@@ -9,7 +9,13 @@ import 'highlight.js/styles/github-dark-dimmed.css';
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  reasoningContent?: string;
   timestamp: number;
+}
+
+interface ModelInfo {
+  id: string;
+  name?: string;
 }
 
 interface LogEntry {
@@ -36,6 +42,7 @@ interface PluginInfo {
 interface ServiceProviderInfo {
   contextId: string;
   capabilities: string[];
+  model?: string;
 }
 
 interface ServiceInfo {
@@ -112,7 +119,7 @@ async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
 // ===== WebSocket Hook =====
 
 function useWebSocket(
-  onMessage: (content: string) => void,
+  onMessage: (content: string, reasoningContent?: string) => void,
   onLog: (entry: LogEntry) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -141,7 +148,7 @@ function useWebSocket(
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'message' && data.content) {
-            onMessage(data.content);
+            onMessage(data.content, data.reasoningContent);
           } else if (data.type === 'log' && data.log) {
             onLog(data.log);
           }
@@ -209,7 +216,9 @@ function DashboardPage({
     setBusy(null);
   };
 
-  const serviceEntries = servicesData ? Object.entries(servicesData) : [];
+  const serviceEntries = servicesData
+    ? Object.entries(servicesData).filter(([name]) => name !== 'platform' && name !== 'app')
+    : [];
 
   return (
     <div className="page-content page-dashboard">
@@ -276,7 +285,7 @@ function DashboardPage({
                 >
                   {info.providers.map(p => (
                     <option key={p.contextId} value={p.contextId}>
-                      {p.contextId}
+                      {p.contextId}{p.model ? ` (${p.model})` : ''}
                     </option>
                   ))}
                 </select>
@@ -284,7 +293,12 @@ function DashboardPage({
             ) : info.providers.length === 1 ? (
               <div className="service-slot-single">
                 <span className="service-slot-label">提供者</span>
-                <span className="service-slot-provider-name">{info.providers[0].contextId}</span>
+                <span className="service-slot-provider-name">
+                  {info.providers[0].contextId}
+                  {info.providers[0].model && (
+                    <span className="service-model-tag">{info.providers[0].model}</span>
+                  )}
+                </span>
               </div>
             ) : (
               <div className="service-slot-single">
@@ -466,25 +480,41 @@ function PluginConfigPage({
     });
   };
 
-  // 全局配置部分
-  const topLevel: [string, unknown][] = [];
-  const pluginsConfig: Record<string, Record<string, unknown>> = {};
-  if (config) {
-    for (const [key, val] of Object.entries(config)) {
-      if (key === 'plugins' && typeof val === 'object' && val !== null) {
-        Object.assign(pluginsConfig, val);
-      } else {
-        topLevel.push([key, val]);
-      }
+  const [editingGlobal, setEditingGlobal] = useState(false);
+  const [globalDraft, setGlobalDraft] = useState({
+    name: '',
+    persona: '',
+    logLevel: 'info',
+    agent: { maxToolIterations: 10, temperature: 0.7, maxTokens: 4096 },
+  });
+
+  // 当 config 变化时同步 draft
+  useEffect(() => {
+    if (config) {
+      const agent = (config.agent ?? {}) as Record<string, unknown>;
+      setGlobalDraft({
+        name: (config.name as string) ?? '',
+        persona: (config.persona as string) ?? '',
+        logLevel: (config.logLevel as string) ?? 'info',
+        agent: {
+          maxToolIterations: (agent.maxToolIterations as number) ?? 10,
+          temperature: (agent.temperature as number) ?? 0.7,
+          maxTokens: (agent.maxTokens as number) ?? 4096,
+        },
+      });
     }
-  }
+  }, [config]);
 
   const handleSaveGlobal = async () => {
     setSaving(true);
-    const res = await api<{ ok?: boolean; error?: string }>('/api/config/save', { method: 'POST' });
+    const res = await api<{ ok?: boolean; error?: string }>('/api/config', {
+      method: 'PUT',
+      body: JSON.stringify(globalDraft),
+    });
     setSaving(false);
     if (res.ok) {
-      showToast('配置已保存到磁盘');
+      showToast('全局配置已保存');
+      setEditingGlobal(false);
       onConfigSaved();
     } else {
       showToast(res.error ?? '保存失败');
@@ -498,16 +528,83 @@ function PluginConfigPage({
       {/* 全局配置 */}
       <div className="config-header-row">
         <div className="section-label" style={{ marginBottom: 0 }}>全局配置</div>
-        <button className="btn btn-primary btn-sm" onClick={handleSaveGlobal} disabled={saving}>
-          {saving ? '保存中...' : '保存到磁盘'}
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {!editingGlobal ? (
+            <button className="btn btn-sm" onClick={() => setEditingGlobal(true)}>编辑</button>
+          ) : (
+            <>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveGlobal} disabled={saving}>
+                {saving ? '保存中...' : '保存'}
+              </button>
+              <button className="btn btn-sm" onClick={() => setEditingGlobal(false)}>取消</button>
+            </>
+          )}
+        </div>
       </div>
       {config && (
         <div className="config-block" style={{ marginTop: 8, marginBottom: 20 }}>
           <div className="config-block-body" style={{ paddingTop: 10 }}>
-            {topLevel.map(([key, val]) => (
-              <ConfigValue key={key} label={key} value={val} />
-            ))}
+            {editingGlobal ? (
+              <div className="config-edit-form">
+                <div className="config-edit-row">
+                  <label className="config-edit-label">name</label>
+                  <input className="config-edit-input" value={globalDraft.name}
+                    onChange={e => setGlobalDraft(d => ({ ...d, name: e.target.value }))} />
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">persona</label>
+                  <input className="config-edit-input" value={globalDraft.persona}
+                    onChange={e => setGlobalDraft(d => ({ ...d, persona: e.target.value }))} />
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">logLevel</label>
+                  <select className="config-edit-input" value={globalDraft.logLevel}
+                    onChange={e => setGlobalDraft(d => ({ ...d, logLevel: e.target.value }))}>
+                    <option value="debug">debug</option>
+                    <option value="info">info</option>
+                    <option value="warn">warn</option>
+                    <option value="error">error</option>
+                  </select>
+                </div>
+                <div style={{ margin: '10px 0 6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Agent</div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">agent.temperature</label>
+                  <input className="config-edit-input" type="number" step="0.1" min="0" max="2"
+                    value={globalDraft.agent.temperature}
+                    onChange={e => setGlobalDraft(d => ({ ...d, agent: { ...d.agent, temperature: Number(e.target.value) } }))} />
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">agent.maxTokens</label>
+                  <input className="config-edit-input" type="number" step="256" min="256"
+                    value={globalDraft.agent.maxTokens}
+                    onChange={e => setGlobalDraft(d => ({ ...d, agent: { ...d.agent, maxTokens: Number(e.target.value) } }))} />
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">agent.maxToolIterations</label>
+                  <input className="config-edit-input" type="number" step="1" min="1" max="50"
+                    value={globalDraft.agent.maxToolIterations}
+                    onChange={e => setGlobalDraft(d => ({ ...d, agent: { ...d.agent, maxToolIterations: Number(e.target.value) } }))} />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="config-item">
+                  <span className="key">name</span>
+                  <span className="val">{(config.name as string) ?? '-'}</span>
+                </div>
+                <div className="config-item">
+                  <span className="key">persona</span>
+                  <span className="val">{(config.persona as string) ?? '-'}</span>
+                </div>
+                <div className="config-item">
+                  <span className="key">logLevel</span>
+                  <span className="val">{(config.logLevel as string) ?? '-'}</span>
+                </div>
+                {config.agent && (
+                  <ConfigValue label="agent" value={config.agent} />
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -612,6 +709,9 @@ function ChatPanel({
   setInput,
   onSend,
   width,
+  models,
+  currentModel,
+  onModelChange,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -621,6 +721,9 @@ function ChatPanel({
   setInput: (v: string) => void;
   onSend: () => void;
   width: number;
+  models: ModelInfo[];
+  currentModel: string | null;
+  onModelChange: (model: string) => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -639,7 +742,20 @@ function ChatPanel({
     <div className="chat-panel" style={{ width }}>
       <div className="chat-panel-header">
         <span className="chat-panel-title">💬 {status?.name ?? 'Aalis'}</span>
-        <div className={`connection-dot ${connected ? 'online' : 'offline'}`} />
+        <div className="chat-panel-header-right">
+          {models.length > 0 && (
+            <select
+              className="model-select"
+              value={currentModel ?? ''}
+              onChange={e => onModelChange(e.target.value)}
+            >
+              {models.map(m => (
+                <option key={m.id} value={m.id}>{m.name ?? m.id}</option>
+              ))}
+            </select>
+          )}
+          <div className={`connection-dot ${connected ? 'online' : 'offline'}`} />
+        </div>
       </div>
       <div className="messages">
         {messages.length === 0 && (
@@ -653,6 +769,16 @@ function ChatPanel({
             <div className="message-sender">
               {msg.role === 'user' ? 'You' : status?.name ?? 'Aalis'}
             </div>
+            {msg.role === 'assistant' && msg.reasoningContent && (
+              <details className="thinking-block">
+                <summary className="thinking-summary">💭 思考过程</summary>
+                <div className="thinking-content">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                    {msg.reasoningContent}
+                  </ReactMarkdown>
+                </div>
+              </details>
+            )}
             <div className="message-bubble">
               {msg.role === 'assistant' ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
@@ -764,9 +890,11 @@ export function App() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [servicesData, setServicesData] = useState<Record<string, ServiceInfo> | null>(null);
   const [chatWidth, setChatWidth] = useState(420);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [currentModel, setCurrentModel] = useState<string | null>(null);
 
-  const handleIncoming = useCallback((content: string) => {
-    setMessages(prev => [...prev, { role: 'assistant', content, timestamp: Date.now() }]);
+  const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
+    setMessages(prev => [...prev, { role: 'assistant', content, reasoningContent, timestamp: Date.now() }]);
     setLoading(false);
   }, []);
 
@@ -795,13 +923,31 @@ export function App() {
       .catch(() => {});
   }, []);
 
+  const refreshModels = useCallback(() => {
+    api<{ models: ModelInfo[] }>('/api/llm/models')
+      .then(d => setModels(d.models ?? []))
+      .catch(() => {});
+    api<{ model: string | null }>('/api/llm/model')
+      .then(d => setCurrentModel(d.model))
+      .catch(() => {});
+  }, []);
+
+  const handleModelChange = useCallback((model: string) => {
+    setCurrentModel(model);
+    api<{ ok?: boolean }>('/api/llm/model', {
+      method: 'PUT',
+      body: JSON.stringify({ model }),
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
     refreshConfig();
     refreshPlugins();
     refreshServices();
+    refreshModels();
     api<LogEntry[]>('/api/logs').then(setLogs).catch(() => {});
-  }, [refreshPlugins, refreshConfig, refreshServices]);
+  }, [refreshPlugins, refreshConfig, refreshServices, refreshModels]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -920,6 +1066,9 @@ export function App() {
         setInput={setInput}
         onSend={handleSend}
         width={chatWidth}
+        models={models}
+        currentModel={currentModel}
+        onModelChange={handleModelChange}
       />
     </div>
   );

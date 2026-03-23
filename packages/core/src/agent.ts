@@ -98,6 +98,12 @@ export class Agent {
       await this.ctx.hooks.run('llm-call:after', llmAfterData);
       response = llmAfterData.response;
 
+      // 收集所有思考内容
+      const allReasoning: string[] = [];
+      if (response.reasoningContent) {
+        allReasoning.push(response.reasoningContent);
+      }
+
       // 工具调用循环
       let iterations = 0;
       while (response.toolCalls && response.toolCalls.length > 0 && iterations < this.maxToolIterations) {
@@ -109,6 +115,7 @@ export class Agent {
           role: 'assistant',
           content: response.content,
           toolCalls: response.toolCalls,
+          reasoningContent: response.reasoningContent,
         });
 
         // 执行每个工具调用
@@ -156,6 +163,10 @@ export class Agent {
         const nextLlmAfterData = { response, messages: nextLlmData.messages };
         await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
         response = nextLlmAfterData.response;
+
+        if (response.reasoningContent) {
+          allReasoning.push(response.reasoningContent);
+        }
       }
 
       let replyContent = response.content ?? '';
@@ -178,10 +189,14 @@ export class Agent {
       });
 
       // 发出回复
+      const combinedReasoning = allReasoning.length > 0
+        ? allReasoning.join('\n\n---\n\n')
+        : undefined;
       await this.ctx.emit('message:send', {
         content: replyContent,
         sessionId: incoming.sessionId,
         platform: incoming.platform,
+        reasoningContent: combinedReasoning,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

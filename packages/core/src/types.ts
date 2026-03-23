@@ -9,6 +9,7 @@ export interface Message {
   toolCallId?: string;
   name?: string;
   timestamp?: number;
+  reasoningContent?: string | null;
 }
 
 export interface IncomingMessage {
@@ -23,6 +24,7 @@ export interface OutgoingMessage {
   content: string;
   sessionId: string;
   platform?: string;
+  reasoningContent?: string;
 }
 
 // ----- 工具调用 (DeepSeek/OpenAI format) -----
@@ -77,6 +79,7 @@ export interface ChatRequest {
 export interface ChatResponse {
   content: string | null;
   toolCalls?: ToolCall[];
+  reasoningContent?: string | null;
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -84,8 +87,16 @@ export interface ChatResponse {
   };
 }
 
+export interface ModelInfo {
+  id: string;
+  name?: string;
+}
+
 export interface LLMService {
   chat(request: ChatRequest): Promise<ChatResponse>;
+  listModels?(): Promise<ModelInfo[]>;
+  getModel?(): string;
+  setModel?(model: string): void;
 }
 
 // ----- 记忆服务接口 -----
@@ -115,13 +126,6 @@ export type DependencyDeclaration = string | ServiceDependency;
 export interface InjectDeclaration {
   required?: DependencyDeclaration[];
   optional?: DependencyDeclaration[];
-}
-
-// ----- 权限配置 -----
-
-export interface PermissionsConfig {
-  allow?: string[];
-  deny?: string[];
 }
 
 // ----- 插件接口 -----

@@ -2,7 +2,6 @@ import type {
   RegisteredTool,
   ToolDefinition,
   ToolCallContext,
-  PermissionsConfig,
 } from './types.js';
 import type { Logger } from './logger.js';
 
@@ -12,16 +11,13 @@ import type { Logger } from './logger.js';
  * - 插件通过 ctx.tools.register() 注册工具
  * - Agent 通过 getDefinitions() 获取可用工具列表发送给 LLM
  * - Agent 通过 execute() 执行 LLM 返回的工具调用
- * - 权限系统: deny 优先于 allow
  */
 export class ToolRegistry {
   private tools = new Map<string, RegisteredTool>();
-  private permissions: PermissionsConfig;
   private logger: Logger;
 
-  constructor(logger: Logger, permissions: PermissionsConfig = {}) {
+  constructor(logger: Logger) {
     this.logger = logger.child('tools');
-    this.permissions = permissions;
   }
 
   /**
@@ -50,14 +46,7 @@ export class ToolRegistry {
    * 获取所有可用工具的定义（发送给 LLM 的格式）
    */
   getDefinitions(): ToolDefinition[] {
-    const defs: ToolDefinition[] = [];
-    for (const tool of this.tools.values()) {
-      const name = tool.definition.function.name;
-      if (this.isAllowed(name)) {
-        defs.push(tool.definition);
-      }
-    }
-    return defs;
+    return [...this.tools.values()].map(t => t.definition);
   }
 
   /**
@@ -68,10 +57,6 @@ export class ToolRegistry {
     args: Record<string, unknown>,
     callCtx: ToolCallContext,
   ): Promise<string> {
-    if (!this.isAllowed(toolName)) {
-      return JSON.stringify({ error: `工具 "${toolName}" 不被允许执行` });
-    }
-
     const tool = this.tools.get(toolName);
     if (!tool) {
       return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
@@ -98,39 +83,5 @@ export class ToolRegistry {
         this.logger.debug(`注销工具: ${name} (插件 ${pluginName} 卸载)`);
       }
     }
-  }
-
-  /**
-   * 检查工具是否被权限系统允许
-   * deny 优先于 allow
-   */
-  private isAllowed(toolName: string): boolean {
-    const { allow, deny } = this.permissions;
-
-    // deny 优先
-    if (deny && deny.length > 0) {
-      for (const pattern of deny) {
-        if (this.matchPattern(toolName, pattern)) return false;
-      }
-    }
-
-    // 没有 allow 列表 = 全部允许
-    if (!allow || allow.length === 0) return true;
-
-    for (const pattern of allow) {
-      if (this.matchPattern(toolName, pattern)) return true;
-    }
-    return false;
-  }
-
-  /**
-   * 简单的通配符匹配: * 匹配任意字符
-   */
-  private matchPattern(name: string, pattern: string): boolean {
-    if (pattern === '*') return true;
-    const regex = new RegExp(
-      '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
-    );
-    return regex.test(name);
   }
 }

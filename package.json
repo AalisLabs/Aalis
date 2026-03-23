@@ -16,6 +16,7 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-openai": "workspace:*",
+    "@aalis/plugin-deepseek": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-memory-mongodb": "workspace:*",
     "@aalis/plugin-memory-sqlite": "workspace:*",

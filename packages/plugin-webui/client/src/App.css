@@ -402,6 +402,19 @@ body {
   font-weight: 600;
   color: var(--text);
   font-family: 'SF Mono', 'Fira Code', monospace;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.service-model-tag {
+  font-size: 0.68rem;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--primary-glow);
+  color: var(--primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .service-slot-caps {
@@ -1242,4 +1255,90 @@ body {
   display: flex;
   gap: 6px;
   padding-top: 4px;
+}
+
+/* ===== 模型选择器 ===== */
+
+.chat-panel-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-select {
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  max-width: 180px;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+
+.model-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+/* ===== 思考过程 ===== */
+
+.thinking-block {
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  overflow: hidden;
+}
+
+.thinking-summary {
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-summary::before {
+  content: '▶';
+  font-size: 0.6rem;
+  transition: transform 0.2s;
+}
+
+details[open] > .thinking-summary::before {
+  transform: rotate(90deg);
+}
+
+.thinking-content {
+  padding: 0 12px 10px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-height: 400px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(139, 92, 246, 0.1);
+}
+
+.thinking-content p {
+  margin: 4px 0;
+}
+
+.thinking-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thinking-content::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.2);
+  border-radius: 2px;
 }

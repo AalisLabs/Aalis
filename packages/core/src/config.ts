@@ -1,13 +1,10 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { PermissionsConfig } from './types.js';
-
 export interface AalisConfig {
   name: string;
   persona: string;
   logLevel: string;
-  permissions: PermissionsConfig;
   agent: {
     maxToolIterations: number;
     temperature: number;
@@ -24,7 +21,6 @@ const DEFAULT_CONFIG: AalisConfig = {
   name: 'Aalis',
   persona: 'default',
   logLevel: 'info',
-  permissions: {},
   agent: {
     maxToolIterations: 10,
     temperature: 0.7,
@@ -179,10 +175,6 @@ export class ConfigManager {
       logLevel: this.config.logLevel,
     };
 
-    if (this.config.permissions && Object.keys(this.config.permissions).length > 0) {
-      obj.permissions = this.config.permissions;
-    }
-
     obj.agent = this.config.agent;
 
     // 恢复插件配置中的环境变量占位符
@@ -256,7 +248,6 @@ export class ConfigManager {
       name: (parsed['name'] as string) ?? DEFAULT_CONFIG.name,
       persona: (parsed['persona'] as string) ?? DEFAULT_CONFIG.persona,
       logLevel: (parsed['logLevel'] as string) ?? DEFAULT_CONFIG.logLevel,
-      permissions: (parsed['permissions'] as PermissionsConfig) ?? DEFAULT_CONFIG.permissions,
       agent: {
         ...DEFAULT_CONFIG.agent,
         ...((parsed['agent'] as Record<string, unknown>) ?? {}),
