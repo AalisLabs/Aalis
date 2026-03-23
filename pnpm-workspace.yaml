@@ -1,0 +1,6 @@
+packages:
+  - 'packages/*'
+  - 'packages/aalis-plugin-webui/client'
+allowBuilds:
+  better-sqlite3: false
+  esbuild: false

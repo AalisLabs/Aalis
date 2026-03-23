@@ -1,0 +1,29 @@
+{
+  "name": "aalis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@aalis/core": "workspace:*",
+    "aalis-plugin-openai": "workspace:*",
+    "aalis-plugin-persona": "workspace:*",
+    "aalis-plugin-memory-mongodb": "workspace:*",
+    "aalis-plugin-memory-sqlite": "workspace:*",
+    "aalis-plugin-cli": "workspace:*",
+    "aalis-plugin-websearch": "workspace:*",
+    "aalis-plugin-webui": "workspace:*"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3"]
+  }
+}
