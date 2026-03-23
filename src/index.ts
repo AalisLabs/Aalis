@@ -3,6 +3,7 @@ import { App } from '@aalis/core';
 // 插件导入
 import * as pluginPersona from '@aalis/plugin-persona';
 import * as pluginOpenAI from '@aalis/plugin-openai';
+import * as pluginDeepSeek from '@aalis/plugin-deepseek';
 import * as pluginMemoryMongoDB from '@aalis/plugin-memory-mongodb';
 import * as pluginMemorySQLite from '@aalis/plugin-memory-sqlite';
 import * as pluginCLI from '@aalis/plugin-cli';
@@ -20,6 +21,7 @@ async function main() {
   // 5. 平台 (可选依赖 llm)
   await app.plugin(pluginPersona);
   await app.plugin(pluginOpenAI);
+  await app.plugin(pluginDeepSeek);
   await app.plugin(pluginMemoryMongoDB);
   await app.plugin(pluginMemorySQLite);
   await app.plugin(pluginWebSearch);

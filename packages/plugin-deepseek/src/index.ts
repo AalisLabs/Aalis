@@ -11,23 +11,24 @@ import type {
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-openai';
+export const name = '@aalis/plugin-deepseek';
 export const provides = ['llm'];
 
 // ===== 配置 =====
 
-interface OpenAIConfig {
+interface DeepSeekConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
   timeout?: number;
 }
 
-// ===== OpenAI-compatible 消息格式 =====
+// ===== DeepSeek API 消息格式 =====
 
 interface APIMessage {
   role: string;
   content: string | null;
+  reasoning_content?: string | null;
   tool_calls?: APIToolCall[];
   tool_call_id?: string;
   name?: string;
@@ -58,6 +59,7 @@ interface APIChatResponse {
     message: {
       role: string;
       content: string | null;
+      reasoning_content?: string | null;
       tool_calls?: APIToolCall[];
     };
     finish_reason: string;
@@ -71,14 +73,14 @@ interface APIChatResponse {
 
 // ===== LLM 服务实现 =====
 
-class OpenAILLMService implements LLMService {
+class DeepSeekLLMService implements LLMService {
   private apiKey: string;
   private baseUrl: string;
   private model: string;
   private timeout: number;
   private logger;
 
-  constructor(config: OpenAIConfig, logger: Context['logger']) {
+  constructor(config: DeepSeekConfig, logger: Context['logger']) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.model = config.model;
@@ -117,15 +119,17 @@ class OpenAILLMService implements LLMService {
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
-      temperature: request.temperature ?? 0.7,
-      max_tokens: request.maxTokens ?? 4096,
+      max_tokens: request.maxTokens ?? 8192,
+      // 启用思考模式
+      thinking: { type: 'enabled' },
     };
+    // 思考模式下 temperature 等参数不生效，但不会报错
 
     if (tools && tools.length > 0) {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 LLM: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 DeepSeek (思考模式): ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -139,18 +143,19 @@ class OpenAILLMService implements LLMService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`LLM API 错误 (${response.status}): ${errorText}`);
+      throw new Error(`DeepSeek API 错误 (${response.status}): ${errorText}`);
     }
 
     const data = (await response.json()) as APIChatResponse;
     const choice = data.choices[0];
 
     if (!choice) {
-      throw new Error('LLM 返回了空的 choices');
+      throw new Error('DeepSeek 返回了空的 choices');
     }
 
     const result: ChatResponse = {
       content: choice.message.content,
+      reasoningContent: choice.message.reasoning_content ?? undefined,
     };
 
     if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
@@ -175,11 +180,21 @@ class OpenAILLMService implements LLMService {
     return result;
   }
 
+  /**
+   * 转换为 DeepSeek API 消息格式
+   * 关键：在工具调用循环中保留 reasoning_content，
+   * 但历史消息（从 memory 加载）不含 reasoning_content
+   */
   private toAPIMessage(msg: Message): APIMessage {
     const apiMsg: APIMessage = {
       role: msg.role,
       content: msg.content,
     };
+
+    // 传递思考内容给 API（工具调用循环中需要）
+    if (msg.reasoningContent) {
+      apiMsg.reasoning_content = msg.reasoningContent;
+    }
 
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       apiMsg.tool_calls = msg.toolCalls.map(tc => ({
@@ -219,24 +234,24 @@ class OpenAILLMService implements LLMService {
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const openaiConfig: OpenAIConfig = {
+  const deepseekConfig: DeepSeekConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
     model: (config.model as string) ?? 'deepseek-chat',
     timeout: config.timeout as number | undefined,
   };
 
-  if (!openaiConfig.apiKey) {
-    ctx.logger.error('未配置 apiKey，插件无法启动');
+  if (!deepseekConfig.apiKey) {
+    ctx.logger.error('未配置 apiKey，DeepSeek 插件无法启动');
     return;
   }
 
-  const service = new OpenAILLMService(openaiConfig, ctx.logger);
+  const service = new DeepSeekLLMService(deepseekConfig, ctx.logger);
 
-  // 注册 LLM 服务，声明能力
+  // 注册 LLM 服务，声明能力（含 thinking 能力标记）
   ctx.provide('llm', service, {
-    capabilities: ['chat', 'tool_calling', 'streaming'],
+    capabilities: ['chat', 'tool_calling', 'thinking'],
   });
 
-  ctx.logger.info(`已连接: ${openaiConfig.baseUrl} (${openaiConfig.model})`);
+  ctx.logger.info(`DeepSeek 思考模式已连接: ${deepseekConfig.baseUrl} (${deepseekConfig.model})`);
 }

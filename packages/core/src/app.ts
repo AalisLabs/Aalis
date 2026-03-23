@@ -32,7 +32,7 @@ export class App {
     this.events = new EventBus();
     const services = new ServiceContainer();
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
-    const tools = new ToolRegistry(this.logger, config.get('permissions'));
+    const tools = new ToolRegistry(this.logger);
     const hooks = new HookRegistry();
 
     // 2. 根上下文
