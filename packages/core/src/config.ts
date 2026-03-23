@@ -16,6 +16,8 @@ export interface AalisConfig {
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件名列表 */
   disabledPlugins?: string[];
+  /** 服务偏好：服务名 → 偏好的提供者 contextId */
+  servicePreferences?: Record<string, string>;
 }
 
 const DEFAULT_CONFIG: AalisConfig = {
@@ -30,6 +32,7 @@ const DEFAULT_CONFIG: AalisConfig = {
   },
   plugins: {},
   disabledPlugins: [],
+  servicePreferences: {},
 };
 
 /**
@@ -130,6 +133,23 @@ export class ConfigManager {
   }
 
   /**
+   * 设置服务偏好提供者
+   */
+  setServicePreference(serviceName: string, contextId: string): void {
+    if (!this.config.servicePreferences) {
+      this.config.servicePreferences = {};
+    }
+    this.config.servicePreferences[serviceName] = contextId;
+  }
+
+  /**
+   * 获取服务偏好
+   */
+  getServicePreferences(): Record<string, string> {
+    return this.config.servicePreferences ?? {};
+  }
+
+  /**
    * 保存当前配置到磁盘（YAML 格式）
    * 注意：环境变量引用会被保护，不会展开为实际值
    */
@@ -181,6 +201,10 @@ export class ConfigManager {
 
     if (this.config.disabledPlugins && this.config.disabledPlugins.length > 0) {
       obj.disabledPlugins = this.config.disabledPlugins;
+    }
+
+    if (this.config.servicePreferences && Object.keys(this.config.servicePreferences).length > 0) {
+      obj.servicePreferences = this.config.servicePreferences;
     }
 
     return obj;

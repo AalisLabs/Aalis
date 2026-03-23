@@ -121,4 +121,26 @@ export class ServiceContainer {
   listServices(): string[] {
     return [...this.entries.keys()];
   }
+
+  /**
+   * 获取某个服务的所有 entry（给 API 暴露用）
+   */
+  getEntries(name: string): ServiceEntry[] {
+    return this.entries.get(name) ?? [];
+  }
+
+  /**
+   * 将指定 contextId 的提供者置为首位（偏好选择）
+   * 仅调整列表顺序，不修改 priority 数值
+   */
+  prefer(name: string, contextId: string): boolean {
+    const list = this.entries.get(name);
+    if (!list) return false;
+    const target = list.find(e => e.contextId === contextId);
+    if (!target) return false;
+    const rest = list.filter(e => e !== target);
+    list.length = 0;
+    list.push(target, ...rest);
+    return true;
+  }
 }
