@@ -137,6 +137,77 @@ function StatusPanel({ status }: { status: SystemStatus | null }) {
   </>);
 }
 
+// ===== 递归配置值渲染（只读） =====
+
+function ConfigValue({ label, value, depth = 0 }: { label: string; value: unknown; depth?: number }) {
+  const [open, setOpen] = useState(depth < 1);
+
+  // 非对象基本值 — 直接 key: value 一行
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
+    const display = value === null || value === undefined ? '-'
+      : Array.isArray(value) ? JSON.stringify(value)
+      : String(value);
+    return (
+      <div className="config-item" style={{ paddingLeft: depth * 12 }}>
+        <span className="key">{label}</span>
+        <span className="val" title={display}>{display}</span>
+      </div>
+    );
+  }
+
+  // 对象值 — 可折叠
+  const entries = Object.entries(value as Record<string, unknown>);
+  return (
+    <div className="config-nested" style={{ paddingLeft: depth * 12 }}>
+      <div className="config-nested-header" onClick={() => setOpen(o => !o)}>
+        <span className={`config-block-toggle ${open ? 'open' : ''}`}>▶</span>
+        <span className="key">{label}</span>
+        <span className="config-nested-count">{entries.length} 项</span>
+      </div>
+      {open && (
+        <div className="config-nested-body">
+          {entries.map(([k, v]) => (
+            <ConfigValue key={k} label={k} value={v} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== 扁平化 / 还原嵌套对象（编辑用） =====
+
+function flattenConfig(obj: Record<string, unknown>, prefix = ''): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      Object.assign(result, flattenConfig(v as Record<string, unknown>, path));
+    } else {
+      result[path] = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+    }
+  }
+  return result;
+}
+
+function unflattenConfig(flat: Record<string, string>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [path, raw] of Object.entries(flat)) {
+    const keys = path.split('.');
+    let cur = result;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (!(keys[i] in cur) || typeof cur[keys[i]] !== 'object') {
+        cur[keys[i]] = {};
+      }
+      cur = cur[keys[i]] as Record<string, unknown>;
+    }
+    const last = keys[keys.length - 1];
+    // 解析值类型
+    try { cur[last] = JSON.parse(raw); } catch { cur[last] = raw; }
+  }
+  return result;
+}
+
 // ===== 侧边栏：插件面板 =====
 
 function PluginsPanel({
@@ -174,20 +245,12 @@ function PluginsPanel({
   };
 
   const startEdit = (plugin: PluginInfo) => {
-    const buf: Record<string, string> = {};
-    for (const [k, v] of Object.entries(plugin.config ?? {})) {
-      buf[k] = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-    }
-    setEditBuffer(buf);
+    setEditBuffer(flattenConfig((plugin.config ?? {}) as Record<string, unknown>));
     setEditingPlugin(plugin.name);
   };
 
   const savePluginConfig = async (pluginName: string) => {
-    const parsed: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(editBuffer)) {
-      // 尝试解析为 JSON（支持数字、布尔、对象、数组）
-      try { parsed[k] = JSON.parse(v); } catch { parsed[k] = v; }
-    }
+    const parsed = unflattenConfig(editBuffer);
     setBusy(pluginName);
     await api(`/api/plugins/${encodeURIComponent(pluginName)}/config`, {
       method: 'PUT',
@@ -255,12 +318,7 @@ function PluginsPanel({
                   <>
                     <div className="config-block-body" style={{ paddingTop: 6 }}>
                       {Object.entries(p.config).map(([k, v]) => (
-                        <div className="config-item" key={k}>
-                          <span className="key">{k}</span>
-                          <span className="val" title={typeof v === 'object' ? JSON.stringify(v) : String(v ?? '-')}>
-                            {typeof v === 'object' ? JSON.stringify(v) : String(v ?? '-')}
-                          </span>
-                        </div>
+                        <ConfigValue key={k} label={k} value={v} />
                       ))}
                     </div>
                     <button className="btn btn-sm" onClick={() => startEdit(p)}>编辑配置</button>
@@ -328,12 +386,6 @@ function ConfigPanel({
     });
   };
 
-  const renderValue = (val: unknown): string => {
-    if (val === null || val === undefined) return '-';
-    if (typeof val === 'object') return JSON.stringify(val);
-    return String(val);
-  };
-
   const topLevel: [string, unknown][] = [];
   const pluginsConfig: Record<string, Record<string, unknown>> = {};
 
@@ -377,10 +429,7 @@ function ConfigPanel({
       <div className="config-block" style={{ marginTop: 8 }}>
         <div className="config-block-body" style={{ paddingTop: 10 }}>
           {topLevel.map(([key, val]) => (
-            <div className="config-item" key={key}>
-              <span className="key">{key}</span>
-              <span className="val" title={renderValue(val)}>{renderValue(val)}</span>
-            </div>
+            <ConfigValue key={key} label={key} value={val} />
           ))}
         </div>
       </div>
@@ -400,10 +449,7 @@ function ConfigPanel({
             {isOpen && (
               <div className="config-block-body">
                 {entries.map(([key, val]) => (
-                  <div className="config-item" key={key}>
-                    <span className="key">{key}</span>
-                    <span className="val" title={renderValue(val)}>{renderValue(val)}</span>
-                  </div>
+                  <ConfigValue key={key} label={key} value={val} />
                 ))}
               </div>
             )}

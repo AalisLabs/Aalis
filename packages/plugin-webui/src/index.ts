@@ -275,7 +275,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // SPA fallback: 所有非 API 路径返回 index.html
   if (existsSync(clientDist)) {
-    expressApp.get('*', (_req, res) => {
+    expressApp.get('{*path}', (_req, res) => {
       res.sendFile(resolve(clientDist, 'index.html'));
     });
   }

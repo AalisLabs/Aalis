@@ -800,3 +800,42 @@ body {
   padding-top: 4px;
 }
 
+/* ===== 嵌套配置值 ===== */
+
+.config-nested {
+  padding: 2px 0;
+}
+
+.config-nested-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.config-nested-header:hover {
+  background: var(--surface-hover);
+  border-radius: 4px;
+}
+
+.config-nested-header .key {
+  color: var(--text-secondary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.config-nested-count {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.config-nested-body {
+  border-left: 1px solid var(--border);
+  margin-left: 6px;
+  padding-left: 8px;
+}
+
