@@ -7,3 +7,4 @@ dist/
 !vite.config.ts
 .env
 .env.local
+data/
