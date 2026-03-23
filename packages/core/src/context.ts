@@ -143,6 +143,27 @@ export class Context {
     return this._services.getCapabilities(name);
   }
 
+  /**
+   * 列出所有已注册的服务名
+   */
+  listServices(): string[] {
+    return this._services.listServices();
+  }
+
+  /**
+   * 获取某个服务的所有 entry
+   */
+  getServiceEntries(name: string) {
+    return this._services.getEntries(name);
+  }
+
+  /**
+   * 切换服务的偏好提供者
+   */
+  preferService(name: string, contextId: string): boolean {
+    return this._services.prefer(name, contextId);
+  }
+
   // ---- 工具 ----
 
   /**

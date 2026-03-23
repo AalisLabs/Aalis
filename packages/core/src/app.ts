@@ -89,6 +89,12 @@ export class App {
       });
     }
 
+    // 应用配置文件中的服务偏好
+    const prefs = this.ctx.config.getServicePreferences();
+    for (const [service, contextId] of Object.entries(prefs)) {
+      this.ctx.preferService(service, contextId);
+    }
+
     // 初始化 Agent
     this.agent = new Agent(this.ctx);
 

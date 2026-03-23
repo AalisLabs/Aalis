@@ -202,6 +202,46 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json(getLogBuffer());
   });
 
+  // 获取服务列表（含提供者信息）
+  expressApp.get('/api/services', (_req, res) => {
+    const serviceNames = ctx.listServices();
+    const services: Record<string, { providers: Array<{ contextId: string; capabilities: string[] }>; active: string | undefined }> = {};
+
+    for (const name of serviceNames) {
+      const entries = ctx.getServiceEntries(name);
+      services[name] = {
+        providers: entries.map(e => ({
+          contextId: e.contextId,
+          capabilities: [...e.capabilities],
+        })),
+        active: entries.length > 0 ? entries[0].contextId : undefined,
+      };
+    }
+    res.json({ services });
+  });
+
+  // 切换服务的偏好提供者（同时持久化到配置文件）
+  expressApp.post('/api/services/:name/prefer', (req, res) => {
+    const serviceName = req.params.name;
+    const contextId = req.body?.contextId;
+    if (!contextId || typeof contextId !== 'string') {
+      res.status(400).json({ error: 'contextId 必须是字符串' });
+      return;
+    }
+    const ok = ctx.preferService(serviceName, contextId);
+    if (ok) {
+      // 持久化到配置文件
+      const app = getApp();
+      if (app) {
+        ctx.config.setServicePreference(serviceName, contextId);
+        app.saveConfig();
+      }
+      res.json({ ok: true, message: `${serviceName} 已切换到 ${contextId}` });
+    } else {
+      res.status(404).json({ error: `服务 ${serviceName} 或提供者 ${contextId} 不存在` });
+    }
+  });
+
   // ---------- WebSocket ----------
 
   wss.on('connection', (ws) => {
