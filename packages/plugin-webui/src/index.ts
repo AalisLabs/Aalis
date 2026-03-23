@@ -9,7 +9,7 @@ import { getLogBuffer, onLogEntry } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-webui';
+export const name = '@aalis/plugin-webui';
 export const provides = ['platform'];
 
 // ===== 配置 =====

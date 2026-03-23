@@ -15,13 +15,13 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "aalis-plugin-openai": "workspace:*",
-    "aalis-plugin-persona": "workspace:*",
-    "aalis-plugin-memory-mongodb": "workspace:*",
-    "aalis-plugin-memory-sqlite": "workspace:*",
-    "aalis-plugin-cli": "workspace:*",
-    "aalis-plugin-websearch": "workspace:*",
-    "aalis-plugin-webui": "workspace:*"
+    "@aalis/plugin-openai": "workspace:*",
+    "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-memory-mongodb": "workspace:*",
+    "@aalis/plugin-memory-sqlite": "workspace:*",
+    "@aalis/plugin-cli": "workspace:*",
+    "@aalis/plugin-websearch": "workspace:*",
+    "@aalis/plugin-webui": "workspace:*"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3"]

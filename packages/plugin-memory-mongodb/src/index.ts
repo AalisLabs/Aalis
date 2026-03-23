@@ -3,7 +3,7 @@ import type { Context, MemoryService, Message } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-memory-mongodb';
+export const name = '@aalis/plugin-memory-mongodb';
 export const provides = ['memory'];
 
 // ===== 配置 =====

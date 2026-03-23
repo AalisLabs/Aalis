@@ -5,7 +5,7 @@ import type { Context, PersonaService, MemoryService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-cli';
+export const name = '@aalis/plugin-cli';
 export const inject = {
   optional: [{ service: 'llm', capabilities: ['chat'] }],
 };

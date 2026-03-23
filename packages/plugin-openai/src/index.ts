@@ -10,7 +10,7 @@ import type {
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-openai';
+export const name = '@aalis/plugin-openai';
 export const provides = ['llm'];
 
 // ===== 配置 =====

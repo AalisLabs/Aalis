@@ -1,13 +1,13 @@
 import { App } from '@aalis/core';
 
 // 插件导入
-import * as pluginPersona from 'aalis-plugin-persona';
-import * as pluginOpenAI from 'aalis-plugin-openai';
-import * as pluginMemoryMongoDB from 'aalis-plugin-memory-mongodb';
-import * as pluginMemorySQLite from 'aalis-plugin-memory-sqlite';
-import * as pluginCLI from 'aalis-plugin-cli';
-import * as pluginWebSearch from 'aalis-plugin-websearch';
-import * as pluginWebUI from 'aalis-plugin-webui';
+import * as pluginPersona from '@aalis/plugin-persona';
+import * as pluginOpenAI from '@aalis/plugin-openai';
+import * as pluginMemoryMongoDB from '@aalis/plugin-memory-mongodb';
+import * as pluginMemorySQLite from '@aalis/plugin-memory-sqlite';
+import * as pluginCLI from '@aalis/plugin-cli';
+import * as pluginWebSearch from '@aalis/plugin-websearch';
+import * as pluginWebUI from '@aalis/plugin-webui';
 
 async function main() {
   const app = new App();

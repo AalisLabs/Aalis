@@ -5,7 +5,7 @@ import type { Context, PersonaService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-persona';
+export const name = '@aalis/plugin-persona';
 export const provides = ['persona'];
 
 // ===== 角色卡格式 =====

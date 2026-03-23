@@ -2,7 +2,7 @@ import type { Context } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-websearch';
+export const name = '@aalis/plugin-websearch';
 
 // ===== 配置 =====
 

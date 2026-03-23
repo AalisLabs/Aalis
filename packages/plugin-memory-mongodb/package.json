@@ -1,5 +1,5 @@
 {
-  "name": "aalis-plugin-memory-mongodb",
+  "name": "@aalis/plugin-memory-mongodb",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

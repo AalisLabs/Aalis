@@ -5,7 +5,7 @@ import type { Context, MemoryService, Message } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = 'aalis-plugin-memory-sqlite';
+export const name = '@aalis/plugin-memory-sqlite';
 export const provides = ['memory'];
 
 // ===== 配置 =====

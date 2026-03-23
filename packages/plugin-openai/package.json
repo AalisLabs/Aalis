@@ -1,5 +1,5 @@
 {
-  "name": "aalis-plugin-persona",
+  "name": "@aalis/plugin-openai",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,8 +9,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "yaml": "^2.7.0"
+    "@aalis/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

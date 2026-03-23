@@ -11,27 +11,27 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:packages/core
-      aalis-plugin-cli:
+      '@aalis/plugin-cli':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-cli
-      aalis-plugin-memory-mongodb:
+        version: link:packages/plugin-cli
+      '@aalis/plugin-memory-mongodb':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-memory-mongodb
-      aalis-plugin-memory-sqlite:
+        version: link:packages/plugin-memory-mongodb
+      '@aalis/plugin-memory-sqlite':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-memory-sqlite
-      aalis-plugin-openai:
+        version: link:packages/plugin-memory-sqlite
+      '@aalis/plugin-openai':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-openai
-      aalis-plugin-persona:
+        version: link:packages/plugin-openai
+      '@aalis/plugin-persona':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-persona
-      aalis-plugin-websearch:
+        version: link:packages/plugin-persona
+      '@aalis/plugin-websearch':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-websearch
-      aalis-plugin-webui:
+        version: link:packages/plugin-websearch
+      '@aalis/plugin-webui':
         specifier: workspace:*
-        version: link:packages/aalis-plugin-webui
+        version: link:packages/plugin-webui
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -43,7 +43,23 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-cli:
+  packages/core:
+    dependencies:
+      chalk:
+        specifier: ^5.4.0
+        version: 5.6.2
+      yaml:
+        specifier: ^2.7.0
+        version: 2.8.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-cli:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -59,7 +75,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-memory-mongodb:
+  packages/plugin-memory-mongodb:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -75,7 +91,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-memory-sqlite:
+  packages/plugin-memory-sqlite:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -94,7 +110,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-openai:
+  packages/plugin-openai:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -107,7 +123,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-persona:
+  packages/plugin-persona:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -123,7 +139,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-websearch:
+  packages/plugin-websearch:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -136,7 +152,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-webui:
+  packages/plugin-webui:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -161,7 +177,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/aalis-plugin-webui/client:
+  packages/plugin-webui/client:
     dependencies:
       react:
         specifier: ^19.0.0
@@ -185,22 +201,6 @@ importers:
       vite:
         specifier: ^6.2.0
         version: 6.4.1(@types/node@22.19.15)(tsx@4.21.0)(yaml@2.8.3)
-
-  packages/core:
-    dependencies:
-      chalk:
-        specifier: ^5.4.0
-        version: 5.6.2
-      yaml:
-        specifier: ^2.7.0
-        version: 2.8.3
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
 
 packages:
 

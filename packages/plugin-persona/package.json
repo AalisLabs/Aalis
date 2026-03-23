@@ -1,5 +1,5 @@
 {
-  "name": "aalis-plugin-websearch",
+  "name": "@aalis/plugin-persona",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,7 +9,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*"
+    "@aalis/core": "workspace:*",
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
