@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-agent-default": "workspace:*",
     "@aalis/plugin-cli": "workspace:*",
     "@aalis/plugin-deepseek": "workspace:*",
     "@aalis/plugin-embedding-ollama": "workspace:*",

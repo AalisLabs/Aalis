@@ -346,8 +346,7 @@ export const name = '@aalis/plugin-agent-default';
 export const provides = ['agent'];
 
 export const inject = {
-  required: ['llm'] as const,
-  optional: ['memory', 'persona'] as const,
+  optional: ['llm', 'memory', 'persona'],
 };
 
 export const configSchema: ConfigSchema = {
