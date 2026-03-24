@@ -42,11 +42,18 @@ interface SystemStatus {
   commands: CommandInfo[];
 }
 
+interface ExtendDeclaration {
+  events?: string[];
+  hooks?: string[];
+  mixins?: Record<string, string[]>;
+}
+
 interface PluginInfo {
   name: string;
   state: string;
   provides: string[];
   core: boolean;
+  extends?: ExtendDeclaration;
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;
@@ -1017,7 +1024,8 @@ function PluginConfigPage({
       {plugins.map(p => {
         const isEditing = editingPlugin === p.name;
         const isOpen = openSections.has(p.name);
-        const hasDetail = p.provides.length > 0 || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
+        const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length || p.extends.mixins && Object.keys(p.extends.mixins).length);
+        const hasDetail = p.provides.length > 0 || hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
         const hasSchema = !!p.configSchema;
         return (
           <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={p.name}>
@@ -1053,6 +1061,17 @@ function PluginConfigPage({
             {isOpen && p.provides.length > 0 && (
               <div className="plugin-card-provides">
                 {p.provides.map(s => <span className="tool-chip" key={s}>{s}</span>)}
+              </div>
+            )}
+
+            {isOpen && hasExtends && (
+              <div className="plugin-card-extends">
+                <span className="extends-label">扩展 Core:</span>
+                {p.extends!.events?.map(e => <span className="extends-chip event" key={`e-${e}`}>📡 {e}</span>)}
+                {p.extends!.hooks?.map(h => <span className="extends-chip hook" key={`h-${h}`}>🪝 {h}</span>)}
+                {p.extends!.mixins && Object.entries(p.extends!.mixins).map(([svc, methods]) =>
+                  methods.map(m => <span className="extends-chip mixin" key={`m-${svc}-${m}`}>🔗 ctx.{m}()</span>)
+                )}
               </div>
             )}
 

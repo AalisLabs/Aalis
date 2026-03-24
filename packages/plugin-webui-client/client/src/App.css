@@ -1011,6 +1011,38 @@ body {
   padding: 0 14px 8px;
 }
 
+.plugin-card-extends {
+  padding: 4px 14px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.extends-label {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-right: 4px;
+}
+.extends-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-family: 'Fira Mono', monospace;
+}
+.extends-chip.event {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+.extends-chip.hook {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+}
+.extends-chip.mixin {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fbbf24;
+}
+
 .plugin-provides-inline {
   display: inline-flex;
   gap: 4px;

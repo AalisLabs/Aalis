@@ -45,6 +45,7 @@ export type {
   ServiceDependency,
   DependencyDeclaration,
   InjectDeclaration,
+  ExtendDeclaration,
   PluginMeta,
   SchemaFieldType,
   SchemaField,
