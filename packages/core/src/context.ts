@@ -10,6 +10,13 @@ import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, Command
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
+/** mixin 记录：哪些方法代理到哪个服务 */
+interface MixinEntry {
+  service: string;
+  methods: string[];
+  contextId: string;
+}
+
 /**
  * 上下文 (Context)
  *
@@ -33,6 +40,9 @@ export class Context {
   private _children: Set<Context> = new Set();
   private _parent?: Context;
   private _disposed = false;
+
+  /** 全局 mixin 注册表（所有 Context 实例共享） */
+  private static _mixins: MixinEntry[] = [];
 
   constructor(options: {
     id: string;
@@ -216,6 +226,73 @@ export class Context {
     const dispose = this.commands.register(def, this.id);
     this._disposables.push(dispose);
     return dispose;
+  }
+
+  // ---- Mixin ----
+
+  /**
+   * 将服务的方法代理到 Context 上
+   *
+   * 调用后，所有 Context 实例都可以直接调用这些方法，
+   * 实际执行时会通过 getService 获取当前活跃的服务实例。
+   *
+   * @example
+   * // 插件注册一个 scheduler 服务并 mixin 到 context
+   * ctx.provide('scheduler', schedulerImpl);
+   * ctx.mixin('scheduler', ['schedule', 'cron', 'interval']);
+   *
+   * // 其他插件可以直接使用:
+   * (ctx as any).schedule('daily', callback);
+   *
+   * // 配合 declare module 获得类型支持:
+   * // declare module '@aalis/core' {
+   * //   interface Context { schedule(name: string, cb: () => void): void; }
+   * // }
+   */
+  mixin(serviceName: string, methods: string[]): () => void {
+    const entry: MixinEntry = { service: serviceName, methods, contextId: this.id };
+    Context._mixins.push(entry);
+
+    // 在 Context prototype 上定义 getter，代理到服务
+    for (const method of methods) {
+      if (method in Context.prototype) {
+        this.logger.warn(`mixin: 方法 "${method}" 已存在于 Context，跳过`);
+        continue;
+      }
+      Object.defineProperty(Context.prototype, method, {
+        configurable: true,
+        enumerable: false,
+        get(this: Context) {
+          const svc = this.getService<Record<string, unknown>>(serviceName);
+          if (!svc) return undefined;
+          const val = svc[method];
+          if (typeof val === 'function') return val.bind(svc);
+          return val;
+        },
+      });
+    }
+
+    const dispose = () => {
+      const idx = Context._mixins.indexOf(entry);
+      if (idx >= 0) Context._mixins.splice(idx, 1);
+      for (const method of methods) {
+        // 只有当没有其他 mixin 注册了同名方法时才删除
+        const stillUsed = Context._mixins.some(e => e.methods.includes(method));
+        if (!stillUsed) {
+          delete (Context.prototype as unknown as Record<string, unknown>)[method];
+        }
+      }
+    };
+    this._disposables.push(dispose);
+    this.logger.debug(`mixin: ${methods.join(', ')} → ${serviceName}`);
+    return dispose;
+  }
+
+  /**
+   * 获取当前所有 mixin 注册信息
+   */
+  static getMixins(): Array<{ service: string; methods: string[]; contextId: string }> {
+    return Context._mixins.map(e => ({ ...e }));
   }
 
   // ---- 中间件/钩子 ----
