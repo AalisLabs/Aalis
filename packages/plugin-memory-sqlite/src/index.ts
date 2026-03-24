@@ -9,7 +9,7 @@ export const name = '@aalis/plugin-memory-sqlite';
 export const provides = ['memory'];
 
 export const configSchema: ConfigSchema = {
-  path: { type: 'string', label: '数据库路径', default: 'data/aalis.db' },
+  path: { type: 'string', label: '数据库路径', default: 'data/aalis.db', description: 'SQLite 数据库文件路径，相对于项目根目录' },
 };
 
 export const defaultConfig = {

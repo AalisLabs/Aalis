@@ -61,10 +61,19 @@ interface SchemaField {
 
 interface SchemaGroup {
   label?: string;
+  description?: string;
   fields: Record<string, SchemaField>;
 }
 
-type ConfigSchema = Record<string, SchemaField | SchemaGroup>;
+interface SchemaArray {
+  type: 'array';
+  label: string;
+  description?: string;
+  items: Record<string, SchemaField>;
+  default?: unknown[];
+}
+
+type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 
 // ----- 平台适配器类型 -----
 
@@ -473,15 +482,23 @@ function unflattenConfig(flat: Record<string, string>): Record<string, unknown> 
 
 // ===== Schema 辅助 =====
 
-function isSchemaField(entry: SchemaField | SchemaGroup): entry is SchemaField {
-  return 'type' in entry;
+function isSchemaField(entry: SchemaField | SchemaGroup | SchemaArray): entry is SchemaField {
+  return 'type' in entry && (entry as SchemaArray).type !== 'array';
+}
+
+function isSchemaArray(entry: SchemaField | SchemaGroup | SchemaArray): entry is SchemaArray {
+  return 'type' in entry && (entry as SchemaArray).type === 'array';
 }
 
 /** 从 configSchema + 当前 config 构建 draft 对象 */
 function buildDraftFromSchema(schema: ConfigSchema, config: Record<string, unknown>): Record<string, unknown> {
   const draft: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(schema)) {
-    if (isSchemaField(entry)) {
+    if (isSchemaArray(entry)) {
+      // SchemaArray: 保留已有数组，否则取默认值
+      const existing = config[key];
+      draft[key] = Array.isArray(existing) ? existing : (entry.default ?? []);
+    } else if (isSchemaField(entry)) {
       draft[key] = config[key] ?? entry.default ?? (entry.type === 'number' ? 0 : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
     } else {
       // SchemaGroup
@@ -649,12 +666,86 @@ function SchemaForm({
           );
         }
 
+        // SchemaArray
+        if (isSchemaArray(entry)) {
+          const arr = (Array.isArray(draft[key]) ? draft[key] : []) as Record<string, unknown>[];
+          const updateArr = (newArr: Record<string, unknown>[]) => onChange({ ...draft, [key]: newArr });
+
+          const addItem = () => {
+            const newItem: Record<string, unknown> = {};
+            for (const [fk, field] of Object.entries(entry.items)) {
+              newItem[fk] = field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : '');
+            }
+            updateArr([...arr, newItem]);
+          };
+
+          const removeItem = (idx: number) => {
+            updateArr(arr.filter((_, i) => i !== idx));
+          };
+
+          const updateItem = (idx: number, fieldKey: string, value: unknown) => {
+            const newArr = arr.map((item, i) => i === idx ? { ...item, [fieldKey]: value } : item);
+            updateArr(newArr);
+          };
+
+          return (
+            <div className="config-edit-group" key={key}>
+              <div className="config-edit-group-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {entry.label}
+                <button
+                  className="config-edit-btn"
+                  style={{ fontSize: 12, padding: '2px 8px' }}
+                  onClick={addItem}
+                >+ 添加</button>
+              </div>
+              {entry.description && <span className="config-edit-hint" style={{ marginBottom: 8, display: 'block' }}>{entry.description}</span>}
+              {arr.length === 0 && <div style={{ color: '#888', fontSize: 13, padding: '4px 0' }}>暂无条目，点击"添加"新建</div>}
+              {arr.map((item, idx) => (
+                <div className="config-edit-array-item" key={idx} style={{
+                  border: '1px solid var(--border, #333)',
+                  borderRadius: 6,
+                  padding: '8px 12px',
+                  marginBottom: 8,
+                  position: 'relative',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: '#888' }}>#{idx + 1}</span>
+                    <button
+                      className="config-edit-btn"
+                      style={{ fontSize: 11, padding: '1px 6px', color: '#ef4444' }}
+                      onClick={() => removeItem(idx)}
+                    >删除</button>
+                  </div>
+                  {Object.entries(entry.items).map(([fk, field]) => (
+                    <div className="config-edit-row" key={fk}>
+                      <label className="config-edit-label" title={field.description}>
+                        {field.label}
+                        {field.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
+                      </label>
+                      <SchemaFormField
+                        field={field}
+                        fieldKey={fk}
+                        value={item[fk]}
+                        onChange={v => updateItem(idx, fk, v)}
+                        modelCache={modelCache}
+                        onFetchModels={onFetchModels}
+                      />
+                      {field.description && <span className="config-edit-hint">{field.description}</span>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        }
+
         // SchemaGroup
         const group = entry as SchemaGroup;
         const groupData = (draft[key] ?? {}) as Record<string, unknown>;
         return (
           <div className="config-edit-group" key={key}>
             {group.label && <div className="config-edit-group-label">{group.label}</div>}
+            {group.description && <span className="config-edit-hint" style={{ marginBottom: 8, display: 'block' }}>{group.description}</span>}
             {Object.entries(group.fields).map(([fk, field]) => (
               <div className="config-edit-row" key={fk}>
                 <label className="config-edit-label" title={field.description}>

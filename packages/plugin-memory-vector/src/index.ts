@@ -12,7 +12,7 @@ export const configSchema: ConfigSchema = {
   search: {
     label: '搜索设置',
     fields: {
-      topK: { type: 'number', label: '最大返回数', default: 5 },
+      topK: { type: 'number', label: '最大返回数', default: 5, description: '语义搜索返回的最大记忆条数' },
       timeWeight: { type: 'number', label: '时间权重', default: 0.3, description: '0=纯语义，1=纯时间近因' },
     },
   },

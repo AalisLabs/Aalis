@@ -287,11 +287,22 @@ export interface SchemaField {
 
 export interface SchemaGroup {
   label?: string;
+  description?: string;
   fields: Record<string, SchemaField>;
 }
 
-/** 配置 Schema：顶层 key 可以是字段或分组 */
-export type ConfigSchema = Record<string, SchemaField | SchemaGroup>;
+/** 数组 Schema：对象数组，每个元素用 items 描述其字段结构 */
+export interface SchemaArray {
+  type: 'array';
+  label: string;
+  description?: string;
+  /** 数组每个元素的字段定义 */
+  items: Record<string, SchemaField>;
+  default?: unknown[];
+}
+
+/** 配置 Schema：顶层 key 可以是字段、分组或数组 */
+export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 
 // ----- 事件类型 -----
 

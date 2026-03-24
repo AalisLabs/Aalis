@@ -8,7 +8,7 @@ export const name = '@aalis/plugin-vectorstore-flat';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {
-  path: { type: 'string', label: '存储目录', default: 'data/vectorstore' },
+  path: { type: 'string', label: '存储目录', default: 'data/vectorstore', description: 'JSON 向量文件存储目录' },
 };
 
 export const defaultConfig = {

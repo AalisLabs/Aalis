@@ -7,9 +7,9 @@ export const name = '@aalis/plugin-memory-mongodb';
 export const provides = ['memory'];
 
 export const configSchema: ConfigSchema = {
-  uri: { type: 'string', label: 'MongoDB URI', required: true, default: 'mongodb://localhost:27017' },
-  database: { type: 'string', label: '数据库名', required: true, default: 'aalis' },
-  collection: { type: 'string', label: '集合名', default: 'messages' },
+  uri: { type: 'string', label: 'MongoDB URI', required: true, default: 'mongodb://localhost:27017', description: 'MongoDB 连接字符串' },
+  database: { type: 'string', label: '数据库名', required: true, default: 'aalis', description: '存储消息历史的数据库' },
+  collection: { type: 'string', label: '集合名', default: 'messages', description: '消息集合名称' },
 };
 
 export const defaultConfig = {

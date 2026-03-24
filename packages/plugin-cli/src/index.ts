@@ -12,7 +12,7 @@ export const inject = {
 export const provides = ['platform'];
 
 export const configSchema: ConfigSchema = {
-  prompt: { type: 'string', label: '提示符', default: 'You' },
+  prompt: { type: 'string', label: '提示符', default: 'You', description: '命令行输入提示符前缀' },
 };
 
 export const defaultConfig = {

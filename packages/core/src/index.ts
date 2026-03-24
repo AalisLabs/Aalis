@@ -46,6 +46,7 @@ export type {
   SchemaFieldType,
   SchemaField,
   SchemaGroup,
+  SchemaArray,
   ConfigSchema,
   AalisEvents,
   HookContextMap,
