@@ -59,6 +59,23 @@ interface SchemaGroup {
 
 type ConfigSchema = Record<string, SchemaField | SchemaGroup>;
 
+// ----- 平台适配器类型 -----
+
+interface PlatformConnectionInfo {
+  id: string;
+  platform: string;
+  selfId?: string;
+  status: 'online' | 'offline' | 'connecting';
+  detail?: Record<string, unknown>;
+}
+
+interface PlatformInfo {
+  adapterName: string;
+  platform: string;
+  contextId: string;
+  connections: PlatformConnectionInfo[];
+}
+
 interface ServiceProviderInfo {
   contextId: string;
   capabilities: string[];
@@ -69,7 +86,7 @@ interface ServiceInfo {
   active: string | undefined;
 }
 
-type PageTab = 'dashboard' | 'marketplace' | 'plugin-config' | 'logs';
+type PageTab = 'dashboard' | 'marketplace' | 'plugin-config' | 'platforms' | 'logs';
 
 const SESSION_ID = 'webui-default';
 
@@ -121,6 +138,16 @@ function IconLogs() {
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
       <line x1="10" y1="9" x2="8" y2="9" />
+    </svg>
+  );
+}
+
+function IconPlatform() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   );
 }
@@ -1223,6 +1250,98 @@ function ChatPanel({
   );
 }
 
+// ===== 平台接入页 =====
+
+function PlatformPage() {
+  const [platforms, setPlatforms] = useState<PlatformInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api<{ platforms: PlatformInfo[] }>('/api/platforms');
+      setPlatforms(data.platforms ?? []);
+    } catch {
+      setPlatforms([]);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => clearInterval(timer);
+  }, [refresh]);
+
+  const totalConnections = platforms.reduce((sum, p) => sum + p.connections.length, 0);
+  const onlineConnections = platforms.reduce(
+    (sum, p) => sum + p.connections.filter(c => c.status === 'online').length,
+    0,
+  );
+
+  return (
+    <div className="page-content page-platforms">
+      <div className="section-label">概览</div>
+      <div className="overview-grid">
+        <div className="overview-card">
+          <div className="overview-card-icon">🔌</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">适配器</div>
+            <div className="overview-card-value">{platforms.length}</div>
+          </div>
+        </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">🌐</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">连接数</div>
+            <div className="overview-card-value">{onlineConnections} / {totalConnections}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="section-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        适配器列表
+        <button className="btn-sm" onClick={refresh} disabled={loading}>
+          {loading ? '刷新中...' : '刷新'}
+        </button>
+      </div>
+
+      {platforms.length === 0 && !loading && (
+        <div className="empty-hint">暂无平台适配器。请启用并配置平台适配器插件。</div>
+      )}
+
+      {platforms.map(p => (
+        <div className="platform-card" key={p.contextId}>
+          <div className="platform-card-header">
+            <span className="platform-card-name">{p.adapterName}</span>
+            <span className="platform-card-id">{p.platform}</span>
+          </div>
+          {p.connections.length === 0 ? (
+            <div className="platform-no-connections">无活跃连接</div>
+          ) : (
+            <div className="platform-connections">
+              {p.connections.map(conn => (
+                <div className="platform-connection" key={conn.id}>
+                  <span className={`platform-status-dot ${conn.status}`} />
+                  <span className="platform-conn-id">{conn.selfId ?? conn.id}</span>
+                  <span className={`platform-conn-status ${conn.status}`}>
+                    {conn.status === 'online' ? '在线' : conn.status === 'connecting' ? '连接中' : '离线'}
+                  </span>
+                  {conn.detail && Object.keys(conn.detail).length > 0 && (
+                    <span className="platform-conn-detail">
+                      {Object.entries(conn.detail).map(([k, v]) => `${k}: ${String(v)}`).join(', ')}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ===== 日志页 =====
 
 function LogPage({ logs }: { logs: LogEntry[] }) {
@@ -1414,6 +1533,7 @@ export function App() {
     { key: 'dashboard', label: '仪表盘', icon: <IconDashboard /> },
     { key: 'marketplace', label: '插件市场', icon: <IconMarketplace /> },
     { key: 'plugin-config', label: '插件配置', icon: <IconPluginConfig /> },
+    { key: 'platforms', label: '平台接入', icon: <IconPlatform /> },
     { key: 'logs', label: '日志', icon: <IconLogs /> },
   ];
 
@@ -1468,6 +1588,7 @@ export function App() {
               onConfigSaved={refreshConfig}
             />
           )}
+          {activeTab === 'platforms' && <PlatformPage />}
           {activeTab === 'logs' && <LogPage logs={logs} />}
         </div>
       </main>

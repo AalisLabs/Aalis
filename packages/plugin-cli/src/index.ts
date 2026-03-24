@@ -1,7 +1,7 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { Context, PersonaService, ConfigSchema } from '@aalis/core';
+import type { Context, PersonaService, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -37,13 +37,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const sessionId = cliConfig.sessionId!;
 
+  // 构造 PlatformAdapter 实例
+  const adapter: PlatformAdapter = {
+    adapterName: 'CLI',
+    platform: 'cli',
+    getConnections(): PlatformConnection[] {
+      return [{
+        id: sessionId,
+        platform: 'cli',
+        status: 'online',
+      }];
+    },
+    async sendMessage(_sessionId: string, content: string): Promise<void> {
+      console.log(`\n${chalk.green('Aalis')}${chalk.gray('>')} ${content}\n`);
+    },
+  };
+
   // 注册为平台服务
-  ctx.provide('platform', { name: 'cli' }, { capabilities: ['text'] });
+  ctx.provide('platform', adapter, { capabilities: ['text'] });
 
   // 监听 AI 回复
   ctx.on('message:send', (msg) => {
     if (msg.sessionId !== sessionId) return;
-    console.log(`\n${chalk.green('Aalis')}${chalk.gray('>')} ${msg.content}\n`);
+    adapter.sendMessage(msg.sessionId, msg.content);
   });
 
   // 启动 REPL（在 ready 事件后）

@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
 import { getLogBuffer, onLogEntry } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -338,6 +338,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ services });
   });
 
+  // 获取所有平台适配器及其连接状态
+  expressApp.get('/api/platforms', (_req, res) => {
+    const entries = ctx.getServiceEntries('platform');
+    const platforms: Array<{
+      adapterName: string;
+      platform: string;
+      contextId: string;
+      connections: PlatformConnection[];
+    }> = [];
+
+    for (const entry of entries) {
+      const adapter = entry.instance as PlatformAdapter;
+      if (adapter && typeof adapter.getConnections === 'function') {
+        platforms.push({
+          adapterName: adapter.adapterName,
+          platform: adapter.platform,
+          contextId: entry.contextId,
+          connections: adapter.getConnections(),
+        });
+      }
+    }
+
+    res.json({ platforms });
+  });
+
   // 切换服务的偏好提供者（同时持久化到配置文件）
   expressApp.post('/api/services/:name/prefer', (req, res) => {
     const serviceName = req.params.name;
@@ -547,5 +572,40 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     server.close();
   });
 
-  ctx.provide('platform', { name: 'webui' }, { capabilities: ['text', 'web'] });
+  // 构造 PlatformAdapter 实例
+  const adapter: PlatformAdapter = {
+    adapterName: 'WebUI',
+    platform: 'webui',
+    getConnections(): PlatformConnection[] {
+      const connections: PlatformConnection[] = [];
+      for (const [sessionId, sockets] of sessions) {
+        const hasActive = [...sockets].some(ws => ws.readyState === WebSocket.OPEN);
+        if (hasActive) {
+          connections.push({
+            id: sessionId,
+            platform: 'webui',
+            status: 'online',
+          });
+        }
+      }
+      return connections;
+    },
+    async sendMessage(sessionId: string, content: string): Promise<void> {
+      const sockets = sessions.get(sessionId);
+      if (!sockets) return;
+      const payload: WSOutgoing = {
+        type: 'message',
+        content,
+        sessionId,
+      };
+      const json = JSON.stringify(payload);
+      for (const ws of sockets) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(json);
+        }
+      }
+    },
+  };
+
+  ctx.provide('platform', adapter, { capabilities: ['text', 'web'] });
 }

@@ -35,6 +35,8 @@ export type {
   PersonaService,
   EmbeddingService,
   AgentService,
+  PlatformConnection,
+  PlatformAdapter,
   StreamChunkMessage,
   ToolExecuteMessage,
   ServiceDependency,
