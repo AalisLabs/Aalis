@@ -16,13 +16,13 @@ export const name = '@aalis/plugin-deepseek';
 export const provides = ['llm'];
 
 export const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
-  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.deepseek.com' },
-  model: { type: 'select', label: '模型', default: 'deepseek-chat', dynamicOptions: 'llm' },
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'DeepSeek API 密钥' },
+  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.deepseek.com', description: 'API 端点地址，可替换为兼容的第三方服务' },
+  model: { type: 'select', label: '模型', default: 'deepseek-chat', dynamicOptions: 'llm', description: '使用的模型名称' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
-  maxTokens: { type: 'number', label: '最大 Token', default: 8192 },
+  maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
-  maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10 },
+  maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
   capabilities: {
     type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
     options: [

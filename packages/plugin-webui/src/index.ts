@@ -13,8 +13,8 @@ export const name = '@aalis/plugin-webui';
 export const provides = ['platform'];
 
 export const configSchema: ConfigSchema = {
-  port: { type: 'number', label: '端口', default: 3000 },
-  host: { type: 'string', label: '监听地址', default: '127.0.0.1' },
+  port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
+  host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
 };
 
 export const defaultConfig = {
