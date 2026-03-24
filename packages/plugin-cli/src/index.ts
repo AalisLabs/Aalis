@@ -1,7 +1,7 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { Context, PersonaService, MemoryService } from '@aalis/core';
+import type { Context, PersonaService, MemoryService, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -10,6 +10,10 @@ export const inject = {
   optional: [{ service: 'llm', capabilities: ['chat'] }],
 };
 export const provides = ['platform'];
+
+export const configSchema: ConfigSchema = {
+  prompt: { type: 'string', label: '提示符', default: 'You' },
+};
 
 // ===== 配置 =====
 
@@ -60,6 +64,11 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
   const persona = ctx.getService<PersonaService>('persona');
   const assistantName = persona?.getPersonaName() ?? 'Aalis';
   console.log(`\n${chalk.bold(`欢迎使用 ${assistantName}!`)} 输入 /help 查看命令列表。\n`);
+
+  // readline 关闭（Ctrl+C 或 /quit）时退出进程
+  rl.on('close', () => {
+    process.kill(process.pid, 'SIGINT');
+  });
 
   // 清理
   ctx.on('dispose', () => {

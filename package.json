@@ -17,6 +17,8 @@
     "@aalis/core": "workspace:*",
     "@aalis/plugin-cli": "workspace:*",
     "@aalis/plugin-deepseek": "workspace:*",
+    "@aalis/plugin-embedding-ollama": "workspace:*",
+    "@aalis/plugin-embedding-openai": "workspace:*",
     "@aalis/plugin-memory-mongodb": "workspace:*",
     "@aalis/plugin-memory-sqlite": "workspace:*",
     "@aalis/plugin-memory-vector": "workspace:*",

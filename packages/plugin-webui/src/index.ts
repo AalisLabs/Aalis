@@ -4,13 +4,18 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema } from '@aalis/core';
 import { getLogBuffer, onLogEntry } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-webui';
 export const provides = ['platform'];
+
+export const configSchema: ConfigSchema = {
+  port: { type: 'number', label: '端口', default: 3000 },
+  host: { type: 'string', label: '监听地址', default: '127.0.0.1' },
+};
 
 // ===== 配置 =====
 
@@ -117,6 +122,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       provides: p.provides ?? [],
       core: p.core ?? false,
       config: sanitizeConfig(p.config),
+      configSchema: p.configSchema,
       error: p.error,
     }));
     res.json({ plugins });
@@ -343,6 +349,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.json({ ok: true, message: `${serviceName} 已切换到 ${contextId}` });
     } else {
       res.status(404).json({ error: `服务 ${serviceName} 或提供者 ${contextId} 不存在` });
+    }
+  });
+
+  // 获取某个服务的可用模型列表 (调用 service.listModels())
+  expressApp.get('/api/models/:service', async (req, res) => {
+    const serviceName = req.params.service;
+    const service = ctx.getService<{ listModels?(): Promise<string[]> }>(serviceName);
+    if (!service || typeof service.listModels !== 'function') {
+      res.json({ models: [] });
+      return;
+    }
+    try {
+      const models = await service.listModels();
+      res.json({ models });
+    } catch {
+      res.json({ models: [] });
     }
   });
 

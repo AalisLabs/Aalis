@@ -1,12 +1,16 @@
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { Context, MemoryService, Message } from '@aalis/core';
+import type { Context, MemoryService, Message, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-sqlite';
 export const provides = ['memory'];
+
+export const configSchema: ConfigSchema = {
+  path: { type: 'string', label: '数据库路径', default: 'data/aalis.db' },
+};
 
 // ===== 配置 =====
 

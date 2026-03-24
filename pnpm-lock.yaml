@@ -17,6 +17,12 @@ importers:
       '@aalis/plugin-deepseek':
         specifier: workspace:*
         version: link:packages/plugin-deepseek
+      '@aalis/plugin-embedding-ollama':
+        specifier: workspace:*
+        version: link:packages/plugin-embedding-ollama
+      '@aalis/plugin-embedding-openai':
+        specifier: workspace:*
+        version: link:packages/plugin-embedding-openai
       '@aalis/plugin-memory-mongodb':
         specifier: workspace:*
         version: link:packages/plugin-memory-mongodb
@@ -85,6 +91,32 @@ importers:
         version: 5.9.3
 
   packages/plugin-deepseek:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-embedding-ollama:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-embedding-openai:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -175,19 +207,6 @@ importers:
         version: 5.9.3
 
   packages/plugin-vectorstore:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/plugin-websearch:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
