@@ -1419,7 +1419,7 @@ details[open] > .thinking-summary::before {
 /* ===== 工具调用块 ===== */
 
 .tool-call-block {
-  margin-bottom: 4px;
+  margin: 8px 0;
   border-radius: 8px;
   background: rgba(59, 130, 246, 0.06);
   border: 1px solid rgba(59, 130, 246, 0.15);
