@@ -98,6 +98,98 @@ export class App {
         this.logger.error(`加载插件 "${pkg.name}" 失败: ${message}`);
       }
     }
+
+    // 将插件默认配置中缺失的字段同步到配置文件
+    this.syncPluginDefaults();
+  }
+
+  /**
+   * 将各插件 defaultConfig 中缺失的字段同步到配置文件，
+   * 同时移除 configSchema 中未定义的多余字段
+   */
+  private syncPluginDefaults(): void {
+    const plugins = this.plugins.getStatus();
+    let changed = false;
+
+    for (const plugin of plugins) {
+      const defaults = plugin.defaultConfig ?? {};
+      const schema = plugin.configSchema;
+      const fileConfig = this.ctx.config.getPluginConfig(plugin.name);
+
+      // 步骤 1: 补充缺失的默认值
+      let merged = this.deepMergeDefaults(defaults, fileConfig);
+
+      // 步骤 2: 移除 schema 中未定义的多余字段
+      if (schema && Object.keys(schema).length > 0) {
+        merged = this.removeExtraFields(merged, schema);
+      }
+
+      if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
+        this.ctx.config.setPluginConfig(plugin.name, merged);
+        changed = true;
+        this.logger.debug(`同步插件配置: ${plugin.name}`);
+      }
+    }
+
+    if (changed) {
+      this.ctx.config.save();
+      this.logger.info('已将插件配置同步到配置文件');
+    }
+  }
+
+  /**
+   * 根据 configSchema 移除多余字段
+   * SchemaGroup (含 fields) 对应嵌套对象，SchemaField 对应普通字段
+   */
+  private removeExtraFields(
+    config: Record<string, unknown>,
+    schema: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(config)) {
+      if (!(key in schema)) continue; // 多余字段，丢弃
+      const schemaDef = schema[key] as Record<string, unknown>;
+      // SchemaGroup: 有 fields 子对象，递归清理
+      if (schemaDef.fields && typeof schemaDef.fields === 'object'
+        && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        result[key] = this.removeExtraFields(
+          value as Record<string, unknown>,
+          schemaDef.fields as Record<string, unknown>,
+        );
+      } else {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 深度合并默认值：只填充缺失的键，不覆盖已有值
+   */
+  private deepMergeDefaults(
+    defaults: Record<string, unknown>,
+    current: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const result = { ...current };
+    for (const [key, defaultValue] of Object.entries(defaults)) {
+      if (!(key in result)) {
+        result[key] = defaultValue;
+      } else if (
+        defaultValue !== null &&
+        typeof defaultValue === 'object' &&
+        !Array.isArray(defaultValue) &&
+        result[key] !== null &&
+        typeof result[key] === 'object' &&
+        !Array.isArray(result[key])
+      ) {
+        // 嵌套对象递归合并
+        result[key] = this.deepMergeDefaults(
+          defaultValue as Record<string, unknown>,
+          result[key] as Record<string, unknown>,
+        );
+      }
+    }
+    return result;
   }
 
   /**
