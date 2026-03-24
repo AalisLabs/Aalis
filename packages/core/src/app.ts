@@ -11,6 +11,7 @@ import { InMemoryFallbackService } from './memory-fallback.js';
 import type { AgentService, MemoryService, VectorStoreService } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readFileSync, existsSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 
@@ -91,7 +92,7 @@ export class App {
 
     for (const pkg of discovered) {
       try {
-        const mod = await import(pkg.name) as PluginModule;
+        const mod = await import(pathToFileURL(pkg.entry).href) as PluginModule;
         await this.plugin(mod);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -205,7 +206,7 @@ export class App {
       if (this.plugins.getPlugin(pkg.name)) continue;
 
       try {
-        const mod = await import(pkg.name) as PluginModule;
+        const mod = await import(pathToFileURL(pkg.entry).href) as PluginModule;
         await this.plugin(mod);
         loaded.push(pkg.name);
         this.logger.info(`热加载插件: ${pkg.name}`);
@@ -307,7 +308,7 @@ export class App {
   /**
    * 扫描目录，返回可加载的插件列表
    */
-  private async discoverPlugins(dir: string): Promise<Array<{ name: string; dir: string }>> {
+  private async discoverPlugins(dir: string): Promise<Array<{ name: string; dir: string; entry: string }>> {
     this.logger.info(`正在扫描插件目录: ${dir}`);
 
     let entries: string[];
@@ -321,7 +322,7 @@ export class App {
       return [];
     }
 
-    const discovered: Array<{ name: string; dir: string }> = [];
+    const discovered: Array<{ name: string; dir: string; entry: string }> = [];
 
     for (const entry of entries) {
       const pkgJsonPath = resolve(dir, entry, 'package.json');
@@ -340,9 +341,11 @@ export class App {
         continue;
       }
 
+      const main = (pkgJson['main'] as string) || 'dist/index.js';
       discovered.push({
         name: pkgJson['name'] as string,
         dir: resolve(dir, entry),
+        entry: resolve(dir, entry, main),
       });
     }
 
