@@ -60,5 +60,6 @@ export type {
   CommandDefinition,
   RegisteredCommand,
   SafetyLevel,
+  ToolSummary,
   UserIdentity,
 } from './types.js';

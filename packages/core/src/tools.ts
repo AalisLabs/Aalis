@@ -2,6 +2,7 @@ import type {
   RegisteredTool,
   ToolDefinition,
   ToolCallContext,
+  ToolSummary,
 } from './types.js';
 import type { AuthorityManager } from './authority.js';
 import type { Logger } from './logger.js';
@@ -55,6 +56,18 @@ export class ToolRegistry {
    */
   getDefinitions(): ToolDefinition[] {
     return [...this.tools.values()].map(t => t.definition);
+  }
+
+  /**
+   * 获取所有工具的摘要信息（名称、描述、权限、安全级别）
+   */
+  getSummaries(): ToolSummary[] {
+    return [...this.tools.values()].map(t => ({
+      name: t.definition.function.name,
+      description: t.definition.function.description,
+      authority: t.authority ?? 1,
+      safety: t.safety ?? 'safe',
+    }));
   }
 
   /**
