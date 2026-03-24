@@ -465,7 +465,7 @@ function DashboardPage({
 
 // ===== 递归配置值渲染（只读） =====
 
-function ConfigValue({ label, value, depth = 0, secret }: { label: string; value: unknown; depth?: number; secret?: boolean }) {
+function ConfigValue({ label, value, depth = 0, secret, description }: { label: string; value: unknown; depth?: number; secret?: boolean; description?: string }) {
   const [open, setOpen] = useState(depth < 1);
 
   if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
@@ -476,7 +476,10 @@ function ConfigValue({ label, value, depth = 0, secret }: { label: string; value
     const display = isSensitive && raw.length > 4 ? raw.slice(0, 4) + '••••••' : raw;
     return (
       <div className="config-item" style={{ paddingLeft: depth * 12 }}>
-        <span className="key">{label}</span>
+        <span className="key">
+          <code className="field-key">{label}</code>
+          {description && <span className="field-hint"> / {description}</span>}
+        </span>
         <span className="val" title={isSensitive ? '••••••' : raw}>{display}</span>
       </div>
     );
@@ -700,10 +703,12 @@ function SchemaForm({
     <div className="config-edit-form">
       {Object.entries(schema).map(([key, entry]) => {
         if (isSchemaField(entry)) {
+          const hint = entry.description || entry.label;
           return (
             <div className="config-edit-row" key={key}>
               <label className="config-edit-label" title={entry.description}>
-                {entry.label}
+                <code className="field-key">{key}</code>
+                {hint && <span className="field-hint"> / {hint}</span>}
                 {entry.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
               </label>
               <SchemaFormField
@@ -714,7 +719,6 @@ function SchemaForm({
                 modelCache={modelCache}
                 onFetchModels={onFetchModels}
               />
-              {entry.description && <span className="config-edit-hint">{entry.description}</span>}
             </div>
           );
         }
@@ -769,10 +773,13 @@ function SchemaForm({
                       onClick={() => removeItem(idx)}
                     >删除</button>
                   </div>
-                  {Object.entries(entry.items).map(([fk, field]) => (
+                  {Object.entries(entry.items).map(([fk, field]) => {
+                    const itemHint = field.description || field.label;
+                    return (
                     <div className="config-edit-row" key={fk}>
                       <label className="config-edit-label" title={field.description}>
-                        {field.label}
+                        <code className="field-key">{fk}</code>
+                        {itemHint && <span className="field-hint"> / {itemHint}</span>}
                         {field.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
                       </label>
                       <SchemaFormField
@@ -783,9 +790,9 @@ function SchemaForm({
                         modelCache={modelCache}
                         onFetchModels={onFetchModels}
                       />
-                      {field.description && <span className="config-edit-hint">{field.description}</span>}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -799,10 +806,13 @@ function SchemaForm({
           <div className="config-edit-group" key={key}>
             {group.label && <div className="config-edit-group-label">{group.label}</div>}
             {group.description && <span className="config-edit-hint" style={{ marginBottom: 8, display: 'block' }}>{group.description}</span>}
-            {Object.entries(group.fields).map(([fk, field]) => (
+            {Object.entries(group.fields).map(([fk, field]) => {
+              const groupHint = field.description || field.label;
+              return (
               <div className="config-edit-row" key={fk}>
                 <label className="config-edit-label" title={field.description}>
-                  {field.label}
+                  <code className="field-key">{fk}</code>
+                  {groupHint && <span className="field-hint"> / {groupHint}</span>}
                   {field.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
                 </label>
                 <SchemaFormField
@@ -813,9 +823,9 @@ function SchemaForm({
                   modelCache={modelCache}
                   onFetchModels={onFetchModels}
                 />
-                {field.description && <span className="config-edit-hint">{field.description}</span>}
               </div>
-            ))}
+              );
+            })}
           </div>
         );
       })}
@@ -1001,9 +1011,13 @@ function PluginConfigPage({
                 {Object.entries(coreSchema).map(([key, entry]) => {
                   const val = (config as Record<string, unknown>)[key];
                   const field = entry as SchemaField;
+                  const hint = field.description || field.label;
                   return (
                     <div className="config-item" key={key}>
-                      <span className="key">{field.label || key}</span>
+                      <span className="key">
+                        <code className="field-key">{key}</code>
+                        {hint && <span className="field-hint"> / {hint}</span>}
+                      </span>
                       <span className="val">
                         {field.type === 'boolean'
                           ? (val ? '✓ 开启' : '✗ 关闭')
@@ -1083,7 +1097,10 @@ function PluginConfigPage({
                       {Object.entries(p.config).map(([k, v]) => {
                         const schemaEntry = p.configSchema?.[k];
                         const isSecret = schemaEntry && 'secret' in schemaEntry ? (schemaEntry as SchemaField).secret : undefined;
-                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} />;
+                        const fieldDesc = schemaEntry && 'description' in schemaEntry ? (schemaEntry as SchemaField).description
+                          : schemaEntry && 'label' in schemaEntry ? (schemaEntry as SchemaField).label
+                          : undefined;
+                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} description={fieldDesc} />;
                       })}
                     </div>
                     <button className="btn btn-sm" onClick={() => startEdit(p)}>编辑配置</button>
