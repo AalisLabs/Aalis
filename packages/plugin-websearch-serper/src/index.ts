@@ -6,7 +6,7 @@ export const name = '@aalis/plugin-websearch-serper';
 export const provides: string[] = [];
 
 export const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'Serper API Key', required: true },
+  apiKey: { type: 'string', label: 'Serper API Key', required: true, secret: true },
   maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10 },
   maxPerDay: { type: 'number', label: '每天最大次数', default: 100 },
   maxConcurrent: { type: 'number', label: '最大并发', default: 3 },
