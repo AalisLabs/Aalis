@@ -53,27 +53,6 @@ interface WSOutgoing {
   toolPhase?: 'start' | 'end';
 }
 
-/**
- * 脱敏处理：隐藏 apiKey 等敏感字段
- */
-function sanitizeConfig(obj: unknown): unknown {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(sanitizeConfig);
-
-  const result: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
-    if (/apiKey|password|secret|token/i.test(key) && typeof val === 'string' && val) {
-      result[key] = val.slice(0, 4) + '****';
-    } else if (typeof val === 'object' && val !== null) {
-      result[key] = sanitizeConfig(val);
-    } else {
-      result[key] = val;
-    }
-  }
-  return result;
-}
-
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -127,7 +106,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       state: p.state,
       provides: p.provides ?? [],
       core: p.core ?? false,
-      config: sanitizeConfig(p.config),
+      config: p.config,
       configSchema: p.configSchema,
       defaultConfig: p.defaultConfig,
       error: p.error,
@@ -135,10 +114,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ plugins });
   });
 
-  // 获取当前全局配置（脱敏）
+  // 获取当前全局配置
   expressApp.get('/api/config', (_req, res) => {
     const allConfig = ctx.config.getAll();
-    res.json(sanitizeConfig(allConfig));
+    res.json(allConfig);
   });
 
   // 更新全局配置字段
@@ -194,7 +173,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    const success = await app.plugins.updatePluginConfig(pluginName, newConfig);
+    const success = await app.plugins.updatePluginConfig(pluginName, newConfig as Record<string, unknown>);
     if (success) {
       app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
