@@ -356,12 +356,34 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!text.trim()) return; // 忽略空消息
 
     const sessionId = makeSessionId(selfId, detailType, event);
+    const userId = event.user_id ? String(event.user_id) : undefined;
+
+    // 指令处理 —— 通过指令注册表
+    const parsed = ctx.commands.parseCommand(text);
+    if (parsed) {
+      ctx.commands.execute(parsed.name, {
+        sessionId,
+        platform: 'onebot',
+        userId,
+        args: parsed.args,
+        raw: parsed.raw,
+      }).then((result) => {
+        if (result) {
+          adapter.sendMessage(sessionId, result).catch(err => {
+            ctx.logger.warn(`OneBot 指令回复失败: ${err}`);
+          });
+        }
+      }).catch(err => {
+        ctx.logger.warn(`OneBot 指令执行失败: ${err}`);
+      });
+      return;
+    }
 
     ctx.emit('message:received', {
       content: text,
       sessionId,
       platform: 'onebot',
-      userId: event.user_id ? String(event.user_id) : undefined,
+      userId,
     });
   }
 

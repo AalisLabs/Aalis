@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import { getLogBuffer, onLogEntry } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity } from '@aalis/core';
+import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -91,6 +91,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         persona: ctx.hasService('persona'),
       },
       tools: ctx.tools.getDefinitions().map(t => t.function.name),
+      commands: ctx.commands.getAll().map(c => ({
+        name: c.name,
+        description: c.description,
+        authority: c.authority,
+        safety: c.safety,
+        asTools: c.asTools,
+      })),
     });
   });
 
@@ -117,7 +124,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取当前全局配置
   expressApp.get('/api/config', (_req, res) => {
     const allConfig = ctx.config.getAll();
-    res.json(allConfig);
+    res.json({ ...allConfig, _schema: CORE_CONFIG_SCHEMA });
   });
 
   // 更新全局配置字段
@@ -135,11 +142,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // 只允许更新安全的顶级字段
-    const allowed = ['name', 'persona', 'logLevel'] as const;
+    const allowed = ['name', 'persona', 'logLevel', 'commandPrefix', 'commandAsTools'] as const;
     for (const key of allowed) {
       if (key in updates) {
         ctx.config.set(key, updates[key]);
       }
+    }
+
+    // commandPrefix / commandAsTools 需要同步到运行时
+    if ('commandPrefix' in updates && typeof updates.commandPrefix === 'string') {
+      ctx.commands.prefix = updates.commandPrefix;
+    }
+    if ('commandAsTools' in updates && typeof updates.commandAsTools === 'boolean') {
+      ctx.commands.globalAsTools = updates.commandAsTools;
     }
 
     try {
@@ -381,24 +396,182 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
+  // ---------- 权限管理 API ----------
+
+  // 获取权限概览（所有用户 + 配置）
+  expressApp.get('/api/authority', (_req, res) => {
+    const users = ctx.authority.listUsers();
+    const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
+    const commands = ctx.commands.getAll();
+    const overrides = ctx.commands.getOverrides();
+    res.json({
+      users,
+      owners,
+      defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
+      ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
+      dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
+      commandPrefix: ctx.config.get('commandPrefix') ?? '/',
+      commands: commands.map(c => {
+        const o = overrides[c.name];
+        return {
+          name: c.name,
+          description: c.description,
+          authority: o?.authority ?? c.authority ?? 1,
+          safety: o?.safety ?? c.safety ?? 'safe',
+          baseAuthority: c.authority ?? 1,
+          baseSafety: c.safety ?? 'safe',
+          overridden: !!o,
+          pluginName: c.pluginName,
+        };
+      }),
+      commandOverrides: overrides,
+    });
+  });
+
+  // 设置用户权限等级
+  expressApp.put('/api/authority/user', (req, res) => {
+    const { platform, userId, authority } = req.body ?? {};
+    if (!platform || !userId || typeof authority !== 'number') {
+      res.status(400).json({ error: 'platform, userId, authority(number) 必填' });
+      return;
+    }
+    if (authority < 0) {
+      res.status(400).json({ error: '权限等级必须 >= 0' });
+      return;
+    }
+    ctx.authority.setAuthority(platform, userId, authority);
+    ctx.authority.save();
+    res.json({ ok: true, message: `${platform}:${userId} 权限已设为 ${authority}` });
+  });
+
+  // 删除用户权限记录（回退到默认等级）
+  expressApp.delete('/api/authority/user', (req, res) => {
+    const { platform, userId } = req.body ?? {};
+    if (!platform || !userId) {
+      res.status(400).json({ error: 'platform, userId 必填' });
+      return;
+    }
+    ctx.authority.setAuthority(platform, userId, ctx.config.get('defaultAuthority') ?? 1);
+    ctx.authority.save();
+    res.json({ ok: true, message: `${platform}:${userId} 权限已重置` });
+  });
+
+  // 更新 owner 列表
+  expressApp.put('/api/authority/owners', (req, res) => {
+    const owners = req.body?.owners;
+    if (!Array.isArray(owners)) {
+      res.status(400).json({ error: 'owners 必须是数组' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    ctx.config.set('owners', owners);
+    app.saveConfig();
+    res.json({ ok: true, message: 'Owner 列表已更新' });
+  });
+
+  // 更新 dangerousPolicy
+  expressApp.put('/api/authority/dangerous', (req, res) => {
+    const policy = req.body?.policy;
+    if (!policy || typeof policy !== 'object') {
+      res.status(400).json({ error: 'policy 必须是对象' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    ctx.config.set('dangerousPolicy', policy);
+    app.saveConfig();
+    res.json({ ok: true, message: '高危策略已更新' });
+  });
+
+  // 更新全局权限配置（defaultAuthority, ownerAuthority）
+  expressApp.put('/api/authority/config', (req, res) => {
+    const { defaultAuthority, ownerAuthority } = req.body ?? {};
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    if (typeof defaultAuthority === 'number') {
+      ctx.config.set('defaultAuthority', defaultAuthority);
+    }
+    if (typeof ownerAuthority === 'number') {
+      ctx.config.set('ownerAuthority', ownerAuthority);
+    }
+    app.saveConfig();
+    res.json({ ok: true, message: '权限配置已更新' });
+  });
+
+
+
+  // 更新单条指令的权限覆盖
+  expressApp.put('/api/authority/command', (req, res) => {
+    const { name, authority, safety } = req.body ?? {};
+    if (!name || typeof name !== 'string') {
+      res.status(400).json({ error: 'name 必填' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    const override: { authority?: number; safety?: string } = {};
+    if (typeof authority === 'number') override.authority = authority;
+    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
+
+    if (Object.keys(override).length === 0) {
+      // 移除覆盖
+      ctx.commands.removeOverride(name);
+    } else {
+      ctx.commands.setOverride(name, override);
+    }
+    // 持久化到配置
+    ctx.config.set('commandOverrides', ctx.commands.getOverrides());
+    app.saveConfig();
+    res.json({ ok: true, message: `指令 ${name} 权限已更新` });
+  });
+
+  // 重置指令覆盖（恢复插件默认）
+  expressApp.delete('/api/authority/command', (req, res) => {
+    const { name } = req.body ?? {};
+    if (!name || typeof name !== 'string') {
+      res.status(400).json({ error: 'name 必填' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    ctx.commands.removeOverride(name);
+    ctx.config.set('commandOverrides', ctx.commands.getOverrides());
+    app.saveConfig();
+    res.json({ ok: true, message: `指令 ${name} 覆盖已重置` });
+  });
+
   // ---------- 斜杠命令处理 (通过指令注册表) ----------
 
-  async function handleSlashCommand(
+  async function handleCommand(
     ctx: Context,
-    command: string,
+    input: string,
     sessionId: string,
   ): Promise<string | undefined> {
-    if (!command.startsWith('/')) return undefined;
+    const parsed = ctx.commands.parseCommand(input);
+    if (!parsed) return undefined;
 
-    const parts = command.slice(1).split(/\s+/);
-    const cmdName = parts[0];
-    const args = parts.slice(1);
-
-    return ctx.commands.execute(cmdName, {
+    return ctx.commands.execute(parsed.name, {
       sessionId,
       platform: 'webui',
-      args,
-      raw: command,
+      userId: 'console',
+      args: parsed.args,
+      raw: parsed.raw,
     });
   }
 
@@ -427,24 +600,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
         sessions.get(sessionId)!.add(ws);
 
-        // 斜杠命令处理
-        if (trimmed.startsWith('/')) {
-          const cmdResult = await handleSlashCommand(ctx, trimmed, sessionId);
-          if (cmdResult !== undefined) {
-            const reply: WSOutgoing = {
-              type: 'message',
-              content: cmdResult,
-              sessionId,
-            };
-            ws.send(JSON.stringify(reply));
-            return;
-          }
+        // 指令处理
+        const cmdResult = await handleCommand(ctx, trimmed, sessionId);
+        if (cmdResult !== undefined) {
+          const reply: WSOutgoing = {
+            type: 'message',
+            content: cmdResult,
+            sessionId,
+          };
+          ws.send(JSON.stringify(reply));
+          return;
         }
 
         await ctx.emit('message:received', {
           content: trimmed,
           sessionId,
           platform: 'webui',
+          userId: 'console',
         });
       } catch (err) {
         ctx.logger.warn('WebUI 消息处理失败:', err);

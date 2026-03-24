@@ -7,7 +7,8 @@ export { ServiceContainer, normalizeDependency } from './service.js';
 export { ToolRegistry } from './tools.js';
 export { HookRegistry } from './hooks.js';
 export { CommandRegistry } from './commands.js';
-export { ConfigManager } from './config.js';
+export { AuthorityManager } from './authority.js';
+export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager } from './plugin.js';
 export { InMemoryFallbackService } from './memory-fallback.js';
 export { Logger, getLogBuffer, onLogEntry } from './logger.js';
@@ -55,4 +56,6 @@ export type {
   CommandContext,
   CommandDefinition,
   RegisteredCommand,
+  SafetyLevel,
+  UserIdentity,
 } from './types.js';

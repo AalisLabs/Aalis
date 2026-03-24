@@ -1,5 +1,16 @@
 // ===== 共享类型定义 =====
 
+// ----- 安全与权限 -----
+
+/** 安全等级：safe=安全操作, dangerous=高危操作 */
+export type SafetyLevel = 'safe' | 'dangerous';
+
+/** 用户身份标识 */
+export interface UserIdentity {
+  platform: string;
+  userId: string;
+}
+
 // ----- 消息 -----
 
 export interface Message {
@@ -88,6 +99,10 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
+  /** 安全级别 (默认 'safe') */
+  safety?: SafetyLevel;
+  /** 最低权限等级 (默认 1) */
+  authority?: number;
 }
 
 // ----- LLM 服务接口 -----
@@ -373,6 +388,12 @@ export interface CommandDefinition {
   name: string;
   /** 指令描述 */
   description: string;
+  /** 最低权限等级 (默认 1) */
+  authority?: number;
+  /** 安全级别 (默认 'safe') */
+  safety?: SafetyLevel;
+  /** 是否同时注册为 AI 工具 (默认 false) */
+  asTools?: boolean;
   /**
    * 执行函数
    * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出

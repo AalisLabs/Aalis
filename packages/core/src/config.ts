@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import type { UserIdentity, ConfigSchema } from './types.js';
 export interface AalisConfig {
   name: string;
   persona: string;
@@ -15,6 +16,27 @@ export interface AalisConfig {
   disabledPlugins?: string[];
   /** 服务偏好：服务名 → 偏好的提供者 contextId */
   servicePreferences?: Record<string, string>;
+  /** 指令前缀，默认 '/'，设为空字符串则仅按关键词触发 */
+  commandPrefix?: string;
+  /** 是否将所有指令自动注册为 AI 工具 (默认 false) */
+  commandAsTools?: boolean;
+  /** owner 列表 */
+  owners?: UserIdentity[];
+  /** 新用户默认权限等级 (默认 1) */
+  defaultAuthority?: number;
+  /** owner 的权限等级 (默认 5) */
+  ownerAuthority?: number;
+  /** dangerous 操作白名单策略 */
+  dangerousPolicy?: {
+    /** 允许的 dangerous 工具/指令名列表，['*'] 表示全部放行 */
+    allow?: string[];
+    /** 白名单有效时长(秒)，0 = 永久 */
+    duration?: number;
+    /** 白名单启用时间戳 (ms)，运行时自动设置 */
+    enabledAt?: number;
+  };
+  /** 管理员对单条指令的权限/安全等级覆盖 */
+  commandOverrides?: Record<string, { authority?: number; safety?: string }>;
 }
 
 const DEFAULT_CONFIG: AalisConfig = {
@@ -24,6 +46,28 @@ const DEFAULT_CONFIG: AalisConfig = {
   plugins: {},
   disabledPlugins: [],
   servicePreferences: {},
+  commandPrefix: '/',
+  commandAsTools: false,
+  owners: [],
+  defaultAuthority: 1,
+  ownerAuthority: 5,
+};
+
+/** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
+export const CORE_CONFIG_SCHEMA: ConfigSchema = {
+  name: { type: 'string', label: '机器人名称', description: '显示名称，用于提示词和界面展示', default: 'Aalis' },
+  persona: { type: 'string', label: '人设文件', description: '对应 personas/ 目录下的文件名（不含后缀）', default: 'default' },
+  logLevel: {
+    type: 'select', label: '日志等级', description: '日志输出等级', default: 'info',
+    options: [
+      { label: 'debug', value: 'debug' },
+      { label: 'info', value: 'info' },
+      { label: 'warn', value: 'warn' },
+      { label: 'error', value: 'error' },
+    ],
+  },
+  commandPrefix: { type: 'string', label: '指令前缀', description: '指令前缀，默认 /，留空则按关键词匹配触发', default: '/' },
+  commandAsTools: { type: 'boolean', label: '指令作为工具', description: '将所有指令自动注册为 AI 可调用的工具', default: false },
 };
 
 /**
@@ -188,12 +232,29 @@ export class ConfigManager {
       obj.plugins = this.config.plugins;
     }
 
-    if (this.config.disabledPlugins && this.config.disabledPlugins.length > 0) {
-      obj.disabledPlugins = this.config.disabledPlugins;
-    }
+    obj.disabledPlugins = this.config.disabledPlugins ?? [];
 
     if (this.config.servicePreferences && Object.keys(this.config.servicePreferences).length > 0) {
       obj.servicePreferences = this.config.servicePreferences;
+    }
+
+    // 核心配置字段始终序列化，确保用户可见可编辑
+    obj.commandPrefix = this.config.commandPrefix ?? DEFAULT_CONFIG.commandPrefix;
+    obj.commandAsTools = this.config.commandAsTools ?? DEFAULT_CONFIG.commandAsTools;
+    obj.owners = this.config.owners ?? [];
+    obj.defaultAuthority = this.config.defaultAuthority ?? DEFAULT_CONFIG.defaultAuthority;
+    obj.ownerAuthority = this.config.ownerAuthority ?? DEFAULT_CONFIG.ownerAuthority;
+
+    if (this.config.dangerousPolicy) {
+      // 保存时不序列化 enabledAt (运行时字段)
+      const { enabledAt, ...rest } = this.config.dangerousPolicy;
+      if (Object.keys(rest).length > 0) {
+        obj.dangerousPolicy = rest;
+      }
+    }
+
+    if (this.config.commandOverrides && Object.keys(this.config.commandOverrides).length > 0) {
+      obj.commandOverrides = this.config.commandOverrides;
     }
 
     return obj;
@@ -252,6 +313,12 @@ export class ConfigManager {
       plugins: (parsed['plugins'] as Record<string, Record<string, unknown>>) ?? {},
       disabledPlugins: (parsed['disabledPlugins'] as string[]) ?? [],
       servicePreferences: (parsed['servicePreferences'] as Record<string, string>) ?? {},
+      commandPrefix: parsed['commandPrefix'] != null ? String(parsed['commandPrefix']) : DEFAULT_CONFIG.commandPrefix,
+      commandAsTools: (parsed['commandAsTools'] as boolean) ?? DEFAULT_CONFIG.commandAsTools,
+      owners: (parsed['owners'] as UserIdentity[]) ?? [],
+      defaultAuthority: (parsed['defaultAuthority'] as number) ?? DEFAULT_CONFIG.defaultAuthority,
+      ownerAuthority: (parsed['ownerAuthority'] as number) ?? DEFAULT_CONFIG.ownerAuthority,
+      dangerousPolicy: (parsed['dangerousPolicy'] as AalisConfig['dangerousPolicy']) ?? undefined,
     };
   }
 }

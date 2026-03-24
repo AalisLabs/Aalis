@@ -3,12 +3,13 @@ import { ServiceContainer } from './service.js';
 import { ToolRegistry } from './tools.js';
 import { HookRegistry } from './hooks.js';
 import { CommandRegistry } from './commands.js';
+import { AuthorityManager } from './authority.js';
 import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
-import type { AgentService, MemoryService, VectorStoreService } from './types.js';
+import type { AgentService, MemoryService, VectorStoreService, RegisteredCommand } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -41,6 +42,53 @@ export class App {
     const tools = new ToolRegistry(this.logger);
     const hooks = new HookRegistry();
     const commands = new CommandRegistry(this.logger);
+    commands.prefix = config.get('commandPrefix') ?? '/';
+    commands.globalAsTools = config.get('commandAsTools') ?? false;
+
+    // 加载管理员对指令的覆盖配置
+    const cmdOverrides = config.get('commandOverrides');
+    if (cmdOverrides) commands.loadOverrides(cmdOverrides);
+
+    // 1.5 权限管理
+    const authority = new AuthorityManager(config, this.logger);
+    commands.setAuthority(authority);
+    tools.setAuthority(authority);
+
+    // 指令 → 工具桥接: 当指令声明 asTools 时自动注册为 AI 工具
+    commands.onToolBridge = (cmd: RegisteredCommand) => {
+      return tools.register(
+        {
+          definition: {
+            type: 'function' as const,
+            function: {
+              name: `cmd_${cmd.name}`,
+              description: `[指令] ${cmd.description}`,
+              parameters: {
+                type: 'object',
+                properties: {
+                  args: { type: 'string', description: '指令参数(空格分隔)' },
+                },
+                required: [],
+              },
+            },
+          },
+          handler: async (args, callCtx) => {
+            const argsStr = typeof args.args === 'string' ? args.args : '';
+            const result = await commands.execute(cmd.name, {
+              args: argsStr ? argsStr.split(/\s+/) : [],
+              raw: `${commands.prefix}${cmd.name}${argsStr ? ' ' + argsStr : ''}`,
+              sessionId: callCtx.sessionId,
+              platform: callCtx.platform ?? 'unknown',
+              userId: callCtx.userId,
+            });
+            return result ?? '(指令已执行)';
+          },
+          safety: cmd.safety,
+          authority: cmd.authority,
+        },
+        cmd.pluginName,
+      );
+    };
 
     // 2. 根上下文
     this.ctx = new Context({
@@ -50,6 +98,7 @@ export class App {
       tools,
       hooks,
       commands,
+      authority,
       logger: this.logger,
       config,
     });
@@ -102,6 +151,9 @@ export class App {
 
     // 将插件默认配置中缺失的字段同步到配置文件
     this.syncPluginDefaults();
+
+    // 确保核心配置的所有字段都落盘到 YAML（补齐用户可能缺少的条目）
+    this.saveConfig();
   }
 
   /**
@@ -383,9 +435,10 @@ export class App {
     // /help — 动态列出所有已注册指令（Markdown 格式）
     this.ctx.command('help', '显示可用指令列表', async () => {
       const all = this.ctx.commands.getAll();
+      const prefix = this.ctx.commands.prefix;
       const lines = ['**可用指令：**', ''];
       for (const cmd of all) {
-        lines.push(`- \`/${cmd.name}\` — ${cmd.description}`);
+        lines.push(`- \`${prefix}${cmd.name}\` — ${cmd.description}`);
       }
       return lines.join('\n');
     });
@@ -418,7 +471,7 @@ export class App {
         process.exit(0);
       }, 500);
       return '正在关闭应用…';
-    });
+    }, { authority: 5, safety: 'dangerous' });
 
     // /restart — 重新启动应用（重新执行原始启动命令）
     this.ctx.command('restart', '重启应用', async () => {
@@ -445,6 +498,48 @@ export class App {
         process.exit(0);
       }, 500);
       return '正在重启应用…';
+    }, { authority: 5, safety: 'dangerous' });
+
+    // /grant — 设置用户权限等级（只能授予低于自身等级的权限）
+    this.ctx.command('grant', '设置用户权限 (用法: grant <platform:userId> <level>)', async (cmdCtx) => {
+      if (cmdCtx.args.length < 2) {
+        const prefix = this.ctx.commands.prefix;
+        return `用法: ${prefix}grant <platform:userId> <level>`;
+      }
+      const [target, levelStr] = cmdCtx.args;
+      const level = parseInt(levelStr, 10);
+      if (isNaN(level) || level < 0) {
+        return '权限等级必须是非负整数。';
+      }
+      const callerAuth = this.ctx.authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
+      if (level >= callerAuth) {
+        return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
+      }
+      const sep = target.indexOf(':');
+      if (sep < 1) {
+        return '目标格式: <platform:userId>，例如 onebot:12345';
+      }
+      const platform = target.slice(0, sep);
+      const userId = target.slice(sep + 1);
+      this.ctx.authority.setAuthority(platform, userId, level);
+      this.ctx.authority.save();
+      return `已将 ${target} 的权限等级设置为 ${level}。`;
+    }, { authority: 2 });
+
+    // /authority — 查看当前用户权限等级
+    this.ctx.command('authority', '查看自己或指定用户的权限等级', async (cmdCtx) => {
+      const authority = this.ctx.authority;
+      if (cmdCtx.args.length > 0) {
+        // 查看指定用户
+        const target = cmdCtx.args[0];
+        const sep = target.indexOf(':');
+        if (sep < 1) return '目标格式: <platform:userId>';
+        const level = authority.getAuthority(target.slice(0, sep), target.slice(sep + 1));
+        return `${target} 的权限等级: ${level}`;
+      }
+      const level = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
+      const isOwner = authority.isOwner(cmdCtx.platform, cmdCtx.userId);
+      return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
     });
   }
 
@@ -508,6 +603,7 @@ export class App {
    */
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
+    this.ctx.authority.save();
     await this.ctx.emit('dispose');
     this.ctx.dispose();
     this.logger.info('已停止');
