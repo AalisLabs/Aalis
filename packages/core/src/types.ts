@@ -134,6 +134,8 @@ export interface LLMService {
   getTemperature(): number;
   getMaxTokens(): number;
   getMaxToolIterations(): number;
+  /** 列出远端可用模型（用于前端下拉框）*/
+  listModels?(): Promise<string[]>;
 }
 
 // ----- 记忆服务接口 -----
@@ -173,6 +175,15 @@ export interface PersonaService {
   getPersonaName(): string;
 }
 
+// ----- Embedding 服务接口 -----
+
+export interface EmbeddingService {
+  /** 将文本转为向量 */
+  embed(text: string): Promise<number[]>;
+  /** 列出远端可用模型（用于前端下拉框）*/
+  listModels?(): Promise<string[]>;
+}
+
 // ----- 服务依赖声明 -----
 
 export interface ServiceDependency {
@@ -194,6 +205,31 @@ export interface PluginMeta {
   inject?: InjectDeclaration;
   provides?: string[];
 }
+
+// ----- 配置 Schema (internal-framework-style) -----
+
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select';
+
+export interface SchemaField {
+  type: SchemaFieldType;
+  label: string;
+  description?: string;
+  default?: unknown;
+  required?: boolean;
+  /** select 类型的静态选项 */
+  options?: Array<{ label: string; value: string | number }>;
+  /** select 类型的动态选项来源：填服务名 (如 'llm', 'embedding')，
+   *  运行时调用 service.listModels() 获取 */
+  dynamicOptions?: string;
+}
+
+export interface SchemaGroup {
+  label?: string;
+  fields: Record<string, SchemaField>;
+}
+
+/** 配置 Schema：顶层 key 可以是字段或分组 */
+export type ConfigSchema = Record<string, SchemaField | SchemaGroup>;
 
 // ----- 事件类型 -----
 

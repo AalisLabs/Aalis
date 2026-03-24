@@ -33,8 +33,30 @@ interface PluginInfo {
   provides: string[];
   core: boolean;
   config: Record<string, unknown>;
+  configSchema?: ConfigSchema;
   error?: string;
 }
+
+// ----- ConfigSchema 类型 (镜像 core) -----
+
+type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select';
+
+interface SchemaField {
+  type: SchemaFieldType;
+  label: string;
+  description?: string;
+  default?: unknown;
+  required?: boolean;
+  options?: Array<{ label: string; value: string | number }>;
+  dynamicOptions?: string;
+}
+
+interface SchemaGroup {
+  label?: string;
+  fields: Record<string, SchemaField>;
+}
+
+type ConfigSchema = Record<string, SchemaField | SchemaGroup>;
 
 interface ServiceProviderInfo {
   contextId: string;
@@ -412,6 +434,186 @@ function unflattenConfig(flat: Record<string, string>): Record<string, unknown> 
   return result;
 }
 
+// ===== Schema 辅助 =====
+
+function isSchemaField(entry: SchemaField | SchemaGroup): entry is SchemaField {
+  return 'type' in entry;
+}
+
+/** 从 configSchema + 当前 config 构建 draft 对象 */
+function buildDraftFromSchema(schema: ConfigSchema, config: Record<string, unknown>): Record<string, unknown> {
+  const draft: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(schema)) {
+    if (isSchemaField(entry)) {
+      draft[key] = config[key] ?? entry.default ?? (entry.type === 'number' ? 0 : entry.type === 'boolean' ? false : '');
+    } else {
+      // SchemaGroup
+      const group: Record<string, unknown> = {};
+      const src = (config[key] ?? {}) as Record<string, unknown>;
+      for (const [fk, field] of Object.entries(entry.fields)) {
+        group[fk] = src[fk] ?? field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : '');
+      }
+      draft[key] = group;
+    }
+  }
+  // 保留 schema 中未定义但 config 中已有的字段
+  for (const [key, val] of Object.entries(config)) {
+    if (!(key in draft)) draft[key] = val;
+  }
+  return draft;
+}
+
+// ===== SchemaForm 组件 =====
+
+function SchemaFormField({
+  field,
+  value,
+  onChange,
+  modelCache,
+  onFetchModels,
+}: {
+  field: SchemaField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  modelCache: Record<string, string[]>;
+  onFetchModels: (service: string) => void;
+}) {
+  if (field.type === 'boolean') {
+    return (
+      <label className="config-edit-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
+        {field.label}
+      </label>
+    );
+  }
+
+  if (field.type === 'select') {
+    const dynamicKey = field.dynamicOptions;
+    const dynamicModels = dynamicKey ? modelCache[dynamicKey] : undefined;
+
+    // 触发一次远端模型拉取
+    useEffect(() => {
+      if (dynamicKey && !modelCache[dynamicKey]) {
+        onFetchModels(dynamicKey);
+      }
+    }, [dynamicKey]);
+
+    // 合并静态选项 + 动态选项
+    const staticOpts = field.options ?? [];
+    const dynOpts = (dynamicModels ?? []).map(m => ({ label: m, value: m }));
+    const allOptions = [...staticOpts];
+    for (const d of dynOpts) {
+      if (!allOptions.some(o => String(o.value) === String(d.value))) allOptions.push(d);
+    }
+    // 如果当前值不在列表中，也加进去
+    const cur = String(value ?? '');
+    if (cur && !allOptions.some(o => String(o.value) === cur)) {
+      allOptions.unshift({ label: cur, value: cur });
+    }
+
+    return (
+      <select
+        className="config-edit-input"
+        value={cur}
+        onChange={e => onChange(e.target.value)}
+      >
+        {allOptions.length === 0 && <option value="">加载中...</option>}
+        {allOptions.map(o => (
+          <option key={String(o.value)} value={String(o.value)}>{o.label}</option>
+        ))}
+      </select>
+    );
+  }
+
+  if (field.type === 'number') {
+    return (
+      <input
+        className="config-edit-input"
+        type="number"
+        value={value === undefined || value === null ? '' : String(value)}
+        onChange={e => {
+          const v = e.target.value;
+          onChange(v === '' ? '' : Number(v));
+        }}
+      />
+    );
+  }
+
+  // string (default)
+  return (
+    <input
+      className="config-edit-input"
+      type="text"
+      value={String(value ?? '')}
+      onChange={e => onChange(e.target.value)}
+    />
+  );
+}
+
+function SchemaForm({
+  schema,
+  draft,
+  onChange,
+  modelCache,
+  onFetchModels,
+}: {
+  schema: ConfigSchema;
+  draft: Record<string, unknown>;
+  onChange: (newDraft: Record<string, unknown>) => void;
+  modelCache: Record<string, string[]>;
+  onFetchModels: (service: string) => void;
+}) {
+  return (
+    <div className="config-edit-form">
+      {Object.entries(schema).map(([key, entry]) => {
+        if (isSchemaField(entry)) {
+          return (
+            <div className="config-edit-row" key={key}>
+              <label className="config-edit-label" title={entry.description}>
+                {entry.label}
+                {entry.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
+              </label>
+              <SchemaFormField
+                field={entry}
+                value={draft[key]}
+                onChange={v => onChange({ ...draft, [key]: v })}
+                modelCache={modelCache}
+                onFetchModels={onFetchModels}
+              />
+              {entry.description && <span className="config-edit-hint">{entry.description}</span>}
+            </div>
+          );
+        }
+
+        // SchemaGroup
+        const group = entry as SchemaGroup;
+        const groupData = (draft[key] ?? {}) as Record<string, unknown>;
+        return (
+          <div className="config-edit-group" key={key}>
+            {group.label && <div className="config-edit-group-label">{group.label}</div>}
+            {Object.entries(group.fields).map(([fk, field]) => (
+              <div className="config-edit-row" key={fk}>
+                <label className="config-edit-label" title={field.description}>
+                  {field.label}
+                  {field.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
+                </label>
+                <SchemaFormField
+                  field={field}
+                  value={groupData[fk]}
+                  onChange={v => onChange({ ...draft, [key]: { ...groupData, [fk]: v } })}
+                  modelCache={modelCache}
+                  onFetchModels={onFetchModels}
+                />
+                {field.description && <span className="config-edit-hint">{field.description}</span>}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ===== 插件配置页 =====
 
 function PluginConfigPage({
@@ -428,6 +630,8 @@ function PluginConfigPage({
   const [busy, setBusy] = useState<string | null>(null);
   const [editingPlugin, setEditingPlugin] = useState<string | null>(null);
   const [editBuffer, setEditBuffer] = useState<Record<string, string>>({});
+  const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>({});
+  const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
@@ -455,12 +659,26 @@ function PluginConfigPage({
   };
 
   const startEdit = (plugin: PluginInfo) => {
-    setEditBuffer(flattenConfig((plugin.config ?? {}) as Record<string, unknown>));
+    if (plugin.configSchema) {
+      setSchemaDraft(buildDraftFromSchema(plugin.configSchema, (plugin.config ?? {}) as Record<string, unknown>));
+    } else {
+      setEditBuffer(flattenConfig((plugin.config ?? {}) as Record<string, unknown>));
+    }
     setEditingPlugin(plugin.name);
   };
 
-  const savePluginConfig = async (pluginName: string) => {
-    const parsed = unflattenConfig(editBuffer);
+  const fetchModels = useCallback(async (service: string) => {
+    if (modelCache[service]) return;
+    try {
+      const res = await api<{ models: string[] }>(`/api/models/${encodeURIComponent(service)}`);
+      setModelCache(prev => ({ ...prev, [service]: res.models ?? [] }));
+    } catch {
+      setModelCache(prev => ({ ...prev, [service]: [] }));
+    }
+  }, [modelCache]);
+
+  const savePluginConfig = async (pluginName: string, hasSchema: boolean) => {
+    const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
     setBusy(pluginName);
     await api(`/api/plugins/${encodeURIComponent(pluginName)}/config`, {
       method: 'PUT',
@@ -603,7 +821,8 @@ function PluginConfigPage({
       {plugins.map(p => {
         const isEditing = editingPlugin === p.name;
         const isOpen = openSections.has(p.name);
-        const hasDetail = p.provides.length > 0 || (p.config && Object.keys(p.config).length > 0);
+        const hasDetail = p.provides.length > 0 || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
+        const hasSchema = !!p.configSchema;
         return (
           <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={p.name}>
             <div className="plugin-card-header">
@@ -636,7 +855,7 @@ function PluginConfigPage({
               </div>
             )}
 
-            {isOpen && p.config && Object.keys(p.config).length > 0 && (
+            {isOpen && (p.config && Object.keys(p.config).length > 0 || hasSchema) && (
               <div className="plugin-card-config">
                 {!isEditing ? (
                   <>
@@ -646,6 +865,20 @@ function PluginConfigPage({
                       ))}
                     </div>
                     <button className="btn btn-sm" onClick={() => startEdit(p)}>编辑配置</button>
+                  </>
+                ) : hasSchema ? (
+                  <>
+                    <SchemaForm
+                      schema={p.configSchema!}
+                      draft={schemaDraft}
+                      onChange={setSchemaDraft}
+                      modelCache={modelCache}
+                      onFetchModels={fetchModels}
+                    />
+                    <div className="config-edit-actions">
+                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(p.name, true)} disabled={busy === p.name}>保存</button>
+                      <button className="btn btn-sm" onClick={() => setEditingPlugin(null)}>取消</button>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -662,7 +895,7 @@ function PluginConfigPage({
                       ))}
                     </div>
                     <div className="config-edit-actions">
-                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(p.name)} disabled={busy === p.name}>保存</button>
+                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(p.name, false)} disabled={busy === p.name}>保存</button>
                       <button className="btn btn-sm" onClick={() => setEditingPlugin(null)}>取消</button>
                     </div>
                   </>

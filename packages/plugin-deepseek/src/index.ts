@@ -7,12 +7,22 @@ import type {
   Message,
   ToolDefinition,
   ToolCall,
+  ConfigSchema,
 } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-deepseek';
 export const provides = ['llm'];
+
+export const configSchema: ConfigSchema = {
+  apiKey: { type: 'string', label: 'API Key', required: true },
+  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.deepseek.com' },
+  model: { type: 'select', label: '模型', default: 'deepseek-chat', dynamicOptions: 'llm' },
+  temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
+  maxTokens: { type: 'number', label: '最大 Token', default: 8192 },
+  maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10 },
+};
 
 // ===== 配置 =====
 
@@ -107,6 +117,19 @@ class DeepSeekLLMService implements LLMService {
 
   getMaxToolIterations(): number {
     return this.maxToolIterations;
+  }
+
+  async listModels(): Promise<string[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/models`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+      });
+      if (!res.ok) return [];
+      const data = (await res.json()) as { data: { id: string }[] };
+      return data.data.map(m => m.id);
+    } catch {
+      return [];
+    }
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {

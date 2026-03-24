@@ -1,8 +1,16 @@
-import type { Context } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-websearch-serper';
+
+export const configSchema: ConfigSchema = {
+  apiKey: { type: 'string', label: 'Serper API Key', required: true },
+  maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10 },
+  maxPerDay: { type: 'number', label: '每天最大次数', default: 100 },
+  maxConcurrent: { type: 'number', label: '最大并发', default: 3 },
+  defaultNumResults: { type: 'number', label: '默认结果数', default: 5 },
+};
 
 // ===== 配置 =====
 

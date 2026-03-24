@@ -1,10 +1,16 @@
 import { MongoClient, type Collection, type Db } from 'mongodb';
-import type { Context, MemoryService, Message } from '@aalis/core';
+import type { Context, MemoryService, Message, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-mongodb';
 export const provides = ['memory'];
+
+export const configSchema: ConfigSchema = {
+  uri: { type: 'string', label: 'MongoDB URI', required: true, default: 'mongodb://localhost:27017' },
+  database: { type: 'string', label: '数据库名', required: true, default: 'aalis' },
+  collection: { type: 'string', label: '集合名', default: 'messages' },
+};
 
 // ===== 配置 =====
 
