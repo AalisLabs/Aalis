@@ -102,5 +102,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const service = new PersonaServiceImpl(card);
-  ctx.provide('persona', service);
+  ctx.provide('persona', service, {
+    capabilities: ['system_prompt', 'persona_name'],
+  });
 }

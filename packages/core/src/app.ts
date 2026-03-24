@@ -6,8 +6,8 @@ import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
-import { Agent } from './agent.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
+import type { AgentService } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
@@ -29,7 +29,6 @@ export class App {
   readonly packagesDir: string;
 
   private events: EventBus;
-  private agent?: Agent;
 
   constructor(configPath?: string) {
     // 1. 核心子系统
@@ -294,8 +293,21 @@ export class App {
       this.ctx.preferService(service, contextId);
     }
 
-    // 初始化 Agent
-    this.agent = new Agent(this.ctx);
+    // 将 message:received 事件路由到 agent 服务
+    // Agent 现在是一个可替换的服务，由 plugin-agent-default 或任何外部插件提供
+    this.ctx.on('message:received', async (msg) => {
+      const agent = this.ctx.getService<AgentService>('agent');
+      if (agent) {
+        await agent.handleMessage(msg);
+      } else {
+        this.logger.warn('Agent 服务不可用，消息将不会被处理');
+        await this.ctx.emit('message:send', {
+          content: '[系统] Agent 服务不可用，请检查插件配置。',
+          sessionId: msg.sessionId,
+          platform: msg.platform,
+        });
+      }
+    });
 
     // 发出 ready 事件
     await this.ctx.emit('ready');

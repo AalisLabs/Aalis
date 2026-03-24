@@ -833,6 +833,11 @@ function PluginConfigPage({
                   {stateLabel[p.state] ?? p.state}
                 </span>
                 {p.core && <span className="badge core-badge">核心</span>}
+                {p.provides.length > 0 && (
+                  <span className="plugin-provides-inline">
+                    {p.provides.map(s => <span className="provides-chip" key={s}>{s}</span>)}
+                  </span>
+                )}
               </div>
               <label className={`toggle-switch ${p.core ? 'core-locked' : ''}`}>
                 <input

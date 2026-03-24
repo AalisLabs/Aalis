@@ -84,5 +84,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.warn(`OpenAI Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
   }
 
-  ctx.provide('embedding', service);
+  ctx.provide('embedding', service, {
+    capabilities: ['embed', 'openai-compatible'],
+  });
 }
