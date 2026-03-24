@@ -16,6 +16,21 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
+  enabled: {
+    type: 'boolean',
+    label: '启用工具搜索层',
+    default: true,
+    description: '关闭后所有工具将直接发送给 LLM，不经过搜索层',
+  },
+  showToolNames: {
+    type: 'boolean',
+    label: '展示工具名称列表',
+    default: true,
+    description:
+      '开启后，系统提示中会附带所有可用工具的名称列表（不含说明），' +
+      '模型需要调用 search_tools 查询具体用法后才能使用对应工具。' +
+      '关闭后模型只看到 search_tools，需要先搜索才能发现工具。',
+  },
   maxDirectTools: {
     type: 'number',
     label: '直传阈值',
@@ -25,6 +40,8 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
+  enabled: true,
+  showToolNames: true,
   maxDirectTools: 5,
 };
 
@@ -33,28 +50,41 @@ export const defaultConfig = {
 /** search_tools 自身的工具名 */
 const SEARCH_TOOL_NAME = 'search_tools';
 
-/** search_tools 的工具定义 */
-const SEARCH_TOOL_DEF: ToolDefinition = {
-  type: 'function',
-  function: {
-    name: SEARCH_TOOL_NAME,
-    description:
-      '搜索可用工具。传入关键词，返回匹配的工具列表及其描述。' +
-      '搜索到工具后即可直接调用对应工具。',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: '搜索关键词，可以是工具名称、功能描述等（空字符串返回所有工具摘要）',
-        },
-      },
-      required: ['query'],
-    },
-  },
-};
-
 // ===== 工具搜索逻辑 =====
+
+/**
+ * 构建 search_tools 的工具定义
+ * 当 showToolNames 开启时，description 中会附带所有可用工具的名称列表
+ */
+function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
+  let description =
+    '查询工具的详细使用方法。传入工具名称或关键词，返回匹配工具的完整参数说明。' +
+    '你必须先调用此工具了解用法后，才能调用对应工具。';
+
+  if (toolNames && toolNames.length > 0) {
+    description +=
+      '\n\n当前可用工具列表:\n' +
+      toolNames.map(n => `- ${n}`).join('\n');
+  }
+
+  return {
+    type: 'function',
+    function: {
+      name: SEARCH_TOOL_NAME,
+      description,
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: '工具名称或搜索关键词（空字符串返回所有工具的详细说明）',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  };
+}
 
 /**
  * 在工具摘要列表中按关键词搜索
@@ -62,15 +92,9 @@ const SEARCH_TOOL_DEF: ToolDefinition = {
 function searchTools(
   summaries: ToolSummary[],
   query: string,
-  userAuthority?: number,
 ): ToolSummary[] {
   // 排除 search_tools 自身
-  let pool = summaries.filter(s => s.name !== SEARCH_TOOL_NAME);
-
-  // 按权限过滤
-  if (userAuthority !== undefined) {
-    pool = pool.filter(s => s.authority <= userAuthority);
-  }
+  const pool = summaries.filter(s => s.name !== SEARCH_TOOL_NAME);
 
   if (!query.trim()) return pool;
 
@@ -128,28 +152,44 @@ function extractDiscoveredTools(
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const logger = ctx.logger.child('tool-search');
+  const enabled = (config.enabled as boolean) ?? true;
+  const showToolNames = (config.showToolNames as boolean) ?? true;
   const maxDirectTools = (config.maxDirectTools as number) ?? 5;
 
-  // 注册 search_tools 工具
+  if (!enabled) {
+    logger.info('工具搜索层已禁用');
+    return;
+  }
+
+  // 注册 search_tools 工具（初始定义，钩子中会动态更新 description）
   ctx.registerTool({
-    definition: SEARCH_TOOL_DEF,
-    async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
+    definition: buildSearchToolDef(),
+    async handler(args: Record<string, unknown>, _callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
       const summaries = ctx.tools.getSummaries();
       const results = searchTools(summaries, query);
+      // 搜索结果返回完整定义，供 LLM 了解参数
+      const allDefs = ctx.tools.getDefinitions();
+      const defMap = new Map(allDefs.map(d => [d.function.name, d]));
+
+      const toolDetails = results.map(t => {
+        const def = defMap.get(t.name);
+        return {
+          name: t.name,
+          description: t.description,
+          parameters: def?.function.parameters ?? null,
+          authority: t.authority,
+          safety: t.safety,
+        };
+      });
 
       logger.debug(`搜索工具 "${query}" → ${results.length} 条结果`);
 
       return JSON.stringify({
         found: results.length,
-        tools: results.map(t => ({
-          name: t.name,
-          description: t.description,
-          authority: t.authority,
-          safety: t.safety,
-        })),
+        tools: toolDetails,
         hint: results.length > 0
-          ? '这些工具已对你可用，你可以直接调用它们。'
+          ? '以上工具现在对你可用，你可以直接调用它们。'
           : '未找到匹配的工具，请尝试其他关键词。',
       });
     },
@@ -168,8 +208,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 从消息历史提取已发现的工具
     const discovered = extractDiscoveredTools(data.messages);
 
-    // 构建筛选后的工具列表：search_tools + 已发现的工具
-    const filtered: ToolDefinition[] = [SEARCH_TOOL_DEF];
+    // 构建 search_tools 定义（showToolNames 时附带工具名列表）
+    const otherToolNames = allDefs
+      .map(d => d.function.name)
+      .filter(n => n !== SEARCH_TOOL_NAME);
+    const searchDef = buildSearchToolDef(showToolNames ? otherToolNames : undefined);
+
+    // 构建筛选后的工具列表：search_tools + 已发现的工具完整定义
+    const filtered: ToolDefinition[] = [searchDef];
     if (discovered.size > 0) {
       for (const def of allDefs) {
         if (def.function.name !== SEARCH_TOOL_NAME && discovered.has(def.function.name)) {
@@ -180,7 +226,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     data.tools = filtered;
     logger.debug(
-      `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个 (已发现 ${discovered.size})`,
+      `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个` +
+      ` (已发现 ${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
     );
 
     await next();
