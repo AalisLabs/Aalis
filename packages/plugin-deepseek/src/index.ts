@@ -111,9 +111,10 @@ class DeepSeekLLMService implements LLMService {
   private temperature: number;
   private maxTokens: number;
   private maxToolIterations: number;
+  private enableThinking: boolean;
   private logger;
 
-  constructor(config: DeepSeekConfig, logger: Context['logger']) {
+  constructor(config: DeepSeekConfig, logger: Context['logger'], enableThinking: boolean) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.model = config.model;
@@ -121,6 +122,7 @@ class DeepSeekLLMService implements LLMService {
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.maxToolIterations = config.maxToolIterations;
+    this.enableThinking = enableThinking;
     this.logger = logger;
   }
 
@@ -138,7 +140,7 @@ class DeepSeekLLMService implements LLMService {
 
   async listModels(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/v1/models`, {
+      const res = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
       });
       if (!res.ok) return [];
@@ -157,16 +159,20 @@ class DeepSeekLLMService implements LLMService {
       model: this.model,
       messages,
       max_tokens: request.maxTokens ?? 8192,
-      // 启用思考模式
-      thinking: { type: 'enabled' },
     };
-    // 思考模式下 temperature 等参数不生效，但不会报错
+
+    if (this.enableThinking) {
+      body.thinking = { type: 'enabled' };
+      // 思考模式下 temperature 等参数不生效
+    } else {
+      body.temperature = request.temperature ?? this.temperature;
+    }
 
     if (tools && tools.length > 0) {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 DeepSeek (思考模式): ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ' (思考模式)' : ''}: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -225,15 +231,20 @@ class DeepSeekLLMService implements LLMService {
       model: this.model,
       messages,
       max_tokens: request.maxTokens ?? 8192,
-      thinking: { type: 'enabled' },
       stream: true,
     };
+
+    if (this.enableThinking) {
+      body.thinking = { type: 'enabled' };
+    } else {
+      body.temperature = request.temperature ?? this.temperature;
+    }
 
     if (tools && tools.length > 0) {
       body.tools = tools;
     }
 
-    this.logger.debug(`流式请求 DeepSeek (思考模式): ${this.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ' (思考模式)' : ''}: ${this.model}, ${messages.length} 条消息`);
 
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -421,8 +432,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     throw new Error('未配置 apiKey，DeepSeek 插件无法启动');
   }
 
-  const service = new DeepSeekLLMService(deepseekConfig, ctx.logger);
   const capabilities = resolveCapabilities(deepseekConfig.model, config.capabilities);
+  const service = new DeepSeekLLMService(deepseekConfig, ctx.logger, capabilities.includes('thinking'));
 
   ctx.provide('llm', service, { capabilities });
 

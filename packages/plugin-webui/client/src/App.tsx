@@ -1401,7 +1401,15 @@ export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<PageTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<PageTab>(() => {
+    const hash = location.hash.replace('#', '');
+    const valid: PageTab[] = ['dashboard', 'marketplace', 'plugin-config', 'platforms', 'logs'];
+    return valid.includes(hash as PageTab) ? (hash as PageTab) : 'dashboard';
+  });
+
+  useEffect(() => {
+    location.hash = activeTab;
+  }, [activeTab]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);

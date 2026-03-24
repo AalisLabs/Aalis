@@ -88,6 +88,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const wss = new WebSocketServer({ server, path: '/ws' });
   const sessions = new Map<string, Set<WebSocket>>();
   const logSubscribers = new Set<WebSocket>();
+  const allClients = new Set<WebSocket>();
 
   // 获取 App 实例（通过服务注册获取）
   const getApp = (): App | undefined => ctx.getService<App>('app');
@@ -426,6 +427,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   wss.on('connection', (ws) => {
     ctx.logger.debug('WebUI 客户端已连接');
+    allClients.add(ws);
 
     ws.on('message', async (data) => {
       try {
@@ -471,6 +473,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     ws.on('close', () => {
+      allClients.delete(ws);
       logSubscribers.delete(ws);
       for (const [, sockets] of sessions) {
         sockets.delete(ws);
@@ -577,18 +580,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     adapterName: 'WebUI',
     platform: 'webui',
     getConnections(): PlatformConnection[] {
-      const connections: PlatformConnection[] = [];
-      for (const [sessionId, sockets] of sessions) {
-        const hasActive = [...sockets].some(ws => ws.readyState === WebSocket.OPEN);
-        if (hasActive) {
-          connections.push({
-            id: sessionId,
-            platform: 'webui',
-            status: 'online',
-          });
-        }
-      }
-      return connections;
+      // 统计所有活跃 WebSocket 客户端
+      const activeCount = [...allClients].filter(ws => ws.readyState === WebSocket.OPEN).length;
+      if (activeCount === 0) return [];
+      return [{
+        id: 'webui',
+        platform: 'webui',
+        status: 'online',
+        detail: { clients: activeCount },
+      }];
     },
     async sendMessage(sessionId: string, content: string): Promise<void> {
       const sockets = sessions.get(sessionId);
