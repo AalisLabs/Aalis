@@ -16,7 +16,7 @@ export const name = '@aalis/plugin-deepseek';
 export const provides = ['llm'];
 
 export const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true },
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
   baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.deepseek.com' },
   model: { type: 'select', label: '模型', default: 'deepseek-chat', dynamicOptions: 'llm' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },

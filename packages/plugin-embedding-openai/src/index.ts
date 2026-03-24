@@ -6,7 +6,7 @@ export const name = '@aalis/plugin-embedding-openai';
 export const provides = ['embedding'];
 
 export const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true },
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
   baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.openai.com' },
   model: { type: 'select', label: 'Embedding 模型', default: 'text-embedding-3-small', dynamicOptions: 'embedding' },
 };
