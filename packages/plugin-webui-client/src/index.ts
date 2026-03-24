@@ -25,4 +25,8 @@ export function apply(ctx: Context): void {
   } else {
     ctx.logger.warn('WebUI 服务不支持 setClientDir，前端无法挂载');
   }
+
+  ctx.provide('webui-client', {
+    getClientDir: () => clientDist,
+  }, { capabilities: ['default-ui'] });
 }
