@@ -110,7 +110,20 @@ export class App {
     // 4. 注册核心服务（让插件能通过 ctx.getService 访问）
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
 
-    // 5. 注册内置指令
+    // 5. 监控核心必需服务，卸载时自动恢复
+    this.ctx.on('service:unregistered', async (name) => {
+      if ((App.REQUIRED_SERVICES as readonly string[]).includes(name)) {
+        this.logger.warn(`必需服务 "${name}" 被卸载，尝试自动恢复...`);
+        const activated = await this.plugins.ensureServiceProvider(name);
+        if (activated) {
+          this.logger.info(`必需服务 "${name}" 已通过插件 "${activated}" 恢复`);
+        } else {
+          this.logger.error(`必需服务 "${name}" 自动恢复失败！`);
+        }
+      }
+    });
+
+    // 6. 注册内置指令
     this.registerBuiltinCommands();
 
     this.logger.info(`Aalis v0.1.0 - ${config.get('name')}`);
@@ -447,7 +460,10 @@ export class App {
     this.ctx.command('status', '显示系统状态', async () => {
       const lines = ['**系统状态：**', ''];
       const checks = [
+        ['WebUI Server', this.ctx.hasService('webui-server')],
+        ['CLI', this.ctx.hasService('cli')],
         ['LLM 服务', this.ctx.hasService('llm')],
+        ['Agent', this.ctx.hasService('agent')],
         ['记忆服务', this.ctx.hasService('memory')],
         ['人格服务', this.ctx.hasService('persona')],
         ['Embedding', this.ctx.hasService('embedding')],
@@ -577,6 +593,9 @@ export class App {
       this.ctx.preferService(service, contextId);
     }
 
+    // 检查核心必需服务，缺失时自动寻找并启动提供者
+    await this.ensureRequiredServices();
+
     // 将 message:received 事件路由到 agent 服务
     // Agent 现在是一个可替换的服务，由 plugin-agent-default 或任何外部插件提供
     this.ctx.on('message:received', async (msg) => {
@@ -607,5 +626,33 @@ export class App {
     await this.ctx.emit('dispose');
     this.ctx.dispose();
     this.logger.info('已停止');
+  }
+
+  /**
+   * 核心必需服务列表
+   *
+   * 这些服务必须至少有一个提供者在运行。
+   * 如果在启动后缺失，核心会自动寻找声明能提供该服务的插件并启动它。
+   */
+  private static readonly REQUIRED_SERVICES = ['webui-server', 'cli'] as const;
+
+  /**
+   * 检查核心必需服务是否就绪，缺失时自动寻找并启动提供者
+   */
+  private async ensureRequiredServices(): Promise<void> {
+    for (const service of App.REQUIRED_SERVICES) {
+      if (this.ctx.hasService(service)) {
+        this.logger.debug(`必需服务 "${service}" 已就绪`);
+        continue;
+      }
+
+      this.logger.warn(`必需服务 "${service}" 未就绪，尝试自动恢复...`);
+      const activated = await this.plugins.ensureServiceProvider(service);
+      if (activated) {
+        this.logger.info(`必需服务 "${service}" 已通过插件 "${activated}" 恢复`);
+      } else {
+        this.logger.error(`必需服务 "${service}" 无法恢复！系统功能将受限。`);
+      }
+    }
   }
 }
