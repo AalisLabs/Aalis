@@ -105,6 +105,7 @@ export class App {
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.ctx, this.logger);
+    this.plugins.requiredServices = App.REQUIRED_SERVICES;
     this.packagesDir = resolve(process.cwd(), 'packages');
 
     // 4. 注册核心服务（让插件能通过 ctx.getService 访问）
@@ -112,14 +113,15 @@ export class App {
 
     // 5. 监控核心必需服务，卸载时自动恢复
     this.ctx.on('service:unregistered', async (name) => {
-      if ((App.REQUIRED_SERVICES as readonly string[]).includes(name)) {
-        this.logger.warn(`必需服务 "${name}" 被卸载，尝试自动恢复...`);
-        const activated = await this.plugins.ensureServiceProvider(name);
-        if (activated) {
-          this.logger.info(`必需服务 "${name}" 已通过插件 "${activated}" 恢复`);
-        } else {
-          this.logger.error(`必需服务 "${name}" 自动恢复失败！`);
-        }
+      if (!(App.REQUIRED_SERVICES as readonly string[]).includes(name)) return;
+      // softReload 可能已经恢复了，先检查
+      if (this.ctx.hasService(name)) return;
+      this.logger.warn(`必需服务 "${name}" 被卸载，尝试自动恢复...`);
+      const activated = await this.plugins.ensureServiceProvider(name);
+      if (activated) {
+        this.logger.info(`必需服务 "${name}" 已通过插件 "${activated}" 恢复`);
+      } else if (!this.ctx.hasService(name)) {
+        this.logger.error(`必需服务 "${name}" 自动恢复失败！`);
       }
     });
 
@@ -634,7 +636,7 @@ export class App {
    * 这些服务必须至少有一个提供者在运行。
    * 如果在启动后缺失，核心会自动寻找声明能提供该服务的插件并启动它。
    */
-  private static readonly REQUIRED_SERVICES = ['webui-server', 'cli'] as const;
+  private static readonly REQUIRED_SERVICES = ['webui-server', 'webui-client', 'cli'] as const;
 
   /**
    * 检查核心必需服务是否就绪，缺失时自动寻找并启动提供者
