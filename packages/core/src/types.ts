@@ -259,6 +259,45 @@ export interface PlatformAdapter {
   isReady?(): boolean;
 }
 
+// ----- WebUI 服务接口 -----
+
+/**
+ * WebUI 服务 —— Web 管理后台
+ *
+ * 负责启动 HTTP 服务器，提供 REST API（插件管理、配置、权限等）
+ * 和 WebSocket（消息/日志推送），同时托管前端静态文件。
+ *
+ * 核心要求此服务必须运行。
+ * 默认由 plugin-webui 提供，第三方可替换整个实现或仅替换前端部分。
+ */
+export interface WebUIService {
+  /** 获取 HTTP 服务监听端口 */
+  getPort(): number;
+  /** 获取 HTTP 服务监听地址 */
+  getHost(): string;
+  /**
+   * 设置前端静态文件目录
+   * 允许外部插件在运行时替换前端
+   */
+  setClientDir?(dir: string): void;
+}
+
+// ----- CLI 服务接口 -----
+
+/**
+ * CLI 服务 —— 命令行交互界面
+ *
+ * 提供终端 REPL 交互，支持指令输入和对话。
+ * 核心要求此服务必须运行。
+ * 默认由 plugin-cli 提供，第三方可提供自己的 CLI 实现。
+ */
+export interface CLIService {
+  /** 获取当前会话 ID */
+  getSessionId(): string;
+  /** CLI 是否正在运行 */
+  isRunning(): boolean;
+}
+
 // ----- 服务依赖声明 -----
 
 export interface ServiceDependency {
@@ -330,6 +369,7 @@ export interface AalisEvents {
   'service:unregistered': [name: string];
   'plugin:loaded': [name: string];
   'plugin:unloaded': [name: string];
+  'plugins:changed': [];
   'ready': [];
   'dispose': [];
 }
