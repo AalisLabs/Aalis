@@ -140,7 +140,7 @@ export class App {
 
   /**
    * 根据 configSchema 移除多余字段
-   * SchemaGroup (含 fields) 对应嵌套对象，SchemaField 对应普通字段
+   * SchemaGroup (含 fields) 对应嵌套对象，SchemaArray (type=array) 直接保留，SchemaField 对应普通字段
    */
   private removeExtraFields(
     config: Record<string, unknown>,
@@ -150,8 +150,11 @@ export class App {
     for (const [key, value] of Object.entries(config)) {
       if (!(key in schema)) continue; // 多余字段，丢弃
       const schemaDef = schema[key] as Record<string, unknown>;
+      // SchemaArray: type === 'array'，数组内容由用户管理，直接保留
+      if (schemaDef.type === 'array') {
+        result[key] = value;
       // SchemaGroup: 有 fields 子对象，递归清理
-      if (schemaDef.fields && typeof schemaDef.fields === 'object'
+      } else if (schemaDef.fields && typeof schemaDef.fields === 'object'
         && value !== null && typeof value === 'object' && !Array.isArray(value)) {
         result[key] = this.removeExtraFields(
           value as Record<string, unknown>,

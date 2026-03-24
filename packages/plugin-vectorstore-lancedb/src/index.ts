@@ -9,8 +9,8 @@ export const name = '@aalis/plugin-vectorstore-lancedb';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {
-  path: { type: 'string', label: '数据库目录', default: 'data/lancedb' },
-  tableName: { type: 'string', label: '表名', default: 'vectors' },
+  path: { type: 'string', label: '数据库目录', default: 'data/lancedb', description: 'LanceDB 数据文件存储目录' },
+  tableName: { type: 'string', label: '表名', default: 'vectors', description: '向量表名称' },
 };
 
 export const defaultConfig = {

@@ -10,11 +10,16 @@ export const inject = {
 export const provides = ['platform'];
 
 export const configSchema: ConfigSchema = {
-  connectionsJson: {
-    type: 'string',
-    label: '连接配置 (JSON)',
-    description: '连接数组，格式: [{"url":"ws://127.0.0.1:8080","accessToken":"可选","selfId":"可选"}]',
-    default: '[]',
+  connections: {
+    type: 'array',
+    label: '连接列表',
+    description: '配置一个或多个 OneBot WebSocket 连接',
+    items: {
+      url: { type: 'string', label: 'WebSocket 地址', required: true, description: '如 ws://127.0.0.1:8080' },
+      accessToken: { type: 'string', label: '鉴权 Token', secret: true, description: '可选，与 OneBot 实现端一致' },
+      selfId: { type: 'string', label: '机器人 ID', description: '可选，连接后自动获取' },
+    },
+    default: [],
   },
 };
 
@@ -140,21 +145,9 @@ const ACTION_TIMEOUT = 30000; // 30 秒
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
-  // 支持两种配置方式：直接数组 或 JSON 字符串
-  let connections: OneBotConnectionConfig[];
-  if (Array.isArray(config.connections)) {
-    connections = config.connections as OneBotConnectionConfig[];
-  } else if (typeof config.connectionsJson === 'string' && config.connectionsJson.trim()) {
-    try {
-      const parsed = JSON.parse(config.connectionsJson as string);
-      connections = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      ctx.logger.warn('OneBot connections JSON 解析失败，请检查配置格式');
-      connections = [];
-    }
-  } else {
-    connections = [];
-  }
+  const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
+    ? config.connections as OneBotConnectionConfig[]
+    : [];
 
   if (connections.length === 0) {
     ctx.logger.info('OneBot 适配器未配置任何连接');
