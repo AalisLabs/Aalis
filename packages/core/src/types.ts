@@ -105,6 +105,14 @@ export interface RegisteredTool {
   authority?: number;
 }
 
+/** 工具摘要（不含 handler，用于搜索展示） */
+export interface ToolSummary {
+  name: string;
+  description: string;
+  authority: number;
+  safety: SafetyLevel;
+}
+
 // ----- LLM 服务接口 -----
 
 export interface ChatRequest {
