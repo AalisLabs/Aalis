@@ -1,6 +1,6 @@
 import { Context } from './context.js';
 import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, DependencyDeclaration, ConfigSchema } from './types.js';
+import type { InjectDeclaration, DependencyDeclaration, ConfigSchema, ExtendDeclaration } from './types.js';
 import type { Logger } from './logger.js';
 
 // ----- 插件定义格式 -----
@@ -11,6 +11,8 @@ export interface PluginModule {
   provides?: string[];
   /** 标记为 core 的插件不能被用户禁用 */
   core?: boolean;
+  /** 声明该插件对 core 的扩展（新增事件、钩子、mixin 方法） */
+  extends?: ExtendDeclaration;
   /** 配置 Schema，用于前端自动生成配置表单 */
   configSchema?: ConfigSchema;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
@@ -161,12 +163,13 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; error?: string }> {
+  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; error?: string }> {
     return [...this.plugins.entries()].map(([name, entry]) => ({
       name,
       state: entry.state,
       provides: entry.module.provides,
       core: entry.module.core,
+      extends: entry.module.extends,
       config: entry.config,
       configSchema: entry.module.configSchema,
       defaultConfig: entry.module.defaultConfig,
