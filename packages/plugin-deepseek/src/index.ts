@@ -21,6 +21,7 @@ export const configSchema: ConfigSchema = {
   model: { type: 'select', label: '模型', default: 'deepseek-chat', dynamicOptions: 'llm' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 8192 },
+  contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10 },
   capabilities: {
     type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
@@ -38,6 +39,7 @@ export const defaultConfig = {
   model: 'deepseek-chat',
   temperature: 0.7,
   maxTokens: 8192,
+  contextLength: 131072,
   maxToolIterations: 10,
 };
 
@@ -50,6 +52,7 @@ interface DeepSeekConfig {
   timeout?: number;
   temperature: number;
   maxTokens: number;
+  contextLength: number;
   maxToolIterations: number;
 }
 
@@ -110,6 +113,7 @@ class DeepSeekLLMService implements LLMService {
   private timeout: number;
   private temperature: number;
   private maxTokens: number;
+  private contextLength: number;
   private maxToolIterations: number;
   private enableThinking: boolean;
   private logger;
@@ -121,6 +125,7 @@ class DeepSeekLLMService implements LLMService {
     this.timeout = config.timeout ?? 120000;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
+    this.contextLength = config.contextLength;
     this.maxToolIterations = config.maxToolIterations;
     this.enableThinking = enableThinking;
     this.logger = logger;
@@ -136,6 +141,10 @@ class DeepSeekLLMService implements LLMService {
 
   getMaxToolIterations(): number {
     return this.maxToolIterations;
+  }
+
+  getContextLength(): number {
+    return this.contextLength;
   }
 
   async listModels(): Promise<string[]> {
@@ -425,6 +434,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     timeout: config.timeout as number | undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 8192,
+    contextLength: (config.contextLength as number) ?? 131072,
     maxToolIterations: (config.maxToolIterations as number) ?? 10,
   };
 

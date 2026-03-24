@@ -117,6 +117,9 @@ class DefaultAgent implements AgentService {
     const temperature = llm.getTemperature();
     const maxTokens = llm.getMaxTokens();
     const maxToolIterations = llm.getMaxToolIterations();
+    const contextLength = llm.getContextLength();
+    // 预留 token 预算 = 上下文长度 - 最大输出 token - 安全余量
+    const tokenBudget = contextLength - maxTokens - 512;
 
     try {
       const messages = await this.buildMessages(incoming);
@@ -130,6 +133,9 @@ class DefaultAgent implements AgentService {
       // Hook: llm-call:before — 插件可以修改消息或工具列表
       const llmBeforeData = { messages, tools };
       await this.ctx.hooks.run('llm-call:before', llmBeforeData);
+
+      // 裁剪消息以确保不超过上下文窗口
+      llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
 
       let response = await this.consumeStream(llm, {
         messages: llmBeforeData.messages,
@@ -216,6 +222,9 @@ class DefaultAgent implements AgentService {
         // 继续请求 LLM (再次经过 hooks)
         const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools };
         await this.ctx.hooks.run('llm-call:before', nextLlmData);
+
+        // 裁剪消息以确保不超过上下文窗口
+        nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
 
         response = await this.consumeStream(llm, {
           messages: nextLlmData.messages,
@@ -322,6 +331,50 @@ class DefaultAgent implements AgentService {
       return `${personaPrompt}\n\n${this.systemPrompt}`;
     }
     return this.systemPrompt;
+  }
+
+  /**
+   * 粗略估算消息的 token 数（混合中英文约 3 字符/token）
+   */
+  private estimateTokens(messages: Message[]): number {
+    let total = 0;
+    for (const msg of messages) {
+      // 每条消息有固定开销 (~4 tokens)
+      total += 4;
+      if (msg.content) total += Math.ceil(msg.content.length / 3);
+      if (msg.toolCalls) {
+        total += Math.ceil(JSON.stringify(msg.toolCalls).length / 3);
+      }
+      if (msg.reasoningContent) {
+        total += Math.ceil(msg.reasoningContent.length / 3);
+      }
+    }
+    return total;
+  }
+
+  /**
+   * 裁剪消息列表，使总 token 数不超过预算
+   * 保留: system prompt(首条) + 当前用户消息(末条)，从最早的历史开始裁剪
+   */
+  private trimMessages(messages: Message[], budget: number): Message[] {
+    let estimated = this.estimateTokens(messages);
+    if (estimated <= budget) return messages;
+
+    // 保留首条(system) 和末条(当前用户消息)
+    // 从 index 1 开始删除最旧的历史，直到符合预算
+    const result = [...messages];
+    while (estimated > budget && result.length > 2) {
+      const removed = result.splice(1, 1)[0];
+      estimated -= 4;
+      if (removed.content) estimated -= Math.ceil(removed.content.length / 3);
+      if (removed.toolCalls) estimated -= Math.ceil(JSON.stringify(removed.toolCalls).length / 3);
+      if (removed.reasoningContent) estimated -= Math.ceil(removed.reasoningContent.length / 3);
+    }
+
+    if (result.length < messages.length) {
+      this.logger.info(`上下文截断: ${messages.length} → ${result.length} 条消息 (约 ${estimated} tokens)`);
+    }
+    return result;
   }
 
   /**
