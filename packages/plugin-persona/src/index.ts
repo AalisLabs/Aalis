@@ -8,6 +8,8 @@ import type { Context, PersonaService } from '@aalis/core';
 export const name = '@aalis/plugin-persona';
 export const provides = ['persona'];
 
+export const defaultConfig = {};
+
 // ===== 角色卡格式 =====
 
 interface PersonaCard {

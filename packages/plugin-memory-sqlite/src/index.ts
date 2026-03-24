@@ -12,6 +12,10 @@ export const configSchema: ConfigSchema = {
   path: { type: 'string', label: '数据库路径', default: 'data/aalis.db' },
 };
 
+export const defaultConfig = {
+  path: 'data/aalis.db',
+};
+
 // ===== 配置 =====
 
 interface SQLiteMemoryConfig {

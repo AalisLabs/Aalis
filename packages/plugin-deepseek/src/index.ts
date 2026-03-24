@@ -24,6 +24,14 @@ export const configSchema: ConfigSchema = {
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10 },
 };
 
+export const defaultConfig = {
+  baseUrl: 'https://api.deepseek.com',
+  model: 'deepseek-chat',
+  temperature: 0.7,
+  maxTokens: 8192,
+  maxToolIterations: 10,
+};
+
 // ===== 配置 =====
 
 interface DeepSeekConfig {

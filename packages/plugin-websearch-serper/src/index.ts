@@ -13,6 +13,13 @@ export const configSchema: ConfigSchema = {
   defaultNumResults: { type: 'number', label: '默认结果数', default: 5 },
 };
 
+export const defaultConfig = {
+  maxPerMinute: 10,
+  maxPerDay: 100,
+  maxConcurrent: 3,
+  defaultNumResults: 5,
+};
+
 // ===== 配置 =====
 
 interface WebSearchConfig {

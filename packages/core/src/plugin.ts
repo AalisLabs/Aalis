@@ -13,6 +13,8 @@ export interface PluginModule {
   core?: boolean;
   /** 配置 Schema，用于前端自动生成配置表单 */
   configSchema?: ConfigSchema;
+  /** 插件默认配置，当主配置文件中无此插件配置时使用 */
+  defaultConfig?: Record<string, unknown>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
 }
 
@@ -157,7 +159,7 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; config: Record<string, unknown>; configSchema?: ConfigSchema; error?: string }> {
+  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; error?: string }> {
     return [...this.plugins.entries()].map(([name, entry]) => ({
       name,
       state: entry.state,
@@ -165,6 +167,7 @@ export class PluginManager {
       core: entry.module.core,
       config: entry.config,
       configSchema: entry.module.configSchema,
+      defaultConfig: entry.module.defaultConfig,
       error: entry.error,
     }));
   }

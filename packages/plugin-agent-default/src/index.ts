@@ -357,6 +357,10 @@ export const configSchema: ConfigSchema = {
   },
 };
 
+export const defaultConfig = {
+  systemPrompt: BASE_SYSTEM_PROMPT,
+};
+
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agent = new DefaultAgent(ctx, config);
   ctx.provide('agent', agent, {

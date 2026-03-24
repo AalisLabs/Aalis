@@ -13,6 +13,11 @@ export const configSchema: ConfigSchema = {
   tableName: { type: 'string', label: '表名', default: 'vectors' },
 };
 
+export const defaultConfig = {
+  path: 'data/lancedb',
+  tableName: 'vectors',
+};
+
 // ===== 配置 =====
 
 interface LanceDBConfig {

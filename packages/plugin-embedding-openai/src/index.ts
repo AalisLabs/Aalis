@@ -11,6 +11,11 @@ export const configSchema: ConfigSchema = {
   model: { type: 'select', label: 'Embedding 模型', default: 'text-embedding-3-small', dynamicOptions: 'embedding' },
 };
 
+export const defaultConfig = {
+  baseUrl: 'https://api.openai.com',
+  model: 'text-embedding-3-small',
+};
+
 // ===== 配置 =====
 
 interface OpenAIEmbeddingConfig {

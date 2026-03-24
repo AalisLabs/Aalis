@@ -12,6 +12,12 @@ export const configSchema: ConfigSchema = {
   collection: { type: 'string', label: '集合名', default: 'messages' },
 };
 
+export const defaultConfig = {
+  uri: 'mongodb://localhost:27017',
+  database: 'aalis',
+  collection: 'messages',
+};
+
 // ===== 配置 =====
 
 interface MongoMemoryConfig {
