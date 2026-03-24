@@ -454,8 +454,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ws.on('close', () => {
       allClients.delete(ws);
       logSubscribers.delete(ws);
-      for (const [, sockets] of sessions) {
+      for (const [sid, sockets] of sessions) {
         sockets.delete(ws);
+        if (sockets.size === 0) sessions.delete(sid);
       }
     });
   });

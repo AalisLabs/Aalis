@@ -251,6 +251,7 @@ export class ConfigManager {
       },
       plugins: (parsed['plugins'] as Record<string, Record<string, unknown>>) ?? {},
       disabledPlugins: (parsed['disabledPlugins'] as string[]) ?? [],
+      servicePreferences: (parsed['servicePreferences'] as Record<string, string>) ?? {},
     };
   }
 }

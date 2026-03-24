@@ -22,6 +22,7 @@ export class InMemoryFallbackService implements MemoryService {
       toolCalls: message.toolCalls,
       toolCallId: message.toolCallId,
       name: message.name,
+      reasoningContent: message.reasoningContent,
       timestamp: message.timestamp ?? Date.now(),
     });
   }

@@ -68,10 +68,13 @@ class SQLiteMemoryService implements MemoryService {
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const stmt = this.db.prepare(`
       SELECT role, content, toolCalls, toolCallId, name, timestamp
-      FROM messages
-      WHERE sessionId = ?
-      ORDER BY timestamp ASC
-      LIMIT ?
+      FROM (
+        SELECT role, content, toolCalls, toolCallId, name, timestamp
+        FROM messages
+        WHERE sessionId = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+      ) sub ORDER BY timestamp ASC
     `);
     const rows = stmt.all(sessionId, limit) as Array<{
       role: string;
