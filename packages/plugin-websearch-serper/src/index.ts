@@ -6,11 +6,11 @@ export const name = '@aalis/plugin-websearch-serper';
 export const provides: string[] = [];
 
 export const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'Serper API Key', required: true, secret: true },
-  maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10 },
-  maxPerDay: { type: 'number', label: '每天最大次数', default: 100 },
-  maxConcurrent: { type: 'number', label: '最大并发', default: 3 },
-  defaultNumResults: { type: 'number', label: '默认结果数', default: 5 },
+  apiKey: { type: 'string', label: 'Serper API Key', required: true, secret: true, description: 'Serper.dev API 密钥' },
+  maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10, description: '频率限制：每分钟最多搜索次数' },
+  maxPerDay: { type: 'number', label: '每天最大次数', default: 100, description: '频率限制：每天最多搜索次数' },
+  maxConcurrent: { type: 'number', label: '最大并发', default: 3, description: '同时进行的搜索请求数上限' },
+  defaultNumResults: { type: 'number', label: '默认结果数', default: 5, description: '每次搜索返回的结果条数' },
 };
 
 export const defaultConfig = {

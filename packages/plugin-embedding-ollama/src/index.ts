@@ -6,8 +6,8 @@ export const name = '@aalis/plugin-embedding-ollama';
 export const provides = ['embedding'];
 
 export const configSchema: ConfigSchema = {
-  baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434' },
-  model: { type: 'select', label: 'Embedding 模型', default: 'nomic-embed-text', dynamicOptions: 'embedding' },
+  baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
+  model: { type: 'select', label: 'Embedding 模型', default: 'nomic-embed-text', dynamicOptions: 'embedding', description: '用于生成文本向量的模型' },
 };
 
 export const defaultConfig = {
