@@ -22,6 +22,15 @@ export const configSchema: ConfigSchema = {
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 8192 },
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10 },
+  capabilities: {
+    type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
+    options: [
+      { label: '对话', value: 'chat' },
+      { label: '工具调用', value: 'tool_calling' },
+      { label: '流式输出', value: 'streaming' },
+      { label: '深度思考', value: 'thinking' },
+    ],
+  },
 };
 
 export const defaultConfig = {
@@ -372,6 +381,29 @@ class DeepSeekLLMService implements LLMService {
   }
 }
 
+// ===== 模型能力映射 =====
+
+const MODEL_CAPABILITIES: Record<string, string[]> = {
+  'deepseek-chat':     ['chat', 'tool_calling', 'streaming'],
+  'deepseek-reasoner': ['chat', 'tool_calling', 'streaming', 'thinking'],
+};
+
+const DEFAULT_CAPABILITIES = ['chat', 'streaming'];
+
+function resolveCapabilities(model: string, userOverride?: unknown): string[] {
+  // 用户显式声明优先
+  if (Array.isArray(userOverride) && userOverride.length > 0) {
+    return userOverride as string[];
+  }
+  // 精确匹配
+  if (MODEL_CAPABILITIES[model]) return MODEL_CAPABILITIES[model];
+  // 模糊匹配：模型名包含关键词
+  const lower = model.toLowerCase();
+  if (lower.includes('reasoner')) return ['chat', 'tool_calling', 'streaming', 'thinking'];
+  if (lower.includes('chat')) return ['chat', 'tool_calling', 'streaming'];
+  return DEFAULT_CAPABILITIES;
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -390,11 +422,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const service = new DeepSeekLLMService(deepseekConfig, ctx.logger);
+  const capabilities = resolveCapabilities(deepseekConfig.model, config.capabilities);
 
-  // 注册 LLM 服务，声明能力（含 thinking 能力标记）
-  ctx.provide('llm', service, {
-    capabilities: ['chat', 'tool_calling', 'thinking'],
-  });
+  ctx.provide('llm', service, { capabilities });
 
-  ctx.logger.info(`DeepSeek 思考模式已连接: ${deepseekConfig.baseUrl} (${deepseekConfig.model})`);
+  ctx.logger.info(`DeepSeek 已连接: ${deepseekConfig.baseUrl} (${deepseekConfig.model}) [${capabilities.join(', ')}]`);
 }

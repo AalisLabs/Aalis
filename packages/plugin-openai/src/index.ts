@@ -22,6 +22,15 @@ export const configSchema: ConfigSchema = {
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096 },
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10 },
+  capabilities: {
+    type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
+    options: [
+      { label: '对话', value: 'chat' },
+      { label: '工具调用', value: 'tool_calling' },
+      { label: '流式输出', value: 'streaming' },
+      { label: '深度思考', value: 'thinking' },
+    ],
+  },
 };
 
 export const defaultConfig = {
@@ -358,13 +367,46 @@ class OpenAILLMService implements LLMService {
   }
 }
 
+// ===== 模型能力映射 =====
+
+const MODEL_CAPABILITIES: Record<string, string[]> = {
+  'gpt-4o':            ['chat', 'tool_calling', 'streaming'],
+  'gpt-4o-mini':       ['chat', 'tool_calling', 'streaming'],
+  'gpt-4-turbo':       ['chat', 'tool_calling', 'streaming'],
+  'gpt-4':             ['chat', 'tool_calling', 'streaming'],
+  'gpt-3.5-turbo':     ['chat', 'tool_calling', 'streaming'],
+  'o1':                ['chat', 'thinking'],
+  'o1-mini':           ['chat', 'thinking'],
+  'o1-preview':        ['chat', 'thinking'],
+  'o3':                ['chat', 'tool_calling', 'streaming', 'thinking'],
+  'o3-mini':           ['chat', 'tool_calling', 'streaming', 'thinking'],
+  'o4-mini':           ['chat', 'tool_calling', 'streaming', 'thinking'],
+};
+
+const DEFAULT_CAPABILITIES = ['chat', 'tool_calling', 'streaming'];
+
+function resolveCapabilities(model: string, userOverride?: unknown): string[] {
+  // 用户显式声明优先
+  if (Array.isArray(userOverride) && userOverride.length > 0) {
+    return userOverride as string[];
+  }
+  // 精确匹配
+  if (MODEL_CAPABILITIES[model]) return MODEL_CAPABILITIES[model];
+  // 模糊匹配
+  const lower = model.toLowerCase();
+  for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
+    if (lower.startsWith(known)) return caps;
+  }
+  return DEFAULT_CAPABILITIES;
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const openaiConfig: OpenAIConfig = {
     apiKey: (config.apiKey as string) ?? '',
-    baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
-    model: (config.model as string) ?? 'deepseek-chat',
+    baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com',
+    model: (config.model as string) ?? 'gpt-4o',
     timeout: config.timeout as number | undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
@@ -376,11 +418,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const service = new OpenAILLMService(openaiConfig, ctx.logger);
+  const capabilities = resolveCapabilities(openaiConfig.model, config.capabilities);
 
-  // 注册 LLM 服务，声明能力
-  ctx.provide('llm', service, {
-    capabilities: ['chat', 'tool_calling', 'streaming'],
-  });
+  ctx.provide('llm', service, { capabilities });
 
-  ctx.logger.info(`已连接: ${openaiConfig.baseUrl} (${openaiConfig.model})`);
+  ctx.logger.info(`已连接: ${openaiConfig.baseUrl} (${openaiConfig.model}) [${capabilities.join(', ')}]`);
 }

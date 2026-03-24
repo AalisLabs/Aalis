@@ -224,7 +224,7 @@ export interface PluginMeta {
 
 // ----- 配置 Schema (internal-framework-style) -----
 
-export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select';
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
 
 export interface SchemaField {
   type: SchemaFieldType;
