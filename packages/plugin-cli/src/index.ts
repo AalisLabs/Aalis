@@ -1,7 +1,7 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { Context, PersonaService, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
+import type { Context, PersonaService, ConfigSchema, PlatformAdapter, PlatformConnection, CLIService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -9,7 +9,7 @@ export const name = '@aalis/plugin-cli';
 export const inject = {
   optional: [{ service: 'llm', capabilities: ['chat'] }],
 };
-export const provides = ['platform'];
+export const provides = ['cli', 'platform'];
 
 export const configSchema: ConfigSchema = {
   prompt: { type: 'string', label: '提示符', default: 'You', description: '命令行输入提示符前缀' },
@@ -56,6 +56,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 注册为平台服务
   ctx.provide('platform', adapter, { capabilities: ['text'] });
 
+  // 注册为 CLI 服务
+  let running = false;
+  const cliService: CLIService = {
+    getSessionId: () => sessionId,
+    isRunning: () => running,
+  };
+  ctx.provide('cli', cliService, { capabilities: ['repl'] });
+
   // 监听 AI 回复
   ctx.on('message:send', (msg) => {
     if (msg.sessionId !== sessionId) return;
@@ -64,6 +72,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 启动 REPL（在 ready 事件后）
   ctx.on('ready', () => {
+    running = true;
     startREPL(ctx, cliConfig, sessionId);
   });
 }

@@ -125,7 +125,7 @@ plugins:
     model: "qwen3-embedding:8b"
   "@aalis/plugin-cli":
     prompt: "You"
-  "@aalis/plugin-webui":
+  "@aalis/plugin-webui-server":
     port: 3000
 
 # 禁用不需要的插件

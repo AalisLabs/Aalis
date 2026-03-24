@@ -1,16 +1,15 @@
 import { createServer } from 'node:http';
-import { resolve, dirname } from 'node:path';
+import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-webui';
-export const provides = ['platform'];
+export const name = '@aalis/plugin-webui-server';
+export const provides = ['webui-server', 'platform'];
 
 export const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
@@ -38,7 +37,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call';
+  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -72,12 +71,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取 App 实例（通过服务注册获取）
   const getApp = (): App | undefined => ctx.getService<App>('app');
 
-  // 提供静态文件 (构建后的前端)
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const clientDist = resolve(__dirname, '../client/dist');
-  if (existsSync(clientDist)) {
-    expressApp.use(express.static(clientDist));
+  // 前端静态文件托管（由 webui-client 插件通过 setClientDir 挂载）
+  // server 注册服务名 'webui-server'，client 通过 capabilities 匹配版本
+  let clientDist = '';
+  let staticMiddleware: express.RequestHandler | null = null;
+
+  function mountStaticDir(dir: string): void {
+    if (existsSync(dir)) {
+      staticMiddleware = express.static(dir);
+      ctx.logger.info(`前端静态目录: ${dir}`);
+    } else {
+      staticMiddleware = null;
+      ctx.logger.warn(`前端目录不存在: ${dir}`);
+    }
   }
+
+  // 动态静态文件中间件（支持运行时切换前端）
+  expressApp.use((req, res, next) => {
+    if (staticMiddleware) {
+      staticMiddleware(req, res, next);
+    } else {
+      next();
+    }
+  });
 
   // ---------- REST API ----------
 
@@ -86,7 +102,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({
       name: ctx.config.get('name'),
       services: {
+        'webui-server': ctx.hasService('webui-server'),
+        cli: ctx.hasService('cli'),
         llm: ctx.hasService('llm'),
+        agent: ctx.hasService('agent'),
         memory: ctx.hasService('memory'),
         persona: ctx.hasService('persona'),
       },
@@ -644,6 +663,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
+  // 插件状态级联变更后，广播通知所有前端刷新
+  ctx.on('plugins:changed', () => {
+    const payload: WSOutgoing = { type: 'state_changed' };
+    const json = JSON.stringify(payload);
+    for (const ws of allClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
   // 监听 AI 回复
   ctx.on('message:send', (msg: OutgoingMessage) => {
     const sockets = sessions.get(msg.sessionId);
@@ -708,11 +738,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // SPA fallback: 所有非 API 路径返回 index.html
-  if (existsSync(clientDist)) {
-    expressApp.get('{*path}', (_req, res) => {
-      res.sendFile(resolve(clientDist, 'index.html'));
-    });
-  }
+  expressApp.get('{*path}', (_req, res) => {
+    const indexPath = resolve(clientDist, 'index.html');
+    if (existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.status(404).json({ error: '前端未就绪，请安装 webui-client 插件 (如 @aalis/plugin-webui-client)' });
+    }
+  });
 
   // 启动服务器
   ctx.on('ready', () => {
@@ -760,4 +793,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
 
   ctx.provide('platform', adapter, { capabilities: ['text', 'web'] });
+
+  // === 注册 WebUI 服务 ===
+  const webuiService: WebUIService = {
+    getPort: () => uiConfig.port,
+    getHost: () => uiConfig.host,
+    setClientDir(dir: string): void {
+      clientDist = dir;
+      mountStaticDir(dir);
+      ctx.logger.info(`前端已切换: ${dir}`);
+    },
+  };
+  ctx.provide('webui-server', webuiService, { capabilities: ['api-v1'] });
 }

@@ -29,7 +29,8 @@
     "@aalis/plugin-vectorstore-lancedb": "workspace:*",
     "@aalis/plugin-tools-basic": "workspace:*",
     "@aalis/plugin-websearch-serper": "workspace:*",
-    "@aalis/plugin-webui": "workspace:*"
+    "@aalis/plugin-webui-server": "workspace:*",
+    "@aalis/plugin-webui-client": "workspace:*"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
