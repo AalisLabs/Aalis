@@ -6,11 +6,15 @@ import 'highlight.js/styles/github-dark-dimmed.css';
 
 // ===== 类型 =====
 
+type ContentSegment =
+  | { type: 'text'; content: string }
+  | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string };
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   reasoningContent?: string;
-  toolCalls?: { name: string; args: Record<string, unknown>; result?: string }[];
+  segments?: ContentSegment[];
   timestamp: number;
 }
 
@@ -1184,36 +1188,47 @@ function ChatPanel({
                 </div>
               </details>
             )}
-            {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
-              msg.toolCalls.map((tc, j) => (
-                <details key={j} className="tool-call-block">
-                  <summary className="tool-call-summary">
-                    🔧 {tc.name}{tc.result == null ? ' …' : ''}
-                  </summary>
-                  <div className="tool-call-content">
-                    <div className="tool-call-args">
-                      <strong>参数</strong>
-                      <pre>{JSON.stringify(tc.args, null, 2)}</pre>
-                    </div>
-                    {tc.result != null && (
-                      <div className="tool-call-result">
-                        <strong>结果</strong>
-                        <pre>{tc.result}</pre>
+            {msg.role === 'assistant' && msg.segments && msg.segments.length > 0 ? (
+              <div className="message-bubble">
+                {msg.segments.map((seg, j) =>
+                  seg.type === 'text' ? (
+                    seg.content ? (
+                      <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                        {seg.content}
+                      </ReactMarkdown>
+                    ) : null
+                  ) : (
+                    <details key={j} className="tool-call-block">
+                      <summary className="tool-call-summary">
+                        🔧 {seg.name}{seg.result == null ? ' …' : ''}
+                      </summary>
+                      <div className="tool-call-content">
+                        <div className="tool-call-args">
+                          <strong>参数</strong>
+                          <pre>{JSON.stringify(seg.args, null, 2)}</pre>
+                        </div>
+                        {seg.result != null && (
+                          <div className="tool-call-result">
+                            <strong>结果</strong>
+                            <pre>{seg.result}</pre>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </details>
-              ))
+                    </details>
+                  )
+                )}
+              </div>
+            ) : (
+              <div className="message-bubble">
+                {msg.role === 'assistant' ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                    {msg.content}
+                  </ReactMarkdown>
+                ) : (
+                  msg.content
+                )}
+              </div>
             )}
-            <div className="message-bubble">
-              {msg.role === 'assistant' ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                  {msg.content}
-                </ReactMarkdown>
-              ) : (
-                msg.content
-              )}
-            </div>
           </div>
         ))}
         {loading && (
@@ -1420,16 +1435,28 @@ export function App() {
   const streamingRef = useRef(false);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
-    // message:send 到达时，用完整内容替换流式消息（如果有的话）
+    // message:send 到达时，用完整内容更新最后一个文本段，保留所有 segments
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant' && streamingRef.current) {
-        // 替换正在流式传输的消息为完整版本
         streamingRef.current = false;
-        return [...prev.slice(0, -1), { role: 'assistant' as const, content, reasoningContent, timestamp: Date.now() }];
+        const segments = [...(last.segments ?? [])];
+        // 更新最后一个 text segment 为最终完整内容
+        const lastSeg = segments[segments.length - 1];
+        if (lastSeg && lastSeg.type === 'text') {
+          segments[segments.length - 1] = { type: 'text', content };
+        } else {
+          segments.push({ type: 'text', content });
+        }
+        return [...prev.slice(0, -1), {
+          ...last,
+          content,
+          reasoningContent: reasoningContent ?? last.reasoningContent,
+          segments,
+        }];
       }
       streamingRef.current = false;
-      return [...prev, { role: 'assistant' as const, content, reasoningContent, timestamp: Date.now() }];
+      return [...prev, { role: 'assistant' as const, content, reasoningContent, segments: [{ type: 'text' as const, content }], timestamp: Date.now() }];
     });
     setLoading(false);
   }, []);
@@ -1443,10 +1470,20 @@ export function App() {
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant' && streamingRef.current) {
-        // 追加到现有流式消息
         const updated = { ...last };
-        if (contentDelta) updated.content += contentDelta;
         if (reasoningDelta) updated.reasoningContent = (updated.reasoningContent ?? '') + reasoningDelta;
+        if (contentDelta) {
+          updated.content += contentDelta;
+          const segments = [...(updated.segments ?? [])];
+          const lastSeg = segments[segments.length - 1];
+          if (lastSeg && lastSeg.type === 'text') {
+            segments[segments.length - 1] = { type: 'text', content: lastSeg.content + contentDelta };
+          } else {
+            // 工具调用后的新文本段
+            segments.push({ type: 'text', content: contentDelta });
+          }
+          updated.segments = segments;
+        }
         return [...prev.slice(0, -1), updated];
       }
       // 创建新的助手消息
@@ -1455,6 +1492,7 @@ export function App() {
         role: 'assistant' as const,
         content: contentDelta ?? '',
         reasoningContent: reasoningDelta,
+        segments: contentDelta ? [{ type: 'text' as const, content: contentDelta }] : [],
         timestamp: Date.now(),
       }];
     });
@@ -1472,22 +1510,28 @@ export function App() {
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
-        // 工具开始执行——在当前助手消息上追加，或新建一条
         if (last && last.role === 'assistant') {
-          const updated = { ...last, toolCalls: [...(last.toolCalls ?? []), { name: toolName, args: toolArgs }] };
-          return [...prev.slice(0, -1), updated];
+          const segments = [...(last.segments ?? [])];
+          segments.push({ type: 'tool_call', name: toolName, args: toolArgs });
+          return [...prev.slice(0, -1), { ...last, segments }];
         }
         streamingRef.current = true;
-        return [...prev, { role: 'assistant' as const, content: '', toolCalls: [{ name: toolName, args: toolArgs }], timestamp: Date.now() }];
+        return [...prev, {
+          role: 'assistant' as const,
+          content: '',
+          segments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs }],
+          timestamp: Date.now(),
+        }];
       }
       // toolPhase === 'end'——填充结果
-      if (last && last.role === 'assistant' && last.toolCalls) {
-        const calls = [...last.toolCalls];
-        const idx = calls.findIndex(tc => tc.name === toolName && !tc.result);
+      if (last && last.role === 'assistant' && last.segments) {
+        const segments = [...last.segments];
+        const idx = segments.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
         if (idx !== -1) {
-          calls[idx] = { ...calls[idx], result: toolResult };
+          const seg = segments[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
+          segments[idx] = { ...seg, result: toolResult };
         }
-        return [...prev.slice(0, -1), { ...last, toolCalls: calls }];
+        return [...prev.slice(0, -1), { ...last, segments }];
       }
       return prev;
     });
