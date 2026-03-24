@@ -3,9 +3,10 @@ import { ServiceContainer } from './service.js';
 import { ToolRegistry } from './tools.js';
 import { HookRegistry } from './hooks.js';
 import { CommandRegistry } from './commands.js';
+import { AuthorityManager } from './authority.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext } from './types.js';
+import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel } from './types.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -24,6 +25,7 @@ export class Context {
   readonly tools: ToolRegistry;
   readonly hooks: HookRegistry;
   readonly commands: CommandRegistry;
+  readonly authority: AuthorityManager;
 
   private _events: EventBus;
   private _services: ServiceContainer;
@@ -39,6 +41,7 @@ export class Context {
     tools: ToolRegistry;
     hooks: HookRegistry;
     commands: CommandRegistry;
+    authority: AuthorityManager;
     logger: Logger;
     config: ConfigManager;
     parent?: Context;
@@ -49,6 +52,7 @@ export class Context {
     this.tools = options.tools;
     this.hooks = options.hooks;
     this.commands = options.commands;
+    this.authority = options.authority;
     this.logger = options.logger;
     this.config = options.config;
     this._parent = options.parent;
@@ -65,6 +69,7 @@ export class Context {
       tools: this.tools,
       hooks: this.hooks,
       commands: this.commands,
+      authority: this.authority,
       logger: this.logger.child(id),
       config: this.config,
       parent: this,
@@ -198,8 +203,17 @@ export class Context {
     name: string,
     description: string,
     action: (ctx: CommandContext) => Promise<string | void>,
+    options?: { authority?: number; safety?: SafetyLevel; asTools?: boolean },
   ): () => void {
-    const dispose = this.commands.register({ name, description, action }, this.id);
+    const def: CommandDefinition = {
+      name,
+      description,
+      action,
+      authority: options?.authority,
+      safety: options?.safety,
+      asTools: options?.asTools,
+    };
+    const dispose = this.commands.register(def, this.id);
     this._disposables.push(dispose);
     return dispose;
   }
