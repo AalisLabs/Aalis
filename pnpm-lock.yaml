@@ -11,6 +11,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:packages/core
+      '@aalis/plugin-agent-default':
+        specifier: workspace:*
+        version: link:packages/plugin-agent-default
       '@aalis/plugin-cli':
         specifier: workspace:*
         version: link:packages/plugin-cli

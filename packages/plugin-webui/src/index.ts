@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, MemoryService } from '@aalis/core';
 import { getLogBuffer, onLogEntry } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -206,6 +206,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     const success = await app.plugins.enablePlugin(pluginName);
     if (success) {
+      app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
@@ -222,6 +223,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     const success = await app.plugins.disablePlugin(pluginName);
     if (success) {
+      app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
       res.status(400).json({ error: `核心插件不能被禁用` });
@@ -368,6 +370,57 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
+  // ---------- 斜杠命令处理 ----------
+
+  async function handleSlashCommand(
+    ctx: Context,
+    command: string,
+    sessionId: string,
+  ): Promise<string | undefined> {
+    switch (command) {
+      case '/help':
+        return [
+          '**可用命令：**',
+          '- `/help` — 显示帮助信息',
+          '- `/clear` — 清空当前会话历史',
+          '- `/status` — 显示系统状态',
+        ].join('\n');
+
+      case '/clear': {
+        const memory = ctx.getService<MemoryService>('memory');
+        if (memory) {
+          await memory.clearSession(sessionId);
+          return '会话历史已清空。';
+        }
+        return '记忆服务未启用。';
+      }
+
+      case '/status': {
+        const lines = ['**系统状态：**'];
+        const svcChecks = [
+          ['Agent', ctx.hasService('agent')],
+          ['LLM', ctx.hasService('llm')],
+          ['记忆', ctx.hasService('memory')],
+          ['人格', ctx.hasService('persona')],
+          ['Embedding', ctx.hasService('embedding')],
+          ['向量库', ctx.hasService('vectorstore')],
+        ] as const;
+        for (const [label, ok] of svcChecks) {
+          lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
+        }
+        const tools = ctx.tools.getDefinitions();
+        lines.push(`- 已注册工具: ${tools.length} 个`);
+        return lines.join('\n');
+      }
+
+      default:
+        if (command.startsWith('/')) {
+          return `未知命令: ${command}。输入 /help 查看帮助。`;
+        }
+        return undefined;
+    }
+  }
+
   // ---------- WebSocket ----------
 
   wss.on('connection', (ws) => {
@@ -385,14 +438,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (msg.type !== 'message' || !msg.content) return;
 
         const sessionId = msg.sessionId || 'webui-default';
+        const trimmed = msg.content.trim();
 
         if (!sessions.has(sessionId)) {
           sessions.set(sessionId, new Set());
         }
         sessions.get(sessionId)!.add(ws);
 
+        // 斜杠命令处理
+        if (trimmed.startsWith('/')) {
+          const cmdResult = await handleSlashCommand(ctx, trimmed, sessionId);
+          if (cmdResult !== undefined) {
+            const reply: WSOutgoing = {
+              type: 'message',
+              content: cmdResult,
+              sessionId,
+            };
+            ws.send(JSON.stringify(reply));
+            return;
+          }
+        }
+
         await ctx.emit('message:received', {
-          content: msg.content,
+          content: trimmed,
           sessionId,
           platform: 'webui',
         });
