@@ -50,6 +50,12 @@ export class PluginManager {
   private logger: Logger;
   private reloading = false;
 
+  /**
+   * 必需服务列表: softReload 完成后若缺失会自动恢复。
+   * 由 App 设置。
+   */
+  requiredServices: readonly string[] = [];
+
   constructor(rootCtx: Context, logger: Logger) {
     this.rootCtx = rootCtx;
     this.logger = logger.child('plugin');
@@ -147,15 +153,22 @@ export class PluginManager {
 
     if (entry.state === 'disabled') return true; // 已经禁用
 
-    if (entry.state === 'active' && entry.context) {
-      entry.context.dispose();
-      entry.context = undefined;
-      this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+    // 设置 reloading 防止 dispose 产生的事件触发重入
+    this.reloading = true;
+    try {
+      if (entry.state === 'active' && entry.context) {
+        entry.context.dispose();
+        entry.context = undefined;
+        this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+      }
+
+      entry.state = 'disabled';
+      this.rootCtx.config.setPluginEnabled(name, false);
+      this.logger.info(`插件已禁用: ${name}`);
+    } finally {
+      this.reloading = false;
     }
 
-    entry.state = 'disabled';
-    this.rootCtx.config.setPluginEnabled(name, false);
-    this.logger.info(`插件已禁用: ${name}`);
     await this.softReload();
     return true;
   }
@@ -263,6 +276,19 @@ export class PluginManager {
       this.reloading = false;
     }
 
+    // Phase 3: 检查必需服务，缺失则自动恢复
+    for (const service of this.requiredServices) {
+      if (!this.rootCtx.hasService(service)) {
+        this.logger.warn(`必需服务 "${service}" 缺失，尝试自动恢复...`);
+        const activated = await this.ensureServiceProvider(service);
+        if (activated) {
+          this.logger.info(`必需服务 "${service}" 已通过插件 "${activated}" 恢复`);
+        } else {
+          this.logger.error(`必需服务 "${service}" 自动恢复失败！`);
+        }
+      }
+    }
+
     // 通知前端刷新状态
     this.rootCtx.emit('plugins:changed').catch(() => {});
   }
@@ -353,11 +379,22 @@ export class PluginManager {
    *
    * @returns 成功激活的插件名，或 undefined
    */
-  async ensureServiceProvider(serviceName: string): Promise<string | undefined> {
+  async ensureServiceProvider(
+    serviceName: string,
+    _resolving?: Set<string>,
+  ): Promise<string | undefined> {
     // 先检查是否已经有提供者在运行
     if (this.rootCtx.hasService(serviceName)) {
       return undefined; // 已存在，无需处理
     }
+
+    // 循环依赖检测
+    const resolving = _resolving ?? new Set<string>();
+    if (resolving.has(serviceName)) {
+      this.logger.error(`检测到循环依赖，跳过: ${serviceName}`);
+      return undefined;
+    }
+    resolving.add(serviceName);
 
     // 遍历所有已注册插件，找到声明 provides 包含该服务名的
     const candidates: PluginEntry[] = [];
@@ -371,25 +408,36 @@ export class PluginManager {
       return undefined;
     }
 
-    // 优先选择被禁用的（用户可能误禁用了）
-    const disabled = candidates.find(e => e.state === 'disabled');
-    if (disabled) {
-      this.logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${disabled.module.name}`);
-      disabled.state = 'pending';
-      disabled.error = undefined;
-      this.rootCtx.config.setPluginEnabled(disabled.module.name, true);
-      await this.tryActivate(disabled);
-      if ((disabled.state as PluginState) === 'active') return disabled.module.name;
-    }
+    // 尝试激活一个候选者（优先 disabled → pending/error）
+    const ordered = [
+      ...candidates.filter(e => e.state === 'disabled'),
+      ...candidates.filter(e => e.state === 'pending' || e.state === 'error'),
+    ];
 
-    // 其次选择 pending/error 的
-    const pending = candidates.find(e => e.state === 'pending' || e.state === 'error');
-    if (pending) {
-      this.logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${pending.module.name}`);
-      pending.state = 'pending';
-      pending.error = undefined;
-      await this.tryActivate(pending);
-      if ((pending.state as PluginState) === 'active') return pending.module.name;
+    for (const candidate of ordered) {
+      if (candidate.state === 'disabled') {
+        this.logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${candidate.module.name}`);
+        candidate.state = 'pending';
+        candidate.error = undefined;
+        this.rootCtx.config.setPluginEnabled(candidate.module.name, true);
+      } else {
+        this.logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${candidate.module.name}`);
+        candidate.state = 'pending';
+        candidate.error = undefined;
+      }
+
+      // 递归确保该候选者的依赖链也有提供者
+      for (const dep of candidate.requiredDeps) {
+        if (!this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
+          await this.ensureServiceProvider(dep.service, resolving);
+        }
+      }
+
+      await this.tryActivate(candidate);
+      if ((candidate.state as PluginState) === 'active') {
+        this.rootCtx.config.save();
+        return candidate.module.name;
+      }
     }
 
     // 如果有 active 的候选者但服务仍然不存在，可能是插件 bug

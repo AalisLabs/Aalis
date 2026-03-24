@@ -342,7 +342,10 @@ export class Context {
     }
     this._children.clear();
 
-    // 逆序执行清理
+    // 记录此上下文注册的服务名，以便 dispose 后发射事件
+    const removedServices = this._services.unregisterByContext(this.id);
+
+    // 逆序执行清理（unregisterByContext 已提前执行，disposable 中的重复调用会安全跳过）
     for (let i = this._disposables.length - 1; i >= 0; i--) {
       try {
         this._disposables[i]();
@@ -351,6 +354,11 @@ export class Context {
       }
     }
     this._disposables = [];
+
+    // 发射服务注销事件，让 App 的自动恢复监听器能响应
+    for (const svc of removedServices) {
+      this._events.emit('service:unregistered', svc).catch(() => {});
+    }
 
     // 清理该上下文注册的钩子
     this.hooks.unregisterByContext(this.id);
