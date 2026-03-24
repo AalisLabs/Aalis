@@ -82,6 +82,12 @@ class FlatVectorStore implements VectorStoreService {
     this.dirty = true;
   }
 
+  async clear(): Promise<void> {
+    this.entries = [];
+    this.dirty = true;
+    await this.save();
+  }
+
   async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
     if (this.entries.length === 0) return [];
     const q = normalize(queryVector);

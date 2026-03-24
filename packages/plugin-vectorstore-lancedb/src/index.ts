@@ -94,6 +94,18 @@ class LanceDBVectorStore implements VectorStoreService {
     return this.table.countRows();
   }
 
+  async clear(): Promise<void> {
+    if (this.table) {
+      this.table.close();
+      this.table = null;
+    }
+    // 删除旧表并重置
+    const tableNames = await this.db.tableNames();
+    if (tableNames.includes(this.tableName)) {
+      await this.db.dropTable(this.tableName);
+    }
+  }
+
   async save(): Promise<void> {
     // LanceDB 自动持久化，无需手动 save
   }

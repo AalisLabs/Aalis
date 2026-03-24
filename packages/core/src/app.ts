@@ -8,7 +8,7 @@ import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
-import type { AgentService, MemoryService } from './types.js';
+import type { AgentService, MemoryService, VectorStoreService } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
@@ -366,9 +366,15 @@ export class App {
       });
 
       // fallback 场景下也注册 /clear
-      this.ctx.command('clear', '清空当前会话历史', async (cmdCtx) => {
+      this.ctx.command('clear', '清空当前会话历史及长期记忆', async (cmdCtx) => {
         await fallback.clearSession(cmdCtx.sessionId);
-        return '会话历史已清空。';
+        // 同时清空向量记忆
+        const vectorstore = this.ctx.getService<VectorStoreService>('vectorstore');
+        if (vectorstore) {
+          await vectorstore.clear();
+          this.logger.info('向量记忆已清空');
+        }
+        return '会话历史与长期记忆已清空。';
       });
     }
 

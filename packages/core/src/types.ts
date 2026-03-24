@@ -164,6 +164,8 @@ export interface VectorStoreService {
   search(queryVector: number[], topK: number): Promise<VectorSearchResult[]>;
   /** 当前存储的向量总数 */
   size(): Promise<number>;
+  /** 清空所有向量数据 */
+  clear(): Promise<void>;
   /** 持久化（由调用方或 dispose 触发） */
   save(): Promise<void>;
 }
