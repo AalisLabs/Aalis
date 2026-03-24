@@ -65,9 +65,10 @@ class MongoMemoryService implements MemoryService {
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const docs = await this.collection
       .find({ sessionId })
-      .sort({ timestamp: 1 })
+      .sort({ timestamp: -1 })
       .limit(limit)
       .toArray();
+    docs.reverse();
 
     return docs.map(doc => ({
       role: doc.role as Message['role'],

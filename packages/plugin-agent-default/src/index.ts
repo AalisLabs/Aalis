@@ -121,7 +121,7 @@ class DefaultAgent implements AgentService {
     const maxToolIterations = llm.getMaxToolIterations();
     const contextLength = llm.getContextLength();
     // 预留 token 预算 = 上下文长度 - 最大输出 token - 安全余量
-    const tokenBudget = contextLength - maxTokens - 512;
+    const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
     try {
       const messages = await this.buildMessages(incoming);
@@ -185,7 +185,7 @@ class DefaultAgent implements AgentService {
           await this.ctx.hooks.run('tool-call:before', toolBeforeData);
 
           // 通知平台：工具开始执行
-          this.ctx.emit('tool:execute', {
+          await this.ctx.emit('tool:execute', {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             toolName: toolBeforeData.name,
@@ -205,7 +205,7 @@ class DefaultAgent implements AgentService {
           result = toolAfterData.result;
 
           // 通知平台：工具执行完成
-          this.ctx.emit('tool:execute', {
+          await this.ctx.emit('tool:execute', {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             toolName: toolBeforeData.name,
@@ -398,15 +398,33 @@ class DefaultAgent implements AgentService {
     if (estimated <= budget) return result;
 
     // 第一轮：从最旧的非 system 历史消息开始删除（跳过末条）
+    // 注意：assistant(含toolCalls) + 紧跟的 tool 消息必须成组删除
     let i = 1;
     while (estimated > budget && i < result.length - 1) {
       if (result[i].role === 'system') {
         i++;
         continue;
       }
+      // 如果是 assistant 且含 toolCalls，连同后续的 tool 消息一起删除
+      if (result[i].role === 'assistant' && result[i].toolCalls && result[i].toolCalls!.length > 0) {
+        estimated -= this.estimateMsgTokens(result[i]);
+        result.splice(i, 1);
+        for (let s = 0; s < systemIndices.length; s++) {
+          if (systemIndices[s] > i) systemIndices[s]--;
+        }
+        // 继续删除紧跟的 tool 消息
+        while (i < result.length - 1 && result[i].role === 'tool') {
+          estimated -= this.estimateMsgTokens(result[i]);
+          result.splice(i, 1);
+          for (let s = 0; s < systemIndices.length; s++) {
+            if (systemIndices[s] > i) systemIndices[s]--;
+          }
+        }
+        continue;
+      }
+      // 如果是孤立的 tool 消息（其 assistant 已删），也删除
       estimated -= this.estimateMsgTokens(result[i]);
       result.splice(i, 1);
-      // systemIndices 需要更新（后面的索引全部 -1）
       for (let s = 0; s < systemIndices.length; s++) {
         if (systemIndices[s] > i) systemIndices[s]--;
       }

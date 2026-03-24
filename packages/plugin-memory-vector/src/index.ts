@@ -140,7 +140,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
         const contextBlock = `以下是从长期记忆中检索到的相关历史片段，可作为参考：\n${contextLines.join('\n')}`;
 
-        const insertIdx = data.messages.findIndex(m => m.role !== 'system') || 1;
+        const idx = data.messages.findIndex(m => m.role !== 'system');
+        const insertIdx = idx === -1 ? data.messages.length : idx;
         data.messages.splice(insertIdx, 0, {
           role: 'system',
           content: contextBlock,
