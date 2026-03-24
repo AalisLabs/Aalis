@@ -15,6 +15,8 @@ interface ChatMessage {
   content: string;
   reasoningContent?: string;
   segments?: ContentSegment[];
+  /** 思考阶段的 segments（文本与工具调用交替） */
+  reasoningSegments?: ContentSegment[];
   timestamp: number;
 }
 
@@ -1190,13 +1192,37 @@ function ChatPanel({
             <div className="message-sender">
               {msg.role === 'user' ? 'You' : status?.name ?? 'Aalis'}
             </div>
-            {msg.role === 'assistant' && msg.reasoningContent && (
+            {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 && (
               <details className="thinking-block">
                 <summary className="thinking-summary">💭 思考过程</summary>
                 <div className="thinking-content">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                    {msg.reasoningContent}
-                  </ReactMarkdown>
+                  {msg.reasoningSegments.map((seg, j) =>
+                    seg.type === 'text' ? (
+                      seg.content ? (
+                        <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                          {seg.content}
+                        </ReactMarkdown>
+                      ) : null
+                    ) : (
+                      <details key={j} className="tool-call-block">
+                        <summary className="tool-call-summary">
+                          🔧 {seg.name}{seg.result == null ? ' …' : ''}
+                        </summary>
+                        <div className="tool-call-content">
+                          <div className="tool-call-args">
+                            <strong>参数</strong>
+                            <pre>{JSON.stringify(seg.args, null, 2)}</pre>
+                          </div>
+                          {seg.result != null && (
+                            <div className="tool-call-result">
+                              <strong>结果</strong>
+                              <pre>{seg.result}</pre>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    )
+                  )}
                 </div>
               </details>
             )}
@@ -1460,10 +1486,20 @@ export function App() {
         } else {
           segments.push({ type: 'text', content });
         }
+        // 如果有最终 reasoningContent，更新 reasoningSegments 中最后一个文本段
+        let reasoningSegments = last.reasoningSegments;
+        if (reasoningContent && reasoningSegments) {
+          reasoningSegments = [...reasoningSegments];
+          const lastRS = reasoningSegments[reasoningSegments.length - 1];
+          if (lastRS && lastRS.type === 'text') {
+            reasoningSegments[reasoningSegments.length - 1] = { type: 'text', content: reasoningContent };
+          }
+        }
         return [...prev.slice(0, -1), {
           ...last,
           content,
           reasoningContent: reasoningContent ?? last.reasoningContent,
+          reasoningSegments: reasoningSegments ?? last.reasoningSegments,
           segments,
         }];
       }
@@ -1483,7 +1519,18 @@ export function App() {
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant' && streamingRef.current) {
         const updated = { ...last };
-        if (reasoningDelta) updated.reasoningContent = (updated.reasoningContent ?? '') + reasoningDelta;
+        if (reasoningDelta) {
+          updated.reasoningContent = (updated.reasoningContent ?? '') + reasoningDelta;
+          // 追加到 reasoningSegments
+          const rSegs = [...(updated.reasoningSegments ?? [])];
+          const lastRS = rSegs[rSegs.length - 1];
+          if (lastRS && lastRS.type === 'text') {
+            rSegs[rSegs.length - 1] = { type: 'text', content: lastRS.content + reasoningDelta };
+          } else {
+            rSegs.push({ type: 'text', content: reasoningDelta });
+          }
+          updated.reasoningSegments = rSegs;
+        }
         if (contentDelta) {
           updated.content += contentDelta;
           const segments = [...(updated.segments ?? [])];
@@ -1504,6 +1551,7 @@ export function App() {
         role: 'assistant' as const,
         content: contentDelta ?? '',
         reasoningContent: reasoningDelta,
+        reasoningSegments: reasoningDelta ? [{ type: 'text' as const, content: reasoningDelta }] : [],
         segments: contentDelta ? [{ type: 'text' as const, content: contentDelta }] : [],
         timestamp: Date.now(),
       }];
@@ -1523,6 +1571,13 @@ export function App() {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
         if (last && last.role === 'assistant') {
+          // 判断是否处于"思考"阶段：有 reasoning 但还没有内容文本
+          const isThinking = !last.content && (last.reasoningContent || (!last.segments?.length));
+          if (isThinking) {
+            const rSegs = [...(last.reasoningSegments ?? [])];
+            rSegs.push({ type: 'tool_call', name: toolName, args: toolArgs });
+            return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
+          }
           const segments = [...(last.segments ?? [])];
           segments.push({ type: 'tool_call', name: toolName, args: toolArgs });
           return [...prev.slice(0, -1), { ...last, segments }];
@@ -1531,19 +1586,30 @@ export function App() {
         return [...prev, {
           role: 'assistant' as const,
           content: '',
-          segments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs }],
+          reasoningSegments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs }],
           timestamp: Date.now(),
         }];
       }
-      // toolPhase === 'end'——填充结果
-      if (last && last.role === 'assistant' && last.segments) {
-        const segments = [...last.segments];
-        const idx = segments.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
-        if (idx !== -1) {
-          const seg = segments[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
-          segments[idx] = { ...seg, result: toolResult };
+      // toolPhase === 'end'——填充结果，先查 reasoningSegments 再查 segments
+      if (last && last.role === 'assistant') {
+        if (last.reasoningSegments) {
+          const rSegs = [...last.reasoningSegments];
+          const idx = rSegs.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
+          if (idx !== -1) {
+            const seg = rSegs[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
+            rSegs[idx] = { ...seg, result: toolResult };
+            return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
+          }
         }
-        return [...prev.slice(0, -1), { ...last, segments }];
+        if (last.segments) {
+          const segments = [...last.segments];
+          const idx = segments.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
+          if (idx !== -1) {
+            const seg = segments[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
+            segments[idx] = { ...seg, result: toolResult };
+            return [...prev.slice(0, -1), { ...last, segments }];
+          }
+        }
       }
       return prev;
     });
