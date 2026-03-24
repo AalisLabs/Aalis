@@ -80,6 +80,25 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-adapter-onebot:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/ws':
+        specifier: ^8.5.0
+        version: 8.18.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-agent-default:
     dependencies:
       '@aalis/core':
