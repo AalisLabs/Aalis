@@ -320,6 +320,27 @@ export interface PluginMeta {
   provides?: string[];
 }
 
+// ----- 插件扩展声明 -----
+
+/**
+ * 插件可以声明它对 core 做了哪些扩展，用于前端展示和文档生成。
+ *
+ * @example
+ * export const extends_: ExtendDeclaration = {
+ *   events: ['scheduler:tick', 'scheduler:error'],
+ *   hooks: ['schedule:before'],
+ *   mixins: { scheduler: ['schedule', 'cron'] },
+ * };
+ */
+export interface ExtendDeclaration {
+  /** 该插件新增的自定义事件名 */
+  events?: string[];
+  /** 该插件新增的自定义钩子名 */
+  hooks?: string[];
+  /** 该插件 mixin 到 Context 上的方法: { 服务名: [方法名...] } */
+  mixins?: Record<string, string[]>;
+}
+
 // ----- 配置 Schema (internal-framework-style) -----
 
 export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
