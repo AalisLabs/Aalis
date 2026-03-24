@@ -42,18 +42,11 @@ interface SystemStatus {
   commands: CommandInfo[];
 }
 
-interface ExtendDeclaration {
-  events?: string[];
-  hooks?: string[];
-  mixins?: Record<string, string[]>;
-}
-
 interface PluginInfo {
   name: string;
   state: string;
   provides: string[];
   core: boolean;
-  extends?: ExtendDeclaration;
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;
@@ -209,7 +202,6 @@ function useWebSocket(
   onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean) => void,
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
-  onStateChanged?: () => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -248,8 +240,6 @@ function useWebSocket(
             onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {
             onLog(data.log);
-          } else if (data.type === 'state_changed') {
-            onStateChanged?.();
           }
         } catch { /* ignore */ }
       };
@@ -261,7 +251,7 @@ function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged]);
+  }, [onMessage, onStream, onLog, onToolCall]);
 
   const send = useCallback((content: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -826,6 +816,8 @@ function SchemaForm({
               </div>
               );
             })}
+              </div>
+            ))}
           </div>
         );
       })}
@@ -1038,8 +1030,7 @@ function PluginConfigPage({
       {plugins.map(p => {
         const isEditing = editingPlugin === p.name;
         const isOpen = openSections.has(p.name);
-        const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length || p.extends.mixins && Object.keys(p.extends.mixins).length);
-        const hasDetail = p.provides.length > 0 || hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
+        const hasDetail = p.provides.length > 0 || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
         const hasSchema = !!p.configSchema;
         return (
           <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={p.name}>
@@ -1075,17 +1066,6 @@ function PluginConfigPage({
             {isOpen && p.provides.length > 0 && (
               <div className="plugin-card-provides">
                 {p.provides.map(s => <span className="tool-chip" key={s}>{s}</span>)}
-              </div>
-            )}
-
-            {isOpen && hasExtends && (
-              <div className="plugin-card-extends">
-                <span className="extends-label">扩展 Core:</span>
-                {p.extends!.events?.map(e => <span className="extends-chip event" key={`e-${e}`}>📡 {e}</span>)}
-                {p.extends!.hooks?.map(h => <span className="extends-chip hook" key={`h-${h}`}>🪝 {h}</span>)}
-                {p.extends!.mixins && Object.entries(p.extends!.mixins).map(([svc, methods]) =>
-                  methods.map(m => <span className="extends-chip mixin" key={`m-${svc}-${m}`}>🔗 ctx.{m}()</span>)
-                )}
               </div>
             )}
 
@@ -2282,6 +2262,8 @@ export function App() {
     });
   }, []);
 
+  const { send, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall);
+
   const refreshPlugins = useCallback(() => {
     api<{ plugins: PluginInfo[] }>('/api/plugins')
       .then(d => setPlugins(d.plugins ?? []))
@@ -2297,14 +2279,6 @@ export function App() {
       .then(d => setServicesData(d.services ?? null))
       .catch(() => {});
   }, []);
-
-  const handleStateChanged = useCallback(() => {
-    refreshPlugins();
-    refreshServices();
-    api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
-  }, [refreshPlugins, refreshServices]);
-
-  const { send, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged);
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
