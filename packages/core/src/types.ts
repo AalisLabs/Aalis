@@ -134,6 +134,8 @@ export interface LLMService {
   getTemperature(): number;
   getMaxTokens(): number;
   getMaxToolIterations(): number;
+  /** 模型上下文窗口大小（token 数） */
+  getContextLength(): number;
   /** 列出远端可用模型（用于前端下拉框）*/
   listModels?(): Promise<string[]>;
 }

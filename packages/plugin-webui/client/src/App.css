@@ -755,7 +755,7 @@ body {
   font-family: inherit;
   outline: none;
   min-height: 42px;
-  max-height: 140px;
+  max-height: 300px;
   transition: border-color var(--transition);
 }
 
