@@ -16,12 +16,13 @@ export interface PluginModule {
 
 // ----- 插件状态 -----
 
-export type PluginState = 'pending' | 'activating' | 'active' | 'disabled' | 'disposed';
+export type PluginState = 'pending' | 'activating' | 'active' | 'disabled' | 'disposed' | 'error';
 
 export interface PluginEntry {
   module: PluginModule;
   config: Record<string, unknown>;
   state: PluginState;
+  error?: string;
   context?: Context;
   requiredDeps: NormalizedDependency[];
   optionalDeps: NormalizedDependency[];
@@ -116,8 +117,9 @@ export class PluginManager {
     const entry = this.plugins.get(name);
     if (!entry) return false;
 
-    if (entry.state !== 'disabled') return true; // 已经启用
+    if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
     entry.state = 'pending';
+    entry.error = undefined;
     this.rootCtx.config.setPluginEnabled(name, true);
     this.logger.info(`插件已启用: ${name}`);
     await this.tryActivate(entry);
@@ -153,13 +155,14 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; config: Record<string, unknown> }> {
+  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; config: Record<string, unknown>; error?: string }> {
     return [...this.plugins.entries()].map(([name, entry]) => ({
       name,
       state: entry.state,
       provides: entry.module.provides,
       core: entry.module.core,
       config: entry.config,
+      error: entry.error,
     }));
   }
 
@@ -217,6 +220,7 @@ export class PluginManager {
     try {
       await entry.module.apply(ctx, entry.config);
       entry.state = 'active';
+      entry.error = undefined;
       this.logger.info(`插件已激活: ${entry.module.name}`);
       await this.rootCtx.emit('plugin:loaded', entry.module.name);
     } catch (err) {
@@ -224,7 +228,8 @@ export class PluginManager {
       this.logger.error(`插件 "${entry.module.name}" 激活失败: ${message}`);
       ctx.dispose();
       entry.context = undefined;
-      entry.state = 'pending';
+      entry.state = 'error';
+      entry.error = message;
     }
   }
 

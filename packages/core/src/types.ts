@@ -27,6 +27,29 @@ export interface OutgoingMessage {
   reasoningContent?: string;
 }
 
+/** 流式消息片段 */
+export interface StreamChunkMessage {
+  sessionId: string;
+  platform?: string;
+  contentDelta?: string;
+  reasoningDelta?: string;
+  done?: boolean;
+}
+
+/** 工具调用状态通知 */
+export interface ToolExecuteMessage {
+  sessionId: string;
+  platform?: string;
+  /** 工具名称 */
+  toolName: string;
+  /** 传入工具的参数 */
+  args: Record<string, unknown>;
+  /** 'start' = 开始调用, 'end' = 调用完成 */
+  phase: 'start' | 'end';
+  /** 工具返回结果（仅在 phase='end' 时存在） */
+  result?: string;
+}
+
 // ----- 工具调用 (DeepSeek/OpenAI format) -----
 
 export interface ToolFunction {
@@ -87,16 +110,30 @@ export interface ChatResponse {
   };
 }
 
-export interface ModelInfo {
-  id: string;
-  name?: string;
+/** 流式响应的单个 chunk */
+export interface ChatStreamChunk {
+  /** 增量内容片段 */
+  contentDelta?: string;
+  /** 增量思考内容片段 */
+  reasoningDelta?: string;
+  /** 工具调用（仅在流结束时出现） */
+  toolCalls?: ToolCall[];
+  /** 是否结束 */
+  done?: boolean;
+  /** 用量统计（仅在最后一个 chunk 可能包含） */
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 }
 
 export interface LLMService {
   chat(request: ChatRequest): Promise<ChatResponse>;
-  listModels?(): Promise<ModelInfo[]>;
-  getModel?(): string;
-  setModel?(model: string): void;
+  chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
+  getTemperature(): number;
+  getMaxTokens(): number;
+  getMaxToolIterations(): number;
 }
 
 // ----- 记忆服务接口 -----
@@ -105,6 +142,28 @@ export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
+}
+
+// ----- 向量数据库服务接口 -----
+
+/** 向量搜索结果条目 */
+export interface VectorSearchResult {
+  /** 余弦相似度分数 */
+  score: number;
+  /** 存储时附带的元数据 */
+  metadata: Record<string, unknown>;
+}
+
+/** 向量数据库服务——由 vectorstore 插件提供 */
+export interface VectorStoreService {
+  /** 添加一条向量及其元数据 */
+  add(vector: number[], metadata: Record<string, unknown>): void;
+  /** 搜索最近邻，返回 [分数, 元数据][] */
+  search(queryVector: number[], topK: number): VectorSearchResult[];
+  /** 当前存储的向量总数 */
+  size(): number;
+  /** 持久化（由调用方或 dispose 触发） */
+  save(): void;
 }
 
 // ----- 人格服务接口 -----
@@ -141,6 +200,8 @@ export interface PluginMeta {
 export interface AalisEvents {
   'message:received': [message: IncomingMessage];
   'message:send': [message: OutgoingMessage];
+  'message:stream': [chunk: StreamChunkMessage];
+  'tool:execute': [info: ToolExecuteMessage];
   'service:registered': [name: string, capabilities: string[]];
   'service:unregistered': [name: string];
   'plugin:loaded': [name: string];

@@ -104,8 +104,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 解析数据库路径
   const dbPath = resolve(ctx.config.getConfigDir(), sqliteConfig.path);
   const dbDir = resolve(dbPath, '..');
-  if (!existsSync(dbDir)) {
-    mkdirSync(dbDir, { recursive: true });
+  try {
+    if (!existsSync(dbDir)) {
+      mkdirSync(dbDir, { recursive: true });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.logger.error(`无法创建数据库目录 ${dbDir}: ${msg}`);
+    return;
   }
 
   ctx.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);

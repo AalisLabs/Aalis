@@ -5,10 +5,10 @@ export interface AalisConfig {
   name: string;
   persona: string;
   logLevel: string;
-  agent: {
-    maxToolIterations: number;
-    temperature: number;
-    maxTokens: number;
+  agent?: {
+    maxToolIterations?: number;
+    temperature?: number;
+    maxTokens?: number;
   };
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件名列表 */
@@ -21,11 +21,6 @@ const DEFAULT_CONFIG: AalisConfig = {
   name: 'Aalis',
   persona: 'default',
   logLevel: 'info',
-  agent: {
-    maxToolIterations: 10,
-    temperature: 0.7,
-    maxTokens: 4096,
-  },
   plugins: {},
   disabledPlugins: [],
   servicePreferences: {},
@@ -175,7 +170,9 @@ export class ConfigManager {
       logLevel: this.config.logLevel,
     };
 
-    obj.agent = this.config.agent;
+    if (this.config.agent && Object.keys(this.config.agent).length > 0) {
+      obj.agent = this.config.agent;
+    }
 
     // 恢复插件配置中的环境变量占位符
     if (this.rawYaml) {

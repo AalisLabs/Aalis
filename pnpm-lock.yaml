@@ -23,15 +23,21 @@ importers:
       '@aalis/plugin-memory-sqlite':
         specifier: workspace:*
         version: link:packages/plugin-memory-sqlite
+      '@aalis/plugin-memory-vector':
+        specifier: workspace:*
+        version: link:packages/plugin-memory-vector
       '@aalis/plugin-openai':
         specifier: workspace:*
         version: link:packages/plugin-openai
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:packages/plugin-persona
-      '@aalis/plugin-websearch':
+      '@aalis/plugin-vectorstore':
         specifier: workspace:*
-        version: link:packages/plugin-websearch
+        version: link:packages/plugin-vectorstore
+      '@aalis/plugin-websearch-serper':
+        specifier: workspace:*
+        version: link:packages/plugin-websearch-serper
       '@aalis/plugin-webui':
         specifier: workspace:*
         version: link:packages/plugin-webui
@@ -126,6 +132,19 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-memory-vector:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-openai:
     dependencies:
       '@aalis/core':
@@ -155,7 +174,33 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-vectorstore:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-websearch:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-websearch-serper:
     dependencies:
       '@aalis/core':
         specifier: workspace:*

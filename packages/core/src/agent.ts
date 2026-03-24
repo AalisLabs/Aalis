@@ -2,10 +2,14 @@ import type { Context } from './context.js';
 import type {
   IncomingMessage,
   Message,
+  ChatRequest,
+  ChatResponse,
+  ChatStreamChunk,
   LLMService,
   MemoryService,
   PersonaService,
   ToolCallContext,
+  ToolCall,
 } from './types.js';
 import type { Logger } from './logger.js';
 
@@ -31,22 +35,61 @@ const BASE_SYSTEM_PROMPT = `你是一个智能助手。请根据以下准则行�
 export class Agent {
   private ctx: Context;
   private logger: Logger;
-  private maxToolIterations: number;
-  private temperature: number;
-  private maxTokens: number;
 
   constructor(ctx: Context) {
     this.ctx = ctx;
     this.logger = ctx.logger.child('agent');
 
-    const agentConfig = ctx.config.get('agent');
-    this.maxToolIterations = agentConfig.maxToolIterations;
-    this.temperature = agentConfig.temperature;
-    this.maxTokens = agentConfig.maxTokens;
-
     // 监听传入的消息
     ctx.on('message:received', (msg) => this.handleMessage(msg));
     this.logger.info('会话代理已初始化');
+  }
+
+  /**
+   * 消费流式 LLM 调用，累积完整响应，同时向前端推送增量事件
+   */
+  private async consumeStream(
+    llm: LLMService,
+    request: ChatRequest,
+    sessionId: string,
+    platform: string,
+  ): Promise<ChatResponse> {
+    let content = '';
+    let reasoningContent = '';
+    let toolCalls: ToolCall[] | undefined;
+    let usage: ChatResponse['usage'] | undefined;
+
+    for await (const chunk of llm.chatStream(request)) {
+      if (chunk.contentDelta) {
+        content += chunk.contentDelta;
+        await this.ctx.emit('message:stream', {
+          sessionId,
+          platform,
+          contentDelta: chunk.contentDelta,
+        });
+      }
+      if (chunk.reasoningDelta) {
+        reasoningContent += chunk.reasoningDelta;
+        await this.ctx.emit('message:stream', {
+          sessionId,
+          platform,
+          reasoningDelta: chunk.reasoningDelta,
+        });
+      }
+      if (chunk.done) {
+        toolCalls = chunk.toolCalls;
+      }
+      if (chunk.usage) {
+        usage = chunk.usage;
+      }
+    }
+
+    return {
+      content,
+      reasoningContent: reasoningContent || undefined,
+      toolCalls,
+      usage,
+    };
   }
 
   private async handleMessage(incoming: IncomingMessage): Promise<void> {
@@ -73,6 +116,11 @@ export class Agent {
       return;
     }
 
+    // 从 LLM 服务读取参数
+    const temperature = llm.getTemperature();
+    const maxTokens = llm.getMaxTokens();
+    const maxToolIterations = llm.getMaxToolIterations();
+
     try {
       const messages = await this.buildMessages(incoming);
       const tools = this.ctx.tools.getDefinitions();
@@ -86,12 +134,12 @@ export class Agent {
       const llmBeforeData = { messages, tools };
       await this.ctx.hooks.run('llm-call:before', llmBeforeData);
 
-      let response = await llm.chat({
+      let response = await this.consumeStream(llm, {
         messages: llmBeforeData.messages,
         tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
-        temperature: this.temperature,
-        maxTokens: this.maxTokens,
-      });
+        temperature,
+        maxTokens,
+      }, incoming.sessionId, incoming.platform);
 
       // Hook: llm-call:after — 插件可以处理 LLM 返回结果
       const llmAfterData = { response, messages: llmBeforeData.messages };
@@ -106,7 +154,7 @@ export class Agent {
 
       // 工具调用循环
       let iterations = 0;
-      while (response.toolCalls && response.toolCalls.length > 0 && iterations < this.maxToolIterations) {
+      while (response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
         iterations++;
         this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
 
@@ -131,6 +179,15 @@ export class Agent {
           const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
           await this.ctx.hooks.run('tool-call:before', toolBeforeData);
 
+          // 通知平台：工具开始执行
+          this.ctx.emit('tool:execute', {
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            toolName: toolBeforeData.name,
+            args: toolBeforeData.args,
+            phase: 'start',
+          });
+
           let result = await this.ctx.tools.execute(
             toolBeforeData.name,
             toolBeforeData.args,
@@ -141,6 +198,16 @@ export class Agent {
           const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
           await this.ctx.hooks.run('tool-call:after', toolAfterData);
           result = toolAfterData.result;
+
+          // 通知平台：工具执行完成
+          this.ctx.emit('tool:execute', {
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            toolName: toolBeforeData.name,
+            args: toolBeforeData.args,
+            phase: 'end',
+            result,
+          });
 
           llmBeforeData.messages.push({
             role: 'tool',
@@ -153,12 +220,12 @@ export class Agent {
         const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools };
         await this.ctx.hooks.run('llm-call:before', nextLlmData);
 
-        response = await llm.chat({
+        response = await this.consumeStream(llm, {
           messages: nextLlmData.messages,
           tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
-          temperature: this.temperature,
-          maxTokens: this.maxTokens,
-        });
+          temperature,
+          maxTokens,
+        }, incoming.sessionId, incoming.platform);
 
         const nextLlmAfterData = { response, messages: nextLlmData.messages };
         await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
@@ -192,6 +259,14 @@ export class Agent {
       const combinedReasoning = allReasoning.length > 0
         ? allReasoning.join('\n\n---\n\n')
         : undefined;
+
+      // 发出流结束标记
+      await this.ctx.emit('message:stream', {
+        sessionId: incoming.sessionId,
+        platform: incoming.platform,
+        done: true,
+      });
+
       await this.ctx.emit('message:send', {
         content: replyContent,
         sessionId: incoming.sessionId,

@@ -10,12 +10,8 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   reasoningContent?: string;
+  toolCalls?: { name: string; args: Record<string, unknown>; result?: string }[];
   timestamp: number;
-}
-
-interface ModelInfo {
-  id: string;
-  name?: string;
 }
 
 interface LogEntry {
@@ -37,12 +33,12 @@ interface PluginInfo {
   provides: string[];
   core: boolean;
   config: Record<string, unknown>;
+  error?: string;
 }
 
 interface ServiceProviderInfo {
   contextId: string;
   capabilities: string[];
-  model?: string;
 }
 
 interface ServiceInfo {
@@ -120,7 +116,9 @@ async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
 
 function useWebSocket(
   onMessage: (content: string, reasoningContent?: string) => void,
+  onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean) => void,
   onLog: (entry: LogEntry) => void,
+  onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -128,18 +126,22 @@ function useWebSocket(
   useEffect(() => {
     let ws: WebSocket;
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let disposed = false;
 
     function connect() {
+      if (disposed) return;
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${protocol}//${location.host}/ws`);
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (disposed) return;
         setConnected(true);
         ws.send(JSON.stringify({ type: 'subscribe_logs' }));
       };
 
       ws.onclose = () => {
+        if (disposed) return;
         setConnected(false);
         reconnectTimer = setTimeout(connect, 3000);
       };
@@ -147,8 +149,12 @@ function useWebSocket(
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'message' && data.content) {
+          if (data.type === 'stream') {
+            onStream(data.contentDelta, data.reasoningDelta, data.done);
+          } else if (data.type === 'message' && data.content) {
             onMessage(data.content, data.reasoningContent);
+          } else if (data.type === 'tool_call' && data.toolName) {
+            onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {
             onLog(data.log);
           }
@@ -158,10 +164,11 @@ function useWebSocket(
 
     connect();
     return () => {
+      disposed = true;
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onLog]);
+  }, [onMessage, onStream, onLog, onToolCall]);
 
   const send = useCallback((content: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -192,6 +199,7 @@ function DashboardPage({
   onRefreshServices: () => void;
 }) {
   const activeCount = plugins.filter(p => p.state === 'active').length;
+  const errorCount = plugins.filter(p => p.state === 'error').length;
   const totalCount = plugins.length;
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -211,7 +219,7 @@ function DashboardPage({
       showToast(`${serviceName} 已切换到 ${contextId}`);
       onRefreshServices();
     } else {
-      showToast(res.error ?? '操作失败');
+      showToast(res.error ?? '未知错误');
     }
     setBusy(null);
   };
@@ -250,6 +258,15 @@ function DashboardPage({
             <div className="overview-card-value">{activeCount} / {totalCount}</div>
           </div>
         </div>
+        {errorCount > 0 && (
+          <div className="overview-card overview-card-error">
+            <div className="overview-card-icon">⚠️</div>
+            <div className="overview-card-body">
+              <div className="overview-card-label">错误插件</div>
+              <div className="overview-card-value">{errorCount}</div>
+            </div>
+          </div>
+        )}
         <div className="overview-card">
           <div className="overview-card-icon">🛠</div>
           <div className="overview-card-body">
@@ -285,7 +302,7 @@ function DashboardPage({
                 >
                   {info.providers.map(p => (
                     <option key={p.contextId} value={p.contextId}>
-                      {p.contextId}{p.model ? ` (${p.model})` : ''}
+                      {p.contextId}
                     </option>
                   ))}
                 </select>
@@ -293,12 +310,7 @@ function DashboardPage({
             ) : info.providers.length === 1 ? (
               <div className="service-slot-single">
                 <span className="service-slot-label">提供者</span>
-                <span className="service-slot-provider-name">
-                  {info.providers[0].contextId}
-                  {info.providers[0].model && (
-                    <span className="service-model-tag">{info.providers[0].model}</span>
-                  )}
-                </span>
+                <span className="service-slot-provider-name">{info.providers[0].contextId}</span>
               </div>
             ) : (
               <div className="service-slot-single">
@@ -315,6 +327,7 @@ function DashboardPage({
                   ))}
               </div>
             )}
+
           </div>
         ))}
       </div>
@@ -436,7 +449,7 @@ function PluginConfigPage({
       showToast(`${plugin.name} 已${action === 'enable' ? '启用' : '禁用'}`);
       onRefresh();
     } else {
-      showToast(res.error ?? '操作失败');
+      showToast(res.error ?? '未知错误');
     }
     setBusy(null);
   };
@@ -453,9 +466,11 @@ function PluginConfigPage({
       method: 'PUT',
       body: JSON.stringify({ config: parsed }),
     });
-    showToast(`${pluginName} 配置已更新`);
+    showToast(`${pluginName} 配置已更新，正在重载…`);
     setEditingPlugin(null);
     onRefresh();
+    // 插件重载是异步的，延迟再刷新一次以获取最终状态
+    setTimeout(() => onRefresh(), 1500);
     setBusy(null);
   };
 
@@ -464,12 +479,14 @@ function PluginConfigPage({
     disabled: '已禁用',
     pending: '等待中',
     disposed: '已释放',
+    error: '运行错误',
   };
 
   const stateBadge: Record<string, string> = {
     active: 'active',
     disabled: 'disposed',
     pending: 'pending',
+    error: 'error',
   };
 
   const toggleSection = (key: string) => {
@@ -485,22 +502,15 @@ function PluginConfigPage({
     name: '',
     persona: '',
     logLevel: 'info',
-    agent: { maxToolIterations: 10, temperature: 0.7, maxTokens: 4096 },
   });
 
   // 当 config 变化时同步 draft
   useEffect(() => {
     if (config) {
-      const agent = (config.agent ?? {}) as Record<string, unknown>;
       setGlobalDraft({
         name: (config.name as string) ?? '',
         persona: (config.persona as string) ?? '',
         logLevel: (config.logLevel as string) ?? 'info',
-        agent: {
-          maxToolIterations: (agent.maxToolIterations as number) ?? 10,
-          temperature: (agent.temperature as number) ?? 0.7,
-          maxTokens: (agent.maxTokens as number) ?? 4096,
-        },
       });
     }
   }, [config]);
@@ -517,7 +527,7 @@ function PluginConfigPage({
       setEditingGlobal(false);
       onConfigSaved();
     } else {
-      showToast(res.error ?? '保存失败');
+      showToast(res.error ?? '未知错误');
     }
   };
 
@@ -566,25 +576,6 @@ function PluginConfigPage({
                     <option value="error">error</option>
                   </select>
                 </div>
-                <div style={{ margin: '10px 0 6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Agent</div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">agent.temperature</label>
-                  <input className="config-edit-input" type="number" step="0.1" min="0" max="2"
-                    value={globalDraft.agent.temperature}
-                    onChange={e => setGlobalDraft(d => ({ ...d, agent: { ...d.agent, temperature: Number(e.target.value) } }))} />
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">agent.maxTokens</label>
-                  <input className="config-edit-input" type="number" step="256" min="256"
-                    value={globalDraft.agent.maxTokens}
-                    onChange={e => setGlobalDraft(d => ({ ...d, agent: { ...d.agent, maxTokens: Number(e.target.value) } }))} />
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">agent.maxToolIterations</label>
-                  <input className="config-edit-input" type="number" step="1" min="1" max="50"
-                    value={globalDraft.agent.maxToolIterations}
-                    onChange={e => setGlobalDraft(d => ({ ...d, agent: { ...d.agent, maxToolIterations: Number(e.target.value) } }))} />
-                </div>
               </div>
             ) : (
               <>
@@ -600,9 +591,6 @@ function PluginConfigPage({
                   <span className="key">logLevel</span>
                   <span className="val">{(config.logLevel as string) ?? '-'}</span>
                 </div>
-                {config.agent && (
-                  <ConfigValue label="agent" value={config.agent} />
-                )}
               </>
             )}
           </div>
@@ -617,7 +605,7 @@ function PluginConfigPage({
         const isOpen = openSections.has(p.name);
         const hasDetail = p.provides.length > 0 || (p.config && Object.keys(p.config).length > 0);
         return (
-          <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''}`} key={p.name}>
+          <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={p.name}>
             <div className="plugin-card-header">
               <div className="plugin-card-info" style={{ cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && toggleSection(p.name)}>
                 {hasDetail && <span className={`config-block-toggle ${isOpen ? 'open' : ''}`}>▶</span>}
@@ -637,6 +625,10 @@ function PluginConfigPage({
                 <span className="toggle-slider" />
               </label>
             </div>
+
+            {p.state === 'error' && p.error && (
+              <div className="plugin-error-msg">⚠ {p.error}</div>
+            )}
 
             {isOpen && p.provides.length > 0 && (
               <div className="plugin-card-provides">
@@ -684,15 +676,143 @@ function PluginConfigPage({
   );
 }
 
-// ===== 插件市场页（占位） =====
+// ===== 插件市场页 =====
 
-function MarketplacePage() {
+function MarketplacePage({
+  plugins,
+  onRefresh,
+}: {
+  plugins: PluginInfo[];
+  onRefresh: () => void;
+}) {
+  const [installPkg, setInstallPkg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [uninstalling, setUninstalling] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleScan = async () => {
+    setBusy(true);
+    const res = await api<{ ok?: boolean; loaded?: string[]; message?: string; error?: string }>(
+      '/api/plugins/scan',
+      { method: 'POST' },
+    );
+    if (res.ok) {
+      showToast(res.message ?? '扫描完成');
+      onRefresh();
+    } else {
+      showToast(res.error ?? '扫描失败');
+    }
+    setBusy(false);
+  };
+
+  const handleInstall = async () => {
+    const pkg = installPkg.trim();
+    if (!pkg) return;
+    setBusy(true);
+    const res = await api<{ ok?: boolean; message?: string; error?: string }>(
+      '/api/plugins/install',
+      { method: 'POST', body: JSON.stringify({ name: pkg }) },
+    );
+    if (res.ok) {
+      showToast(res.message ?? '安装成功');
+      setInstallPkg('');
+      onRefresh();
+    } else {
+      showToast(res.error ?? res.message ?? '安装失败');
+    }
+    setBusy(false);
+  };
+
+  const handleUninstall = async (pluginName: string) => {
+    setUninstalling(pluginName);
+    const res = await api<{ ok?: boolean; message?: string; error?: string }>(
+      `/api/plugins/${encodeURIComponent(pluginName)}/uninstall`,
+      { method: 'POST' },
+    );
+    if (res.ok) {
+      showToast(res.message ?? '卸载成功');
+      onRefresh();
+    } else {
+      showToast(res.error ?? '卸载失败');
+    }
+    setUninstalling(null);
+  };
+
+  const stateLabel: Record<string, string> = {
+    active: '运行中',
+    disabled: '已禁用',
+    pending: '等待中',
+    error: '错误',
+    disposed: '已释放',
+  };
+
+  const stateBadge: Record<string, string> = {
+    active: 'active',
+    disabled: 'disposed',
+    pending: 'pending',
+    error: 'error',
+  };
+
   return (
     <div className="page-content page-marketplace">
-      <div className="marketplace-placeholder">
-        <div className="marketplace-icon">🏪</div>
-        <h2>插件市场</h2>
-        <p>即将推出 — 在这里浏览和安装社区插件</p>
+      {toast && <div className="toast">{toast}</div>}
+
+      {/* 安装区 */}
+      <div className="section-label">安装插件</div>
+      <div className="marketplace-install-row">
+        <input
+          className="marketplace-install-input"
+          placeholder="npm 包名，如 @aalis/plugin-example"
+          value={installPkg}
+          onChange={e => setInstallPkg(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleInstall()}
+          disabled={busy}
+        />
+        <button className="btn btn-primary btn-sm" onClick={handleInstall} disabled={busy || !installPkg.trim()}>
+          {busy ? '安装中...' : '安装'}
+        </button>
+        <button className="btn btn-sm" onClick={handleScan} disabled={busy}>
+          重新扫描
+        </button>
+      </div>
+
+      {/* 已安装插件列表 */}
+      <div className="section-label" style={{ marginTop: 24 }}>已安装插件 ({plugins.length})</div>
+      {plugins.length === 0 && <div className="empty-hint">无插件</div>}
+      <div className="marketplace-plugin-list">
+        {plugins.map(p => (
+          <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''}`} key={p.name}>
+            <div className="plugin-card-header">
+              <div className="plugin-card-info">
+                <span className="plugin-card-name">{p.name}</span>
+                <span className={`badge ${stateBadge[p.state] ?? 'pending'}`}>
+                  {stateLabel[p.state] ?? p.state}
+                </span>
+                {p.core && <span className="badge core-badge">核心</span>}
+              </div>
+              {!p.core && (
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => handleUninstall(p.name)}
+                  disabled={uninstalling === p.name}
+                >
+                  {uninstalling === p.name ? '卸载中...' : '卸载'}
+                </button>
+              )}
+            </div>
+            {p.provides.length > 0 && (
+              <div className="plugin-card-provides">
+                {p.provides.map(s => <span className="tool-chip" key={s}>{s}</span>)}
+              </div>
+            )}
+            {p.error && <div className="plugin-error-msg">⚠ {p.error}</div>}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -709,9 +829,6 @@ function ChatPanel({
   setInput,
   onSend,
   width,
-  models,
-  currentModel,
-  onModelChange,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -721,9 +838,6 @@ function ChatPanel({
   setInput: (v: string) => void;
   onSend: () => void;
   width: number;
-  models: ModelInfo[];
-  currentModel: string | null;
-  onModelChange: (model: string) => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -742,20 +856,7 @@ function ChatPanel({
     <div className="chat-panel" style={{ width }}>
       <div className="chat-panel-header">
         <span className="chat-panel-title">💬 {status?.name ?? 'Aalis'}</span>
-        <div className="chat-panel-header-right">
-          {models.length > 0 && (
-            <select
-              className="model-select"
-              value={currentModel ?? ''}
-              onChange={e => onModelChange(e.target.value)}
-            >
-              {models.map(m => (
-                <option key={m.id} value={m.id}>{m.name ?? m.id}</option>
-              ))}
-            </select>
-          )}
-          <div className={`connection-dot ${connected ? 'online' : 'offline'}`} />
-        </div>
+        <div className={`connection-dot ${connected ? 'online' : 'offline'}`} />
       </div>
       <div className="messages">
         {messages.length === 0 && (
@@ -778,6 +879,27 @@ function ChatPanel({
                   </ReactMarkdown>
                 </div>
               </details>
+            )}
+            {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+              msg.toolCalls.map((tc, j) => (
+                <details key={j} className="tool-call-block">
+                  <summary className="tool-call-summary">
+                    🔧 {tc.name}{tc.result == null ? ' …' : ''}
+                  </summary>
+                  <div className="tool-call-content">
+                    <div className="tool-call-args">
+                      <strong>参数</strong>
+                      <pre>{JSON.stringify(tc.args, null, 2)}</pre>
+                    </div>
+                    {tc.result != null && (
+                      <div className="tool-call-result">
+                        <strong>结果</strong>
+                        <pre>{tc.result}</pre>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ))
             )}
             <div className="message-bubble">
               {msg.role === 'assistant' ? (
@@ -890,11 +1012,48 @@ export function App() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [servicesData, setServicesData] = useState<Record<string, ServiceInfo> | null>(null);
   const [chatWidth, setChatWidth] = useState(420);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [currentModel, setCurrentModel] = useState<string | null>(null);
+
+  const streamingRef = useRef(false);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
-    setMessages(prev => [...prev, { role: 'assistant', content, reasoningContent, timestamp: Date.now() }]);
+    // message:send 到达时，用完整内容替换流式消息（如果有的话）
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant' && streamingRef.current) {
+        // 替换正在流式传输的消息为完整版本
+        streamingRef.current = false;
+        return [...prev.slice(0, -1), { role: 'assistant' as const, content, reasoningContent, timestamp: Date.now() }];
+      }
+      streamingRef.current = false;
+      return [...prev, { role: 'assistant' as const, content, reasoningContent, timestamp: Date.now() }];
+    });
+    setLoading(false);
+  }, []);
+
+  const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean) => {
+    if (done) {
+      // 流结束标记 — 不做额外操作，等 message:send 带完整内容
+      return;
+    }
+
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant' && streamingRef.current) {
+        // 追加到现有流式消息
+        const updated = { ...last };
+        if (contentDelta) updated.content += contentDelta;
+        if (reasoningDelta) updated.reasoningContent = (updated.reasoningContent ?? '') + reasoningDelta;
+        return [...prev.slice(0, -1), updated];
+      }
+      // 创建新的助手消息
+      streamingRef.current = true;
+      return [...prev, {
+        role: 'assistant' as const,
+        content: contentDelta ?? '',
+        reasoningContent: reasoningDelta,
+        timestamp: Date.now(),
+      }];
+    });
     setLoading(false);
   }, []);
 
@@ -905,7 +1064,32 @@ export function App() {
     });
   }, []);
 
-  const { send, connected } = useWebSocket(handleIncoming, handleLog);
+  const handleToolCall = useCallback((toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => {
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (toolPhase === 'start') {
+        // 工具开始执行——在当前助手消息上追加，或新建一条
+        if (last && last.role === 'assistant') {
+          const updated = { ...last, toolCalls: [...(last.toolCalls ?? []), { name: toolName, args: toolArgs }] };
+          return [...prev.slice(0, -1), updated];
+        }
+        streamingRef.current = true;
+        return [...prev, { role: 'assistant' as const, content: '', toolCalls: [{ name: toolName, args: toolArgs }], timestamp: Date.now() }];
+      }
+      // toolPhase === 'end'——填充结果
+      if (last && last.role === 'assistant' && last.toolCalls) {
+        const calls = [...last.toolCalls];
+        const idx = calls.findIndex(tc => tc.name === toolName && !tc.result);
+        if (idx !== -1) {
+          calls[idx] = { ...calls[idx], result: toolResult };
+        }
+        return [...prev.slice(0, -1), { ...last, toolCalls: calls }];
+      }
+      return prev;
+    });
+  }, []);
+
+  const { send, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall);
 
   const refreshPlugins = useCallback(() => {
     api<{ plugins: PluginInfo[] }>('/api/plugins')
@@ -923,31 +1107,13 @@ export function App() {
       .catch(() => {});
   }, []);
 
-  const refreshModels = useCallback(() => {
-    api<{ models: ModelInfo[] }>('/api/llm/models')
-      .then(d => setModels(d.models ?? []))
-      .catch(() => {});
-    api<{ model: string | null }>('/api/llm/model')
-      .then(d => setCurrentModel(d.model))
-      .catch(() => {});
-  }, []);
-
-  const handleModelChange = useCallback((model: string) => {
-    setCurrentModel(model);
-    api<{ ok?: boolean }>('/api/llm/model', {
-      method: 'PUT',
-      body: JSON.stringify({ model }),
-    }).catch(() => {});
-  }, []);
-
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
     refreshConfig();
     refreshPlugins();
     refreshServices();
-    refreshModels();
     api<LogEntry[]>('/api/logs').then(setLogs).catch(() => {});
-  }, [refreshPlugins, refreshConfig, refreshServices, refreshModels]);
+  }, [refreshPlugins, refreshConfig, refreshServices]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1014,7 +1180,9 @@ export function App() {
               onRefreshServices={refreshServices}
             />
           )}
-          {activeTab === 'marketplace' && <MarketplacePage />}
+          {activeTab === 'marketplace' && (
+            <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />
+          )}
           {activeTab === 'plugin-config' && (
             <PluginConfigPage
               plugins={plugins}
@@ -1066,9 +1234,6 @@ export function App() {
         setInput={setInput}
         onSend={handleSend}
         width={chatWidth}
-        models={models}
-        currentModel={currentModel}
-        onModelChange={handleModelChange}
       />
     </div>
   );
