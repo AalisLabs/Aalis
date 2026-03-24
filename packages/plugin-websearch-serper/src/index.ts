@@ -3,7 +3,7 @@ import type { Context, ConfigSchema } from '@aalis/core';
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-websearch-serper';
-export const provides = ['websearch'];
+export const provides: string[] = [];
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'Serper API Key', required: true },
@@ -194,11 +194,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     `限制: ${cfg.maxPerMinute}/min, ${cfg.maxPerDay}/day, ` +
     `并发: ${cfg.maxConcurrent})`,
   );
-
-  // 注册为 websearch 服务
-  ctx.provide('websearch', { name: 'serper' }, {
-    capabilities: ['web_search', 'rate_limited'],
-  });
 
   // 注册搜索工具
   ctx.registerTool({
