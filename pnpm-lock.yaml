@@ -53,9 +53,12 @@ importers:
       '@aalis/plugin-websearch-serper':
         specifier: workspace:*
         version: link:packages/plugin-websearch-serper
-      '@aalis/plugin-webui':
+      '@aalis/plugin-webui-client':
         specifier: workspace:*
-        version: link:packages/plugin-webui
+        version: link:packages/plugin-webui-client
+      '@aalis/plugin-webui-server':
+        specifier: workspace:*
+        version: link:packages/plugin-webui-server
     devDependencies:
       '@types/node':
         specifier: ^22.19.15
@@ -305,32 +308,20 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-webui:
+  packages/plugin-webui-client:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      express:
-        specifier: ^5.1.0
-        version: 5.2.1
-      ws:
-        specifier: ^8.18.0
-        version: 8.20.0
     devDependencies:
-      '@types/express':
-        specifier: ^5.0.0
-        version: 5.0.6
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
-      '@types/ws':
-        specifier: ^8.5.0
-        version: 8.18.1
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-webui/client:
+  packages/plugin-webui-client/client:
     dependencies:
       highlight.js:
         specifier: ^11.11.1
@@ -366,6 +357,31 @@ importers:
       vite:
         specifier: ^6.2.0
         version: 6.4.1(@types/node@22.19.15)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/plugin-webui-server:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+    devDependencies:
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/ws':
+        specifier: ^8.5.0
+        version: 8.18.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
 packages:
 

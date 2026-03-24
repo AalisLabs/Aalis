@@ -202,6 +202,7 @@ function useWebSocket(
   onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean) => void,
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
+  onStateChanged?: () => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -240,6 +241,8 @@ function useWebSocket(
             onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {
             onLog(data.log);
+          } else if (data.type === 'state_changed') {
+            onStateChanged?.();
           }
         } catch { /* ignore */ }
       };
@@ -251,7 +254,7 @@ function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged]);
 
   const send = useCallback((content: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -2243,8 +2246,6 @@ export function App() {
     });
   }, []);
 
-  const { send, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall);
-
   const refreshPlugins = useCallback(() => {
     api<{ plugins: PluginInfo[] }>('/api/plugins')
       .then(d => setPlugins(d.plugins ?? []))
@@ -2260,6 +2261,14 @@ export function App() {
       .then(d => setServicesData(d.services ?? null))
       .catch(() => {});
   }, []);
+
+  const handleStateChanged = useCallback(() => {
+    refreshPlugins();
+    refreshServices();
+    api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
+  }, [refreshPlugins, refreshServices]);
+
+  const { send, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged);
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});

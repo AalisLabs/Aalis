@@ -1,11 +1,11 @@
 {
-  "name": "@aalis/plugin-webui",
+  "name": "@aalis/plugin-webui-server",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && cd client && npm run build",
+    "build": "tsc",
     "dev": "tsc --watch"
   },
   "dependencies": {
