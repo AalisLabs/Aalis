@@ -8,6 +8,10 @@ import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { Agent } from './agent.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
+import { readdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 
 /**
  * Aalis 应用主容器
@@ -22,6 +26,7 @@ export class App {
   readonly ctx: Context;
   readonly plugins: PluginManager;
   readonly logger: Logger;
+  readonly packagesDir: string;
 
   private events: EventBus;
   private agent?: Agent;
@@ -48,6 +53,7 @@ export class App {
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.ctx, this.logger);
+    this.packagesDir = resolve(process.cwd(), 'packages');
 
     // 4. 注册核心服务（让插件能通过 ctx.getService 访问）
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
@@ -63,6 +69,199 @@ export class App {
     const fileConfig = this.ctx.config.getPluginConfig(module.name);
     const mergedConfig = { ...fileConfig, ...config };
     await this.plugins.register(module, mergedConfig);
+  }
+
+  /**
+   * 自动扫描 packages/ 目录，动态加载所有插件
+   *
+   * 规则:
+   * - 跳过 package.json 中标记 `"aalis": { "core": true }` 的包
+   * - 其余包全部视为插件，通过 dynamic import() 加载
+   */
+  async autoLoadPlugins(packagesDir?: string): Promise<void> {
+    const dir = packagesDir ?? this.packagesDir;
+    const discovered = await this.discoverPlugins(dir);
+    this.logger.info(`发现 ${discovered.length} 个插件`);
+
+    for (const pkg of discovered) {
+      try {
+        const mod = await import(pkg.name) as PluginModule;
+        await this.plugin(mod);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`加载插件 "${pkg.name}" 失败: ${message}`);
+      }
+    }
+  }
+
+  /**
+   * 重新扫描 packages/ 目录，加载新发现的插件（已注册的跳过）
+   * 返回新加载的插件名列表
+   */
+  async rescanPlugins(): Promise<string[]> {
+    const discovered = await this.discoverPlugins(this.packagesDir);
+    const loaded: string[] = [];
+
+    for (const pkg of discovered) {
+      // 跳过已注册的
+      if (this.plugins.getPlugin(pkg.name)) continue;
+
+      try {
+        const mod = await import(pkg.name) as PluginModule;
+        await this.plugin(mod);
+        loaded.push(pkg.name);
+        this.logger.info(`热加载插件: ${pkg.name}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`热加载插件 "${pkg.name}" 失败: ${message}`);
+      }
+    }
+
+    return loaded;
+  }
+
+  /**
+   * 从 npm 安装插件到 packages/ 目录并加载
+   * @param npmPkg npm 包名，如 "@aalis/plugin-example"
+   * @returns 安装结果
+   */
+  async installPlugin(npmPkg: string): Promise<{ ok: boolean; message: string }> {
+    // 从包名推导目录名: @aalis/plugin-xxx → plugin-xxx
+    const dirName = npmPkg.replace(/^@[^/]+\//, '');
+    const targetDir = resolve(this.packagesDir, dirName);
+
+    if (existsSync(targetDir)) {
+      return { ok: false, message: `目录 ${dirName} 已存在` };
+    }
+
+    this.logger.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
+
+    try {
+      // 使用 npm pack 下载到临时目录，然后解压到 packages/
+      const tempTgz = resolve(this.packagesDir, `${dirName}.tgz`);
+
+      await this.exec('npm', ['pack', npmPkg, '--pack-destination', this.packagesDir]);
+
+      // npm pack 产出的文件名格式: scope-name-version.tgz
+      // 找到 tgz 文件
+      const dirents = await readdir(this.packagesDir);
+      const tgzFile = dirents.find(f =>
+        f.endsWith('.tgz') && f.includes(dirName),
+      );
+      if (!tgzFile) {
+        return { ok: false, message: '下载包失败: 未找到 tgz 文件' };
+      }
+
+      const tgzPath = resolve(this.packagesDir, tgzFile);
+
+      // 创建目录并解压
+      await this.exec('mkdir', ['-p', targetDir]);
+      await this.exec('tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1']);
+
+      // 清理 tgz
+      await this.exec('rm', ['-f', tgzPath]);
+
+      // 安装依赖
+      await this.exec('pnpm', ['install', '--filter', npmPkg], process.cwd());
+
+      // 加载插件
+      const newPlugins = await this.rescanPlugins();
+
+      if (newPlugins.length > 0) {
+        return { ok: true, message: `已安装并加载: ${newPlugins.join(', ')}` };
+      } else {
+        return { ok: true, message: `已安装到 packages/${dirName}，但未发现新插件` };
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`安装插件 "${npmPkg}" 失败: ${message}`);
+      return { ok: false, message };
+    }
+  }
+
+  /**
+   * 卸载插件：停用并删除 packages/ 下的目录
+   */
+  async uninstallPlugin(pluginName: string): Promise<{ ok: boolean; message: string }> {
+    // 先卸载
+    await this.plugins.unload(pluginName);
+
+    // 从包名推导目录名
+    const dirName = pluginName.replace(/^@[^/]+\//, '');
+    const targetDir = resolve(this.packagesDir, dirName);
+
+    if (!existsSync(targetDir)) {
+      return { ok: true, message: `插件 ${pluginName} 已卸载（目录不存在）` };
+    }
+
+    try {
+      await this.exec('rm', ['-rf', targetDir]);
+      this.logger.info(`已删除插件目录: packages/${dirName}`);
+      return { ok: true, message: `插件 ${pluginName} 已卸载并删除` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, message };
+    }
+  }
+
+  // ---- 内部方法 ----
+
+  /**
+   * 扫描目录，返回可加载的插件列表
+   */
+  private async discoverPlugins(dir: string): Promise<Array<{ name: string; dir: string }>> {
+    this.logger.info(`正在扫描插件目录: ${dir}`);
+
+    let entries: string[];
+    try {
+      const dirents = await readdir(dir, { withFileTypes: true });
+      entries = dirents
+        .filter(d => d.isDirectory() || d.isSymbolicLink())
+        .map(d => d.name);
+    } catch {
+      this.logger.warn(`无法读取 packages 目录: ${dir}`);
+      return [];
+    }
+
+    const discovered: Array<{ name: string; dir: string }> = [];
+
+    for (const entry of entries) {
+      const pkgJsonPath = resolve(dir, entry, 'package.json');
+      let pkgJson: Record<string, unknown>;
+      try {
+        pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
+      } catch {
+        this.logger.debug(`跳过 ${entry}: 无法读取 package.json`);
+        continue;
+      }
+
+      // 跳过标记为 core 的包
+      const aalisMeta = pkgJson['aalis'] as Record<string, unknown> | undefined;
+      if (aalisMeta?.core) {
+        this.logger.debug(`跳过核心包: ${pkgJson['name']}`);
+        continue;
+      }
+
+      discovered.push({
+        name: pkgJson['name'] as string,
+        dir: resolve(dir, entry),
+      });
+    }
+
+    return discovered;
+  }
+
+  private exec(cmd: string, args: string[], cwd?: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(cmd, args, {
+        cwd: cwd ?? this.packagesDir,
+        timeout: 120_000,
+        maxBuffer: 10 * 1024 * 1024,
+      }, (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message));
+        else resolve(stdout);
+      });
+    });
   }
 
   /**

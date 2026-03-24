@@ -2,8 +2,8 @@ import type {
   Context,
   ChatRequest,
   ChatResponse,
+  ChatStreamChunk,
   LLMService,
-  ModelInfo,
   Message,
   ToolDefinition,
   ToolCall,
@@ -21,6 +21,9 @@ interface OpenAIConfig {
   baseUrl: string;
   model: string;
   timeout?: number;
+  temperature: number;
+  maxTokens: number;
+  maxToolIterations: number;
 }
 
 // ===== OpenAI-compatible 消息格式 =====
@@ -76,6 +79,9 @@ class OpenAILLMService implements LLMService {
   private baseUrl: string;
   private model: string;
   private timeout: number;
+  private temperature: number;
+  private maxTokens: number;
+  private maxToolIterations: number;
   private logger;
 
   constructor(config: OpenAIConfig, logger: Context['logger']) {
@@ -83,31 +89,22 @@ class OpenAILLMService implements LLMService {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.model = config.model;
     this.timeout = config.timeout ?? 120000;
+    this.temperature = config.temperature;
+    this.maxTokens = config.maxTokens;
+    this.maxToolIterations = config.maxToolIterations;
     this.logger = logger;
   }
 
-  getModel(): string {
-    return this.model;
+  getTemperature(): number {
+    return this.temperature;
   }
 
-  setModel(model: string): void {
-    this.model = model;
-    this.logger.info(`模型已切换: ${model}`);
+  getMaxTokens(): number {
+    return this.maxTokens;
   }
 
-  async listModels(): Promise<ModelInfo[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/models`, {
-        headers: { 'Authorization': `Bearer ${this.apiKey}` },
-        signal: AbortSignal.timeout(this.timeout),
-      });
-      if (!response.ok) return [];
-      const data = (await response.json()) as { data?: Array<{ id: string }> };
-      return (data.data ?? []).map(m => ({ id: m.id }));
-    } catch {
-      this.logger.warn('获取模型列表失败');
-      return [];
-    }
+  getMaxToolIterations(): number {
+    return this.maxToolIterations;
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
@@ -175,6 +172,120 @@ class OpenAILLMService implements LLMService {
     return result;
   }
 
+  async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
+    const messages = request.messages.map(m => this.toAPIMessage(m));
+    const tools = request.tools?.map(t => this.toAPITool(t));
+
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages,
+      temperature: request.temperature ?? 0.7,
+      max_tokens: request.maxTokens ?? 4096,
+      stream: true,
+    };
+
+    if (tools && tools.length > 0) {
+      body.tools = tools;
+    }
+
+    this.logger.debug(`流式请求 LLM: ${this.model}, ${messages.length} 条消息`);
+
+    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.timeout),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`LLM API 错误 (${response.status}): ${errorText}`);
+    }
+
+    const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+
+    if (!response.body) {
+      throw new Error('LLM API 返回了空的响应体，无法进行流式读取');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop()!;
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          const payload = trimmed.slice(6);
+          if (payload === '[DONE]') {
+            // 组装工具调用
+            const toolCalls: ToolCall[] = [];
+            for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
+              toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
+            }
+            yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+            return;
+          }
+
+          try {
+            const data = JSON.parse(payload);
+            const delta = data.choices?.[0]?.delta;
+            if (!delta) continue;
+
+            const chunk: ChatStreamChunk = {};
+            if (delta.content) chunk.contentDelta = delta.content;
+
+            // 累积工具调用
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                if (tc.id) {
+                  toolCallBuffers.set(idx, { id: tc.id, name: tc.function?.name ?? '', args: '' });
+                }
+                const entry = toolCallBuffers.get(idx);
+                if (entry) {
+                  if (tc.function?.name) entry.name = tc.function.name;
+                  if (tc.function?.arguments) entry.args += tc.function.arguments;
+                }
+              }
+            }
+
+            if (data.usage) {
+              chunk.usage = {
+                promptTokens: data.usage.prompt_tokens,
+                completionTokens: data.usage.completion_tokens,
+                totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+              };
+            }
+
+            if (chunk.contentDelta || chunk.usage) {
+              yield chunk;
+            }
+          } catch { /* skip malformed JSON */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    // If we get here without [DONE], yield done
+    const toolCalls: ToolCall[] = [];
+    for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
+      toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
+    }
+    yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+  }
+
   private toAPIMessage(msg: Message): APIMessage {
     const apiMsg: APIMessage = {
       role: msg.role,
@@ -224,11 +335,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
     model: (config.model as string) ?? 'deepseek-chat',
     timeout: config.timeout as number | undefined,
+    temperature: (config.temperature as number) ?? 0.7,
+    maxTokens: (config.maxTokens as number) ?? 4096,
+    maxToolIterations: (config.maxToolIterations as number) ?? 10,
   };
 
   if (!openaiConfig.apiKey) {
-    ctx.logger.error('未配置 apiKey，插件无法启动');
-    return;
+    throw new Error('未配置 apiKey，插件无法启动');
   }
 
   const service = new OpenAILLMService(openaiConfig, ctx.logger);

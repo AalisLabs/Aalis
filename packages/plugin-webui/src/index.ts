@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, LogEntry, App, LLMService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App } from '@aalis/core';
 import { getLogBuffer, onLogEntry } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -28,12 +28,19 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'status' | 'log';
+  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
+  contentDelta?: string;
+  reasoningDelta?: string;
+  done?: boolean;
   status?: Record<string, unknown>;
   log?: LogEntry;
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+  toolResult?: string;
+  toolPhase?: 'start' | 'end';
 }
 
 /**
@@ -110,6 +117,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       provides: p.provides ?? [],
       core: p.core ?? false,
       config: sanitizeConfig(p.config),
+      error: p.error,
     }));
     res.json({ plugins });
   });
@@ -135,7 +143,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // 只允许更新安全的顶级字段
-    const allowed = ['name', 'persona', 'logLevel', 'agent'] as const;
+    const allowed = ['name', 'persona', 'logLevel'] as const;
     for (const key of allowed) {
       if (key in updates) {
         ctx.config.set(key, updates[key]);
@@ -175,6 +183,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const success = await app.plugins.updatePluginConfig(pluginName, newConfig);
     if (success) {
+      app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
@@ -213,6 +222,65 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
+  // 重新扫描 packages/ 并加载新插件
+  expressApp.post('/api/plugins/scan', async (_req, res) => {
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    try {
+      const loaded = await app.rescanPlugins();
+      res.json({ ok: true, loaded, message: loaded.length > 0 ? `新加载 ${loaded.length} 个插件` : '无新插件' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // 安装插件（从 npm 下载到 packages/ 并加载）
+  expressApp.post('/api/plugins/install', async (req, res) => {
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    const npmPkg = req.body?.name;
+    if (!npmPkg || typeof npmPkg !== 'string') {
+      res.status(400).json({ error: 'name 字段必须是 npm 包名字符串' });
+      return;
+    }
+    // 基础校验：只允许合法的 npm 包名
+    if (!/^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+$/i.test(npmPkg)) {
+      res.status(400).json({ error: '非法包名' });
+      return;
+    }
+    try {
+      const result = await app.installPlugin(npmPkg);
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // 卸载插件
+  expressApp.post('/api/plugins/:name/uninstall', async (req, res) => {
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    const pluginName = req.params.name;
+    try {
+      const result = await app.uninstallPlugin(pluginName);
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // 保存配置到磁盘
   expressApp.post('/api/config/save', (_req, res) => {
     const app = getApp();
@@ -235,84 +303,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 获取服务列表（含提供者信息）
-  expressApp.get('/api/services', (_req, res) => {
+  expressApp.get('/api/services', async (_req, res) => {
     const serviceNames = ctx.listServices();
-    const services: Record<string, { providers: Array<{ contextId: string; capabilities: string[]; model?: string }>; active: string | undefined }> = {};
+    const services: Record<string, {
+      providers: Array<{ contextId: string; capabilities: string[] }>;
+      active: string | undefined;
+    }> = {};
 
-    for (const name of serviceNames) {
-      const entries = ctx.getServiceEntries(name);
-      services[name] = {
-        providers: entries.map(e => {
-          const info: { contextId: string; capabilities: string[]; model?: string } = {
-            contextId: e.contextId,
-            capabilities: [...e.capabilities],
-          };
-          // 对 LLM 服务附加当前模型信息
-          if (name === 'llm') {
-            const llm = e.instance as LLMService;
-            if (llm.getModel) info.model = llm.getModel();
-          }
-          return info;
-        }),
+    for (const svcName of serviceNames) {
+      const entries = ctx.getServiceEntries(svcName);
+      services[svcName] = {
+        providers: entries.map(e => ({
+          contextId: e.contextId,
+          capabilities: [...e.capabilities],
+        })),
         active: entries.length > 0 ? entries[0].contextId : undefined,
       };
     }
+
     res.json({ services });
-  });
-
-  // ---------- LLM 模型管理 API ----------
-
-  // 获取可用模型列表
-  expressApp.get('/api/llm/models', async (_req, res) => {
-    const llm = ctx.getService<LLMService>('llm');
-    if (!llm || !llm.listModels) {
-      res.json({ models: [] });
-      return;
-    }
-    try {
-      const models = await llm.listModels();
-      res.json({ models });
-    } catch {
-      res.json({ models: [] });
-    }
-  });
-
-  // 获取当前模型
-  expressApp.get('/api/llm/model', (_req, res) => {
-    const llm = ctx.getService<LLMService>('llm');
-    if (!llm || !llm.getModel) {
-      res.json({ model: null });
-      return;
-    }
-    res.json({ model: llm.getModel() });
-  });
-
-  // 切换模型
-  expressApp.put('/api/llm/model', (req, res) => {
-    const model = req.body?.model;
-    if (!model || typeof model !== 'string') {
-      res.status(400).json({ error: 'model 必须是字符串' });
-      return;
-    }
-    const llm = ctx.getService<LLMService>('llm');
-    if (!llm || !llm.setModel) {
-      res.status(500).json({ error: 'LLM 服务不支持模型切换' });
-      return;
-    }
-    llm.setModel(model);
-
-    // 持久化到配置
-    const entries = ctx.getServiceEntries('llm');
-    if (entries.length > 0) {
-      const activeContextId = entries[0].contextId;
-      const pluginConfig = ctx.config.getPluginConfig(activeContextId);
-      pluginConfig.model = model;
-      ctx.config.setPluginConfig(activeContextId, pluginConfig);
-      const app = getApp();
-      if (app) app.saveConfig();
-    }
-
-    res.json({ ok: true, model });
   });
 
   // 切换服务的偏好提供者（同时持久化到配置文件）
@@ -399,6 +408,49 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       content: msg.content,
       sessionId: msg.sessionId,
       reasoningContent: msg.reasoningContent,
+    };
+    const json = JSON.stringify(payload);
+
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
+  // 监听流式增量推送
+  ctx.on('message:stream', (chunk: StreamChunkMessage) => {
+    const sockets = sessions.get(chunk.sessionId);
+    if (!sockets) return;
+
+    const payload: WSOutgoing = {
+      type: 'stream',
+      sessionId: chunk.sessionId,
+      contentDelta: chunk.contentDelta,
+      reasoningDelta: chunk.reasoningDelta,
+      done: chunk.done,
+    };
+    const json = JSON.stringify(payload);
+
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
+  // 监听工具调用事件
+  ctx.on('tool:execute', (info: ToolExecuteMessage) => {
+    const sockets = sessions.get(info.sessionId);
+    if (!sockets) return;
+
+    const payload: WSOutgoing = {
+      type: 'tool_call',
+      sessionId: info.sessionId,
+      toolName: info.toolName,
+      toolArgs: info.args,
+      toolPhase: info.phase,
+      toolResult: info.result,
     };
     const json = JSON.stringify(payload);
 

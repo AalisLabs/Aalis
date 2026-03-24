@@ -402,19 +402,6 @@ body {
   font-weight: 600;
   color: var(--text);
   font-family: 'SF Mono', 'Fira Code', monospace;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.service-model-tag {
-  font-size: 0.68rem;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--primary-glow);
-  color: var(--primary);
-  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .service-slot-caps {
@@ -431,36 +418,38 @@ body {
 
 /* ===== 插件市场占位 ===== */
 
-.marketplace-placeholder {
+.marketplace-install-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.marketplace-install-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-light);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.marketplace-install-input:focus {
+  border-color: var(--accent);
+}
+
+.marketplace-plugin-list {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-muted);
-  text-align: center;
   gap: 8px;
-}
-
-.marketplace-icon {
-  font-size: 3rem;
-  opacity: 0.4;
-}
-
-.marketplace-placeholder h2 {
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.marketplace-placeholder p {
-  font-size: 0.85rem;
 }
 
 .page-marketplace {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 /* ===== 右侧聊天面板 ===== */
@@ -977,6 +966,22 @@ body {
   opacity: 0.55;
 }
 
+.plugin-card.errored {
+  border-color: var(--danger);
+  border-left: 3px solid var(--danger);
+}
+
+.plugin-error-msg {
+  padding: 6px 14px 8px;
+  font-size: 0.78rem;
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.overview-card-error {
+  border-color: var(--danger);
+}
+
 .plugin-card-header {
   display: flex;
   align-items: center;
@@ -1094,6 +1099,16 @@ body {
 .btn-primary:hover:not(:disabled) {
   background: var(--primary-hover);
   color: white;
+}
+
+.btn-danger {
+  background: #d32f2f;
+  color: white;
+  border-color: #d32f2f;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b71c1c;
 }
 
 .btn-sm {
@@ -1257,32 +1272,6 @@ body {
   padding-top: 4px;
 }
 
-/* ===== 模型选择器 ===== */
-
-.chat-panel-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.model-select {
-  font-size: 0.75rem;
-  padding: 3px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-  max-width: 180px;
-  cursor: pointer;
-  transition: border-color var(--transition);
-}
-
-.model-select:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px var(--primary-glow);
-}
-
 /* ===== 思考过程 ===== */
 
 .thinking-block {
@@ -1340,5 +1329,81 @@ details[open] > .thinking-summary::before {
 
 .thinking-content::-webkit-scrollbar-thumb {
   background: rgba(139, 92, 246, 0.2);
+  border-radius: 2px;
+}
+
+/* ===== 工具调用块 ===== */
+
+.tool-call-block {
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  overflow: hidden;
+}
+
+.tool-call-summary {
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-call-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-call-summary::before {
+  content: '▶';
+  font-size: 0.6rem;
+  transition: transform 0.2s;
+}
+
+details[open] > .tool-call-summary::before {
+  transform: rotate(90deg);
+}
+
+.tool-call-content {
+  padding: 0 12px 10px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-height: 400px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(59, 130, 246, 0.1);
+}
+
+.tool-call-content pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-call-content strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(59, 130, 246, 0.7);
+}
+
+.tool-call-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.tool-call-content::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.2);
   border-radius: 2px;
 }

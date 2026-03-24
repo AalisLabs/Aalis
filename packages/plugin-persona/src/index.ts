@@ -72,16 +72,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   let card: PersonaCard;
 
   if (cardPath) {
-    const raw = readFileSync(cardPath, 'utf-8');
-    const parsed = parseYaml(raw) as Record<string, unknown>;
-    card = {
-      name: (parsed.name as string) ?? personaName,
-      description: (parsed.description as string) ?? '',
-      prompt: (parsed.prompt as string) ?? '',
-      traits: parsed.traits as string[] | undefined,
-      greeting: parsed.greeting as string | undefined,
-    };
-    ctx.logger.info(`已加载角色卡: ${card.name} (${cardPath})`);
+    try {
+      const raw = readFileSync(cardPath, 'utf-8');
+      const parsed = parseYaml(raw) as Record<string, unknown>;
+      card = {
+        name: (parsed.name as string) ?? personaName,
+        description: (parsed.description as string) ?? '',
+        prompt: (parsed.prompt as string) ?? '',
+        traits: parsed.traits as string[] | undefined,
+        greeting: parsed.greeting as string | undefined,
+      };
+      ctx.logger.info(`已加载角色卡: ${card.name} (${cardPath})`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.logger.error(`角色卡文件读取/解析失败 (${cardPath}): ${msg}`);
+      card = {
+        name: 'Aalis',
+        description: '一个友好的 AI 助手',
+        prompt: '请友好、专业地与用户交流。',
+      };
+    }
   } else {
     card = {
       name: 'Aalis',

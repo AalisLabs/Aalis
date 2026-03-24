@@ -72,38 +72,6 @@ class MongoMemoryService implements MemoryService {
   }
 }
 
-// ===== 内存 fallback 实现 =====
-
-class InMemoryService implements MemoryService {
-  private sessions = new Map<string, Message[]>();
-
-  async saveMessage(sessionId: string, message: Message): Promise<void> {
-    let history = this.sessions.get(sessionId);
-    if (!history) {
-      history = [];
-      this.sessions.set(sessionId, history);
-    }
-    history.push({
-      role: message.role,
-      content: message.content,
-      toolCalls: message.toolCalls,
-      toolCallId: message.toolCallId,
-      name: message.name,
-      timestamp: message.timestamp ?? Date.now(),
-    });
-  }
-
-  async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
-    const history = this.sessions.get(sessionId);
-    if (!history) return [];
-    return history.slice(-limit);
-  }
-
-  async clearSession(sessionId: string): Promise<void> {
-    this.sessions.delete(sessionId);
-  }
-}
-
 // ===== 插件入口 =====
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
@@ -143,14 +111,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    ctx.logger.warn(`MongoDB 连接失败: ${message}`);
     await client.close().catch(() => {});
-
-    // 回退到内存模式
-    ctx.logger.info('回退到内存记忆模式 (数据不会持久化，重启后丢失)');
-    const fallback = new InMemoryService();
-    ctx.provide('memory', fallback, {
-      capabilities: ['history'],
-    });
+    throw new Error(`MongoDB 连接失败: ${message}`);
   }
 }
