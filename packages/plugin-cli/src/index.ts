@@ -99,25 +99,22 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // 斜杠指令处理 —— 通过指令注册表
-      if (trimmed.startsWith('/')) {
-        const parts = trimmed.slice(1).split(/\s+/);
-        const cmdName = parts[0];
-        const args = parts.slice(1);
-
-        const result = await ctx.commands.execute(cmdName, {
+      // 指令处理 —— 通过指令注册表
+      const parsed = ctx.commands.parseCommand(trimmed);
+      if (parsed) {
+        const result = await ctx.commands.execute(parsed.name, {
           sessionId,
           platform: 'cli',
-          args,
-          raw: trimmed,
+          args: parsed.args,
+          raw: parsed.raw,
         });
 
         if (result) {
           console.log(`\n${result}\n`);
         }
 
-        // /shutdown 后退出循环
-        if (cmdName === 'shutdown' || cmdName === 'restart') break;
+        // shutdown / restart 后退出循环
+        if (parsed.name === 'shutdown' || parsed.name === 'restart') break;
 
         continue;
       }

@@ -27,10 +27,19 @@ interface LogEntry {
   message: string;
 }
 
+interface CommandInfo {
+  name: string;
+  description: string;
+  authority?: number;
+  safety?: string;
+  asTools?: boolean;
+}
+
 interface SystemStatus {
   name: string;
   services: Record<string, boolean>;
   tools: string[];
+  commands: CommandInfo[];
 }
 
 interface PluginInfo {
@@ -102,7 +111,7 @@ interface ServiceInfo {
   active: string | undefined;
 }
 
-type PageTab = 'dashboard' | 'marketplace' | 'plugin-config' | 'platforms' | 'logs';
+type PageTab = 'dashboard' | 'marketplace' | 'plugin-config' | 'platforms' | 'authority' | 'logs';
 
 const SESSION_ID = 'webui-default';
 
@@ -164,6 +173,14 @@ function IconPlatform() {
       <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
       <line x1="8" y1="21" x2="16" y2="21" />
       <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  );
+}
+
+function IconAuthority() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
   );
 }
@@ -340,6 +357,13 @@ function DashboardPage({
             <div className="overview-card-value">{status?.tools.length ?? 0}</div>
           </div>
         </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">⌘</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">已注册指令</div>
+            <div className="overview-card-value">{status?.commands?.length ?? 0}</div>
+          </div>
+        </div>
       </div>
 
       {/* 核心服务槽位 */}
@@ -404,6 +428,25 @@ function DashboardPage({
         {!status || status.tools.length === 0
           ? <div className="empty-hint">无工具</div>
           : status.tools.map(t => <span className="tool-chip" key={t}>{t}</span>)
+        }
+      </div>
+
+      {/* 指令列表 */}
+      <div className="section-label">已注册指令</div>
+      <div className="tools-grid">
+        {!status || !status.commands || status.commands.length === 0
+          ? <div className="empty-hint">无指令</div>
+          : status.commands.map(c => (
+            <span className="tool-chip cmd-chip" key={c.name} title={c.description}>
+              /{c.name}
+              {c.authority != null && c.authority > 1 && (
+                <span className="chip-badge chip-auth">🔒{c.authority}</span>
+              )}
+              {c.safety === 'dangerous' && (
+                <span className="chip-badge chip-danger">⚠️</span>
+              )}
+            </span>
+          ))
         }
       </div>
     </div>
@@ -882,22 +925,19 @@ function PluginConfigPage({
   };
 
   const [editingGlobal, setEditingGlobal] = useState(false);
-  const [globalDraft, setGlobalDraft] = useState({
-    name: '',
-    persona: '',
-    logLevel: 'info',
-  });
+  const [globalDraft, setGlobalDraft] = useState<Record<string, unknown>>({});
 
-  // 当 config 变化时同步 draft
+  // 从 API 返回的 _schema 抽取核心配置 schema
+  const coreSchema: ConfigSchema | undefined = config && (config as Record<string, unknown>)._schema
+    ? (config as Record<string, unknown>)._schema as ConfigSchema
+    : undefined;
+
+  // 当 config / schema 变化时同步 draft
   useEffect(() => {
-    if (config) {
-      setGlobalDraft({
-        name: (config.name as string) ?? '',
-        persona: (config.persona as string) ?? '',
-        logLevel: (config.logLevel as string) ?? 'info',
-      });
+    if (config && coreSchema) {
+      setGlobalDraft(buildDraftFromSchema(coreSchema, config as Record<string, unknown>));
     }
-  }, [config]);
+  }, [config, coreSchema]);
 
   const handleSaveGlobal = async () => {
     setSaving(true);
@@ -935,46 +975,33 @@ function PluginConfigPage({
           )}
         </div>
       </div>
-      {config && (
+      {config && coreSchema && (
         <div className="config-block" style={{ marginTop: 8, marginBottom: 20 }}>
           <div className="config-block-body" style={{ paddingTop: 10 }}>
             {editingGlobal ? (
-              <div className="config-edit-form">
-                <div className="config-edit-row">
-                  <label className="config-edit-label">name</label>
-                  <input className="config-edit-input" value={globalDraft.name}
-                    onChange={e => setGlobalDraft(d => ({ ...d, name: e.target.value }))} />
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">persona</label>
-                  <input className="config-edit-input" value={globalDraft.persona}
-                    onChange={e => setGlobalDraft(d => ({ ...d, persona: e.target.value }))} />
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">logLevel</label>
-                  <select className="config-edit-input" value={globalDraft.logLevel}
-                    onChange={e => setGlobalDraft(d => ({ ...d, logLevel: e.target.value }))}>
-                    <option value="debug">debug</option>
-                    <option value="info">info</option>
-                    <option value="warn">warn</option>
-                    <option value="error">error</option>
-                  </select>
-                </div>
-              </div>
+              <SchemaForm
+                schema={coreSchema}
+                draft={globalDraft}
+                onChange={setGlobalDraft}
+                modelCache={modelCache}
+                onFetchModels={() => {}}
+              />
             ) : (
               <>
-                <div className="config-item">
-                  <span className="key">name</span>
-                  <span className="val">{(config.name as string) ?? '-'}</span>
-                </div>
-                <div className="config-item">
-                  <span className="key">persona</span>
-                  <span className="val">{(config.persona as string) ?? '-'}</span>
-                </div>
-                <div className="config-item">
-                  <span className="key">logLevel</span>
-                  <span className="val">{(config.logLevel as string) ?? '-'}</span>
-                </div>
+                {Object.entries(coreSchema).map(([key, entry]) => {
+                  const val = (config as Record<string, unknown>)[key];
+                  const field = entry as SchemaField;
+                  return (
+                    <div className="config-item" key={key}>
+                      <span className="key">{field.label || key}</span>
+                      <span className="val">
+                        {field.type === 'boolean'
+                          ? (val ? '✓ 开启' : '✗ 关闭')
+                          : (val === '' || val == null) ? '(空)' : String(val)}
+                      </span>
+                    </div>
+                  );
+                })}
               </>
             )}
           </div>
@@ -1486,6 +1513,516 @@ function PlatformPage() {
   );
 }
 
+// ===== 权限管理页 =====
+
+interface AuthorityUser {
+  platform: string;
+  userId: string;
+  authority: number;
+}
+
+interface AuthorityOwner {
+  platform: string;
+  userId: string;
+}
+
+interface AuthorityCommand {
+  name: string;
+  description: string;
+  authority: number;
+  safety: string;
+  baseAuthority: number;
+  baseSafety: string;
+  overridden: boolean;
+  pluginName: string;
+}
+
+interface AuthorityData {
+  users: AuthorityUser[];
+  owners: AuthorityOwner[];
+  defaultAuthority: number;
+  ownerAuthority: number;
+  commandPrefix: string;
+  commandAsTools: boolean;
+  commands: AuthorityCommand[];
+  commandOverrides: Record<string, { authority?: number; safety?: string }>;
+  dangerousPolicy: {
+    allow?: string[];
+    duration?: number;
+  };
+}
+
+function AuthorityPage() {
+  const [data, setData] = useState<AuthorityData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState('');
+
+  // 展开/折叠区段
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['commands', 'config']));
+  const toggleSection = (key: string) => {
+    setOpenSections(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+
+  // 编辑状态
+  const [editConfig, setEditConfig] = useState(false);
+  const [configDraft, setConfigDraft] = useState({ defaultAuthority: 1, ownerAuthority: 5 });
+  const [editDangerous, setEditDangerous] = useState(false);
+  const [dangerousDraft, setDangerousDraft] = useState({ allow: '', duration: 0 });
+  const [editUser, setEditUser] = useState<{ platform: string; userId: string; authority: number } | null>(null);
+  const [newUser, setNewUser] = useState({ platform: '', userId: '', authority: 1 });
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newOwner, setNewOwner] = useState({ platform: '', userId: '' });
+  const [showAddOwner, setShowAddOwner] = useState(false);
+  const [editingCmd, setEditingCmd] = useState<string | null>(null);
+  const [cmdDraft, setCmdDraft] = useState({ authority: 1, safety: 'safe' });
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await api<AuthorityData>('/api/authority');
+      setData(d);
+      setConfigDraft({ defaultAuthority: d.defaultAuthority, ownerAuthority: d.ownerAuthority });
+      setDangerousDraft({
+        allow: (d.dangerousPolicy?.allow ?? []).join(', '),
+        duration: d.dangerousPolicy?.duration ?? 0,
+      });
+    } catch {
+      setData(null);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const flash = (msg: string) => {
+    setMessage(msg);
+    setTimeout(() => setMessage(''), 2000);
+  };
+
+  // ---- 用户操作 ----
+  const saveUserAuthority = async (platform: string, userId: string, authority: number) => {
+    await api('/api/authority/user', { method: 'PUT', body: JSON.stringify({ platform, userId, authority }) });
+    setEditUser(null);
+    flash(`已设置 ${platform}:${userId} → ${authority}`);
+    refresh();
+  };
+  const deleteUser = async (platform: string, userId: string) => {
+    await api('/api/authority/user', { method: 'DELETE', body: JSON.stringify({ platform, userId }) });
+    flash(`已重置 ${platform}:${userId}`);
+    refresh();
+  };
+  const addUser = async () => {
+    if (!newUser.platform || !newUser.userId) return;
+    await saveUserAuthority(newUser.platform, newUser.userId, newUser.authority);
+    setNewUser({ platform: '', userId: '', authority: 1 });
+    setShowAddUser(false);
+  };
+
+  // ---- Owner 操作 ----
+  const addOwner = async () => {
+    if (!data || !newOwner.platform || !newOwner.userId) return;
+    const owners = [...data.owners, { platform: newOwner.platform, userId: newOwner.userId }];
+    await api('/api/authority/owners', { method: 'PUT', body: JSON.stringify({ owners }) });
+    setNewOwner({ platform: '', userId: '' });
+    setShowAddOwner(false);
+    flash('Owner 已添加');
+    refresh();
+  };
+  const removeOwner = async (idx: number) => {
+    if (!data) return;
+    const owners = data.owners.filter((_, i) => i !== idx);
+    await api('/api/authority/owners', { method: 'PUT', body: JSON.stringify({ owners }) });
+    flash('Owner 已移除');
+    refresh();
+  };
+
+  // ---- 配置操作 ----
+  const saveConfig = async () => {
+    await api('/api/authority/config', { method: 'PUT', body: JSON.stringify(configDraft) });
+    setEditConfig(false);
+    flash('权限配置已保存');
+    refresh();
+  };
+  const saveDangerous = async () => {
+    const allow = dangerousDraft.allow.split(',').map(s => s.trim()).filter(Boolean);
+    await api('/api/authority/dangerous', { method: 'PUT', body: JSON.stringify({ policy: { allow, duration: dangerousDraft.duration } }) });
+    setEditDangerous(false);
+    flash('高危策略已保存');
+    refresh();
+  };
+
+  // ---- 指令权限操作 ----
+  const saveCommandOverride = async (name: string) => {
+    await api('/api/authority/command', { method: 'PUT', body: JSON.stringify({ name, authority: cmdDraft.authority, safety: cmdDraft.safety }) });
+    setEditingCmd(null);
+    flash(`指令 ${name} 权限已更新`);
+    refresh();
+  };
+  const resetCommandOverride = async (name: string) => {
+    await api('/api/authority/command', { method: 'DELETE', body: JSON.stringify({ name }) });
+    flash(`指令 ${name} 已恢复默认`);
+    refresh();
+  };
+
+  if (loading && !data) {
+    return <div className="page-content"><div className="empty-hint">加载中...</div></div>;
+  }
+  if (!data) {
+    return <div className="page-content"><div className="empty-hint">获取权限数据失败</div></div>;
+  }
+
+  return (
+    <div className="page-content page-authority">
+      {message && <div className="toast">{message}</div>}
+
+      {/* 概览 */}
+      <div className="section-label">概览</div>
+      <div className="overview-grid">
+        <div className="overview-card">
+          <div className="overview-card-icon">👤</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">已注册用户</div>
+            <div className="overview-card-value">{data.users.length}</div>
+          </div>
+        </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">👑</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">Owner 数</div>
+            <div className="overview-card-value">{data.owners.length}</div>
+          </div>
+        </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">⌘</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">已注册指令</div>
+            <div className="overview-card-value">{data.commands.length}</div>
+          </div>
+        </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">⚠️</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">高危白名单</div>
+            <div className="overview-card-value">{data.dangerousPolicy?.allow?.length ?? 0}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 权限配置 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('config')}>
+          <span className="config-block-title">权限配置</span>
+          <span className="config-block-hint">控制新用户默认的权限等级及 Owner 的权限上限</span>
+          <span className={`config-block-toggle ${openSections.has('config') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('config') && (
+          <div className="config-block-body">
+            {editConfig ? (
+              <div className="config-edit-form">
+                <div className="config-edit-row">
+                  <label className="config-edit-label">defaultAuthority</label>
+                  <input type="number" className="config-edit-input" min={0}
+                    value={configDraft.defaultAuthority}
+                    onChange={e => setConfigDraft(v => ({ ...v, defaultAuthority: parseInt(e.target.value) || 0 }))} />
+                  <span className="config-edit-hint">新用户默认权限等级</span>
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">ownerAuthority</label>
+                  <input type="number" className="config-edit-input" min={1}
+                    value={configDraft.ownerAuthority}
+                    onChange={e => setConfigDraft(v => ({ ...v, ownerAuthority: parseInt(e.target.value) || 5 }))} />
+                  <span className="config-edit-hint">Owner 用户权限等级</span>
+                </div>
+                <div className="config-edit-actions">
+                  <button className="btn btn-primary btn-sm" onClick={saveConfig}>保存</button>
+                  <button className="btn btn-sm" onClick={() => setEditConfig(false)}>取消</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="config-item">
+                  <span className="key">defaultAuthority</span>
+                  <span className="val">{data.defaultAuthority}</span>
+                </div>
+                <div className="config-item">
+                  <span className="key">ownerAuthority</span>
+                  <span className="val">{data.ownerAuthority}</span>
+                </div>
+                <div style={{ padding: '6px 0 2px' }}>
+                  <button className="btn-sm" onClick={() => setEditConfig(true)}>编辑</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 指令权限 (internal-framework 风格) */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('commands')}>
+          <span className="config-block-title">指令权限</span>
+          <span className="config-block-hint">自定义每条指令的所需权限等级与安全等级，修改后优先于插件默认值</span>
+          <span className={`config-block-toggle ${openSections.has('commands') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('commands') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            {data.commands.length === 0 ? (
+              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册指令</div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header">
+                  <span>指令</span>
+                  <span>来源</span>
+                  <span>权限等级</span>
+                  <span>安全等级</span>
+                  <span>操作</span>
+                </div>
+                {data.commands.map(c => {
+                  const isEditing = editingCmd === c.name;
+                  return (
+                    <div className={`authority-cmd-row ${c.overridden ? 'overridden' : ''}`} key={c.name}>
+                      <span className="authority-cmd-name" title={c.description}>
+                        {data.commandPrefix}{c.name}
+                      </span>
+                      <span className="authority-cmd-plugin">{c.pluginName}</span>
+                      <span>
+                        {isEditing ? (
+                          <input type="number" className="config-edit-input authority-inline-input" min={0}
+                            value={cmdDraft.authority}
+                            onChange={e => setCmdDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
+                            autoFocus />
+                        ) : (
+                          <span className={`authority-badge ${c.authority >= data.ownerAuthority ? 'owner' : c.authority >= 3 ? 'high' : ''}`}>
+                            {c.authority}
+                          </span>
+                        )}
+                      </span>
+                      <span>
+                        {isEditing ? (
+                          <select className="config-edit-input authority-inline-select"
+                            value={cmdDraft.safety}
+                            onChange={e => setCmdDraft(v => ({ ...v, safety: e.target.value }))}>
+                            <option value="safe">safe</option>
+                            <option value="dangerous">dangerous</option>
+                          </select>
+                        ) : (
+                          <span className={`authority-safety-tag ${c.safety}`}>{c.safety}</span>
+                        )}
+                      </span>
+                      <span className="authority-actions">
+                        {isEditing ? (
+                          <>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveCommandOverride(c.name)}>保存</button>
+                            <button className="btn btn-sm" onClick={() => setEditingCmd(null)}>取消</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn btn-sm" onClick={() => {
+                              setEditingCmd(c.name);
+                              setCmdDraft({ authority: c.authority, safety: c.safety });
+                            }}>编辑</button>
+                            {c.overridden && (
+                              <button className="btn btn-sm" onClick={() => resetCommandOverride(c.name)} title="恢复插件默认值">重置</button>
+                            )}
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Owner 管理 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('owners')}>
+          <span className="config-block-title">Owner 管理</span>
+          <span className="config-block-hint">Owner 自动获得最高权限等级，WebUI 控制台始终为 Owner</span>
+          <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('owners') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            <div style={{ padding: '8px 12px' }}>
+              <button className="btn-sm" onClick={() => setShowAddOwner(!showAddOwner)}>
+                {showAddOwner ? '取消' : '+ 添加 Owner'}
+              </button>
+            </div>
+            {showAddOwner && (
+              <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
+                <input className="config-edit-input" placeholder="平台 (如 onebot)"
+                  value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
+                <input className="config-edit-input" placeholder="用户 ID"
+                  value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
+                <button className="btn btn-primary btn-sm" onClick={addOwner} disabled={!newOwner.platform || !newOwner.userId}>确认</button>
+              </div>
+            )}
+            {data.owners.length === 0 ? (
+              <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
+                暂无 Owner。WebUI 控制台用户始终拥有最高权限。
+              </div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header authority-owner-header">
+                  <span>平台</span>
+                  <span>用户 ID</span>
+                  <span>操作</span>
+                </div>
+                {data.owners.map((o, idx) => (
+                  <div className="authority-cmd-row authority-owner-row" key={`${o.platform}:${o.userId}`}>
+                    <span className="authority-cell-platform">{o.platform}</span>
+                    <span className="authority-cell-id">{o.userId}</span>
+                    <span>
+                      <button className="btn btn-danger btn-sm" onClick={() => removeOwner(idx)}>移除</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 用户权限 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('users')}>
+          <span className="config-block-title">用户权限</span>
+          <span className="config-block-hint">已自定义权限的用户列表，未列出的用户使用 defaultAuthority</span>
+          <span className={`config-block-toggle ${openSections.has('users') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('users') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            <div style={{ padding: '8px 12px', display: 'flex', gap: 6 }}>
+              <button className="btn-sm" onClick={() => setShowAddUser(!showAddUser)}>
+                {showAddUser ? '取消' : '+ 添加用户'}
+              </button>
+              <button className="btn-sm" onClick={refresh} disabled={loading}>
+                {loading ? '刷新中...' : '刷新'}
+              </button>
+            </div>
+            {showAddUser && (
+              <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
+                <input className="config-edit-input" placeholder="平台 (如 onebot)"
+                  value={newUser.platform} onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))} />
+                <input className="config-edit-input" placeholder="用户 ID"
+                  value={newUser.userId} onChange={e => setNewUser(v => ({ ...v, userId: e.target.value }))} />
+                <input className="config-edit-input" type="number" placeholder="权限等级" min={0}
+                  value={newUser.authority} onChange={e => setNewUser(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))} />
+                <button className="btn btn-primary btn-sm" onClick={addUser} disabled={!newUser.platform || !newUser.userId}>确认</button>
+              </div>
+            )}
+            {data.users.length === 0 ? (
+              <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
+                暂无已设置权限的用户。新用户将获得默认等级 {data.defaultAuthority}。
+              </div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header authority-user-header">
+                  <span>平台</span>
+                  <span>用户 ID</span>
+                  <span>权限等级</span>
+                  <span>操作</span>
+                </div>
+                {data.users.map(u => {
+                  const key = `${u.platform}:${u.userId}`;
+                  const isEditing = editUser && editUser.platform === u.platform && editUser.userId === u.userId;
+                  return (
+                    <div className="authority-cmd-row authority-user-row" key={key}>
+                      <span className="authority-cell-platform">{u.platform}</span>
+                      <span className="authority-cell-id">{u.userId}</span>
+                      <span>
+                        {isEditing ? (
+                          <input type="number" className="config-edit-input authority-inline-input" min={0}
+                            value={editUser!.authority}
+                            onChange={e => setEditUser(prev => prev ? { ...prev, authority: parseInt(e.target.value) || 0 } : null)}
+                            autoFocus />
+                        ) : (
+                          <span className={`authority-badge ${u.authority >= data.ownerAuthority ? 'owner' : u.authority >= 3 ? 'high' : ''}`}>
+                            {u.authority}
+                          </span>
+                        )}
+                      </span>
+                      <span className="authority-actions">
+                        {isEditing ? (
+                          <>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveUserAuthority(editUser!.platform, editUser!.userId, editUser!.authority)}>保存</button>
+                            <button className="btn btn-sm" onClick={() => setEditUser(null)}>取消</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn btn-sm" onClick={() => setEditUser({ platform: u.platform, userId: u.userId, authority: u.authority })}>编辑</button>
+                            <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>重置</button>
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 高危操作策略 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('dangerous')}>
+          <span className="config-block-title">高危操作策略</span>
+          <span className="config-block-hint">控制哪些危险指令/工具允许执行，未在白名单中的 dangerous 操作会被拒绝</span>
+          <span className={`config-block-toggle ${openSections.has('dangerous') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('dangerous') && (
+          <div className="config-block-body">
+            {editDangerous ? (
+              <div className="config-edit-form">
+                <div className="config-edit-row">
+                  <label className="config-edit-label">allow</label>
+                  <input className="config-edit-input"
+                    value={dangerousDraft.allow}
+                    onChange={e => setDangerousDraft(v => ({ ...v, allow: e.target.value }))}
+                    placeholder="shutdown, restart 或 *" />
+                  <span className="config-edit-hint">逗号分隔，* 表示全部放行</span>
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">duration</label>
+                  <input type="number" className="config-edit-input" min={0}
+                    value={dangerousDraft.duration}
+                    onChange={e => setDangerousDraft(v => ({ ...v, duration: parseInt(e.target.value) || 0 }))} />
+                  <span className="config-edit-hint">有效期 (秒)，0 = 永久</span>
+                </div>
+                <div className="config-edit-actions">
+                  <button className="btn btn-primary btn-sm" onClick={saveDangerous}>保存</button>
+                  <button className="btn btn-sm" onClick={() => setEditDangerous(false)}>取消</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="config-item">
+                  <span className="key">allow</span>
+                  <span className="val">{(data.dangerousPolicy?.allow ?? []).join(', ') || '(无)'}</span>
+                </div>
+                <div className="config-item">
+                  <span className="key">duration</span>
+                  <span className="val">{data.dangerousPolicy?.duration ?? 0}s {data.dangerousPolicy?.duration === 0 ? '(永久)' : ''}</span>
+                </div>
+                <div style={{ padding: '6px 0 2px' }}>
+                  <button className="btn-sm" onClick={() => setEditDangerous(true)}>编辑</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ===== 日志页 =====
 
 function LogPage({ logs }: { logs: LogEntry[] }) {
@@ -1755,6 +2292,7 @@ export function App() {
     { key: 'marketplace', label: '插件市场', icon: <IconMarketplace /> },
     { key: 'plugin-config', label: '插件配置', icon: <IconPluginConfig /> },
     { key: 'platforms', label: '平台接入', icon: <IconPlatform /> },
+    { key: 'authority', label: '权限管理', icon: <IconAuthority /> },
     { key: 'logs', label: '日志', icon: <IconLogs /> },
   ];
 
@@ -1810,6 +2348,7 @@ export function App() {
             />
           )}
           {activeTab === 'platforms' && <PlatformPage />}
+          {activeTab === 'authority' && <AuthorityPage />}
           {activeTab === 'logs' && <LogPage logs={logs} />}
         </div>
       </main>

@@ -1164,10 +1164,18 @@ body {
 .config-block-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   cursor: pointer;
   transition: background var(--transition);
+}
+
+.config-block-hint {
+  flex: 1;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  text-align: right;
 }
 
 .config-block-header:hover {
@@ -1638,4 +1646,182 @@ details[open] > .tool-call-summary::before {
 .btn-sm:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ===== 指令胶囊 (仪表盘) ===== */
+
+.cmd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.chip-badge {
+  font-size: 0.62rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.chip-badge.chip-auth {
+  color: #ffd700;
+}
+
+.chip-badge.chip-danger {
+  color: var(--danger);
+}
+
+/* ===== 权限管理页 ===== */
+
+.authority-add-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.authority-add-form .config-edit-input {
+  width: auto;
+  min-width: 120px;
+  flex: 1;
+}
+
+/* 指令权限列表 (grid-based) */
+.authority-cmd-list {
+  font-size: 0.78rem;
+}
+
+.authority-cmd-header {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.7fr 0.7fr 1fr;
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.authority-cmd-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.7fr 0.7fr 1fr;
+  padding: 6px 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+
+.authority-cmd-row:last-child {
+  border-bottom: none;
+}
+
+.authority-cmd-row:hover {
+  background: var(--surface-hover);
+}
+
+.authority-cmd-row.overridden {
+  background: rgba(124, 111, 247, 0.04);
+}
+
+.authority-cmd-name {
+  color: var(--primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.authority-cmd-plugin {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Owner 表格 — 3 列 */
+.authority-owner-header {
+  grid-template-columns: 1fr 1.5fr 0.8fr;
+}
+
+.authority-owner-row {
+  grid-template-columns: 1fr 1.5fr 0.8fr;
+}
+
+/* 用户表格 — 4 列 */
+.authority-user-header {
+  grid-template-columns: 1fr 1.5fr 0.8fr 1fr;
+}
+
+.authority-user-row {
+  grid-template-columns: 1fr 1.5fr 0.8fr 1fr;
+}
+
+.authority-cell-platform {
+  color: var(--primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.76rem;
+}
+
+.authority-cell-id {
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.authority-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.authority-badge.owner {
+  background: rgba(255, 215, 0, 0.15);
+  color: #ffd700;
+}
+
+.authority-badge.high {
+  background: rgba(124, 111, 247, 0.15);
+  color: var(--primary);
+}
+
+.authority-safety-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.authority-safety-tag.safe {
+  background: rgba(72, 199, 142, 0.12);
+  color: #48c78e;
+}
+
+.authority-safety-tag.dangerous {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--danger);
+}
+
+.authority-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.authority-inline-input {
+  width: 70px !important;
+  padding: 2px 6px !important;
+  font-size: 0.76rem !important;
+}
+
+.authority-inline-select {
+  width: 100px !important;
+  padding: 2px 6px !important;
+  font-size: 0.76rem !important;
 }
