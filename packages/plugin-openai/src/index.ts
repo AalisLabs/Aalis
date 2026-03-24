@@ -163,7 +163,7 @@ class OpenAILLMService implements LLMService {
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
-      temperature: request.temperature ?? 0.7,
+      temperature: request.temperature ?? this.temperature,
       max_tokens: request.maxTokens ?? 4096,
     };
 
@@ -228,7 +228,7 @@ class OpenAILLMService implements LLMService {
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
-      temperature: request.temperature ?? 0.7,
+      temperature: request.temperature ?? this.temperature,
       max_tokens: request.maxTokens ?? 4096,
       stream: true,
     };
