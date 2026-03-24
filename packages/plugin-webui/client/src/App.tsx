@@ -40,7 +40,7 @@ interface PluginInfo {
 
 // ----- ConfigSchema 类型 (镜像 core) -----
 
-type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select';
+type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
 
 interface SchemaField {
   type: SchemaFieldType;
@@ -446,13 +446,13 @@ function buildDraftFromSchema(schema: ConfigSchema, config: Record<string, unkno
   const draft: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(schema)) {
     if (isSchemaField(entry)) {
-      draft[key] = config[key] ?? entry.default ?? (entry.type === 'number' ? 0 : entry.type === 'boolean' ? false : '');
+      draft[key] = config[key] ?? entry.default ?? (entry.type === 'number' ? 0 : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
     } else {
       // SchemaGroup
       const group: Record<string, unknown> = {};
       const src = (config[key] ?? {}) as Record<string, unknown>;
       for (const [fk, field] of Object.entries(entry.fields)) {
-        group[fk] = src[fk] ?? field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : '');
+        group[fk] = src[fk] ?? field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : field.type === 'multiselect' ? [] : '');
       }
       draft[key] = group;
     }
@@ -485,6 +485,29 @@ function SchemaFormField({
         <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
         {field.label}
       </label>
+    );
+  }
+
+  if (field.type === 'multiselect') {
+    const selected = Array.isArray(value) ? value as string[] : [];
+    const allOptions = field.options ?? [];
+    const toggle = (v: string) => {
+      const next = selected.includes(v) ? selected.filter(s => s !== v) : [...selected, v];
+      onChange(next);
+    };
+    return (
+      <div className="multiselect-group">
+        {allOptions.map(o => (
+          <label key={String(o.value)} className="multiselect-item">
+            <input
+              type="checkbox"
+              checked={selected.includes(String(o.value))}
+              onChange={() => toggle(String(o.value))}
+            />
+            {o.label}
+          </label>
+        ))}
+      </div>
     );
   }
 

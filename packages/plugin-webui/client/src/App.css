@@ -1336,6 +1336,26 @@ select.config-edit-input {
   cursor: pointer;
 }
 
+.multiselect-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.multiselect-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.multiselect-item input[type="checkbox"] {
+  accent-color: #5b7fff;
+}
+
 /* ===== 思考过程 ===== */
 
 .thinking-block {

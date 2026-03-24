@@ -326,8 +326,17 @@ export class App {
     this.ctx.command('restart', '重启应用', async () => {
       setTimeout(async () => {
         await this.stop();
-        // 用完整的 process.argv 重新 spawn 自身，兼容 tsx / node 等各种启动方式
-        const [exec, ...args] = process.argv;
+        const scriptFile = process.argv[1];
+        let exec: string;
+        let args: string[];
+        if (scriptFile?.endsWith('.ts')) {
+          // tsx 运行时 argv[0] 是 node，需要用 tsx 重新启动
+          const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
+          exec = existsSync(tsxBin) ? tsxBin : 'tsx';
+          args = process.argv.slice(1);
+        } else {
+          [exec, ...args] = process.argv;
+        }
         const child = spawn(exec, args, {
           cwd: process.cwd(),
           stdio: 'inherit',
