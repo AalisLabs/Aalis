@@ -42,7 +42,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 获取向量数据库服务
   const vectorstore = ctx.getService<VectorStoreService>('vectorstore');
   if (!vectorstore) {
-    throw new Error('向量记忆插件需要 vectorstore 服务，请确保 @aalis/plugin-vectorstore 已加载');
+    throw new Error('向量记忆插件需要 vectorstore 服务，请确保向量存储插件已加载');
   }
   const store: VectorStoreService = vectorstore;
 
@@ -62,7 +62,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   };
 
-  ctx.logger.info(`向量记忆已启动: 当前 ${store.size()} 条记录`);
+  ctx.logger.info(`向量记忆已启动: 当前 ${await store.size()} 条记录`);
 
   // 注册为 semanticMemory 服务
   ctx.provide('semanticMemory', { name: 'vector-memory' }, {
@@ -75,8 +75,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (!content.trim()) return;
     try {
       const vec = await embedder.embed(content);
-      store.add(vec, { role, content, sessionId, timestamp: Date.now() });
-      store.save();
+      await store.add(vec, { role, content, sessionId, timestamp: Date.now() });
+      await store.save();
     } catch (err) {
       ctx.logger.warn('向量索引失败:', err);
     }
@@ -101,14 +101,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
 
     try {
-      const candidateCount = Math.min(cfg.search.topK * 3, store.size());
+      const candidateCount = Math.min(cfg.search.topK * 3, await store.size());
       if (candidateCount === 0) {
         await next();
         return;
       }
 
       const queryVec = await embedder.embed(lastUserMsg.content);
-      const candidates = store.search(queryVec, candidateCount);
+      const candidates = await store.search(queryVec, candidateCount);
 
       // 时间加权重排
       const now = Date.now();

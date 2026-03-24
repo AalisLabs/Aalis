@@ -1,7 +1,7 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { Context, PersonaService, MemoryService, ConfigSchema } from '@aalis/core';
+import type { Context, PersonaService, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -21,15 +21,6 @@ interface CLIConfig {
   prompt?: string;
   sessionId?: string;
 }
-
-// ===== 内置命令 =====
-
-const COMMANDS: Record<string, string> = {
-  '/help': '显示帮助信息',
-  '/clear': '清空当前会话历史',
-  '/status': '显示系统状态',
-  '/quit': '退出程序',
-};
 
 // ===== 插件入口 =====
 
@@ -87,10 +78,26 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // 内置命令处理
+      // 斜杠指令处理 —— 通过指令注册表
       if (trimmed.startsWith('/')) {
-        const handled = await handleCommand(ctx, trimmed, sessionId);
-        if (handled === 'quit') break;
+        const parts = trimmed.slice(1).split(/\s+/);
+        const cmdName = parts[0];
+        const args = parts.slice(1);
+
+        const result = await ctx.commands.execute(cmdName, {
+          sessionId,
+          platform: 'cli',
+          args,
+          raw: trimmed,
+        });
+
+        if (result) {
+          console.log(`\n${result}\n`);
+        }
+
+        // /shutdown 后退出循环
+        if (cmdName === 'shutdown' || cmdName === 'restart') break;
+
         continue;
       }
 
@@ -104,53 +111,4 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
   };
 
   askLoop().catch(() => {});
-}
-
-async function handleCommand(
-  ctx: Context,
-  command: string,
-  sessionId: string,
-): Promise<string | void> {
-  switch (command) {
-    case '/help':
-      console.log(chalk.bold('\n可用命令:'));
-      for (const [cmd, desc] of Object.entries(COMMANDS)) {
-        console.log(`  ${chalk.cyan(cmd.padEnd(12))} ${desc}`);
-      }
-      console.log();
-      return;
-
-    case '/clear': {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (memory) {
-        await memory.clearSession(sessionId);
-        console.log(chalk.yellow('会话历史已清空。\n'));
-      } else {
-        console.log(chalk.yellow('记忆服务未启用。\n'));
-      }
-      return;
-    }
-
-    case '/status': {
-      console.log(chalk.bold('\n系统状态:'));
-      const hasLLM = ctx.hasService('llm');
-      const hasMemory = ctx.hasService('memory');
-      const hasPersona = ctx.hasService('persona');
-      console.log(`  LLM 服务:    ${hasLLM ? chalk.green('可用') : chalk.red('不可用')}`);
-      console.log(`  记忆服务:    ${hasMemory ? chalk.green('可用') : chalk.red('不可用')}`);
-      console.log(`  人格服务:    ${hasPersona ? chalk.green('可用') : chalk.red('不可用')}`);
-      const tools = ctx.tools.getDefinitions();
-      console.log(`  已注册工具:  ${tools.length} 个`);
-      console.log();
-      return;
-    }
-
-    case '/quit':
-      console.log(chalk.gray('再见！'));
-      return 'quit';
-
-    default:
-      console.log(chalk.red(`未知命令: ${command}。输入 /help 查看帮助。\n`));
-      return;
-  }
 }

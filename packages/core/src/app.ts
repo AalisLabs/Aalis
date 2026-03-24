@@ -2,16 +2,17 @@ import { EventBus } from './events.js';
 import { ServiceContainer } from './service.js';
 import { ToolRegistry } from './tools.js';
 import { HookRegistry } from './hooks.js';
+import { CommandRegistry } from './commands.js';
 import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
-import type { AgentService } from './types.js';
+import type { AgentService, MemoryService } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 
 /**
  * Aalis 应用主容器
@@ -38,6 +39,7 @@ export class App {
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
     const tools = new ToolRegistry(this.logger);
     const hooks = new HookRegistry();
+    const commands = new CommandRegistry(this.logger);
 
     // 2. 根上下文
     this.ctx = new Context({
@@ -46,6 +48,7 @@ export class App {
       services,
       tools,
       hooks,
+      commands,
       logger: this.logger,
       config,
     });
@@ -56,6 +59,9 @@ export class App {
 
     // 4. 注册核心服务（让插件能通过 ctx.getService 访问）
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
+
+    // 5. 注册内置指令
+    this.registerBuiltinCommands();
 
     this.logger.info(`Aalis v0.1.0 - ${config.get('name')}`);
   }
@@ -272,6 +278,69 @@ export class App {
   }
 
   /**
+   * 注册内置指令 (/help, /status)
+   */
+  private registerBuiltinCommands(): void {
+    // /help — 动态列出所有已注册指令（Markdown 格式）
+    this.ctx.command('help', '显示可用指令列表', async () => {
+      const all = this.ctx.commands.getAll();
+      const lines = ['**可用指令：**', ''];
+      for (const cmd of all) {
+        lines.push(`- \`/${cmd.name}\` — ${cmd.description}`);
+      }
+      return lines.join('\n');
+    });
+
+    // /status — 显示系统状态（Markdown 格式）
+    this.ctx.command('status', '显示系统状态', async () => {
+      const lines = ['**系统状态：**', ''];
+      const checks = [
+        ['LLM 服务', this.ctx.hasService('llm')],
+        ['记忆服务', this.ctx.hasService('memory')],
+        ['人格服务', this.ctx.hasService('persona')],
+        ['Embedding', this.ctx.hasService('embedding')],
+        ['向量库', this.ctx.hasService('vectorstore')],
+      ] as const;
+      for (const [label, ok] of checks) {
+        lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
+      }
+      const tools = this.ctx.tools.getDefinitions();
+      lines.push(`- 已注册工具: ${tools.length} 个`);
+      const cmds = this.ctx.commands.getAll();
+      lines.push(`- 已注册指令: ${cmds.length} 个`);
+      return lines.join('\n');
+    });
+
+    // /shutdown — 关闭应用
+    this.ctx.command('shutdown', '关闭应用', async () => {
+      // 异步执行，先返回消息再关闭
+      setTimeout(async () => {
+        await this.stop();
+        process.exit(0);
+      }, 500);
+      return '正在关闭应用…';
+    });
+
+    // /restart — 重新启动应用（重新执行原始启动命令）
+    this.ctx.command('restart', '重启应用', async () => {
+      setTimeout(async () => {
+        await this.stop();
+        // 用完整的 process.argv 重新 spawn 自身，兼容 tsx / node 等各种启动方式
+        const [exec, ...args] = process.argv;
+        const child = spawn(exec, args, {
+          cwd: process.cwd(),
+          stdio: 'inherit',
+          detached: true,
+          env: process.env,
+        });
+        child.unref();
+        process.exit(0);
+      }, 500);
+      return '正在重启应用…';
+    });
+  }
+
+  /**
    * 启动应用
    */
   async start(): Promise<void> {
@@ -284,6 +353,12 @@ export class App {
       this.ctx.provide('memory', fallback, {
         capabilities: ['history'],
         priority: -100, // 最低优先级
+      });
+
+      // fallback 场景下也注册 /clear
+      this.ctx.command('clear', '清空当前会话历史', async (cmdCtx) => {
+        await fallback.clearSession(cmdCtx.sessionId);
+        return '会话历史已清空。';
       });
     }
 
