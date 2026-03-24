@@ -39,11 +39,13 @@ class DefaultAgent implements AgentService {
   private ctx: Context;
   private logger: Logger;
   private systemPrompt: string;
+  private memoryTokenBudget: number;
 
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
     this.logger = ctx.logger.child('agent');
     this.systemPrompt = (config.systemPrompt as string) || BASE_SYSTEM_PROMPT;
+    this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.logger.info('默认对话代理已初始化');
   }
 
@@ -334,41 +336,93 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 粗略估算消息的 token 数（混合中英文约 3 字符/token）
+   * 粗略估算消息列表的总 token 数
    */
   private estimateTokens(messages: Message[]): number {
     let total = 0;
     for (const msg of messages) {
-      // 每条消息有固定开销 (~4 tokens)
-      total += 4;
-      if (msg.content) total += Math.ceil(msg.content.length / 3);
-      if (msg.toolCalls) {
-        total += Math.ceil(JSON.stringify(msg.toolCalls).length / 3);
-      }
-      if (msg.reasoningContent) {
-        total += Math.ceil(msg.reasoningContent.length / 3);
-      }
+      total += this.estimateMsgTokens(msg);
     }
     return total;
   }
 
   /**
+   * 估算单条消息的 token 数
+   */
+  private estimateMsgTokens(msg: Message): number {
+    let t = 4;
+    if (msg.content) t += Math.ceil(msg.content.length / 3);
+    if (msg.toolCalls) t += Math.ceil(JSON.stringify(msg.toolCalls).length / 3);
+    if (msg.reasoningContent) t += Math.ceil(msg.reasoningContent.length / 3);
+    return t;
+  }
+
+  /**
    * 裁剪消息列表，使总 token 数不超过预算
-   * 保留: system prompt(首条) + 当前用户消息(末条)，从最早的历史开始裁剪
+   *
+   * 保护策略：
+   *  1. 首条 system（主提示词）和末条（当前用户消息）永不删除
+   *  2. hook 注入的 system 消息（长期记忆等）有独立的 memoryTokenBudget 保护额度
+   *  3. 优先从最旧的非 system 历史消息开始删除
+   *  4. 如果还不够，按比例缩减超长的 tool 结果内容
+   *  5. 最后才动 system 消息（长期记忆）
    */
   private trimMessages(messages: Message[], budget: number): Message[] {
-    let estimated = this.estimateTokens(messages);
-    if (estimated <= budget) return messages;
+    const result = messages.map(m => ({ ...m }));
+    let estimated = this.estimateTokens(result);
+    if (estimated <= budget) return result;
 
-    // 保留首条(system) 和末条(当前用户消息)
-    // 从 index 1 开始删除最旧的历史，直到符合预算
-    const result = [...messages];
-    while (estimated > budget && result.length > 2) {
-      const removed = result.splice(1, 1)[0];
-      estimated -= 4;
-      if (removed.content) estimated -= Math.ceil(removed.content.length / 3);
-      if (removed.toolCalls) estimated -= Math.ceil(JSON.stringify(removed.toolCalls).length / 3);
-      if (removed.reasoningContent) estimated -= Math.ceil(removed.reasoningContent.length / 3);
+    // 计算 system 消息（首条之外的，即 hook 注入的长期记忆等）的 token 总量
+    const systemIndices: number[] = [];
+    let systemTokens = 0;
+    for (let i = 1; i < result.length - 1; i++) {
+      if (result[i].role === 'system') {
+        systemIndices.push(i);
+        systemTokens += this.estimateMsgTokens(result[i]);
+      }
+    }
+    // 如果长期记忆超出预留额度，截断长期记忆内容本身
+    if (systemTokens > this.memoryTokenBudget && systemIndices.length > 0) {
+      // 按比例缩减每条 system 消息的 content
+      const ratio = this.memoryTokenBudget / systemTokens;
+      for (const idx of systemIndices) {
+        const msg = result[idx];
+        if (msg.content && msg.content.length > 200) {
+          const oldTokens = this.estimateMsgTokens(msg);
+          const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
+          msg.content = msg.content.slice(0, targetLen) + '\n... [记忆内容已缩减]';
+          estimated -= (oldTokens - this.estimateMsgTokens(msg));
+        }
+      }
+    }
+    if (estimated <= budget) return result;
+
+    // 第一轮：从最旧的非 system 历史消息开始删除（跳过末条）
+    let i = 1;
+    while (estimated > budget && i < result.length - 1) {
+      if (result[i].role === 'system') {
+        i++;
+        continue;
+      }
+      estimated -= this.estimateMsgTokens(result[i]);
+      result.splice(i, 1);
+      // systemIndices 需要更新（后面的索引全部 -1）
+      for (let s = 0; s < systemIndices.length; s++) {
+        if (systemIndices[s] > i) systemIndices[s]--;
+      }
+    }
+    if (estimated <= budget) {
+      this.logger.info(`上下文截断: ${messages.length} → ${result.length} 条消息 (约 ${estimated} tokens)`);
+      return result;
+    }
+
+    // 第二轮（极端情况）：删除 hook 注入的 system 消息
+    for (let j = systemIndices.length - 1; j >= 0 && estimated > budget; j--) {
+      const idx = systemIndices[j];
+      if (idx > 0 && idx < result.length - 1) {
+        estimated -= this.estimateMsgTokens(result[idx]);
+        result.splice(idx, 1);
+      }
     }
 
     if (result.length < messages.length) {
@@ -408,10 +462,17 @@ export const configSchema: ConfigSchema = {
     label: '基础系统提示词',
     description: '定义 Agent 的基础行为指令。留空则使用默认提示词。',
   },
+  memoryTokenBudget: {
+    type: 'number',
+    label: '长期记忆预留 Token',
+    default: 4096,
+    description: '为长期记忆注入的 system 消息预留的 token 额度，截断时不会删除这些消息',
+  },
 };
 
 export const defaultConfig = {
   systemPrompt: BASE_SYSTEM_PROMPT,
+  memoryTokenBudget: 4096,
 };
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
