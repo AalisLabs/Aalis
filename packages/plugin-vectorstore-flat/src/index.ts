@@ -11,6 +11,10 @@ export const configSchema: ConfigSchema = {
   path: { type: 'string', label: '存储目录', default: 'data/vectorstore' },
 };
 
+export const defaultConfig = {
+  path: 'data/vectorstore',
+};
+
 // ===== 配置 =====
 
 interface VectorStoreConfig {

@@ -34,6 +34,7 @@ interface PluginInfo {
   core: boolean;
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
+  defaultConfig?: Record<string, unknown>;
   error?: string;
 }
 
@@ -677,6 +678,15 @@ function PluginConfigPage({
     }
   }, [modelCache]);
 
+  const restoreDefaults = (plugin: PluginInfo) => {
+    const defaults = plugin.defaultConfig ?? {};
+    if (plugin.configSchema) {
+      setSchemaDraft(buildDraftFromSchema(plugin.configSchema, defaults));
+    } else {
+      setEditBuffer(flattenConfig(defaults));
+    }
+  };
+
   const savePluginConfig = async (pluginName: string, hasSchema: boolean) => {
     const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
     setBusy(pluginName);
@@ -882,6 +892,9 @@ function PluginConfigPage({
                     />
                     <div className="config-edit-actions">
                       <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(p.name, true)} disabled={busy === p.name}>保存</button>
+                      {p.defaultConfig && Object.keys(p.defaultConfig).length > 0 && (
+                        <button className="btn btn-warn btn-sm" onClick={() => restoreDefaults(p)}>恢复默认</button>
+                      )}
                       <button className="btn btn-sm" onClick={() => setEditingPlugin(null)}>取消</button>
                     </div>
                   </>
@@ -901,6 +914,9 @@ function PluginConfigPage({
                     </div>
                     <div className="config-edit-actions">
                       <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(p.name, false)} disabled={busy === p.name}>保存</button>
+                      {p.defaultConfig && Object.keys(p.defaultConfig).length > 0 && (
+                        <button className="btn btn-warn btn-sm" onClick={() => restoreDefaults(p)}>恢复默认</button>
+                      )}
                       <button className="btn btn-sm" onClick={() => setEditingPlugin(null)}>取消</button>
                     </div>
                   </>

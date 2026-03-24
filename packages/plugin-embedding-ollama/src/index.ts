@@ -10,6 +10,11 @@ export const configSchema: ConfigSchema = {
   model: { type: 'select', label: 'Embedding 模型', default: 'nomic-embed-text', dynamicOptions: 'embedding' },
 };
 
+export const defaultConfig = {
+  baseUrl: 'http://localhost:11434',
+  model: 'nomic-embed-text',
+};
+
 // ===== 配置 =====
 
 interface OllamaEmbeddingConfig {

@@ -17,6 +17,11 @@ export const configSchema: ConfigSchema = {
   host: { type: 'string', label: '监听地址', default: '127.0.0.1' },
 };
 
+export const defaultConfig = {
+  port: 3000,
+  host: '127.0.0.1',
+};
+
 // ===== 配置 =====
 
 interface WebUIConfig {
@@ -123,6 +128,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       core: p.core ?? false,
       config: sanitizeConfig(p.config),
       configSchema: p.configSchema,
+      defaultConfig: p.defaultConfig,
       error: p.error,
     }));
     res.json({ plugins });

@@ -15,6 +15,11 @@ export const configSchema: ConfigSchema = {
   prompt: { type: 'string', label: '提示符', default: 'You' },
 };
 
+export const defaultConfig = {
+  prompt: 'You',
+  sessionId: 'cli-default',
+};
+
 // ===== 配置 =====
 
 interface CLIConfig {

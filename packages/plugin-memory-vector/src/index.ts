@@ -18,6 +18,13 @@ export const configSchema: ConfigSchema = {
   },
 };
 
+export const defaultConfig = {
+  search: {
+    topK: 5,
+    timeWeight: 0.3,
+  },
+};
+
 // ===== 配置 =====
 
 interface VectorMemoryConfig {

@@ -1129,6 +1129,16 @@ body {
   background: #b71c1c;
 }
 
+.btn-warn {
+  background: #ed6c02;
+  color: white;
+  border-color: #ed6c02;
+}
+
+.btn-warn:hover:not(:disabled) {
+  background: #e65100;
+}
+
 .btn-sm {
   padding: 4px 10px;
   font-size: 0.72rem;

@@ -70,9 +70,10 @@ export class App {
    * 注册插件
    */
   async plugin(module: PluginModule, config?: Record<string, unknown>): Promise<void> {
-    // 合并配置: 代码传入的 config 优先于配置文件中的
+    // 合并优先级: 插件默认配置 ← 配置文件 ← 代码传入
+    const defaults = module.defaultConfig ?? {};
     const fileConfig = this.ctx.config.getPluginConfig(module.name);
-    const mergedConfig = { ...fileConfig, ...config };
+    const mergedConfig = { ...defaults, ...fileConfig, ...config };
     await this.plugins.register(module, mergedConfig);
   }
 
