@@ -1011,6 +1011,24 @@ body {
   padding: 0 14px 8px;
 }
 
+.plugin-provides-inline {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  flex-wrap: wrap;
+}
+
+.provides-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: rgba(124, 111, 247, 0.12);
+  color: var(--primary);
+  border: 1px solid rgba(124, 111, 247, 0.25);
+}
+
 .plugin-card-config {
   padding: 0 14px 12px;
   border-top: 1px solid var(--border);

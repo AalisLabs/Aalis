@@ -8,7 +8,6 @@ export { ToolRegistry } from './tools.js';
 export { HookRegistry } from './hooks.js';
 export { ConfigManager } from './config.js';
 export { PluginManager } from './plugin.js';
-export { Agent } from './agent.js';
 export { InMemoryFallbackService } from './memory-fallback.js';
 export { Logger, getLogBuffer, onLogEntry } from './logger.js';
 export type { PluginModule } from './plugin.js';
@@ -34,6 +33,7 @@ export type {
   VectorStoreService,
   PersonaService,
   EmbeddingService,
+  AgentService,
   StreamChunkMessage,
   ToolExecuteMessage,
   ServiceDependency,

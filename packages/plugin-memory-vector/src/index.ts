@@ -3,7 +3,7 @@ import type { Context, IncomingMessage, OutgoingMessage, Message, MiddlewareNext
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-vector';
-export const provides: string[] = [];
+export const provides = ['semanticMemory'];
 export const inject = {
   required: ['vectorstore', 'embedding'],
 };
@@ -63,6 +63,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   };
 
   ctx.logger.info(`向量记忆已启动: 当前 ${store.size()} 条记录`);
+
+  // 注册为 semanticMemory 服务
+  ctx.provide('semanticMemory', { name: 'vector-memory' }, {
+    capabilities: ['indexing', 'semantic_search', 'context_injection'],
+  });
 
   // === 索引新消息 ===
 
