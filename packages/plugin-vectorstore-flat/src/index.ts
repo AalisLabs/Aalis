@@ -4,7 +4,7 @@ import type { Context, VectorStoreService, VectorSearchResult, ConfigSchema } fr
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-vectorstore';
+export const name = '@aalis/plugin-vectorstore-flat';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {
@@ -69,16 +69,16 @@ class FlatVectorStore implements VectorStoreService {
     }
   }
 
-  size(): number {
+  async size(): Promise<number> {
     return this.entries.length;
   }
 
-  add(vector: number[], metadata: Record<string, unknown>): void {
+  async add(vector: number[], metadata: Record<string, unknown>): Promise<void> {
     this.entries.push({ vector: normalize(vector), metadata });
     this.dirty = true;
   }
 
-  search(queryVector: number[], topK: number): VectorSearchResult[] {
+  async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
     if (this.entries.length === 0) return [];
     const q = normalize(queryVector);
 
@@ -91,7 +91,7 @@ class FlatVectorStore implements VectorStoreService {
     return scored.slice(0, Math.min(topK, scored.length));
   }
 
-  save(): void {
+  async save(): Promise<void> {
     if (!this.dirty) return;
     try {
       writeFileSync(this.dataPath, JSON.stringify(this.entries));
@@ -105,7 +105,7 @@ class FlatVectorStore implements VectorStoreService {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const storeConfig: VectorStoreConfig = {
     path: (config.path as string) ?? 'data/vectorstore',
   };
@@ -113,7 +113,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const storagePath = resolve(ctx.config.getConfigDir(), storeConfig.path);
   const store = new FlatVectorStore(storagePath, ctx.logger);
 
-  ctx.logger.info(`向量数据库已加载: ${store.size()} 条记录, 存储路径=${storagePath}`);
+  ctx.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储路径=${storagePath}`);
 
   ctx.provide('vectorstore', store, {
     capabilities: ['search', 'persistence'],

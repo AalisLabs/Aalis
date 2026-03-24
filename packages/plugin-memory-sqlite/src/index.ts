@@ -132,6 +132,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       priority: 10, // 比 MongoDB 和 fallback 优先级高
     });
 
+    // 注册 /clear 指令 —— 由 memory 服务提供者负责
+    ctx.command('clear', '清空当前会话历史', async (cmdCtx) => {
+      await service.clearSession(cmdCtx.sessionId);
+      return '会话历史已清空。';
+    });
+
     ctx.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
 
     ctx.on('dispose', () => {

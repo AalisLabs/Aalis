@@ -25,7 +25,8 @@
     "@aalis/plugin-memory-vector": "workspace:*",
     "@aalis/plugin-openai": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
-    "@aalis/plugin-vectorstore": "workspace:*",
+    "@aalis/plugin-vectorstore-flat": "workspace:*",
+    "@aalis/plugin-vectorstore-lancedb": "workspace:*",
     "@aalis/plugin-websearch-serper": "workspace:*",
     "@aalis/plugin-webui": "workspace:*"
   },

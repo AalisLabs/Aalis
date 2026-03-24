@@ -159,13 +159,13 @@ export interface VectorSearchResult {
 /** 向量数据库服务——由 vectorstore 插件提供 */
 export interface VectorStoreService {
   /** 添加一条向量及其元数据 */
-  add(vector: number[], metadata: Record<string, unknown>): void;
+  add(vector: number[], metadata: Record<string, unknown>): Promise<void>;
   /** 搜索最近邻，返回 [分数, 元数据][] */
-  search(queryVector: number[], topK: number): VectorSearchResult[];
+  search(queryVector: number[], topK: number): Promise<VectorSearchResult[]>;
   /** 当前存储的向量总数 */
-  size(): number;
+  size(): Promise<number>;
   /** 持久化（由调用方或 dispose 触发） */
-  save(): void;
+  save(): Promise<void>;
 }
 
 // ----- 人格服务接口 -----
@@ -292,4 +292,39 @@ export interface HookContextMap {
   'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
   'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
   'response:before': { content: string; sessionId: string };
+}
+
+// ----- 指令系统 -----
+
+/** 指令执行上下文 */
+export interface CommandContext {
+  /** 会话 ID */
+  sessionId: string;
+  /** 平台标识 */
+  platform: string;
+  /** 用户 ID */
+  userId?: string;
+  /** 指令参数 (命令名之后的部分，按空格分割) */
+  args: string[];
+  /** 原始输入文本 */
+  raw: string;
+}
+
+/** 指令定义 */
+export interface CommandDefinition {
+  /** 指令名称 (不含前缀斜杠) */
+  name: string;
+  /** 指令描述 */
+  description: string;
+  /**
+   * 执行函数
+   * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
+   */
+  action: (ctx: CommandContext) => Promise<string | void>;
+}
+
+/** 已注册的指令 */
+export interface RegisteredCommand extends CommandDefinition {
+  /** 注册此指令的插件名 */
+  pluginName: string;
 }

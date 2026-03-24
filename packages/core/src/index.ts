@@ -6,6 +6,7 @@ export { EventBus } from './events.js';
 export { ServiceContainer, normalizeDependency } from './service.js';
 export { ToolRegistry } from './tools.js';
 export { HookRegistry } from './hooks.js';
+export { CommandRegistry } from './commands.js';
 export { ConfigManager } from './config.js';
 export { PluginManager } from './plugin.js';
 export { InMemoryFallbackService } from './memory-fallback.js';
@@ -48,4 +49,7 @@ export type {
   HookContextMap,
   MiddlewareFn,
   MiddlewareNext,
+  CommandContext,
+  CommandDefinition,
+  RegisteredCommand,
 } from './types.js';

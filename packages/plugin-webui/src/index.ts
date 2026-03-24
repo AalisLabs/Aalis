@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, MemoryService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema } from '@aalis/core';
 import { getLogBuffer, onLogEntry } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -370,55 +370,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
-  // ---------- 斜杠命令处理 ----------
+  // ---------- 斜杠命令处理 (通过指令注册表) ----------
 
   async function handleSlashCommand(
     ctx: Context,
     command: string,
     sessionId: string,
   ): Promise<string | undefined> {
-    switch (command) {
-      case '/help':
-        return [
-          '**可用命令：**',
-          '- `/help` — 显示帮助信息',
-          '- `/clear` — 清空当前会话历史',
-          '- `/status` — 显示系统状态',
-        ].join('\n');
+    if (!command.startsWith('/')) return undefined;
 
-      case '/clear': {
-        const memory = ctx.getService<MemoryService>('memory');
-        if (memory) {
-          await memory.clearSession(sessionId);
-          return '会话历史已清空。';
-        }
-        return '记忆服务未启用。';
-      }
+    const parts = command.slice(1).split(/\s+/);
+    const cmdName = parts[0];
+    const args = parts.slice(1);
 
-      case '/status': {
-        const lines = ['**系统状态：**'];
-        const svcChecks = [
-          ['Agent', ctx.hasService('agent')],
-          ['LLM', ctx.hasService('llm')],
-          ['记忆', ctx.hasService('memory')],
-          ['人格', ctx.hasService('persona')],
-          ['Embedding', ctx.hasService('embedding')],
-          ['向量库', ctx.hasService('vectorstore')],
-        ] as const;
-        for (const [label, ok] of svcChecks) {
-          lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
-        }
-        const tools = ctx.tools.getDefinitions();
-        lines.push(`- 已注册工具: ${tools.length} 个`);
-        return lines.join('\n');
-      }
-
-      default:
-        if (command.startsWith('/')) {
-          return `未知命令: ${command}。输入 /help 查看帮助。`;
-        }
-        return undefined;
-    }
+    return ctx.commands.execute(cmdName, {
+      sessionId,
+      platform: 'webui',
+      args,
+      raw: command,
+    });
   }
 
   // ---------- WebSocket ----------

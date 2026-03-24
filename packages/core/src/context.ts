@@ -2,9 +2,10 @@ import { EventBus } from './events.js';
 import { ServiceContainer } from './service.js';
 import { ToolRegistry } from './tools.js';
 import { HookRegistry } from './hooks.js';
+import { CommandRegistry } from './commands.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn } from './types.js';
+import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext } from './types.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -22,6 +23,7 @@ export class Context {
   readonly config: ConfigManager;
   readonly tools: ToolRegistry;
   readonly hooks: HookRegistry;
+  readonly commands: CommandRegistry;
 
   private _events: EventBus;
   private _services: ServiceContainer;
@@ -36,6 +38,7 @@ export class Context {
     services: ServiceContainer;
     tools: ToolRegistry;
     hooks: HookRegistry;
+    commands: CommandRegistry;
     logger: Logger;
     config: ConfigManager;
     parent?: Context;
@@ -45,6 +48,7 @@ export class Context {
     this._services = options.services;
     this.tools = options.tools;
     this.hooks = options.hooks;
+    this.commands = options.commands;
     this.logger = options.logger;
     this.config = options.config;
     this._parent = options.parent;
@@ -60,6 +64,7 @@ export class Context {
       services: this._services,
       tools: this.tools,
       hooks: this.hooks,
+      commands: this.commands,
       logger: this.logger.child(id),
       config: this.config,
       parent: this,
@@ -175,6 +180,30 @@ export class Context {
     return dispose;
   }
 
+  // ---- 指令 ----
+
+  /**
+   * 注册斜杠指令（便捷方法）
+   *
+   * @example
+   * // 插件注册自定义指令
+   * ctx.command('ping', '测试连通性', async () => 'pong!');
+   *
+   * // 带参数的指令
+   * ctx.command('echo', '回显消息', async (cmdCtx) => {
+   *   return cmdCtx.args.join(' ') || '(空)';
+   * });
+   */
+  command(
+    name: string,
+    description: string,
+    action: (ctx: CommandContext) => Promise<string | void>,
+  ): () => void {
+    const dispose = this.commands.register({ name, description, action }, this.id);
+    this._disposables.push(dispose);
+    return dispose;
+  }
+
   // ---- 中间件/钩子 ----
 
   /**
@@ -234,6 +263,9 @@ export class Context {
 
     // 清理该上下文注册的钩子
     this.hooks.unregisterByContext(this.id);
+
+    // 清理该上下文注册的指令
+    this.commands.unregisterByPlugin(this.id);
 
     // 从父上下文中移除
     if (this._parent) {
