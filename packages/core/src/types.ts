@@ -274,6 +274,8 @@ export interface SchemaField {
   description?: string;
   default?: unknown;
   required?: boolean;
+  /** 标记为敏感字段，前端显示时自动遮蔽 */
+  secret?: boolean;
   /** select 类型的静态选项 */
   options?: Array<{ label: string; value: string | number }>;
   /** select 类型的动态选项来源：填服务名 (如 'llm', 'embedding')，

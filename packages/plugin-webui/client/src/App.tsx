@@ -52,6 +52,7 @@ interface SchemaField {
   description?: string;
   default?: unknown;
   required?: boolean;
+  secret?: boolean;
   options?: Array<{ label: string; value: string | number }>;
   dynamicOptions?: string;
 }
@@ -400,17 +401,19 @@ function DashboardPage({
 
 // ===== 递归配置值渲染（只读） =====
 
-function ConfigValue({ label, value, depth = 0 }: { label: string; value: unknown; depth?: number }) {
+function ConfigValue({ label, value, depth = 0, secret }: { label: string; value: unknown; depth?: number; secret?: boolean }) {
   const [open, setOpen] = useState(depth < 1);
 
   if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
-    const display = value === null || value === undefined ? '-'
+    const isSensitive = secret || /apiKey|password|secret|token/i.test(label);
+    const raw = value === null || value === undefined ? '-'
       : Array.isArray(value) ? JSON.stringify(value)
       : String(value);
+    const display = isSensitive && raw.length > 4 ? raw.slice(0, 4) + '••••••' : raw;
     return (
       <div className="config-item" style={{ paddingLeft: depth * 12 }}>
         <span className="key">{label}</span>
-        <span className="val" title={display}>{display}</span>
+        <span className="val" title={isSensitive ? '••••••' : raw}>{display}</span>
       </div>
     );
   }
@@ -426,7 +429,7 @@ function ConfigValue({ label, value, depth = 0 }: { label: string; value: unknow
       {open && (
         <div className="config-nested-body">
           {entries.map(([k, v]) => (
-            <ConfigValue key={k} label={k} value={v} depth={depth + 1} />
+            <ConfigValue key={k} label={k} value={v} depth={depth + 1} secret={secret} />
           ))}
         </div>
       )}
@@ -499,12 +502,14 @@ function buildDraftFromSchema(schema: ConfigSchema, config: Record<string, unkno
 
 function SchemaFormField({
   field,
+  fieldKey,
   value,
   onChange,
   modelCache,
   onFetchModels,
 }: {
   field: SchemaField;
+  fieldKey: string;
   value: unknown;
   onChange: (v: unknown) => void;
   modelCache: Record<string, string[]>;
@@ -595,10 +600,11 @@ function SchemaFormField({
   }
 
   // string (default)
+  const isSensitive = field.secret || /apiKey|password|secret|token/i.test(fieldKey);
   return (
     <input
       className="config-edit-input"
-      type="text"
+      type={isSensitive ? 'password' : 'text'}
       value={String(value ?? '')}
       onChange={e => onChange(e.target.value)}
     />
@@ -630,6 +636,7 @@ function SchemaForm({
               </label>
               <SchemaFormField
                 field={entry}
+                fieldKey={key}
                 value={draft[key]}
                 onChange={v => onChange({ ...draft, [key]: v })}
                 modelCache={modelCache}
@@ -654,6 +661,7 @@ function SchemaForm({
                 </label>
                 <SchemaFormField
                   field={field}
+                  fieldKey={fk}
                   value={groupData[fk]}
                   onChange={v => onChange({ ...draft, [key]: { ...groupData, [fk]: v } })}
                   modelCache={modelCache}
@@ -714,10 +722,11 @@ function PluginConfigPage({
   };
 
   const startEdit = (plugin: PluginInfo) => {
+    const config = (plugin.config ?? {}) as Record<string, unknown>;
     if (plugin.configSchema) {
-      setSchemaDraft(buildDraftFromSchema(plugin.configSchema, (plugin.config ?? {}) as Record<string, unknown>));
+      setSchemaDraft(buildDraftFromSchema(plugin.configSchema, config));
     } else {
-      setEditBuffer(flattenConfig((plugin.config ?? {}) as Record<string, unknown>));
+      setEditBuffer(flattenConfig(config));
     }
     setEditingPlugin(plugin.name);
   };
@@ -929,9 +938,11 @@ function PluginConfigPage({
                 {!isEditing ? (
                   <>
                     <div className="config-block-body" style={{ paddingTop: 6 }}>
-                      {Object.entries(p.config).map(([k, v]) => (
-                        <ConfigValue key={k} label={k} value={v} />
-                      ))}
+                      {Object.entries(p.config).map(([k, v]) => {
+                        const schemaEntry = p.configSchema?.[k];
+                        const isSecret = schemaEntry && 'secret' in schemaEntry ? (schemaEntry as SchemaField).secret : undefined;
+                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} />;
+                      })}
                     </div>
                     <button className="btn btn-sm" onClick={() => startEdit(p)}>编辑配置</button>
                   </>
@@ -960,6 +971,7 @@ function PluginConfigPage({
                           <label className="config-edit-label">{k}</label>
                           <input
                             className="config-edit-input"
+                            type={/apiKey|password|secret|token/i.test(k) ? 'password' : 'text'}
                             value={editBuffer[k]}
                             onChange={e => setEditBuffer(prev => ({ ...prev, [k]: e.target.value }))}
                           />
