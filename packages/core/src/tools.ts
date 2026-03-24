@@ -3,6 +3,7 @@ import type {
   ToolDefinition,
   ToolCallContext,
 } from './types.js';
+import type { AuthorityManager } from './authority.js';
 import type { Logger } from './logger.js';
 
 /**
@@ -11,13 +12,20 @@ import type { Logger } from './logger.js';
  * - 插件通过 ctx.tools.register() 注册工具
  * - Agent 通过 getDefinitions() 获取可用工具列表发送给 LLM
  * - Agent 通过 execute() 执行 LLM 返回的工具调用
+ * - 集成权限检查 (authority + dangerous 白名单)
  */
 export class ToolRegistry {
   private tools = new Map<string, RegisteredTool>();
   private logger: Logger;
+  private _authority?: AuthorityManager;
 
   constructor(logger: Logger) {
     this.logger = logger.child('tools');
+  }
+
+  /** 设置权限管理器（由 App 初始化时注入） */
+  setAuthority(authority: AuthorityManager): void {
+    this._authority = authority;
   }
 
   /**
@@ -51,6 +59,10 @@ export class ToolRegistry {
 
   /**
    * 执行工具调用
+   *
+   * 权限检查流程 (AI 继承调用者权限):
+   * 1. 检查用户 authority >= 工具要求
+   * 2. 检查 dangerous 工具是否在白名单中
    */
   async execute(
     toolName: string,
@@ -60,6 +72,29 @@ export class ToolRegistry {
     const tool = this.tools.get(toolName);
     if (!tool) {
       return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
+    }
+
+    // 权限检查
+    if (this._authority) {
+      const userAuth = this._authority.getAuthority(
+        callCtx.platform ?? 'unknown',
+        callCtx.userId,
+      );
+      const required = tool.authority ?? 1;
+      if (userAuth < required) {
+        return JSON.stringify({
+          error: `权限不足: 工具 "${toolName}" 需要权限等级 ${required}，当前用户等级 ${userAuth}`,
+        });
+      }
+
+      // dangerous 检查
+      if ((tool.safety ?? 'safe') === 'dangerous') {
+        if (!this._authority.isDangerousAllowed(toolName)) {
+          return JSON.stringify({
+            error: `拒绝执行: 工具 "${toolName}" 被标记为高危操作，未在 dangerousPolicy.allow 白名单中`,
+          });
+        }
+      }
     }
 
     try {
