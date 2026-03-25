@@ -1243,3 +1243,96 @@ body {
   gap: 6px;
   padding-top: 4px;
 }
+
+/* ===== 高危操作确认对话框 ===== */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fade-in 0.15s ease;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.confirm-dialog {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  max-width: 440px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+.confirm-dialog-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--text);
+}
+.confirm-dialog-desc {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+.confirm-dialog-desc strong {
+  color: var(--text);
+  font-family: var(--mono);
+}
+.confirm-dialog-args {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--muted);
+  text-align: left;
+  max-height: 160px;
+  overflow: auto;
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.confirm-dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.btn-confirm-danger {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  background: #e74c3c;
+  color: #fff;
+  transition: background 0.15s;
+}
+.btn-confirm-danger:hover {
+  background: #c0392b;
+}
+.btn-confirm-cancel {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+  background: var(--card-bg);
+  color: var(--muted);
+  transition: all 0.15s;
+}
+.btn-confirm-cancel:hover {
+  border-color: var(--text);
+  color: var(--text);
+}

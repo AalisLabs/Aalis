@@ -10,11 +10,6 @@ import type {
 
 export const name = '@aalis/plugin-tool-search';
 
-export const inject = {
-  required: [] as string[],
-  optional: [] as string[],
-};
-
 export const configSchema: ConfigSchema = {
   enabled: {
     type: 'boolean',

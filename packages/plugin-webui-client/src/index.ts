@@ -28,5 +28,5 @@ export function apply(ctx: Context): void {
 
   ctx.provide('webui-client', {
     getClientDir: () => clientDist,
-  }, { capabilities: ['default-ui'] });
+  });
 }

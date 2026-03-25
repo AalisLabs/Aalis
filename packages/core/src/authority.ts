@@ -3,6 +3,23 @@ import { resolve, dirname } from 'node:path';
 import type { ConfigManager } from './config.js';
 import type { Logger } from './logger.js';
 
+/** 高危操作确认请求信息 */
+export interface DangerousConfirmRequest {
+  /** 操作名称（指令名或工具名） */
+  name: string;
+  /** 操作类型 */
+  type: 'command' | 'tool';
+  /** 操作参数（工具调用时存在） */
+  args?: Record<string, unknown>;
+  /** 会话 ID */
+  sessionId: string;
+  /** 来源平台 */
+  platform: string;
+}
+
+/** 确认回调：返回 true 表示放行，false 表示拒绝 */
+export type DangerousConfirmHandler = (request: DangerousConfirmRequest) => Promise<boolean>;
+
 /**
  * 权限管理器
  *
@@ -18,6 +35,7 @@ export class AuthorityManager {
   private logger: Logger;
   private filePath: string;
   private dirty = false;
+  private confirmHandler?: DangerousConfirmHandler;
 
   constructor(config: ConfigManager, logger: Logger) {
     this.config = config;
@@ -84,6 +102,29 @@ export class AuthorityManager {
     if (policy.allow.includes('*')) return true;
 
     return policy.allow.includes(name);
+  }
+
+  /**
+   * 注册交互式确认回调（由平台插件设置）
+   */
+  setConfirmHandler(handler: DangerousConfirmHandler): void {
+    this.confirmHandler = handler;
+  }
+
+  /**
+   * 检查高危操作是否可以执行：先查白名单，再尝试交互确认
+   */
+  async confirmDangerous(request: DangerousConfirmRequest): Promise<boolean> {
+    if (this.isDangerousAllowed(request.name)) return true;
+    if (this.confirmHandler) {
+      try {
+        return await this.confirmHandler(request);
+      } catch (err) {
+        this.logger.warn(`高危确认回调异常: ${err}`);
+        return false;
+      }
+    }
+    return false;
   }
 
   /**

@@ -7,7 +7,7 @@ import type { Context, PersonaService, ConfigSchema, PlatformAdapter, PlatformCo
 
 export const name = '@aalis/plugin-cli';
 export const inject = {
-  optional: [{ service: 'llm', capabilities: ['chat'] }],
+  optional: ['llm'],
 };
 export const provides = ['cli', 'platform'];
 
@@ -54,7 +54,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
 
   // 注册为平台服务
-  ctx.provide('platform', adapter, { capabilities: ['text'] });
+  ctx.provide('platform', adapter);
 
   // 注册为 CLI 服务
   let running = false;
@@ -62,7 +62,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     getSessionId: () => sessionId,
     isRunning: () => running,
   };
-  ctx.provide('cli', cliService, { capabilities: ['repl'] });
+  ctx.provide('cli', cliService);
 
   // 监听 AI 回复
   ctx.on('message:send', (msg) => {
@@ -86,13 +86,19 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
   const assistantName = persona?.getPersonaName() ?? 'Aalis';
   console.log(`\n${chalk.bold(`欢迎使用 ${assistantName}!`)} 输入 /help 查看命令列表。\n`);
 
+  let closing = false;
+
   // readline 关闭（Ctrl+C 或 /quit）时退出进程
   rl.on('close', () => {
-    process.kill(process.pid, 'SIGINT');
+    if (!closing) {
+      closing = true;
+      process.kill(process.pid, 'SIGINT');
+    }
   });
 
   // 清理
   ctx.on('dispose', () => {
+    closing = true;
     rl.close();
   });
 

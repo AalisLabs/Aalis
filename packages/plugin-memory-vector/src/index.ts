@@ -72,9 +72,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.logger.info(`向量记忆已启动: 当前 ${await store.size()} 条记录`);
 
   // 注册为 semanticMemory 服务
-  ctx.provide('semanticMemory', { name: 'vector-memory' }, {
-    capabilities: ['indexing', 'semantic_search', 'context_injection'],
-  });
+  ctx.provide('semanticMemory', { name: 'vector-memory' });
 
   // === 索引新消息 ===
 

@@ -49,6 +49,10 @@ export class App {
     const cmdOverrides = config.get('commandOverrides');
     if (cmdOverrides) commands.loadOverrides(cmdOverrides);
 
+    // 加载管理员对工具的覆盖配置
+    const toolOverrides = config.get('toolOverrides');
+    if (toolOverrides) tools.loadOverrides(toolOverrides);
+
     // 1.5 权限管理
     const authority = new AuthorityManager(config, this.logger);
     commands.setAuthority(authority);
@@ -617,6 +621,34 @@ export class App {
     // 发出 ready 事件
     await this.ctx.emit('ready');
     this.logger.info('启动完成');
+  }
+
+  /**
+   * 重启应用（先停止再 spawn 新进程）
+   * 延迟 500ms 执行，以便调用方能先返回响应
+   */
+  restart(): void {
+    setTimeout(async () => {
+      await this.stop();
+      const scriptFile = process.argv[1];
+      let exec: string;
+      let args: string[];
+      if (scriptFile?.endsWith('.ts')) {
+        const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
+        exec = existsSync(tsxBin) ? tsxBin : 'tsx';
+        args = process.argv.slice(1);
+      } else {
+        [exec, ...args] = process.argv;
+      }
+      const child = spawn(exec, args, {
+        cwd: process.cwd(),
+        stdio: 'inherit',
+        detached: true,
+        env: process.env,
+      });
+      child.unref();
+      process.exit(0);
+    }, 500);
   }
 
   /**

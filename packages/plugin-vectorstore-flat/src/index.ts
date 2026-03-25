@@ -125,9 +125,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储路径=${storagePath}`);
 
-  ctx.provide('vectorstore', store, {
-    capabilities: ['search', 'persistence'],
-  });
+  ctx.provide('vectorstore', store);
 
   ctx.on('dispose', () => {
     store.save();
