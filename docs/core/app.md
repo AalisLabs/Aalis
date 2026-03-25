@@ -1,0 +1,74 @@
+# App — 应用容器
+
+`App` 是 Aalis 的顶层容器，负责初始化所有子系统、管理插件生命周期和内置指令。
+
+**源码**: `packages/core/src/app.ts`
+
+## 构造函数
+
+```typescript
+const app = new App(configPath?: string);
+```
+
+- 加载 YAML 配置文件（默认 `aalis.config.yaml`）
+- 初始化根 Context + 所有核心子系统
+- 注册内置指令
+
+## 关键属性
+
+| 属性 | 类型 | 说明 |
+|---|---|---|
+| `ctx` | `Context` | 根执行上下文 |
+| `plugins` | `PluginManager` | 插件管理器 |
+| `logger` | `Logger` | 日志器 |
+| `packagesDir` | `string` | packages 目录路径 |
+
+## 核心方法
+
+### `app.start()`
+
+1. 如果没有 `memory` 服务，注册内存 fallback（priority=-100）
+2. 应用配置中的服务偏好
+3. 检查必需服务可用性（`webui-server`, `webui-client`, `cli`）
+4. 注册 `message:received` → `agent.handleMessage()` 路由
+5. 发出 `ready` 事件
+
+### `app.stop()`
+
+1. 保存权限数据到磁盘
+2. 发出 `dispose` 事件
+3. 级联销毁根 Context 及所有子 Context
+
+### `app.plugin(module, config?)`
+
+注册单个插件。配置合并优先级：`代码传入 > YAML 配置 > defaultConfig`。
+
+### `app.autoLoadPlugins(packagesDir?)`
+
+扫描 `packages/` 目录，自动 `import()` 并注册所有插件包。跳过 `package.json` 中 `"aalis": { "core": true }` 的包。
+
+### `app.installPlugin(npmPkg)` / `app.uninstallPlugin(name)`
+
+支持从 npm 安装/卸载插件包。
+
+### `app.restart()`
+
+保存配置 → 发出 `restarting` 事件 → 关闭当前进程 → spawn 新进程。
+
+## 内置指令
+
+| 指令 | 权限 | 安全等级 | 说明 |
+|---|---|---|---|
+| `/help` | 0 | safe | 列出所有已注册指令 |
+| `/status` | 0 | safe | 显示系统状态（服务可用性、工具数、指令数） |
+| `/shutdown` | 5 | dangerous | 关闭应用 |
+| `/restart` | 5 | dangerous | 重启应用 |
+| `/grant <platform:userId> <level>` | 2 | safe | 设置用户权限（不可授予 ≥ 自身权限） |
+| `/authority [platform:userId]` | 0 | safe | 查看权限等级 |
+
+## 配置同步
+
+`App` 在加载插件时自动同步配置：
+- 补填插件 `defaultConfig` 中缺失的字段
+- 删除 `configSchema` 中未定义的多余字段（递归清理）
+- 保护环境变量占位符（`${VAR}`）不被覆盖
