@@ -4,7 +4,6 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { UserIdentity, ConfigSchema } from './types.js';
 export interface AalisConfig {
   name: string;
-  persona: string;
   logLevel: string;
   agent?: {
     maxToolIterations?: number;
@@ -43,7 +42,6 @@ export interface AalisConfig {
 
 const DEFAULT_CONFIG: AalisConfig = {
   name: 'Aalis',
-  persona: 'default',
   logLevel: 'info',
   plugins: {},
   disabledPlugins: [],
@@ -58,7 +56,6 @@ const DEFAULT_CONFIG: AalisConfig = {
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: { type: 'string', label: '机器人名称', description: '显示名称，用于提示词和界面展示', default: 'Aalis' },
-  persona: { type: 'select', label: '人设', description: '人设文件名（不含后缀）', default: 'default', dynamicOptions: 'persona' },
   logLevel: {
     type: 'select', label: '日志等级', description: '日志输出等级', default: 'info',
     options: [
@@ -212,7 +209,6 @@ export class ConfigManager {
   private buildSaveObject(): Record<string, unknown> {
     const obj: Record<string, unknown> = {
       name: this.config.name,
-      persona: this.config.persona,
       logLevel: this.config.logLevel,
     };
 
@@ -310,7 +306,6 @@ export class ConfigManager {
   private mergeDefaults(parsed: Record<string, unknown>): AalisConfig {
     return {
       name: (parsed['name'] as string) ?? DEFAULT_CONFIG.name,
-      persona: (parsed['persona'] as string) ?? DEFAULT_CONFIG.persona,
       logLevel: (parsed['logLevel'] as string) ?? DEFAULT_CONFIG.logLevel,
       agent: {
         ...DEFAULT_CONFIG.agent,
