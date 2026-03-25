@@ -173,6 +173,9 @@ class OpenAILLMService implements LLMService {
 
     this.logger.debug(`请求 LLM: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
+    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
+    if (request.signal) signals.push(request.signal);
+
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -180,7 +183,7 @@ class OpenAILLMService implements LLMService {
         'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeout),
+      signal: AbortSignal.any(signals),
     });
 
     if (!response.ok) {
@@ -239,6 +242,9 @@ class OpenAILLMService implements LLMService {
 
     this.logger.debug(`流式请求 LLM: ${this.model}, ${messages.length} 条消息`);
 
+    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
+    if (request.signal) signals.push(request.signal);
+
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -246,7 +252,7 @@ class OpenAILLMService implements LLMService {
         'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeout),
+      signal: AbortSignal.any(signals),
     });
 
     if (!response.ok) {

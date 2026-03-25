@@ -45,12 +45,26 @@ class DefaultAgent implements AgentService {
   private systemPrompt: string;
   private memoryTokenBudget: number;
 
+  /** 每个 session 的活跃 AbortController，用于中止生成 */
+  private activeControllers = new Map<string, AbortController>();
+
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
     this.logger = ctx.logger.child('agent');
     this.systemPrompt = (config.systemPrompt as string) || GUIDELINES_PROMPT;
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.logger.info('默认对话代理已初始化');
+  }
+
+  /**
+   * 中止指定会话的当前生成
+   */
+  abort(sessionId: string): void {
+    const controller = this.activeControllers.get(sessionId);
+    if (controller) {
+      controller.abort();
+      this.logger.info(`生成已中止: session=${sessionId}`);
+    }
   }
 
   /**
@@ -61,6 +75,7 @@ class DefaultAgent implements AgentService {
     request: ChatRequest,
     sessionId: string,
     platform: string,
+    signal?: AbortSignal,
   ): Promise<ChatResponse> {
     let content = '';
     let reasoningContent = '';
@@ -68,6 +83,10 @@ class DefaultAgent implements AgentService {
     let usage: ChatResponse['usage'] | undefined;
 
     for await (const chunk of llm.chatStream(request)) {
+      // 检查中止信号
+      if (signal?.aborted) {
+        throw new DOMException('Generation aborted', 'AbortError');
+      }
       if (chunk.contentDelta) {
         content += chunk.contentDelta;
         await this.ctx.emit('message:stream', {
@@ -101,13 +120,34 @@ class DefaultAgent implements AgentService {
   }
 
   async handleMessage(incoming: IncomingMessage): Promise<void> {
+    // 如果该 session 有正在进行的生成，先中止
+    this.abort(incoming.sessionId);
+
+    const controller = new AbortController();
+    this.activeControllers.set(incoming.sessionId, controller);
+
+    try {
+      await this._handleMessageInner(incoming, controller.signal);
+    } finally {
+      // 仅清理自己创建的 controller（避免清掉后续新请求的）
+      if (this.activeControllers.get(incoming.sessionId) === controller) {
+        this.activeControllers.delete(incoming.sessionId);
+      }
+    }
+  }
+
+  private async _handleMessageInner(incoming: IncomingMessage, signal: AbortSignal): Promise<void> {
     // Hook: message:before — 插件可以修改或拦截消息
     // 中间件不调用 next() 即可中断整个流程（包括 LLM 调用）
     const msgHookData: { message: IncomingMessage; metadata: Record<string, unknown> } = {
       message: incoming,
       metadata: {},
     };
+
+    let handled = false;
+
     await this.ctx.hooks.run('message:before', msgHookData, async () => {
+      handled = true;
       // ===== defaultAction: 全部消息处理逻辑在此 =====
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
@@ -152,7 +192,8 @@ class DefaultAgent implements AgentService {
           tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
           temperature,
           maxTokens,
-        }, incoming.sessionId, incoming.platform);
+          signal,
+        }, incoming.sessionId, incoming.platform, signal);
 
         // Hook: llm-call:after — 插件可以处理 LLM 返回结果
         const llmAfterData = { response, messages: llmBeforeData.messages };
@@ -168,6 +209,7 @@ class DefaultAgent implements AgentService {
         // 工具调用循环
         let iterations = 0;
         while (response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
+          if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
           iterations++;
           this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
 
@@ -241,7 +283,8 @@ class DefaultAgent implements AgentService {
             tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
             temperature,
             maxTokens,
-          }, incoming.sessionId, incoming.platform);
+            signal,
+          }, incoming.sessionId, incoming.platform, signal);
 
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
           await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
@@ -303,6 +346,17 @@ class DefaultAgent implements AgentService {
           metadata: msgHookData.metadata,
         });
       } catch (err) {
+        // 中止错误 — 静默退出，已生成的流内容保留在前端
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          this.logger.info(`生成已中止: session=${incoming.sessionId}`);
+          await this.ctx.emit('message:stream', {
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            done: true,
+          });
+          return;
+        }
+
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`处理消息失败: ${message}`);
         await this.ctx.emit('message:send', {
@@ -312,6 +366,15 @@ class DefaultAgent implements AgentService {
         });
       }
     });
+
+    // 消息被中间件拦截（如 chat-flow 缓冲），通知前端结束 loading
+    if (!handled) {
+      await this.ctx.emit('message:stream', {
+        sessionId: incoming.sessionId,
+        platform: incoming.platform,
+        done: true,
+      });
+    }
   }
 
   /**

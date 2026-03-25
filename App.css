@@ -792,6 +792,15 @@ body {
   cursor: not-allowed;
 }
 
+.send-btn.stop-btn {
+  background: var(--danger, #e53935);
+  font-size: 0.85rem;
+}
+
+.send-btn.stop-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #e53935) 85%, black);
+}
+
 /* ===== 日志页 ===== */
 
 .page-logs {

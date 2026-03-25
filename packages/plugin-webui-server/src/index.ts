@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService, AgentService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -31,7 +31,7 @@ interface WebUIConfig {
 // ===== WebSocket 消息协议 =====
 
 interface WSIncoming {
-  type: 'message' | 'subscribe_logs';
+  type: 'message' | 'subscribe_logs' | 'abort';
   content?: string;
   sessionId?: string;
 }
@@ -699,6 +699,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
         if (msg.type === 'subscribe_logs') {
           logSubscribers.add(ws);
+          return;
+        }
+
+        if (msg.type === 'abort') {
+          const sessionId = msg.sessionId || 'webui-default';
+          const agent = ctx.getService<AgentService>('agent');
+          if (agent?.abort) agent.abort(sessionId);
           return;
         }
 
