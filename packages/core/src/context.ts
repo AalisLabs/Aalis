@@ -29,10 +29,7 @@ export class Context {
   readonly id: string;
   readonly logger: Logger;
   readonly config: ConfigManager;
-  readonly tools: ToolRegistry;
   readonly hooks: HookRegistry;
-  readonly commands: CommandRegistry;
-  readonly authority: AuthorityManager;
 
   private _events: EventBus;
   private _services: ServiceContainer;
@@ -48,10 +45,7 @@ export class Context {
     id: string;
     events: EventBus;
     services: ServiceContainer;
-    tools: ToolRegistry;
     hooks: HookRegistry;
-    commands: CommandRegistry;
-    authority: AuthorityManager;
     logger: Logger;
     config: ConfigManager;
     parent?: Context;
@@ -59,13 +53,30 @@ export class Context {
     this.id = options.id;
     this._events = options.events;
     this._services = options.services;
-    this.tools = options.tools;
     this.hooks = options.hooks;
-    this.commands = options.commands;
-    this.authority = options.authority;
     this.logger = options.logger;
     this.config = options.config;
     this._parent = options.parent;
+  }
+
+  // ---- 内置服务 getter（由 builtin 插件注册，通过服务容器延迟查找） ----
+
+  get tools(): ToolRegistry {
+    const svc = this._services.get<ToolRegistry>('tools');
+    if (!svc) throw new Error('ToolRegistry 服务不可用，请确保 @aalis/builtin-tools 已加载');
+    return svc;
+  }
+
+  get commands(): CommandRegistry {
+    const svc = this._services.get<CommandRegistry>('commands');
+    if (!svc) throw new Error('CommandRegistry 服务不可用，请确保 @aalis/builtin-commands 已加载');
+    return svc;
+  }
+
+  get authority(): AuthorityManager {
+    const svc = this._services.get<AuthorityManager>('authority');
+    if (!svc) throw new Error('AuthorityManager 服务不可用，请确保 @aalis/builtin-authority 已加载');
+    return svc;
   }
 
   /**
@@ -76,10 +87,7 @@ export class Context {
       id,
       events: this._events,
       services: this._services,
-      tools: this.tools,
       hooks: this.hooks,
-      commands: this.commands,
-      authority: this.authority,
       logger: this.logger.child(id),
       config: this.config,
       parent: this,
@@ -412,8 +420,8 @@ export class Context {
     // 清理该上下文注册的钩子
     this.hooks.unregisterByContext(this.id);
 
-    // 清理该上下文注册的指令
-    this.commands.unregisterByPlugin(this.id);
+    // 清理该上下文注册的指令（安全访问，服务可能已卸载）
+    this._services.get<CommandRegistry>('commands')?.unregisterByPlugin(this.id);
 
     // 从父上下文中移除
     if (this._parent) {
