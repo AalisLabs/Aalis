@@ -174,7 +174,7 @@ export class ToolRegistry {
         });
         if (!confirmed) {
           return JSON.stringify({
-            error: `拒绝执行: 工具 "${toolName}" 被标记为高危操作，需要用户确认后才能执行`,
+            error: `用户已取消执行工具 "${toolName}"`,
           });
         }
       }

@@ -84,6 +84,7 @@ export class App {
               sessionId: callCtx.sessionId,
               platform: callCtx.platform ?? 'unknown',
               userId: callCtx.userId,
+              skipSafetyCheck: true, // 工具层已完成 dangerous 检查，跳过指令层重复确认
             });
             return result ?? '(指令已执行)';
           },
@@ -497,6 +498,8 @@ export class App {
 
     // /restart — 重新启动应用（重新执行原始启动命令）
     this.ctx.command('restart', '重启应用', async () => {
+      // 先通知所有平台“即将重启”
+      await this.ctx.emit('restarting');
       setTimeout(async () => {
         await this.stop();
         const scriptFile = process.argv[1];
