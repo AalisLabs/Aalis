@@ -1,12 +1,11 @@
 import { EventBus } from './events.js';
 import { ServiceContainer } from './service.js';
-import { ToolRegistry } from './tools.js';
 import { HookRegistry } from './hooks.js';
-import { CommandRegistry } from './commands.js';
-import { AuthorityManager } from './authority.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection } from './types/index.js';
+import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, AuthorityService } from './types/index.js';
+
+type Maybe<T> = T | undefined;
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -69,22 +68,16 @@ export class Context {
 
   // ---- 内置服务 getter（由 builtin 插件注册，通过服务容器延迟查找） ----
 
-  get tools(): ToolRegistry {
-    const svc = this._services.get<ToolRegistry>('tools');
-    if (!svc) throw new Error('ToolRegistry 服务不可用，请确保 @aalis/builtin-tools 已加载');
-    return svc;
+  get tools(): Maybe<ToolService> {
+    return this._services.get<ToolService>('tools');
   }
 
-  get commands(): CommandRegistry {
-    const svc = this._services.get<CommandRegistry>('commands');
-    if (!svc) throw new Error('CommandRegistry 服务不可用，请确保 @aalis/builtin-commands 已加载');
-    return svc;
+  get commands(): Maybe<CommandService> {
+    return this._services.get<CommandService>('commands');
   }
 
-  get authority(): AuthorityManager {
-    const svc = this._services.get<AuthorityManager>('authority');
-    if (!svc) throw new Error('AuthorityManager 服务不可用，请确保 @aalis/builtin-authority 已加载');
-    return svc;
+  get authority(): Maybe<AuthorityService> {
+    return this._services.get<AuthorityService>('authority');
   }
 
   /**
@@ -290,8 +283,10 @@ export class Context {
 
   /**
    * 注册 AI 工具（便捷方法）
+   * 需要 tools 服务可用，否则抛出错误
    */
   registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void {
+    if (!this.tools) throw new Error('tools 服务不可用，请安装 @aalis/plugin-agent-tools');
     const dispose = this.tools.register(tool, this.id);
     this._disposables.push(dispose);
     return dispose;
@@ -317,6 +312,7 @@ export class Context {
     action: (ctx: CommandContext) => Promise<string | void>,
     options?: { authority?: number; safety?: SafetyLevel; asTools?: boolean },
   ): () => void {
+    if (!this.commands) throw new Error('commands 服务不可用，请安装 @aalis/plugin-commands');
     const def: CommandDefinition = {
       name,
       description,
@@ -466,7 +462,7 @@ export class Context {
     this.hooks.unregisterByContext(this.id);
 
     // 清理该上下文注册的指令（安全访问，服务可能已卸载）
-    this._services.get<CommandRegistry>('commands')?.unregisterByPlugin(this.id);
+    this._services.get<CommandService>('commands')?.unregisterByPlugin(this.id);
 
     // 从父上下文中移除
     if (this._parent) {

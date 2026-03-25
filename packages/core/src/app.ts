@@ -5,8 +5,6 @@ import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
-import { InMemoryFallbackService } from './memory-fallback.js';
-import { builtinAuthority, builtinCommands, builtinTools, builtinLifecycle } from './builtin/index.js';
 import type { AgentService } from './types/index.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -183,20 +181,11 @@ export class App {
   }
 
   /**
-   * 加载内置插件（authority → commands → tools → lifecycle），保证顺序。
-   * 内置插件为 core: true，不可被用户禁用。
+   * 内置插件加载点（保留用于未来可能的核心内置逻辑）。
+   * 所有业务插件（commands、authority、tools 等）均通过 packages/ 目录自动加载。
    */
   private async loadBuiltinPlugins(): Promise<void> {
-    this.logger.info('加载内置插件...');
-
-    // 顺序很重要: authority 先于 commands/tools（它们依赖 authority）
-    await this.plugin(builtinAuthority);
-    await this.plugin(builtinCommands);
-    await this.plugin(builtinTools);
-    // lifecycle 依赖 commands + authority，在其后加载
-    await this.plugin(builtinLifecycle);
-
-    this.logger.info('内置插件加载完成');
+    // 当前无内置插件，所有功能由外部插件提供
   }
 
   /**
@@ -484,16 +473,6 @@ export class App {
     this.logger.info('正在启动...');
     await this.ctx.emit('app:starting');
 
-    // 检查是否有 memory 服务，没有则注册 fallback
-    if (!this.ctx.hasService('memory')) {
-      this.logger.warn('未检测到记忆服务插件，启用内存 fallback (数据不会持久化)');
-      const fallback = new InMemoryFallbackService();
-      this.ctx.provide('memory', fallback, {
-        capabilities: ['history'],
-        priority: -100, // 最低优先级
-      });
-    }
-
     // 应用配置文件中的服务偏好
     const prefs = this.ctx.config.getServicePreferences();
     for (const [service, contextId] of Object.entries(prefs)) {
@@ -564,7 +543,7 @@ export class App {
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
     await this.ctx.emit('app:stopping');
-    try { this.ctx.authority.save(); } catch { /* authority 服务可能已卸载 */ }
+    try { this.ctx.authority?.save(); } catch { /* authority 服务可能已卸载 */ }
     await this.ctx.emit('dispose');
     this.ctx.dispose();
     this.logger.info('已停止');

@@ -35,6 +35,15 @@ export type {
 // 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
 export type { HookContextMap } from './hooks.js';
 
+// 权限服务接口
+export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
+
+// 指令服务接口
+export type { CommandService } from './commands.js';
+
+// 工具服务接口
+export type { ToolService } from './tools.js';
+
 // LLM 服务
 export type {
   ChatRequest,

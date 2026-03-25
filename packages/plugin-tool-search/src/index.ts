@@ -9,6 +9,9 @@ import type {
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-tool-search';
+export const inject = {
+  required: ['tools'],
+};
 
 export const configSchema: ConfigSchema = {
   enabled: {
@@ -161,10 +164,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     definition: buildSearchToolDef(),
     async handler(args: Record<string, unknown>, _callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
-      const summaries = ctx.tools.getSummaries();
+      const summaries = ctx.tools!.getSummaries();
       const results = searchTools(summaries, query);
       // 搜索结果返回完整定义，供 LLM 了解参数
-      const allDefs = ctx.tools.getDefinitions();
+      const allDefs = ctx.tools!.getDefinitions();
       const defMap = new Map(allDefs.map(d => [d.function.name, d]));
 
       const toolDetails = results.map(t => {

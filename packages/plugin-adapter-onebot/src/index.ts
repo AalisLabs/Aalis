@@ -13,7 +13,7 @@ import { OneBotV12 } from './v12.js';
 
 export const name = '@aalis/plugin-adapter-onebot';
 export const inject = {
-  optional: ['llm'],
+  optional: ['llm', 'commands'],
 };
 export const provides = ['platform'];
 
@@ -379,9 +379,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.debug(`OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`);
 
     // 指令处理
-    const parsed = ctx.commands.parseCommand(event.text);
+    const parsed = ctx.commands?.parseCommand(event.text);
     if (parsed) {
-      ctx.commands.execute(parsed.name, {
+      ctx.commands!.execute(parsed.name, {
         sessionId,
         platform: 'onebot',
         userId: event.userId,
