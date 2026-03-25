@@ -5,16 +5,10 @@ export type { AppOptions } from './app.js';
 export { Context } from './context.js';
 export { EventBus } from './events.js';
 export { ServiceContainer, ScopedServiceContainer, normalizeDependency } from './service.js';
-export { ToolRegistry } from './tools.js';
 export { HookRegistry } from './hooks.js';
-export { CommandRegistry } from './commands.js';
-export { AuthorityManager } from './authority.js';
-export type { DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
 export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager } from './plugin.js';
-export { InMemoryFallbackService } from './memory-fallback.js';
 export { Logger, getLogBuffer, onLogEntry } from './logger.js';
-export { builtinAuthority, builtinCommands, builtinTools, builtinLifecycle } from './builtin/index.js';
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
 export type { LogLevel, LogEntry } from './logger.js';
@@ -52,6 +46,12 @@ export type {
   CommandContext,
   CommandDefinition,
   RegisteredCommand,
+  // 服务接口（抽象契约，具体实现由插件提供）
+  AuthorityService,
+  DangerousConfirmRequest,
+  DangerousConfirmHandler,
+  CommandService,
+  ToolService,
   // LLM 服务
   ChatRequest,
   ChatResponse,

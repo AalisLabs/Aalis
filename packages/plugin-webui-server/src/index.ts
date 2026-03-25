@@ -11,6 +11,9 @@ import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 export const name = '@aalis/plugin-webui-server';
 export const provides = ['webui-server', 'platform'];
+export const inject = {
+  optional: ['commands', 'tools', 'authority'],
+};
 
 export const webuiPages: WebuiPage[] = [
   { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10 },
@@ -119,8 +122,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         memory: ctx.hasService('memory'),
         persona: ctx.hasService('persona'),
       },
-      tools: ctx.tools.getDefinitions().map(t => t.function.name),
-      commands: ctx.commands.getAll().map(c => ({
+      tools: ctx.tools?.getDefinitions().map(t => t.function.name) ?? [],
+      commands: ctx.commands?.getAll().map(c => ({
         name: c.name,
         description: c.description,
         authority: c.authority,
@@ -225,19 +228,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // 只允许更新安全的顶级字段
-    const allowed = ['name', 'logLevel', 'commandPrefix', 'commandAsTools'] as const;
+    const allowed = ['name', 'logLevel'] as const;
     for (const key of allowed) {
       if (key in updates) {
         ctx.config.set(key, updates[key]);
       }
-    }
-
-    // commandPrefix / commandAsTools 需要同步到运行时
-    if ('commandPrefix' in updates && typeof updates.commandPrefix === 'string') {
-      ctx.commands.prefix = updates.commandPrefix;
-    }
-    if ('commandAsTools' in updates && typeof updates.commandAsTools === 'boolean') {
-      ctx.commands.globalAsTools = updates.commandAsTools;
     }
 
     // 检查是否有需要重启才能生效的字段
@@ -498,19 +493,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取权限概览（所有用户 + 配置）
   expressApp.get('/api/authority', (_req, res) => {
-    const users = ctx.authority.listUsers();
+    const users = ctx.authority?.listUsers() ?? [];
     const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
-    const commands = ctx.commands.getAll();
-    const overrides = ctx.commands.getOverrides();
-    const tools = ctx.tools.getAll();
-    const toolOverrides = ctx.tools.getOverrides();
+    const commands = ctx.commands?.getAll() ?? [];
+    const overrides = ctx.commands?.getOverrides() ?? {};
+    const tools = ctx.tools?.getAll() ?? [];
+    const toolOverrides = ctx.tools?.getOverrides() ?? {};
     res.json({
       users,
       owners,
       defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
       ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
-      commandPrefix: ctx.config.get('commandPrefix') ?? '/',
+      commandPrefix: ctx.commands?.prefix ?? '/',
       commands: commands.map(c => {
         const o = overrides[c.name];
         return {
@@ -541,8 +536,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.status(400).json({ error: '权限等级必须 >= 0' });
       return;
     }
-    ctx.authority.setAuthority(platform, userId, authority);
-    ctx.authority.save();
+    ctx.authority?.setAuthority(platform, userId, authority);
+    ctx.authority?.save();
     res.json({ ok: true, message: `${platform}:${userId} 权限已设为 ${authority}` });
   });
 
@@ -553,8 +548,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.status(400).json({ error: 'platform, userId 必填' });
       return;
     }
-    ctx.authority.setAuthority(platform, userId, ctx.config.get('defaultAuthority') ?? 1);
-    ctx.authority.save();
+    ctx.authority?.setAuthority(platform, userId, ctx.config.get('defaultAuthority') ?? 1);
+    ctx.authority?.save();
     res.json({ ok: true, message: `${platform}:${userId} 权限已重置` });
   });
 
@@ -630,12 +625,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     if (Object.keys(override).length === 0) {
       // 移除覆盖
-      ctx.commands.removeOverride(name);
+      ctx.commands?.removeOverride(name);
     } else {
-      ctx.commands.setOverride(name, override);
+      ctx.commands?.setOverride(name, override);
     }
     // 持久化到配置
-    ctx.config.set('commandOverrides', ctx.commands.getOverrides());
+    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
     app.saveConfig();
     res.json({ ok: true, message: `指令 ${name} 权限已更新` });
   });
@@ -652,8 +647,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    ctx.commands.removeOverride(name);
-    ctx.config.set('commandOverrides', ctx.commands.getOverrides());
+    ctx.commands?.removeOverride(name);
+    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
     app.saveConfig();
     res.json({ ok: true, message: `指令 ${name} 覆盖已重置` });
   });
@@ -675,11 +670,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
 
     if (Object.keys(override).length === 0) {
-      ctx.tools.removeOverride(name);
+      ctx.tools?.removeOverride(name);
     } else {
-      ctx.tools.setOverride(name, override);
+      ctx.tools?.setOverride(name, override);
     }
-    ctx.config.set('toolOverrides', ctx.tools.getOverrides());
+    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
     app.saveConfig();
     res.json({ ok: true, message: `工具 ${name} 权限已更新` });
   });
@@ -696,8 +691,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    ctx.tools.removeOverride(name);
-    ctx.config.set('toolOverrides', ctx.tools.getOverrides());
+    ctx.tools?.removeOverride(name);
+    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
     app.saveConfig();
     res.json({ ok: true, message: `工具 ${name} 覆盖已重置` });
   });
@@ -709,10 +704,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     input: string,
     sessionId: string,
   ): Promise<string | undefined> {
-    const parsed = ctx.commands.parseCommand(input);
+    const parsed = ctx.commands?.parseCommand(input);
     if (!parsed) return undefined;
 
-    return ctx.commands.execute(parsed.name, {
+    return ctx.commands!.execute(parsed.name, {
       sessionId,
       platform: 'webui',
       userId: 'console',
@@ -727,7 +722,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   /** 每个 session 最多一个待确认请求 */
   const pendingSessionConfirms = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
 
-  ctx.authority.setConfirmHandler('webui', async (request) => {
+  ctx.authority?.setConfirmHandler('webui', async (request) => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
     const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
