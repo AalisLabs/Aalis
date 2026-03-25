@@ -9,6 +9,13 @@ export const name = '@aalis/plugin-persona';
 export const provides = ['persona'];
 
 export const configSchema: ConfigSchema = {
+  persona: {
+    type: 'select',
+    label: '人设',
+    description: '人设文件名（不含后缀）',
+    default: 'default',
+    dynamicOptions: 'persona',
+  },
   personasDir: {
     type: 'string',
     label: '人设目录',
@@ -18,6 +25,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
+  persona: 'default',
   personasDir: 'data/personas',
 };
 
@@ -115,7 +123,7 @@ class PersonaServiceImpl implements PersonaService {
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const personaName = ctx.config.get('persona');
+  const personaName = (config.persona as string) || 'default';
   const personasDir = (config.personasDir as string) || 'data/personas';
   const configDir = ctx.config.getConfigDir();
 
