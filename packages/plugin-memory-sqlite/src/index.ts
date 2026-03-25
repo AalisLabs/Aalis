@@ -134,10 +134,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const service = new SQLiteMemoryService(db);
 
-    ctx.provide('memory', service, {
-      capabilities: ['history', 'persistence'],
-      priority: 10, // 比 MongoDB 和 fallback 优先级高
-    });
+    ctx.provide('memory', service, { priority: 10 });
 
     // 注册 /clear 指令 —— 由 memory 服务提供者负责
     ctx.command('clear', '清空当前会话历史及长期记忆', async (cmdCtx) => {

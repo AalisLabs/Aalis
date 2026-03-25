@@ -8,10 +8,6 @@ import { registerHttpTools } from './tools/http.js';
 
 export const name = '@aalis/plugin-tools-basic';
 export const provides = ['machine-tools'];
-export const inject = {
-  required: [] as string[],
-  optional: [] as string[],
-};
 
 export const configSchema: ConfigSchema = {
   workingDirectory: {
@@ -115,9 +111,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('machine-tools', service, {
-    capabilities: ['shell', 'file', 'system', 'http', 'extensible'],
-  });
+  ctx.provide('machine-tools', service);
 
   // 注册各工具组
   if (cfg.shell.enabled) {

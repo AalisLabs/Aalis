@@ -210,6 +210,7 @@ function useWebSocket(
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
   onStateChanged?: () => void,
+  onConfirmDangerous?: (confirmId: string, name: string, opType: 'command' | 'tool', args?: Record<string, unknown>) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -250,6 +251,8 @@ function useWebSocket(
             onLog(data.log);
           } else if (data.type === 'state_changed') {
             onStateChanged?.();
+          } else if (data.type === 'confirm_dangerous' && data.confirmId) {
+            onConfirmDangerous?.(data.confirmId, data.dangerousName, data.dangerousType, data.dangerousArgs);
           }
         } catch { /* ignore */ }
       };
@@ -261,7 +264,7 @@ function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onConfirmDangerous]);
 
   const send = useCallback((content: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -273,7 +276,13 @@ function useWebSocket(
     }
   }, []);
 
-  return { send, connected };
+  const sendRaw = useCallback((data: Record<string, unknown>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(data));
+    }
+  }, []);
+
+  return { send, sendRaw, connected };
 }
 
 // ===== 仪表盘页 =====
@@ -840,11 +849,13 @@ function PluginConfigPage({
   config,
   onRefresh,
   onConfigSaved,
+  onRestart,
 }: {
   plugins: PluginInfo[];
   config: Record<string, unknown> | null;
   onRefresh: () => void;
   onConfigSaved: () => void;
+  onRestart: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editingPlugin, setEditingPlugin] = useState<string | null>(null);
@@ -961,15 +972,19 @@ function PluginConfigPage({
 
   const handleSaveGlobal = async () => {
     setSaving(true);
-    const res = await api<{ ok?: boolean; error?: string }>('/api/config', {
+    const res = await api<{ ok?: boolean; error?: string; restart?: boolean }>('/api/config', {
       method: 'PUT',
       body: JSON.stringify(globalDraft),
     });
     setSaving(false);
     if (res.ok) {
-      showToast('全局配置已保存');
       setEditingGlobal(false);
       onConfigSaved();
+      if (res.restart) {
+        onRestart();
+      } else {
+        showToast('全局配置已保存');
+      }
     } else {
       showToast(res.error ?? '未知错误');
     }
@@ -1335,7 +1350,6 @@ function ChatPanel({
     <div className="chat-panel" style={{ width }}>
       <div className="chat-panel-header">
         <span className="chat-panel-title">💬 {status?.name ?? 'Aalis'}</span>
-        <div className={`connection-dot ${connected ? 'online' : 'offline'}`} />
       </div>
       <div className="messages">
         {messages.length === 0 && (
@@ -1576,6 +1590,17 @@ interface AuthorityCommand {
   pluginName: string;
 }
 
+interface AuthorityTool {
+  name: string;
+  description: string;
+  authority: number;
+  safety: string;
+  baseAuthority: number;
+  baseSafety: string;
+  overridden: boolean;
+  pluginName: string;
+}
+
 interface AuthorityData {
   users: AuthorityUser[];
   owners: AuthorityOwner[];
@@ -1585,6 +1610,8 @@ interface AuthorityData {
   commandAsTools: boolean;
   commands: AuthorityCommand[];
   commandOverrides: Record<string, { authority?: number; safety?: string }>;
+  tools: AuthorityTool[];
+  toolOverrides: Record<string, { authority?: number; safety?: string }>;
   dangerousPolicy: {
     allow?: string[];
     duration?: number;
@@ -1597,7 +1624,7 @@ function AuthorityPage() {
   const [message, setMessage] = useState('');
 
   // 展开/折叠区段
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['commands', 'config']));
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['config']));
   const toggleSection = (key: string) => {
     setOpenSections(prev => {
       const next = new Set(prev);
@@ -1618,6 +1645,8 @@ function AuthorityPage() {
   const [showAddOwner, setShowAddOwner] = useState(false);
   const [editingCmd, setEditingCmd] = useState<string | null>(null);
   const [cmdDraft, setCmdDraft] = useState({ authority: 1, safety: 'safe' });
+  const [editingTool, setEditingTool] = useState<string | null>(null);
+  const [toolDraft, setToolDraft] = useState({ authority: 1, safety: 'safe' });
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1707,6 +1736,19 @@ function AuthorityPage() {
     refresh();
   };
 
+  // ---- 工具权限操作 ----
+  const saveToolOverride = async (name: string) => {
+    await api('/api/authority/tool', { method: 'PUT', body: JSON.stringify({ name, authority: toolDraft.authority, safety: toolDraft.safety }) });
+    setEditingTool(null);
+    flash(`工具 ${name} 权限已更新`);
+    refresh();
+  };
+  const resetToolOverride = async (name: string) => {
+    await api('/api/authority/tool', { method: 'DELETE', body: JSON.stringify({ name }) });
+    flash(`工具 ${name} 已恢复默认`);
+    refresh();
+  };
+
   if (loading && !data) {
     return <div className="page-content"><div className="empty-hint">加载中...</div></div>;
   }
@@ -1740,6 +1782,13 @@ function AuthorityPage() {
           <div className="overview-card-body">
             <div className="overview-card-label">已注册指令</div>
             <div className="overview-card-value">{data.commands.length}</div>
+          </div>
+        </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">🔧</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">已注册工具</div>
+            <div className="overview-card-value">{data.tools?.length ?? 0}</div>
           </div>
         </div>
         <div className="overview-card">
@@ -1866,6 +1915,85 @@ function AuthorityPage() {
                             }}>编辑</button>
                             {c.overridden && (
                               <button className="btn btn-sm" onClick={() => resetCommandOverride(c.name)} title="恢复插件默认值">重置</button>
+                            )}
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 工具权限 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('tools')}>
+          <span className="config-block-title">工具权限</span>
+          <span className="config-block-hint">自定义每个 AI 工具的所需权限等级与安全等级，修改后优先于插件默认值</span>
+          <span className={`config-block-toggle ${openSections.has('tools') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('tools') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            {!data.tools || data.tools.length === 0 ? (
+              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册工具</div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header">
+                  <span>工具</span>
+                  <span>来源</span>
+                  <span>权限等级</span>
+                  <span>安全等级</span>
+                  <span>操作</span>
+                </div>
+                {data.tools.map(t => {
+                  const isEditing = editingTool === t.name;
+                  return (
+                    <div className={`authority-cmd-row ${t.overridden ? 'overridden' : ''}`} key={t.name}>
+                      <span className="authority-cmd-name" title={t.description}>
+                        {t.name}
+                      </span>
+                      <span className="authority-cmd-plugin">{t.pluginName}</span>
+                      <span>
+                        {isEditing ? (
+                          <input type="number" className="config-edit-input authority-inline-input" min={0}
+                            value={toolDraft.authority}
+                            onChange={e => setToolDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
+                            autoFocus />
+                        ) : (
+                          <span className={`authority-badge ${t.authority >= data.ownerAuthority ? 'owner' : t.authority >= 3 ? 'high' : ''}`}>
+                            {t.authority}
+                          </span>
+                        )}
+                      </span>
+                      <span>
+                        {isEditing ? (
+                          <select className="config-edit-input authority-inline-select"
+                            value={toolDraft.safety}
+                            onChange={e => setToolDraft(v => ({ ...v, safety: e.target.value }))}>
+                            <option value="safe">safe</option>
+                            <option value="dangerous">dangerous</option>
+                          </select>
+                        ) : (
+                          <span className={`authority-safety-tag ${t.safety}`}>{t.safety}</span>
+                        )}
+                      </span>
+                      <span className="authority-actions">
+                        {isEditing ? (
+                          <>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveToolOverride(t.name)}>保存</button>
+                            <button className="btn btn-sm" onClick={() => setEditingTool(null)}>取消</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn btn-sm" onClick={() => {
+                              setEditingTool(t.name);
+                              setToolDraft({ authority: t.authority, safety: t.safety });
+                            }}>编辑</button>
+                            {t.overridden && (
+                              <button className="btn btn-sm" onClick={() => resetToolOverride(t.name)} title="恢复插件默认值">重置</button>
                             )}
                           </>
                         )}
@@ -2123,7 +2251,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
-    const valid: PageTab[] = ['dashboard', 'marketplace', 'plugin-config', 'platforms', 'logs'];
+    const valid: PageTab[] = ['dashboard', 'marketplace', 'plugin-config', 'platforms', 'authority', 'logs'];
     return valid.includes(hash as PageTab) ? (hash as PageTab) : 'dashboard';
   });
 
@@ -2136,6 +2264,17 @@ export function App() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [servicesData, setServicesData] = useState<Record<string, ServiceInfo> | null>(null);
   const [chatWidth, setChatWidth] = useState(420);
+
+  // 重启中状态
+  const [restarting, setRestarting] = useState(false);
+
+  // 高危操作确认对话框
+  const [confirmDialog, setConfirmDialog] = useState<{
+    confirmId: string;
+    name: string;
+    opType: 'command' | 'tool';
+    args?: Record<string, unknown>;
+  } | null>(null);
 
   const streamingRef = useRef(false);
 
@@ -2153,15 +2292,9 @@ export function App() {
         } else {
           segments.push({ type: 'text', content });
         }
-        // 如果有最终 reasoningContent，更新 reasoningSegments 中最后一个文本段
-        let reasoningSegments = last.reasoningSegments;
-        if (reasoningContent && reasoningSegments) {
-          reasoningSegments = [...reasoningSegments];
-          const lastRS = reasoningSegments[reasoningSegments.length - 1];
-          if (lastRS && lastRS.type === 'text') {
-            reasoningSegments[reasoningSegments.length - 1] = { type: 'text', content: reasoningContent };
-          }
-        }
+        // 保留流式阶段已构建好的 reasoningSegments（含 tool_call 结构），
+        // 不用 message:send 的扁平合并文本覆盖
+        const reasoningSegments = last.reasoningSegments;
         return [...prev.slice(0, -1), {
           ...last,
           content,
@@ -2304,7 +2437,18 @@ export function App() {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
   }, [refreshPlugins, refreshServices]);
 
-  const { send, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged);
+  const handleConfirmDangerous = useCallback((confirmId: string, name: string, opType: 'command' | 'tool', args?: Record<string, unknown>) => {
+    setConfirmDialog({ confirmId, name, opType, args });
+  }, []);
+
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleConfirmDangerous);
+
+  // 重启完成后自动关闭遮罩
+  useEffect(() => {
+    if (restarting && connected) {
+      setRestarting(false);
+    }
+  }, [restarting, connected]);
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
@@ -2390,6 +2534,7 @@ export function App() {
               config={config}
               onRefresh={refreshPlugins}
               onConfigSaved={refreshConfig}
+              onRestart={() => setRestarting(true)}
             />
           )}
           {activeTab === 'platforms' && <PlatformPage />}
@@ -2438,6 +2583,46 @@ export function App() {
         onSend={handleSend}
         width={chatWidth}
       />
+
+      {/* 高危操作确认对话框 */}
+      {confirmDialog && (
+        <div className="confirm-overlay" onClick={() => {
+          sendRaw({ type: 'dangerous_response', confirmId: confirmDialog.confirmId, allowed: false });
+          setConfirmDialog(null);
+        }}>
+          <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="confirm-dialog-icon">⚠️</div>
+            <h3>高危操作确认</h3>
+            <p className="confirm-dialog-desc">
+              {confirmDialog.opType === 'command' ? '指令' : '工具'} <strong>{confirmDialog.name}</strong> 被标记为高危操作，需要您确认后才能执行。
+            </p>
+            {confirmDialog.args && Object.keys(confirmDialog.args).length > 0 && (
+              <pre className="confirm-dialog-args">{JSON.stringify(confirmDialog.args, null, 2)}</pre>
+            )}
+            <div className="confirm-dialog-actions">
+              <button className="btn-confirm-danger" onClick={() => {
+                sendRaw({ type: 'dangerous_response', confirmId: confirmDialog.confirmId, allowed: true });
+                setConfirmDialog(null);
+              }}>确认执行</button>
+              <button className="btn-confirm-cancel" onClick={() => {
+                sendRaw({ type: 'dangerous_response', confirmId: confirmDialog.confirmId, allowed: false });
+                setConfirmDialog(null);
+              }}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 重启中遮罩 */}
+      {restarting && (
+        <div className="restart-overlay">
+          <div className="restart-dialog">
+            <div className="restart-spinner" />
+            <h3>正在重启…</h3>
+            <p className="restart-desc">应用正在重新启动，请稍候</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

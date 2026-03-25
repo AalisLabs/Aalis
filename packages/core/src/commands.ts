@@ -171,8 +171,14 @@ export class CommandRegistry {
       // dangerous 检查
       const safety = override?.safety ?? cmd.safety ?? 'safe';
       if (safety === 'dangerous') {
-        if (!this._authority.isDangerousAllowed(name)) {
-          return `拒绝执行: 指令 ${this.prefix}${name} 被标记为高危操作，未在 dangerousPolicy.allow 白名单中。`;
+        const confirmed = await this._authority.confirmDangerous({
+          name,
+          type: 'command',
+          sessionId: cmdCtx.sessionId,
+          platform: cmdCtx.platform,
+        });
+        if (!confirmed) {
+          return `拒绝执行: 指令 ${this.prefix}${name} 被标记为高危操作，需要确认后才能执行。`;
         }
       }
     }

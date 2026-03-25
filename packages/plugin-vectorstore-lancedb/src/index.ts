@@ -134,10 +134,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const count = await store.size();
   ctx.logger.info(`LanceDB 向量数据库已加载: ${count} 条记录, 路径=${dbPath}, 表=${cfg.tableName}`);
 
-  ctx.provide('vectorstore', store, {
-    capabilities: ['search', 'persistence', 'ann_index'],
-    priority: 10, // 优先级高于 flat 实现
-  });
+  ctx.provide('vectorstore', store, { priority: 10 });
 
   ctx.on('dispose', async () => {
     await store.close();

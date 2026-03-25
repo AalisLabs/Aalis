@@ -37,6 +37,8 @@ export interface AalisConfig {
   };
   /** 管理员对单条指令的权限/安全等级覆盖 */
   commandOverrides?: Record<string, { authority?: number; safety?: string }>;
+  /** 管理员对工具的权限/安全等级覆盖 */
+  toolOverrides?: Record<string, { authority?: number; safety?: string }>;
 }
 
 const DEFAULT_CONFIG: AalisConfig = {
@@ -56,7 +58,7 @@ const DEFAULT_CONFIG: AalisConfig = {
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: { type: 'string', label: '机器人名称', description: '显示名称，用于提示词和界面展示', default: 'Aalis' },
-  persona: { type: 'string', label: '人设文件', description: '对应 personas/ 目录下的文件名（不含后缀）', default: 'default' },
+  persona: { type: 'string', label: '人设文件', description: '人设文件名（不含后缀），在人设插件配置的目录中查找', default: 'default' },
   logLevel: {
     type: 'select', label: '日志等级', description: '日志输出等级', default: 'info',
     options: [
@@ -257,6 +259,10 @@ export class ConfigManager {
       obj.commandOverrides = this.config.commandOverrides;
     }
 
+    if (this.config.toolOverrides && Object.keys(this.config.toolOverrides).length > 0) {
+      obj.toolOverrides = this.config.toolOverrides;
+    }
+
     return obj;
   }
 
@@ -319,6 +325,8 @@ export class ConfigManager {
       defaultAuthority: (parsed['defaultAuthority'] as number) ?? DEFAULT_CONFIG.defaultAuthority,
       ownerAuthority: (parsed['ownerAuthority'] as number) ?? DEFAULT_CONFIG.ownerAuthority,
       dangerousPolicy: (parsed['dangerousPolicy'] as AalisConfig['dangerousPolicy']) ?? undefined,
+      commandOverrides: (parsed['commandOverrides'] as AalisConfig['commandOverrides']) ?? undefined,
+      toolOverrides: (parsed['toolOverrides'] as AalisConfig['toolOverrides']) ?? undefined,
     };
   }
 }
