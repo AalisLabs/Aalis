@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -31,15 +31,13 @@ interface WebUIConfig {
 // ===== WebSocket 消息协议 =====
 
 interface WSIncoming {
-  type: 'message' | 'subscribe_logs' | 'dangerous_response';
+  type: 'message' | 'subscribe_logs';
   content?: string;
   sessionId?: string;
-  confirmId?: string;
-  allowed?: boolean;
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'confirm_dangerous';
+  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'restarting';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -52,10 +50,6 @@ interface WSOutgoing {
   toolArgs?: Record<string, unknown>;
   toolResult?: string;
   toolPhase?: 'start' | 'end';
-  confirmId?: string;
-  dangerousName?: string;
-  dangerousType?: 'command' | 'tool';
-  dangerousArgs?: Record<string, unknown>;
 }
 
 // ===== 插件入口 =====
@@ -105,8 +99,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取系统状态
   expressApp.get('/api/status', (_req, res) => {
+    const persona = ctx.getService<PersonaService>('persona');
     res.json({
-      name: ctx.config.get('name'),
+      name: persona?.getPersonaName() ?? ctx.config.get('name'),
       services: {
         'webui-server': ctx.hasService('webui-server'),
         cli: ctx.hasService('cli'),
@@ -656,25 +651,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
-  // ---------- 高危操作交互式确认 ----------
+  // ---------- 高危操作交互式确认（内联对话式） ----------
 
   const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
-  const pendingConfirmations = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
-  let confirmCounter = 0;
+  /** 每个 session 最多一个待确认请求 */
+  const pendingSessionConfirms = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
 
-  ctx.authority.setConfirmHandler(async (request) => {
-    const confirmId = `confirm_${Date.now()}_${++confirmCounter}`;
+  ctx.authority.setConfirmHandler('webui', async (request) => {
+    const typeLabel = request.type === 'command' ? '指令' : '工具';
+    const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
+    const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
+
+    // 以普通聊天消息形式发送确认提示
     const payload: WSOutgoing = {
-      type: 'confirm_dangerous',
-      confirmId,
+      type: 'message',
+      content: prompt,
       sessionId: request.sessionId,
-      dangerousName: request.name,
-      dangerousType: request.type,
-      dangerousArgs: request.args,
     };
     const json = JSON.stringify(payload);
 
-    // 优先发到对应 session 的连接，否则广播给所有客户端
     const sockets = sessions.get(request.sessionId);
     const targets = (sockets && sockets.size > 0) ? sockets : allClients;
     let sent = false;
@@ -688,10 +683,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
-        pendingConfirmations.delete(confirmId);
+        pendingSessionConfirms.delete(request.sessionId);
+        // 超时后向会话发送提示
+        const timeoutPayload: WSOutgoing = {
+          type: 'message',
+          content: '⏰ 高危操作确认已超时，已自动取消。',
+          sessionId: request.sessionId,
+        };
+        const timeoutJson = JSON.stringify(timeoutPayload);
+        for (const ws of targets) {
+          if (ws.readyState === WebSocket.OPEN) ws.send(timeoutJson);
+        }
         resolve(false);
       }, CONFIRM_TIMEOUT);
-      pendingConfirmations.set(confirmId, { resolve, timer });
+      pendingSessionConfirms.set(request.sessionId, { resolve, timer });
     });
   });
 
@@ -710,16 +715,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           return;
         }
 
-        if (msg.type === 'dangerous_response') {
-          const pending = pendingConfirmations.get(msg.confirmId ?? '');
-          if (pending) {
-            clearTimeout(pending.timer);
-            pendingConfirmations.delete(msg.confirmId!);
-            pending.resolve(!!msg.allowed);
-          }
-          return;
-        }
-
         if (msg.type !== 'message' || !msg.content) return;
 
         const sessionId = msg.sessionId || 'webui-default';
@@ -729,6 +724,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessions.set(sessionId, new Set());
         }
         sessions.get(sessionId)!.add(ws);
+
+        // 检查是否有待确认的高危操作（拦截用户输入作为确认/取消）
+        const pending = pendingSessionConfirms.get(sessionId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          pendingSessionConfirms.delete(sessionId);
+          const confirmed = trimmed.toLowerCase() === 'y';
+          pending.resolve(confirmed);
+          // 不继续处理此消息，交给原始命令/工具执行流返回结果
+          return;
+        }
 
         // 指令处理
         const cmdResult = await handleCommand(ctx, trimmed, sessionId);
@@ -777,6 +783,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 插件状态级联变更后，广播通知所有前端刷新
   ctx.on('plugins:changed', () => {
     const payload: WSOutgoing = { type: 'state_changed' };
+    const json = JSON.stringify(payload);
+    for (const ws of allClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
+  // 重启通知：广播给所有客户端
+  ctx.on('restarting', () => {
+    const payload: WSOutgoing = { type: 'restarting' };
     const json = JSON.stringify(payload);
     for (const ws of allClients) {
       if (ws.readyState === WebSocket.OPEN) {
