@@ -197,9 +197,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       try {
         const parsed = JSON.parse(jsonStr);
         const reply = parsed[outputFormat.replyField];
-        if (typeof reply === 'string' && reply.length > 0) {
+        if (typeof reply === 'string') {
+          // 空字符串表示不回复，非空则提取为回复内容
           data.content = reply;
-          ctx.logger.debug(`outputFormat 解码成功，提取字段: ${outputFormat.replyField}`);
+          if (reply.length > 0) {
+            ctx.logger.debug(`outputFormat 解码成功，提取字段: ${outputFormat.replyField}`);
+          } else {
+            ctx.logger.debug(`outputFormat 解码成功，回复字段为空（静默）`);
+          }
         }
       } catch {
         // 解析失败时保留原始内容，不影响正常流程
