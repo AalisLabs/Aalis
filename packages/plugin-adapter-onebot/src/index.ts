@@ -219,7 +219,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter);
+  ctx.provide('platform', adapter, { capabilities: ['onebot'] });
 
   // ----- 连接管理 -----
 

@@ -2,14 +2,21 @@
 
 本文档描述 Aalis 框架的整体架构设计、核心流程和扩展机制。
 
+## 设计哲学
+
+Aalis 的核心遵循**忒修斯之船**原则：Core 自身只提供最小化的基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——包括 LLM 调用、消息存储、对话编排、平台接入——全部由可插拔的插件提供。核心的任何行为都可以被插件拦截、修改或完全替换。
+
 ## 系统分层
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                    平台层 (Platform Layer)                    |
-│   CLI  ·  WebUI (Express+WS+React)  ·  OneBot v11/v12        |
+│                    平台层 (Platform Layer)                    │
+│   CLI  ·  WebUI (Express+WS+React)  ·  OneBot v11/v12       │
 ├──────────────────────────────────────────────────────────────┤
-│                    对话编排层 (Agent Layer)                    |
+│                    流控层 (Flow Control Layer)                │
+│   ChatFlow: 消息缓冲 → 触发评分 → 空闲检测 → 打字延迟        │
+├──────────────────────────────────────────────────────────────┤
+│                    对话编排层 (Agent Layer)                    │
 │   DefaultAgent: 消息构建 → LLM 调用 → 工具循环 → 上下文截断   │
 ├──────────────────────────────────────────────────────────────┤
 │                    服务层 (Service Layer)                      │
@@ -31,9 +38,13 @@
 Platform 适配器接收 → 发出 message:received 事件
   │
   ▼
-App 路由 → DefaultAgent.handleMessage(incoming)
+App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
   │
-  ├─ 1. hooks.run('message:before')  ← 插件可修改/拦截消息
+  ├─ 1. hooks.run('message:before', { message, metadata }, defaultAction)
+  │     │
+  │     ├─ [ChatFlow 中间件, priority=200] 流控拦截/缓冲
+  │     ├─ [其他插件中间件]
+  │     └─ 全部通过 → defaultAction() 进入 Agent 处理
   │
   ├─ 2. buildMessages()
   │     └─ [系统提示词] + [历史消息(≤50)] + [当前用户消息]
@@ -62,12 +73,73 @@ App 路由 → DefaultAgent.handleMessage(incoming)
   └─ 10. emit('message:send') → 各平台输出给用户
 ```
 
+## 核心扩展机制
+
+Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
+
+### 1. 中间件管道 (Hooks)
+
+最强大的扩展手段。插件通过 `ctx.middleware(hook, fn, priority)` 注册中间件，拦截核心流程的每个阶段。中间件既可以修改数据、也可以完全中断流程。
+
+```typescript
+// 拦截消息（不调用 next = 中断整个管道）
+ctx.middleware('message:before', async (data, next) => {
+  if (shouldBlock(data.message)) return; // 中断
+  data.message.content += ' [已审核]';   // 修改
+  await next();                           // 继续
+}, 200);
+```
+
+详见 [events.md — 中间件系统](core/events.md)
+
+### 2. 服务替换 (Service IoC)
+
+任何服务都可以被替换。提供同名服务的插件自动参与优先级竞争：
+
+```typescript
+// 注册自定义 Agent 实现
+ctx.provide('agent', myAgent, { capabilities: ['multi-turn'], priority: 20 });
+```
+
+详见 [service.md — 服务容器](core/service.md)
+
+### 3. 事件监听 (EventBus)
+
+松耦合的发布/订阅模式，用于响应系统事件而不干预流程：
+
+```typescript
+ctx.on('message:send', async (msg) => { /* 记录日志、统计等 */ });
+```
+
+### 4. Context Mixin
+
+将服务方法直接代理到 Context 原型上，让所有插件都可以像调用内置方法一样使用：
+
+```typescript
+ctx.mixin('scheduler', ['schedule', 'cron']);
+// 之后任何 Context 实例都可以调用 ctx.schedule(...)
+```
+
+### 5. Declaration Merging
+
+第三方插件可通过 TypeScript 声明合并来扩展核心类型：
+
+```typescript
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'scheduler:tick': [jobId: string];
+  }
+  interface HookContextMap {
+    'schedule:before': { jobId: string; cron: string };
+  }
+}
+```
+
 ## 服务 IoC 与能力匹配
 
 ### 服务注册
 
 ```typescript
-// 插件提供服务
 ctx.provide('llm', deepseekService, {
   capabilities: ['chat', 'tool_calling', 'streaming', 'thinking'],
   priority: 10,
@@ -77,7 +149,6 @@ ctx.provide('llm', deepseekService, {
 ### 服务消费
 
 ```typescript
-// 按能力查找
 const llm = ctx.getService<LLMService>('llm', ['tool_calling']);
 ```
 
@@ -126,18 +197,56 @@ disabled ←─(手动禁用)─ active
 
 ## 中间件钩子管道
 
-钩子（Hook）是有序的中间件管道，插件可拦截核心流程的各阶段：
+钩子（Hook）是有序的中间件管道，插件可拦截核心流程的各阶段。
+
+### 执行模型
+
+```
+hooks.run(hookName, data, defaultAction)
+  │
+  ▼
+中间件 A (priority=200) ─── await fn(data, next)
+  │ next()                     │ 不调用 next() → 中断
+  ▼                             ▼
+中间件 B (priority=100)      管道终止，defaultAction 不执行
+  │ next()
+  ▼
+中间件 C (priority=0)
+  │ next()
+  ▼
+defaultAction() ← 所有中间件通过后执行
+```
+
+### 钩子列表
 
 | 钩子名 | 数据 | 用途 |
 |---|---|---|
-| `message:before` | `{ message }` | 修改/拦截收到的消息 |
+| `message:before` | `{ message, metadata }` | 修改/拦截收到的消息 |
+| `message:after` | `{ message, response, sessionId, metadata }` | 处理消息回复后 |
 | `llm-call:before` | `{ messages, tools }` | 修改发给 LLM 的消息列表和工具 |
 | `llm-call:after` | `{ response, messages }` | 处理 LLM 返回的响应 |
 | `tool-call:before` | `{ name, args, toolCallContext }` | 修改工具调用参数 |
 | `tool-call:after` | `{ name, result, toolCallContext }` | 处理工具返回结果 |
 | `response:before` | `{ content, sessionId }` | 修改最终回复内容 |
 
-中间件按优先级降序执行，通过调用 `next()` 传递控制权。不调用 `next()` 可中止管道。
+中间件按优先级降序执行，通过调用 `next()` 传递控制权。**不调用 `next()` 即中止整个管道（包括 defaultAction）**——这是拦截消息的标准做法。
+
+### 扩展自定义钩子
+
+插件可以定义并触发自己的钩子，第三方可注入中间件：
+
+```typescript
+// 定义钩子的插件
+await ctx.hooks.run('my-plugin:before', { task: taskData }, async () => {
+  // defaultAction
+});
+
+// 拦截钩子的第三方插件
+ctx.middleware('my-plugin:before', async (data, next) => {
+  data.task.modified = true;
+  await next();
+});
+```
 
 ## 权限与安全
 
@@ -198,6 +307,23 @@ Owner    → 最高权限 (配置 ownerAuthority，默认 5)
   第二轮: 如仍超出，删除 hook 注入的系统消息
   特殊: 长期记忆超出预留额度时，按比例缩减内容 (最少保留 200 字符)
 ```
+
+## 事件列表
+
+| 事件 | 参数 | 说明 |
+|---|---|---|
+| `message:received` | `IncomingMessage` | 平台收到用户消息 |
+| `message:send` | `OutgoingMessage` | AI 回复即将发送 |
+| `message:stream` | `StreamChunkMessage` | 流式输出增量 |
+| `tool:execute` | `ToolExecuteMessage` | 工具调用开始/结束 |
+| `service:registered` | `name, capabilities[]` | 服务注册 |
+| `service:unregistered` | `name` | 服务移除 |
+| `plugin:loaded` | `name` | 插件加载 |
+| `plugin:unloaded` | `name` | 插件卸载 |
+| `plugins:changed` | — | 插件状态变更 |
+| `ready` | — | 应用启动完成 |
+| `dispose` | — | 应用关闭 |
+| `restarting` | — | 应用即将重启 |
 
 ## 向量语义记忆
 

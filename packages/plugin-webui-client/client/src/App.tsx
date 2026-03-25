@@ -73,6 +73,7 @@ interface SchemaField {
   secret?: boolean;
   options?: Array<{ label: string; value: string | number }>;
   dynamicOptions?: string;
+  allowCustom?: boolean;
 }
 
 interface SchemaGroup {
@@ -642,11 +643,44 @@ function SchemaFormField({
 
   if (field.type === 'multiselect') {
     const selected = Array.isArray(value) ? value as string[] : [];
-    const allOptions = field.options ?? [];
+    const dynamicKey = field.dynamicOptions;
+    const dynamicModels = dynamicKey ? modelCache[dynamicKey] : undefined;
+
+    // 触发一次远端选项拉取
+    useEffect(() => {
+      if (dynamicKey && !modelCache[dynamicKey]) {
+        onFetchModels(dynamicKey);
+      }
+    }, [dynamicKey]);
+
+    // 合并静态选项 + 动态选项
+    const staticOpts = field.options ?? [];
+    const dynOpts = (dynamicModels ?? []).map(m => ({ label: m, value: m }));
+    const allOptions = [...staticOpts];
+    for (const d of dynOpts) {
+      if (!allOptions.some(o => String(o.value) === String(d.value))) allOptions.push(d);
+    }
+    // 已选但不在选项中的值也显示（用户自定义值或已卸载的平台等）
+    for (const s of selected) {
+      if (!allOptions.some(o => String(o.value) === s)) {
+        allOptions.push({ label: s, value: s });
+      }
+    }
+
     const toggle = (v: string) => {
       const next = selected.includes(v) ? selected.filter(s => s !== v) : [...selected, v];
       onChange(next);
     };
+
+    const [customInput, setCustomInput] = useState('');
+    const addCustom = () => {
+      const trimmed = customInput.trim();
+      if (trimmed && !selected.includes(trimmed)) {
+        onChange([...selected, trimmed]);
+      }
+      setCustomInput('');
+    };
+
     return (
       <div className="multiselect-group">
         {allOptions.map(o => (
@@ -659,6 +693,20 @@ function SchemaFormField({
             {o.label}
           </label>
         ))}
+        {field.allowCustom && (
+          <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+            <input
+              className="config-edit-input"
+              style={{ flex: 1, fontSize: 12 }}
+              type="text"
+              placeholder="手动输入..."
+              value={customInput}
+              onChange={e => setCustomInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }}
+            />
+            <button className="config-edit-btn" style={{ fontSize: 11, padding: '2px 8px' }} onClick={addCustom}>添加</button>
+          </div>
+        )}
       </div>
     );
   }

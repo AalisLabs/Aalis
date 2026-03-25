@@ -381,11 +381,13 @@ export interface SchemaField {
   required?: boolean;
   /** 标记为敏感字段，前端显示时自动遮蔽 */
   secret?: boolean;
-  /** select 类型的静态选项 */
+  /** select / multiselect 类型的静态选项 */
   options?: Array<{ label: string; value: string | number }>;
-  /** select 类型的动态选项来源：填服务名 (如 'llm', 'embedding')，
-   *  运行时调用 service.listModels() 获取 */
+  /** select / multiselect 类型的动态选项来源：填服务名 (如 'llm', 'embedding', 'platform')，
+   *  运行时调用 service.listModels() 获取（platform 特殊处理：收集所有 adapter.platform） */
   dynamicOptions?: string;
+  /** multiselect 是否允许用户手动输入自定义值（不限于选项列表） */
+  allowCustom?: boolean;
 }
 
 export interface SchemaGroup {
@@ -409,6 +411,18 @@ export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArra
 
 // ----- 事件类型 -----
 
+/**
+ * 内置事件表
+ *
+ * 第三方插件可通过 TypeScript declaration merging 扩展：
+ * ```ts
+ * declare module '@aalis/core' {
+ *   interface AalisEvents {
+ *     'scheduler:tick': [jobId: string];
+ *   }
+ * }
+ * ```
+ */
 export interface AalisEvents {
   'message:received': [message: IncomingMessage];
   'message:send': [message: OutgoingMessage];
@@ -422,6 +436,8 @@ export interface AalisEvents {
   'ready': [];
   'dispose': [];
   'restarting': [];
+  // 允许任意字符串 key（运行时安全，类型兜底）
+  [key: string]: unknown[];
 }
 
 // ----- 钩子/中间件类型 -----
@@ -439,21 +455,28 @@ export type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
 /**
  * Hook 定义：插件可以用中间件拦截和修改 Agent 核心流程
  *
- * 支持的 hook 点:
- * - message:before     — 拦截用户消息（可修改或丢弃）
- * - llm-call:before    — 修改发送给 LLM 的请求
- * - llm-call:after     — 处理 LLM 返回结果
- * - tool-call:before   — 拦截工具调用
- * - tool-call:after    — 处理工具执行结果
- * - response:before    — 在发送回复前修改内容
+ * 中间件不调用 next() 即可中断整个流程（包括 defaultAction），
+ * 这是拦截消息的标准做法，不需要额外的 skip 标志。
+ *
+ * 第三方插件可通过 TypeScript declaration merging 扩展：
+ * ```ts
+ * declare module '@aalis/core' {
+ *   interface HookContextMap {
+ *     'schedule:before': { jobId: string; cron: string };
+ *   }
+ * }
+ * ```
  */
 export interface HookContextMap {
-  'message:before': { message: IncomingMessage };
+  'message:before': { message: IncomingMessage; metadata: Record<string, unknown> };
+  'message:after': { message: IncomingMessage; response: string; sessionId: string; metadata: Record<string, unknown> };
   'llm-call:before': { messages: Message[]; tools: ToolDefinition[] };
   'llm-call:after': { response: ChatResponse; messages: Message[] };
   'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
   'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
   'response:before': { content: string; sessionId: string };
+  // 允许任意字符串 key（运行时安全，类型兜底）
+  [key: string]: Record<string, unknown>;
 }
 
 // ----- 指令系统 -----
