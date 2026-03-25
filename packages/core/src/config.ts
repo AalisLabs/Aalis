@@ -58,7 +58,7 @@ const DEFAULT_CONFIG: AalisConfig = {
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: { type: 'string', label: '机器人名称', description: '显示名称，用于提示词和界面展示', default: 'Aalis' },
-  persona: { type: 'string', label: '人设文件', description: '人设文件名（不含后缀），在人设插件配置的目录中查找', default: 'default' },
+  persona: { type: 'select', label: '人设', description: '人设文件名（不含后缀）', default: 'default', dynamicOptions: 'persona' },
   logLevel: {
     type: 'select', label: '日志等级', description: '日志输出等级', default: 'info',
     options: [

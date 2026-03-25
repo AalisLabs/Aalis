@@ -218,6 +218,8 @@ export interface PersonaService {
   getPersonaName(): string;
   /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */
   getOutputFormat?(): OutputFormat | undefined;
+  /** 列出可用的人设卡（用于前端下拉框） */
+  listModels?(): Promise<string[]>;
 }
 
 // ----- Embedding 服务接口 -----
@@ -419,6 +421,7 @@ export interface AalisEvents {
   'plugins:changed': [];
   'ready': [];
   'dispose': [];
+  'restarting': [];
 }
 
 // ----- 钩子/中间件类型 -----
@@ -467,6 +470,8 @@ export interface CommandContext {
   args: string[];
   /** 原始输入文本 */
   raw: string;
+  /** 跳过安全等级检查（用于工具桥接等已在上层完成检查的场景） */
+  skipSafetyCheck?: boolean;
 }
 
 /** 指令定义 */

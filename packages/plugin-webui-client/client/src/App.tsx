@@ -210,7 +210,7 @@ function useWebSocket(
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
   onStateChanged?: () => void,
-  onConfirmDangerous?: (confirmId: string, name: string, opType: 'command' | 'tool', args?: Record<string, unknown>) => void,
+  onRestarting?: () => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -251,8 +251,8 @@ function useWebSocket(
             onLog(data.log);
           } else if (data.type === 'state_changed') {
             onStateChanged?.();
-          } else if (data.type === 'confirm_dangerous' && data.confirmId) {
-            onConfirmDangerous?.(data.confirmId, data.dangerousName, data.dangerousType, data.dangerousArgs);
+          } else if (data.type === 'restarting') {
+            onRestarting?.();
           }
         } catch { /* ignore */ }
       };
@@ -264,7 +264,7 @@ function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onConfirmDangerous]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting]);
 
   const send = useCallback((content: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -1019,7 +1019,7 @@ function PluginConfigPage({
                 draft={globalDraft}
                 onChange={setGlobalDraft}
                 modelCache={modelCache}
-                onFetchModels={() => {}}
+                onFetchModels={fetchModels}
               />
             ) : (
               <>
@@ -2268,14 +2268,6 @@ export function App() {
   // 重启中状态
   const [restarting, setRestarting] = useState(false);
 
-  // 高危操作确认对话框
-  const [confirmDialog, setConfirmDialog] = useState<{
-    confirmId: string;
-    name: string;
-    opType: 'command' | 'tool';
-    args?: Record<string, unknown>;
-  } | null>(null);
-
   const streamingRef = useRef(false);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
@@ -2437,16 +2429,16 @@ export function App() {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
   }, [refreshPlugins, refreshServices]);
 
-  const handleConfirmDangerous = useCallback((confirmId: string, name: string, opType: 'command' | 'tool', args?: Record<string, unknown>) => {
-    setConfirmDialog({ confirmId, name, opType, args });
+  const handleRestarting = useCallback(() => {
+    setRestarting(true);
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleConfirmDangerous);
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting);
 
-  // 重启完成后自动关闭遮罩
+  // 重启完成后自动刷新页面
   useEffect(() => {
     if (restarting && connected) {
-      setRestarting(false);
+      window.location.reload();
     }
   }, [restarting, connected]);
 
@@ -2583,35 +2575,6 @@ export function App() {
         onSend={handleSend}
         width={chatWidth}
       />
-
-      {/* 高危操作确认对话框 */}
-      {confirmDialog && (
-        <div className="confirm-overlay" onClick={() => {
-          sendRaw({ type: 'dangerous_response', confirmId: confirmDialog.confirmId, allowed: false });
-          setConfirmDialog(null);
-        }}>
-          <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
-            <div className="confirm-dialog-icon">⚠️</div>
-            <h3>高危操作确认</h3>
-            <p className="confirm-dialog-desc">
-              {confirmDialog.opType === 'command' ? '指令' : '工具'} <strong>{confirmDialog.name}</strong> 被标记为高危操作，需要您确认后才能执行。
-            </p>
-            {confirmDialog.args && Object.keys(confirmDialog.args).length > 0 && (
-              <pre className="confirm-dialog-args">{JSON.stringify(confirmDialog.args, null, 2)}</pre>
-            )}
-            <div className="confirm-dialog-actions">
-              <button className="btn-confirm-danger" onClick={() => {
-                sendRaw({ type: 'dangerous_response', confirmId: confirmDialog.confirmId, allowed: true });
-                setConfirmDialog(null);
-              }}>确认执行</button>
-              <button className="btn-confirm-cancel" onClick={() => {
-                sendRaw({ type: 'dangerous_response', confirmId: confirmDialog.confirmId, allowed: false });
-                setConfirmDialog(null);
-              }}>取消</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 重启中遮罩 */}
       {restarting && (
