@@ -1,4 +1,4 @@
-import type { DependencyDeclaration } from './types.js';
+import type { DependencyDeclaration } from './types/index.js';
 
 export interface ServiceEntry {
   instance: unknown;

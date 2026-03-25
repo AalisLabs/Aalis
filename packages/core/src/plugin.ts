@@ -1,6 +1,6 @@
 import { Context } from './context.js';
 import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, DependencyDeclaration, ConfigSchema, ExtendDeclaration, WebuiPage } from './types.js';
+import type { InjectDeclaration, DependencyDeclaration, ConfigSchema, ExtendDeclaration, WebuiPage } from './types/index.js';
 import type { Logger } from './logger.js';
 
 // ----- 插件定义格式 -----

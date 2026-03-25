@@ -21,38 +21,25 @@ export type { LogLevel, LogEntry } from './logger.js';
 export type { NormalizedDependency, ServiceEntry } from './service.js';
 export type { AalisConfig } from './config.js';
 export type {
+  // 核心机制类型
   Message,
   IncomingMessage,
   OutgoingMessage,
+  StreamChunkMessage,
+  ToolExecuteMessage,
   ToolFunction,
   ToolDefinition,
   ToolCall,
   ToolCallContext,
   RegisteredTool,
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMService,
-  MemoryService,
-  VectorSearchResult,
-  VectorStoreService,
-  PersonaService,
-  OutputFormat,
-  OutputFormatField,
-  EmbeddingService,
-  AgentService,
-  AppService,
-  WebUIService,
-  CLIService,
-  PlatformConnection,
-  PlatformAdapter,
-  StreamChunkMessage,
-  ToolExecuteMessage,
+  ToolSummary,
+  SafetyLevel,
+  UserIdentity,
   ServiceDependency,
   DependencyDeclaration,
   InjectDeclaration,
-  ExtendDeclaration,
   PluginMeta,
+  ExtendDeclaration,
   SchemaFieldType,
   SchemaField,
   SchemaGroup,
@@ -65,11 +52,29 @@ export type {
   CommandContext,
   CommandDefinition,
   RegisteredCommand,
-  SafetyLevel,
-  ToolSummary,
-  UserIdentity,
-  WebuiPage,
-  WebuiComponent,
+  // LLM 服务
+  ChatRequest,
+  ChatResponse,
+  ChatStreamChunk,
+  LLMService,
+  // 记忆服务
+  MemoryService,
+  // Embedding 服务
+  EmbeddingService,
+  // 向量数据库服务
+  VectorSearchResult,
+  VectorStoreService,
+  // 人格服务
+  OutputFormatField,
+  OutputFormat,
+  PersonaService,
+  // Agent 服务
+  AgentService,
+  // 平台适配器
+  PlatformConnection,
+  PlatformAdapter,
+  // WebUI 服务
+  WebUIService,
   WebuiStatComponent,
   WebuiTableComponent,
   WebuiFormComponent,
@@ -77,4 +82,10 @@ export type {
   WebuiInfoComponent,
   WebuiMarkdownComponent,
   WebuiTabsComponent,
-} from './types.js';
+  WebuiComponent,
+  WebuiPage,
+  // CLI 服务
+  CLIService,
+  // App 服务
+  AppService,
+} from './types/index.js';
