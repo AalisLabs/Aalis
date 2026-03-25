@@ -3,6 +3,7 @@ import type {
   ToolDefinition,
   ToolCallContext,
   ToolSummary,
+  SafetyLevel,
 } from './types.js';
 import type { AuthorityManager } from './authority.js';
 import type { Logger } from './logger.js';
@@ -17,6 +18,7 @@ import type { Logger } from './logger.js';
  */
 export class ToolRegistry {
   private tools = new Map<string, RegisteredTool>();
+  private _overrides = new Map<string, { authority?: number; safety?: string }>();
   private logger: Logger;
   private _authority?: AuthorityManager;
 
@@ -60,14 +62,73 @@ export class ToolRegistry {
 
   /**
    * 获取所有工具的摘要信息（名称、描述、权限、安全级别）
+   * 已应用覆盖
    */
   getSummaries(): ToolSummary[] {
-    return [...this.tools.values()].map(t => ({
-      name: t.definition.function.name,
-      description: t.definition.function.description,
-      authority: t.authority ?? 1,
-      safety: t.safety ?? 'safe',
-    }));
+    return [...this.tools.values()].map(t => {
+      const name = t.definition.function.name;
+      const o = this._overrides.get(name);
+      return {
+        name,
+        description: t.definition.function.description,
+        authority: o?.authority ?? t.authority ?? 1,
+        safety: (o?.safety as SafetyLevel) ?? t.safety ?? 'safe',
+      };
+    });
+  }
+
+  /**
+   * 获取所有已注册工具的详细信息（供权限管理 UI 使用）
+   */
+  getAll(): Array<{
+    name: string;
+    description: string;
+    authority: number;
+    safety: string;
+    baseAuthority: number;
+    baseSafety: string;
+    overridden: boolean;
+    pluginName: string;
+  }> {
+    return [...this.tools.values()].map(t => {
+      const name = t.definition.function.name;
+      const o = this._overrides.get(name);
+      return {
+        name,
+        description: t.definition.function.description,
+        authority: o?.authority ?? t.authority ?? 1,
+        safety: o?.safety ?? t.safety ?? 'safe',
+        baseAuthority: t.authority ?? 1,
+        baseSafety: t.safety ?? 'safe',
+        overridden: !!o,
+        pluginName: t.pluginName,
+      };
+    });
+  }
+
+  // ---- 覆盖管理 ----
+
+  setOverride(name: string, override: { authority?: number; safety?: string }): void {
+    this._overrides.set(name, override);
+  }
+
+  removeOverride(name: string): void {
+    this._overrides.delete(name);
+  }
+
+  getOverrides(): Record<string, { authority?: number; safety?: string }> {
+    const result: Record<string, { authority?: number; safety?: string }> = {};
+    for (const [name, o] of this._overrides) {
+      result[name] = o;
+    }
+    return result;
+  }
+
+  loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void {
+    this._overrides.clear();
+    for (const [name, o] of Object.entries(overrides)) {
+      this._overrides.set(name, o);
+    }
   }
 
   /**
@@ -87,13 +148,14 @@ export class ToolRegistry {
       return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
     }
 
-    // 权限检查
+    // 权限检查（覆盖优先）
     if (this._authority) {
       const userAuth = this._authority.getAuthority(
         callCtx.platform ?? 'unknown',
         callCtx.userId,
       );
-      const required = tool.authority ?? 1;
+      const override = this._overrides.get(toolName);
+      const required = override?.authority ?? tool.authority ?? 1;
       if (userAuth < required) {
         return JSON.stringify({
           error: `权限不足: 工具 "${toolName}" 需要权限等级 ${required}，当前用户等级 ${userAuth}`,
@@ -101,10 +163,18 @@ export class ToolRegistry {
       }
 
       // dangerous 检查
-      if ((tool.safety ?? 'safe') === 'dangerous') {
-        if (!this._authority.isDangerousAllowed(toolName)) {
+      const effectiveSafety = override?.safety ?? tool.safety ?? 'safe';
+      if (effectiveSafety === 'dangerous') {
+        const confirmed = await this._authority.confirmDangerous({
+          name: toolName,
+          type: 'tool',
+          args,
+          sessionId: callCtx.sessionId,
+          platform: callCtx.platform ?? 'unknown',
+        });
+        if (!confirmed) {
           return JSON.stringify({
-            error: `拒绝执行: 工具 "${toolName}" 被标记为高危操作，未在 dangerousPolicy.allow 白名单中`,
+            error: `拒绝执行: 工具 "${toolName}" 被标记为高危操作，需要用户确认后才能执行`,
           });
         }
       }

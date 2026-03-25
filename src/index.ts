@@ -9,8 +9,11 @@ async function main() {
   // 启动
   await app.start();
 
-  // 优雅退出
+  // 优雅退出（防止重复调用）
+  let stopping = false;
   const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
     await app.stop();
     process.exit(0);
   };

@@ -8,6 +8,7 @@ export { ToolRegistry } from './tools.js';
 export { HookRegistry } from './hooks.js';
 export { CommandRegistry } from './commands.js';
 export { AuthorityManager } from './authority.js';
+export type { DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
 export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager } from './plugin.js';
 export { InMemoryFallbackService } from './memory-fallback.js';
@@ -34,6 +35,8 @@ export type {
   VectorSearchResult,
   VectorStoreService,
   PersonaService,
+  OutputFormat,
+  OutputFormatField,
   EmbeddingService,
   AgentService,
   WebUIService,

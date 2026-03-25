@@ -53,18 +53,28 @@ function truncateOutput(output: string, maxSize: number): string {
 }
 
 export function registerShellTools(ctx: Context, config: ShellConfig): void {
-  const shellCmd = platform() === 'win32' ? 'cmd' : '/bin/sh';
-  const shellFlag = platform() === 'win32' ? '/c' : '-c';
+  const isWin = platform() === 'win32';
+  const shellCmd = isWin ? 'cmd' : '/bin/sh';
+  const shellFlag = isWin ? '/c' : '-c';
+
+  const platformName = isWin ? 'Windows' : platform() === 'darwin' ? 'macOS' : 'Linux';
+  const shellName = isWin ? 'cmd.exe' : 'sh (POSIX shell)';
+  const syntaxHint = isWin
+    ? '使用 Windows cmd 语法（如 dir, type, copy, del）。若需 PowerShell，请以 powershell -Command "..." 调用。'
+    : '使用 POSIX shell 语法（如 ls, cat, cp, rm）。bash 特性可通过 bash -c "..." 显式调用。';
 
   // ==================== exec ====================
   ctx.registerTool({
+    safety: 'dangerous',
+    authority: 3,
     definition: {
       type: 'function',
       function: {
         name: 'exec',
         description:
-          '在 shell 中执行命令并返回结果。适用于运行脚本、安装依赖、编译项目、' +
-          'git 操作、系统管理等。命令在服务器本地执行，拥有当前进程的完整权限。' +
+          `在本机 ${platformName} 系统的 ${shellName} 中执行命令并返回结果。${syntaxHint} ` +
+          '适用于运行脚本、安装依赖、编译项目、git 操作、系统管理等。' +
+          '命令在服务器本地执行，拥有当前进程的完整权限。' +
           '对于需要长时间运行的命令（如服务器、构建监视），请使用 exec_background。',
         parameters: {
           type: 'object',
@@ -150,12 +160,14 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
 
   // ==================== exec_background ====================
   ctx.registerTool({
+    safety: 'dangerous',
+    authority: 3,
     definition: {
       type: 'function',
       function: {
         name: 'exec_background',
         description:
-          '在后台启动一个长时间运行的进程（如开发服务器、文件监视器）。' +
+          `在本机 ${platformName} 系统的 ${shellName} 中后台启动一个长时间运行的进程（如开发服务器、文件监视器）。${syntaxHint} ` +
           '返回进程 ID，可通过 process_read 读取输出，通过 process_kill 终止进程。',
         parameters: {
           type: 'object',
@@ -319,6 +331,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
 
   // ==================== process_kill ====================
   ctx.registerTool({
+    safety: 'dangerous',
+    authority: 2,
     definition: {
       type: 'function',
       function: {
