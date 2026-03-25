@@ -198,9 +198,6 @@ export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArra
 
 // ----- 事件类型 -----
 
-// 前向引用：事件和钩子中引用了领域服务接口
-import type { AgentService } from './agent.js';
-
 /**
  * 内置事件表
  *
@@ -246,35 +243,6 @@ export type MiddlewareNext = () => Promise<void>;
  */
 export type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
 
-/**
- * Hook 定义：插件可以用中间件拦截和修改 Agent 核心流程
- *
- * 中间件不调用 next() 即可中断整个流程（包括 defaultAction），
- * 这是拦截消息的标准做法，不需要额外的 skip 标志。
- *
- * 第三方插件可通过 TypeScript declaration merging 扩展：
- * ```ts
- * declare module '@aalis/core' {
- *   interface HookContextMap {
- *     'schedule:before': { jobId: string; cron: string };
- *   }
- * }
- * ```
- */
-export interface HookContextMap {
-  'message:before': { message: IncomingMessage; metadata: Record<string, unknown> };
-  'message:after': { message: IncomingMessage; response: string; sessionId: string; metadata: Record<string, unknown> };
-  /** 消息路由钩子：插件可拦截此钩子来替换 agent 或修改消息路由逻辑 */
-  'message:route': { message: IncomingMessage; agent: AgentService | undefined };
-  'llm-call:before': { messages: Message[]; tools: ToolDefinition[] };
-  'llm-call:after': { response: ChatResponse; messages: Message[] };
-  'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
-  'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
-  'response:before': { content: string; sessionId: string };
-  // 允许任意字符串 key（运行时安全，类型兜底）
-  [key: string]: Record<string, unknown>;
-}
-
 // ----- 指令系统 -----
 
 /** 指令执行上下文 */
@@ -317,6 +285,3 @@ export interface RegisteredCommand extends CommandDefinition {
   /** 注册此指令的插件名 */
   pluginName: string;
 }
-
-// HookContextMap 引用了 ChatResponse，需要从 llm 导入
-import type { ChatResponse } from './llm.js';
