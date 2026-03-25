@@ -1,4 +1,4 @@
-import type { AalisEvents } from './types.js';
+import type { AalisEvents } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 

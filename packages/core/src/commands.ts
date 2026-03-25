@@ -1,4 +1,4 @@
-import type { CommandDefinition, CommandContext, RegisteredCommand } from './types.js';
+import type { CommandDefinition, CommandContext, RegisteredCommand } from './types/index.js';
 import type { AuthorityManager } from './authority.js';
 import type { Logger } from './logger.js';
 
