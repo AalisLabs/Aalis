@@ -11,7 +11,7 @@
 
 ```typescript
 meta.name = '@aalis/plugin-memory-vector'
-meta.provides = ['semanticMemory']
+meta.provides = ['semantic-memory']
 meta.inject = { required: ['vectorstore', 'embedding'] }
 ```
 

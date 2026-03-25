@@ -354,6 +354,13 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       return;
     }
 
+    // scheduler 来源的消息 — 不受流控，直接放行
+    if (msg.source === 'scheduler') {
+      data.metadata['chat-flow:scheduler'] = true;
+      await next();
+      return;
+    }
+
     // 空闲触发的消息 — 替换内容为系统提示然后放行
     if (msg.content === IDLE_TRIGGER_MARKER) {
       data.message = {

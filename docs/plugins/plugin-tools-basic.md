@@ -11,8 +11,7 @@
 
 ```typescript
 meta.name = '@aalis/plugin-tools-basic'
-meta.provides = ['machine-tools']
-meta.inject = {} // 无依赖
+meta.inject = { required: ['tools'] }
 ```
 
 ## 配置
@@ -43,10 +42,6 @@ meta.inject = {} // 无依赖
 - **file**: 文件读写操作
 - **system**: 系统信息查询
 - **http**: HTTP 请求
-
-## 扩展
-
-提供 `MachineToolsService` 接口，第三方插件可通过 `registerToolGroup` 注册额外工具组。
 
 ## 指令
 

@@ -286,6 +286,59 @@ function useWebSocket(
   return { send, sendRaw, connected };
 }
 
+// ===== 服务槽位卡片 =====
+
+function ServiceCard({ name, info, busy, onPrefer }: {
+  name: string;
+  info: ServiceInfo;
+  busy: string | null;
+  onPrefer: (name: string, contextId: string) => void;
+}) {
+  return (
+    <div className="service-slot-card">
+      <div className="service-slot-header">
+        <span className="service-slot-name">{name}</span>
+        <span className={`badge ${info.providers.length > 0 ? 'active' : 'error'}`}>
+          {info.providers.length > 0 ? '就绪' : '未就绪'}
+        </span>
+      </div>
+      {info.providers.length > 1 ? (
+        <div className="service-slot-select-row">
+          <span className="service-slot-label">活跃提供者</span>
+          <select
+            className="service-select"
+            value={info.active ?? ''}
+            disabled={busy === name}
+            onChange={e => onPrefer(name, e.target.value)}
+          >
+            {info.providers.map(p => (
+              <option key={p.contextId} value={p.contextId}>{p.contextId}</option>
+            ))}
+          </select>
+        </div>
+      ) : info.providers.length === 1 ? (
+        <div className="service-slot-single">
+          <span className="service-slot-label">提供者</span>
+          <span className="service-slot-provider-name">{info.providers[0].contextId}</span>
+        </div>
+      ) : (
+        <div className="service-slot-single">
+          <span className="empty-hint">无提供者</span>
+        </div>
+      )}
+      {info.providers.length > 0 && (
+        <div className="service-slot-caps">
+          {info.providers
+            .find(p => p.contextId === info.active)
+            ?.capabilities.map(c => (
+              <span className="tool-chip" key={c}>{c}</span>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== 仪表盘页 =====
 
 function DashboardPage({
@@ -330,6 +383,15 @@ function DashboardPage({
   const serviceEntries = servicesData
     ? Object.entries(servicesData).filter(([name]) => name !== 'platform' && name !== 'app')
     : [];
+
+  // core 定义了类型接口的基础服务
+  const coreServiceNames = new Set([
+    'agent', 'llm', 'memory', 'tools', 'commands', 'authority',
+    'embedding', 'vectorstore', 'persona', 'semantic-memory',
+    'cli', 'webui-server', 'webui-client',
+  ]);
+  const coreServices = serviceEntries.filter(([name]) => coreServiceNames.has(name));
+  const extServices = serviceEntries.filter(([name]) => !coreServiceNames.has(name));
 
   return (
     <div className="page-content page-dashboard">
@@ -386,61 +448,28 @@ function DashboardPage({
         </div>
       </div>
 
-      {/* 核心服务槽位 */}
+      {/* 核心服务 */}
       <div className="section-label">核心服务</div>
       <div className="services-grid">
-        {serviceEntries.length === 0 && (
+        {coreServices.length === 0 && (
           <div className="empty-hint">加载中...</div>
         )}
-        {serviceEntries.map(([name, info]) => (
-          <div className="service-slot-card" key={name}>
-            <div className="service-slot-header">
-              <span className="service-slot-name">{name}</span>
-              <span className={`badge ${info.providers.length > 0 ? 'active' : 'error'}`}>
-                {info.providers.length > 0 ? '就绪' : '未就绪'}
-              </span>
-            </div>
-
-            {info.providers.length > 1 ? (
-              <div className="service-slot-select-row">
-                <span className="service-slot-label">活跃提供者</span>
-                <select
-                  className="service-select"
-                  value={info.active ?? ''}
-                  disabled={busy === name}
-                  onChange={e => handlePrefer(name, e.target.value)}
-                >
-                  {info.providers.map(p => (
-                    <option key={p.contextId} value={p.contextId}>
-                      {p.contextId}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : info.providers.length === 1 ? (
-              <div className="service-slot-single">
-                <span className="service-slot-label">提供者</span>
-                <span className="service-slot-provider-name">{info.providers[0].contextId}</span>
-              </div>
-            ) : (
-              <div className="service-slot-single">
-                <span className="empty-hint">无提供者</span>
-              </div>
-            )}
-
-            {info.providers.length > 0 && (
-              <div className="service-slot-caps">
-                {info.providers
-                  .find(p => p.contextId === info.active)
-                  ?.capabilities.map(c => (
-                    <span className="tool-chip" key={c}>{c}</span>
-                  ))}
-              </div>
-            )}
-
-          </div>
+        {coreServices.map(([name, info]) => (
+          <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
         ))}
       </div>
+
+      {/* 扩展服务 */}
+      {extServices.length > 0 && (
+        <>
+          <div className="section-label">扩展服务</div>
+          <div className="services-grid">
+            {extServices.map(([name, info]) => (
+              <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
+            ))}
+          </div>
+        </>
+      )}
 
       {/* 工具列表 */}
       <div className="section-label">已注册工具</div>
@@ -939,6 +968,8 @@ function PluginConfigPage({
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
+  const [pluginSearch, setPluginSearch] = useState('');
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -1122,9 +1153,78 @@ function PluginConfigPage({
       )}
 
       {/* 插件列表 */}
-      <div className="section-label">插件管理</div>
+      <div className="section-label" style={{ marginBottom: 0 }}>插件管理</div>
+      <div className="plugin-search-row">
+        <input
+          className="plugin-search-input"
+          placeholder="搜索插件..."
+          value={pluginSearch}
+          onChange={e => setPluginSearch(e.target.value)}
+        />
+        {pluginSearch && (
+          <button className="plugin-search-clear" onClick={() => setPluginSearch('')}>✕</button>
+        )}
+      </div>
       {plugins.length === 0 && <div className="empty-hint">无插件</div>}
-      {plugins.map(p => {
+      {(() => {
+        const q = pluginSearch.toLowerCase();
+        const filtered = q
+          ? plugins.filter(p =>
+              p.name.toLowerCase().includes(q) ||
+              p.provides.some(s => s.toLowerCase().includes(q)))
+          : plugins;
+
+        // 分类逻辑
+        const categoryMap: Record<string, string> = {};
+        const categoryOrder = [
+          '系统', 'LLM 模型', '智能体', '存储', '嵌入模型',
+          '向量存储', '工具', '界面', '适配器', '自动化', '其他',
+        ];
+        for (const p of filtered) {
+          const n = p.name;
+          const cat =
+            p.core ? '系统'
+            : /^(@aalis\/)?plugin-(openai|deepseek)$/.test(n) ? 'LLM 模型'
+            : /^(@aalis\/)?plugin-agent/.test(n) || /^(@aalis\/)?plugin-(chat-flow|persona)$/.test(n) ? '智能体'
+            : /^(@aalis\/)?plugin-memory-/.test(n) ? '存储'
+            : /^(@aalis\/)?plugin-embedding-/.test(n) ? '嵌入模型'
+            : /^(@aalis\/)?plugin-vectorstore-/.test(n) ? '向量存储'
+            : /^(@aalis\/)?plugin-(tool-|tools-|websearch-)/.test(n) ? '工具'
+            : /^(@aalis\/)?plugin-(webui-|cli)/.test(n) ? '界面'
+            : /^(@aalis\/)?plugin-adapter-/.test(n) ? '适配器'
+            : /^(@aalis\/)?plugin-(scheduler|skills)$/.test(n) ? '自动化'
+            : /^(@aalis\/)?plugin-(commands|authority)$/.test(n) ? '系统'
+            : '其他';
+          categoryMap[n] = cat;
+        }
+
+        const grouped = new Map<string, PluginInfo[]>();
+        for (const cat of categoryOrder) grouped.set(cat, []);
+        for (const p of filtered) {
+          const cat = categoryMap[p.name] || '其他';
+          grouped.get(cat)!.push(p);
+        }
+
+        const toggleCategory = (cat: string) => {
+          setCollapsedCategories(prev => {
+            const next = new Set(prev);
+            next.has(cat) ? next.delete(cat) : next.add(cat);
+            return next;
+          });
+        };
+
+        return Array.from(grouped.entries())
+          .filter(([, items]) => items.length > 0)
+          .map(([cat, items]) => {
+            const isCollapsed = collapsedCategories.has(cat);
+            return (
+              <div className="plugin-category" key={cat}>
+                <div className="plugin-category-header" onClick={() => toggleCategory(cat)}>
+                  <span className={`config-block-toggle ${!isCollapsed ? 'open' : ''}`}>▶</span>
+                  <span className="plugin-category-name">{cat}</span>
+                  <span className="plugin-category-count">{items.length}</span>
+                </div>
+                {!isCollapsed && items.map(p => {
         const isEditing = editingPlugin === p.name;
         const isOpen = openSections.has(p.name);
         const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length || p.extends.mixins && Object.keys(p.extends.mixins).length);
@@ -1240,6 +1340,10 @@ function PluginConfigPage({
           </div>
         );
       })}
+              </div>
+            );
+          });
+      })()}
     </div>
   );
 }
@@ -2363,6 +2467,11 @@ async function pageAction<T = unknown>(pluginName: string, method: string, args:
 
 // ===== 声明式页面渲染器 =====
 
+const dynStatIconMap: Record<string, string> = {
+  skills: '🧩', scheduler: '⏰', browser: '🌐', memory: '🧠',
+  tools: '🛠', agent: '✦', default: '📊',
+};
+
 function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: string }) {
   const [value, setValue] = useState<string | number>('—');
   const [loading, setLoading] = useState(true);
@@ -2375,10 +2484,15 @@ function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: s
       .finally(() => setLoading(false));
   }, [pluginName, comp.source]);
 
+  const icon = dynStatIconMap[comp.icon ?? ''] ?? dynStatIconMap.default;
+
   return (
     <div className="dyn-stat-card">
-      <span className="dyn-stat-label">{comp.label}</span>
-      <span className="dyn-stat-value">{loading ? '...' : value}</span>
+      <div className="dyn-stat-icon">{icon}</div>
+      <div className="dyn-stat-body">
+        <div className="dyn-stat-label">{comp.label}</div>
+        <div className="dyn-stat-value">{loading ? '...' : value}</div>
+      </div>
     </div>
   );
 }
@@ -2441,7 +2555,7 @@ function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName:
                     {comp.actions.map((act, ai) => (
                       <button
                         key={ai}
-                        className={`config-edit-btn${act.danger ? ' danger' : ''}`}
+                        className={`btn btn-sm${act.danger ? ' btn-danger' : ''}`}
                         onClick={() => handleAction(act, row)}
                       >
                         {act.label}
@@ -2502,7 +2616,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
         onFetchModels={handleFetchModels}
       />
       <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
-        <button className="config-edit-btn primary" onClick={handleSave} disabled={saving}>
+        <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? '保存中...' : '保存'}
         </button>
         {msg && <span style={{ fontSize: 13, color: msg === '已保存' ? '#22c55e' : '#ef4444' }}>{msg}</span>}
@@ -2527,17 +2641,19 @@ function DynActions({ comp, pluginName }: { comp: WebuiActionsComponent; pluginN
 
   return (
     <div className="dyn-actions-block">
-      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      {comp.label && <div className="dyn-section-title">{comp.label}</div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {comp.items.map((item, i) => (
-          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <button
-              className={`config-edit-btn${item.danger ? ' danger' : ''}${item.variant === 'primary' ? ' primary' : ''}`}
+              className={`btn btn-sm${item.danger ? ' btn-danger' : item.variant === 'primary' ? ' btn-primary' : ''}`}
               onClick={() => handleClick(item)}
             >
               {item.label}
             </button>
-            {actionMsg[item.method] && <span style={{ fontSize: 12, color: '#888' }}>{actionMsg[item.method]}</span>}
+            {actionMsg[item.method] && (
+              <span className="dyn-action-msg">{actionMsg[item.method]}</span>
+            )}
           </span>
         ))}
       </div>
@@ -2637,11 +2753,35 @@ function DynamicPage({ page }: { page: WebuiPageDef }) {
   if (!page.content || page.content.length === 0) {
     return <div className="empty-hint" style={{ padding: 24 }}>此页面未提供内容</div>;
   }
+
+  // 将连续的 stat 组件合并到一个 grid 中
+  const groups: Array<{ type: 'stat-grid'; items: WebuiStatComponent[] } | { type: 'component'; item: WebuiComponent }> = [];
+  for (const comp of page.content) {
+    if (comp.type === 'stat') {
+      const last = groups[groups.length - 1];
+      if (last && last.type === 'stat-grid') {
+        last.items.push(comp);
+      } else {
+        groups.push({ type: 'stat-grid', items: [comp] });
+      }
+    } else {
+      groups.push({ type: 'component', item: comp });
+    }
+  }
+
   return (
-    <div className="dynamic-page">
-      {page.content.map((comp, i) => (
-        <DynamicComponent key={i} component={comp} pluginName={page.plugin} />
-      ))}
+    <div className="page-content dynamic-page">
+      {groups.map((g, i) =>
+        g.type === 'stat-grid' ? (
+          <div className="dyn-stat-grid" key={i}>
+            {g.items.map((comp, j) => (
+              <DynStat key={j} comp={comp} pluginName={page.plugin} />
+            ))}
+          </div>
+        ) : (
+          <DynamicComponent key={i} component={g.item} pluginName={page.plugin} />
+        )
+      )}
     </div>
   );
 }
