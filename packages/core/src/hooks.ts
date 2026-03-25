@@ -15,7 +15,10 @@ interface HookEntry<T> {
  * 中间件按优先级排序（数字越大越先执行），可以：
  * - 修改 data 对象（引用传递）
  * - 调用 next() 继续管道
- * - 不调用 next() 来中断流程
+ * - 不调用 next() 来中断流程（包括 defaultAction）
+ *
+ * 第三方插件可通过 TS declaration merging 扩展 HookContextMap，
+ * 也可以使用任意字符串 key（运行时安全）。
  */
 export class HookRegistry {
   private hooks = new Map<string, HookEntry<any>[]>();
@@ -23,7 +26,7 @@ export class HookRegistry {
   /**
    * 注册中间件，返回 dispose 函数
    */
-  register<K extends keyof HookContextMap>(
+  register<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
     priority: number = 0,
@@ -47,11 +50,15 @@ export class HookRegistry {
 
   /**
    * 执行中间件管道
+   *
+   * 中间件不调用 next() 即可中断整个管道（包括 defaultAction）。
+   * 这是拦截/跳过的标准手段，无需额外的 skip 标志。
+   *
    * @param hook - 钩子名称
    * @param data - 传递给中间件的数据对象（会被中间件修改）
    * @param defaultAction - 所有中间件通过后的默认操作
    */
-  async run<K extends keyof HookContextMap>(
+  async run<K extends string & keyof HookContextMap>(
     hook: K,
     data: HookContextMap[K],
     defaultAction?: () => Promise<void>,

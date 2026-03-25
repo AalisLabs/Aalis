@@ -15,24 +15,110 @@
 ```typescript
 interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  name?: string;         // tool 消息的 tool name
-  tool_call_id?: string; // tool 消息关联的 call ID
-  tool_calls?: ToolCall[];
+  content: string | null;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  name?: string;
   timestamp?: number;
+  reasoningContent?: string | null;
 }
 ```
 
-### ToolCall
+### IncomingMessage
+
+平台适配器传递到 Agent 的入站消息。
 
 ```typescript
+interface IncomingMessage {
+  content: string;
+  sessionId: string;
+  platform: string;
+  userId?: string;
+  images?: string[]; // base64 or URL
+}
+```
+
+### OutgoingMessage / StreamChunkMessage / ToolExecuteMessage
+
+```typescript
+interface OutgoingMessage {
+  content: string;
+  sessionId: string;
+  platform?: string;
+  reasoningContent?: string;
+}
+
+interface StreamChunkMessage {
+  sessionId: string;
+  platform?: string;
+  contentDelta?: string;
+  reasoningDelta?: string;
+  done?: boolean;
+}
+
+interface ToolExecuteMessage {
+  sessionId: string;
+  platform?: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  phase: 'start' | 'end';
+  result?: string;
+}
+```
+
+---
+
+## 工具类型
+
+### ToolDefinition / ToolCall
+
+```typescript
+interface ToolDefinition {
+  type: 'function';
+  function: ToolFunction;
+}
+
+interface ToolFunction {
+  name: string;
+  strict?: boolean;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+    additionalProperties?: boolean;
+  };
+}
+
 interface ToolCall {
   id: string;
   type: 'function';
-  function: {
-    name: string;
-    arguments: string;  // JSON string
-  };
+  function: { name: string; arguments: string };
+}
+```
+
+### RegisteredTool / ToolSummary
+
+```typescript
+interface RegisteredTool {
+  definition: ToolDefinition;
+  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+  pluginName: string;
+  safety?: SafetyLevel;   // 默认 'safe'
+  authority?: number;      // 默认 1
+}
+
+interface ToolSummary {
+  name: string;
+  description: string;
+  authority: number;
+  safety: SafetyLevel;
+}
+
+interface ToolCallContext {
+  sessionId: string;
+  userId?: string;
+  platform?: string;
 }
 ```
 
@@ -42,71 +128,78 @@ interface ToolCall {
 
 ### LLMService
 
-大语言模型服务，必须提供聊天和消息token估算能力。
+大语言模型服务。
 
 ```typescript
 interface LLMService {
-  chat(messages: Message[], options?: LLMChatOptions): Promise<LLMResponse>;
-  estimateTokens(messages: Message[]): number;
+  chat(request: ChatRequest): Promise<ChatResponse>;
+  chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
+  getTemperature(): number;
+  getMaxTokens(): number;
+  getMaxToolIterations(): number;
+  getContextLength(): number;
+  listModels?(): Promise<string[]>;
 }
 
-interface LLMChatOptions {
-  temperature?: number;
+interface ChatRequest {
+  messages: Message[];
   tools?: ToolDefinition[];
-  stream?: boolean;
-  onToken?: (token: string) => void;
+  temperature?: number;
+  maxTokens?: number;
 }
 
-interface LLMResponse {
-  content: string;
-  tool_calls?: ToolCall[];
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-  thinking?: string;  // DeepSeek 推理链内容
+interface ChatResponse {
+  content: string | null;
+  toolCalls?: ToolCall[];
+  reasoningContent?: string | null;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+}
+
+interface ChatStreamChunk {
+  contentDelta?: string;
+  reasoningDelta?: string;
+  toolCalls?: ToolCall[];
+  done?: boolean;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 ```
 
 ### AgentService
 
-Agent 负责处理完整的消息收发流程。
+对话编排引擎。
 
 ```typescript
 interface AgentService {
-  handleMessage(session: SessionContext): Promise<void>;
-}
-
-interface SessionContext {
-  sessionId: string;
-  platform: string;
-  userId: string;
-  content: string;
-  send: (content: string) => Promise<void>;
+  handleMessage(message: IncomingMessage): Promise<void>;
 }
 ```
 
 ### MemoryService
 
-会话记忆存储，以 sessionId 为粒度。
+会话记忆存储（以 sessionId 为粒度）。
 
 ```typescript
 interface MemoryService {
-  getMessages(sessionId: string, limit?: number): Promise<Message[]>;
-  addMessage(sessionId: string, message: Message): Promise<void>;
-  clearMessages(sessionId: string): Promise<void>;
+  saveMessage(sessionId: string, message: Message): Promise<void>;
+  getHistory(sessionId: string, limit?: number): Promise<Message[]>;
+  clearSession(sessionId: string): Promise<void>;
 }
 ```
 
 ### VectorStoreService
 
-向量存储服务，支持语义相似度检索。
+向量存储，支持语义相似度检索。
 
 ```typescript
 interface VectorStoreService {
-  upsert(id: string, vector: number[], metadata: Record<string, unknown>): Promise<void>;
-  query(vector: number[], topK: number): Promise<VectorSearchResult[]>;
+  add(vector: number[], metadata: Record<string, unknown>): Promise<void>;
+  search(queryVector: number[], topK: number): Promise<VectorSearchResult[]>;
+  size(): Promise<number>;
+  clear(): Promise<void>;
+  save(): Promise<void>;
 }
 
 interface VectorSearchResult {
-  id: string;
   score: number;
   metadata: Record<string, unknown>;
 }
@@ -114,153 +207,266 @@ interface VectorSearchResult {
 
 ### EmbeddingService
 
-文本嵌入向量化服务。
+文本嵌入向量化。
 
 ```typescript
 interface EmbeddingService {
   embed(text: string): Promise<number[]>;
-  embedBatch?(texts: string[]): Promise<number[][]>;
+  listModels?(): Promise<string[]>;
 }
 ```
 
 ### PersonaService
 
-人设/角色卡管理服务。
+人设/角色卡管理。
 
 ```typescript
 interface PersonaService {
   getSystemPrompt(): string;
-  getPersonaCard(): PersonaCard;
+  getPersonaName(): string;
+  getOutputFormat?(): OutputFormat | undefined;
+  listModels?(): Promise<string[]>;
 }
 
-interface PersonaCard {
-  name: string;
-  personality?: string;
-  scenario?: string;
-  firstMessage?: string;
-  outputFormat?: Record<string, string>;
+interface OutputFormat {
+  fields: Record<string, OutputFormatField>;
+  replyField: string;
+}
+
+interface OutputFormatField {
+  description: string;
+  reply?: boolean;
 }
 ```
 
 ### PlatformAdapter
 
-平台适配器，连接外部通信渠道。
+平台适配器，每个平台插件实现此接口。
 
 ```typescript
 interface PlatformAdapter {
+  adapterName: string;
   platform: string;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  send(sessionId: string, content: string): Promise<void>;
+  getConnections(): PlatformConnection[];
+  sendMessage(sessionId: string, content: string): Promise<void>;
+  isReady?(): boolean;
+}
+
+interface PlatformConnection {
+  id: string;
+  platform: string;
+  selfId?: string;
+  status: 'online' | 'offline' | 'connecting';
+  detail?: Record<string, unknown>;
+}
+```
+
+### WebUIService / CLIService
+
+```typescript
+interface WebUIService {
+  getPort(): number;
+  getHost(): string;
+  setClientDir?(dir: string): void;
+}
+
+interface CLIService {
+  getSessionId(): string;
+  isRunning(): boolean;
 }
 ```
 
 ---
 
-## 配置类型
+## 配置 Schema
+
+Aalis 的配置 Schema 体系用于声明插件配置项，同时驱动 WebUI 自动生成表单。
+
+### SchemaField
+
+单个配置字段。
+
+```typescript
+type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
+
+interface SchemaField {
+  type: SchemaFieldType;
+  label: string;
+  description?: string;
+  default?: unknown;
+  required?: boolean;
+  secret?: boolean;           // 前端自动遮蔽
+  options?: Array<{ label: string; value: string | number }>;
+  dynamicOptions?: string;    // 填服务名，运行时调用 service.listModels()
+}
+```
+
+### SchemaGroup
+
+配置分组（将字段组织到折叠区域）。
+
+```typescript
+interface SchemaGroup {
+  label?: string;
+  description?: string;
+  fields: Record<string, SchemaField>;
+}
+```
+
+### SchemaArray
+
+对象数组（如 OneBot 多连接、Chat-Flow 多 Profile 等场景）。
+
+```typescript
+interface SchemaArray {
+  type: 'array';
+  label: string;
+  description?: string;
+  items: Record<string, SchemaField>;
+  default?: unknown[];
+}
+```
 
 ### ConfigSchema
 
-插件声明配置项时使用的 JSON Schema 子集。
+顶层配置 Schema，各 key 可以是字段、分组或数组：
 
 ```typescript
-interface ConfigSchemaItem {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
-  default?: unknown;
-  description?: string;
-  required?: boolean;
-}
+type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
+```
 
-type ConfigSchema = Record<string, ConfigSchemaItem>;
+### 使用示例
+
+```typescript
+export const configSchema: ConfigSchema = {
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
+  model: { type: 'select', label: '模型', dynamicOptions: 'llm' },
+  advanced: {
+    label: '高级设置',
+    fields: {
+      temperature: { type: 'number', label: '温度', default: 0.7 },
+    },
+  },
+  connections: {
+    type: 'array',
+    label: '连接列表',
+    items: {
+      host: { type: 'string', label: '主机', default: '127.0.0.1' },
+      port: { type: 'number', label: '端口', default: 6700 },
+    },
+    default: [],
+  },
+};
 ```
 
 ---
 
-## 事件类型映射
+## 事件与钩子类型
 
-### EventMap
+### AalisEvents
+
+内置事件类型映射表，支持 declaration merging 扩展。
 
 ```typescript
-interface EventMap {
-  'message':       (session: SessionContext) => void;
-  'message:send':  (params: { sessionId: string; content: string }) => void;
-  'ready':         () => void;
-  'dispose':       () => void;
+interface AalisEvents {
+  'message:received': [message: IncomingMessage];
+  'message:send': [message: OutgoingMessage];
+  'message:stream': [chunk: StreamChunkMessage];
+  'tool:execute': [info: ToolExecuteMessage];
+  'service:registered': [name: string, capabilities: string[]];
+  'service:unregistered': [name: string];
+  'plugin:loaded': [name: string];
+  'plugin:unloaded': [name: string];
+  'plugins:changed': [];
+  'ready': [];
+  'dispose': [];
+  'restarting': [];
+  [key: string]: unknown[];  // 运行时安全兜底
 }
 ```
 
-### HookMap
+### HookContextMap
+
+内置钩子数据类型映射表，支持 declaration merging 扩展。
 
 ```typescript
-interface HookMap {
-  'llm-call:before':  (data: { messages: Message[]; options: LLMChatOptions }) => void | Promise<void>;
-  'llm-call:after':   (data: { messages: Message[]; response: LLMResponse }) => void | Promise<void>;
-  'response:before':  (data: { session: SessionContext; content: string }) => void | Promise<void>;
-  'command:before':   (data: { name: string; args: Record<string, unknown>; ctx: CommandContext }) => void | Promise<void>;
-  'command:after':    (data: { name: string; result: unknown; ctx: CommandContext }) => void | Promise<void>;
-  'tool:before':      (data: { name: string; args: Record<string, unknown> }) => void | Promise<void>;
-  'tool:after':       (data: { name: string; result: unknown }) => void | Promise<void>;
+interface HookContextMap {
+  'message:before': { message: IncomingMessage; metadata: Record<string, unknown> };
+  'message:after': { message: IncomingMessage; response: string; sessionId: string; metadata: Record<string, unknown> };
+  'llm-call:before': { messages: Message[]; tools: ToolDefinition[] };
+  'llm-call:after': { response: ChatResponse; messages: Message[] };
+  'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
+  'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
+  'response:before': { content: string; sessionId: string };
+  [key: string]: Record<string, unknown>;  // 运行时安全兜底
+}
+```
+
+### MiddlewareFn / MiddlewareNext
+
+```typescript
+type MiddlewareNext = () => Promise<void>;
+type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
+```
+
+---
+
+## 依赖声明
+
+### InjectDeclaration
+
+插件声明其依赖的服务。
+
+```typescript
+interface InjectDeclaration {
+  required?: DependencyDeclaration[];
+  optional?: DependencyDeclaration[];
+}
+
+type DependencyDeclaration = string | ServiceDependency;
+
+interface ServiceDependency {
+  service: string;
+  capabilities?: string[];
+}
+```
+
+### ExtendDeclaration
+
+插件声明其对核心的扩展（用于前端展示和文档生成）。
+
+```typescript
+interface ExtendDeclaration {
+  events?: string[];
+  hooks?: string[];
+  mixins?: Record<string, string[]>;
 }
 ```
 
 ---
 
-## 工具定义
+## 指令系统
 
-### ToolDefinition
-
-可以注册到 ToolRegistry 且被 LLM 调用的工具。
-
-```typescript
-interface ToolDefinition {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: JSONSchema;   // JSON Schema 描述参数
-  };
-}
-```
-
-### ToolHandler
-
-```typescript
-type ToolHandler = (args: Record<string, unknown>) => Promise<string>;
-```
-
----
-
-## 指令定义
-
-### CommandDefinition
+### CommandDefinition / CommandContext
 
 ```typescript
 interface CommandDefinition {
   name: string;
   description: string;
-  authority?: number;          // 所需最低权限，默认 1
-  dangerous?: boolean;         // 是否需要确认
-  options?: CommandOption[];
+  authority?: number;      // 默认 1
+  safety?: SafetyLevel;    // 默认 'safe'
+  asTools?: boolean;       // 是否同时注册为 AI 工具
   action: (ctx: CommandContext) => Promise<string | void>;
 }
 
-interface CommandOption {
-  name: string;
-  alias?: string;
-  type: 'string' | 'number' | 'boolean';
-  default?: unknown;
-  description?: string;
-  required?: boolean;
-}
-```
-
-### CommandContext
-
-```typescript
 interface CommandContext {
-  args: Record<string, unknown>;
-  session?: SessionContext;
-  raw?: string;
-  send: (content: string) => Promise<void>;
+  sessionId: string;
+  platform: string;
+  userId?: string;
+  args: string[];
+  raw: string;
+  skipSafetyCheck?: boolean;
 }
+
+type SafetyLevel = 'safe' | 'dangerous';
 ```

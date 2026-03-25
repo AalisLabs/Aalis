@@ -54,7 +54,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
 
   // 注册为平台服务
-  ctx.provide('platform', adapter);
+  ctx.provide('platform', adapter, { capabilities: ['cli'] });
 
   // 注册为 CLI 服务
   let running = false;
