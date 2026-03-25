@@ -1,6 +1,5 @@
 packages:
   - 'packages/*'
-  - 'packages/plugin-webui-client/client'
   - 'packages/plugin-webui-client-napcat/client'
 allowBuilds:
   better-sqlite3: false
