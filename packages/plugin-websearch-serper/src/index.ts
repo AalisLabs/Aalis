@@ -3,6 +3,9 @@ import type { Context, ConfigSchema } from '@aalis/core';
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-websearch-serper';
+export const inject = {
+  required: ['tools'],
+};
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'Serper API Key', required: true, secret: true, description: 'Serper.dev API 密钥' },

@@ -8,6 +8,9 @@ import { registerHttpTools } from './tools/http.js';
 
 export const name = '@aalis/plugin-tools-basic';
 export const provides = ['machine-tools'];
+export const inject = {
+  required: ['tools'],
+};
 
 export const configSchema: ConfigSchema = {
   workingDirectory: {
