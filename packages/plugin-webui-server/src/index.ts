@@ -3,13 +3,21 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService, AgentService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService, AgentService, WebuiPage } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-webui-server';
 export const provides = ['webui-server', 'platform'];
+
+export const webuiPages: WebuiPage[] = [
+  { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10 },
+  { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20 },
+  { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30 },
+  { key: 'platforms', label: '平台接入', icon: 'platforms', order: 40 },
+  { key: 'logs', label: '日志', icon: 'logs', order: 60 },
+];
 
 export const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
@@ -139,6 +147,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       error: p.error,
     }));
     res.json({ plugins });
+  });
+
+  // 获取可用的 WebUI 页面（由活跃插件的 webuiPages 声明汇总）
+  expressApp.get('/api/pages', (_req, res) => {
+    const app = getApp();
+    if (!app) { res.json([]); return; }
+
+    const pages: WebuiPage[] = [];
+    for (const plugin of app.plugins.getStatus()) {
+      if (plugin.state === 'active' && plugin.webuiPages) {
+        pages.push(...plugin.webuiPages);
+      }
+    }
+    pages.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+    res.json(pages);
   });
 
   // 获取当前全局配置

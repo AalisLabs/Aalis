@@ -1,15 +1,13 @@
 import { EventBus } from './events.js';
 import { ServiceContainer } from './service.js';
-import { ToolRegistry } from './tools.js';
 import { HookRegistry } from './hooks.js';
-import { CommandRegistry } from './commands.js';
-import { AuthorityManager } from './authority.js';
 import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
-import type { AgentService, MemoryService, VectorStoreService, RegisteredCommand } from './types.js';
+import { builtinAuthority, builtinCommands, builtinTools } from './builtin/index.js';
+import type { AgentService, MemoryService, VectorStoreService } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -34,76 +32,19 @@ export class App {
   private events: EventBus;
 
   constructor(configPath?: string) {
-    // 1. 核心子系统
+    // 1. 核心基础设施（事件总线、服务容器、钩子、配置、日志）
     const config = new ConfigManager(configPath);
     this.events = new EventBus();
     const services = new ServiceContainer();
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
-    const tools = new ToolRegistry(this.logger);
     const hooks = new HookRegistry();
-    const commands = new CommandRegistry(this.logger);
-    commands.prefix = config.get('commandPrefix') ?? '/';
-    commands.globalAsTools = config.get('commandAsTools') ?? false;
 
-    // 加载管理员对指令的覆盖配置
-    const cmdOverrides = config.get('commandOverrides');
-    if (cmdOverrides) commands.loadOverrides(cmdOverrides);
-
-    // 加载管理员对工具的覆盖配置
-    const toolOverrides = config.get('toolOverrides');
-    if (toolOverrides) tools.loadOverrides(toolOverrides);
-
-    // 1.5 权限管理
-    const authority = new AuthorityManager(config, this.logger);
-    commands.setAuthority(authority);
-    tools.setAuthority(authority);
-
-    // 指令 → 工具桥接: 当指令声明 asTools 时自动注册为 AI 工具
-    commands.onToolBridge = (cmd: RegisteredCommand) => {
-      return tools.register(
-        {
-          definition: {
-            type: 'function' as const,
-            function: {
-              name: `cmd_${cmd.name}`,
-              description: `[指令] ${cmd.description}`,
-              parameters: {
-                type: 'object',
-                properties: {
-                  args: { type: 'string', description: '指令参数(空格分隔)' },
-                },
-                required: [],
-              },
-            },
-          },
-          handler: async (args, callCtx) => {
-            const argsStr = typeof args.args === 'string' ? args.args : '';
-            const result = await commands.execute(cmd.name, {
-              args: argsStr ? argsStr.split(/\s+/) : [],
-              raw: `${commands.prefix}${cmd.name}${argsStr ? ' ' + argsStr : ''}`,
-              sessionId: callCtx.sessionId,
-              platform: callCtx.platform ?? 'unknown',
-              userId: callCtx.userId,
-              skipSafetyCheck: true, // 工具层已完成 dangerous 检查，跳过指令层重复确认
-            });
-            return result ?? '(指令已执行)';
-          },
-          safety: cmd.safety,
-          authority: cmd.authority,
-        },
-        cmd.pluginName,
-      );
-    };
-
-    // 2. 根上下文
+    // 2. 根上下文（commands/tools/authority 由内置插件延迟注入）
     this.ctx = new Context({
       id: 'root',
       events: this.events,
       services,
-      tools,
       hooks,
-      commands,
-      authority,
       logger: this.logger,
       config,
     });
@@ -130,8 +71,7 @@ export class App {
       }
     });
 
-    // 6. 注册内置指令
-    this.registerBuiltinCommands();
+    // 6. 内置指令在 loadBuiltinPlugins() 中注册（需要 commands 服务就绪）
 
     this.logger.info(`Aalis v0.1.0 - ${config.get('name')}`);
   }
@@ -151,10 +91,14 @@ export class App {
    * 自动扫描 packages/ 目录，动态加载所有插件
    *
    * 规则:
+   * - 先加载内置插件（authority, commands, tools）
    * - 跳过 package.json 中标记 `"aalis": { "core": true }` 的包
    * - 其余包全部视为插件，通过 dynamic import() 加载
    */
   async autoLoadPlugins(packagesDir?: string): Promise<void> {
+    // 0. 加载内置插件（必须在外部插件之前）
+    await this.loadBuiltinPlugins();
+
     const dir = packagesDir ?? this.packagesDir;
     const discovered = await this.discoverPlugins(dir);
     this.logger.info(`发现 ${discovered.length} 个插件`);
@@ -174,6 +118,24 @@ export class App {
 
     // 确保核心配置的所有字段都落盘到 YAML（补齐用户可能缺少的条目）
     this.saveConfig();
+  }
+
+  /**
+   * 加载内置插件（authority → commands → tools），保证顺序。
+   * 内置插件为 core: true，不可被用户禁用。
+   */
+  private async loadBuiltinPlugins(): Promise<void> {
+    this.logger.info('加载内置插件...');
+
+    // 顺序很重要: authority 先于 commands/tools（它们依赖 authority）
+    await this.plugin(builtinAuthority);
+    await this.plugin(builtinCommands);
+    await this.plugin(builtinTools);
+
+    // 内置指令（依赖 commands 和 tools 服务）
+    this.registerBuiltinCommands();
+
+    this.logger.info('内置插件加载完成');
   }
 
   /**
@@ -659,7 +621,7 @@ export class App {
    */
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
-    this.ctx.authority.save();
+    try { this.ctx.authority.save(); } catch { /* authority 服务可能已卸载 */ }
     await this.ctx.emit('dispose');
     this.ctx.dispose();
     this.logger.info('已停止');
