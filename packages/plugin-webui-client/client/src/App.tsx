@@ -119,7 +119,7 @@ interface ServiceInfo {
   active: string | undefined;
 }
 
-type PageTab = 'dashboard' | 'marketplace' | 'plugin-config' | 'platforms' | 'authority' | 'logs';
+type PageTab = string;
 
 const SESSION_ID = 'webui-default';
 
@@ -2344,13 +2344,22 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
-    const valid: PageTab[] = ['dashboard', 'marketplace', 'plugin-config', 'platforms', 'authority', 'logs'];
-    return valid.includes(hash as PageTab) ? (hash as PageTab) : 'dashboard';
+    return hash || 'dashboard';
   });
+
+  // 可用页面列表（由服务端 /api/pages 返回，null 表示尚未加载）
+  const [availablePages, setAvailablePages] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     location.hash = activeTab;
   }, [activeTab]);
+
+  // 当可用页面加载后，若当前 tab 不在列表中则回退到 dashboard
+  useEffect(() => {
+    if (availablePages && !availablePages.has(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [availablePages, activeTab]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -2517,11 +2526,18 @@ export function App() {
       .catch(() => {});
   }, []);
 
+  const refreshPages = useCallback(() => {
+    api<Array<{ key: string; label: string; icon?: string; order?: number }>>('/api/pages')
+      .then(pages => setAvailablePages(new Set(pages.map(p => p.key))))
+      .catch(() => {});
+  }, []);
+
   const handleStateChanged = useCallback(() => {
     refreshPlugins();
     refreshServices();
+    refreshPages();
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
-  }, [refreshPlugins, refreshServices]);
+  }, [refreshPlugins, refreshServices, refreshPages]);
 
   const handleRestarting = useCallback(() => {
     setRestarting(true);
@@ -2541,17 +2557,19 @@ export function App() {
     refreshConfig();
     refreshPlugins();
     refreshServices();
+    refreshPages();
     api<LogEntry[]>('/api/logs').then(setLogs).catch(() => {});
-  }, [refreshPlugins, refreshConfig, refreshServices]);
+  }, [refreshPlugins, refreshConfig, refreshServices, refreshPages]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
       refreshPlugins();
       refreshServices();
+      refreshPages();
     }, 10000);
     return () => clearInterval(timer);
-  }, [refreshPlugins, refreshServices]);
+  }, [refreshPlugins, refreshServices, refreshPages]);
 
   const handleAbort = useCallback(() => {
     sendRaw({ type: 'abort', sessionId: SESSION_ID });
@@ -2575,14 +2593,20 @@ export function App() {
     setLoading(true);
   };
 
-  const tabs: { key: PageTab; label: string; icon: React.ReactNode }[] = [
-    { key: 'dashboard', label: '仪表盘', icon: <IconDashboard /> },
-    { key: 'marketplace', label: '插件市场', icon: <IconMarketplace /> },
-    { key: 'plugin-config', label: '插件配置', icon: <IconPluginConfig /> },
-    { key: 'platforms', label: '平台接入', icon: <IconPlatform /> },
-    { key: 'authority', label: '权限管理', icon: <IconAuthority /> },
-    { key: 'logs', label: '日志', icon: <IconLogs /> },
+  // 所有已知页面（组件已内置），根据 availablePages 动态过滤
+  const allKnownTabs: { key: string; label: string; icon: React.ReactNode; order: number }[] = [
+    { key: 'dashboard', label: '仪表盘', icon: <IconDashboard />, order: 10 },
+    { key: 'marketplace', label: '插件市场', icon: <IconMarketplace />, order: 20 },
+    { key: 'plugin-config', label: '插件配置', icon: <IconPluginConfig />, order: 30 },
+    { key: 'platforms', label: '平台接入', icon: <IconPlatform />, order: 40 },
+    { key: 'authority', label: '权限管理', icon: <IconAuthority />, order: 50 },
+    { key: 'logs', label: '日志', icon: <IconLogs />, order: 60 },
   ];
+
+  // 未加载时显示全部（避免闪烁），加载后只显示服务端声明的页面
+  const tabs = availablePages
+    ? allKnownTabs.filter(t => availablePages.has(t.key)).sort((a, b) => a.order - b.order)
+    : allKnownTabs;
 
   return (
     <div className="app-layout">

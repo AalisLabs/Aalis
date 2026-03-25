@@ -13,6 +13,7 @@ export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager } from './plugin.js';
 export { InMemoryFallbackService } from './memory-fallback.js';
 export { Logger, getLogBuffer, onLogEntry } from './logger.js';
+export { builtinAuthority, builtinCommands, builtinTools } from './builtin/index.js';
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
 export type { LogLevel, LogEntry } from './logger.js';
@@ -65,4 +66,5 @@ export type {
   SafetyLevel,
   ToolSummary,
   UserIdentity,
+  WebuiPage,
 } from './types.js';

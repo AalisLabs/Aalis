@@ -1,6 +1,6 @@
 import { Context } from './context.js';
 import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, DependencyDeclaration, ConfigSchema, ExtendDeclaration } from './types.js';
+import type { InjectDeclaration, DependencyDeclaration, ConfigSchema, ExtendDeclaration, WebuiPage } from './types.js';
 import type { Logger } from './logger.js';
 
 // ----- 插件定义格式 -----
@@ -17,6 +17,8 @@ export interface PluginModule {
   configSchema?: ConfigSchema;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
   defaultConfig?: Record<string, unknown>;
+  /** 该插件提供的 WebUI 页面声明 */
+  webuiPages?: WebuiPage[];
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
 }
 
@@ -176,7 +178,7 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; error?: string }> {
+  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: WebuiPage[]; error?: string }> {
     return [...this.plugins.entries()].map(([name, entry]) => ({
       name,
       state: entry.state,
@@ -186,6 +188,7 @@ export class PluginManager {
       config: entry.config,
       configSchema: entry.module.configSchema,
       defaultConfig: entry.module.defaultConfig,
+      webuiPages: entry.module.webuiPages,
       error: entry.error,
     }));
   }
