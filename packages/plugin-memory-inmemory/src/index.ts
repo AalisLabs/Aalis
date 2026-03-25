@@ -1,13 +1,8 @@
-import type { MemoryService, Message } from './types/index.js';
+import type { Context, MemoryService, Message } from '@aalis/core';
 
-/**
- * 内存 fallback 记忆服务 —— 核心内置
- *
- * 当没有任何记忆插件提供 memory 服务时，
- * App 会自动注册这个 fallback。
- * 数据仅存在于内存中，重启后丢失。
- */
-export class InMemoryFallbackService implements MemoryService {
+// ===== InMemoryFallbackService 实现 =====
+
+class InMemoryFallbackService implements MemoryService {
   private sessions = new Map<string, Message[]>();
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -36,4 +31,20 @@ export class InMemoryFallbackService implements MemoryService {
   async clearSession(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
   }
+}
+
+// ===== 插件元数据 =====
+
+export const name = '@aalis/plugin-memory-inmemory';
+export const provides = ['memory'];
+
+// ===== 插件入口 =====
+
+export function apply(ctx: Context, _config: Record<string, unknown>): void {
+  const service = new InMemoryFallbackService();
+  ctx.provide('memory', service, {
+    capabilities: ['history'],
+    priority: -100,
+  });
+  ctx.logger.info('内存记忆服务已启用 (数据不会持久化)');
 }

@@ -1,35 +1,10 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { ConfigManager } from './config.js';
-import type { Logger } from './logger.js';
+import type { Context, WebuiPage, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, ConfigManager, Logger } from '@aalis/core';
 
-/** 高危操作确认请求信息 */
-export interface DangerousConfirmRequest {
-  /** 操作名称（指令名或工具名） */
-  name: string;
-  /** 操作类型 */
-  type: 'command' | 'tool';
-  /** 操作参数（工具调用时存在） */
-  args?: Record<string, unknown>;
-  /** 会话 ID */
-  sessionId: string;
-  /** 来源平台 */
-  platform: string;
-}
+// ===== AuthorityManager 实现 =====
 
-/** 确认回调：返回 true 表示放行，false 表示拒绝 */
-export type DangerousConfirmHandler = (request: DangerousConfirmRequest) => Promise<boolean>;
-
-/**
- * 权限管理器
- *
- * 职责:
- * - 解析用户权限等级 (owner > 数据库记录 > 默认等级)
- * - 管理用户权限数据的持久化 (JSON 文件)
- * - 判断 dangerous 操作是否被白名单放行
- */
-export class AuthorityManager {
-  /** platform:userId → authority level */
+class AuthorityManager implements AuthorityService {
   private users = new Map<string, number>();
   private config: ConfigManager;
   private logger: Logger;
@@ -44,37 +19,20 @@ export class AuthorityManager {
     this.load();
   }
 
-  /**
-   * 获取用户权限等级
-   *
-   * 优先级: owner 列表 → 持久化记录 → 默认等级
-   */
   getAuthority(platform: string, userId?: string): number {
     if (!userId) return this.config.get('defaultAuthority') ?? 1;
-
-    // WebUI 控制台用户始终拥有 owner 权限（与 internal-framework 控制台模型一致）
     if (platform === 'webui' && userId === 'console') {
       return this.config.get('ownerAuthority') ?? 5;
     }
-
-    // 检查 owner 列表
     const owners = this.config.get('owners') ?? [];
-    if (owners.some(o => o.platform === platform && o.userId === userId)) {
+    if (owners.some((o: { platform: string; userId: string }) => o.platform === platform && o.userId === userId)) {
       return this.config.get('ownerAuthority') ?? 5;
     }
-
-    // 检查持久化记录
     const key = `${platform}:${userId}`;
-    if (this.users.has(key)) {
-      return this.users.get(key)!;
-    }
-
+    if (this.users.has(key)) return this.users.get(key)!;
     return this.config.get('defaultAuthority') ?? 1;
   }
 
-  /**
-   * 设置用户权限等级
-   */
   setAuthority(platform: string, userId: string, level: number): void {
     const key = `${platform}:${userId}`;
     this.users.set(key, level);
@@ -82,14 +40,9 @@ export class AuthorityManager {
     this.logger.debug(`设置用户权限: ${key} → ${level}`);
   }
 
-  /**
-   * 检查某个 dangerous 操作是否被白名单放行
-   */
   isDangerousAllowed(name: string): boolean {
     const policy = this.config.get('dangerousPolicy');
     if (!policy?.allow || policy.allow.length === 0) return false;
-
-    // 检查有效期
     if (policy.duration && policy.duration > 0 && policy.enabledAt) {
       const elapsed = (Date.now() - policy.enabledAt) / 1000;
       if (elapsed > policy.duration) {
@@ -97,23 +50,14 @@ export class AuthorityManager {
         return false;
       }
     }
-
-    // '*' 表示全部放行
     if (policy.allow.includes('*')) return true;
-
     return policy.allow.includes(name);
   }
 
-  /**
-   * 注册交互式确认回调（由平台插件按平台名设置）
-   */
   setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void {
     this.confirmHandlers.set(platform, handler);
   }
 
-  /**
-   * 检查高危操作是否可以执行：先查白名单，再尝试对应平台的交互确认
-   */
   async confirmDangerous(request: DangerousConfirmRequest): Promise<boolean> {
     if (this.isDangerousAllowed(request.name)) return true;
     const handler = this.confirmHandlers.get(request.platform);
@@ -128,20 +72,13 @@ export class AuthorityManager {
     return false;
   }
 
-  /**
-   * 检查用户是否为 owner
-   */
   isOwner(platform: string, userId?: string): boolean {
     if (!userId) return false;
-    // WebUI 控制台始终为 owner
     if (platform === 'webui' && userId === 'console') return true;
     const owners = this.config.get('owners') ?? [];
-    return owners.some(o => o.platform === platform && o.userId === userId);
+    return owners.some((o: { platform: string; userId: string }) => o.platform === platform && o.userId === userId);
   }
 
-  /**
-   * 获取所有已设置权限的用户
-   */
   listUsers(): Array<{ platform: string; userId: string; authority: number }> {
     const result: Array<{ platform: string; userId: string; authority: number }> = [];
     for (const [key, level] of this.users) {
@@ -155,19 +92,13 @@ export class AuthorityManager {
     return result;
   }
 
-  /**
-   * 持久化到磁盘
-   */
   save(): void {
     if (!this.dirty) return;
     try {
       const dir = dirname(this.filePath);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
       const data: Record<string, number> = {};
-      for (const [key, level] of this.users) {
-        data[key] = level;
-      }
+      for (const [key, level] of this.users) data[key] = level;
       writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
       this.dirty = false;
       this.logger.debug('用户权限数据已保存');
@@ -176,22 +107,79 @@ export class AuthorityManager {
     }
   }
 
-  /**
-   * 从磁盘加载
-   */
   private load(): void {
     if (!existsSync(this.filePath)) return;
     try {
       const raw = readFileSync(this.filePath, 'utf-8');
       const data = JSON.parse(raw) as Record<string, number>;
       for (const [key, level] of Object.entries(data)) {
-        if (typeof level === 'number') {
-          this.users.set(key, level);
-        }
+        if (typeof level === 'number') this.users.set(key, level);
       }
       this.logger.debug(`加载了 ${this.users.size} 条用户权限记录`);
     } catch (err) {
       this.logger.warn(`加载用户权限数据失败: ${err}`);
     }
   }
+}
+
+// ===== 插件元数据 =====
+
+export const name = '@aalis/plugin-authority';
+export const provides = ['authority'];
+
+export const webuiPages: WebuiPage[] = [
+  { key: 'authority', label: '权限管理', icon: 'authority', order: 50 },
+];
+
+// ===== 插件入口 =====
+
+export const inject = {
+  required: ['commands'],
+};
+
+export function apply(ctx: Context, _config: Record<string, unknown>): void {
+  const authority = new AuthorityManager(ctx.config, ctx.logger);
+  ctx.provide('authority', authority);
+
+  // ===== 权限指令 =====
+
+  // /grant — 设置用户权限等级
+  ctx.command('grant', '设置用户权限 (用法: grant <platform:userId> <level>)', async (cmdCtx) => {
+    if (cmdCtx.args.length < 2) {
+      const prefix = ctx.commands!.prefix;
+      return `用法: ${prefix}grant <platform:userId> <level>`;
+    }
+    const [target, levelStr] = cmdCtx.args;
+    const level = parseInt(levelStr, 10);
+    if (isNaN(level) || level < 0) {
+      return '权限等级必须是非负整数。';
+    }
+    const callerAuth = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
+    if (level >= callerAuth) {
+      return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
+    }
+    const sep = target.indexOf(':');
+    if (sep < 1) {
+      return '目标格式: <platform:userId>，例如 onebot:12345';
+    }
+    const platform = target.slice(0, sep);
+    const userId = target.slice(sep + 1);
+    authority.setAuthority(platform, userId, level);
+    authority.save();
+    return `已将 ${target} 的权限等级设置为 ${level}。`;
+  }, { authority: 2 });
+
+  // /authority — 查看当前用户权限等级
+  ctx.command('authority', '查看自己或指定用户的权限等级', async (cmdCtx) => {
+    if (cmdCtx.args.length > 0) {
+      const target = cmdCtx.args[0];
+      const sep = target.indexOf(':');
+      if (sep < 1) return '目标格式: <platform:userId>';
+      const level = authority.getAuthority(target.slice(0, sep), target.slice(sep + 1));
+      return `${target} 的权限等级: ${level}`;
+    }
+    const level = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
+    const isOwner = authority.isOwner(cmdCtx.platform, cmdCtx.userId);
+    return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
+  });
 }

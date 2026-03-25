@@ -7,7 +7,7 @@ import type { Context, PersonaService, ConfigSchema, PlatformAdapter, PlatformCo
 
 export const name = '@aalis/plugin-cli';
 export const inject = {
-  optional: ['llm'],
+  optional: ['llm', 'commands', 'authority'],
 };
 export const provides = ['cli', 'platform'];
 
@@ -87,7 +87,7 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
   console.log(`\n${chalk.bold(`欢迎使用 ${assistantName}!`)} 输入 /help 查看命令列表。\n`);
 
   // 注册高危操作确认处理器（CLI 平台）
-  ctx.authority.setConfirmHandler('cli', async (request) => {
+  ctx.authority?.setConfirmHandler('cli', async (request) => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
     const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
@@ -130,9 +130,9 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
       if (!trimmed) continue;
 
       // 指令处理 —— 通过指令注册表
-      const parsed = ctx.commands.parseCommand(trimmed);
+      const parsed = ctx.commands?.parseCommand(trimmed);
       if (parsed) {
-        const result = await ctx.commands.execute(parsed.name, {
+        const result = await ctx.commands!.execute(parsed.name, {
           sessionId,
           platform: 'cli',
           args: parsed.args,

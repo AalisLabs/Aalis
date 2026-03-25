@@ -15,10 +15,6 @@ export interface AalisConfig {
   disabledPlugins?: string[];
   /** 服务偏好：服务名 → 偏好的提供者 contextId */
   servicePreferences?: Record<string, string>;
-  /** 指令前缀，默认 '/'，设为空字符串则仅按关键词触发 */
-  commandPrefix?: string;
-  /** 是否将所有指令自动注册为 AI 工具 (默认 false) */
-  commandAsTools?: boolean;
   /** owner 列表 */
   owners?: UserIdentity[];
   /** 新用户默认权限等级 (默认 1) */
@@ -46,8 +42,6 @@ const DEFAULT_CONFIG: AalisConfig = {
   plugins: {},
   disabledPlugins: [],
   servicePreferences: {},
-  commandPrefix: '/',
-  commandAsTools: false,
   owners: [],
   defaultAuthority: 1,
   ownerAuthority: 5,
@@ -55,7 +49,7 @@ const DEFAULT_CONFIG: AalisConfig = {
 
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
-  name: { type: 'string', label: '机器人名称', description: '显示名称，用于提示词和界面展示', default: 'Aalis' },
+  name: { type: 'string', label: '应用名称', description: '应用显示名称，用于日志和界面展示', default: 'Aalis' },
   logLevel: {
     type: 'select', label: '日志等级', description: '日志输出等级', default: 'info',
     options: [
@@ -65,8 +59,6 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
       { label: 'error', value: 'error' },
     ],
   },
-  commandPrefix: { type: 'string', label: '指令前缀', description: '指令前缀，默认 /，留空则按关键词匹配触发', default: '/' },
-  commandAsTools: { type: 'boolean', label: '指令作为工具', description: '将所有指令自动注册为 AI 可调用的工具', default: false },
 };
 
 /**
@@ -236,9 +228,6 @@ export class ConfigManager {
       obj.servicePreferences = this.config.servicePreferences;
     }
 
-    // 核心配置字段始终序列化，确保用户可见可编辑
-    obj.commandPrefix = this.config.commandPrefix ?? DEFAULT_CONFIG.commandPrefix;
-    obj.commandAsTools = this.config.commandAsTools ?? DEFAULT_CONFIG.commandAsTools;
     obj.owners = this.config.owners ?? [];
     obj.defaultAuthority = this.config.defaultAuthority ?? DEFAULT_CONFIG.defaultAuthority;
     obj.ownerAuthority = this.config.ownerAuthority ?? DEFAULT_CONFIG.ownerAuthority;
@@ -314,8 +303,6 @@ export class ConfigManager {
       plugins: (parsed['plugins'] as Record<string, Record<string, unknown>>) ?? {},
       disabledPlugins: (parsed['disabledPlugins'] as string[]) ?? [],
       servicePreferences: (parsed['servicePreferences'] as Record<string, string>) ?? {},
-      commandPrefix: parsed['commandPrefix'] != null ? String(parsed['commandPrefix']) : DEFAULT_CONFIG.commandPrefix,
-      commandAsTools: (parsed['commandAsTools'] as boolean) ?? DEFAULT_CONFIG.commandAsTools,
       owners: (parsed['owners'] as UserIdentity[]) ?? [],
       defaultAuthority: (parsed['defaultAuthority'] as number) ?? DEFAULT_CONFIG.defaultAuthority,
       ownerAuthority: (parsed['ownerAuthority'] as number) ?? DEFAULT_CONFIG.ownerAuthority,

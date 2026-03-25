@@ -173,7 +173,7 @@ class DefaultAgent implements AgentService {
 
       try {
         const messages = await this.buildMessages(incoming);
-        const tools = this.ctx.tools.getDefinitions();
+        const tools = this.ctx.tools?.getDefinitions() ?? [];
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           userId: incoming.userId,
@@ -243,11 +243,11 @@ class DefaultAgent implements AgentService {
               phase: 'start',
             });
 
-            let result = await this.ctx.tools.execute(
+            let result = await (this.ctx.tools?.execute(
               toolBeforeData.name,
               toolBeforeData.args,
               toolCtx,
-            );
+            ) ?? Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
 
             // Hook: tool-call:after — 插件可以处理工具执行结果
             const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
