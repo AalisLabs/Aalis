@@ -1016,7 +1016,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['webui', 'web'] });
+  ctx.provide('platform', adapter, { capabilities: ['webui'] });
 
   // === 注册 WebUI 服务 ===
   const webuiService: WebUIService = {

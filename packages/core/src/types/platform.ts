@@ -36,4 +36,13 @@ export interface PlatformAdapter {
    * 默认实现：检查 getConnections() 中是否有 status === 'online'
    */
   isReady?(): boolean;
+  /**
+   * 调用平台原生 API（可选，由具体适配器实现）
+   *
+   * 例如 OneBot 适配器通过此接口调用 set_group_ban 等 Action。
+   * @param sessionId 用于定位连接的 sessionId
+   * @param action    API 名称
+   * @param params    API 参数
+   */
+  callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>;
 }

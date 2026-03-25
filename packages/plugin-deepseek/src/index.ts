@@ -24,6 +24,19 @@ export const configSchema: ConfigSchema = {
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
   strictToolCalls: { type: 'boolean', label: 'Strict 工具调用', default: false, description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）' },
+  thinkingMode: {
+    type: 'select', label: '思考模式', default: 'auto',
+    options: [
+      { label: '自动（按模型推断）', value: 'auto' },
+      { label: '启用', value: 'enabled' },
+      { label: '关闭', value: 'disabled' },
+    ],
+    description: '控制深度思考。「自动」会根据模型名称推断（reasoner 模型自动启用）。deepseek-chat 也可手动启用思考模式。',
+  },
+  thinkingBudget: {
+    type: 'number', label: '思考 Token 预算', default: 0,
+    description: '限制思考链最大 token 数（0 = 不限制，由模型自行决定）。设置后可控制思考深度，减少 token 消耗。',
+  },
   capabilities: {
     type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
     options: [
@@ -56,6 +69,7 @@ interface DeepSeekConfig {
   contextLength: number;
   maxToolIterations: number;
   strictToolCalls: boolean;
+  thinkingBudget: number;
 }
 
 // ===== DeepSeek API 消息格式 =====
@@ -118,6 +132,7 @@ class DeepSeekLLMService implements LLMService {
   private contextLength: number;
   private maxToolIterations: number;
   private enableThinking: boolean;
+  private thinkingBudget: number;
   private strictToolCalls: boolean;
   private logger;
 
@@ -131,6 +146,7 @@ class DeepSeekLLMService implements LLMService {
     this.contextLength = config.contextLength;
     this.maxToolIterations = config.maxToolIterations;
     this.enableThinking = enableThinking;
+    this.thinkingBudget = config.thinkingBudget;
     this.strictToolCalls = config.strictToolCalls;
     this.logger = logger;
   }
@@ -175,7 +191,9 @@ class DeepSeekLLMService implements LLMService {
     };
 
     if (this.enableThinking) {
-      body.thinking = { type: 'enabled' };
+      const thinking: Record<string, unknown> = { type: 'enabled' };
+      if (this.thinkingBudget > 0) thinking.budget_tokens = this.thinkingBudget;
+      body.thinking = thinking;
       // 思考模式下 temperature 等参数不生效
     } else {
       body.temperature = request.temperature ?? this.temperature;
@@ -185,7 +203,7 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ' (思考模式)' : ''}: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考模式${this.thinkingBudget > 0 ? `, 预算 ${this.thinkingBudget}` : ''})` : ''}: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -251,7 +269,9 @@ class DeepSeekLLMService implements LLMService {
     };
 
     if (this.enableThinking) {
-      body.thinking = { type: 'enabled' };
+      const thinking: Record<string, unknown> = { type: 'enabled' };
+      if (this.thinkingBudget > 0) thinking.budget_tokens = this.thinkingBudget;
+      body.thinking = thinking;
     } else {
       body.temperature = request.temperature ?? this.temperature;
     }
@@ -447,6 +467,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     contextLength: (config.contextLength as number) ?? 131072,
     maxToolIterations: (config.maxToolIterations as number) ?? 10,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
+    thinkingBudget: (config.thinkingBudget as number) ?? 0,
   };
 
   if (!deepseekConfig.apiKey) {
@@ -454,9 +475,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const capabilities = resolveCapabilities(deepseekConfig.model, config.capabilities);
-  const service = new DeepSeekLLMService(deepseekConfig, ctx.logger, capabilities.includes('thinking'));
+
+  // 解析思考模式：auto 根据 capabilities 推断，enabled/disabled 强制覆盖
+  const thinkingMode = (config.thinkingMode as string) ?? 'auto';
+  let enableThinking: boolean;
+  if (thinkingMode === 'enabled') {
+    enableThinking = true;
+    // 强制启用时确保 capabilities 包含 thinking
+    if (!capabilities.includes('thinking')) capabilities.push('thinking');
+  } else if (thinkingMode === 'disabled') {
+    enableThinking = false;
+    const idx = capabilities.indexOf('thinking');
+    if (idx >= 0) capabilities.splice(idx, 1);
+  } else {
+    enableThinking = capabilities.includes('thinking');
+  }
+
+  const service = new DeepSeekLLMService(deepseekConfig, ctx.logger, enableThinking);
 
   ctx.provide('llm', service, { capabilities });
 
-  ctx.logger.info(`DeepSeek 已连接: ${deepseekConfig.baseUrl} (${deepseekConfig.model}) [${capabilities.join(', ')}]`);
+  ctx.logger.info(`DeepSeek 已连接: ${deepseekConfig.baseUrl} (${deepseekConfig.model}) [${capabilities.join(', ')}]${enableThinking ? ` 思考模式${deepseekConfig.thinkingBudget > 0 ? `(预算 ${deepseekConfig.thinkingBudget})` : ''}` : ''}`);
 }

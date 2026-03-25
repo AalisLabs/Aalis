@@ -23,4 +23,8 @@ export interface PersonaService {
   getOutputFormat?(): OutputFormat | undefined;
   /** 列出可用的人设卡（用于前端下拉框） */
   listModels?(): Promise<string[]>;
+  /** 获取角色卡定义的昵称列表（用于触发检测） */
+  getNickNames?(): string[];
+  /** 获取角色卡定义的禁言关键词列表 */
+  getMuteKeywords?(): string[];
 }
