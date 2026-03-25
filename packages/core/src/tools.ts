@@ -4,7 +4,7 @@ import type {
   ToolCallContext,
   ToolSummary,
   SafetyLevel,
-} from './types.js';
+} from './types/index.js';
 import type { AuthorityManager } from './authority.js';
 import type { Logger } from './logger.js';
 

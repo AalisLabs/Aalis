@@ -1,4 +1,4 @@
-import type { MemoryService, Message } from './types.js';
+import type { MemoryService, Message } from './types/index.js';
 
 /**
  * 内存 fallback 记忆服务 —— 核心内置

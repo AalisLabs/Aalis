@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { UserIdentity, ConfigSchema } from './types.js';
+import type { UserIdentity, ConfigSchema } from './types/index.js';
 export interface AalisConfig {
   name: string;
   logLevel: string;
