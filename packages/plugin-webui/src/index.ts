@@ -161,7 +161,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // 只允许更新安全的顶级字段
-    const allowed = ['name', 'persona', 'logLevel', 'commandPrefix', 'commandAsTools'] as const;
+    const allowed = ['name', 'logLevel', 'commandPrefix', 'commandAsTools'] as const;
     for (const key of allowed) {
       if (key in updates) {
         ctx.config.set(key, updates[key]);
