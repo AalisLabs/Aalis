@@ -19,6 +19,8 @@ export interface PluginModule {
   defaultConfig?: Record<string, unknown>;
   /** 该插件提供的 WebUI 页面声明 */
   webuiPages?: WebuiPage[];
+  /** WebUI 页面操作处理器（声明式页面的后端方法） */
+  webuiHandlers?: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
 }
 
@@ -178,7 +180,7 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: WebuiPage[]; error?: string }> {
+  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: WebuiPage[]; webuiHandlerNames?: string[]; error?: string }> {
     return [...this.plugins.entries()].map(([name, entry]) => ({
       name,
       state: entry.state,
@@ -189,6 +191,7 @@ export class PluginManager {
       configSchema: entry.module.configSchema,
       defaultConfig: entry.module.defaultConfig,
       webuiPages: entry.module.webuiPages,
+      webuiHandlerNames: entry.module.webuiHandlers ? Object.keys(entry.module.webuiHandlers) : undefined,
       error: entry.error,
     }));
   }

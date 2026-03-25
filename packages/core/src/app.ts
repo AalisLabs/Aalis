@@ -439,6 +439,12 @@ export class App {
         continue;
       }
 
+      // 跳过标记为 client 的前端包（非 Node.js 插件）
+      if (aalisMeta?.client) {
+        this.logger.debug(`跳过前端包: ${pkgJson['name']}`);
+        continue;
+      }
+
       const main = (pkgJson['main'] as string) || 'dist/index.js';
       discovered.push({
         name: pkgJson['name'] as string,
@@ -570,7 +576,7 @@ export class App {
    * 这些服务必须至少有一个提供者在运行。
    * 可通过 AppOptions.requiredServices 自定义覆盖。
    */
-  private static readonly DEFAULT_REQUIRED_SERVICES = ['webui-server', 'webui-client', 'cli'] as const;
+  private static readonly DEFAULT_REQUIRED_SERVICES = ['webui-server', 'cli'] as const;
 
   /**
    * 检查核心必需服务是否就绪，缺失时自动寻找并启动提供者
