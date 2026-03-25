@@ -7,7 +7,6 @@ import { registerHttpTools } from './tools/http.js';
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-tools-basic';
-export const provides = ['machine-tools'];
 export const inject = {
   required: ['tools'],
 };
