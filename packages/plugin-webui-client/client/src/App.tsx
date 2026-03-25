@@ -2330,6 +2330,322 @@ function LogPage({ logs }: { logs: LogEntry[] }) {
   );
 }
 
+// ===== 声明式页面类型 (镜像 core) =====
+
+interface WebuiStatComponent { type: 'stat'; label: string; source: string; icon?: string }
+interface WebuiTableComponent { type: 'table'; label?: string; source: string; columns: Array<{ key: string; label: string; render?: string }>; actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>; refresh?: number }
+interface WebuiFormComponent { type: 'form'; label?: string; source: string; save: string; schema: ConfigSchema }
+interface WebuiActionsComponent { type: 'actions'; label?: string; items: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }> }
+interface WebuiInfoComponent { type: 'info'; label?: string; source: string }
+interface WebuiMarkdownComponent { type: 'markdown'; label?: string; source: string }
+interface WebuiTabsComponent { type: 'tabs'; label?: string; items: Array<{ key: string; label: string; content: WebuiComponent[] }> }
+type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent;
+
+interface WebuiPageDef {
+  key: string;
+  label: string;
+  icon?: string;
+  order?: number;
+  plugin: string;
+  content?: WebuiComponent[];
+}
+
+// ===== 声明式页面操作 API =====
+
+async function pageAction<T = unknown>(pluginName: string, method: string, args: Record<string, unknown> = {}): Promise<T> {
+  const res = await fetch(`/api/page-action/${encodeURIComponent(pluginName)}/${encodeURIComponent(method)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  return res.json() as Promise<T>;
+}
+
+// ===== 声明式页面渲染器 =====
+
+function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: string }) {
+  const [value, setValue] = useState<string | number>('—');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    pageAction<{ ok: boolean; data: { value: string | number } }>(pluginName, comp.source)
+      .then(r => { if (r.ok && r.data) setValue(r.data.value); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [pluginName, comp.source]);
+
+  return (
+    <div className="dyn-stat-card">
+      <span className="dyn-stat-label">{comp.label}</span>
+      <span className="dyn-stat-value">{loading ? '...' : value}</span>
+    </div>
+  );
+}
+
+function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName: string }) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    pageAction<{ ok: boolean; data: Record<string, unknown>[] }>(pluginName, comp.source)
+      .then(r => { if (r.ok && Array.isArray(r.data)) setRows(r.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [pluginName, comp.source]);
+
+  useEffect(() => {
+    fetchData();
+    if (comp.refresh && comp.refresh > 0) {
+      const timer = setInterval(fetchData, comp.refresh * 1000);
+      return () => clearInterval(timer);
+    }
+  }, [fetchData, comp.refresh]);
+
+  const handleAction = async (action: NonNullable<WebuiTableComponent['actions']>[number], row: Record<string, unknown>) => {
+    if (action.confirm && !confirm(action.confirm)) return;
+    await pageAction(pluginName, action.method, row);
+    fetchData();
+  };
+
+  return (
+    <div className="dyn-table-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      {loading && rows.length === 0 ? (
+        <div className="empty-hint">加载中...</div>
+      ) : rows.length === 0 ? (
+        <div className="empty-hint">暂无数据</div>
+      ) : (
+        <table className="dyn-table">
+          <thead>
+            <tr>
+              {comp.columns.map(col => <th key={col.key}>{col.label}</th>)}
+              {comp.actions && comp.actions.length > 0 && <th>操作</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i}>
+                {comp.columns.map(col => (
+                  <td key={col.key}>
+                    {col.render === 'status-badge'
+                      ? <span className={`dyn-badge dyn-badge-${String(row[col.key])}`}>{String(row[col.key] ?? '')}</span>
+                      : col.render === 'code'
+                        ? <code>{String(row[col.key] ?? '')}</code>
+                        : String(row[col.key] ?? '')}
+                  </td>
+                ))}
+                {comp.actions && comp.actions.length > 0 && (
+                  <td className="dyn-table-actions">
+                    {comp.actions.map((act, ai) => (
+                      <button
+                        key={ai}
+                        className={`config-edit-btn${act.danger ? ' danger' : ''}`}
+                        onClick={() => handleAction(act, row)}
+                      >
+                        {act.label}
+                      </button>
+                    ))}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: string }) {
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const modelCache = useRef<Record<string, string[]>>({});
+
+  useEffect(() => {
+    setLoading(true);
+    pageAction<{ ok: boolean; data: Record<string, unknown> }>(pluginName, comp.source)
+      .then(r => { if (r.ok && r.data) setDraft(r.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [pluginName, comp.source]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMsg('');
+    try {
+      const r = await pageAction<{ ok: boolean; error?: string }>(pluginName, comp.save, draft);
+      setMsg(r.ok ? '已保存' : (r.error ?? '保存失败'));
+    } catch { setMsg('保存失败'); }
+    setSaving(false);
+  };
+
+  const handleFetchModels = (service: string) => {
+    api<{ models: string[] }>(`/api/models/${service}`)
+      .then(r => { modelCache.current = { ...modelCache.current, [service]: r.models ?? [] }; })
+      .catch(() => {});
+  };
+
+  if (loading) return <div className="empty-hint">加载中...</div>;
+
+  return (
+    <div className="dyn-form-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      <SchemaForm
+        schema={comp.schema}
+        draft={draft}
+        onChange={setDraft}
+        modelCache={modelCache.current}
+        onFetchModels={handleFetchModels}
+      />
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        <button className="config-edit-btn primary" onClick={handleSave} disabled={saving}>
+          {saving ? '保存中...' : '保存'}
+        </button>
+        {msg && <span style={{ fontSize: 13, color: msg === '已保存' ? '#22c55e' : '#ef4444' }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+function DynActions({ comp, pluginName }: { comp: WebuiActionsComponent; pluginName: string }) {
+  const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
+
+  const handleClick = async (item: WebuiActionsComponent['items'][number]) => {
+    if (item.confirm && !confirm(item.confirm)) return;
+    setActionMsg(prev => ({ ...prev, [item.method]: '执行中...' }));
+    try {
+      const r = await pageAction<{ ok: boolean; error?: string }>(pluginName, item.method);
+      setActionMsg(prev => ({ ...prev, [item.method]: r.ok ? '完成' : (r.error ?? '失败') }));
+    } catch {
+      setActionMsg(prev => ({ ...prev, [item.method]: '失败' }));
+    }
+  };
+
+  return (
+    <div className="dyn-actions-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {comp.items.map((item, i) => (
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <button
+              className={`config-edit-btn${item.danger ? ' danger' : ''}${item.variant === 'primary' ? ' primary' : ''}`}
+              onClick={() => handleClick(item)}
+            >
+              {item.label}
+            </button>
+            {actionMsg[item.method] && <span style={{ fontSize: 12, color: '#888' }}>{actionMsg[item.method]}</span>}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DynInfo({ comp, pluginName }: { comp: WebuiInfoComponent; pluginName: string }) {
+  const [data, setData] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    pageAction<{ ok: boolean; data: Record<string, unknown> }>(pluginName, comp.source)
+      .then(r => { if (r.ok && r.data) setData(r.data); })
+      .catch(() => {});
+  }, [pluginName, comp.source]);
+
+  return (
+    <div className="dyn-info-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      {data ? (
+        <div className="dyn-info-grid">
+          {Object.entries(data).map(([k, v]) => (
+            <div className="dyn-info-item" key={k}>
+              <span className="dyn-info-key">{k}</span>
+              <span className="dyn-info-val">{typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-hint">加载中...</div>
+      )}
+    </div>
+  );
+}
+
+function DynMarkdown({ comp, pluginName }: { comp: WebuiMarkdownComponent; pluginName: string }) {
+  const [content, setContent] = useState('');
+
+  useEffect(() => {
+    pageAction<{ ok: boolean; data: { content: string } }>(pluginName, comp.source)
+      .then(r => { if (r.ok && r.data) setContent(r.data.content); })
+      .catch(() => {});
+  }, [pluginName, comp.source]);
+
+  return (
+    <div className="dyn-markdown-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight as never]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function DynTabs({ comp, pluginName }: { comp: WebuiTabsComponent; pluginName: string }) {
+  const [activeKey, setActiveKey] = useState(comp.items[0]?.key ?? '');
+  const activeItem = comp.items.find(i => i.key === activeKey);
+
+  return (
+    <div className="dyn-tabs-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      <div className="dyn-tabs-header">
+        {comp.items.map(item => (
+          <button
+            key={item.key}
+            className={`dyn-tab-btn${activeKey === item.key ? ' active' : ''}`}
+            onClick={() => setActiveKey(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="dyn-tabs-body">
+        {activeItem && activeItem.content.map((c, i) => (
+          <DynamicComponent key={i} component={c} pluginName={pluginName} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DynamicComponent({ component, pluginName }: { component: WebuiComponent; pluginName: string }) {
+  switch (component.type) {
+    case 'stat': return <DynStat comp={component} pluginName={pluginName} />;
+    case 'table': return <DynTable comp={component} pluginName={pluginName} />;
+    case 'form': return <DynForm comp={component} pluginName={pluginName} />;
+    case 'actions': return <DynActions comp={component} pluginName={pluginName} />;
+    case 'info': return <DynInfo comp={component} pluginName={pluginName} />;
+    case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} />;
+    case 'tabs': return <DynTabs comp={component} pluginName={pluginName} />;
+    default: return null;
+  }
+}
+
+/** 动态页面：根据声明式内容自动渲染 */
+function DynamicPage({ page }: { page: WebuiPageDef }) {
+  if (!page.content || page.content.length === 0) {
+    return <div className="empty-hint" style={{ padding: 24 }}>此页面未提供内容</div>;
+  }
+  return (
+    <div className="dynamic-page">
+      {page.content.map((comp, i) => (
+        <DynamicComponent key={i} component={comp} pluginName={page.plugin} />
+      ))}
+    </div>
+  );
+}
+
 // ===== 主组件 =====
 
 export function App() {
@@ -2343,6 +2659,8 @@ export function App() {
 
   // 可用页面列表（由服务端 /api/pages 返回，null 表示尚未加载）
   const [availablePages, setAvailablePages] = useState<Set<string> | null>(null);
+  // 服务端返回的完整页面定义列表（含声明式内容）
+  const [pageDefs, setPageDefs] = useState<WebuiPageDef[]>([]);
 
   useEffect(() => {
     location.hash = activeTab;
@@ -2521,8 +2839,11 @@ export function App() {
   }, []);
 
   const refreshPages = useCallback(() => {
-    api<Array<{ key: string; label: string; icon?: string; order?: number }>>('/api/pages')
-      .then(pages => setAvailablePages(new Set(pages.map(p => p.key))))
+    api<WebuiPageDef[]>('/api/pages')
+      .then(pages => {
+        setPageDefs(pages);
+        setAvailablePages(new Set(pages.map(p => p.key)));
+      })
       .catch(() => {});
   }, []);
 
@@ -2587,20 +2908,48 @@ export function App() {
     setLoading(true);
   };
 
-  // 所有已知页面（组件已内置），根据 availablePages 动态过滤
-  const allKnownTabs: { key: string; label: string; icon: React.ReactNode; order: number }[] = [
-    { key: 'dashboard', label: '仪表盘', icon: <IconDashboard />, order: 10 },
-    { key: 'marketplace', label: '插件市场', icon: <IconMarketplace />, order: 20 },
-    { key: 'plugin-config', label: '插件配置', icon: <IconPluginConfig />, order: 30 },
-    { key: 'platforms', label: '平台接入', icon: <IconPlatform />, order: 40 },
-    { key: 'authority', label: '权限管理', icon: <IconAuthority />, order: 50 },
-    { key: 'logs', label: '日志', icon: <IconLogs />, order: 60 },
-  ];
+  // 内置页面（有专用 React 组件）及其图标映射
+  const builtinIconMap: Record<string, React.ReactNode> = {
+    dashboard: <IconDashboard />,
+    marketplace: <IconMarketplace />,
+    'plugin-config': <IconPluginConfig />,
+    platforms: <IconPlatform />,
+    authority: <IconAuthority />,
+    logs: <IconLogs />,
+  };
+  const builtinKeys = new Set(Object.keys(builtinIconMap));
 
-  // 未加载时显示全部（避免闪烁），加载后只显示服务端声明的页面
-  const tabs = availablePages
-    ? allKnownTabs.filter(t => availablePages.has(t.key)).sort((a, b) => a.order - b.order)
-    : allKnownTabs;
+  // 默认图标（用于插件声明的动态页面）
+  const defaultIcon = (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18M3 9h18" />
+    </svg>
+  );
+
+  // 组合内置 + 动态页面为统一的 tab 列表
+  const tabs: { key: string; label: string; icon: React.ReactNode; order: number }[] = (() => {
+    if (!availablePages) {
+      // 未加载时显示全部内置（避免闪烁）
+      return Object.entries(builtinIconMap).map(([key, icon], i) => ({
+        key, label: key, icon, order: (i + 1) * 10,
+      }));
+    }
+    return pageDefs
+      .filter(p => availablePages.has(p.key))
+      .map(p => ({
+        key: p.key,
+        label: p.label,
+        icon: builtinIconMap[p.key] ?? defaultIcon,
+        order: p.order ?? 99,
+      }))
+      .sort((a, b) => a.order - b.order);
+  })();
+
+  // 查找当前 tab 对应的动态页面定义（仅非内置页面）
+  const activeDynamicPage = (!builtinKeys.has(activeTab))
+    ? pageDefs.find(p => p.key === activeTab && p.content)
+    : undefined;
 
   return (
     <div className="app-layout">
@@ -2657,6 +3006,7 @@ export function App() {
           {activeTab === 'platforms' && <PlatformPage />}
           {activeTab === 'authority' && <AuthorityPage />}
           {activeTab === 'logs' && <LogPage logs={logs} />}
+          {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
         </div>
       </main>
 

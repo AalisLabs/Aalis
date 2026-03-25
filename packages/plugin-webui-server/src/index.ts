@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService, AgentService, WebuiPage } from '@aalis/core';
@@ -149,19 +150,58 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ plugins });
   });
 
-  // 获取可用的 WebUI 页面（由活跃插件的 webuiPages 声明汇总）
+  // 获取可用的 WebUI 页面（由活跃插件的 webuiPages 声明汇总，包含声明式内容）
   expressApp.get('/api/pages', (_req, res) => {
     const app = getApp();
     if (!app) { res.json([]); return; }
 
-    const pages: WebuiPage[] = [];
+    const pages: (WebuiPage & { plugin: string })[] = [];
     for (const plugin of app.plugins.getStatus()) {
       if (plugin.state === 'active' && plugin.webuiPages) {
-        pages.push(...plugin.webuiPages);
+        for (const page of plugin.webuiPages) {
+          pages.push({ ...page, plugin: plugin.name });
+        }
       }
     }
     pages.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
     res.json(pages);
+  });
+
+  // 通用声明式页面操作：调用插件的 webuiHandlers
+  expressApp.post('/api/page-action/:plugin/:method', async (req, res) => {
+    const { plugin: pluginName, method } = req.params;
+    const args: Record<string, unknown> = req.body ?? {};
+
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+
+    const entry = app.plugins.getPlugin(pluginName);
+    if (!entry || entry.state !== 'active') {
+      res.status(404).json({ error: `插件 ${pluginName} 不存在或未激活` });
+      return;
+    }
+
+    const handler = entry.module.webuiHandlers?.[method];
+    if (typeof handler !== 'function') {
+      res.status(404).json({ error: `处理器 ${method} 不存在` });
+      return;
+    }
+
+    if (!entry.context) {
+      res.status(500).json({ error: `插件 ${pluginName} 上下文不可用` });
+      return;
+    }
+
+    try {
+      const result = await handler(entry.context, args);
+      res.json({ ok: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
   });
 
   // 获取当前全局配置
@@ -914,13 +954,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 启动服务器
   ctx.on('ready', () => {
-    // 根据当前活跃的 webui-client 提供者挂载前端目录
+    // 优先尝试 webui-client 服务（兼容旧式客户端插件如 napcat）
     const activeClient = ctx.getService<{ getClientDir(): string }>('webui-client');
     if (activeClient?.getClientDir) {
       const dir = activeClient.getClientDir();
       clientDist = dir;
       mountStaticDir(dir);
-      ctx.logger.info(`活跃前端: ${dir}`);
+      ctx.logger.info(`活跃前端(服务): ${dir}`);
+    } else {
+      // 自动发现同级 webui-client 包的 dist 目录
+      const __dirname = dirname(fileURLToPath(import.meta.url));
+      const candidates = [
+        resolve(__dirname, '../../plugin-webui-client/dist'),
+        resolve(__dirname, '../../plugin-webui-client-napcat/dist'),
+      ];
+      for (const dir of candidates) {
+        if (existsSync(dir) && existsSync(resolve(dir, 'index.html'))) {
+          clientDist = dir;
+          mountStaticDir(dir);
+          ctx.logger.info(`活跃前端(自动发现): ${dir}`);
+          break;
+        }
+      }
     }
 
     server.listen(uiConfig.port, uiConfig.host, () => {

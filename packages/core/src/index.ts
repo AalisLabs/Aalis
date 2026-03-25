@@ -69,4 +69,12 @@ export type {
   ToolSummary,
   UserIdentity,
   WebuiPage,
+  WebuiComponent,
+  WebuiStatComponent,
+  WebuiTableComponent,
+  WebuiFormComponent,
+  WebuiActionsComponent,
+  WebuiInfoComponent,
+  WebuiMarkdownComponent,
+  WebuiTabsComponent,
 } from './types.js';
