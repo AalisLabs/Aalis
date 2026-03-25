@@ -7,7 +7,7 @@ import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
 import { builtinAuthority, builtinCommands, builtinTools, builtinLifecycle } from './builtin/index.js';
-import type { AgentService } from './types.js';
+import type { AgentService } from './types/index.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';

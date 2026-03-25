@@ -1,7 +1,7 @@
 import type { Context } from '../context.js';
 import type { PluginModule } from '../plugin.js';
 import type { ToolRegistry } from '../tools.js';
-import type { AppService, VectorStoreService } from '../types.js';
+import type { AppService, VectorStoreService } from '../types/index.js';
 
 /**
  * 内置插件：生命周期指令
