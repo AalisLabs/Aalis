@@ -27,11 +27,13 @@ export type {
   AalisEvents,
   MiddlewareNext,
   MiddlewareFn,
-  HookContextMap,
   CommandContext,
   CommandDefinition,
   RegisteredCommand,
 } from './core.js';
+
+// 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
+export type { HookContextMap } from './hooks.js';
 
 // LLM 服务
 export type {
