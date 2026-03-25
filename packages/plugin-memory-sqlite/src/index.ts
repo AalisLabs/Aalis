@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { Context, MemoryService, Message, ConfigSchema, VectorStoreService } from '@aalis/core';
+import type { Context, MemoryService, Message, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -135,18 +135,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const service = new SQLiteMemoryService(db);
 
     ctx.provide('memory', service, { priority: 10 });
-
-    // 注册 /clear 指令 —— 由 memory 服务提供者负责
-    ctx.command('clear', '清空当前会话历史及长期记忆', async (cmdCtx) => {
-      await service.clearSession(cmdCtx.sessionId);
-      // 同时清空向量记忆
-      const vectorstore = ctx.getService<VectorStoreService>('vectorstore');
-      if (vectorstore) {
-        await vectorstore.clear();
-        ctx.logger.info('向量记忆已清空');
-      }
-      return '会话历史与长期记忆已清空。';
-    });
 
     ctx.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
 
