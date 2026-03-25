@@ -1402,6 +1402,7 @@ function ChatPanel({
   input,
   setInput,
   onSend,
+  onAbort,
   width,
 }: {
   messages: ChatMessage[];
@@ -1411,6 +1412,7 @@ function ChatPanel({
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
+  onAbort: () => void;
   width: number;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1542,13 +1544,24 @@ function ChatPanel({
           disabled={!connected}
           rows={1}
         />
-        <button
-          className="send-btn"
-          onClick={onSend}
-          disabled={!connected || loading || !input.trim()}
-        >
-          ↑
-        </button>
+        {loading && !input.trim() ? (
+          <button
+            className="send-btn stop-btn"
+            onClick={onAbort}
+            disabled={!connected}
+            title="停止生成"
+          >
+            ■
+          </button>
+        ) : (
+          <button
+            className="send-btn"
+            onClick={onSend}
+            disabled={!connected || !input.trim()}
+          >
+            ↑
+          </button>
+        )}
       </div>
     </div>
   );
@@ -2383,7 +2396,8 @@ export function App() {
 
   const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean) => {
     if (done) {
-      // 流结束标记 — 不做额外操作，等 message:send 带完整内容
+      // 流结束标记 — 解除 loading（正常完成、中止、或消息被拦截均会到达此处）
+      setLoading(false);
       return;
     }
 
@@ -2539,9 +2553,22 @@ export function App() {
     return () => clearInterval(timer);
   }, [refreshPlugins, refreshServices]);
 
+  const handleAbort = useCallback(() => {
+    sendRaw({ type: 'abort', sessionId: SESSION_ID });
+    setLoading(false);
+    streamingRef.current = false;
+  }, [sendRaw]);
+
   const handleSend = () => {
     const trimmed = input.trim();
-    if (!trimmed || loading) return;
+
+    // 生成中 — 先中止当前生成
+    if (loading) {
+      handleAbort();
+    }
+
+    if (!trimmed) return;
+
     setMessages(prev => [...prev, { role: 'user', content: trimmed, timestamp: Date.now() }]);
     send(trimmed);
     setInput('');
@@ -2653,6 +2680,7 @@ export function App() {
         input={input}
         setInput={setInput}
         onSend={handleSend}
+        onAbort={handleAbort}
         width={chatWidth}
       />
 
