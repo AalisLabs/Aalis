@@ -45,7 +45,12 @@ class DefaultAgent implements AgentService {
   private systemPrompt: string;
   private memoryTokenBudget: number;
 
-  /** 每个 session 的活跃 AbortController，用于中止生成 */
+  /**
+   * 活跃 AbortController 表
+   *
+   * key = `${sessionId}::${source}` — 同一 session 不同来源（user / scheduler）
+   * 独立管理，互不打断；同来源新消息会中止旧的生成。
+   */
   private activeControllers = new Map<string, AbortController>();
 
   constructor(ctx: Context, config: Record<string, unknown>) {
@@ -56,15 +61,22 @@ class DefaultAgent implements AgentService {
     this.logger.info('默认对话代理已初始化');
   }
 
+  /** 生成 lane key：同 session + 同 source 共用一个 lane */
+  private laneKey(sessionId: string, source?: string): string {
+    return `${sessionId}::${source ?? 'user'}`;
+  }
+
   /**
-   * 中止指定会话的当前生成
+   * 中止指定会话的当前生成（所有 lane）
    */
   abort(sessionId: string): void {
-    const controller = this.activeControllers.get(sessionId);
-    if (controller) {
-      controller.abort();
-      this.logger.info(`生成已中止: session=${sessionId}`);
+    for (const [key, controller] of this.activeControllers) {
+      if (key.startsWith(`${sessionId}::`)) {
+        controller.abort();
+        this.activeControllers.delete(key);
+      }
     }
+    this.logger.info(`生成已中止: session=${sessionId}`);
   }
 
   /**
@@ -120,18 +132,21 @@ class DefaultAgent implements AgentService {
   }
 
   async handleMessage(incoming: IncomingMessage): Promise<void> {
-    // 如果该 session 有正在进行的生成，先中止
-    this.abort(incoming.sessionId);
+    const lane = this.laneKey(incoming.sessionId, incoming.source);
+
+    // 仅中止同一 lane（同 session + 同 source）的旧生成；不同来源互不打断
+    const prev = this.activeControllers.get(lane);
+    if (prev) prev.abort();
 
     const controller = new AbortController();
-    this.activeControllers.set(incoming.sessionId, controller);
+    this.activeControllers.set(lane, controller);
 
     try {
       await this._handleMessageInner(incoming, controller.signal);
     } finally {
       // 仅清理自己创建的 controller（避免清掉后续新请求的）
-      if (this.activeControllers.get(incoming.sessionId) === controller) {
-        this.activeControllers.delete(incoming.sessionId);
+      if (this.activeControllers.get(lane) === controller) {
+        this.activeControllers.delete(lane);
       }
     }
   }
