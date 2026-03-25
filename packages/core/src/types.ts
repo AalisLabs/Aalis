@@ -373,6 +373,20 @@ export interface ExtendDeclaration {
   mixins?: Record<string, string[]>;
 }
 
+// ----- WebUI 页面声明 -----
+
+/** 插件可声明的 WebUI 页面 */
+export interface WebuiPage {
+  /** 页面唯一标识（对应前端路由/标签 key） */
+  key: string;
+  /** 页面显示名称 */
+  label: string;
+  /** 图标标识（前端映射到对应图标组件） */
+  icon?: string;
+  /** 排序权重（越小越靠前，默认 99） */
+  order?: number;
+}
+
 // ----- 配置 Schema (internal-framework-style) -----
 
 export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
