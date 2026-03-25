@@ -217,6 +217,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       await sendAction(state, action, params);
     },
+
+    async callAction(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown> {
+      const parsed = parseSessionId(sessionId);
+      if (!parsed) throw new Error(`无法解析 sessionId: ${sessionId}`);
+
+      const state = states.find(s => s.selfId === parsed.selfId);
+      if (!state || state.status !== 'online' || !state.ws) {
+        throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
+      }
+
+      return sendAction(state, action, params);
+    },
   };
 
   ctx.provide('platform', adapter, { capabilities: ['onebot'] });
@@ -404,6 +416,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       sessionId,
       platform: 'onebot',
       userId: event.userId,
+      images: event.images,
+      sessionType: event.detailType === 'group' ? 'group'
+        : event.detailType === 'private' ? 'private'
+        : event.detailType === 'channel' ? 'channel'
+        : undefined,
     });
   }
 

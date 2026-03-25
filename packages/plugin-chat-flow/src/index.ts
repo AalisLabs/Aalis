@@ -13,8 +13,8 @@ import type { Logger } from '@aalis/core';
 /** 单个平台配置 profile（类似 onebot 适配器的"连接"） */
 interface ChatFlowProfile {
   /** 作用于的平台列表，空数组 = 默认/兜底规则 */
-  platforms: string[];
-
+  platforms: string[];  /** 作用于的会话类型，空数组 = 不限制（group / private / channel） */
+  sessionTypes: string[];
   /** 间隔模式: fixed=固定条数, dynamic=动态评分, both=两者满足其一即触发 */
   intervalMode: 'fixed' | 'dynamic' | 'both';
   /** 固定间隔：每 N 条消息触发一次回复 */
@@ -77,6 +77,8 @@ interface SessionState {
   userInteractions: Map<string, { count: number; lastTime: number }>;
   /** 该 session 消息来源的平台 */
   platform: string;
+  /** 该 session 的会话类型 */
+  sessionType?: string;
 }
 
 // ────────────────── 内部标识 ──────────────────
@@ -101,6 +103,7 @@ function parseStringList(val: unknown): string[] {
 function resolveProfile(raw: Record<string, unknown>): ChatFlowProfile {
   return {
     platforms: parseStringList(raw.platforms),
+    sessionTypes: parseStringList(raw.sessionTypes),
     intervalMode: (raw.intervalMode as ChatFlowProfile['intervalMode']) ?? 'both',
     fixedInterval: (raw.fixedInterval as number) ?? 5,
     activityScoreLower: (raw.activityScoreLower as number) ?? 0.3,
@@ -131,17 +134,30 @@ function resolveConfig(raw: Record<string, unknown>): ChatFlowConfig {
   };
 }
 
-/** 根据平台名查找匹配的 profile，优先精确匹配，其次回退到默认 profile（platforms 为空） */
-function getProfileForPlatform(config: ChatFlowConfig, platform: string): ChatFlowProfile | null {
+/** 根据平台名 + 会话类型查找匹配的 profile，优先精确匹配，其次回退到默认 profile（platforms 为空） */
+function getProfileForPlatform(config: ChatFlowConfig, platform: string, sessionType?: string): ChatFlowProfile | null {
   let defaultProfile: ChatFlowProfile | null = null;
+  let platformOnlyMatch: ChatFlowProfile | null = null;
   for (const profile of config.profiles) {
-    if (profile.platforms.length === 0) {
-      defaultProfile = profile;
-    } else if (profile.platforms.includes(platform)) {
+    const platformMatch = profile.platforms.length === 0 || profile.platforms.includes(platform);
+    const typeMatch = profile.sessionTypes.length === 0 || (sessionType != null && profile.sessionTypes.includes(sessionType));
+
+    if (!platformMatch) continue;
+
+    // 完全匹配（平台 + 会话类型都指定且匹配）
+    if (profile.platforms.length > 0 && profile.sessionTypes.length > 0 && typeMatch) {
       return profile;
     }
+    // 仅平台匹配（sessionTypes 未指定）
+    if (profile.platforms.length > 0 && profile.sessionTypes.length === 0 && !platformOnlyMatch) {
+      platformOnlyMatch = profile;
+    }
+    // 默认 profile（平台未指定）
+    if (profile.platforms.length === 0 && profile.sessionTypes.length === 0 && !defaultProfile) {
+      defaultProfile = profile;
+    }
   }
-  return defaultProfile;
+  return platformOnlyMatch ?? defaultProfile;
 }
 
 // ────────────────── 插件主体 ──────────────────
@@ -153,12 +169,17 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   const profileSummary = config.profiles.length === 0
     ? '无 profile 配置（流控未生效）'
-    : config.profiles.map(p => p.platforms.length > 0 ? p.platforms.join(',') : '默认').join(' | ');
+    : config.profiles.map(p => {
+        const parts: string[] = [];
+        if (p.platforms.length > 0) parts.push(p.platforms.join(','));
+        if (p.sessionTypes.length > 0) parts.push(`[${p.sessionTypes.join(',')}]`);
+        return parts.length > 0 ? parts.join(' ') : '默认';
+      }).join(' | ');
   logger.info(`聊天流控已启用 (profiles: ${profileSummary})`);
 
   // ────── 获取/创建 session 状态 ──────
 
-  function getSession(sessionId: string, platform: string): SessionState {
+  function getSession(sessionId: string, platform: string, sessionType?: string): SessionState {
     let state = sessions.get(sessionId);
     if (!state) {
       state = {
@@ -172,6 +193,7 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         idleBackoff: 1,
         userInteractions: new Map(),
         platform,
+        sessionType,
       };
       sessions.set(sessionId, state);
     }
@@ -188,6 +210,13 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       if (personaName && !names.includes(personaName)) {
         names.push(personaName);
       }
+      // 添加角色卡定义的昵称
+      const nickNames = persona.getNickNames?.() ?? [];
+      for (const nn of nickNames) {
+        if (nn && !names.includes(nn)) {
+          names.push(nn);
+        }
+      }
     }
     return names;
   }
@@ -197,14 +226,16 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   function checkImmediateTrigger(message: IncomingMessage, profile: ChatFlowProfile): boolean {
     const content = message.content;
 
-    // 1. @bot 检测
+    // 1. @bot 检测（支持 <at self> 标记、CQ 码、通用 @ 格式）
     if (profile.triggerOnAt) {
-      if (/\[CQ:at,qq=\d+\]/.test(content) || /@\S+/.test(content)) {
+      if (/<at self>[^<]*<\/at>/.test(content) ||
+          /\[CQ:at,qq=\d+\]/.test(content) ||
+          /@\S+/.test(content)) {
         return true;
       }
     }
 
-    // 2. 昵称/名字检测（全局触发词）
+    // 2. 昵称/名字检测（全局触发词 + 角色卡昵称）
     const names = getBotNames();
     for (const name of names) {
       if (name && content.includes(name)) {
@@ -218,8 +249,16 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ────── 禁言检测 ──────
 
   function checkMuteKeyword(content: string, profile: ChatFlowProfile): boolean {
-    if (profile.muteKeywords.length === 0) return false;
-    for (const keyword of profile.muteKeywords) {
+    // 检查 profile 配置的禁言关键词
+    if (profile.muteKeywords.length > 0) {
+      for (const keyword of profile.muteKeywords) {
+        if (content.includes(keyword)) return true;
+      }
+    }
+    // 检查角色卡定义的禁言关键词
+    const persona = ctx.getService<PersonaService>('persona');
+    const personaMuteKw = persona?.getMuteKeywords?.() ?? [];
+    for (const keyword of personaMuteKw) {
       if (content.includes(keyword)) return true;
     }
     return false;
@@ -348,7 +387,7 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     const msg = data.message;
 
     // 查找匹配的 profile，找不到则直接放行（该平台不受流控）
-    const profile = getProfileForPlatform(config, msg.platform);
+    const profile = getProfileForPlatform(config, msg.platform, msg.sessionType);
     if (!profile) {
       await next();
       return;
@@ -372,7 +411,7 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       return;
     }
 
-    const state = getSession(msg.sessionId, msg.platform);
+    const state = getSession(msg.sessionId, msg.platform, msg.sessionType);
     const now = Date.now();
 
     // 更新用户交互记录
@@ -455,7 +494,7 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       return;
     }
 
-    const profile = getProfileForPlatform(config, state.platform);
+    const profile = getProfileForPlatform(config, state.platform, state.sessionType);
     if (!profile || !profile.typingEnabled) {
       await next();
       return;
@@ -479,7 +518,7 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     const state = sessions.get(msg.sessionId);
     if (!state) return;
 
-    const profile = getProfileForPlatform(config, state.platform);
+    const profile = getProfileForPlatform(config, state.platform, state.sessionType);
     if (!profile) return;
 
     if (profile.cooldownSeconds > 0) {
@@ -520,6 +559,16 @@ export const configSchema: ConfigSchema = {
         description: '选择要应用的平台。留空表示默认规则，匹配未被其他条目覆盖的平台。',
         dynamicOptions: 'platform',
         allowCustom: true,
+      },
+      sessionTypes: {
+        type: 'multiselect',
+        label: '会话类型',
+        description: '限定生效的会话类型。留空表示不限制。可与平台配合使用，如为 OneBot 群聊和私聊设置不同频率。',
+        options: [
+          { label: '群聊', value: 'group' },
+          { label: '私聊', value: 'private' },
+          { label: '频道', value: 'channel' },
+        ],
       },
       intervalMode: {
         type: 'select',
