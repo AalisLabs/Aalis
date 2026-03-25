@@ -405,6 +405,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ctx.config.setServicePreference(serviceName, contextId);
         app.saveConfig();
       }
+
+      // 切换 webui-client 时，需要通知 webui-server 更新静态目录
+      if (serviceName === 'webui-client') {
+        const newClient = ctx.getService<{ getClientDir(): string }>('webui-client');
+        if (newClient?.getClientDir) {
+          const dir = newClient.getClientDir();
+          clientDist = dir;
+          mountStaticDir(dir);
+          ctx.logger.info(`前端已切换: ${dir}`);
+        }
+        // 通知所有前端刷新页面以加载新客户端
+        const reloadPayload: WSOutgoing = { type: 'restarting' };
+        const reloadJson = JSON.stringify(reloadPayload);
+        for (const ws of allClients) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(reloadJson);
+          }
+        }
+      }
+
       res.json({ ok: true, message: `${serviceName} 已切换到 ${contextId}` });
     } else {
       res.status(404).json({ error: `服务 ${serviceName} 或提供者 ${contextId} 不存在` });
@@ -894,6 +914,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 启动服务器
   ctx.on('ready', () => {
+    // 根据当前活跃的 webui-client 提供者挂载前端目录
+    const activeClient = ctx.getService<{ getClientDir(): string }>('webui-client');
+    if (activeClient?.getClientDir) {
+      const dir = activeClient.getClientDir();
+      clientDist = dir;
+      mountStaticDir(dir);
+      ctx.logger.info(`活跃前端: ${dir}`);
+    }
+
     server.listen(uiConfig.port, uiConfig.host, () => {
       ctx.logger.info(`WebUI 已启动: http://${uiConfig.host}:${uiConfig.port}`);
     });
