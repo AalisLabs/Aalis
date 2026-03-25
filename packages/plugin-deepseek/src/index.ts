@@ -23,6 +23,7 @@ export const configSchema: ConfigSchema = {
   maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
+  strictToolCalls: { type: 'boolean', label: 'Strict 工具调用', default: false, description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）' },
   capabilities: {
     type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
     options: [
@@ -54,6 +55,7 @@ interface DeepSeekConfig {
   maxTokens: number;
   contextLength: number;
   maxToolIterations: number;
+  strictToolCalls: boolean;
 }
 
 // ===== DeepSeek API 消息格式 =====
@@ -116,6 +118,7 @@ class DeepSeekLLMService implements LLMService {
   private contextLength: number;
   private maxToolIterations: number;
   private enableThinking: boolean;
+  private strictToolCalls: boolean;
   private logger;
 
   constructor(config: DeepSeekConfig, logger: Context['logger'], enableThinking: boolean) {
@@ -128,6 +131,7 @@ class DeepSeekLLMService implements LLMService {
     this.contextLength = config.contextLength;
     this.maxToolIterations = config.maxToolIterations;
     this.enableThinking = enableThinking;
+    this.strictToolCalls = config.strictToolCalls;
     this.logger = logger;
   }
 
@@ -393,7 +397,7 @@ class DeepSeekLLMService implements LLMService {
       type: 'function',
       function: {
         name: tool.function.name,
-        strict: tool.function.strict,
+        strict: this.strictToolCalls || tool.function.strict,
         description: tool.function.description,
         parameters: tool.function.parameters as Record<string, unknown>,
       },
@@ -436,6 +440,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxTokens: (config.maxTokens as number) ?? 8192,
     contextLength: (config.contextLength as number) ?? 131072,
     maxToolIterations: (config.maxToolIterations as number) ?? 10,
+    strictToolCalls: (config.strictToolCalls as boolean) ?? false,
   };
 
   if (!deepseekConfig.apiKey) {

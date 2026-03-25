@@ -5,7 +5,7 @@ import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from 
 
 export const name = '@aalis/plugin-adapter-onebot';
 export const inject = {
-  optional: [{ service: 'llm', capabilities: ['chat'] }],
+  optional: ['llm'],
 };
 export const provides = ['platform'];
 
@@ -209,7 +209,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['text'] });
+  ctx.provide('platform', adapter);
 
   // ----- Action 发送 -----
 

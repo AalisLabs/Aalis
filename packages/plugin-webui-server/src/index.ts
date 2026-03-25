@@ -31,13 +31,15 @@ interface WebUIConfig {
 // ===== WebSocket 消息协议 =====
 
 interface WSIncoming {
-  type: 'message' | 'subscribe_logs';
+  type: 'message' | 'subscribe_logs' | 'dangerous_response';
   content?: string;
   sessionId?: string;
+  confirmId?: string;
+  allowed?: boolean;
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed';
+  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'confirm_dangerous';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -50,6 +52,10 @@ interface WSOutgoing {
   toolArgs?: Record<string, unknown>;
   toolResult?: string;
   toolPhase?: 'start' | 'end';
+  confirmId?: string;
+  dangerousName?: string;
+  dangerousType?: 'command' | 'tool';
+  dangerousArgs?: Record<string, unknown>;
 }
 
 // ===== 插件入口 =====
@@ -176,9 +182,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ctx.commands.globalAsTools = updates.commandAsTools;
     }
 
+    // 检查是否有需要重启才能生效的字段
+    const restartNeeded = ['name', 'persona', 'logLevel'].some(k => k in updates);
+
     try {
       app.saveConfig();
-      res.json({ ok: true, message: '全局配置已更新并保存' });
+      if (restartNeeded) {
+        res.json({ ok: true, message: '全局配置已更新，正在重启应用以生效…', restart: true });
+        app.restart();
+      } else {
+        res.json({ ok: true, message: '全局配置已更新并保存' });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -423,6 +437,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
     const commands = ctx.commands.getAll();
     const overrides = ctx.commands.getOverrides();
+    const tools = ctx.tools.getAll();
+    const toolOverrides = ctx.tools.getOverrides();
     res.json({
       users,
       owners,
@@ -444,6 +460,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
       }),
       commandOverrides: overrides,
+      tools,
+      toolOverrides,
     });
   });
 
@@ -575,6 +593,50 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ ok: true, message: `指令 ${name} 覆盖已重置` });
   });
 
+  // 更新单条工具的权限覆盖
+  expressApp.put('/api/authority/tool', (req, res) => {
+    const { name, authority, safety } = req.body ?? {};
+    if (!name || typeof name !== 'string') {
+      res.status(400).json({ error: 'name 必填' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    const override: { authority?: number; safety?: string } = {};
+    if (typeof authority === 'number') override.authority = authority;
+    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
+
+    if (Object.keys(override).length === 0) {
+      ctx.tools.removeOverride(name);
+    } else {
+      ctx.tools.setOverride(name, override);
+    }
+    ctx.config.set('toolOverrides', ctx.tools.getOverrides());
+    app.saveConfig();
+    res.json({ ok: true, message: `工具 ${name} 权限已更新` });
+  });
+
+  // 重置工具覆盖（恢复插件默认）
+  expressApp.delete('/api/authority/tool', (req, res) => {
+    const { name } = req.body ?? {};
+    if (!name || typeof name !== 'string') {
+      res.status(400).json({ error: 'name 必填' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    ctx.tools.removeOverride(name);
+    ctx.config.set('toolOverrides', ctx.tools.getOverrides());
+    app.saveConfig();
+    res.json({ ok: true, message: `工具 ${name} 覆盖已重置` });
+  });
+
   // ---------- 斜杠命令处理 (通过指令注册表) ----------
 
   async function handleCommand(
@@ -594,6 +656,45 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
+  // ---------- 高危操作交互式确认 ----------
+
+  const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
+  const pendingConfirmations = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
+  let confirmCounter = 0;
+
+  ctx.authority.setConfirmHandler(async (request) => {
+    const confirmId = `confirm_${Date.now()}_${++confirmCounter}`;
+    const payload: WSOutgoing = {
+      type: 'confirm_dangerous',
+      confirmId,
+      sessionId: request.sessionId,
+      dangerousName: request.name,
+      dangerousType: request.type,
+      dangerousArgs: request.args,
+    };
+    const json = JSON.stringify(payload);
+
+    // 优先发到对应 session 的连接，否则广播给所有客户端
+    const sockets = sessions.get(request.sessionId);
+    const targets = (sockets && sockets.size > 0) ? sockets : allClients;
+    let sent = false;
+    for (const ws of targets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+        sent = true;
+      }
+    }
+    if (!sent) return false;
+
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingConfirmations.delete(confirmId);
+        resolve(false);
+      }, CONFIRM_TIMEOUT);
+      pendingConfirmations.set(confirmId, { resolve, timer });
+    });
+  });
+
   // ---------- WebSocket ----------
 
   wss.on('connection', (ws) => {
@@ -606,6 +707,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
         if (msg.type === 'subscribe_logs') {
           logSubscribers.add(ws);
+          return;
+        }
+
+        if (msg.type === 'dangerous_response') {
+          const pending = pendingConfirmations.get(msg.confirmId ?? '');
+          if (pending) {
+            clearTimeout(pending.timer);
+            pendingConfirmations.delete(msg.confirmId!);
+            pending.resolve(!!msg.allowed);
+          }
           return;
         }
 
@@ -792,7 +903,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['text', 'web'] });
+  ctx.provide('platform', adapter, { capabilities: ['web'] });
 
   // === 注册 WebUI 服务 ===
   const webuiService: WebUIService = {

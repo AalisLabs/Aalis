@@ -111,9 +111,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
 
     const service = new MongoMemoryService(collection);
-    ctx.provide('memory', service, {
-      capabilities: ['history', 'persistence'],
-    });
+    ctx.provide('memory', service);
 
     ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
 

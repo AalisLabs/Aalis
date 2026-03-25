@@ -15,12 +15,16 @@ import type {
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
-const BASE_SYSTEM_PROMPT = `你是一个智能助手。请根据以下准则行动：
+const IDENTITY_PROMPT = '你是一个智能助手。';
+
+const GUIDELINES_PROMPT = `请根据以下准则行动：
 - 诚实、准确地回答用户的问题
 - 当工具能够帮助回答问题时，主动使用工具
 - 如果不确定，请坦诚说明而不是猜测
 - 利用之前对话的上下文来提供连贯的体验
 - 回答应当简洁清晰，除非用户要求详细解释`;
+
+const BASE_SYSTEM_PROMPT = `${IDENTITY_PROMPT}${GUIDELINES_PROMPT}`;
 
 /**
  * 默认 Agent 实现 —— 对话编排器
@@ -44,7 +48,7 @@ class DefaultAgent implements AgentService {
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
     this.logger = ctx.logger.child('agent');
-    this.systemPrompt = (config.systemPrompt as string) || BASE_SYSTEM_PROMPT;
+    this.systemPrompt = (config.systemPrompt as string) || GUIDELINES_PROMPT;
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.logger.info('默认对话代理已初始化');
   }
@@ -330,9 +334,11 @@ class DefaultAgent implements AgentService {
     const persona = this.ctx.getService<PersonaService>('persona');
     if (persona) {
       const personaPrompt = persona.getSystemPrompt();
+      // persona 已包含身份信息，仅追加行为准则
       return `${personaPrompt}\n\n${this.systemPrompt}`;
     }
-    return this.systemPrompt;
+    // 无 persona 时以身份描述开头
+    return `${IDENTITY_PROMPT}${this.systemPrompt}`;
   }
 
   /**
@@ -477,8 +483,8 @@ export const inject = {
 export const configSchema: ConfigSchema = {
   systemPrompt: {
     type: 'string',
-    label: '基础系统提示词',
-    description: '定义 Agent 的基础行为指令。留空则使用默认提示词。',
+    label: '行为准则提示词',
+    description: '定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。',
   },
   memoryTokenBudget: {
     type: 'number',
@@ -489,13 +495,11 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  systemPrompt: BASE_SYSTEM_PROMPT,
+  systemPrompt: GUIDELINES_PROMPT,
   memoryTokenBudget: 4096,
 };
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agent = new DefaultAgent(ctx, config);
-  ctx.provide('agent', agent, {
-    capabilities: ['chat', 'tool_loop', 'streaming'],
-  });
+  ctx.provide('agent', agent);
 }
