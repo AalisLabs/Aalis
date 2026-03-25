@@ -6,7 +6,7 @@ import { CommandRegistry } from './commands.js';
 import { AuthorityManager } from './authority.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel } from './types.js';
+import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection } from './types.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -90,7 +90,7 @@ export class Context {
 
   // ---- 事件 ----
 
-  on<E extends keyof AalisEvents>(
+  on<E extends string & keyof AalisEvents>(
     event: E,
     handler: EventHandler<AalisEvents[E]>,
   ): () => void {
@@ -99,7 +99,7 @@ export class Context {
     return dispose;
   }
 
-  once<E extends keyof AalisEvents>(
+  once<E extends string & keyof AalisEvents>(
     event: E,
     handler: EventHandler<AalisEvents[E]>,
   ): () => void {
@@ -108,7 +108,7 @@ export class Context {
     return dispose;
   }
 
-  emit<E extends keyof AalisEvents>(
+  emit<E extends string & keyof AalisEvents>(
     event: E,
     ...args: AalisEvents[E]
   ): Promise<void> {
@@ -182,6 +182,55 @@ export class Context {
    */
   preferService(name: string, contextId: string): boolean {
     return this._services.prefer(name, contextId);
+  }
+
+  // ---- 平台 ----
+
+  /**
+   * 获取所有已注册的平台适配器
+   *
+   * 每个平台插件通过 `ctx.provide('platform', adapter, { capabilities: ['<平台名>'] })`
+   * 注册自身，claim 即为平台标识（如 'onebot', 'cli', 'webui'）。
+   */
+  getPlatforms(): PlatformAdapter[] {
+    return this._services.getEntries('platform')
+      .map(e => e.instance as PlatformAdapter)
+      .filter(a => a && typeof a.getConnections === 'function');
+  }
+
+  /**
+   * 获取所有已注册的平台名称（去重）
+   *
+   * 基于各 platform 服务的 capabilities 收集，而非 adapter.platform 字段。
+   */
+  getPlatformNames(): string[] {
+    const names = new Set<string>();
+    for (const entry of this._services.getEntries('platform')) {
+      for (const cap of entry.capabilities) names.add(cap);
+    }
+    return [...names];
+  }
+
+  /**
+   * 获取所有平台适配器及其连接详情
+   */
+  getPlatformDetails(): Array<{
+    adapterName: string;
+    platform: string;
+    contextId: string;
+    capabilities: string[];
+    connections: PlatformConnection[];
+  }> {
+    return this._services.getEntries('platform').map(entry => {
+      const adapter = entry.instance as PlatformAdapter;
+      return {
+        adapterName: adapter.adapterName,
+        platform: adapter.platform,
+        contextId: entry.contextId,
+        capabilities: [...entry.capabilities],
+        connections: adapter.getConnections(),
+      };
+    });
   }
 
   // ---- 工具 ----
@@ -313,7 +362,7 @@ export class Context {
    *   await next();
    * });
    */
-  middleware<K extends keyof HookContextMap>(
+  middleware<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
     priority?: number,

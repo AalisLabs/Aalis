@@ -4,7 +4,10 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
 
 /**
  * 类型安全的事件总线
- * 支持注册/移除监听器，以及返回 dispose 函数用于自动清理
+ *
+ * 内置事件使用 AalisEvents 接口提供类型推导。
+ * 第三方插件可以通过 TS declaration merging 扩展 AalisEvents，
+ * 也可以使用任意字符串 key 注册/触发自定义事件（运行时安全）。
  */
 export class EventBus {
   private handlers = new Map<string, Set<EventHandler<any>>>();
@@ -12,27 +15,27 @@ export class EventBus {
   /**
    * 监听事件，返回 dispose 函数
    */
-  on<E extends keyof AalisEvents>(
+  on<E extends string & keyof AalisEvents>(
     event: E,
     handler: EventHandler<AalisEvents[E]>,
   ): () => void {
-    let set = this.handlers.get(event as string);
+    let set = this.handlers.get(event);
     if (!set) {
       set = new Set();
-      this.handlers.set(event as string, set);
+      this.handlers.set(event, set);
     }
     set.add(handler);
 
     return () => {
       set!.delete(handler);
-      if (set!.size === 0) this.handlers.delete(event as string);
+      if (set!.size === 0) this.handlers.delete(event);
     };
   }
 
   /**
    * 监听事件一次
    */
-  once<E extends keyof AalisEvents>(
+  once<E extends string & keyof AalisEvents>(
     event: E,
     handler: EventHandler<AalisEvents[E]>,
   ): () => void {
@@ -47,11 +50,11 @@ export class EventBus {
   /**
    * 触发事件，按注册顺序依次调用，支持异步 handler
    */
-  async emit<E extends keyof AalisEvents>(
+  async emit<E extends string & keyof AalisEvents>(
     event: E,
     ...args: AalisEvents[E]
   ): Promise<void> {
-    const set = this.handlers.get(event as string);
+    const set = this.handlers.get(event);
     if (!set) return;
     for (const handler of set) {
       await handler(...args);
@@ -61,9 +64,9 @@ export class EventBus {
   /**
    * 移除指定事件的所有监听器
    */
-  removeAll(event?: keyof AalisEvents): void {
+  removeAll(event?: string): void {
     if (event) {
-      this.handlers.delete(event as string);
+      this.handlers.delete(event);
     } else {
       this.handlers.clear();
     }
