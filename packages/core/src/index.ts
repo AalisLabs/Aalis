@@ -1,9 +1,10 @@
 // @aalis/core — 公共 API 导出
 
-export { App } from './app.js';
+export { App, createApp } from './app.js';
+export type { AppOptions } from './app.js';
 export { Context } from './context.js';
 export { EventBus } from './events.js';
-export { ServiceContainer, normalizeDependency } from './service.js';
+export { ServiceContainer, ScopedServiceContainer, normalizeDependency } from './service.js';
 export { ToolRegistry } from './tools.js';
 export { HookRegistry } from './hooks.js';
 export { CommandRegistry } from './commands.js';
@@ -13,7 +14,7 @@ export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager } from './plugin.js';
 export { InMemoryFallbackService } from './memory-fallback.js';
 export { Logger, getLogBuffer, onLogEntry } from './logger.js';
-export { builtinAuthority, builtinCommands, builtinTools } from './builtin/index.js';
+export { builtinAuthority, builtinCommands, builtinTools, builtinLifecycle } from './builtin/index.js';
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
 export type { LogLevel, LogEntry } from './logger.js';
@@ -40,6 +41,7 @@ export type {
   OutputFormatField,
   EmbeddingService,
   AgentService,
+  AppService,
   WebUIService,
   CLIService,
   PlatformConnection,
