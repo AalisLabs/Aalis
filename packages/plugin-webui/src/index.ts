@@ -8,8 +8,8 @@ import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-webui-server';
-export const provides = ['webui-server', 'platform'];
+export const name = '@aalis/plugin-webui';
+export const provides = ['webui', 'platform'];
 
 export const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
@@ -72,7 +72,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const getApp = (): App | undefined => ctx.getService<App>('app');
 
   // 前端静态文件托管（由 webui-client 插件通过 setClientDir 挂载）
-  // server 注册服务名 'webui-server'，client 通过 capabilities 匹配版本
   let clientDist = '';
   let staticMiddleware: express.RequestHandler | null = null;
 
@@ -103,7 +102,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({
       name: persona?.getPersonaName() ?? ctx.config.get('name'),
       services: {
-        'webui-server': ctx.hasService('webui-server'),
+        webui: ctx.hasService('webui'),
         cli: ctx.hasService('cli'),
         llm: ctx.hasService('llm'),
         agent: ctx.hasService('agent'),
@@ -177,17 +176,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ctx.commands.globalAsTools = updates.commandAsTools;
     }
 
-    // 检查是否有需要重启才能生效的字段
-    const restartNeeded = ['name', 'persona', 'logLevel'].some(k => k in updates);
-
     try {
       app.saveConfig();
-      if (restartNeeded) {
-        res.json({ ok: true, message: '全局配置已更新，正在重启应用以生效…', restart: true });
-        app.restart();
-      } else {
-        res.json({ ok: true, message: '全局配置已更新并保存' });
-      }
+      res.json({ ok: true, message: '全局配置已更新并保存' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -432,8 +423,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
     const commands = ctx.commands.getAll();
     const overrides = ctx.commands.getOverrides();
-    const tools = ctx.tools.getAll();
-    const toolOverrides = ctx.tools.getOverrides();
     res.json({
       users,
       owners,
@@ -455,8 +444,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
       }),
       commandOverrides: overrides,
-      tools,
-      toolOverrides,
     });
   });
 
@@ -588,50 +575,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ ok: true, message: `指令 ${name} 覆盖已重置` });
   });
 
-  // 更新单条工具的权限覆盖
-  expressApp.put('/api/authority/tool', (req, res) => {
-    const { name, authority, safety } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name 必填' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    const override: { authority?: number; safety?: string } = {};
-    if (typeof authority === 'number') override.authority = authority;
-    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
-
-    if (Object.keys(override).length === 0) {
-      ctx.tools.removeOverride(name);
-    } else {
-      ctx.tools.setOverride(name, override);
-    }
-    ctx.config.set('toolOverrides', ctx.tools.getOverrides());
-    app.saveConfig();
-    res.json({ ok: true, message: `工具 ${name} 权限已更新` });
-  });
-
-  // 重置工具覆盖（恢复插件默认）
-  expressApp.delete('/api/authority/tool', (req, res) => {
-    const { name } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name 必填' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    ctx.tools.removeOverride(name);
-    ctx.config.set('toolOverrides', ctx.tools.getOverrides());
-    app.saveConfig();
-    res.json({ ok: true, message: `工具 ${name} 覆盖已重置` });
-  });
-
   // ---------- 斜杠命令处理 (通过指令注册表) ----------
 
   async function handleCommand(
@@ -650,55 +593,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       raw: parsed.raw,
     });
   }
-
-  // ---------- 高危操作交互式确认（内联对话式） ----------
-
-  const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
-  /** 每个 session 最多一个待确认请求 */
-  const pendingSessionConfirms = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
-
-  ctx.authority.setConfirmHandler('webui', async (request) => {
-    const typeLabel = request.type === 'command' ? '指令' : '工具';
-    const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
-    const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
-
-    // 以普通聊天消息形式发送确认提示
-    const payload: WSOutgoing = {
-      type: 'message',
-      content: prompt,
-      sessionId: request.sessionId,
-    };
-    const json = JSON.stringify(payload);
-
-    const sockets = sessions.get(request.sessionId);
-    const targets = (sockets && sockets.size > 0) ? sockets : allClients;
-    let sent = false;
-    for (const ws of targets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-        sent = true;
-      }
-    }
-    if (!sent) return false;
-
-    return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        pendingSessionConfirms.delete(request.sessionId);
-        // 超时后向会话发送提示
-        const timeoutPayload: WSOutgoing = {
-          type: 'message',
-          content: '⏰ 高危操作确认已超时，已自动取消。',
-          sessionId: request.sessionId,
-        };
-        const timeoutJson = JSON.stringify(timeoutPayload);
-        for (const ws of targets) {
-          if (ws.readyState === WebSocket.OPEN) ws.send(timeoutJson);
-        }
-        resolve(false);
-      }, CONFIRM_TIMEOUT);
-      pendingSessionConfirms.set(request.sessionId, { resolve, timer });
-    });
-  });
 
   // ---------- WebSocket ----------
 
@@ -724,17 +618,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessions.set(sessionId, new Set());
         }
         sessions.get(sessionId)!.add(ws);
-
-        // 检查是否有待确认的高危操作（拦截用户输入作为确认/取消）
-        const pending = pendingSessionConfirms.get(sessionId);
-        if (pending) {
-          clearTimeout(pending.timer);
-          pendingSessionConfirms.delete(sessionId);
-          const confirmed = trimmed.toLowerCase() === 'y';
-          pending.resolve(confirmed);
-          // 不继续处理此消息，交给原始命令/工具执行流返回结果
-          return;
-        }
 
         // 指令处理
         const cmdResult = await handleCommand(ctx, trimmed, sessionId);
@@ -871,7 +754,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
-      res.status(404).json({ error: '前端未就绪，请安装 webui-client 插件 (如 @aalis/plugin-webui-client)' });
+      res.status(404).json({ error: '前端未就绪，请安装 webui-client 插件' });
     }
   });
 
@@ -920,7 +803,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['web'] });
+  ctx.provide('platform', adapter, { capabilities: ['text', 'web'] });
 
   // === 注册 WebUI 服务 ===
   const webuiService: WebUIService = {
@@ -932,5 +815,5 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ctx.logger.info(`前端已切换: ${dir}`);
     },
   };
-  ctx.provide('webui-server', webuiService, { capabilities: ['api-v1'] });
+  ctx.provide('webui', webuiService, { capabilities: ['api', 'websocket', 'management'] });
 }

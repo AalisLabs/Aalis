@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Context, PersonaService, ConfigSchema, OutputFormat, OutputFormatField } from '@aalis/core';
@@ -37,9 +37,13 @@ interface PersonaCard {
 class PersonaServiceImpl implements PersonaService {
   private card: PersonaCard;
   private _outputFormat?: OutputFormat;
+  private searchDirs: string[];
+  private fileName: string;
 
-  constructor(card: PersonaCard) {
+  constructor(card: PersonaCard, searchDirs: string[], fileName: string) {
     this.card = card;
+    this.searchDirs = searchDirs;
+    this.fileName = fileName;
 
     // 解析 outputFormat
     if (card.outputFormat) {
@@ -86,11 +90,25 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   getPersonaName(): string {
-    return this.card.name;
+    return this.card.name || `${this.fileName}，未设置名字`;
   }
 
   getOutputFormat(): OutputFormat | undefined {
     return this._outputFormat;
+  }
+
+  async listModels(): Promise<string[]> {
+    const names = new Set<string>();
+    for (const dir of this.searchDirs) {
+      if (!existsSync(dir)) continue;
+      let files: string[];
+      try { files = readdirSync(dir); } catch { continue; }
+      for (const file of files) {
+        if (!/\.ya?ml$/i.test(file)) continue;
+        names.add(file.replace(/\.ya?ml$/i, ''));
+      }
+    }
+    return [...names];
   }
 }
 
@@ -101,46 +119,49 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const personasDir = (config.personasDir as string) || 'data/personas';
   const configDir = ctx.config.getConfigDir();
 
-  // 查找角色卡文件：先查配置目录，再查 configDir/personas 兼容旧路径
-  const searchPaths = [
-    resolve(process.cwd(), personasDir, `${personaName}.yaml`),
-    resolve(process.cwd(), personasDir, `${personaName}.yml`),
-    resolve(configDir, 'personas', `${personaName}.yaml`),
-    resolve(configDir, 'personas', `${personaName}.yml`),
+  // 收集所有候选目录
+  const searchDirs = [
+    resolve(process.cwd(), personasDir),
+    resolve(configDir, 'personas'),
   ];
 
-  let cardPath: string | undefined;
-  for (const p of searchPaths) {
-    if (existsSync(p)) {
-      cardPath = p;
-      break;
+  /** 在目录中按文件名精确匹配 .yaml/.yml 文件 */
+  function findCard(): { card: PersonaCard; path: string } | undefined {
+    for (const dir of searchDirs) {
+      for (const ext of ['.yaml', '.yml']) {
+        const p = resolve(dir, `${personaName}${ext}`);
+        if (existsSync(p)) {
+          const result = tryLoadCard(p);
+          if (result) return { card: result, path: p };
+        }
+      }
     }
+    return undefined;
   }
 
-  let card: PersonaCard;
-
-  if (cardPath) {
+  function tryLoadCard(filePath: string): PersonaCard | undefined {
     try {
-      const raw = readFileSync(cardPath, 'utf-8');
+      const raw = readFileSync(filePath, 'utf-8');
       const parsed = parseYaml(raw) as Record<string, unknown>;
-      card = {
-        name: (parsed.name as string) ?? personaName,
+      return {
+        name: (parsed.name as string) ?? '',
         description: (parsed.description as string) ?? '',
         prompt: (parsed.prompt as string) ?? '',
         traits: parsed.traits as string[] | undefined,
         greeting: parsed.greeting as string | undefined,
         outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
       };
-      ctx.logger.info(`已加载角色卡: ${card.name} (${cardPath})`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      ctx.logger.error(`角色卡文件读取/解析失败 (${cardPath}): ${msg}`);
-      card = {
-        name: 'Aalis',
-        description: '一个友好的 AI 助手',
-        prompt: '请友好、专业地与用户交流。',
-      };
+    } catch {
+      return undefined;
     }
+  }
+
+  let card: PersonaCard;
+  const found = findCard();
+
+  if (found) {
+    card = found.card;
+    ctx.logger.info(`已加载角色卡: ${card.name} (${found.path})`);
   } else {
     card = {
       name: 'Aalis',
@@ -150,7 +171,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
   }
 
-  const service = new PersonaServiceImpl(card);
+  const service = new PersonaServiceImpl(card, searchDirs, personaName as string);
   ctx.provide('persona', service);
 
   // 当角色卡配置了 outputFormat 时，注册 response:before 钩子解析 JSON

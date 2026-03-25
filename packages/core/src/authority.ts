@@ -35,7 +35,7 @@ export class AuthorityManager {
   private logger: Logger;
   private filePath: string;
   private dirty = false;
-  private confirmHandler?: DangerousConfirmHandler;
+  private confirmHandlers = new Map<string, DangerousConfirmHandler>();
 
   constructor(config: ConfigManager, logger: Logger) {
     this.config = config;
@@ -105,20 +105,21 @@ export class AuthorityManager {
   }
 
   /**
-   * 注册交互式确认回调（由平台插件设置）
+   * 注册交互式确认回调（由平台插件按平台名设置）
    */
-  setConfirmHandler(handler: DangerousConfirmHandler): void {
-    this.confirmHandler = handler;
+  setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void {
+    this.confirmHandlers.set(platform, handler);
   }
 
   /**
-   * 检查高危操作是否可以执行：先查白名单，再尝试交互确认
+   * 检查高危操作是否可以执行：先查白名单，再尝试对应平台的交互确认
    */
   async confirmDangerous(request: DangerousConfirmRequest): Promise<boolean> {
     if (this.isDangerousAllowed(request.name)) return true;
-    if (this.confirmHandler) {
+    const handler = this.confirmHandlers.get(request.platform);
+    if (handler) {
       try {
-        return await this.confirmHandler(request);
+        return await handler(request);
       } catch (err) {
         this.logger.warn(`高危确认回调异常: ${err}`);
         return false;

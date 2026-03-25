@@ -168,9 +168,9 @@ export class CommandRegistry {
         return `权限不足: 指令 ${this.prefix}${name} 需要权限等级 ${required}，您当前等级 ${userAuth}。`;
       }
 
-      // dangerous 检查
+      // dangerous 检查（skipSafetyCheck 时跳过，避免工具桥接双重确认）
       const safety = override?.safety ?? cmd.safety ?? 'safe';
-      if (safety === 'dangerous') {
+      if (safety === 'dangerous' && !cmdCtx.skipSafetyCheck) {
         const confirmed = await this._authority.confirmDangerous({
           name,
           type: 'command',
@@ -178,7 +178,7 @@ export class CommandRegistry {
           platform: cmdCtx.platform,
         });
         if (!confirmed) {
-          return `拒绝执行: 指令 ${this.prefix}${name} 被标记为高危操作，需要确认后才能执行。`;
+          return `已取消执行指令 ${this.prefix}${name}。`;
         }
       }
     }

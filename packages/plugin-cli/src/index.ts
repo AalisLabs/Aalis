@@ -86,6 +86,21 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
   const assistantName = persona?.getPersonaName() ?? 'Aalis';
   console.log(`\n${chalk.bold(`欢迎使用 ${assistantName}!`)} 输入 /help 查看命令列表。\n`);
 
+  // 注册高危操作确认处理器（CLI 平台）
+  ctx.authority.setConfirmHandler('cli', async (request) => {
+    const typeLabel = request.type === 'command' ? '指令' : '工具';
+    const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
+    const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
+    console.log(`\n${chalk.green('Aalis')}${chalk.gray('>')} ${chalk.yellow(prompt)}\n`);
+    let answer: string;
+    try {
+      answer = await rl.question(promptStr);
+    } catch {
+      return false;
+    }
+    return answer.trim().toLowerCase() === 'y';
+  });
+
   let closing = false;
 
   // readline 关闭（Ctrl+C 或 /quit）时退出进程
