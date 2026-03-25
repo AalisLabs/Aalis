@@ -255,22 +255,12 @@ class DefaultAgent implements AgentService {
       await this.ctx.hooks.run('response:before', responseData);
       replyContent = responseData.content;
 
-      // 保存消息到记忆
+      // 保存用户消息到记忆
       await this.saveToMemory(incoming.sessionId, {
         role: 'user',
         content: incoming.content,
         timestamp: Date.now(),
       });
-      await this.saveToMemory(incoming.sessionId, {
-        role: 'assistant',
-        content: replyContent,
-        timestamp: Date.now(),
-      });
-
-      // 发出回复
-      const combinedReasoning = allReasoning.length > 0
-        ? allReasoning.join('\n\n---\n\n')
-        : undefined;
 
       // 发出流结束标记
       await this.ctx.emit('message:stream', {
@@ -279,12 +269,27 @@ class DefaultAgent implements AgentService {
         done: true,
       });
 
-      await this.ctx.emit('message:send', {
-        content: replyContent,
-        sessionId: incoming.sessionId,
-        platform: incoming.platform,
-        reasoningContent: combinedReasoning,
-      });
+      // 空回复（outputFormat 中 reply 字段为空字符串）时静默，不发送消息
+      if (replyContent.length === 0) {
+        this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
+      } else {
+        await this.saveToMemory(incoming.sessionId, {
+          role: 'assistant',
+          content: replyContent,
+          timestamp: Date.now(),
+        });
+
+        const combinedReasoning = allReasoning.length > 0
+          ? allReasoning.join('\n\n---\n\n')
+          : undefined;
+
+        await this.ctx.emit('message:send', {
+          content: replyContent,
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          reasoningContent: combinedReasoning,
+        });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`处理消息失败: ${message}`);
