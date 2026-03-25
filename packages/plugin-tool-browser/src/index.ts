@@ -127,13 +127,29 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   async function ensureChrome(): Promise<void> {
     const fs = await import('fs');
+    const path = await import('path');
     const puppeteer = await import('puppeteer');
-    const chromePath = puppeteer.executablePath?.() ?? puppeteer.default?.executablePath?.();
-    if (chromePath && fs.existsSync(chromePath)) return;
+    const execPath = puppeteer.executablePath?.() ?? puppeteer.default?.executablePath?.();
+    if (execPath && fs.existsSync(execPath)) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
-    const { execSync } = await import('child_process');
-    execSync('npx puppeteer browsers install chrome', { stdio: 'inherit', timeout: 300_000 });
+    // 通过 puppeteer 包路径找到其内置 CLI
+    const puppeteerPkg = path.dirname(
+      (await import('url')).fileURLToPath(import.meta.resolve('puppeteer'))
+    );
+    // 向上找到 puppeteer 包根目录（含 package.json）
+    let pkgRoot = puppeteerPkg;
+    while (!fs.existsSync(path.join(pkgRoot, 'package.json'))) {
+      const parent = path.dirname(pkgRoot);
+      if (parent === pkgRoot) break;
+      pkgRoot = parent;
+    }
+    const cliPath = path.join(pkgRoot, 'lib', 'cjs', 'puppeteer', 'node', 'cli.js');
+    const { execFileSync } = await import('child_process');
+    execFileSync(process.execPath, [cliPath, 'browsers', 'install', 'chrome'], {
+      stdio: 'inherit',
+      timeout: 300_000,
+    });
     logger.info('Chrome 下载完成');
   }
 
