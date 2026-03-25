@@ -120,6 +120,8 @@ export interface ChatRequest {
   tools?: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  /** 中止信号，用于取消正在进行的 LLM 调用 */
+  signal?: AbortSignal;
 }
 
 export interface ChatResponse {
@@ -245,6 +247,8 @@ export interface EmbeddingService {
 export interface AgentService {
   /** 处理一条传入消息，完成完整的对话循环 */
   handleMessage(message: IncomingMessage): Promise<void>;
+  /** 中止指定会话的当前生成（可选实现） */
+  abort?(sessionId: string): void;
 }
 
 // ----- 平台适配器接口 -----
