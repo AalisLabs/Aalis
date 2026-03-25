@@ -354,27 +354,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取所有平台适配器及其连接状态
   expressApp.get('/api/platforms', (_req, res) => {
-    const entries = ctx.getServiceEntries('platform');
-    const platforms: Array<{
-      adapterName: string;
-      platform: string;
-      contextId: string;
-      connections: PlatformConnection[];
-    }> = [];
-
-    for (const entry of entries) {
-      const adapter = entry.instance as PlatformAdapter;
-      if (adapter && typeof adapter.getConnections === 'function') {
-        platforms.push({
-          adapterName: adapter.adapterName,
-          platform: adapter.platform,
-          contextId: entry.contextId,
-          connections: adapter.getConnections(),
-        });
-      }
-    }
-
-    res.json({ platforms });
+    res.json({ platforms: ctx.getPlatformDetails() });
   });
 
   // 切换服务的偏好提供者（同时持久化到配置文件）
@@ -402,6 +382,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取某个服务的可用模型列表 (调用 service.listModels())
   expressApp.get('/api/models/:service', async (req, res) => {
     const serviceName = req.params.service;
+
+    // 特殊处理 platform：通过 core 的 getPlatformNames() 获取已注册的平台名称
+    if (serviceName === 'platform') {
+      res.json({ models: ctx.getPlatformNames() });
+      return;
+    }
+
     const service = ctx.getService<{ listModels?(): Promise<string[]> }>(serviceName);
     if (!service || typeof service.listModels !== 'function') {
       res.json({ models: [] });
@@ -803,7 +790,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['text', 'web'] });
+  ctx.provide('platform', adapter, { capabilities: ['webui', 'text', 'web'] });
 
   // === 注册 WebUI 服务 ===
   const webuiService: WebUIService = {

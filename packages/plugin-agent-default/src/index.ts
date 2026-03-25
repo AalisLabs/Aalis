@@ -102,203 +102,216 @@ class DefaultAgent implements AgentService {
 
   async handleMessage(incoming: IncomingMessage): Promise<void> {
     // Hook: message:before — 插件可以修改或拦截消息
-    const msgHookData = { message: incoming };
+    // 中间件不调用 next() 即可中断整个流程（包括 LLM 调用）
+    const msgHookData: { message: IncomingMessage; metadata: Record<string, unknown> } = {
+      message: incoming,
+      metadata: {},
+    };
     await this.ctx.hooks.run('message:before', msgHookData, async () => {
-      // 默认行为：继续处理
-    });
-    incoming = msgHookData.message;
+      // ===== defaultAction: 全部消息处理逻辑在此 =====
+      // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
+      incoming = msgHookData.message;
 
-    const llm = this.ctx.getService<LLMService>('llm');
-    if (!llm) {
-      this.logger.warn('LLM 服务不可用，无法处理消息');
-      await this.ctx.emit('message:send', {
-        content: '[系统] LLM 服务不可用，请检查配置。',
-        sessionId: incoming.sessionId,
-        platform: incoming.platform,
-      });
-      return;
-    }
-
-    // 从 LLM 服务读取参数
-    const temperature = llm.getTemperature();
-    const maxTokens = llm.getMaxTokens();
-    const maxToolIterations = llm.getMaxToolIterations();
-    const contextLength = llm.getContextLength();
-    // 预留 token 预算 = 上下文长度 - 最大输出 token - 安全余量
-    const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
-
-    try {
-      const messages = await this.buildMessages(incoming);
-      const tools = this.ctx.tools.getDefinitions();
-      const toolCtx: ToolCallContext = {
-        sessionId: incoming.sessionId,
-        userId: incoming.userId,
-        platform: incoming.platform,
-      };
-
-      // Hook: llm-call:before — 插件可以修改消息或工具列表
-      const llmBeforeData = { messages, tools };
-      await this.ctx.hooks.run('llm-call:before', llmBeforeData);
-
-      // 裁剪消息以确保不超过上下文窗口
-      llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
-
-      let response = await this.consumeStream(llm, {
-        messages: llmBeforeData.messages,
-        tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
-        temperature,
-        maxTokens,
-      }, incoming.sessionId, incoming.platform);
-
-      // Hook: llm-call:after — 插件可以处理 LLM 返回结果
-      const llmAfterData = { response, messages: llmBeforeData.messages };
-      await this.ctx.hooks.run('llm-call:after', llmAfterData);
-      response = llmAfterData.response;
-
-      // 收集所有思考内容
-      const allReasoning: string[] = [];
-      if (response.reasoningContent) {
-        allReasoning.push(response.reasoningContent);
+      const llm = this.ctx.getService<LLMService>('llm');
+      if (!llm) {
+        this.logger.warn('LLM 服务不可用，无法处理消息');
+        await this.ctx.emit('message:send', {
+          content: '[系统] LLM 服务不可用，请检查配置。',
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+        });
+        return;
       }
 
-      // 工具调用循环
-      let iterations = 0;
-      while (response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
-        iterations++;
-        this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
+      // 从 LLM 服务读取参数
+      const temperature = llm.getTemperature();
+      const maxTokens = llm.getMaxTokens();
+      const maxToolIterations = llm.getMaxToolIterations();
+      const contextLength = llm.getContextLength();
+      // 预留 token 预算 = 上下文长度 - 最大输出 token - 安全余量
+      const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
-        // 将 assistant 消息 (含 toolCalls) 加入历史
-        llmBeforeData.messages.push({
-          role: 'assistant',
-          content: response.content,
-          toolCalls: response.toolCalls,
-          reasoningContent: response.reasoningContent,
-        });
+      try {
+        const messages = await this.buildMessages(incoming);
+        const tools = this.ctx.tools.getDefinitions();
+        const toolCtx: ToolCallContext = {
+          sessionId: incoming.sessionId,
+          userId: incoming.userId,
+          platform: incoming.platform,
+        };
 
-        // 执行每个工具调用
-        for (const toolCall of response.toolCalls) {
-          let args: Record<string, unknown>;
-          try {
-            args = JSON.parse(toolCall.function.arguments);
-          } catch {
-            args = {};
-          }
-
-          // Hook: tool-call:before — 插件可以拦截或修改工具调用
-          const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
-          await this.ctx.hooks.run('tool-call:before', toolBeforeData);
-
-          // 通知平台：工具开始执行
-          await this.ctx.emit('tool:execute', {
-            sessionId: incoming.sessionId,
-            platform: incoming.platform,
-            toolName: toolBeforeData.name,
-            args: toolBeforeData.args,
-            phase: 'start',
-          });
-
-          let result = await this.ctx.tools.execute(
-            toolBeforeData.name,
-            toolBeforeData.args,
-            toolCtx,
-          );
-
-          // Hook: tool-call:after — 插件可以处理工具执行结果
-          const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
-          await this.ctx.hooks.run('tool-call:after', toolAfterData);
-          result = toolAfterData.result;
-
-          // 通知平台：工具执行完成
-          await this.ctx.emit('tool:execute', {
-            sessionId: incoming.sessionId,
-            platform: incoming.platform,
-            toolName: toolBeforeData.name,
-            args: toolBeforeData.args,
-            phase: 'end',
-            result,
-          });
-
-          llmBeforeData.messages.push({
-            role: 'tool',
-            content: result,
-            toolCallId: toolCall.id,
-          });
-        }
-
-        // 继续请求 LLM (再次经过 hooks)
-        const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools };
-        await this.ctx.hooks.run('llm-call:before', nextLlmData);
+        // Hook: llm-call:before — 插件可以修改消息或工具列表
+        const llmBeforeData = { messages, tools };
+        await this.ctx.hooks.run('llm-call:before', llmBeforeData);
 
         // 裁剪消息以确保不超过上下文窗口
-        nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
+        llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
 
-        response = await this.consumeStream(llm, {
-          messages: nextLlmData.messages,
-          tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
+        let response = await this.consumeStream(llm, {
+          messages: llmBeforeData.messages,
+          tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
           temperature,
           maxTokens,
         }, incoming.sessionId, incoming.platform);
 
-        const nextLlmAfterData = { response, messages: nextLlmData.messages };
-        await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
-        response = nextLlmAfterData.response;
+        // Hook: llm-call:after — 插件可以处理 LLM 返回结果
+        const llmAfterData = { response, messages: llmBeforeData.messages };
+        await this.ctx.hooks.run('llm-call:after', llmAfterData);
+        response = llmAfterData.response;
 
+        // 收集所有思考内容
+        const allReasoning: string[] = [];
         if (response.reasoningContent) {
           allReasoning.push(response.reasoningContent);
         }
-      }
 
-      let replyContent = response.content ?? '';
+        // 工具调用循环
+        let iterations = 0;
+        while (response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
+          iterations++;
+          this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
 
-      // Hook: response:before — 插件可以修改最终回复
-      const responseData = { content: replyContent, sessionId: incoming.sessionId };
-      await this.ctx.hooks.run('response:before', responseData);
-      replyContent = responseData.content;
+          // 将 assistant 消息 (含 toolCalls) 加入历史
+          llmBeforeData.messages.push({
+            role: 'assistant',
+            content: response.content,
+            toolCalls: response.toolCalls,
+            reasoningContent: response.reasoningContent,
+          });
 
-      // 保存用户消息到记忆
-      await this.saveToMemory(incoming.sessionId, {
-        role: 'user',
-        content: incoming.content,
-        timestamp: Date.now(),
-      });
+          // 执行每个工具调用
+          for (const toolCall of response.toolCalls) {
+            let args: Record<string, unknown>;
+            try {
+              args = JSON.parse(toolCall.function.arguments);
+            } catch {
+              args = {};
+            }
 
-      // 发出流结束标记
-      await this.ctx.emit('message:stream', {
-        sessionId: incoming.sessionId,
-        platform: incoming.platform,
-        done: true,
-      });
+            // Hook: tool-call:before — 插件可以拦截或修改工具调用
+            const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
+            await this.ctx.hooks.run('tool-call:before', toolBeforeData);
 
-      // 空回复（outputFormat 中 reply 字段为空字符串）时静默，不发送消息
-      if (replyContent.length === 0) {
-        this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
-      } else {
+            // 通知平台：工具开始执行
+            await this.ctx.emit('tool:execute', {
+              sessionId: incoming.sessionId,
+              platform: incoming.platform,
+              toolName: toolBeforeData.name,
+              args: toolBeforeData.args,
+              phase: 'start',
+            });
+
+            let result = await this.ctx.tools.execute(
+              toolBeforeData.name,
+              toolBeforeData.args,
+              toolCtx,
+            );
+
+            // Hook: tool-call:after — 插件可以处理工具执行结果
+            const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
+            await this.ctx.hooks.run('tool-call:after', toolAfterData);
+            result = toolAfterData.result;
+
+            // 通知平台：工具执行完成
+            await this.ctx.emit('tool:execute', {
+              sessionId: incoming.sessionId,
+              platform: incoming.platform,
+              toolName: toolBeforeData.name,
+              args: toolBeforeData.args,
+              phase: 'end',
+              result,
+            });
+
+            llmBeforeData.messages.push({
+              role: 'tool',
+              content: result,
+              toolCallId: toolCall.id,
+            });
+          }
+
+          // 继续请求 LLM (再次经过 hooks)
+          const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools };
+          await this.ctx.hooks.run('llm-call:before', nextLlmData);
+
+          // 裁剪消息以确保不超过上下文窗口
+          nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
+
+          response = await this.consumeStream(llm, {
+            messages: nextLlmData.messages,
+            tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
+            temperature,
+            maxTokens,
+          }, incoming.sessionId, incoming.platform);
+
+          const nextLlmAfterData = { response, messages: nextLlmData.messages };
+          await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
+          response = nextLlmAfterData.response;
+
+          if (response.reasoningContent) {
+            allReasoning.push(response.reasoningContent);
+          }
+        }
+
+        let replyContent = response.content ?? '';
+
+        // Hook: response:before — 插件可以修改最终回复
+        const responseData = { content: replyContent, sessionId: incoming.sessionId };
+        await this.ctx.hooks.run('response:before', responseData);
+        replyContent = responseData.content;
+
+        // 保存用户消息到记忆
         await this.saveToMemory(incoming.sessionId, {
-          role: 'assistant',
-          content: replyContent,
+          role: 'user',
+          content: incoming.content,
           timestamp: Date.now(),
         });
 
-        const combinedReasoning = allReasoning.length > 0
-          ? allReasoning.join('\n\n---\n\n')
-          : undefined;
-
-        await this.ctx.emit('message:send', {
-          content: replyContent,
+        // 发出流结束标记
+        await this.ctx.emit('message:stream', {
           sessionId: incoming.sessionId,
           platform: incoming.platform,
-          reasoningContent: combinedReasoning,
+          done: true,
+        });
+
+        // 空回复（outputFormat 中 reply 字段为空字符串）时静默，不发送消息
+        if (replyContent.length === 0) {
+          this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
+        } else {
+          await this.saveToMemory(incoming.sessionId, {
+            role: 'assistant',
+            content: replyContent,
+            timestamp: Date.now(),
+          });
+
+          const combinedReasoning = allReasoning.length > 0
+            ? allReasoning.join('\n\n---\n\n')
+            : undefined;
+
+          await this.ctx.emit('message:send', {
+            content: replyContent,
+            sessionId: incoming.sessionId,
+            platform: incoming.platform,
+            reasoningContent: combinedReasoning,
+          });
+        }
+
+        // Hook: message:after — 插件可以在完整消息周期结束后做后处理
+        await this.ctx.hooks.run('message:after', {
+          message: incoming,
+          response: replyContent,
+          sessionId: incoming.sessionId,
+          metadata: msgHookData.metadata,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`处理消息失败: ${message}`);
+        await this.ctx.emit('message:send', {
+          content: `[错误] ${message}`,
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
         });
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`处理消息失败: ${message}`);
-      await this.ctx.emit('message:send', {
-        content: `[错误] ${message}`,
-        sessionId: incoming.sessionId,
-        platform: incoming.platform,
-      });
-    }
+    });
   }
 
   /**
