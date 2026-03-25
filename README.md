@@ -101,7 +101,7 @@ aalis/
 | `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui |
 | `websearch` | 联网搜索 | plugin-websearch-serper |
 | `tools` | AI 工具注册表 | core (内置), plugin-tools-basic |
-| `semanticMemory` | 语义长期记忆 | plugin-memory-vector |
+| `semantic-memory` | 语义长期记忆 | plugin-memory-vector |
 
 ## 快速开始
 

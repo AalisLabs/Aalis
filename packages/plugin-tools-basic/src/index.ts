@@ -68,52 +68,11 @@ export interface ToolsBasicConfig {
   http: { enabled: boolean; defaultTimeout: number; maxResponseSize: number };
 }
 
-// ===== 扩展工具服务 =====
-
-/**
- * MachineToolsService —— 供其他插件扩展机器交互能力
- *
- * 其他插件可以通过获取 'machine-tools' 服务来注册额外的工具组：
- * ```ts
- * const mt = ctx.getService<MachineToolsService>('machine-tools');
- * mt.registerToolGroup('my-tools', (ctx, config) => { ... });
- * ```
- */
-export interface MachineToolsService {
-  /** 注册一个工具组，允许第三方插件扩展机器交互能力 */
-  registerToolGroup(
-    groupName: string,
-    register: (ctx: Context, config: Record<string, unknown>) => void,
-  ): void;
-  /** 获取已注册的工具组列表 */
-  getToolGroups(): string[];
-}
-
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
   const cwd = cfg.workingDirectory || process.cwd();
-
-  // 扩展机制：维护第三方注册的工具组
-  const toolGroups = new Map<string, (ctx: Context, config: Record<string, unknown>) => void>();
-
-  const service: MachineToolsService = {
-    registerToolGroup(groupName, register) {
-      if (toolGroups.has(groupName)) {
-        ctx.logger.warn(`工具组 "${groupName}" 已存在，将被覆盖`);
-      }
-      toolGroups.set(groupName, register);
-      ctx.logger.info(`工具组已注册: ${groupName}`);
-      // 立即激活
-      register(ctx, config);
-    },
-    getToolGroups() {
-      return [...toolGroups.keys()];
-    },
-  };
-
-  ctx.provide('machine-tools', service);
 
   // 注册各工具组
   if (cfg.shell.enabled) {
@@ -140,13 +99,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.command('tools', '列出所有已注册的机器交互工具', async () => {
     const groups = ['shell', 'file', 'system', 'http']
       .filter(g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false);
-    const extensions = service.getToolGroups();
     const lines = [
       '📦 机器交互工具:',
       ...groups.map(g => `  ✅ ${g}`),
-      ...(extensions.length > 0
-        ? ['', '🔌 扩展工具组:', ...extensions.map(g => `  ✅ ${g}`)]
-        : []),
     ];
     return lines.join('\n');
   });
