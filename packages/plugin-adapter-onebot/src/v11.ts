@@ -5,7 +5,7 @@ import type {
   NormalizedMetaEvent,
   SendMessageParams,
 } from './types.js';
-import { extractText } from './types.js';
+import { segmentsToText, parseContentToSegments, toV11Segments } from './types.js';
 
 /**
  * OneBot v11 协议处理器
@@ -21,8 +21,9 @@ export class OneBotV11 implements OneBotProtocol {
   readonly version = 'v11' as const;
 
   buildSendMessage(params: SendMessageParams): { action: string; params: Record<string, unknown> } {
+    const segments = parseContentToSegments(params.content);
     const actionParams: Record<string, unknown> = {
-      message: [{ type: 'text', data: { text: params.content } }],
+      message: toV11Segments(segments),
     };
 
     if (params.detailType === 'private') {
@@ -70,9 +71,20 @@ export class OneBotV11 implements OneBotProtocol {
     const selfId = raw.self_id != null ? String(raw.self_id) : fallbackSelfId;
     const detailType = (raw.message_type ?? 'private') as string;
     const message = Array.isArray(raw.message) ? raw.message : [];
-    const text = (raw.raw_message as string) ?? extractText(message);
+    // 优先使用消息段生成富文本（含 <at> 等标记），回退到 raw_message
+    const text = message.length > 0
+      ? segmentsToText(message, selfId)
+      : ((raw.raw_message as string) ?? '');
 
     if (!text.trim()) return null;
+
+    // 提取图片 URL
+    const images: string[] = [];
+    for (const seg of message) {
+      if (seg.type === 'image' && seg.data.url) {
+        images.push(String(seg.data.url));
+      }
+    }
 
     return {
       selfId,
@@ -82,6 +94,7 @@ export class OneBotV11 implements OneBotProtocol {
       userId: raw.user_id != null ? String(raw.user_id) : undefined,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
       message,
+      images: images.length > 0 ? images : undefined,
     };
   }
 

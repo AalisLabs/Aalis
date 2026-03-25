@@ -29,6 +29,8 @@ export interface IncomingMessage {
   platform: string;
   userId?: string;
   images?: string[]; // base64 or URL
+  /** 会话类型：群聊、私聊、频道等 */
+  sessionType?: 'group' | 'private' | 'channel';
   /** 消息来源标识（用于并发隔离：同一 session 不同来源互不打断） */
   source?: string;
 }
