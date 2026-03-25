@@ -59,6 +59,14 @@ export class Context {
     this._parent = options.parent;
   }
 
+  // ---- 子系统访问（供高级插件检查/包装用） ----
+
+  /** 底层事件总线实例 */
+  get eventBus(): EventBus { return this._events; }
+
+  /** 底层服务容器实例 */
+  get serviceContainer(): ServiceContainer { return this._services; }
+
   // ---- 内置服务 getter（由 builtin 插件注册，通过服务容器延迟查找） ----
 
   get tools(): ToolRegistry {
@@ -87,6 +95,37 @@ export class Context {
       id,
       events: this._events,
       services: this._services,
+      hooks: this.hooks,
+      logger: this.logger.child(id),
+      config: this.config,
+      parent: this,
+    });
+    this._children.add(child);
+    return child;
+  }
+
+  /**
+   * 创建隔离作用域的子上下文
+   *
+   * 与 fork() 的区别：fork() 共享同一个 ServiceContainer；
+   * createScope() 创建一个 **ScopedServiceContainer**（子容器），
+   * 读取 fallback 到父容器，写入仅影响子容器自身。
+   *
+   * 适用于沙盒/会话隔离场景：
+   * - 沙盒内 `ctx.provide('agent', sandboxAgent)` 不会污染全局
+   * - 沙盒内 `ctx.getService('authority')` 仍能 fallback 到全局服务
+   *
+   * @example
+   * const sandbox = ctx.createScope('sandbox-group-123');
+   * sandbox.provide('agent', myCustomAgent); // 仅此作用域可见
+   * sandbox.getService('authority'); // fallback 到父级全局服务
+   */
+  createScope(id: string): Context {
+    const scopedServices = this._services.createScope();
+    const child = new Context({
+      id,
+      events: this._events,
+      services: scopedServices,
       hooks: this.hooks,
       logger: this.logger.child(id),
       config: this.config,
@@ -126,13 +165,13 @@ export class Context {
   // ---- 服务 (IoC + 能力声明) ----
 
   /**
-   * 注册服务
+   * 注册服务，返回 dispose 函数用于精确卸载该服务
    */
   provide(
     name: string,
     instance: unknown,
     options?: { capabilities?: string[]; priority?: number },
-  ): void {
+  ): () => void {
     this._services.register(
       name,
       instance,
@@ -140,14 +179,20 @@ export class Context {
       options?.priority ?? 0,
       this.id,
     );
-    this._disposables.push(() => {
-      // 清理时按 contextId 移除
-      this._services.unregisterByContext(this.id);
-    });
+
+    const dispose = () => {
+      const removed = this._services.unregister(name, this.id);
+      if (removed) {
+        this._events.emit('service:unregistered', name).catch(() => {});
+      }
+    };
+    this._disposables.push(dispose);
 
     const caps = options?.capabilities ?? [];
     this._events.emit('service:registered', name, caps).catch(() => {});
     this.logger.debug(`服务已注册: ${name}${caps.length ? ` [${caps.join(', ')}]` : ''}`);
+
+    return dispose;
   }
 
   /**
@@ -402,7 +447,7 @@ export class Context {
     // 记录此上下文注册的服务名，以便 dispose 后发射事件
     const removedServices = this._services.unregisterByContext(this.id);
 
-    // 逆序执行清理（unregisterByContext 已提前执行，disposable 中的重复调用会安全跳过）
+    // 逆序执行清理（unregisterByContext 已整体移除服务，provide 的 dispose 会安全跳过）
     for (let i = this._disposables.length - 1; i >= 0; i--) {
       try {
         this._disposables[i]();

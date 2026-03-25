@@ -6,22 +6,73 @@ import { ConfigManager } from './config.js';
 import { PluginManager, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import { InMemoryFallbackService } from './memory-fallback.js';
-import { builtinAuthority, builtinCommands, builtinTools } from './builtin/index.js';
-import type { AgentService, MemoryService, VectorStoreService } from './types.js';
+import { builtinAuthority, builtinCommands, builtinTools, builtinLifecycle } from './builtin/index.js';
+import type { AgentService } from './types.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFileSync, existsSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 
+// ----- 应用配置选项 -----
+
+/**
+ * App 构造选项
+ *
+ * 所有字段均可选：未提供的子系统由 App 自动创建。
+ * 传入自定义实例即可实现隔离/沙盒/测试等场景。
+ */
+export interface AppOptions {
+  /** 配置文件路径 */
+  configPath?: string;
+  /** 注入自定义事件总线（默认新建） */
+  events?: EventBus;
+  /** 注入自定义服务容器（默认新建） */
+  services?: ServiceContainer;
+  /** 注入自定义钩子注册表（默认新建） */
+  hooks?: HookRegistry;
+  /** 注入自定义配置管理器（默认新建） */
+  config?: ConfigManager;
+  /** 自定义必需服务列表（默认: webui-server, webui-client, cli） */
+  requiredServices?: string[];
+}
+
+/**
+ * 创建 App 实例的工厂函数
+ *
+ * 推荐用此函数而非直接 `new App()` — 语义更clear，
+ * 未来可在不改调用方的前提下加入缓存、校验等逻辑。
+ *
+ * @example
+ * // 默认用法
+ * const app = createApp();
+ *
+ * // 沙盒隔离: 完全独立的子系统
+ * const sandbox = createApp({
+ *   config: new ConfigManager('sandbox.config.yaml'),
+ *   events: new EventBus(),
+ *   services: new ServiceContainer(),
+ *   hooks: new HookRegistry(),
+ *   requiredServices: [], // 沙盒不需要 webui/cli
+ * });
+ */
+export function createApp(options?: AppOptions | string): App {
+  return new App(options);
+}
+
 /**
  * Aalis 应用主容器
  *
  * 职责:
- * - 初始化所有核心子系统 (事件总线, 服务容器, 工具注册表, 配置)
+ * - 初始化所有核心子系统 (事件总线, 服务容器, 钩子注册表, 配置)
  * - 创建根 Context
  * - 管理插件生命周期
- * - 启动 Agent
+ * - 启动 Agent 消息路由
+ *
+ * 所有子系统均可通过 AppOptions 注入，使得：
+ * - 测试时可 mock 任意子系统
+ * - 沙盒插件可创建完全隔离的 App 实例
+ * - 多实例部署无需修改 core
  */
 export class App {
   readonly ctx: Context;
@@ -29,38 +80,51 @@ export class App {
   readonly logger: Logger;
   readonly packagesDir: string;
 
-  private events: EventBus;
+  /** 事件总线（可被沙盒插件获取以实现事件桥接） */
+  readonly events: EventBus;
+  /** 服务容器 */
+  readonly services: ServiceContainer;
+  /** 钩子注册表 */
+  readonly hooks: HookRegistry;
 
-  constructor(configPath?: string) {
-    // 1. 核心基础设施（事件总线、服务容器、钩子、配置、日志）
-    const config = new ConfigManager(configPath);
-    this.events = new EventBus();
-    const services = new ServiceContainer();
+  /** 可配置的必需服务列表 */
+  readonly requiredServices: readonly string[];
+
+  constructor(options?: AppOptions | string) {
+    // 兼容旧签名: new App('path/to/config.yaml')
+    const opts: AppOptions = typeof options === 'string'
+      ? { configPath: options }
+      : options ?? {};
+
+    // 1. 核心基础设施（允许外部注入，未提供则自动创建）
+    const config = opts.config ?? new ConfigManager(opts.configPath);
+    this.events = opts.events ?? new EventBus();
+    this.services = opts.services ?? new ServiceContainer();
+    this.hooks = opts.hooks ?? new HookRegistry();
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
-    const hooks = new HookRegistry();
 
     // 2. 根上下文（commands/tools/authority 由内置插件延迟注入）
     this.ctx = new Context({
       id: 'root',
       events: this.events,
-      services,
-      hooks,
+      services: this.services,
+      hooks: this.hooks,
       logger: this.logger,
       config,
     });
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.ctx, this.logger);
-    this.plugins.requiredServices = App.REQUIRED_SERVICES;
+    this.requiredServices = opts.requiredServices ?? [...App.DEFAULT_REQUIRED_SERVICES];
+    this.plugins.requiredServices = this.requiredServices;
     this.packagesDir = resolve(process.cwd(), 'packages');
 
-    // 4. 注册核心服务（让插件能通过 ctx.getService 访问）
+    // 4. 注册核心服务（让插件能通过 ctx.getService<AppService>('app') 访问）
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
 
     // 5. 监控核心必需服务，卸载时自动恢复
     this.ctx.on('service:unregistered', async (name) => {
-      if (!(App.REQUIRED_SERVICES as readonly string[]).includes(name)) return;
-      // softReload 可能已经恢复了，先检查
+      if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;
       this.logger.warn(`必需服务 "${name}" 被卸载，尝试自动恢复...`);
       const activated = await this.plugins.ensureServiceProvider(name);
@@ -70,8 +134,6 @@ export class App {
         this.logger.error(`必需服务 "${name}" 自动恢复失败！`);
       }
     });
-
-    // 6. 内置指令在 loadBuiltinPlugins() 中注册（需要 commands 服务就绪）
 
     this.logger.info(`Aalis v0.1.0 - ${config.get('name')}`);
   }
@@ -121,7 +183,7 @@ export class App {
   }
 
   /**
-   * 加载内置插件（authority → commands → tools），保证顺序。
+   * 加载内置插件（authority → commands → tools → lifecycle），保证顺序。
    * 内置插件为 core: true，不可被用户禁用。
    */
   private async loadBuiltinPlugins(): Promise<void> {
@@ -131,9 +193,8 @@ export class App {
     await this.plugin(builtinAuthority);
     await this.plugin(builtinCommands);
     await this.plugin(builtinTools);
-
-    // 内置指令（依赖 commands 和 tools 服务）
-    this.registerBuiltinCommands();
+    // lifecycle 依赖 commands + authority，在其后加载
+    await this.plugin(builtinLifecycle);
 
     this.logger.info('内置插件加载完成');
   }
@@ -411,64 +472,68 @@ export class App {
   }
 
   /**
-   * 注册内置指令 (/help, /status)
+   * 启动应用
    */
-  private registerBuiltinCommands(): void {
-    // /help — 动态列出所有已注册指令（Markdown 格式）
-    this.ctx.command('help', '显示可用指令列表', async () => {
-      const all = this.ctx.commands.getAll();
-      const prefix = this.ctx.commands.prefix;
-      const lines = ['**可用指令：**', ''];
-      for (const cmd of all) {
-        lines.push(`- \`${prefix}${cmd.name}\` — ${cmd.description}`);
-      }
-      return lines.join('\n');
+  async start(): Promise<void> {
+    this.logger.info('正在启动...');
+    await this.ctx.emit('app:starting');
+
+    // 检查是否有 memory 服务，没有则注册 fallback
+    if (!this.ctx.hasService('memory')) {
+      this.logger.warn('未检测到记忆服务插件，启用内存 fallback (数据不会持久化)');
+      const fallback = new InMemoryFallbackService();
+      this.ctx.provide('memory', fallback, {
+        capabilities: ['history'],
+        priority: -100, // 最低优先级
+      });
+    }
+
+    // 应用配置文件中的服务偏好
+    const prefs = this.ctx.config.getServicePreferences();
+    for (const [service, contextId] of Object.entries(prefs)) {
+      this.ctx.preferService(service, contextId);
+    }
+
+    // 检查核心必需服务，缺失时自动寻找并启动提供者
+    await this.ensureRequiredServices();
+
+    // 将 message:received 事件路由到 agent 服务
+    // 通过 'message:route' 钩子管道，沙盒插件可拦截并替换路由逻辑
+    this.ctx.on('message:received', async (msg) => {
+      const agent = this.ctx.getService<AgentService>('agent');
+      const routeData = { message: msg, agent };
+
+      await this.hooks.run('message:route', routeData, async () => {
+        if (routeData.agent) {
+          await routeData.agent.handleMessage(routeData.message);
+        } else {
+          this.logger.warn('Agent 服务不可用，消息将不会被处理');
+          await this.ctx.emit('message:send', {
+            content: '[系统] Agent 服务不可用，请检查插件配置。',
+            sessionId: routeData.message.sessionId,
+            platform: routeData.message.platform,
+          });
+        }
+      });
     });
 
-    // /status — 显示系统状态（Markdown 格式）
-    this.ctx.command('status', '显示系统状态', async () => {
-      const lines = ['**系统状态：**', ''];
-      const checks = [
-        ['WebUI Server', this.ctx.hasService('webui-server')],
-        ['CLI', this.ctx.hasService('cli')],
-        ['LLM 服务', this.ctx.hasService('llm')],
-        ['Agent', this.ctx.hasService('agent')],
-        ['记忆服务', this.ctx.hasService('memory')],
-        ['人格服务', this.ctx.hasService('persona')],
-        ['Embedding', this.ctx.hasService('embedding')],
-        ['向量库', this.ctx.hasService('vectorstore')],
-      ] as const;
-      for (const [label, ok] of checks) {
-        lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
-      }
-      const tools = this.ctx.tools.getDefinitions();
-      lines.push(`- 已注册工具: ${tools.length} 个`);
-      const cmds = this.ctx.commands.getAll();
-      lines.push(`- 已注册指令: ${cmds.length} 个`);
-      return lines.join('\n');
-    });
+    // 发出 ready 事件
+    await this.ctx.emit('ready');
+    this.logger.info('启动完成');
+  }
 
-    // /shutdown — 关闭应用
-    this.ctx.command('shutdown', '关闭应用', async () => {
-      // 异步执行，先返回消息再关闭
-      setTimeout(async () => {
-        await this.stop();
-        process.exit(0);
-      }, 500);
-      return '正在关闭应用…';
-    }, { authority: 5, safety: 'dangerous' });
-
-    // /restart — 重新启动应用（重新执行原始启动命令）
-    this.ctx.command('restart', '重启应用', async () => {
-      // 先通知所有平台“即将重启”
-      await this.ctx.emit('restarting');
+  /**
+   * 重启应用（先停止再 spawn 新进程）
+   * 延迟 500ms 执行，以便调用方能先返回响应
+   */
+  restart(): void {
+    this.ctx.emit('restarting').then(() => {
       setTimeout(async () => {
         await this.stop();
         const scriptFile = process.argv[1];
         let exec: string;
         let args: string[];
         if (scriptFile?.endsWith('.ts')) {
-          // tsx 运行时 argv[0] 是 node，需要用 tsx 重新启动
           const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
           exec = existsSync(tsxBin) ? tsxBin : 'tsx';
           args = process.argv.slice(1);
@@ -484,136 +549,7 @@ export class App {
         child.unref();
         process.exit(0);
       }, 500);
-      return '正在重启应用…';
-    }, { authority: 5, safety: 'dangerous' });
-
-    // /grant — 设置用户权限等级（只能授予低于自身等级的权限）
-    this.ctx.command('grant', '设置用户权限 (用法: grant <platform:userId> <level>)', async (cmdCtx) => {
-      if (cmdCtx.args.length < 2) {
-        const prefix = this.ctx.commands.prefix;
-        return `用法: ${prefix}grant <platform:userId> <level>`;
-      }
-      const [target, levelStr] = cmdCtx.args;
-      const level = parseInt(levelStr, 10);
-      if (isNaN(level) || level < 0) {
-        return '权限等级必须是非负整数。';
-      }
-      const callerAuth = this.ctx.authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
-      if (level >= callerAuth) {
-        return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
-      }
-      const sep = target.indexOf(':');
-      if (sep < 1) {
-        return '目标格式: <platform:userId>，例如 onebot:12345';
-      }
-      const platform = target.slice(0, sep);
-      const userId = target.slice(sep + 1);
-      this.ctx.authority.setAuthority(platform, userId, level);
-      this.ctx.authority.save();
-      return `已将 ${target} 的权限等级设置为 ${level}。`;
-    }, { authority: 2 });
-
-    // /authority — 查看当前用户权限等级
-    this.ctx.command('authority', '查看自己或指定用户的权限等级', async (cmdCtx) => {
-      const authority = this.ctx.authority;
-      if (cmdCtx.args.length > 0) {
-        // 查看指定用户
-        const target = cmdCtx.args[0];
-        const sep = target.indexOf(':');
-        if (sep < 1) return '目标格式: <platform:userId>';
-        const level = authority.getAuthority(target.slice(0, sep), target.slice(sep + 1));
-        return `${target} 的权限等级: ${level}`;
-      }
-      const level = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
-      const isOwner = authority.isOwner(cmdCtx.platform, cmdCtx.userId);
-      return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
-    });
-  }
-
-  /**
-   * 启动应用
-   */
-  async start(): Promise<void> {
-    this.logger.info('正在启动...');
-
-    // 检查是否有 memory 服务，没有则注册 fallback
-    if (!this.ctx.hasService('memory')) {
-      this.logger.warn('未检测到记忆服务插件，启用内存 fallback (数据不会持久化)');
-      const fallback = new InMemoryFallbackService();
-      this.ctx.provide('memory', fallback, {
-        capabilities: ['history'],
-        priority: -100, // 最低优先级
-      });
-
-      // fallback 场景下也注册 /clear
-      this.ctx.command('clear', '清空当前会话历史及长期记忆', async (cmdCtx) => {
-        await fallback.clearSession(cmdCtx.sessionId);
-        // 同时清空向量记忆
-        const vectorstore = this.ctx.getService<VectorStoreService>('vectorstore');
-        if (vectorstore) {
-          await vectorstore.clear();
-          this.logger.info('向量记忆已清空');
-        }
-        return '会话历史与长期记忆已清空。';
-      });
-    }
-
-    // 应用配置文件中的服务偏好
-    const prefs = this.ctx.config.getServicePreferences();
-    for (const [service, contextId] of Object.entries(prefs)) {
-      this.ctx.preferService(service, contextId);
-    }
-
-    // 检查核心必需服务，缺失时自动寻找并启动提供者
-    await this.ensureRequiredServices();
-
-    // 将 message:received 事件路由到 agent 服务
-    // Agent 现在是一个可替换的服务，由 plugin-agent-default 或任何外部插件提供
-    this.ctx.on('message:received', async (msg) => {
-      const agent = this.ctx.getService<AgentService>('agent');
-      if (agent) {
-        await agent.handleMessage(msg);
-      } else {
-        this.logger.warn('Agent 服务不可用，消息将不会被处理');
-        await this.ctx.emit('message:send', {
-          content: '[系统] Agent 服务不可用，请检查插件配置。',
-          sessionId: msg.sessionId,
-          platform: msg.platform,
-        });
-      }
-    });
-
-    // 发出 ready 事件
-    await this.ctx.emit('ready');
-    this.logger.info('启动完成');
-  }
-
-  /**
-   * 重启应用（先停止再 spawn 新进程）
-   * 延迟 500ms 执行，以便调用方能先返回响应
-   */
-  restart(): void {
-    setTimeout(async () => {
-      await this.stop();
-      const scriptFile = process.argv[1];
-      let exec: string;
-      let args: string[];
-      if (scriptFile?.endsWith('.ts')) {
-        const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
-        exec = existsSync(tsxBin) ? tsxBin : 'tsx';
-        args = process.argv.slice(1);
-      } else {
-        [exec, ...args] = process.argv;
-      }
-      const child = spawn(exec, args, {
-        cwd: process.cwd(),
-        stdio: 'inherit',
-        detached: true,
-        env: process.env,
-      });
-      child.unref();
-      process.exit(0);
-    }, 500);
+    }).catch(() => {});
   }
 
   /**
@@ -621,6 +557,7 @@ export class App {
    */
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
+    await this.ctx.emit('app:stopping');
     try { this.ctx.authority.save(); } catch { /* authority 服务可能已卸载 */ }
     await this.ctx.emit('dispose');
     this.ctx.dispose();
@@ -628,18 +565,18 @@ export class App {
   }
 
   /**
-   * 核心必需服务列表
+   * 默认必需服务列表
    *
    * 这些服务必须至少有一个提供者在运行。
-   * 如果在启动后缺失，核心会自动寻找声明能提供该服务的插件并启动它。
+   * 可通过 AppOptions.requiredServices 自定义覆盖。
    */
-  private static readonly REQUIRED_SERVICES = ['webui-server', 'webui-client', 'cli'] as const;
+  private static readonly DEFAULT_REQUIRED_SERVICES = ['webui-server', 'webui-client', 'cli'] as const;
 
   /**
    * 检查核心必需服务是否就绪，缺失时自动寻找并启动提供者
    */
   private async ensureRequiredServices(): Promise<void> {
-    for (const service of App.REQUIRED_SERVICES) {
+    for (const service of this.requiredServices) {
       if (this.ctx.hasService(service)) {
         this.logger.debug(`必需服务 "${service}" 已就绪`);
         continue;

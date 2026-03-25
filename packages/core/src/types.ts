@@ -330,6 +330,24 @@ export interface CLIService {
   isRunning(): boolean;
 }
 
+// ----- App 服务接口 -----
+
+/**
+ * App 生命周期接口
+ *
+ * 插件通过 `ctx.getService<AppService>('app')` 获取，
+ * 用于触发应用级操作（停止、重启、保存配置等），
+ * 无需直接导入 App 类。
+ */
+export interface AppService {
+  /** 停止应用 */
+  stop(): Promise<void>;
+  /** 重启应用（延迟 spawn 新进程后退出当前进程） */
+  restart(): void;
+  /** 保存配置到磁盘 */
+  saveConfig(): void;
+}
+
 // ----- 服务依赖声明 -----
 
 export interface ServiceDependency {
@@ -454,6 +472,10 @@ export interface AalisEvents {
   'ready': [];
   'dispose': [];
   'restarting': [];
+  /** 应用正在启动（start() 开头，在服务检查和消息路由注册之前） */
+  'app:starting': [];
+  /** 应用正在停止（stop() 开头，在 dispose 之前） */
+  'app:stopping': [];
   // 允许任意字符串 key（运行时安全，类型兜底）
   [key: string]: unknown[];
 }
@@ -488,6 +510,8 @@ export type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
 export interface HookContextMap {
   'message:before': { message: IncomingMessage; metadata: Record<string, unknown> };
   'message:after': { message: IncomingMessage; response: string; sessionId: string; metadata: Record<string, unknown> };
+  /** 消息路由钩子：插件可拦截此钩子来替换 agent 或修改消息路由逻辑 */
+  'message:route': { message: IncomingMessage; agent: AgentService | undefined };
   'llm-call:before': { messages: Message[]; tools: ToolDefinition[] };
   'llm-call:after': { response: ChatResponse; messages: Message[] };
   'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };

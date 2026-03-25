@@ -459,12 +459,6 @@ function DashboardPage({
           : status.commands.map(c => (
             <span className="tool-chip cmd-chip" key={c.name} title={c.description}>
               /{c.name}
-              {c.authority != null && c.authority > 1 && (
-                <span className="chip-badge chip-auth">🔒{c.authority}</span>
-              )}
-              {c.safety === 'dangerous' && (
-                <span className="chip-badge chip-danger">⚠️</span>
-              )}
             </span>
           ))
         }

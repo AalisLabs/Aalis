@@ -96,6 +96,20 @@ export class ServiceContainer {
   }
 
   /**
+   * 移除指定服务名下某个 contextId 的提供者（精确卸载单条目）
+   * @returns 是否成功移除
+   */
+  unregister(name: string, contextId: string): boolean {
+    const list = this.entries.get(name);
+    if (!list) return false;
+    const idx = list.findIndex(e => e.contextId === contextId);
+    if (idx < 0) return false;
+    list.splice(idx, 1);
+    if (list.length === 0) this.entries.delete(name);
+    return true;
+  }
+
+  /**
    * 按 contextId 移除所有该上下文注册的服务，返回被移除的服务名列表
    */
   unregisterByContext(contextId: string): string[] {
@@ -142,5 +156,66 @@ export class ServiceContainer {
     list.length = 0;
     list.push(target, ...rest);
     return true;
+  }
+
+  /**
+   * 创建作用域子容器
+   *
+   * 子容器读取时先查本地，miss 则 fallback 到父容器；
+   * 写入（register）仅影响子容器自身。
+   *
+   * 适用于沙盒/会话隔离场景：每个沙盒拥有独立的服务覆盖，
+   * 同时继承全局公共服务（如 authority、commands）。
+   *
+   * @example
+   * const scoped = container.createScope();
+   * scoped.register('agent', sandboxAgent); // 仅沙盒可见
+   * scoped.get('authority'); // fallback 到父容器
+   */
+  createScope(): ScopedServiceContainer {
+    return new ScopedServiceContainer(this);
+  }
+}
+
+/**
+ * 作用域服务容器 —— ServiceContainer 的子容器
+ *
+ * - get / has / getEntries / listServices: 先查本地，miss 则 fallback 到父容器
+ * - register / unregister: 仅操作本地，不影响父容器
+ * - 支持多层嵌套: ScopedServiceContainer.createScope() 返回更深层的子容器
+ */
+export class ScopedServiceContainer extends ServiceContainer {
+  readonly parent: ServiceContainer;
+
+  constructor(parent: ServiceContainer) {
+    super();
+    this.parent = parent;
+  }
+
+  override get<T>(name: string, requiredCapabilities?: string[]): T | undefined {
+    const local = super.get<T>(name, requiredCapabilities);
+    if (local !== undefined) return local;
+    return this.parent.get<T>(name, requiredCapabilities);
+  }
+
+  override has(name: string, requiredCapabilities?: string[]): boolean {
+    return super.has(name, requiredCapabilities) || this.parent.has(name, requiredCapabilities);
+  }
+
+  override getCapabilities(name: string): string[] {
+    const local = super.getCapabilities(name);
+    const parent = this.parent.getCapabilities(name);
+    return [...new Set([...local, ...parent])];
+  }
+
+  override listServices(): string[] {
+    return [...new Set([...super.listServices(), ...this.parent.listServices()])];
+  }
+
+  override getEntries(name: string): ServiceEntry[] {
+    const local = super.getEntries(name);
+    const parent = this.parent.getEntries(name);
+    // 本地条目优先（在前），父容器条目在后
+    return [...local, ...parent];
   }
 }
