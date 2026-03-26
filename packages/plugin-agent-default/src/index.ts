@@ -33,6 +33,7 @@ class DefaultAgent implements AgentService {
   private logger: Logger;
   private systemPrompt: string;
   private memoryTokenBudget: number;
+  private historyLimit: number;
   /** 平台 → 启用的工具分组映射 */
   private toolGroups: Record<string, string[]>;
 
@@ -49,6 +50,7 @@ class DefaultAgent implements AgentService {
     this.logger = ctx.logger.child('agent');
     this.systemPrompt = (config.systemPrompt as string) || '';
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
+    this.historyLimit = (config.historyLimit as number) ?? 50;
     this.toolGroups = parseToolGroups(config.toolGroups);
     this.logger.info('默认对话代理已初始化');
   }
@@ -249,7 +251,7 @@ class DefaultAgent implements AgentService {
         };
 
         // Hook: llm-call:before — 插件可以修改消息或工具列表
-        const llmBeforeData = { messages, tools };
+        const llmBeforeData = { messages, tools, sessionId: incoming.sessionId };
         await this.ctx.hooks.run('llm-call:before', llmBeforeData);
 
         // 裁剪消息以确保不超过上下文窗口
@@ -281,6 +283,9 @@ class DefaultAgent implements AgentService {
         if (response.reasoningContent) {
           allReasoning.push(response.reasoningContent);
         }
+
+        // 收集工具调用摘要
+        const toolCallSummaries: string[] = [];
 
         // 工具调用循环
         let iterations = 0;
@@ -333,6 +338,10 @@ class DefaultAgent implements AgentService {
             result = toolAfterData.result;
             this.logger.debug(`工具完成: ${toolBeforeData.name} (${Date.now() - toolT0}ms) 结果=${result}`);
 
+            // 记录工具调用摘要（工具名 + 关键结果概要）
+            const resultPreview = result.length > 200 ? result.slice(0, 200) + '...' : result;
+            toolCallSummaries.push(`[${toolBeforeData.name}] ${resultPreview}`);
+
             // 通知平台：工具执行完成
             await this.ctx.emit('tool:execute', {
               sessionId: incoming.sessionId,
@@ -351,7 +360,7 @@ class DefaultAgent implements AgentService {
           }
 
           // 继续请求 LLM (再次经过 hooks)
-          const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools };
+          const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools, sessionId: incoming.sessionId };
           await this.ctx.hooks.run('llm-call:before', nextLlmData);
 
           // 裁剪消息以确保不超过上下文窗口
@@ -402,9 +411,16 @@ class DefaultAgent implements AgentService {
         if (replyContent.length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
+          // 如果有工具调用，将摘要附加到保存的消息中，便于长期记忆回溯
+          let savedContent = replyContent;
+          if (toolCallSummaries.length > 0) {
+            const toolSummary = toolCallSummaries.join('\n');
+            savedContent = `${replyContent}\n\n[工具调用过程]\n${toolSummary}`;
+          }
+
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
-            content: replyContent,
+            content: savedContent,
             timestamp: Date.now(),
           });
 
@@ -473,7 +489,7 @@ class DefaultAgent implements AgentService {
     const memory = this.ctx.getService<MemoryService>('memory');
     if (memory) {
       try {
-        const history = await memory.getHistory(incoming.sessionId, 50);
+        const history = await memory.getHistory(incoming.sessionId, this.historyLimit);
         messages.push(...history);
       } catch (err) {
         this.logger.warn('获取历史消息失败:', err);
@@ -657,6 +673,12 @@ export const configSchema: ConfigSchema = {
     default: 4096,
     description: '为长期记忆注入的 system 消息预留的 token 额度，截断时不会删除这些消息',
   },
+  historyLimit: {
+    type: 'number',
+    label: '历史消息条数',
+    default: 50,
+    description: '从记忆中加载的最近对话历史条数',
+  },
   toolGroups: {
     type: 'array',
     label: '工具分组',
@@ -680,6 +702,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   systemPrompt: '',
   memoryTokenBudget: 4096,
+  historyLimit: 50,
   toolGroups: [],
 };
 
