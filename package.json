@@ -27,7 +27,7 @@
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-vectorstore-flat": "workspace:*",
     "@aalis/plugin-vectorstore-lancedb": "workspace:*",
-    "@aalis/plugin-tools-basic": "workspace:*",
+    "@aalis/plugin-tools-system": "workspace:*",
     "@aalis/plugin-websearch-serper": "workspace:*",
     "@aalis/plugin-webui-server": "workspace:*",
     "@aalis/plugin-webui-client": "workspace:*"

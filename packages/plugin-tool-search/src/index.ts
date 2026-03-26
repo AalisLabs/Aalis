@@ -162,12 +162,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 注册 search_tools 工具（初始定义，钩子中会动态更新 description）
   ctx.registerTool({
     definition: buildSearchToolDef(),
-    async handler(args: Record<string, unknown>, _callCtx: ToolCallContext) {
+    async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
-      const summaries = ctx.tools!.getSummaries();
+      // 使用与当前平台一致的分组过滤
+      const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
+      const summaries = ctx.tools!.getSummaries().filter(t => {
+        if (!filter?.groups?.length) return true;
+        return !t.groups || t.groups.length === 0 || t.groups.some(g => filter.groups!.includes(g));
+      });
       const results = searchTools(summaries, query);
       // 搜索结果返回完整定义，供 LLM 了解参数
-      const allDefs = ctx.tools!.getDefinitions();
+      const allDefs = ctx.tools!.getDefinitions(filter);
       const defMap = new Map(allDefs.map(d => [d.function.name, d]));
 
       const toolDetails = results.map(t => {

@@ -86,12 +86,17 @@ export class OneBotV11 implements OneBotProtocol {
       }
     }
 
+    // 提取发送者昵称（优先群名片，回退到昵称）
+    const sender = raw.sender as Record<string, unknown> | undefined;
+    const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
+
     return {
       selfId,
       detailType,
       text,
       messageId: raw.message_id != null ? String(raw.message_id) : undefined,
       userId: raw.user_id != null ? String(raw.user_id) : undefined,
+      nickname,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
       message,
       images: images.length > 0 ? images : undefined,
