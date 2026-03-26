@@ -56,8 +56,9 @@ const SEARCH_TOOL_NAME = 'search_tools';
  */
 function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
   let description =
-    '查询工具的详细使用方法。传入工具名称或关键词，返回匹配工具的完整参数说明。' +
-    '你必须先调用此工具了解用法后，才能调用对应工具。';
+    '查询【可用工具列表】中某个工具的详细参数说明。仅用于发现和了解系统中注册的功能性工具（如网络搜索、指令执行等）。' +
+    '严禁将本工具用作网络搜索或查询任何实际内容——它只能返回工具的使用方法，不会返回任何网络信息。' +
+    '能直接回答的问题请勿调用任何工具。';
 
   if (toolNames && toolNames.length > 0) {
     description +=
