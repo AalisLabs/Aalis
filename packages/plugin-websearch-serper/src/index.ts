@@ -213,8 +213,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         name: 'web_search',
         strict: true,
         description:
-          '搜索互联网获取最新信息。当用户询问实时信息、新闻、不确定的事实、' +
-          '或任何可能需要最新数据的问题时使用此工具。',
+          '搜索互联网获取最新信息。以下情况应主动使用，不要等被明确要求才搜索：' +
+          '(1) 遇到不熟悉的梗、网络用语、表情包、段子、缩写；' +
+          '(2) 时事新闻、热点事件、最新数据；' +
+          '(3) 任何拿不准或想核实的事实、人物、作品；' +
+          '(4) 用户明确要求查询的内容。',
         parameters: {
           type: 'object',
           properties: {

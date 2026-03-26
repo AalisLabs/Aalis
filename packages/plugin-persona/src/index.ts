@@ -91,6 +91,8 @@ class PersonaServiceImpl implements PersonaService {
   currentUserId?: string;
   /** 当前平台标识 */
   currentPlatform?: string;
+  /** 当前群名称（仅群聊时可用） */
+  currentGroupName?: string;
 
   constructor(
     card: PersonaCard,
@@ -171,6 +173,7 @@ class PersonaServiceImpl implements PersonaService {
         const parts = this.currentSessionId.split(':');
         const groupId = parts.length >= 4 ? parts.slice(3).join(':') : undefined;
         prompt += '会话类型：群聊\n';
+        if (this.currentGroupName) prompt += `群名称：${this.currentGroupName}\n`;
         if (groupId) prompt += `群号：${groupId}\n`;
       } else if (this.currentSessionType === 'private') {
         prompt += '会话类型：私聊\n';
@@ -321,6 +324,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentSessionType = data.message.sessionType;
     service.currentUserId = data.message.userId;
     service.currentPlatform = data.message.platform;
+    service.currentGroupName = data.message.groupName;
     try {
       await next();
     } finally {
@@ -328,6 +332,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       service.currentSessionType = undefined;
       service.currentUserId = undefined;
       service.currentPlatform = undefined;
+      service.currentGroupName = undefined;
     }
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
 
@@ -350,7 +355,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         : raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
       try {
         const parsed = JSON.parse(jsonStr);
-        const reply = parsed[outputFormat.replyField];
+        let reply = parsed[outputFormat.replyField];
+
+        // 回退：模型可能使用了错误的字段名（如 response 代替 message）
+        if (typeof reply !== 'string') {
+          const aliases = ['response', 'reply', 'content', 'answer', 'text', 'msg'];
+          for (const alias of aliases) {
+            if (alias !== outputFormat.replyField && typeof parsed[alias] === 'string') {
+              reply = parsed[alias];
+              ctx.logger.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
+              break;
+            }
+          }
+        }
+
+        // 仍未找到：若 JSON 中只有一个字符串字段，使用它
+        if (typeof reply !== 'string') {
+          const stringEntries = Object.entries(parsed).filter(([, v]) => typeof v === 'string');
+          if (stringEntries.length === 1) {
+            reply = stringEntries[0][1] as string;
+            ctx.logger.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
+          }
+        }
+
         if (typeof reply === 'string') {
           // 空字符串表示不回复，非空则提取为回复内容
           data.content = reply;

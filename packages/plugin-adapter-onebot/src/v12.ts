@@ -3,6 +3,7 @@ import type {
   OneBotRawEvent,
   NormalizedMessageEvent,
   NormalizedMetaEvent,
+  NormalizedNoticeEvent,
   SendMessageParams,
 } from './types.js';
 import { segmentsToText, parseContentToSegments, toV12Segments } from './types.js';
@@ -50,10 +51,11 @@ export class OneBotV12 implements OneBotProtocol {
     return info?.user_id != null ? String(info.user_id) : undefined;
   }
 
-  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'other' {
+  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'other' {
     switch (raw.type) {
       case 'message': return 'message';
       case 'meta': return 'meta';
+      case 'notice': return 'notice';
       default: return 'other';
     }
   }
@@ -78,6 +80,15 @@ export class OneBotV12 implements OneBotProtocol {
       }
     }
 
+    // 提取引用回复的消息 ID
+    let replyToMessageId: string | undefined;
+    for (const seg of message) {
+      if (seg.type === 'reply' && (seg.data.message_id ?? seg.data.id) != null) {
+        replyToMessageId = String(seg.data.message_id ?? seg.data.id);
+        break;
+      }
+    }
+
     // 提取发送者昵称
     const sender = raw.sender as Record<string, unknown> | undefined;
     const nickname = (sender?.card as string) || (sender?.nickname as string) || (sender?.user_name as string) || undefined;
@@ -94,6 +105,7 @@ export class OneBotV12 implements OneBotProtocol {
       channelId: raw.channel_id != null ? String(raw.channel_id) : undefined,
       message,
       images: images.length > 0 ? images : undefined,
+      replyToMessageId,
     };
   }
 
@@ -112,6 +124,21 @@ export class OneBotV12 implements OneBotProtocol {
         onebot_version: version.onebot_version as string | undefined,
       } : undefined,
       interval: raw.interval as number | undefined,
+    };
+  }
+
+  parseNoticeEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedNoticeEvent | null {
+    const selfId = raw.self?.user_id ? String(raw.self.user_id) : fallbackSelfId;
+    const detailType = (raw.detail_type ?? '') as string;
+    const subType = (raw.sub_type ?? '') as string;
+
+    // v12 uses detail_type for notice classification
+    return {
+      selfId,
+      noticeType: detailType || 'unknown',
+      subType: subType || undefined,
+      userId: raw.user_id != null ? String(raw.user_id) : undefined,
+      groupId: raw.group_id != null ? String(raw.group_id) : undefined,
     };
   }
 }

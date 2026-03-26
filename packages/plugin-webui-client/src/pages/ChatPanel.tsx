@@ -4,6 +4,16 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { ChatMessage, SystemStatus } from '../types';
 
+/** 将 File 转为 base64 data URL */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export function ChatPanel({
   messages,
   loading,
@@ -14,6 +24,8 @@ export function ChatPanel({
   onSend,
   onAbort,
   width,
+  pendingImages,
+  setPendingImages,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -24,9 +36,12 @@ export function ChatPanel({
   onSend: () => void;
   onAbort: () => void;
   width: number;
+  pendingImages: string[];
+  setPendingImages: (v: string[] | ((prev: string[]) => string[])) => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -49,6 +64,48 @@ export function ChatPanel({
     }
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newImages: string[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue;
+      // 限制单张 10MB
+      if (file.size > 10 * 1024 * 1024) continue;
+      const dataUrl = await fileToDataUrl(file);
+      newImages.push(dataUrl);
+    }
+    if (newImages.length > 0) {
+      setPendingImages(prev => [...prev, ...newImages]);
+    }
+    // 清空 file input 以允许重复选择同一文件
+    e.target.value = '';
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const newImages: string[] = [];
+    for (const item of Array.from(items)) {
+      if (!item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      const dataUrl = await fileToDataUrl(file);
+      newImages.push(dataUrl);
+    }
+    if (newImages.length > 0) {
+      setPendingImages(prev => [...prev, ...newImages]);
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setPendingImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  /** 检查最后一条消息是否正在生成（用于放置停止按钮） */
+  const lastMsg = messages[messages.length - 1];
+  const isGenerating = lastMsg?.role === 'assistant' && loading;
+
   return (
     <div className="chat-panel" style={{ width }}>
       <div className="chat-panel-header">
@@ -66,6 +123,14 @@ export function ChatPanel({
             <div className="message-sender">
               {msg.role === 'user' ? 'You' : status?.name ?? 'Aalis'}
             </div>
+            {/* 用户消息中的图片 */}
+            {msg.role === 'user' && msg.images && msg.images.length > 0 && (
+              <div className="message-images">
+                {msg.images.map((img, j) => (
+                  <img key={j} src={img} alt={`attached-${j}`} className="message-image" />
+                ))}
+              </div>
+            )}
             {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 && (
               <details className="thinking-block">
                 <summary className="thinking-summary">💭 思考过程</summary>
@@ -141,9 +206,16 @@ export function ChatPanel({
                 )}
               </div>
             )}
+            {/* 停止生成按钮：放在正在生成的气泡下方 */}
+            {msg.role === 'assistant' && i === messages.length - 1 && isGenerating && (
+              <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
+                ■ 停止生成
+              </button>
+            )}
           </div>
         ))}
-        {loading && (
+        {/* 仅在没有 assistant 消息时显示 loading 指示器（首次生成等待） */}
+        {loading && (!lastMsg || lastMsg.role !== 'assistant') && (
           <div className="message-group assistant">
             <div className="message-sender">{status?.name ?? 'Aalis'}</div>
             <div className="message-bubble">
@@ -151,39 +223,60 @@ export function ChatPanel({
                 <span /><span /><span />
               </div>
             </div>
+            <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
+              ■ 停止生成
+            </button>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
+      {/* 图片预览区域 */}
+      {pendingImages.length > 0 && (
+        <div className="pending-images">
+          {pendingImages.map((img, i) => (
+            <div key={i} className="pending-image-item">
+              <img src={img} alt={`pending-${i}`} />
+              <button className="pending-image-remove" onClick={() => removeImage(i)}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="input-area">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+        />
+        <button
+          className="upload-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!connected}
+          title="上传图片"
+        >
+          🖼
+        </button>
         <textarea
           ref={textareaRef}
           value={input}
           onChange={e => { setInput(e.target.value); autoResize(); }}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
           disabled={!connected}
           rows={1}
         />
-        {loading && !input.trim() ? (
-          <button
-            className="send-btn stop-btn"
-            onClick={onAbort}
-            disabled={!connected}
-            title="停止生成"
-          >
-            ■
-          </button>
-        ) : (
-          <button
-            className="send-btn"
-            onClick={onSend}
-            disabled={!connected || !input.trim()}
-          >
-            ↑
-          </button>
-        )}
+        <button
+          className="send-btn"
+          onClick={onSend}
+          disabled={!connected || (!input.trim() && pendingImages.length === 0)}
+        >
+          ↑
+        </button>
       </div>
     </div>
   );

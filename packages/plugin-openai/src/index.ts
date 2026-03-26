@@ -30,6 +30,7 @@ export const configSchema: ConfigSchema = {
       { label: '工具调用', value: 'tool_calling' },
       { label: '流式输出', value: 'streaming' },
       { label: '深度思考', value: 'thinking' },
+      { label: '图像识别', value: 'vision' },
     ],
   },
 };
@@ -58,9 +59,14 @@ interface OpenAIConfig {
 
 // ===== OpenAI-compatible 消息格式 =====
 
+type APIMessageContent =
+  | string
+  | null
+  | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
+
 interface APIMessage {
   role: string;
-  content: string | null;
+  content: APIMessageContent;
   tool_calls?: APIToolCall[];
   tool_call_id?: string;
   name?: string;
@@ -347,6 +353,18 @@ class OpenAILLMService implements LLMService {
       content: msg.content,
     };
 
+    // 多模态：如果消息包含图片，构造 content 数组
+    if (msg.images && msg.images.length > 0 && msg.role === 'user') {
+      const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+      if (msg.content) {
+        parts.push({ type: 'text', text: msg.content });
+      }
+      for (const img of msg.images) {
+        parts.push({ type: 'image_url', image_url: { url: img } });
+      }
+      apiMsg.content = parts;
+    }
+
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       apiMsg.tool_calls = msg.toolCalls.map(tc => ({
         id: tc.id,
@@ -385,8 +403,8 @@ class OpenAILLMService implements LLMService {
 // ===== 模型能力映射 =====
 
 const MODEL_CAPABILITIES: Record<string, string[]> = {
-  'gpt-4o':            ['chat', 'tool_calling', 'streaming'],
-  'gpt-4o-mini':       ['chat', 'tool_calling', 'streaming'],
+  'gpt-4o':            ['chat', 'tool_calling', 'streaming', 'vision'],
+  'gpt-4o-mini':       ['chat', 'tool_calling', 'streaming', 'vision'],
   'gpt-4-turbo':       ['chat', 'tool_calling', 'streaming'],
   'gpt-4':             ['chat', 'tool_calling', 'streaming'],
   'gpt-3.5-turbo':     ['chat', 'tool_calling', 'streaming'],

@@ -5,6 +5,7 @@ import type {
   OneBotProtocol,
   OneBotRawEvent,
   OneBotActionResponse,
+  NormalizedNoticeEvent,
 } from './types.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
@@ -120,6 +121,63 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const states: ConnectionState[] = [];
+
+  // ----- 群信息缓存 -----
+
+  interface GroupInfo {
+    name: string;
+    memberCount?: number;
+    fetchedAt: number;
+  }
+  const groupInfoCache = new Map<string, GroupInfo>();
+  const GROUP_CACHE_TTL = 10 * 60 * 1000; // 10 分钟
+
+  /** 获取群信息（带缓存） */
+  async function getGroupInfo(state: ConnectionState, groupId: string): Promise<GroupInfo | null> {
+    const cached = groupInfoCache.get(groupId);
+    if (cached && Date.now() - cached.fetchedAt < GROUP_CACHE_TTL) return cached;
+
+    try {
+      const data = await sendAction(state, 'get_group_info', {
+        group_id: Number(groupId) || groupId,
+      }) as Record<string, unknown>;
+      const info: GroupInfo = {
+        name: String(data.group_name ?? ''),
+        memberCount: data.member_count != null ? Number(data.member_count) : undefined,
+        fetchedAt: Date.now(),
+      };
+      if (info.name) groupInfoCache.set(groupId, info);
+      return info;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 获取引用消息的内容 */
+  async function fetchReplyMessage(state: ConnectionState, messageId: string): Promise<{
+    content?: string; userId?: string; nickname?: string;
+  } | null> {
+    try {
+      const data = await sendAction(state, 'get_msg', {
+        message_id: Number(messageId) || messageId,
+      }) as Record<string, unknown>;
+      const message = Array.isArray(data.message) ? data.message : [];
+      const sender = data.sender as Record<string, unknown> | undefined;
+      // 提取纯文本内容
+      let content = '';
+      for (const seg of message) {
+        const s = seg as Record<string, unknown>;
+        if (s.type === 'text') content += String((s.data as Record<string, unknown>)?.text ?? '');
+      }
+      return {
+        content: content || (data.raw_message as string) || undefined,
+        userId: data.user_id != null ? String(data.user_id) : undefined,
+        nickname: (sender?.card as string) || (sender?.nickname as string) || undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
 
   // ----- Action 发送 -----
 
@@ -334,6 +392,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           handleMessageEvent(state, event);
         } else if (eventType === 'meta') {
           handleMetaEvent(state, event);
+        } else if (eventType === 'notice') {
+          handleNoticeEvent(state, event);
         }
       } catch (err) {
         ctx.logger.debug('OneBot 消息解析失败:', err);
@@ -438,18 +498,94 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    ctx.emit('message:received', {
-      content: event.text,
-      sessionId,
-      platform: 'onebot',
-      userId: event.userId,
-      nickname: event.nickname,
-      images: event.images,
-      sessionType: event.detailType === 'group' ? 'group'
-        : event.detailType === 'private' ? 'private'
-        : event.detailType === 'channel' ? 'channel'
-        : undefined,
+    // 异步获取群信息和引用消息（不阻塞消息接收）
+    (async () => {
+      let groupName: string | undefined;
+      let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;
+
+      // 获取群名
+      if (event.detailType === 'group' && event.groupId) {
+        const info = await getGroupInfo(state, event.groupId);
+        if (info?.name) groupName = info.name;
+      }
+
+      // 获取引用消息内容
+      if (event.replyToMessageId) {
+        const reply = await fetchReplyMessage(state, event.replyToMessageId);
+        replyTo = {
+          messageId: event.replyToMessageId,
+          content: reply?.content,
+          userId: reply?.userId,
+          nickname: reply?.nickname,
+        };
+      }
+
+      ctx.emit('message:received', {
+        content: event.text,
+        sessionId,
+        platform: 'onebot',
+        userId: event.userId,
+        nickname: event.nickname,
+        images: event.images,
+        sessionType: event.detailType === 'group' ? 'group'
+          : event.detailType === 'private' ? 'private'
+          : event.detailType === 'channel' ? 'channel'
+          : undefined,
+        groupName,
+        groupId: event.groupId,
+        replyTo,
+      });
+    })().catch(err => {
+      ctx.logger.warn(`OneBot 消息处理异常: ${err}`);
     });
+  }
+
+  function handleNoticeEvent(state: ConnectionState, raw: OneBotRawEvent): void {
+    if (!state.protocol) return;
+
+    const fallbackSelfId = state.selfId ?? 'unknown';
+    const notice = state.protocol.parseNoticeEvent(raw, fallbackSelfId);
+    if (!notice) return;
+
+    ctx.logger.debug(`OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`);
+
+    // 戳一戳 → 转化为 message:received，让 agent 可以响应
+    if (notice.noticeType === 'poke' && notice.groupId) {
+      const selfId = notice.selfId;
+      const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
+      const targetDesc = notice.targetId === selfId ? '你' : notice.targetId;
+      const content = `[戳一戳: ${notice.userId} 戳了 ${targetDesc}]`;
+
+      ctx.emit('message:received', {
+        content,
+        sessionId,
+        platform: 'onebot',
+        userId: notice.userId,
+        sessionType: 'group',
+        groupId: notice.groupId,
+        noticeType: 'poke',
+      });
+      return;
+    }
+
+    // 群文件上传 → 转化为 message:received
+    if (notice.noticeType === 'group_upload' && notice.groupId) {
+      const selfId = notice.selfId;
+      const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
+      const fileName = notice.data?.fileName ?? '未知文件';
+      const content = `[文件上传: ${notice.userId} 上传了 ${fileName}]`;
+
+      ctx.emit('message:received', {
+        content,
+        sessionId,
+        platform: 'onebot',
+        userId: notice.userId,
+        sessionType: 'group',
+        groupId: notice.groupId,
+        noticeType: 'group_upload',
+      });
+      return;
+    }
   }
 
   function handleMetaEvent(state: ConnectionState, raw: OneBotRawEvent): void {

@@ -11,6 +11,8 @@ export interface ChatMessage {
   segments?: ContentSegment[];
   /** 思考阶段的 segments（文本与工具调用交替） */
   reasoningSegments?: ContentSegment[];
+  /** 附带的图片（base64 data URL）*/
+  images?: string[];
   timestamp: number;
 }
 

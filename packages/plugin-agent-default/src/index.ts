@@ -559,14 +559,28 @@ class DefaultAgent implements AgentService {
 
     // 3. 当前用户消息（带发送者前缀，与历史消息格式一致）
     const senderLabel = incoming.nickname ?? incoming.userId;
-    const currentContent = senderLabel
+    let currentContent = senderLabel
       ? `[${senderLabel}]: ${incoming.content}`
       : incoming.content;
-    messages.push({
+
+    // 附加引用回复上下文
+    if (incoming.replyTo?.content) {
+      const replyLabel = incoming.replyTo.nickname ?? incoming.replyTo.userId ?? '?';
+      currentContent += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
+    }
+
+    const userMessage: Message = {
       role: 'user',
       content: currentContent,
       timestamp: Date.now(),
-    });
+    };
+
+    // 多模态：将图片传递给 LLM（未被图像识别中间件消费的图片）
+    if (incoming.images && incoming.images.length > 0) {
+      userMessage.images = incoming.images;
+    }
+
+    messages.push(userMessage);
 
     return messages;
   }

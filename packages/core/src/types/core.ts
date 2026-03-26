@@ -21,6 +21,8 @@ export interface Message {
   name?: string;
   timestamp?: number;
   reasoningContent?: string | null;
+  /** 图片列表（base64 data URL 或 HTTP URL），用于多模态 LLM */
+  images?: string[];
 }
 
 export interface IncomingMessage {
@@ -35,6 +37,19 @@ export interface IncomingMessage {
   sessionType?: 'group' | 'private' | 'channel';
   /** 消息来源标识（用于并发隔离：同一 session 不同来源互不打断） */
   source?: string;
+  /** 群名称（仅群聊时可用） */
+  groupName?: string;
+  /** 群组 ID（直接字段，无需从 sessionId 解析） */
+  groupId?: string;
+  /** 引用回复的原消息 */
+  replyTo?: {
+    messageId: string;
+    content?: string;
+    userId?: string;
+    nickname?: string;
+  };
+  /** 通知子类型（如 poke、group_upload 等非消息事件） */
+  noticeType?: string;
 }
 
 export interface OutgoingMessage {
