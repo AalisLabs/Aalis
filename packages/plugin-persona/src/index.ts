@@ -45,6 +45,17 @@ export const defaultConfig = {
 
 // ===== 角色卡格式 =====
 
+interface PlatformOverride {
+  /** 追加到基础 prompt 的内容 */
+  appendPrompt?: string;
+  /** 完全替换基础 prompt（优先于 appendPrompt） */
+  prompt?: string;
+  /** 替换 description */
+  description?: string;
+  /** 替换 traits */
+  traits?: string[];
+}
+
 interface PersonaCard {
   name: string;
   description: string;
@@ -54,6 +65,8 @@ interface PersonaCard {
   outputFormat?: Record<string, { description: string; reply?: boolean }>;
   nick_name?: string[];
   mute_keyword?: string[];
+  /** 按平台标识覆盖/追加角色卡字段 */
+  platformOverrides?: Record<string, PlatformOverride>;
 }
 
 // ===== 实现 =====
@@ -74,6 +87,8 @@ class PersonaServiceImpl implements PersonaService {
   currentSessionType?: 'group' | 'private' | 'channel';
   /** 当前消息发送者 ID */
   currentUserId?: string;
+  /** 当前平台标识 */
+  currentPlatform?: string;
 
   constructor(
     card: PersonaCard,
@@ -121,16 +136,30 @@ class PersonaServiceImpl implements PersonaService {
       prompt += `当前时间：${timeStr}\n\n`;
     }
 
+    // 解析平台覆盖
+    const override = this.currentPlatform
+      ? this.card.platformOverrides?.[this.currentPlatform]
+      : undefined;
+
+    const description = override?.description ?? this.card.description;
+    const traits = override?.traits ?? this.card.traits;
+    const basePrompt = override?.prompt ?? this.card.prompt;
+
     if (this.card.name) {
       prompt += `你的名字是 ${this.card.name}。`;
     }
-    if (this.card.description) {
-      prompt += `${this.card.description}\n\n`;
+    if (description) {
+      prompt += `${description}\n\n`;
     }
-    if (this.card.traits && this.card.traits.length > 0) {
-      prompt += `性格特点: ${this.card.traits.join('、')}\n\n`;
+    if (traits && traits.length > 0) {
+      prompt += `性格特点: ${traits.join('、')}\n\n`;
     }
-    prompt += this.card.prompt;
+    prompt += basePrompt;
+
+    // 追加平台特定内容（仅当未完全替换 prompt 时）
+    if (!override?.prompt && override?.appendPrompt) {
+      prompt += '\n\n' + override.appendPrompt;
+    }
 
     // 会话上下文注入
     if (this.currentSessionId) {
@@ -253,6 +282,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
         nick_name: parsed.nick_name as string[] | undefined,
         mute_keyword: parsed.mute_keyword as string[] | undefined,
+        platformOverrides: parsed.platformOverrides as PersonaCard['platformOverrides'] | undefined,
       };
     } catch {
       return undefined;
@@ -285,12 +315,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentSessionId = data.message.sessionId;
     service.currentSessionType = data.message.sessionType;
     service.currentUserId = data.message.userId;
+    service.currentPlatform = data.message.platform;
     try {
       await next();
     } finally {
       service.currentSessionId = undefined;
       service.currentSessionType = undefined;
       service.currentUserId = undefined;
+      service.currentPlatform = undefined;
     }
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
 

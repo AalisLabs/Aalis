@@ -27,6 +27,7 @@ export type {
   ToolCallContext,
   RegisteredTool,
   ToolSummary,
+  ToolGroupInfo,
   SafetyLevel,
   UserIdentity,
   ServiceDependency,

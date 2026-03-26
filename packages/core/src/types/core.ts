@@ -28,6 +28,8 @@ export interface IncomingMessage {
   sessionId: string;
   platform: string;
   userId?: string;
+  /** 用户昵称 */
+  nickname?: string;
   images?: string[]; // base64 or URL
   /** 会话类型：群聊、私聊、频道等 */
   sessionType?: 'group' | 'private' | 'channel';
@@ -97,6 +99,8 @@ export interface ToolCallContext {
   sessionId: string;
   userId?: string;
   platform?: string;
+  /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
+  enabledGroups?: string[];
 }
 
 export interface RegisteredTool {
@@ -107,6 +111,8 @@ export interface RegisteredTool {
   safety?: SafetyLevel;
   /** 最低权限等级 (默认 1) */
   authority?: number;
+  /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
+  groups?: string[];
 }
 
 /** 工具摘要（不含 handler，用于搜索展示） */
@@ -115,6 +121,19 @@ export interface ToolSummary {
   description: string;
   authority: number;
   safety: SafetyLevel;
+  groups?: string[];
+}
+
+/** 工具分组信息 */
+export interface ToolGroupInfo {
+  /** 分组标识（如 'system'、'onebot'、'search'） */
+  name: string;
+  /** 显示名称（如 '系统工具'、'OneBot 工具'） */
+  label: string;
+  /** 分组描述 */
+  description?: string;
+  /** 注册该分组的插件 */
+  pluginName: string;
 }
 
 // ----- 服务依赖声明 -----

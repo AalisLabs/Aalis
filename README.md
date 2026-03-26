@@ -77,7 +77,7 @@ aalis/
 │   ├── plugin-embedding-openai/   # OpenAI Embedding
 │   ├── plugin-vectorstore-flat/   # 平面 JSON 向量存储
 │   ├── plugin-vectorstore-lancedb/# LanceDB 向量存储
-│   ├── plugin-tools-basic/        # 机器交互工具（Shell / 文件 / 系统 / HTTP）
+│   ├── plugin-tools-system/       # 系统工具集（Shell / 文件 / 系统 / HTTP）
 │   ├── plugin-tool-search/        # 工具搜索层
 │   ├── plugin-websearch-serper/   # Serper 联网搜索
 │   ├── plugin-adapter-onebot/     # OneBot v11/v12 协议适配器
@@ -100,7 +100,7 @@ aalis/
 | `persona` | 角色人格管理 | plugin-persona |
 | `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui |
 | `websearch` | 联网搜索 | plugin-websearch-serper |
-| `tools` | AI 工具注册表 | core (内置), plugin-tools-basic |
+| `tools` | AI 工具注册表 | core (内置), plugin-tools-system |
 | `semantic-memory` | 语义长期记忆 | plugin-memory-vector |
 
 ## 快速开始

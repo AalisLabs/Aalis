@@ -6,7 +6,7 @@ import { registerHttpTools } from './tools/http.js';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-tools-basic';
+export const name = '@aalis/plugin-tools-system';
 export const inject = {
   required: ['tools'],
 };
@@ -74,24 +74,44 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
   const cwd = cfg.workingDirectory || process.cwd();
 
+  /** 创建带分组标记的工具注册代理 */
+  function ctxWithGroups(groups: string[]): Context {
+    return new Proxy(ctx, {
+      get(target, prop) {
+        if (prop === 'registerTool') {
+          return (tool: Parameters<Context['registerTool']>[0]) =>
+            target.registerTool({ ...tool, groups });
+        }
+        return Reflect.get(target, prop, target);
+      },
+    }) as Context;
+  }
+
+  // 注册工具分组
+  ctx.registerToolGroup({
+    name: 'system',
+    label: '系统工具',
+    description: 'Shell 命令执行、文件操作、系统信息查询、HTTP 请求等系统级工具',
+  });
+
   // 注册各工具组
   if (cfg.shell.enabled) {
-    registerShellTools(ctx, { cwd, ...cfg.shell });
+    registerShellTools(ctxWithGroups(['system']), { cwd, ...cfg.shell });
     ctx.logger.info('Shell 工具已启用');
   }
 
   if (cfg.file.enabled) {
-    registerFileTools(ctx, { cwd, ...cfg.file });
+    registerFileTools(ctxWithGroups(['system']), { cwd, ...cfg.file });
     ctx.logger.info('文件工具已启用');
   }
 
   if (cfg.system.enabled) {
-    registerSystemTools(ctx, { cwd });
+    registerSystemTools(ctxWithGroups(['system']), { cwd });
     ctx.logger.info('系统工具已启用');
   }
 
   if (cfg.http.enabled) {
-    registerHttpTools(ctx, cfg.http);
+    registerHttpTools(ctxWithGroups(['system']), cfg.http);
     ctx.logger.info('HTTP 工具已启用');
   }
 
