@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, WebuiPage, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, ConfigManager, Logger } from '@aalis/core';
+import type { Context, WebuiPage, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, ConfigManager, Logger, App } from '@aalis/core';
 
 // ===== AuthorityManager 实现 =====
 
@@ -183,3 +183,157 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
     return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
   });
 }
+
+// ===== WebUI 操作处理器 =====
+
+export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+  /** 获取权限概览 */
+  async getOverview(ctx) {
+    const users = ctx.authority?.listUsers() ?? [];
+    const owners: Array<{ platform: string; userId: string }> = ctx.config.get('owners') ?? [];
+    const commands = ctx.commands?.getAll() ?? [];
+    const overrides = ctx.commands?.getOverrides() ?? {};
+    const tools = ctx.tools?.getAll() ?? [];
+    const toolOverrides = ctx.tools?.getOverrides() ?? {};
+    return {
+      users,
+      owners,
+      defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
+      ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
+      dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
+      commandPrefix: ctx.commands?.prefix ?? '/',
+      commands: commands.map(c => {
+        const o = overrides[c.name];
+        return {
+          name: c.name,
+          description: c.description,
+          authority: o?.authority ?? c.authority ?? 1,
+          safety: o?.safety ?? c.safety ?? 'safe',
+          baseAuthority: c.authority ?? 1,
+          baseSafety: c.safety ?? 'safe',
+          overridden: !!o,
+          pluginName: c.pluginName,
+        };
+      }),
+      commandOverrides: overrides,
+      tools,
+      toolOverrides,
+    };
+  },
+
+  /** 设置用户权限等级 */
+  async setUser(ctx, args) {
+    const { platform, userId, authority } = args;
+    if (!platform || !userId || typeof authority !== 'number') {
+      throw new Error('platform, userId, authority(number) 必填');
+    }
+    if (authority < 0) throw new Error('权限等级必须 >= 0');
+    ctx.authority?.setAuthority(platform as string, userId as string, authority);
+    ctx.authority?.save();
+    return { message: `${platform}:${userId} 权限已设为 ${authority}` };
+  },
+
+  /** 删除用户权限记录（回退到默认等级） */
+  async deleteUser(ctx, args) {
+    const { platform, userId } = args;
+    if (!platform || !userId) throw new Error('platform, userId 必填');
+    ctx.authority?.setAuthority(platform as string, userId as string, (ctx.config.get('defaultAuthority') ?? 1) as number);
+    ctx.authority?.save();
+    return { message: `${platform}:${userId} 权限已重置` };
+  },
+
+  /** 更新 owner 列表 */
+  async setOwners(ctx, args) {
+    const owners = args.owners;
+    if (!Array.isArray(owners)) throw new Error('owners 必须是数组');
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    ctx.config.set('owners', owners);
+    app.saveConfig();
+    return { message: 'Owner 列表已更新' };
+  },
+
+  /** 更新 dangerousPolicy */
+  async setDangerousPolicy(ctx, args) {
+    const policy = args.policy;
+    if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    ctx.config.set('dangerousPolicy', policy);
+    app.saveConfig();
+    return { message: '高危策略已更新' };
+  },
+
+  /** 更新全局权限配置（defaultAuthority, ownerAuthority） */
+  async setConfig(ctx, args) {
+    const { defaultAuthority, ownerAuthority } = args;
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    if (typeof defaultAuthority === 'number') ctx.config.set('defaultAuthority', defaultAuthority);
+    if (typeof ownerAuthority === 'number') ctx.config.set('ownerAuthority', ownerAuthority);
+    app.saveConfig();
+    return { message: '权限配置已更新' };
+  },
+
+  /** 更新单条指令的权限覆盖 */
+  async setCommandOverride(ctx, args) {
+    const { name, authority, safety } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    const override: { authority?: number; safety?: string } = {};
+    if (typeof authority === 'number') override.authority = authority;
+    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
+    if (Object.keys(override).length === 0) {
+      ctx.commands?.removeOverride(name);
+    } else {
+      ctx.commands?.setOverride(name, override);
+    }
+    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
+    app.saveConfig();
+    return { message: `指令 ${name} 权限已更新` };
+  },
+
+  /** 重置指令覆盖 */
+  async resetCommandOverride(ctx, args) {
+    const { name } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    ctx.commands?.removeOverride(name);
+    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
+    app.saveConfig();
+    return { message: `指令 ${name} 覆盖已重置` };
+  },
+
+  /** 更新单条工具的权限覆盖 */
+  async setToolOverride(ctx, args) {
+    const { name, authority, safety } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    const override: { authority?: number; safety?: string } = {};
+    if (typeof authority === 'number') override.authority = authority;
+    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
+    if (Object.keys(override).length === 0) {
+      ctx.tools?.removeOverride(name);
+    } else {
+      ctx.tools?.setOverride(name, override);
+    }
+    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
+    app.saveConfig();
+    return { message: `工具 ${name} 权限已更新` };
+  },
+
+  /** 重置工具覆盖 */
+  async resetToolOverride(ctx, args) {
+    const { name } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const app = ctx.getService<App>('app');
+    if (!app) throw new Error('App 不可用');
+    ctx.tools?.removeOverride(name);
+    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
+    app.saveConfig();
+    return { message: `工具 ${name} 覆盖已重置` };
+  },
+};

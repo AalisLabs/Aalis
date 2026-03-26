@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, UserIdentity, WebUIService, PersonaService, AgentService, WebuiPage } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, PersonaService, AgentService, WebuiPage } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -424,6 +424,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ platforms: ctx.getPlatformDetails() });
   });
 
+  // 获取已注册的工具分组（含元数据 + 各组工具数量）
+  expressApp.get('/api/tool-groups', (_req, res) => {
+    const groups = ctx.tools?.getGroups() ?? [];
+    const allTools = ctx.tools?.getAll() ?? [];
+    const result = groups.map(g => {
+      const toolCount = allTools.filter(t => t.groups?.includes(g.name)).length;
+      return { ...g, toolCount };
+    });
+    res.json({ groups: result });
+  });
+
   // 切换服务的偏好提供者（同时持久化到配置文件）
   expressApp.post('/api/services/:name/prefer', (req, res) => {
     const serviceName = req.params.name;
@@ -476,6 +487,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
+    // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
+    if (serviceName === 'toolGroups') {
+      const groups = ctx.tools?.getGroups() ?? [];
+      if (groups.length > 0) {
+        res.json({
+          models: groups.map(g => g.name).sort(),
+          details: groups.map(g => ({ value: g.name, label: g.label, description: g.description, pluginName: g.pluginName })),
+        });
+      } else {
+        // 回退：从已注册工具中提取分组名称
+        const tools = ctx.tools?.getAll() ?? [];
+        const groupSet = new Set<string>();
+        for (const t of tools) {
+          t.groups?.forEach((g: string) => groupSet.add(g));
+        }
+        res.json({ models: [...groupSet].sort() });
+      }
+      return;
+    }
+
     const service = ctx.getService<{ listModels?(): Promise<string[]> }>(serviceName);
     if (!service || typeof service.listModels !== 'function') {
       res.json({ models: [] });
@@ -487,214 +518,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } catch {
       res.json({ models: [] });
     }
-  });
-
-  // ---------- 权限管理 API ----------
-
-  // 获取权限概览（所有用户 + 配置）
-  expressApp.get('/api/authority', (_req, res) => {
-    const users = ctx.authority?.listUsers() ?? [];
-    const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
-    const commands = ctx.commands?.getAll() ?? [];
-    const overrides = ctx.commands?.getOverrides() ?? {};
-    const tools = ctx.tools?.getAll() ?? [];
-    const toolOverrides = ctx.tools?.getOverrides() ?? {};
-    res.json({
-      users,
-      owners,
-      defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
-      ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
-      dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
-      commandPrefix: ctx.commands?.prefix ?? '/',
-      commands: commands.map(c => {
-        const o = overrides[c.name];
-        return {
-          name: c.name,
-          description: c.description,
-          authority: o?.authority ?? c.authority ?? 1,
-          safety: o?.safety ?? c.safety ?? 'safe',
-          baseAuthority: c.authority ?? 1,
-          baseSafety: c.safety ?? 'safe',
-          overridden: !!o,
-          pluginName: c.pluginName,
-        };
-      }),
-      commandOverrides: overrides,
-      tools,
-      toolOverrides,
-    });
-  });
-
-  // 设置用户权限等级
-  expressApp.put('/api/authority/user', (req, res) => {
-    const { platform, userId, authority } = req.body ?? {};
-    if (!platform || !userId || typeof authority !== 'number') {
-      res.status(400).json({ error: 'platform, userId, authority(number) 必填' });
-      return;
-    }
-    if (authority < 0) {
-      res.status(400).json({ error: '权限等级必须 >= 0' });
-      return;
-    }
-    ctx.authority?.setAuthority(platform, userId, authority);
-    ctx.authority?.save();
-    res.json({ ok: true, message: `${platform}:${userId} 权限已设为 ${authority}` });
-  });
-
-  // 删除用户权限记录（回退到默认等级）
-  expressApp.delete('/api/authority/user', (req, res) => {
-    const { platform, userId } = req.body ?? {};
-    if (!platform || !userId) {
-      res.status(400).json({ error: 'platform, userId 必填' });
-      return;
-    }
-    ctx.authority?.setAuthority(platform, userId, ctx.config.get('defaultAuthority') ?? 1);
-    ctx.authority?.save();
-    res.json({ ok: true, message: `${platform}:${userId} 权限已重置` });
-  });
-
-  // 更新 owner 列表
-  expressApp.put('/api/authority/owners', (req, res) => {
-    const owners = req.body?.owners;
-    if (!Array.isArray(owners)) {
-      res.status(400).json({ error: 'owners 必须是数组' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    ctx.config.set('owners', owners);
-    app.saveConfig();
-    res.json({ ok: true, message: 'Owner 列表已更新' });
-  });
-
-  // 更新 dangerousPolicy
-  expressApp.put('/api/authority/dangerous', (req, res) => {
-    const policy = req.body?.policy;
-    if (!policy || typeof policy !== 'object') {
-      res.status(400).json({ error: 'policy 必须是对象' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    ctx.config.set('dangerousPolicy', policy);
-    app.saveConfig();
-    res.json({ ok: true, message: '高危策略已更新' });
-  });
-
-  // 更新全局权限配置（defaultAuthority, ownerAuthority）
-  expressApp.put('/api/authority/config', (req, res) => {
-    const { defaultAuthority, ownerAuthority } = req.body ?? {};
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    if (typeof defaultAuthority === 'number') {
-      ctx.config.set('defaultAuthority', defaultAuthority);
-    }
-    if (typeof ownerAuthority === 'number') {
-      ctx.config.set('ownerAuthority', ownerAuthority);
-    }
-    app.saveConfig();
-    res.json({ ok: true, message: '权限配置已更新' });
-  });
-
-
-
-  // 更新单条指令的权限覆盖
-  expressApp.put('/api/authority/command', (req, res) => {
-    const { name, authority, safety } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name 必填' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    const override: { authority?: number; safety?: string } = {};
-    if (typeof authority === 'number') override.authority = authority;
-    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
-
-    if (Object.keys(override).length === 0) {
-      // 移除覆盖
-      ctx.commands?.removeOverride(name);
-    } else {
-      ctx.commands?.setOverride(name, override);
-    }
-    // 持久化到配置
-    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
-    app.saveConfig();
-    res.json({ ok: true, message: `指令 ${name} 权限已更新` });
-  });
-
-  // 重置指令覆盖（恢复插件默认）
-  expressApp.delete('/api/authority/command', (req, res) => {
-    const { name } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name 必填' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    ctx.commands?.removeOverride(name);
-    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
-    app.saveConfig();
-    res.json({ ok: true, message: `指令 ${name} 覆盖已重置` });
-  });
-
-  // 更新单条工具的权限覆盖
-  expressApp.put('/api/authority/tool', (req, res) => {
-    const { name, authority, safety } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name 必填' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    const override: { authority?: number; safety?: string } = {};
-    if (typeof authority === 'number') override.authority = authority;
-    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
-
-    if (Object.keys(override).length === 0) {
-      ctx.tools?.removeOverride(name);
-    } else {
-      ctx.tools?.setOverride(name, override);
-    }
-    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
-    app.saveConfig();
-    res.json({ ok: true, message: `工具 ${name} 权限已更新` });
-  });
-
-  // 重置工具覆盖（恢复插件默认）
-  expressApp.delete('/api/authority/tool', (req, res) => {
-    const { name } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name 必填' });
-      return;
-    }
-    const app = getApp();
-    if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    ctx.tools?.removeOverride(name);
-    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
-    app.saveConfig();
-    res.json({ ok: true, message: `工具 ${name} 覆盖已重置` });
   });
 
   // ---------- 斜杠命令处理 (通过指令注册表) ----------

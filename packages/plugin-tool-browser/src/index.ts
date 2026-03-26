@@ -217,10 +217,19 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     return text.slice(0, config.maxContentLength) + `\n... [内容已截断，共 ${text.length} 字符]`;
   }
 
+  // ── 注册工具分组 ──
+
+  ctx.registerToolGroup({
+    name: 'browser',
+    label: '浏览器',
+    description: '使用 Puppeteer 无头浏览器进行网页导航、内容提取、截图等操作',
+  });
+
   // ── 注册工具 ──
 
   // 1. 导航 (navigate)
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {
@@ -261,6 +270,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 2. 获取页面文本
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {
@@ -302,6 +312,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 3. 点击元素
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {
@@ -335,6 +346,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 4. 输入文本
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {
@@ -376,6 +388,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 5. 截图
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {
@@ -421,6 +434,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 6. 获取页面链接列表
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {
@@ -458,6 +472,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 7. 关闭页面
   ctx.registerTool({
+    groups: ['browser'],
     definition: {
       type: 'function',
       function: {

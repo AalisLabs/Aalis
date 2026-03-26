@@ -78,6 +78,17 @@ async function callAction(
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
+  // 创建带分组标记的 Context 代理，所有通过此代理注册的工具自动归入 'onebot' 组
+  const groupedCtx = new Proxy(ctx, {
+    get(target, prop) {
+      if (prop === 'registerTool') {
+        return (tool: Parameters<Context['registerTool']>[0]) =>
+          target.registerTool({ ...tool, groups: ['onebot'] });
+      }
+      return Reflect.get(target, prop, target);
+    },
+  }) as Context;
+
   // 仅当 OneBot 平台可用时才注册工具
   // 使用 ready 事件确保平台已加载
   ctx.on('ready', () => {
@@ -88,15 +99,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
 
+    // 注册工具分组
+    ctx.registerToolGroup({
+      name: 'onebot',
+      label: 'OneBot 工具',
+      description: 'QQ 群管理、群信息查询、消息交互等 OneBot 平台工具',
+    });
+
     const cfg = {
       groupManagement: { enabled: true, ...(config.groupManagement as Record<string, unknown> ?? {}) },
       groupInfo: { enabled: true, ...(config.groupInfo as Record<string, unknown> ?? {}) },
       interaction: { enabled: true, ...(config.interaction as Record<string, unknown> ?? {}) },
     };
 
-    if (cfg.groupManagement.enabled) registerGroupManagementTools(ctx);
-    if (cfg.groupInfo.enabled) registerGroupInfoTools(ctx);
-    if (cfg.interaction.enabled) registerInteractionTools(ctx);
+    if (cfg.groupManagement.enabled) registerGroupManagementTools(groupedCtx);
+    if (cfg.groupInfo.enabled) registerGroupInfoTools(groupedCtx);
+    if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
   });
 }
 
