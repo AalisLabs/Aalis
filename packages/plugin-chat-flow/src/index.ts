@@ -317,9 +317,13 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory) return;
     try {
+      const senderLabel = incoming.nickname ?? incoming.userId;
+      const contentToSave = senderLabel
+        ? `[${senderLabel}]: ${incoming.content}`
+        : incoming.content;
       await memory.saveMessage(incoming.sessionId, {
         role: 'user',
-        content: incoming.content,
+        content: contentToSave,
         timestamp: Date.now(),
       });
     } catch (err) {

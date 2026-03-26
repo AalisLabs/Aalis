@@ -557,10 +557,14 @@ class DefaultAgent implements AgentService {
       }
     }
 
-    // 3. 当前用户消息
+    // 3. 当前用户消息（带发送者前缀，与历史消息格式一致）
+    const senderLabel = incoming.nickname ?? incoming.userId;
+    const currentContent = senderLabel
+      ? `[${senderLabel}]: ${incoming.content}`
+      : incoming.content;
     messages.push({
       role: 'user',
-      content: incoming.content,
+      content: currentContent,
       timestamp: Date.now(),
     });
 
