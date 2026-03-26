@@ -3,6 +3,7 @@ import type {
   OneBotRawEvent,
   NormalizedMessageEvent,
   NormalizedMetaEvent,
+  NormalizedNoticeEvent,
   SendMessageParams,
 } from './types.js';
 import { segmentsToText, parseContentToSegments, toV11Segments } from './types.js';
@@ -59,10 +60,11 @@ export class OneBotV11 implements OneBotProtocol {
     return info?.user_id != null ? String(info.user_id) : undefined;
   }
 
-  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'other' {
+  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'other' {
     switch (raw.post_type) {
       case 'message': return 'message';
       case 'meta_event': return 'meta';
+      case 'notice': return 'notice';
       default: return 'other';
     }
   }
@@ -86,6 +88,15 @@ export class OneBotV11 implements OneBotProtocol {
       }
     }
 
+    // 提取引用回复的消息 ID
+    let replyToMessageId: string | undefined;
+    for (const seg of message) {
+      if (seg.type === 'reply' && seg.data.id != null) {
+        replyToMessageId = String(seg.data.id);
+        break;
+      }
+    }
+
     // 提取发送者昵称（优先群名片，回退到昵称）
     const sender = raw.sender as Record<string, unknown> | undefined;
     const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
@@ -100,6 +111,7 @@ export class OneBotV11 implements OneBotProtocol {
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
       message,
       images: images.length > 0 ? images : undefined,
+      replyToMessageId,
     };
   }
 
@@ -112,6 +124,88 @@ export class OneBotV11 implements OneBotProtocol {
       subType,
       selfId,
       interval: (raw.interval as number) ?? (status?.interval as number) ?? undefined,
+    };
+  }
+
+  parseNoticeEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedNoticeEvent | null {
+    const selfId = raw.self_id != null ? String(raw.self_id) : fallbackSelfId;
+    const noticeType = (raw.notice_type ?? '') as string;
+    const subType = (raw.sub_type ?? '') as string;
+
+    // v11 poke: notice_type='notify', sub_type='poke'
+    if (noticeType === 'notify' && subType === 'poke') {
+      return {
+        selfId,
+        noticeType: 'poke',
+        userId: raw.user_id != null ? String(raw.user_id) : undefined,
+        targetId: raw.target_id != null ? String(raw.target_id) : undefined,
+        groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+      };
+    }
+
+    // 群文件上传: notice_type='group_upload'
+    if (noticeType === 'group_upload') {
+      const file = raw.file as Record<string, unknown> | undefined;
+      return {
+        selfId,
+        noticeType: 'group_upload',
+        userId: raw.user_id != null ? String(raw.user_id) : undefined,
+        groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+        data: file ? {
+          fileId: file.id,
+          fileName: file.name,
+          fileSize: file.size,
+          busid: file.busid,
+        } : undefined,
+      };
+    }
+
+    // 群成员增减: notice_type='group_increase' / 'group_decrease'
+    if (noticeType === 'group_increase' || noticeType === 'group_decrease') {
+      return {
+        selfId,
+        noticeType,
+        subType,
+        userId: raw.user_id != null ? String(raw.user_id) : undefined,
+        groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+        data: {
+          operatorId: raw.operator_id != null ? String(raw.operator_id) : undefined,
+        },
+      };
+    }
+
+    // 群管理员变动: notice_type='group_admin'
+    if (noticeType === 'group_admin') {
+      return {
+        selfId,
+        noticeType: 'group_admin',
+        subType,
+        userId: raw.user_id != null ? String(raw.user_id) : undefined,
+        groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+      };
+    }
+
+    // 消息撤回: notice_type='group_recall' / 'friend_recall'
+    if (noticeType === 'group_recall' || noticeType === 'friend_recall') {
+      return {
+        selfId,
+        noticeType,
+        userId: raw.user_id != null ? String(raw.user_id) : undefined,
+        groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+        data: {
+          operatorId: raw.operator_id != null ? String(raw.operator_id) : undefined,
+          messageId: raw.message_id != null ? String(raw.message_id) : undefined,
+        },
+      };
+    }
+
+    // 其他未处理的通知类型
+    return {
+      selfId,
+      noticeType: noticeType || 'unknown',
+      subType: subType || undefined,
+      userId: raw.user_id != null ? String(raw.user_id) : undefined,
+      groupId: raw.group_id != null ? String(raw.group_id) : undefined,
     };
   }
 }
