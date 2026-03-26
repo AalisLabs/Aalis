@@ -133,11 +133,61 @@ class DefaultAgent implements AgentService {
     const sep = '━'.repeat(52);
     const lines: string[] = ['', sep, `  ${tag}  (${elapsedMs}ms)`, sep];
 
-    // 内容
+    // 检查是否期望结构化输出
+    const persona = this.ctx.getService<PersonaService>('persona');
+    const expectJson = !!persona?.getOutputFormat?.();
+
+    // 尝试解析结构化输出 (outputFormat JSON)
+    let parsedFormat: Record<string, unknown> | null = null;
     if (response.content) {
+      const raw = response.content.trim();
+      const jsonStr = raw.startsWith('{')
+        ? raw
+        : raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
+      try {
+        const obj = JSON.parse(jsonStr);
+        if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
+          parsedFormat = obj;
+        }
+      } catch { /* 非 JSON，正常文本 */ }
+    }
+
+    if (parsedFormat) {
+      // 结构化输出：先展示原始 JSON，再逐字段展示
+      lines.push('  原始 JSON:');
+      try {
+        const compact = JSON.stringify(parsedFormat);
+        if (compact.length <= 200) {
+          lines.push(`    ${compact}`);
+        } else {
+          for (const pLine of JSON.stringify(parsedFormat, null, 2).split('\n')) {
+            lines.push(`    ${pLine}`);
+          }
+        }
+      } catch { /* ignore */ }
+      lines.push('');
+      lines.push('  结构化输出:');
+      for (const [key, value] of Object.entries(parsedFormat)) {
+        const valStr = typeof value === 'string' ? value : JSON.stringify(value);
+        if (valStr.includes('\n')) {
+          lines.push(`    ${key}:`);
+          for (const vLine of valStr.split('\n')) {
+            lines.push(`      ${vLine}`);
+          }
+        } else {
+          lines.push(`    ${key}: ${valStr}`);
+        }
+      }
+    } else if (response.content) {
+      // 普通文本
       lines.push('  内容:');
       for (const line of response.content.split('\n')) {
         lines.push(`    ${line}`);
+      }
+      // 期望 JSON 但模型返回了纯文本
+      if (expectJson) {
+        lines.push('');
+        lines.push('  ⚠ 期望结构化输出(JSON)但模型返回了纯文本');
       }
     } else {
       lines.push('  内容: (空)');
@@ -251,7 +301,7 @@ class DefaultAgent implements AgentService {
         };
 
         // Hook: llm-call:before — 插件可以修改消息或工具列表
-        const llmBeforeData = { messages, tools, sessionId: incoming.sessionId };
+        const llmBeforeData = { messages, tools, sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform };
         await this.ctx.hooks.run('llm-call:before', llmBeforeData);
 
         // 裁剪消息以确保不超过上下文窗口
@@ -360,7 +410,7 @@ class DefaultAgent implements AgentService {
           }
 
           // 继续请求 LLM (再次经过 hooks)
-          const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools, sessionId: incoming.sessionId };
+          const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools, sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform };
           await this.ctx.hooks.run('llm-call:before', nextLlmData);
 
           // 裁剪消息以确保不超过上下文窗口
@@ -393,10 +443,14 @@ class DefaultAgent implements AgentService {
         await this.ctx.hooks.run('response:before', responseData);
         replyContent = responseData.content;
 
-        // 保存用户消息到记忆
+        // 保存用户消息到记忆（带发送者前缀，便于模型区分群聊中的不同成员）
+        const senderLabel = incoming.nickname ?? incoming.userId;
+        const userContentToSave = senderLabel
+          ? `[${senderLabel}]: ${incoming.content}`
+          : incoming.content;
         await this.saveToMemory(incoming.sessionId, {
           role: 'user',
-          content: incoming.content,
+          content: userContentToSave,
           timestamp: Date.now(),
         });
 
@@ -547,73 +601,131 @@ class DefaultAgent implements AgentService {
   /**
    * 裁剪消息列表，使总 token 数不超过预算
    *
-   * 保护策略：
-   *  1. 首条 system（主提示词）和末条（当前用户消息）永不删除
-   *  2. hook 注入的 system 消息（长期记忆等）有独立的 memoryTokenBudget 保护额度
-   *  3. 优先从最旧的非 system 历史消息开始删除
-   *  4. 如果还不够，按比例缩减超长的 tool 结果内容
-   *  5. 最后才动 system 消息（长期记忆）
+   * 渐进式压缩策略（保证 agent 在长工具链中无限运行）：
+   *  1. 首条 system（主提示词）和末条消息永不删除
+   *  2. 缩减超出预留额度的 system 消息（长期记忆）
+   *  3. 截断过长的 tool 输出内容（保留头部关键信息）
+   *  4. 将最旧的 assistant+tool 组压缩为紧凑摘要（保留决策上下文）
+   *  5. 删除最旧的非 system 消息
+   *  6. 最后手段：删除 hook 注入的 system 消息
    */
   private trimMessages(messages: Message[], budget: number): Message[] {
     const result = messages.map(m => ({ ...m }));
     let estimated = this.estimateTokens(result);
     if (estimated <= budget) return result;
 
-    // 计算 system 消息（首条之外的，即 hook 注入的长期记忆等）的 token 总量
-    const systemIndices: number[] = [];
-    let systemTokens = 0;
-    for (let i = 1; i < result.length - 1; i++) {
-      if (result[i].role === 'system') {
-        systemIndices.push(i);
-        systemTokens += this.estimateMsgTokens(result[i]);
+    /** 重新扫描 system 消息索引（首条和末条之间） */
+    const findSystemIndices = (): number[] => {
+      const indices: number[] = [];
+      for (let i = 1; i < result.length - 1; i++) {
+        if (result[i].role === 'system') indices.push(i);
       }
-    }
-    // 如果长期记忆超出预留额度，截断长期记忆内容本身
-    if (systemTokens > this.memoryTokenBudget && systemIndices.length > 0) {
-      // 按比例缩减每条 system 消息的 content
-      const ratio = this.memoryTokenBudget / systemTokens;
-      for (const idx of systemIndices) {
-        const msg = result[idx];
-        if (msg.content && msg.content.length > 200) {
-          const oldTokens = this.estimateMsgTokens(msg);
-          const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
-          msg.content = msg.content.slice(0, targetLen) + '\n... [记忆内容已缩减]';
-          estimated -= (oldTokens - this.estimateMsgTokens(msg));
+      return indices;
+    };
+
+    // === Phase 1: 缩减超出预留额度的 system 消息 ===
+    {
+      const sysIdx = findSystemIndices();
+      let sysTokens = sysIdx.reduce((s, i) => s + this.estimateMsgTokens(result[i]), 0);
+      if (sysTokens > this.memoryTokenBudget && sysIdx.length > 0) {
+        const ratio = this.memoryTokenBudget / sysTokens;
+        for (const idx of sysIdx) {
+          const msg = result[idx];
+          if (msg.content && msg.content.length > 200) {
+            const oldTokens = this.estimateMsgTokens(msg);
+            const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
+            msg.content = msg.content.slice(0, targetLen) + '\n... [记忆内容已缩减]';
+            estimated -= (oldTokens - this.estimateMsgTokens(msg));
+          }
         }
       }
     }
     if (estimated <= budget) return result;
 
-    // 第一轮：从最旧的非 system 历史消息开始删除（跳过末条）
-    // 注意：assistant(含toolCalls) + 紧跟的 tool 消息必须成组删除
-    let i = 1;
-    while (estimated > budget && i < result.length - 1) {
-      if (result[i].role === 'system') {
-        i++;
-        continue;
+    // === Phase 2: 截断过长的 tool 输出 ===
+    for (let i = 1; i < result.length - 1; i++) {
+      if (estimated <= budget) break;
+      if (result[i].role === 'tool' && result[i].content && result[i].content!.length > 1500) {
+        const oldTokens = this.estimateMsgTokens(result[i]);
+        result[i].content = result[i].content!.slice(0, 500) + '\n... [工具输出已截断]';
+        estimated -= (oldTokens - this.estimateMsgTokens(result[i]));
       }
-      // 如果是 assistant 且含 toolCalls，连同后续的 tool 消息一起删除
-      if (result[i].role === 'assistant' && result[i].toolCalls && result[i].toolCalls!.length > 0) {
-        estimated -= this.estimateMsgTokens(result[i]);
-        result.splice(i, 1);
-        for (let s = 0; s < systemIndices.length; s++) {
-          if (systemIndices[s] > i) systemIndices[s]--;
+    }
+    if (estimated <= budget) return result;
+
+    // === Phase 3: 将旧的 assistant+tool 组压缩为摘要 ===
+    // 识别所有工具调用组 (assistant(toolCalls) + 紧跟的 tool 消息)
+    {
+      const groups: Array<{ start: number; end: number }> = [];
+      for (let j = 1; j < result.length; j++) {
+        if (result[j].role === 'assistant' && result[j].toolCalls?.length) {
+          let end = j + 1;
+          while (end < result.length && result[end].role === 'tool') end++;
+          groups.push({ start: j, end });
+          j = end - 1;
         }
-        // 继续删除紧跟的 tool 消息
-        while (i < result.length - 1 && result[i].role === 'tool') {
-          estimated -= this.estimateMsgTokens(result[i]);
-          result.splice(i, 1);
-          for (let s = 0; s < systemIndices.length; s++) {
-            if (systemIndices[s] > i) systemIndices[s]--;
+      }
+
+      // 从最旧开始压缩，保护最后一组（当前工具链需要完整结果）
+      let offset = 0;
+      for (let g = 0; g < groups.length - 1 && estimated > budget; g++) {
+        const start = groups[g].start - offset;
+        const end = groups[g].end - offset;
+        const groupLen = end - start;
+
+        // 计算当前组的 token
+        let groupTokens = 0;
+        const toolPreviews: string[] = [];
+        for (let j = start; j < end; j++) {
+          groupTokens += this.estimateMsgTokens(result[j]);
+          if (result[j].role === 'tool') {
+            const c = result[j].content ?? '';
+            toolPreviews.push(c.length > 100 ? c.slice(0, 100) + '...' : c);
           }
         }
-        continue;
+
+        // 构建紧凑摘要
+        const aMsg = result[start];
+        const names = aMsg.toolCalls!.map(tc => tc.function.name);
+        const parts = names.map((n, idx) => `${n} → ${toolPreviews[idx] ?? '(无结果)'}`);
+        let text = `[历史工具调用] ${parts.join(' | ')}`;
+        if (aMsg.content) text = `${aMsg.content}\n${text}`;
+
+        const summaryMsg: Message = { role: 'assistant', content: text };
+        const summaryTokens = this.estimateMsgTokens(summaryMsg);
+
+        // 仅在确实能节省 token 时压缩
+        if (summaryTokens < groupTokens) {
+          result.splice(start, groupLen, summaryMsg);
+          estimated -= (groupTokens - summaryTokens);
+          offset += groupLen - 1;
+        }
       }
-      // 如果是孤立的 tool 消息（其 assistant 已删），也删除
-      estimated -= this.estimateMsgTokens(result[i]);
-      result.splice(i, 1);
-      for (let s = 0; s < systemIndices.length; s++) {
-        if (systemIndices[s] > i) systemIndices[s]--;
+    }
+    if (estimated <= budget) {
+      if (result.length < messages.length) {
+        this.logger.info(`上下文压缩: ${messages.length} → ${result.length} 条消息 (约 ${estimated} tokens)`);
+      }
+      return result;
+    }
+
+    // === Phase 4: 删除最旧的非 system 消息 ===
+    {
+      let i = 1;
+      while (estimated > budget && i < result.length - 1) {
+        if (result[i].role === 'system') { i++; continue; }
+        // assistant(含toolCalls) + 紧跟的 tool 消息成组删除
+        if (result[i].role === 'assistant' && result[i].toolCalls?.length) {
+          estimated -= this.estimateMsgTokens(result[i]);
+          result.splice(i, 1);
+          while (i < result.length - 1 && result[i].role === 'tool') {
+            estimated -= this.estimateMsgTokens(result[i]);
+            result.splice(i, 1);
+          }
+          continue;
+        }
+        estimated -= this.estimateMsgTokens(result[i]);
+        result.splice(i, 1);
       }
     }
     if (estimated <= budget) {
@@ -621,10 +733,11 @@ class DefaultAgent implements AgentService {
       return result;
     }
 
-    // 第二轮（极端情况）：删除 hook 注入的 system 消息
-    for (let j = systemIndices.length - 1; j >= 0 && estimated > budget; j--) {
-      const idx = systemIndices[j];
-      if (idx > 0 && idx < result.length - 1) {
+    // === Phase 5: 极端情况 — 删除 hook 注入的 system 消息 ===
+    {
+      const sysIdx = findSystemIndices();
+      for (let j = sysIdx.length - 1; j >= 0 && estimated > budget; j--) {
+        const idx = sysIdx[j];
         estimated -= this.estimateMsgTokens(result[idx]);
         result.splice(idx, 1);
       }

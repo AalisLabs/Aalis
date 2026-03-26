@@ -440,7 +440,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ctx.logger.info(`OneBot 实现: ${meta.version.impl ?? 'unknown'} v${meta.version.version ?? '?'} (onebot ${meta.version.onebot_version ?? '?'})`);
       }
     } else if (meta.subType === 'heartbeat') {
-      ctx.logger.debug(`OneBot[${state.protocol.version}] 心跳 (interval: ${meta.interval ?? '?'}ms)`);
+      // 心跳事件不输出日志
     } else if (meta.subType === 'status_update') {
       ctx.logger.debug(`OneBot[${state.protocol.version}] 状态更新事件`);
     }

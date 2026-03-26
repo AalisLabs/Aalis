@@ -106,6 +106,31 @@ class LanceDBVectorStore implements VectorStoreService {
     }
   }
 
+  async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
+    if (!this.table) return 0;
+    const before = await this.table.countRows();
+    // LanceDB 的 metadata 存储在 metadata_json 字段中，需要通过全表扫描过滤
+    // 读取全部记录，过滤后重建表
+    const allRows = await this.table.query().toArray();
+    const keep = allRows.filter(row => {
+      const meta = JSON.parse(row.metadata_json as string) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(filter)) {
+        if (meta[key] !== value) return true;
+      }
+      return false;
+    });
+    const deleted = before - keep.length;
+    if (deleted > 0 && keep.length > 0) {
+      // 重建表
+      this.table.close();
+      await this.db.dropTable(this.tableName);
+      this.table = await this.db.createTable(this.tableName, keep);
+    } else if (deleted > 0 && keep.length === 0) {
+      await this.clear();
+    }
+    return deleted;
+  }
+
   async save(): Promise<void> {
     // LanceDB 自动持久化，无需手动 save
   }

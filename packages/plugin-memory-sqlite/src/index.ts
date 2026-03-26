@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { Context, MemoryService, Message, ConfigSchema } from '@aalis/core';
+import { randomUUID } from 'node:crypto';
+import type { Context, MemoryService, ConversationTurn, Message, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -46,6 +47,19 @@ class SQLiteMemoryService implements MemoryService {
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session
         ON messages(sessionId, timestamp);
+
+      CREATE TABLE IF NOT EXISTS conversation_turns (
+        turnId TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL,
+        userId TEXT,
+        platform TEXT,
+        userContent TEXT NOT NULL,
+        assistantContent TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_turns_session
+        ON conversation_turns(sessionId, timestamp);
     `);
   }
 
@@ -98,6 +112,59 @@ class SQLiteMemoryService implements MemoryService {
   async clearSession(sessionId: string): Promise<void> {
     const stmt = this.db.prepare('DELETE FROM messages WHERE sessionId = ?');
     stmt.run(sessionId);
+  }
+
+  // ----- 对话轮次归档 -----
+
+  async saveTurn(turn: Omit<ConversationTurn, 'id'>): Promise<string> {
+    const turnId = randomUUID();
+    const stmt = this.db.prepare(`
+      INSERT INTO conversation_turns (turnId, sessionId, userId, platform, userContent, assistantContent, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(turnId, turn.sessionId, turn.userId ?? null, turn.platform ?? null, turn.userContent, turn.assistantContent, turn.timestamp);
+    return turnId;
+  }
+
+  async getTurns(turnIds: string[]): Promise<ConversationTurn[]> {
+    if (turnIds.length === 0) return [];
+    const placeholders = turnIds.map(() => '?').join(',');
+    const stmt = this.db.prepare(`SELECT turnId, sessionId, userId, platform, userContent, assistantContent, timestamp FROM conversation_turns WHERE turnId IN (${placeholders})`);
+    const rows = stmt.all(...turnIds) as Array<{
+      turnId: string; sessionId: string; userId: string | null; platform: string | null;
+      userContent: string; assistantContent: string; timestamp: number;
+    }>;
+    return rows.map(row => ({
+      id: row.turnId,
+      sessionId: row.sessionId,
+      userId: row.userId ?? undefined,
+      platform: row.platform ?? undefined,
+      userContent: row.userContent,
+      assistantContent: row.assistantContent,
+      timestamp: row.timestamp,
+    }));
+  }
+
+  async deleteTurns(sessionId: string): Promise<number> {
+    const stmt = this.db.prepare('DELETE FROM conversation_turns WHERE sessionId = ?');
+    const result = stmt.run(sessionId);
+    return result.changes;
+  }
+
+  async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
+    const stmt = this.db.prepare(`
+      DELETE FROM messages
+      WHERE sessionId = ? AND id NOT IN (
+        SELECT id FROM messages WHERE sessionId = ? ORDER BY timestamp DESC LIMIT ?
+      )
+    `);
+    const result = stmt.run(sessionId, sessionId, keepRecent);
+    return result.changes;
+  }
+
+  async clearAll(): Promise<void> {
+    this.db.exec('DELETE FROM messages');
+    this.db.exec('DELETE FROM conversation_turns');
   }
 
   close(): void {

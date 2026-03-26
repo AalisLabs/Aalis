@@ -88,6 +88,19 @@ class FlatVectorStore implements VectorStoreService {
     await this.save();
   }
 
+  async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
+    const before = this.entries.length;
+    this.entries = this.entries.filter(e => {
+      for (const [key, value] of Object.entries(filter)) {
+        if (e.metadata[key] !== value) return true;
+      }
+      return false;
+    });
+    const deleted = before - this.entries.length;
+    if (deleted > 0) this.dirty = true;
+    return deleted;
+  }
+
   async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
     if (this.entries.length === 0) return [];
     const q = normalize(queryVector);

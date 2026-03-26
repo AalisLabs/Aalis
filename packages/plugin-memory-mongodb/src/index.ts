@@ -1,5 +1,6 @@
 import { MongoClient, type Collection, type Db } from 'mongodb';
-import type { Context, MemoryService, Message, ConfigSchema } from '@aalis/core';
+import { randomUUID } from 'node:crypto';
+import type { Context, MemoryService, ConversationTurn, Message, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -40,13 +41,26 @@ interface MessageDocument {
   createdAt: Date;
 }
 
+interface TurnDocument {
+  turnId: string;
+  sessionId: string;
+  userId?: string;
+  platform?: string;
+  userContent: string;
+  assistantContent: string;
+  timestamp: number;
+  createdAt: Date;
+}
+
 // ===== MongoDB 实现 =====
 
 class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
+  private turns: Collection<TurnDocument>;
 
-  constructor(collection: Collection<MessageDocument>) {
+  constructor(collection: Collection<MessageDocument>, turns: Collection<TurnDocument>) {
     this.collection = collection;
+    this.turns = turns;
   }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -83,6 +97,64 @@ class MongoMemoryService implements MemoryService {
   async clearSession(sessionId: string): Promise<void> {
     await this.collection.deleteMany({ sessionId });
   }
+
+  // ----- 对话轮次归档 -----
+
+  async saveTurn(turn: Omit<ConversationTurn, 'id'>): Promise<string> {
+    const turnId = randomUUID();
+    await this.turns.insertOne({
+      turnId,
+      sessionId: turn.sessionId,
+      userId: turn.userId,
+      platform: turn.platform,
+      userContent: turn.userContent,
+      assistantContent: turn.assistantContent,
+      timestamp: turn.timestamp,
+      createdAt: new Date(),
+    });
+    return turnId;
+  }
+
+  async getTurns(turnIds: string[]): Promise<ConversationTurn[]> {
+    if (turnIds.length === 0) return [];
+    const docs = await this.turns.find({ turnId: { $in: turnIds } }).toArray();
+    return docs.map(doc => ({
+      id: doc.turnId,
+      sessionId: doc.sessionId,
+      userId: doc.userId,
+      platform: doc.platform,
+      userContent: doc.userContent,
+      assistantContent: doc.assistantContent,
+      timestamp: doc.timestamp,
+    }));
+  }
+
+  async deleteTurns(sessionId: string): Promise<number> {
+    const result = await this.turns.deleteMany({ sessionId });
+    return result.deletedCount;
+  }
+
+  async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
+    // 找到要保留的最旧消息的 timestamp
+    const keepDocs = await this.collection
+      .find({ sessionId })
+      .sort({ timestamp: -1 })
+      .limit(keepRecent)
+      .project({ _id: 1 })
+      .toArray();
+    const keepIds = keepDocs.map(d => d._id);
+    if (keepIds.length === 0) return 0;
+    const result = await this.collection.deleteMany({
+      sessionId,
+      _id: { $nin: keepIds },
+    });
+    return result.deletedCount;
+  }
+
+  async clearAll(): Promise<void> {
+    await this.collection.deleteMany({});
+    await this.turns.deleteMany({});
+  }
 }
 
 // ===== 插件入口 =====
@@ -106,11 +178,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     await client.connect();
     const db: Db = client.db(mongoConfig.database);
     const collection = db.collection<MessageDocument>(mongoConfig.collection!);
+    const turnsCollection = db.collection<TurnDocument>('conversation_turns');
 
     // 创建索引
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
+    await turnsCollection.createIndex({ turnId: 1 }, { unique: true });
+    await turnsCollection.createIndex({ sessionId: 1, timestamp: 1 });
 
-    const service = new MongoMemoryService(collection);
+    const service = new MongoMemoryService(collection, turnsCollection);
     ctx.provide('memory', service);
 
     ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
