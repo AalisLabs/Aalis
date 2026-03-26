@@ -23,7 +23,7 @@ export interface HookContextMap {
   'message:after': { message: IncomingMessage; response: string; sessionId: string; metadata: Record<string, unknown> };
   /** 消息路由钩子：插件可拦截此钩子来替换 agent 或修改消息路由逻辑 */
   'message:route': { message: IncomingMessage; agent: AgentService | undefined };
-  'llm-call:before': { messages: Message[]; tools: ToolDefinition[] };
+  'llm-call:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string };
   'llm-call:after': { response: ChatResponse; messages: Message[] };
   'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
   'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
