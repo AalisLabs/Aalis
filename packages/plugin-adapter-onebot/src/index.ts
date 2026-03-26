@@ -51,6 +51,8 @@ interface ConnectionState {
   selfId?: string;
   protocol?: OneBotProtocol;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  heartbeatTimer?: ReturnType<typeof setInterval>;
+  lastPong: number;
   pendingActions: Map<string, {
     resolve: (data: unknown) => void;
     reject: (err: Error) => void;
@@ -103,6 +105,8 @@ const protocolV12 = new OneBotV12();
 // ===== 重连配置 =====
 const RECONNECT_INTERVAL = 5000;
 const ACTION_TIMEOUT = 30000;
+const HEARTBEAT_INTERVAL = 30000;
+const HEARTBEAT_TIMEOUT = 10000;
 
 // ===== 插件入口 =====
 
@@ -240,6 +244,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       config: connConfig,
       status: 'offline',
       selfId: connConfig.selfId,
+      lastPong: 0,
       pendingActions: new Map(),
     };
 
@@ -255,6 +260,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     states.push(state);
     doConnect(state);
     return state;
+  }
+
+  function stopHeartbeat(state: ConnectionState): void {
+    if (state.heartbeatTimer) {
+      clearInterval(state.heartbeatTimer);
+      state.heartbeatTimer = undefined;
+    }
   }
 
   function doConnect(state: ConnectionState): void {
@@ -273,7 +285,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ws.on('open', () => {
       state.status = 'online';
+      state.lastPong = Date.now();
       ctx.logger.info(`OneBot 已连接: ${state.config.url}`);
+
+      // 客户端心跳：定期 ping，检测待机后的死连接
+      stopHeartbeat(state);
+      ws.on('pong', () => { state.lastPong = Date.now(); });
+      state.heartbeatTimer = setInterval(() => {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        if (Date.now() - state.lastPong > HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT) {
+          ctx.logger.warn(`OneBot 心跳超时，主动断开: ${state.config.url}`);
+          state.ws.terminate();
+          return;
+        }
+        state.ws.ping();
+      }, HEARTBEAT_INTERVAL);
 
       onConnected(state);
     });
@@ -317,6 +343,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ws.on('close', () => {
       state.status = 'offline';
       state.ws = undefined;
+      stopHeartbeat(state);
       for (const [, pending] of state.pendingActions) {
         clearTimeout(pending.timer);
         pending.reject(new Error('连接已关闭'));
@@ -471,6 +498,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('dispose', () => {
     for (const state of states) {
       if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+      stopHeartbeat(state);
       if (state.ws) {
         state.ws.removeAllListeners();
         state.ws.close();
