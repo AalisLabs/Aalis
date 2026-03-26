@@ -8,4 +8,5 @@ dist/
 .env
 .env.local
 data/
-aalis.config.yaml
+aalis.config.yamlgit log --all --oneline -- aalis.config.yaml
+workspace/

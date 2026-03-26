@@ -48,6 +48,7 @@ interface AuthorityData {
   dangerousPolicy: {
     allow?: string[];
     duration?: number;
+    enabledAt?: number;
   };
 }
 
@@ -96,7 +97,27 @@ export function AuthorityPage() {
     setLoading(false);
   }, []);
 
+  // 倒计时：剩余秒数
+  const [remainSec, setRemainSec] = useState<number | null>(null);
+
   useEffect(() => { refresh(); }, [refresh]);
+
+  // 当 data 变化时启动 / 重置倒计时
+  useEffect(() => {
+    const policy = data?.dangerousPolicy;
+    if (!policy?.enabledAt || !policy?.duration || policy.duration <= 0) {
+      setRemainSec(null);
+      return;
+    }
+    const calc = () => {
+      const elapsed = (Date.now() - policy.enabledAt!) / 1000;
+      const left = Math.max(0, Math.ceil(policy.duration! - elapsed));
+      setRemainSec(left);
+    };
+    calc();
+    const timer = setInterval(calc, 1000);
+    return () => clearInterval(timer);
+  }, [data?.dangerousPolicy]);
 
   const flash = (msg: string) => {
     setMessage(msg);
@@ -603,7 +624,16 @@ export function AuthorityPage() {
                 </div>
                 <div className="config-item">
                   <span className="key">duration</span>
-                  <span className="val">{data.dangerousPolicy?.duration ?? 0}s {data.dangerousPolicy?.duration === 0 ? '(永久)' : ''}</span>
+                  <span className="val">
+                    {data.dangerousPolicy?.duration === 0
+                      ? '(永久)'
+                      : remainSec != null
+                        ? remainSec > 0
+                          ? `${Math.floor(remainSec / 3600).toString().padStart(2, '0')}:${Math.floor((remainSec % 3600) / 60).toString().padStart(2, '0')}:${(remainSec % 60).toString().padStart(2, '0')} 剩余`
+                          : '✕ 已过期'
+                        : `${data.dangerousPolicy?.duration ?? 0}s (未激活)`
+                    }
+                  </span>
                 </div>
                 <div style={{ padding: '6px 0 2px' }}>
                   <button className="btn-sm" onClick={() => setEditDangerous(true)}>编辑</button>

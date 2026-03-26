@@ -54,6 +54,8 @@ interface PlatformOverride {
   description?: string;
   /** 替换 traits */
   traits?: string[];
+  /** 禁用结构化输出格式（该平台回复纯文本） */
+  disableOutputFormat?: boolean;
 }
 
 interface PersonaCard {
@@ -192,8 +194,11 @@ class PersonaServiceImpl implements PersonaService {
       }
     }
 
-    // 追加结构化输出指令
-    if (this._outputFormat) {
+    // 追加结构化输出指令（若当前平台禁用则跳过）
+    const platformDisabled = this.currentPlatform
+      ? this.card.platformOverrides?.[this.currentPlatform]?.disableOutputFormat
+      : false;
+    if (this._outputFormat && !platformDisabled) {
       prompt += '\n\n# 输出格式\n';
       prompt += '你必须始终以如下 JSON 格式回复，不要输出 JSON 之外的任何内容：\n';
       prompt += '```json\n{\n';
@@ -333,6 +338,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.middleware('response:before', async (data, next) => {
       await next();
+      // 当前平台禁用了结构化输出则跳过解析
+      if (service.currentPlatform
+        && card.platformOverrides?.[service.currentPlatform]?.disableOutputFormat) {
+        return;
+      }
       const raw = data.content.trim();
       // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记）
       const jsonStr = raw.startsWith('{')
