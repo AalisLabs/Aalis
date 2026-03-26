@@ -78,12 +78,17 @@ export class OneBotV12 implements OneBotProtocol {
       }
     }
 
+    // 提取发送者昵称
+    const sender = raw.sender as Record<string, unknown> | undefined;
+    const nickname = (sender?.card as string) || (sender?.nickname as string) || (sender?.user_name as string) || undefined;
+
     return {
       selfId,
       detailType,
       text,
       messageId: raw.message_id != null ? String(raw.message_id) : undefined,
       userId: raw.user_id != null ? String(raw.user_id) : undefined,
+      nickname,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
       guildId: raw.guild_id != null ? String(raw.guild_id) : undefined,
       channelId: raw.channel_id != null ? String(raw.channel_id) : undefined,

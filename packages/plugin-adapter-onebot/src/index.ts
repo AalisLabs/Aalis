@@ -416,6 +416,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       sessionId,
       platform: 'onebot',
       userId: event.userId,
+      nickname: event.nickname,
       images: event.images,
       sessionType: event.detailType === 'group' ? 'group'
         : event.detailType === 'private' ? 'private'

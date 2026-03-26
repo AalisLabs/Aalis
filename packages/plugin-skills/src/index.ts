@@ -258,10 +258,19 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   ctx.provide('skills', service);
 
+  // ── 注册工具分组 ──
+
+  ctx.registerToolGroup({
+    name: 'skills',
+    label: '技能管理',
+    description: '创建、查看、执行和管理可复用的提示词技能模板',
+  });
+
   // ── 注册 AI 工具 ──
 
   // 1. 创建技能
   ctx.registerTool({
+    groups: ['skills'],
     definition: {
       type: 'function',
       function: {
@@ -305,6 +314,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 2. 列出技能
   ctx.registerTool({
+    groups: ['skills'],
     definition: {
       type: 'function',
       function: {
@@ -327,6 +337,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 3. 执行技能（展开模板 → 发送给自己作为新对话输入）
   ctx.registerTool({
+    groups: ['skills'],
     definition: {
       type: 'function',
       function: {
@@ -384,6 +395,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 4. 更新技能
   ctx.registerTool({
+    groups: ['skills'],
     definition: {
       type: 'function',
       function: {
@@ -420,6 +432,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 5. 删除技能
   ctx.registerTool({
+    groups: ['skills'],
     definition: {
       type: 'function',
       function: {

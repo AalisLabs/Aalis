@@ -14,6 +14,7 @@ export type {
   ToolCallContext,
   RegisteredTool,
   ToolSummary,
+  ToolGroupInfo,
   ServiceDependency,
   DependencyDeclaration,
   InjectDeclaration,

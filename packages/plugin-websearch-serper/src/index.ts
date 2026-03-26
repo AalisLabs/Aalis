@@ -197,8 +197,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     `并发: ${cfg.maxConcurrent})`,
   );
 
+  // 注册工具分组
+  ctx.registerToolGroup({
+    name: 'search',
+    label: '网页搜索',
+    description: '通过 Serper API 搜索互联网获取最新信息',
+  });
+
   // 注册搜索工具
   ctx.registerTool({
+    groups: ['search'],
     definition: {
       type: 'function',
       function: {

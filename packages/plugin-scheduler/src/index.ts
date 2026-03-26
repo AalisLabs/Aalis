@@ -430,7 +430,14 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
 
   if (ctx.tools) {
+    ctx.registerToolGroup({
+      name: 'scheduler',
+      label: '定时任务',
+      description: '创建、查看和取消定时/周期性自主行动计划',
+    });
+
     ctx.registerTool({
+      groups: ['scheduler'],
       definition: {
         type: 'function',
         function: {
@@ -468,6 +475,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     });
 
     ctx.registerTool({
+      groups: ['scheduler'],
       definition: {
         type: 'function',
         function: {
@@ -491,6 +499,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     });
 
     ctx.registerTool({
+      groups: ['scheduler'],
       definition: {
         type: 'function',
         function: {

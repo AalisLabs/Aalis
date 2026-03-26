@@ -15,17 +15,6 @@ import type {
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
-const IDENTITY_PROMPT = '你是一个智能助手。';
-
-const GUIDELINES_PROMPT = `请根据以下准则行动：
-- 诚实、准确地回答用户的问题
-- 当工具能够帮助回答问题时，主动使用工具
-- 如果不确定，请坦诚说明而不是猜测
-- 利用之前对话的上下文来提供连贯的体验
-- 回答应当简洁清晰，除非用户要求详细解释`;
-
-const BASE_SYSTEM_PROMPT = `${IDENTITY_PROMPT}${GUIDELINES_PROMPT}`;
-
 /**
  * 默认 Agent 实现 —— 对话编排器
  *
@@ -44,6 +33,8 @@ class DefaultAgent implements AgentService {
   private logger: Logger;
   private systemPrompt: string;
   private memoryTokenBudget: number;
+  /** 平台 → 启用的工具分组映射 */
+  private toolGroups: Record<string, string[]>;
 
   /**
    * 活跃 AbortController 表
@@ -56,8 +47,9 @@ class DefaultAgent implements AgentService {
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
     this.logger = ctx.logger.child('agent');
-    this.systemPrompt = (config.systemPrompt as string) || GUIDELINES_PROMPT;
+    this.systemPrompt = (config.systemPrompt as string) || '';
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
+    this.toolGroups = parseToolGroups(config.toolGroups);
     this.logger.info('默认对话代理已初始化');
   }
 
@@ -131,6 +123,62 @@ class DefaultAgent implements AgentService {
     };
   }
 
+  /**
+   * Debug 模式下格式化输出 LLM 响应详情
+   */
+  private debugLogResponse(response: ChatResponse, elapsedMs: number, iteration?: number): void {
+    const tag = iteration != null ? `LLM 响应 (工具迭代 #${iteration})` : 'LLM 响应';
+    const sep = '━'.repeat(52);
+    const lines: string[] = ['', sep, `  ${tag}  (${elapsedMs}ms)`, sep];
+
+    // 内容
+    if (response.content) {
+      lines.push('  内容:');
+      for (const line of response.content.split('\n')) {
+        lines.push(`    ${line}`);
+      }
+    } else {
+      lines.push('  内容: (空)');
+    }
+
+    // 推理
+    if (response.reasoningContent) {
+      lines.push('');
+      lines.push('  推理:');
+      for (const line of response.reasoningContent.split('\n')) {
+        lines.push(`    ${line}`);
+      }
+    }
+
+    // 工具调用
+    if (response.toolCalls?.length) {
+      lines.push('');
+      lines.push('  工具调用:');
+      for (const tc of response.toolCalls) {
+        lines.push(`    -> ${tc.function.name}`);
+        // 格式化 JSON 参数
+        try {
+          const pretty = JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
+          for (const pLine of pretty.split('\n')) {
+            lines.push(`       ${pLine}`);
+          }
+        } catch {
+          lines.push(`       ${tc.function.arguments}`);
+        }
+      }
+    }
+
+    // Token 用量
+    if (response.usage) {
+      const u = response.usage;
+      lines.push('');
+      lines.push(`  Token: 输入 ${u.promptTokens} / 输出 ${u.completionTokens} / 总计 ${u.totalTokens}`);
+    }
+
+    lines.push(sep);
+    this.logger.debug(lines.join('\n'));
+  }
+
   async handleMessage(incoming: IncomingMessage): Promise<void> {
     const lane = this.laneKey(incoming.sessionId, incoming.source);
 
@@ -188,11 +236,16 @@ class DefaultAgent implements AgentService {
 
       try {
         const messages = await this.buildMessages(incoming);
-        const tools = this.ctx.tools?.getDefinitions() ?? [];
+        // 根据平台筛选工具分组
+        const enabledGroups = this.toolGroups[incoming.platform] ?? this.toolGroups['default'];
+        const tools = this.ctx.tools?.getDefinitions(
+          enabledGroups ? { groups: enabledGroups } : undefined,
+        ) ?? [];
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           userId: incoming.userId,
           platform: incoming.platform,
+          enabledGroups,
         };
 
         // Hook: llm-call:before — 插件可以修改消息或工具列表
@@ -202,6 +255,12 @@ class DefaultAgent implements AgentService {
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
 
+        this.logger.debug(
+          `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
+          `${llmBeforeData.tools.length} 个工具, ` +
+          `temperature=${temperature}, maxTokens=${maxTokens}`,
+        );
+        const t0 = Date.now();
         let response = await this.consumeStream(llm, {
           messages: llmBeforeData.messages,
           tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
@@ -209,6 +268,8 @@ class DefaultAgent implements AgentService {
           maxTokens,
           signal,
         }, incoming.sessionId, incoming.platform, signal);
+
+        this.debugLogResponse(response, Date.now() - t0);
 
         // Hook: llm-call:after — 插件可以处理 LLM 返回结果
         const llmAfterData = { response, messages: llmBeforeData.messages };
@@ -258,6 +319,8 @@ class DefaultAgent implements AgentService {
               phase: 'start',
             });
 
+            this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
+            const toolT0 = Date.now();
             let result = await (this.ctx.tools?.execute(
               toolBeforeData.name,
               toolBeforeData.args,
@@ -268,6 +331,7 @@ class DefaultAgent implements AgentService {
             const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
             await this.ctx.hooks.run('tool-call:after', toolAfterData);
             result = toolAfterData.result;
+            this.logger.debug(`工具完成: ${toolBeforeData.name} (${Date.now() - toolT0}ms) 结果=${result}`);
 
             // 通知平台：工具执行完成
             await this.ctx.emit('tool:execute', {
@@ -293,6 +357,7 @@ class DefaultAgent implements AgentService {
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
 
+          const tN = Date.now();
           response = await this.consumeStream(llm, {
             messages: nextLlmData.messages,
             tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
@@ -300,6 +365,8 @@ class DefaultAgent implements AgentService {
             maxTokens,
             signal,
           }, incoming.sessionId, incoming.platform, signal);
+
+          this.debugLogResponse(response, Date.now() - tN, iterations);
 
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
           await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
@@ -431,10 +498,12 @@ class DefaultAgent implements AgentService {
     if (persona) {
       const personaPrompt = persona.getSystemPrompt();
       // persona 已包含身份信息，仅追加行为准则
-      return `${personaPrompt}\n\n${this.systemPrompt}`;
+      return this.systemPrompt
+        ? `${personaPrompt}\n\n${this.systemPrompt}`
+        : personaPrompt;
     }
-    // 无 persona 时以身份描述开头
-    return `${IDENTITY_PROMPT}${this.systemPrompt}`;
+    // 无 persona 时仅使用用户配置的提示词
+    return this.systemPrompt;
   }
 
   /**
@@ -588,12 +657,51 @@ export const configSchema: ConfigSchema = {
     default: 4096,
     description: '为长期记忆注入的 system 消息预留的 token 额度，截断时不会删除这些消息',
   },
+  toolGroups: {
+    type: 'array',
+    label: '工具分组',
+    description: '按平台配置启用的工具分组。每条指定一个平台标识（如 onebot、web）或 default（默认），以及该平台启用的分组名列表。未配置的平台使用所有工具。',
+    items: {
+      platform: {
+        type: 'string',
+        label: '平台标识',
+        description: '平台名（如 onebot、webui）或 default 表示默认',
+      },
+      groups: {
+        type: 'multiselect',
+        label: '启用的工具组',
+        dynamicOptions: 'toolGroups',
+        allowCustom: true,
+      },
+    },
+  },
 };
 
 export const defaultConfig = {
-  systemPrompt: GUIDELINES_PROMPT,
+  systemPrompt: '',
   memoryTokenBudget: 4096,
+  toolGroups: [],
 };
+
+/** 将 SchemaArray 格式或旧 Record 格式的 toolGroups 统一转为 Record<string, string[]> */
+function parseToolGroups(raw: unknown): Record<string, string[]> {
+  if (!raw) return {};
+  // 新格式: Array<{ platform: string; groups: string[] }>
+  if (Array.isArray(raw)) {
+    const result: Record<string, string[]> = {};
+    for (const entry of raw) {
+      if (entry && typeof entry === 'object' && typeof entry.platform === 'string' && Array.isArray(entry.groups)) {
+        result[entry.platform] = entry.groups;
+      }
+    }
+    return result;
+  }
+  // 旧格式兼容: Record<string, string[]>
+  if (typeof raw === 'object') {
+    return raw as Record<string, string[]>;
+  }
+  return {};
+}
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agent = new DefaultAgent(ctx, config);

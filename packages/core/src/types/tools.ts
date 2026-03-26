@@ -5,6 +5,7 @@ import type {
   ToolDefinition,
   ToolCallContext,
   ToolSummary,
+  ToolGroupInfo,
   SafetyLevel,
 } from './core.js';
 import type { AuthorityService } from './authority.js';
@@ -21,7 +22,12 @@ export interface ToolService {
     pluginName: string,
   ): () => void;
 
-  getDefinitions(): ToolDefinition[];
+  /**
+   * 获取工具定义列表
+   * @param filter 可选过滤条件
+   *   - groups: 仅返回属于指定分组的工具（无 groups 的工具始终包含）
+   */
+  getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
 
   getSummaries(): ToolSummary[];
 
@@ -34,6 +40,7 @@ export interface ToolService {
     baseSafety: string;
     overridden: boolean;
     pluginName: string;
+    groups?: string[];
   }>;
 
   execute(
@@ -50,4 +57,9 @@ export interface ToolService {
   setOverride(name: string, override: { authority?: number; safety?: string }): void;
   removeOverride(name: string): void;
   getOverrides(): Record<string, { authority?: number; safety?: string }>;
+
+  /** 注册工具分组 */
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
+  /** 获取所有已注册的工具分组 */
+  getGroups(): ToolGroupInfo[];
 }

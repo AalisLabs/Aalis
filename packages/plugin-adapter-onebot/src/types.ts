@@ -36,6 +36,8 @@ export interface NormalizedMessageEvent {
   text: string;
   messageId?: string;
   userId?: string;
+  /** 用户昵称 */
+  nickname?: string;
   groupId?: string;
   guildId?: string;
   channelId?: string;

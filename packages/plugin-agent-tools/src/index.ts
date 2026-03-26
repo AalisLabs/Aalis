@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   ToolCallContext,
   ToolSummary,
+  ToolGroupInfo,
   SafetyLevel,
   Logger,
 } from '@aalis/core';
@@ -15,6 +16,7 @@ import type {
 class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
   private _overrides = new Map<string, { authority?: number; safety?: string }>();
+  private _groups = new Map<string, ToolGroupInfo>();
   private logger: Logger;
   private _authority?: AuthorityService;
 
@@ -39,8 +41,15 @@ class ToolRegistry implements ToolService {
     };
   }
 
-  getDefinitions(): ToolDefinition[] {
-    return [...this.tools.values()].map(t => t.definition);
+  getDefinitions(filter?: { groups?: string[] }): ToolDefinition[] {
+    const tools = [...this.tools.values()];
+    if (filter?.groups && filter.groups.length > 0) {
+      const enabledGroups = new Set(filter.groups);
+      return tools
+        .filter(t => !t.groups || t.groups.length === 0 || t.groups.some(g => enabledGroups.has(g)))
+        .map(t => t.definition);
+    }
+    return tools.map(t => t.definition);
   }
 
   getSummaries(): ToolSummary[] {
@@ -52,6 +61,7 @@ class ToolRegistry implements ToolService {
         description: t.definition.function.description,
         authority: o?.authority ?? t.authority ?? 1,
         safety: (o?.safety as SafetyLevel) ?? t.safety ?? 'safe',
+        groups: t.groups,
       };
     });
   }
@@ -65,6 +75,7 @@ class ToolRegistry implements ToolService {
     baseSafety: string;
     overridden: boolean;
     pluginName: string;
+    groups?: string[];
   }> {
     return [...this.tools.values()].map(t => {
       const name = t.definition.function.name;
@@ -78,6 +89,7 @@ class ToolRegistry implements ToolService {
         baseSafety: t.safety ?? 'safe',
         overridden: !!o,
         pluginName: t.pluginName,
+        groups: t.groups,
       };
     });
   }
@@ -97,6 +109,22 @@ class ToolRegistry implements ToolService {
   loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void {
     this._overrides.clear();
     for (const [name, o] of Object.entries(overrides)) this._overrides.set(name, o);
+  }
+
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void {
+    const info: ToolGroupInfo = { ...group, pluginName };
+    this._groups.set(group.name, info);
+    this.logger.debug(`注册工具分组: ${group.name} (来自 ${pluginName})`);
+    return () => {
+      if (this._groups.get(group.name)?.pluginName === pluginName) {
+        this._groups.delete(group.name);
+        this.logger.debug(`注销工具分组: ${group.name}`);
+      }
+    };
+  }
+
+  getGroups(): ToolGroupInfo[] {
+    return [...this._groups.values()];
   }
 
   async execute(

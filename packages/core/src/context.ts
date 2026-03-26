@@ -3,7 +3,7 @@ import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, AuthorityService } from './types/index.js';
+import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, AuthorityService } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
@@ -288,6 +288,17 @@ export class Context {
   registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void {
     if (!this.tools) throw new Error('tools 服务不可用，请安装 @aalis/plugin-agent-tools');
     const dispose = this.tools.register(tool, this.id);
+    this._disposables.push(dispose);
+    return dispose;
+  }
+
+  /**
+   * 注册工具分组（便捷方法）
+   * 插件通过此方法声明其提供的工具分组，包含显示名称和描述
+   */
+  registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
+    if (!this.tools) throw new Error('tools 服务不可用，请安装 @aalis/plugin-agent-tools');
+    const dispose = this.tools.registerGroup(group, this.id);
     this._disposables.push(dispose);
     return dispose;
   }
