@@ -46,6 +46,8 @@ interface WSIncoming {
   type: 'message' | 'subscribe_logs' | 'abort';
   content?: string;
   sessionId?: string;
+  /** base64 data URL 或 HTTP URL 列表 */
+  images?: string[];
 }
 
 interface WSOutgoing {
@@ -648,6 +650,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessionId,
           platform: 'webui',
           userId: 'console',
+          ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
         });
       } catch (err) {
         ctx.logger.warn('WebUI 消息处理失败:', err);

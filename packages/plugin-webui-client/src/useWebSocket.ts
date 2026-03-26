@@ -64,13 +64,17 @@ export function useWebSocket(
     };
   }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting]);
 
-  const send = useCallback((content: string) => {
+  const send = useCallback((content: string, images?: string[]) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
+      const payload: Record<string, unknown> = {
         type: 'message',
         content,
         sessionId: SESSION_ID,
-      }));
+      };
+      if (images && images.length > 0) {
+        payload.images = images;
+      }
+      wsRef.current.send(JSON.stringify(payload));
     }
   }, []);
 

@@ -44,6 +44,22 @@ export interface NormalizedMessageEvent {
   message: OneBotMessageSegment[];
   /** 图片 URL 列表（从 image 段提取） */
   images?: string[];
+  /** 引用回复的原消息 ID */
+  replyToMessageId?: string;
+}
+
+/** 标准化后的通知事件 */
+export interface NormalizedNoticeEvent {
+  selfId: string;
+  /** 通知类型: poke, group_upload, group_increase, group_decrease, group_admin, group_recall 等 */
+  noticeType: string;
+  subType?: string;
+  userId?: string;
+  nickname?: string;
+  targetId?: string;
+  groupId?: string;
+  /** 附加数据（如上传文件的信息等） */
+  data?: Record<string, unknown>;
 }
 
 /** 标准化后的元事件 */
@@ -91,14 +107,17 @@ export interface OneBotProtocol {
   /** 解析自身信息响应 */
   parseSelfInfo(data: unknown): string | undefined;
 
-  /** 解析原始事件类型: 'message' | 'meta' | 'other' */
-  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'other';
+  /** 解析原始事件类型: 'message' | 'meta' | 'notice' | 'other' */
+  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'other';
 
   /** 解析消息事件为标准化格式 */
   parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedMessageEvent | null;
 
   /** 解析元事件为标准化格式 */
   parseMetaEvent(raw: OneBotRawEvent): NormalizedMetaEvent;
+
+  /** 解析通知事件为标准化格式 */
+  parseNoticeEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedNoticeEvent | null;
 }
 
 /** 从 OneBot 消息段数组中提取纯文本 */

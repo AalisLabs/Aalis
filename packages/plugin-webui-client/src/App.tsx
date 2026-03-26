@@ -18,6 +18,7 @@ export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
     return hash || 'dashboard';
@@ -266,11 +267,18 @@ export function App() {
       handleAbort();
     }
 
-    if (!trimmed) return;
+    if (!trimmed && pendingImages.length === 0) return;
 
-    setMessages(prev => [...prev, { role: 'user', content: trimmed, timestamp: Date.now() }]);
-    send(trimmed);
+    const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    setMessages(prev => [...prev, {
+      role: 'user',
+      content: trimmed,
+      images,
+      timestamp: Date.now(),
+    }]);
+    send(trimmed, images);
     setInput('');
+    setPendingImages([]);
     setLoading(true);
   };
 
@@ -416,6 +424,8 @@ export function App() {
         onSend={handleSend}
         onAbort={handleAbort}
         width={chatWidth}
+        pendingImages={pendingImages}
+        setPendingImages={setPendingImages}
       />
 
       {/* 重启中遮罩 */}

@@ -45,6 +45,7 @@ export const configSchema: ConfigSchema = {
       { label: '工具调用', value: 'tool_calling' },
       { label: '流式输出', value: 'streaming' },
       { label: '深度思考', value: 'thinking' },
+      { label: '图像识别', value: 'vision' },
     ],
   },
 };
@@ -75,9 +76,14 @@ interface DeepSeekConfig {
 
 // ===== DeepSeek API 消息格式 =====
 
+type APIMessageContent =
+  | string
+  | null
+  | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
+
 interface APIMessage {
   role: string;
-  content: string | null;
+  content: APIMessageContent;
   reasoning_content?: string | null;
   tool_calls?: APIToolCall[];
   tool_call_id?: string;
@@ -411,6 +417,18 @@ class DeepSeekLLMService implements LLMService {
       role: msg.role,
       content: msg.content ?? null,
     };
+
+    // 多模态：如果消息包含图片，构造 content 数组
+    if (msg.images && msg.images.length > 0 && msg.role === 'user') {
+      const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+      if (msg.content) {
+        parts.push({ type: 'text', text: msg.content });
+      }
+      for (const img of msg.images) {
+        parts.push({ type: 'image_url', image_url: { url: img } });
+      }
+      apiMsg.content = parts;
+    }
 
     // 传递思考内容给 API（工具调用循环中需要）
     if (msg.reasoningContent) {
