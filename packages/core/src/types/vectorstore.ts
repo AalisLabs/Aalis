@@ -18,6 +18,8 @@ export interface VectorStoreService {
   size(): Promise<number>;
   /** 清空所有向量数据 */
   clear(): Promise<void>;
+  /** 按 metadata 字段过滤删除（如 { sessionId: 'xxx' }） */
+  deleteByFilter?(filter: Record<string, unknown>): Promise<number>;
   /** 持久化（由调用方或 dispose 触发） */
   save(): Promise<void>;
 }
