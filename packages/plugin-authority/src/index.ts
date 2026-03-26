@@ -43,7 +43,9 @@ class AuthorityManager implements AuthorityService {
   isDangerousAllowed(name: string): boolean {
     const policy = this.config.get('dangerousPolicy');
     if (!policy?.allow || policy.allow.length === 0) return false;
-    if (policy.duration && policy.duration > 0 && policy.enabledAt) {
+    // 有限时策略时检查过期；缺少 enabledAt 视为已过期（重启后自动失效）
+    if (policy.duration && policy.duration > 0) {
+      if (!policy.enabledAt) return false;
       const elapsed = (Date.now() - policy.enabledAt) / 1000;
       if (elapsed > policy.duration) {
         this.logger.info('dangerous 白名单已过期');
@@ -255,10 +257,14 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
 
   /** 更新 dangerousPolicy */
   async setDangerousPolicy(ctx, args) {
-    const policy = args.policy;
+    const policy = args.policy as Record<string, unknown>;
     if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
     const app = ctx.getService<App>('app');
     if (!app) throw new Error('App 不可用');
+    // 设置激活时间戳，使 duration 限时机制生效
+    if (Array.isArray(policy.allow) && policy.allow.length > 0) {
+      policy.enabledAt = Date.now();
+    }
     ctx.config.set('dangerousPolicy', policy);
     app.saveConfig();
     return { message: '高危策略已更新' };

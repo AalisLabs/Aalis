@@ -74,13 +74,25 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 注册为 semantic-memory 服务
   ctx.provide('semantic-memory', { name: 'vector-memory' });
 
-  // === 索引新消息 ===
+  // === 按对话轮次索引（user + assistant 一组） ===
 
-  async function indexMessage(role: 'user' | 'assistant', content: string, sessionId: string): Promise<void> {
-    if (!content.trim()) return;
+  // 暂存最近 user 消息，等 assistant 回复后一起 embed
+  const pendingUserMessages = new Map<string, { content: string; timestamp: number }>();
+
+  async function indexTurn(sessionId: string, userContent: string, assistantContent: string, timestamp: number): Promise<void> {
+    // 合并为一个对话轮次
+    const turnText = `用户: ${userContent}\n助手: ${assistantContent}`;
+    if (!turnText.trim()) return;
     try {
-      const vec = await embedder.embed(content);
-      await store.add(vec, { role, content, sessionId, timestamp: Date.now() });
+      const vec = await embedder.embed(turnText);
+      await store.add(vec, {
+        type: 'turn', // 标记为对话轮次
+        userContent,
+        assistantContent,
+        content: turnText, // 完整文本用于去重
+        sessionId,
+        timestamp,
+      });
       await store.save();
     } catch (err) {
       ctx.logger.warn('向量索引失败:', err);
@@ -88,16 +100,24 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   ctx.on('message:received', (msg: IncomingMessage) => {
-    indexMessage('user', msg.content, msg.sessionId);
+    pendingUserMessages.set(msg.sessionId, {
+      content: msg.content,
+      timestamp: Date.now(),
+    });
   });
 
   ctx.on('message:send', (msg: OutgoingMessage) => {
-    indexMessage('assistant', msg.content, msg.sessionId);
+    const pending = pendingUserMessages.get(msg.sessionId);
+    if (pending) {
+      pendingUserMessages.delete(msg.sessionId);
+      // 异步索引对话轮次
+      indexTurn(msg.sessionId, pending.content, msg.content, pending.timestamp);
+    }
   });
 
-  // === 检索并注入上下文 ===
+  // === 检索并注入上下文（增强去重） ===
 
-  ctx.middleware('llm-call:before', async (data: { messages: Message[]; tools: unknown[] }, next: MiddlewareNext) => {
+  ctx.middleware('llm-call:before', async (data: { messages: Message[]; tools: unknown[]; sessionId?: string }, next: MiddlewareNext) => {
     const userMessages = data.messages.filter(m => m.role === 'user');
     const lastUserMsg = userMessages[userMessages.length - 1];
     if (!lastUserMsg?.content) {
@@ -127,13 +147,44 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       const topResults = ranked.slice(0, cfg.search.topK);
 
-      // 过滤掉和当前会话上下文完全重复的内容
-      const currentContents = new Set(data.messages.map(m => m.content));
-      const relevant = topResults.filter(r => !currentContents.has(r.metadata.content as string));
+      // 增强去重：
+      // 1. 完全匹配：内容与 data.messages 中已有消息完全相同
+      // 2. 当前会话重叠：如果检索到的是当前 sessionId 的消息，且已被 getHistory() 覆盖
+      const currentContents = new Set(data.messages.map(m => m.content).filter(Boolean));
+
+      // 构建当前会话中用户和助手消息的子串集合，用于模糊去重
+      const currentUserContents = new Set(
+        data.messages.filter(m => m.role === 'user').map(m => m.content).filter(Boolean),
+      );
+      const currentAssistantContents = new Set(
+        data.messages.filter(m => m.role === 'assistant').map(m => m.content).filter(Boolean),
+      );
+
+      const relevant = topResults.filter(r => {
+        const content = r.metadata.content as string;
+        // 完全匹配去重
+        if (currentContents.has(content)) return false;
+
+        // 当前 session 的对话轮次 — 检查 user/assistant 内容是否已在历史中
+        if (data.sessionId && r.metadata.sessionId === data.sessionId) {
+          const uContent = r.metadata.userContent as string | undefined;
+          const aContent = r.metadata.assistantContent as string | undefined;
+          if (uContent && currentUserContents.has(uContent) && aContent && currentAssistantContents.has(aContent)) {
+            return false; // 这个轮次的两条消息都已在上下文中
+          }
+        }
+
+        return true;
+      });
 
       if (relevant.length > 0) {
         const contextLines = relevant.map((r, i) => {
           const date = new Date(r.metadata.timestamp as number).toLocaleString('zh-CN');
+          const type = r.metadata.type as string;
+          if (type === 'turn') {
+            return `[${i + 1}] (对话, ${date}, session: ${(r.metadata.sessionId as string).slice(0, 8)})\n  ${r.metadata.content}`;
+          }
+          // 兼容旧格式的单条消息
           return `[${i + 1}] (${r.metadata.role}, ${date}) ${r.metadata.content}`;
         });
         const contextBlock = `以下是从长期记忆中检索到的相关历史片段，可作为参考：\n${contextLines.join('\n')}`;
