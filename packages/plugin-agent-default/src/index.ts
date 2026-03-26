@@ -443,6 +443,13 @@ class DefaultAgent implements AgentService {
         await this.ctx.hooks.run('response:before', responseData);
         replyContent = responseData.content;
 
+        // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+        if (replyContent && lastAssistant?.content && replyContent === lastAssistant.content) {
+          this.logger.warn(`检测到重复回复，跳过发送 (session=${incoming.sessionId})`);
+          replyContent = '';
+        }
+
         // 保存用户消息到记忆（带发送者前缀，便于模型区分群聊中的不同成员）
         const senderLabel = incoming.nickname ?? incoming.userId;
         const userContentToSave = senderLabel
