@@ -54,7 +54,7 @@ export type {
 } from './llm.js';
 
 // 记忆服务
-export type { MemoryService } from './memory.js';
+export type { MemoryService, ConversationTurn } from './memory.js';
 
 // Embedding 服务
 export type { EmbeddingService } from './embedding.js';

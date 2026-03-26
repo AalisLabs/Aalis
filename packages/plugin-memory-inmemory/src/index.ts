@@ -31,6 +31,14 @@ class InMemoryFallbackService implements MemoryService {
   async clearSession(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
   }
+
+  async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
+    const history = this.sessions.get(sessionId);
+    if (!history || history.length <= keepRecent) return 0;
+    const removed = history.length - keepRecent;
+    this.sessions.set(sessionId, history.slice(-keepRecent));
+    return removed;
+  }
 }
 
 // ===== 插件元数据 =====

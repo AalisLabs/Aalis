@@ -5,6 +5,7 @@ import type {
   ChatStreamChunk,
   LLMService,
   Message,
+  PersonaService,
   ToolDefinition,
   ToolCall,
   ConfigSchema,
@@ -123,6 +124,7 @@ interface APIChatResponse {
 // ===== LLM 服务实现 =====
 
 class DeepSeekLLMService implements LLMService {
+  private ctx: Context;
   private apiKey: string;
   private baseUrl: string;
   private model: string;
@@ -136,7 +138,8 @@ class DeepSeekLLMService implements LLMService {
   private strictToolCalls: boolean;
   private logger;
 
-  constructor(config: DeepSeekConfig, logger: Context['logger'], enableThinking: boolean) {
+  constructor(ctx: Context, config: DeepSeekConfig, enableThinking: boolean) {
+    this.ctx = ctx;
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.model = config.model;
@@ -148,7 +151,13 @@ class DeepSeekLLMService implements LLMService {
     this.enableThinking = enableThinking;
     this.thinkingBudget = config.thinkingBudget;
     this.strictToolCalls = config.strictToolCalls;
-    this.logger = logger;
+    this.logger = ctx.logger;
+  }
+
+  /** 检测当前是否应启用 JSON Mode（persona 有 outputFormat 且非思考模式） */
+  private shouldUseJsonMode(): boolean {
+    if (this.enableThinking) return false;
+    return !!this.ctx.getService<PersonaService>('persona')?.getOutputFormat?.();
   }
 
   getTemperature(): number {
@@ -203,7 +212,13 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考模式${this.thinkingBudget > 0 ? `, 预算 ${this.thinkingBudget}` : ''})` : ''}: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    // JSON Mode: persona 定义了 outputFormat 时强制模型输出合法 JSON
+    const jsonMode = this.shouldUseJsonMode();
+    if (jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+
+    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考模式${this.thinkingBudget > 0 ? `, 预算 ${this.thinkingBudget}` : ''})` : ''}${jsonMode ? ' (JSON Mode)' : ''}: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -280,7 +295,13 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ' (思考模式)' : ''}: ${this.model}, ${messages.length} 条消息`);
+    // JSON Mode: persona 定义了 outputFormat 时强制模型输出合法 JSON
+    const jsonMode = this.shouldUseJsonMode();
+    if (jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+
+    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ' (思考模式)' : ''}${jsonMode ? ' (JSON Mode)' : ''}: ${this.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -388,7 +409,7 @@ class DeepSeekLLMService implements LLMService {
   private toAPIMessage(msg: Message): APIMessage {
     const apiMsg: APIMessage = {
       role: msg.role,
-      content: msg.content,
+      content: msg.content ?? null,
     };
 
     // 传递思考内容给 API（工具调用循环中需要）
@@ -491,7 +512,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     enableThinking = capabilities.includes('thinking');
   }
 
-  const service = new DeepSeekLLMService(deepseekConfig, ctx.logger, enableThinking);
+  const service = new DeepSeekLLMService(ctx, deepseekConfig, enableThinking);
 
   ctx.provide('llm', service, { capabilities });
 
