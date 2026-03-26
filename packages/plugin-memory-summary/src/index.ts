@@ -159,6 +159,11 @@ class SummaryStore {
     this.db.prepare('DELETE FROM session_summaries WHERE sessionId = ?').run(sessionId);
   }
 
+  /** 清空所有会话的摘要 */
+  clearAll(): void {
+    this.db.exec('DELETE FROM session_summaries');
+  }
+
   close(): void {
     this.db.close();
   }
@@ -212,21 +217,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       if (totalCount < cfg.threshold) return;
 
-      // 检查是否已有摘要覆盖到足够新的位置
+      // 检查是否已有摘要
       const existing = store.getSummary(sessionId);
-      const oldCoveredCount = existing?.coveredUpTo ?? 0;
-      const newMessagesToSummarize = totalCount - cfg.keepRecent;
 
-      // 如果新增的未摘要消息不足 threshold - keepRecent 的一半，跳过
-      if (existing && newMessagesToSummarize - oldCoveredCount < Math.floor((cfg.threshold - cfg.keepRecent) / 2)) {
-        return;
-      }
-
-      // 取需要被摘要的旧消息
-      const messagesToSummarize = allHistory.slice(
-        oldCoveredCount, // 从上次摘要覆盖到的位置开始
-        newMessagesToSummarize,
-      );
+      // 取所有待摘要的旧消息（除最近 keepRecent 条之外的）
+      const messagesToSummarize = allHistory.slice(0, totalCount - cfg.keepRecent);
 
       if (messagesToSummarize.length === 0) return;
 
@@ -257,7 +252,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       }
 
-      ctx.logger.debug(`正在为 session=${sessionId} 生成摘要 (覆盖 ${oldCoveredCount} → ${newMessagesToSummarize} 条消息)`);
+      ctx.logger.debug(`正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`);
 
       // 调用 LLM 生成摘要（非流式，低 temperature）
       let summaryText = '';
@@ -272,8 +267,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
 
       if (summaryText.trim()) {
-        store.upsertSummary(sessionId, summaryText.trim(), newMessagesToSummarize, totalCount);
-        ctx.logger.info(`会话摘要已更新: session=${sessionId}, 覆盖 ${newMessagesToSummarize} 条消息`);
+        store.upsertSummary(sessionId, summaryText.trim(), messagesToSummarize.length, totalCount);
+
+        // 真正的压缩：从数据库删除旧消息，只保留最近 keepRecent 条
+        if (memory.trimHistory) {
+          const deleted = await memory.trimHistory(sessionId, cfg.keepRecent);
+          ctx.logger.info(`会话已压缩: session=${sessionId}, 删除 ${deleted} 条旧消息，保留 ${cfg.keepRecent} 条`);
+        } else {
+          ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未删除');
+        }
       }
     } catch (err) {
       ctx.logger.warn('生成会话摘要失败:', err);
@@ -326,6 +328,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ctx.logger.warn('异步摘要生成失败:', err);
     });
   }, 0);
+
+  // 监听 memory:clear-session 事件，支持由 /clear 命令触发清空摘要
+  ctx.on('memory:clear-session', (data: unknown) => {
+    const d = data as { sessionId?: string; type?: string };
+    if (d.type === 'summary' && d.sessionId) {
+      store.clearSession(d.sessionId);
+      ctx.logger.info(`会话摘要已清空: session=${d.sessionId}`);
+    }
+  });
+
+  ctx.on('memory:clear-all', () => {
+    store.clearAll();
+    ctx.logger.info('所有会话摘要已清空');
+  });
 
   // 清理
   ctx.on('dispose', () => {

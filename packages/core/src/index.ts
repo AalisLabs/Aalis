@@ -60,6 +60,7 @@ export type {
   LLMService,
   // 记忆服务
   MemoryService,
+  ConversationTurn,
   // Embedding 服务
   EmbeddingService,
   // 向量数据库服务

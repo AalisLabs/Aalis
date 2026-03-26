@@ -354,10 +354,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (typeof reply === 'string') {
           // 空字符串表示不回复，非空则提取为回复内容
           data.content = reply;
+          // 输出所有字段概要
+          const fieldSummary = Object.entries(parsed)
+            .filter(([k]) => k !== outputFormat.replyField)
+            .map(([k, v]) => {
+              const s = typeof v === 'string' ? v : JSON.stringify(v);
+              return `${k}=${s.length > 60 ? s.slice(0, 60) + '...' : s}`;
+            })
+            .join(', ');
           if (reply.length > 0) {
-            ctx.logger.debug(`outputFormat 解码成功，提取字段: ${outputFormat.replyField}`);
+            ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`);
           } else {
-            ctx.logger.debug(`outputFormat 解码成功，回复字段为空（静默）`);
+            ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
           }
           // 状态持久化：保存非回复字段
           if (statePersistence) {

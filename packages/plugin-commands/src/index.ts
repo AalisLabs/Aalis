@@ -2,6 +2,7 @@ import type {
   Context,
   ToolService,
   AuthorityService,
+  MemoryService,
   ConfigSchema,
   CommandDefinition,
   CommandContext,
@@ -10,7 +11,6 @@ import type {
   SafetyLevel,
   Logger,
   AppService,
-  VectorStoreService,
 } from '@aalis/core';
 
 // ===== CommandRegistry 实现 =====
@@ -278,15 +278,56 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return '正在重启应用…';
   }, { authority: 5, safety: 'dangerous' });
 
-  // /clear — 清空会话历史及长期记忆
-  ctx.command('clear', '清空当前会话历史及长期记忆', async (cmdCtx) => {
-    const memory = ctx.getService<{ clearSession(id: string): Promise<void> }>('memory');
-    if (!memory) return '记忆服务不可用。';
-    await memory.clearSession(cmdCtx.sessionId);
-    const vectorstore = ctx.getService<VectorStoreService>('vectorstore');
-    if (vectorstore) {
-      await vectorstore.clear();
+  // /clear — 清空记忆（支持子命令，子命令可通过 commandOverrides 独立配置权限）
+  ctx.command('clear', '清空记忆 (可选: context/summary/vector/all/nuke)', async (cmdCtx) => {
+    const scope = cmdCtx.args[0]?.toLowerCase() || 'all';
+    const validScopes = ['all', 'context', 'summary', 'vector', 'nuke'];
+    if (!validScopes.includes(scope)) {
+      return `未知的清空范围: ${scope}。可用: ${validScopes.join(', ')}`;
     }
-    return '会话历史与长期记忆已清空。';
+
+    const results: string[] = [];
+
+    // nuke — 全局清空所有会话所有记忆
+    if (scope === 'nuke') {
+      const memory = ctx.getService<MemoryService>('memory');
+      if (memory?.clearAll) {
+        await memory.clearAll();
+        results.push('✅ 所有消息历史和对话归档已清空');
+      } else if (memory) {
+        results.push('⚠ 记忆服务不支持全局清空');
+      } else {
+        results.push('⚠ 记忆服务不可用');
+      }
+      await ctx.emit('memory:clear-all', {});
+      results.push('✅ 所有摘要记忆已清空');
+      results.push('✅ 所有向量记忆已清空');
+      return results.join('\n');
+    }
+
+    // 清空上下文消息历史（当前会话）
+    if (scope === 'all' || scope === 'context') {
+      const memory = ctx.getService<MemoryService>('memory');
+      if (memory) {
+        await memory.clearSession(cmdCtx.sessionId);
+        results.push('✅ 当前会话消息历史已清空');
+      } else {
+        results.push('⚠ 记忆服务不可用');
+      }
+    }
+
+    // 清空摘要记忆（当前会话）
+    if (scope === 'all' || scope === 'summary') {
+      await ctx.emit('memory:clear-session', { sessionId: cmdCtx.sessionId, type: 'summary' });
+      results.push('✅ 当前会话摘要记忆已清空');
+    }
+
+    // 清空向量记忆 + 归档（当前会话）
+    if (scope === 'all' || scope === 'vector') {
+      await ctx.emit('memory:clear-session', { sessionId: cmdCtx.sessionId, type: 'vector' });
+      results.push('✅ 当前会话向量记忆已清空');
+    }
+
+    return results.join('\n');
   });
 }

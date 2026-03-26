@@ -1,4 +1,4 @@
-import type { Context, IncomingMessage, OutgoingMessage, Message, MiddlewareNext, VectorStoreService, EmbeddingService, ConfigSchema } from '@aalis/core';
+import type { Context, IncomingMessage, OutgoingMessage, Message, MiddlewareNext, MemoryService, ConversationTurn, VectorStoreService, EmbeddingService, ConfigSchema } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -6,6 +6,7 @@ export const name = '@aalis/plugin-memory-vector';
 export const provides = ['semantic-memory'];
 export const inject = {
   required: ['vectorstore', 'embedding'],
+  optional: ['memory'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -16,6 +17,18 @@ export const configSchema: ConfigSchema = {
       timeWeight: { type: 'number', label: '时间权重', default: 0.3, description: '0=纯语义，1=纯时间近因' },
     },
   },
+  crossSessionMode: {
+    type: 'select',
+    label: '跨会话检索模式',
+    default: 'all',
+    description: '控制向量记忆的跨会话可见范围',
+    options: [
+      { label: '不互通（仅当前会话）', value: 'isolated' },
+      { label: '同用户增强（跨会话，同用户优先）', value: 'user' },
+      { label: '同平台（仅相同平台的会话）', value: 'platform' },
+      { label: '全部打通（所有平台所有会话）', value: 'all' },
+    ],
+  },
 };
 
 export const defaultConfig = {
@@ -23,17 +36,19 @@ export const defaultConfig = {
     topK: 5,
     timeWeight: 0.3,
   },
+  crossSessionMode: 'all',
 };
 
 // ===== 配置 =====
 
+type CrossSessionMode = 'isolated' | 'user' | 'platform' | 'all';
+
 interface VectorMemoryConfig {
   search: {
-    /** 返回的最大结果数 */
     topK: number;
-    /** 时间衰减权重 (0-1)，0=纯语义相似度，1=纯时间近因 */
     timeWeight: number;
   };
+  crossSessionMode: CrossSessionMode;
 }
 
 // ===== 时间衰减计算 =====
@@ -46,53 +61,59 @@ function recencyScore(timestampMs: number, nowMs: number): number {
 // ===== 插件入口 =====
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  // 获取向量数据库服务
-  const vectorstore = ctx.getService<VectorStoreService>('vectorstore');
-  if (!vectorstore) {
-    throw new Error('向量记忆插件需要 vectorstore 服务，请确保向量存储插件已加载');
-  }
-  const store: VectorStoreService = vectorstore;
+  const store = ctx.getService<VectorStoreService>('vectorstore')!;
+  const embedder = ctx.getService<EmbeddingService>('embedding')!;
+  const memory = ctx.getService<MemoryService>('memory');
 
-  // 获取 embedding 服务
-  const embeddingService = ctx.getService<EmbeddingService>('embedding');
-  if (!embeddingService) {
-    throw new Error('向量记忆插件需要 embedding 服务，请确保 embedding 插件已加载');
-  }
-  const embedder: EmbeddingService = embeddingService;
+  const hasTurnArchive = !!memory?.saveTurn;
 
   const searchRaw = (config.search ?? {}) as Record<string, unknown>;
-
   const cfg: VectorMemoryConfig = {
     search: {
       topK: (searchRaw.topK as number) ?? 5,
       timeWeight: Math.max(0, Math.min(1, (searchRaw.timeWeight as number) ?? 0.3)),
     },
+    crossSessionMode: (config.crossSessionMode as CrossSessionMode) ?? 'all',
   };
 
-  ctx.logger.info(`向量记忆已启动: 当前 ${await store.size()} 条记录`);
+  function parsePlatform(sessionId: string): string {
+    return sessionId.split(':')[0] ?? '';
+  }
 
-  // 注册为 semantic-memory 服务
+  ctx.logger.info(`向量记忆已启动: ${await store.size()} 条向量, 归档存储=${hasTurnArchive ? '可用' : '不可用（将内嵌文本）'}`);
+
   ctx.provide('semantic-memory', { name: 'vector-memory' });
 
-  // === 按对话轮次索引（user + assistant 一组） ===
+  // === 暂存最近 user 消息，等 assistant 回复后一起索引 ===
 
-  // 暂存最近 user 消息，等 assistant 回复后一起 embed
-  const pendingUserMessages = new Map<string, { content: string; timestamp: number }>();
+  const pendingUserMessages = new Map<string, { content: string; timestamp: number; userId?: string; nickname?: string; platform?: string }>();
 
-  async function indexTurn(sessionId: string, userContent: string, assistantContent: string, timestamp: number): Promise<void> {
-    // 合并为一个对话轮次
+  async function indexTurn(sessionId: string, userContent: string, assistantContent: string, timestamp: number, userId?: string, platform?: string): Promise<void> {
     const turnText = `用户: ${userContent}\n助手: ${assistantContent}`;
     if (!turnText.trim()) return;
     try {
       const vec = await embedder.embed(turnText);
-      await store.add(vec, {
-        type: 'turn', // 标记为对话轮次
-        userContent,
-        assistantContent,
-        content: turnText, // 完整文本用于去重
+
+      // 向量 metadata：只存引用 ID 和过滤所需字段
+      const metadata: Record<string, unknown> = {
         sessionId,
+        userId: userId ?? '',
+        platform: platform ?? parsePlatform(sessionId),
         timestamp,
-      });
+      };
+
+      if (hasTurnArchive) {
+        // 正确架构：原文存入归档，向量只存 turnId
+        const turnId = await memory!.saveTurn!({ sessionId, userId, platform, userContent, assistantContent, timestamp });
+        metadata.turnId = turnId;
+      } else {
+        // 降级：无归档存储时内嵌文本（兼容旧配置）
+        metadata.userContent = userContent;
+        metadata.assistantContent = assistantContent;
+        metadata.content = turnText;
+      }
+
+      await store.add(vec, metadata);
       await store.save();
     } catch (err) {
       ctx.logger.warn('向量索引失败:', err);
@@ -100,9 +121,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   ctx.on('message:received', (msg: IncomingMessage) => {
+    const senderLabel = msg.nickname ?? msg.userId;
     pendingUserMessages.set(msg.sessionId, {
-      content: msg.content,
+      content: senderLabel ? `[${senderLabel}]: ${msg.content}` : msg.content,
       timestamp: Date.now(),
+      userId: msg.userId,
+      nickname: msg.nickname,
+      platform: msg.platform,
     });
   });
 
@@ -110,14 +135,42 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const pending = pendingUserMessages.get(msg.sessionId);
     if (pending) {
       pendingUserMessages.delete(msg.sessionId);
-      // 异步索引对话轮次
-      indexTurn(msg.sessionId, pending.content, msg.content, pending.timestamp);
+      indexTurn(msg.sessionId, pending.content, msg.content, pending.timestamp, pending.userId, pending.platform);
     }
   });
 
-  // === 检索并注入上下文（增强去重） ===
+  // === 清除会话的向量记忆 ===
 
-  ctx.middleware('llm-call:before', async (data: { messages: Message[]; tools: unknown[]; sessionId?: string }, next: MiddlewareNext) => {
+  ctx.on('memory:clear-session', async (data: unknown) => {
+    const d = data as { sessionId?: string; type?: string };
+    if (d.type !== 'vector' || !d.sessionId) return;
+
+    let deleted = 0;
+
+    // 删除向量
+    if (store.deleteByFilter) {
+      deleted = await store.deleteByFilter({ sessionId: d.sessionId });
+      await store.save();
+    }
+
+    // 删除归档
+    if (hasTurnArchive) {
+      await memory!.deleteTurns!(d.sessionId);
+    }
+
+    ctx.logger.info(`向量记忆已清空: session=${d.sessionId}, 删除 ${deleted} 条向量`);
+  });
+
+  ctx.on('memory:clear-all', async () => {
+    await store.clear();
+    await store.save();
+    // 归档由 memory.clearAll() 统一清理，此处无需重复删除
+    ctx.logger.info('向量记忆已全部清空');
+  });
+
+  // === 检索并注入上下文 ===
+
+  ctx.middleware('llm-call:before', async (data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string }, next: MiddlewareNext) => {
     const userMessages = data.messages.filter(m => m.role === 'user');
     const lastUserMsg = userMessages[userMessages.length - 1];
     if (!lastUserMsg?.content) {
@@ -126,6 +179,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
 
     try {
+      const mode = cfg.crossSessionMode;
+      const curSessionId = data.sessionId;
+      const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+      const curUserId = data.userId ?? '';
+
       const candidateCount = Math.min(cfg.search.topK * 3, await store.size());
       if (candidateCount === 0) {
         await next();
@@ -135,24 +193,48 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const queryVec = await embedder.embed(lastUserMsg.content);
       const candidates = await store.search(queryVec, candidateCount);
 
+      // 按 crossSessionMode 过滤
+      const filtered = candidates.filter(c => {
+        switch (mode) {
+          case 'isolated':
+            return c.metadata.sessionId === curSessionId;
+          case 'platform':
+            return (c.metadata.platform as string) === curPlatform
+              || parsePlatform(c.metadata.sessionId as string) === curPlatform;
+          case 'user':
+          case 'all':
+          default:
+            return true;
+        }
+      });
+
       // 时间加权重排
       const now = Date.now();
-      const ranked = candidates.map(c => ({
-        ...c,
-        finalScore:
+      const ranked = filtered.map(c => {
+        let score =
           (1 - cfg.search.timeWeight) * c.score +
-          cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now),
-      }));
+          cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
+
+        if (mode === 'user' && curUserId && (c.metadata.userId as string) === curUserId) {
+          score *= 1.2;
+        }
+        return { ...c, finalScore: score };
+      });
       ranked.sort((a, b) => b.finalScore - a.finalScore);
 
       const topResults = ranked.slice(0, cfg.search.topK);
 
-      // 增强去重：
-      // 1. 完全匹配：内容与 data.messages 中已有消息完全相同
-      // 2. 当前会话重叠：如果检索到的是当前 sessionId 的消息，且已被 getHistory() 覆盖
-      const currentContents = new Set(data.messages.map(m => m.content).filter(Boolean));
+      // 解析内容：从归档中批量获取，或从 metadata 降级读取
+      let turns: ConversationTurn[] = [];
+      const turnIds = topResults.map(r => r.metadata.turnId as string).filter(Boolean);
 
-      // 构建当前会话中用户和助手消息的子串集合，用于模糊去重
+      if (hasTurnArchive && turnIds.length > 0) {
+        turns = await memory!.getTurns!(turnIds);
+      }
+
+      const turnMap = new Map(turns.map(t => [t.id, t]));
+
+      // 去重：排除当前上下文中已有的内容
       const currentUserContents = new Set(
         data.messages.filter(m => m.role === 'user').map(m => m.content).filter(Boolean),
       );
@@ -160,37 +242,41 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         data.messages.filter(m => m.role === 'assistant').map(m => m.content).filter(Boolean),
       );
 
-      const relevant = topResults.filter(r => {
-        const content = r.metadata.content as string;
-        // 完全匹配去重
-        if (currentContents.has(content)) return false;
+      const contextLines: string[] = [];
+      let idx = 0;
 
-        // 当前 session 的对话轮次 — 检查 user/assistant 内容是否已在历史中
-        if (data.sessionId && r.metadata.sessionId === data.sessionId) {
-          const uContent = r.metadata.userContent as string | undefined;
-          const aContent = r.metadata.assistantContent as string | undefined;
-          if (uContent && currentUserContents.has(uContent) && aContent && currentAssistantContents.has(aContent)) {
-            return false; // 这个轮次的两条消息都已在上下文中
-          }
+      for (const r of topResults) {
+        let userContent: string | undefined;
+        let assistantContent: string | undefined;
+
+        const turnId = r.metadata.turnId as string | undefined;
+        if (turnId && turnMap.has(turnId)) {
+          const turn = turnMap.get(turnId)!;
+          userContent = turn.userContent;
+          assistantContent = turn.assistantContent;
+        } else if (r.metadata.userContent) {
+          // 降级：从内嵌 metadata 读取
+          userContent = r.metadata.userContent as string;
+          assistantContent = r.metadata.assistantContent as string;
+        } else {
+          continue;
         }
 
-        return true;
-      });
+        // 去重
+        if (currentUserContents.has(userContent) && currentAssistantContents.has(assistantContent)) {
+          continue;
+        }
 
-      if (relevant.length > 0) {
-        const contextLines = relevant.map((r, i) => {
-          const date = new Date(r.metadata.timestamp as number).toLocaleString('zh-CN');
-          const type = r.metadata.type as string;
-          if (type === 'turn') {
-            return `[${i + 1}] (对话, ${date}, session: ${(r.metadata.sessionId as string).slice(0, 8)})\n  ${r.metadata.content}`;
-          }
-          // 兼容旧格式的单条消息
-          return `[${i + 1}] (${r.metadata.role}, ${date}) ${r.metadata.content}`;
-        });
+        idx++;
+        const date = new Date((r.metadata.timestamp as number) ?? 0).toLocaleString('zh-CN');
+        contextLines.push(`[${idx}] (${date})\n  ${userContent}\n  助手: ${assistantContent}`);
+      }
+
+      if (contextLines.length > 0) {
         const contextBlock = `以下是从长期记忆中检索到的相关历史片段，可作为参考：\n${contextLines.join('\n')}`;
 
-        const idx = data.messages.findIndex(m => m.role !== 'system');
-        const insertIdx = idx === -1 ? data.messages.length : idx;
+        const insertAt = data.messages.findIndex(m => m.role !== 'system');
+        const insertIdx = insertAt === -1 ? data.messages.length : insertAt;
         data.messages.splice(insertIdx, 0, {
           role: 'system',
           content: contextBlock,
