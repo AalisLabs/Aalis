@@ -57,6 +57,7 @@ export function DashboardPage({
     'agent', 'llm', 'memory', 'tools', 'commands', 'authority',
     'embedding', 'vectorstore', 'persona', 'semantic-memory',
     'cli', 'webui-server', 'webui-client',
+    'image-recognition', 'file-reader',
   ]);
   const coreServices = serviceEntries.filter(([name]) => coreServiceNames.has(name));
   const extServices = serviceEntries.filter(([name]) => !coreServiceNames.has(name));

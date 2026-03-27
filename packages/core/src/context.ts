@@ -224,6 +224,22 @@ export class Context {
   }
 
   /**
+   * 获取某个服务的所有实例（带提供者信息）
+   *
+   * 可选 requiredCapabilities 过滤：只返回满足所有所需能力的提供者。
+   *
+   * @example
+   * // 获取所有支持 vision 的 LLM
+   * const visionLLMs = ctx.getAllServices<LLMService>('llm', ['vision']);
+   *
+   * // 获取所有 LLM 并聚合模型列表
+   * const allLLMs = ctx.getAllServices<LLMService>('llm');
+   */
+  getAllServices<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[] }> {
+    return this._services.getAll<T>(name, requiredCapabilities);
+  }
+
+  /**
    * 切换服务的偏好提供者
    */
   preferService(name: string, contextId: string): boolean {
