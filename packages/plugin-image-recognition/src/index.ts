@@ -1,36 +1,19 @@
-import type { Context, ConfigSchema, IncomingMessage } from '@aalis/core';
+import type { Context, ConfigSchema, IncomingMessage, LLMService, Message } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-image-recognition';
+export const provides = ['image-recognition'];
 export const inject = {
   optional: ['llm'],
 };
 
 export const configSchema: ConfigSchema = {
-  enabled: {
+  forceEnabled: {
     type: 'boolean',
     label: '强制图像识别',
     description: '启用后，即使主 LLM 支持多模态也强制由本插件处理图片。关闭时自动判断：主 LLM 声明 vision 能力则直接传递图片，否则由本插件转为文字描述。',
     default: false,
-  },
-  apiKey: {
-    type: 'string',
-    label: 'Vision API Key',
-    secret: true,
-    description: '用于图像识别的 API 密钥。留空则复用主 LLM 的 API Key（从配置中读取）。',
-  },
-  baseUrl: {
-    type: 'string',
-    label: 'Vision API 地址',
-    default: '',
-    description: 'Vision API 端点（OpenAI 兼容）。留空则复用主 LLM 的 API 地址。',
-  },
-  model: {
-    type: 'string',
-    label: 'Vision 模型',
-    default: 'gpt-4o-mini',
-    description: '用于图像识别的模型名称（需支持 vision）。推荐使用低成本的多模态模型。',
   },
   maxTokens: {
     type: 'number',
@@ -47,18 +30,14 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  enabled: false,
-  model: 'gpt-4o-mini',
+  forceEnabled: false,
   maxTokens: 300,
 };
 
 // ===== 配置接口 =====
 
 interface ImageRecognitionConfig {
-  enabled: boolean;
-  apiKey: string;
-  baseUrl: string;
-  model: string;
+  forceEnabled: boolean;
   maxTokens: number;
   prompt: string;
 }
@@ -69,81 +48,29 @@ const DEFAULT_PROMPT = '请简洁地描述这张图片的内容，包括画面�
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg: ImageRecognitionConfig = {
-    enabled: (config.enabled as boolean) ?? false,
-    apiKey: (config.apiKey as string) || '',
-    baseUrl: (config.baseUrl as string) || '',
-    model: (config.model as string) || 'gpt-4o-mini',
+    forceEnabled: (config.forceEnabled as boolean) ?? false,
     maxTokens: (config.maxTokens as number) ?? 300,
     prompt: (config.prompt as string) || '',
   };
 
-  // 尝试从主 LLM 配置中获取 API Key 和 baseUrl 作为回退
-  function resolveApiConfig(): { apiKey: string; baseUrl: string } {
-    let apiKey = cfg.apiKey;
-    let baseUrl = cfg.baseUrl;
-
-    if (!apiKey || !baseUrl) {
-      // 尝试从 LLM 插件配置中读取
-      const llmPlugins = ['@aalis/plugin-openai', '@aalis/plugin-deepseek'];
-      for (const pluginName of llmPlugins) {
-        const pluginConfig = ctx.config.getPluginConfig(pluginName);
-        if (pluginConfig) {
-          if (!apiKey && pluginConfig.apiKey) apiKey = pluginConfig.apiKey as string;
-          if (!baseUrl && pluginConfig.baseUrl) baseUrl = pluginConfig.baseUrl as string;
-          if (apiKey && baseUrl) break;
-        }
-      }
-    }
-
-    if (!baseUrl) baseUrl = 'https://api.openai.com';
-    return { apiKey, baseUrl: baseUrl.replace(/\/$/, '') };
-  }
-
-  /** 调用 Vision API 识别单张图片 */
-  async function describeImage(imageUrl: string, signal?: AbortSignal): Promise<string> {
-    const { apiKey, baseUrl } = resolveApiConfig();
-    if (!apiKey) {
-      ctx.logger.warn('图像识别：API Key 未配置');
-      return '[图片: 无法识别，API Key 未配置]';
-    }
-
+  /** 通过 LLM 服务识别单张图片 */
+  async function describeImage(visionLLM: LLMService, imageUrl: string): Promise<string> {
     const prompt = cfg.prompt || DEFAULT_PROMPT;
 
-    const body = {
-      model: cfg.model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageUrl } },
-          ],
-        },
-      ],
-      max_tokens: cfg.maxTokens,
-    };
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: prompt,
+        images: [imageUrl],
+      },
+    ];
 
     try {
-      const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: signal ?? AbortSignal.timeout(30000),
+      const response = await visionLLM.chat({
+        messages,
+        maxTokens: cfg.maxTokens,
       });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        ctx.logger.warn(`图像识别 API 错误 (${res.status}): ${errText}`);
-        return '[图片: 识别失败]';
-      }
-
-      const data = await res.json() as {
-        choices: Array<{ message: { content: string } }>;
-      };
-      return data.choices?.[0]?.message?.content?.trim() || '[图片: 无描述]';
+      return response.content?.trim() || '[图片: 无描述]';
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.logger.warn(`图像识别失败: ${msg}`);
@@ -159,24 +86,36 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
+    // 获取当前活跃的主 LLM
+    const primaryLLM = ctx.getService<LLMService>('llm');
     // 判断主 LLM 是否声明了 vision 能力
-    const llmHasVision = ctx.getServiceCapabilities('llm').includes('vision');
+    const primaryHasVision = primaryLLM
+      ? ctx.getServiceEntries('llm')[0]?.capabilities.has('vision') ?? false
+      : false;
 
-    if (!cfg.enabled && llmHasVision) {
+    if (!cfg.forceEnabled && primaryHasVision) {
       // 主模型支持多模态且未强制启用 → 图片直接传递给 LLM
       ctx.logger.debug(`主 LLM 支持图像识别，${msg.images.length} 张图片将直接传递给模型`);
       await next();
       return;
     }
 
-    // 需要本插件处理：强制模式 或 主 LLM 不支持 vision
+    // 寻找任意一个支持 vision 的 LLM 提供者
+    const visionProviders = ctx.getAllServices<LLMService>('llm', ['vision']);
+    if (visionProviders.length === 0) {
+      ctx.logger.warn('没有可用的 vision LLM 提供者，图片将被忽略');
+      await next();
+      return;
+    }
+
+    const visionLLM = visionProviders[0].instance;
     ctx.logger.debug(
-      `图像识别中间件：${cfg.enabled ? '强制模式' : '主 LLM 不支持图像识别'}，开始识别 ${msg.images.length} 张图片`,
+      `图像识别中间件：${cfg.forceEnabled ? '强制模式' : '主 LLM 不支持图像识别'}，使用 ${visionProviders[0].contextId} 识别 ${msg.images.length} 张图片`,
     );
 
     // 并行识别所有图片
     const descriptions = await Promise.all(
-      msg.images.map(img => describeImage(img)),
+      msg.images.map(img => describeImage(visionLLM, img)),
     );
 
     // 将描述附加到消息内容中
@@ -196,5 +135,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     await next();
   }, 900); // 高优先级，在 persona 注入之后、其他中间件之前
 
-  ctx.logger.info(`图像识别中间件已加载 (模型: ${cfg.model}, ${cfg.enabled ? '强制模式' : '自动路由'})`);
+  // 注册服务，供其他插件查询图像识别能力是否可用
+  ctx.provide('image-recognition', {
+    /** 本插件能否处理图片（始终 true，因为插件已加载） */
+    available: true,
+  });
+
+  ctx.logger.info(`图像识别中间件已加载 (${cfg.forceEnabled ? '强制模式' : '自动路由'})`);
 }

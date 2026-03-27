@@ -19,6 +19,7 @@ export function App() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<Array<{ name: string; data: string; mimeType?: string }>>([]);
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
     return hash || 'dashboard';
@@ -267,18 +268,21 @@ export function App() {
       handleAbort();
     }
 
-    if (!trimmed && pendingImages.length === 0) return;
+    if (!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) return;
 
     const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    const files = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
     setMessages(prev => [...prev, {
       role: 'user',
       content: trimmed,
       images,
+      fileNames: files?.map(f => f.name),
       timestamp: Date.now(),
     }]);
-    send(trimmed, images);
+    send(trimmed, images, files);
     setInput('');
     setPendingImages([]);
+    setPendingFiles([]);
     setLoading(true);
   };
 
@@ -426,6 +430,8 @@ export function App() {
         width={chatWidth}
         pendingImages={pendingImages}
         setPendingImages={setPendingImages}
+        pendingFiles={pendingFiles}
+        setPendingFiles={setPendingFiles}
       />
 
       {/* 重启中遮罩 */}
