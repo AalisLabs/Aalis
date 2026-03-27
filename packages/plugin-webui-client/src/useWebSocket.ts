@@ -64,7 +64,7 @@ export function useWebSocket(
     };
   }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting]);
 
-  const send = useCallback((content: string, images?: string[]) => {
+  const send = useCallback((content: string, images?: string[], files?: Array<{ name: string; data: string; mimeType?: string }>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const payload: Record<string, unknown> = {
         type: 'message',
@@ -73,6 +73,9 @@ export function useWebSocket(
       };
       if (images && images.length > 0) {
         payload.images = images;
+      }
+      if (files && files.length > 0) {
+        payload.files = files;
       }
       wsRef.current.send(JSON.stringify(payload));
     }

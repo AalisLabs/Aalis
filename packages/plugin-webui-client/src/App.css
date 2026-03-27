@@ -907,6 +907,75 @@ body {
   transform: scale(1.02);
 }
 
+/* ===== 消息中的文件 ===== */
+
+.message-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.message-file-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  color: var(--text);
+  max-width: fit-content;
+}
+
+/* ===== 待发送文件预览 ===== */
+
+.pending-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 24px 0;
+  background: var(--bg-secondary);
+}
+
+.pending-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  max-width: fit-content;
+}
+
+.pending-file-icon {
+  flex-shrink: 0;
+}
+
+.pending-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.pending-file-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.pending-file-remove:hover {
+  color: var(--danger, #e53935);
+}
+
 /* ===== 日志页 ===== */
 
 .page-logs {
