@@ -13,6 +13,8 @@ export interface ChatMessage {
   reasoningSegments?: ContentSegment[];
   /** 附带的图片（base64 data URL）*/
   images?: string[];
+  /** 附带的文件名列表（仅用于显示） */
+  fileNames?: string[];
   timestamp: number;
 }
 
@@ -34,6 +36,10 @@ export interface CommandInfo {
 export interface SystemStatus {
   name: string;
   services: Record<string, boolean>;
+  uploadCapabilities?: {
+    image: boolean;
+    file: boolean;
+  };
   tools: string[];
   commands: CommandInfo[];
 }

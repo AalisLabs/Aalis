@@ -336,7 +336,10 @@ export function PluginConfigPage({
                 {!isEditing ? (
                   <>
                     <div className="config-block-body" style={{ paddingTop: 6 }}>
-                      {Object.entries(p.config).map(([k, v]) => {
+                      {(hasSchema
+                        ? Object.keys(p.configSchema!).map(k => [k, p.config[k]] as const)
+                        : Object.entries(p.config)
+                      ).map(([k, v]) => {
                         const schemaEntry = p.configSchema?.[k];
                         const isSecret = schemaEntry && 'secret' in schemaEntry ? (schemaEntry as SchemaField).secret : undefined;
                         const fieldDesc = schemaEntry && 'description' in schemaEntry ? (schemaEntry as SchemaField).description

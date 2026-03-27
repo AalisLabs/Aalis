@@ -48,6 +48,8 @@ interface WSIncoming {
   sessionId?: string;
   /** base64 data URL 或 HTTP URL 列表 */
   images?: string[];
+  /** 上传的文件列表 */
+  files?: Array<{ name: string; data: string; mimeType?: string }>;
 }
 
 interface WSOutgoing {
@@ -114,6 +116,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取系统状态
   expressApp.get('/api/status', (_req, res) => {
     const persona = ctx.getService<PersonaService>('persona');
+    // 判断上传能力
+    const hasImageRecognition = ctx.hasService('image-recognition');
+    const llmHasVision = ctx.getServiceCapabilities('llm').includes('vision');
+    const hasFileReader = ctx.hasService('file-reader');
+
     res.json({
       name: persona?.getPersonaName() ?? ctx.config.get('name'),
       services: {
@@ -123,6 +130,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         agent: ctx.hasService('agent'),
         memory: ctx.hasService('memory'),
         persona: ctx.hasService('persona'),
+      },
+      /** 上传能力：客户端据此决定显示哪些上传按钮 */
+      uploadCapabilities: {
+        /** 是否支持图片上传（image-recognition 可用 或 LLM 声明了 vision） */
+        image: hasImageRecognition || llmHasVision,
+        /** 是否支持文件上传（file-reader 可用） */
+        file: hasFileReader,
       },
       tools: ctx.tools?.getDefinitions().map(t => t.function.name) ?? [],
       commands: ctx.commands?.getAll().map(c => ({
@@ -515,8 +529,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
     try {
-      const models = await service.listModels();
-      res.json({ models });
+      // 聚合所有提供者的模型列表
+      const allProviders = ctx.getAllServices<{ listModels?(): Promise<string[]> }>(serviceName);
+      const aggregated: Array<{ model: string; provider: string; capabilities: string[] }> = [];
+      const flatModels: string[] = [];
+
+      for (const provider of allProviders) {
+        if (typeof provider.instance.listModels !== 'function') continue;
+        try {
+          const models = await provider.instance.listModels();
+          for (const m of models) {
+            aggregated.push({ model: m, provider: provider.contextId, capabilities: provider.capabilities });
+            flatModels.push(m);
+          }
+        } catch {
+          // 单个提供者获取模型失败不影响整体
+        }
+      }
+
+      res.json({ models: flatModels, providers: aggregated });
     } catch {
       res.json({ models: [] });
     }
@@ -651,6 +682,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           platform: 'webui',
           userId: 'console',
           ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
+          ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
         });
       } catch (err) {
         ctx.logger.warn('WebUI 消息处理失败:', err);

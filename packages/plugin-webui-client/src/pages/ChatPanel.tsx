@@ -14,6 +14,27 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+/** 支持的文档文件扩展名 */
+const DOCUMENT_EXTENSIONS = [
+  '.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm',
+  '.css', '.js', '.ts', '.yaml', '.yml', '.ini', '.cfg',
+  '.conf', '.log', '.sh', '.py', '.java', '.c', '.cpp',
+  '.h', '.rs', '.go', '.rb', '.php', '.sql',
+  '.pdf', '.docx',
+];
+
+const DOCUMENT_ACCEPT = DOCUMENT_EXTENSIONS.join(',') +
+  ',text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** 根据上传能力计算 accept 属性 */
+function computeAccept(caps?: { image: boolean; file: boolean }): string {
+  if (!caps) return '';
+  const parts: string[] = [];
+  if (caps.image) parts.push('image/*');
+  if (caps.file) parts.push(DOCUMENT_ACCEPT);
+  return parts.join(',');
+}
+
 export function ChatPanel({
   messages,
   loading,
@@ -26,6 +47,8 @@ export function ChatPanel({
   width,
   pendingImages,
   setPendingImages,
+  pendingFiles,
+  setPendingFiles,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -38,10 +61,19 @@ export function ChatPanel({
   width: number;
   pendingImages: string[];
   setPendingImages: (v: string[] | ((prev: string[]) => string[])) => void;
+  pendingFiles: Array<{ name: string; data: string; mimeType?: string }>;
+  setPendingFiles: (v: Array<{ name: string; data: string; mimeType?: string }> | ((prev: Array<{ name: string; data: string; mimeType?: string }>) => Array<{ name: string; data: string; mimeType?: string }>)) => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 上传能力
+  const uploadCaps = status?.uploadCapabilities;
+  const canUploadImage = uploadCaps?.image ?? false;
+  const canUploadFile = uploadCaps?.file ?? false;
+  const canUpload = canUploadImage || canUploadFile;
+  const acceptAttr = computeAccept(uploadCaps);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -68,21 +100,31 @@ export function ChatPanel({
     const files = e.target.files;
     if (!files) return;
     const newImages: string[] = [];
+    const newFiles: Array<{ name: string; data: string; mimeType?: string }> = [];
     for (const file of Array.from(files)) {
-      if (!file.type.startsWith('image/')) continue;
-      // 限制单张 10MB
-      if (file.size > 10 * 1024 * 1024) continue;
-      const dataUrl = await fileToDataUrl(file);
-      newImages.push(dataUrl);
+      if (file.type.startsWith('image/') && canUploadImage) {
+        // 图片文件 → 图片队列
+        if (file.size > 10 * 1024 * 1024) continue;
+        const dataUrl = await fileToDataUrl(file);
+        newImages.push(dataUrl);
+      } else if (canUploadFile) {
+        // 非图片文件 → 文件队列
+        if (file.size > 20 * 1024 * 1024) continue;
+        const dataUrl = await fileToDataUrl(file);
+        newFiles.push({ name: file.name, data: dataUrl, mimeType: file.type || undefined });
+      }
     }
     if (newImages.length > 0) {
       setPendingImages(prev => [...prev, ...newImages]);
     }
-    // 清空 file input 以允许重复选择同一文件
+    if (newFiles.length > 0) {
+      setPendingFiles(prev => [...prev, ...newFiles]);
+    }
     e.target.value = '';
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {
+    if (!canUploadImage) return;
     const items = e.clipboardData?.items;
     if (!items) return;
     const newImages: string[] = [];
@@ -100,6 +142,10 @@ export function ChatPanel({
 
   const removeImage = (index: number) => {
     setPendingImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeFile = (index: number) => {
+    setPendingFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   /** 检查最后一条消息是否正在生成（用于放置停止按钮） */
@@ -128,6 +174,14 @@ export function ChatPanel({
               <div className="message-images">
                 {msg.images.map((img, j) => (
                   <img key={j} src={img} alt={`attached-${j}`} className="message-image" />
+                ))}
+              </div>
+            )}
+            {/* 用户消息中的文件 */}
+            {msg.role === 'user' && msg.fileNames && msg.fileNames.length > 0 && (
+              <div className="message-files">
+                {msg.fileNames.map((name, j) => (
+                  <div key={j} className="message-file-item">📄 {name}</div>
                 ))}
               </div>
             )}
@@ -243,23 +297,38 @@ export function ChatPanel({
         </div>
       )}
 
+      {/* 文件预览区域 */}
+      {pendingFiles.length > 0 && (
+        <div className="pending-files">
+          {pendingFiles.map((file, i) => (
+            <div key={i} className="pending-file-item">
+              <span className="pending-file-icon">📄</span>
+              <span className="pending-file-name">{file.name}</span>
+              <button className="pending-file-remove" onClick={() => removeFile(i)}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="input-area">
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={acceptAttr}
           multiple
           style={{ display: 'none' }}
           onChange={handleFileSelect}
         />
-        <button
-          className="upload-btn"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!connected}
-          title="上传图片"
-        >
-          🖼
-        </button>
+        {canUpload && (
+          <button
+            className="upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!connected}
+            title={canUploadImage && canUploadFile ? '上传图片或文件' : canUploadImage ? '上传图片' : '上传文件'}
+          >
+            📎
+          </button>
+        )}
         <textarea
           ref={textareaRef}
           value={input}
@@ -273,7 +342,7 @@ export function ChatPanel({
         <button
           className="send-btn"
           onClick={onSend}
-          disabled={!connected || (!input.trim() && pendingImages.length === 0)}
+          disabled={!connected || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
         >
           ↑
         </button>
