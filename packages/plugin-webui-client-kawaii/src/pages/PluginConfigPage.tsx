@@ -308,7 +308,7 @@ export function PluginConfigPage({
           const cat =
             p.core ? '系统'
             : /^(@aalis\/)?plugin-(openai|deepseek|ollama)$/.test(n) ? 'LLM 模型'
-            : /^(@aalis\/)?plugin-agent/.test(n) || /^(@aalis\/)?plugin-(chat-flow|persona)$/.test(n) ? '智能体'
+            : /^(@aalis\/)?plugin-agent/.test(n) || /^(@aalis\/)?plugin-persona$/.test(n) ? '智能体'
             : /^(@aalis\/)?plugin-memory-/.test(n) ? '存储'
             : /^(@aalis\/)?plugin-embedding-/.test(n) ? '嵌入模型'
             : /^(@aalis\/)?plugin-vectorstore-/.test(n) ? '向量存储'
