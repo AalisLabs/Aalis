@@ -5,7 +5,7 @@ import type { Context, ConfigSchema, WebuiPage, PluginModule, IncomingMessage } 
 //
 // 支持 cron 表达式和固定间隔两种调度方式。
 // 每个任务向指定 session 发送 message:received 事件，
-// source='scheduler' 使其绕过 chat-flow 流控、且不打断用户会话。
+// source='scheduler' 使其绕过流控、且不打断用户会话。
 // ════════════════════════════════════════════════════════════
 
 // ──────────── 配置类型 ────────────
