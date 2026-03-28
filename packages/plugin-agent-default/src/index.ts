@@ -433,6 +433,9 @@ class DefaultAgent implements AgentService {
           enabledGroups,
         };
 
+        // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
+        const originalTools = [...tools];
+
         // Hook: llm-call:before — 插件可以修改消息或工具列表
         const llmBeforeData = { messages, tools, sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform };
         await this.ctx.hooks.run('llm-call:before', llmBeforeData);
@@ -543,8 +546,8 @@ class DefaultAgent implements AgentService {
             });
           }
 
-          // 继续请求 LLM (再次经过 hooks)
-          const nextLlmData = { messages: llmBeforeData.messages, tools: llmBeforeData.tools, sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform };
+          // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
+          const nextLlmData = { messages: llmBeforeData.messages, tools: [...originalTools], sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform };
           await this.ctx.hooks.run('llm-call:before', nextLlmData);
 
           // 裁剪消息以确保不超过上下文窗口
