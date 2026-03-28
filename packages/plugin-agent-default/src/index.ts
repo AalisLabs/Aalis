@@ -3,15 +3,19 @@ import type {
   AgentService,
   IncomingMessage,
   Message,
+  ToolCallContext,
+  ToolCall,
+  ToolDefinition,
+  ConfigSchema,
+  PreprocessorFn,
+  PreprocessorInfo,
+  PluginGroupInfo,
+  App,
   ChatRequest,
   ChatResponse,
   LLMService,
   MemoryService,
   PersonaService,
-  ToolCallContext,
-  ToolCall,
-  ConfigSchema,
-  PluginModule,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
@@ -36,6 +40,10 @@ class DefaultAgent implements AgentService {
   private historyLimit: number;
   /** 平台 → 启用的工具分组映射 */
   private toolGroups: Record<string, string[]>;
+  /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
+  private preferredModel: string;
+  /** 模型 ID → 提供者 contextId 映射缓存 */
+  private modelProviderMap: Map<string, string> | null = null;
 
   /**
    * 活跃 AbortController 表
@@ -45,6 +53,9 @@ class DefaultAgent implements AgentService {
    */
   private activeControllers = new Map<string, AbortController>();
 
+  /** 已注册的预处理器（name → { priority, dispose }） */
+  private preprocessors = new Map<string, { priority: number; dispose: () => void }>();
+
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
     this.logger = ctx.logger.child('agent');
@@ -52,7 +63,54 @@ class DefaultAgent implements AgentService {
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.historyLimit = (config.historyLimit as number) ?? 50;
     this.toolGroups = parseToolGroups(config.toolGroups);
+    this.preferredModel = (config.preferredModel as string) || '';
     this.logger.info('默认对话代理已初始化');
+
+    // 异步构建模型→提供者映射
+    if (this.preferredModel) {
+      this.buildModelProviderMap();
+    }
+  }
+
+  /** 构建模型→提供者映射缓存 */
+  private async buildModelProviderMap(): Promise<void> {
+    const map = new Map<string, string>();
+    const allProviders = this.ctx.getAllServices<LLMService>('llm');
+    for (const p of allProviders) {
+      if (typeof p.instance.listModels === 'function') {
+        try {
+          const models = await p.instance.listModels();
+          for (const m of models) map.set(m.id, p.contextId);
+        } catch { /* ignore */ }
+      }
+    }
+    this.modelProviderMap = map;
+    this.logger.debug(`Agent 模型映射已构建: ${map.size} 个模型`);
+  }
+
+  /**
+   * 根据 preferredModel 配置获取 LLM 服务
+   * - 有 preferredModel → 找到对应提供者并返回
+   * - 无 preferredModel → 返回默认（首个）提供者
+   */
+  private resolveLLM(): { llm: LLMService; modelOverride?: string } | undefined {
+    if (!this.preferredModel) {
+      const llm = this.ctx.getService<LLMService>('llm');
+      return llm ? { llm } : undefined;
+    }
+    // 有指定模型：查找拥有该模型的提供者
+    const allProviders = this.ctx.getAllServices<LLMService>('llm');
+    if (allProviders.length === 0) return undefined;
+
+    if (this.modelProviderMap) {
+      const targetContextId = this.modelProviderMap.get(this.preferredModel);
+      if (targetContextId) {
+        const found = allProviders.find(p => p.contextId === targetContextId);
+        if (found) return { llm: found.instance, modelOverride: this.preferredModel };
+      }
+    }
+    // 映射未命中：回退到默认提供者，但仍传递 model override
+    return { llm: allProviders[0].instance, modelOverride: this.preferredModel };
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */
@@ -71,6 +129,62 @@ class DefaultAgent implements AgentService {
       }
     }
     this.logger.info(`生成已中止: session=${sessionId}`);
+  }
+
+  /**
+   * 注册消息预处理器
+   *
+   * 底层通过 message:before 中间件实现。
+   * 同名注册会自动替换旧的预处理器。
+   */
+  registerPreprocessor(name: string, handler: PreprocessorFn, priority = 500): () => void {
+    // 同名替换
+    const existing = this.preprocessors.get(name);
+    if (existing) existing.dispose();
+
+    const dispose = this.ctx.middleware('message:before', async (data, next) => {
+      await handler(data.message, next);
+    }, priority);
+
+    const cleanup = () => {
+      dispose();
+      this.preprocessors.delete(name);
+      this.logger.info(`预处理器已注销: ${name}`);
+    };
+
+    this.preprocessors.set(name, { priority, dispose: cleanup });
+    this.logger.info(`预处理器已注册: ${name} (priority: ${priority})`);
+    return cleanup;
+  }
+
+  /**
+   * 获取当前所有已注册预处理器的元信息
+   */
+  getPreprocessors(): PreprocessorInfo[] {
+    return [...this.preprocessors.entries()]
+      .map(([name, { priority }]) => ({ name, priority }))
+      .sort((a, b) => b.priority - a.priority);
+  }
+
+  /**
+   * 获取 Agent 子系统的插件分组
+   *
+   * 找出所有 provides 与 Agent inject.optional 有交集的插件。
+   */
+  getPluginGroups(): PluginGroupInfo[] {
+    const app = this.ctx.getService<App>('app');
+    if (!app) return [];
+
+    const targetServices = new Set(inject.optional ?? []);
+    const grouped: string[] = [];
+
+    for (const p of app.plugins.getStatus()) {
+      if (p.provides?.some(s => targetServices.has(s))) {
+        grouped.push(p.instanceId);
+      }
+    }
+
+    return [{ label: 'Agent', plugins: grouped }];
   }
 
   /**
@@ -267,8 +381,8 @@ class DefaultAgent implements AgentService {
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
 
-      const llm = this.ctx.getService<LLMService>('llm');
-      if (!llm) {
+      const resolved = this.resolveLLM();
+      if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
         await this.ctx.emit('message:send', {
           content: '[系统] LLM 服务不可用，请检查配置。',
@@ -277,6 +391,7 @@ class DefaultAgent implements AgentService {
         });
         return;
       }
+      const { llm, modelOverride } = resolved;
 
       // 从 LLM 服务读取参数
       const temperature = llm.getTemperature();
@@ -318,6 +433,7 @@ class DefaultAgent implements AgentService {
           tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
           temperature,
           maxTokens,
+          model: modelOverride,
           signal,
         }, incoming.sessionId, incoming.platform, signal);
 
@@ -422,6 +538,7 @@ class DefaultAgent implements AgentService {
             tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
             temperature,
             maxTokens,
+            model: modelOverride,
             signal,
           }, incoming.sessionId, incoming.platform, signal);
 
@@ -442,6 +559,9 @@ class DefaultAgent implements AgentService {
         const responseData = { content: replyContent, sessionId: incoming.sessionId };
         await this.ctx.hooks.run('response:before', responseData);
         replyContent = responseData.content;
+
+        // 回退：如果回复仍是 JSON 包裹（outputFormat 钩子不存在或未处理），尝试提取回复字段
+        replyContent = this.extractJsonReply(replyContent);
 
         // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
         const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
@@ -775,6 +895,22 @@ class DefaultAgent implements AgentService {
   }
 
   /**
+   * 如果内容是 JSON 包裹的回复则提取纯文本，否则原样返回
+   */
+  private extractJsonReply(content: string): string {
+    const trimmed = content.trim();
+    if (!trimmed.startsWith('{')) return content;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return content;
+      for (const key of ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message']) {
+        if (typeof parsed[key] === 'string') return parsed[key];
+      }
+    } catch { /* 非 JSON，原样返回 */ }
+    return content;
+  }
+
+  /**
    * 保存消息到记忆服务
    */
   private async saveToMemory(sessionId: string, message: Message): Promise<void> {
@@ -792,6 +928,7 @@ class DefaultAgent implements AgentService {
 // ----- 插件导出 -----
 
 export const name = '@aalis/plugin-agent-default';
+export const displayName = '默认 Agent';
 
 export const provides = ['agent'];
 
@@ -800,8 +937,16 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
+  preferredModel: {
+    type: 'select',
+    label: '对话模型',
+    description: '选择用于对话的模型。留空则使用默认（首个）LLM 提供者的默认模型。',
+    default: '',
+    options: [{ label: '默认', value: '' }],
+    dynamicOptions: 'llm',
+  },
   systemPrompt: {
-    type: 'string',
+    type: 'textarea',
     label: '行为准则提示词',
     description: '定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。',
   },
@@ -838,6 +983,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
+  preferredModel: '',
   systemPrompt: '',
   memoryTokenBudget: 4096,
   historyLimit: 50,

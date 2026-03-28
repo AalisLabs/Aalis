@@ -4,14 +4,14 @@ import { existsSync, mkdirSync } from 'node:fs';
 import type {
   Context,
   Message,
-  LLMService,
-  MemoryService,
   ConfigSchema,
 } from '@aalis/core';
+import type { LLMService, MemoryService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-summary';
+export const displayName = '记忆摘要';
 export const inject = {
   required: ['memory', 'llm'],
 };

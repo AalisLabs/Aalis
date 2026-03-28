@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema, WebuiPage, PluginModule, IncomingMessage } from '@aalis/core';
+import type { Context, ConfigSchema, WebuiPage, PluginModule } from '@aalis/core';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -54,11 +54,11 @@ export interface SkillsService {
 // ──────────── 插件元数据 ────────────
 
 export const name = '@aalis/plugin-skills';
+export const displayName = '技能系统';
 
 export const provides = ['skills'];
 
 export const inject = {
-  required: ['tools'],
   optional: ['agent'],
 };
 

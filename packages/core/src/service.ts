@@ -5,6 +5,8 @@ export interface ServiceEntry {
   capabilities: Set<string>;
   priority: number;
   contextId: string;
+  /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
+  label?: string;
 }
 
 export interface NormalizedDependency {
@@ -42,6 +44,7 @@ export class ServiceContainer {
     capabilities: string[] = [],
     priority: number = 0,
     contextId: string = 'root',
+    label?: string,
   ): void {
     let list = this.entries.get(name);
     if (!list) {
@@ -53,6 +56,7 @@ export class ServiceContainer {
       capabilities: new Set(capabilities),
       priority,
       contextId,
+      label,
     });
     // 按优先级降序排列
     list.sort((a, b) => b.priority - a.priority);
@@ -80,6 +84,14 @@ export class ServiceContainer {
    */
   has(name: string, requiredCapabilities?: string[]): boolean {
     return this.get(name, requiredCapabilities) !== undefined;
+  }
+
+  /**
+   * 检查指定 contextId 是否注册了某个服务
+   */
+  hasByContext(name: string, contextId: string): boolean {
+    const list = this.entries.get(name);
+    return list?.some(e => e.contextId === contextId) ?? false;
   }
 
   /**
@@ -148,10 +160,10 @@ export class ServiceContainer {
    *
    * 可选 requiredCapabilities 过滤：只返回满足所有所需能力的提供者。
    */
-  getAll<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[] }> {
+  getAll<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     const list = this.entries.get(name);
     if (!list) return [];
-    const result: Array<{ instance: T; contextId: string; capabilities: string[] }> = [];
+    const result: Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> = [];
     for (const entry of list) {
       if (requiredCapabilities && requiredCapabilities.length > 0) {
         const satisfied = requiredCapabilities.every(c => entry.capabilities.has(c));
@@ -161,6 +173,7 @@ export class ServiceContainer {
         instance: entry.instance as T,
         contextId: entry.contextId,
         capabilities: [...entry.capabilities],
+        label: entry.label,
       });
     }
     return result;
@@ -242,7 +255,7 @@ export class ScopedServiceContainer extends ServiceContainer {
     return [...local, ...parent];
   }
 
-  override getAll<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[] }> {
+  override getAll<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     const local = super.getAll<T>(name, requiredCapabilities);
     const parent = this.parent.getAll<T>(name, requiredCapabilities);
     return [...local, ...parent];

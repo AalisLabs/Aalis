@@ -1,11 +1,10 @@
 import type {
   Context,
   IncomingMessage,
-  MemoryService,
-  PersonaService,
   ConfigSchema,
   PluginModule,
 } from '@aalis/core';
+import type { MemoryService, PersonaService } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
 // ────────────────── 配置类型 ──────────────────
@@ -41,6 +40,9 @@ interface ChatFlowProfile {
   idleTriggerStyle: 'exponential' | 'fixed';
   idleTriggerMaxMinutes: number;
   idleTriggerJitter: boolean;
+
+  /** 空闲触发提示词 */
+  idleTriggerPrompt: string;
 
   /** 禁言 */
   muteKeywords: string[];
@@ -119,6 +121,7 @@ function resolveProfile(raw: Record<string, unknown>): ChatFlowProfile {
     idleTriggerStyle: (raw.idleTriggerStyle as ChatFlowProfile['idleTriggerStyle']) ?? 'exponential',
     idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? 1440,
     idleTriggerJitter: (raw.idleTriggerJitter as boolean) ?? true,
+    idleTriggerPrompt: (raw.idleTriggerPrompt as string) || '',
     muteKeywords: parseStringList(raw.muteKeywords),
     muteTimeSeconds: (raw.muteTimeSeconds as number) ?? 60,
   };
@@ -406,9 +409,10 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
     // 空闲触发的消息 — 替换内容为系统提示然后放行
     if (msg.content === IDLE_TRIGGER_MARKER) {
+      const idlePrompt = profile.idleTriggerPrompt || '[系统提示: 群里已经很久没人说话了，你可以主动发起一个话题或者分享一些有趣的内容。]';
       data.message = {
         ...msg,
-        content: '[系统提示: 群里已经很久没人说话了，你可以主动发起一个话题或者分享一些有趣的内容。]',
+        content: idlePrompt,
       };
       data.metadata['chat-flow:idle-trigger'] = true;
       await next();
@@ -546,6 +550,7 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 // ────────────────── 导出 ──────────────────
 
 export const name = '@aalis/plugin-chat-flow';
+export const displayName = '对话流程';
 
 export const inject = {
   optional: ['memory', 'persona'],
@@ -606,6 +611,12 @@ export const configSchema: ConfigSchema = {
       },
       idleTriggerMaxMinutes: { type: 'number', label: '空闲最大间隔（分钟）', default: 1440 },
       idleTriggerJitter: { type: 'boolean', label: '空闲抖动', default: true },
+      idleTriggerPrompt: {
+        type: 'textarea',
+        label: '空闲触发提示词',
+        default: '',
+        description: '空闲触发时发送给 Agent 的系统提示。留空使用默认提示。',
+      },
       muteKeywords: { type: 'string', label: '禁言关键词', default: '', description: '逗号分隔。' },
       muteTimeSeconds: { type: 'number', label: '禁言时长（秒）', default: 60 },
     },

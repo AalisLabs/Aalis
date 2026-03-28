@@ -137,6 +137,13 @@ export class ConfigManager {
   }
 
   /**
+   * 移除插件配置（用于删除多实例条目）
+   */
+  removePluginConfig(pluginName: string): void {
+    delete this.config.plugins[pluginName];
+  }
+
+  /**
    * 检查插件是否被禁用
    */
   isPluginDisabled(pluginName: string): boolean {

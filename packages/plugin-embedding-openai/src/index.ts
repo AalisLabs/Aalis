@@ -1,9 +1,12 @@
-import type { Context, EmbeddingService, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { EmbeddingService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-embedding-openai';
+export const displayName = 'OpenAI Embedding';
 export const provides = ['embedding'];
+export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'OpenAI API 密钥' },
@@ -89,5 +92,5 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.warn(`OpenAI Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
   }
 
-  ctx.provide('embedding', service);
+  ctx.provide('embedding', service, { label: `OpenAI / ${model}` });
 }

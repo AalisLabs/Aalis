@@ -3,6 +3,18 @@ import { api } from '../api';
 import { ServiceCard } from '../components/ServiceCard';
 import type { SystemStatus, PluginInfo, ServiceInfo, ToolGroupDetail } from '../types';
 
+interface ServiceGroup {
+  label: string;
+  services: string[];
+}
+
+interface LLMModelEntry {
+  id: string;
+  capabilities: string[];
+  provider: string;
+  contextId: string;
+}
+
 export function DashboardPage({
   status,
   connected,
@@ -22,10 +34,24 @@ export function DashboardPage({
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [toolGroups, setToolGroups] = useState<ToolGroupDetail[]>([]);
+  const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
+  const [llmModels, setLlmModels] = useState<LLMModelEntry[]>([]);
 
   useEffect(() => {
     api<{ groups: ToolGroupDetail[] }>('/api/tool-groups')
       .then(d => setToolGroups(d.groups ?? []))
+      .catch(() => {});
+  }, [plugins]);
+
+  useEffect(() => {
+    api<{ groups: ServiceGroup[] }>('/api/service-groups')
+      .then(d => setServiceGroups(d.groups ?? []))
+      .catch(() => {});
+  }, [plugins]);
+
+  useEffect(() => {
+    api<{ models: LLMModelEntry[] }>('/api/llm-models')
+      .then(d => setLlmModels(d.models ?? []))
       .catch(() => {});
   }, [plugins]);
 
@@ -50,17 +76,19 @@ export function DashboardPage({
   };
 
   const serviceEntries = servicesData
-    ? Object.entries(servicesData).filter(([name]) => name !== 'platform' && name !== 'app')
+    ? Object.entries(servicesData).filter(([name]) => name !== 'platform' && name !== 'app' && name !== 'llm')
     : [];
 
-  const coreServiceNames = new Set([
-    'agent', 'llm', 'memory', 'tools', 'commands', 'authority',
-    'embedding', 'vectorstore', 'persona', 'semantic-memory',
-    'cli', 'webui-server', 'webui-client',
-    'image-recognition', 'file-reader',
-  ]);
-  const coreServices = serviceEntries.filter(([name]) => coreServiceNames.has(name));
-  const extServices = serviceEntries.filter(([name]) => !coreServiceNames.has(name));
+  // 根据 /api/service-groups 返回的分组信息将服务分层
+  const groupedSections = serviceGroups.map(g => ({
+    label: g.label,
+    entries: serviceEntries.filter(([name]) => g.services.includes(name)),
+  }));
+
+  // 如果 API 未返回分组（兼容旧后端），回退到全量显示
+  const hasGroups = groupedSections.some(s => s.entries.length > 0);
+  const allClaimed = new Set(serviceGroups.flatMap(g => g.services));
+  const unclaimed = serviceEntries.filter(([name]) => !allClaimed.has(name));
 
   return (
     <div className="page-content page-dashboard">
@@ -114,23 +142,46 @@ export function DashboardPage({
             <div className="overview-card-value">{status?.commands?.length ?? 0}</div>
           </div>
         </div>
+        <div className="overview-card">
+          <div className="overview-card-icon">🤖</div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">可用模型</div>
+            <div className="overview-card-value">{llmModels.length}</div>
+          </div>
+        </div>
       </div>
 
-      <div className="section-label">核心服务</div>
-      <div className="services-grid">
-        {coreServices.length === 0 && (
-          <div className="empty-hint">加载中...</div>
-        )}
-        {coreServices.map(([name, info]) => (
-          <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
-        ))}
-      </div>
-
-      {extServices.length > 0 && (
+      {hasGroups ? (
         <>
-          <div className="section-label">扩展服务</div>
+          {groupedSections.map(section => section.entries.length > 0 && (
+            <div key={section.label}>
+              <div className="section-label">{section.label}</div>
+              <div className="services-grid">
+                {section.entries.map(([name, info]) => (
+                  <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
+                ))}
+              </div>
+            </div>
+          ))}
+          {unclaimed.length > 0 && (
+            <div>
+              <div className="section-label">其他</div>
+              <div className="services-grid">
+                {unclaimed.map(([name, info]) => (
+                  <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="section-label">服务</div>
           <div className="services-grid">
-            {extServices.map(([name, info]) => (
+            {serviceEntries.length === 0 && (
+              <div className="empty-hint">加载中...</div>
+            )}
+            {serviceEntries.map(([name, info]) => (
               <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
             ))}
           </div>

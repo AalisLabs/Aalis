@@ -3,7 +3,7 @@ import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, AuthorityService } from './types/index.js';
+import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
@@ -36,6 +36,12 @@ export class Context {
   private _children: Set<Context> = new Set();
   private _parent?: Context;
   private _disposed = false;
+
+  /** 注册缓冲：服务尚不可用时暂存，待服务就绪后自动刷入 */
+  private _pendingTools: Omit<RegisteredTool, 'pluginName'>[] = [];
+  private _pendingToolGroups: Omit<ToolGroupInfo, 'pluginName'>[] = [];
+  private _pendingCommands: { def: CommandDefinition; ctxId: string }[] = [];
+  private _flushListenerAttached = false;
 
   /** 全局 mixin 注册表（所有 Context 实例共享） */
   private static _mixins: MixinEntry[] = [];
@@ -74,10 +80,6 @@ export class Context {
 
   get commands(): Maybe<CommandService> {
     return this._services.get<CommandService>('commands');
-  }
-
-  get authority(): Maybe<AuthorityService> {
-    return this._services.get<AuthorityService>('authority');
   }
 
   /**
@@ -163,7 +165,7 @@ export class Context {
   provide(
     name: string,
     instance: unknown,
-    options?: { capabilities?: string[]; priority?: number },
+    options?: { capabilities?: string[]; priority?: number; label?: string },
   ): () => void {
     this._services.register(
       name,
@@ -171,6 +173,7 @@ export class Context {
       options?.capabilities ?? [],
       options?.priority ?? 0,
       this.id,
+      options?.label,
     );
 
     const dispose = () => {
@@ -182,7 +185,9 @@ export class Context {
     this._disposables.push(dispose);
 
     const caps = options?.capabilities ?? [];
-    this._events.emit('service:registered', name, caps).catch(() => {});
+    this._events.emit('service:registered', name, caps).catch(err => {
+      this.logger.warn(`服务注册事件发射失败 [${name}]:`, err);
+    });
     this.logger.debug(`服务已注册: ${name}${caps.length ? ` [${caps.join(', ')}]` : ''}`);
 
     return dispose;
@@ -235,7 +240,7 @@ export class Context {
    * // 获取所有 LLM 并聚合模型列表
    * const allLLMs = ctx.getAllServices<LLMService>('llm');
    */
-  getAllServices<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[] }> {
+  getAllServices<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     return this._services.getAll<T>(name, requiredCapabilities);
   }
 
@@ -295,40 +300,129 @@ export class Context {
     });
   }
 
+  // ---- 领域聚合查询 ----
+
+  /**
+   * 聚合所有 LLM 提供者的模型列表
+   *
+   * 遍历所有已注册的 'llm' 服务实例，调用各自的 listModels()，
+   * 将结果合并为一个统一的模型列表（附带提供者标记）。
+   *
+   * @example
+   * const models = await ctx.listAllModels();
+   * // [{ id: 'gpt-4o', capabilities: [...], provider: 'OpenAI (api.openai.com)', contextId: '...' }, ...]
+   */
+  async listAllModels(): Promise<Array<{ id: string; capabilities: string[]; provider: string; contextId: string }>> {
+    const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
+    const results: Array<{ id: string; capabilities: string[]; provider: string; contextId: string }> = [];
+
+    await Promise.all(providers.map(async ({ instance, contextId, label }) => {
+      if (typeof instance.listModels !== 'function') return;
+      try {
+        const models = await instance.listModels();
+        for (const m of models) {
+          results.push({ ...m, provider: label ?? contextId, contextId });
+        }
+      } catch (err) {
+        this.logger.warn(`获取模型列表失败 [${contextId}]:`, err);
+      }
+    }));
+
+    return results;
+  }
+
+  // ---- 注册缓冲（服务延迟就绪支持） ----
+
+  /**
+   * 确保已挂载 service:registered 监听器，
+   * 用于在 tools/commands 服务就绪时自动刷入缓冲队列。
+   */
+  private _ensureFlushListener(): void {
+    if (this._flushListenerAttached) return;
+    this._flushListenerAttached = true;
+
+    const off = this.on('service:registered', (svcName: string) => {
+      if (svcName === 'tools') this._flushPendingTools();
+      if (svcName === 'commands') this._flushPendingCommands();
+    });
+    this._disposables.push(off);
+  }
+
+  private _flushPendingTools(): void {
+    const tools = this.tools;
+    if (!tools) return;
+    for (const tool of this._pendingTools) {
+      const dispose = tools.register(tool, this.id);
+      this._disposables.push(dispose);
+    }
+    this._pendingTools = [];
+    for (const group of this._pendingToolGroups) {
+      const dispose = tools.registerGroup(group, this.id);
+      this._disposables.push(dispose);
+    }
+    this._pendingToolGroups = [];
+  }
+
+  private _flushPendingCommands(): void {
+    const commands = this.commands;
+    if (!commands) return;
+    for (const { def, ctxId } of this._pendingCommands) {
+      const dispose = commands.register(def, ctxId);
+      this._disposables.push(dispose);
+    }
+    this._pendingCommands = [];
+  }
+
   // ---- 工具 ----
 
   /**
    * 注册 AI 工具（便捷方法）
-   * 需要 tools 服务可用，否则抛出错误
+   * 若 tools 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
    */
   registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void {
-    if (!this.tools) throw new Error('tools 服务不可用，请安装 @aalis/plugin-agent-tools');
-    const dispose = this.tools.register(tool, this.id);
-    this._disposables.push(dispose);
-    return dispose;
+    if (this.tools) {
+      const dispose = this.tools.register(tool, this.id);
+      this._disposables.push(dispose);
+      return dispose;
+    }
+    // 服务尚不可用，缓冲
+    this._pendingTools.push(tool);
+    this._ensureFlushListener();
+    this.logger.debug(`工具 "${tool.definition.function.name}" 已缓冲，等待 tools 服务就绪`);
+    return () => {
+      const idx = this._pendingTools.indexOf(tool);
+      if (idx >= 0) this._pendingTools.splice(idx, 1);
+    };
   }
 
   /**
    * 注册工具分组（便捷方法）
-   * 插件通过此方法声明其提供的工具分组，包含显示名称和描述
+   * 若 tools 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
    */
   registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
-    if (!this.tools) throw new Error('tools 服务不可用，请安装 @aalis/plugin-agent-tools');
-    const dispose = this.tools.registerGroup(group, this.id);
-    this._disposables.push(dispose);
-    return dispose;
+    if (this.tools) {
+      const dispose = this.tools.registerGroup(group, this.id);
+      this._disposables.push(dispose);
+      return dispose;
+    }
+    this._pendingToolGroups.push(group);
+    this._ensureFlushListener();
+    this.logger.debug(`工具分组 "${group.name}" 已缓冲，等待 tools 服务就绪`);
+    return () => {
+      const idx = this._pendingToolGroups.indexOf(group);
+      if (idx >= 0) this._pendingToolGroups.splice(idx, 1);
+    };
   }
 
   // ---- 指令 ----
 
   /**
    * 注册斜杠指令（便捷方法）
+   * 若 commands 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
    *
    * @example
-   * // 插件注册自定义指令
    * ctx.command('ping', '测试连通性', async () => 'pong!');
    *
-   * // 带参数的指令
    * ctx.command('echo', '回显消息', async (cmdCtx) => {
    *   return cmdCtx.args.join(' ') || '(空)';
    * });
@@ -339,7 +433,6 @@ export class Context {
     action: (ctx: CommandContext) => Promise<string | void>,
     options?: { authority?: number; safety?: SafetyLevel; asTools?: boolean },
   ): () => void {
-    if (!this.commands) throw new Error('commands 服务不可用，请安装 @aalis/plugin-commands');
     const def: CommandDefinition = {
       name,
       description,
@@ -348,9 +441,20 @@ export class Context {
       safety: options?.safety,
       asTools: options?.asTools,
     };
-    const dispose = this.commands.register(def, this.id);
-    this._disposables.push(dispose);
-    return dispose;
+    if (this.commands) {
+      const dispose = this.commands.register(def, this.id);
+      this._disposables.push(dispose);
+      return dispose;
+    }
+    // 缓冲
+    const entry = { def, ctxId: this.id };
+    this._pendingCommands.push(entry);
+    this._ensureFlushListener();
+    this.logger.debug(`指令 "${name}" 已缓冲，等待 commands 服务就绪`);
+    return () => {
+      const idx = this._pendingCommands.indexOf(entry);
+      if (idx >= 0) this._pendingCommands.splice(idx, 1);
+    };
   }
 
   // ---- Mixin ----
@@ -461,8 +565,9 @@ export class Context {
     if (this._disposed) return;
     this._disposed = true;
 
-    // 先销毁子上下文
-    for (const child of this._children) {
+    // 先销毁子上下文（复制避免迭代中修改 Set）
+    const children = [...this._children];
+    for (const child of children) {
       child.dispose();
     }
     this._children.clear();
@@ -479,6 +584,9 @@ export class Context {
       }
     }
     this._disposables = [];
+    this._pendingTools = [];
+    this._pendingToolGroups = [];
+    this._pendingCommands = [];
 
     // 发射服务注销事件，让 App 的自动恢复监听器能响应
     for (const svc of removedServices) {
@@ -487,6 +595,9 @@ export class Context {
 
     // 清理该上下文注册的钩子
     this.hooks.unregisterByContext(this.id);
+
+    // 清理该上下文注册的工具（安全访问，服务可能已卸载）
+    this._services.get<ToolService>('tools')?.unregisterByPlugin(this.id);
 
     // 清理该上下文注册的指令（安全访问，服务可能已卸载）
     this._services.get<CommandService>('commands')?.unregisterByPlugin(this.id);

@@ -3,8 +3,8 @@ import type { Context, ConfigSchema, PlatformAdapter, ToolCallContext } from '@a
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-onebot-tools';
+export const displayName = 'OneBot 工具';
 export const inject = {
-  required: ['tools'],
   optional: ['platform'],
 };
 

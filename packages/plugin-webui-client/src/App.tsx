@@ -49,6 +49,12 @@ export function App() {
 
   // 重启中状态
   const [restarting, setRestarting] = useState(false);
+  // 重启过程中 WS 已断开过（用于区分：收到 restarting 后需要先断开再重连才刷新）
+  const [wasDisconnected, setWasDisconnected] = useState(false);
+  // 简单重载（webui-client 切换等，无需等待重连）
+  const [reloading, setReloading] = useState(false);
+  // 重启/刷新 overlay 的提示文字
+  const [restartMessage, setRestartMessage] = useState('正在重启…');
 
   const streamingRef = useRef(false);
 
@@ -224,16 +230,40 @@ export function App() {
 
   const handleRestarting = useCallback(() => {
     setRestarting(true);
+    setWasDisconnected(false);
+    setRestartMessage('正在重启…');
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting);
+  const handleReload = useCallback(() => {
+    setReloading(true);
+    setRestartMessage('正在切换前端，即将刷新…');
+  }, []);
 
-  // 重启完成后自动刷新页面
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload);
+
+  // 重启流程：等待 WS 断开后重连，再刷新
   useEffect(() => {
-    if (restarting && connected) {
-      window.location.reload();
+    if (restarting && !connected) {
+      setWasDisconnected(true);
+      setRestartMessage('等待服务器重启…');
     }
   }, [restarting, connected]);
+
+  useEffect(() => {
+    if (restarting && wasDisconnected && connected) {
+      setRestartMessage('服务器已就绪，即将刷新…');
+      const timer = setTimeout(() => window.location.reload(), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [restarting, wasDisconnected, connected]);
+
+  // 简单重载流程（webui-client 切换）：短暂延迟后直接刷新
+  useEffect(() => {
+    if (reloading) {
+      const timer = setTimeout(() => window.location.reload(), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [reloading]);
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
@@ -378,7 +408,7 @@ export function App() {
               config={config}
               onRefresh={refreshPlugins}
               onConfigSaved={refreshConfig}
-              onRestart={() => setRestarting(true)}
+              onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }}
             />
           )}
           {activeTab === 'platforms' && <PlatformPage />}
@@ -434,13 +464,13 @@ export function App() {
         setPendingFiles={setPendingFiles}
       />
 
-      {/* 重启中遮罩 */}
-      {restarting && (
+      {/* 重启/刷新中遮罩 */}
+      {(restarting || reloading) && (
         <div className="restart-overlay">
           <div className="restart-dialog">
             <div className="restart-spinner" />
-            <h3>正在重启…</h3>
-            <p className="restart-desc">应用正在重新启动，请稍候</p>
+            <h3>{reloading ? '切换前端' : '正在重启…'}</h3>
+            <p className="restart-desc">{restartMessage}</p>
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@ import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Context } from './context.js';
 import { ConfigManager } from './config.js';
-import { PluginManager, type PluginModule } from './plugin.js';
+import { PluginManager, parseInstanceId, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
 import type { AgentService } from './types/index.js';
 import { readdir } from 'node:fs/promises';
@@ -101,7 +101,7 @@ export class App {
     this.hooks = opts.hooks ?? new HookRegistry();
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
 
-    // 2. 根上下文（commands/tools/authority 由内置插件延迟注入）
+    // 2. 根上下文
     this.ctx = new Context({
       id: 'root',
       events: this.events,
@@ -117,10 +117,18 @@ export class App {
     this.plugins.requiredServices = this.requiredServices;
     this.packagesDir = resolve(process.cwd(), 'packages');
 
-    // 4. 注册核心服务（让插件能通过 ctx.getService<AppService>('app') 访问）
+    // 4. 注册核心服务
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
 
-    // 5. 监控核心必需服务，卸载时自动恢复
+    // 5. 新服务注册时自动应用配置文件中的服务偏好
+    this.ctx.on('service:registered', (svcName) => {
+      const pref = config.getServicePreferences()[svcName];
+      if (pref) {
+        this.ctx.preferService(svcName, pref);
+      }
+    });
+
+    // 8. 监控核心必需服务，卸载时自动恢复
     this.ctx.on('service:unregistered', async (name) => {
       if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;
@@ -138,22 +146,27 @@ export class App {
 
   /**
    * 注册插件
+   *
+   * @param module     插件模块
+   * @param config     插件配置（覆盖文件配置）
+   * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
    */
-  async plugin(module: PluginModule, config?: Record<string, unknown>): Promise<void> {
+  async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<void> {
+    const id = instanceId ?? module.name;
     // 合并优先级: 插件默认配置 ← 配置文件 ← 代码传入
     const defaults = module.defaultConfig ?? {};
-    const fileConfig = this.ctx.config.getPluginConfig(module.name);
+    const fileConfig = this.ctx.config.getPluginConfig(id);
     const mergedConfig = { ...defaults, ...fileConfig, ...config };
-    await this.plugins.register(module, mergedConfig);
+    await this.plugins.register(module, mergedConfig, id);
   }
 
   /**
    * 自动扫描 packages/ 目录，动态加载所有插件
    *
    * 规则:
-   * - 先加载内置插件（authority, commands, tools）
    * - 跳过 package.json 中标记 `"aalis": { "core": true }` 的包
    * - 其余包全部视为插件，通过 dynamic import() 加载
+   * - tools 和 commands 服务由核心提供，插件无需声明依赖即可使用
    */
   async autoLoadPlugins(packagesDir?: string): Promise<void> {
     // 0. 加载内置插件（必须在外部插件之前）
@@ -163,13 +176,39 @@ export class App {
     const discovered = await this.discoverPlugins(dir);
     this.logger.info(`发现 ${discovered.length} 个插件`);
 
+    // 按模块名索引已加载的模块（用于多实例查找）
+    const loadedModules = new Map<string, PluginModule>();
+
     for (const pkg of discovered) {
       try {
         const mod = await import(pathToFileURL(pkg.entry).href) as PluginModule;
+        loadedModules.set(mod.name, mod);
         await this.plugin(mod);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`加载插件 "${pkg.name}" 失败: ${message}`);
+      }
+    }
+
+    // 扫描配置文件中的多实例条目（name:suffix 格式）
+    const pluginConfigs = this.ctx.config.get('plugins') ?? {};
+    for (const configKey of Object.keys(pluginConfigs)) {
+      const { moduleName, suffix } = parseInstanceId(configKey);
+      if (!suffix) continue; // 非多实例条目，已在上面加载
+      const mod = loadedModules.get(moduleName);
+      if (!mod) {
+        this.logger.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
+        continue;
+      }
+      if (!mod.reusable) {
+        this.logger.warn(`插件 "${moduleName}" 未声明 reusable，跳过多实例 "${configKey}"`);
+        continue;
+      }
+      try {
+        await this.plugin(mod, undefined, configKey);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`加载多实例插件 "${configKey}" 失败: ${message}`);
       }
     }
 
@@ -199,7 +238,7 @@ export class App {
     for (const plugin of plugins) {
       const defaults = plugin.defaultConfig ?? {};
       const schema = plugin.configSchema;
-      const fileConfig = this.ctx.config.getPluginConfig(plugin.name);
+      const fileConfig = this.ctx.config.getPluginConfig(plugin.instanceId);
 
       // 步骤 1: 补充缺失的默认值
       let merged = this.deepMergeDefaults(defaults, fileConfig);
@@ -210,7 +249,7 @@ export class App {
       }
 
       if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
-        this.ctx.config.setPluginConfig(plugin.name, merged);
+        this.ctx.config.setPluginConfig(plugin.instanceId, merged);
         changed = true;
         this.logger.debug(`同步插件配置: ${plugin.name}`);
       }
@@ -543,7 +582,6 @@ export class App {
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
     await this.ctx.emit('app:stopping');
-    try { this.ctx.authority?.save(); } catch { /* authority 服务可能已卸载 */ }
     await this.ctx.emit('dispose');
     this.ctx.dispose();
     this.logger.info('已停止');

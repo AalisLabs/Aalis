@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema, ToolCallContext, RegisteredTool } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
 import { registerShellTools } from './tools/shell.js';
 import { registerFileTools } from './tools/file.js';
 import { registerSystemTools } from './tools/system.js';
@@ -7,8 +7,9 @@ import { registerHttpTools } from './tools/http.js';
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-tools-system';
+export const displayName = '系统工具';
 export const inject = {
-  required: ['tools'],
+  optional: ['commands'],
 };
 
 export const configSchema: ConfigSchema = {
