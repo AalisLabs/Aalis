@@ -20,6 +20,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [pendingFiles, setPendingFiles] = useState<Array<{ name: string; data: string; mimeType?: string }>>([]);
+  const attachmentOrderRef = useRef<Array<'image' | 'file'>>([]);
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
     return hash || 'dashboard';
@@ -302,17 +303,20 @@ export function App() {
 
     const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
     const files = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
+    const attachmentOrder = attachmentOrderRef.current.length > 0 ? [...attachmentOrderRef.current] : undefined;
     setMessages(prev => [...prev, {
       role: 'user',
       content: trimmed,
       images,
       fileNames: files?.map(f => f.name),
+      attachmentOrder: attachmentOrder ? [...attachmentOrder] : undefined,
       timestamp: Date.now(),
     }]);
-    send(trimmed, images, files);
+    send(trimmed, images, files, attachmentOrder);
     setInput('');
     setPendingImages([]);
     setPendingFiles([]);
+    attachmentOrderRef.current = [];
     setLoading(true);
   };
 
@@ -462,6 +466,7 @@ export function App() {
         setPendingImages={setPendingImages}
         pendingFiles={pendingFiles}
         setPendingFiles={setPendingFiles}
+        attachmentOrderRef={attachmentOrderRef}
       />
 
       {/* 重启/刷新中遮罩 */}

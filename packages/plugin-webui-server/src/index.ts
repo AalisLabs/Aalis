@@ -51,6 +51,8 @@ interface WSIncoming {
   images?: string[];
   /** 上传的文件列表 */
   files?: Array<{ name: string; data: string; mimeType?: string }>;
+  /** 附件上传顺序 */
+  attachmentOrder?: Array<'image' | 'file'>;
 }
 
 interface WSOutgoing {
@@ -825,6 +827,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           userId: 'console',
           ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
           ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
+          ...(msg.attachmentOrder && msg.attachmentOrder.length > 0 ? { attachmentOrder: msg.attachmentOrder } : {}),
         });
       } catch (err) {
         ctx.logger.warn('WebUI 消息处理失败:', err);

@@ -14,6 +14,24 @@ import type {
 
 // ===== 插件元数据 =====
 
+/** 已知的内容审查错误关键词 */
+const CONTENT_FILTER_PATTERNS = [
+  'content exists risk',
+  'content_filter',
+  'content_policy',
+  'sensitive content',
+  'risk control',
+];
+
+/** 解析 API 错误，对内容审查类错误返回友好提示 */
+function parseApiError(provider: string, status: number, body: string): string {
+  const lower = body.toLowerCase();
+  if (status === 400 && CONTENT_FILTER_PATTERNS.some(p => lower.includes(p))) {
+    return `${provider} 拒绝了此次请求（内容安全策略），请尝试换一个话题或缩短上下文`;
+  }
+  return `${provider} API 错误 (${status}): ${body}`;
+}
+
 export const name = '@aalis/plugin-deepseek';
 export const displayName = 'DeepSeek';
 export const provides = ['llm'];
@@ -71,8 +89,7 @@ interface DeepSeekConfig {
 
 type APIMessageContent =
   | string
-  | null
-  | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
+  | null;
 
 interface APIMessage {
   role: string;
@@ -237,7 +254,7 @@ class DeepSeekLLMService implements LLMService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`DeepSeek API 错误 (${response.status}): ${errorText}`);
+      throw new Error(parseApiError('DeepSeek', response.status, errorText));
     }
 
     const data = (await response.json()) as APIChatResponse;
@@ -320,7 +337,7 @@ class DeepSeekLLMService implements LLMService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`DeepSeek API 错误 (${response.status}): ${errorText}`);
+      throw new Error(parseApiError('DeepSeek', response.status, errorText));
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
@@ -414,17 +431,8 @@ class DeepSeekLLMService implements LLMService {
       content: msg.content ?? null,
     };
 
-    // 多模态：如果消息包含图片，构造 content 数组
-    if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
-      if (msg.content) {
-        parts.push({ type: 'text', text: msg.content });
-      }
-      for (const img of msg.images) {
-        parts.push({ type: 'image_url', image_url: { url: img } });
-      }
-      apiMsg.content = parts;
-    }
+    // DeepSeek API 不支持 image_url content 类型
+    // 图片应由 plugin-image-recognition 预处理为文本描述，不传递给 API
 
     // 传递思考内容给 API（工具调用循环中需要）
     if (msg.reasoningContent) {
