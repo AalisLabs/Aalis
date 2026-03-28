@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { AlertTriangle, Radio, Workflow, Link2, Loader2 } from 'lucide-react';
 import { api } from '../api';
 import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, isSchemaField } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
@@ -17,7 +18,8 @@ export function PluginConfigPage({
   onConfigSaved: () => void;
   onRestart: () => void;
 }) {
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busySet, setBusySet] = useState<Set<string>>(new Set());
+  const prevPluginsRef = useRef(plugins);
   const [editingPlugin, setEditingPlugin] = useState<string | null>(null);
   const [editBuffer, setEditBuffer] = useState<Record<string, string>>({});
   const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>({});
@@ -31,6 +33,17 @@ export function PluginConfigPage({
   const [newInstanceTarget, setNewInstanceTarget] = useState<string | null>(null);
   const [newInstanceSuffix, setNewInstanceSuffix] = useState('');
 
+  // 当插件列表更新（state_changed WS 事件触发 refreshPlugins）时，自动清除 busy 状态
+  useEffect(() => {
+    if (prevPluginsRef.current !== plugins && busySet.size > 0) {
+      setBusySet(new Set());
+    }
+    prevPluginsRef.current = plugins;
+  }, [plugins, busySet]);
+
+  const markBusy = (id: string) => setBusySet(prev => new Set(prev).add(id));
+  const isBusy = (id: string) => busySet.has(id);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
@@ -38,7 +51,7 @@ export function PluginConfigPage({
 
   const handleToggle = async (plugin: PluginInfo) => {
     if (plugin.core) return;
-    setBusy(plugin.instanceId);
+    markBusy(plugin.instanceId);
     const action = plugin.state === 'disabled' ? 'enable' : 'disable';
     const res = await api<{ ok?: boolean; error?: string }>(
       `/api/plugins/${encodeURIComponent(plugin.instanceId)}/${action}`,
@@ -49,8 +62,8 @@ export function PluginConfigPage({
       onRefresh();
     } else {
       showToast(res.error ?? '未知错误');
+      setBusySet(prev => { const next = new Set(prev); next.delete(plugin.instanceId); return next; });
     }
-    setBusy(null);
   };
 
   const startEdit = (plugin: PluginInfo) => {
@@ -98,7 +111,7 @@ export function PluginConfigPage({
 
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
     const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
-    setBusy(instanceId);
+    markBusy(instanceId);
     await api(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
       method: 'PUT',
       body: JSON.stringify({ config: parsed }),
@@ -106,14 +119,12 @@ export function PluginConfigPage({
     showToast(`${instanceId} 配置已更新，正在重载…`);
     setEditingPlugin(null);
     onRefresh();
-    setTimeout(() => onRefresh(), 1500);
-    setBusy(null);
   };
 
   const handleCreateInstance = async (moduleName: string) => {
     const suffix = newInstanceSuffix.trim();
     if (!suffix) return;
-    setBusy(moduleName);
+    markBusy(moduleName);
     const res = await api<{ ok?: boolean; instanceId?: string; error?: string }>(
       `/api/plugins/${encodeURIComponent(moduleName)}/instances`,
       { method: 'POST', body: JSON.stringify({ suffix }) },
@@ -125,13 +136,13 @@ export function PluginConfigPage({
       onRefresh();
     } else {
       showToast(res.error ?? '创建失败');
+      setBusySet(prev => { const next = new Set(prev); next.delete(moduleName); return next; });
     }
-    setBusy(null);
   };
 
   const handleRemoveInstance = async (instanceId: string) => {
     if (!confirm(`确定删除实例 "${instanceId}"？配置将一并移除。`)) return;
-    setBusy(instanceId);
+    markBusy(instanceId);
     const res = await api<{ ok?: boolean; error?: string }>(
       `/api/plugins/${encodeURIComponent(instanceId)}/instance`,
       { method: 'DELETE' },
@@ -141,8 +152,8 @@ export function PluginConfigPage({
       onRefresh();
     } else {
       showToast(res.error ?? '删除失败');
+      setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
     }
-    setBusy(null);
   };
 
   /** 判断是否为多实例的子实例（instanceId 含冒号后缀） */
@@ -346,7 +357,13 @@ export function PluginConfigPage({
         const hasDetail = p.provides.length > 0 || hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
         const hasSchema = !!p.configSchema;
         return (
-          <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={iid}>
+          <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={iid} style={{ position: 'relative' }}>
+            {isBusy(iid) && (
+              <div className="plugin-reload-overlay">
+                <Loader2 size={20} className="plugin-reload-spinner" />
+                <span>重载中…</span>
+              </div>
+            )}
             <div className="plugin-card-header">
               <div className="plugin-card-info" style={{ cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && toggleSection(iid)}>
                 {hasDetail && <span className={`config-block-toggle ${isOpen ? 'open' : ''}`}>▶</span>}
@@ -368,7 +385,7 @@ export function PluginConfigPage({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {isSub && (
-                  <button className="btn btn-sm" style={{ color: '#e55', fontSize: 11 }} onClick={() => handleRemoveInstance(iid)} disabled={busy === iid}>删除</button>
+                  <button className="btn btn-sm" style={{ color: '#e55', fontSize: 11 }} onClick={() => handleRemoveInstance(iid)} disabled={isBusy(iid)}>删除</button>
                 )}
                 {p.reusable && !isSub && (
                   <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => { setNewInstanceTarget(newInstanceTarget === p.name ? null : p.name); setNewInstanceSuffix(''); }}>+ 实例</button>
@@ -378,7 +395,7 @@ export function PluginConfigPage({
                     type="checkbox"
                     checked={p.state !== 'disabled'}
                     onChange={() => handleToggle(p)}
-                    disabled={p.core || busy === iid}
+                    disabled={p.core || isBusy(iid)}
                   />
                   <span className="toggle-slider" />
                 </label>
@@ -397,13 +414,13 @@ export function PluginConfigPage({
                   onChange={e => setNewInstanceSuffix(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleCreateInstance(p.name)}
                 />
-                <button className="btn btn-primary btn-sm" onClick={() => handleCreateInstance(p.name)} disabled={!newInstanceSuffix.trim() || busy === p.name}>创建</button>
+                <button className="btn btn-primary btn-sm" onClick={() => handleCreateInstance(p.name)} disabled={!newInstanceSuffix.trim() || isBusy(p.name)}>创建</button>
                 <button className="btn btn-sm" onClick={() => setNewInstanceTarget(null)}>取消</button>
               </div>
             )}
 
             {p.state === 'error' && p.error && (
-              <div className="plugin-error-msg">⚠ {p.error}</div>
+              <div className="plugin-error-msg"><AlertTriangle size={14} /> {p.error}</div>
             )}
 
             {isOpen && p.provides.length > 0 && (
@@ -415,10 +432,10 @@ export function PluginConfigPage({
             {isOpen && hasExtends && (
               <div className="plugin-card-extends">
                 <span className="extends-label">扩展 Core:</span>
-                {p.extends!.events?.map(e => <span className="extends-chip event" key={`e-${e}`}>📡 {e}</span>)}
-                {p.extends!.hooks?.map(h => <span className="extends-chip hook" key={`h-${h}`}>🪝 {h}</span>)}
+                {p.extends!.events?.map(e => <span className="extends-chip event" key={`e-${e}`}><Radio size={12} /> {e}</span>)}
+                {p.extends!.hooks?.map(h => <span className="extends-chip hook" key={`h-${h}`}><Workflow size={12} /> {h}</span>)}
                 {p.extends!.mixins && Object.entries(p.extends!.mixins).map(([svc, methods]) =>
-                  methods.map(m => <span className="extends-chip mixin" key={`m-${svc}-${m}`}>🔗 ctx.{m}()</span>)
+                  methods.map(m => <span className="extends-chip mixin" key={`m-${svc}-${m}`}><Link2 size={12} /> ctx.{m}()</span>)
                 )}
               </div>
             )}
@@ -454,7 +471,7 @@ export function PluginConfigPage({
                       onFetchProviders={fetchProviders}
                     />
                     <div className="config-edit-actions">
-                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, true)} disabled={busy === iid}>保存</button>
+                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, true)} disabled={isBusy(iid)}>保存</button>
                       {p.defaultConfig && Object.keys(p.defaultConfig).length > 0 && (
                         <button className="btn btn-warn btn-sm" onClick={() => restoreDefaults(p)}>恢复默认</button>
                       )}
@@ -477,7 +494,7 @@ export function PluginConfigPage({
                       ))}
                     </div>
                     <div className="config-edit-actions">
-                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, false)} disabled={busy === iid}>保存</button>
+                      <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, false)} disabled={isBusy(iid)}>保存</button>
                       {p.defaultConfig && Object.keys(p.defaultConfig).length > 0 && (
                         <button className="btn btn-warn btn-sm" onClick={() => restoreDefaults(p)}>恢复默认</button>
                       )}

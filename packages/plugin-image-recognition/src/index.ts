@@ -150,14 +150,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       msg.images.map(img => describeImage(visionLLM, img)),
     );
 
-    // 将描述附加到消息内容中
-    const descText = descriptions
-      .map((desc, i) => `[图片${msg.images!.length > 1 ? (i + 1) : ''}: ${desc}]`)
-      .join('\n');
+    const descTexts = descriptions
+      .map((desc, i) => `[图片${msg.images!.length > 1 ? (i + 1) : ''}: ${desc}]`);
 
-    msg.content = msg.content
-      ? `${msg.content}\n${descText}`
-      : descText;
+    // 如果有 attachmentOrder，将图片描述存入 _imageDescriptions，交由后续统一组装
+    if (msg.attachmentOrder) {
+      msg._imageDescriptions = descTexts;
+    } else {
+      const descText = descTexts.join('\n');
+      msg.content = msg.content
+        ? `${msg.content}\n${descText}`
+        : descText;
+    }
 
     // 清除 images，表示已由中间件消费（不再传递给多模态 LLM）
     msg.images = undefined;

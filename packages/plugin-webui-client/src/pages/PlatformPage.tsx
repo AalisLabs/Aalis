@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Plug, Globe } from 'lucide-react';
 import { api } from '../api';
 import type { PlatformInfo } from '../types';
 
@@ -34,14 +35,14 @@ export function PlatformPage() {
       <div className="section-label">概览</div>
       <div className="overview-grid">
         <div className="overview-card">
-          <div className="overview-card-icon">🔌</div>
+          <div className="overview-card-icon"><Plug size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">适配器</div>
             <div className="overview-card-value">{platforms.length}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">🌐</div>
+          <div className="overview-card-icon"><Globe size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">连接数</div>
             <div className="overview-card-value">{onlineConnections} / {totalConnections}</div>

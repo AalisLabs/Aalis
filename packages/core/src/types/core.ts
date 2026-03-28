@@ -42,6 +42,12 @@ export interface IncomingMessage {
     /** MIME 类型 */
     mimeType?: string;
   }>;
+  /** 附件上传顺序（images 与 files 的交错顺序） */
+  attachmentOrder?: Array<'image' | 'file'>;
+  /** 预处理器生成的图片描述（按 images 原始下标对齐） */
+  _imageDescriptions?: string[];
+  /** 预处理器生成的文件描述（按 files 原始下标对齐） */
+  _fileDescriptions?: string[];
   /** 会话类型：群聊、私聊、频道等 */
   sessionType?: 'group' | 'private' | 'channel';
   /** 消息来源标识（用于并发隔离：同一 session 不同来源互不打断） */

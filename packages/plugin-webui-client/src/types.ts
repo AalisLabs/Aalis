@@ -15,6 +15,8 @@ export interface ChatMessage {
   images?: string[];
   /** 附带的文件名列表（仅用于显示） */
   fileNames?: string[];
+  /** 附件上传顺序（用于展示顺序标注） */
+  attachmentOrder?: Array<'image' | 'file'>;
   timestamp: number;
 }
 

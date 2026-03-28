@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Sparkles, Zap, AlertTriangle, Wrench, Bot, Command } from 'lucide-react';
 import { api } from '../api';
 import { ServiceCard } from '../components/ServiceCard';
 import type { SystemStatus, PluginInfo, ServiceInfo, ToolGroupDetail } from '../types';
@@ -106,14 +107,14 @@ export function DashboardPage({
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">✦</div>
+          <div className="overview-card-icon"><Sparkles size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">应用名称</div>
             <div className="overview-card-value">{status?.name ?? '-'}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">⚡</div>
+          <div className="overview-card-icon"><Zap size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">活跃插件</div>
             <div className="overview-card-value">{activeCount} / {totalCount}</div>
@@ -121,7 +122,7 @@ export function DashboardPage({
         </div>
         {errorCount > 0 && (
           <div className="overview-card overview-card-error">
-            <div className="overview-card-icon">⚠️</div>
+            <div className="overview-card-icon"><AlertTriangle size={20} /></div>
             <div className="overview-card-body">
               <div className="overview-card-label">错误插件</div>
               <div className="overview-card-value">{errorCount}</div>
@@ -129,21 +130,21 @@ export function DashboardPage({
           </div>
         )}
         <div className="overview-card">
-          <div className="overview-card-icon">🛠</div>
+          <div className="overview-card-icon"><Wrench size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">已注册工具</div>
             <div className="overview-card-value">{status?.tools.length ?? 0}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">⌘</div>
+          <div className="overview-card-icon"><Command size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">已注册指令</div>
             <div className="overview-card-value">{status?.commands?.length ?? 0}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">🤖</div>
+          <div className="overview-card-icon"><Bot size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">可用模型</div>
             <div className="overview-card-value">{llmModels.length}</div>

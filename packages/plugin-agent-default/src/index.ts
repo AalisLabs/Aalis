@@ -42,6 +42,10 @@ class DefaultAgent implements AgentService {
   private toolGroups: Record<string, string[]>;
   /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
   private preferredModel: string;
+  /** 按平台覆盖的模型（platform → modelId） */
+  private platformModels: Record<string, string>;
+  /** session 级别的模型覆盖（sessionId → modelId），由 /model 指令设置 */
+  private sessionModelOverrides = new Map<string, string>();
   /** 模型 ID → 提供者 contextId 映射缓存 */
   private modelProviderMap: Map<string, string> | null = null;
 
@@ -64,6 +68,7 @@ class DefaultAgent implements AgentService {
     this.historyLimit = (config.historyLimit as number) ?? 50;
     this.toolGroups = parseToolGroups(config.toolGroups);
     this.preferredModel = (config.preferredModel as string) || '';
+    this.platformModels = parsePlatformModels(config.platformModels);
     this.logger.info('默认对话代理已初始化');
 
     // 异步构建模型→提供者映射
@@ -89,12 +94,22 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 根据 preferredModel 配置获取 LLM 服务
-   * - 有 preferredModel → 找到对应提供者并返回
-   * - 无 preferredModel → 返回默认（首个）提供者
+   * 根据优先级链获取 LLM 服务和模型覆盖
+   *
+   * 优先级（从高到低）：
+   * 1. session 级别覆盖（/model 指令设置）
+   * 2. 平台级别覆盖（platformModels 配置）
+   * 3. 全局 preferredModel
+   * 4. 默认 LLM 提供者的默认模型
    */
-  private resolveLLM(): { llm: LLMService; modelOverride?: string } | undefined {
-    if (!this.preferredModel) {
+  private resolveLLM(platform?: string, sessionId?: string): { llm: LLMService; modelOverride?: string } | undefined {
+    // 按优先级选取模型
+    const model =
+      (sessionId && this.sessionModelOverrides.get(sessionId)) ||
+      (platform && this.platformModels[platform]) ||
+      this.preferredModel;
+
+    if (!model) {
       const llm = this.ctx.getService<LLMService>('llm');
       return llm ? { llm } : undefined;
     }
@@ -103,14 +118,14 @@ class DefaultAgent implements AgentService {
     if (allProviders.length === 0) return undefined;
 
     if (this.modelProviderMap) {
-      const targetContextId = this.modelProviderMap.get(this.preferredModel);
+      const targetContextId = this.modelProviderMap.get(model);
       if (targetContextId) {
         const found = allProviders.find(p => p.contextId === targetContextId);
-        if (found) return { llm: found.instance, modelOverride: this.preferredModel };
+        if (found) return { llm: found.instance, modelOverride: model };
       }
     }
     // 映射未命中：回退到默认提供者，但仍传递 model override
-    return { llm: allProviders[0].instance, modelOverride: this.preferredModel };
+    return { llm: allProviders[0].instance, modelOverride: model };
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */
@@ -381,7 +396,7 @@ class DefaultAgent implements AgentService {
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
 
-      const resolved = this.resolveLLM();
+      const resolved = this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
         await this.ctx.emit('message:send', {
@@ -588,8 +603,8 @@ class DefaultAgent implements AgentService {
           done: true,
         });
 
-        // 空回复（outputFormat 中 reply 字段为空字符串）时静默，不发送消息
-        if (replyContent.length === 0) {
+        // 空回复（outputFormat 中 reply 字段为空字符串或仅空白）时静默，不发送消息
+        if (replyContent.trim().length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
           // 如果有工具调用，将摘要附加到保存的消息中，便于长期记忆回溯
@@ -687,6 +702,41 @@ class DefaultAgent implements AgentService {
     if (incoming.replyTo?.content) {
       const replyLabel = incoming.replyTo.nickname ?? incoming.replyTo.userId ?? '?';
       currentContent += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
+    }
+
+    // 根据 attachmentOrder 按上传顺序组装附件描述
+    if (incoming.attachmentOrder && (incoming._fileDescriptions || incoming._imageDescriptions)) {
+      const fileDescs = incoming._fileDescriptions ?? [];
+      const imageDescs = incoming._imageDescriptions ?? [];
+      let fi = 0, ii = 0;
+      const ordered: string[] = [];
+      for (const type of incoming.attachmentOrder) {
+        if (type === 'file' && fi < fileDescs.length) {
+          ordered.push(fileDescs[fi++]);
+        } else if (type === 'image' && ii < imageDescs.length) {
+          ordered.push(imageDescs[ii++]);
+        }
+      }
+      // 追加剩余未匹配的描述
+      while (fi < fileDescs.length) ordered.push(fileDescs[fi++]);
+      while (ii < imageDescs.length) ordered.push(imageDescs[ii++]);
+      if (ordered.length > 0) {
+        const attachText = ordered.join('\n');
+        currentContent = currentContent
+          ? `${currentContent}\n${attachText}`
+          : attachText;
+      }
+    }
+
+    // 检测预处理附件内容——引导 LLM 综合分析而非逐项转述
+    const hasPreprocessed = /\[图片\d*[:：]|\[文件[:：]|--- 文件内容 ---/.test(currentContent);
+    if (hasPreprocessed) {
+      messages.push({
+        role: 'system',
+        content: '用户消息中包含系统预处理的附件描述（图片识别结果和/或文件内容提取）。'
+          + '请将这些信息作为参考上下文，结合用户的文字，给出一个自然、连贯的统一回复。'
+          + '不要将分析结果逐项列出或分成单独的字段，直接在回复中融合所有信息。',
+      });
     }
 
     const userMessage: Message = {
@@ -900,11 +950,24 @@ class DefaultAgent implements AgentService {
   private extractJsonReply(content: string): string {
     const trimmed = content.trim();
     if (!trimmed.startsWith('{')) return content;
+    const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
     try {
       const parsed = JSON.parse(trimmed);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return content;
-      for (const key of ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message']) {
+      // 优先查找字符串类型的回复字段
+      for (const key of replyKeys) {
         if (typeof parsed[key] === 'string') return parsed[key];
+      }
+      // 嵌套对象：深入一层查找字符串回复
+      for (const key of replyKeys) {
+        const val = parsed[key];
+        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+          for (const subKey of replyKeys) {
+            if (typeof val[subKey] === 'string') return val[subKey];
+          }
+          const strings = Object.values(val).filter((v): v is string => typeof v === 'string');
+          if (strings.length > 0) return strings.join('\n');
+        }
       }
     } catch { /* 非 JSON，原样返回 */ }
     return content;
@@ -962,6 +1025,24 @@ export const configSchema: ConfigSchema = {
     default: 50,
     description: '从记忆中加载的最近对话历史条数',
   },
+  platformModels: {
+    type: 'array',
+    label: '平台模型覆盖',
+    description: '为不同平台指定不同的对话模型。未配置的平台使用上方的全局对话模型。',
+    items: {
+      platform: {
+        type: 'string',
+        label: '平台标识',
+        description: '平台名（如 onebot、webui、cli）',
+      },
+      model: {
+        type: 'select',
+        label: '模型',
+        dynamicOptions: 'llm',
+        allowCustom: true,
+      },
+    },
+  },
   toolGroups: {
     type: 'array',
     label: '工具分组',
@@ -987,8 +1068,25 @@ export const defaultConfig = {
   systemPrompt: '',
   memoryTokenBudget: 4096,
   historyLimit: 50,
+  platformModels: [],
   toolGroups: [],
 };
+
+/** 将 SchemaArray 格式的 platformModels 转为 Record<string, string> */
+function parsePlatformModels(raw: unknown): Record<string, string> {
+  if (!raw) return {};
+  if (Array.isArray(raw)) {
+    const result: Record<string, string> = {};
+    for (const entry of raw) {
+      if (entry && typeof entry === 'object' && typeof entry.platform === 'string' && typeof entry.model === 'string' && entry.model) {
+        result[entry.platform] = entry.model;
+      }
+    }
+    return result;
+  }
+  if (typeof raw === 'object') return raw as Record<string, string>;
+  return {};
+}
 
 /** 将 SchemaArray 格式或旧 Record 格式的 toolGroups 统一转为 Record<string, string[]> */
 function parseToolGroups(raw: unknown): Record<string, string[]> {
@@ -1013,4 +1111,51 @@ function parseToolGroups(raw: unknown): Record<string, string[]> {
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agent = new DefaultAgent(ctx, config);
   ctx.provide('agent', agent);
+
+  // ===== /model 指令 =====
+  ctx.command('model', '查看或切换当前会话的对话模型', async (cmdCtx) => {
+    const target = cmdCtx.args[0];
+
+    // 无参数：显示当前模型和可用模型列表
+    if (!target) {
+      const sessionOverride = agent['sessionModelOverrides'].get(cmdCtx.sessionId);
+      const platformModel = agent['platformModels'][cmdCtx.platform];
+      const globalModel = agent['preferredModel'];
+      const current = sessionOverride || platformModel || globalModel || '(默认)';
+      const lines = [`**当前模型**: ${current}`];
+      if (sessionOverride) lines.push(`  _(session 覆盖, /model reset 可清除)_`);
+      else if (platformModel) lines.push(`  _(平台 ${cmdCtx.platform} 配置)_`);
+      else if (globalModel) lines.push(`  _(全局配置)_`);
+
+      // 列出可用模型
+      const allProviders = ctx.getAllServices<LLMService>('llm');
+      const models: string[] = [];
+      for (const p of allProviders) {
+        if (typeof p.instance.listModels === 'function') {
+          try {
+            const list = await p.instance.listModels();
+            for (const m of list) models.push(m.id);
+          } catch { /* ignore */ }
+        }
+      }
+      if (models.length > 0) {
+        lines.push('', '**可用模型**:');
+        for (const m of models) lines.push(`- ${m}`);
+      }
+      return lines.join('\n');
+    }
+
+    // /model reset — 清除 session 覆盖
+    if (target === 'reset') {
+      agent['sessionModelOverrides'].delete(cmdCtx.sessionId);
+      const fallback = agent['platformModels'][cmdCtx.platform] || agent['preferredModel'] || '(默认)';
+      return `已清除会话模型覆盖，回退到: ${fallback}`;
+    }
+
+    // /model <name> — 设置 session 级模型覆盖
+    agent['sessionModelOverrides'].set(cmdCtx.sessionId, target);
+    // 确保模型映射是最新的
+    await agent['buildModelProviderMap']();
+    return `当前会话模型已切换为: ${target}`;
+  });
 }

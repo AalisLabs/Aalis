@@ -329,6 +329,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const fileInfos: string[] = [];
+    // 记录图片文件被路由到 msg.images 的数量（用于 attachmentOrder 更新）
+    let routedImageCount = 0;
 
     for (const fileAttachment of msg.files) {
       try {
@@ -340,6 +342,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           // 图片文件 → 路由到 msg.images，由 image-recognition 中间件或多模态 LLM 处理
           if (!msg.images) msg.images = [];
           msg.images.push(fileAttachment.data);
+          routedImageCount++;
+          // 如果存在 attachmentOrder，将对应的 'file' 条目替换为 'image'（因为被路由到了图片队列）
+          if (msg.attachmentOrder) {
+            let fileIdx = 0;
+            for (let i = 0; i < msg.attachmentOrder.length; i++) {
+              if (msg.attachmentOrder[i] === 'file') {
+                // 找到当前文件在 order 中的位置（已处理的非路由文件 + 路由图片 = fileIdx）
+                if (fileIdx === fileInfos.length + routedImageCount - 1) {
+                  msg.attachmentOrder[i] = 'image';
+                  break;
+                }
+                fileIdx++;
+              }
+            }
+          }
           ctx.logger.debug(`图片文件 ${fileAttachment.name} 已路由到 msg.images`);
           continue;
         }
@@ -374,8 +391,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    // 将文件信息注入消息内容
-    if (fileInfos.length > 0) {
+    // 如果有 attachmentOrder，将文件描述存入 _fileDescriptions，交由后续统一组装
+    if (msg.attachmentOrder && fileInfos.length > 0) {
+      msg._fileDescriptions = fileInfos;
+    } else if (fileInfos.length > 0) {
+      // 无排序信息时保持原有行为：直接注入 msg.content
       const fileText = fileInfos.join('\n');
       msg.content = msg.content
         ? `${msg.content}\n${fileText}`
