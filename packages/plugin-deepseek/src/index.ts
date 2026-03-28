@@ -70,6 +70,10 @@ export const configSchema: ConfigSchema = {
     type: 'number', label: '思考 Token 预算', default: 0,
     description: '限制思考链最大 token 数（0 = 不限制，由模型自行决定）。设置后可控制思考深度，减少 token 消耗。',
   },
+  jsonMode: {
+    type: 'boolean', label: 'JSON Mode', default: false,
+    description: '启用后强制模型输出合法 JSON（response_format: json_object）。注意：启用时不可同时使用工具调用，且需要 system prompt 中包含 JSON 格式要求。',
+  },
 };
 
 export const defaultConfig = {
@@ -94,6 +98,7 @@ interface DeepSeekConfig {
   maxToolIterations: number;
   strictToolCalls: boolean;
   thinkingBudget: number;
+  jsonMode: boolean;
 }
 
 // ===== DeepSeek API 消息格式 =====
@@ -163,6 +168,7 @@ class DeepSeekLLMService implements LLMService {
   private enableThinking: boolean;
   private thinkingBudget: number;
   private strictToolCalls: boolean;
+  private jsonMode: boolean;
   private logger;
 
   constructor(ctx: Context, config: DeepSeekConfig, enableThinking: boolean) {
@@ -178,12 +184,18 @@ class DeepSeekLLMService implements LLMService {
     this.enableThinking = enableThinking;
     this.thinkingBudget = config.thinkingBudget;
     this.strictToolCalls = config.strictToolCalls;
+    this.jsonMode = config.jsonMode;
     this.logger = ctx.logger;
   }
 
-  /** 检测当前是否应启用 JSON Mode（persona 有 outputFormat 且非思考模式） */
-  private shouldUseJsonMode(): boolean {
+  /**
+   * 检测当前是否应启用 JSON Mode
+   * 需要同时满足：配置显式开启、非思考模式、persona 有 outputFormat、没有工具调用
+   */
+  private shouldUseJsonMode(hasTools: boolean): boolean {
+    if (!this.jsonMode) return false;
     if (this.enableThinking) return false;
+    if (hasTools) return false;
     return !!this.ctx.getService<PersonaService>('persona')?.getOutputFormat?.();
   }
 
@@ -238,12 +250,13 @@ class DeepSeekLLMService implements LLMService {
       body.temperature = request.temperature ?? this.temperature;
     }
 
-    if (tools && tools.length > 0) {
+    const hasTools = !!(tools && tools.length > 0);
+    if (hasTools) {
       body.tools = tools;
     }
 
-    // JSON Mode: persona 定义了 outputFormat 时强制模型输出合法 JSON
-    const jsonMode = this.shouldUseJsonMode();
+    // JSON Mode: 仅在配置显式开启、无工具、非思考模式时生效
+    const jsonMode = this.shouldUseJsonMode(hasTools);
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -321,12 +334,13 @@ class DeepSeekLLMService implements LLMService {
       body.temperature = request.temperature ?? this.temperature;
     }
 
-    if (tools && tools.length > 0) {
+    const hasTools = !!(tools && tools.length > 0);
+    if (hasTools) {
       body.tools = tools;
     }
 
-    // JSON Mode: persona 定义了 outputFormat 时强制模型输出合法 JSON
-    const jsonMode = this.shouldUseJsonMode();
+    // JSON Mode: 仅在配置显式开启、无工具、非思考模式时生效
+    const jsonMode = this.shouldUseJsonMode(hasTools);
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -542,6 +556,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxToolIterations: (config.maxToolIterations as number) ?? 10,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
     thinkingBudget: (config.thinkingBudget as number) ?? 0,
+    jsonMode: (config.jsonMode as boolean) ?? false,
   };
 
   if (!deepseekConfig.apiKey) {

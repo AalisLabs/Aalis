@@ -321,10 +321,11 @@ class OllamaLLMService implements LLMService {
   /**
    * 将图片字符串解析为 Ollama 所需的纯 base64 格式。
    * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。
+   * 返回 null 表示图片无法获取。
    */
-  private async resolveImage(img: string): Promise<string> {
-    // data URI → 提取 base64
-    const dataMatch = img.match(/^data:[^;]+;base64,(.+)$/);
+  private async resolveImage(img: string): Promise<string | null> {
+    // data URI → 提取 base64（兼容多参数格式如 data:image/png;charset=utf-8;base64,...）
+    const dataMatch = img.match(/^data:[^,]*;base64,(.+)$/);
     if (dataMatch) return dataMatch[1];
 
     // HTTP(S) URL → 下载并转 base64
@@ -333,13 +334,13 @@ class OllamaLLMService implements LLMService {
         const res = await fetch(img, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) {
           this.logger.warn(`下载图片失败 (${res.status}): ${img}`);
-          return img;
+          return null;
         }
         const buf = Buffer.from(await res.arrayBuffer());
         return buf.toString('base64');
       } catch (err) {
         this.logger.warn(`下载图片异常: ${img}`, err);
-        return img;
+        return null;
       }
     }
 
@@ -360,7 +361,9 @@ class OllamaLLMService implements LLMService {
 
     // 多模态：Ollama 支持 images 字段（base64 或文件路径）
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      ollamaMsg.images = await Promise.all(msg.images.map(img => this.resolveImage(img)));
+      const resolved = await Promise.all(msg.images.map(img => this.resolveImage(img)));
+      const valid = resolved.filter((r): r is string => r !== null);
+      if (valid.length > 0) ollamaMsg.images = valid;
     }
 
     // 传递工具调用（assistant 消息中的）
