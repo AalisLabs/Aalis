@@ -70,6 +70,9 @@ class DefaultAgent implements AgentService {
     this.preferredModel = (config.preferredModel as string) || '';
     this.platformModels = parsePlatformModels(config.platformModels);
     this.logger.info('默认对话代理已初始化');
+    if (Object.keys(this.platformModels).length > 0) {
+      this.logger.info(`平台模型覆盖: ${Object.entries(this.platformModels).map(([p, m]) => `${p}→${m}`).join(', ')}`);
+    }
 
     // 异步构建模型→提供者映射
     if (this.preferredModel) {
@@ -1116,8 +1119,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.command('model', '查看或切换当前会话的对话模型', async (cmdCtx) => {
     const target = cmdCtx.args[0];
 
-    // 无参数：显示当前模型和可用模型列表
-    if (!target) {
+    // 无参数 或 /model info：显示当前模型和来源
+    if (!target || target === 'info') {
       const sessionOverride = agent['sessionModelOverrides'].get(cmdCtx.sessionId);
       const platformModel = agent['platformModels'][cmdCtx.platform];
       const globalModel = agent['preferredModel'];
@@ -1127,20 +1130,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       else if (platformModel) lines.push(`  _(平台 ${cmdCtx.platform} 配置)_`);
       else if (globalModel) lines.push(`  _(全局配置)_`);
 
-      // 列出可用模型
-      const allProviders = ctx.getAllServices<LLMService>('llm');
-      const models: string[] = [];
-      for (const p of allProviders) {
-        if (typeof p.instance.listModels === 'function') {
-          try {
-            const list = await p.instance.listModels();
-            for (const m of list) models.push(m.id);
-          } catch { /* ignore */ }
+      // 仅 /model（无参数）时列出可用模型
+      if (!target) {
+        const allProviders = ctx.getAllServices<LLMService>('llm');
+        const models: string[] = [];
+        for (const p of allProviders) {
+          if (typeof p.instance.listModels === 'function') {
+            try {
+              const list = await p.instance.listModels();
+              for (const m of list) models.push(m.id);
+            } catch { /* ignore */ }
+          }
         }
-      }
-      if (models.length > 0) {
-        lines.push('', '**可用模型**:');
-        for (const m of models) lines.push(`- ${m}`);
+        if (models.length > 0) {
+          lines.push('', '**可用模型**:');
+          for (const m of models) lines.push(`- ${m}`);
+        }
       }
       return lines.join('\n');
     }
@@ -1152,10 +1157,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return `已清除会话模型覆盖，回退到: ${fallback}`;
     }
 
-    // /model <name> — 设置 session 级模型覆盖
-    agent['sessionModelOverrides'].set(cmdCtx.sessionId, target);
-    // 确保模型映射是最新的
-    await agent['buildModelProviderMap']();
-    return `当前会话模型已切换为: ${target}`;
+    // /model set <name> — 设置 session 级模型覆盖
+    if (target === 'set') {
+      const modelName = cmdCtx.args[1];
+      if (!modelName) return '用法: /model set <模型名称>';
+      agent['sessionModelOverrides'].set(cmdCtx.sessionId, modelName);
+      await agent['buildModelProviderMap']();
+      return `当前会话模型已切换为: ${modelName}`;
+    }
+
+    return `未知子命令: ${target}。可用: info / set <模型名> / reset`;
   });
 }
