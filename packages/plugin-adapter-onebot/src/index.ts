@@ -43,8 +43,8 @@ export const configSchema: ConfigSchema = {
     description: '启用后，文本将按标点符号自动拆分为多条消息发送，模拟真人发送习惯',
     fields: {
       enabled: { type: 'boolean', label: '启用', description: '是否启用消息分条发送', default: false },
-      minDelay: { type: 'number', label: '最小延迟 (ms)', description: '分条消息之间的最小延迟（毫秒）', default: 500 },
-      maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟（毫秒）', default: 1500 },
+      delayPerChar: { type: 'number', label: '每字延迟 (ms)', description: '按下一条消息的字数计算延迟，单位毫秒/字', default: 50 },
+      maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟上限（毫秒）', default: 3000 },
     },
   },
 };
@@ -53,8 +53,8 @@ export const defaultConfig = {
   connections: [] as OneBotConnectionConfig[],
   splitMessage: {
     enabled: false,
-    minDelay: 500,
-    maxDelay: 1500,
+    delayPerChar: 50,
+    maxDelay: 3000,
   },
 };
 
@@ -156,7 +156,6 @@ function splitMessageByPunctuation(content: string): string[] {
   }
 
   // 在文本 token 内部按标点拆分
-  // 标点保留在前一段末尾（如 "你好。" 拆成 ["你好。"]）
   const splitRegex = /(?<=[。！？；\n，、,.!?;])/;
   const pieces: string[] = [];
   let current = '';
@@ -180,17 +179,19 @@ function splitMessageByPunctuation(content: string): string[] {
     pieces.push(current);
   }
 
-  // 过滤空段，合并过短的段落（< 4 字符的纯文本段）到上一条
+  // 去除每段尾部标点，过滤空段，合并过短段落
+  const trailingPunctuation = /[。！？；，、,.!?;\s]+$/;
   const result: string[] = [];
   for (const piece of pieces) {
-    const trimmed = piece.trim();
-    if (!trimmed) continue;
+    // 去除尾部标点符号
+    const cleaned = piece.replace(trailingPunctuation, '').trim();
+    if (!cleaned) continue;
     // 纯文本过短则合并到上一条
-    const textOnly = trimmed.replace(/<[^>]+>/g, '').trim();
+    const textOnly = cleaned.replace(/<[^>]+>/g, '').trim();
     if (textOnly.length < 4 && result.length > 0) {
-      result[result.length - 1] += piece;
+      result[result.length - 1] += cleaned;
     } else {
-      result.push(piece);
+      result.push(cleaned);
     }
   }
 
@@ -205,10 +206,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     : [];
 
   // 消息分条配置
-  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; minDelay?: number; maxDelay?: number };
+  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; delayPerChar?: number; maxDelay?: number };
   const splitEnabled = splitCfg.enabled === true;
-  const splitMinDelay = Math.max(0, splitCfg.minDelay ?? 500);
-  const splitMaxDelay = Math.max(splitMinDelay, splitCfg.maxDelay ?? 1500);
+  const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
+  const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
 
   if (connections.length === 0) {
     ctx.logger.info('OneBot 适配器未配置任何连接');
@@ -380,10 +381,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
         await sendAction(state, action, params);
 
-        // 多条消息之间加随机延迟
+        // 按下一条消息的字数计算延迟
         if (i < pieces.length - 1) {
-          const delay = splitMinDelay + Math.random() * (splitMaxDelay - splitMinDelay);
-          await new Promise(r => setTimeout(r, delay));
+          const nextPiece = pieces[i + 1];
+          const charCount = nextPiece ? nextPiece.replace(/<[^>]+>/g, '').length : 0;
+          const delay = Math.min(charCount * splitDelayPerChar, splitMaxDelay);
+          if (delay > 0) {
+            await new Promise(r => setTimeout(r, delay));
+          }
         }
       }
     },

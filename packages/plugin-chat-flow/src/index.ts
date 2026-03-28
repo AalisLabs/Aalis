@@ -29,11 +29,6 @@ interface ChatFlowProfile {
   /** 回复后冷却时间（秒） */
   cooldownSeconds: number;
 
-  /** 打字延迟 */
-  typingEnabled: boolean;
-  typingDelayPerChar: number;
-  typingMaxDelay: number;
-
   /** 空闲触发 */
   enableIdleTrigger: boolean;
   idleTriggerMinutes: number;
@@ -90,10 +85,6 @@ const IDLE_TRIGGER_MARKER = '__chat_flow_idle_trigger__';
 
 // ────────────────── 工具函数 ──────────────────
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function parseStringList(val: unknown): string[] {
   if (Array.isArray(val)) return val.filter(Boolean).map(String);
   if (typeof val === 'string' && val.trim()) {
@@ -113,9 +104,6 @@ function resolveProfile(raw: Record<string, unknown>): ChatFlowProfile {
     activityDecayMinutes: (raw.activityDecayMinutes as number) ?? 10,
     triggerOnAt: (raw.triggerOnAt as boolean) ?? true,
     cooldownSeconds: (raw.cooldownSeconds as number) ?? 10,
-    typingEnabled: (raw.typingEnabled as boolean) ?? true,
-    typingDelayPerChar: (raw.typingDelayPerChar as number) ?? 50,
-    typingMaxDelay: (raw.typingMaxDelay as number) ?? 5000,
     enableIdleTrigger: (raw.enableIdleTrigger as boolean) ?? false,
     idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? 180,
     idleTriggerStyle: (raw.idleTriggerStyle as ChatFlowProfile['idleTriggerStyle']) ?? 'exponential',
@@ -491,35 +479,6 @@ function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     // 不调用 next() → 中断管道，消息不会被送到 Agent
   }, 200); // 高优先级
 
-  // ────── response:before 中间件（打字延迟） ──────
-
-  ctx.middleware('response:before', async (data, next) => {
-    const sessionId = data.sessionId;
-    const state = sessions.get(sessionId);
-
-    if (!state) {
-      await next();
-      return;
-    }
-
-    const profile = getProfileForPlatform(config, state.platform, state.sessionType);
-    if (!profile || !profile.typingEnabled) {
-      await next();
-      return;
-    }
-
-    await next();
-
-    if (data.content && data.content.length > 0) {
-      const charCount = data.content.length;
-      const delay = Math.min(charCount * profile.typingDelayPerChar, profile.typingMaxDelay);
-      if (delay > 0) {
-        logger.debug(`打字延迟: ${delay}ms (${charCount} chars)`);
-        await sleep(delay);
-      }
-    }
-  }, -100);
-
   // ────── 监听 message:send 事件设置冷却 ──────
 
   ctx.on('message:send', (msg) => {
@@ -595,9 +554,6 @@ export const configSchema: ConfigSchema = {
       activityDecayMinutes: { type: 'number', label: '衰减时间（分钟）', default: 10, description: '回复后阈值从上限衰减回下限所需时间。' },
       triggerOnAt: { type: 'boolean', label: '@ 触发', default: true, description: '消息中包含 @bot 时立刻触发回复。' },
       cooldownSeconds: { type: 'number', label: '冷却时间（秒）', default: 10, description: 'AI 回复后的冷却时间。' },
-      typingEnabled: { type: 'boolean', label: '打字延迟', default: true, description: '是否模拟打字延迟。' },
-      typingDelayPerChar: { type: 'number', label: '每字延迟（ms）', default: 50 },
-      typingMaxDelay: { type: 'number', label: '最大延迟（ms）', default: 5000 },
       enableIdleTrigger: { type: 'boolean', label: '空闲主动触发', default: false, description: '长时间无人说话时 AI 是否主动发起话题。' },
       idleTriggerMinutes: { type: 'number', label: '空闲间隔（分钟）', default: 180 },
       idleTriggerStyle: {
