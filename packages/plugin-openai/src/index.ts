@@ -13,6 +13,24 @@ import type {
 
 // ===== 插件元数据 =====
 
+/** 已知的内容审查错误关键词 */
+const CONTENT_FILTER_PATTERNS = [
+  'content exists risk',
+  'content_filter',
+  'content_policy',
+  'sensitive content',
+  'risk control',
+];
+
+/** 解析 API 错误，对内容审查类错误返回友好提示 */
+function parseApiError(provider: string, status: number, body: string): string {
+  const lower = body.toLowerCase();
+  if (status === 400 && CONTENT_FILTER_PATTERNS.some(p => lower.includes(p))) {
+    return `${provider} 拒绝了此次请求（内容安全策略），请尝试换一个话题或缩短上下文`;
+  }
+  return `${provider} API 错误 (${status}): ${body}`;
+}
+
 export const name = '@aalis/plugin-openai';
 export const displayName = 'OpenAI';
 export const provides = ['llm'];
@@ -190,7 +208,7 @@ class OpenAILLMService implements LLMService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`LLM API 错误 (${response.status}): ${errorText}`);
+      throw new Error(parseApiError('LLM', response.status, errorText));
     }
 
     const data = (await response.json()) as APIChatResponse;
@@ -259,7 +277,7 @@ class OpenAILLMService implements LLMService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`LLM API 错误 (${response.status}): ${errorText}`);
+      throw new Error(parseApiError('LLM', response.status, errorText));
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Puzzle, Clock, Globe, Brain, Wrench, Sparkles, BarChart2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -11,9 +12,9 @@ import type {
   WebuiMarkdownComponent, WebuiTabsComponent, WebuiPageDef,
 } from '../types';
 
-const dynStatIconMap: Record<string, string> = {
-  skills: '🧩', scheduler: '⏰', browser: '🌐', memory: '🧠',
-  tools: '🛠', agent: '✦', default: '📊',
+const dynStatIconMap: Record<string, JSX.Element> = {
+  skills: <Puzzle size={18} />, scheduler: <Clock size={18} />, browser: <Globe size={18} />, memory: <Brain size={18} />,
+  tools: <Wrench size={18} />, agent: <Sparkles size={18} />, default: <BarChart2 size={18} />,
 };
 
 function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: string }) {

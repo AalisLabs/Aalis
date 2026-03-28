@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { User, Crown, Command, Wrench, AlertTriangle } from 'lucide-react';
 import { pageAction } from '../api';
 
 interface AuthorityUser {
@@ -212,35 +213,35 @@ export function AuthorityPage() {
       <div className="section-label">概览</div>
       <div className="overview-grid">
         <div className="overview-card">
-          <div className="overview-card-icon">👤</div>
+          <div className="overview-card-icon"><User size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">已注册用户</div>
             <div className="overview-card-value">{data.users.length}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">👑</div>
+          <div className="overview-card-icon"><Crown size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">Owner 数</div>
             <div className="overview-card-value">{data.owners.length}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">⌘</div>
+          <div className="overview-card-icon"><Command size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">已注册指令</div>
             <div className="overview-card-value">{data.commands.length}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">🔧</div>
+          <div className="overview-card-icon"><Wrench size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">已注册工具</div>
             <div className="overview-card-value">{data.tools?.length ?? 0}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon">⚠️</div>
+          <div className="overview-card-icon"><AlertTriangle size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">高危白名单</div>
             <div className="overview-card-value">{data.dangerousPolicy?.allow?.length ?? 0}</div>
