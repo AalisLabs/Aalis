@@ -71,8 +71,8 @@ export const configSchema: ConfigSchema = {
     description: '限制思考链最大 token 数（0 = 不限制，由模型自行决定）。设置后可控制思考深度，减少 token 消耗。',
   },
   jsonMode: {
-    type: 'boolean', label: 'JSON Mode', default: false,
-    description: '启用后强制模型输出合法 JSON（response_format: json_object）。注意：启用时不可同时使用工具调用，且需要 system prompt 中包含 JSON 格式要求。',
+    type: 'boolean', label: 'JSON Mode', default: true,
+    description: '启用后强制模型输出合法 JSON（response_format: json_object）。当工具可用时自动禁用以避免冲突。',
   },
 };
 
@@ -556,7 +556,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxToolIterations: (config.maxToolIterations as number) ?? 10,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
     thinkingBudget: (config.thinkingBudget as number) ?? 0,
-    jsonMode: (config.jsonMode as boolean) ?? false,
+    jsonMode: (config.jsonMode as boolean) ?? true,
   };
 
   if (!deepseekConfig.apiKey) {

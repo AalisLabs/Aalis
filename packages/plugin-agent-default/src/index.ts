@@ -576,6 +576,34 @@ class DefaultAgent implements AgentService {
 
         let replyContent = response.content ?? '';
 
+        // JSON 格式重试：当期望结构化输出但模型返回纯文本且未调用工具时，
+        // 去掉工具重试一次（使 LLM 插件的 json_object 模式生效）
+        const persona = this.ctx.getService<PersonaService>('persona');
+        const expectJson = !!persona?.getOutputFormat?.();
+        if (
+          expectJson &&
+          replyContent &&
+          !replyContent.trim().startsWith('{') &&
+          !response.toolCalls?.length &&
+          llmBeforeData.tools.length > 0
+        ) {
+          this.logger.debug('JSON 格式重试：模型返回了纯文本，去掉工具重试');
+          const retryT0 = Date.now();
+          const retryResponse = await this.consumeStream(llm, {
+            messages: llmBeforeData.messages,
+            // 不传 tools → LLM 插件的 json_object 会生效
+            temperature,
+            maxTokens,
+            model: modelOverride,
+            signal,
+          }, incoming.sessionId, incoming.platform, signal);
+          this.debugLogResponse(retryResponse, Date.now() - retryT0);
+          if (retryResponse.content?.trim().startsWith('{')) {
+            response = retryResponse;
+            replyContent = retryResponse.content ?? '';
+          }
+        }
+
         // Hook: response:before — 插件可以修改最终回复
         const responseData = { content: replyContent, sessionId: incoming.sessionId };
         await this.ctx.hooks.run('response:before', responseData);
