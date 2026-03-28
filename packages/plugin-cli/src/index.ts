@@ -1,8 +1,7 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection, CLIService, PersonaService } from '@aalis/core';
-import type { AuthorityService } from '@aalis/plugin-authority';
+import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection, CLIService, PersonaService, AuthorityService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 

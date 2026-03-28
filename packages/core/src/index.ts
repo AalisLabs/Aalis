@@ -94,4 +94,8 @@ export type {
   OutputFormatField,
   OutputFormat,
   PersonaService,
+  // 权限服务
+  AuthorityService,
+  DangerousConfirmRequest,
+  DangerousConfirmHandler,
 } from './types/index.js';
