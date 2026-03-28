@@ -7,10 +7,22 @@ import type { Logger } from './logger.js';
 
 export interface PluginModule {
   name: string;
+  /** 插件的显示名称，用于前端展示 */
+  displayName?: string;
   inject?: InjectDeclaration;
   provides?: string[];
   /** 标记为 core 的插件不能被用户禁用 */
   core?: boolean;
+  /**
+   * 是否允许同一插件以不同配置多次加载（多实例）
+   *
+   * 默认 false：同一 module 只能注册一次（防止重复注册命令等副作用）。
+   * 设为 true 后，可通过 `name:suffix` 格式注册多个实例，
+   * 每个实例拥有独立的 Context、配置和 contextId。
+   *
+   * 适合多实例的插件：LLM adapters、embedding adapters、platform adapters、memory backends。
+   */
+  reusable?: boolean;
   /** 声明该插件对 core 的扩展（新增事件、钩子、mixin 方法） */
   extends?: ExtendDeclaration;
   /** 配置 Schema，用于前端自动生成配置表单 */
@@ -30,12 +42,33 @@ export type PluginState = 'pending' | 'activating' | 'active' | 'disabled' | 'di
 
 export interface PluginEntry {
   module: PluginModule;
+  /** 实例 ID：单实例时与 module.name 相同，多实例时为 `name:suffix` */
+  instanceId: string;
   config: Record<string, unknown>;
   state: PluginState;
   error?: string;
   context?: Context;
   requiredDeps: NormalizedDependency[];
   optionalDeps: NormalizedDependency[];
+}
+
+/**
+ * 解析插件实例 ID
+ *
+ * 格式：`@scope/plugin-name:suffix` → { moduleName: '@scope/plugin-name', suffix: 'suffix' }
+ * 无 suffix 时返回 { moduleName, suffix: undefined }
+ */
+export function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string } {
+  // 从右侧找最后一个冒号，但跳过 scope 中的冒号
+  // 格式: @scope/name:suffix 或 name:suffix
+  const slashIdx = instanceId.indexOf('/');
+  const searchFrom = slashIdx >= 0 ? slashIdx + 1 : 0;
+  const colonIdx = instanceId.indexOf(':', searchFrom);
+  if (colonIdx < 0) return { moduleName: instanceId };
+  return {
+    moduleName: instanceId.slice(0, colonIdx),
+    suffix: instanceId.slice(colonIdx + 1),
+  };
 }
 
 /**
@@ -75,37 +108,50 @@ export class PluginManager {
 
   /**
    * 注册并尝试加载一个插件
+   *
+   * @param module    插件模块
+   * @param config    插件配置
+   * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
    */
   async register(
     module: PluginModule,
     config: Record<string, unknown> = {},
+    instanceId?: string,
   ): Promise<void> {
-    if (this.plugins.has(module.name)) {
-      this.logger.warn(`插件 "${module.name}" 已注册，跳过`);
+    const id = instanceId ?? module.name;
+
+    // 多实例检查：同一 module 非 reusable 时不允许重复注册
+    if (this.plugins.has(id)) {
+      this.logger.warn(`插件 "${id}" 已注册，跳过`);
+      return;
+    }
+    if (id !== module.name && !module.reusable) {
+      this.logger.warn(`插件 "${module.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
       return;
     }
 
     const inject = module.inject ?? {};
-    const requiredDeps = (inject.required ?? []).map(normalizeDep);
-    const optionalDeps = (inject.optional ?? []).map(normalizeDep);
+    const requiredDeps = (inject.required ?? []).map(normalizeDependency);
+    const optionalDeps = (inject.optional ?? []).map(normalizeDependency);
 
-    // 检查是否被配置禁用
-    const isDisabled = this.rootCtx.config.isPluginDisabled(module.name);
+    // 检查是否被配置禁用（按 instanceId 检查）
+    const isDisabled = this.rootCtx.config.isPluginDisabled(id);
 
     const entry: PluginEntry = {
       module,
+      instanceId: id,
       config,
       state: isDisabled ? 'disabled' : 'pending',
       requiredDeps,
       optionalDeps,
     };
 
-    this.plugins.set(module.name, entry);
+    this.plugins.set(id, entry);
 
     if (isDisabled) {
-      this.logger.info(`插件已注册(禁用): ${module.name}`);
+      this.logger.info(`插件已注册(禁用): ${id}`);
     } else {
-      this.logger.info(`插件已注册: ${module.name}`);
+      this.logger.info(`插件已注册: ${id}`);
       // 尝试立即激活
       await this.tryActivate(entry);
     }
@@ -180,12 +226,15 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; state: PluginState; provides?: string[]; core?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: WebuiPage[]; webuiHandlerNames?: string[]; error?: string }> {
-    return [...this.plugins.entries()].map(([name, entry]) => ({
-      name,
+  getStatus(): Array<{ name: string; instanceId: string; displayName?: string; state: PluginState; provides?: string[]; core?: boolean; reusable?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: WebuiPage[]; webuiHandlerNames?: string[]; error?: string }> {
+    return [...this.plugins.entries()].map(([, entry]) => ({
+      name: entry.module.name,
+      instanceId: entry.instanceId,
+      displayName: entry.module.displayName,
       state: entry.state,
       provides: entry.module.provides,
       core: entry.module.core,
+      reusable: entry.module.reusable,
       extends: entry.module.extends,
       config: entry.config,
       configSchema: entry.module.configSchema,
@@ -225,6 +274,74 @@ export class PluginManager {
     return true;
   }
 
+  /**
+   * 基于已注册的 reusable 插件创建新实例
+   *
+   * @param moduleName 原始模块名（如 `@aalis/plugin-openai`）
+   * @param suffix     实例后缀（如 `vision`），将生成 instanceId `moduleName:suffix`
+   * @param config     新实例的配置
+   * @returns 新实例的 instanceId，失败返回 undefined
+   */
+  async createInstance(moduleName: string, suffix: string, config: Record<string, unknown> = {}): Promise<string | undefined> {
+    // 从已注册的插件中查找同 module 的 entry
+    let sourceModule: PluginModule | undefined;
+    for (const entry of this.plugins.values()) {
+      if (entry.module.name === moduleName) {
+        sourceModule = entry.module;
+        break;
+      }
+    }
+    if (!sourceModule) {
+      this.logger.warn(`创建实例失败: 模块 "${moduleName}" 未找到`);
+      return undefined;
+    }
+    if (!sourceModule.reusable) {
+      this.logger.warn(`创建实例失败: 模块 "${moduleName}" 未声明 reusable`);
+      return undefined;
+    }
+
+    const instanceId = `${moduleName}:${suffix}`;
+    if (this.plugins.has(instanceId)) {
+      this.logger.warn(`创建实例失败: "${instanceId}" 已存在`);
+      return undefined;
+    }
+
+    // 合并配置：默认配置 ← 传入配置
+    const defaults = sourceModule.defaultConfig ?? {};
+    const mergedConfig = { ...defaults, ...config };
+
+    // 写入配置文件
+    this.rootCtx.config.setPluginConfig(instanceId, mergedConfig);
+
+    // 注册并尝试激活
+    await this.register(sourceModule, mergedConfig, instanceId);
+
+    return instanceId;
+  }
+
+  /**
+   * 移除一个多实例插件（不允许移除主实例）
+   */
+  async removeInstance(instanceId: string): Promise<boolean> {
+    const { moduleName, suffix } = parseInstanceId(instanceId);
+    if (!suffix) {
+      this.logger.warn(`不能移除主实例 "${instanceId}"`);
+      return false;
+    }
+
+    const entry = this.plugins.get(instanceId);
+    if (!entry) return false;
+
+    // 卸载
+    await this.unload(instanceId);
+
+    // 从配置文件中移除
+    this.rootCtx.config.removePluginConfig(instanceId);
+
+    await this.softReload();
+    return true;
+  }
+
   // ---- 内部逻辑 ----
 
   /**
@@ -256,13 +373,13 @@ export class PluginManager {
           );
           if (!unmet) continue;
 
-          this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.module.name}`);
+          this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
           if (entry.context) {
             entry.context.dispose();
             entry.context = undefined;
           }
           entry.state = 'pending';
-          this.rootCtx.emit('plugin:unloaded', entry.module.name).catch(() => {});
+          this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(() => {});
           changed = true;
         }
 
@@ -306,7 +423,7 @@ export class PluginManager {
     for (const dep of entry.requiredDeps) {
       if (!this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
         this.logger.debug(
-          `插件 "${entry.module.name}" 等待服务: ${dep.service}${dep.capabilities.length ? ` [${dep.capabilities.join(', ')}]` : ''}`,
+          `插件 "${entry.instanceId}" 等待服务: ${dep.service}${dep.capabilities.length ? ` [${dep.capabilities.join(', ')}]` : ''}`,
         );
         return;
       }
@@ -315,19 +432,32 @@ export class PluginManager {
     // 先标记为 activating，防止 service:registered 事件导致重入
     entry.state = 'activating';
 
-    // 所有依赖已满足，激活插件
-    const ctx = this.rootCtx.fork(entry.module.name);
+    // 所有依赖已满足，激活插件（使用 instanceId 作为 contextId，以区分多实例）
+    const ctx = this.rootCtx.fork(entry.instanceId);
     entry.context = ctx;
 
     try {
       await entry.module.apply(ctx, entry.config);
+
+      // 校验 provides 声明与实际注册的一致性
+      if (entry.module.provides) {
+        const missing = entry.module.provides.filter(
+          name => !this.rootCtx.serviceContainer.hasByContext(name, entry.instanceId),
+        );
+        if (missing.length > 0) {
+          throw new Error(
+            `声明 provides [${missing.join(', ')}] 但未实际注册这些服务`,
+          );
+        }
+      }
+
       entry.state = 'active';
       entry.error = undefined;
-      this.logger.info(`插件已激活: ${entry.module.name}`);
-      await this.rootCtx.emit('plugin:loaded', entry.module.name);
+      this.logger.info(`插件已激活: ${entry.instanceId}`);
+      await this.rootCtx.emit('plugin:loaded', entry.instanceId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`插件 "${entry.module.name}" 激活失败: ${message}`);
+      this.logger.error(`插件 "${entry.instanceId}" 激活失败: ${message}`);
       ctx.dispose();
       entry.context = undefined;
       entry.state = 'error';
@@ -365,13 +495,13 @@ export class PluginManager {
       }
 
       // 停用插件
-      this.logger.info(`服务 "${removedService}" 不可用，停用插件: ${entry.module.name}`);
+      this.logger.info(`服务 "${removedService}" 不可用，停用插件: ${entry.instanceId}`);
       if (entry.context) {
         entry.context.dispose();
         entry.context = undefined;
       }
       entry.state = 'pending';
-      this.rootCtx.emit('plugin:unloaded', entry.module.name).catch(() => {});
+      this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(() => {});
     }
   }
 
@@ -422,12 +552,12 @@ export class PluginManager {
 
     for (const candidate of ordered) {
       if (candidate.state === 'disabled') {
-        this.logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${candidate.module.name}`);
+        this.logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${candidate.instanceId}`);
         candidate.state = 'pending';
         candidate.error = undefined;
-        this.rootCtx.config.setPluginEnabled(candidate.module.name, true);
+        this.rootCtx.config.setPluginEnabled(candidate.instanceId, true);
       } else {
-        this.logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${candidate.module.name}`);
+        this.logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${candidate.instanceId}`);
         candidate.state = 'pending';
         candidate.error = undefined;
       }
@@ -442,14 +572,14 @@ export class PluginManager {
       await this.tryActivate(candidate);
       if ((candidate.state as PluginState) === 'active') {
         this.rootCtx.config.save();
-        return candidate.module.name;
+        return candidate.instanceId;
       }
     }
 
     // 如果有 active 的候选者但服务仍然不存在，可能是插件 bug
     const active = candidates.find(e => e.state === 'active');
     if (active) {
-      this.logger.warn(`插件 "${active.module.name}" 已激活但未提供 "${serviceName}" 服务`);
+      this.logger.warn(`插件 "${active.instanceId}" 已激活但未提供 "${serviceName}" 服务`);
     }
 
     this.logger.error(`无法为必需服务 "${serviceName}" 找到可用的提供者`);
@@ -459,6 +589,4 @@ export class PluginManager {
 
 // ----- 辅助 -----
 
-function normalizeDep(dep: DependencyDeclaration): NormalizedDependency {
-  return normalizeDependency(dep);
-}
+

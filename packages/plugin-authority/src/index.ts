@@ -1,6 +1,37 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, WebuiPage, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, ConfigManager, Logger, App } from '@aalis/core';
+import type { Context, WebuiPage, ConfigManager, Logger, App, ToolService, CommandService, ExecutionGuardContext } from '@aalis/core';
+
+// ===== Authority 域类型（由本插件独占定义） =====
+
+/** 高危操作确认请求信息 */
+export interface DangerousConfirmRequest {
+  /** 操作名称（指令名或工具名） */
+  name: string;
+  /** 操作类型 */
+  type: 'command' | 'tool';
+  /** 操作参数（工具调用时存在） */
+  args?: Record<string, unknown>;
+  /** 会话 ID */
+  sessionId: string;
+  /** 来源平台 */
+  platform: string;
+}
+
+/** 确认回调：返回 true 表示放行，false 表示拒绝 */
+export type DangerousConfirmHandler = (request: DangerousConfirmRequest) => Promise<boolean>;
+
+/** 权限服务接口 */
+export interface AuthorityService {
+  getAuthority(platform: string, userId?: string): number;
+  setAuthority(platform: string, userId: string, level: number): void;
+  isOwner(platform: string, userId?: string): boolean;
+  isDangerousAllowed(name: string): boolean;
+  confirmDangerous(request: DangerousConfirmRequest): Promise<boolean>;
+  save(): void;
+  setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void;
+  listUsers(): Array<{ platform: string; userId: string; authority: number }>;
+}
 
 // ===== AuthorityManager 实现 =====
 
@@ -127,7 +158,11 @@ class AuthorityManager implements AuthorityService {
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-authority';
+export const displayName = '权限管理';
 export const provides = ['authority'];
+export const inject = {
+  optional: ['commands', 'tools'],
+};
 
 export const webuiPages: WebuiPage[] = [
   { key: 'authority', label: '权限管理', icon: 'authority', order: 50 },
@@ -135,13 +170,51 @@ export const webuiPages: WebuiPage[] = [
 
 // ===== 插件入口 =====
 
-export const inject = {
-  required: ['commands'],
-};
-
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
   const authority = new AuthorityManager(ctx.config, ctx.logger);
   ctx.provide('authority', authority);
+
+  // ===== 向 tools/commands 注入执行守卫 =====
+
+  const guard = async (guardCtx: ExecutionGuardContext): Promise<string | null> => {
+    const userAuth = authority.getAuthority(guardCtx.platform, guardCtx.userId);
+    if (userAuth < guardCtx.authority) {
+      return `权限不足: ${guardCtx.type === 'command' ? '指令' : '工具'} "${guardCtx.name}" 需要权限等级 ${guardCtx.authority}，当前用户等级 ${userAuth}`;
+    }
+    if (guardCtx.safety === 'dangerous' && !guardCtx.skipSafetyCheck) {
+      const confirmed = await authority.confirmDangerous({
+        name: guardCtx.name,
+        type: guardCtx.type,
+        args: guardCtx.args,
+        sessionId: guardCtx.sessionId,
+        platform: guardCtx.platform,
+      });
+      if (!confirmed) {
+        return guardCtx.type === 'command'
+          ? `已取消执行指令 ${guardCtx.name}。`
+          : `用户已取消执行工具 "${guardCtx.name}"`;
+      }
+    }
+    return null;
+  };
+
+  // 注入到已有的 tools/commands 服务
+  const injectGuard = (svcName: string) => {
+    if (svcName === 'tools' || svcName === 'commands') {
+      const svc = ctx.getService<ToolService | CommandService>(svcName);
+      svc?.setExecutionGuard(guard);
+    }
+  };
+
+  // 当前已注册的服务立即注入
+  injectGuard('tools');
+  injectGuard('commands');
+
+  // 未来注册的服务也注入
+  ctx.on('service:registered', injectGuard);
+
+  // ===== 应用停止时保存 =====
+  ctx.on('app:stopping', () => { authority.save(); });
 
   // ===== 权限指令 =====
 
@@ -191,7 +264,8 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
 export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
   /** 获取权限概览 */
   async getOverview(ctx) {
-    const users = ctx.authority?.listUsers() ?? [];
+    const auth = ctx.getService<AuthorityService>('authority');
+    const users = auth?.listUsers() ?? [];
     const owners: Array<{ platform: string; userId: string }> = ctx.config.get('owners') ?? [];
     const commands = ctx.commands?.getAll() ?? [];
     const overrides = ctx.commands?.getOverrides() ?? {};
@@ -230,8 +304,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       throw new Error('platform, userId, authority(number) 必填');
     }
     if (authority < 0) throw new Error('权限等级必须 >= 0');
-    ctx.authority?.setAuthority(platform as string, userId as string, authority);
-    ctx.authority?.save();
+    const auth = ctx.getService<AuthorityService>('authority');
+    auth?.setAuthority(platform as string, userId as string, authority);
+    auth?.save();
     return { message: `${platform}:${userId} 权限已设为 ${authority}` };
   },
 
@@ -239,8 +314,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
   async deleteUser(ctx, args) {
     const { platform, userId } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');
-    ctx.authority?.setAuthority(platform as string, userId as string, (ctx.config.get('defaultAuthority') ?? 1) as number);
-    ctx.authority?.save();
+    const auth = ctx.getService<AuthorityService>('authority');
+    auth?.setAuthority(platform as string, userId as string, (ctx.config.get('defaultAuthority') ?? 1) as number);
+    auth?.save();
     return { message: `${platform}:${userId} 权限已重置` };
   },
 

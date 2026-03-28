@@ -7,6 +7,8 @@ export interface ChatRequest {
   tools?: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  /** 覆盖模型（不指定则使用服务默认模型） */
+  model?: string;
   /** 中止信号，用于取消正在进行的 LLM 调用 */
   signal?: AbortSignal;
 }
@@ -40,6 +42,12 @@ export interface ChatStreamChunk {
   };
 }
 
+/** 模型信息（含能力声明） */
+export interface ModelInfo {
+  id: string;
+  capabilities: string[];
+}
+
 export interface LLMService {
   chat(request: ChatRequest): Promise<ChatResponse>;
   chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
@@ -48,6 +56,6 @@ export interface LLMService {
   getMaxToolIterations(): number;
   /** 模型上下文窗口大小（token 数） */
   getContextLength(): number;
-  /** 列出远端可用模型（用于前端下拉框）*/
-  listModels?(): Promise<string[]>;
+  /** 列出远端可用模型及其能力 */
+  listModels?(): Promise<ModelInfo[]>;
 }

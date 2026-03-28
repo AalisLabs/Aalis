@@ -18,7 +18,6 @@ export type {
   ServiceDependency,
   DependencyDeclaration,
   InjectDeclaration,
-  PluginMeta,
   ExtendDeclaration,
   SchemaFieldType,
   SchemaField,
@@ -31,13 +30,13 @@ export type {
   CommandContext,
   CommandDefinition,
   RegisteredCommand,
+  PluginGroupInfo,
+  ExecutionGuardContext,
+  ExecutionGuard,
 } from './core.js';
 
 // 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
 export type { HookContextMap } from './hooks.js';
-
-// 权限服务接口
-export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
 
 // 指令服务接口
 export type { CommandService } from './commands.js';
@@ -45,31 +44,11 @@ export type { CommandService } from './commands.js';
 // 工具服务接口
 export type { ToolService } from './tools.js';
 
-// LLM 服务
-export type {
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMService,
-} from './llm.js';
-
-// 记忆服务
-export type { MemoryService, ConversationTurn } from './memory.js';
-
-// Embedding 服务
-export type { EmbeddingService } from './embedding.js';
-
-// 向量数据库服务
-export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
-
-// 人格服务
-export type { OutputFormatField, OutputFormat, PersonaService } from './persona.js';
-
 // Agent 服务
-export type { AgentService } from './agent.js';
+export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js';
 
 // 平台适配器
-export type { PlatformConnection, PlatformAdapter } from './platform.js';
+export type { PlatformConnection, PlatformAdapter, PlatformManagerService } from './platform.js';
 
 // WebUI 服务与声明式页面组件
 export type {
@@ -90,3 +69,18 @@ export type { CLIService } from './cli.js';
 
 // App 服务
 export type { AppService } from './app.js';
+
+// LLM 服务
+export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService } from './llm.js';
+
+// 记忆服务
+export type { MemoryService, ConversationTurn } from './memory.js';
+
+// Embedding 服务
+export type { EmbeddingService } from './embedding.js';
+
+// 向量数据库服务
+export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
+
+// 人格服务
+export type { OutputFormatField, OutputFormat, PersonaService } from './persona.js';

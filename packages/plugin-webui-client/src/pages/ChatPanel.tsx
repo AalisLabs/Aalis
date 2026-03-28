@@ -26,6 +26,26 @@ const DOCUMENT_EXTENSIONS = [
 const DOCUMENT_ACCEPT = DOCUMENT_EXTENSIONS.join(',') +
   ',text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
+/** 从可能的 JSON 包裹回复中提取纯文本 */
+function extractJsonReply(content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{')) return content;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return content;
+    for (const key of ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message']) {
+      if (typeof parsed[key] === 'string') return parsed[key];
+    }
+  } catch {
+    // 流式传输中 JSON 可能不完整，尝试正则提取
+    const match = trimmed.match(/^\{\s*"(?:response|reply|content|answer|text|msg|message)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*[,}]?/);
+    if (match) {
+      return match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\t/g, '\t');
+    }
+  }
+  return content;
+}
+
 /** 根据上传能力计算 accept 属性 */
 function computeAccept(caps?: { image: boolean; file: boolean }): string {
   if (!caps) return '';
@@ -225,7 +245,7 @@ export function ChatPanel({
                   seg.type === 'text' ? (
                     seg.content ? (
                       <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                        {seg.content}
+                        {extractJsonReply(seg.content)}
                       </ReactMarkdown>
                     ) : null
                   ) : (
@@ -253,7 +273,7 @@ export function ChatPanel({
               <div className="message-bubble">
                 {msg.role === 'assistant' ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                    {msg.content}
+                    {extractJsonReply(msg.content)}
                   </ReactMarkdown>
                 ) : (
                   msg.content

@@ -1,9 +1,12 @@
-import type { Context, EmbeddingService, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { EmbeddingService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-embedding-ollama';
+export const displayName = 'Ollama Embedding';
 export const provides = ['embedding'];
+export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
@@ -109,5 +112,5 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.warn(`Ollama Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
   }
 
-  ctx.provide('embedding', service);
+  ctx.provide('embedding', service, { label: `Ollama / ${model}` });
 }

@@ -1,10 +1,12 @@
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import type { Context, VectorStoreService, VectorSearchResult, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { VectorStoreService, VectorSearchResult } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-vectorstore-flat';
+export const displayName = 'Flat 向量库';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {

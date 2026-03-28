@@ -122,6 +122,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const modelCache = useRef<Record<string, string[]>>({});
+  const providerCacheRef = useRef<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
 
   useEffect(() => {
     setLoading(true);
@@ -147,6 +148,15 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
       .catch(() => {});
   };
 
+  const handleFetchProviders = (service: string) => {
+    api<{ services: Record<string, { providers: Array<{ contextId: string; displayName?: string }> }> }>('/api/services')
+      .then(r => {
+        const svc = r.services?.[service];
+        providerCacheRef.current = { ...providerCacheRef.current, [service]: svc?.providers ?? [] };
+      })
+      .catch(() => {});
+  };
+
   if (loading) return <div className="empty-hint">加载中...</div>;
 
   return (
@@ -158,6 +168,8 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
         onChange={setDraft}
         modelCache={modelCache.current}
         onFetchModels={handleFetchModels}
+        providerCache={providerCacheRef.current}
+        onFetchProviders={handleFetchProviders}
       />
       <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
         <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>

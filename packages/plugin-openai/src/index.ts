@@ -1,43 +1,36 @@
 import type {
   Context,
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMService,
   Message,
   ToolDefinition,
   ToolCall,
   ConfigSchema,
+  ChatRequest,
+  ChatResponse,
+  ChatStreamChunk,
+  LLMService,
+  ModelInfo,
 } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-openai';
+export const displayName = 'OpenAI';
 export const provides = ['llm'];
+export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'OpenAI API 密钥' },
   baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.openai.com', description: 'API 端点地址，可替换为兼容的第三方服务' },
-  model: { type: 'select', label: '模型', default: 'gpt-4o', dynamicOptions: 'llm', description: '使用的模型名称' },
+  defaultModel: { type: 'string', label: '默认模型', default: 'gpt-4o', description: '未指定模型时使用的默认模型名称' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
   maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
-  capabilities: {
-    type: 'multiselect', label: '模型能力（留空则按模型名自动推断）',
-    options: [
-      { label: '对话', value: 'chat' },
-      { label: '工具调用', value: 'tool_calling' },
-      { label: '流式输出', value: 'streaming' },
-      { label: '深度思考', value: 'thinking' },
-      { label: '图像识别', value: 'vision' },
-    ],
-  },
 };
 
 export const defaultConfig = {
   baseUrl: 'https://api.openai.com',
-  model: 'gpt-4o',
+  defaultModel: 'gpt-4o',
   temperature: 0.7,
   maxTokens: 4096,
   contextLength: 128000,
@@ -49,7 +42,7 @@ export const defaultConfig = {
 interface OpenAIConfig {
   apiKey: string;
   baseUrl: string;
-  model: string;
+  defaultModel: string;
   timeout?: number;
   temperature: number;
   maxTokens: number;
@@ -113,7 +106,7 @@ interface APIChatResponse {
 class OpenAILLMService implements LLMService {
   private apiKey: string;
   private baseUrl: string;
-  private model: string;
+  private defaultModel: string;
   private timeout: number;
   private temperature: number;
   private maxTokens: number;
@@ -124,7 +117,7 @@ class OpenAILLMService implements LLMService {
   constructor(config: OpenAIConfig, logger: Context['logger']) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.model = config.model;
+    this.defaultModel = config.defaultModel;
     this.timeout = config.timeout ?? 120000;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
@@ -149,14 +142,17 @@ class OpenAILLMService implements LLMService {
     return this.contextLength;
   }
 
-  async listModels(): Promise<string[]> {
+  async listModels(): Promise<ModelInfo[]> {
     try {
       const res = await fetch(`${this.baseUrl}/v1/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { data: { id: string }[] };
-      return data.data.map(m => m.id);
+      return data.data.map(m => ({
+        id: m.id,
+        capabilities: resolveCapabilities(m.id),
+      }));
     } catch {
       return [];
     }
@@ -167,7 +163,7 @@ class OpenAILLMService implements LLMService {
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
-      model: this.model,
+      model: request.model ?? this.defaultModel,
       messages,
       temperature: request.temperature ?? this.temperature,
       max_tokens: request.maxTokens ?? 4096,
@@ -177,7 +173,7 @@ class OpenAILLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 LLM: ${this.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 LLM: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -235,7 +231,7 @@ class OpenAILLMService implements LLMService {
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
-      model: this.model,
+      model: request.model ?? this.defaultModel,
       messages,
       temperature: request.temperature ?? this.temperature,
       max_tokens: request.maxTokens ?? 4096,
@@ -246,7 +242,7 @@ class OpenAILLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`流式请求 LLM: ${this.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 LLM: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -435,11 +431,20 @@ function resolveCapabilities(model: string, userOverride?: unknown): string[] {
 
 // ===== 插件入口 =====
 
+/** 收集所有已知模型能力的并集 */
+function getAllCapabilities(): string[] {
+  const caps = new Set<string>();
+  for (const c of Object.values(MODEL_CAPABILITIES)) {
+    for (const cap of c) caps.add(cap);
+  }
+  return [...caps];
+}
+
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const openaiConfig: OpenAIConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com',
-    model: (config.model as string) ?? 'gpt-4o',
+    defaultModel: (config.defaultModel as string) ?? (config.model as string) ?? 'gpt-4o',
     timeout: config.timeout as number | undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
@@ -452,9 +457,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const service = new OpenAILLMService(openaiConfig, ctx.logger);
-  const capabilities = resolveCapabilities(openaiConfig.model, config.capabilities);
+  const capabilities = getAllCapabilities();
 
-  ctx.provide('llm', service, { capabilities });
+  ctx.provide('llm', service, { capabilities, label: `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})` });
 
-  ctx.logger.info(`已连接: ${openaiConfig.baseUrl} (${openaiConfig.model}) [${capabilities.join(', ')}]`);
+  ctx.logger.info(`已连接: ${openaiConfig.baseUrl} (默认模型: ${openaiConfig.defaultModel}) [${capabilities.join(', ')}]`);
 }
