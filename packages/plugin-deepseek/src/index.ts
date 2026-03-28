@@ -190,13 +190,15 @@ class DeepSeekLLMService implements LLMService {
 
   /**
    * 检测当前是否应启用 JSON Mode
-   * 需要同时满足：配置显式开启、非思考模式、persona 有 outputFormat、没有工具调用
+   * 需要同时满足：配置开启、非思考模式、无工具、persona 有 outputFormat、消息中包含 "json" 关键词
    */
-  private shouldUseJsonMode(hasTools: boolean): boolean {
+  private shouldUseJsonMode(hasTools: boolean, messages: APIMessage[]): boolean {
     if (!this.jsonMode) return false;
     if (this.enableThinking) return false;
     if (hasTools) return false;
-    return !!this.ctx.getService<PersonaService>('persona')?.getOutputFormat?.();
+    if (!this.ctx.getService<PersonaService>('persona')?.getOutputFormat?.()) return false;
+    // DeepSeek API 要求 prompt 中包含 "json" 关键词，同时也用作区分普通调用和结构化输出调用
+    return messages.some(m => typeof m.content === 'string' && /json/i.test(m.content));
   }
 
   getTemperature(): number {
@@ -255,8 +257,8 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    // JSON Mode: 仅在配置显式开启、无工具、非思考模式时生效
-    const jsonMode = this.shouldUseJsonMode(hasTools);
+    // JSON Mode: 配置开启、无工具、非思考、persona 有 outputFormat、消息含 json 关键词时自动启用
+    const jsonMode = this.shouldUseJsonMode(hasTools, messages);
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -339,8 +341,8 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    // JSON Mode: 仅在配置显式开启、无工具、非思考模式时生效
-    const jsonMode = this.shouldUseJsonMode(hasTools);
+    // JSON Mode: 配置开启、无工具、非思考、persona 有 outputFormat、消息含 json 关键词时自动启用
+    const jsonMode = this.shouldUseJsonMode(hasTools, messages);
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }

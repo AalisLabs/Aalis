@@ -448,6 +448,11 @@ class DefaultAgent implements AgentService {
           `${llmBeforeData.tools.length} 个工具, ` +
           `temperature=${temperature}, maxTokens=${maxTokens}`,
         );
+
+        // 检查是否期望 JSON 输出（persona 有 outputFormat）
+        const persona = this.ctx.getService<PersonaService>('persona');
+        const expectJson = !!persona?.getOutputFormat?.();
+
         const t0 = Date.now();
         let response = await this.consumeStream(llm, {
           messages: llmBeforeData.messages,
@@ -577,9 +582,7 @@ class DefaultAgent implements AgentService {
         let replyContent = response.content ?? '';
 
         // JSON 格式重试：当期望结构化输出但模型返回纯文本且未调用工具时，
-        // 去掉工具重试一次（使 LLM 插件的 json_object 模式生效）
-        const persona = this.ctx.getService<PersonaService>('persona');
-        const expectJson = !!persona?.getOutputFormat?.();
+        // 去掉工具重试一次（DeepSeek 会自动启用 JSON Mode）
         if (
           expectJson &&
           replyContent &&
@@ -591,7 +594,6 @@ class DefaultAgent implements AgentService {
           const retryT0 = Date.now();
           const retryResponse = await this.consumeStream(llm, {
             messages: llmBeforeData.messages,
-            // 不传 tools → LLM 插件的 json_object 会生效
             temperature,
             maxTokens,
             model: modelOverride,
@@ -695,7 +697,7 @@ class DefaultAgent implements AgentService {
       }
     });
 
-    // 消息被中间件拦截（如 chat-flow 缓冲），通知前端结束 loading
+    // 消息被拦截（如流控缓冲），通知前端结束 loading
     if (!handled) {
       await this.ctx.emit('message:stream', {
         sessionId: incoming.sessionId,
