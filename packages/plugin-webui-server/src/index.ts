@@ -4,8 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService } from '@aalis/core';
-import type { AuthorityService } from '@aalis/plugin-authority';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
