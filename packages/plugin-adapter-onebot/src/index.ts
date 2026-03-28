@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
+import type { MemoryService, PersonaService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -15,7 +16,7 @@ import { OneBotV12 } from './v12.js';
 export const name = '@aalis/plugin-adapter-onebot';
 export const displayName = 'OneBot 适配器';
 export const inject = {
-  optional: ['llm', 'commands'],
+  optional: ['llm', 'commands', 'memory', 'persona'],
 };
 export const provides = ['platform'];
 export const reusable = true;
@@ -47,6 +48,46 @@ export const configSchema: ConfigSchema = {
       maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟上限（毫秒）', default: 3000 },
     },
   },
+  chatFlow: {
+    label: '聊天流控',
+    description: '控制群聊中 AI 回复的触发频率，支持固定间隔和动态活跃度评分两种模式',
+    fields: {
+      enabled: { type: 'boolean', label: '启用', description: '是否启用聊天流控（仅对群聊生效）', default: false },
+      intervalMode: {
+        type: 'select',
+        label: '间隔模式',
+        options: [
+          { label: '固定消息条数', value: 'fixed' },
+          { label: '动态活跃度评分', value: 'dynamic' },
+          { label: '满足任一即触发', value: 'both' },
+        ],
+        default: 'both',
+      },
+      fixedInterval: { type: 'number', label: '固定间隔（条）', default: 5, description: '固定模式下每收到 N 条消息触发一次回复。' },
+      activityScoreLower: { type: 'number', label: '活跃度下限阈值', default: 0.3, description: '长时间无回复后的触发阈值，越低越容易触发。' },
+      activityScoreUpper: { type: 'number', label: '活跃度上限阈值', default: 0.85, description: '刚回复后的触发阈值，越高越不容易再次触发。' },
+      activityDecayMinutes: { type: 'number', label: '衰减时间（分钟）', default: 10, description: '回复后阈值从上限衰减回下限所需时间。' },
+      triggerOnAt: { type: 'boolean', label: '@ 触发', default: true, description: '消息中包含 @bot 时立刻触发回复。' },
+      triggerNames: { type: 'string', label: '触发词 / 昵称', default: '', description: '消息中出现这些词时立刻触发回复，逗号分隔（自动包含人设名称）。' },
+      cooldownSeconds: { type: 'number', label: '冷却时间（秒）', default: 10, description: 'AI 回复后的冷却时间。' },
+      enableIdleTrigger: { type: 'boolean', label: '空闲主动触发', default: false, description: '长时间无人说话时 AI 是否主动发起话题。' },
+      idleTriggerMinutes: { type: 'number', label: '空闲间隔（分钟）', default: 180 },
+      idleTriggerStyle: {
+        type: 'select',
+        label: '空闲重试风格',
+        options: [
+          { label: '指数退避', value: 'exponential' },
+          { label: '固定间隔', value: 'fixed' },
+        ],
+        default: 'exponential',
+      },
+      idleTriggerMaxMinutes: { type: 'number', label: '空闲最大间隔（分钟）', default: 1440 },
+      idleTriggerJitter: { type: 'boolean', label: '空闲抖动', default: true },
+      idleTriggerPrompt: { type: 'textarea', label: '空闲触发提示词', default: '', description: '空闲触发时发送给 Agent 的系统提示。留空使用默认提示。' },
+      muteKeywords: { type: 'string', label: '禁言关键词', default: '', description: '逗号分隔。' },
+      muteTimeSeconds: { type: 'number', label: '禁言时长（秒）', default: 60 },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -55,6 +96,25 @@ export const defaultConfig = {
     enabled: false,
     delayPerChar: 50,
     maxDelay: 3000,
+  },
+  chatFlow: {
+    enabled: false,
+    intervalMode: 'both' as const,
+    fixedInterval: 5,
+    activityScoreLower: 0.3,
+    activityScoreUpper: 0.85,
+    activityDecayMinutes: 10,
+    triggerOnAt: true,
+    triggerNames: '',
+    cooldownSeconds: 10,
+    enableIdleTrigger: false,
+    idleTriggerMinutes: 180,
+    idleTriggerStyle: 'exponential' as const,
+    idleTriggerMaxMinutes: 1440,
+    idleTriggerJitter: true,
+    idleTriggerPrompt: '',
+    muteKeywords: '',
+    muteTimeSeconds: 60,
   },
 };
 
@@ -75,6 +135,75 @@ interface ConnectionState {
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>;
+}
+
+// ===== 聊天流控类型 =====
+
+/** 聊天流控配置（解析后） */
+interface ChatFlowConfig {
+  enabled: boolean;
+  intervalMode: 'fixed' | 'dynamic' | 'both';
+  fixedInterval: number;
+  activityScoreLower: number;
+  activityScoreUpper: number;
+  activityDecayMinutes: number;
+  triggerOnAt: boolean;
+  triggerNames: string[];
+  cooldownSeconds: number;
+  enableIdleTrigger: boolean;
+  idleTriggerMinutes: number;
+  idleTriggerStyle: 'exponential' | 'fixed';
+  idleTriggerMaxMinutes: number;
+  idleTriggerJitter: boolean;
+  idleTriggerPrompt: string;
+  muteKeywords: string[];
+  muteTimeSeconds: number;
+}
+
+/** 每个 session 的流控状态 */
+interface FlowSessionState {
+  messageCount: number;
+  lastReplyTime: number;
+  lastMessageTime: number;
+  activityScore: number;
+  cooldownUntil: number;
+  mutedUntil: number;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  idleBackoff: number;
+  userInteractions: Map<string, { count: number; lastTime: number }>;
+}
+
+/** 空闲触发标识 */
+const IDLE_TRIGGER_MARKER = '__chat_flow_idle_trigger__';
+
+function parseStringList(val: unknown): string[] {
+  if (Array.isArray(val)) return val.filter(Boolean).map(String);
+  if (typeof val === 'string' && val.trim()) {
+    return val.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function resolveChatFlowConfig(raw: Record<string, unknown>): ChatFlowConfig {
+  return {
+    enabled: (raw.enabled as boolean) ?? false,
+    intervalMode: (raw.intervalMode as ChatFlowConfig['intervalMode']) ?? 'both',
+    fixedInterval: (raw.fixedInterval as number) ?? 5,
+    activityScoreLower: (raw.activityScoreLower as number) ?? 0.3,
+    activityScoreUpper: (raw.activityScoreUpper as number) ?? 0.85,
+    activityDecayMinutes: (raw.activityDecayMinutes as number) ?? 10,
+    triggerOnAt: (raw.triggerOnAt as boolean) ?? true,
+    triggerNames: parseStringList(raw.triggerNames),
+    cooldownSeconds: (raw.cooldownSeconds as number) ?? 10,
+    enableIdleTrigger: (raw.enableIdleTrigger as boolean) ?? false,
+    idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? 180,
+    idleTriggerStyle: (raw.idleTriggerStyle as ChatFlowConfig['idleTriggerStyle']) ?? 'exponential',
+    idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? 1440,
+    idleTriggerJitter: (raw.idleTriggerJitter as boolean) ?? true,
+    idleTriggerPrompt: (raw.idleTriggerPrompt as string) || '',
+    muteKeywords: parseStringList(raw.muteKeywords),
+    muteTimeSeconds: (raw.muteTimeSeconds as number) ?? 60,
+  };
 }
 
 // ===== 工具函数 =====
@@ -211,11 +340,292 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
   const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
 
+  // 聊天流控配置
+  const flowCfg = resolveChatFlowConfig((config.chatFlow ?? {}) as Record<string, unknown>);
+
   if (connections.length === 0) {
     ctx.logger.info('OneBot 适配器未配置任何连接');
   }
 
+  if (flowCfg.enabled) {
+    ctx.logger.info(`聊天流控已启用 (模式: ${flowCfg.intervalMode}, 间隔: ${flowCfg.fixedInterval}条, 阈值: ${flowCfg.activityScoreLower}~${flowCfg.activityScoreUpper})`);
+  }
+
   const states: ConnectionState[] = [];
+
+  // ===== 聊天流控状态管理 =====
+
+  const flowSessions = new Map<string, FlowSessionState>();
+
+  function getFlowSession(sessionId: string): FlowSessionState {
+    let state = flowSessions.get(sessionId);
+    if (!state) {
+      state = {
+        messageCount: 0,
+        lastReplyTime: 0,
+        lastMessageTime: 0,
+        activityScore: 0,
+        cooldownUntil: 0,
+        mutedUntil: 0,
+        idleTimer: null,
+        idleBackoff: 1,
+        userInteractions: new Map(),
+      };
+      flowSessions.set(sessionId, state);
+    }
+    return state;
+  }
+
+  // ── 从 persona 获取 bot 名称用于触发检测 ──
+
+  function getBotNames(): string[] {
+    const names = [...flowCfg.triggerNames];
+    const persona = ctx.getService<PersonaService>('persona');
+    if (persona) {
+      const personaName = persona.getPersonaName();
+      if (personaName && !names.includes(personaName)) names.push(personaName);
+      const nickNames = persona.getNickNames?.() ?? [];
+      for (const nn of nickNames) {
+        if (nn && !names.includes(nn)) names.push(nn);
+      }
+    }
+    return names;
+  }
+
+  // ── 即时触发检测 ──
+
+  function checkImmediateTrigger(content: string): boolean {
+    if (flowCfg.triggerOnAt) {
+      if (/<at self>[^<]*<\/at>/.test(content) ||
+          /\[CQ:at,qq=\d+\]/.test(content) ||
+          /@\S+/.test(content)) {
+        return true;
+      }
+    }
+    const names = getBotNames();
+    for (const name of names) {
+      if (name && content.includes(name)) return true;
+    }
+    return false;
+  }
+
+  // ── 禁言检测 ──
+
+  function checkMuteKeyword(content: string): boolean {
+    for (const keyword of flowCfg.muteKeywords) {
+      if (content.includes(keyword)) return true;
+    }
+    const persona = ctx.getService<PersonaService>('persona');
+    const personaMuteKw = persona?.getMuteKeywords?.() ?? [];
+    for (const keyword of personaMuteKw) {
+      if (content.includes(keyword)) return true;
+    }
+    return false;
+  }
+
+  // ── 动态阈值计算 ──
+
+  function getCurrentThreshold(fState: FlowSessionState): number {
+    if (fState.lastReplyTime === 0) return flowCfg.activityScoreLower;
+    const elapsed = Date.now() - fState.lastReplyTime;
+    const decayMs = flowCfg.activityDecayMinutes * 60 * 1000;
+    const factor = Math.max(0, 1 - elapsed / decayMs);
+    return flowCfg.activityScoreLower + (flowCfg.activityScoreUpper - flowCfg.activityScoreLower) * factor;
+  }
+
+  function calculateScoreIncrement(fState: FlowSessionState, userId?: string): number {
+    const base = 1.0 / Math.max(1, flowCfg.fixedInterval);
+    let userWeight = 1.0;
+    if (userId) {
+      const interaction = fState.userInteractions.get(userId);
+      if (interaction) {
+        userWeight = 1.0 + 0.5 * Math.min(interaction.count / 10, 1.0);
+      }
+    }
+    return base * userWeight;
+  }
+
+  // ── 触发判定 ──
+
+  function shouldTrigger(fState: FlowSessionState): boolean {
+    const fixedOk = fState.messageCount >= flowCfg.fixedInterval;
+    const dynamicOk = fState.activityScore >= getCurrentThreshold(fState);
+    switch (flowCfg.intervalMode) {
+      case 'fixed':   return fixedOk;
+      case 'dynamic': return dynamicOk;
+      case 'both':    return fixedOk || dynamicOk;
+      default:        return fixedOk;
+    }
+  }
+
+  // ── 触发后重置 ──
+
+  function resetAfterTrigger(fState: FlowSessionState): void {
+    fState.messageCount = 0;
+    fState.activityScore = 0;
+    fState.lastReplyTime = Date.now();
+  }
+
+  // ── 保存缓冲消息到记忆 ──
+
+  async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string): Promise<void> {
+    const memory = ctx.getService<MemoryService>('memory');
+    if (!memory) return;
+    try {
+      const senderLabel = nickname ?? userId;
+      const contentToSave = senderLabel ? `[${senderLabel}]: ${content}` : content;
+      await memory.saveMessage(sessionId, {
+        role: 'user',
+        content: contentToSave,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      ctx.logger.warn(`保存缓冲消息失败: ${err}`);
+    }
+  }
+
+  // ── 空闲触发 ──
+
+  function scheduleIdleTrigger(fState: FlowSessionState, sessionId: string, platform: string): void {
+    clearIdleTimer(fState);
+    if (!flowCfg.enableIdleTrigger) return;
+
+    let delayMs: number;
+    if (flowCfg.idleTriggerStyle === 'exponential') {
+      delayMs = Math.min(
+        flowCfg.idleTriggerMinutes * fState.idleBackoff * 60 * 1000,
+        flowCfg.idleTriggerMaxMinutes * 60 * 1000,
+      );
+    } else {
+      delayMs = flowCfg.idleTriggerMinutes * 60 * 1000;
+    }
+
+    if (flowCfg.idleTriggerJitter) {
+      const jitter = delayMs * (0.1 * (Math.random() * 2 - 1));
+      delayMs = Math.max(60_000, delayMs + jitter);
+    }
+
+    fState.idleTimer = setTimeout(async () => {
+      try {
+        ctx.logger.info(`空闲触发: session=${sessionId} (退避 x${fState.idleBackoff})`);
+        if (flowCfg.idleTriggerStyle === 'exponential') {
+          fState.idleBackoff = Math.min(fState.idleBackoff * 2, 64);
+        }
+        await ctx.emit('message:received', {
+          content: IDLE_TRIGGER_MARKER,
+          sessionId,
+          platform,
+        });
+        scheduleIdleTrigger(fState, sessionId, platform);
+      } catch (err) {
+        ctx.logger.warn(`空闲触发执行失败: ${err}`);
+      }
+    }, delayMs);
+
+    ctx.logger.debug(`空闲触发已调度: session=${sessionId}, ${Math.round(delayMs / 60_000)}分钟后`);
+  }
+
+  function clearIdleTimer(fState: FlowSessionState): void {
+    if (fState.idleTimer) {
+      clearTimeout(fState.idleTimer);
+      fState.idleTimer = null;
+    }
+  }
+
+  // ── debug 日志：展示消息计数和发言指数 ──
+
+  function logFlowStatus(sessionId: string, fState: FlowSessionState, label: string): void {
+    const threshold = getCurrentThreshold(fState);
+    ctx.logger.debug(
+      `[流控] ${label} | session=${sessionId} | ` +
+      `消息计数=${fState.messageCount}/${flowCfg.fixedInterval} | ` +
+      `发言指数=${fState.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)}, 范围=${flowCfg.activityScoreLower}~${flowCfg.activityScoreUpper})`
+    );
+  }
+
+  // ── 流控核心判定：返回 true 表示放行，false 表示拦截 ──
+
+  async function handleFlowControl(
+    sessionId: string,
+    content: string,
+    sessionType: string | undefined,
+    userId?: string,
+    nickname?: string,
+  ): Promise<boolean> {
+    // 只对群聊启用流控
+    if (!flowCfg.enabled || sessionType !== 'group') return true;
+
+    // 空闲触发消息直接放行（替换内容在 middleware 层处理不到，这里直接返回 true）
+    if (content === IDLE_TRIGGER_MARKER) return true;
+
+    const fState = getFlowSession(sessionId);
+    const now = Date.now();
+
+    // 更新用户交互记录
+    if (userId) {
+      const prev = fState.userInteractions.get(userId) ?? { count: 0, lastTime: 0 };
+      fState.userInteractions.set(userId, { count: prev.count + 1, lastTime: now });
+    }
+    fState.lastMessageTime = now;
+
+    // 禁言检测
+    if (checkMuteKeyword(content)) {
+      fState.mutedUntil = now + flowCfg.muteTimeSeconds * 1000;
+      fState.messageCount = 0;
+      fState.activityScore = 0;
+      ctx.logger.info(`禁言触发: session=${sessionId}, ${flowCfg.muteTimeSeconds}秒`);
+      logFlowStatus(sessionId, fState, '禁言 → 计数器归零');
+      await saveBufferedMessage(sessionId, content, nickname, userId);
+      scheduleIdleTrigger(fState, sessionId, 'onebot');
+      return false;
+    }
+
+    // 仍在禁言中
+    if (now < fState.mutedUntil) {
+      logFlowStatus(sessionId, fState, '禁言中');
+      await saveBufferedMessage(sessionId, content, nickname, userId);
+      return false;
+    }
+
+    // 仍在冷却中
+    if (now < fState.cooldownUntil) {
+      fState.messageCount++;
+      fState.activityScore += calculateScoreIncrement(fState, userId);
+      logFlowStatus(sessionId, fState, '冷却中');
+      await saveBufferedMessage(sessionId, content, nickname, userId);
+      scheduleIdleTrigger(fState, sessionId, 'onebot');
+      return false;
+    }
+
+    // 即时触发（@、名字）
+    if (checkImmediateTrigger(content)) {
+      ctx.logger.debug(`即时触发 (@ / 名字): session=${sessionId}`);
+      resetAfterTrigger(fState);
+      fState.idleBackoff = 1;
+      logFlowStatus(sessionId, fState, '即时触发 → 计数器归零');
+      scheduleIdleTrigger(fState, sessionId, 'onebot');
+      return true;
+    }
+
+    // 累加计数和评分
+    fState.messageCount++;
+    fState.activityScore += calculateScoreIncrement(fState, userId);
+
+    // 间隔触发判定
+    if (shouldTrigger(fState)) {
+      logFlowStatus(sessionId, fState, '间隔触发 → 计数器归零');
+      resetAfterTrigger(fState);
+      fState.idleBackoff = 1;
+      scheduleIdleTrigger(fState, sessionId, 'onebot');
+      return true;
+    }
+
+    // 未触发，缓冲消息
+    logFlowStatus(sessionId, fState, '未触发');
+    await saveBufferedMessage(sessionId, content, nickname, userId);
+    scheduleIdleTrigger(fState, sessionId, 'onebot');
+    return false;
+  }
 
   // ----- 群信息缓存 -----
 
@@ -611,7 +1021,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 异步获取群信息和引用消息（不阻塞消息接收）
+    const sessionType = event.detailType === 'group' ? 'group'
+      : event.detailType === 'private' ? 'private'
+      : event.detailType === 'channel' ? 'channel'
+      : undefined;
+
+    // 异步获取群信息、引用消息，并执行流控判定
     (async () => {
       let groupName: string | undefined;
       let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;
@@ -633,6 +1048,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
       }
 
+      // 流控判定：返回 false 表示拦截（消息已缓冲到记忆）
+      const shouldEmit = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname);
+      if (!shouldEmit) return;
+
       ctx.emit('message:received', {
         content: event.text,
         sessionId,
@@ -640,10 +1059,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         userId: event.userId,
         nickname: event.nickname,
         images: event.images,
-        sessionType: event.detailType === 'group' ? 'group'
-          : event.detailType === 'private' ? 'private'
-          : event.detailType === 'channel' ? 'channel'
-          : undefined,
+        sessionType,
         groupName,
         groupId: event.groupId,
         replyTo,
@@ -659,6 +1075,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const fallbackSelfId = state.selfId ?? 'unknown';
     const notice = state.protocol.parseNoticeEvent(raw, fallbackSelfId);
     if (!notice) return;
+
+    // 过滤高频无用通知（输入状态等）
+    if (notice.noticeType === 'notify' && notice.subType === 'input_status') return;
 
     ctx.logger.debug(`OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`);
 
@@ -731,6 +1150,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
     ctx.logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
+
+    // 流控：设置冷却、重置退避
+    if (flowCfg.enabled) {
+      const fState = flowSessions.get(msg.sessionId);
+      if (fState) {
+        if (flowCfg.cooldownSeconds > 0) {
+          fState.cooldownUntil = Date.now() + flowCfg.cooldownSeconds * 1000;
+        }
+        fState.idleBackoff = 1;
+        scheduleIdleTrigger(fState, msg.sessionId, 'onebot');
+      }
+    }
+
     adapter.sendMessage(msg.sessionId, msg.content).catch(err => {
       ctx.logger.warn(`OneBot 发送消息失败: ${err}`);
     });
@@ -749,6 +1181,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   ctx.on('dispose', () => {
+    // 清理流控定时器
+    for (const [, fState] of flowSessions) {
+      clearIdleTimer(fState);
+    }
+    flowSessions.clear();
+
     for (const state of states) {
       if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
       stopHeartbeat(state);
