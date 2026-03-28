@@ -23,6 +23,17 @@ const CONTENT_FILTER_PATTERNS = [
   'risk control',
 ];
 
+/**
+ * 剥离 DeepSeek 模型泄漏的 DSML（DeepSeek Markup Language）标记
+ *
+ * 思考模型有时会在 content 中直接输出 <｜DSML｜function_calls>...</｜DSML｜function_calls> 标记
+ * 而非正确走 API 的 tool_calls 通道，导致 JSON 解析失败。
+ */
+const DSML_PATTERN = /<[｜|]DSML[｜|][\s\S]*$/;
+function stripDSML(content: string): string {
+  return content.replace(DSML_PATTERN, '').trimEnd();
+}
+
 /** 解析 API 错误，对内容审查类错误返回友好提示 */
 function parseApiError(provider: string, status: number, body: string): string {
   const lower = body.toLowerCase();
@@ -265,7 +276,7 @@ class DeepSeekLLMService implements LLMService {
     }
 
     const result: ChatResponse = {
-      content: choice.message.content,
+      content: choice.message.content ? stripDSML(choice.message.content) : choice.message.content,
       reasoningContent: choice.message.reasoning_content ?? undefined,
     };
 
@@ -341,6 +352,9 @@ class DeepSeekLLMService implements LLMService {
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+    /** 流式累积内容，用于检测 DSML 泄漏 */
+    let accContent = '';
+    let dsmlDetected = false;
 
     if (!response.body) {
       throw new Error('DeepSeek API 返回了空的响应体，无法进行流式读取');
@@ -377,7 +391,24 @@ class DeepSeekLLMService implements LLMService {
             if (!delta) continue;
 
             const chunk: ChatStreamChunk = {};
-            if (delta.content) chunk.contentDelta = delta.content;
+            if (delta.content) {
+              if (!dsmlDetected) {
+                accContent += delta.content;
+                // 检测 DSML 起始标记（全角或半角 | 前缀）
+                const dsmlIdx = accContent.search(/<[｜|]DSML/);
+                if (dsmlIdx !== -1) {
+                  dsmlDetected = true;
+                  // 输出 DSML 之前的部分（如果有）
+                  const cleanPart = accContent.slice(0, dsmlIdx);
+                  const prevLen = accContent.length - delta.content.length;
+                  const cleanDelta = cleanPart.slice(prevLen);
+                  if (cleanDelta) chunk.contentDelta = cleanDelta;
+                } else {
+                  chunk.contentDelta = delta.content;
+                }
+              }
+              // dsmlDetected = true 时不再 emit content
+            }
             if (delta.reasoning_content) chunk.reasoningDelta = delta.reasoning_content;
 
             // 累积工具调用
