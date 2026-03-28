@@ -615,6 +615,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.on('message:send', (msg) => {
     if (!msg.sessionId.startsWith('onebot:')) return;
+    if (!msg.content?.trim()) {
+      ctx.logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
+      return;
+    }
     ctx.logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
     adapter.sendMessage(msg.sessionId, msg.content).catch(err => {
       ctx.logger.warn(`OneBot 发送消息失败: ${err}`);

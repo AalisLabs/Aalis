@@ -58,6 +58,8 @@ interface PlatformOverride {
   traits?: string[];
   /** 禁用结构化输出格式（该平台回复纯文本） */
   disableOutputFormat?: boolean;
+  /** 覆盖结构化输出格式（提供时 disableOutputFormat 被忽略） */
+  outputFormat?: Record<string, { description: string; reply?: boolean }>;
 }
 
 interface PersonaCard {
@@ -108,18 +110,23 @@ class PersonaServiceImpl implements PersonaService {
     this.statePersistence = options.statePersistence;
     this.timeInjection = options.timeInjection;
 
-    // 解析 outputFormat
+    // 解析基础 outputFormat
     if (card.outputFormat) {
-      const fields: Record<string, OutputFormatField> = {};
-      let replyField: string | undefined;
-      for (const [key, def] of Object.entries(card.outputFormat)) {
-        fields[key] = { description: def.description, reply: def.reply };
-        if (def.reply) replyField = key;
-      }
-      if (replyField) {
-        this._outputFormat = { fields, replyField };
-      }
+      this._outputFormat = PersonaServiceImpl.parseRawOutputFormat(card.outputFormat);
     }
+  }
+
+  /** 解析原始 outputFormat 定义 → OutputFormat 结构 */
+  private static parseRawOutputFormat(
+    raw: Record<string, { description: string; reply?: boolean }>,
+  ): OutputFormat | undefined {
+    const fields: Record<string, OutputFormatField> = {};
+    let replyField: string | undefined;
+    for (const [key, def] of Object.entries(raw)) {
+      fields[key] = { description: def.description, reply: def.reply };
+      if (def.reply) replyField = key;
+    }
+    return replyField ? { fields, replyField } : undefined;
   }
 
   /** 保存会话状态 */
@@ -199,21 +206,19 @@ class PersonaServiceImpl implements PersonaService {
       }
     }
 
-    // 追加结构化输出指令（若当前平台禁用则跳过）
-    const platformDisabled = this.currentPlatform
-      ? this.card.platformOverrides?.[this.currentPlatform]?.disableOutputFormat
-      : false;
-    if (this._outputFormat && !platformDisabled) {
+    // 追加结构化输出指令（动态解析当前平台的 outputFormat）
+    const effectiveFormat = this.getOutputFormat();
+    if (effectiveFormat) {
       prompt += '\n\n# 输出格式\n';
       prompt += '你必须始终以如下 JSON 格式回复，不要输出 JSON 之外的任何内容：\n';
-      prompt += '```json\n{\n';
-      const entries = Object.entries(this._outputFormat.fields);
+      prompt += '{\n';
+      const entries = Object.entries(effectiveFormat.fields);
       entries.forEach(([key, field], i) => {
         const comma = i < entries.length - 1 ? ',' : '';
         prompt += `  "${key}": "..."${comma}  // ${field.description}${field.reply ? '（发送给用户的回复）' : ''}\n`;
       });
-      prompt += '}\n```\n';
-      prompt += '严格遵守此格式。不要在 JSON 外包裹 markdown 代码块标记。直接输出纯 JSON。';
+      prompt += '}\n';
+      prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。';
     }
 
     return prompt;
@@ -224,6 +229,16 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   getOutputFormat(): OutputFormat | undefined {
+    const override = this.currentPlatform
+      ? this.card.platformOverrides?.[this.currentPlatform]
+      : undefined;
+    // 平台提供了自己的 outputFormat → 优先使用
+    if (override?.outputFormat) {
+      return PersonaServiceImpl.parseRawOutputFormat(override.outputFormat);
+    }
+    // 平台禁用了结构化输出
+    if (override?.disableOutputFormat) return undefined;
+    // 使用基础 outputFormat
     return this._outputFormat;
   }
 
@@ -292,7 +307,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
         nick_name: parsed.nick_name as string[] | undefined,
         mute_keyword: parsed.mute_keyword as string[] | undefined,
-        platformOverrides: parsed.platformOverrides as PersonaCard['platformOverrides'] | undefined,
+        platformOverrides: parsed.platformOverrides as Record<string, PlatformOverride> | undefined,
       };
     } catch {
       return undefined;
@@ -339,17 +354,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
 
   // 当角色卡配置了 outputFormat 时，注册 response:before 钩子解析 JSON
-  const outputFormat = service.getOutputFormat();
-  if (outputFormat) {
-    ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${outputFormat.replyField})`);
+  const baseFormat = service.getOutputFormat();
+  const hasAnyOutputFormat = !!baseFormat
+    || Object.values(card.platformOverrides ?? {}).some(o => !!o.outputFormat);
+
+  if (hasAnyOutputFormat) {
+    ctx.logger.info(`角色卡启用结构化输出${baseFormat ? ` (默认回复字段: ${baseFormat.replyField})` : ''}`);
 
     ctx.middleware('response:before', async (data, next) => {
       await next();
-      // 当前平台禁用了结构化输出则跳过解析
-      if (service.currentPlatform
-        && card.platformOverrides?.[service.currentPlatform]?.disableOutputFormat) {
-        return;
-      }
+      // 动态获取当前平台生效的 outputFormat
+      const outputFormat = service.getOutputFormat();
+      if (!outputFormat) return;
+
       const raw = data.content.trim();
       // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记）
       const jsonStr = raw.startsWith('{')

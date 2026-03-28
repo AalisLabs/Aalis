@@ -131,7 +131,7 @@ class OllamaLLMService implements LLMService {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const messages = request.messages.map(m => this.toOllamaMessage(m));
+    const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
@@ -198,7 +198,7 @@ class OllamaLLMService implements LLMService {
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    const messages = request.messages.map(m => this.toOllamaMessage(m));
+    const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
@@ -319,11 +319,40 @@ class OllamaLLMService implements LLMService {
   }
 
   /**
+   * 将图片字符串解析为 Ollama 所需的纯 base64 格式。
+   * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。
+   */
+  private async resolveImage(img: string): Promise<string> {
+    // data URI → 提取 base64
+    const dataMatch = img.match(/^data:[^;]+;base64,(.+)$/);
+    if (dataMatch) return dataMatch[1];
+
+    // HTTP(S) URL → 下载并转 base64
+    if (/^https?:\/\//i.test(img)) {
+      try {
+        const res = await fetch(img, { signal: AbortSignal.timeout(30000) });
+        if (!res.ok) {
+          this.logger.warn(`下载图片失败 (${res.status}): ${img}`);
+          return img;
+        }
+        const buf = Buffer.from(await res.arrayBuffer());
+        return buf.toString('base64');
+      } catch (err) {
+        this.logger.warn(`下载图片异常: ${img}`, err);
+        return img;
+      }
+    }
+
+    // 其他情况（纯 base64 或文件路径）直接返回
+    return img;
+  }
+
+  /**
    * 转换为 Ollama API 消息格式
    * Ollama 的图片通过 images 字段传递 base64 数据（或 URL）
    * 工具调用结果通过 role: tool 传递
    */
-  private toOllamaMessage(msg: Message): OllamaMessage {
+  private async toOllamaMessage(msg: Message): Promise<OllamaMessage> {
     const ollamaMsg: OllamaMessage = {
       role: msg.role === 'tool' ? 'tool' : msg.role,
       content: msg.content ?? '',
@@ -331,11 +360,7 @@ class OllamaLLMService implements LLMService {
 
     // 多模态：Ollama 支持 images 字段（base64 或文件路径）
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      ollamaMsg.images = msg.images.map(img => {
-        // 如果是 data URI，提取 base64 部分
-        const match = img.match(/^data:[^;]+;base64,(.+)$/);
-        return match ? match[1] : img;
-      });
+      ollamaMsg.images = await Promise.all(msg.images.map(img => this.resolveImage(img)));
     }
 
     // 传递工具调用（assistant 消息中的）
