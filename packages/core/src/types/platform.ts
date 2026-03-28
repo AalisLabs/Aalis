@@ -46,3 +46,24 @@ export interface PlatformAdapter {
    */
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>;
 }
+
+// ----- 平台管理服务接口 -----
+
+import type { PluginGroupInfo } from './core.js';
+
+/**
+ * 平台管理服务 —— 平台子系统协调器
+ *
+ * 聚合所有平台适配器的连接状态，
+ * 为 Dashboard 提供插件分组信息。
+ *
+ * 默认由 plugin-platform 提供。
+ */
+export interface PlatformManagerService {
+  /** 获取平台子系统的插件分组（基于 provides ∩ inject 自动计算） */
+  getPluginGroups(): PluginGroupInfo[];
+  /** 获取所有平台的聚合连接列表 */
+  getConnections(): PlatformConnection[];
+  /** 获取所有已注册的平台名称 */
+  getPlatformNames(): string[];
+}

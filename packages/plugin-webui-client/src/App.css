@@ -213,6 +213,7 @@ body {
 .page-content {
   padding: 20px 28px;
   overflow-y: auto;
+  overflow-x: hidden;
   height: 100%;
 }
 
@@ -222,7 +223,12 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
+  margin-top: 24px;
   margin-bottom: 10px;
+}
+
+.section-label:first-child {
+  margin-top: 0;
 }
 
 .empty-hint {
@@ -737,7 +743,7 @@ body {
   resize: none;
   font-family: inherit;
   outline: none;
-  min-height: 42px;
+  min-height: 52px;
   max-height: 300px;
   overflow-y: auto;
   transition: border-color var(--transition);
@@ -935,8 +941,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 24px 0;
+  padding: 8px 24px;
   background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
 }
 
 .pending-file-item {
@@ -1317,6 +1324,19 @@ body {
   font-weight: 600;
 }
 
+.plugin-card-module-name {
+  font-size: 0.7rem;
+  font-weight: 400;
+  opacity: 0.45;
+  margin-left: 6px;
+}
+
+.plugin-instance-suffix {
+  color: var(--primary);
+  font-weight: 400;
+  opacity: 0.85;
+}
+
 .core-badge {
   background: rgba(124, 111, 247, 0.15);
   color: var(--primary);
@@ -1648,6 +1668,15 @@ body {
 .config-edit-input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+textarea.config-textarea {
+  min-height: 80px;
+  max-height: 300px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  overflow-y: auto;
 }
 
 .config-edit-actions {
@@ -2565,4 +2594,65 @@ details[open] > .tool-call-summary::before {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* ===== 模型列表 ===== */
+
+.model-search-row {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.model-provider-group {
+  margin-bottom: 12px;
+}
+
+.model-provider-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.model-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  transition: border-color var(--transition);
+}
+
+.model-chip:hover {
+  border-color: var(--primary);
+}
+
+.model-chip-name {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text);
+  font-size: 0.76rem;
+}
+
+.model-chip-caps {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.model-cap-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  background: rgba(124, 111, 247, 0.12);
+  color: var(--primary);
 }

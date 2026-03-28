@@ -4,15 +4,17 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, PersonaService, AgentService, WebuiPage } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService } from '@aalis/core';
+import type { AuthorityService } from '@aalis/plugin-authority';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-webui-server';
+export const displayName = 'WebUI 服务端';
 export const provides = ['webui-server', 'platform'];
 export const inject = {
-  optional: ['commands', 'tools', 'authority'],
+  optional: ['authority', 'commands'],
 };
 
 export const webuiPages: WebuiPage[] = [
@@ -53,7 +55,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'restarting';
+  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'restarting' | 'reload';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -158,9 +160,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     const plugins = app.plugins.getStatus().map(p => ({
       name: p.name,
+      instanceId: p.instanceId,
+      displayName: p.displayName,
       state: p.state,
       provides: p.provides ?? [],
       core: p.core ?? false,
+      reusable: p.reusable ?? false,
       config: p.config,
       configSchema: p.configSchema,
       defaultConfig: p.defaultConfig,
@@ -392,6 +397,50 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
+  // 创建插件多实例
+  expressApp.post('/api/plugins/:name/instances', async (req, res) => {
+    const moduleName = req.params.name;
+    const suffix = req.body?.suffix;
+    const config = req.body?.config ?? {};
+    if (!suffix || typeof suffix !== 'string') {
+      res.status(400).json({ error: 'suffix 必须是非空字符串' });
+      return;
+    }
+    if (!/^[\w-]+$/.test(suffix)) {
+      res.status(400).json({ error: 'suffix 只能包含字母、数字、下划线和连字符' });
+      return;
+    }
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    const instanceId = await app.plugins.createInstance(moduleName, suffix, config as Record<string, unknown>);
+    if (instanceId) {
+      app.saveConfig();
+      res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
+    } else {
+      res.status(400).json({ error: `无法创建实例（模块不存在、未声明 reusable 或实例已存在）` });
+    }
+  });
+
+  // 删除插件多实例
+  expressApp.delete('/api/plugins/:instanceId/instance', async (req, res) => {
+    const instanceId = req.params.instanceId;
+    const app = getApp();
+    if (!app) {
+      res.status(500).json({ error: 'App 不可用' });
+      return;
+    }
+    const ok = await app.plugins.removeInstance(instanceId);
+    if (ok) {
+      app.saveConfig();
+      res.json({ ok: true, message: `已删除实例 ${instanceId}` });
+    } else {
+      res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
+    }
+  });
+
   // 保存配置到磁盘
   expressApp.post('/api/config/save', (_req, res) => {
     const app = getApp();
@@ -415,9 +464,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取服务列表（含提供者信息）
   expressApp.get('/api/services', async (_req, res) => {
+    const app = getApp();
+    const pluginStatus = app ? app.plugins.getStatus() : [];
+    const displayNameMap = new Map<string, string>();
+    for (const p of pluginStatus) {
+      if (p.displayName) {
+        displayNameMap.set(p.name, p.displayName);
+        displayNameMap.set(p.instanceId, p.displayName);
+      }
+    }
+
     const serviceNames = ctx.listServices();
     const services: Record<string, {
-      providers: Array<{ contextId: string; capabilities: string[] }>;
+      providers: Array<{ contextId: string; capabilities: string[]; displayName?: string }>;
       active: string | undefined;
     }> = {};
 
@@ -427,6 +486,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         providers: entries.map(e => ({
           contextId: e.contextId,
           capabilities: [...e.capabilities],
+          displayName: displayNameMap.get(e.contextId),
+          label: e.label,
         })),
         active: entries.length > 0 ? entries[0].contextId : undefined,
       };
@@ -449,6 +510,74 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return { ...g, toolCount };
     });
     res.json({ groups: result });
+  });
+
+  // 获取服务分组（自动分层 Dashboard 用）
+  expressApp.get('/api/service-groups', (_req, res) => {
+    const app = getApp();
+    const pluginStatus = app ? app.plugins.getStatus() : [];
+    // 构建 instanceId → provides 映射
+    const providesMap = new Map<string, string[]>();
+    for (const p of pluginStatus) {
+      if (p.provides) providesMap.set(p.instanceId, p.provides);
+    }
+
+    const claimed = new Set<string>();
+    const groups: Array<{ label: string; services: string[] }> = [];
+
+    // 1. 核心服务（基础设施）
+    const coreServices = ['commands', 'authority', 'tools'];
+    groups.push({ label: '核心', services: coreServices });
+    coreServices.forEach(s => claimed.add(s));
+
+    // 2. Agent 子系统
+    const agent = ctx.getService<AgentService>('agent');
+    if (agent?.getPluginGroups) {
+      const agentGroups = agent.getPluginGroups();
+      const agentServices = new Set<string>();
+      agentServices.add('agent'); // Agent 自身
+      for (const g of agentGroups) {
+        for (const pid of g.plugins) {
+          const svcs = providesMap.get(pid);
+          if (svcs) svcs.forEach(s => agentServices.add(s));
+        }
+      }
+      const agentList = [...agentServices].filter(s => !claimed.has(s));
+      if (agentList.length > 0) {
+        groups.push({ label: 'Agent', services: agentList });
+        agentList.forEach(s => claimed.add(s));
+      }
+    }
+
+    // 3. 平台子系统
+    const platformMgr = ctx.getService<PlatformManagerService>('platform-manager');
+    if (platformMgr?.getPluginGroups) {
+      const platGroups = platformMgr.getPluginGroups();
+      const platServices = new Set<string>();
+      platServices.add('platform-manager');
+      // webui-client 属于平台子系统
+      if (ctx.hasService('webui-client')) platServices.add('webui-client');
+      for (const g of platGroups) {
+        for (const pid of g.plugins) {
+          const svcs = providesMap.get(pid);
+          if (svcs) svcs.forEach(s => platServices.add(s));
+        }
+      }
+      const platList = [...platServices].filter(s => !claimed.has(s));
+      if (platList.length > 0) {
+        groups.push({ label: '平台', services: platList });
+        platList.forEach(s => claimed.add(s));
+      }
+    }
+
+    // 4. 其他服务
+    const allServiceNames = ctx.listServices();
+    const other = allServiceNames.filter(s => !claimed.has(s) && s !== 'app');
+    if (other.length > 0) {
+      groups.push({ label: '其他', services: other });
+    }
+
+    res.json({ groups });
   });
 
   // 切换服务的偏好提供者（同时持久化到配置文件）
@@ -477,8 +606,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           mountStaticDir(dir);
           ctx.logger.info(`前端已切换: ${dir}`);
         }
-        // 通知所有前端刷新页面以加载新客户端
-        const reloadPayload: WSOutgoing = { type: 'restarting' };
+        // 通知所有前端刷新页面以加载新客户端（使用 reload 而非 restarting，客户端无需等待重连）
+        const reloadPayload: WSOutgoing = { type: 'reload' };
         const reloadJson = JSON.stringify(reloadPayload);
         for (const ws of allClients) {
           if (ws.readyState === WebSocket.OPEN) {
@@ -490,6 +619,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.json({ ok: true, message: `${serviceName} 已切换到 ${contextId}` });
     } else {
       res.status(404).json({ error: `服务 ${serviceName} 或提供者 ${contextId} 不存在` });
+    }
+  });
+
+  // 获取所有 LLM 模型（聚合所有 LLM 提供者）
+  expressApp.get('/api/llm-models', async (_req, res) => {
+    try {
+      const models = await ctx.listAllModels();
+      res.json({ models });
+    } catch {
+      res.json({ models: [] });
     }
   });
 
@@ -523,14 +662,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    const service = ctx.getService<{ listModels?(): Promise<string[]> }>(serviceName);
+    const service = ctx.getService<{ listModels?(): Promise<unknown[]> }>(serviceName);
     if (!service || typeof service.listModels !== 'function') {
       res.json({ models: [] });
       return;
     }
     try {
       // 聚合所有提供者的模型列表
-      const allProviders = ctx.getAllServices<{ listModels?(): Promise<string[]> }>(serviceName);
+      const allProviders = ctx.getAllServices<{ listModels?(): Promise<unknown[]> }>(serviceName);
       const aggregated: Array<{ model: string; provider: string; capabilities: string[] }> = [];
       const flatModels: string[] = [];
 
@@ -539,8 +678,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         try {
           const models = await provider.instance.listModels();
           for (const m of models) {
-            aggregated.push({ model: m, provider: provider.contextId, capabilities: provider.capabilities });
-            flatModels.push(m);
+            // LLM listModels() returns ModelInfo[], embedding returns string[]
+            const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
+            const modelId = isModelInfo ? (m as Record<string, unknown>).id as string : String(m);
+            const modelCaps = isModelInfo ? (m as Record<string, unknown>).capabilities as string[] : provider.capabilities;
+            aggregated.push({ model: modelId, provider: provider.contextId, capabilities: modelCaps });
+            flatModels.push(modelId);
           }
         } catch {
           // 单个提供者获取模型失败不影响整体
@@ -578,7 +721,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   /** 每个 session 最多一个待确认请求 */
   const pendingSessionConfirms = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
 
-  ctx.authority?.setConfirmHandler('webui', async (request) => {
+  ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', async (request) => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
     const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
@@ -807,27 +950,56 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 启动服务器
   ctx.on('ready', () => {
-    // 优先尝试 webui-client 服务（兼容旧式客户端插件如 napcat）
-    const activeClient = ctx.getService<{ getClientDir(): string }>('webui-client');
-    if (activeClient?.getClientDir) {
-      const dir = activeClient.getClientDir();
-      clientDist = dir;
-      mountStaticDir(dir);
-      ctx.logger.info(`活跃前端(服务): ${dir}`);
-    } else {
-      // 自动发现同级 webui-client 包的 dist 目录
-      const __dirname = dirname(fileURLToPath(import.meta.url));
-      const candidates = [
-        resolve(__dirname, '../../plugin-webui-client/dist'),
-        resolve(__dirname, '../../plugin-webui-client-napcat/dist'),
-      ];
-      for (const dir of candidates) {
-        if (existsSync(dir) && existsSync(resolve(dir, 'index.html'))) {
-          clientDist = dir;
-          mountStaticDir(dir);
-          ctx.logger.info(`活跃前端(自动发现): ${dir}`);
-          break;
+    // 自动发现同级 webui-client 包并注册为 webui-client 服务提供者
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const clientCandidates: Array<{ id: string; label: string; dir: string }> = [
+      { id: '@aalis/plugin-webui-client', label: 'Aalis 默认前端', dir: resolve(__dirname, '../../plugin-webui-client/dist') },
+      { id: '@aalis/plugin-webui-client-napcat', label: 'NapCat 前端', dir: resolve(__dirname, '../../plugin-webui-client-napcat/dist') },
+    ];
+
+    // 如果已有外部插件注册了 webui-client 服务，则跳过自动发现
+    const hasExternalClient = ctx.hasService('webui-client');
+    if (!hasExternalClient) {
+      let isFirst = true;
+      for (const candidate of clientCandidates) {
+        if (existsSync(candidate.dir) && existsSync(resolve(candidate.dir, 'index.html'))) {
+          const childCtx = ctx.fork(candidate.id);
+          childCtx.provide('webui-client', {
+            getClientDir: () => candidate.dir,
+          }, { label: candidate.label });
+          ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
+
+          if (isFirst) {
+            clientDist = candidate.dir;
+            mountStaticDir(candidate.dir);
+            ctx.logger.info(`活跃前端: ${candidate.label}`);
+            isFirst = false;
+          }
         }
+      }
+    }
+
+    // 若已有外部 webui-client 服务，使用其提供的目录
+    if (hasExternalClient) {
+      const activeClient = ctx.getService<{ getClientDir(): string }>('webui-client');
+      if (activeClient?.getClientDir) {
+        const dir = activeClient.getClientDir();
+        clientDist = dir;
+        mountStaticDir(dir);
+        ctx.logger.info(`活跃前端(服务): ${dir}`);
+      }
+    }
+
+    // 应用配置中的 webui-client 偏好
+    const clientPref = ctx.config.getServicePreferences()['webui-client'];
+    if (clientPref) {
+      ctx.preferService('webui-client', clientPref);
+      const preferred = ctx.getService<{ getClientDir(): string }>('webui-client');
+      if (preferred?.getClientDir) {
+        const dir = preferred.getClientDir();
+        clientDist = dir;
+        mountStaticDir(dir);
+        ctx.logger.info(`活跃前端(偏好): ${dir}`);
       }
     }
 

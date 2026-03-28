@@ -1,12 +1,12 @@
 // ===== 指令服务接口 =====
 
-import type { CommandDefinition, RegisteredCommand, CommandContext } from './core.js';
+import type { CommandDefinition, RegisteredCommand, CommandContext, ExecutionGuard } from './core.js';
 
 /**
  * 指令服务接口
  *
  * 管理用户可调用的斜杠指令的注册、解析、执行。
- * 具体实现由 plugin-commands 提供。
+ * 由 plugin-commands 创建 CommandRegistry 并注册为服务。
  */
 export interface CommandService {
   /** 指令前缀 */
@@ -29,8 +29,6 @@ export interface CommandService {
   removeOverride(name: string): void;
   getOverrides(): Record<string, { authority?: number; safety?: string }>;
 
-  setAuthority(authority: AuthorityService): void;
+  /** 设置执行守卫（由权限插件注入） */
+  setExecutionGuard(guard: ExecutionGuard): void;
 }
-
-// 引入 AuthorityService 以便 setAuthority 声明
-import type { AuthorityService } from './authority.js';

@@ -1,13 +1,15 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { Context, PersonaService, ConfigSchema, PlatformAdapter, PlatformConnection, CLIService } from '@aalis/core';
+import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection, CLIService, PersonaService } from '@aalis/core';
+import type { AuthorityService } from '@aalis/plugin-authority';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-cli';
+export const displayName = 'CLI 终端';
 export const inject = {
-  optional: ['llm', 'commands', 'authority'],
+  optional: ['llm', 'authority', 'commands'],
 };
 export const provides = ['cli', 'platform'];
 
@@ -87,7 +89,7 @@ async function startREPL(ctx: Context, config: CLIConfig, sessionId: string): Pr
   console.log(`\n${chalk.bold(`欢迎使用 ${assistantName}!`)} 输入 /help 查看命令列表。\n`);
 
   // 注册高危操作确认处理器（CLI 平台）
-  ctx.authority?.setConfirmHandler('cli', async (request) => {
+  ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async (request) => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
     const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;

@@ -1,11 +1,12 @@
-import type { Context, ConfigSchema, IncomingMessage, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema, IncomingMessage, ToolCallContext, AgentService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-file-reader';
+export const displayName = '文件读取';
 export const provides = ['file-reader'];
 export const inject = {
-  required: ['tools'],
+  optional: ['agent'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -319,10 +320,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
-  // ===== message:before 中间件：处理消息中的文件附件 =====
+  // ===== 文件附件预处理函数 =====
 
-  ctx.middleware('message:before', async (data, next) => {
-    const msg = data.message as IncomingMessage;
+  async function preprocessFiles(msg: IncomingMessage, next: () => Promise<void>): Promise<void> {
     if (!msg.files || msg.files.length === 0) {
       await next();
       return;
@@ -354,7 +354,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const stored = storeFile(fileAttachment.name, buffer, mimeType, msg.sessionId);
 
         ctx.logger.debug(`文件已存储: ${stored.name} (ID: ${stored.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
-        fileInfos.push(`[文件: ${stored.name} (ID: ${stored.id})]`);
+
+        // 小文件自动读取内容并注入消息，大文件仅提供 ID 让模型按需调用工具
+        const AUTO_INLINE_LIMIT = 30_000; // 字符
+        try {
+          const text = await extractText(stored);
+          if (text.length <= AUTO_INLINE_LIMIT && !text.startsWith('[不支持')) {
+            fileInfos.push(`[文件: ${stored.name}]\n--- 文件内容 ---\n${text}\n--- 文件内容结束 ---`);
+          } else {
+            fileInfos.push(`[文件: ${stored.name} (ID: ${stored.id}，大文件，使用 read_uploaded_file 工具读取内容)]`);
+          }
+        } catch {
+          fileInfos.push(`[文件: ${stored.name} (ID: ${stored.id})]`);
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         ctx.logger.warn(`文件处理失败 (${fileAttachment.name}):`, errMsg);
@@ -374,7 +386,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     msg.files = undefined;
 
     await next();
-  }, 950); // 高优先级，在图像识别之前
+  }
+
+  // 优先使用 agent.registerPreprocessor，回退到 ctx.middleware
+  const agent = ctx.getService<AgentService>('agent');
+  if (agent?.registerPreprocessor) {
+    agent.registerPreprocessor('file-reader', preprocessFiles, 950);
+  } else {
+    ctx.middleware('message:before', async (data, next) => {
+      await preprocessFiles(data.message, next);
+    }, 950);
+  }
 
   // 注册 file-reader 服务，供其他插件（如 WebUI）查询文件上传能力是否可用
   ctx.provide('file-reader', {

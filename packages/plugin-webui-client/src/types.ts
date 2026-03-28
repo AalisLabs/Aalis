@@ -52,9 +52,12 @@ export interface ExtendDeclaration {
 
 export interface PluginInfo {
   name: string;
+  instanceId: string;
+  displayName?: string;
   state: string;
   provides: string[];
   core: boolean;
+  reusable: boolean;
   extends?: ExtendDeclaration;
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
@@ -64,7 +67,7 @@ export interface PluginInfo {
 
 // ----- ConfigSchema 类型 (镜像 core) -----
 
-export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea';
 
 export interface SchemaField {
   type: SchemaFieldType;
@@ -75,6 +78,8 @@ export interface SchemaField {
   secret?: boolean;
   options?: Array<{ label: string; value: string | number }>;
   dynamicOptions?: string;
+  /** select 类型的动态提供者列表：填服务名，获取该服务的所有提供者 */
+  dynamicProviders?: string;
   allowCustom?: boolean;
 }
 
@@ -114,6 +119,8 @@ export interface PlatformInfo {
 export interface ServiceProviderInfo {
   contextId: string;
   capabilities: string[];
+  displayName?: string;
+  label?: string;
 }
 
 export interface ServiceInfo {

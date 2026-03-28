@@ -6,15 +6,14 @@ import type {
   ToolCallContext,
   ToolSummary,
   ToolGroupInfo,
-  SafetyLevel,
+  ExecutionGuard,
 } from './core.js';
-import type { AuthorityService } from './authority.js';
 
 /**
  * 工具服务接口
  *
  * 管理 AI 可调用的工具的注册、查询、执行。
- * 具体实现由 plugin-agent-tools 提供。
+ * 由 plugin-agent-tools 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
   register(
@@ -51,7 +50,8 @@ export interface ToolService {
 
   unregisterByPlugin(pluginName: string): void;
 
-  setAuthority(authority: AuthorityService): void;
+  /** 设置执行守卫（由权限插件注入） */
+  setExecutionGuard(guard: ExecutionGuard): void;
 
   loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void;
   setOverride(name: string, override: { authority?: number; safety?: string }): void;

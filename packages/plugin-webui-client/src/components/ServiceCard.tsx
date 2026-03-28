@@ -23,15 +23,16 @@ export function ServiceCard({ name, info, busy, onPrefer }: {
             disabled={busy === name}
             onChange={e => onPrefer(name, e.target.value)}
           >
-            {info.providers.map(p => (
-              <option key={p.contextId} value={p.contextId}>{p.contextId}</option>
-            ))}
+            {info.providers.map(p => {
+              const text = p.label ?? (p.displayName ? `[${p.displayName}] ${p.contextId}` : p.contextId);
+              return <option key={p.contextId} value={p.contextId}>{text}</option>;
+            })}
           </select>
         </div>
       ) : info.providers.length === 1 ? (
         <div className="service-slot-single">
           <span className="service-slot-label">提供者</span>
-          <span className="service-slot-provider-name">{info.providers[0].contextId}</span>
+          <span className="service-slot-provider-name">{info.providers[0].label ?? (info.providers[0].displayName ? `[${info.providers[0].displayName}] ${info.providers[0].contextId}` : info.providers[0].contextId)}</span>
         </div>
       ) : (
         <div className="service-slot-single">

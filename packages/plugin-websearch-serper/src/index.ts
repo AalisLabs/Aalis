@@ -1,10 +1,12 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema, Message } from '@aalis/core';
+import type { LLMService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-websearch-serper';
+export const displayName = 'Serper 网络搜索';
 export const inject = {
-  required: ['tools'],
+  optional: ['llm'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -13,6 +15,26 @@ export const configSchema: ConfigSchema = {
   maxPerDay: { type: 'number', label: '每天最大次数', default: 100, description: '频率限制：每天最多搜索次数' },
   maxConcurrent: { type: 'number', label: '最大并发', default: 3, description: '同时进行的搜索请求数上限' },
   defaultNumResults: { type: 'number', label: '默认结果数', default: 5, description: '每次搜索返回的结果条数' },
+  enableCompression: {
+    type: 'boolean',
+    label: '启用搜索结果压缩',
+    default: false,
+    description: '启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。',
+  },
+  compressionModel: {
+    type: 'select',
+    label: '压缩模型',
+    description: '选择用于压缩搜索结果的模型。留空则使用默认 LLM 提供者。',
+    default: '',
+    options: [{ label: '默认', value: '' }],
+    dynamicOptions: 'llm',
+  },
+  compressionPrompt: {
+    type: 'textarea',
+    label: '压缩提示词',
+    default: '',
+    description: '自定义压缩搜索结果的提示词。留空使用默认提示。提示词中可使用 {query} 代表搜索关键词。',
+  },
 };
 
 export const defaultConfig = {
@@ -20,6 +42,9 @@ export const defaultConfig = {
   maxPerDay: 100,
   maxConcurrent: 3,
   defaultNumResults: 5,
+  enableCompression: false,
+  compressionModel: '',
+  compressionPrompt: '',
 };
 
 // ===== 配置 =====
@@ -30,6 +55,9 @@ interface WebSearchConfig {
   maxPerDay: number;
   maxConcurrent: number;
   defaultNumResults: number;
+  enableCompression: boolean;
+  compressionModel: string;
+  compressionPrompt: string;
 }
 
 // ===== 速率限制器 =====
@@ -183,6 +211,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxPerDay: (config.maxPerDay as number) ?? 100,
     maxConcurrent: (config.maxConcurrent as number) ?? 3,
     defaultNumResults: (config.defaultNumResults as number) ?? 5,
+    enableCompression: (config.enableCompression as boolean) ?? false,
+    compressionModel: (config.compressionModel as string) ?? '',
+    compressionPrompt: (config.compressionPrompt as string) ?? '',
   };
 
   if (!cfg.apiKey) {
@@ -191,10 +222,71 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const limiter = new RateLimiter(cfg);
 
+  // 压缩功能：模型→提供者映射缓存
+  let modelProviderMap: Map<string, string> | null = null;
+  if (cfg.enableCompression) {
+    (async () => {
+      const map = new Map<string, string>();
+      const allProviders = ctx.getAllServices<LLMService>('llm');
+      for (const p of allProviders) {
+        if (typeof p.instance.listModels === 'function') {
+          try {
+            const models = await p.instance.listModels();
+            for (const m of models) map.set(m.id, p.contextId);
+          } catch { /* ignore */ }
+        }
+      }
+      modelProviderMap = map;
+      ctx.logger.debug(`搜索压缩模型映射已构建: ${map.size} 个模型`);
+    })();
+  }
+
+  const DEFAULT_COMPRESSION_PROMPT =
+    '请根据用户的搜索意图，将以下搜索结果压缩整合为一段简洁、准确、有条理的摘要。' +
+    '保留关键事实、数据和来源，去除重复和无关信息。用中文回答。\n\n' +
+    '搜索关键词: {query}\n\n搜索结果:\n{results}';
+
+  /** 使用 LLM 压缩搜索结果 */
+  async function compressResults(query: string, rawResults: string): Promise<string> {
+    const allProviders = ctx.getAllServices<LLMService>('llm');
+    if (allProviders.length === 0) return rawResults;
+
+    // 查找目标 LLM 提供者
+    let targetLLM: LLMService = allProviders[0].instance;
+    if (cfg.compressionModel && modelProviderMap) {
+      const targetContextId = modelProviderMap.get(cfg.compressionModel);
+      if (targetContextId) {
+        const found = allProviders.find(p => p.contextId === targetContextId);
+        if (found) targetLLM = found.instance;
+      }
+    }
+
+    const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
+    const prompt = promptTemplate
+      .replace('{query}', query)
+      .replace('{results}', rawResults);
+
+    const messages: Message[] = [{ role: 'user', content: prompt }];
+
+    try {
+      const response = await targetLLM.chat({
+        messages,
+        maxTokens: 1024,
+        model: cfg.compressionModel || undefined,
+      });
+      return response.content?.trim() || rawResults;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.logger.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);
+      return rawResults;
+    }
+  }
+
   ctx.logger.info(
     `网络搜索已启用 (provider: serper, ` +
     `限制: ${cfg.maxPerMinute}/min, ${cfg.maxPerDay}/day, ` +
-    `并发: ${cfg.maxConcurrent})`,
+    `并发: ${cfg.maxConcurrent}` +
+    `${cfg.enableCompression ? ', 压缩: 已启用' : ''})`,
   );
 
   // 注册工具分组
@@ -253,7 +345,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       try {
         ctx.logger.debug(`执行搜索: "${query}" (${numResults} 条结果)`);
         const data = await serperSearch(query, cfg.apiKey, numResults);
-        return formatSearchResults(data);
+        let result = formatSearchResults(data);
+
+        // 压缩整合
+        if (cfg.enableCompression) {
+          ctx.logger.debug(`压缩搜索结果 (原始长度: ${result.length})`);
+          result = await compressResults(query, result);
+          ctx.logger.debug(`压缩完成 (压缩后长度: ${result.length})`);
+        }
+
+        return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         ctx.logger.error(`搜索失败: ${message}`);
