@@ -956,6 +956,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const __dirname = dirname(fileURLToPath(import.meta.url));
     const clientCandidates: Array<{ id: string; label: string; dir: string }> = [
       { id: '@aalis/plugin-webui-client', label: 'Aalis 默认前端', dir: resolve(__dirname, '../../plugin-webui-client/dist') },
+      { id: '@aalis/plugin-webui-client-kawaii', label: 'Kawaii 二次元前端', dir: resolve(__dirname, '../../plugin-webui-client-kawaii/dist') },
       { id: '@aalis/plugin-webui-client-napcat', label: 'NapCat 前端', dir: resolve(__dirname, '../../plugin-webui-client-napcat/dist') },
     ];
 

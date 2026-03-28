@@ -38,10 +38,24 @@ export const configSchema: ConfigSchema = {
     },
     default: [],
   },
+  splitMessage: {
+    label: '消息分条发送',
+    description: '启用后，文本将按标点符号自动拆分为多条消息发送，模拟真人发送习惯',
+    fields: {
+      enabled: { type: 'boolean', label: '启用', description: '是否启用消息分条发送', default: false },
+      minDelay: { type: 'number', label: '最小延迟 (ms)', description: '分条消息之间的最小延迟（毫秒）', default: 500 },
+      maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟（毫秒）', default: 1500 },
+    },
+  },
 };
 
 export const defaultConfig = {
   connections: [] as OneBotConnectionConfig[],
+  splitMessage: {
+    enabled: false,
+    minDelay: 500,
+    maxDelay: 1500,
+  },
 };
 
 // ===== 内部类型 =====
@@ -111,12 +125,90 @@ const ACTION_TIMEOUT = 30000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 
+// ===== 消息分条逻辑 =====
+
+/**
+ * 按标点符号（中英文逗号、句号、问号、叹号、分号、顿号、换行等）
+ * 将文本拆分为多条消息。XML 标记（<at>、<image> 等）保持与相邻文本在一起。
+ * 只拆分纯文本部分，不在 XML 标记中间切割。
+ */
+function splitMessageByPunctuation(content: string): string[] {
+  // 如果内容很短或只有 XML 标记，不拆分
+  if (content.length <= 10) return [content];
+
+  // 识别所有 XML 标记的位置，拆分时不切割它们
+  const xmlTagRegex = /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
+
+  // 将内容拆分为「标记区」和「纯文本区」交替的 token
+  interface Token { type: 'text' | 'tag'; value: string }
+  const tokens: Token[] = [];
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = xmlTagRegex.exec(content)) !== null) {
+    if (m.index > lastIdx) {
+      tokens.push({ type: 'text', value: content.slice(lastIdx, m.index) });
+    }
+    tokens.push({ type: 'tag', value: m[0] });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < content.length) {
+    tokens.push({ type: 'text', value: content.slice(lastIdx) });
+  }
+
+  // 在文本 token 内部按标点拆分
+  // 标点保留在前一段末尾（如 "你好。" 拆成 ["你好。"]）
+  const splitRegex = /(?<=[。！？；\n，、,.!?;])/;
+  const pieces: string[] = [];
+  let current = '';
+
+  for (const token of tokens) {
+    if (token.type === 'tag') {
+      current += token.value;
+    } else {
+      const parts = token.value.split(splitRegex);
+      for (let i = 0; i < parts.length; i++) {
+        current += parts[i];
+        // 在标点后断开，但最后一段不断开（等后续 token 追加）
+        if (i < parts.length - 1 && current.trim()) {
+          pieces.push(current);
+          current = '';
+        }
+      }
+    }
+  }
+  if (current.trim()) {
+    pieces.push(current);
+  }
+
+  // 过滤空段，合并过短的段落（< 4 字符的纯文本段）到上一条
+  const result: string[] = [];
+  for (const piece of pieces) {
+    const trimmed = piece.trim();
+    if (!trimmed) continue;
+    // 纯文本过短则合并到上一条
+    const textOnly = trimmed.replace(/<[^>]+>/g, '').trim();
+    if (textOnly.length < 4 && result.length > 0) {
+      result[result.length - 1] += piece;
+    } else {
+      result.push(piece);
+    }
+  }
+
+  return result.length > 0 ? result : [content];
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
     ? config.connections as OneBotConnectionConfig[]
     : [];
+
+  // 消息分条配置
+  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; minDelay?: number; maxDelay?: number };
+  const splitEnabled = splitCfg.enabled === true;
+  const splitMinDelay = Math.max(0, splitCfg.minDelay ?? 500);
+  const splitMaxDelay = Math.max(splitMinDelay, splitCfg.maxDelay ?? 1500);
 
   if (connections.length === 0) {
     ctx.logger.info('OneBot 适配器未配置任何连接');
@@ -273,13 +365,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
 
-      const { action, params } = state.protocol.buildSendMessage({
-        detailType: parsed.detailType,
-        targetId: parsed.targetId,
-        content,
-      });
+      // 消息分条发送
+      const pieces = splitEnabled ? splitMessageByPunctuation(content) : [content];
 
-      await sendAction(state, action, params);
+      for (let i = 0; i < pieces.length; i++) {
+        const piece = pieces[i].trim();
+        if (!piece) continue;
+
+        const { action, params } = state.protocol.buildSendMessage({
+          detailType: parsed.detailType,
+          targetId: parsed.targetId,
+          content: piece,
+        });
+
+        await sendAction(state, action, params);
+
+        // 多条消息之间加随机延迟
+        if (i < pieces.length - 1) {
+          const delay = splitMinDelay + Math.random() * (splitMaxDelay - splitMinDelay);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
     },
 
     async callAction(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown> {
