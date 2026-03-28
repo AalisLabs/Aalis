@@ -84,3 +84,6 @@ export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
 
 // 人格服务
 export type { OutputFormatField, OutputFormat, PersonaService } from './persona.js';
+
+// 权限服务
+export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
