@@ -752,7 +752,7 @@ body {
   resize: none;
   font-family: inherit;
   outline: none;
-  min-height: 42px;
+  min-height: 52px;
   max-height: 140px;
   transition: border-color var(--transition);
 }
@@ -1245,6 +1245,15 @@ body {
 .config-edit-input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+textarea.config-textarea {
+  min-height: 80px;
+  max-height: 300px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  overflow-y: auto;
 }
 
 .config-edit-actions {

@@ -160,6 +160,40 @@ export interface ToolGroupInfo {
   pluginName: string;
 }
 
+// ----- 执行守卫 -----
+
+/**
+ * 执行守卫上下文 —— 在工具/指令执行前进行权限检查的最小信息
+ */
+export interface ExecutionGuardContext {
+  /** 操作名称（工具名或指令名） */
+  name: string;
+  /** 操作类型 */
+  type: 'tool' | 'command';
+  /** 声明的最低权限等级 */
+  authority: number;
+  /** 声明的安全等级 */
+  safety: SafetyLevel;
+  /** 会话 ID */
+  sessionId: string;
+  /** 来源平台 */
+  platform: string;
+  /** 用户 ID */
+  userId?: string;
+  /** 操作参数（工具调用时） */
+  args?: Record<string, unknown>;
+  /** 是否跳过安全等级检查（指令的工具桥接等场景） */
+  skipSafetyCheck?: boolean;
+}
+
+/**
+ * 执行守卫函数
+ *
+ * 返回 null 表示放行，返回 string 表示拦截（值为拦截原因/提示消息）。
+ * 由外部插件（如 plugin-authority）通过 setExecutionGuard() 注入。
+ */
+export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
+
 // ----- 服务依赖声明 -----
 
 export interface ServiceDependency {
@@ -172,14 +206,6 @@ export type DependencyDeclaration = string | ServiceDependency;
 export interface InjectDeclaration {
   required?: DependencyDeclaration[];
   optional?: DependencyDeclaration[];
-}
-
-// ----- 插件接口 -----
-
-export interface PluginMeta {
-  name: string;
-  inject?: InjectDeclaration;
-  provides?: string[];
 }
 
 // ----- 插件扩展声明 -----
@@ -205,7 +231,7 @@ export interface ExtendDeclaration {
 
 // ----- 配置 Schema (internal-framework-style) -----
 
-export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea';
 
 export interface SchemaField {
   type: SchemaFieldType;
@@ -220,6 +246,9 @@ export interface SchemaField {
   /** select / multiselect 类型的动态选项来源：填服务名 (如 'llm', 'embedding', 'platform')，
    *  运行时调用 service.listModels() 获取（platform 特殊处理：收集所有 adapter.platform） */
   dynamicOptions?: string;
+  /** select 类型的动态选项来源：填服务名 (如 'llm')，
+   *  运行时获取该服务的所有提供者列表（contextId + displayName） */
+  dynamicProviders?: string;
   /** multiselect 是否允许用户手动输入自定义值（不限于选项列表） */
   allowCustom?: boolean;
 }
@@ -331,4 +360,17 @@ export interface CommandDefinition {
 export interface RegisteredCommand extends CommandDefinition {
   /** 注册此指令的插件名 */
   pluginName: string;
+}
+
+/**
+ * 插件分组信息 —— 用于 Dashboard 自动分层
+ *
+ * 由 Agent / Platform 等子系统协调器的 `getPluginGroups()` 返回，
+ * WebUI Dashboard 据此将插件归入对应的子系统面板。
+ */
+export interface PluginGroupInfo {
+  /** 分组显示名称 */
+  label: string;
+  /** 该分组包含的插件 instanceId 列表 */
+  plugins: string[];
 }

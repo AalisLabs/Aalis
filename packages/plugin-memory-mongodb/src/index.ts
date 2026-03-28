@@ -1,11 +1,14 @@
 import { MongoClient, type Collection, type Db } from 'mongodb';
 import { randomUUID } from 'node:crypto';
-import type { Context, MemoryService, ConversationTurn, Message, ConfigSchema } from '@aalis/core';
+import type { Context, Message, ConfigSchema } from '@aalis/core';
+import type { MemoryService, ConversationTurn } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-mongodb';
+export const displayName = 'MongoDB 记忆';
 export const provides = ['memory'];
+export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   uri: { type: 'string', label: 'MongoDB URI', required: true, default: 'mongodb://localhost:27017', description: 'MongoDB 连接字符串' },

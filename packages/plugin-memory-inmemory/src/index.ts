@@ -1,4 +1,5 @@
-import type { Context, MemoryService, Message } from '@aalis/core';
+import type { Context, Message } from '@aalis/core';
+import type { MemoryService } from '@aalis/core';
 
 // ===== InMemoryFallbackService 实现 =====
 
@@ -44,6 +45,7 @@ class InMemoryFallbackService implements MemoryService {
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-inmemory';
+export const displayName = '内存记忆';
 export const provides = ['memory'];
 
 // ===== 插件入口 =====

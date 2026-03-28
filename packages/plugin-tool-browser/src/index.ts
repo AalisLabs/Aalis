@@ -29,10 +29,9 @@ interface PageSlot {
 // ──────────── 插件元数据 ────────────
 
 export const name = '@aalis/plugin-tool-browser';
+export const displayName = '浏览器工具';
 
-export const inject = {
-  required: ['tools'],
-};
+// tools 服务由核心提供，无需声明依赖
 
 export const configSchema: ConfigSchema = {
   headless: {

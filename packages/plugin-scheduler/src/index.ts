@@ -115,6 +115,7 @@ export interface SchedulerService {
 // ──────────── 插件元数据 ────────────
 
 export const name = '@aalis/plugin-scheduler';
+export const displayName = '定时任务';
 
 export const provides = ['scheduler'];
 

@@ -1,8 +1,10 @@
-import type { Context, IncomingMessage, OutgoingMessage, Message, MiddlewareNext, MemoryService, ConversationTurn, VectorStoreService, EmbeddingService, ConfigSchema } from '@aalis/core';
+import type { Context, IncomingMessage, OutgoingMessage, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
+import type { MemoryService, ConversationTurn, VectorStoreService, EmbeddingService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-vector';
+export const displayName = '向量记忆';
 export const provides = ['semantic-memory'];
 export const inject = {
   required: ['vectorstore', 'embedding'],

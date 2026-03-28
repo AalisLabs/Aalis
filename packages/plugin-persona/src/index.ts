@@ -1,11 +1,13 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { Context, PersonaService, ConfigSchema, OutputFormat, OutputFormatField } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { PersonaService, OutputFormat, OutputFormatField } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-persona';
+export const displayName = '人设系统';
 export const provides = ['persona'];
 
 export const configSchema: ConfigSchema = {

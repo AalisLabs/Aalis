@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray } from '../types';
+import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray, ServiceProviderInfo } from '../types';
 import { api } from '../api';
 
 // ===== 扁平化 / 还原嵌套对象（编辑用） =====
@@ -76,6 +76,8 @@ function SchemaFormField({
   onChange,
   modelCache,
   onFetchModels,
+  providerCache,
+  onFetchProviders,
 }: {
   field: SchemaField;
   fieldKey: string;
@@ -83,6 +85,8 @@ function SchemaFormField({
   onChange: (v: unknown) => void;
   modelCache: Record<string, string[]>;
   onFetchModels: (service: string) => void;
+  providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
+  onFetchProviders: (service: string) => void;
 }) {
   if (field.type === 'boolean') {
     return (
@@ -163,17 +167,27 @@ function SchemaFormField({
   if (field.type === 'select') {
     const dynamicKey = field.dynamicOptions;
     const dynamicModels = dynamicKey ? modelCache[dynamicKey] : undefined;
+    const providerKey = field.dynamicProviders;
+    const dynamicProviders = providerKey ? providerCache[providerKey] : undefined;
 
     useEffect(() => {
       if (dynamicKey && !modelCache[dynamicKey]) {
         onFetchModels(dynamicKey);
       }
-    }, [dynamicKey]);
+      if (providerKey && !providerCache[providerKey]) {
+        onFetchProviders(providerKey);
+      }
+    }, [dynamicKey, providerKey]);
 
     const staticOpts = field.options ?? [];
+    // Provider-based options (contextId as value, displayName or contextId as label)
+    const provOpts = (dynamicProviders ?? []).map(p => ({
+      label: p.displayName ? `[${p.displayName}] ${p.contextId}` : p.contextId,
+      value: p.contextId,
+    }));
     const dynOpts = (dynamicModels ?? []).map(m => ({ label: m, value: m }));
     const allOptions = [...staticOpts];
-    for (const d of dynOpts) {
+    for (const d of [...provOpts, ...dynOpts]) {
       if (!allOptions.some(o => String(o.value) === String(d.value))) allOptions.push(d);
     }
     const cur = String(value ?? '');
@@ -209,6 +223,17 @@ function SchemaFormField({
     );
   }
 
+  if (field.type === 'textarea') {
+    return (
+      <textarea
+        className="config-edit-input config-textarea"
+        value={String(value ?? '')}
+        onChange={e => onChange(e.target.value)}
+        rows={3}
+      />
+    );
+  }
+
   // string (default)
   const isSensitive = field.secret || /apiKey|password|secret|token/i.test(fieldKey);
   return (
@@ -227,12 +252,16 @@ export function SchemaForm({
   onChange,
   modelCache,
   onFetchModels,
+  providerCache,
+  onFetchProviders,
 }: {
   schema: ConfigSchema;
   draft: Record<string, unknown>;
   onChange: (newDraft: Record<string, unknown>) => void;
   modelCache: Record<string, string[]>;
   onFetchModels: (service: string) => void;
+  providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
+  onFetchProviders: (service: string) => void;
 }) {
   return (
     <div className="config-edit-form">
@@ -253,6 +282,8 @@ export function SchemaForm({
                 onChange={v => onChange({ ...draft, [key]: v })}
                 modelCache={modelCache}
                 onFetchModels={onFetchModels}
+                providerCache={providerCache}
+                onFetchProviders={onFetchProviders}
               />
             </div>
           );
@@ -324,6 +355,8 @@ export function SchemaForm({
                         onChange={v => updateItem(idx, fk, v)}
                         modelCache={modelCache}
                         onFetchModels={onFetchModels}
+                        providerCache={providerCache}
+                        onFetchProviders={onFetchProviders}
                       />
                     </div>
                     );
@@ -357,6 +390,8 @@ export function SchemaForm({
                   onChange={v => onChange({ ...draft, [key]: { ...groupData, [fk]: v } })}
                   modelCache={modelCache}
                   onFetchModels={onFetchModels}
+                  providerCache={providerCache}
+                  onFetchProviders={onFetchProviders}
                 />
               </div>
               );

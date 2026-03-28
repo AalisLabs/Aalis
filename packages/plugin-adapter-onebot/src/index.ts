@@ -13,10 +13,12 @@ import { OneBotV12 } from './v12.js';
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-adapter-onebot';
+export const displayName = 'OneBot 适配器';
 export const inject = {
   optional: ['llm', 'commands'],
 };
 export const provides = ['platform'];
+export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   connections: {

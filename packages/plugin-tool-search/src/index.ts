@@ -9,9 +9,8 @@ import type {
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-tool-search';
-export const inject = {
-  required: ['tools'],
-};
+export const displayName = '搜索工具';
+// tools 服务由核心提供，无需声明依赖
 
 export const configSchema: ConfigSchema = {
   enabled: {
