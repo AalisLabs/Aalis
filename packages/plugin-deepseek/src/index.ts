@@ -190,11 +190,15 @@ class DeepSeekLLMService implements LLMService {
   /**
    * 判断是否应启用 JSON Mode
    * 条件：调用方请求 json_object + 配置启用 + 非思考模式 + 消息含 json 关键词（DeepSeek API 要求）
+   * 注意：当请求包含 tools 时不启用 JSON Mode——DeepSeek 模型在同时收到
+   * response_format 和 tools 时会将工具调用意图写入 JSON content，
+   * 而不产生实际的 tool_calls，导致工具永远不被执行。
    */
   private shouldUseJsonMode(request: ChatRequest, messages: APIMessage[]): boolean {
     if (request.responseFormat !== 'json_object') return false;
     if (!this.jsonMode) return false;
     if (this.enableThinking) return false;
+    if (request.tools && request.tools.length > 0) return false;
     return messages.some(m => typeof m.content === 'string' && /json/i.test(m.content));
   }
 
