@@ -380,10 +380,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const clientRendered = !!currentOverride?.clientSideJsonRendering;
 
       const raw = data.content.trim();
-      // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记）
-      const jsonStr = raw.startsWith('{')
+      // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记或在 JSON 前输出文本）
+      let jsonStr = raw.startsWith('{')
         ? raw
         : raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
+      // 若提取结果不以 { 开头，尝试从内容中定位第一个 { 到最后一个 } 的 JSON 块
+      if (!jsonStr.startsWith('{')) {
+        const firstBrace = raw.indexOf('{');
+        const lastBrace = raw.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          jsonStr = raw.slice(firstBrace, lastBrace + 1);
+        }
+      }
       try {
         const parsed = JSON.parse(jsonStr);
         let reply = parsed[outputFormat.replyField];
