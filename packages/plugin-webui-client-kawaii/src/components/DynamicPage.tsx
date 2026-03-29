@@ -42,6 +42,43 @@ function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: s
   );
 }
 
+/** 倒计时单元格：每秒更新，归零时显示提示并触发刷新 */
+function CountdownCell({ target, onZero }: { target: number; onZero?: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    firedRef.current = false;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [target]);
+
+  if (!target || target <= 0) return <span>-</span>;
+
+  const diff = Math.max(0, Math.round((target - now) / 1000));
+
+  if (diff === 0 && !firedRef.current) {
+    firedRef.current = true;
+    if (onZero) setTimeout(onZero, 3000);
+    return <span className="countdown-fired">⏳ 执行中</span>;
+  }
+  if (diff === 0) return <span className="countdown-fired">⏳ 执行中</span>;
+
+  let text: string;
+  if (diff < 60) {
+    text = `${diff}秒`;
+  } else if (diff < 3600) {
+    const m = Math.floor(diff / 60);
+    const s = diff % 60;
+    text = s > 0 ? `${m}分${s}秒` : `${m}分`;
+  } else {
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    text = m > 0 ? `${h}时${m}分` : `${h}时`;
+  }
+  return <span className={diff <= 5 ? 'countdown-imminent' : ''}>{text}</span>;
+}
+
 function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,11 +125,13 @@ function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName:
               <tr key={i}>
                 {comp.columns.map(col => (
                   <td key={col.key}>
-                    {col.render === 'status-badge'
-                      ? <span className={`dyn-badge dyn-badge-${String(row[col.key])}`}>{String(row[col.key] ?? '')}</span>
-                      : col.render === 'code'
-                        ? <code>{String(row[col.key] ?? '')}</code>
-                        : String(row[col.key] ?? '')}
+                    {col.render === 'countdown'
+                      ? <CountdownCell target={Number(row[col.key]) || 0} onZero={fetchData} />
+                      : col.render === 'status-badge'
+                        ? <span className={`dyn-badge dyn-badge-${String(row[col.key])}`}>{String(row[col.key] ?? '')}</span>
+                        : col.render === 'code'
+                          ? <code>{String(row[col.key] ?? '')}</code>
+                          : String(row[col.key] ?? '')}
                   </td>
                 ))}
                 {comp.actions && comp.actions.length > 0 && (
