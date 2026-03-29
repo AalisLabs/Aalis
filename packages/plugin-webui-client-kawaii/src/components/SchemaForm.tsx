@@ -83,7 +83,7 @@ function SchemaFormField({
   fieldKey: string;
   value: unknown;
   onChange: (v: unknown) => void;
-  modelCache: Record<string, string[]>;
+  modelCache: Record<string, Array<{ label: string; value: string }>>;
   onFetchModels: (service: string) => void;
   providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
   onFetchProviders: (service: string) => void;
@@ -109,7 +109,7 @@ function SchemaFormField({
     }, [dynamicKey]);
 
     const staticOpts = field.options ?? [];
-    const dynOpts = (dynamicModels ?? []).map(m => ({ label: m, value: m }));
+    const dynOpts = dynamicModels ?? [];
     const allOptions = [...staticOpts];
     for (const d of dynOpts) {
       if (!allOptions.some(o => String(o.value) === String(d.value))) allOptions.push(d);
@@ -185,7 +185,7 @@ function SchemaFormField({
       label: p.displayName ? `[${p.displayName}] ${p.contextId}` : p.contextId,
       value: p.contextId,
     }));
-    const dynOpts = (dynamicModels ?? []).map(m => ({ label: m, value: m }));
+    const dynOpts = dynamicModels ?? [];
     const allOptions = [...staticOpts];
     for (const d of [...provOpts, ...dynOpts]) {
       if (!allOptions.some(o => String(o.value) === String(d.value))) allOptions.push(d);
@@ -258,7 +258,7 @@ export function SchemaForm({
   schema: ConfigSchema;
   draft: Record<string, unknown>;
   onChange: (newDraft: Record<string, unknown>) => void;
-  modelCache: Record<string, string[]>;
+  modelCache: Record<string, Array<{ label: string; value: string }>>;
   onFetchModels: (service: string) => void;
   providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
   onFetchProviders: (service: string) => void;

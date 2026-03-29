@@ -150,7 +150,11 @@ class OllamaLLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 Ollama: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    if (request.responseFormat === 'json_object') {
+      body.format = 'json';
+    }
+
+    this.logger.debug(`请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
     if (request.signal) signals.push(request.signal);
@@ -217,7 +221,11 @@ class OllamaLLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`流式请求 Ollama: ${body.model}, ${messages.length} 条消息`);
+    if (request.responseFormat === 'json_object') {
+      body.format = 'json';
+    }
+
+    this.logger.debug(`流式请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
     if (request.signal) signals.push(request.signal);

@@ -9,7 +9,6 @@ import type {
   ChatStreamChunk,
   LLMService,
   ModelInfo,
-  PersonaService,
 } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -189,16 +188,53 @@ class DeepSeekLLMService implements LLMService {
   }
 
   /**
-   * 检测当前是否应启用 JSON Mode
-   * 需要同时满足：配置开启、非思考模式、无工具、persona 有 outputFormat、消息中包含 "json" 关键词
+   * 判断是否应启用 JSON Mode
+   * 条件：调用方请求 json_object + 配置启用 + 非思考模式 + 消息含 json 关键词（DeepSeek API 要求）
    */
-  private shouldUseJsonMode(hasTools: boolean, messages: APIMessage[]): boolean {
+  private shouldUseJsonMode(request: ChatRequest, messages: APIMessage[]): boolean {
+    if (request.responseFormat !== 'json_object') return false;
     if (!this.jsonMode) return false;
     if (this.enableThinking) return false;
-    if (hasTools) return false;
-    if (!this.ctx.getService<PersonaService>('persona')?.getOutputFormat?.()) return false;
-    // DeepSeek API 要求 prompt 中包含 "json" 关键词，同时也用作区分普通调用和结构化输出调用
     return messages.some(m => typeof m.content === 'string' && /json/i.test(m.content));
+  }
+
+  /**
+   * JSON 安全调用：内部处理 DeepSeek JSON Mode 的已知问题
+   * 1. 空内容重试（DeepSeek 文档注意事项 #4：JSON Output 有概率返回空 content）
+   * 2. 纯文本格式转换（模型未遵循 JSON 指令时，追加消息要求格式化）
+   */
+  private async chatWithJsonRetry(request: ChatRequest): Promise<ChatResponse> {
+    const response = await this.chat(request);
+
+    // 有工具调用时不需要 JSON 内容
+    if (response.toolCalls?.length) return response;
+
+    // 空内容重试
+    if (!response.content?.trim()) {
+      this.logger.debug('JSON Mode 返回空内容，重试原始请求');
+      const retry = await this.chat(request);
+      if (retry.content?.trim()) return retry;
+      return response;
+    }
+
+    // 非 JSON 内容：格式转换
+    if (!response.content.trim().startsWith('{')) {
+      this.logger.debug('JSON 格式转换：将纯文本回复转为结构化 JSON');
+      const retryRequest: ChatRequest = {
+        ...request,
+        messages: [
+          ...request.messages,
+          { role: 'assistant', content: response.content },
+          { role: 'user', content: '请将你上面的回复严格转换为系统提示中要求的 JSON 格式，保留回复的完整内容，填充所有字段。只输出 JSON，不要输出其他任何内容。' },
+        ],
+        tools: undefined,
+        temperature: 0.3,
+      };
+      const retry = await this.chat(retryRequest);
+      if (retry.content?.trim().startsWith('{')) return retry;
+    }
+
+    return response;
   }
 
   getTemperature(): number {
@@ -252,13 +288,11 @@ class DeepSeekLLMService implements LLMService {
       body.temperature = request.temperature ?? this.temperature;
     }
 
-    const hasTools = !!(tools && tools.length > 0);
-    if (hasTools) {
+    if (tools && tools.length > 0) {
       body.tools = tools;
     }
 
-    // JSON Mode: 配置开启、无工具、非思考、persona 有 outputFormat、消息含 json 关键词时自动启用
-    const jsonMode = this.shouldUseJsonMode(hasTools, messages);
+    const jsonMode = this.shouldUseJsonMode(request, messages);
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -319,6 +353,9 @@ class DeepSeekLLMService implements LLMService {
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
+    const jsonMode = this.shouldUseJsonMode(request, messages);
+
+    // ===== 统一流式路径（JSON Mode 和普通模式共用） =====
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -336,13 +373,10 @@ class DeepSeekLLMService implements LLMService {
       body.temperature = request.temperature ?? this.temperature;
     }
 
-    const hasTools = !!(tools && tools.length > 0);
-    if (hasTools) {
+    if (tools && tools.length > 0) {
       body.tools = tools;
     }
 
-    // JSON Mode: 配置开启、无工具、非思考、persona 有 outputFormat、消息含 json 关键词时自动启用
-    const jsonMode = this.shouldUseJsonMode(hasTools, messages);
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -464,6 +498,16 @@ class DeepSeekLLMService implements LLMService {
     for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
       toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
     }
+
+    // JSON Mode 空内容重试：DeepSeek 文档注意事项 #4（JSON Output 有概率返回空 content）
+    if (jsonMode && !accContent.trim() && toolCalls.length === 0) {
+      this.logger.debug('JSON Mode 流式返回空内容，重试原始请求');
+      const retry = await this.chat(request);
+      if (retry.content) yield { contentDelta: retry.content };
+      yield { done: true, toolCalls: retry.toolCalls, usage: retry.usage };
+      return;
+    }
+
     yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
   }
 

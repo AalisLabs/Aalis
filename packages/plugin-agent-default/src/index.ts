@@ -452,6 +452,7 @@ class DefaultAgent implements AgentService {
         // 检查是否期望 JSON 输出（persona 有 outputFormat）
         const persona = this.ctx.getService<PersonaService>('persona');
         const expectJson = !!persona?.getOutputFormat?.();
+        const responseFormat = expectJson ? 'json_object' as const : undefined;
 
         const t0 = Date.now();
         let response = await this.consumeStream(llm, {
@@ -461,6 +462,7 @@ class DefaultAgent implements AgentService {
           maxTokens,
           model: modelOverride,
           signal,
+          responseFormat,
         }, incoming.sessionId, incoming.platform, signal);
 
         this.debugLogResponse(response, Date.now() - t0);
@@ -566,6 +568,7 @@ class DefaultAgent implements AgentService {
             maxTokens,
             model: modelOverride,
             signal,
+            responseFormat,
           }, incoming.sessionId, incoming.platform, signal);
 
           this.debugLogResponse(response, Date.now() - tN, iterations);
@@ -581,38 +584,16 @@ class DefaultAgent implements AgentService {
 
         let replyContent = response.content ?? '';
 
-        // JSON 格式重试：当期望结构化输出但模型返回纯文本且未调用工具时，
-        // 去掉工具重试一次（DeepSeek 会自动启用 JSON Mode）
-        if (
-          expectJson &&
-          replyContent &&
-          !replyContent.trim().startsWith('{') &&
-          !response.toolCalls?.length &&
-          llmBeforeData.tools.length > 0
-        ) {
-          this.logger.debug('JSON 格式重试：模型返回了纯文本，去掉工具重试');
-          const retryT0 = Date.now();
-          const retryResponse = await this.consumeStream(llm, {
-            messages: llmBeforeData.messages,
-            temperature,
-            maxTokens,
-            model: modelOverride,
-            signal,
-          }, incoming.sessionId, incoming.platform, signal);
-          this.debugLogResponse(retryResponse, Date.now() - retryT0);
-          if (retryResponse.content?.trim().startsWith('{')) {
-            response = retryResponse;
-            replyContent = retryResponse.content ?? '';
-          }
-        }
-
         // Hook: response:before — 插件可以修改最终回复
         const responseData = { content: replyContent, sessionId: incoming.sessionId };
         await this.ctx.hooks.run('response:before', responseData);
         replyContent = responseData.content;
 
-        // 回退：如果回复仍是 JSON 包裹（outputFormat 钩子不存在或未处理），尝试提取回复字段
-        replyContent = this.extractJsonReply(replyContent);
+        // 回退：仅当无 outputFormat 时尝试提取 JSON 中的回复字段
+        // 有 outputFormat 时由 persona 的 response:before 已正确处理（提取或保留）
+        if (!expectJson) {
+          replyContent = this.extractJsonReply(replyContent);
+        }
 
         // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
         const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');

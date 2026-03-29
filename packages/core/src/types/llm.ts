@@ -11,6 +11,8 @@ export interface ChatRequest {
   model?: string;
   /** 中止信号，用于取消正在进行的 LLM 调用 */
   signal?: AbortSignal;
+  /** 期望的响应格式。设为 'json_object' 时 LLM 提供者应尽力返回合法 JSON */
+  responseFormat?: 'text' | 'json_object';
 }
 
 export interface ChatResponse {
