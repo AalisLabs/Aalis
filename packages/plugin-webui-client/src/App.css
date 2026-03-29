@@ -791,6 +791,26 @@ body {
   margin-left: 6px;
 }
 
+/* 流式 JSON 渲染 */
+.json-field-partial {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--primary);
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 0.8s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  50% { opacity: 0; }
+}
+
 /* ===== 打字动画 ===== */
 
 .typing-indicator {

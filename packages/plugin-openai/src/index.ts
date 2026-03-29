@@ -191,7 +191,11 @@ class OpenAILLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`请求 LLM: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    if (request.responseFormat === 'json_object') {
+      body.response_format = { type: 'json_object' };
+    }
+
+    this.logger.debug(`请求 LLM${request.responseFormat === 'json_object' ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -260,7 +264,11 @@ class OpenAILLMService implements LLMService {
       body.tools = tools;
     }
 
-    this.logger.debug(`流式请求 LLM: ${body.model}, ${messages.length} 条消息`);
+    if (request.responseFormat === 'json_object') {
+      body.response_format = { type: 'json_object' };
+    }
+
+    this.logger.debug(`流式请求 LLM${request.responseFormat === 'json_object' ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);

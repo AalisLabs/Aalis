@@ -60,6 +60,8 @@ interface PlatformOverride {
   disableOutputFormat?: boolean;
   /** 覆盖结构化输出格式（提供时 disableOutputFormat 被忽略） */
   outputFormat?: Record<string, { description: string; reply?: boolean }>;
+  /** JSON 内容由客户端渲染，服务端不提取回复字段（适用于支持 JSON 视图的前端如 webui） */
+  clientSideJsonRendering?: boolean;
 }
 
 interface PersonaCard {
@@ -250,6 +252,10 @@ class PersonaServiceImpl implements PersonaService {
     return this.card.mute_keyword ?? [];
   }
 
+  isTimeInjectionEnabled(): boolean {
+    return this.timeInjection;
+  }
+
   async listModels(): Promise<string[]> {
     const names = new Set<string>();
     for (const dir of this.searchDirs) {
@@ -367,6 +373,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const outputFormat = service.getOutputFormat();
       if (!outputFormat) return;
 
+      // 客户端渲染模式：保留完整 JSON，仅做状态持久化和日志，不提取回复字段
+      const currentOverride = service.currentPlatform
+        ? card.platformOverrides?.[service.currentPlatform]
+        : undefined;
+      const clientRendered = !!currentOverride?.clientSideJsonRendering;
+
       const raw = data.content.trim();
       // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记）
       const jsonStr = raw.startsWith('{')
@@ -398,8 +410,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
 
         if (typeof reply === 'string') {
-          // 空字符串表示不回复，非空则提取为回复内容
-          data.content = reply;
+          // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
+          if (!clientRendered) {
+            data.content = reply;
+          }
           // 输出所有字段概要
           const fieldSummary = Object.entries(parsed)
             .filter(([k]) => k !== outputFormat.replyField)

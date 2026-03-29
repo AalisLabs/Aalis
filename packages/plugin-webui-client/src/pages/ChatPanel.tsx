@@ -41,16 +41,75 @@ function tryParseJsonObject(content: string): Record<string, unknown> | null {
   }
 }
 
-/** 流式传输中 JSON 不完整时，提取已流出的回复文本 */
-function extractStreamingReply(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith('{')) return content;
-  const match = trimmed.match(/^\{\s*"(?:response|reply|content|answer|text|msg|message)"\s*:\s*"((?:[^"\\]|\\.)*)/);
-  if (match) {
-    return match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\t/g, '\t');
+/** 部分解析的 JSON 字段 */
+interface PartialField {
+  key: string;
+  keyDone: boolean;
+  value: string;
+  valueDone: boolean;
+  valueType: 'string' | 'number' | 'boolean' | 'null' | 'object' | 'array' | 'unknown';
+}
+
+/** 增量解析不完整的 JSON，提取已流出的字段及其值（用于流式渲染） */
+function parsePartialJson(raw: string): PartialField[] | null {
+  const s = raw.trim();
+  if (!s.startsWith('{')) return null;
+  const fields: PartialField[] = [];
+  let i = 1;
+  const skip = () => { while (i < s.length && /[\s,]/.test(s[i])) i++; };
+
+  while (i < s.length) {
+    skip();
+    if (i >= s.length || s[i] === '}') break;
+    if (s[i] !== '"') break;
+    i++;
+    let key = '';
+    let keyDone = false;
+    while (i < s.length) {
+      if (s[i] === '\\' && i + 1 < s.length) { key += s[i + 1]; i += 2; }
+      else if (s[i] === '"') { keyDone = true; i++; break; }
+      else { key += s[i]; i++; }
+    }
+    if (!keyDone) { fields.push({ key, keyDone: false, value: '', valueDone: false, valueType: 'unknown' }); break; }
+    skip();
+    if (i >= s.length || s[i] !== ':') { fields.push({ key, keyDone: true, value: '', valueDone: false, valueType: 'unknown' }); break; }
+    i++; skip();
+    if (i >= s.length) { fields.push({ key, keyDone: true, value: '', valueDone: false, valueType: 'unknown' }); break; }
+
+    if (s[i] === '"') {
+      i++;
+      let val = '';
+      let done = false;
+      while (i < s.length) {
+        if (s[i] === '\\' && i + 1 < s.length) {
+          const c = s[i + 1];
+          val += c === 'n' ? '\n' : c === 't' ? '\t' : c === '"' ? '"' : c === '\\' ? '\\' : c;
+          i += 2;
+        } else if (s[i] === '"') { done = true; i++; break; }
+        else { val += s[i]; i++; }
+      }
+      fields.push({ key, keyDone: true, value: val, valueDone: done, valueType: 'string' });
+    } else if (s[i] === '{' || s[i] === '[') {
+      const open = s[i], close = open === '{' ? '}' : ']';
+      let depth = 1; const start = i; i++;
+      let inStr = false;
+      while (i < s.length && depth > 0) {
+        if (inStr) { if (s[i] === '\\') i++; else if (s[i] === '"') inStr = false; }
+        else if (s[i] === '"') inStr = true;
+        else if (s[i] === open) depth++;
+        else if (s[i] === close) depth--;
+        i++;
+      }
+      fields.push({ key, keyDone: true, value: s.slice(start, i), valueDone: depth === 0, valueType: open === '{' ? 'object' : 'array' });
+    } else {
+      let val = '';
+      while (i < s.length && !/[,\s}]/.test(s[i])) { val += s[i]; i++; }
+      const done = i < s.length && /[,}]/.test(s[i]);
+      const vt = /^(true|false)$/.test(val) ? 'boolean' as const : val === 'null' ? 'null' as const : 'number' as const;
+      fields.push({ key, keyDone: true, value: val, valueDone: done, valueType: vt });
+    }
   }
-  // JSON 骨架已出现但内容尚未流出
-  return '';
+  return fields.length > 0 ? fields : null;
 }
 
 /** 友好的 JSON 字段标签映射 */
@@ -145,22 +204,53 @@ function JsonMessageView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+/** 流式 JSON 视图：随传输逐字段/逐字符实时渲染 */
+function StreamingJsonView({ fields }: { fields: PartialField[] }) {
+  return (
+    <div className="json-message-view">
+      {fields.map((f, idx) => {
+        const isLast = idx === fields.length - 1;
+        const showCursor = isLast && (!f.valueDone || !f.keyDone);
+        const label = f.keyDone ? (FIELD_LABELS[f.key] || f.key) : f.key;
+        const isReply = f.keyDone && REPLY_KEYS.has(f.key);
+
+        return (
+          <div key={idx} className={`json-field${isReply ? ' json-field-reply' : ''}`}>
+            <span className={`json-field-label${!f.keyDone ? ' json-field-partial' : ''}`}>
+              {label}
+              {!f.keyDone && showCursor && <span className="streaming-cursor" />}
+            </span>
+            {f.keyDone && (
+              isReply && f.value ? (
+                <div className="json-field-value json-field-value-md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                    {f.value}
+                  </ReactMarkdown>
+                  {showCursor && <span className="streaming-cursor" />}
+                </div>
+              ) : (
+                <span className="json-field-value">
+                  {f.value}
+                  {showCursor && <span className="streaming-cursor" />}
+                </span>
+              )
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** 渲染助手消息内容：JSON 结构化显示，或 Markdown */
 function AssistantContent({ content }: { content: string }) {
   const parsed = tryParseJsonObject(content);
-  if (parsed) {
-    return <JsonMessageView data={parsed} />;
-  }
-  // 非 JSON — 可能是流式传输中尚未完整的 JSON
+  if (parsed) return <JsonMessageView data={parsed} />;
   const trimmed = content.trim();
   if (trimmed.startsWith('{')) {
-    const streaming = extractStreamingReply(content);
-    if (!streaming) return null; // JSON 骨架，隐藏
-    return (
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-        {streaming}
-      </ReactMarkdown>
-    );
+    const fields = parsePartialJson(content);
+    if (fields) return <StreamingJsonView fields={fields} />;
+    return null;
   }
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>

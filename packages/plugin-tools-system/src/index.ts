@@ -9,7 +9,7 @@ import { registerHttpTools } from './tools/http.js';
 export const name = '@aalis/plugin-tools-system';
 export const displayName = '系统工具';
 export const inject = {
-  optional: ['commands'],
+  optional: ['commands', 'persona'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -107,8 +107,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   if (cfg.system.enabled) {
-    registerSystemTools(ctxWithGroups(['system']), { cwd });
-    ctx.logger.info('系统工具已启用');
+    const persona = ctx.getService<{ isTimeInjectionEnabled?(): boolean }>('persona');
+    const skipTimeTool = !!persona?.isTimeInjectionEnabled?.();
+    registerSystemTools(ctxWithGroups(['system']), { cwd, skipTimeTool });
+    ctx.logger.info('系统工具已启用' + (skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''));
   }
 
   if (cfg.http.enabled) {

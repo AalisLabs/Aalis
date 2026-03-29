@@ -15,6 +15,7 @@ import type { Context } from '@aalis/core';
 
 interface SystemConfig {
   cwd: string;
+  skipTimeTool?: boolean;
 }
 
 export function registerSystemTools(ctx: Context, config: SystemConfig): void {
@@ -139,7 +140,7 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
   });
 
   // ==================== system_time ====================
-  ctx.registerTool({
+  if (!config.skipTimeTool) ctx.registerTool({
     definition: {
       type: 'function',
       function: {
@@ -165,7 +166,6 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
       });
     },
   });
-
   // ==================== cwd ====================
   ctx.registerTool({
     definition: {
