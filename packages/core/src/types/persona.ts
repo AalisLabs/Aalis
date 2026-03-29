@@ -27,4 +27,6 @@ export interface PersonaService {
   getNickNames?(): string[];
   /** 获取角色卡定义的禁言关键词列表 */
   getMuteKeywords?(): string[];
+  /** 是否启用了时间注入（供其他插件判断是否需要注册时间相关工具） */
+  isTimeInjectionEnabled?(): boolean;
 }
