@@ -454,6 +454,19 @@ class DefaultAgent implements AgentService {
         const expectJson = !!persona?.getOutputFormat?.();
         const responseFormat = expectJson ? 'json_object' as const : undefined;
 
+        // 当工具和 JSON 输出格式共存时，追加工具调用优先级指令
+        // 防止模型在 JSON 回复中描述工具调用意图而不实际发出 tool_call
+        if (llmBeforeData.tools.length > 0 && expectJson) {
+          const sysMsg = llmBeforeData.messages.find(m => m.role === 'system');
+          if (sysMsg) {
+            sysMsg.content += '\n\n# 工具调用优先\n'
+              + '当你需要调用工具获取信息或执行操作时，必须使用 tool_call，'
+              + '不要在 JSON 回复中描述工具调用意图。'
+              + '仅在你不需要使用任何工具的情况下，才使用上述 JSON 格式输出最终回复。';
+            this.logger.debug('已注入工具调用优先指令（tools + JSON 输出格式共存）');
+          }
+        }
+
         const t0 = Date.now();
         let response = await this.consumeStream(llm, {
           messages: llmBeforeData.messages,
