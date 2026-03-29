@@ -1,4 +1,6 @@
 import type { Context, ConfigSchema, WebuiPage, PluginModule, IncomingMessage } from '@aalis/core';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 
 // ════════════════════════════════════════════════════════════
 // plugin-scheduler — 让 AI 从"被动"变"主动"
@@ -30,6 +32,8 @@ interface SchedulerConfig {
   jobs: SchedulerJobConfig[];
   /** 同时执行的最大任务数 */
   maxConcurrent: number;
+  /** 动态任务持久化文件路径 */
+  persistPath: string;
 }
 
 // ──────────── Cron 解析 ────────────
@@ -173,11 +177,18 @@ export const configSchema: ConfigSchema = {
     default: 3,
     description: '同时执行的任务数量上限，超出时排队等待。',
   },
+  persistPath: {
+    type: 'string',
+    label: '动态任务存储路径',
+    default: 'data/scheduler-jobs.json',
+    description: '通过 AI 或 WebUI 创建的任务会持久化到此文件，重启后自动加载。',
+  },
 };
 
 export const defaultConfig = {
   jobs: [] as Record<string, unknown>[],
   maxConcurrent: 3,
+  persistPath: 'data/scheduler-jobs.json',
 };
 
 // ──────────── WebUI 页面 ────────────
@@ -198,7 +209,7 @@ export const webuiPages: WebuiPage[] = [
           { key: 'schedule', label: '调度规则' },
           { key: 'sessionId', label: '目标会话' },
           { key: 'status', label: '状态' },
-          { key: 'countdown', label: '下次执行' },
+          { key: 'nextRun', label: '下次执行', render: 'countdown' },
           { key: 'lastRunText', label: '上次执行' },
           { key: 'runCount', label: '执行次数' },
           { key: 'lastResult', label: '最近结果' },
@@ -221,27 +232,12 @@ export const webuiHandlers: PluginModule['webuiHandlers'] = {
   async listJobs(ctx) {
     const svc = ctx.getService<SchedulerService>('scheduler');
     if (!svc) return [];
-    const now = Date.now();
     return svc.getJobs().map(j => {
-      let countdown = '-';
-      if (j.enabled && !j.paused && !j.running && j.nextRun > 0) {
-        const diffSec = Math.max(0, Math.round((j.nextRun - now) / 1000));
-        if (diffSec < 60) {
-          countdown = `${diffSec}秒`;
-        } else if (diffSec < 3600) {
-          const m = Math.floor(diffSec / 60);
-          const s = diffSec % 60;
-          countdown = s > 0 ? `${m}分${s}秒` : `${m}分`;
-        } else {
-          const h = Math.floor(diffSec / 3600);
-          const m = Math.floor((diffSec % 3600) / 60);
-          countdown = m > 0 ? `${h}时${m}分` : `${h}时`;
-        }
-      }
+      const ready = j.enabled && !j.paused && !j.running;
       return {
         ...j,
+        nextRun: ready ? j.nextRun : 0,
         schedule: j.cron ?? `每 ${j.interval}s`,
-        countdown,
         status: !j.enabled ? '❌ 禁用'
           : j.paused ? '⏸ 暂停'
           : j.running ? '⏳ 执行中'
@@ -276,6 +272,47 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const runtimes = new Map<string, JobRuntime>();
   let runningCount = 0;
   let cronInterval: ReturnType<typeof setInterval> | null = null;
+
+  // 配置中定义的任务名称集合（不需要持久化）
+  const configJobNames = new Set(config.jobs.map(j => j.name));
+  // 动态任务集合（需要持久化）
+  const dynamicJobs = new Map<string, SchedulerJobConfig>();
+
+  // ── 持久化读写 ──
+
+  const persistFile = resolve(process.cwd(), config.persistPath);
+
+  function loadDynamicJobs(): SchedulerJobConfig[] {
+    try {
+      if (!existsSync(persistFile)) return [];
+      const data = JSON.parse(readFileSync(persistFile, 'utf-8'));
+      if (!Array.isArray(data)) return [];
+      return data.map((j: any) => ({
+        name: String(j.name ?? 'unnamed'),
+        cron: j.cron as string | undefined,
+        interval: j.interval as number | undefined,
+        sessionId: String(j.sessionId ?? 'internal'),
+        platform: String(j.platform ?? 'internal'),
+        content: String(j.content ?? ''),
+        enabled: j.enabled !== false,
+      }));
+    } catch (err) {
+      logger.warn(`加载持久化任务失败: ${err}`);
+      return [];
+    }
+  }
+
+  function saveDynamicJobs(): void {
+    try {
+      const dir = dirname(persistFile);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const jobs = [...dynamicJobs.values()];
+      writeFileSync(persistFile, JSON.stringify(jobs, null, 2), 'utf-8');
+      logger.debug(`已持久化 ${jobs.length} 个动态任务`);
+    } catch (err) {
+      logger.warn(`持久化任务失败: ${err}`);
+    }
+  }
 
   // ── 发送调度消息 ──
 
@@ -375,6 +412,18 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     initJob(job);
   }
 
+  // 加载持久化的动态任务
+  const persisted = loadDynamicJobs();
+  for (const job of persisted) {
+    if (!runtimes.has(job.name)) {
+      dynamicJobs.set(job.name, job);
+      initJob(job);
+    }
+  }
+  if (persisted.length > 0) {
+    logger.info(`已加载 ${persisted.length} 个持久化任务`);
+  }
+
   // ── Cron 主循环（每 60 秒检查一次） ──
 
   /** 启动 cron 主循环（幂等，已启动则跳过） */
@@ -451,12 +500,21 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
     addJob(job) {
       initJob(job);
+      // 非配置中定义的任务需要持久化
+      if (!configJobNames.has(job.name)) {
+        dynamicJobs.set(job.name, job);
+        saveDynamicJobs();
+      }
     },
     removeJob(jobName) {
       const rt = runtimes.get(jobName);
       if (!rt) return false;
       if (rt.timer) clearInterval(rt.timer);
       runtimes.delete(jobName);
+      if (dynamicJobs.has(jobName)) {
+        dynamicJobs.delete(jobName);
+        saveDynamicJobs();
+      }
       logger.info(`任务已删除: ${jobName}`);
       return true;
     },
@@ -630,5 +688,6 @@ function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
       enabled: j.enabled !== false,
     })),
     maxConcurrent: (raw.maxConcurrent as number) ?? 3,
+    persistPath: (raw.persistPath as string) ?? 'data/scheduler-jobs.json',
   };
 }
