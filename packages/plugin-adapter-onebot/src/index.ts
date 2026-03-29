@@ -1141,6 +1141,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
+  // ----- 群聊时间感知提示 -----
+  // 群聊中多人消息平铺在历史中，注入提示帮助模型关注时间线
+  ctx.middleware('llm-call:before', async (data, next) => {
+    if (data.sessionId?.includes(':group:')) {
+      // 在最后一条用户消息前插入时间感知提示
+      let lastUserIdx = -1;
+      for (let i = data.messages.length - 1; i >= 0; i--) {
+        if (data.messages[i].role === 'user') { lastUserIdx = i; break; }
+      }
+      if (lastUserIdx > 0) {
+        data.messages.splice(lastUserIdx, 0, {
+          role: 'system',
+          content: '注意：以上是群聊的历史消息记录，包含多位群友的发言。'
+            + '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
+        });
+      }
+    }
+    await next();
+  });
+
   // ----- 监听消息回复事件 -----
 
   ctx.on('message:send', (msg) => {
