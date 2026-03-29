@@ -23,7 +23,7 @@ export function PluginConfigPage({
   const [editingPlugin, setEditingPlugin] = useState<string | null>(null);
   const [editBuffer, setEditBuffer] = useState<Record<string, string>>({});
   const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>({});
-  const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
+  const [modelCache, setModelCache] = useState<Record<string, Array<{ label: string; value: string }>>>({});
   const [providerCache, setProviderCache] = useState<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -79,8 +79,14 @@ export function PluginConfigPage({
   const fetchModels = useCallback(async (service: string) => {
     if (modelCache[service]) return;
     try {
-      const res = await api<{ models: string[] }>(`/api/models/${encodeURIComponent(service)}`);
-      setModelCache(prev => ({ ...prev, [service]: res.models ?? [] }));
+      const res = await api<{ models: string[]; providers?: Array<{ model: string; provider: string }> }>(`/api/models/${encodeURIComponent(service)}`);
+      const provMap = new Map<string, string>();
+      for (const p of res.providers ?? []) provMap.set(p.model, p.provider);
+      const items = (res.models ?? []).map(m => ({
+        label: provMap.has(m) ? `${provMap.get(m)} / ${m}` : m,
+        value: m,
+      }));
+      setModelCache(prev => ({ ...prev, [service]: items }));
     } catch {
       setModelCache(prev => ({ ...prev, [service]: [] }));
     }

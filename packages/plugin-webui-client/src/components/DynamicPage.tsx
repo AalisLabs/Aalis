@@ -122,7 +122,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const modelCache = useRef<Record<string, string[]>>({});
+  const modelCache = useRef<Record<string, Array<{ label: string; value: string }>>>({});
   const providerCacheRef = useRef<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
 
   useEffect(() => {
@@ -144,8 +144,16 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   };
 
   const handleFetchModels = (service: string) => {
-    api<{ models: string[] }>(`/api/models/${service}`)
-      .then(r => { modelCache.current = { ...modelCache.current, [service]: r.models ?? [] }; })
+    api<{ models: string[]; providers?: Array<{ model: string; provider: string }> }>(`/api/models/${service}`)
+      .then(r => {
+        const provMap = new Map<string, string>();
+        for (const p of r.providers ?? []) provMap.set(p.model, p.provider);
+        const items = (r.models ?? []).map(m => ({
+          label: provMap.has(m) ? `${provMap.get(m)} / ${m}` : m,
+          value: m,
+        }));
+        modelCache.current = { ...modelCache.current, [service]: items };
+      })
       .catch(() => {});
   };
 

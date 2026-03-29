@@ -683,7 +683,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
             const modelId = isModelInfo ? (m as Record<string, unknown>).id as string : String(m);
             const modelCaps = isModelInfo ? (m as Record<string, unknown>).capabilities as string[] : provider.capabilities;
-            aggregated.push({ model: modelId, provider: provider.contextId, capabilities: modelCaps });
+            aggregated.push({ model: modelId, provider: provider.label ?? provider.contextId, capabilities: modelCaps });
             flatModels.push(modelId);
           }
         } catch {
