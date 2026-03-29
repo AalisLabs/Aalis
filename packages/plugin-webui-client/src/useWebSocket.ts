@@ -29,6 +29,7 @@ export function useWebSocket(
         if (disposed) return;
         setConnected(true);
         ws.send(JSON.stringify({ type: 'subscribe_logs' }));
+        ws.send(JSON.stringify({ type: 'subscribe_session', sessionId: SESSION_ID }));
       };
 
       ws.onclose = () => {

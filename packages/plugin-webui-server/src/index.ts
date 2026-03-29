@@ -44,7 +44,7 @@ interface WebUIConfig {
 // ===== WebSocket 消息协议 =====
 
 interface WSIncoming {
-  type: 'message' | 'subscribe_logs' | 'abort';
+  type: 'message' | 'subscribe_logs' | 'subscribe_session' | 'abort';
   content?: string;
   sessionId?: string;
   /** base64 data URL 或 HTTP URL 列表 */
@@ -777,6 +777,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
         if (msg.type === 'subscribe_logs') {
           logSubscribers.add(ws);
+          return;
+        }
+
+        // 客户端连接时主动注册会话，确保 scheduler 等异步消息能推送
+        if (msg.type === 'subscribe_session') {
+          const sid = msg.sessionId || 'webui-default';
+          if (!sessions.has(sid)) {
+            sessions.set(sid, new Set());
+          }
+          sessions.get(sid)!.add(ws);
           return;
         }
 
