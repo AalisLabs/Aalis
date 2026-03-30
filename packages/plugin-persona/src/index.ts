@@ -392,8 +392,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           jsonStr = raw.slice(firstBrace, lastBrace + 1);
         }
       }
+      // 尝试解析 JSON，失败时自动修复常见错误后重试
+      let parsed: Record<string, unknown> | null = null;
       try {
-        const parsed = JSON.parse(jsonStr);
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // 修复：XML 属性中的未转义双引号 (如 <face id="14"/>)
+        const repaired = jsonStr.replace(
+          /<(\w+)\s+(\w+)="([^"]*?)"\s*\/>/g,
+          '<$1 $2=\\\"$3\\\" />',
+        );
+        try {
+          parsed = JSON.parse(repaired);
+          ctx.logger.debug('outputFormat JSON 自动修复成功（XML 属性引号转义）');
+        } catch {
+          // 修复：尾部逗号
+          const noTrailing = repaired.replace(/,\s*([\]}])/g, '$1');
+          try {
+            parsed = JSON.parse(noTrailing);
+            ctx.logger.debug('outputFormat JSON 自动修复成功（移除尾部逗号）');
+          } catch {
+            // 所有修复均失败
+          }
+        }
+      }
+      try {
+        if (!parsed) throw new Error('JSON 解析失败');
         let reply = parsed[outputFormat.replyField];
 
         // 回退：模型可能使用了错误的字段名（如 response 代替 message）
