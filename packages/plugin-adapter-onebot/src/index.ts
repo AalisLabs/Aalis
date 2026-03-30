@@ -1081,22 +1081,36 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.debug(`OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`);
 
-    // 戳一戳 → 转化为 message:received，让 agent 可以响应
-    if (notice.noticeType === 'poke' && notice.groupId) {
+    // 戳一戳 → 转化为 message:received，让 agent 可以响应（群聊 + 私聊均支持）
+    if (notice.noticeType === 'poke') {
       const selfId = notice.selfId;
-      const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
       const targetDesc = notice.targetId === selfId ? '你' : notice.targetId;
       const content = `[戳一戳: ${notice.userId} 戳了 ${targetDesc}]`;
 
-      ctx.emit('message:received', {
-        content,
-        sessionId,
-        platform: 'onebot',
-        userId: notice.userId,
-        sessionType: 'group',
-        groupId: notice.groupId,
-        noticeType: 'poke',
-      });
+      if (notice.groupId) {
+        // 群聊 poke
+        const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
+        ctx.emit('message:received', {
+          content,
+          sessionId,
+          platform: 'onebot',
+          userId: notice.userId,
+          sessionType: 'group',
+          groupId: notice.groupId,
+          noticeType: 'poke',
+        });
+      } else if (notice.userId) {
+        // 私聊 poke
+        const sessionId = makeSessionId(selfId, 'private', notice.userId);
+        ctx.emit('message:received', {
+          content,
+          sessionId,
+          platform: 'onebot',
+          userId: notice.userId,
+          sessionType: 'private',
+          noticeType: 'poke',
+        });
+      }
       return;
     }
 
