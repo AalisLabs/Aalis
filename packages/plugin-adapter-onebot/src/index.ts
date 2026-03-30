@@ -658,6 +658,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
+  /** 获取用户昵称（群聊优先取群名片，私聊取陌生人昵称） */
+  async function resolveNickname(state: ConnectionState, userId?: string, groupId?: string): Promise<string | undefined> {
+    if (!userId) return undefined;
+    try {
+      if (groupId) {
+        const data = await sendAction(state, 'get_group_member_info', {
+          group_id: Number(groupId) || groupId,
+          user_id: Number(userId) || userId,
+        }) as Record<string, unknown>;
+        return (data.card as string) || (data.nickname as string) || undefined;
+      }
+      const data = await sendAction(state, 'get_stranger_info', {
+        user_id: Number(userId) || userId,
+      }) as Record<string, unknown>;
+      return (data.nickname as string) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** 获取引用消息的内容 */
   async function fetchReplyMessage(state: ConnectionState, messageId: string): Promise<{
     content?: string; userId?: string; nickname?: string;
@@ -1081,35 +1101,50 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.debug(`OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`);
 
-    // 戳一戳 → 转化为 message:received，让 agent 可以响应（群聊 + 私聊均支持）
+    // 戳一戳 → 仅在目标是 bot 时触发 agent 回复
     if (notice.noticeType === 'poke') {
       const selfId = notice.selfId;
-      const targetDesc = notice.targetId === selfId ? '你' : notice.targetId;
-      const content = `[戳一戳: ${notice.userId} 戳了 ${targetDesc}]`;
+      const targetIsBot = notice.targetId === selfId;
 
       if (notice.groupId) {
-        // 群聊 poke
-        const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
-        ctx.emit('message:received', {
-          content,
-          sessionId,
-          platform: 'onebot',
-          userId: notice.userId,
-          sessionType: 'group',
-          groupId: notice.groupId,
-          noticeType: 'poke',
-        });
+        // 群聊 poke：只有被戳的是 bot 才回复
+        if (!targetIsBot) {
+          ctx.logger.debug(`群聊戳一戳: ${notice.userId} → ${notice.targetId}（非 bot，忽略）`);
+          return;
+        }
+        (async () => {
+          const nick = await resolveNickname(state, notice.userId, notice.groupId);
+          const who = nick ?? notice.userId;
+          const content = `[戳一戳: ${who} 戳了你]`;
+          const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
+          ctx.emit('message:received', {
+            content,
+            sessionId,
+            platform: 'onebot',
+            userId: notice.userId,
+            nickname: nick,
+            sessionType: 'group',
+            groupId: notice.groupId,
+            noticeType: 'poke',
+          });
+        })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
       } else if (notice.userId) {
-        // 私聊 poke
-        const sessionId = makeSessionId(selfId, 'private', notice.userId);
-        ctx.emit('message:received', {
-          content,
-          sessionId,
-          platform: 'onebot',
-          userId: notice.userId,
-          sessionType: 'private',
-          noticeType: 'poke',
-        });
+        // 私聊 poke：始终回复
+        (async () => {
+          const nick = await resolveNickname(state, notice.userId);
+          const who = nick ?? notice.userId;
+          const content = `[戳一戳: ${who} 戳了你]`;
+          const sessionId = makeSessionId(selfId, 'private', notice.userId);
+          ctx.emit('message:received', {
+            content,
+            sessionId,
+            platform: 'onebot',
+            userId: notice.userId,
+            nickname: nick,
+            sessionType: 'private',
+            noticeType: 'poke',
+          });
+        })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
       }
       return;
     }
@@ -1159,7 +1194,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 群聊中多人消息平铺在历史中，注入提示帮助模型关注时间线
   // 特殊事件（如戳一戳、文件上传）触发时注入说明，让模型知道触发原因
   const noticePatterns: Array<{ pattern: RegExp; hint: string }> = [
-    { pattern: /^\[戳一戳:/, hint: '这条消息不是用户手动输入的文字，而是一个「戳一戳」互动事件。请根据戳一戳的情境做出自然、俏皮的反应，而不是直接回复消息内容。' },
+    { pattern: /^\[戳一戳:/, hint: '这条消息不是用户手动输入的文字，而是一个「戳一戳」互动事件——有人戳了你。请根据戳一戳的情境做出自然、俏皮的反应，而不是直接回复消息内容。' },
     { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
   ];
 
