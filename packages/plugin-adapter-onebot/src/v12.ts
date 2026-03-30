@@ -138,6 +138,7 @@ export class OneBotV12 implements OneBotProtocol {
       noticeType: detailType || 'unknown',
       subType: subType || undefined,
       userId: raw.user_id != null ? String(raw.user_id) : undefined,
+      targetId: raw.target_id != null ? String(raw.target_id) : undefined,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
     };
   }
