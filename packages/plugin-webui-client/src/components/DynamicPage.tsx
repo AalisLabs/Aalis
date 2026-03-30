@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactElement } from 'react';
 import { Puzzle, Clock, Globe, Brain, Wrench, Sparkles, BarChart2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,7 +12,7 @@ import type {
   WebuiMarkdownComponent, WebuiTabsComponent, WebuiPageDef,
 } from '../types';
 
-const dynStatIconMap: Record<string, JSX.Element> = {
+const dynStatIconMap: Record<string, ReactElement> = {
   skills: <Puzzle size={18} />, scheduler: <Clock size={18} />, browser: <Globe size={18} />, memory: <Brain size={18} />,
   tools: <Wrench size={18} />, agent: <Sparkles size={18} />, default: <BarChart2 size={18} />,
 };
