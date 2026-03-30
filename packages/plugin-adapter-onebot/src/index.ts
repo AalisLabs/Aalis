@@ -1141,8 +1141,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
-  // ----- 群聊时间感知提示 -----
+  // ----- 群聊时间感知提示 + 特殊事件触发上下文 -----
   // 群聊中多人消息平铺在历史中，注入提示帮助模型关注时间线
+  // 特殊事件（如戳一戳、文件上传）触发时注入说明，让模型知道触发原因
+  const noticePatterns: Array<{ pattern: RegExp; hint: string }> = [
+    { pattern: /^\[戳一戳:/, hint: '这条消息不是用户手动输入的文字，而是一个「戳一戳」互动事件。请根据戳一戳的情境做出自然、俏皮的反应，而不是直接回复消息内容。' },
+    { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
+  ];
+
   ctx.middleware('llm-call:before', async (data, next) => {
     if (data.sessionId?.includes(':group:')) {
       // 在最后一条用户消息前插入时间感知提示
@@ -1158,6 +1164,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
       }
     }
+
+    // 特殊事件触发上下文：检查最后一条用户消息是否为非文本事件
+    if (data.sessionId?.startsWith('onebot:')) {
+      const lastMsg = data.messages[data.messages.length - 1];
+      if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
+        // 去掉发送者前缀后匹配事件模式
+        const bare = lastMsg.content.replace(/^\[[^\]]*\]:\s*/, '');
+        for (const { pattern, hint } of noticePatterns) {
+          if (pattern.test(bare)) {
+            // 在用户消息前插入事件说明
+            data.messages.splice(data.messages.length - 1, 0, {
+              role: 'system',
+              content: hint,
+            });
+            break;
+          }
+        }
+      }
+    }
+
     await next();
   });
 
