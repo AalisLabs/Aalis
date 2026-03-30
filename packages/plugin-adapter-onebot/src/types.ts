@@ -204,7 +204,7 @@ export function parseContentToSegments(content: string): ParsedSegment[] {
     if (match[1] !== undefined) {
       segments.push({ type: 'at', data: { id: match[1].trim() } });
     } else if (match[2] !== undefined) {
-      segments.push({ type: 'face', data: { id: match[2] } });
+      // face 标签：忽略，不转为消息段（防止 LLM 误发 QQ 表情，也兼容v12版本）
     } else if (match[3] !== undefined) {
       segments.push({ type: 'image', data: { url: match[3] } });
     } else if (match[4] !== undefined) {
