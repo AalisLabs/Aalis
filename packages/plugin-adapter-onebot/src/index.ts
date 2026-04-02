@@ -1114,7 +1114,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
         (async () => {
           const nick = await resolveNickname(state, notice.userId, notice.groupId);
-          const who = nick ?? notice.userId;
+          const who = nick ? `${nick}(${notice.userId})` : notice.userId;
           const content = `[戳一戳: ${who} 戳了你]`;
           const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
           ctx.emit('message:received', {
@@ -1132,7 +1132,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // 私聊 poke：始终回复
         (async () => {
           const nick = await resolveNickname(state, notice.userId);
-          const who = nick ?? notice.userId;
+          const who = nick ? `${nick}(${notice.userId})` : notice.userId;
           const content = `[戳一戳: ${who} 戳了你]`;
           const sessionId = makeSessionId(selfId, 'private', notice.userId);
           ctx.emit('message:received', {
@@ -1287,7 +1287,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       stopHeartbeat(state);
       if (state.ws) {
         state.ws.removeAllListeners();
-        state.ws.close();
+        if (state.ws.readyState === 0 /* CONNECTING */) {
+          state.ws.terminate();
+        } else {
+          state.ws.close();
+        }
       }
       for (const [, pending] of state.pendingActions) {
         clearTimeout(pending.timer);
