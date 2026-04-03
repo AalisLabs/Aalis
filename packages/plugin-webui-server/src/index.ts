@@ -57,7 +57,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload';
+  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload' | 'confirm';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -743,7 +743,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return ctx.commands!.execute(parsed.name, {
       sessionId,
       platform: 'webui',
-      userId: 'webui-user',
+      userId: 'console',
       args: parsed.args,
       raw: parsed.raw,
     });
@@ -760,9 +760,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
     const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
 
-    // 以普通聊天消息形式发送确认提示
+    // 以确认消息形式发送（不影响客户端 loading/streaming 状态）
     const payload: WSOutgoing = {
-      type: 'message',
+      type: 'confirm',
       content: prompt,
       sessionId: request.sessionId,
     };
@@ -784,7 +784,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         pendingSessionConfirms.delete(request.sessionId);
         // 超时后向会话发送提示
         const timeoutPayload: WSOutgoing = {
-          type: 'message',
+          type: 'confirm',
           content: '⏰ 高危操作确认已超时，已自动取消。',
           sessionId: request.sessionId,
         };
@@ -1010,7 +1010,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           content: trimmed,
           sessionId,
           platform: 'webui',
-          userId: 'webui-user',
+          userId: 'console',
           nickname: '',
           ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
           ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
