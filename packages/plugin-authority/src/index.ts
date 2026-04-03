@@ -168,15 +168,12 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   };
 
   // 注入到已有的 tools/commands 服务
-  // 使用 Set 跟踪已注入的服务，避免重复注入
-  const injected = new Set<string>();
   const injectGuard = (svcName: string) => {
-    if ((svcName === 'tools' || svcName === 'commands') && !injected.has(svcName)) {
+    if (svcName === 'tools' || svcName === 'commands') {
       const svc = ctx.getService<ToolService | CommandService>(svcName);
       if (svc?.setExecutionGuard) {
         svc.setExecutionGuard(guard);
-        injected.add(svcName);
-        ctx.logger.info(`权限守卫已注入: ${svcName}`);
+        ctx.logger.debug(`权限守卫已注入: ${svcName}`);
       }
     }
   };
