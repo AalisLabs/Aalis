@@ -35,17 +35,11 @@ export const configSchema: ConfigSchema = {
     default: 20,
     description: '摘要后保留的最近消息条数（不参与摘要的部分）',
   },
-  maxSummaryTokens: {
+  summaryTokenRatio: {
     type: 'number',
-    label: '摘要最大 Token',
-    default: 1024,
-    description: '注入到提示词的摘要最大 token 预算',
-  },
-  summaryGenerateTokens: {
-    type: 'number',
-    label: '摘要生成最大 Token',
-    default: 800,
-    description: 'LLM 生成摘要时的最大输出 token 数',
+    label: '摘要 Token 占比',
+    default: 0.05,
+    description: '摘要占模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。 实际 token 上限 = contextLength × 比例，自动适配不同模型',
   },
   summaryPrompt: {
     type: 'string',
@@ -58,8 +52,7 @@ export const defaultConfig = {
   dbPath: 'data/aalis.db',
   threshold: 30,
   keepRecent: 20,
-  maxSummaryTokens: 1024,
-  summaryGenerateTokens: 800,
+  summaryTokenRatio: 0.05,
   summaryPrompt: '',
 };
 
@@ -71,10 +64,8 @@ interface SummaryConfig {
   threshold: number;
   /** 摘要时保留最近 N 条消息不参与摘要 */
   keepRecent: number;
-  /** 注入的摘要 token 预算上限 */
-  maxSummaryTokens: number;
-  /** LLM 生成摘要时的最大输出 token */
-  summaryGenerateTokens: number;
+  /** 摘要占模型上下文窗口的比例 (0~1) */
+  summaryTokenRatio: number;
   /** 自定义摘要提示词 */
   summaryPrompt: string;
 }
@@ -93,13 +84,12 @@ const DEFAULT_SUMMARY_PROMPT = `你是一个对话摘要助手。请将以下对
 7. 如果有之前的摘要，在此基础上整合新内容，确保旧摘要中的重要信息不因新内容加入而被丢弃
 8. 使用第三方视角描述，标注发言者身份（如"用户[小明]..."、"助手..."）
 9. 按话题或时间分段组织，便于后续检索
-10. 摘要长度应与原始对话信息量成正比，充分利用可用空间，不要刻意压缩
-11. **特别重要**：如果对话中存在正在进行的多步骤任务或计划（如任务列表、待办事项、分步实施方案），必须完整保留任务的目标、已完成的步骤、尚未完成的步骤及其状态。在摘要末尾用独立段落列出，格式如：
+10. **特别重要**：如果对话中存在正在进行的多步骤任务或计划（如任务列表、待办事项、分步实施方案），必须完整保留任务的目标、已完成的步骤、尚未完成的步骤及其状态。在摘要末尾用独立段落列出，格式如：
     【进行中的任务】
     - 目标：...
     - 已完成：...
     - 待完成：...
-12. 保留助手在对话中制定的工作计划、承诺要做的事情、以及用户尚未被满足的请求`;
+11. 保留助手在对话中制定的工作计划、承诺要做的事情、以及用户尚未被满足的请求`;
 
 // ===== 摘要存储 =====
 
@@ -184,8 +174,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     dbPath: (config.dbPath as string) ?? 'data/aalis.db',
     threshold: (config.threshold as number) ?? 30,
     keepRecent: (config.keepRecent as number) ?? 20,
-    maxSummaryTokens: (config.maxSummaryTokens as number) ?? 1024,
-    summaryGenerateTokens: (config.summaryGenerateTokens as number) ?? 800,
+    summaryTokenRatio: (config.summaryTokenRatio as number) ?? 0.05,
     summaryPrompt: (config.summaryPrompt as string) ?? '',
   };
 
@@ -196,6 +185,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 正在摘要中的 session，避免并发重复摘要
   const summarizing = new Set<string>();
+
+  /** 根据当前 LLM 的上下文窗口动态计算摘要 token 上限 */
+  function getSummaryTokenBudget(): number {
+    const llm = ctx.getService<LLMService>('llm');
+    if (!llm) return 2048; // fallback
+    const contextLength = llm.getContextLength();
+    return Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio));
+  }
 
   // 摘要生成提示词
   const summarySystemPrompt = cfg.summaryPrompt || DEFAULT_SUMMARY_PROMPT;
@@ -243,8 +240,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         .join('\n');
 
       // 构建摘要请求
+      const summaryBudget = getSummaryTokenBudget();
+      const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
       const summaryMessages: Message[] = [
-        { role: 'system', content: summarySystemPrompt },
+        { role: 'system', content: summarySystemPrompt + budgetHint },
       ];
 
       // 如果已有旧摘要，在提示中包含它
@@ -262,12 +261,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       ctx.logger.debug(`正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`);
 
-      // 调用 LLM 生成摘要（非流式，低 temperature）
+      // 调用 LLM 生成摘要
       let summaryText = '';
       for await (const chunk of llm.chatStream({
         messages: summaryMessages,
         temperature: 0.3,
-        maxTokens: cfg.summaryGenerateTokens,
+        maxTokens: summaryBudget,
       })) {
         if (chunk.contentDelta) {
           summaryText += chunk.contentDelta;
@@ -303,13 +302,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     const existing = store.getSummary(sessionId);
     if (existing?.summary) {
-      // 估算摘要 token
+      // 动态计算摘要 token 预算
+      const summaryBudget = getSummaryTokenBudget();
       const summaryTokens = Math.ceil(existing.summary.length / 3);
       let summaryContent = existing.summary;
 
       // 如果超出预算，截断
-      if (summaryTokens > cfg.maxSummaryTokens) {
-        const maxChars = cfg.maxSummaryTokens * 3;
+      if (summaryTokens > summaryBudget) {
+        const maxChars = summaryBudget * 3;
         summaryContent = summaryContent.slice(0, maxChars) + '\n... [摘要已截断]';
       }
 
@@ -385,8 +385,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           }
         } catch { /* ignore */ }
 
+        const summaryBudget = getSummaryTokenBudget();
+        const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
         const summaryMessages: Message[] = [
-          { role: 'system', content: summarySystemPrompt },
+          { role: 'system', content: summarySystemPrompt + budgetHint },
         ];
 
         const taskHint = data.reason === 'auto'
@@ -411,7 +413,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         for await (const chunk of llm.chatStream({
           messages: summaryMessages,
           temperature: 0.3,
-          maxTokens: cfg.summaryGenerateTokens,
+          maxTokens: summaryBudget,
         })) {
           if (chunk.contentDelta) {
             summaryText += chunk.contentDelta;
