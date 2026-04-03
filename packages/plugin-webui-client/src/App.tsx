@@ -5,6 +5,7 @@ import { api, getSessionId, pageAction } from './api';
 import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
 import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles } from './icons';
 import { useWebSocket } from './useWebSocket';
+import type { TokenUsageData } from './useWebSocket';
 import { useSessionManager } from './useSessionManager';
 import { DashboardPage } from './pages/DashboardPage';
 import { PluginConfigPage } from './pages/PluginConfigPage';
@@ -74,6 +75,12 @@ export function App() {
 
   // 高危操作确认等待状态
   const [pendingConfirm, setPendingConfirm] = useState(false);
+
+  // Token 使用量统计
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageData | null>(null);
+
+  // 压缩状态: null=空闲, 'start'=正在压缩, 'done'=完成, 'error'=失败
+  const [compressingStatus, setCompressingStatus] = useState<'start' | 'done' | 'error' | null>(null);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
     // message:send 到达时，用完整内容更新最后一个文本段，保留所有 segments
@@ -301,7 +308,28 @@ export function App() {
     ]);
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm);
+  /** Token 使用量更新 */
+  const handleTokenUsage = useCallback((usage: TokenUsageData) => {
+    setTokenUsage(usage);
+  }, []);
+
+  /** 压缩状态更新 */
+  const handleCompressing = useCallback((sessionId: string, status: string) => {
+    if (sessionId === getSessionId()) {
+      setCompressingStatus(status as 'start' | 'done' | 'error');
+      // 压缩完成后 3 秒自动清除状态
+      if (status === 'done' || status === 'error') {
+        setTimeout(() => setCompressingStatus(null), 3000);
+      }
+    }
+  }, []);
+
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing);
+
+  /** 手动触发压缩 */
+  const handleCompress = useCallback(() => {
+    sendRaw({ type: 'compress', sessionId: getSessionId() });
+  }, [sendRaw]);
 
   // 重启流程：等待 WS 断开后重连，再刷新
   useEffect(() => {
@@ -591,6 +619,9 @@ export function App() {
           onClearTodos={handleClearTodos}
           toolLimitReached={toolLimitReached}
           onContinueTools={handleContinueTools}
+          tokenUsage={tokenUsage}
+          compressingStatus={compressingStatus}
+          onCompress={handleCompress}
         />
       </div>
 

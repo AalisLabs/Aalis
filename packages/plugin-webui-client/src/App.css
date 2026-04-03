@@ -906,6 +906,180 @@ body {
   color: var(--text);
 }
 
+.chat-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ===== Token 使用量徽章 ===== */
+.token-usage-badge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  cursor: default;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  transition: background var(--transition);
+}
+.token-usage-badge:hover {
+  background: rgba(255,255,255,0.1);
+}
+.token-usage-number {
+  font-variant-numeric: tabular-nums;
+}
+.token-usage-number.caution {
+  color: #f0a020;
+}
+.token-usage-number.warn {
+  color: #ef4444;
+}
+
+/* ===== Token 详情悬浮面板 ===== */
+.token-usage-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: var(--bg-secondary, #1e1e2e);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  z-index: 100;
+  font-size: 0.78rem;
+}
+.token-panel-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.token-panel-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  margin-bottom: 4px;
+  overflow: hidden;
+}
+.token-panel-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--primary, #6366f1);
+  transition: width 0.3s ease;
+}
+.token-panel-bar-fill.caution {
+  background: #f0a020;
+}
+.token-panel-bar-fill.warn {
+  background: #ef4444;
+}
+.token-panel-ratio {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  margin-bottom: 10px;
+}
+.token-panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.token-panel-row {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+}
+.token-panel-row.sub {
+  padding-left: 12px;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+.token-panel-row span:last-child {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.token-panel-section-header {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 0.8rem;
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+.token-panel-section-total {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.token-panel-compress-btn {
+  width: 100%;
+  padding: 6px 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: background var(--transition), color var(--transition);
+}
+.token-panel-compress-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(255,255,255,0.08));
+  color: var(--text);
+}
+.token-panel-compress-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.token-panel-empty {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 8px 0;
+}
+
+/* ===== 对话压缩状态气泡 ===== */
+.compress-bubble {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  margin: 4px 0;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+.compress-bubble.start {
+  color: var(--primary, #6366f1);
+}
+.compress-bubble.done {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+.compress-bubble.error {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+@keyframes compress-spin {
+  to { transform: rotate(360deg); }
+}
+.compress-spinner {
+  animation: compress-spin 1s linear infinite;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;

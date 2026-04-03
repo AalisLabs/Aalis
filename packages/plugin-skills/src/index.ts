@@ -465,10 +465,15 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       // 在 system 消息后追加技能提示
       const systemIdx = data.messages.findIndex(m => m.role === 'system');
       if (systemIdx >= 0 && data.messages[systemIdx].content) {
+        const appendText = `\n\n你拥有以下可复用技能，可以通过 skill_execute 工具调用它们：\n${skillSummary}`;
+        const prevContributions = (data.messages[systemIdx].metadata?._tokenContributions as Record<string, number>) ?? {};
         data.messages[systemIdx] = {
           ...data.messages[systemIdx],
-          content: data.messages[systemIdx].content +
-            `\n\n你拥有以下可复用技能，可以通过 skill_execute 工具调用它们：\n${skillSummary}`,
+          content: data.messages[systemIdx].content + appendText,
+          metadata: {
+            ...data.messages[systemIdx].metadata,
+            _tokenContributions: { ...prevContributions, skills: appendText.length },
+          },
         };
       }
     }

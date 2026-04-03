@@ -410,6 +410,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ].filter(Boolean).join('\n');
 
         (sysMsg as { content: string }).content += subtaskContext;
+        const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
+        (sysMsg as { metadata?: Record<string, unknown> }).metadata = {
+          ...sysMsg.metadata,
+          _tokenContributions: { ...prevContributions, subtask: subtaskContext.length },
+        };
       }
     }
 
@@ -471,7 +476,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           }
 
           lines.push('--- 活跃子任务提醒结束 ---');
-          (sysMsg as { content: string }).content += lines.join('\n');
+          const parentContext = lines.join('\n');
+          (sysMsg as { content: string }).content += parentContext;
+          const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
+          (sysMsg as { metadata?: Record<string, unknown> }).metadata = {
+            ...sysMsg.metadata,
+            _tokenContributions: { ...prevContributions, subtask: (prevContributions.subtask ?? 0) + parentContext.length },
+          };
         }
       }
     }
