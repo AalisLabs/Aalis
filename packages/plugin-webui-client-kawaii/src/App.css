@@ -448,6 +448,35 @@ body {
   flex-direction: column;
   background: var(--bg);
   flex-shrink: 0;
+  position: relative;
+}
+
+/* ===== 拖拽上传遮罩 ===== */
+
+.chat-panel.drag-over {
+  outline: 2px dashed var(--primary);
+  outline-offset: -2px;
+}
+
+.drag-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drag-overlay-content {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  padding: 14px 28px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
 .resize-handle {
@@ -967,14 +996,29 @@ body {
   display: flex;
   gap: 8px;
   padding: 8px 24px;
-  flex-wrap: wrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.pending-images::-webkit-scrollbar {
+  height: 4px;
+}
+.pending-images::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.pending-images::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .pending-image-item {
   position: relative;
   width: 64px;
+  min-width: 64px;
   height: 64px;
   border-radius: var(--radius);
   overflow: hidden;
@@ -1118,11 +1162,25 @@ body {
 
 .pending-files {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   padding: 8px 24px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.pending-files::-webkit-scrollbar {
+  height: 4px;
+}
+.pending-files::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.pending-files::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .pending-file-item {
@@ -1135,6 +1193,8 @@ body {
   border-radius: var(--radius);
   font-size: 0.82rem;
   max-width: fit-content;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .pending-file-icon {
