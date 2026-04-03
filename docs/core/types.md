@@ -136,7 +136,6 @@ interface LLMService {
   chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
   getTemperature(): number;
   getMaxTokens(): number;
-  getMaxToolIterations(): number;
   getContextLength(): number;
   listModels?(): Promise<string[]>;
 }

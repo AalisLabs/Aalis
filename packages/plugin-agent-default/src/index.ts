@@ -16,6 +16,8 @@ import type {
   LLMService,
   MemoryService,
   PersonaService,
+  PersonaSessionOptions,
+  SessionManagerService,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
@@ -38,12 +40,9 @@ class DefaultAgent implements AgentService {
   private systemPrompt: string;
   private memoryTokenBudget: number;
   private historyLimit: number;
-  /** 平台 → 启用的工具分组映射 */
-  private toolGroups: Record<string, string[]>;
+  private maxToolIterations: number;
   /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
   private preferredModel: string;
-  /** 按平台覆盖的模型（platform → modelId） */
-  private platformModels: Record<string, string>;
   /** session 级别的模型覆盖（sessionId → modelId），由 /model 指令设置 */
   private sessionModelOverrides = new Map<string, string>();
   /** 模型 ID → 提供者 contextId 映射缓存 */
@@ -66,13 +65,9 @@ class DefaultAgent implements AgentService {
     this.systemPrompt = (config.systemPrompt as string) || '';
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.historyLimit = (config.historyLimit as number) ?? 50;
-    this.toolGroups = parseToolGroups(config.toolGroups);
+    this.maxToolIterations = (config.maxToolIterations as number) ?? 30;
     this.preferredModel = (config.preferredModel as string) || '';
-    this.platformModels = parsePlatformModels(config.platformModels);
     this.logger.info('默认对话代理已初始化');
-    if (Object.keys(this.platformModels).length > 0) {
-      this.logger.info(`平台模型覆盖: ${Object.entries(this.platformModels).map(([p, m]) => `${p}→${m}`).join(', ')}`);
-    }
 
     // 异步构建模型→提供者映射
     if (this.preferredModel) {
@@ -100,17 +95,38 @@ class DefaultAgent implements AgentService {
    * 根据优先级链获取 LLM 服务和模型覆盖
    *
    * 优先级（从高到低）：
-   * 1. session 级别覆盖（/model 指令设置）
-   * 2. 平台级别覆盖（platformModels 配置）
+   * 1. /model 指令的 session 级覆盖
+   * 2. session-manager resolveConfig (= 会话 > 父 sessionDefaults > 平台 profile)
    * 3. 全局 preferredModel
    * 4. 默认 LLM 提供者的默认模型
    */
   private resolveLLM(platform?: string, sessionId?: string): { llm: LLMService; modelOverride?: string } | undefined {
-    // 按优先级选取模型
-    const model =
-      (sessionId && this.sessionModelOverrides.get(sessionId)) ||
-      (platform && this.platformModels[platform]) ||
-      this.preferredModel;
+    let model: string | undefined;
+    let llmProviderOverride: string | undefined;
+
+    // 1. session-manager resolveConfig: 会话 > 父 sessionDefaults > 平台 profile
+    const sm = this.ctx.getService<SessionManagerService>('session-manager');
+    if (sm && sessionId) {
+      const resolved = sm.resolveConfig(sessionId, platform);
+      if (resolved.model) model = resolved.model;
+      if (resolved.llmProvider) llmProviderOverride = resolved.llmProvider;
+    }
+
+    // 2. /model set 覆盖（最高运行时优先级）
+    const sessionOverride = sessionId && this.sessionModelOverrides.get(sessionId);
+    if (sessionOverride) model = sessionOverride;
+
+    // 3. 全局 preferredModel
+    if (!model) {
+      model = this.preferredModel;
+    }
+
+    // 如果指定了 llmProvider（contextId），直接查找该提供者
+    if (llmProviderOverride) {
+      const allProviders = this.ctx.getAllServices<LLMService>('llm');
+      const found = allProviders.find(p => p.contextId === llmProviderOverride);
+      if (found) return { llm: found.instance, modelOverride: model };
+    }
 
     if (!model) {
       const llm = this.ctx.getService<LLMService>('llm');
@@ -414,15 +430,33 @@ class DefaultAgent implements AgentService {
       // 从 LLM 服务读取参数
       const temperature = llm.getTemperature();
       const maxTokens = llm.getMaxTokens();
-      const maxToolIterations = llm.getMaxToolIterations();
+      const maxToolIterations = this.maxToolIterations;
       const contextLength = llm.getContextLength();
       // 预留 token 预算 = 上下文长度 - 最大输出 token - 安全余量
       const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
       try {
-        const messages = await this.buildMessages(incoming);
-        // 根据平台筛选工具分组
-        const enabledGroups = this.toolGroups[incoming.platform] ?? this.toolGroups['default'];
+        // 统一解析 session 配置（一次解析，多处复用）
+        const sessionMgr = this.ctx.getService<SessionManagerService>('session-manager');
+        const resolved = (sessionMgr && incoming.sessionId)
+          ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
+          : undefined;
+
+        // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
+        const personaOpts: PersonaSessionOptions | undefined = resolved
+          ? {
+              persona: resolved.persona,
+              disableOutputFormat: resolved.disableOutputFormat,
+              clientSideJsonRendering: resolved.clientSideJsonRendering,
+            }
+          : undefined;
+
+        const messages = await this.buildMessages(incoming, personaOpts);
+        // 通过 resolved config 获取工具分组
+        let enabledGroups: string[] | undefined;
+        if (resolved?.enabledToolGroups && resolved.enabledToolGroups.length > 0) {
+          enabledGroups = resolved.enabledToolGroups;
+        }
         const tools = this.ctx.tools?.getDefinitions(
           enabledGroups ? { groups: enabledGroups } : undefined,
         ) ?? [];
@@ -449,9 +483,9 @@ class DefaultAgent implements AgentService {
           `temperature=${temperature}, maxTokens=${maxTokens}`,
         );
 
-        // 检查是否期望 JSON 输出（persona 有 outputFormat）
+        // 检查是否期望 JSON 输出（persona 有 outputFormat 且 session 未禁用）
         const persona = this.ctx.getService<PersonaService>('persona');
-        const expectJson = !!persona?.getOutputFormat?.();
+        const expectJson = !!persona?.getOutputFormat?.(personaOpts);
         const responseFormat = expectJson ? 'json_object' as const : undefined;
 
         // 当工具和 JSON 输出格式共存时，追加工具调用优先级指令
@@ -494,6 +528,18 @@ class DefaultAgent implements AgentService {
         // 收集工具调用摘要
         const toolCallSummaries: string[] = [];
 
+        // 在工具调用循环前，先保存用户消息（确保历史中消息顺序正确）
+        const senderLabel = incoming.nickname ?? incoming.userId;
+        const userContentToSave = senderLabel
+          ? `[${senderLabel}]: ${incoming.content}`
+          : incoming.content;
+        await this.saveToMemory(incoming.sessionId, {
+          role: 'user',
+          content: userContentToSave,
+          timestamp: Date.now(),
+        });
+        let userMessageSaved = true;
+
         // 工具调用循环
         let iterations = 0;
         while (response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
@@ -507,6 +553,15 @@ class DefaultAgent implements AgentService {
             content: response.content,
             toolCalls: response.toolCalls,
             reasoningContent: response.reasoningContent,
+          });
+
+          // 持久化 assistant 消息（含 toolCalls），确保历史记录完整
+          await this.saveToMemory(incoming.sessionId, {
+            role: 'assistant',
+            content: response.content,
+            toolCalls: response.toolCalls,
+            reasoningContent: response.reasoningContent,
+            timestamp: Date.now(),
           });
 
           // 执行每个工具调用
@@ -564,6 +619,14 @@ class DefaultAgent implements AgentService {
               content: result,
               toolCallId: toolCall.id,
             });
+
+            // 持久化 tool 结果消息
+            await this.saveToMemory(incoming.sessionId, {
+              role: 'tool',
+              content: result,
+              toolCallId: toolCall.id,
+              timestamp: Date.now(),
+            });
           }
 
           // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
@@ -615,16 +678,18 @@ class DefaultAgent implements AgentService {
           replyContent = '';
         }
 
-        // 保存用户消息到记忆（带发送者前缀，便于模型区分群聊中的不同成员）
-        const senderLabel = incoming.nickname ?? incoming.userId;
-        const userContentToSave = senderLabel
-          ? `[${senderLabel}]: ${incoming.content}`
-          : incoming.content;
-        await this.saveToMemory(incoming.sessionId, {
-          role: 'user',
-          content: userContentToSave,
-          timestamp: Date.now(),
-        });
+        // 保存用户消息到记忆（如果工具调用循环中未保存 — 无工具调用时）
+        if (!userMessageSaved) {
+          const senderLabel2 = incoming.nickname ?? incoming.userId;
+          const userContent2 = senderLabel2
+            ? `[${senderLabel2}]: ${incoming.content}`
+            : incoming.content;
+          await this.saveToMemory(incoming.sessionId, {
+            role: 'user',
+            content: userContent2,
+            timestamp: Date.now(),
+          });
+        }
 
         // 发出流结束标记
         await this.ctx.emit('message:stream', {
@@ -637,16 +702,10 @@ class DefaultAgent implements AgentService {
         if (replyContent.trim().length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
-          // 如果有工具调用，将摘要附加到保存的消息中，便于长期记忆回溯
-          let savedContent = replyContent;
-          if (toolCallSummaries.length > 0) {
-            const toolSummary = toolCallSummaries.join('\n');
-            savedContent = `${replyContent}\n\n[工具调用过程]\n${toolSummary}`;
-          }
-
+          // 保存最终 assistant 回复（不含工具调用摘要，工具调用已作为独立消息保存）
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
-            content: savedContent,
+            content: replyContent,
             timestamp: Date.now(),
           });
 
@@ -704,11 +763,11 @@ class DefaultAgent implements AgentService {
   /**
    * 构建发送给 LLM 的消息列表
    */
-  private async buildMessages(incoming: IncomingMessage): Promise<Message[]> {
+  private async buildMessages(incoming: IncomingMessage, personaOpts?: PersonaSessionOptions): Promise<Message[]> {
     const messages: Message[] = [];
 
     // 1. 系统提示
-    const systemPrompt = this.buildSystemPrompt();
+    const systemPrompt = this.buildSystemPrompt(personaOpts);
     messages.push({ role: 'system', content: systemPrompt });
 
     // 2. 历史消息
@@ -788,10 +847,10 @@ class DefaultAgent implements AgentService {
   /**
    * 构建系统提示词
    */
-  private buildSystemPrompt(): string {
+  private buildSystemPrompt(personaOpts?: PersonaSessionOptions): string {
     const persona = this.ctx.getService<PersonaService>('persona');
     if (persona) {
-      const personaPrompt = persona.getSystemPrompt();
+      const personaPrompt = persona.getSystemPrompt(personaOpts);
       // persona 已包含身份信息，仅追加行为准则
       return this.systemPrompt
         ? `${personaPrompt}\n\n${this.systemPrompt}`
@@ -1055,41 +1114,11 @@ export const configSchema: ConfigSchema = {
     default: 50,
     description: '从记忆中加载的最近对话历史条数',
   },
-  platformModels: {
-    type: 'array',
-    label: '平台模型覆盖',
-    description: '为不同平台指定不同的对话模型。未配置的平台使用上方的全局对话模型。',
-    items: {
-      platform: {
-        type: 'string',
-        label: '平台标识',
-        description: '平台名（如 onebot、webui、cli）',
-      },
-      model: {
-        type: 'select',
-        label: '模型',
-        dynamicOptions: 'llm',
-        allowCustom: true,
-      },
-    },
-  },
-  toolGroups: {
-    type: 'array',
-    label: '工具分组',
-    description: '按平台配置启用的工具分组。每条指定一个平台标识（如 onebot、web）或 default（默认），以及该平台启用的分组名列表。未配置的平台使用所有工具。',
-    items: {
-      platform: {
-        type: 'string',
-        label: '平台标识',
-        description: '平台名（如 onebot、webui）或 default 表示默认',
-      },
-      groups: {
-        type: 'multiselect',
-        label: '启用的工具组',
-        dynamicOptions: 'toolGroups',
-        allowCustom: true,
-      },
-    },
+  maxToolIterations: {
+    type: 'number',
+    label: '最大工具迭代',
+    default: 30,
+    description: '工具调用循环的最大迭代次数',
   },
 };
 
@@ -1098,45 +1127,8 @@ export const defaultConfig = {
   systemPrompt: '',
   memoryTokenBudget: 4096,
   historyLimit: 50,
-  platformModels: [],
-  toolGroups: [],
+  maxToolIterations: 30,
 };
-
-/** 将 SchemaArray 格式的 platformModels 转为 Record<string, string> */
-function parsePlatformModels(raw: unknown): Record<string, string> {
-  if (!raw) return {};
-  if (Array.isArray(raw)) {
-    const result: Record<string, string> = {};
-    for (const entry of raw) {
-      if (entry && typeof entry === 'object' && typeof entry.platform === 'string' && typeof entry.model === 'string' && entry.model) {
-        result[entry.platform] = entry.model;
-      }
-    }
-    return result;
-  }
-  if (typeof raw === 'object') return raw as Record<string, string>;
-  return {};
-}
-
-/** 将 SchemaArray 格式或旧 Record 格式的 toolGroups 统一转为 Record<string, string[]> */
-function parseToolGroups(raw: unknown): Record<string, string[]> {
-  if (!raw) return {};
-  // 新格式: Array<{ platform: string; groups: string[] }>
-  if (Array.isArray(raw)) {
-    const result: Record<string, string[]> = {};
-    for (const entry of raw) {
-      if (entry && typeof entry === 'object' && typeof entry.platform === 'string' && Array.isArray(entry.groups)) {
-        result[entry.platform] = entry.groups;
-      }
-    }
-    return result;
-  }
-  // 旧格式兼容: Record<string, string[]>
-  if (typeof raw === 'object') {
-    return raw as Record<string, string[]>;
-  }
-  return {};
-}
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agent = new DefaultAgent(ctx, config);
@@ -1149,12 +1141,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 无参数 或 /model info：显示当前模型和来源
     if (!target || target === 'info') {
       const sessionOverride = agent['sessionModelOverrides'].get(cmdCtx.sessionId);
-      const platformModel = agent['platformModels'][cmdCtx.platform];
       const globalModel = agent['preferredModel'];
-      const current = sessionOverride || platformModel || globalModel || '(默认)';
+      // 从 session-manager resolveConfig 获取平台/会话级配置
+      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      const resolvedModel = smSvc ? smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model : undefined;
+      const current = sessionOverride || resolvedModel || globalModel || '(默认)';
       const lines = [`**当前模型**: ${current}`];
       if (sessionOverride) lines.push(`  _(session 覆盖, /model reset 可清除)_`);
-      else if (platformModel) lines.push(`  _(平台 ${cmdCtx.platform} 配置)_`);
+      else if (resolvedModel) lines.push(`  _(会话/平台配置)_`);
       else if (globalModel) lines.push(`  _(全局配置)_`);
 
       // 仅 /model（无参数）时列出可用模型
@@ -1180,7 +1174,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // /model reset — 清除 session 覆盖
     if (target === 'reset') {
       agent['sessionModelOverrides'].delete(cmdCtx.sessionId);
-      const fallback = agent['platformModels'][cmdCtx.platform] || agent['preferredModel'] || '(默认)';
+      const fallback = agent['preferredModel'] || '(默认)';
       return `已清除会话模型覆盖，回退到: ${fallback}`;
     }
 

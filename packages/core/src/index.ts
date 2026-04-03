@@ -93,9 +93,16 @@ export type {
   // 人格服务
   OutputFormatField,
   OutputFormat,
+  PersonaSessionOptions,
   PersonaService,
   // 权限服务
   AuthorityService,
   DangerousConfirmRequest,
   DangerousConfirmHandler,
+  // 会话管理
+  SessionInfo,
+  SessionConfig,
+  SessionTreeNode,
+  SessionManagerService,
+  PlatformProfile,
 } from './types/index.js';

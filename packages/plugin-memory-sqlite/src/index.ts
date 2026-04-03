@@ -63,6 +63,14 @@ class SQLiteMemoryService implements MemoryService {
       );
       CREATE INDEX IF NOT EXISTS idx_turns_session
         ON conversation_turns(sessionId, timestamp);
+
+      CREATE TABLE IF NOT EXISTS metadata (
+        namespace TEXT NOT NULL,
+        key TEXT NOT NULL,
+        data TEXT NOT NULL,
+        updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (namespace, key)
+      );
     `);
   }
 
@@ -168,6 +176,34 @@ class SQLiteMemoryService implements MemoryService {
   async clearAll(): Promise<void> {
     this.db.exec('DELETE FROM messages');
     this.db.exec('DELETE FROM conversation_turns');
+    this.db.exec('DELETE FROM metadata');
+  }
+
+  // ----- 结构化元数据存储 -----
+
+  async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+    const stmt = this.db.prepare(`
+      INSERT INTO metadata (namespace, key, data, updatedAt) VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now')
+    `);
+    stmt.run(namespace, key, JSON.stringify(data));
+  }
+
+  async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
+    const stmt = this.db.prepare('SELECT data FROM metadata WHERE namespace = ? AND key = ?');
+    const row = stmt.get(namespace, key) as { data: string } | undefined;
+    return row ? JSON.parse(row.data) : undefined;
+  }
+
+  async listMetadata(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>> {
+    const stmt = this.db.prepare('SELECT key, data FROM metadata WHERE namespace = ?');
+    const rows = stmt.all(namespace) as Array<{ key: string; data: string }>;
+    return rows.map(row => ({ key: row.key, data: JSON.parse(row.data) }));
+  }
+
+  async deleteMetadata(namespace: string, key: string): Promise<void> {
+    const stmt = this.db.prepare('DELETE FROM metadata WHERE namespace = ? AND key = ?');
+    stmt.run(namespace, key);
   }
 
   close(): void {

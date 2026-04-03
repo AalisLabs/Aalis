@@ -17,11 +17,11 @@ export const inject = {
 };
 
 export const webuiPages: WebuiPage[] = [
-  { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10 },
-  { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20 },
-  { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30 },
-  { key: 'platforms', label: '平台接入', icon: 'platforms', order: 40 },
-  { key: 'logs', label: '日志', icon: 'logs', order: 60 },
+  { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10, renderer: 'dashboard' },
+  { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20, renderer: 'marketplace' },
+  { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30, renderer: 'plugin-config' },
+  { key: 'platforms', label: '平台接入', icon: 'platforms', order: 40, renderer: 'platforms' },
+  { key: 'logs', label: '日志', icon: 'logs', order: 60, renderer: 'logs' },
 ];
 
 export const configSchema: ConfigSchema = {
@@ -44,7 +44,7 @@ interface WebUIConfig {
 // ===== WebSocket 消息协议 =====
 
 interface WSIncoming {
-  type: 'message' | 'subscribe_logs' | 'subscribe_session' | 'abort';
+  type: 'message' | 'subscribe_logs' | 'subscribe_session' | 'unsubscribe_session' | 'abort';
   content?: string;
   sessionId?: string;
   /** base64 data URL 或 HTTP URL 列表 */
@@ -56,7 +56,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'restarting' | 'reload';
+  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -69,6 +69,7 @@ interface WSOutgoing {
   toolArgs?: Record<string, unknown>;
   toolResult?: string;
   toolPhase?: 'start' | 'end';
+  todoItems?: unknown[];
 }
 
 // ===== 插件入口 =====
@@ -180,11 +181,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const app = getApp();
     if (!app) { res.json([]); return; }
 
-    const pages: (WebuiPage & { plugin: string })[] = [];
+    const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
     for (const plugin of app.plugins.getStatus()) {
       if (plugin.state === 'active' && plugin.webuiPages) {
         for (const page of plugin.webuiPages) {
-          pages.push({ ...page, plugin: plugin.name });
+          pages.push({ ...page, plugin: plugin.name, pluginDisplayName: plugin.displayName });
         }
       }
     }
@@ -226,6 +227,33 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
+    }
+  });
+
+  // 插件页面：返回原始 HTML 内容（供 iframe 组件使用）
+  expressApp.get('/api/plugin-page/:plugin/:page', async (req, res) => {
+    const { plugin: pluginName, page: pageName } = req.params;
+
+    const app = getApp();
+    if (!app) { res.status(500).send('App 不可用'); return; }
+
+    const entry = app.plugins.getPlugin(pluginName);
+    if (!entry || entry.state !== 'active') { res.status(404).send('插件不存在或未激活'); return; }
+
+    const handler = entry.module.webuiHandlers?.[pageName];
+    if (typeof handler !== 'function') { res.status(404).send('页面处理器不存在'); return; }
+    if (!entry.context) { res.status(500).send('插件上下文不可用'); return; }
+
+    try {
+      const result = await handler(entry.context, {});
+      if (result && typeof result === 'object' && 'html' in result && typeof (result as Record<string, unknown>).html === 'string') {
+        res.type('html').send((result as { html: string }).html);
+      } else {
+        res.status(400).send('处理器未返回 { html: string }');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).send(msg);
     }
   });
 
@@ -710,7 +738,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return ctx.commands!.execute(parsed.name, {
       sessionId,
       platform: 'webui',
-      userId: 'console',
+      userId: 'webui-user',
       args: parsed.args,
       raw: parsed.raw,
     });
@@ -790,6 +818,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           return;
         }
 
+        if (msg.type === 'unsubscribe_session') {
+          const sid = msg.sessionId || 'webui-default';
+          sessions.get(sid)?.delete(ws);
+          return;
+        }
+
         if (msg.type === 'abort') {
           const sessionId = msg.sessionId || 'webui-default';
           const agent = ctx.getService<AgentService>('agent');
@@ -834,7 +868,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           content: trimmed,
           sessionId,
           platform: 'webui',
-          userId: 'console',
+          userId: 'webui-user',
+          nickname: '',
           ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
           ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
           ...(msg.attachmentOrder && msg.attachmentOrder.length > 0 ? { attachmentOrder: msg.attachmentOrder } : {}),
@@ -880,6 +915,46 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('restarting', () => {
     const payload: WSOutgoing = { type: 'restarting' };
     const json = JSON.stringify(payload);
+    for (const ws of allClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
+  // 会话列表变更：广播给所有客户端，让前端即时刷新
+  const broadcastSessionsChanged = () => {
+    const payload: WSOutgoing = { type: 'sessions_changed' };
+    const json = JSON.stringify(payload);
+    for (const ws of allClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  };
+  // Todo 列表变更：推送给订阅了该会话的客户端
+  ctx.on('todo:updated', (...args: unknown[]) => {
+    const sessionId = args[0] as string;
+    const items = args[1] as unknown[];
+    const sockets = sessions.get(sessionId);
+    if (!sockets) return;
+    const payload: WSOutgoing = { type: 'todo_updated', sessionId, todoItems: items };
+    const json = JSON.stringify(payload);
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
+  ctx.on('session:created', broadcastSessionsChanged);
+  ctx.on('session:updated', broadcastSessionsChanged);
+  ctx.on('session:deleted', broadcastSessionsChanged);
+  ctx.on('session:completed', broadcastSessionsChanged);
+
+  // 会话切换通知：广播给所有客户端
+  ctx.on('session:switched', (sessionId: string) => {
+    const json = JSON.stringify({ type: 'session_switched', sessionId });
     for (const ws of allClients) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(json);

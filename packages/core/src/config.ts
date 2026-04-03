@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, watch as fsWatch } from 'node:fs';
+import type { FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { UserIdentity, ConfigSchema } from './types/index.js';
@@ -75,6 +76,14 @@ export class ConfigManager {
   private configPath: string;
   /** 原始 YAML 文本（保存时基于此还原环境变量占位符） */
   private rawYaml: string | null = null;
+  /** 文件监听器 */
+  private watcher: FSWatcher | null = null;
+  /** save() 期间忽略 watch 事件 */
+  private selfWriting = false;
+  /** debounce 定时器 */
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 外部变更回调 */
+  private onChangeCallback: (() => void) | null = null;
 
   constructor(configPath?: string) {
     this.configPath = configPath
@@ -190,7 +199,10 @@ export class ConfigManager {
     // 构建要保存的配置对象，保护环境变量
     const toSave = this.buildSaveObject();
     const yaml = stringifyYaml(toSave, { lineWidth: 0 });
+    this.selfWriting = true;
     writeFileSync(this.configPath, yaml, 'utf-8');
+    // 延迟重置标记，确保 fs.watch 事件被跳过
+    setTimeout(() => { this.selfWriting = false; }, 500);
   }
 
   /**
@@ -199,6 +211,39 @@ export class ConfigManager {
   reload(): AalisConfig {
     this.loadFromDisk();
     return this.config;
+  }
+
+  /**
+   * 监听配置文件变更，外部修改时自动重新加载并触发回调
+   */
+  watch(onChange: () => void): void {
+    this.onChangeCallback = onChange;
+    if (this.watcher) return;
+    if (!existsSync(this.configPath)) return;
+    try {
+      this.watcher = fsWatch(this.configPath, () => {
+        if (this.selfWriting) return;
+        // debounce: 编辑器可能触发多次 change 事件
+        if (this.debounceTimer) clearTimeout(this.debounceTimer);
+        this.debounceTimer = setTimeout(() => {
+          this.debounceTimer = null;
+          try {
+            this.loadFromDisk();
+            this.onChangeCallback?.();
+          } catch { /* 文件可能被部分写入，忽略 */ }
+        }, 300);
+      });
+    } catch { /* 平台不支持 watch */ }
+  }
+
+  /**
+   * 停止监听配置文件
+   */
+  unwatch(): void {
+    if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null; }
+    this.watcher?.close();
+    this.watcher = null;
+    this.onChangeCallback = null;
   }
 
   /**

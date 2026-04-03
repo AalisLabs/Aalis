@@ -235,4 +235,5 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     await next();
   }, 100); // 高优先级，先于其他中间件执行
+
 }

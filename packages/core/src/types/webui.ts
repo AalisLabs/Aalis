@@ -100,6 +100,22 @@ export interface WebuiTabsComponent {
   items: Array<{ key: string; label: string; content: WebuiComponent[] }>;
 }
 
+/** 内嵌页面（iframe） */
+export interface WebuiIframeComponent {
+  type: 'iframe';
+  /** 标题 */
+  label?: string;
+  /**
+   * 内容来源。支持三种格式：
+   * - handler 方法名：调用插件 webuiHandler，返回 { html: string }
+   * - 以 '/' 开头的路径：视为服务端相对路径（如 /api/plugin-page/xxx）
+   * - 以 'http' 开头的完整 URL
+   */
+  source: string;
+  /** iframe 高度，如 '600px' 或 '100%'（默认 '100%'） */
+  height?: string;
+}
+
 /** 所有声明式页面组件的联合类型 */
 export type WebuiComponent =
   | WebuiStatComponent
@@ -108,7 +124,8 @@ export type WebuiComponent =
   | WebuiActionsComponent
   | WebuiInfoComponent
   | WebuiMarkdownComponent
-  | WebuiTabsComponent;
+  | WebuiTabsComponent
+  | WebuiIframeComponent;
 
 /** 插件可声明的 WebUI 页面 */
 export interface WebuiPage {
@@ -116,10 +133,23 @@ export interface WebuiPage {
   key: string;
   /** 页面显示名称 */
   label: string;
-  /** 图标标识（前端映射到对应图标组件） */
+  /**
+   * 图标标识。支持两种格式：
+   * - 命名标识（如 'dashboard'）：前端映射到内置图标组件
+   * - 内联 SVG（以 '<svg' 开头）：前端直接渲染为图标
+   */
   icon?: string;
   /** 排序权重（越小越靠前，默认 99） */
   order?: number;
+  /**
+   * 自定义渲染器标识。
+   * 当页面需要客户端的专用组件（而非声明式 content）时，插件声明此字段。
+   * 客户端根据此标识在自身的渲染器注册表中查找对应组件：
+   * - 找到 → 使用自定义组件渲染
+   * - 未找到 → 显示「此客户端不支持该页面」的提示
+   * 这样不同 webui 客户端可独立决定支持哪些自定义页面。
+   */
+  renderer?: string;
   /** 声明式页面内容（不提供则使用客户端内置页面） */
   content?: WebuiComponent[];
 }

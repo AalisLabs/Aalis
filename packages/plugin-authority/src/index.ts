@@ -134,7 +134,7 @@ export const inject = {
 };
 
 export const webuiPages: WebuiPage[] = [
-  { key: 'authority', label: '权限管理', icon: 'authority', order: 50 },
+  { key: 'authority', label: '权限管理', icon: 'authority', order: 50, renderer: 'authority' },
 ];
 
 // ===== 插件入口 =====

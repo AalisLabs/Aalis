@@ -16,11 +16,26 @@ export interface OutputFormat {
   replyField: string;
 }
 
+/**
+ * 会话级选项，由调用方（如 agent-default）从 SessionConfig 构造后传入。
+ * PersonaService 本身不关心 session-manager，只根据传入的选项调整行为。
+ */
+export interface PersonaSessionOptions {
+  /** 覆盖角色卡名称 */
+  persona?: string;
+  /** 禁用结构化输出格式 */
+  disableOutputFormat?: boolean;
+  /** 客户端渲染 JSON 覆盖 */
+  clientSideJsonRendering?: boolean;
+}
+
 export interface PersonaService {
-  getSystemPrompt(): string;
+  getSystemPrompt(options?: PersonaSessionOptions): string;
   getPersonaName(): string;
   /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */
-  getOutputFormat?(): OutputFormat | undefined;
+  getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;
+  /** 该角色卡是否配置为客户端渲染 JSON */
+  isClientSideJsonRendering?(options?: PersonaSessionOptions): boolean;
   /** 列出可用的人设卡（用于前端下拉框） */
   listModels?(): Promise<string[]>;
   /** 获取角色卡定义的昵称列表（用于触发检测） */

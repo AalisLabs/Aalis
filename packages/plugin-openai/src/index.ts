@@ -43,7 +43,6 @@ export const configSchema: ConfigSchema = {
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
-  maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
 };
 
 export const defaultConfig = {
@@ -52,7 +51,6 @@ export const defaultConfig = {
   temperature: 0.7,
   maxTokens: 4096,
   contextLength: 128000,
-  maxToolIterations: 10,
 };
 
 // ===== 配置 =====
@@ -65,7 +63,6 @@ interface OpenAIConfig {
   temperature: number;
   maxTokens: number;
   contextLength: number;
-  maxToolIterations: number;
 }
 
 // ===== OpenAI-compatible 消息格式 =====
@@ -129,7 +126,6 @@ class OpenAILLMService implements LLMService {
   private temperature: number;
   private maxTokens: number;
   private contextLength: number;
-  private maxToolIterations: number;
   private logger;
 
   constructor(config: OpenAIConfig, logger: Context['logger']) {
@@ -140,7 +136,6 @@ class OpenAILLMService implements LLMService {
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
-    this.maxToolIterations = config.maxToolIterations;
     this.logger = logger;
   }
 
@@ -150,10 +145,6 @@ class OpenAILLMService implements LLMService {
 
   getMaxTokens(): number {
     return this.maxTokens;
-  }
-
-  getMaxToolIterations(): number {
-    return this.maxToolIterations;
   }
 
   getContextLength(): number {
@@ -475,7 +466,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
     contextLength: (config.contextLength as number) ?? 128000,
-    maxToolIterations: (config.maxToolIterations as number) ?? 10,
   };
 
   if (!openaiConfig.apiKey) {

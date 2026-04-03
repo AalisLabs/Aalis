@@ -1,9 +1,9 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight } from 'lucide-react';
+import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { ChatMessage, SystemStatus } from '../types';
+import type { ChatMessage, SystemStatus, TodoItem } from '../types';
 import type { MutableRefObject } from 'react';
 
 /** 将 File 转为 base64 data URL */
@@ -268,6 +268,54 @@ function computeAccept(caps?: { image: boolean; file: boolean }): string {
   return parts.join(',');
 }
 
+/** 任务计划状态图标 */
+function TodoStatusIcon({ status }: { status: TodoItem['status'] }) {
+  switch (status) {
+    case 'completed': return <CheckCircle2 size={14} className="todo-icon todo-icon-done" />;
+    case 'in-progress': return <Loader size={14} className="todo-icon todo-icon-active" />;
+    default: return <Circle size={14} className="todo-icon todo-icon-pending" />;
+  }
+}
+
+/** 任务计划栏：可折叠的 todo 列表 */
+function TodoBar({ items, onClear, loading }: { items: TodoItem[]; onClear: () => void; loading: boolean }) {
+  const [open, setOpen] = useState(true);
+  const completed = items.filter(i => i.status === 'completed').length;
+  const total = items.length;
+  const allDone = completed === total;
+  // 有未完成项且正在生成中时，禁止删除
+  const clearDisabled = !allDone && loading;
+
+  return (
+    <div className={`todo-bar ${allDone ? 'todo-bar-done' : ''}`}>
+      <div className="todo-bar-header" onClick={() => setOpen(!open)}>
+        <ListTodo size={15} className="todo-bar-icon" />
+        <span className="todo-bar-title">任务计划</span>
+        <span className="todo-bar-count">{completed}/{total}</span>
+        <div className="todo-bar-progress">
+          <div className="todo-bar-progress-fill" style={{ width: `${total > 0 ? (completed / total) * 100 : 0}%` }} />
+        </div>
+        <button className="todo-bar-toggle" title={open ? '收起' : '展开'}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        <button className="todo-bar-clear" onClick={e => { e.stopPropagation(); if (!clearDisabled) onClear(); }} disabled={clearDisabled} title={clearDisabled ? '任务执行中，无法清除' : '清除计划'}>
+          <X size={14} />
+        </button>
+      </div>
+      {open && (
+        <div className="todo-bar-list">
+          {items.map(item => (
+            <div key={item.id} className={`todo-item todo-item-${item.status}`}>
+              <TodoStatusIcon status={item.status} />
+              <span className="todo-item-title">{item.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatPanel({
   messages,
   loading,
@@ -283,6 +331,10 @@ export function ChatPanel({
   pendingFiles,
   setPendingFiles,
   attachmentOrderRef,
+  sessionTitle,
+  onNewSession,
+  todoItems,
+  onClearTodos,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -298,6 +350,14 @@ export function ChatPanel({
   pendingFiles: Array<{ name: string; data: string; mimeType?: string }>;
   setPendingFiles: (v: Array<{ name: string; data: string; mimeType?: string }> | ((prev: Array<{ name: string; data: string; mimeType?: string }>) => Array<{ name: string; data: string; mimeType?: string }>)) => void;
   attachmentOrderRef: MutableRefObject<Array<'image' | 'file'>>;
+  /** 当前会话的显示标题 */
+  sessionTitle?: string;
+  /** 新建会话的回调 */
+  onNewSession?: () => void;
+  /** 任务计划列表 */
+  todoItems?: TodoItem[];
+  /** 清除任务计划 */
+  onClearTodos?: () => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -416,7 +476,12 @@ export function ChatPanel({
   return (
     <div className="chat-panel" style={{ width }}>
       <div className="chat-panel-header">
-        <span className="chat-panel-title"><MessageSquare size={16} /> {status?.name ?? 'Aalis'}</span>
+        <span className="chat-panel-title">
+          <MessageSquare size={16} /> {sessionTitle || status?.name || 'Aalis'}
+        </span>
+        {onNewSession && (
+          <button className="chat-panel-new-btn" onClick={onNewSession} title="新对话">+</button>
+        )}
       </div>
       <div className="messages">
         {messages.length === 0 && (
@@ -620,6 +685,11 @@ export function ChatPanel({
         </div>
       )}
 
+      {/* 任务计划栏 */}
+      {todoItems && todoItems.length > 0 && onClearTodos && (
+        <TodoBar items={todoItems} onClear={onClearTodos} loading={loading} />
+      )}
+
       <div className="input-area">
         <input
           ref={fileInputRef}
@@ -649,13 +719,27 @@ export function ChatPanel({
           disabled={!connected}
           rows={1}
         />
-        <button
-          className="send-btn"
-          onClick={onSend}
-          disabled={!connected || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
-        >
-          ↑
-        </button>
+        {(() => {
+          const hasContent = !!(input.trim() || pendingImages.length > 0 || pendingFiles.length > 0);
+          const showStop = loading && !hasContent;
+          return showStop ? (
+            <button
+              className="send-btn stop-mode"
+              onClick={onAbort}
+              title="停止生成"
+            >
+              <Square size={16} />
+            </button>
+          ) : (
+            <button
+              className="send-btn"
+              onClick={onSend}
+              disabled={!connected || !hasContent}
+            >
+              ↑
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

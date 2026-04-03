@@ -144,19 +144,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-chat-flow:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-cli:
     dependencies:
       '@aalis/core':
@@ -337,6 +324,19 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-okx-trading:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-ollama:
     dependencies:
       '@aalis/core':
@@ -418,6 +418,32 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-session-manager:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-session-tools:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-skills:
     dependencies:
       '@aalis/core':
@@ -426,6 +452,19 @@ importers:
       yaml:
         specifier: ^2.7.0
         version: 2.8.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-todo-list:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

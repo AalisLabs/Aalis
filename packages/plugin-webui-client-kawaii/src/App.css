@@ -899,12 +899,14 @@ body {
   cursor: not-allowed;
 }
 
-.send-btn.stop-btn {
+.send-btn.stop-btn,
+.send-btn.stop-mode {
   background: var(--danger, #e53935);
   font-size: 0.85rem;
 }
 
-.send-btn.stop-btn:hover:not(:disabled) {
+.send-btn.stop-btn:hover:not(:disabled),
+.send-btn.stop-mode:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger, #e53935) 85%, black);
 }
 

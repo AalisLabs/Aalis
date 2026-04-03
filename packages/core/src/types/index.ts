@@ -83,7 +83,10 @@ export type { EmbeddingService } from './embedding.js';
 export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
 
 // 人格服务
-export type { OutputFormatField, OutputFormat, PersonaService } from './persona.js';
+export type { OutputFormatField, OutputFormat, PersonaSessionOptions, PersonaService } from './persona.js';
 
 // 权限服务
 export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
+
+// 会话管理
+export type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from './session.js';
