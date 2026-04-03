@@ -237,8 +237,8 @@ class PersonaServiceImpl implements PersonaService {
       ? undefined
       : this.getCardOutputFormat(effectiveCard);
     if (effectiveFormat) {
-      prompt += '\n\n# 输出格式\n';
-      prompt += '你必须始终以如下 JSON 格式回复，不要输出 JSON 之外的任何内容：\n';
+      prompt += '\n\n# 输出格式（强制）\n';
+      prompt += '你的每一次回复都必须严格使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
       prompt += '{\n';
       const entries = Object.entries(effectiveFormat.fields);
       entries.forEach(([key, field], i) => {
@@ -246,7 +246,8 @@ class PersonaServiceImpl implements PersonaService {
         prompt += `  "${key}": "..."${comma}  // ${field.description}${field.reply ? '（发送给用户的回复）' : ''}\n`;
       });
       prompt += '}\n';
-      prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。';
+      prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。\n';
+      prompt += '任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。';
     }
 
     return prompt;
