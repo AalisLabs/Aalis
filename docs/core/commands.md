@@ -78,3 +78,17 @@ commands.setOverride('shutdown', { authority: 3, safety: 'safe' });
 commands.removeOverride('shutdown');
 commands.getOverrides();
 ```
+
+## 内置指令参考
+
+| 指令 | 参数 | 说明 | 权限 | 安全等级 |
+|---|---|---|---|---|
+| `/help` | — | 显示帮助信息 | 0 | safe |
+| `/status` | — | 系统状态 | 0 | safe |
+| `/clear` | `[context\|summary\|vector\|all\|nuke]` | 清空消息/记忆 | 0 | safe |
+| `/model` | `[model_name]` | 查看或切换会话模型 | 0 | safe |
+| `/tools` | — | 列出所有 AI 工具 | 0 | safe |
+| `/shutdown` | — | 关闭应用 | 5 | dangerous |
+| `/restart` | — | 重启应用 | 5 | dangerous |
+| `/grant` | `<platform:userId> <level>` | 设置用户权限 | 2 | safe |
+| `/authority` | `[platform:userId]` | 查看权限等级 | 0 | safe |
