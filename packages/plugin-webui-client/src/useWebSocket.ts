@@ -4,7 +4,7 @@ import type { LogEntry } from './types';
 
 export function useWebSocket(
   onMessage: (content: string, reasoningContent?: string) => void,
-  onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean) => void,
+  onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void,
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
   onStateChanged?: () => void,
@@ -48,7 +48,7 @@ export function useWebSocket(
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'stream') {
-            onStream(data.contentDelta, data.reasoningDelta, data.done);
+            onStream(data.contentDelta, data.reasoningDelta, data.done, data.toolLimitReached);
           } else if (data.type === 'message' && data.content) {
             onMessage(data.content, data.reasoningContent);
           } else if (data.type === 'tool_call' && data.toolName) {
