@@ -398,13 +398,13 @@ export function App() {
       attachmentOrder: attachmentOrder ? [...attachmentOrder] : undefined,
       timestamp: Date.now(),
     }]);
-    send(trimmed, images, files, attachmentOrder);
     setInput('');
     setPendingImages([]);
     setPendingFiles([]);
     attachmentOrderRef.current = [];
     setToolLimitReached(false);
     setLoading(true);
+    send(trimmed, images, files, attachmentOrder);
   };
 
   // 内置页面（webui-server 核心页面）的图标映射

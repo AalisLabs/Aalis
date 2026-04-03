@@ -161,6 +161,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const ids = (args.subtask_ids as string[]) || [];
+      if (ids.length === 0) {
+        return JSON.stringify({
+          error: '缺少 subtask_ids 参数。正确用法: { "subtask_ids": ["<子任务ID1>", "<子任务ID2>"] }',
+        });
+      }
       const results = ids.map(id => {
         const session = sm.getSession(id);
         if (!session) return { id, error: '会话不存在' };
@@ -292,7 +297,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const ids = (args.subtask_ids as string[]) || [];
-      if (ids.length === 0) return JSON.stringify({ error: '缺少子任务 ID' });
+      if (ids.length === 0) {
+        return JSON.stringify({ error: '缺少 subtask_ids 参数。正确用法: { "subtask_ids": ["<子任务ID1>", "<子任务ID2>"] }' });
+      }
 
       const timeoutSec = Number(args.timeout_seconds) || (cfg.maxWaitMs / 1000);
       const timeoutMs = Math.min(timeoutSec * 1000, cfg.maxWaitMs);

@@ -312,12 +312,12 @@ export function App() {
       attachmentOrder: attachmentOrder ? [...attachmentOrder] : undefined,
       timestamp: Date.now(),
     }]);
-    send(trimmed, images, files, attachmentOrder);
     setInput('');
     setPendingImages([]);
     setPendingFiles([]);
     attachmentOrderRef.current = [];
     setLoading(true);
+    send(trimmed, images, files, attachmentOrder);
   };
 
   // 内置页面（有专用 React 组件）及其图标映射
