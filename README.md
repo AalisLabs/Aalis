@@ -6,19 +6,25 @@
 
 ## 特性
 
-- **模块化插件系统** — 所有功能均为可热插拔的插件，核心框架零外部依赖
+- **模块化插件系统** — 所有功能均为可热插拔的插件（40+），核心框架零外部依赖
 - **服务 IoC + 能力声明** — 插件声明所需能力，框架自动匹配最佳实现
-- **多 LLM 支持** — DeepSeek / OpenAI 及兼容接口，支持深度思考与工具调用
+- **多 LLM 支持** — DeepSeek / OpenAI / Ollama 及兼容接口，支持深度思考与工具调用
 - **语义记忆** — 向量化长期记忆，基于语义相似度 + 时间衰减检索历史上下文
-- **多后端存储** — SQLite / MongoDB 消息历史，LanceDB / 平面文件向量存储
-- **上下文管理** — 自动 token 计数、消息截断、长期记忆预算保护
-- **机器交互工具** — 内置 Shell / 文件 / 系统 / HTTP 工具，AI 可操控本地环境
-- **多平台接入** — CLI 终端、Web 管理界面、OneBot v11/v12 协议（QQ 等）
+- **对话摘要** — LLM 驱动的消息摘要压缩，自动在消息积累后触发
+- **多后端存储** — SQLite / MongoDB / 内存 消息历史，LanceDB / 平面文件向量存储
+- **智能上下文管理** — 自动 token 计数、五阶段消息裁剪、用户消息保护、压缩后延续提示
+- **子任务并行** — 会话树形结构，支持 `create_subtask` / `wait_subtasks` 并行任务协调
+- **定时调度** — AI 可自主创建 cron 定时任务，绕过速率控制主动执行
+- **丰富工具集** — Shell / 文件 / HTTP / 浏览器自动化 / 代码执行 / 数学计算 / Office 文档操作
+- **多平台接入** — CLI 终端、Web 管理界面（含 Kawaii 主题变体）、OneBot v11/v12 协议
 - **联网搜索** — Serper API 集成，AI 可主动搜索互联网
 - **工具搜索层** — 工具数量多时自动启用搜索机制，减少 LLM token 消耗
-- **Web 管理界面** — 实时对话、流式输出、插件配置、服务状态、平台监控
+- **Web 管理界面** — 实时对话、流式输出、插件配置、服务状态、平台监控、文件管理、待办事项
 - **角色人格** — YAML 角色卡定义 AI 的性格、行为与结构化输出格式
-- **权限系统** — 多级权限控制与高危操作交互式确认
+- **技能系统** — AI 可自主学习和管理技能库，支持模板参数化
+- **权限系统** — 多级权限控制、时限危险操作白名单、平台级确认处理
+- **图像理解** — 多模态视觉识别，自动模型选择
+- **Office 文档** — Word / Excel / PPT / PDF 创建与编辑，支持子任务协同操作
 
 ## 设计理念
 
@@ -65,25 +71,52 @@ aalis/
 │   ├── core/                      # 核心模块文档
 │   └── plugins/                   # 插件文档
 ├── packages/
-│   ├── core/                      # 核心框架
-│   ├── plugin-agent-default/      # 默认对话 Agent
-│   ├── plugin-deepseek/           # DeepSeek LLM
-│   ├── plugin-openai/             # OpenAI-compatible LLM
-│   ├── plugin-persona/            # 角色人格管理
-│   ├── plugin-memory-sqlite/      # SQLite 消息历史
-│   ├── plugin-memory-mongodb/     # MongoDB 消息历史
-│   ├── plugin-memory-vector/      # 向量语义记忆
-│   ├── plugin-embedding-ollama/   # Ollama Embedding
-│   ├── plugin-embedding-openai/   # OpenAI Embedding
-│   ├── plugin-vectorstore-flat/   # 平面 JSON 向量存储
-│   ├── plugin-vectorstore-lancedb/# LanceDB 向量存储
-│   ├── plugin-tools-system/       # 系统工具集（Shell / 文件 / 系统 / HTTP）
-│   ├── plugin-tool-search/        # 工具搜索层
-│   ├── plugin-websearch-serper/   # Serper 联网搜索
-│   ├── plugin-adapter-onebot/     # OneBot v11/v12 协议适配器
-│   ├── plugin-cli/                # 终端对话界面
-│   ├── plugin-webui-server/       # Web 管理后端（Express + WebSocket）
-│   └── plugin-webui-client/       # Web 管理前端（React SPA）
+│   ├── core/                        # 核心框架
+│   │
+│   ├── plugin-agent-default/        # 默认对话编排 Agent
+│   ├── plugin-agent-tools/          # Agent 工具注册与权限管理
+│   ├── plugin-session-manager/      # 会话管理与平台配置继承
+│   ├── plugin-session-tools/        # 子任务创建与并行协调
+│   ├── plugin-scheduler/            # Cron 定时任务调度
+│   ├── plugin-todo-list/            # 待办事项管理
+│   ├── plugin-skills/               # AI 技能库系统
+│   │
+│   ├── plugin-deepseek/             # DeepSeek LLM
+│   ├── plugin-openai/               # OpenAI-compatible LLM
+│   ├── plugin-ollama/               # Ollama 本地模型 LLM
+│   ├── plugin-persona/              # 角色人格管理
+│   │
+│   ├── plugin-memory-sqlite/        # SQLite 消息历史
+│   ├── plugin-memory-mongodb/       # MongoDB 消息历史
+│   ├── plugin-memory-inmemory/      # 内存消息存储（fallback）
+│   ├── plugin-memory-summary/       # LLM 对话摘要压缩
+│   ├── plugin-memory-vector/        # 向量语义长期记忆
+│   ├── plugin-embedding-ollama/     # Ollama Embedding
+│   ├── plugin-embedding-openai/     # OpenAI Embedding
+│   ├── plugin-vectorstore-flat/     # 平面 JSON 向量存储
+│   ├── plugin-vectorstore-lancedb/  # LanceDB 向量存储
+│   │
+│   ├── plugin-tools-system/         # 系统工具集（Shell / 文件 / 系统 / HTTP）
+│   ├── plugin-tool-search/          # 工具搜索层
+│   ├── plugin-tool-browser/         # Puppeteer 浏览器自动化
+│   ├── plugin-tool-code-runner/     # Python / JS 代码执行
+│   ├── plugin-tool-math/            # 数学计算工具集
+│   ├── plugin-office/               # Office 文档操作（Word/Excel/PPT/PDF）
+│   ├── plugin-file-reader/          # 多格式文件上传读取
+│   ├── plugin-image-recognition/    # 图像视觉识别
+│   ├── plugin-websearch-serper/     # Serper 联网搜索
+│   ├── plugin-okx-trading/          # OKX 交易所接口
+│   │
+│   ├── plugin-adapter-onebot/       # OneBot v11/v12 协议适配器
+│   ├── plugin-onebot-tools/         # OneBot 群管工具（禁言/踢人/查询）
+│   ├── plugin-cli/                  # 终端对话界面
+│   ├── plugin-webui-server/         # Web 管理后端（Express + WebSocket）
+│   ├── plugin-webui-client/         # Web 管理前端（React SPA）
+│   ├── plugin-webui-client-kawaii/  # Web 前端 Kawaii 主题变体
+│   │
+│   ├── plugin-platform/             # 平台管理聚合
+│   ├── plugin-authority/            # 权限管理系统
+│   └── plugin-commands/             # 指令系统与工具桥接
 └── src/
     └── index.ts                   # 主入口
 ```
@@ -92,16 +125,20 @@ aalis/
 
 | 服务名 | 描述 | 实现插件 |
 |---|---|---|
-| `llm` | AI 模型调用（对话、工具调用、流式输出） | plugin-deepseek, plugin-openai |
+| `llm` | AI 模型调用（对话、工具调用、流式输出） | plugin-deepseek, plugin-openai, plugin-ollama |
 | `agent` | 对话编排（消息构建、工具循环、上下文管理） | plugin-agent-default |
-| `memory` | 消息历史存储与检索 | plugin-memory-sqlite, plugin-memory-mongodb |
+| `memory` | 消息历史存储与检索 | plugin-memory-sqlite, plugin-memory-mongodb, plugin-memory-inmemory |
 | `embedding` | 文本向量化 | plugin-embedding-ollama, plugin-embedding-openai |
 | `vectorstore` | 向量存储与相似度检索 | plugin-vectorstore-lancedb, plugin-vectorstore-flat |
 | `persona` | 角色人格管理 | plugin-persona |
-| `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui |
+| `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui-server |
 | `websearch` | 联网搜索 | plugin-websearch-serper |
-| `tools` | AI 工具注册表 | core (内置), plugin-tools-system |
+| `tools` | AI 工具注册表 | plugin-agent-tools, plugin-tools-system |
 | `semantic-memory` | 语义长期记忆 | plugin-memory-vector |
+| `session-manager` | 会话生命周期、平台配置、会话树 | plugin-session-manager |
+| `scheduler` | 定时任务调度 | plugin-scheduler |
+| `authority` | 权限等级与高危操作管理 | plugin-authority |
+| `commands` | 指令注册与工具桥接 | plugin-commands |
 
 ## 快速开始
 
@@ -264,8 +301,10 @@ outputFormat:
 | 命令 | 描述 | 权限 |
 |---|---|---|
 | `/help` | 显示帮助信息 | 0 |
-| `/clear` | 清空当前会话历史及长期记忆 | 0 |
+| `/clear [context\|summary\|vector\|all\|nuke]` | 清空指定范围的消息/记忆 | 0 |
 | `/status` | 显示系统状态 | 0 |
+| `/model` | 查看或切换会话模型 | 0 |
+| `/tools` | 列出所有 AI 工具 | 0 |
 | `/shutdown` | 关闭应用 | 5 (dangerous) |
 | `/restart` | 重启应用 | 5 (dangerous) |
 | `/grant <platform:userId> <level>` | 设置用户权限等级 | 2 |
@@ -275,34 +314,52 @@ outputFormat:
 
 详细的技术实现文档位于 [`docs/`](docs/) 目录：
 
+### 核心模块
+
 | 文档 | 内容 |
 |---|---|
 | [架构总览](docs/architecture.md) | 系统架构、消息处理流程、设计模式 |
-| [核心 — 应用容器](docs/core/app.md) | App 类、启动流程、内置指令 |
-| [核心 — 执行上下文](docs/core/context.md) | Context 类、IoC 容器、生命周期 |
-| [核心 — 服务容器](docs/core/service.md) | 服务注册、能力匹配、优先级 |
-| [核心 — 插件管理](docs/core/plugin.md) | 插件生命周期、Soft Reload、依赖追踪 |
-| [核心 — 事件系统](docs/core/events.md) | EventBus、钩子管道 |
-| [核心 — 配置管理](docs/core/config.md) | YAML 配置、环境变量、Schema |
-| [核心 — 指令系统](docs/core/commands.md) | 指令注册、权限检查、工具桥接 |
-| [核心 — 工具注册表](docs/core/tools.md) | 工具注册、权限、执行 |
-| [核心 — 权限系统](docs/core/authority.md) | 权限等级、Owner、高危确认 |
-| [核心 — 类型定义](docs/core/types.md) | 所有核心类型参考 |
-| [插件 — LLM 服务](docs/plugins/llm.md) | DeepSeek / OpenAI 实现 |
-| [插件 — 对话 Agent](docs/plugins/agent.md) | 消息编排、工具循环、上下文截断 |
-| [插件 — 记忆存储](docs/plugins/memory.md) | SQLite / MongoDB / 向量语义记忆 |
-| [插件 — 向量与 Embedding](docs/plugins/vector.md) | Embedding 服务与向量存储 |
-| [插件 — 工具集](docs/plugins/tools.md) | Shell / 文件 / 系统 / HTTP 工具 |
-| [插件 — 平台适配器](docs/plugins/platform.md) | CLI / WebUI / OneBot |
-| [插件 — 其他](docs/plugins/misc.md) | 角色、搜索、工具搜索层 |
+| [应用容器](docs/core/app.md) | App 类、启动流程、内置指令 |
+| [执行上下文](docs/core/context.md) | Context 类、IoC 容器、生命周期 |
+| [服务容器](docs/core/service.md) | 服务注册、能力匹配、优先级 |
+| [插件管理](docs/core/plugin.md) | 插件生命周期、Soft Reload、依赖追踪 |
+| [事件系统](docs/core/events.md) | EventBus、钩子管道 |
+| [配置管理](docs/core/config.md) | YAML 配置、环境变量、Schema |
+| [指令系统](docs/core/commands.md) | 指令注册、权限检查、工具桥接 |
+| [工具注册表](docs/core/tools.md) | 工具注册、权限、执行 |
+| [权限系统](docs/core/authority.md) | 权限等级、Owner、高危确认 |
+| [类型定义](docs/core/types.md) | 所有核心类型参考 |
+
+### 插件文档
+
+| 文档 | 内容 |
+|---|---|
+| [默认 Agent](docs/plugins/plugin-agent-default.md) | 消息编排、工具循环、五阶段上下文裁剪 |
+| [DeepSeek LLM](docs/plugins/plugin-deepseek.md) | 深度思考、工具调用、SSE 流式 |
+| [OpenAI LLM](docs/plugins/plugin-openai.md) | OpenAI 兼容接口、SSE 流式 |
+| [OneBot 适配器](docs/plugins/plugin-adapter-onebot.md) | v11/v12 协议、WebSocket 连接 |
+| [CLI 终端](docs/plugins/plugin-cli.md) | REPL 交互、指令解析 |
+| [Ollama Embedding](docs/plugins/plugin-embedding-ollama.md) | Ollama 嵌入 API |
+| [OpenAI Embedding](docs/plugins/plugin-embedding-openai.md) | OpenAI 兼容嵌入 API |
+| [MongoDB 记忆](docs/plugins/plugin-memory-mongodb.md) | MongoDB 连接与索引 |
+| [SQLite 记忆](docs/plugins/plugin-memory-sqlite.md) | SQLite WAL 模式存储 |
+| [向量记忆](docs/plugins/plugin-memory-vector.md) | 语义检索与时间衰减 |
+| [角色人格](docs/plugins/plugin-persona.md) | YAML 角色卡与结构化输出 |
+| [工具搜索层](docs/plugins/plugin-tool-search.md) | 工具数量阈值与搜索机制 |
+| [系统工具集](docs/plugins/plugin-tools-system.md) | Shell / 文件 / 系统 / HTTP 工具 |
+| [平面向量存储](docs/plugins/plugin-vectorstore-flat.md) | JSON 存储、余弦相似度 |
+| [LanceDB 向量存储](docs/plugins/plugin-vectorstore-lancedb.md) | 原生向量检索 |
+| [Serper 搜索](docs/plugins/plugin-websearch-serper.md) | Serper API 联网搜索 |
+| [WebUI 前端](docs/plugins/plugin-webui-client.md) | React 前端、实时通信 |
+| [WebUI 后端](docs/plugins/plugin-webui-server.md) | Express API、WebSocket |
 
 ## TODO
 
 - [ ] 数据库定时清理/压缩策略（按 TTL 或条数上限淘汰旧消息）
-- [ ] 向量记忆摘要压缩（批量总结旧记忆为摘要后丢弃原文）
 - [ ] 反向 WebSocket 支持（OneBot 适配器）
 - [ ] 更多平台适配器（Discord、Telegram 等）
 - [ ] 插件市场与远程安装
+- [ ] npm 包发布与第三方插件生态
 
 ## 开发进度
 
@@ -310,30 +367,45 @@ outputFormat:
 
 - [x] 核心框架（服务 IoC + 能力声明 + 事件总线 + 响应式插件生命周期）
 - [x] 配置管理（YAML + 环境变量插值 + 启动时自动同步插件默认值）
-- [x] 工具注册表（OpenAI function calling 格式 + 权限系统）
-- [x] 默认 Agent（消息编排 + 工具调用循环 + 上下文截断 + 长期记忆预算保护）
+- [x] 工具注册表（OpenAI function calling 格式 + 权限系统 + 安全等级）
+- [x] 默认 Agent（消息编排 + 工具循环 + 五阶段上下文裁剪 + 压缩后延续提示）
 - [x] DeepSeek LLM 插件（深度思考 + 工具调用 + 流式输出）
 - [x] OpenAI-compatible LLM 插件
-- [x] 角色卡插件
-- [x] SQLite 记忆插件
-- [x] MongoDB 记忆插件
+- [x] Ollama 本地模型 LLM 插件
+- [x] 角色卡插件（结构化 JSON 输出 + 强制格式校验）
+- [x] SQLite / MongoDB / 内存消息记忆插件
+- [x] LLM 对话摘要压缩插件（30 条触发，保留 20 条最新）
 - [x] 向量语义记忆插件（自动注入语义相关历史到 system prompt）
 - [x] Ollama / OpenAI Embedding 插件
 - [x] LanceDB / 平面文件向量存储插件
-- [x] 机器交互工具插件（Shell / 文件 / 系统 / HTTP，含 SSRF 防护）
+- [x] 会话管理器（会话树、平台配置继承、会话生命周期事件）
+- [x] 子任务系统（create_subtask / wait_subtasks 并行执行）
+- [x] 定时调度（Cron / 固定间隔，绕过速率控制主动执行）
+- [x] 待办事项管理（会话级任务跟踪）
+- [x] AI 技能系统（YAML 自学习技能库 + 模板参数化）
+- [x] 系统工具集（Shell / 文件 / 系统 / HTTP，含 SSRF 防护）
+- [x] Puppeteer 浏览器自动化（导航 / 截图 / 点击 / 输入）
+- [x] 代码执行工具（Python + JavaScript，超时与输出限制）
+- [x] 数学计算工具集（10 类：表达式 / 统计 / 矩阵 / 数论 / 几何 / 金融等）
+- [x] Office 文档操作（Word / Excel / PPT / PDF，支持子任务协同）
+- [x] 多格式文件上传读取（MIME 检测，20MB 限制）
+- [x] 图像视觉识别（自动模型选择，多模态消息）
 - [x] Serper 联网搜索插件
-- [x] OneBot 12 协议适配器（WebSocket 多连接 + 自动重连）
+- [x] OKX 交易所接口（行情 / 账户 / 下单，模拟/实盘模式）
+- [x] OneBot v11/v12 协议适配器（WebSocket 多连接 + 自动重连）
+- [x] OneBot 群管工具（禁言 / 踢人 / 昵称 / 戳一戳）
 - [x] CLI 终端对话插件
-- [x] Web 管理界面（实时对话 + 插件配置 + 服务状态 + 平台监控 + 日志流）
+- [x] Web 管理界面（实时对话 + 流式输出 + 流恢复 + 插件配置 + 文件管理 + 日志流）
+- [x] Web 前端 Kawaii 主题变体
 - [x] 交互式 tool call 显示（对话与思考中内联展示工具调用过程）
 - [x] 插件自动发现（扫描 packages/ 目录，无需手动声明依赖）
 - [x] 优雅降级（Memory / Agent 缺失时自动 fallback）
-- [x] 图像理解（多模态消息）
+- [x] 权限系统（多级权限 + 时限白名单 + 平台级确认 + 高危操作拦截）
 
 ### 🔲 计划中
 
-- [-] 热重载支持 #部分支持
-- [ ] 更多 LLM 接口（Gemini、本地模型等）
+- [ ] 热重载支持（部分已实现）
+- [ ] 更多 LLM 接口（Gemini 等）
 - [ ] npm 包发布与第三方插件生态
 
 ## 许可证

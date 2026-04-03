@@ -26,21 +26,52 @@ meta.inject = {} // 无依赖
 
 ## REST API
 
-- **系统**: 状态查询
-- **插件管理**: 列表、启用/禁用、配置读写、安装/卸载、扫描
-- **全局配置**: 读写
-- **权限管理**: 用户列表、owner 设置、指令/工具覆盖
-- **服务**: 列表、能力查询
-- **平台**: 连接状态
-- **模型**: 列表（LLM / Embedding / Persona）
-- **日志**: 历史查询
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/status` | GET | 系统状态、服务可用性、上传能力检测 |
+| `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息） |
+| `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |
+| `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器 |
+| `/api/plugin-page/:plugin/:page` | GET | 插件 HTML 页面渲染（iframe 支持） |
+| `/api/config` | GET/PUT | 全局配置读写（安全字段 + 重启检测） |
+| `/api/authority` | — | 权限管理（用户列表、owner 设置） |
+| `/api/services` | GET | 服务列表与能力查询 |
+| `/api/platforms` | GET | 平台连接状态 |
+| `/api/models` | GET | 模型列表（LLM / Embedding / Persona） |
+| `/api/logs` | GET | 历史日志查询 |
 
 ## WebSocket
 
-- 实时聊天（含高危操作确认流程）
-- 流式回复增量推送
-- 工具调用事件推送
-- 日志实时推送
+### 入站消息类型 (Client → Server)
+
+| 类型 | 说明 |
+|---|---|
+| `message` | 用户发送聊天消息 |
+| `subscribe_logs` | 订阅实时日志推送 |
+| `subscribe_session` | 订阅指定会话更新 |
+| `unsubscribe_session` | 取消会话订阅 |
+| `abort` | 中断当前生成 |
+
+### 出站消息类型 (Server → Client)
+
+| 类型 | 说明 |
+|---|---|
+| `message` | 完整消息推送 |
+| `stream` | 流式增量推送（contentDelta / reasoningDelta） |
+| `stream_resume` | 页面刷新后恢复中断的流（累积缓冲内容） |
+| `status` | 系统状态更新 |
+| `tool_call` | 工具调用开始/结束事件 |
+| `state_changed` | 插件/服务状态变化 |
+| `sessions_changed` | 会话列表更新 |
+| `todo_updated` | 待办事项变化 |
+| `restarting` | 应用即将重启通知 |
+| `reload` | 前端应重新加载 |
+| `confirm` | 高危操作确认请求 |
+| `log` | 实时日志推送 |
+
+## 流式缓冲管理
+
+服务端为每个会话维护流式缓冲 `streamBuffers`，存储累积的 `content`、`reasoningContent` 和 `generating` 状态。当客户端断线重连（页面刷新）后，通过 `stream_resume` 消息恢复已产生但未收到的内容，实现无缝续流。
 
 ## 前端挂载
 
