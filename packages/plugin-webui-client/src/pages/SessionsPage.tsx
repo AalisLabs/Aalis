@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { pageAction } from '../api';
+import { buildChatMessages } from '../useSessionManager';
+import type { RawMessage } from '../useSessionManager';
+import type { ChatMessage } from '../types';
 
 // ===== 类型 =====
 
@@ -40,15 +43,9 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-interface MessageItem {
-  role: string;
-  content: string;
-  timestamp?: number;
-}
-
 interface SessionDetail {
   session: SessionInfo;
-  messages: MessageItem[];
+  messages: RawMessage[];
 }
 
 // ===== 工具函数 =====
@@ -675,7 +672,7 @@ function TreeNodeView({
 
 function SessionDetailView({ detail, onSwitchSession }: { detail: SessionDetail; onSwitchSession?: (id: string) => void }) {
   const s = detail.session;
-  const msgs = detail.messages;
+  const chatMessages = buildChatMessages(detail.messages);
 
   return (
     <div className="session-detail">
@@ -710,23 +707,70 @@ function SessionDetailView({ detail, onSwitchSession }: { detail: SessionDetail;
         </div>
       )}
       <div className="session-detail-messages">
-        <h4>消息记录 ({msgs.length})</h4>
-        {msgs.length === 0 ? (
+        <h4>消息记录 ({detail.messages.length})</h4>
+        {chatMessages.length === 0 ? (
           <div className="no-messages">暂无消息记录</div>
         ) : (
           <div className="message-list">
-            {msgs.map((msg, i) => (
-              <div key={i} className={`detail-message ${msg.role}`}>
-                <div className="detail-msg-role">{msg.role === 'user' ? '用户' : msg.role === 'assistant' ? '助手' : msg.role}</div>
-                <div className="detail-msg-content">{msg.content}</div>
-                {msg.timestamp && (
-                  <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
-                )}
-              </div>
+            {chatMessages.map((msg, i) => (
+              <DetailMessageView key={i} msg={msg} />
             ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 渲染单条 ChatMessage（支持工具调用折叠） */
+function DetailMessageView({ msg }: { msg: ChatMessage }) {
+  const roleLabel = msg.role === 'user' ? '用户' : '助手';
+
+  // 有 segments 的助手消息 — 使用结构化渲染
+  if (msg.role === 'assistant' && msg.segments && msg.segments.length > 0) {
+    return (
+      <div className={`detail-message ${msg.role}`}>
+        <div className="detail-msg-role">{roleLabel}</div>
+        <div className="detail-msg-content">
+          {msg.segments.map((seg, j) =>
+            seg.type === 'text' ? (
+              seg.content ? <div key={j} className="detail-text-segment">{seg.content}</div> : null
+            ) : (
+              <details key={j} className="tool-call-block">
+                <summary className="tool-call-summary">
+                  🔧 {seg.name}{seg.result == null ? ' …' : ''}
+                </summary>
+                <div className="tool-call-content">
+                  <div className="tool-call-args">
+                    <strong>参数</strong>
+                    <pre>{JSON.stringify(seg.args, null, 2)}</pre>
+                  </div>
+                  {seg.result != null && (
+                    <div className="tool-call-result">
+                      <strong>结果</strong>
+                      <pre>{seg.result}</pre>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )
+          )}
+        </div>
+        {msg.timestamp > 0 && (
+          <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
+        )}
+      </div>
+    );
+  }
+
+  // 纯文本消息
+  return (
+    <div className={`detail-message ${msg.role}`}>
+      <div className="detail-msg-role">{roleLabel}</div>
+      <div className="detail-msg-content">{msg.content}</div>
+      {msg.timestamp > 0 && (
+        <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
+      )}
     </div>
   );
 }

@@ -59,6 +59,9 @@ export function App() {
 
   const [chatWidth, setChatWidth] = useState(420);
 
+  // 工具调用达到上限标记
+  const [toolLimitReached, setToolLimitReached] = useState(false);
+
   // 重启中状态
   const [restarting, setRestarting] = useState(false);
   // 重启过程中 WS 已断开过（用于区分：收到 restarting 后需要先断开再重连才刷新）
@@ -99,10 +102,11 @@ export function App() {
     setLoading(false);
   }, []);
 
-  const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean) => {
+  const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => {
     if (done) {
       // 流结束标记 — 解除 loading（正常完成、中止、或消息被拦截均会到达此处）
       setLoading(false);
+      setToolLimitReached(!!toolLimitReached);
       return;
     }
 
@@ -147,7 +151,6 @@ export function App() {
         timestamp: Date.now(),
       }];
     });
-    setLoading(false);
   }, []);
 
   const handleLog = useCallback((entry: LogEntry) => {
@@ -161,34 +164,36 @@ export function App() {
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
+        const now = Date.now();
         if (last && last.role === 'assistant') {
           // 判断是否处于"思考"阶段：有 reasoning 但还没有内容文本
           const isThinking = !last.content && (last.reasoningContent || (!last.segments?.length));
           if (isThinking) {
             const rSegs = [...(last.reasoningSegments ?? [])];
-            rSegs.push({ type: 'tool_call', name: toolName, args: toolArgs });
+            rSegs.push({ type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
             return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
           }
           const segments = [...(last.segments ?? [])];
-          segments.push({ type: 'tool_call', name: toolName, args: toolArgs });
+          segments.push({ type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
           return [...prev.slice(0, -1), { ...last, segments }];
         }
         streamingRef.current = true;
         return [...prev, {
           role: 'assistant' as const,
           content: '',
-          reasoningSegments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs }],
+          reasoningSegments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs, startTime: now }],
           timestamp: Date.now(),
         }];
       }
       // toolPhase === 'end'——填充结果，先查 reasoningSegments 再查 segments
       if (last && last.role === 'assistant') {
+        const endNow = Date.now();
         if (last.reasoningSegments) {
           const rSegs = [...last.reasoningSegments];
           const idx = rSegs.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
           if (idx !== -1) {
             const seg = rSegs[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
-            rSegs[idx] = { ...seg, result: toolResult };
+            rSegs[idx] = { ...seg, result: toolResult, endTime: endNow };
             return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
           }
         }
@@ -197,7 +202,7 @@ export function App() {
           const idx = segments.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
           if (idx !== -1) {
             const seg = segments[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
-            segments[idx] = { ...seg, result: toolResult };
+            segments[idx] = { ...seg, result: toolResult, endTime: endNow };
             return [...prev.slice(0, -1), { ...last, segments }];
           }
         }
@@ -323,8 +328,21 @@ export function App() {
   const handleAbort = useCallback(() => {
     sendRaw({ type: 'abort', sessionId: getSessionId() });
     setLoading(false);
+    setToolLimitReached(false);
     streamingRef.current = false;
   }, [sendRaw]);
+
+  const handleContinueTools = useCallback(() => {
+    // 用户确认继续工具调用：发送一条提示消息让模型继续
+    setMessages(prev => [...prev, {
+      role: 'user' as const,
+      content: '[请继续执行未完成的工具调用]',
+      timestamp: Date.now(),
+    }]);
+    send('[请继续执行未完成的工具调用]');
+    setToolLimitReached(false);
+    setLoading(true);
+  }, [send]);
 
   const handleClearTodos = useCallback(() => {
     const sid = session.activeSessionId;
@@ -362,6 +380,7 @@ export function App() {
     setPendingImages([]);
     setPendingFiles([]);
     attachmentOrderRef.current = [];
+    setToolLimitReached(false);
     setLoading(true);
   };
 
@@ -519,6 +538,8 @@ export function App() {
           onNewSession={session.pluginName ? () => session.startNewChat() : undefined}
           todoItems={todoItems}
           onClearTodos={handleClearTodos}
+          toolLimitReached={toolLimitReached}
+          onContinueTools={handleContinueTools}
         />
       </div>
 

@@ -415,6 +415,15 @@ class DefaultAgent implements AgentService {
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
 
+      // 标记会话为活跃状态
+      const sessionMgrForStatus = this.ctx.getService<SessionManagerService>('session-manager');
+      if (sessionMgrForStatus && incoming.sessionId) {
+        const session = sessionMgrForStatus.getSession(incoming.sessionId);
+        if (session && session.status !== 'active') {
+          sessionMgrForStatus.updateSession(incoming.sessionId, { status: 'active' }).catch(() => {});
+        }
+      }
+
       const resolved = this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
@@ -658,6 +667,14 @@ class DefaultAgent implements AgentService {
           }
         }
 
+        // 检测是否因工具调用次数达到上限而退出循环
+        const toolLimitReached = iterations >= maxToolIterations
+          && response.toolCalls != null
+          && response.toolCalls.length > 0;
+        if (toolLimitReached) {
+          this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
+        }
+
         let replyContent = response.content ?? '';
 
         // Hook: response:before — 插件可以修改最终回复
@@ -696,6 +713,7 @@ class DefaultAgent implements AgentService {
           sessionId: incoming.sessionId,
           platform: incoming.platform,
           done: true,
+          toolLimitReached,
         });
 
         // 空回复（outputFormat 中 reply 字段为空字符串或仅空白）时静默，不发送消息
@@ -728,6 +746,11 @@ class DefaultAgent implements AgentService {
           sessionId: incoming.sessionId,
           metadata: msgHookData.metadata,
         });
+
+        // 标记会话为已完成（工具调用达上限时保持 active，等待用户决定是否继续）
+        if (!toolLimitReached && sessionMgrForStatus && incoming.sessionId) {
+          sessionMgrForStatus.updateSession(incoming.sessionId, { status: 'completed' }).catch(() => {});
+        }
       } catch (err) {
         // 中止错误 — 静默退出，已生成的流内容保留在前端
         if (err instanceof DOMException && err.name === 'AbortError') {
@@ -737,6 +760,10 @@ class DefaultAgent implements AgentService {
             platform: incoming.platform,
             done: true,
           });
+          // 中止也标记为已完成
+          if (sessionMgrForStatus && incoming.sessionId) {
+            sessionMgrForStatus.updateSession(incoming.sessionId, { status: 'completed' }).catch(() => {});
+          }
           return;
         }
 
