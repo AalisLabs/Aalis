@@ -63,6 +63,7 @@ interface WSOutgoing {
   contentDelta?: string;
   reasoningDelta?: string;
   done?: boolean;
+  toolLimitReached?: boolean;
   status?: Record<string, unknown>;
   log?: LogEntry;
   toolName?: string;
@@ -993,6 +994,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       contentDelta: chunk.contentDelta,
       reasoningDelta: chunk.reasoningDelta,
       done: chunk.done,
+      toolLimitReached: chunk.toolLimitReached,
     };
     const json = JSON.stringify(payload);
 

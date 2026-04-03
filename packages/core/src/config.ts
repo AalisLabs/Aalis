@@ -78,8 +78,8 @@ export class ConfigManager {
   private rawYaml: string | null = null;
   /** 文件监听器 */
   private watcher: FSWatcher | null = null;
-  /** save() 期间忽略 watch 事件 */
-  private selfWriting = false;
+  /** save() 写入的最后内容，用于 watch 去重 */
+  private lastWrittenYaml: string | null = null;
   /** debounce 定时器 */
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   /** 外部变更回调 */
@@ -199,10 +199,8 @@ export class ConfigManager {
     // 构建要保存的配置对象，保护环境变量
     const toSave = this.buildSaveObject();
     const yaml = stringifyYaml(toSave, { lineWidth: 0 });
-    this.selfWriting = true;
+    this.lastWrittenYaml = yaml;
     writeFileSync(this.configPath, yaml, 'utf-8');
-    // 延迟重置标记，确保 fs.watch 事件被跳过
-    setTimeout(() => { this.selfWriting = false; }, 500);
   }
 
   /**
@@ -222,12 +220,15 @@ export class ConfigManager {
     if (!existsSync(this.configPath)) return;
     try {
       this.watcher = fsWatch(this.configPath, () => {
-        if (this.selfWriting) return;
         // debounce: 编辑器可能触发多次 change 事件
         if (this.debounceTimer) clearTimeout(this.debounceTimer);
         this.debounceTimer = setTimeout(() => {
           this.debounceTimer = null;
           try {
+            // 读取当前文件内容，与上次自己写入的比较，相同则跳过
+            const current = readFileSync(this.configPath, 'utf-8');
+            if (this.lastWrittenYaml !== null && current === this.lastWrittenYaml) return;
+            this.lastWrittenYaml = null;
             this.loadFromDisk();
             this.onChangeCallback?.();
           } catch { /* 文件可能被部分写入，忽略 */ }

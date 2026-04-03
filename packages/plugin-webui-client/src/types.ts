@@ -8,7 +8,7 @@ export interface TodoItem {
 
 export type ContentSegment =
   | { type: 'text'; content: string }
-  | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string };
+  | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
 
 export interface ChatMessage {
   role: 'user' | 'assistant';

@@ -90,7 +90,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           createdBy: 'agent',
           inputContext: task,
           config: { ...inheritedConfig },
-          metadata: { platform: callCtx.platform || 'internal' },
+          metadata: { platform: callCtx.platform || 'internal', title: taskName },
         });
 
         // 异步派发任务消息，触发 agent 处理（不等待完成）

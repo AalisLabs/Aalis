@@ -81,6 +81,8 @@ export interface StreamChunkMessage {
   contentDelta?: string;
   reasoningDelta?: string;
   done?: boolean;
+  /** 当工具调用次数达到上限时为 true，前端可据此提示用户继续 */
+  toolLimitReached?: boolean;
 }
 
 /** 工具调用状态通知 */
