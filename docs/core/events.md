@@ -36,12 +36,25 @@ await ctx.emit('message:send', outMsg);
 | `message:send` | `OutgoingMessage` | AI 回复即将发送 |
 | `message:stream` | `StreamChunkMessage` | 流式输出增量 |
 | `tool:execute` | `ToolExecuteMessage` | 工具调用开始/结束 |
+| `session:created` | `sessionId` | 会话创建 |
+| `session:updated` | `sessionId` | 会话更新 |
+| `session:switched` | `sessionId` | 会话切换 |
+| `session:deleted` | `sessionId` | 会话删除 |
+| `session:completed` | `sessionId` | 子任务会话完成 |
+| `todo:updated` | `{ sessionId, items }` | 待办事项变化 |
+| `scheduler:job:start` | `jobId` | 定时任务开始 |
+| `scheduler:job:done` | `jobId` | 定时任务完成 |
+| `scheduler:job:error` | `jobId, error` | 定时任务出错 |
+| `memory:clear-all` | `sessionId` | 清除所有记忆 |
+| `memory:clear-session` | `sessionId, type` | 清除指定会话记忆 |
 | `service:registered` | `name, capabilities[]` | 服务注册 |
 | `service:unregistered` | `name` | 服务移除 |
 | `plugin:loaded` | `name` | 插件加载 |
 | `plugin:unloaded` | `name` | 插件卸载 |
 | `plugins:changed` | — | 插件状态变更 |
+| `app:starting` | — | 应用启动中 |
 | `ready` | — | 应用启动完成 |
+| `app:stopping` | — | 应用停止中 |
 | `dispose` | — | 应用关闭 |
 | `restarting` | — | 应用即将重启 |
 
