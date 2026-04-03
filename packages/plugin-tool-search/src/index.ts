@@ -186,13 +186,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
       });
 
+      // 收集搜索结果所在分组中未包含的其他工具，作为关联提示
+      const resultNames = new Set(results.map(r => r.name));
+      const relatedNames = new Set<string>();
+      for (const r of results) {
+        if (!r.groups?.length) continue;
+        for (const s of summaries) {
+          if (resultNames.has(s.name) || s.name === SEARCH_TOOL_NAME) continue;
+          if (s.groups?.some(g => r.groups!.includes(g))) relatedNames.add(s.name);
+        }
+      }
+
       logger.debug(`搜索工具 "${query}" → ${results.length} 条结果`);
 
       return JSON.stringify({
         found: results.length,
         tools: toolDetails,
+        ...(relatedNames.size > 0 ? {
+          related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先 search_tools 查询其参数。`,
+        } : {}),
         hint: results.length > 0
-          ? '以上工具现在对你可用，你可以直接调用它们。'
+          ? '以上工具现在对你可用，你可以直接调用它们。注意：每个工具的参数结构不同，请严格按照 parameters 定义传参。'
           : '未找到匹配的工具，请尝试其他关键词。',
       });
     },
