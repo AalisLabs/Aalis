@@ -148,44 +148,78 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return `未知的清空范围: ${scope}。可用: ${validScopes.join(', ')}`;
     }
 
-    const results: string[] = [];
+    // 确定清除范围和类型
+    const isGlobal = scope === 'nuke';
+    const types = scope === 'all' || scope === 'nuke'
+      ? undefined  // undefined = 全部类型
+      : [scope];
 
-    if (scope === 'nuke') {
+    // 构建 memory:clear hook 数据（统一入口）
+    const clearData = {
+      scope: isGlobal ? 'all' as const : 'session' as const,
+      types,
+      sessionId: cmdCtx.sessionId,
+      results: [] as Array<{ source: string; success: boolean; message: string }>,
+      rollbacks: [] as Array<{ source: string; fn: () => Promise<void> }>,
+    };
+
+    // 通过 hook 管道统一编排清除操作
+    // defaultAction 处理基础 memory 服务的清除
+    await ctx.hooks.run('memory:clear', clearData, async () => {
       const memory = ctx.getService<MemoryService>('memory');
-      if (memory?.clearAll) {
-        await memory.clearAll();
-        results.push('✅ 所有消息历史和对话归档已清空');
-      } else if (memory) {
-        results.push('⚠ 记忆服务不支持全局清空');
-      } else {
-        results.push('⚠ 记忆服务不可用');
+      if (!memory) {
+        clearData.results.push({ source: 'memory', success: false, message: '记忆服务不可用' });
+        return;
       }
-      await ctx.emit('memory:clear-all', {});
-      results.push('✅ 所有摘要记忆已清空');
-      results.push('✅ 所有向量记忆已清空');
-      return results.join('\n');
-    }
 
-    if (scope === 'all' || scope === 'context') {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (memory) {
-        await memory.clearSession(cmdCtx.sessionId);
-        results.push('✅ 当前会话消息历史已清空');
-      } else {
-        results.push('⚠ 记忆服务不可用');
+      // 基础记忆清除（context 类型或全部）
+      if (!types || types.includes('context')) {
+        try {
+          if (isGlobal && memory.clearAll) {
+            await memory.clearAll();
+            clearData.results.push({ source: 'memory', success: true, message: '所有消息历史和归档已清空' });
+          } else {
+            await memory.clearSession(cmdCtx.sessionId);
+            clearData.results.push({ source: 'memory', success: true, message: '当前会话消息历史已清空' });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          clearData.results.push({ source: 'memory', success: false, message: `清空失败: ${msg}` });
+        }
       }
+    });
+
+    // 检查是否有失败
+    const hasFailure = clearData.results.some(r => !r.success);
+
+    // 如果有失败且有可回滚的操作，执行回滚
+    if (hasFailure && clearData.rollbacks.length > 0) {
+      const rollbackResults: string[] = [];
+      for (const rb of clearData.rollbacks) {
+        try {
+          await rb.fn();
+          rollbackResults.push(`↩ ${rb.source}: 已回滚`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          rollbackResults.push(`↩ ${rb.source}: 回滚失败 - ${msg}`);
+        }
+      }
+      // 将回滚结果追加到输出
+      return [
+        ...clearData.results.map(r => `${r.success ? '✅' : '❌'} ${r.message}`),
+        '',
+        '**部分清除失败，已执行回滚：**',
+        ...rollbackResults,
+      ].join('\n');
     }
 
-    if (scope === 'all' || scope === 'summary') {
-      await ctx.emit('memory:clear-session', { sessionId: cmdCtx.sessionId, type: 'summary' });
-      results.push('✅ 当前会话摘要记忆已清空');
+    // 正常输出结果
+    if (clearData.results.length === 0) {
+      return '无可清除的记忆模块。';
     }
 
-    if (scope === 'all' || scope === 'vector') {
-      await ctx.emit('memory:clear-session', { sessionId: cmdCtx.sessionId, type: 'vector' });
-      results.push('✅ 当前会话向量记忆已清空');
-    }
-
-    return results.join('\n');
+    return clearData.results
+      .map(r => `${r.success ? '✅' : '⚠'} ${r.message}`)
+      .join('\n');
   });
 }

@@ -168,10 +168,16 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   };
 
   // 注入到已有的 tools/commands 服务
+  // 使用 Set 跟踪已注入的服务，避免重复注入
+  const injected = new Set<string>();
   const injectGuard = (svcName: string) => {
-    if (svcName === 'tools' || svcName === 'commands') {
+    if ((svcName === 'tools' || svcName === 'commands') && !injected.has(svcName)) {
       const svc = ctx.getService<ToolService | CommandService>(svcName);
-      svc?.setExecutionGuard(guard);
+      if (svc?.setExecutionGuard) {
+        svc.setExecutionGuard(guard);
+        injected.add(svcName);
+        ctx.logger.info(`权限守卫已注入: ${svcName}`);
+      }
     }
   };
 
@@ -179,8 +185,8 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   injectGuard('tools');
   injectGuard('commands');
 
-  // 未来注册的服务也注入
-  ctx.on('service:registered', injectGuard);
+  // 未来注册的服务也注入（处理 authority 先于 tools/commands 加载的情况）
+  ctx.on('service:registered', (name: string) => injectGuard(name));
 
   // ===== 应用停止时保存 =====
   ctx.on('app:stopping', () => { authority.save(); });

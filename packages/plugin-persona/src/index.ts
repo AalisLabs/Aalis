@@ -385,19 +385,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
 
-  // 当角色卡配置了 outputFormat 时，注册 response:before 钩子解析 JSON
+  // response:before 钩子：统一处理 JSON 解析
+  // 1. 有 outputFormat 时：结构化解析 + 状态持久化
+  // 2. 无 outputFormat 时：回退提取（模型意外用 JSON 包裹回复时自动解包）
   const baseFormat = service.getOutputFormat();
 
   if (baseFormat) {
     ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
+  }
 
-    ctx.middleware('response:before', async (data, next) => {
-      await next();
+  ctx.middleware('response:before', async (data, next) => {
+    await next();
 
-      // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
-      let personaOpts: import('@aalis/core').PersonaSessionOptions | undefined;
-      try {
-        const sm = ctx.getService<SessionManagerService>('session-manager');
+    // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
+    let personaOpts: import('@aalis/core').PersonaSessionOptions | undefined;
+    try {
+      const sm = ctx.getService<SessionManagerService>('session-manager');
         if (sm && data.sessionId) {
           const resolved = sm.resolveConfig(data.sessionId);
           personaOpts = {
@@ -409,7 +412,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       } catch { /* session-manager 不可用，使用全局默认 */ }
 
       const outputFormat = service.getOutputFormat(personaOpts);
-      if (!outputFormat) return;
+
+      // ===== 无 outputFormat：回退 JSON 提取 =====
+      // 当角色卡未定义 outputFormat 时，模型偶尔仍会用 JSON 包裹回复
+      // 此处自动解包，提取回复字段
+      if (!outputFormat) {
+        const trimmed = data.content.trim();
+        if (!trimmed.startsWith('{')) return;
+        const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
+        try {
+          const obj = JSON.parse(trimmed);
+          if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return;
+          for (const key of replyKeys) {
+            if (typeof obj[key] === 'string') {
+              data.content = obj[key];
+              ctx.logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
+              return;
+            }
+          }
+        } catch { /* 非 JSON，保持原始内容 */ }
+        return;
+      }
+
+      // ===== 有 outputFormat：结构化解析 =====
 
       const clientRendered = service.isClientSideJsonRendering(personaOpts);
 
@@ -512,5 +537,4 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ctx.logger.debug('outputFormat 解码失败，保留原始回复');
       }
     });
-  }
 }
