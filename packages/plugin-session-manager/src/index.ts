@@ -800,6 +800,25 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.debug(`广播会话切换: ${sessionId}`);
   });
 
+  // ===== 会话状态自治管理 =====
+  // 监听消息事件，自动维护会话状态（从 Agent 职责中迁出）
+
+  ctx.on('message:received', (msg: { sessionId: string }) => {
+    if (!msg.sessionId) return;
+    const session = manager.getSession(msg.sessionId);
+    if (session && session.status !== 'active') {
+      manager.updateSession(msg.sessionId, { status: 'active' }).catch(() => {});
+    }
+  });
+
+  ctx.on('message:send', (msg: { sessionId: string }) => {
+    if (!msg.sessionId) return;
+    const session = manager.getSession(msg.sessionId);
+    if (session && session.status === 'active') {
+      manager.updateSession(msg.sessionId, { status: 'completed' }).catch(() => {});
+    }
+  });
+
   // 监听用户消息事件 → 自动生成会话标题
   // 在用户首次发消息时即生成标题，无需等待 AI 回复
   // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题

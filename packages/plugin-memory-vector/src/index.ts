@@ -141,34 +141,47 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // === 清除会话的向量记忆 ===
+  // === 统一记忆清除：通过 memory:clear hook 参与编排 ===
 
-  ctx.on('memory:clear-session', async (data: unknown) => {
-    const d = data as { sessionId?: string; type?: string };
-    if (d.type !== 'vector' || !d.sessionId) return;
-
-    let deleted = 0;
-
-    // 删除向量
-    if (store.deleteByFilter) {
-      deleted = await store.deleteByFilter({ sessionId: d.sessionId });
-      await store.save();
+  ctx.middleware('memory:clear', async (data: {
+    scope: 'session' | 'all';
+    types?: string[];
+    sessionId?: string;
+    results: Array<{ source: string; success: boolean; message: string }>;
+    rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+  }, next) => {
+    // 类型过滤：如果指定了 types 且不包含 vector，跳过
+    if (data.types && !data.types.includes('vector')) {
+      await next();
+      return;
     }
 
-    // 删除归档
-    if (hasTurnArchive) {
-      await memory!.deleteTurns!(d.sessionId);
+    try {
+      if (data.scope === 'all') {
+        await store.clear();
+        await store.save();
+        data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
+        ctx.logger.info('向量记忆已全部清空');
+      } else if (data.sessionId) {
+        let deleted = 0;
+        if (store.deleteByFilter) {
+          deleted = await store.deleteByFilter({ sessionId: data.sessionId });
+          await store.save();
+        }
+        if (hasTurnArchive) {
+          await memory!.deleteTurns!(data.sessionId);
+        }
+        data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
+        ctx.logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
+      ctx.logger.warn('向量清空失败:', err);
     }
 
-    ctx.logger.info(`向量记忆已清空: session=${d.sessionId}, 删除 ${deleted} 条向量`);
-  });
-
-  ctx.on('memory:clear-all', async () => {
-    await store.clear();
-    await store.save();
-    // 归档由 memory.clearAll() 统一清理，此处无需重复删除
-    ctx.logger.info('向量记忆已全部清空');
-  });
+    await next();
+  }, 10);
 
   // === 检索并注入上下文 ===
 

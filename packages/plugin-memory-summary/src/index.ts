@@ -331,19 +331,38 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     });
   }, 0);
 
-  // 监听 memory:clear-session 事件，支持由 /clear 命令触发清空摘要
-  ctx.on('memory:clear-session', (data: unknown) => {
-    const d = data as { sessionId?: string; type?: string };
-    if (d.type === 'summary' && d.sessionId) {
-      store.clearSession(d.sessionId);
-      ctx.logger.info(`会话摘要已清空: session=${d.sessionId}`);
+  // 统一记忆清除：通过 memory:clear hook 参与编排
+  ctx.middleware('memory:clear', async (data: {
+    scope: 'session' | 'all';
+    types?: string[];
+    sessionId?: string;
+    results: Array<{ source: string; success: boolean; message: string }>;
+    rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+  }, next) => {
+    // 类型过滤：如果指定了 types 且不包含 summary，跳过
+    if (data.types && !data.types.includes('summary')) {
+      await next();
+      return;
     }
-  });
 
-  ctx.on('memory:clear-all', () => {
-    store.clearAll();
-    ctx.logger.info('所有会话摘要已清空');
-  });
+    try {
+      if (data.scope === 'all') {
+        store.clearAll();
+        data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
+        ctx.logger.info('所有会话摘要已清空');
+      } else if (data.sessionId) {
+        store.clearSession(data.sessionId);
+        data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
+        ctx.logger.info(`会话摘要已清空: session=${data.sessionId}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'summary', success: false, message: `摘要清空失败: ${msg}` });
+      ctx.logger.warn('摘要清空失败:', err);
+    }
+
+    await next();
+  }, 10);
 
   // 清理
   ctx.on('dispose', () => {
