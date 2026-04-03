@@ -50,6 +50,134 @@ function clampBounds(
   return { x: ex, y: ey, w: ew, h: eh };
 }
 
+// ===== 预设模板系统 =====
+
+interface TemplateColors {
+  /** 主色调（用于标题栏、强调元素） */
+  primary: string;
+  /** 辅助色（用于装饰条、图标背景等） */
+  secondary: string;
+  /** 主文字色 */
+  text: string;
+  /** 背景色 */
+  background: string;
+  /** 标题色 */
+  title: string;
+  /** 副标题/浅色文字 */
+  subtitle: string;
+}
+
+interface PresetTemplate {
+  name: string;
+  description: string;
+  colors: TemplateColors;
+  /** 母版定义（传给 defineSlideMaster 的参数数组） */
+  masters: Array<{
+    title: string;
+    background: PptxGenJS.BackgroundProps;
+    objects: PptxGenJS.SlideMasterProps['objects'];
+  }>;
+}
+
+/**
+ * 根据颜色主题生成标准母版集（title / content / section / end）
+ * 所有坐标基于 16:9 (10×5.63")，创建时会自适应
+ */
+function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
+  return [
+    // 封面页
+    {
+      title: 'title',
+      background: { color: c.primary },
+      objects: [
+        { rect: { x: 0, y: 4.4, w: 10, h: 1.23, fill: { color: c.secondary } } },
+        { text: { text: '', options: { x: 0.6, y: 1.2, w: 8.8, h: 1.5, color: c.background, fontSize: 36, bold: true, placeholder: 'title' } } },
+        { text: { text: '', options: { x: 0.6, y: 2.9, w: 8.8, h: 0.8, color: c.subtitle, fontSize: 18, placeholder: 'subtitle' } } },
+      ],
+    },
+    // 内容页
+    {
+      title: 'content',
+      background: { color: c.background },
+      objects: [
+        { rect: { x: 0, y: 0, w: 10, h: 0.8, fill: { color: c.primary } } },
+        { text: { text: '', options: { x: 0.6, y: 0.1, w: 8.8, h: 0.6, color: c.background, fontSize: 20, bold: true, placeholder: 'title' } } },
+      ],
+    },
+    // 分节页（章节过渡）
+    {
+      title: 'section',
+      background: { color: c.secondary },
+      objects: [
+        { rect: { x: 0.5, y: 2.0, w: 2, h: 0.06, fill: { color: c.background } } },
+        { text: { text: '', options: { x: 0.5, y: 2.2, w: 9, h: 1.2, color: c.background, fontSize: 32, bold: true, placeholder: 'title' } } },
+      ],
+    },
+    // 结束页
+    {
+      title: 'end',
+      background: { color: c.primary },
+      objects: [
+        { text: { text: 'Thank You', options: { x: 0, y: 1.8, w: 10, h: 1.5, color: c.background, fontSize: 40, bold: true, align: 'center' } } },
+        { text: { text: '', options: { x: 0, y: 3.5, w: 10, h: 0.8, color: c.subtitle, fontSize: 16, align: 'center', placeholder: 'subtitle' } } },
+      ],
+    },
+  ];
+}
+
+const PRESET_TEMPLATES: Record<string, PresetTemplate> = {
+  clean: {
+    name: 'clean',
+    description: '简洁白色主题。白底配蓝色标题栏，适合商务汇报、技术分享、日常演示等通用场景。',
+    colors: { primary: '2B579A', secondary: '1A3A6B', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'D0D8E8' },
+    masters: buildTemplateMasters({ primary: '2B579A', secondary: '1A3A6B', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'D0D8E8' }),
+  },
+  dark: {
+    name: 'dark',
+    description: '深色科技主题。深蓝黑背景配亮色文字，适合科技产品发布、AI/数据、技术演讲等现代感场景。',
+    colors: { primary: '0D1117', secondary: '161B22', text: 'E6EDF3', background: '0D1117', title: 'FFFFFF', subtitle: '8B949E' },
+    masters: buildTemplateMasters({ primary: '0D1117', secondary: '161B22', text: 'E6EDF3', background: '0D1117', title: 'FFFFFF', subtitle: '8B949E' }),
+  },
+  corporate: {
+    name: 'corporate',
+    description: '企业蓝色主题。经典蓝色调，沉稳专业，适合企业年报、战略规划、投资路演、正式汇报等商务场景。',
+    colors: { primary: '1F4E79', secondary: '2E75B6', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'BDD7EE' },
+    masters: buildTemplateMasters({ primary: '1F4E79', secondary: '2E75B6', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'BDD7EE' }),
+  },
+  minimal: {
+    name: 'minimal',
+    description: '极简主题。纯白背景，黑色文字，几乎无装饰。适合学术报告、论文答辩、内容密集型演示。',
+    colors: { primary: '222222', secondary: '444444', text: '222222', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'AAAAAA' },
+    masters: buildTemplateMasters({ primary: '222222', secondary: '444444', text: '222222', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'AAAAAA' }),
+  },
+  nature: {
+    name: 'nature',
+    description: '自然绿色主题。绿色调，清新自然，适合环保、农业、健康、教育等主题的演示。',
+    colors: { primary: '2D6A4F', secondary: '40916C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'B7E4C7' },
+    masters: buildTemplateMasters({ primary: '2D6A4F', secondary: '40916C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'B7E4C7' }),
+  },
+  warm: {
+    name: 'warm',
+    description: '暖色橙红主题。温暖活泼，适合创意展示、市场营销、品牌推广、活动策划等需要活力感的场景。',
+    colors: { primary: 'C0392B', secondary: 'E74C3C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'FADBD8' },
+    masters: buildTemplateMasters({ primary: 'C0392B', secondary: 'E74C3C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'FADBD8' }),
+  },
+};
+
+/** 把预设模板的母版注册到 pptx 实例上 */
+function applyTemplate(pptx: PptxGenJS, templateName: string): PresetTemplate | null {
+  const tpl = PRESET_TEMPLATES[templateName];
+  if (!tpl) return null;
+  for (const master of tpl.masters) {
+    pptx.defineSlideMaster({
+      title: master.title,
+      background: master.background,
+      objects: master.objects,
+    });
+  }
+  return tpl;
+}
+
 export function registerPptTools(ctx: Context, sessions: DocSessionManager, outputDir: string) {
   function requireState(docId: string): PptState {
     return sessions.require(docId, 'pptx').doc as PptState;
@@ -61,20 +189,50 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
     return state.slides[idx];
   }
 
+  // ---- ppt_list_templates ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'ppt_list_templates',
+        description: '列出所有可用的 PPT 预设模板及其描述。创建 PPT 前调用此工具了解可选模板，帮助选择最适合演示主题的模板。',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+    },
+    async handler() {
+      const list = Object.values(PRESET_TEMPLATES).map(t => ({
+        name: t.name,
+        description: t.description,
+        colors: { primary: t.colors.primary, text: t.colors.text, background: t.colors.background },
+        masters: t.masters.map(m => m.title),
+      }));
+      return JSON.stringify({
+        templates: list,
+        message: '创建 PPT 时通过 template 参数指定模板名称。模板会自动注册母版（title / content / section / end），添加幻灯片时通过 masterName 参数引用。',
+      });
+    },
+  });
+
   // ---- ppt_create ----
   ctx.registerTool({
     definition: {
       type: 'function',
       function: {
         name: 'ppt_create',
-        description: '创建一个新的 PowerPoint 演示文稿会话，返回 docId。该 docId 全局共享，可传递给子任务让多个子任务并行操作同一文稿（如各负责不同幻灯片）。坐标系统：所有位置/尺寸参数以英寸为单位。LAYOUT_16x9 页面为 10×5.63 英寸，LAYOUT_4x3 为 10×7.5 英寸，LAYOUT_WIDE 为 13.33×7.5 英寸。',
+        description: [
+          '创建一个新的 PowerPoint 演示文稿，返回 docId。',
+          '可通过 template 参数选择预设模板（如 clean/dark/corporate/minimal/nature/warm），模板会自动注册母版页。',
+          '使用模板后，添加幻灯片时用 masterName 引用母版：title（封面）、content（内容）、section（分节）、end（结束）。',
+          '该 docId 全局共享，可传递给子任务并行协作。',
+        ].join('\n'),
         parameters: {
           type: 'object',
           properties: {
             filename: { type: 'string', description: '文件名（如 report.pptx）' },
             title: { type: 'string', description: '演示文稿标题' },
             author: { type: 'string', description: '作者' },
-            layout: { type: 'string', enum: ['LAYOUT_16x9', 'LAYOUT_4x3', 'LAYOUT_WIDE'], description: '幻灯片比例，默认 LAYOUT_16x9。16:9 页面尺寸为 10×5.63 英寸；4:3 为 10×7.5 英寸' },
+            layout: { type: 'string', enum: ['LAYOUT_16x9', 'LAYOUT_4x3', 'LAYOUT_WIDE'], description: '幻灯片比例，默认 LAYOUT_16x9' },
+            template: { type: 'string', enum: ['clean', 'dark', 'corporate', 'minimal', 'nature', 'warm'], description: '预设模板名称。选择后自动注册 title/content/section/end 四种母版页' },
           },
           required: ['filename'],
         },
@@ -88,9 +246,28 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const layout = String(args.layout || 'LAYOUT_16x9');
       pptx.layout = layout;
       const [slideW, slideH] = LAYOUT_DIMS[layout] || LAYOUT_DIMS.LAYOUT_16x9;
+
+      // 应用预设模板
+      let templateInfo: string | undefined;
+      if (args.template) {
+        const tpl = applyTemplate(pptx, String(args.template));
+        if (tpl) {
+          templateInfo = `已应用模板 "${tpl.name}"（${tpl.description}）。可用母版：${tpl.masters.map(m => m.title).join('、')}。颜色参考 — 主色: ${tpl.colors.primary}, 文字色: ${tpl.colors.text}, 背景色: ${tpl.colors.background}`;
+        }
+      }
+
       const state: PptState = { pptx, slides: [], slideW, slideH };
       const docId = sessions.create('pptx', filename, state);
-      return JSON.stringify({ docId, filename, slideWidth: slideW, slideHeight: slideH, message: `PPT 已创建（${slideW}×${slideH} 英寸）。所有元素的 x/y/w/h 均以英寸为单位，请确保 x+w ≤ ${slideW}，y+h ≤ ${slideH}` });
+
+      const result: Record<string, unknown> = {
+        docId,
+        filename,
+        slideWidth: slideW,
+        slideHeight: slideH,
+        message: `PPT 已创建（${slideW}×${slideH} 英寸）。所有元素的 x/y/w/h 均以英寸为单位，请确保 x+w ≤ ${slideW}，y+h ≤ ${slideH}`,
+      };
+      if (templateInfo) result.template = templateInfo;
+      return JSON.stringify(result);
     },
   });
 

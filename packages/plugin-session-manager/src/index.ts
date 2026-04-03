@@ -611,7 +611,7 @@ class SessionManager implements SessionManagerService {
 
   // ---- 标题管理 ----
 
-  async generateTitle(sessionId: string): Promise<string | undefined> {
+  async generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined> {
     const session = this.sessions.get(sessionId);
     if (!session) return undefined;
     // 已有标题则跳过
@@ -623,15 +623,19 @@ class SessionManager implements SessionManagerService {
       return undefined;
     }
 
-    // 获取最早的几条消息用于总结
-    const history = await this.memory.getHistory(sessionId, 4);
-    if (history.length === 0) return undefined;
-
-    const contextStr = history
-      .filter((m: Message) => m.role === 'user' || m.role === 'assistant')
-      .slice(0, 4)
-      .map((m: Message) => `${m.role}: ${(m.content || '').slice(0, 200)}`)
-      .join('\n');
+    // 优先使用直接传入的用户消息；否则从历史获取
+    let contextStr: string;
+    if (userMessage && userMessage.trim()) {
+      contextStr = `user: ${userMessage.slice(0, 400)}`;
+    } else {
+      const history = await this.memory.getHistory(sessionId, 4);
+      if (history.length === 0) return undefined;
+      contextStr = history
+        .filter((m: Message) => m.role === 'user' || m.role === 'assistant')
+        .slice(0, 4)
+        .map((m: Message) => `${m.role}: ${(m.content || '').slice(0, 200)}`)
+        .join('\n');
+    }
 
     if (!contextStr.trim()) return undefined;
 
@@ -796,18 +800,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.debug(`广播会话切换: ${sessionId}`);
   });
 
-  // 监听消息发送事件 → 自动生成会话标题
-  // 在 AI 首次回复后为缺少标题的会话自动生成标题
+  // 监听用户消息事件 → 自动生成会话标题
+  // 在用户首次发消息时即生成标题，无需等待 AI 回复
+  // 仅对 webui / cli 平台生效，onebot 等外部平台不生成标题
+  const TITLE_PLATFORMS = new Set(['webui', 'cli', 'internal']);
   const titleGenerating = new Set<string>();
-  ctx.on('message:send', (msg: { content: string; sessionId: string }) => {
-    const { sessionId } = msg;
+  ctx.on('message:received', (msg: { content: string; sessionId: string; platform?: string }) => {
+    const { sessionId, platform } = msg;
     if (!sessionId || titleGenerating.has(sessionId)) return;
+    // 仅对指定平台生成标题
+    if (platform && !TITLE_PLATFORMS.has(platform)) return;
     const session = manager.getSession(sessionId);
-    // 只给没有标题的 session 生成标题
-    if (!session || session.title) return;
+    // 只给没有标题的 session 生成标题；跳过子任务会话
+    if (!session || session.title || session.parentId) return;
     titleGenerating.add(sessionId);
-    // 异步生成，不阻塞消息发送
-    manager.generateTitle(sessionId)
+    // 异步生成，不阻塞消息处理；直接传入用户消息避免依赖历史
+    manager.generateTitle(sessionId, msg.content)
       .catch(err => ctx.logger.debug('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });

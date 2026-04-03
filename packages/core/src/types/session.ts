@@ -151,8 +151,8 @@ export interface SessionManagerService {
 
   // ---- 标题管理 ----
 
-  /** 自动生成会话标题（调用 LLM 总结），返回生成的标题或 undefined */
-  generateTitle(sessionId: string): Promise<string | undefined>;
+  /** 自动生成会话标题（调用 LLM 总结），返回生成的标题或 undefined。可传入 userMessage 避免依赖历史记录。 */
+  generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;
   /** 手动更新会话标题 */
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }
