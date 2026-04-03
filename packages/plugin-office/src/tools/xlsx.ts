@@ -27,7 +27,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       type: 'function',
       function: {
         name: 'excel_create',
-        description: '创建一个新的 Excel 工作簿会话，返回 docId。默认创建一个空 Sheet。',
+        description: '创建一个新的 Excel 工作簿会话，返回 docId。默认创建一个空 Sheet。该 docId 全局共享，可传递给子任务实现并行协作编辑。',
         parameters: {
           type: 'object',
           properties: {
@@ -479,7 +479,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       type: 'function',
       function: {
         name: 'excel_save',
-        description: '保存 Excel 工作簿到文件并释放文档会话。',
+        description: '保存 Excel 工作簿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
         parameters: {
           type: 'object',
           properties: {
