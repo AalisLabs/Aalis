@@ -3,7 +3,7 @@ import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
 import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
-import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs } from './icons';
+import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles } from './icons';
 import { useWebSocket } from './useWebSocket';
 import { useSessionManager } from './useSessionManager';
 import { DashboardPage } from './pages/DashboardPage';
@@ -14,6 +14,7 @@ import { PlatformPage } from './pages/PlatformPage';
 import { AuthorityPage } from './pages/AuthorityPage';
 import { LogPage } from './pages/LogPage';
 import { SessionsPage } from './pages/SessionsPage';
+import { FilesPage } from './pages/FilesPage';
 import { DynamicPage } from './components/DynamicPage';
 
 export function App() {
@@ -391,6 +392,7 @@ export function App() {
     'plugin-config': <IconPluginConfig />,
     platforms: <IconPlatform />,
     authority: <IconAuthority />,
+    files: <IconFiles />,
     logs: <IconLogs />,
   };
 
@@ -440,6 +442,7 @@ export function App() {
       case 'platforms': return <PlatformPage />;
       case 'authority': return <AuthorityPage />;
       case 'logs': return <LogPage logs={logs} />;
+      case 'files': return <FilesPage />;
       case 'sessions': return <SessionsPage pluginName={pluginName} activeSessionId={session.activeSessionId} onSwitchSession={(id) => { session.switchSession(id); }} onStartNewChat={() => session.startNewChat()} refreshSignal={sessionsRefreshSignal} />;
       default: return null;
     }
