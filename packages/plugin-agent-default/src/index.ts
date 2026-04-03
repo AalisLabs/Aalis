@@ -899,13 +899,41 @@ class DefaultAgent implements AgentService {
   }
 
   /**
+   * 估算文本的 token 数（区分中文与 ASCII）
+   *
+   * 对于大多数 BPE tokenizer（GPT/DeepSeek/Qwen 等）：
+   * - ASCII 字符约 3-4 字符 = 1 token
+   * - 中文/日文/韩文字符约 1-2 字符 = 1 token
+   * 这里采用保守估算以避免超限。
+   */
+  private estimateTextTokens(text: string): number {
+    let tokens = 0;
+    // eslint-disable-next-line no-control-regex
+    const cjkRegex = /[\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/;
+    let i = 0;
+    while (i < text.length) {
+      if (cjkRegex.test(text[i])) {
+        // CJK 字符：~1.5 token/字符（保守取高）
+        tokens += 1.5;
+        i++;
+      } else {
+        // ASCII 序列：~1 token / 3.5 字符
+        let asciiLen = 0;
+        while (i < text.length && !cjkRegex.test(text[i])) { asciiLen++; i++; }
+        tokens += Math.ceil(asciiLen / 3.5);
+      }
+    }
+    return Math.ceil(tokens);
+  }
+
+  /**
    * 估算单条消息的 token 数
    */
   private estimateMsgTokens(msg: Message): number {
     let t = 4;
-    if (msg.content) t += Math.ceil(msg.content.length / 3);
-    if (msg.toolCalls) t += Math.ceil(JSON.stringify(msg.toolCalls).length / 3);
-    if (msg.reasoningContent) t += Math.ceil(msg.reasoningContent.length / 3);
+    if (msg.content) t += this.estimateTextTokens(msg.content);
+    if (msg.toolCalls) t += this.estimateTextTokens(JSON.stringify(msg.toolCalls));
+    if (msg.reasoningContent) t += this.estimateTextTokens(msg.reasoningContent);
     return t;
   }
 
