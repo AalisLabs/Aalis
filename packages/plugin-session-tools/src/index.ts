@@ -52,6 +52,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           '创建一个子任务会话并异步派发任务。子任务将在独立会话中并行执行，不阻塞当前会话。',
           '返回子任务 ID，后续可用 check_subtask 查询状态或 wait_subtasks 等待完成。',
           '你可以连续调用多次 create_subtask 来创建多个并行子任务。',
+          '',
+          '【重要协作规范】',
+          '1. 创建子任务前，先用 manage_todo_list 列出计划，包含"创建子任务"和"等待子任务完成"两步',
+          '2. 共享文档协作：如果多个子任务需要操作同一个文档（如 PPT、Word、Excel），先在主会话中创建文档拿到 docId，然后在 task 中明确告知子任务该 docId——子任务会直接操作同一文档，无需各自创建',
+          '3. task 描述中应包含：(a) 具体任务内容 (b) 需要使用的共享资源 ID（如 docId）(c) 子任务负责的范围（如"负责第3-4张幻灯片"）',
+          '4. 创建完所有子任务后，必须立即调用 wait_subtasks 等待结果，不要在未等待的情况下继续主任务',
+          '5. 子任务无法调用 create_subtask（不可嵌套）；保持 save 操作在主会话中执行',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -78,6 +85,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!task) return JSON.stringify({ error: '缺少任务描述' });
 
       const parentId = callCtx.sessionId;
+
+      // 防止子任务嵌套创建子任务
+      const parentSession = sm.getSession(parentId);
+      if (parentSession?.parentId) {
+        return JSON.stringify({ error: '子任务中不能再创建子任务。请直接完成当前任务，由父会话负责任务拆分和协调。' });
+      }
+
       const taskName = args.name ? String(args.name) : `子任务 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
 
       try {
@@ -123,7 +137,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'check_subtask',
-        description: '查询一个或多个子任务的当前状态和结果。返回每个子任务的状态、结果摘要等信息。',
+        description: [
+          '查询一个或多个子任务的当前状态和结果。',
+          '返回每个子任务的状态（active=进行中, completed=已完成, error=出错）、结果摘要等。',
+          '如果有子任务状态为 error，可使用 send_to_subtask 重新发送指令让其重试。',
+        ].join('\n'),
         parameters: {
           type: 'object',
           properties: {
@@ -146,16 +164,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const results = ids.map(id => {
         const session = sm.getSession(id);
         if (!session) return { id, error: '会话不存在' };
+        const statusLabel = session.status === 'active' ? '进行中'
+          : session.status === 'completed' ? '已完成'
+          : session.status === 'error' ? '出错'
+          : session.status;
         return {
           id,
           name: session.name,
           status: session.status,
+          statusLabel,
           result: session.result || null,
           inputContext: session.inputContext || null,
         };
       });
 
-      return JSON.stringify({ subtasks: results });
+      const summary = {
+        total: results.length,
+        active: results.filter(r => !('error' in r) && r.status === 'active').length,
+        completed: results.filter(r => !('error' in r) && r.status === 'completed').length,
+        errored: results.filter(r => !('error' in r) && r.status === 'error').length,
+      };
+
+      return JSON.stringify({ summary, subtasks: results });
     },
   });
 
@@ -233,7 +263,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         description: [
           '等待指定的子任务全部完成。阻塞直到所有子任务完成或超时。',
           '返回每个子任务的状态和结果摘要。超时后仍返回当前状态（部分可能未完成）。',
-          '建议在创建所有并行子任务后调用此工具，以收集结果后继续推进主任务。',
+          '',
+          '【必须调用】创建子任务后，必须调用此工具等待所有子任务完成。',
+          '不等待就继续主任务会导致：子任务结果丢失、文档内容不完整、最终输出质量差。',
+          '调用后请检查返回的 allCompleted 字段和每个子任务的 result，确认所有子任务均成功完成。',
+          '如有子任务失败或超时，可使用 send_to_subtask 补充指令后再次等待。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -328,6 +362,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ---- 子任务的系统提示增强 ----
   // 当 agent 处理子任务消息时，在系统提示中注入子任务上下文
   const SUBTASK_CONTEXT_MARKER = '--- 子任务上下文 ---';
+  const PARENT_CONTEXT_MARKER = '--- 活跃子任务提醒 ---';
+
   ctx.middleware('llm-call:before', async (data, next) => {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) { await next(); return; }
@@ -336,8 +372,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!sessionId) { await next(); return; }
 
     const session = sm.getSession(sessionId);
-    if (!session?.parentId) { await next(); return; } // 非子任务，不处理
-
     const messages = data.messages;
     if (!messages || messages.length === 0) { await next(); return; }
 
@@ -345,23 +379,95 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const sysMsg = messages.find(m => m.role === 'system');
     if (!sysMsg || typeof sysMsg.content !== 'string') { await next(); return; }
 
-    // 幂等检查：避免多轮工具调用中重复注入
-    if (sysMsg.content.includes(SUBTASK_CONTEXT_MARKER)) { await next(); return; }
+    // ---- 子任务侧：注入子任务上下文 ----
+    if (session?.parentId) {
+      // 幂等检查：避免多轮工具调用中重复注入
+      if (!sysMsg.content.includes(SUBTASK_CONTEXT_MARKER)) {
+        const subtaskContext = [
+          `\n\n--- 子任务上下文 ---`,
+          `你正在一个子任务会话中执行独立任务。`,
+          `子任务名称: ${session.name}`,
+          session.inputContext ? `任务指令: ${session.inputContext}` : '',
+          '',
+          '回答规则：',
+          '- 像普通对话一样正常回答问题或完成任务即可',
+          '- 系统会自动将你的最终回复作为任务结果报告给父会话',
+          '- 请给出完整、有价值的回答，因为你的回复内容将直接成为子任务结果',
+          '',
+          '共享资源规则：',
+          '- 如果任务指令中包含 docId（如 doc-xxxxxxxx），直接使用该 ID 操作文档，不要创建新文档',
+          '- 严格只操作你负责的范围（如指定的幻灯片编号、工作表等），不要越界修改其他部分',
+          '- 完成后请在回复中汇报你做了什么（如添加了哪些幻灯片、内容摘要等），方便父会话整合',
+          '- 不要调用 save 操作——由父会话统一保存',
+          '--- 子任务上下文结束 ---',
+        ].filter(Boolean).join('\n');
 
-    const subtaskContext = [
-      `\n\n--- 子任务上下文 ---`,
-      `你正在一个子任务会话中执行独立任务。`,
-      `子任务名称: ${session.name}`,
-      session.inputContext ? `任务指令: ${session.inputContext}` : '',
-      '',
-      '回答规则：',
-      '- 像普通对话一样正常回答问题或完成任务即可',
-      '- 系统会自动将你的最终回复作为任务结果报告给父会话',
-      '- 请给出完整、有价值的回答，因为你的回复内容将直接成为子任务结果',
-      '--- 子任务上下文结束 ---',
-    ].filter(Boolean).join('\n');
+        (sysMsg as { content: string }).content += subtaskContext;
+      }
+    }
 
-    (sysMsg as { content: string }).content += subtaskContext;
+    // ---- 父会话侧：注入活跃子任务提醒 ----
+    if (!session?.parentId && session) {
+      // 检查是否有子任务
+      const children = session.children;
+      if (children && children.length > 0) {
+        // 收集活跃/已完成/出错的子任务信息
+        const activeChildren: string[] = [];
+        const completedChildren: string[] = [];
+        const errorChildren: string[] = [];
+
+        for (const childId of children) {
+          const child = sm.getSession(childId);
+          if (!child) continue;
+          if (child.status === 'active') {
+            activeChildren.push(`  - [进行中] ${child.name} (ID: ${childId})`);
+          } else if (child.status === 'completed') {
+            const resultPreview = child.result ? child.result.slice(0, 200) : '(无结果)';
+            completedChildren.push(`  - [已完成] ${child.name} (ID: ${childId}): ${resultPreview}`);
+          } else if (child.status === 'error') {
+            const resultPreview = child.result ? child.result.slice(0, 200) : '(无错误详情)';
+            errorChildren.push(`  - [出错] ${child.name} (ID: ${childId}): ${resultPreview}`);
+          }
+        }
+
+        // 只有存在需要关注的子任务时才注入
+        if (activeChildren.length > 0 || completedChildren.length > 0 || errorChildren.length > 0) {
+          // 幂等：移除旧的提醒（每轮重新注入最新状态）
+          const content = sysMsg.content as string;
+          const markerStart = content.indexOf(`\n\n${PARENT_CONTEXT_MARKER}`);
+          if (markerStart !== -1) {
+            const markerEnd = content.indexOf('--- 活跃子任务提醒结束 ---', markerStart);
+            if (markerEnd !== -1) {
+              (sysMsg as { content: string }).content = content.slice(0, markerStart) + content.slice(markerEnd + '--- 活跃子任务提醒结束 ---'.length);
+            }
+          }
+
+          const lines: string[] = [`\n\n${PARENT_CONTEXT_MARKER}`];
+
+          if (activeChildren.length > 0) {
+            lines.push(`⚠️ 你有 ${activeChildren.length} 个子任务正在执行：`);
+            lines.push(...activeChildren);
+            lines.push('');
+            lines.push('你必须调用 wait_subtasks 等待这些子任务完成后再继续。不要忽略进行中的子任务。');
+          }
+
+          if (errorChildren.length > 0) {
+            lines.push(`❌ 以下子任务执行出错：`);
+            lines.push(...errorChildren);
+            lines.push('');
+            lines.push('可使用 send_to_subtask 向出错的子任务发送修正指令让其重试，或使用 check_subtask 查看详细状态。');
+          }
+
+          if (completedChildren.length > 0) {
+            lines.push(`以下子任务已完成，请检查结果：`);
+            lines.push(...completedChildren);
+          }
+
+          lines.push('--- 活跃子任务提醒结束 ---');
+          (sysMsg as { content: string }).content += lines.join('\n');
+        }
+      }
+    }
 
     await next();
   }, 900); // 高优先级，在其他中间件之前运行

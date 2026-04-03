@@ -67,7 +67,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_create',
-        description: '创建一个新的 PowerPoint 演示文稿会话，返回 docId。坐标系统：所有位置/尺寸参数以英寸为单位。LAYOUT_16x9 页面为 10×5.63 英寸，LAYOUT_4x3 为 10×7.5 英寸，LAYOUT_WIDE 为 13.33×7.5 英寸。',
+        description: '创建一个新的 PowerPoint 演示文稿会话，返回 docId。该 docId 全局共享，可传递给子任务让多个子任务并行操作同一文稿（如各负责不同幻灯片）。坐标系统：所有位置/尺寸参数以英寸为单位。LAYOUT_16x9 页面为 10×5.63 英寸，LAYOUT_4x3 为 10×7.5 英寸，LAYOUT_WIDE 为 13.33×7.5 英寸。',
         parameters: {
           type: 'object',
           properties: {
@@ -100,7 +100,16 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_slide',
-        description: '向 PPT 添加新幻灯片。返回幻灯片编号（从 1 开始）。',
+        description: [
+          '向 PPT 添加新幻灯片。返回幻灯片编号（从 1 开始）。',
+          '支持 count 参数一次性批量添加多张幻灯片。',
+          '',
+          '【子任务协作模式】如果计划将文稿分给多个子任务并行编辑：',
+          '1. 先在主会话中用 count 参数一次性预创建所有幻灯片',
+          '2. 将具体的幻灯片编号范围分配给各子任务（如"负责幻灯片 1-3"）',
+          '3. 子任务不应调用 ppt_add_slide，只操作已分配的幻灯片编号',
+          '这样可避免并发添加导致的页面顺序混乱。',
+        ].join('\n'),
         parameters: {
           type: 'object',
           properties: {
@@ -113,6 +122,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
                 color: { type: 'string', description: '背景色（十六进制如 "003366"）' },
               },
             },
+            count: { type: 'number', description: '批量添加的幻灯片数量（默认 1）。用于子任务协作前预创建所有页面。' },
           },
           required: ['docId'],
         },
@@ -120,14 +130,27 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
     },
     async handler(args) {
       const state = requireState(String(args.docId));
+      const count = Math.max(1, Math.min(Number(args.count) || 1, 50));
       const opts: PptxGenJS.AddSlideProps = {};
       if (args.masterName) opts.masterName = String(args.masterName);
-      const slide = state.pptx.addSlide(opts);
       const bg = args.background as Record<string, unknown> | undefined;
-      if (bg?.color) slide.background = { color: String(bg.color) };
-      state.slides.push(slide);
-      const slideNum = state.slides.length;
-      return JSON.stringify({ slideNumber: slideNum, message: `幻灯片 ${slideNum} 已添加` });
+
+      const added: number[] = [];
+      for (let i = 0; i < count; i++) {
+        const slide = state.pptx.addSlide(opts);
+        if (bg?.color) slide.background = { color: String(bg.color) };
+        state.slides.push(slide);
+        added.push(state.slides.length);
+      }
+
+      if (count === 1) {
+        return JSON.stringify({ slideNumber: added[0], message: `幻灯片 ${added[0]} 已添加` });
+      }
+      return JSON.stringify({
+        slideNumbers: added,
+        total: state.slides.length,
+        message: `已批量添加 ${count} 张幻灯片（编号 ${added[0]}-${added[added.length - 1]}），共 ${state.slides.length} 张`,
+      });
     },
   });
 
@@ -573,7 +596,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_save',
-        description: '保存 PPT 演示文稿到文件并释放文档会话。',
+        description: '保存 PPT 演示文稿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
         parameters: {
           type: 'object',
           properties: {
