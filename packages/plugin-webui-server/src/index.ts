@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { resolve, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
+import { resolve, dirname, basename, extname, relative, join } from 'node:path';
+import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -21,6 +21,7 @@ export const webuiPages: WebuiPage[] = [
   { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20, renderer: 'marketplace' },
   { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30, renderer: 'plugin-config' },
   { key: 'platforms', label: '平台接入', icon: 'platforms', order: 40, renderer: 'platforms' },
+  { key: 'files', label: '文件管理', icon: 'files', order: 50, renderer: 'files' },
   { key: 'logs', label: '日志', icon: 'logs', order: 60, renderer: 'logs' },
 ];
 
@@ -792,6 +793,131 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }, CONFIRM_TIMEOUT);
       pendingSessionConfirms.set(request.sessionId, { resolve, timer });
     });
+  });
+
+  // ---------- 文件管理 API ----------
+
+  const workspaceRoot = resolve(process.cwd(), 'workspace');
+
+  /** 安全路径解析：确保在 workspace 目录内，防止路径穿越 */
+  function safeResolvePath(relPath: string): string | null {
+    // 规范化并解析
+    const abs = resolve(workspaceRoot, relPath);
+    // 确保结果在 workspace 内
+    if (!abs.startsWith(workspaceRoot)) return null;
+    return abs;
+  }
+
+  // 列出目录内容
+  expressApp.get('/api/files', (req, res) => {
+    const dir = String(req.query.path || '');
+    const abs = safeResolvePath(dir);
+    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
+    if (!existsSync(abs)) { res.status(404).json({ error: '目录不存在' }); return; }
+    const stat = statSync(abs);
+    if (!stat.isDirectory()) { res.status(400).json({ error: '不是目录' }); return; }
+    try {
+      const entries = readdirSync(abs).map(name => {
+        const fullPath = join(abs, name);
+        try {
+          const s = statSync(fullPath);
+          return {
+            name,
+            path: relative(workspaceRoot, fullPath).replace(/\\/g, '/'),
+            isDirectory: s.isDirectory(),
+            size: s.isDirectory() ? 0 : s.size,
+            mtime: s.mtime.toISOString(),
+            ext: s.isDirectory() ? '' : extname(name).toLowerCase(),
+          };
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      // 目录优先，同类型按名称排序
+      entries.sort((a: any, b: any) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      const currentPath = relative(workspaceRoot, abs).replace(/\\/g, '/');
+      res.json({ path: currentPath, entries });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 获取文件/目录详情
+  expressApp.get('/api/files/info', (req, res) => {
+    const filePath = String(req.query.path || '');
+    const abs = safeResolvePath(filePath);
+    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
+    if (!existsSync(abs)) { res.status(404).json({ error: '不存在' }); return; }
+    const s = statSync(abs);
+    res.json({
+      name: basename(abs),
+      path: relative(workspaceRoot, abs).replace(/\\/g, '/'),
+      isDirectory: s.isDirectory(),
+      size: s.size,
+      mtime: s.mtime.toISOString(),
+      birthtime: s.birthtime.toISOString(),
+      ext: s.isDirectory() ? '' : extname(abs).toLowerCase(),
+    });
+  });
+
+  // 下载文件
+  expressApp.get('/api/files/download', (req, res) => {
+    const filePath = String(req.query.path || '');
+    const abs = safeResolvePath(filePath);
+    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
+    if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
+    const s = statSync(abs);
+    if (s.isDirectory()) { res.status(400).json({ error: '不能下载目录' }); return; }
+    const fileName = basename(abs);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.setHeader('Content-Length', s.size);
+    createReadStream(abs).pipe(res);
+  });
+
+  // 重命名
+  expressApp.post('/api/files/rename', (req, res) => {
+    const { path: filePath, newName } = req.body ?? {};
+    if (!filePath || !newName) { res.status(400).json({ error: '缺少参数' }); return; }
+    if (typeof newName !== 'string' || newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
+      res.status(400).json({ error: '文件名不合法' }); return;
+    }
+    const abs = safeResolvePath(String(filePath));
+    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
+    if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
+    const newPath = resolve(dirname(abs), String(newName));
+    if (!newPath.startsWith(workspaceRoot)) { res.status(403).json({ error: '目标路径不合法' }); return; }
+    if (existsSync(newPath)) { res.status(409).json({ error: '目标名称已存在' }); return; }
+    try {
+      renameSync(abs, newPath);
+      res.json({ ok: true, newPath: relative(workspaceRoot, newPath).replace(/\\/g, '/') });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 删除
+  expressApp.post('/api/files/delete', (req, res) => {
+    const { path: filePath } = req.body ?? {};
+    if (!filePath) { res.status(400).json({ error: '缺少参数' }); return; }
+    const abs = safeResolvePath(String(filePath));
+    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
+    if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
+    // 禁止删除 workspace 根目录本身
+    if (abs === workspaceRoot) { res.status(403).json({ error: '不能删除根目录' }); return; }
+    try {
+      const s = statSync(abs);
+      if (s.isDirectory()) {
+        rmSync(abs, { recursive: true });
+      } else {
+        unlinkSync(abs);
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ---------- WebSocket ----------
