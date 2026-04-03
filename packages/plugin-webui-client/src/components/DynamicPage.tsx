@@ -83,6 +83,7 @@ function CountdownCell({ target, onZero }: { target: number; onZero?: () => void
 function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -102,8 +103,14 @@ function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName:
 
   const handleAction = async (action: NonNullable<WebuiTableComponent['actions']>[number], row: Record<string, unknown>) => {
     if (action.confirm && !confirm(action.confirm)) return;
-    await pageAction(pluginName, action.method, row);
-    fetchData();
+    const result = await pageAction<Record<string, unknown>>(pluginName, action.method, row);
+    if (action.danger || action.confirm) {
+      fetchData();
+    } else if (result && typeof result === 'object' && !Array.isArray(result)) {
+      setDetail(result);
+    } else {
+      fetchData();
+    }
   };
 
   return (
@@ -152,6 +159,31 @@ function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName:
             ))}
           </tbody>
         </table>
+      )}
+
+      {detail && (
+        <div className="dyn-detail-overlay" onClick={() => setDetail(null)}>
+          <div className="dyn-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="dyn-detail-header">
+              <span className="dyn-detail-title">{String(detail.name || detail.title || '详情')}</span>
+              <button className="dyn-detail-close" onClick={() => setDetail(null)}>×</button>
+            </div>
+            <div className="dyn-detail-body">
+              {Object.entries(detail).map(([k, v]) => {
+                const val = v == null ? '' : typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+                const isLong = val.length > 120 || val.includes('\n');
+                return (
+                  <div className="dyn-detail-field" key={k}>
+                    <div className="dyn-detail-key">{k}</div>
+                    {isLong
+                      ? <pre className="dyn-detail-pre">{val}</pre>
+                      : <div className="dyn-detail-val">{val}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
