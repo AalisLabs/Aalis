@@ -802,8 +802,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 监听用户消息事件 → 自动生成会话标题
   // 在用户首次发消息时即生成标题，无需等待 AI 回复
-  // 仅对 webui / cli 平台生效，onebot 等外部平台不生成标题
-  const TITLE_PLATFORMS = new Set(['webui', 'cli', 'internal']);
+  // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题
+  const TITLE_PLATFORMS = new Set(['webui', 'cli']);
   const titleGenerating = new Set<string>();
   ctx.on('message:received', (msg: { content: string; sessionId: string; platform?: string }) => {
     const { sessionId, platform } = msg;
