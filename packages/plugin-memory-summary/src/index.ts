@@ -93,7 +93,13 @@ const DEFAULT_SUMMARY_PROMPT = `你是一个对话摘要助手。请将以下对
 7. 如果有之前的摘要，在此基础上整合新内容，确保旧摘要中的重要信息不因新内容加入而被丢弃
 8. 使用第三方视角描述，标注发言者身份（如"用户[小明]..."、"助手..."）
 9. 按话题或时间分段组织，便于后续检索
-10. 摘要长度应与原始对话信息量成正比，充分利用可用空间，不要刻意压缩`;
+10. 摘要长度应与原始对话信息量成正比，充分利用可用空间，不要刻意压缩
+11. **特别重要**：如果对话中存在正在进行的多步骤任务或计划（如任务列表、待办事项、分步实施方案），必须完整保留任务的目标、已完成的步骤、尚未完成的步骤及其状态。在摘要末尾用独立段落列出，格式如：
+    【进行中的任务】
+    - 目标：...
+    - 已完成：...
+    - 待完成：...
+12. 保留助手在对话中制定的工作计划、承诺要做的事情、以及用户尚未被满足的请求`;
 
 // ===== 摘要存储 =====
 
@@ -310,6 +316,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const summaryMsg: Message = {
         role: 'system',
         content: `以下是之前对话的摘要，包含了较早的对话上下文：\n${summaryContent}`,
+        metadata: { source: 'memory-summary' },
       };
 
       // 插入到第一个 system 消息之后、其他消息之前
@@ -330,6 +337,104 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ctx.logger.warn('异步摘要生成失败:', err);
     });
   }, 0);
+
+  // === 监听手动/自动压缩事件 ===
+  ctx.on('session:compress', async (...args: unknown[]) => {
+    const data = args[0] as { sessionId: string; reason?: string; usageRatio?: number };
+    ctx.logger.info(`收到压缩请求: session=${data.sessionId}, reason=${data.reason ?? 'unknown'}`);
+
+    // 手动压缩时降低阈值要求：即使消息数不到 threshold 也强制执行
+    if (data.reason === 'manual' || data.reason === 'auto') {
+      if (summarizing.has(data.sessionId)) return;
+      summarizing.add(data.sessionId);
+
+      try {
+        const memory = ctx.getService<MemoryService>('memory');
+        const llm = ctx.getService<LLMService>('llm');
+        if (!memory || !llm) return;
+
+        const allHistory = await memory.getHistory(data.sessionId, 200);
+        // 手动压缩：只要有 > keepRecent 条消息就压缩
+        if (allHistory.length <= cfg.keepRecent) {
+          ctx.logger.info(`会话消息数 ${allHistory.length} \u2264 keepRecent(${cfg.keepRecent})，无需压缩`);
+          return;
+        }
+
+        const messagesToSummarize = allHistory.slice(0, allHistory.length - cfg.keepRecent);
+        if (messagesToSummarize.length === 0) return;
+
+        const existing = store.getSummary(data.sessionId);
+        const formattedMessages = messagesToSummarize
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content ?? '(空)'}`)
+          .join('\\n');
+
+        // 从历史消息中提取最近的 todo-list 状态，注入到压缩上下文中
+        let todoContext = '';
+        try {
+          const recentMessages = allHistory.slice(-cfg.keepRecent);
+          const todoMsgs = recentMessages.filter(m =>
+            m.role === 'assistant' && m.toolCalls?.some(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage')
+          );
+          if (todoMsgs.length > 0) {
+            const lastTodo = todoMsgs[todoMsgs.length - 1];
+            const tc = lastTodo.toolCalls?.find(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage');
+            if (tc?.function.arguments) {
+              todoContext = `\\n\\n当前任务列表状态：\\n${tc.function.arguments}`;
+            }
+          }
+        } catch { /* ignore */ }
+
+        const summaryMessages: Message[] = [
+          { role: 'system', content: summarySystemPrompt },
+        ];
+
+        const taskHint = data.reason === 'auto'
+          ? '\\n\\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
+          : '';
+
+        if (existing?.summary) {
+          summaryMessages.push({
+            role: 'user',
+            content: `以下是之前的对话摘要：\\n${existing.summary}\\n\\n以下是新增的对话内容，请在之前摘要的基础上整合生成更新的摘要：\\n${formattedMessages}${todoContext}${taskHint}`,
+          });
+        } else {
+          summaryMessages.push({
+            role: 'user',
+            content: `请为以下对话生成摘要：\\n${formattedMessages}${todoContext}${taskHint}`,
+          });
+        }
+
+        ctx.logger.debug(`正在压缩 session=${data.sessionId} (${messagesToSummarize.length} 条旧消息)`);
+
+        let summaryText = '';
+        for await (const chunk of llm.chatStream({
+          messages: summaryMessages,
+          temperature: 0.3,
+          maxTokens: cfg.summaryGenerateTokens,
+        })) {
+          if (chunk.contentDelta) {
+            summaryText += chunk.contentDelta;
+          }
+        }
+
+        if (summaryText.trim()) {
+          store.upsertSummary(data.sessionId, summaryText.trim(), messagesToSummarize.length, allHistory.length);
+          if (memory.trimHistory) {
+            const deleted = await memory.trimHistory(data.sessionId, cfg.keepRecent);
+            ctx.logger.info(`压缩完成: session=${data.sessionId}, 删除 ${deleted} 条旧消息，保留 ${cfg.keepRecent} 条`);
+          }
+        }
+      } catch (err) {
+        ctx.logger.warn('压缩会话失败:', err);
+      } finally {
+        summarizing.delete(data.sessionId);
+      }
+    } else {
+      // 其他情况走标准流程
+      await generateSummary(data.sessionId);
+    }
+  });
 
   // 统一记忆清除：通过 memory:clear hook 参与编排
   ctx.middleware('memory:clear', async (data: {

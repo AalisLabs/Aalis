@@ -45,7 +45,7 @@ interface WebUIConfig {
 // ===== WebSocket 消息协议 =====
 
 interface WSIncoming {
-  type: 'message' | 'subscribe_logs' | 'subscribe_session' | 'unsubscribe_session' | 'abort';
+  type: 'message' | 'subscribe_logs' | 'subscribe_session' | 'unsubscribe_session' | 'abort' | 'compress';
   content?: string;
   sessionId?: string;
   /** base64 data URL 或 HTTP URL 列表 */
@@ -57,7 +57,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload' | 'confirm';
+  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload' | 'confirm' | 'token_usage' | 'compressing';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -72,6 +72,28 @@ interface WSOutgoing {
   toolResult?: string;
   toolPhase?: 'start' | 'end';
   todoItems?: unknown[];
+  // token_usage 字段
+  tokenUsage?: {
+    contextWindow: number;
+    maxTokens: number;
+    tokenBudget: number;
+    used: number;
+    usageRatio: number;
+    breakdown: {
+      system: number;
+      persona: number;
+      memorySummary: number;
+      memoryVector: number;
+      skills: number;
+      platform: number;
+      subtask: number;
+      systemOther: number;
+      history: number;
+      toolResults: number;
+      toolDefs: number;
+      reservedForReply: number;
+    };
+  };
 }
 
 // ===== 插件入口 =====
@@ -92,6 +114,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复
   const streamBuffers = new Map<string, { content: string; reasoningContent: string; generating: boolean }>();
+
+  // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
+  const tokenUsageCache = new Map<string, WSOutgoing>();
 
   // 获取 App 实例（通过服务注册获取）
   const getApp = (): App | undefined => ctx.getService<App>('app');
@@ -957,6 +982,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             };
             ws.send(JSON.stringify(resume));
           }
+          // 发送缓存的 token 用量，刷新/切换会话后立即展示
+          const cachedUsage = tokenUsageCache.get(sid);
+          if (cachedUsage) {
+            ws.send(JSON.stringify(cachedUsage));
+          } else {
+            // 无缓存（服务重启后），请求 agent 重新计算
+            ctx.emit('token:request', { sessionId: sid }).catch(() => {});
+          }
           return;
         }
 
@@ -970,6 +1003,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const sessionId = msg.sessionId || 'webui-default';
           const agent = ctx.getService<AgentService>('agent');
           if (agent?.abort) agent.abort(sessionId);
+          return;
+        }
+
+        if (msg.type === 'compress') {
+          const sessionId = msg.sessionId || 'webui-default';
+          ctx.logger.info(`收到手动压缩请求: session=${sessionId}`);
+          // 通知前端正在压缩
+          const compressingPayload: WSOutgoing = { type: 'compressing', sessionId, content: 'start' };
+          ws.send(JSON.stringify(compressingPayload));
+          // 触发压缩事件（memory-summary 监听此事件）
+          ctx.emit('session:compress', { sessionId, reason: 'manual' }).then(() => {
+            const donePayload: WSOutgoing = { type: 'compressing', sessionId, content: 'done' };
+            ws.send(JSON.stringify(donePayload));
+          }).catch(() => {
+            const errorPayload: WSOutgoing = { type: 'compressing', sessionId, content: 'error' };
+            ws.send(JSON.stringify(errorPayload));
+          });
           return;
         }
 
@@ -1177,6 +1227,57 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       toolPhase: info.phase,
       toolResult: info.result,
     };
+    const json = JSON.stringify(payload);
+
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
+
+  // 监听 token 使用量统计事件
+  ctx.on('token:usage', (...args: unknown[]) => {
+    const usage = args[0] as {
+      sessionId: string;
+      platform: string;
+      contextWindow: number;
+      maxTokens: number;
+      tokenBudget: number;
+      used: number;
+      usageRatio: number;
+      breakdown: {
+        system: number;
+        persona: number;
+        memorySummary: number;
+        memoryVector: number;
+        skills: number;
+        platform: number;
+        subtask: number;
+        systemOther: number;
+        history: number;
+        toolResults: number;
+        toolDefs: number;
+        reservedForReply: number;
+      };
+    };
+    const sockets = sessions.get(usage.sessionId);
+    if (!sockets) return;
+
+    const payload: WSOutgoing = {
+      type: 'token_usage',
+      sessionId: usage.sessionId,
+      tokenUsage: {
+        contextWindow: usage.contextWindow,
+        maxTokens: usage.maxTokens,
+        tokenBudget: usage.tokenBudget,
+        used: usage.used,
+        usageRatio: usage.usageRatio,
+        breakdown: usage.breakdown,
+      },
+    };
+    // 缓存最新的 token 用量
+    tokenUsageCache.set(usage.sessionId, payload);
     const json = JSON.stringify(payload);
 
     for (const ws of sockets) {

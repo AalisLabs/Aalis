@@ -23,6 +23,8 @@ export interface Message {
   reasoningContent?: string | null;
   /** 图片列表（base64 data URL 或 HTTP URL），用于多模态 LLM */
   images?: string[];
+  /** 元数据：用于标记消息来源等信息（不会发送给 LLM） */
+  metadata?: Record<string, unknown>;
 }
 
 export interface IncomingMessage {
