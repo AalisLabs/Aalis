@@ -295,6 +295,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         data.messages.splice(insertIdx, 0, {
           role: 'system',
           content: contextBlock,
+          metadata: { source: 'memory-vector' },
         });
       }
     } catch (err) {
