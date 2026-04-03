@@ -72,6 +72,9 @@ export function App() {
   // 重启/刷新 overlay 的提示文字
   const [restartMessage, setRestartMessage] = useState('正在重启…');
 
+  // 高危操作确认等待状态
+  const [pendingConfirm, setPendingConfirm] = useState(false);
+
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
     // message:send 到达时，用完整内容更新最后一个文本段，保留所有 segments
     setMessages(prev => {
@@ -289,7 +292,16 @@ export function App() {
     }
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume);
+  /** 高危操作确认提示：插入消息但不影响 loading/streaming 状态 */
+  const handleConfirm = useCallback((content: string) => {
+    setPendingConfirm(true);
+    setMessages(prev => [
+      ...prev,
+      { role: 'assistant' as const, content, segments: [{ type: 'text' as const, content }], timestamp: Date.now() },
+    ]);
+  }, []);
+
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm);
 
   // 重启流程：等待 WS 断开后重连，再刷新
   useEffect(() => {
@@ -376,6 +388,20 @@ export function App() {
 
   const handleSend = async () => {
     const trimmed = input.trim();
+
+    // 高危操作确认中 — 仅发送确认回复，不中止也不新建 loading
+    if (pendingConfirm) {
+      if (!trimmed) return;
+      setPendingConfirm(false);
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: trimmed,
+        timestamp: Date.now(),
+      }]);
+      setInput('');
+      send(trimmed);
+      return;
+    }
 
     // 生成中 — 先中止当前生成
     if (loading) {

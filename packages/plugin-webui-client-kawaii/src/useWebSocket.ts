@@ -10,6 +10,7 @@ export function useWebSocket(
   onStateChanged?: () => void,
   onRestarting?: () => void,
   onReload?: () => void,
+  onConfirm?: (content: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -55,6 +56,8 @@ export function useWebSocket(
             onRestarting?.();
           } else if (data.type === 'reload') {
             onReload?.();
+          } else if (data.type === 'confirm' && data.content) {
+            onConfirm?.(data.content);
           }
         } catch { /* ignore */ }
       };
@@ -66,7 +69,7 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onConfirm]);
 
   const send = useCallback((content: string, images?: string[], files?: Array<{ name: string; data: string; mimeType?: string }>, attachmentOrder?: Array<'image' | 'file'>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

@@ -992,6 +992,34 @@ class DefaultAgent implements AgentService {
     }
     if (estimated <= budget) return result;
 
+    // === Phase 2.5: 缩减 assistant 消息的 reasoningContent ===
+    // 深度思考模型的推理内容可能非常长（数万 token），优先缩减旧迭代的推理，
+    // 仍超预算时缩减最新一条（保留头尾摘要以保持上下文连贯性）
+    {
+      // 收集带 reasoningContent 的 assistant 消息索引（从旧到新）
+      const rcIndices: number[] = [];
+      for (let i = 1; i < result.length; i++) {
+        if (result[i].role === 'assistant' && result[i].reasoningContent && result[i].reasoningContent!.length > 200) {
+          rcIndices.push(i);
+        }
+      }
+      // 从最旧开始，先删除非最后一条的推理，仍不够时截断最后一条
+      for (let k = 0; k < rcIndices.length && estimated > budget; k++) {
+        const idx = rcIndices[k];
+        const msg = result[idx];
+        const oldTokens = this.estimateMsgTokens(msg);
+        if (k < rcIndices.length - 1) {
+          // 非最新：直接移除推理内容
+          msg.reasoningContent = undefined;
+        } else {
+          // 最新一条：保留头部 200 字符
+          msg.reasoningContent = msg.reasoningContent!.slice(0, 200) + '\n... [推理内容已缩减]';
+        }
+        estimated -= (oldTokens - this.estimateMsgTokens(msg));
+      }
+    }
+    if (estimated <= budget) return result;
+
     // === Phase 3: 将旧的 assistant+tool 组压缩为摘要 ===
     // 识别所有工具调用组 (assistant(toolCalls) + 紧跟的 tool 消息)
     {
@@ -1048,23 +1076,55 @@ class DefaultAgent implements AgentService {
       return result;
     }
 
-    // === Phase 4: 删除最旧的非 system 消息 ===
+    // === Phase 4: 删除最旧的非 system 消息（保护最后一组工具调用 + 最新用户消息） ===
     {
+      // 识别最后一组工具调用的索引范围，确保不被删除
+      const lastGroupIndices = new Set<number>();
+      for (let j = result.length - 1; j >= 1; j--) {
+        if (result[j].role === 'assistant' && result[j].toolCalls?.length) {
+          lastGroupIndices.add(j);
+          let k = j + 1;
+          while (k < result.length && result[k].role === 'tool') {
+            lastGroupIndices.add(k);
+            k++;
+          }
+          break;
+        }
+      }
+
+      // 保护最新的 user 消息（用户发起任务的请求，删掉会导致模型丢失任务上下文）
+      let lastUserIdx = -1;
+      for (let j = result.length - 1; j >= 1; j--) {
+        if (result[j].role === 'user') { lastUserIdx = j; break; }
+      }
+
+      const adjustAfterSplice = (splicedAt: number): void => {
+        const updated = new Set<number>();
+        for (const idx of lastGroupIndices) updated.add(idx > splicedAt ? idx - 1 : idx);
+        lastGroupIndices.clear();
+        for (const idx of updated) lastGroupIndices.add(idx);
+        if (lastUserIdx > splicedAt) lastUserIdx--;
+      };
+
       let i = 1;
       while (estimated > budget && i < result.length - 1) {
-        if (result[i].role === 'system') { i++; continue; }
+        if (result[i].role === 'system' || lastGroupIndices.has(i) || i === lastUserIdx) { i++; continue; }
         // assistant(含toolCalls) + 紧跟的 tool 消息成组删除
         if (result[i].role === 'assistant' && result[i].toolCalls?.length) {
           estimated -= this.estimateMsgTokens(result[i]);
           result.splice(i, 1);
+          adjustAfterSplice(i);
           while (i < result.length - 1 && result[i].role === 'tool') {
+            if (lastGroupIndices.has(i)) break;
             estimated -= this.estimateMsgTokens(result[i]);
             result.splice(i, 1);
+            adjustAfterSplice(i);
           }
           continue;
         }
         estimated -= this.estimateMsgTokens(result[i]);
         result.splice(i, 1);
+        adjustAfterSplice(i);
       }
     }
     if (estimated <= budget) {
@@ -1080,6 +1140,21 @@ class DefaultAgent implements AgentService {
         estimated -= this.estimateMsgTokens(result[idx]);
         result.splice(idx, 1);
       }
+    }
+
+    // 大幅裁剪后注入继续执行提示，防止模型因上下文缺失而中止任务
+    if (messages.length - result.length >= 6) {
+      const hint: Message = {
+        role: 'system',
+        content: '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。',
+      };
+      // 插入到最后一条 user 消息之后（如果有），否则插到末尾前
+      let insertIdx = result.length - 1;
+      for (let j = result.length - 1; j >= 1; j--) {
+        if (result[j].role === 'user') { insertIdx = j + 1; break; }
+      }
+      result.splice(insertIdx, 0, hint);
+      estimated += this.estimateMsgTokens(hint);
     }
 
     if (result.length < messages.length) {
