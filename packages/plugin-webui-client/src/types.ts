@@ -1,5 +1,11 @@
 // ===== 共享类型 =====
 
+export interface TodoItem {
+  id: number;
+  title: string;
+  status: 'not-started' | 'in-progress' | 'completed';
+}
+
 export type ContentSegment =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string };
@@ -149,7 +155,8 @@ export interface WebuiActionsComponent { type: 'actions'; label?: string; items:
 export interface WebuiInfoComponent { type: 'info'; label?: string; source: string }
 export interface WebuiMarkdownComponent { type: 'markdown'; label?: string; source: string }
 export interface WebuiTabsComponent { type: 'tabs'; label?: string; items: Array<{ key: string; label: string; content: WebuiComponent[] }> }
-export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent;
+export interface WebuiIframeComponent { type: 'iframe'; label?: string; source: string; height?: string }
+export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent | WebuiIframeComponent;
 
 export interface WebuiPageDef {
   key: string;
@@ -157,5 +164,7 @@ export interface WebuiPageDef {
   icon?: string;
   order?: number;
   plugin: string;
+  pluginDisplayName?: string;
+  renderer?: string;
   content?: WebuiComponent[];
 }
