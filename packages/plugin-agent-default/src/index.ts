@@ -18,6 +18,7 @@ import type {
   PersonaService,
   PersonaSessionOptions,
   SessionManagerService,
+  SessionConfig,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
@@ -43,8 +44,6 @@ class DefaultAgent implements AgentService {
   private maxToolIterations: number;
   /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
   private preferredModel: string;
-  /** session 级别的模型覆盖（sessionId → modelId），由 /model 指令设置 */
-  private sessionModelOverrides = new Map<string, string>();
   /** 模型 ID → 提供者 contextId 映射缓存 */
   private modelProviderMap: Map<string, string> | null = null;
 
@@ -95,10 +94,9 @@ class DefaultAgent implements AgentService {
    * 根据优先级链获取 LLM 服务和模型覆盖
    *
    * 优先级（从高到低）：
-   * 1. /model 指令的 session 级覆盖
-   * 2. session-manager resolveConfig (= 会话 > 父 sessionDefaults > 平台 profile)
-   * 3. 全局 preferredModel
-   * 4. 默认 LLM 提供者的默认模型
+   * 1. session-manager resolveConfig (= 会话 config > 父 sessionDefaults > 平台 profile)
+   * 2. 全局 preferredModel
+   * 3. 默认 LLM 提供者的默认模型
    */
   private resolveLLM(platform?: string, sessionId?: string): { llm: LLMService; modelOverride?: string } | undefined {
     let model: string | undefined;
@@ -112,11 +110,7 @@ class DefaultAgent implements AgentService {
       if (resolved.llmProvider) llmProviderOverride = resolved.llmProvider;
     }
 
-    // 2. /model set 覆盖（最高运行时优先级）
-    const sessionOverride = sessionId && this.sessionModelOverrides.get(sessionId);
-    if (sessionOverride) model = sessionOverride;
-
-    // 3. 全局 preferredModel
+    // 2. 全局 preferredModel
     if (!model) {
       model = this.preferredModel;
     }
@@ -415,14 +409,7 @@ class DefaultAgent implements AgentService {
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
 
-      // 标记会话为活跃状态
-      const sessionMgrForStatus = this.ctx.getService<SessionManagerService>('session-manager');
-      if (sessionMgrForStatus && incoming.sessionId) {
-        const session = sessionMgrForStatus.getSession(incoming.sessionId);
-        if (session && session.status !== 'active') {
-          sessionMgrForStatus.updateSession(incoming.sessionId, { status: 'active' }).catch(() => {});
-        }
-      }
+
 
       const resolved = this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
@@ -678,15 +665,10 @@ class DefaultAgent implements AgentService {
         let replyContent = response.content ?? '';
 
         // Hook: response:before — 插件可以修改最终回复
+        // JSON 解析/修复统一由 persona 的 response:before 钩子处理
         const responseData = { content: replyContent, sessionId: incoming.sessionId };
         await this.ctx.hooks.run('response:before', responseData);
         replyContent = responseData.content;
-
-        // 回退：仅当无 outputFormat 时尝试提取 JSON 中的回复字段
-        // 有 outputFormat 时由 persona 的 response:before 已正确处理（提取或保留）
-        if (!expectJson) {
-          replyContent = this.extractJsonReply(replyContent);
-        }
 
         // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
         const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
@@ -747,10 +729,7 @@ class DefaultAgent implements AgentService {
           metadata: msgHookData.metadata,
         });
 
-        // 标记会话为已完成（工具调用达上限时保持 active，等待用户决定是否继续）
-        if (!toolLimitReached && sessionMgrForStatus && incoming.sessionId) {
-          sessionMgrForStatus.updateSession(incoming.sessionId, { status: 'completed' }).catch(() => {});
-        }
+
       } catch (err) {
         // 中止错误 — 静默退出，已生成的流内容保留在前端
         if (err instanceof DOMException && err.name === 'AbortError') {
@@ -760,10 +739,7 @@ class DefaultAgent implements AgentService {
             platform: incoming.platform,
             done: true,
           });
-          // 中止也标记为已完成
-          if (sessionMgrForStatus && incoming.sessionId) {
-            sessionMgrForStatus.updateSession(incoming.sessionId, { status: 'completed' }).catch(() => {});
-          }
+
           return;
         }
 
@@ -1163,34 +1139,7 @@ class DefaultAgent implements AgentService {
     return result;
   }
 
-  /**
-   * 如果内容是 JSON 包裹的回复则提取纯文本，否则原样返回
-   */
-  private extractJsonReply(content: string): string {
-    const trimmed = content.trim();
-    if (!trimmed.startsWith('{')) return content;
-    const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return content;
-      // 优先查找字符串类型的回复字段
-      for (const key of replyKeys) {
-        if (typeof parsed[key] === 'string') return parsed[key];
-      }
-      // 嵌套对象：深入一层查找字符串回复
-      for (const key of replyKeys) {
-        const val = parsed[key];
-        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-          for (const subKey of replyKeys) {
-            if (typeof val[subKey] === 'string') return val[subKey];
-          }
-          const strings = Object.values(val).filter((v): v is string => typeof v === 'string');
-          if (strings.length > 0) return strings.join('\n');
-        }
-      }
-    } catch { /* 非 JSON，原样返回 */ }
-    return content;
-  }
+
 
   /**
    * 保存消息到记忆服务
@@ -1267,18 +1216,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== /model 指令 =====
   ctx.command('model', '查看或切换当前会话的对话模型', async (cmdCtx) => {
     const target = cmdCtx.args[0];
+    const smSvc = ctx.getService<SessionManagerService>('session-manager');
 
     // 无参数 或 /model info：显示当前模型和来源
     if (!target || target === 'info') {
-      const sessionOverride = agent['sessionModelOverrides'].get(cmdCtx.sessionId);
       const globalModel = agent['preferredModel'];
-      // 从 session-manager resolveConfig 获取平台/会话级配置
-      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      // 从 session-manager resolveConfig 获取最终生效模型（已包含会话级覆盖）
       const resolvedModel = smSvc ? smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model : undefined;
-      const current = sessionOverride || resolvedModel || globalModel || '(默认)';
+      // 检查是否为会话级覆盖（区分来源）
+      const sessionModel = smSvc?.getSession(cmdCtx.sessionId)?.config?.model;
+      const current = resolvedModel || globalModel || '(默认)';
       const lines = [`**当前模型**: ${current}`];
-      if (sessionOverride) lines.push(`  _(session 覆盖, /model reset 可清除)_`);
-      else if (resolvedModel) lines.push(`  _(会话/平台配置)_`);
+      if (sessionModel) lines.push(`  _(会话覆盖, /model reset 可清除)_`);
+      else if (resolvedModel) lines.push(`  _(平台/继承配置)_`);
       else if (globalModel) lines.push(`  _(全局配置)_`);
 
       // 仅 /model（无参数）时列出可用模型
@@ -1301,20 +1251,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return lines.join('\n');
     }
 
-    // /model reset — 清除 session 覆盖
+    // /model reset — 清除会话级模型覆盖
     if (target === 'reset') {
-      agent['sessionModelOverrides'].delete(cmdCtx.sessionId);
+      if (!smSvc) return 'session-manager 服务不可用';
+      const session = smSvc.getSession(cmdCtx.sessionId);
+      if (session?.config?.model) {
+        const { model: _, ...rest } = session.config;
+        await smSvc.updateSession(cmdCtx.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
+      }
       const fallback = agent['preferredModel'] || '(默认)';
       return `已清除会话模型覆盖，回退到: ${fallback}`;
     }
 
-    // /model set <name> — 设置 session 级模型覆盖
+    // /model set <name> — 设置会话级模型覆盖（持久化到 SessionConfig）
     if (target === 'set') {
       const modelName = cmdCtx.args[1];
       if (!modelName) return '用法: /model set <模型名称>';
-      agent['sessionModelOverrides'].set(cmdCtx.sessionId, modelName);
+      if (!smSvc) return 'session-manager 服务不可用';
+      await smSvc.updateSession(cmdCtx.sessionId, { config: { model: modelName } as SessionConfig });
       await agent['buildModelProviderMap']();
-      return `当前会话模型已切换为: ${modelName}`;
+      return `当前会话模型已切换为: ${modelName}（已持久化）`;
     }
 
     return `未知子命令: ${target}。可用: info / set <模型名> / reset`;

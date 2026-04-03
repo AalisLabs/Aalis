@@ -31,6 +31,19 @@ export interface HookContextMap {
   // LLM 调用钩子
   'llm-call:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string };
   'llm-call:after': { response: ChatResponse; messages: Message[] };
+  // 记忆清除钩子（统一编排）
+  'memory:clear': {
+    /** 清除范围: session=当前会话, all=全局 */
+    scope: 'session' | 'all';
+    /** 指定清除的子系统（为空则全部清除） */
+    types?: string[];
+    /** 当前会话 ID（scope=session 时必填） */
+    sessionId?: string;
+    /** 各子系统报告的结果（由中间件填充） */
+    results: Array<{ source: string; success: boolean; message: string }>;
+    /** 回滚函数列表（清除失败时依次执行） */
+    rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+  };
   // 允许任意字符串 key（运行时安全，类型兜底）
   [key: string]: Record<string, unknown>;
 }
