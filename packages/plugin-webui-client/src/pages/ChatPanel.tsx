@@ -3,8 +3,47 @@ import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { ChatMessage, SystemStatus, TodoItem } from '../types';
+import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../types';
 import type { MutableRefObject } from 'react';
+
+/** 工具调用实时计时器 */
+function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (endTime || !startTime) return;
+    let raf: number;
+    const tick = () => { setNow(Date.now()); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [startTime, endTime]);
+  if (!startTime) return null;
+  const elapsed = ((endTime || now) - startTime) / 1000;
+  return <span className="tool-call-timer">{elapsed.toFixed(1)}s</span>;
+}
+
+/** 渲染 tool_call 段的 <details> 块 */
+function ToolCallBlock({ seg, index }: { seg: Extract<ContentSegment, { type: 'tool_call' }>; index: number }) {
+  return (
+    <details key={index} className="tool-call-block">
+      <summary className="tool-call-summary">
+        <Wrench size={14} /> {seg.name}{seg.result == null ? ' …' : ''}
+        <ToolCallTimer startTime={seg.startTime} endTime={seg.endTime} />
+      </summary>
+      <div className="tool-call-content">
+        <div className="tool-call-args">
+          <strong>参数</strong>
+          <pre>{JSON.stringify(seg.args, null, 2)}</pre>
+        </div>
+        {seg.result != null && (
+          <div className="tool-call-result">
+            <strong>结果</strong>
+            <pre>{seg.result}</pre>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
 
 /** 将 File 转为 base64 data URL */
 function fileToDataUrl(file: File): Promise<string> {
@@ -335,6 +374,8 @@ export function ChatPanel({
   onNewSession,
   todoItems,
   onClearTodos,
+  toolLimitReached,
+  onContinueTools,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -358,6 +399,10 @@ export function ChatPanel({
   todoItems?: TodoItem[];
   /** 清除任务计划 */
   onClearTodos?: () => void;
+  /** 工具调用达到上限 */
+  toolLimitReached?: boolean;
+  /** 用户确认继续工具调用 */
+  onContinueTools?: () => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -553,23 +598,7 @@ export function ChatPanel({
                         </ReactMarkdown>
                       ) : null
                     ) : (
-                      <details key={j} className="tool-call-block">
-                        <summary className="tool-call-summary">
-                          <Wrench size={14} /> {seg.name}{seg.result == null ? ' …' : ''}
-                        </summary>
-                        <div className="tool-call-content">
-                          <div className="tool-call-args">
-                            <strong>参数</strong>
-                            <pre>{JSON.stringify(seg.args, null, 2)}</pre>
-                          </div>
-                          {seg.result != null && (
-                            <div className="tool-call-result">
-                              <strong>结果</strong>
-                              <pre>{seg.result}</pre>
-                            </div>
-                          )}
-                        </div>
-                      </details>
+                      <ToolCallBlock key={j} seg={seg} index={j} />
                     )
                   )}
                 </div>
@@ -583,23 +612,7 @@ export function ChatPanel({
                       <AssistantContent key={j} content={seg.content} />
                     ) : null
                   ) : (
-                    <details key={j} className="tool-call-block">
-                      <summary className="tool-call-summary">
-                        <Wrench size={14} /> {seg.name}{seg.result == null ? ' …' : ''}
-                      </summary>
-                      <div className="tool-call-content">
-                        <div className="tool-call-args">
-                          <strong>参数</strong>
-                          <pre>{JSON.stringify(seg.args, null, 2)}</pre>
-                        </div>
-                        {seg.result != null && (
-                          <div className="tool-call-result">
-                            <strong>结果</strong>
-                            <pre>{seg.result}</pre>
-                          </div>
-                        )}
-                      </div>
-                    </details>
+                    <ToolCallBlock key={j} seg={seg} index={j} />
                   )
                 )}
               </div>
@@ -632,6 +645,20 @@ export function ChatPanel({
             <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
               ■ 停止生成
             </button>
+          </div>
+        )}
+        {/* 工具调用达到上限提示 */}
+        {toolLimitReached && !loading && (
+          <div className="tool-limit-bar">
+            <span className="tool-limit-text">⚠ 工具调用次数已达上限</span>
+            <div className="tool-limit-actions">
+              {onContinueTools && (
+                <button className="tool-limit-btn continue" onClick={onContinueTools}>
+                  继续迭代
+                </button>
+              )}
+              <span className="tool-limit-hint">或输入新内容引导模型</span>
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />

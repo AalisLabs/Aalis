@@ -13,7 +13,7 @@ function makeSessionName(): string {
   return `会话 ${mm}-${dd} ${hh}:${mi}`;
 }
 
-interface RawMessage {
+export interface RawMessage {
   role: string;
   content: string | null;
   toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
@@ -26,7 +26,7 @@ interface RawMessage {
  * 将后端返回的结构化消息数组（含 assistant/tool/user/system）转换为前端 ChatMessage 数组。
  * 连续的 assistant + tool 消息组合为一个 ChatMessage，并从 toolCalls/tool 消息重建 segments。
  */
-function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
+export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
   const result: ChatMessage[] = [];
   let i = 0;
 
@@ -283,15 +283,7 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
 
   /** 从服务端拉取会话历史消息并更新状态 */
   const fetchAndSetMessages = useCallback((sessionId: string, plugin: string) => {
-    interface RawMsg {
-      role: string;
-      content: string | null;
-      toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
-      toolCallId?: string;
-      reasoningContent?: string;
-      timestamp?: number;
-    }
-    pageAction<{ session: unknown; messages: RawMsg[] }>(plugin, 'getSessionDetail', { id: sessionId })
+    pageAction<{ session: unknown; messages: RawMessage[] }>(plugin, 'getSessionDetail', { id: sessionId })
       .then(d => {
         if (d?.messages && activeIdRef.current === sessionId) {
           const msgs = buildChatMessages(d.messages);
