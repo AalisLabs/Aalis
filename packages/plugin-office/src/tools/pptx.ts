@@ -8,6 +8,46 @@ import { loadImage } from '../utils.js';
 interface PptState {
   pptx: PptxGenJS;
   slides: PptxGenJS.Slide[];
+  /** 幻灯片宽度（英寸） */
+  slideW: number;
+  /** 幻灯片高度（英寸） */
+  slideH: number;
+}
+
+/** 各 layout 对应的尺寸（英寸） */
+const LAYOUT_DIMS: Record<string, [number, number]> = {
+  LAYOUT_16x9: [10, 5.63],
+  LAYOUT_4x3:  [10, 7.5],
+  LAYOUT_WIDE: [13.33, 7.5],
+};
+
+/** 将元素位置/尺寸钳制在幻灯片可见区域内 */
+function clampBounds(
+  state: PptState,
+  x?: number | null, y?: number | null,
+  w?: number | null, h?: number | null,
+  defaults?: { x: number; y: number; w: number; h: number },
+) {
+  const d = defaults || { x: 0.5, y: 0.5, w: 9, h: 1 };
+  let ex = x != null ? Number(x) : d.x;
+  let ey = y != null ? Number(y) : d.y;
+  let ew = w != null ? Number(w) : d.w;
+  let eh = h != null ? Number(h) : d.h;
+
+  // 确保宽高不超过幻灯片尺寸
+  ew = Math.min(ew, state.slideW);
+  eh = Math.min(eh, state.slideH);
+
+  // 确保 x+w 不超出右边界
+  if (ex + ew > state.slideW) ex = Math.max(0, state.slideW - ew);
+  // 确保 y+h 不超出下边界
+  if (ey + eh > state.slideH) ey = Math.max(0, state.slideH - eh);
+
+  // 确保起点非负
+  ex = Math.max(0, ex);
+  ey = Math.max(0, ey);
+
+  return { x: ex, y: ey, w: ew, h: eh };
 }
 
 export function registerPptTools(ctx: Context, sessions: DocSessionManager, outputDir: string) {
@@ -27,14 +67,14 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_create',
-        description: '创建一个新的 PowerPoint 演示文稿会话，返回 docId。',
+        description: '创建一个新的 PowerPoint 演示文稿会话，返回 docId。坐标系统：所有位置/尺寸参数以英寸为单位。LAYOUT_16x9 页面为 10×5.63 英寸，LAYOUT_4x3 为 10×7.5 英寸，LAYOUT_WIDE 为 13.33×7.5 英寸。',
         parameters: {
           type: 'object',
           properties: {
             filename: { type: 'string', description: '文件名（如 report.pptx）' },
             title: { type: 'string', description: '演示文稿标题' },
             author: { type: 'string', description: '作者' },
-            layout: { type: 'string', enum: ['LAYOUT_16x9', 'LAYOUT_4x3', 'LAYOUT_WIDE'], description: '幻灯片比例，默认 LAYOUT_16x9' },
+            layout: { type: 'string', enum: ['LAYOUT_16x9', 'LAYOUT_4x3', 'LAYOUT_WIDE'], description: '幻灯片比例，默认 LAYOUT_16x9。16:9 页面尺寸为 10×5.63 英寸；4:3 为 10×7.5 英寸' },
           },
           required: ['filename'],
         },
@@ -45,10 +85,12 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const pptx = new PptxGenJS();
       if (args.title) pptx.title = String(args.title);
       if (args.author) pptx.author = String(args.author);
-      pptx.layout = String(args.layout || 'LAYOUT_16x9');
-      const state: PptState = { pptx, slides: [] };
+      const layout = String(args.layout || 'LAYOUT_16x9');
+      pptx.layout = layout;
+      const [slideW, slideH] = LAYOUT_DIMS[layout] || LAYOUT_DIMS.LAYOUT_16x9;
+      const state: PptState = { pptx, slides: [], slideW, slideH };
       const docId = sessions.create('pptx', filename, state);
-      return JSON.stringify({ docId, filename, message: `PPT 已创建` });
+      return JSON.stringify({ docId, filename, slideWidth: slideW, slideHeight: slideH, message: `PPT 已创建（${slideW}×${slideH} 英寸）。所有元素的 x/y/w/h 均以英寸为单位，请确保 x+w ≤ ${slideW}，y+h ≤ ${slideH}` });
     },
   });
 
@@ -95,7 +137,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_text',
-        description: '在 PPT 幻灯片上添加文本框。支持富文本（多段文字）。',
+        description: '在 PPT 幻灯片上添加文本框。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。16:9 页面为 10×5.63 英寸。建议标题 y=0.3~0.5，正文 y=1.5~2，留 0.3~0.5 英寸页边距。',
         parameters: {
           type: 'object',
           properties: {
@@ -137,11 +179,10 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const state = requireState(String(args.docId));
       const slide = getSlide(state, args.slideNumber as number | undefined);
 
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 0.5, y: 0.5, w: 9, h: 1 });
+
       const opts: PptxGenJS.TextPropsOptions = {
-        x: args.x != null ? Number(args.x) : 0.5,
-        y: args.y != null ? Number(args.y) : 0.5,
-        w: args.w != null ? Number(args.w) : 9,
-        h: args.h != null ? Number(args.h) : 1,
+        ...bounds,
         align: (args.align as PptxGenJS.HAlign) || undefined,
         valign: (args.valign as PptxGenJS.VAlign) || undefined,
         fontSize: args.fontSize ? Number(args.fontSize) : undefined,
@@ -178,17 +219,17 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_image',
-        description: '在 PPT 幻灯片上添加图片。支持 URL 和本地文件路径。',
+        description: '在 PPT 幻灯片上添加图片。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。建议图片宽度不超过 9 英寸（16:9 留边距），高度不超过 4 英寸。',
         parameters: {
           type: 'object',
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
             slideNumber: { type: 'number', description: '幻灯片编号' },
             source: { type: 'string', description: '图片来源：URL 或本地路径' },
-            x: { type: 'number', description: 'X 位置（英寸）' },
-            y: { type: 'number', description: 'Y 位置（英寸）' },
-            w: { type: 'number', description: '宽度（英寸）' },
-            h: { type: 'number', description: '高度（英寸）' },
+            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' },
+            y: { type: 'number', description: 'Y 位置（英寸），默认 0.5' },
+            w: { type: 'number', description: '宽度（英寸），默认 5' },
+            h: { type: 'number', description: '高度（英寸），默认 3.75' },
           },
           required: ['docId', 'source'],
         },
@@ -201,15 +242,14 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const base64 = buffer.toString('base64');
       const ext = mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'jpeg';
 
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 0.5, y: 0.5, w: 5, h: 3.75 });
+
       slide.addImage({
         data: `image/${ext};base64,${base64}`,
-        x: args.x != null ? Number(args.x) : 0.5,
-        y: args.y != null ? Number(args.y) : 0.5,
-        w: args.w != null ? Number(args.w) : 5,
-        h: args.h != null ? Number(args.h) : 3.75,
+        ...bounds,
       });
 
-      return JSON.stringify({ success: true, message: `图片已添加` });
+      return JSON.stringify({ success: true, message: `图片已添加`, position: bounds });
     },
   });
 
@@ -219,14 +259,14 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_shape',
-        description: '在 PPT 幻灯片上添加形状（矩形、圆形、箭头等）。',
+        description: '在 PPT 幻灯片上添加形状（矩形、圆形、箭头等）。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。',
         parameters: {
           type: 'object',
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
             slideNumber: { type: 'number', description: '幻灯片编号' },
             shape: { type: 'string', enum: ['rect', 'ellipse', 'roundRect', 'triangle', 'diamond', 'line', 'arrow'], description: '形状类型' },
-            x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
+            x: { type: 'number', description: 'X 位置（英寸），默认 1' }, y: { type: 'number', description: 'Y 位置（英寸），默认 1' }, w: { type: 'number', description: '宽度（英寸），默认 2' }, h: { type: 'number', description: '高度（英寸），默认 2' },
             fill: { type: 'string', description: '填充色（十六进制）' },
             line: { type: 'object', properties: { color: { type: 'string' }, width: { type: 'number' } } },
             text: { type: 'string', description: '形状内的文字' },
@@ -252,11 +292,10 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const shapeType = shapeMap[String(args.shape)] || state.pptx.ShapeType.rect;
       const lineArg = args.line as Record<string, unknown> | undefined;
 
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 1, y: 1, w: 2, h: 2 });
+
       const opts: PptxGenJS.ShapeProps = {
-        x: args.x != null ? Number(args.x) : 1,
-        y: args.y != null ? Number(args.y) : 1,
-        w: args.w != null ? Number(args.w) : 2,
-        h: args.h != null ? Number(args.h) : 2,
+        ...bounds,
         fill: args.fill ? { color: String(args.fill) } : undefined,
         line: lineArg ? { color: lineArg.color ? String(lineArg.color) : undefined, width: lineArg.width ? Number(lineArg.width) : undefined } : undefined,
       };
@@ -265,12 +304,12 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
 
       if (args.text) {
         slide.addText(String(args.text), {
-          x: opts.x, y: opts.y, w: opts.w, h: opts.h,
+          ...bounds,
           align: 'center', valign: 'middle',
         });
       }
 
-      return JSON.stringify({ success: true, message: `形状 ${args.shape} 已添加` });
+      return JSON.stringify({ success: true, message: `形状 ${args.shape} 已添加`, position: bounds });
     },
   });
 
@@ -280,7 +319,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_chart',
-        description: '在 PPT 幻灯片上添加图表。',
+        description: '在 PPT 幻灯片上添加图表。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。',
         parameters: {
           type: 'object',
           properties: {
@@ -300,7 +339,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
                 },
               },
             },
-            x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
+            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' }, y: { type: 'number', description: 'Y 位置（英寸），默认 1' }, w: { type: 'number', description: '宽度（英寸），默认 9' }, h: { type: 'number', description: '高度（英寸），默认 5' },
             showLegend: { type: 'boolean', description: '显示图例' },
             showValue: { type: 'boolean', description: '显示数值标签' },
           },
@@ -325,18 +364,17 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const type = chartTypeMap[String(args.chartType)] || state.pptx.ChartType.bar;
       const data = args.data as Array<{ name: string; labels: string[]; values: number[] }>;
 
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 0.5, y: 1, w: 9, h: 5 });
+
       slide.addChart(type, data, {
-        x: args.x != null ? Number(args.x) : 0.5,
-        y: args.y != null ? Number(args.y) : 1,
-        w: args.w != null ? Number(args.w) : 9,
-        h: args.h != null ? Number(args.h) : 5,
+        ...bounds,
         showTitle: !!args.title,
         title: args.title ? String(args.title) : undefined,
         showLegend: args.showLegend !== false,
         showValue: args.showValue === true,
       });
 
-      return JSON.stringify({ success: true, message: `图表已添加` });
+      return JSON.stringify({ success: true, message: `图表已添加`, position: bounds });
     },
   });
 
@@ -346,7 +384,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_table',
-        description: '在 PPT 幻灯片上添加表格。',
+        description: '在 PPT 幻灯片上添加表格。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。',
         parameters: {
           type: 'object',
           properties: {
@@ -354,7 +392,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
             slideNumber: { type: 'number', description: '幻灯片编号' },
             headers: { type: 'array', items: { type: 'string' }, description: '表头' },
             rows: { type: 'array', items: { type: 'array', items: {} }, description: '数据行' },
-            x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' },
+            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' }, y: { type: 'number', description: 'Y 位置（英寸），默认 1' }, w: { type: 'number', description: '宽度（英寸），默认 9' },
             headerColor: { type: 'string', description: '表头背景色' },
             headerFontColor: { type: 'string', description: '表头文字颜色，默认白色' },
             fontSize: { type: 'number', description: '字号' },
@@ -386,15 +424,17 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
         tableRows.push(row.map(cell => ({ text: cell == null ? '' : String(cell) })));
       }
 
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, undefined, { x: 0.5, y: 1, w: 9, h: 5 });
+
       slide.addTable(tableRows, {
-        x: args.x != null ? Number(args.x) : 0.5,
-        y: args.y != null ? Number(args.y) : 1,
-        w: args.w != null ? Number(args.w) : 9,
+        x: bounds.x,
+        y: bounds.y,
+        w: bounds.w,
         fontSize: args.fontSize ? Number(args.fontSize) : 12,
         border: { type: 'solid', pt: 0.5, color: 'CCCCCC' },
       });
 
-      return JSON.stringify({ success: true, message: `表格已添加` });
+      return JSON.stringify({ success: true, message: `表格已添加`, position: { x: bounds.x, y: bounds.y, w: bounds.w } });
     },
   });
 
@@ -459,7 +499,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_set_master',
-        description: '定义一个幻灯片母版/模板，之后可在添加幻灯片时引用。支持设置背景、标题样式、页脚等。',
+        description: '定义一个幻灯片母版/模板，之后可在添加幻灯片时引用。支持设置背景、固定元素等。元素坐标会自动钳制到幻灯片范围内。',
         parameters: {
           type: 'object',
           properties: {
@@ -493,15 +533,13 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const masterObjects: PptxGenJS.SlideMasterProps['objects'] = [];
       if (objects) {
         for (const obj of objects) {
+          const b = clampBounds(state, obj.x as number, obj.y as number, obj.w as number, obj.h as number, { x: 0, y: 0, w: state.slideW, h: 0.5 });
           if (obj.type === 'text') {
             masterObjects.push({
               text: {
                 text: String(obj.text || ''),
                 options: {
-                  x: obj.x != null ? Number(obj.x) : 0,
-                  y: obj.y != null ? Number(obj.y) : 0,
-                  w: obj.w != null ? Number(obj.w) : 10,
-                  h: obj.h != null ? Number(obj.h) : 0.5,
+                  ...b,
                   color: obj.color ? String(obj.color) : undefined,
                   fontSize: obj.fontSize ? Number(obj.fontSize) : undefined,
                   bold: obj.bold as boolean | undefined,
@@ -511,10 +549,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
           } else if (obj.type === 'rect') {
             masterObjects.push({
               rect: {
-                x: obj.x != null ? Number(obj.x) : 0,
-                y: obj.y != null ? Number(obj.y) : 0,
-                w: obj.w != null ? Number(obj.w) : 10,
-                h: obj.h != null ? Number(obj.h) : 0.5,
+                ...b,
                 fill: obj.fill ? { color: String(obj.fill) } : undefined,
               },
             });

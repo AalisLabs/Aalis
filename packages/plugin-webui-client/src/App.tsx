@@ -267,7 +267,29 @@ export function App() {
     setTodoItems(items as TodoItem[]);
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated);
+  /** 刷新后恢复正在生成的流式内容 */
+  const handleStreamResume = useCallback((content: string, reasoningContent: string, done: boolean) => {
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      // 如果最后一条已经是 assistant 且内容一样，跳过（避免重复）
+      if (last && last.role === 'assistant' && last.content === content) return prev;
+      const msg = {
+        role: 'assistant' as const,
+        content,
+        reasoningContent: reasoningContent || undefined,
+        segments: content ? [{ type: 'text' as const, content }] : [],
+        reasoningSegments: reasoningContent ? [{ type: 'text' as const, content: reasoningContent }] : [],
+        timestamp: Date.now(),
+      };
+      return [...prev, msg];
+    });
+    if (!done) {
+      streamingRef.current = true;
+      setLoading(true);
+    }
+  }, []);
+
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume);
 
   // 重启流程：等待 WS 断开后重连，再刷新
   useEffect(() => {
