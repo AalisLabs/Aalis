@@ -215,6 +215,7 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   height: 100%;
+  animation: page-fade 0.25s ease;
 }
 
 .section-label {
@@ -562,6 +563,7 @@ body {
   flex-direction: column;
   gap: 2px;
   max-width: 88%;
+  animation: msg-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 .message-group.user {
@@ -1737,6 +1739,11 @@ body {
   cursor: not-allowed;
 }
 
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  transition-duration: 0.05s;
+}
+
 .btn-primary {
   background: var(--primary);
   color: white;
@@ -2496,6 +2503,18 @@ details[open] > .tool-call-summary::before {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes page-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes modal-scale {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
 .confirm-dialog {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -2505,6 +2524,7 @@ details[open] > .tool-call-summary::before {
   width: 90%;
   text-align: center;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  animation: modal-scale 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .confirm-dialog-icon {
   font-size: 36px;
@@ -2770,6 +2790,7 @@ details[open] > .tool-call-summary::before {
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(2px);
+  animation: fade-in 0.15s ease;
 }
 .dyn-detail-modal {
   background: var(--surface);
@@ -2780,6 +2801,7 @@ details[open] > .tool-call-summary::before {
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: modal-scale 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .dyn-detail-header {
   display: flex;
