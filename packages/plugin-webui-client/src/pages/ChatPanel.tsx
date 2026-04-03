@@ -407,6 +407,8 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
 
   // 上传能力
   const uploadCaps = status?.uploadCapabilities;
@@ -469,6 +471,51 @@ export function ChatPanel({
     e.target.value = '';
   };
 
+  /** 处理拖拽上传的文件 */
+  const processDroppedFiles = async (fileList: FileList) => {
+    const newImages: string[] = [];
+    const newFiles: Array<{ name: string; data: string; mimeType?: string }> = [];
+    const orderEntries: Array<'image' | 'file'> = [];
+    for (const file of Array.from(fileList)) {
+      if (file.type.startsWith('image/') && canUploadImage) {
+        if (file.size > 10 * 1024 * 1024) continue;
+        const dataUrl = await fileToDataUrl(file);
+        newImages.push(dataUrl);
+        orderEntries.push('image');
+      } else if (canUploadFile) {
+        if (file.size > 20 * 1024 * 1024) continue;
+        const dataUrl = await fileToDataUrl(file);
+        newFiles.push({ name: file.name, data: dataUrl, mimeType: file.type || undefined });
+        orderEntries.push('file');
+      }
+    }
+    if (newImages.length > 0) setPendingImages(prev => [...prev, ...newImages]);
+    if (newFiles.length > 0) setPendingFiles(prev => [...prev, ...newFiles]);
+    if (orderEntries.length > 0) attachmentOrderRef.current = [...attachmentOrderRef.current, ...orderEntries];
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (canUpload && e.dataTransfer.types.includes('Files')) setIsDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) { dragCounter.current = 0; setIsDragging(false); }
+  };
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    if (!canUpload || !e.dataTransfer.files.length) return;
+    await processDroppedFiles(e.dataTransfer.files);
+  };
+
   const handlePaste = async (e: React.ClipboardEvent) => {
     if (!canUploadImage) return;
     const items = e.clipboardData?.items;
@@ -519,7 +566,19 @@ export function ChatPanel({
   const isGenerating = lastMsg?.role === 'assistant' && loading;
 
   return (
-    <div className="chat-panel" style={{ width }}>
+    <div
+      className={`chat-panel${isDragging ? ' drag-over' : ''}`}
+      style={{ width }}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {isDragging && (
+        <div className="drag-overlay">
+          <div className="drag-overlay-content">📎 松开以上传文件</div>
+        </div>
+      )}
       <div className="chat-panel-header">
         <span className="chat-panel-title">
           <MessageSquare size={16} /> {sessionTitle || status?.name || 'Aalis'}
