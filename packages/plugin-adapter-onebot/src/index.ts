@@ -1240,6 +1240,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           role: 'system',
           content: '注意：以上是群聊的历史消息记录，包含多位群友的发言。'
             + '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
+          metadata: { source: 'platform' },
         });
       }
     }
@@ -1256,6 +1257,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             data.messages.splice(data.messages.length - 1, 0, {
               role: 'system',
               content: hint,
+              metadata: { source: 'platform' },
             });
             break;
           }

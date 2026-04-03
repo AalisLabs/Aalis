@@ -1,10 +1,11 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square } from 'lucide-react';
+import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../types';
 import type { MutableRefObject } from 'react';
+import type { TokenUsageData } from '../useWebSocket';
 
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
@@ -376,6 +377,9 @@ export function ChatPanel({
   onClearTodos,
   toolLimitReached,
   onContinueTools,
+  tokenUsage,
+  compressingStatus,
+  onCompress,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -403,12 +407,19 @@ export function ChatPanel({
   toolLimitReached?: boolean;
   /** 用户确认继续工具调用 */
   onContinueTools?: () => void;
+  /** Token 使用量统计 */
+  tokenUsage?: TokenUsageData | null;
+  /** 压缩状态 */
+  compressingStatus?: 'start' | 'done' | 'error' | null;
+  /** 手动压缩回调 */
+  onCompress?: () => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
+  const [showTokenPanel, setShowTokenPanel] = useState(false);
 
   // 上传能力
   const uploadCaps = status?.uploadCapabilities;
@@ -576,16 +587,118 @@ export function ChatPanel({
     >
       {isDragging && (
         <div className="drag-overlay">
-          <div className="drag-overlay-content">📎 松开以上传文件</div>
+          <div className="drag-overlay-content"><Paperclip size={16} /> 松开以上传文件</div>
         </div>
       )}
       <div className="chat-panel-header">
         <span className="chat-panel-title">
           <MessageSquare size={16} /> {sessionTitle || status?.name || 'Aalis'}
         </span>
-        {onNewSession && (
-          <button className="chat-panel-new-btn" onClick={onNewSession} title="新对话">+</button>
-        )}
+        <div className="chat-panel-header-actions">
+          <div
+            className="token-usage-badge"
+            onMouseEnter={() => setShowTokenPanel(true)}
+            onMouseLeave={() => setShowTokenPanel(false)}
+          >
+            <Zap size={12} />
+            <span className={`token-usage-number${tokenUsage && tokenUsage.usageRatio > 0.85 ? ' warn' : tokenUsage && tokenUsage.usageRatio > 0.7 ? ' caution' : ''}`}>
+              {tokenUsage ? tokenUsage.used.toLocaleString() : '--'}
+            </span>
+            {showTokenPanel && (
+              <div className="token-usage-panel">
+                <div className="token-panel-title">Token 使用情况</div>
+                {tokenUsage ? (
+                  <>
+                    <div className="token-panel-bar">
+                      <div
+                        className={`token-panel-bar-fill${tokenUsage.usageRatio > 0.85 ? ' warn' : tokenUsage.usageRatio > 0.7 ? ' caution' : ''}`}
+                        style={{ width: `${Math.min(100, tokenUsage.usageRatio * 100)}%` }}
+                      />
+                    </div>
+                    <div className="token-panel-ratio">{(tokenUsage.usageRatio * 100).toFixed(1)}% 已使用</div>
+                    <div className="token-panel-rows">
+                      <div className="token-panel-row">
+                        <span>上下文窗口</span>
+                        <span>{tokenUsage.contextWindow.toLocaleString()}</span>
+                      </div>
+                      <div className="token-panel-section-header">系统提示词 <span className="token-panel-section-total">{tokenUsage.breakdown.system.toLocaleString()}</span></div>
+                      <div className="token-panel-row sub">
+                        <span>人设 / Persona</span>
+                        <span>{tokenUsage.breakdown.persona.toLocaleString()}</span>
+                      </div>
+                      {tokenUsage.breakdown.memorySummary > 0 && (
+                        <div className="token-panel-row sub">
+                          <span>对话摘要</span>
+                          <span>{tokenUsage.breakdown.memorySummary.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {tokenUsage.breakdown.memoryVector > 0 && (
+                        <div className="token-panel-row sub">
+                          <span>向量记忆</span>
+                          <span>{tokenUsage.breakdown.memoryVector.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {tokenUsage.breakdown.skills > 0 && (
+                        <div className="token-panel-row sub">
+                          <span>技能描述</span>
+                          <span>{tokenUsage.breakdown.skills.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {tokenUsage.breakdown.platform > 0 && (
+                        <div className="token-panel-row sub">
+                          <span>平台提示</span>
+                          <span>{tokenUsage.breakdown.platform.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {tokenUsage.breakdown.subtask > 0 && (
+                        <div className="token-panel-row sub">
+                          <span>子任务上下文</span>
+                          <span>{tokenUsage.breakdown.subtask.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {tokenUsage.breakdown.systemOther > 0 && (
+                        <div className="token-panel-row sub">
+                          <span>其他系统提示</span>
+                          <span>{tokenUsage.breakdown.systemOther.toLocaleString()}</span>
+                        </div>
+                      )}
+                      <div className="token-panel-row">
+                        <span>历史消息</span>
+                        <span>{tokenUsage.breakdown.history.toLocaleString()}</span>
+                      </div>
+                      <div className="token-panel-row">
+                        <span>工具结果</span>
+                        <span>{tokenUsage.breakdown.toolResults.toLocaleString()}</span>
+                      </div>
+                      <div className="token-panel-row">
+                        <span>工具定义</span>
+                        <span>{tokenUsage.breakdown.toolDefs.toLocaleString()}</span>
+                      </div>
+                      <div className="token-panel-row">
+                        <span>回复保留量</span>
+                        <span>{tokenUsage.breakdown.reservedForReply.toLocaleString()}</span>
+                      </div>
+                    </div>
+                    {onCompress && (
+                      <button
+                        className="token-panel-compress-btn"
+                        onClick={(e) => { e.stopPropagation(); onCompress(); }}
+                        disabled={compressingStatus === 'start'}
+                      >
+                        {compressingStatus === 'start' ? <><Loader size={12} className="compress-spinner" /> 压缩中…</> : <><Archive size={12} /> 压缩对话</>}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <div className="token-panel-empty">发送消息后将显示 Token 用量统计</div>
+                )}
+              </div>
+            )}
+          </div>
+          {onNewSession && (
+            <button className="chat-panel-new-btn" onClick={onNewSession} title="新对话">+</button>
+          )}
+        </div>
       </div>
       <div className="messages">
         {messages.length === 0 && (
@@ -718,6 +831,20 @@ export function ChatPanel({
               )}
               <span className="tool-limit-hint">或输入新内容引导模型</span>
             </div>
+          </div>
+        )}
+        {/* 对话压缩状态提示气泡 */}
+        {compressingStatus && (
+          <div className={`compress-bubble ${compressingStatus}`}>
+            {compressingStatus === 'start' && (
+              <><Loader size={14} className="compress-spinner" /> 正在压缩对话历史…</>
+            )}
+            {compressingStatus === 'done' && (
+              <><CheckCircle2 size={14} /> 对话已压缩，历史消息已精简</>
+            )}
+            {compressingStatus === 'error' && (
+              <><AlertTriangle size={14} /> 压缩失败，请稍后重试</>
+            )}
           </div>
         )}
         <div ref={messagesEndRef} />

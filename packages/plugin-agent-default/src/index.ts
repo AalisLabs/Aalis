@@ -42,6 +42,10 @@ class DefaultAgent implements AgentService {
   private memoryTokenBudget: number;
   private historyLimit: number;
   private maxToolIterations: number;
+  /** 单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断 */
+  private toolResultMaxRatio: number;
+  /** token 使用率超过此比例时自动触发压缩 (0~1) */
+  private autoCompressThreshold: number;
   /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
   private preferredModel: string;
   /** 模型 ID → 提供者 contextId 映射缓存 */
@@ -65,6 +69,8 @@ class DefaultAgent implements AgentService {
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.historyLimit = (config.historyLimit as number) ?? 50;
     this.maxToolIterations = (config.maxToolIterations as number) ?? 30;
+    this.toolResultMaxRatio = (config.toolResultMaxRatio as number) ?? 0.15;
+    this.autoCompressThreshold = (config.autoCompressThreshold as number) ?? 0.85;
     this.preferredModel = (config.preferredModel as string) || '';
     this.logger.info('默认对话代理已初始化');
 
@@ -473,6 +479,9 @@ class DefaultAgent implements AgentService {
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
 
+        // 推送 token 使用量统计
+        this.emitTokenUsage(incoming.sessionId, incoming.platform, llmBeforeData.messages, llmBeforeData.tools, contextLength, maxTokens, tokenBudget);
+
         this.logger.debug(
           `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
           `${llmBeforeData.tools.length} 个工具, ` +
@@ -489,10 +498,16 @@ class DefaultAgent implements AgentService {
         if (llmBeforeData.tools.length > 0 && expectJson) {
           const sysMsg = llmBeforeData.messages.find(m => m.role === 'system');
           if (sysMsg) {
-            sysMsg.content += '\n\n# 工具调用优先\n'
+            const toolPriorityText = '\n\n# 工具调用优先\n'
               + '当你需要调用工具获取信息或执行操作时，必须使用 tool_call，'
               + '不要在 JSON 回复中描述工具调用意图。'
               + '仅在你不需要使用任何工具的情况下，才使用上述 JSON 格式输出最终回复。';
+            sysMsg.content += toolPriorityText;
+            const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
+            sysMsg.metadata = {
+              ...sysMsg.metadata,
+              _tokenContributions: { ...prevContributions, toolPriority: toolPriorityText.length },
+            };
             this.logger.debug('已注入工具调用优先指令（tools + JSON 输出格式共存）');
           }
         }
@@ -594,6 +609,14 @@ class DefaultAgent implements AgentService {
             const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
             await this.ctx.hooks.run('tool-call:after', toolAfterData);
             result = toolAfterData.result;
+
+            // 工具结果截断：按上下文窗口比例限制单条工具结果长度
+            const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
+            if (result.length > toolResultMaxChars) {
+              this.logger.info(`工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`);
+              result = result.slice(0, toolResultMaxChars) + `\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
+            }
+
             this.logger.debug(`工具完成: ${toolBeforeData.name} (${Date.now() - toolT0}ms) 结果=${result}`);
 
             // 记录工具调用摘要（工具名 + 关键结果概要）
@@ -631,6 +654,9 @@ class DefaultAgent implements AgentService {
 
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
+
+          // 推送 token 使用量统计
+          this.emitTokenUsage(incoming.sessionId, incoming.platform, nextLlmData.messages, nextLlmData.tools, contextLength, maxTokens, tokenBudget);
 
           const tN = Date.now();
           response = await this.consumeStream(llm, {
@@ -771,7 +797,7 @@ class DefaultAgent implements AgentService {
 
     // 1. 系统提示
     const systemPrompt = this.buildSystemPrompt(personaOpts);
-    messages.push({ role: 'system', content: systemPrompt });
+    messages.push({ role: 'system', content: systemPrompt, metadata: { source: 'persona' } });
 
     // 2. 历史消息
     const memory = this.ctx.getService<MemoryService>('memory');
@@ -828,6 +854,7 @@ class DefaultAgent implements AgentService {
         content: '用户消息中包含系统预处理的附件描述（图片识别结果和/或文件内容提取）。'
           + '请将这些信息作为参考上下文，结合用户的文字，给出一个自然、连贯的统一回复。'
           + '不要将分析结果逐项列出或分成单独的字段，直接在回复中融合所有信息。',
+        metadata: { source: 'system-other' },
       });
     }
 
@@ -911,6 +938,111 @@ class DefaultAgent implements AgentService {
     if (msg.toolCalls) t += this.estimateTextTokens(JSON.stringify(msg.toolCalls));
     if (msg.reasoningContent) t += this.estimateTextTokens(msg.reasoningContent);
     return t;
+  }
+
+  /**
+   * 推送 token 使用量统计事件
+   *
+   * 包含各维度的 token 使用分解，供前端展示和自动压缩判断。
+   */
+  private emitTokenUsage(
+    sessionId: string,
+    platform: string,
+    messages: Message[],
+    tools: ToolDefinition[],
+    contextLength: number,
+    maxTokens: number,
+    tokenBudget: number,
+  ): void {
+    // 按来源分类统计各消息的 token 占用
+    let historyTokens = 0;
+    let toolResultTokens = 0;
+    let personaTokens = 0;
+    let memorySummaryTokens = 0;
+    let memoryVectorTokens = 0;
+    let skillsTokens = 0;
+    let platformTokens = 0;
+    let subtaskTokens = 0;
+    let systemOtherTokens = 0;
+
+    for (const msg of messages) {
+      const t = this.estimateMsgTokens(msg);
+      if (msg.role === 'system') {
+        const source = msg.metadata?.source as string | undefined;
+        const contributions = msg.metadata?._tokenContributions as Record<string, number> | undefined;
+
+        if (source === 'memory-summary') {
+          memorySummaryTokens += t;
+        } else if (source === 'memory-vector') {
+          memoryVectorTokens += t;
+        } else if (source === 'platform') {
+          platformTokens += t;
+        } else if (source === 'system-other') {
+          systemOtherTokens += t;
+        } else if (source === 'persona' || !source) {
+          // persona 消息可能被 skills/subtask/toolPriority 追加了内容
+          if (contributions) {
+            let contributionTokens = 0;
+            for (const [key, charCount] of Object.entries(contributions)) {
+              const ct = this.estimateTextTokens('x'.repeat(charCount as number));
+              if (key === 'skills') skillsTokens += ct;
+              else if (key === 'subtask') subtaskTokens += ct;
+              else systemOtherTokens += ct;
+              contributionTokens += ct;
+            }
+            personaTokens += Math.max(0, t - contributionTokens);
+          } else {
+            personaTokens += t;
+          }
+        } else {
+          systemOtherTokens += t;
+        }
+      } else if (msg.role === 'tool') {
+        toolResultTokens += t;
+      } else {
+        historyTokens += t;
+      }
+    }
+
+    // 工具定义的 token 估算
+    const toolDefsTokens = tools.length > 0
+      ? this.estimateTextTokens(JSON.stringify(tools))
+      : 0;
+
+    const systemTokens = personaTokens + memorySummaryTokens + memoryVectorTokens
+      + skillsTokens + platformTokens + subtaskTokens + systemOtherTokens;
+    const totalUsed = systemTokens + historyTokens + toolResultTokens + toolDefsTokens;
+    const usageRatio = contextLength > 0 ? totalUsed / contextLength : 0;
+
+    this.ctx.emit('token:usage', {
+      sessionId,
+      platform,
+      contextWindow: contextLength,
+      maxTokens,
+      tokenBudget,
+      used: totalUsed,
+      usageRatio,
+      breakdown: {
+        system: systemTokens,
+        persona: personaTokens,
+        memorySummary: memorySummaryTokens,
+        memoryVector: memoryVectorTokens,
+        skills: skillsTokens,
+        platform: platformTokens,
+        subtask: subtaskTokens,
+        systemOther: systemOtherTokens,
+        history: historyTokens,
+        toolResults: toolResultTokens,
+        toolDefs: toolDefsTokens,
+        reservedForReply: maxTokens,
+      },
+    }).catch(() => {});
+
+    // 自动压缩触发：当 token 使用率超过阈值时
+    if (usageRatio >= this.autoCompressThreshold) {
+      this.logger.info(`Token 使用率 ${(usageRatio * 100).toFixed(1)}% 超过阈值 ${(this.autoCompressThreshold * 100).toFixed(0)}%，触发自动压缩`);
+      this.ctx.emit('session:compress', { sessionId, reason: 'auto', usageRatio }).catch(() => {});
+    }
   }
 
   /**
@@ -1122,7 +1254,8 @@ class DefaultAgent implements AgentService {
     if (messages.length - result.length >= 6) {
       const hint: Message = {
         role: 'system',
-        content: '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。',
+        content: '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。如果你之前有正在执行的多步骤任务或计划，请查看对话摘要和 todo-list 工具确认当前进度，然后继续未完成的步骤。',
+        metadata: { source: 'system-other' },
       };
       // 插入到最后一条 user 消息之后（如果有），否则插到末尾前
       let insertIdx = result.length - 1;
@@ -1199,6 +1332,18 @@ export const configSchema: ConfigSchema = {
     default: 30,
     description: '工具调用循环的最大迭代次数',
   },
+  toolResultMaxRatio: {
+    type: 'number',
+    label: '工具结果最大比例',
+    default: 0.15,
+    description: '单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15%',
+  },
+  autoCompressThreshold: {
+    type: 'number',
+    label: '自动压缩阈值',
+    default: 0.85,
+    description: 'Token 使用率超过此比例 (0~1) 时自动触发对话压缩。例如 0.85 表示 85%',
+  },
 };
 
 export const defaultConfig = {
@@ -1207,6 +1352,8 @@ export const defaultConfig = {
   memoryTokenBudget: 4096,
   historyLimit: 50,
   maxToolIterations: 30,
+  toolResultMaxRatio: 0.15,
+  autoCompressThreshold: 0.85,
 };
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -1274,5 +1421,49 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     return `未知子命令: ${target}。可用: info / set <模型名> / reset`;
+  });
+
+  // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
+  ctx.on('token:request', async (...args: unknown[]) => {
+    const data = args[0] as { sessionId: string; platform?: string };
+    if (!data?.sessionId) return;
+
+    try {
+      const resolved = agent['resolveLLM'](data.platform, data.sessionId);
+      if (!resolved) return;
+      const { llm } = resolved;
+
+      const contextLength = llm.getContextLength();
+      const maxTokens = llm.getMaxTokens();
+      const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
+
+      // 获取历史消息并构建基础消息列表
+      const memory = ctx.getService<MemoryService>('memory');
+      const messages: Message[] = [];
+
+      // 系统提示
+      const systemPrompt = agent['buildSystemPrompt']();
+      messages.push({ role: 'system', content: systemPrompt, metadata: { source: 'persona' } });
+
+      // 历史消息
+      if (memory) {
+        const history = await memory.getHistory(data.sessionId, agent['historyLimit']);
+        messages.push(...history);
+      }
+
+      // 运行 llm-call:before 中间件以获取注入的 system 消息（摘要、向量记忆等）
+      const llmBeforeData = { messages, tools: [] as ToolDefinition[], sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
+      await ctx.hooks.run('llm-call:before', llmBeforeData);
+
+      // 获取工具定义
+      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
+      const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
+      const tools = ctx.tools?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
+
+      agent['emitTokenUsage'](data.sessionId, data.platform ?? '', llmBeforeData.messages, tools, contextLength, maxTokens, tokenBudget);
+    } catch (err) {
+      ctx.logger.debug('token:request 处理失败:', err);
+    }
   });
 }

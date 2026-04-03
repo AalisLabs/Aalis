@@ -2,6 +2,28 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { getSessionId, onSessionChange } from './api';
 import type { LogEntry } from './types';
 
+export interface TokenUsageData {
+  contextWindow: number;
+  maxTokens: number;
+  tokenBudget: number;
+  used: number;
+  usageRatio: number;
+  breakdown: {
+    system: number;
+    persona: number;
+    memorySummary: number;
+    memoryVector: number;
+    skills: number;
+    platform: number;
+    subtask: number;
+    systemOther: number;
+    history: number;
+    toolResults: number;
+    toolDefs: number;
+    reservedForReply: number;
+  };
+}
+
 export function useWebSocket(
   onMessage: (content: string, reasoningContent?: string) => void,
   onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void,
@@ -15,6 +37,8 @@ export function useWebSocket(
   onTodoUpdated?: (items: unknown[]) => void,
   onStreamResume?: (content: string, reasoningContent: string, done: boolean) => void,
   onConfirm?: (content: string) => void,
+  onTokenUsage?: (usage: TokenUsageData) => void,
+  onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -75,6 +99,10 @@ export function useWebSocket(
             onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', !!data.done);
           } else if (data.type === 'confirm' && data.content) {
             onConfirm?.(data.content);
+          } else if (data.type === 'token_usage' && data.tokenUsage) {
+            onTokenUsage?.(data.tokenUsage);
+          } else if (data.type === 'compressing' && data.sessionId) {
+            onCompressing?.(data.sessionId, data.content ?? 'start');
           }
         } catch { /* ignore */ }
       };
@@ -86,7 +114,7 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated, onStreamResume, onConfirm]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated, onStreamResume, onConfirm, onTokenUsage, onCompressing]);
 
   // 监听 sessionId 变化，动态切换 WS 订阅
   useEffect(() => {
