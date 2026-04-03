@@ -3342,6 +3342,89 @@ details[open] > .tool-call-summary::before {
   50% { opacity: 0.5; }
 }
 
+/* -- Detail Modal -- */
+.dyn-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.dyn-detail-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(640px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+.dyn-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.dyn-detail-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.dyn-detail-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.dyn-detail-close:hover {
+  color: var(--text-primary);
+}
+.dyn-detail-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dyn-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dyn-detail-key {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.dyn-detail-val {
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.dyn-detail-pre {
+  font-size: 12px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  color: var(--text-primary);
+}
+
 /* -- Form -- */
 .dyn-form-block {
   background: var(--surface);
