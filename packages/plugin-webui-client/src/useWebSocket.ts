@@ -13,6 +13,7 @@ export function useWebSocket(
   onSessionSwitched?: (sessionId: string) => void,
   onSessionsChanged?: () => void,
   onTodoUpdated?: (items: unknown[]) => void,
+  onStreamResume?: (content: string, reasoningContent: string, done: boolean) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -69,6 +70,8 @@ export function useWebSocket(
             onSessionsChanged?.();
           } else if (data.type === 'todo_updated' && data.todoItems) {
             onTodoUpdated?.(data.todoItems);
+          } else if (data.type === 'stream_resume') {
+            onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', !!data.done);
           }
         } catch { /* ignore */ }
       };
@@ -80,7 +83,7 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated, onStreamResume]);
 
   // 监听 sessionId 变化，动态切换 WS 订阅
   useEffect(() => {
