@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MemoryService, PersonaService } from '@aalis/core';
+import type { MemoryService, PersonaService, LLMService, Message } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -468,12 +468,41 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ── 保存缓冲消息到记忆 ──
 
-  async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string): Promise<void> {
+  /** 利用 vision LLM 将图片转为文字描述（用于非触发消息的图片保存） */
+  async function describeImagesForBuffering(images: string[]): Promise<string[]> {
+    const providers = ctx.getAllServices<LLMService>('llm', ['vision']);
+    const chosen = providers[0];
+    if (!chosen) return images.map(() => '[图片]');
+    try {
+      return await Promise.all(images.map(async (url) => {
+        try {
+          const msgs: Message[] = [{ role: 'user', content: '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如果有）、表情包含义等。用中文回答，控制在100字以内。', images: [url] }];
+          const resp = await chosen.instance.chat({ messages: msgs, maxTokens: 300 });
+          return `[图片: ${resp.content?.trim() || '无描述'}]`;
+        } catch {
+          return '[图片: 识别失败]';
+        }
+      }));
+    } catch {
+      return images.map(() => '[图片]');
+    }
+  }
+
+  async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string, images?: string[]): Promise<void> {
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory) return;
     try {
       const senderLabel = nickname ?? userId;
-      const contentToSave = senderLabel ? `[${senderLabel}]: ${content}` : content;
+      let contentToSave = senderLabel ? `[${senderLabel}]: ${content}` : content;
+
+      // 非触发消息的图片描述：转为文字后追加到内容
+      if (images && images.length > 0) {
+        const descs = await describeImagesForBuffering(images);
+        contentToSave = contentToSave
+          ? `${contentToSave}\n${descs.join('\n')}`
+          : descs.join('\n');
+      }
+
       await memory.saveMessage(sessionId, {
         role: 'user',
         content: contentToSave,
@@ -551,6 +580,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionType: string | undefined,
     userId?: string,
     nickname?: string,
+    images?: string[],
   ): Promise<boolean> {
     // 只对群聊启用流控
     if (!flowCfg.enabled || sessionType !== 'group') return true;
@@ -575,7 +605,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       fState.activityScore = 0;
       ctx.logger.info(`禁言触发: session=${sessionId}, ${flowCfg.muteTimeSeconds}秒`);
       logFlowStatus(sessionId, fState, '禁言 → 计数器归零');
-      await saveBufferedMessage(sessionId, content, nickname, userId);
+      await saveBufferedMessage(sessionId, content, nickname, userId, images);
       scheduleIdleTrigger(fState, sessionId, 'onebot');
       return false;
     }
@@ -583,7 +613,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 仍在禁言中
     if (now < fState.mutedUntil) {
       logFlowStatus(sessionId, fState, '禁言中');
-      await saveBufferedMessage(sessionId, content, nickname, userId);
+      await saveBufferedMessage(sessionId, content, nickname, userId, images);
       return false;
     }
 
@@ -592,7 +622,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       fState.messageCount++;
       fState.activityScore += calculateScoreIncrement(fState, userId);
       logFlowStatus(sessionId, fState, '冷却中');
-      await saveBufferedMessage(sessionId, content, nickname, userId);
+      await saveBufferedMessage(sessionId, content, nickname, userId, images);
       scheduleIdleTrigger(fState, sessionId, 'onebot');
       return false;
     }
@@ -622,7 +652,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 未触发，缓冲消息
     logFlowStatus(sessionId, fState, '未触发');
-    await saveBufferedMessage(sessionId, content, nickname, userId);
+    await saveBufferedMessage(sessionId, content, nickname, userId, images);
     scheduleIdleTrigger(fState, sessionId, 'onebot');
     return false;
   }
@@ -1069,7 +1099,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 流控判定：返回 false 表示拦截（消息已缓冲到记忆）
-      const shouldEmit = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname);
+      const shouldEmit = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname, event.images);
       if (!shouldEmit) return;
 
       ctx.emit('message:received', {
