@@ -57,7 +57,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload';
+  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -89,6 +89,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const sessions = new Map<string, Set<WebSocket>>();
   const logSubscribers = new Set<WebSocket>();
   const allClients = new Set<WebSocket>();
+
+  // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复
+  const streamBuffers = new Map<string, { content: string; reasoningContent: string; generating: boolean }>();
 
   // 获取 App 实例（通过服务注册获取）
   const getApp = (): App | undefined => ctx.getService<App>('app');
@@ -942,6 +945,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             sessions.set(sid, new Set());
           }
           sessions.get(sid)!.add(ws);
+          // 如果该会话正在生成中，发送已累积的内容供客户端恢复
+          const buf = streamBuffers.get(sid);
+          if (buf && (buf.content || buf.reasoningContent)) {
+            const resume: WSOutgoing = {
+              type: 'stream_resume',
+              sessionId: sid,
+              content: buf.content,
+              reasoningContent: buf.reasoningContent,
+              done: !buf.generating,
+            };
+            ws.send(JSON.stringify(resume));
+          }
           return;
         }
 
@@ -1091,6 +1106,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 监听 AI 回复
   ctx.on('message:send', (msg: OutgoingMessage) => {
+    // 生成完成，延迟清理缓冲区（给客户端重连拉取历史留出时间窗口）
+    const buf = streamBuffers.get(msg.sessionId);
+    if (buf) {
+      buf.generating = false;
+      buf.content = msg.content ?? buf.content;
+      buf.reasoningContent = msg.reasoningContent ?? buf.reasoningContent;
+      setTimeout(() => streamBuffers.delete(msg.sessionId), 10_000);
+    }
     const sockets = sessions.get(msg.sessionId);
     if (!sockets) return;
 
@@ -1111,6 +1134,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 监听流式增量推送
   ctx.on('message:stream', (chunk: StreamChunkMessage) => {
+    // 累积到缓冲区
+    if (!chunk.done) {
+      let buf = streamBuffers.get(chunk.sessionId);
+      if (!buf) {
+        buf = { content: '', reasoningContent: '', generating: true };
+        streamBuffers.set(chunk.sessionId, buf);
+      }
+      if (chunk.contentDelta) buf.content += chunk.contentDelta;
+      if (chunk.reasoningDelta) buf.reasoningContent += chunk.reasoningDelta;
+    }
     const sockets = sessions.get(chunk.sessionId);
     if (!sockets) return;
 
