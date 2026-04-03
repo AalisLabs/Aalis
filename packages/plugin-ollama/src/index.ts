@@ -24,7 +24,6 @@ export const configSchema: ConfigSchema = {
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数（num_predict）' },
   contextLength: { type: 'number', label: '上下文长度', default: 8192, description: '模型上下文窗口大小（num_ctx）' },
-  maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
   keepAlive: { type: 'string', label: '模型保活时间', default: '5m', description: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）' },
 };
 
@@ -34,7 +33,6 @@ export const defaultConfig = {
   temperature: 0.7,
   maxTokens: 4096,
   contextLength: 8192,
-  maxToolIterations: 10,
   keepAlive: '5m',
 };
 
@@ -46,7 +44,6 @@ interface OllamaConfig {
   temperature: number;
   maxTokens: number;
   contextLength: number;
-  maxToolIterations: number;
   keepAlive: string;
 }
 
@@ -96,7 +93,6 @@ class OllamaLLMService implements LLMService {
   private temperature: number;
   private maxTokens: number;
   private contextLength: number;
-  private maxToolIterations: number;
   private keepAlive: string;
   private logger: Logger;
 
@@ -106,14 +102,12 @@ class OllamaLLMService implements LLMService {
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
-    this.maxToolIterations = config.maxToolIterations;
     this.keepAlive = config.keepAlive;
     this.logger = logger;
   }
 
   getTemperature(): number { return this.temperature; }
   getMaxTokens(): number { return this.maxTokens; }
-  getMaxToolIterations(): number { return this.maxToolIterations; }
   getContextLength(): number { return this.contextLength; }
 
   async listModels(): Promise<ModelInfo[]> {
@@ -464,7 +458,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
     contextLength: (config.contextLength as number) ?? 8192,
-    maxToolIterations: (config.maxToolIterations as number) ?? 10,
     keepAlive: (config.keepAlive as string) ?? '5m',
   };
 

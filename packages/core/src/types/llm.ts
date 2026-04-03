@@ -55,7 +55,6 @@ export interface LLMService {
   chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
   getTemperature(): number;
   getMaxTokens(): number;
-  getMaxToolIterations(): number;
   /** 模型上下文窗口大小（token 数） */
   getContextLength(): number;
   /** 列出远端可用模型及其能力 */

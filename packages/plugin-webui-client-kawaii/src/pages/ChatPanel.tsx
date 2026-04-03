@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight } from 'lucide-react';
+import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -649,13 +649,27 @@ export function ChatPanel({
           disabled={!connected}
           rows={1}
         />
-        <button
-          className="send-btn"
-          onClick={onSend}
-          disabled={!connected || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
-        >
-          ↑
-        </button>
+        {(() => {
+          const hasContent = !!(input.trim() || pendingImages.length > 0 || pendingFiles.length > 0);
+          const showStop = loading && !hasContent;
+          return showStop ? (
+            <button
+              className="send-btn stop-mode"
+              onClick={onAbort}
+              title="停止生成"
+            >
+              <Square size={16} />
+            </button>
+          ) : (
+            <button
+              className="send-btn"
+              onClick={onSend}
+              disabled={!connected || !hasContent}
+            >
+              ↑
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

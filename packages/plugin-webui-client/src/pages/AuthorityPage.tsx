@@ -84,8 +84,7 @@ export function AuthorityPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await pageAction<{ ok: boolean; data: AuthorityData }>('@aalis/plugin-authority', 'getOverview');
-      const d = r.data;
+      const d = await pageAction<AuthorityData>('@aalis/plugin-authority', 'getOverview');
       setData(d);
       setConfigDraft({ defaultAuthority: d.defaultAuthority, ownerAuthority: d.ownerAuthority });
       setDangerousDraft({

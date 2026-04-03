@@ -57,13 +57,22 @@ interface TurnDocument {
 
 // ===== MongoDB 实现 =====
 
+interface MetadataDocument {
+  namespace: string;
+  key: string;
+  data: Record<string, unknown>;
+  updatedAt: Date;
+}
+
 class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
   private turns: Collection<TurnDocument>;
+  private meta: Collection<MetadataDocument>;
 
-  constructor(collection: Collection<MessageDocument>, turns: Collection<TurnDocument>) {
+  constructor(collection: Collection<MessageDocument>, turns: Collection<TurnDocument>, meta: Collection<MetadataDocument>) {
     this.collection = collection;
     this.turns = turns;
+    this.meta = meta;
   }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -157,6 +166,31 @@ class MongoMemoryService implements MemoryService {
   async clearAll(): Promise<void> {
     await this.collection.deleteMany({});
     await this.turns.deleteMany({});
+    await this.meta.deleteMany({});
+  }
+
+  // ----- 结构化元数据存储 -----
+
+  async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+    await this.meta.updateOne(
+      { namespace, key },
+      { $set: { data, updatedAt: new Date() } },
+      { upsert: true },
+    );
+  }
+
+  async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
+    const doc = await this.meta.findOne({ namespace, key });
+    return doc?.data;
+  }
+
+  async listMetadata(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>> {
+    const docs = await this.meta.find({ namespace }).toArray();
+    return docs.map(d => ({ key: d.key, data: d.data }));
+  }
+
+  async deleteMetadata(namespace: string, key: string): Promise<void> {
+    await this.meta.deleteOne({ namespace, key });
   }
 }
 
@@ -182,13 +216,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const db: Db = client.db(mongoConfig.database);
     const collection = db.collection<MessageDocument>(mongoConfig.collection!);
     const turnsCollection = db.collection<TurnDocument>('conversation_turns');
+    const metaCollection = db.collection<MetadataDocument>('metadata');
 
     // 创建索引
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
     await turnsCollection.createIndex({ turnId: 1 }, { unique: true });
     await turnsCollection.createIndex({ sessionId: 1, timestamp: 1 });
+    await metaCollection.createIndex({ namespace: 1, key: 1 }, { unique: true });
 
-    const service = new MongoMemoryService(collection, turnsCollection);
+    const service = new MongoMemoryService(collection, turnsCollection, metaCollection);
     ctx.provide('memory', service);
 
     ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
