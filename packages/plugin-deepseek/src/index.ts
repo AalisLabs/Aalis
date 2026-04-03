@@ -54,7 +54,6 @@ export const configSchema: ConfigSchema = {
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
-  maxToolIterations: { type: 'number', label: '最大工具迭代', default: 10, description: '工具调用最大循环次数' },
   strictToolCalls: { type: 'boolean', label: 'Strict 工具调用', default: false, description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）' },
   thinkingMode: {
     type: 'select', label: '思考模式', default: 'auto',
@@ -81,7 +80,6 @@ export const defaultConfig = {
   temperature: 0.7,
   maxTokens: 8192,
   contextLength: 131072,
-  maxToolIterations: 10,
 };
 
 // ===== 配置 =====
@@ -94,7 +92,6 @@ interface DeepSeekConfig {
   temperature: number;
   maxTokens: number;
   contextLength: number;
-  maxToolIterations: number;
   strictToolCalls: boolean;
   thinkingBudget: number;
   jsonMode: boolean;
@@ -163,7 +160,6 @@ class DeepSeekLLMService implements LLMService {
   private temperature: number;
   private maxTokens: number;
   private contextLength: number;
-  private maxToolIterations: number;
   private enableThinking: boolean;
   private thinkingBudget: number;
   private strictToolCalls: boolean;
@@ -179,7 +175,6 @@ class DeepSeekLLMService implements LLMService {
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
-    this.maxToolIterations = config.maxToolIterations;
     this.enableThinking = enableThinking;
     this.thinkingBudget = config.thinkingBudget;
     this.strictToolCalls = config.strictToolCalls;
@@ -247,10 +242,6 @@ class DeepSeekLLMService implements LLMService {
 
   getMaxTokens(): number {
     return this.maxTokens;
-  }
-
-  getMaxToolIterations(): number {
-    return this.maxToolIterations;
   }
 
   getContextLength(): number {
@@ -603,7 +594,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 8192,
     contextLength: (config.contextLength as number) ?? 131072,
-    maxToolIterations: (config.maxToolIterations as number) ?? 10,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
     thinkingBudget: (config.thinkingBudget as number) ?? 0,
     jsonMode: (config.jsonMode as boolean) ?? true,

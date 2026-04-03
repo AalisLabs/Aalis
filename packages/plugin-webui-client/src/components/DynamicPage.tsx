@@ -9,7 +9,7 @@ import type {
   ConfigSchema,
   WebuiComponent, WebuiStatComponent, WebuiTableComponent,
   WebuiFormComponent, WebuiActionsComponent, WebuiInfoComponent,
-  WebuiMarkdownComponent, WebuiTabsComponent, WebuiPageDef,
+  WebuiMarkdownComponent, WebuiTabsComponent, WebuiIframeComponent, WebuiPageDef,
 } from '../types';
 
 const dynStatIconMap: Record<string, ReactElement> = {
@@ -23,8 +23,8 @@ function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: s
 
   useEffect(() => {
     setLoading(true);
-    pageAction<{ ok: boolean; data: { value: string | number } }>(pluginName, comp.source)
-      .then(r => { if (r.ok && r.data) setValue(r.data.value); })
+    pageAction<{ value: string | number }>(pluginName, comp.source)
+      .then(r => { if (r) setValue(r.value); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [pluginName, comp.source]);
@@ -86,8 +86,8 @@ function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName:
 
   const fetchData = useCallback(() => {
     setLoading(true);
-    pageAction<{ ok: boolean; data: Record<string, unknown>[] }>(pluginName, comp.source)
-      .then(r => { if (r.ok && Array.isArray(r.data)) setRows(r.data); })
+    pageAction<Record<string, unknown>[]>(pluginName, comp.source)
+      .then(r => { if (Array.isArray(r)) setRows(r); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [pluginName, comp.source]);
@@ -167,8 +167,8 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
 
   useEffect(() => {
     setLoading(true);
-    pageAction<{ ok: boolean; data: Record<string, unknown> }>(pluginName, comp.source)
-      .then(r => { if (r.ok && r.data) setDraft(r.data); })
+    pageAction<Record<string, unknown>>(pluginName, comp.source)
+      .then(r => { if (r) setDraft(r); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [pluginName, comp.source]);
@@ -177,8 +177,8 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
     setSaving(true);
     setMsg('');
     try {
-      const r = await pageAction<{ ok: boolean; error?: string }>(pluginName, comp.save, draft);
-      setMsg(r.ok ? '已保存' : (r.error ?? '保存失败'));
+      await pageAction(pluginName, comp.save, draft);
+      setMsg('已保存');
     } catch { setMsg('保存失败'); }
     setSaving(false);
   };
@@ -237,8 +237,8 @@ function DynActions({ comp, pluginName }: { comp: WebuiActionsComponent; pluginN
     if (item.confirm && !confirm(item.confirm)) return;
     setActionMsg(prev => ({ ...prev, [item.method]: '执行中...' }));
     try {
-      const r = await pageAction<{ ok: boolean; error?: string }>(pluginName, item.method);
-      setActionMsg(prev => ({ ...prev, [item.method]: r.ok ? '完成' : (r.error ?? '失败') }));
+      await pageAction(pluginName, item.method);
+      setActionMsg(prev => ({ ...prev, [item.method]: '完成' }));
     } catch {
       setActionMsg(prev => ({ ...prev, [item.method]: '失败' }));
     }
@@ -270,8 +270,8 @@ function DynInfo({ comp, pluginName }: { comp: WebuiInfoComponent; pluginName: s
   const [data, setData] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    pageAction<{ ok: boolean; data: Record<string, unknown> }>(pluginName, comp.source)
-      .then(r => { if (r.ok && r.data) setData(r.data); })
+    pageAction<Record<string, unknown>>(pluginName, comp.source)
+      .then(r => { if (r) setData(r); })
       .catch(() => {});
   }, [pluginName, comp.source]);
 
@@ -298,8 +298,8 @@ function DynMarkdown({ comp, pluginName }: { comp: WebuiMarkdownComponent; plugi
   const [content, setContent] = useState('');
 
   useEffect(() => {
-    pageAction<{ ok: boolean; data: { content: string } }>(pluginName, comp.source)
-      .then(r => { if (r.ok && r.data) setContent(r.data.content); })
+    pageAction<{ content: string }>(pluginName, comp.source)
+      .then(r => { if (r) setContent(r.content); })
       .catch(() => {});
   }, [pluginName, comp.source]);
 
@@ -340,6 +340,37 @@ function DynTabs({ comp, pluginName }: { comp: WebuiTabsComponent; pluginName: s
   );
 }
 
+function DynIframe({ comp, pluginName }: { comp: WebuiIframeComponent; pluginName: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    const source = comp.source;
+    if (source.startsWith('http://') || source.startsWith('https://') || source.startsWith('/')) {
+      setSrc(source);
+    } else {
+      pageAction<{ html: string }>(pluginName, source)
+        .then(r => { if (r?.html) setHtml(r.html); })
+        .catch(() => {});
+    }
+  }, [pluginName, comp.source]);
+
+  const height = comp.height ?? '100%';
+
+  return (
+    <div className="dyn-iframe-block">
+      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      {src ? (
+        <iframe src={src} style={{ width: '100%', height, border: 'none' }} sandbox="allow-scripts allow-same-origin" />
+      ) : html ? (
+        <iframe srcDoc={html} style={{ width: '100%', height, border: 'none' }} sandbox="allow-scripts" />
+      ) : (
+        <div className="empty-hint">加载中...</div>
+      )}
+    </div>
+  );
+}
+
 function DynamicComponent({ component, pluginName }: { component: WebuiComponent; pluginName: string }) {
   switch (component.type) {
     case 'stat': return <DynStat comp={component} pluginName={pluginName} />;
@@ -349,6 +380,7 @@ function DynamicComponent({ component, pluginName }: { component: WebuiComponent
     case 'info': return <DynInfo comp={component} pluginName={pluginName} />;
     case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} />;
     case 'tabs': return <DynTabs comp={component} pluginName={pluginName} />;
+    case 'iframe': return <DynIframe comp={component} pluginName={pluginName} />;
     default: return null;
   }
 }

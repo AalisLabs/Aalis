@@ -329,7 +329,19 @@ export function App() {
     authority: <IconAuthority />,
     logs: <IconLogs />,
   };
-  const builtinKeys = new Set(Object.keys(builtinIconMap));
+
+  // 自定义渲染器 — 返回稳定的 JSX 元素，避免每次 render 创建新的组件类型
+  const renderCustomPage = (renderer: string, pluginName: string): React.ReactNode => {
+    switch (renderer) {
+      case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} onRefreshServices={refreshServices} />;
+      case 'marketplace': return <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />;
+      case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={refreshConfig} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
+      case 'platforms': return <PlatformPage />;
+      case 'authority': return <AuthorityPage />;
+      case 'logs': return <LogPage logs={logs} />;
+      default: return null;
+    }
+  };
 
   // 默认图标（用于插件声明的动态页面）
   const defaultIcon = (
@@ -358,10 +370,9 @@ export function App() {
       .sort((a, b) => a.order - b.order);
   })();
 
-  // 查找当前 tab 对应的动态页面定义（仅非内置页面）
-  const activeDynamicPage = (!builtinKeys.has(activeTab))
-    ? pageDefs.find(p => p.key === activeTab && p.content)
-    : undefined;
+  // 查找当前 tab 对应的页面定义
+  const activePageDef = pageDefs.find(p => p.key === activeTab);
+  const activeDynamicPage = activePageDef?.content ? activePageDef : undefined;
 
   return (
     <div className="app-layout">
@@ -394,31 +405,11 @@ export function App() {
         </div>
 
         <div className="content-body">
-          {activeTab === 'dashboard' && (
-            <DashboardPage
-              status={status}
-              connected={connected}
-              plugins={plugins}
-              servicesData={servicesData}
-              onRefreshServices={refreshServices}
-            />
-          )}
-          {activeTab === 'marketplace' && (
-            <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />
-          )}
-          {activeTab === 'plugin-config' && (
-            <PluginConfigPage
-              plugins={plugins}
-              config={config}
-              onRefresh={refreshPlugins}
-              onConfigSaved={refreshConfig}
-              onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }}
-            />
-          )}
-          {activeTab === 'platforms' && <PlatformPage />}
-          {activeTab === 'authority' && <AuthorityPage />}
-          {activeTab === 'logs' && <LogPage logs={logs} />}
           {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
+          {!activeDynamicPage && activePageDef?.renderer && (
+            renderCustomPage(activePageDef.renderer, activePageDef.plugin) ||
+            <div className="empty-hint" style={{ padding: 24 }}>此客户端不支持渲染器「{activePageDef.renderer}」</div>
+          )}
         </div>
       </main>
 

@@ -5,6 +5,7 @@ import type { MemoryService } from '@aalis/core';
 
 class InMemoryFallbackService implements MemoryService {
   private sessions = new Map<string, Message[]>();
+  private metadata = new Map<string, Map<string, Record<string, unknown>>>();
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     let history = this.sessions.get(sessionId);
@@ -39,6 +40,35 @@ class InMemoryFallbackService implements MemoryService {
     const removed = history.length - keepRecent;
     this.sessions.set(sessionId, history.slice(-keepRecent));
     return removed;
+  }
+
+  // ----- 结构化元数据存储 -----
+
+  async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+    let ns = this.metadata.get(namespace);
+    if (!ns) {
+      ns = new Map();
+      this.metadata.set(namespace, ns);
+    }
+    ns.set(key, data);
+  }
+
+  async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
+    return this.metadata.get(namespace)?.get(key);
+  }
+
+  async listMetadata(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>> {
+    const ns = this.metadata.get(namespace);
+    if (!ns) return [];
+    return [...ns.entries()].map(([key, data]) => ({ key, data }));
+  }
+
+  async deleteMetadata(namespace: string, key: string): Promise<void> {
+    const ns = this.metadata.get(namespace);
+    if (ns) {
+      ns.delete(key);
+      if (ns.size === 0) this.metadata.delete(namespace);
+    }
   }
 }
 

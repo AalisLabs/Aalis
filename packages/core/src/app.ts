@@ -506,6 +506,32 @@ export class App {
   }
 
   /**
+   * 配置文件外部变更时的处理：重新加载各插件配置并重新激活
+   */
+  private async handleConfigFileChanged(): Promise<void> {
+    this.logger.info('检测到配置文件变更，正在热重载...');
+    try {
+      let changed = false;
+      for (const p of this.plugins.getStatus()) {
+        const defaults = p.defaultConfig ?? {};
+        const fileConfig = this.ctx.config.getPluginConfig(p.instanceId);
+        const newConfig = { ...defaults, ...fileConfig };
+        if (JSON.stringify(newConfig) !== JSON.stringify(p.config)) {
+          this.logger.info(`插件 ${p.instanceId} 配置已变更，正在重新加载...`);
+          await this.plugins.updatePluginConfig(p.instanceId, newConfig);
+          changed = true;
+        }
+      }
+      if (changed) {
+        await this.ctx.emit('plugins:changed');
+      }
+      this.logger.info('配置热重载完成');
+    } catch (e) {
+      this.logger.error('配置热重载失败:', e);
+    }
+  }
+
+  /**
    * 启动应用
    */
   async start(): Promise<void> {
@@ -543,6 +569,10 @@ export class App {
 
     // 发出 ready 事件
     await this.ctx.emit('ready');
+
+    // 监听配置文件变更，热重载插件配置
+    this.ctx.config.watch(() => this.handleConfigFileChanged());
+
     this.logger.info('启动完成');
   }
 
@@ -581,6 +611,7 @@ export class App {
    */
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
+    this.ctx.config.unwatch();
     await this.ctx.emit('app:stopping');
     await this.ctx.emit('dispose');
     this.ctx.dispose();

@@ -31,4 +31,15 @@ export interface MemoryService {
   getTurns?(turnIds: string[]): Promise<ConversationTurn[]>;
   /** 删除指定会话的所有轮次归档 */
   deleteTurns?(sessionId: string): Promise<number>;
+
+  // ----- 结构化元数据存储（供会话管理等场景使用） -----
+
+  /** 保存结构化元数据（namespace 隔离，key 唯一） */
+  saveMetadata?(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
+  /** 读取元数据 */
+  getMetadata?(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
+  /** 列出指定 namespace 下所有元数据条目 */
+  listMetadata?(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>>;
+  /** 删除元数据条目 */
+  deleteMetadata?(namespace: string, key: string): Promise<void>;
 }

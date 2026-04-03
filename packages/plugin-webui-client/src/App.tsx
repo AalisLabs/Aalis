@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
-import { api, SESSION_ID } from './api';
-import type { ChatMessage, LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab } from './types';
+import { api, getSessionId, pageAction } from './api';
+import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
 import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs } from './icons';
 import { useWebSocket } from './useWebSocket';
+import { useSessionManager } from './useSessionManager';
 import { DashboardPage } from './pages/DashboardPage';
 import { PluginConfigPage } from './pages/PluginConfigPage';
 import { MarketplacePage } from './pages/MarketplacePage';
@@ -12,12 +13,11 @@ import { ChatPanel } from './pages/ChatPanel';
 import { PlatformPage } from './pages/PlatformPage';
 import { AuthorityPage } from './pages/AuthorityPage';
 import { LogPage } from './pages/LogPage';
+import { SessionsPage } from './pages/SessionsPage';
 import { DynamicPage } from './components/DynamicPage';
 
 export function App() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [pendingFiles, setPendingFiles] = useState<Array<{ name: string; data: string; mimeType?: string }>>([]);
   const attachmentOrderRef = useRef<Array<'image' | 'file'>>([]);
@@ -46,6 +46,17 @@ export function App() {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [servicesData, setServicesData] = useState<Record<string, ServiceInfo> | null>(null);
+
+  // ---- 多会话管理（封装在 hook 中） ----
+  const session = useSessionManager(pageDefs);
+  const { messages, setMessages, loading, setLoading, streamingRef } = session;
+
+  /** WS 推送 sessions_changed 时递增，通知 SessionsPage 刷新 */
+  const [sessionsRefreshSignal, setSessionsRefreshSignal] = useState(0);
+
+  /** 当前会话的 todo 列表 */
+  const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
+
   const [chatWidth, setChatWidth] = useState(420);
 
   // 重启中状态
@@ -56,8 +67,6 @@ export function App() {
   const [reloading, setReloading] = useState(false);
   // 重启/刷新 overlay 的提示文字
   const [restartMessage, setRestartMessage] = useState('正在重启…');
-
-  const streamingRef = useRef(false);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
     // message:send 到达时，用完整内容更新最后一个文本段，保留所有 segments
@@ -226,8 +235,9 @@ export function App() {
     refreshPlugins();
     refreshServices();
     refreshPages();
+    session.refresh();
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
-  }, [refreshPlugins, refreshServices, refreshPages]);
+  }, [refreshPlugins, refreshServices, refreshPages, session.refresh]);
 
   const handleRestarting = useCallback(() => {
     setRestarting(true);
@@ -240,7 +250,18 @@ export function App() {
     setRestartMessage('正在切换前端，即将刷新…');
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload);
+  /** 会话列表变更（WS 实时推送）：刷新会话相关数据并通知 SessionsPage */
+  const handleSessionsChanged = useCallback(() => {
+    session.refresh();
+    setSessionsRefreshSignal(n => n + 1);
+  }, [session.refresh]);
+
+  /** Todo 列表变更（WS 实时推送） */
+  const handleTodoUpdated = useCallback((items: unknown[]) => {
+    setTodoItems(items as TodoItem[]);
+  }, []);
+
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated);
 
   // 重启流程：等待 WS 断开后重连，再刷新
   useEffect(() => {
@@ -272,8 +293,21 @@ export function App() {
     refreshPlugins();
     refreshServices();
     refreshPages();
+    session.refresh();
     api<LogEntry[]>('/api/logs').then(setLogs).catch(() => {});
-  }, [refreshPlugins, refreshConfig, refreshServices, refreshPages]);
+  }, [refreshPlugins, refreshConfig, refreshServices, refreshPages, session.refresh]);
+
+  // 会话切换时加载 todo 列表
+  useEffect(() => {
+    const sid = session.activeSessionId;
+    if (!sid || sid === '__new_chat__') {
+      setTodoItems([]);
+      return;
+    }
+    pageAction<TodoItem[]>('@aalis/plugin-todo-list', 'getTodos', { sessionId: sid })
+      .then(items => setTodoItems(items ?? []))
+      .catch(() => setTodoItems([]));
+  }, [session.activeSessionId]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -281,17 +315,25 @@ export function App() {
       refreshPlugins();
       refreshServices();
       refreshPages();
-    }, 10000);
+      session.refresh();
+    }, 30000);
     return () => clearInterval(timer);
-  }, [refreshPlugins, refreshServices, refreshPages]);
+  }, [refreshPlugins, refreshServices, refreshPages, session.refresh]);
 
   const handleAbort = useCallback(() => {
-    sendRaw({ type: 'abort', sessionId: SESSION_ID });
+    sendRaw({ type: 'abort', sessionId: getSessionId() });
     setLoading(false);
     streamingRef.current = false;
   }, [sendRaw]);
 
-  const handleSend = () => {
+  const handleClearTodos = useCallback(() => {
+    const sid = session.activeSessionId;
+    if (!sid || sid === '__new_chat__') return;
+    pageAction('@aalis/plugin-todo-list', 'clearTodos', { sessionId: sid }).catch(() => {});
+    setTodoItems([]);
+  }, [session.activeSessionId]);
+
+  const handleSend = async () => {
     const trimmed = input.trim();
 
     // 生成中 — 先中止当前生成
@@ -300,6 +342,9 @@ export function App() {
     }
 
     if (!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) return;
+
+    // 确保有活跃会话（无会话时自动新建）
+    await session.ensureSession();
 
     const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
     const files = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
@@ -320,7 +365,7 @@ export function App() {
     setLoading(true);
   };
 
-  // 内置页面（有专用 React 组件）及其图标映射
+  // 内置页面（webui-server 核心页面）的图标映射
   const builtinIconMap: Record<string, React.ReactNode> = {
     dashboard: <IconDashboard />,
     marketplace: <IconMarketplace />,
@@ -329,9 +374,8 @@ export function App() {
     authority: <IconAuthority />,
     logs: <IconLogs />,
   };
-  const builtinKeys = new Set(Object.keys(builtinIconMap));
 
-  // 默认图标（用于插件声明的动态页面）
+  // 默认图标（用于未声明 SVG 也不在内置映射中的页面）
   const defaultIcon = (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -339,8 +383,17 @@ export function App() {
     </svg>
   );
 
+  /** 解析图标：内置名称 → 插件声明的 SVG → 默认图标 */
+  const resolveIcon = (key: string, iconStr?: string): React.ReactNode => {
+    if (builtinIconMap[key]) return builtinIconMap[key];
+    if (iconStr && iconStr.trimStart().startsWith('<svg')) {
+      return <span className="nav-item-svg" dangerouslySetInnerHTML={{ __html: iconStr }} />;
+    }
+    return defaultIcon;
+  };
+
   // 组合内置 + 动态页面为统一的 tab 列表
-  const tabs: { key: string; label: string; icon: React.ReactNode; order: number }[] = (() => {
+  const tabs: { key: string; label: string; pluginDisplayName?: string; icon: React.ReactNode; order: number }[] = (() => {
     if (!availablePages) {
       // 未加载时显示全部内置（避免闪烁）
       return Object.entries(builtinIconMap).map(([key, icon], i) => ({
@@ -352,16 +405,30 @@ export function App() {
       .map(p => ({
         key: p.key,
         label: p.label,
-        icon: builtinIconMap[p.key] ?? defaultIcon,
+        pluginDisplayName: p.pluginDisplayName,
+        icon: resolveIcon(p.key, p.icon),
         order: p.order ?? 99,
       }))
       .sort((a, b) => a.order - b.order);
   })();
 
-  // 查找当前 tab 对应的动态页面定义（仅非内置页面）
-  const activeDynamicPage = (!builtinKeys.has(activeTab))
-    ? pageDefs.find(p => p.key === activeTab && p.content)
-    : undefined;
+  // 自定义渲染器 — 返回稳定的 JSX 元素，避免每次 render 创建新的组件类型
+  const renderCustomPage = (renderer: string, pluginName: string): React.ReactNode => {
+    switch (renderer) {
+      case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} onRefreshServices={refreshServices} />;
+      case 'marketplace': return <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />;
+      case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={refreshConfig} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
+      case 'platforms': return <PlatformPage />;
+      case 'authority': return <AuthorityPage />;
+      case 'logs': return <LogPage logs={logs} />;
+      case 'sessions': return <SessionsPage pluginName={pluginName} activeSessionId={session.activeSessionId} onSwitchSession={(id) => { session.switchSession(id); }} onStartNewChat={() => session.startNewChat()} refreshSignal={sessionsRefreshSignal} />;
+      default: return null;
+    }
+  };
+
+  // 查找当前 tab 对应的页面定义
+  const activePageDef = pageDefs.find(p => p.key === activeTab);
+  const activeDynamicPage = activePageDef?.content ? activePageDef : undefined;
 
   return (
     <div className="app-layout">
@@ -394,31 +461,11 @@ export function App() {
         </div>
 
         <div className="content-body">
-          {activeTab === 'dashboard' && (
-            <DashboardPage
-              status={status}
-              connected={connected}
-              plugins={plugins}
-              servicesData={servicesData}
-              onRefreshServices={refreshServices}
-            />
-          )}
-          {activeTab === 'marketplace' && (
-            <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />
-          )}
-          {activeTab === 'plugin-config' && (
-            <PluginConfigPage
-              plugins={plugins}
-              config={config}
-              onRefresh={refreshPlugins}
-              onConfigSaved={refreshConfig}
-              onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }}
-            />
-          )}
-          {activeTab === 'platforms' && <PlatformPage />}
-          {activeTab === 'authority' && <AuthorityPage />}
-          {activeTab === 'logs' && <LogPage logs={logs} />}
           {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
+          {!activeDynamicPage && activePageDef?.renderer && (
+            renderCustomPage(activePageDef.renderer, activePageDef.plugin) ||
+            <div className="empty-hint" style={{ padding: 24 }}>此客户端不支持渲染器「{activePageDef.renderer}」</div>
+          )}
         </div>
       </main>
 
@@ -452,22 +499,28 @@ export function App() {
       />
 
       {/* 右侧固定聊天面板 */}
-      <ChatPanel
-        messages={messages}
-        loading={loading}
-        connected={connected}
-        status={status}
-        input={input}
-        setInput={setInput}
-        onSend={handleSend}
-        onAbort={handleAbort}
-        width={chatWidth}
-        pendingImages={pendingImages}
-        setPendingImages={setPendingImages}
-        pendingFiles={pendingFiles}
-        setPendingFiles={setPendingFiles}
-        attachmentOrderRef={attachmentOrderRef}
-      />
+      <div className="chat-column" style={{ width: chatWidth, minWidth: chatWidth }}>
+        <ChatPanel
+          messages={messages}
+          loading={loading}
+          connected={connected}
+          status={status}
+          input={input}
+          setInput={setInput}
+          onSend={handleSend}
+          onAbort={handleAbort}
+          width={chatWidth}
+          pendingImages={pendingImages}
+          setPendingImages={setPendingImages}
+          pendingFiles={pendingFiles}
+          setPendingFiles={setPendingFiles}
+          attachmentOrderRef={attachmentOrderRef}
+          sessionTitle={session.isNewChat ? '新对话' : session.activeSessionTitle}
+          onNewSession={session.pluginName ? () => session.startNewChat() : undefined}
+          todoItems={todoItems}
+          onClearTodos={handleClearTodos}
+        />
+      </div>
 
       {/* 重启/刷新中遮罩 */}
       {(restarting || reloading) && (

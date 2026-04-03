@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { PersonaService, OutputFormat, OutputFormatField } from '@aalis/core';
+import type { Context, ConfigSchema, SessionManagerService } from '@aalis/core';
+import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -47,23 +47,6 @@ export const defaultConfig = {
 
 // ===== 角色卡格式 =====
 
-interface PlatformOverride {
-  /** 追加到基础 prompt 的内容 */
-  appendPrompt?: string;
-  /** 完全替换基础 prompt（优先于 appendPrompt） */
-  prompt?: string;
-  /** 替换 description */
-  description?: string;
-  /** 替换 traits */
-  traits?: string[];
-  /** 禁用结构化输出格式（该平台回复纯文本） */
-  disableOutputFormat?: boolean;
-  /** 覆盖结构化输出格式（提供时 disableOutputFormat 被忽略） */
-  outputFormat?: Record<string, { description: string; reply?: boolean }>;
-  /** JSON 内容由客户端渲染，服务端不提取回复字段（适用于支持 JSON 视图的前端如 webui） */
-  clientSideJsonRendering?: boolean;
-}
-
 interface PersonaCard {
   name: string;
   description: string;
@@ -73,8 +56,8 @@ interface PersonaCard {
   outputFormat?: Record<string, { description: string; reply?: boolean }>;
   nick_name?: string[];
   mute_keyword?: string[];
-  /** 按平台标识覆盖/追加角色卡字段 */
-  platformOverrides?: Record<string, PlatformOverride>;
+  /** JSON 内容由客户端渲染，服务端不提取回复字段 */
+  clientSideJsonRendering?: boolean;
 }
 
 // ===== 实现 =====
@@ -86,6 +69,10 @@ class PersonaServiceImpl implements PersonaService {
   private fileName: string;
   private statePersistence: boolean;
   private timeInjection: boolean;
+  /** 按名称缓存的角色卡（用于 session 级 persona 切换） */
+  private cardCache = new Map<string, PersonaCard | null>();
+  /** 按名称缓存的 OutputFormat */
+  private formatCache = new Map<string, OutputFormat | null>();
 
   /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
@@ -95,8 +82,6 @@ class PersonaServiceImpl implements PersonaService {
   currentSessionType?: 'group' | 'private' | 'channel';
   /** 当前消息发送者 ID */
   currentUserId?: string;
-  /** 当前平台标识 */
-  currentPlatform?: string;
   /** 当前群名称（仅群聊时可用） */
   currentGroupName?: string;
 
@@ -136,7 +121,60 @@ class PersonaServiceImpl implements PersonaService {
     this.sessionStates.set(sessionId, state);
   }
 
-  getSystemPrompt(): string {
+  /** 根据 options 获取生效的角色卡（不查 session-manager，由调用方传入） */
+  private getEffectiveCard(options?: PersonaSessionOptions): PersonaCard {
+    if (options?.persona && options.persona !== this.fileName) {
+      return this.loadCard(options.persona) ?? this.card;
+    }
+    return this.card;
+  }
+
+  /** 按名称动态加载角色卡（带缓存） */
+  private loadCard(name: string): PersonaCard | undefined {
+    if (name === this.fileName) return this.card;
+    if (this.cardCache.has(name)) return this.cardCache.get(name) ?? undefined;
+    for (const dir of this.searchDirs) {
+      for (const ext of ['.yaml', '.yml']) {
+        const p = resolve(dir, `${name}${ext}`);
+        if (existsSync(p)) {
+          try {
+            const raw = readFileSync(p, 'utf-8');
+            const parsed = parseYaml(raw) as Record<string, unknown>;
+            const card: PersonaCard = {
+              name: (parsed.name as string) ?? '',
+              description: (parsed.description as string) ?? '',
+              prompt: (parsed.prompt as string) ?? '',
+              traits: parsed.traits as string[] | undefined,
+              greeting: parsed.greeting as string | undefined,
+              outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
+              nick_name: parsed.nick_name as string[] | undefined,
+              mute_keyword: parsed.mute_keyword as string[] | undefined,
+              clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
+            };
+            this.cardCache.set(name, card);
+            return card;
+          } catch { /* continue searching */ }
+        }
+      }
+    }
+    this.cardCache.set(name, null);
+    return undefined;
+  }
+
+  /** 获取指定角色卡的 OutputFormat（带缓存） */
+  private getCardOutputFormat(card: PersonaCard): OutputFormat | undefined {
+    if (card === this.card) return this._outputFormat;
+    const key = card.name || '??';
+    if (this.formatCache.has(key)) return this.formatCache.get(key) ?? undefined;
+    const fmt = card.outputFormat
+      ? PersonaServiceImpl.parseRawOutputFormat(card.outputFormat)
+      : undefined;
+    this.formatCache.set(key, fmt ?? null);
+    return fmt;
+  }
+
+  getSystemPrompt(options?: PersonaSessionOptions): string {
+    const effectiveCard = this.getEffectiveCard(options);
     let prompt = '';
 
     // 时间注入
@@ -151,30 +189,16 @@ class PersonaServiceImpl implements PersonaService {
       prompt += `当前时间：${timeStr}\n\n`;
     }
 
-    // 解析平台覆盖
-    const override = this.currentPlatform
-      ? this.card.platformOverrides?.[this.currentPlatform]
-      : undefined;
-
-    const description = override?.description ?? this.card.description;
-    const traits = override?.traits ?? this.card.traits;
-    const basePrompt = override?.prompt ?? this.card.prompt;
-
-    if (this.card.name) {
-      prompt += `你的名字是 ${this.card.name}。`;
+    if (effectiveCard.name) {
+      prompt += `你的名字是 ${effectiveCard.name}。`;
     }
-    if (description) {
-      prompt += `${description}\n\n`;
+    if (effectiveCard.description) {
+      prompt += `${effectiveCard.description}\n\n`;
     }
-    if (traits && traits.length > 0) {
-      prompt += `性格特点: ${traits.join('、')}\n\n`;
+    if (effectiveCard.traits && effectiveCard.traits.length > 0) {
+      prompt += `性格特点: ${effectiveCard.traits.join('、')}\n\n`;
     }
-    prompt += basePrompt;
-
-    // 追加平台特定内容（仅当未完全替换 prompt 时）
-    if (!override?.prompt && override?.appendPrompt) {
-      prompt += '\n\n' + override.appendPrompt;
-    }
+    prompt += effectiveCard.prompt;
 
     // 会话上下文注入
     if (this.currentSessionId) {
@@ -208,8 +232,10 @@ class PersonaServiceImpl implements PersonaService {
       }
     }
 
-    // 追加结构化输出指令（动态解析当前平台的 outputFormat）
-    const effectiveFormat = this.getOutputFormat();
+    // 追加结构化输出指令 — 尊重调用方传入的 disableOutputFormat
+    const effectiveFormat = options?.disableOutputFormat
+      ? undefined
+      : this.getCardOutputFormat(effectiveCard);
     if (effectiveFormat) {
       prompt += '\n\n# 输出格式\n';
       prompt += '你必须始终以如下 JSON 格式回复，不要输出 JSON 之外的任何内容：\n';
@@ -230,18 +256,19 @@ class PersonaServiceImpl implements PersonaService {
     return this.card.name || `${this.fileName}，未设置名字`;
   }
 
-  getOutputFormat(): OutputFormat | undefined {
-    const override = this.currentPlatform
-      ? this.card.platformOverrides?.[this.currentPlatform]
-      : undefined;
-    // 平台提供了自己的 outputFormat → 优先使用
-    if (override?.outputFormat) {
-      return PersonaServiceImpl.parseRawOutputFormat(override.outputFormat);
+  /** 该角色卡是否配置为客户端渲染 JSON */
+  isClientSideJsonRendering(options?: PersonaSessionOptions): boolean {
+    if (options?.clientSideJsonRendering !== undefined) {
+      return options.clientSideJsonRendering;
     }
-    // 平台禁用了结构化输出
-    if (override?.disableOutputFormat) return undefined;
-    // 使用基础 outputFormat
-    return this._outputFormat;
+    const effectiveCard = this.getEffectiveCard(options);
+    return !!effectiveCard.clientSideJsonRendering;
+  }
+
+  getOutputFormat(options?: PersonaSessionOptions): OutputFormat | undefined {
+    if (options?.disableOutputFormat) return undefined;
+    const effectiveCard = this.getEffectiveCard(options);
+    return this.getCardOutputFormat(effectiveCard);
   }
 
   getNickNames(): string[] {
@@ -313,7 +340,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
         nick_name: parsed.nick_name as string[] | undefined,
         mute_keyword: parsed.mute_keyword as string[] | undefined,
-        platformOverrides: parsed.platformOverrides as Record<string, PlatformOverride> | undefined,
+        clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
       };
     } catch {
       return undefined;
@@ -346,7 +373,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentSessionId = data.message.sessionId;
     service.currentSessionType = data.message.sessionType;
     service.currentUserId = data.message.userId;
-    service.currentPlatform = data.message.platform;
     service.currentGroupName = data.message.groupName;
     try {
       await next();
@@ -354,30 +380,37 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       service.currentSessionId = undefined;
       service.currentSessionType = undefined;
       service.currentUserId = undefined;
-      service.currentPlatform = undefined;
       service.currentGroupName = undefined;
     }
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
 
   // 当角色卡配置了 outputFormat 时，注册 response:before 钩子解析 JSON
   const baseFormat = service.getOutputFormat();
-  const hasAnyOutputFormat = !!baseFormat
-    || Object.values(card.platformOverrides ?? {}).some(o => !!o.outputFormat);
 
-  if (hasAnyOutputFormat) {
-    ctx.logger.info(`角色卡启用结构化输出${baseFormat ? ` (默认回复字段: ${baseFormat.replyField})` : ''}`);
+  if (baseFormat) {
+    ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
 
     ctx.middleware('response:before', async (data, next) => {
       await next();
-      // 动态获取当前平台生效的 outputFormat
-      const outputFormat = service.getOutputFormat();
+
+      // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
+      let personaOpts: import('@aalis/core').PersonaSessionOptions | undefined;
+      try {
+        const sm = ctx.getService<SessionManagerService>('session-manager');
+        if (sm && data.sessionId) {
+          const resolved = sm.resolveConfig(data.sessionId);
+          personaOpts = {
+            persona: resolved.persona,
+            disableOutputFormat: resolved.disableOutputFormat,
+            clientSideJsonRendering: resolved.clientSideJsonRendering,
+          };
+        }
+      } catch { /* session-manager 不可用，使用全局默认 */ }
+
+      const outputFormat = service.getOutputFormat(personaOpts);
       if (!outputFormat) return;
 
-      // 客户端渲染模式：保留完整 JSON，仅做状态持久化和日志，不提取回复字段
-      const currentOverride = service.currentPlatform
-        ? card.platformOverrides?.[service.currentPlatform]
-        : undefined;
-      const clientRendered = !!currentOverride?.clientSideJsonRendering;
+      const clientRendered = service.isClientSideJsonRendering(personaOpts);
 
       const raw = data.content.trim();
       // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记或在 JSON 前输出文本）
