@@ -28,6 +28,7 @@ export const webuiPages: WebuiPage[] = [
 export const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
   host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
+  workspaceRoot: { type: 'string', label: '文件管理根目录', default: 'workspace', description: '文件管理页面可访问的根目录。默认为 workspace/，设为 / 可访问整个系统（需注意安全）' },
 };
 
 export const defaultConfig = {
@@ -827,7 +828,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ---------- 文件管理 API ----------
 
-  const workspaceRoot = resolve(process.cwd(), 'workspace');
+  const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
+  const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
 
   /** 安全路径解析：确保在 workspace 目录内，防止路径穿越 */
   function safeResolvePath(relPath: string): string | null {
