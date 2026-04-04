@@ -1453,17 +1453,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
       }
 
-      // 运行 llm-call:before 中间件以获取注入的 system 消息（摘要、向量记忆等）
-      const llmBeforeData = { messages, tools: [] as ToolDefinition[], sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
-      await ctx.hooks.run('llm-call:before', llmBeforeData);
-
-      // 获取工具定义
+      // 运行 llm-call:before 中间件以获取注入的 system 消息（摘要、向量记忆等）+ 工具搜索层过滤
       const sm = ctx.getService<SessionManagerService>('session-manager');
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
       const tools = ctx.tools?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
 
-      agent['emitTokenUsage'](data.sessionId, data.platform ?? '', llmBeforeData.messages, tools, contextLength, maxTokens, tokenBudget);
+      const llmBeforeData = { messages, tools, sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
+      await ctx.hooks.run('llm-call:before', llmBeforeData);
+
+      agent['emitTokenUsage'](data.sessionId, data.platform ?? '', llmBeforeData.messages, llmBeforeData.tools, contextLength, maxTokens, tokenBudget);
     } catch (err) {
       ctx.logger.debug('token:request 处理失败:', err);
     }
