@@ -4541,7 +4541,6 @@ details[open] > .tool-call-summary::before {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  table-layout: fixed;
 }
 
 .files-table thead {
@@ -4574,10 +4573,10 @@ details[open] > .tool-call-summary::before {
   border-top: 1px solid var(--border);
 }
 
-.col-name { width: 50%; }
-.col-size { width: 15%; }
-.col-mtime { width: 20%; }
-.col-actions { width: 15%; text-align: right; }
+.col-name { width: 100%; }
+.col-size { white-space: nowrap; }
+.col-mtime { white-space: nowrap; }
+.col-actions { text-align: right; }
 
 .files-row { transition: background 0.15s; }
 .files-row:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
