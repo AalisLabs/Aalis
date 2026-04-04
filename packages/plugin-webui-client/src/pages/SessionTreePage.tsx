@@ -336,20 +336,33 @@ function DetailSegment({ seg }: { seg: ContentSegment }) {
 function DetailMessageView({ msg }: { msg: ChatMessage }) {
   const roleLabel = msg.role === 'user' ? '用户' : '助手';
 
+  const thinkingBlock = msg.role === 'assistant' && (
+    msg.reasoningSegments && msg.reasoningSegments.length > 0 ? (
+      <details className="thinking-block">
+        <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+        <div className="thinking-content">
+          {msg.reasoningSegments.map((seg, j) => (
+            <DetailSegment key={j} seg={seg} />
+          ))}
+        </div>
+      </details>
+    ) : msg.reasoningContent ? (
+      <details className="thinking-block">
+        <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+        <div className="thinking-content">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+            {msg.reasoningContent}
+          </ReactMarkdown>
+        </div>
+      </details>
+    ) : null
+  );
+
   if (msg.role === 'assistant' && msg.segments && msg.segments.length > 0) {
     return (
       <div className={`detail-message ${msg.role}`}>
         <div className="detail-msg-role">{roleLabel}</div>
-        {msg.reasoningContent && (
-          <details className="thinking-block">
-            <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-            <div className="thinking-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-                {msg.reasoningContent}
-              </ReactMarkdown>
-            </div>
-          </details>
-        )}
+        {thinkingBlock}
         <div className="detail-msg-content detail-msg-md">
           {msg.segments.map((seg, j) => (
             <DetailSegment key={j} seg={seg} />
@@ -377,16 +390,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
   return (
     <div className={`detail-message ${msg.role}`}>
       <div className="detail-msg-role">{roleLabel}</div>
-      {msg.reasoningContent && (
-        <details className="thinking-block">
-          <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-          <div className="thinking-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-              {msg.reasoningContent}
-            </ReactMarkdown>
-          </div>
-        </details>
-      )}
+      {thinkingBlock}
       <div className="detail-msg-content detail-msg-md">
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
           {msg.content}

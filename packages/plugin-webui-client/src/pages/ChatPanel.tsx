@@ -828,7 +828,7 @@ export function ChatPanel({
                 })}
               </div>
             )}
-            {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 && (
+            {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 ? (
               <details className="thinking-block">
                 <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
                 <div className="thinking-content">
@@ -845,7 +845,16 @@ export function ChatPanel({
                   )}
                 </div>
               </details>
-            )}
+            ) : msg.role === 'assistant' && msg.reasoningContent ? (
+              <details className="thinking-block">
+                <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+                <div className="thinking-content">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+                    {msg.reasoningContent}
+                  </ReactMarkdown>
+                </div>
+              </details>
+            ) : null}
             {msg.role === 'assistant' && msg.segments && msg.segments.length > 0 ? (
               <div className="message-bubble">
                 {msg.segments.map((seg, j) =>

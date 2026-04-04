@@ -25,7 +25,9 @@ export interface RawMessage {
 
 /**
  * 将后端返回的结构化消息数组（含 assistant/tool/user/system）转换为前端 ChatMessage 数组。
- * 连续的 assistant + tool 消息组合为一个 ChatMessage，并从 toolCalls/tool 消息重建 segments。
+ * 连续的 assistant + tool 消息组合为一个 ChatMessage，
+ * 思考内容（reasoningContent）与工具调用交织构建为 reasoningSegments，
+ * 最终回复文本放入 segments。
  */
 export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
   const result: ChatMessage[] = [];
@@ -61,33 +63,35 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
     if (msg.role === 'assistant') {
       // 收集连续的 assistant + tool 消息组成一个 ChatMessage
       const segments: ContentSegment[] = [];
+      const reasoningSegments: ContentSegment[] = [];
+      // 跟踪已收集的中间 reasoning 文本，用于去重旧格式 combined reasoning
+      const intermediateReasonings: string[] = [];
       let lastTimestamp = msg.timestamp ?? 0;
       let finalContent = '';
-      // 收集思考过程（取第一条 assistant 消息的 reasoningContent）
-      let reasoningContent: string | undefined;
 
       while (i < raw.length && (raw[i].role === 'assistant' || raw[i].role === 'tool')) {
         const cur = raw[i];
 
         if (cur.role === 'assistant' && cur.toolCalls && cur.toolCalls.length > 0) {
-          // assistant 消息带 toolCalls：先加文本段，再加工具调用段
-          if (cur.reasoningContent && !reasoningContent) {
-            reasoningContent = cur.reasoningContent;
+          // 带工具调用的 assistant 消息（思考阶段）
+          // 将 reasoning 和工具调用放入 reasoningSegments
+          if (cur.reasoningContent) {
+            reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
+            intermediateReasonings.push(cur.reasoningContent);
           }
           if (cur.content) {
-            segments.push({ type: 'text', content: cur.content });
+            reasoningSegments.push({ type: 'text', content: cur.content });
           }
-          // 为每个 toolCall 创建段（result 稍后从 tool 消息填充）
           for (const tc of cur.toolCalls) {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
-            segments.push({ type: 'tool_call', name: tc.function.name, args });
+            reasoningSegments.push({ type: 'tool_call', name: tc.function.name, args });
           }
           lastTimestamp = cur.timestamp ?? lastTimestamp;
           i++;
         } else if (cur.role === 'tool' && cur.toolCallId) {
-          // tool 结果消息：找到对应的 tool_call 段并填充 result
-          const seg = segments.findLast(
+          // tool 结果消息：找到 reasoningSegments 中对应的 tool_call 段并填充 result
+          const seg = reasoningSegments.findLast(
             s => s.type === 'tool_call' && s.result === undefined
           );
           if (seg && seg.type === 'tool_call') {
@@ -95,20 +99,41 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
           }
           i++;
         } else if (cur.role === 'assistant') {
-          // 无 toolCalls 的 assistant 消息（最终回复或中间文本）
-          if (cur.reasoningContent && !reasoningContent) {
-            reasoningContent = cur.reasoningContent;
-          }
+          // 无 toolCalls 的 assistant 消息
           if (i === raw.length - 1 || raw[i + 1]?.role === 'user' || raw[i + 1]?.role === 'system') {
-            // 这是最后一条 assistant 消息（最终回复）
+            // 最终回复：提取新增的 reasoning（兼容旧格式 combined reasoning）
+            if (cur.reasoningContent) {
+              if (intermediateReasonings.length > 0) {
+                // 旧格式可能存的是 combined reasoning，需要去重
+                const prefix = intermediateReasonings.join('\n\n---\n\n');
+                if (cur.reasoningContent.startsWith(prefix)) {
+                  let remainder = cur.reasoningContent.substring(prefix.length);
+                  if (remainder.startsWith('\n\n---\n\n')) {
+                    remainder = remainder.substring('\n\n---\n\n'.length);
+                  }
+                  if (remainder.trim()) {
+                    reasoningSegments.push({ type: 'text', content: remainder });
+                  }
+                } else {
+                  // 新格式：独立 reasoning，直接添加
+                  reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
+                }
+              } else {
+                reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
+              }
+            }
             finalContent = cur.content ?? '';
             lastTimestamp = cur.timestamp ?? lastTimestamp;
             i++;
             break;
           }
-          // 中间 assistant 消息（无工具调用），追加为文本段
+          // 中间 assistant 消息（无工具调用）
+          if (cur.reasoningContent) {
+            reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
+            intermediateReasonings.push(cur.reasoningContent);
+          }
           if (cur.content) {
-            segments.push({ type: 'text', content: cur.content });
+            reasoningSegments.push({ type: 'text', content: cur.content });
           }
           lastTimestamp = cur.timestamp ?? lastTimestamp;
           i++;
@@ -117,27 +142,34 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
         }
       }
 
-      // 如果没有段信息（兼容旧格式：纯文本消息），直接作为纯文本
-      if (segments.length === 0) {
-        result.push({
-          role: 'assistant',
-          content: finalContent || msg.content || '',
-          reasoningContent,
-          timestamp: lastTimestamp,
-        });
-      } else {
-        // 最终回复内容追加为最后一个文本段
-        if (finalContent) {
-          segments.push({ type: 'text', content: finalContent });
-        }
-        result.push({
-          role: 'assistant',
-          content: finalContent,
-          segments,
-          reasoningContent,
-          timestamp: lastTimestamp,
-        });
+      // 如果 reasoningSegments 中没有任何 text 段（无 reasoning），
+      // 将工具调用移回 segments（兼容非 reasoning 模型）
+      const hasReasoningText = reasoningSegments.some(s => s.type === 'text');
+      if (!hasReasoningText && reasoningSegments.length > 0) {
+        segments.push(...reasoningSegments);
+        reasoningSegments.length = 0;
       }
+
+      // 构建合并 reasoningContent 字符串（用于无 segments 的兼容渲染）
+      const allReasoningTexts = reasoningSegments
+        .filter((s): s is Extract<ContentSegment, { type: 'text' }> => s.type === 'text')
+        .map(s => s.content);
+      const reasoningContent = allReasoningTexts.length > 0
+        ? allReasoningTexts.join('\n\n---\n\n')
+        : undefined;
+
+      if (finalContent) {
+        segments.push({ type: 'text', content: finalContent });
+      }
+
+      result.push({
+        role: 'assistant',
+        content: finalContent || msg.content || '',
+        segments: segments.length > 0 ? segments : undefined,
+        reasoningContent,
+        reasoningSegments: reasoningSegments.length > 0 ? reasoningSegments : undefined,
+        timestamp: lastTimestamp,
+      });
       continue;
     }
 
