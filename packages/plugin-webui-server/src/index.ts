@@ -175,7 +175,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         /** 是否支持文件上传（file-reader 可用） */
         file: hasFileReader,
       },
-      tools: ctx.tools?.getDefinitions().map(t => t.function.name) ?? [],
+      tools: ctx.tools?.getAll().map(t => t.name) ?? [],
       commands: ctx.commands?.getAll().map(c => ({
         name: c.name,
         description: c.description,
