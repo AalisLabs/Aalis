@@ -119,7 +119,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
     }
     const tools = ctx.getService<ToolService>('tools');
-    lines.push(`- 已注册工具: ${tools ? tools.getDefinitions().length : 0} 个`);
+    lines.push(`- 已注册工具: ${tools ? tools.getAll().length : 0} 个`);
     lines.push(`- 已注册指令: ${commands.getAll().length} 个`);
     return lines.join('\n');
   });
