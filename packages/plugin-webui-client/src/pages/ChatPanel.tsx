@@ -435,6 +435,9 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
+  /** 用户正在主动滚动（防止 auto-scroll 与用户手势冲突） */
+  const userScrollingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isUserScrolling = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -476,8 +479,12 @@ export function ChatPanel({
     if (!container) return;
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
-      // 距底部小于 80px 视为在底部
-      userScrolledUp.current = scrollHeight - scrollTop - clientHeight > 80;
+      // 距底部小于 200px 视为在底部
+      userScrolledUp.current = scrollHeight - scrollTop - clientHeight > 200;
+      // 标记用户正在主动操作滚动条，短暂抑制自动滚动
+      isUserScrolling.current = true;
+      if (userScrollingTimer.current) clearTimeout(userScrollingTimer.current);
+      userScrollingTimer.current = setTimeout(() => { isUserScrolling.current = false; }, 300);
     };
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
@@ -488,7 +495,7 @@ export function ChatPanel({
     const container = messagesContainerRef.current;
     if (!container) return;
     const observer = new ResizeObserver(() => {
-      if (!userScrolledUp.current) {
+      if (!userScrolledUp.current && !isUserScrolling.current) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     });
@@ -501,7 +508,7 @@ export function ChatPanel({
   });
 
   useEffect(() => {
-    if (!userScrolledUp.current) {
+    if (!userScrolledUp.current && !isUserScrolling.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
