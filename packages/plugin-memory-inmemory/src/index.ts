@@ -36,6 +36,12 @@ class InMemoryFallbackService implements MemoryService {
     this.archivedSessions.delete(sessionId);
   }
 
+  async clearAll(): Promise<void> {
+    this.sessions.clear();
+    this.archivedSessions.clear();
+    this.metadata.clear();
+  }
+
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
     const history = this.sessions.get(sessionId);
     if (!history || history.length <= keepRecent) return 0;
