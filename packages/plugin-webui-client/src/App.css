@@ -4582,14 +4582,7 @@ details[open] > .tool-call-summary::before {
 .files-row { transition: background 0.15s; }
 .files-row:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
 
-.col-name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* 将 td 的 col-name 也设为 flex */
-td.col-name {
+.col-name-inner {
   display: flex;
   align-items: center;
   gap: 8px;
