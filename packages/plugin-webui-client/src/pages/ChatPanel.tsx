@@ -9,6 +9,7 @@ import 'katex/dist/katex.min.css';
 import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../types';
 import type { MutableRefObject } from 'react';
 import type { TokenUsageData } from '../useWebSocket';
+import { preprocessLaTeX } from '../preprocessLaTeX';
 
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
@@ -240,7 +241,7 @@ function JsonField({ fieldKey, value }: { fieldKey: string; value: unknown }) {
       {isReply ? (
         <div className="json-field-value json-field-value-md">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-            {strValue}
+            {preprocessLaTeX(strValue)}
           </ReactMarkdown>
         </div>
       ) : (
@@ -281,7 +282,7 @@ function StreamingJsonView({ fields }: { fields: PartialField[] }) {
               isReply && f.value ? (
                 <div className="json-field-value json-field-value-md">
                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-                    {f.value}
+                    {preprocessLaTeX(f.value)}
                   </ReactMarkdown>
                   {showCursor && <span className="streaming-cursor" />}
                 </div>
@@ -311,7 +312,7 @@ function AssistantContent({ content }: { content: string }) {
   }
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-      {content}
+      {preprocessLaTeX(content)}
     </ReactMarkdown>
   );
 }
@@ -836,7 +837,7 @@ export function ChatPanel({
                     seg.type === 'text' ? (
                       seg.content ? (
                         <ReactMarkdown key={j} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-                          {seg.content}
+                          {preprocessLaTeX(seg.content)}
                         </ReactMarkdown>
                       ) : null
                     ) : (
@@ -850,7 +851,7 @@ export function ChatPanel({
                 <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
                 <div className="thinking-content">
                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-                    {msg.reasoningContent}
+                    {preprocessLaTeX(msg.reasoningContent!)}
                   </ReactMarkdown>
                 </div>
               </details>
