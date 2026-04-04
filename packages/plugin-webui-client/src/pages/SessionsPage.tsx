@@ -10,6 +10,7 @@ import { buildChatMessages } from '../useSessionManager';
 import { useDetailStream } from '../useDetailStream';
 import type { RawMessage } from '../useSessionManager';
 import type { ChatMessage, ContentSegment } from '../types';
+import { preprocessLaTeX } from '../preprocessLaTeX';
 
 // ===== 类型 =====
 
@@ -755,7 +756,7 @@ function DetailSegment({ seg }: { seg: ContentSegment }) {
     return seg.content ? (
       <div className="detail-text-segment">
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-          {seg.content}
+          {preprocessLaTeX(seg.content)}
         </ReactMarkdown>
       </div>
     ) : null;
@@ -801,7 +802,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
         <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
         <div className="thinking-content">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-            {msg.reasoningContent}
+            {preprocessLaTeX(msg.reasoningContent)}
           </ReactMarkdown>
         </div>
       </details>
