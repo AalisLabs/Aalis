@@ -732,14 +732,15 @@ class DefaultAgent implements AgentService {
             ? allReasoning.join('\n\n---\n\n')
             : undefined;
 
-          // 保存最终 assistant 回复（不含工具调用摘要，工具调用已作为独立消息保存）
+          // 保存最终 assistant 回复：只存最后一次 LLM 调用的 reasoning（中间消息已各自保存了自己的 reasoning）
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
             content: replyContent,
-            reasoningContent: combinedReasoning,
+            reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
           });
 
+          // 发送给流式客户端时使用合并版本（客户端流式阶段已自行维护 reasoningSegments）
           await this.ctx.emit('message:send', {
             content: replyContent,
             sessionId: incoming.sessionId,

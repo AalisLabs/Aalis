@@ -35,7 +35,7 @@ export function useWebSocket(
   onSessionSwitched?: (sessionId: string) => void,
   onSessionsChanged?: () => void,
   onTodoUpdated?: (items: unknown[]) => void,
-  onStreamResume?: (content: string, reasoningContent: string, done: boolean) => void,
+  onStreamResume?: (content: string, reasoningContent: string, segments: Array<{ type: 'text'; content: string } | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string }>, done: boolean) => void,
   onConfirm?: (content: string) => void,
   onTokenUsage?: (usage: TokenUsageData) => void,
   onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void,
@@ -96,7 +96,7 @@ export function useWebSocket(
           } else if (data.type === 'todo_updated' && data.todoItems) {
             onTodoUpdated?.(data.todoItems);
           } else if (data.type === 'stream_resume') {
-            onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', !!data.done);
+            onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', data.segments ?? [], !!data.done);
           } else if (data.type === 'confirm' && data.content) {
             onConfirm?.(data.content);
           } else if (data.type === 'token_usage' && data.tokenUsage) {
