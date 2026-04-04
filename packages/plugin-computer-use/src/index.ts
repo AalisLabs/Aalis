@@ -179,9 +179,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     label: '桌面操控',
     description:
       `通过 UI 组件交互、截屏观察、键盘快捷键等操作控制计算机桌面 (当前平台: ${platformType})。\n` +
-      '推荐工作流（原生应用）：list_apps → ui_tree → click/type_text（AX API 精准操控）。\n' +
-      '推荐工作流（Electron/Web应用）：web_connect → web_inspect → web_action/web_eval（CDP 深度操控）。\n' +
-      '⚠️ 这些工具直接控制桌面，请谨慎使用。',
+      '这些工具直接控制桌面，键鼠等，请谨慎使用。',
   });
 
   // 创建带分组标记的上下文代理
