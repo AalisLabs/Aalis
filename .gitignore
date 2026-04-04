@@ -13,3 +13,5 @@ workspace/
 .vscode/
 .idea/
 *.log
+*.node
+**/native/target/
