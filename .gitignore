@@ -10,3 +10,6 @@ dist/
 data/
 aalis.config.yaml
 workspace/
+.vscode/
+.idea/
+*.log
