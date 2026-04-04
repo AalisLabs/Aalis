@@ -11,7 +11,7 @@ export type ContentSegment =
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
 
 export interface ChatMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   reasoningContent?: string;
   segments?: ContentSegment[];

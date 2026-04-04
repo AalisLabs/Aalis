@@ -2,7 +2,10 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../types';
 import type { MutableRefObject } from 'react';
 import type { TokenUsageData } from '../useWebSocket';
@@ -20,6 +23,20 @@ function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: n
   if (!startTime) return null;
   const elapsed = ((endTime || now) - startTime) / 1000;
   return <span className="tool-call-timer">{elapsed.toFixed(1)}s</span>;
+}
+
+/** 压缩计时器 */
+function CompressTimer({ startTime, endTime }: { startTime: number; endTime?: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (endTime) return;
+    let raf: number;
+    const tick = () => { setNow(Date.now()); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [endTime]);
+  const elapsed = ((endTime || now) - startTime) / 1000;
+  return <span className="compress-timer">{elapsed.toFixed(1)}s</span>;
 }
 
 /** 渲染 tool_call 段的 <details> 块 */
@@ -222,7 +239,7 @@ function JsonField({ fieldKey, value }: { fieldKey: string; value: unknown }) {
       <span className="json-field-label">{label}</span>
       {isReply ? (
         <div className="json-field-value json-field-value-md">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
             {strValue}
           </ReactMarkdown>
         </div>
@@ -263,7 +280,7 @@ function StreamingJsonView({ fields }: { fields: PartialField[] }) {
             {f.keyDone && (
               isReply && f.value ? (
                 <div className="json-field-value json-field-value-md">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
                     {f.value}
                   </ReactMarkdown>
                   {showCursor && <span className="streaming-cursor" />}
@@ -293,7 +310,7 @@ function AssistantContent({ content }: { content: string }) {
     return null;
   }
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
       {content}
     </ReactMarkdown>
   );
@@ -415,11 +432,15 @@ export function ChatPanel({
   onCompress?: () => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUp = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const [showTokenPanel, setShowTokenPanel] = useState(false);
+  const compressStartTime = useRef(0);
+  const compressEndTime = useRef(0);
 
   // 上传能力
   const uploadCaps = status?.uploadCapabilities;
@@ -438,8 +459,50 @@ export function ChatPanel({
   // input 被外部清空（发送后）时重置高度
   useEffect(() => { autoResize(); }, [input, autoResize]);
 
+  // 跟踪压缩计时
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (compressingStatus === 'start') {
+      compressStartTime.current = Date.now();
+      compressEndTime.current = 0;
+    } else if (compressingStatus === 'done' || compressingStatus === 'error') {
+      compressEndTime.current = Date.now();
+    }
+  }, [compressingStatus]);
+
+  // 智能滚动：用户滚动查看上方内容时不强制滚动，回到底部时恢复自动滚动
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // 距底部小于 80px 视为在底部
+      userScrolledUp.current = scrollHeight - scrollTop - clientHeight > 80;
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // 监听容器高度变化（包括 details 展开、流式内容增长等）自动跟随底部
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      if (!userScrolledUp.current) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+    // 观察整个消息列表内部高度的变化
+    for (const child of container.children) {
+      observer.observe(child);
+    }
+    observer.observe(container);
+    return () => observer.disconnect();
+  });
+
+  useEffect(() => {
+    if (!userScrolledUp.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -700,7 +763,7 @@ export function ChatPanel({
           )}
         </div>
       </div>
-      <div className="messages">
+      <div className="messages" ref={messagesContainerRef}>
         {messages.length === 0 && (
           <div className="empty">
             <div className="empty-icon"><MessageSquare size={40} /></div>
@@ -708,6 +771,13 @@ export function ChatPanel({
           </div>
         )}
         {messages.map((msg, i) => (
+          msg.role === 'system' ? (
+            <div key={i} className="system-event-separator">
+              <span className="system-event-line" />
+              <span className="system-event-text"><Archive size={12} /> {msg.content}</span>
+              <span className="system-event-line" />
+            </div>
+          ) : (
           <div key={i} className={`message-group ${msg.role}`}>
             <div className="message-sender">
               {msg.role === 'user' ? 'You' : status?.name ?? 'Aalis'}
@@ -765,7 +835,7 @@ export function ChatPanel({
                   {msg.reasoningSegments.map((seg, j) =>
                     seg.type === 'text' ? (
                       seg.content ? (
-                        <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                        <ReactMarkdown key={j} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
                           {seg.content}
                         </ReactMarkdown>
                       ) : null
@@ -804,6 +874,7 @@ export function ChatPanel({
               </button>
             )}
           </div>
+          )
         ))}
         {/* 仅在没有 assistant 消息时显示 loading 指示器（首次生成等待） */}
         {loading && (!lastMsg || lastMsg.role !== 'assistant') && (
@@ -833,18 +904,26 @@ export function ChatPanel({
             </div>
           </div>
         )}
-        {/* 对话压缩状态提示气泡 */}
-        {compressingStatus && (
-          <div className={`compress-bubble ${compressingStatus}`}>
-            {compressingStatus === 'start' && (
-              <><Loader size={14} className="compress-spinner" /> 正在压缩对话历史…</>
-            )}
-            {compressingStatus === 'done' && (
-              <><CheckCircle2 size={14} /> 对话已压缩，历史消息已精简</>
-            )}
-            {compressingStatus === 'error' && (
-              <><AlertTriangle size={14} /> 压缩失败，请稍后重试</>
-            )}
+        {/* 对话压缩状态 — 消息流内分隔线样式 + 实时计时 */}
+        {compressingStatus === 'start' && (
+          <div className="system-event-separator compressing">
+            <span className="system-event-line" />
+            <span className="system-event-text"><Loader size={12} className="compress-spinner" /> 压缩对话中 <CompressTimer startTime={compressStartTime.current} /></span>
+            <span className="system-event-line" />
+          </div>
+        )}
+        {compressingStatus === 'done' && (
+          <div className="system-event-separator compress-done">
+            <span className="system-event-line" />
+            <span className="system-event-text"><CheckCircle2 size={12} /> 已压缩对话 <CompressTimer startTime={compressStartTime.current} endTime={compressEndTime.current} /></span>
+            <span className="system-event-line" />
+          </div>
+        )}
+        {compressingStatus === 'error' && (
+          <div className="system-event-separator compress-error">
+            <span className="system-event-line" />
+            <span className="system-event-text"><AlertTriangle size={12} /> 压缩失败</span>
+            <span className="system-event-line" />
           </div>
         )}
         <div ref={messagesEndRef} />
