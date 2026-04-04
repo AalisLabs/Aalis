@@ -63,8 +63,14 @@ function recencyScore(timestampMs: number, nowMs: number): number {
 // ===== 插件入口 =====
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const store = ctx.getService<VectorStoreService>('vectorstore')!;
-  const embedder = ctx.getService<EmbeddingService>('embedding')!;
+  /** 动态获取 vectorstore 服务（避免静态引用导致用到错误的提供者） */
+  function getStore(): VectorStoreService {
+    return ctx.getService<VectorStoreService>('vectorstore')!;
+  }
+  /** 动态获取 embedding 服务 */
+  function getEmbedder(): EmbeddingService {
+    return ctx.getService<EmbeddingService>('embedding')!;
+  }
   const memory = ctx.getService<MemoryService>('memory');
 
   const hasTurnArchive = !!memory?.saveTurn;
@@ -82,7 +88,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     return sessionId.split(':')[0] ?? '';
   }
 
-  ctx.logger.info(`向量记忆已启动: ${await store.size()} 条向量, 归档存储=${hasTurnArchive ? '可用' : '不可用（将内嵌文本）'}`);
+  ctx.logger.info(`向量记忆已启动: ${await getStore().size()} 条向量, 归档存储=${hasTurnArchive ? '可用' : '不可用（将内嵌文本）'}`);
 
   ctx.provide('semantic-memory', { name: 'vector-memory' });
 
@@ -94,7 +100,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const turnText = `用户: ${userContent}\n助手: ${assistantContent}`;
     if (!turnText.trim()) return;
     try {
-      const vec = await embedder.embed(turnText);
+      const vec = await getEmbedder().embed(turnText);
 
       // 向量 metadata：只存引用 ID 和过滤所需字段
       const metadata: Record<string, unknown> = {
@@ -115,8 +121,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         metadata.content = turnText;
       }
 
-      await store.add(vec, metadata);
-      await store.save();
+      await getStore().add(vec, metadata);
+      await getStore().save();
     } catch (err) {
       ctx.logger.warn('向量索引失败:', err);
     }
@@ -158,15 +164,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     try {
       if (data.scope === 'all') {
-        await store.clear();
-        await store.save();
+        await getStore().clear();
+        await getStore().save();
         data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
         ctx.logger.info('向量记忆已全部清空');
       } else if (data.sessionId) {
         let deleted = 0;
-        if (store.deleteByFilter) {
-          deleted = await store.deleteByFilter({ sessionId: data.sessionId });
-          await store.save();
+        const currentStore = getStore();
+        if (currentStore.deleteByFilter) {
+          deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
+          await currentStore.save();
         }
         if (hasTurnArchive) {
           await memory!.deleteTurns!(data.sessionId);
@@ -199,14 +206,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
       const curUserId = data.userId ?? '';
 
-      const candidateCount = Math.min(cfg.search.topK * 3, await store.size());
+      const candidateCount = Math.min(cfg.search.topK * 3, await getStore().size());
       if (candidateCount === 0) {
         await next();
         return;
       }
 
-      const queryVec = await embedder.embed(lastUserMsg.content);
-      const candidates = await store.search(queryVec, candidateCount);
+      const queryVec = await getEmbedder().embed(lastUserMsg.content);
+      const candidates = await getStore().search(queryVec, candidateCount);
 
       // 按 crossSessionMode 过滤
       const filtered = candidates.filter(c => {
