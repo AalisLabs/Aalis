@@ -73,29 +73,37 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
         const cur = raw[i];
 
         if (cur.role === 'assistant' && cur.toolCalls && cur.toolCalls.length > 0) {
-          // 带工具调用的 assistant 消息（思考阶段）
-          // 将 reasoning 和工具调用放入 reasoningSegments
+          // 带工具调用的 assistant 消息
+          // 有 reasoningContent → 归入 reasoningSegments（思考阶段）；否则归入 segments（普通内容）
+          const target = cur.reasoningContent ? reasoningSegments : segments;
           if (cur.reasoningContent) {
             reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
             intermediateReasonings.push(cur.reasoningContent);
           }
           if (cur.content) {
-            reasoningSegments.push({ type: 'text', content: cur.content });
+            target.push({ type: 'text', content: cur.content });
           }
           for (const tc of cur.toolCalls) {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
-            reasoningSegments.push({ type: 'tool_call', name: tc.function.name, args });
+            target.push({ type: 'tool_call', name: tc.function.name, args });
           }
           lastTimestamp = cur.timestamp ?? lastTimestamp;
           i++;
         } else if (cur.role === 'tool' && cur.toolCallId) {
-          // tool 结果消息：找到 reasoningSegments 中对应的 tool_call 段并填充 result
-          const seg = reasoningSegments.findLast(
+          // tool 结果消息：优先在 reasoningSegments 中查找未填充的 tool_call，再查 segments
+          const segR = reasoningSegments.findLast(
             s => s.type === 'tool_call' && s.result === undefined
           );
-          if (seg && seg.type === 'tool_call') {
-            seg.result = cur.content ?? '';
+          if (segR && segR.type === 'tool_call') {
+            segR.result = cur.content ?? '';
+          } else {
+            const segS = segments.findLast(
+              s => s.type === 'tool_call' && s.result === undefined
+            );
+            if (segS && segS.type === 'tool_call') {
+              segS.result = cur.content ?? '';
+            }
           }
           i++;
         } else if (cur.role === 'assistant') {
@@ -131,9 +139,11 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
           if (cur.reasoningContent) {
             reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
             intermediateReasonings.push(cur.reasoningContent);
-          }
-          if (cur.content) {
-            reasoningSegments.push({ type: 'text', content: cur.content });
+            if (cur.content) {
+              reasoningSegments.push({ type: 'text', content: cur.content });
+            }
+          } else if (cur.content) {
+            segments.push({ type: 'text', content: cur.content });
           }
           lastTimestamp = cur.timestamp ?? lastTimestamp;
           i++;
