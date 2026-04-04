@@ -4,8 +4,12 @@ import type { ContentSegment } from './types';
 export interface DetailStreamState {
   /** 当前流式输出的 segments（文本 + 工具调用交替） */
   segments: ContentSegment[];
+  /** 思考过程的 segments（推理文本 + 推理期间的工具调用） */
+  reasoningSegments: ContentSegment[];
   /** 是否正在流式输出 */
   isStreaming: boolean;
+  /** 当前是否处于推理阶段（用于将工具调用归入 reasoningSegments） */
+  isReasoning: boolean;
   /** 本轮生成已完成（触发刷新） */
   done: boolean;
 }
@@ -20,7 +24,9 @@ export function useDetailStream(
 ): [DetailStreamState, () => void] {
   const [state, setState] = useState<DetailStreamState>({
     segments: [],
+    reasoningSegments: [],
     isStreaming: false,
+    isReasoning: false,
     done: false,
   });
   const wsRef = useRef<WebSocket | null>(null);
@@ -28,7 +34,7 @@ export function useDetailStream(
 
   useEffect(() => {
     if (!shouldStream || !sessionId) {
-      setState({ segments: [], isStreaming: false, done: false });
+      setState({ segments: [], reasoningSegments: [], isStreaming: false, isReasoning: false, done: false });
       return;
     }
 
@@ -46,27 +52,50 @@ export function useDetailStream(
 
         if (data.type === 'stream_resume') {
           // 刚订阅时，服务端推送已累积的内容（含 segments 则使用完整 segments）
+          const reasoningContent = data.reasoningContent ?? '';
+          const rSegs: ContentSegment[] = [];
+          const segs: ContentSegment[] = [];
+          if (reasoningContent) {
+            rSegs.push({ type: 'text', content: reasoningContent });
+          }
           if (data.segments && data.segments.length > 0) {
-            setState({
-              segments: data.segments,
-              isStreaming: !data.done,
-              done: !!data.done,
-            });
+            for (const seg of data.segments as ContentSegment[]) {
+              if (seg.type === 'tool_call' && reasoningContent) {
+                rSegs.push(seg);
+              } else {
+                segs.push(seg);
+              }
+            }
           } else {
             const content = data.content ?? '';
-            setState({
-              segments: content ? [{ type: 'text', content }] : [],
-              isStreaming: !data.done,
-              done: !!data.done,
-            });
+            if (content) segs.push({ type: 'text', content });
           }
+          setState({
+            segments: segs,
+            reasoningSegments: rSegs,
+            isStreaming: !data.done,
+            isReasoning: !!reasoningContent && !data.content,
+            done: !!data.done,
+          });
         } else if (data.type === 'stream') {
           if (data.done) {
-            setState(prev => ({ ...prev, isStreaming: false, done: true }));
+            setState(prev => ({ ...prev, isStreaming: false, isReasoning: false, done: true }));
           } else {
             setState(prev => {
               const segments = [...prev.segments];
+              const reasoningSegments = [...prev.reasoningSegments];
+              let isReasoning = prev.isReasoning;
+              if (data.reasoningDelta) {
+                isReasoning = true;
+                const last = reasoningSegments[reasoningSegments.length - 1];
+                if (last && last.type === 'text') {
+                  reasoningSegments[reasoningSegments.length - 1] = { type: 'text', content: last.content + data.reasoningDelta };
+                } else {
+                  reasoningSegments.push({ type: 'text', content: data.reasoningDelta });
+                }
+              }
               if (data.contentDelta) {
+                isReasoning = false;
                 const last = segments[segments.length - 1];
                 if (last && last.type === 'text') {
                   segments[segments.length - 1] = { type: 'text', content: last.content + data.contentDelta };
@@ -74,25 +103,30 @@ export function useDetailStream(
                   segments.push({ type: 'text', content: data.contentDelta });
                 }
               }
-              return { ...prev, segments, isStreaming: true };
+              return { ...prev, segments, reasoningSegments, isReasoning, isStreaming: true };
             });
           }
         } else if (data.type === 'tool_call') {
           setState(prev => {
-            const segments = [...prev.segments];
+            // 曾产生过推理内容时，工具调用归入 reasoningSegments
+            const hasReasoning = prev.reasoningSegments.length > 0;
+            const target = hasReasoning ? [...prev.reasoningSegments] : [...prev.segments];
             if (data.toolPhase === 'start') {
-              segments.push({ type: 'tool_call', name: data.toolName, args: data.toolArgs ?? {} });
+              target.push({ type: 'tool_call', name: data.toolName, args: data.toolArgs ?? {} });
             } else if (data.toolPhase === 'end' && data.toolResult !== undefined) {
-              const idx = segments.findLastIndex(
+              const idx = target.findLastIndex(
                 (s): s is Extract<ContentSegment, { type: 'tool_call' }> =>
                   s.type === 'tool_call' && s.name === data.toolName && s.result == null,
               );
               if (idx >= 0) {
-                const seg = segments[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
-                segments[idx] = { ...seg, result: data.toolResult };
+                const seg = target[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
+                target[idx] = { ...seg, result: data.toolResult };
               }
             }
-            return { ...prev, segments, isStreaming: true };
+            if (hasReasoning) {
+              return { ...prev, reasoningSegments: target, isStreaming: true };
+            }
+            return { ...prev, segments: target, isStreaming: true };
           });
         } else if (data.type === 'message') {
           setState(prev => ({ ...prev, done: true, isStreaming: false }));
@@ -109,7 +143,7 @@ export function useDetailStream(
   }, [sessionId, shouldStream]);
 
   const reset = useCallback(() => {
-    setState({ segments: [], isStreaming: false, done: false });
+    setState({ segments: [], reasoningSegments: [], isStreaming: false, isReasoning: false, done: false });
   }, []);
 
   return [state, reset];
