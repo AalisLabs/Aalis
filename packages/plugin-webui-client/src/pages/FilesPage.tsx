@@ -208,26 +208,28 @@ export function FilesPage() {
               {entries.map(entry => (
                 <tr key={entry.path} className="files-row" onDoubleClick={() => entry.isDirectory && navigate(entry.path)}>
                   <td className="col-name">
-                    <span className="file-icon">
-                      {entry.isDirectory ? <FolderOpen size={16} /> : <File size={16} />}
-                    </span>
-                    {renaming === entry.path ? (
-                      <input
-                        ref={renameInputRef}
-                        className="rename-input"
-                        value={renameValue}
-                        onChange={e => setRenameValue(e.target.value)}
-                        onBlur={submitRename}
-                        onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
-                      />
-                    ) : (
-                      <span
-                        className={`file-name ${entry.isDirectory ? 'is-dir' : ''}`}
-                        onClick={() => entry.isDirectory ? navigate(entry.path) : undefined}
-                      >
-                        {entry.name}
+                    <div className="col-name-inner">
+                      <span className="file-icon">
+                        {entry.isDirectory ? <FolderOpen size={16} /> : <File size={16} />}
                       </span>
-                    )}
+                      {renaming === entry.path ? (
+                        <input
+                          ref={renameInputRef}
+                          className="rename-input"
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onBlur={submitRename}
+                          onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                        />
+                      ) : (
+                        <span
+                          className={`file-name ${entry.isDirectory ? 'is-dir' : ''}`}
+                          onClick={() => entry.isDirectory ? navigate(entry.path) : undefined}
+                        >
+                          {entry.name}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="col-size">{entry.isDirectory ? '—' : formatSize(entry.size)}</td>
                   <td className="col-mtime">{formatTime(entry.mtime)}</td>
