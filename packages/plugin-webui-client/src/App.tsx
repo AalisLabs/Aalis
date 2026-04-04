@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
-import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
+import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, ChatMessage, PageTab, TodoItem } from './types';
 import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles } from './icons';
 import { useWebSocket } from './useWebSocket';
 import type { TokenUsageData } from './useWebSocket';
@@ -177,9 +177,9 @@ export function App() {
       if (toolPhase === 'start') {
         const now = Date.now();
         if (last && last.role === 'assistant') {
-          // 判断是否处于"思考"阶段：有 reasoning 但还没有内容文本
-          const isThinking = !last.content && (last.reasoningContent || (!last.segments?.length));
-          if (isThinking) {
+          // 只要消息曾产生过 reasoning，所有工具调用均归入思考过程
+          const hasReasoning = !!(last.reasoningContent || (last.reasoningSegments && last.reasoningSegments.length > 0));
+          if (hasReasoning) {
             const rSegs = [...(last.reasoningSegments ?? [])];
             rSegs.push({ type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
             return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
@@ -278,17 +278,36 @@ export function App() {
   }, []);
 
   /** 刷新后恢复正在生成的流式内容 */
-  const handleStreamResume = useCallback((content: string, reasoningContent: string, done: boolean) => {
+  /** 刷新后恢复正在生成的流式内容（含 segments + reasoning） */
+  const handleStreamResume = useCallback((content: string, reasoningContent: string, serverSegments: ContentSegment[], done: boolean) => {
     setMessages(prev => {
       const last = prev[prev.length - 1];
-      // 如果最后一条已经是 assistant 且内容一样，跳过（避免重复）
       if (last && last.role === 'assistant' && last.content === content) return prev;
-      const msg = {
-        role: 'assistant' as const,
+
+      // 将服务端 segments 按是否有 reasoning 分流：有 reasoning 时工具调用归入 reasoningSegments
+      const rSegs: ContentSegment[] = [];
+      const segs: ContentSegment[] = [];
+      if (reasoningContent) {
+        rSegs.push({ type: 'text', content: reasoningContent });
+      }
+      for (const seg of serverSegments) {
+        if (seg.type === 'tool_call' && reasoningContent) {
+          rSegs.push(seg);
+        } else {
+          segs.push(seg);
+        }
+      }
+      // 如果服务端无 segments 但有 content，创建一个文本段
+      if (segs.length === 0 && content) {
+        segs.push({ type: 'text', content });
+      }
+
+      const msg: ChatMessage = {
+        role: 'assistant',
         content,
         reasoningContent: reasoningContent || undefined,
-        segments: content ? [{ type: 'text' as const, content }] : [],
-        reasoningSegments: reasoningContent ? [{ type: 'text' as const, content: reasoningContent }] : [],
+        reasoningSegments: rSegs.length > 0 ? rSegs : undefined,
+        segments: segs.length > 0 ? segs : undefined,
         timestamp: Date.now(),
       };
       return [...prev, msg];
