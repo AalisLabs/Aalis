@@ -35,10 +35,10 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
     let finalBuffer = buffer;
     let width = 0, height = 0;
 
-    // 从 PNG 头部读取尺寸 (IHDR chunk: offset 16-23)
+    // 从 PNG 头部读取尺寸 (IHDR chunk: offset 16=width, 20=height)
     if (buffer.length > 24 && buffer[0] === 0x89 && buffer[1] === 0x50) {
       width = buffer.readUInt32BE(16);
-      height = buffer.readUInt32BE(18);
+      height = buffer.readUInt32BE(20);
     }
 
     if (config.maxImageWidth > 0 && width > config.maxImageWidth) {
@@ -53,7 +53,7 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
         finalBuffer = resized;
         if (finalBuffer.length > 24) {
           width = finalBuffer.readUInt32BE(16);
-          height = finalBuffer.readUInt32BE(18);
+          height = finalBuffer.readUInt32BE(20);
         }
       } catch {
         // sharp 不可用，使用原图
@@ -81,7 +81,7 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
         description:
           '截取当前屏幕画面并保存为 PNG 文件。返回文件路径、尺寸等元信息。' +
           '可以截取全屏，或指定区域（x, y, width, height）。' +
-          '截图保存后，可使用图片识别工具分析截图内容。',
+          '截图保存后，使用 analyze_image 工具分析截图内容（可自定义提示词，如「提取所有文字」「描述按钮位置」）。',
         parameters: {
           type: 'object',
           properties: {
@@ -115,7 +115,7 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
           height,
           size,
           region: region ?? 'fullscreen',
-          hint: '使用图片识别工具分析此截图文件以了解屏幕内容',
+          hint: '请调用 analyze_image(image="<上方filePath>") 分析截图内容。可通过 prompt 参数指定分析重点，如「提取所有可见文字和按钮位置」。',
         });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });

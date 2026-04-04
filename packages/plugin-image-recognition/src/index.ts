@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
 import type { LLMService } from '@aalis/core';
 
@@ -187,5 +188,97 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     available: true,
   });
 
-  ctx.logger.info(`图像识别中间件已加载 (${cfg.enabled ? '启用' : '直通模式'})`);
+  // ── 注册图片分析工具，供 agent 主动调用 ──
+
+  /** 将本地文件路径转为 data URI */
+  async function fileToDataUri(filePath: string): Promise<string> {
+    const buf = await readFile(filePath);
+    const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
+    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+      : ext === 'gif' ? 'image/gif'
+      : ext === 'webp' ? 'image/webp'
+      : 'image/png';
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  }
+
+  /** 获取 vision LLM 提供者 */
+  function getVisionLLM(): LLMService | null {
+    const allProviders = ctx.getAllServices<LLMService>('llm');
+    let chosen = allProviders.find(p => p.capabilities.includes('vision')) ?? allProviders[0];
+    if (!chosen) return null;
+    if (cfg.preferredModel && modelProviderMap) {
+      const mappedProvider = modelProviderMap.get(cfg.preferredModel);
+      if (mappedProvider) {
+        const found = allProviders.find(p => p.contextId === mappedProvider);
+        if (found) chosen = found;
+      }
+    }
+    return chosen.instance;
+  }
+
+  ctx.registerTool({
+    safety: 'safe',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'analyze_image',
+        description:
+          '分析一张图片的内容，返回文字描述。\n' +
+          '可以分析截图文件（如 screen_capture 返回的路径）、本地图片文件或网络图片 URL。\n' +
+          '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。',
+        parameters: {
+          type: 'object',
+          properties: {
+            image: {
+              type: 'string',
+              description: '图片来源：本地文件路径（如 workspace/.tmp/screenshots/xxx.png）或网络 URL',
+            },
+            prompt: {
+              type: 'string',
+              description: '分析提示词（可选）。不指定则使用默认描述提示。例如：「提取所有可见文字」「描述界面布局和按钮位置」',
+            },
+          },
+          required: ['image'],
+        },
+      },
+    },
+    handler: async (args) => {
+      try {
+        const imageInput = args.image as string;
+        const customPrompt = args.prompt as string | undefined;
+
+        const visionLLM = getVisionLLM();
+        if (!visionLLM) {
+          return JSON.stringify({ error: '没有可用的视觉模型' });
+        }
+
+        // 判断输入类型：URL / data URI / 文件路径
+        let imageUrl: string;
+        if (imageInput.startsWith('http://') || imageInput.startsWith('https://') || imageInput.startsWith('data:')) {
+          imageUrl = imageInput;
+        } else {
+          // 本地文件路径 → 转为 data URI
+          const { resolve } = await import('node:path');
+          const absPath = resolve(process.cwd(), imageInput);
+          imageUrl = await fileToDataUri(absPath);
+        }
+
+        const prompt = customPrompt || cfg.prompt || DEFAULT_PROMPT;
+        const messages: Message[] = [{ role: 'user', content: prompt, images: [imageUrl] }];
+
+        const response = await visionLLM.chat({
+          messages,
+          maxTokens: cfg.maxTokens,
+          model: cfg.preferredModel || undefined,
+        });
+
+        const description = response.content?.trim() || '无法识别图片内容';
+        return JSON.stringify({ description });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  });
+
+  ctx.logger.info(`图像识别中间件已加载 (${cfg.enabled ? '启用' : '直通模式'})，analyze_image 工具已注册`);
 }

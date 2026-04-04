@@ -1021,6 +1021,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           ctx.emit('session:compress', { sessionId, reason: 'manual' }).then(() => {
             const donePayload: WSOutgoing = { type: 'compressing', sessionId, content: 'done' };
             ws.send(JSON.stringify(donePayload));
+            // 压缩完成后重新计算 token 用量并推送给客户端
+            ctx.emit('token:request', { sessionId }).catch(() => {});
           }).catch(() => {
             const errorPayload: WSOutgoing = { type: 'compressing', sessionId, content: 'error' };
             ws.send(JSON.stringify(errorPayload));
