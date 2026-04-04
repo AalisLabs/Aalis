@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, memo, useMemo } from 'react';
 import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,15 +11,17 @@ import type { MutableRefObject } from 'react';
 import type { TokenUsageData } from '../useWebSocket';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 
+// 模块级常量：避免每次渲染创建新数组引用，防止 ReactMarkdown 不必要地重解析
+const REMARK_PLUGINS = [remarkGfm, remarkMath] as const;
+const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex] as const;
+
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (endTime || !startTime) return;
-    let raf: number;
-    const tick = () => { setNow(Date.now()); raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
   }, [startTime, endTime]);
   if (!startTime) return null;
   const elapsed = ((endTime || now) - startTime) / 1000;
@@ -240,7 +242,7 @@ function JsonField({ fieldKey, value }: { fieldKey: string; value: unknown }) {
       <span className="json-field-label">{label}</span>
       {isReply ? (
         <div className="json-field-value json-field-value-md">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
             {preprocessLaTeX(strValue)}
           </ReactMarkdown>
         </div>
@@ -281,7 +283,7 @@ function StreamingJsonView({ fields }: { fields: PartialField[] }) {
             {f.keyDone && (
               isReply && f.value ? (
                 <div className="json-field-value json-field-value-md">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
                     {preprocessLaTeX(f.value)}
                   </ReactMarkdown>
                   {showCursor && <span className="streaming-cursor" />}
@@ -301,7 +303,7 @@ function StreamingJsonView({ fields }: { fields: PartialField[] }) {
 }
 
 /** 渲染助手消息内容：JSON 结构化显示，或 Markdown */
-function AssistantContent({ content }: { content: string }) {
+const AssistantContent = memo(function AssistantContent({ content }: { content: string }) {
   const parsed = tryParseJsonObject(content);
   if (parsed) return <JsonMessageView data={parsed} />;
   const trimmed = content.trim();
@@ -311,11 +313,11 @@ function AssistantContent({ content }: { content: string }) {
     return null;
   }
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
       {preprocessLaTeX(content)}
     </ReactMarkdown>
   );
-}
+});
 
 /** 根据上传能力计算 accept 属性 */
 function computeAccept(caps?: { image: boolean; file: boolean }): string {
@@ -373,6 +375,133 @@ function TodoBar({ items, onClear, loading }: { items: TodoItem[]; onClear: () =
     </div>
   );
 }
+
+/** 单条消息渲染（memoized，避免全量重绘） */
+const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort }: {
+  msg: ChatMessage;
+  senderName: string;
+  isLast: boolean;
+  isGenerating: boolean;
+  onAbort: () => void;
+}) {
+  if (msg.role === 'system') {
+    return (
+      <div className="system-event-separator">
+        <span className="system-event-line" />
+        <span className="system-event-text"><Archive size={12} /> {msg.content}</span>
+        <span className="system-event-line" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`message-group ${msg.role}`}>
+      <div className="message-sender">
+        {msg.role === 'user' ? 'You' : senderName}
+      </div>
+      {/* 用户消息中的图片 */}
+      {msg.role === 'user' && msg.images && msg.images.length > 0 && (
+        <div className="message-images">
+          {msg.images.map((img, j) => {
+            let globalPos = 0;
+            if (msg.attachmentOrder) {
+              let cnt = 0;
+              for (let k = 0; k < msg.attachmentOrder.length; k++) {
+                if (msg.attachmentOrder[k] === 'image') {
+                  if (cnt === j) { globalPos = k + 1; break; }
+                  cnt++;
+                }
+              }
+            }
+            return (
+              <div key={j} className="message-image-wrap">
+                <img src={img} alt={`attached-${j}`} className="message-image" />
+                {globalPos > 0 && <span className="message-attach-order">#{globalPos}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {/* 用户消息中的文件 */}
+      {msg.role === 'user' && msg.fileNames && msg.fileNames.length > 0 && (
+        <div className="message-files">
+          {msg.fileNames.map((name, j) => {
+            let globalPos = 0;
+            if (msg.attachmentOrder) {
+              let cnt = 0;
+              for (let k = 0; k < msg.attachmentOrder.length; k++) {
+                if (msg.attachmentOrder[k] === 'file') {
+                  if (cnt === j) { globalPos = k + 1; break; }
+                  cnt++;
+                }
+              }
+            }
+            return (
+              <div key={j} className="message-file-item">
+                {globalPos > 0 && <span className="message-attach-order">#{globalPos}</span>}
+                <FileText size={14} /> {name}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 ? (
+        <details className="thinking-block">
+          <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+          <div className="thinking-content">
+            {msg.reasoningSegments.map((seg, j) =>
+              seg.type === 'text' ? (
+                seg.content ? (
+                  <ReactMarkdown key={j} remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                    {preprocessLaTeX(seg.content)}
+                  </ReactMarkdown>
+                ) : null
+              ) : (
+                <ToolCallBlock key={j} seg={seg} index={j} />
+              )
+            )}
+          </div>
+        </details>
+      ) : msg.role === 'assistant' && msg.reasoningContent ? (
+        <details className="thinking-block">
+          <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+          <div className="thinking-content">
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+              {preprocessLaTeX(msg.reasoningContent!)}
+            </ReactMarkdown>
+          </div>
+        </details>
+      ) : null}
+      {msg.role === 'assistant' && msg.segments && msg.segments.length > 0 ? (
+        <div className="message-bubble">
+          {msg.segments.map((seg, j) =>
+            seg.type === 'text' ? (
+              seg.content ? (
+                <AssistantContent key={j} content={seg.content} />
+              ) : null
+            ) : (
+              <ToolCallBlock key={j} seg={seg} index={j} />
+            )
+          )}
+        </div>
+      ) : (
+        <div className="message-bubble">
+          {msg.role === 'assistant' ? (
+            <AssistantContent content={msg.content} />
+          ) : (
+            msg.content
+          )}
+        </div>
+      )}
+      {/* 停止生成按钮：放在正在生成的气泡下方 */}
+      {isLast && isGenerating && msg.role === 'assistant' && (
+        <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
+          ■ 停止生成
+        </button>
+      )}
+    </div>
+  );
+});
 
 export function ChatPanel({
   messages,
@@ -496,16 +625,14 @@ export function ChatPanel({
     if (!container) return;
     const observer = new ResizeObserver(() => {
       if (!userScrolledUp.current && !isUserScrolling.current) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // 流式生成中用 instant 跳转避免堆积 smooth 动画
+        messagesEndRef.current?.scrollIntoView({ behavior: loading ? 'instant' : 'smooth' });
       }
     });
-    // 观察整个消息列表内部高度的变化
-    for (const child of container.children) {
-      observer.observe(child);
-    }
+    // 只观察容器本身——子元素尺寸变化会冒泡到容器高度变化
     observer.observe(container);
     return () => observer.disconnect();
-  });
+  }, [messages.length]);
 
   useEffect(() => {
     if (!userScrolledUp.current && !isUserScrolling.current) {
@@ -779,119 +906,14 @@ export function ChatPanel({
           </div>
         )}
         {messages.map((msg, i) => (
-          msg.role === 'system' ? (
-            <div key={i} className="system-event-separator">
-              <span className="system-event-line" />
-              <span className="system-event-text"><Archive size={12} /> {msg.content}</span>
-              <span className="system-event-line" />
-            </div>
-          ) : (
-          <div key={i} className={`message-group ${msg.role}`}>
-            <div className="message-sender">
-              {msg.role === 'user' ? 'You' : status?.name ?? 'Aalis'}
-            </div>
-            {/* 用户消息中的图片 */}
-            {msg.role === 'user' && msg.images && msg.images.length > 0 && (
-              <div className="message-images">
-                {msg.images.map((img, j) => {
-                  let globalPos = 0;
-                  if (msg.attachmentOrder) {
-                    let cnt = 0;
-                    for (let k = 0; k < msg.attachmentOrder.length; k++) {
-                      if (msg.attachmentOrder[k] === 'image') {
-                        if (cnt === j) { globalPos = k + 1; break; }
-                        cnt++;
-                      }
-                    }
-                  }
-                  return (
-                    <div key={j} className="message-image-wrap">
-                      <img src={img} alt={`attached-${j}`} className="message-image" />
-                      {globalPos > 0 && <span className="message-attach-order">#{globalPos}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {/* 用户消息中的文件 */}
-            {msg.role === 'user' && msg.fileNames && msg.fileNames.length > 0 && (
-              <div className="message-files">
-                {msg.fileNames.map((name, j) => {
-                  let globalPos = 0;
-                  if (msg.attachmentOrder) {
-                    let cnt = 0;
-                    for (let k = 0; k < msg.attachmentOrder.length; k++) {
-                      if (msg.attachmentOrder[k] === 'file') {
-                        if (cnt === j) { globalPos = k + 1; break; }
-                        cnt++;
-                      }
-                    }
-                  }
-                  return (
-                    <div key={j} className="message-file-item">
-                      {globalPos > 0 && <span className="message-attach-order">#{globalPos}</span>}
-                      <FileText size={14} /> {name}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 ? (
-              <details className="thinking-block">
-                <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-                <div className="thinking-content">
-                  {msg.reasoningSegments.map((seg, j) =>
-                    seg.type === 'text' ? (
-                      seg.content ? (
-                        <ReactMarkdown key={j} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-                          {preprocessLaTeX(seg.content)}
-                        </ReactMarkdown>
-                      ) : null
-                    ) : (
-                      <ToolCallBlock key={j} seg={seg} index={j} />
-                    )
-                  )}
-                </div>
-              </details>
-            ) : msg.role === 'assistant' && msg.reasoningContent ? (
-              <details className="thinking-block">
-                <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-                <div className="thinking-content">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
-                    {preprocessLaTeX(msg.reasoningContent!)}
-                  </ReactMarkdown>
-                </div>
-              </details>
-            ) : null}
-            {msg.role === 'assistant' && msg.segments && msg.segments.length > 0 ? (
-              <div className="message-bubble">
-                {msg.segments.map((seg, j) =>
-                  seg.type === 'text' ? (
-                    seg.content ? (
-                      <AssistantContent key={j} content={seg.content} />
-                    ) : null
-                  ) : (
-                    <ToolCallBlock key={j} seg={seg} index={j} />
-                  )
-                )}
-              </div>
-            ) : (
-              <div className="message-bubble">
-                {msg.role === 'assistant' ? (
-                  <AssistantContent content={msg.content} />
-                ) : (
-                  msg.content
-                )}
-              </div>
-            )}
-            {/* 停止生成按钮：放在正在生成的气泡下方 */}
-            {msg.role === 'assistant' && i === messages.length - 1 && isGenerating && (
-              <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
-                ■ 停止生成
-              </button>
-            )}
-          </div>
-          )
+          <MessageItem
+            key={i}
+            msg={msg}
+            senderName={status?.name ?? 'Aalis'}
+            isLast={i === messages.length - 1}
+            isGenerating={isGenerating}
+            onAbort={onAbort}
+          />
         ))}
         {/* 仅在没有 assistant 消息时显示 loading 指示器（首次生成等待） */}
         {loading && (!lastMsg || lastMsg.role !== 'assistant') && (
