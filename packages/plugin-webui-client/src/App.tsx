@@ -192,7 +192,7 @@ export function App() {
         return [...prev, {
           role: 'assistant' as const,
           content: '',
-          reasoningSegments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs, startTime: now }],
+          segments: [{ type: 'tool_call' as const, name: toolName, args: toolArgs, startTime: now }],
           timestamp: Date.now(),
         }];
       }
