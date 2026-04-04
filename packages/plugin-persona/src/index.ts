@@ -117,8 +117,19 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   /** 保存会话状态 */
+  /** 保存会话状态 */
   saveSessionState(sessionId: string, state: Record<string, unknown>): void {
     this.sessionStates.set(sessionId, state);
+  }
+
+  /** 清除指定会话的状态 */
+  clearSessionState(sessionId: string): void {
+    this.sessionStates.delete(sessionId);
+  }
+
+  /** 清除所有会话状态 */
+  clearAllStates(): void {
+    this.sessionStates.clear();
   }
 
   /** 根据 options 获取生效的角色卡（不查 session-manager，由调用方传入） */
@@ -368,6 +379,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     timeInjection,
   });
   ctx.provide('persona', service);
+
+  // 参与 memory:clear 清除当前会话的 persona 状态
+  ctx.middleware('memory:clear', async (data: {
+    scope: 'session' | 'all';
+    types?: string[];
+    sessionId?: string;
+    results: Array<{ source: string; success: boolean; message: string }>;
+  }, next) => {
+    try {
+      if (data.scope === 'all') {
+        service.clearAllStates();
+        data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
+      } else if (data.sessionId) {
+        service.clearSessionState(data.sessionId);
+        data.results.push({ source: 'persona', success: true, message: '当前会话角色状态已清空' });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
+    }
+    await next();
+  }, 10);
 
   // 跟踪当前会话信息（始终启用，用于 session 上下文注入和状态持久化）
   ctx.middleware('message:before', async (data, next) => {

@@ -18,6 +18,7 @@ export interface RawMessage {
   content: string | null;
   toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
   toolCallId?: string;
+  name?: string;
   reasoningContent?: string;
   timestamp?: number;
 }
@@ -44,7 +45,15 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
     }
 
     if (msg.role === 'system') {
-      // 跳过 system 消息（不展示）
+      // 系统事件消息（如压缩记录）→ 渲染为分隔线
+      if (msg.name === 'system-event') {
+        result.push({
+          role: 'system',
+          content: msg.content ?? '',
+          timestamp: msg.timestamp ?? 0,
+        });
+      }
+      // 其他 system 消息跳过（不展示）
       i++;
       continue;
     }
@@ -54,12 +63,17 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
       const segments: ContentSegment[] = [];
       let lastTimestamp = msg.timestamp ?? 0;
       let finalContent = '';
+      // 收集思考过程（取第一条 assistant 消息的 reasoningContent）
+      let reasoningContent: string | undefined;
 
       while (i < raw.length && (raw[i].role === 'assistant' || raw[i].role === 'tool')) {
         const cur = raw[i];
 
         if (cur.role === 'assistant' && cur.toolCalls && cur.toolCalls.length > 0) {
           // assistant 消息带 toolCalls：先加文本段，再加工具调用段
+          if (cur.reasoningContent && !reasoningContent) {
+            reasoningContent = cur.reasoningContent;
+          }
           if (cur.content) {
             segments.push({ type: 'text', content: cur.content });
           }
@@ -82,6 +96,9 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
           i++;
         } else if (cur.role === 'assistant') {
           // 无 toolCalls 的 assistant 消息（最终回复或中间文本）
+          if (cur.reasoningContent && !reasoningContent) {
+            reasoningContent = cur.reasoningContent;
+          }
           if (i === raw.length - 1 || raw[i + 1]?.role === 'user' || raw[i + 1]?.role === 'system') {
             // 这是最后一条 assistant 消息（最终回复）
             finalContent = cur.content ?? '';
@@ -105,6 +122,7 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
         result.push({
           role: 'assistant',
           content: finalContent || msg.content || '',
+          reasoningContent,
           timestamp: lastTimestamp,
         });
       } else {
@@ -116,6 +134,7 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
           role: 'assistant',
           content: finalContent,
           segments,
+          reasoningContent,
           timestamp: lastTimestamp,
         });
       }

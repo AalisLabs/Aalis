@@ -317,8 +317,16 @@ export function App() {
   const handleCompressing = useCallback((sessionId: string, status: string) => {
     if (sessionId === getSessionId()) {
       setCompressingStatus(status as 'start' | 'done' | 'error');
-      // 压缩完成后 3 秒自动清除状态
-      if (status === 'done' || status === 'error') {
+      if (status === 'done') {
+        // 插入永久的系统消息，与从数据库加载的 system-event 一致
+        setMessages(prev => [...prev, {
+          role: 'system' as const,
+          content: '对话已压缩',
+          timestamp: Date.now(),
+        }]);
+        // 短暂延迟后清除临时计时器状态
+        setTimeout(() => setCompressingStatus(null), 1500);
+      } else if (status === 'error') {
         setTimeout(() => setCompressingStatus(null), 3000);
       }
     }

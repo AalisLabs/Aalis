@@ -20,8 +20,10 @@ export interface MemoryService {
   clearSession(sessionId: string): Promise<void>;
   /** 清空所有会话的所有消息和归档 */
   clearAll?(): Promise<void>;
-  /** 删除旧消息，仅保留最近 keepRecent 条，返回被删除的条数 */
+  /** 归档旧消息，仅保留最近 keepRecent 条为活跃状态，返回被归档的条数 */
   trimHistory?(sessionId: string, keepRecent: number): Promise<number>;
+  /** 获取完整历史（含已归档消息），用于 UI 展示 */
+  getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
 
   // ----- 对话轮次归档（长期存储，供向量检索引用） -----
 

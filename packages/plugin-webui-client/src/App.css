@@ -954,6 +954,15 @@ body {
   z-index: 100;
   font-size: 0.78rem;
 }
+/* 透明桥接区域：填充 badge 与面板之间的间隙，防止鼠标移动时 mouseLeave */
+.token-usage-panel::before {
+  content: '';
+  position: absolute;
+  top: -10px;
+  left: 0;
+  right: 0;
+  height: 10px;
+}
 .token-panel-title {
   font-weight: 600;
   color: var(--text);
@@ -1078,6 +1087,42 @@ body {
 }
 .compress-spinner {
   animation: compress-spin 1s linear infinite;
+}
+
+/* ===== 系统事件分隔线 ===== */
+.system-event-separator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  user-select: none;
+}
+.system-event-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-color, rgba(255, 255, 255, 0.1));
+}
+.system-event-text {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #888);
+  white-space: nowrap;
+}
+.system-event-separator.compressing .system-event-text {
+  color: var(--primary, #6366f1);
+}
+.system-event-separator.compress-done .system-event-text {
+  color: #22c55e;
+}
+.system-event-separator.compress-error .system-event-text {
+  color: #ef4444;
+}
+.compress-timer {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+  margin-left: 2px;
 }
 
 .messages {
@@ -4263,6 +4308,128 @@ details[open] > .tool-call-summary::before {
 .detail-msg-content {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Markdown 渲染模式：覆盖 pre-wrap */
+.detail-msg-content.detail-msg-md {
+  white-space: normal;
+}
+
+.detail-msg-md p {
+  margin: 0 0 0.6em;
+  line-height: 1.7;
+}
+.detail-msg-md p:last-child { margin-bottom: 0; }
+
+.detail-msg-md h1,
+.detail-msg-md h2,
+.detail-msg-md h3,
+.detail-msg-md h4 {
+  margin: 1em 0 0.5em;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text);
+}
+.detail-msg-md h1:first-child,
+.detail-msg-md h2:first-child,
+.detail-msg-md h3:first-child { margin-top: 0; }
+.detail-msg-md h1 { font-size: 1.3em; }
+.detail-msg-md h2 { font-size: 1.15em; }
+.detail-msg-md h3 { font-size: 1.05em; }
+
+.detail-msg-md ul,
+.detail-msg-md ol {
+  margin: 0.4em 0 0.6em 1.2em;
+  padding: 0;
+}
+.detail-msg-md li { margin-bottom: 0.25em; }
+
+.detail-msg-md blockquote {
+  border-left: 3px solid var(--primary);
+  padding: 0.3em 0.8em;
+  margin: 0.5em 0;
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary);
+}
+
+.detail-msg-md a { color: var(--primary); text-decoration: none; }
+.detail-msg-md a:hover { text-decoration: underline; }
+
+.detail-msg-md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.8em 0;
+}
+
+.detail-msg-md table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.85em;
+  width: 100%;
+}
+.detail-msg-md th,
+.detail-msg-md td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.detail-msg-md th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.detail-msg-md img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* 行内代码 */
+.detail-msg-md code:not(pre code) {
+  background: var(--surface-active);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.88em;
+  color: #e7a0dc;
+}
+
+/* 代码块 */
+.detail-msg-md pre {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0.6em 0;
+  overflow-x: auto;
+  font-size: 0.84em;
+  line-height: 1.5;
+  white-space: pre;
+}
+.detail-msg-md pre code {
+  background: none;
+  padding: 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text);
+}
+.detail-msg-md pre::-webkit-scrollbar { height: 4px; }
+.detail-msg-md pre::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
+
+/* 流式输出指示器 */
+.detail-message.streaming {
+  border-left: 3px solid var(--primary);
+}
+.streaming-indicator {
+  display: inline-block;
+  color: var(--primary);
+  animation: pulse-dot 1s ease-in-out infinite;
+  margin-left: 4px;
+  font-size: 10px;
+  vertical-align: middle;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .detail-msg-time {
