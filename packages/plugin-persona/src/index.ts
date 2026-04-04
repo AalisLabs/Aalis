@@ -387,6 +387,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId?: string;
     results: Array<{ source: string; success: boolean; message: string }>;
   }, next) => {
+    // 类型过滤：仅在清除 context/persona/全部 时参与
+    if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {
+      await next();
+      return;
+    }
+
     try {
       if (data.scope === 'all') {
         service.clearAllStates();
