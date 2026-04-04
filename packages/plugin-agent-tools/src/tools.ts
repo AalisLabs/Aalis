@@ -52,7 +52,10 @@ export class ToolRegistry implements ToolService {
         .filter(t => !t.groups || t.groups.length === 0 || t.groups.some(g => enabledGroups.has(g)))
         .map(t => t.definition);
     }
-    return tools.map(t => t.definition);
+    // 未指定分组时，只返回无分组（通用）工具；有分组的工具需要显式启用
+    return tools
+      .filter(t => !t.groups || t.groups.length === 0)
+      .map(t => t.definition);
   }
 
   getSummaries(): ToolSummary[] {
