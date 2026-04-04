@@ -12,8 +12,8 @@ import type { TokenUsageData } from '../useWebSocket';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 
 // 模块级常量：避免每次渲染创建新数组引用，防止 ReactMarkdown 不必要地重解析
-const REMARK_PLUGINS = [remarkGfm, remarkMath] as const;
-const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex] as const;
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
 
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {

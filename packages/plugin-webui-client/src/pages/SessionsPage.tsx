@@ -12,8 +12,8 @@ import type { RawMessage } from '../useSessionManager';
 import type { ChatMessage, ContentSegment } from '../types';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 
-const REMARK_PLUGINS = [remarkGfm, remarkMath] as const;
-const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex] as const;
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
 
 // ===== 类型 =====
 
