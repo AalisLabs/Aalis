@@ -164,16 +164,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     try {
       if (data.scope === 'all') {
+        pendingUserMessages.clear();
         await getStore().clear();
         await getStore().save();
         data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
         ctx.logger.info('向量记忆已全部清空');
       } else if (data.sessionId) {
+        pendingUserMessages.delete(data.sessionId);
         let deleted = 0;
         const currentStore = getStore();
         if (currentStore.deleteByFilter) {
           deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
           await currentStore.save();
+        } else {
+          ctx.logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
         }
         if (hasTurnArchive) {
           await memory!.deleteTurns!(data.sessionId);

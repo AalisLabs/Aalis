@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.js
 *.d.ts
+!**/src/**/*.d.ts
 *.js.map
 *.d.ts.map
 !vite.config.ts
