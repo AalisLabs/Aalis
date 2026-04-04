@@ -197,10 +197,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
 
-      logger.debug(`搜索工具 "${query}" → ${results.length} 条结果`);
+      // 可用工具总数（排除 search_tools 自身）
+      const totalAvailable = summaries.filter(s => s.name !== SEARCH_TOOL_NAME).length;
+      const truncated = maxSearchResults > 0 && allResults.length > maxSearchResults;
+
+      logger.debug(`搜索工具 "${query}" → ${results.length}/${totalAvailable} 条结果`);
 
       return JSON.stringify({
-        found: results.length,
+        found: `${results.length}/${totalAvailable}`,
+        ...(truncated ? { truncated: `结果已截断，仅显示前 ${maxSearchResults} 条（共 ${allResults.length} 条匹配）。可用更精确的关键词缩小范围。` } : {}),
         tools: toolDetails,
         ...(relatedNames.size > 0 ? {
           related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先 search_tools 查询其参数。`,
