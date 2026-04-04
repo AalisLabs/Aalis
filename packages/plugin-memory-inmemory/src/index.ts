@@ -5,6 +5,7 @@ import type { MemoryService } from '@aalis/core';
 
 class InMemoryFallbackService implements MemoryService {
   private sessions = new Map<string, Message[]>();
+  private archivedSessions = new Map<string, Message[]>();
   private metadata = new Map<string, Map<string, Record<string, unknown>>>();
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -32,14 +33,25 @@ class InMemoryFallbackService implements MemoryService {
 
   async clearSession(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
+    this.archivedSessions.delete(sessionId);
   }
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
     const history = this.sessions.get(sessionId);
     if (!history || history.length <= keepRecent) return 0;
     const removed = history.length - keepRecent;
+    const archived = history.slice(0, -keepRecent);
+    const existing = this.archivedSessions.get(sessionId) ?? [];
+    this.archivedSessions.set(sessionId, [...existing, ...archived]);
     this.sessions.set(sessionId, history.slice(-keepRecent));
     return removed;
+  }
+
+  async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
+    const archived = this.archivedSessions.get(sessionId) ?? [];
+    const active = this.sessions.get(sessionId) ?? [];
+    const all = [...archived, ...active];
+    return all.slice(-limit);
   }
 
   // ----- 结构化元数据存储 -----

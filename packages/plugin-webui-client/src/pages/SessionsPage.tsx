@@ -1,8 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
+import { BrainCircuit, Wrench } from 'lucide-react';
 import { pageAction } from '../api';
 import { buildChatMessages } from '../useSessionManager';
+import { useDetailStream } from '../useDetailStream';
 import type { RawMessage } from '../useSessionManager';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, ContentSegment } from '../types';
 
 // ===== 类型 =====
 
@@ -453,7 +460,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
         ) : detailLoading ? (
           <div className="tree-detail-placeholder">加载中…</div>
         ) : detail ? (
-          <SessionDetailView detail={detail} onSwitchSession={onSwitchSession} />
+          <SessionDetailView detail={detail} onSwitchSession={onSwitchSession} onRefresh={() => loadDetail(detail.session.id)} />
         ) : (
           <div className="tree-detail-placeholder">无法加载会话信息</div>
         )}
@@ -670,9 +677,18 @@ function TreeNodeView({
 
 // ---- 会话详情面板 ----
 
-function SessionDetailView({ detail, onSwitchSession }: { detail: SessionDetail; onSwitchSession?: (id: string) => void }) {
+function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: SessionDetail; onSwitchSession?: (id: string) => void; onRefresh?: () => void }) {
   const s = detail.session;
   const chatMessages = buildChatMessages(detail.messages);
+  const [stream, resetStream] = useDetailStream(s.id, s.status);
+
+  // 流式生成完成后自动刷新历史
+  useEffect(() => {
+    if (stream.done) {
+      resetStream();
+      onRefresh?.();
+    }
+  }, [stream.done, resetStream, onRefresh]);
 
   return (
     <div className="session-detail">
@@ -708,13 +724,24 @@ function SessionDetailView({ detail, onSwitchSession }: { detail: SessionDetail;
       )}
       <div className="session-detail-messages">
         <h4>消息记录 ({detail.messages.length})</h4>
-        {chatMessages.length === 0 ? (
+        {chatMessages.length === 0 && !stream.isStreaming ? (
           <div className="no-messages">暂无消息记录</div>
         ) : (
           <div className="message-list">
             {chatMessages.map((msg, i) => (
               <DetailMessageView key={i} msg={msg} />
             ))}
+            {/* 流式输出中的实时内容 */}
+            {stream.isStreaming && stream.segments.length > 0 && (
+              <div className="detail-message assistant streaming">
+                <div className="detail-msg-role">助手 <span className="streaming-indicator">●</span></div>
+                <div className="detail-msg-content detail-msg-md">
+                  {stream.segments.map((seg, j) => (
+                    <DetailSegment key={j} seg={seg} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -722,7 +749,39 @@ function SessionDetailView({ detail, onSwitchSession }: { detail: SessionDetail;
   );
 }
 
-/** 渲染单条 ChatMessage（支持工具调用折叠） */
+/** 渲染单个 segment（文本用 Markdown，工具调用用折叠块） */
+function DetailSegment({ seg }: { seg: ContentSegment }) {
+  if (seg.type === 'text') {
+    return seg.content ? (
+      <div className="detail-text-segment">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+          {seg.content}
+        </ReactMarkdown>
+      </div>
+    ) : null;
+  }
+  return (
+    <details className="tool-call-block">
+      <summary className="tool-call-summary">
+        <Wrench size={14} /> {seg.name}{seg.result == null ? ' …' : ''}
+      </summary>
+      <div className="tool-call-content">
+        <div className="tool-call-args">
+          <strong>参数</strong>
+          <pre>{JSON.stringify(seg.args, null, 2)}</pre>
+        </div>
+        {seg.result != null && (
+          <div className="tool-call-result">
+            <strong>结果</strong>
+            <pre>{seg.result}</pre>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** 渲染单条 ChatMessage（支持工具调用折叠 + Markdown） */
 function DetailMessageView({ msg }: { msg: ChatMessage }) {
   const roleLabel = msg.role === 'user' ? '用户' : '助手';
 
@@ -731,30 +790,20 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
     return (
       <div className={`detail-message ${msg.role}`}>
         <div className="detail-msg-role">{roleLabel}</div>
-        <div className="detail-msg-content">
-          {msg.segments.map((seg, j) =>
-            seg.type === 'text' ? (
-              seg.content ? <div key={j} className="detail-text-segment">{seg.content}</div> : null
-            ) : (
-              <details key={j} className="tool-call-block">
-                <summary className="tool-call-summary">
-                  🔧 {seg.name}{seg.result == null ? ' …' : ''}
-                </summary>
-                <div className="tool-call-content">
-                  <div className="tool-call-args">
-                    <strong>参数</strong>
-                    <pre>{JSON.stringify(seg.args, null, 2)}</pre>
-                  </div>
-                  {seg.result != null && (
-                    <div className="tool-call-result">
-                      <strong>结果</strong>
-                      <pre>{seg.result}</pre>
-                    </div>
-                  )}
-                </div>
-              </details>
-            )
-          )}
+        {msg.reasoningContent && (
+          <details className="thinking-block">
+            <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+            <div className="thinking-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+                {msg.reasoningContent}
+              </ReactMarkdown>
+            </div>
+          </details>
+        )}
+        <div className="detail-msg-content detail-msg-md">
+          {msg.segments.map((seg, j) => (
+            <DetailSegment key={j} seg={seg} />
+          ))}
         </div>
         {msg.timestamp > 0 && (
           <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
@@ -763,11 +812,38 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
     );
   }
 
-  // 纯文本消息
+  // 纯文本消息 / 用户消息保持原样
+  if (msg.role === 'user') {
+    return (
+      <div className={`detail-message ${msg.role}`}>
+        <div className="detail-msg-role">{roleLabel}</div>
+        <div className="detail-msg-content">{msg.content}</div>
+        {msg.timestamp > 0 && (
+          <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
+        )}
+      </div>
+    );
+  }
+
+  // 助手消息无 segments — 整条渲染 Markdown
   return (
     <div className={`detail-message ${msg.role}`}>
       <div className="detail-msg-role">{roleLabel}</div>
-      <div className="detail-msg-content">{msg.content}</div>
+      {msg.reasoningContent && (
+        <details className="thinking-block">
+          <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+          <div className="thinking-content">
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+              {msg.reasoningContent}
+            </ReactMarkdown>
+          </div>
+        </details>
+      )}
+      <div className="detail-msg-content detail-msg-md">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+          {msg.content}
+        </ReactMarkdown>
+      </div>
       {msg.timestamp > 0 && (
         <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
       )}

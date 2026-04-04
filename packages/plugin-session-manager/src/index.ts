@@ -273,7 +273,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     return { success: true };
   },
 
-  /** 获取会话详情（含完整消息历史） */
+  /** 获取会话详情（含完整消息历史，包括已归档消息） */
   async getSessionDetail(ctx, args) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     const memory = ctx.getService<MemoryService>('memory');
@@ -283,7 +283,10 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     const session = sm.getSession(id);
     if (!session) throw new Error(`会话不存在: ${id}`);
     const limit = (args.limit as number) || 200;
-    const messages = await memory.getHistory(id, limit);
+    // 优先使用 getFullHistory（含已归档消息），确保 UI 能看到完整对话
+    const messages = memory.getFullHistory
+      ? await memory.getFullHistory(id, limit)
+      : await memory.getHistory(id, limit);
     return { session, messages };
   },
 
@@ -642,7 +645,7 @@ class SessionManager implements SessionManagerService {
     try {
       const resp = await llm.chat({
         messages: [
-          { role: 'system', content: '用一句简短的中文总结以下对话的主题，不超过20字，不加引号和标点。只返回标题文本。' },
+          { role: 'system', content: '根据以下对话内容，生成一个简短的中文标题来概括用户的意图或话题。要求：不超过15字；只关注用户想讨论的主题，忽略助手的拒绝或无法回答等内容；不加引号和标点；只返回标题文本，不要任何解释。' },
           { role: 'user', content: contextStr },
         ],
         maxTokens: 50,

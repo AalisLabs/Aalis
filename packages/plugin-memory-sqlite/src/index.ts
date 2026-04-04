@@ -46,6 +46,7 @@ class SQLiteMemoryService implements MemoryService {
         toolCallId TEXT,
         name TEXT,
         timestamp INTEGER NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
         createdAt TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -72,12 +73,22 @@ class SQLiteMemoryService implements MemoryService {
         PRIMARY KEY (namespace, key)
       );
     `);
+
+    // 迁移：为旧数据库添加 archived 列
+    const columns = this.db.pragma('table_info(messages)') as Array<{ name: string }>;
+    if (!columns.some(c => c.name === 'archived')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
+    }
+    // 迁移：为旧数据库添加 reasoningContent 列
+    if (!columns.some(c => c.name === 'reasoningContent')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN reasoningContent TEXT');
+    }
   }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (sessionId, role, content, toolCalls, toolCallId, name, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (sessionId, role, content, toolCalls, toolCallId, name, timestamp, reasoningContent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       sessionId,
@@ -87,16 +98,17 @@ class SQLiteMemoryService implements MemoryService {
       message.toolCallId ?? null,
       message.name ?? null,
       message.timestamp ?? Date.now(),
+      message.reasoningContent ?? null,
     );
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const stmt = this.db.prepare(`
-      SELECT role, content, toolCalls, toolCallId, name, timestamp
+      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
       FROM (
-        SELECT role, content, toolCalls, toolCallId, name, timestamp
+        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
         FROM messages
-        WHERE sessionId = ?
+        WHERE sessionId = ? AND archived = 0
         ORDER BY timestamp DESC
         LIMIT ?
       ) sub ORDER BY timestamp ASC
@@ -108,6 +120,7 @@ class SQLiteMemoryService implements MemoryService {
       toolCallId: string | null;
       name: string | null;
       timestamp: number;
+      reasoningContent: string | null;
     }>;
 
     return rows.map(row => ({
@@ -117,6 +130,7 @@ class SQLiteMemoryService implements MemoryService {
       toolCallId: row.toolCallId ?? undefined,
       name: row.name ?? undefined,
       timestamp: row.timestamp,
+      reasoningContent: row.reasoningContent ?? undefined,
     }));
   }
 
@@ -164,13 +178,44 @@ class SQLiteMemoryService implements MemoryService {
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
     const stmt = this.db.prepare(`
-      DELETE FROM messages
-      WHERE sessionId = ? AND id NOT IN (
-        SELECT id FROM messages WHERE sessionId = ? ORDER BY timestamp DESC LIMIT ?
+      UPDATE messages SET archived = 1
+      WHERE sessionId = ? AND archived = 0 AND id NOT IN (
+        SELECT id FROM messages WHERE sessionId = ? AND archived = 0 ORDER BY timestamp DESC LIMIT ?
       )
     `);
     const result = stmt.run(sessionId, sessionId, keepRecent);
     return result.changes;
+  }
+
+  async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
+    const stmt = this.db.prepare(`
+      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
+      FROM (
+        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
+        FROM messages
+        WHERE sessionId = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+      ) sub ORDER BY timestamp ASC
+    `);
+    const rows = stmt.all(sessionId, limit) as Array<{
+      role: string;
+      content: string | null;
+      toolCalls: string | null;
+      toolCallId: string | null;
+      name: string | null;
+      timestamp: number;
+      reasoningContent: string | null;
+    }>;
+    return rows.map(row => ({
+      role: row.role as Message['role'],
+      content: row.content,
+      toolCalls: row.toolCalls ? JSON.parse(row.toolCalls) : undefined,
+      toolCallId: row.toolCallId ?? undefined,
+      name: row.name ?? undefined,
+      timestamp: row.timestamp,
+      reasoningContent: row.reasoningContent ?? undefined,
+    }));
   }
 
   async clearAll(): Promise<void> {

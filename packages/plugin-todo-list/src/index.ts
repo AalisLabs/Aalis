@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema, ToolCallContext, MemoryService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -21,6 +21,32 @@ export interface TodoItem {
 /** sessionId → TodoItem[] */
 const store = new Map<string, TodoItem[]>();
 
+const TODO_NAMESPACE = 'todo-list';
+
+/** 将 todo 持久化到 MemoryService */
+async function persistTodos(ctx: Context, sessionId: string, items: TodoItem[]): Promise<void> {
+  const memory = ctx.getService<MemoryService>('memory');
+  if (memory?.saveMetadata) {
+    await memory.saveMetadata(TODO_NAMESPACE, sessionId, { items });
+  }
+}
+
+/** 从 MemoryService 加载 todo（优先内存缓存） */
+async function loadTodos(ctx: Context, sessionId: string): Promise<TodoItem[]> {
+  const cached = store.get(sessionId);
+  if (cached) return cached;
+  const memory = ctx.getService<MemoryService>('memory');
+  if (memory?.getMetadata) {
+    const data = await memory.getMetadata(TODO_NAMESPACE, sessionId);
+    if (data?.items && Array.isArray(data.items)) {
+      const items = data.items as TodoItem[];
+      store.set(sessionId, items);
+      return items;
+    }
+  }
+  return [];
+}
+
 // ===== 声明扩展事件 =====
 
 declare module '@aalis/core' {
@@ -32,16 +58,20 @@ declare module '@aalis/core' {
 // ===== WebuiHandlers =====
 
 export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
-  async getTodos(_ctx, args) {
+  async getTodos(ctx, args) {
     const sessionId = args.sessionId as string;
     if (!sessionId) return [];
-    return store.get(sessionId) ?? [];
+    return await loadTodos(ctx, sessionId);
   },
 
   async clearTodos(ctx, args) {
     const sessionId = args.sessionId as string;
     if (!sessionId) throw new Error('缺少 sessionId');
     store.delete(sessionId);
+    const memory = ctx.getService<MemoryService>('memory');
+    if (memory?.deleteMetadata) {
+      await memory.deleteMetadata(TODO_NAMESPACE, sessionId);
+    }
     await ctx.emit('todo:updated', sessionId, []);
     return { success: true };
   },
@@ -132,6 +162,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       });
 
       store.set(callCtx.sessionId, items);
+      await persistTodos(ctx, callCtx.sessionId, items);
       await ctx.emit('todo:updated', callCtx.sessionId, items);
 
       const total = items.length;
@@ -148,5 +179,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 会话删除时清理
   ctx.on('session:deleted', (sessionId: string) => {
     store.delete(sessionId);
+    const memory = ctx.getService<MemoryService>('memory');
+    if (memory?.deleteMetadata) {
+      memory.deleteMetadata(TODO_NAMESPACE, sessionId).catch(() => {});
+    }
   });
 }
