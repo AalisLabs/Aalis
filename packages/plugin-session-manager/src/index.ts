@@ -645,8 +645,8 @@ class SessionManager implements SessionManagerService {
     try {
       const resp = await llm.chat({
         messages: [
-          { role: 'system', content: '根据以下对话内容，生成一个简短的中文标题来概括用户的意图或话题。要求：不超过15字；只关注用户想讨论的主题，忽略助手的拒绝或无法回答等内容；不加引号和标点；只返回标题文本，不要任何解释。' },
-          { role: 'user', content: contextStr },
+          { role: 'system', content: '你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的中文标题。\n\n规则：\n- 不超过15字\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括' },
+          { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
         maxTokens: 50,
         temperature: 0.3,
