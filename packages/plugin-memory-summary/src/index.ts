@@ -366,20 +366,30 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (summarizing.has(data.sessionId)) return;
       summarizing.add(data.sessionId);
 
+      // 通知前端：压缩开始
+      ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'start' }).catch(() => {});
+
       try {
         const memory = ctx.getService<MemoryService>('memory');
         const llm = ctx.getService<LLMService>('llm');
-        if (!memory || !llm) return;
+        if (!memory || !llm) {
+          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+          return;
+        }
 
         const allHistory = await memory.getHistory(data.sessionId, 200);
         // 手动压缩：只要有 > keepRecent 条消息就压缩
         if (allHistory.length <= cfg.keepRecent) {
           ctx.logger.info(`会话消息数 ${allHistory.length} \u2264 keepRecent(${cfg.keepRecent})，无需压缩`);
+          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
           return;
         }
 
         const messagesToSummarize = allHistory.slice(0, allHistory.length - cfg.keepRecent);
-        if (messagesToSummarize.length === 0) return;
+        if (messagesToSummarize.length === 0) {
+          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+          return;
+        }
 
         const existing = store.getSummary(data.sessionId);
         const formattedMessages = messagesToSummarize
@@ -462,9 +472,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             name: 'system-event',
             timestamp: Date.now(),
           });
+
+          // 通知前端：压缩完成
+          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
         }
       } catch (err) {
         ctx.logger.warn('压缩会话失败:', err);
+        // 通知前端：压缩失败
+        ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
       } finally {
         summarizing.delete(data.sessionId);
       }

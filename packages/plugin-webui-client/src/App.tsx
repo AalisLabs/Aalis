@@ -86,6 +86,16 @@ export function App() {
   const [compressingStatus, setCompressingStatus] = useState<'start' | 'done' | 'error' | null>(null);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
+    // 取消 handleStream 尚未执行的 RAF，防止它在 streamingRef 已置 false 后
+    // 创建重复的 assistant 消息（竞态：RAF 回调晚于 handleIncoming 执行）
+    if (streamBufRef.current.raf) {
+      cancelAnimationFrame(streamBufRef.current.raf);
+      streamBufRef.current.raf = 0;
+    }
+    // 清空残留缓冲（已由最终的完整内容替代）
+    streamBufRef.current.content = '';
+    streamBufRef.current.reasoning = '';
+
     // message:send 到达时，用完整内容更新最后一个文本段，保留所有 segments
     setMessages(prev => {
       const last = prev[prev.length - 1];
@@ -118,7 +128,13 @@ export function App() {
 
   const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => {
     if (done) {
-      // 流结束标记 — 解除 loading（正常完成、中止、或消息被拦截均会到达此处）
+      // 流结束标记 — 取消挂起 RAF，清空缓冲，解除 loading
+      if (streamBufRef.current.raf) {
+        cancelAnimationFrame(streamBufRef.current.raf);
+        streamBufRef.current.raf = 0;
+      }
+      streamBufRef.current.content = '';
+      streamBufRef.current.reasoning = '';
       setLoading(false);
       setToolLimitReached(!!toolLimitReached);
       return;
