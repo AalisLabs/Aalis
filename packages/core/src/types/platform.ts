@@ -30,7 +30,7 @@ export interface PlatformAdapter {
   /** 获取当前所有连接 */
   getConnections(): PlatformConnection[];
   /** 向指定 sessionId 发送纯文本消息 */
-  sendMessage(sessionId: string, content: string): Promise<void>;
+  sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void>;
   /**
    * 适配器是否至少有一个可用连接
    * 默认实现：检查 getConnections() 中是否有 status === 'online'

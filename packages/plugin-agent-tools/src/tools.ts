@@ -58,8 +58,16 @@ export class ToolRegistry implements ToolService {
       .map(t => t.definition);
   }
 
-  getSummaries(): ToolSummary[] {
-    return [...this.tools.values()].map(t => {
+  getSummaries(filter?: { groups?: string[] }): ToolSummary[] {
+    let tools = [...this.tools.values()];
+    if (filter?.groups && filter.groups.length > 0) {
+      const enabledGroups = new Set(filter.groups);
+      tools = tools.filter(t => !t.groups || t.groups.length === 0 || t.groups.some(g => enabledGroups.has(g)));
+    } else {
+      // 未指定分组时，只返回无分组（通用）工具
+      tools = tools.filter(t => !t.groups || t.groups.length === 0);
+    }
+    return tools.map(t => {
       const name = t.definition.function.name;
       const o = this._overrides.get(name);
       return {

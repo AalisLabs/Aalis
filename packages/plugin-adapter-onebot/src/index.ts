@@ -813,7 +813,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return states.some(s => s.status === 'online');
     },
 
-    async sendMessage(sessionId: string, content: string): Promise<void> {
+    async sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void> {
       const parsed = parseSessionId(sessionId);
       if (!parsed) {
         ctx.logger.warn(`无法解析 sessionId: ${sessionId}`);
@@ -826,8 +826,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
 
-      // 消息分条发送
-      const pieces = splitEnabled ? splitMessageByPunctuation(content) : [content];
+      // 消息分条发送（指令回复等短消息可跳过）
+      const pieces = (splitEnabled && !options?.skipSplit) ? splitMessageByPunctuation(content) : [content];
 
       for (let i = 0; i < pieces.length; i++) {
         const piece = pieces[i].trim();
@@ -1061,7 +1061,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         raw: parsed.raw,
       }).then((result) => {
         if (result) {
-          adapter.sendMessage(sessionId, result).catch(err => {
+          adapter.sendMessage(sessionId, result, { skipSplit: true }).catch(err => {
             ctx.logger.warn(`OneBot 指令回复失败: ${err}`);
           });
         }

@@ -34,12 +34,19 @@ export const configSchema: ConfigSchema = {
     default: 5,
     description: '当注册的工具总数不超过此值时，跳过搜索层，直接将全部工具发送给 LLM',
   },
+  maxSearchResults: {
+    type: 'number',
+    label: '搜索结果上限',
+    default: 10,
+    description: '单次搜索返回的最大工具数量，0 表示不限制',
+  },
 };
 
 export const defaultConfig = {
   enabled: true,
   showToolNames: true,
   maxDirectTools: 5,
+  maxSearchResults: 10,
 };
 
 // ===== 常量 =====
@@ -153,6 +160,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const enabled = (config.enabled as boolean) ?? true;
   const showToolNames = (config.showToolNames as boolean) ?? true;
   const maxDirectTools = (config.maxDirectTools as number) ?? 5;
+  const maxSearchResults = (config.maxSearchResults as number) ?? 10;
 
   if (!enabled) {
     logger.info('工具搜索层已禁用');
@@ -166,25 +174,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const query = String(args.query ?? '');
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
-      const summaries = ctx.tools!.getSummaries().filter(t => {
-        if (!filter?.groups?.length) return true;
-        return !t.groups || t.groups.length === 0 || t.groups.some(g => filter.groups!.includes(g));
-      });
-      const results = searchTools(summaries, query);
-      // 搜索结果返回完整定义，供 LLM 了解参数
-      const allDefs = ctx.tools!.getDefinitions(filter);
-      const defMap = new Map(allDefs.map(d => [d.function.name, d]));
+      const summaries = ctx.tools!.getSummaries(filter);
+      const allResults = searchTools(summaries, query);
+      const results = maxSearchResults > 0 ? allResults.slice(0, maxSearchResults) : allResults;
+      // 搜索结果只返回名称和描述，不含 parameters（完整定义由 llm-call:before 注入 tools 数组，避免重复）
 
-      const toolDetails = results.map(t => {
-        const def = defMap.get(t.name);
-        return {
-          name: t.name,
-          description: t.description,
-          parameters: def?.function.parameters ?? null,
-          authority: t.authority,
-          safety: t.safety,
-        };
-      });
+      const toolDetails = results.map(t => ({
+        name: t.name,
+        description: t.description,
+        authority: t.authority,
+        safety: t.safety,
+      }));
 
       // 收集搜索结果所在分组中未包含的其他工具，作为关联提示
       const resultNames = new Set(results.map(r => r.name));
