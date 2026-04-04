@@ -6,8 +6,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { writeFile, unlink, rmdir, mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, unlink, rmdir, mkdtemp, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface RunnerConfig {
@@ -53,8 +52,10 @@ export async function runCode(
     config.maxTimeout,
   );
 
-  // 创建临时目录 + 文件
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-code-'));
+  // 创建临时目录 + 文件（统一放在 workspace/.tmp/code-runner/ 下）
+  const baseDir = join(config.cwd, 'workspace', '.tmp', 'code-runner');
+  await mkdir(baseDir, { recursive: true });
+  const tmpDir = await mkdtemp(join(baseDir, 'run-'));
   const tmpFile = join(tmpDir, `script${ext}`);
   await writeFile(tmpFile, code, 'utf-8');
 
