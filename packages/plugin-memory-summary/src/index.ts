@@ -277,12 +277,30 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         store.upsertSummary(sessionId, summaryText.trim(), messagesToSummarize.length, totalCount);
 
         // 真正的压缩：从数据库删除旧消息，只保留最近 keepRecent 条
+        // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
+        let safeKeepRecent = cfg.keepRecent;
+        while (safeKeepRecent < allHistory.length) {
+          const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
+          if (firstKeptMsg.role === 'tool') {
+            safeKeepRecent++;
+          } else {
+            break;
+          }
+        }
         if (memory.trimHistory) {
-          const deleted = await memory.trimHistory(sessionId, cfg.keepRecent);
-          ctx.logger.info(`会话已压缩: session=${sessionId}, 删除 ${deleted} 条旧消息，保留 ${cfg.keepRecent} 条`);
+          const deleted = await memory.trimHistory(sessionId, safeKeepRecent);
+          ctx.logger.info(`会话已压缩: session=${sessionId}, 删除 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
         } else {
           ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未删除');
         }
+
+        // 保存系统事件消息，供前端持久化显示压缩分隔线
+        await memory.saveMessage(sessionId, {
+          role: 'system',
+          content: '对话已压缩',
+          name: 'system-event',
+          timestamp: Date.now(),
+        });
       }
     } catch (err) {
       ctx.logger.warn('生成会话摘要失败:', err);
@@ -422,10 +440,28 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         if (summaryText.trim()) {
           store.upsertSummary(data.sessionId, summaryText.trim(), messagesToSummarize.length, allHistory.length);
-          if (memory.trimHistory) {
-            const deleted = await memory.trimHistory(data.sessionId, cfg.keepRecent);
-            ctx.logger.info(`压缩完成: session=${data.sessionId}, 删除 ${deleted} 条旧消息，保留 ${cfg.keepRecent} 条`);
+          // 安全调整：避免裁剪点落在 tool call 组中间
+          let safeKeepRecent = cfg.keepRecent;
+          while (safeKeepRecent < allHistory.length) {
+            const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
+            if (firstKeptMsg.role === 'tool') {
+              safeKeepRecent++;
+            } else {
+              break;
+            }
           }
+          if (memory.trimHistory) {
+            const deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
+            ctx.logger.info(`压缩完成: session=${data.sessionId}, 删除 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
+          }
+
+          // 保存系统事件消息，供前端持久化显示压缩分隔线
+          await memory.saveMessage(data.sessionId, {
+            role: 'system',
+            content: '对话已压缩',
+            name: 'system-event',
+            timestamp: Date.now(),
+          });
         }
       } catch (err) {
         ctx.logger.warn('压缩会话失败:', err);

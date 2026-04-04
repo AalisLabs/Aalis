@@ -728,16 +728,17 @@ class DefaultAgent implements AgentService {
         if (replyContent.trim().length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
+          const combinedReasoning = allReasoning.length > 0
+            ? allReasoning.join('\n\n---\n\n')
+            : undefined;
+
           // 保存最终 assistant 回复（不含工具调用摘要，工具调用已作为独立消息保存）
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
             content: replyContent,
+            reasoningContent: combinedReasoning,
             timestamp: Date.now(),
           });
-
-          const combinedReasoning = allReasoning.length > 0
-            ? allReasoning.join('\n\n---\n\n')
-            : undefined;
 
           await this.ctx.emit('message:send', {
             content: replyContent,
@@ -804,7 +805,7 @@ class DefaultAgent implements AgentService {
     if (memory) {
       try {
         const history = await memory.getHistory(incoming.sessionId, this.historyLimit);
-        messages.push(...history);
+        messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
       } catch (err) {
         this.logger.warn('获取历史消息失败:', err);
       }
@@ -1448,7 +1449,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 历史消息
       if (memory) {
         const history = await memory.getHistory(data.sessionId, agent['historyLimit']);
-        messages.push(...history);
+        messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
       }
 
       // 运行 llm-call:before 中间件以获取注入的 system 消息（摘要、向量记忆等）

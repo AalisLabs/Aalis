@@ -40,7 +40,9 @@ interface MessageDocument {
   toolCalls?: unknown[];
   toolCallId?: string;
   name?: string;
+  reasoningContent?: string | null;
   timestamp: number;
+  archived?: boolean;
   createdAt: Date;
 }
 
@@ -83,12 +85,32 @@ class MongoMemoryService implements MemoryService {
       toolCalls: message.toolCalls,
       toolCallId: message.toolCallId,
       name: message.name,
+      reasoningContent: message.reasoningContent ?? null,
       timestamp: message.timestamp ?? Date.now(),
       createdAt: new Date(),
     });
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
+    const docs = await this.collection
+      .find({ sessionId, archived: { $ne: true } })
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+    docs.reverse();
+
+    return docs.map(doc => ({
+      role: doc.role as Message['role'],
+      content: doc.content,
+      toolCalls: doc.toolCalls as Message['toolCalls'],
+      toolCallId: doc.toolCallId,
+      name: doc.name,
+      timestamp: doc.timestamp,
+      reasoningContent: doc.reasoningContent ?? undefined,
+    }));
+  }
+
+  async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
     const docs = await this.collection
       .find({ sessionId })
       .sort({ timestamp: -1 })
@@ -103,6 +125,7 @@ class MongoMemoryService implements MemoryService {
       toolCallId: doc.toolCallId,
       name: doc.name,
       timestamp: doc.timestamp,
+      reasoningContent: doc.reasoningContent ?? undefined,
     }));
   }
 
@@ -147,20 +170,20 @@ class MongoMemoryService implements MemoryService {
   }
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
-    // 找到要保留的最旧消息的 timestamp
+    // 找到要保留的最近消息（仅在未归档消息中）
     const keepDocs = await this.collection
-      .find({ sessionId })
+      .find({ sessionId, archived: { $ne: true } })
       .sort({ timestamp: -1 })
       .limit(keepRecent)
       .project({ _id: 1 })
       .toArray();
     const keepIds = keepDocs.map(d => d._id);
     if (keepIds.length === 0) return 0;
-    const result = await this.collection.deleteMany({
-      sessionId,
-      _id: { $nin: keepIds },
-    });
-    return result.deletedCount;
+    const result = await this.collection.updateMany(
+      { sessionId, archived: { $ne: true }, _id: { $nin: keepIds } },
+      { $set: { archived: true } },
+    );
+    return result.modifiedCount;
   }
 
   async clearAll(): Promise<void> {

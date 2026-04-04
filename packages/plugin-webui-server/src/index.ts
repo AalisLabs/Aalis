@@ -71,6 +71,7 @@ interface WSOutgoing {
   toolArgs?: Record<string, unknown>;
   toolResult?: string;
   toolPhase?: 'start' | 'end';
+  segments?: Array<{ type: 'text'; content: string } | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string }>;
   todoItems?: unknown[];
   // token_usage 字段
   tokenUsage?: {
@@ -113,7 +114,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const allClients = new Set<WebSocket>();
 
   // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复
-  const streamBuffers = new Map<string, { content: string; reasoningContent: string; generating: boolean }>();
+  type BufferSegment = { type: 'text'; content: string } | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string };
+  const streamBuffers = new Map<string, { content: string; reasoningContent: string; segments: BufferSegment[]; generating: boolean }>();
 
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
   const tokenUsageCache = new Map<string, WSOutgoing>();
@@ -972,12 +974,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessions.get(sid)!.add(ws);
           // 如果该会话正在生成中，发送已累积的内容供客户端恢复
           const buf = streamBuffers.get(sid);
-          if (buf && (buf.content || buf.reasoningContent)) {
+          if (buf && (buf.content || buf.reasoningContent || buf.segments.length > 0)) {
             const resume: WSOutgoing = {
               type: 'stream_resume',
               sessionId: sid,
               content: buf.content,
               reasoningContent: buf.reasoningContent,
+              segments: buf.segments.length > 0 ? buf.segments : undefined,
               done: !buf.generating,
             };
             ws.send(JSON.stringify(resume));
@@ -1188,10 +1191,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!chunk.done) {
       let buf = streamBuffers.get(chunk.sessionId);
       if (!buf) {
-        buf = { content: '', reasoningContent: '', generating: true };
+        buf = { content: '', reasoningContent: '', segments: [], generating: true };
         streamBuffers.set(chunk.sessionId, buf);
       }
-      if (chunk.contentDelta) buf.content += chunk.contentDelta;
+      if (chunk.contentDelta) {
+        buf.content += chunk.contentDelta;
+        // 追加到 segments：合并连续文本
+        const last = buf.segments[buf.segments.length - 1];
+        if (last && last.type === 'text') {
+          last.content += chunk.contentDelta;
+        } else {
+          buf.segments.push({ type: 'text', content: chunk.contentDelta });
+        }
+      }
       if (chunk.reasoningDelta) buf.reasoningContent += chunk.reasoningDelta;
     }
     const sockets = sessions.get(chunk.sessionId);
@@ -1216,6 +1228,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 监听工具调用事件
   ctx.on('tool:execute', (info: ToolExecuteMessage) => {
+    // 缓存工具调用到 segments
+    let buf = streamBuffers.get(info.sessionId);
+    if (!buf) {
+      buf = { content: '', reasoningContent: '', segments: [], generating: true };
+      streamBuffers.set(info.sessionId, buf);
+    }
+    if (info.phase === 'start') {
+      buf.segments.push({ type: 'tool_call', name: info.toolName, args: info.args ?? {} });
+    } else if (info.phase === 'end') {
+      // 找到最后一个同名且无结果的 tool_call segment，填充结果
+      for (let i = buf.segments.length - 1; i >= 0; i--) {
+        const seg = buf.segments[i];
+        if (seg.type === 'tool_call' && seg.name === info.toolName && seg.result == null) {
+          seg.result = info.result;
+          break;
+        }
+      }
+    }
+
     const sockets = sessions.get(info.sessionId);
     if (!sockets) return;
 
