@@ -733,14 +733,26 @@ function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: Ses
               <DetailMessageView key={i} msg={msg} />
             ))}
             {/* 流式输出中的实时内容 */}
-            {stream.isStreaming && stream.segments.length > 0 && (
+            {stream.isStreaming && (stream.segments.length > 0 || stream.reasoningSegments.length > 0) && (
               <div className="detail-message assistant streaming">
                 <div className="detail-msg-role">助手 <span className="streaming-indicator">●</span></div>
-                <div className="detail-msg-content detail-msg-md">
-                  {stream.segments.map((seg, j) => (
-                    <DetailSegment key={j} seg={seg} />
-                  ))}
-                </div>
+                {stream.reasoningSegments.length > 0 && (
+                  <details className="thinking-block" open>
+                    <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+                    <div className="thinking-content">
+                      {stream.reasoningSegments.map((seg, j) => (
+                        <DetailSegment key={j} seg={seg} />
+                      ))}
+                    </div>
+                  </details>
+                )}
+                {stream.segments.length > 0 && (
+                  <div className="detail-msg-content detail-msg-md">
+                    {stream.segments.map((seg, j) => (
+                      <DetailSegment key={j} seg={seg} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
