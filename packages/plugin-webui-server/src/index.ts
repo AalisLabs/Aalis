@@ -1014,19 +1014,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (msg.type === 'compress') {
           const sessionId = msg.sessionId || 'webui-default';
           ctx.logger.info(`收到手动压缩请求: session=${sessionId}`);
-          // 通知前端正在压缩
-          const compressingPayload: WSOutgoing = { type: 'compressing', sessionId, content: 'start' };
-          ws.send(JSON.stringify(compressingPayload));
-          // 触发压缩事件（memory-summary 监听此事件）
+          // 触发压缩事件（memory-summary 监听此事件，并发出 session:compressing 通知）
           ctx.emit('session:compress', { sessionId, reason: 'manual' }).then(() => {
-            const donePayload: WSOutgoing = { type: 'compressing', sessionId, content: 'done' };
-            ws.send(JSON.stringify(donePayload));
             // 压缩完成后重新计算 token 用量并推送给客户端
             ctx.emit('token:request', { sessionId }).catch(() => {});
-          }).catch(() => {
-            const errorPayload: WSOutgoing = { type: 'compressing', sessionId, content: 'error' };
-            ws.send(JSON.stringify(errorPayload));
-          });
+          }).catch(() => {});
           return;
         }
 
@@ -1150,6 +1142,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('session:updated', broadcastSessionsChanged);
   ctx.on('session:deleted', broadcastSessionsChanged);
   ctx.on('session:completed', broadcastSessionsChanged);
+
+  // 压缩状态通知：memory-summary 发出 session:compressing 事件，广播给订阅该会话的客户端
+  ctx.on('session:compressing', (...args: unknown[]) => {
+    const data = args[0] as { sessionId: string; status: string };
+    const sockets = sessions.get(data.sessionId);
+    if (!sockets) return;
+    const payload: WSOutgoing = { type: 'compressing', sessionId: data.sessionId, content: data.status };
+    const json = JSON.stringify(payload);
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
 
   // 会话切换通知：广播给所有客户端
   ctx.on('session:switched', (sessionId: string) => {
