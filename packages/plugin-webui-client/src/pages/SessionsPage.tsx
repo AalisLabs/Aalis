@@ -12,6 +12,9 @@ import type { RawMessage } from '../useSessionManager';
 import type { ChatMessage, ContentSegment } from '../types';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 
+const REMARK_PLUGINS = [remarkGfm, remarkMath] as const;
+const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex] as const;
+
 // ===== 类型 =====
 
 interface SessionInfo {
@@ -767,7 +770,7 @@ function DetailSegment({ seg }: { seg: ContentSegment }) {
   if (seg.type === 'text') {
     return seg.content ? (
       <div className="detail-text-segment">
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
           {preprocessLaTeX(seg.content)}
         </ReactMarkdown>
       </div>
@@ -813,7 +816,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
       <details className="thinking-block">
         <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
         <div className="thinking-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
             {preprocessLaTeX(msg.reasoningContent)}
           </ReactMarkdown>
         </div>
@@ -858,7 +861,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
       <div className="detail-msg-role">{roleLabel}</div>
       {thinkingBlock}
       <div className="detail-msg-content detail-msg-md">
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeHighlight, rehypeKatex]}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
           {msg.content}
         </ReactMarkdown>
       </div>

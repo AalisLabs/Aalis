@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
@@ -52,6 +52,9 @@ export function App() {
   // ---- 多会话管理（封装在 hook 中） ----
   const session = useSessionManager(pageDefs);
   const { messages, setMessages, loading, setLoading, streamingRef } = session;
+
+  /** 流式 delta 累积缓冲区，由 RAF 批量刷入 state */
+  const streamBufRef = useRef({ content: '', reasoning: '', raf: 0 as number });
 
   /** WS 推送 sessions_changed 时递增，通知 SessionsPage 刷新 */
   const [sessionsRefreshSignal, setSessionsRefreshSignal] = useState(0);
@@ -121,46 +124,58 @@ export function App() {
       return;
     }
 
-    setMessages(prev => {
-      const last = prev[prev.length - 1];
-      if (last && last.role === 'assistant' && streamingRef.current) {
-        const updated = { ...last };
-        if (reasoningDelta) {
-          updated.reasoningContent = (updated.reasoningContent ?? '') + reasoningDelta;
-          // 追加到 reasoningSegments
-          const rSegs = [...(updated.reasoningSegments ?? [])];
-          const lastRS = rSegs[rSegs.length - 1];
-          if (lastRS && lastRS.type === 'text') {
-            rSegs[rSegs.length - 1] = { type: 'text', content: lastRS.content + reasoningDelta };
-          } else {
-            rSegs.push({ type: 'text', content: reasoningDelta });
+    // 累积 delta 到 ref，由 RAF 批量刷入 state（避免每个 delta 都触发渲染）
+    streamBufRef.current.content += contentDelta ?? '';
+    streamBufRef.current.reasoning += reasoningDelta ?? '';
+    if (streamBufRef.current.raf) return;
+    streamBufRef.current.raf = requestAnimationFrame(() => {
+      const buf = streamBufRef.current;
+      const cDelta = buf.content;
+      const rDelta = buf.reasoning;
+      buf.content = '';
+      buf.reasoning = '';
+      buf.raf = 0;
+      if (!cDelta && !rDelta) return;
+
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'assistant' && streamingRef.current) {
+          const updated = { ...last };
+          if (rDelta) {
+            updated.reasoningContent = (updated.reasoningContent ?? '') + rDelta;
+            const rSegs = [...(updated.reasoningSegments ?? [])];
+            const lastRS = rSegs[rSegs.length - 1];
+            if (lastRS && lastRS.type === 'text') {
+              rSegs[rSegs.length - 1] = { type: 'text', content: lastRS.content + rDelta };
+            } else {
+              rSegs.push({ type: 'text', content: rDelta });
+            }
+            updated.reasoningSegments = rSegs;
           }
-          updated.reasoningSegments = rSegs;
-        }
-        if (contentDelta) {
-          updated.content += contentDelta;
-          const segments = [...(updated.segments ?? [])];
-          const lastSeg = segments[segments.length - 1];
-          if (lastSeg && lastSeg.type === 'text') {
-            segments[segments.length - 1] = { type: 'text', content: lastSeg.content + contentDelta };
-          } else {
-            // 工具调用后的新文本段
-            segments.push({ type: 'text', content: contentDelta });
+          if (cDelta) {
+            updated.content += cDelta;
+            const segments = [...(updated.segments ?? [])];
+            const lastSeg = segments[segments.length - 1];
+            if (lastSeg && lastSeg.type === 'text') {
+              segments[segments.length - 1] = { type: 'text', content: lastSeg.content + cDelta };
+            } else {
+              segments.push({ type: 'text', content: cDelta });
+            }
+            updated.segments = segments;
           }
-          updated.segments = segments;
+          return [...prev.slice(0, -1), updated];
         }
-        return [...prev.slice(0, -1), updated];
-      }
-      // 创建新的助手消息
-      streamingRef.current = true;
-      return [...prev, {
-        role: 'assistant' as const,
-        content: contentDelta ?? '',
-        reasoningContent: reasoningDelta,
-        reasoningSegments: reasoningDelta ? [{ type: 'text' as const, content: reasoningDelta }] : [],
-        segments: contentDelta ? [{ type: 'text' as const, content: contentDelta }] : [],
-        timestamp: Date.now(),
-      }];
+        // 创建新的助手消息
+        streamingRef.current = true;
+        return [...prev, {
+          role: 'assistant' as const,
+          content: cDelta ?? '',
+          reasoningContent: rDelta || undefined,
+          reasoningSegments: rDelta ? [{ type: 'text' as const, content: rDelta }] : [],
+          segments: cDelta ? [{ type: 'text' as const, content: cDelta }] : [],
+          timestamp: Date.now(),
+        }];
+      });
     });
   }, []);
 
@@ -517,7 +532,7 @@ export function App() {
   };
 
   // 组合内置 + 动态页面为统一的 tab 列表
-  const tabs: { key: string; label: string; pluginDisplayName?: string; icon: React.ReactNode; order: number }[] = (() => {
+  const tabs = useMemo(() => {
     if (!availablePages) {
       // 未加载时显示全部内置（避免闪烁）
       return Object.entries(builtinIconMap).map(([key, icon], i) => ({
@@ -534,7 +549,7 @@ export function App() {
         order: p.order ?? 99,
       }))
       .sort((a, b) => a.order - b.order);
-  })();
+  }, [availablePages, pageDefs]);
 
   // 自定义渲染器 — 返回稳定的 JSX 元素，避免每次 render 创建新的组件类型
   const renderCustomPage = (renderer: string, pluginName: string): React.ReactNode => {
