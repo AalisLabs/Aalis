@@ -28,7 +28,7 @@ export interface ToolService {
    */
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
 
-  getSummaries(): ToolSummary[];
+  getSummaries(filter?: { groups?: string[] }): ToolSummary[];
 
   getAll(): Array<{
     name: string;
