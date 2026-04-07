@@ -219,11 +219,10 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     const persona = ctx.getService<PersonaService>('persona');
     const personas = persona?.listModels ? await persona.listModels() : [];
 
-    // 可用 LLM 模型列表
-    let models: Array<{ id: string; capabilities: string[] }> = [];
+    // 可用 LLM 模型列表（聚合所有提供者）
+    let models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }> = [];
     try {
-      const llm = ctx.getService<LLMService>('llm');
-      if (llm?.listModels) models = await llm.listModels();
+      models = await ctx.listAllModels();
     } catch { /* llm 服务不可用 */ }
 
     // 工具分组列表
