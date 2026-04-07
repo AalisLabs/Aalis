@@ -253,6 +253,7 @@ const RECONNECT_INTERVAL = 5000;
 const ACTION_TIMEOUT = 30000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
+const CONNECT_TIMEOUT = 15000;
 
 // ===== 消息分条逻辑 =====
 
@@ -914,7 +915,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const ws = new WebSocket(state.config.url, { headers });
     state.ws = ws;
 
+    // 诊断：捕获 unexpected-response（服务器返回非 101 时触发，且不会触发 error）
+    ws.on('unexpected-response', (req, res) => {
+      ctx.logger.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
+      let body = '';
+      res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      res.on('end', () => { ctx.logger.warn(`OneBot unexpected-response body: ${body.slice(0, 500)}`); });
+    });
+
+    // 连接超时：如果 WS 握手在 CONNECT_TIMEOUT 内未完成，主动关闭并触发重连
+    const connectTimer = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ctx.logger.warn(`OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`);
+        ws.terminate();
+      }
+    }, CONNECT_TIMEOUT);
+
+    ws.on('upgrade', (res) => {
+      ctx.logger.debug(`OneBot WS upgrade: status=${res.statusCode}`);
+    });
+
     ws.on('open', () => {
+      clearTimeout(connectTimer);
       state.status = 'online';
       state.lastPong = Date.now();
       ctx.logger.info(`OneBot 已连接: ${state.config.url}`);
@@ -974,6 +996,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     ws.on('close', () => {
+      clearTimeout(connectTimer);
       state.status = 'offline';
       state.ws = undefined;
       stopHeartbeat(state);
@@ -988,7 +1011,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     ws.on('error', (err) => {
-      ctx.logger.warn(`OneBot 连接错误: ${err.message}`);
+      clearTimeout(connectTimer);
+      ctx.logger.warn(`OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`);
     });
   }
 
@@ -1023,8 +1047,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   function scheduleReconnect(state: ConnectionState): void {
     if (ctx.disposed) return;
     if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+    ctx.logger.info(`OneBot 将在 ${RECONNECT_INTERVAL / 1000}s 后尝试重连: ${state.config.url}`);
     state.reconnectTimer = setTimeout(() => {
       state.reconnectTimer = undefined;
+      ctx.logger.info(`OneBot 正在重试连接: ${state.config.url}`);
       doConnect(state);
     }, RECONNECT_INTERVAL);
   }

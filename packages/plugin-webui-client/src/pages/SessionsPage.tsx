@@ -45,7 +45,7 @@ interface SessionConfigData {
 
 interface ConfigOptions {
   personas: string[];
-  models: Array<{ id: string; capabilities: string[] }>;
+  models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }>;
   toolGroups: Array<{ name: string; label: string }>;
 }
 
@@ -149,13 +149,20 @@ function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel
   const inheritLabel = (field: keyof SessionConfigData, resolvedVal: unknown) =>
     !draft[field] && resolvedVal ? ` (继承: ${resolvedVal})` : '';
 
+  /** 查找模型的 provider 前缀显示名 */
+  const modelDisplayName = (modelId: string | undefined) => {
+    if (!modelId) return undefined;
+    const found = options?.models.find(m => m.id === modelId);
+    return found?.provider ? `${found.provider} / ${modelId}` : modelId;
+  };
+
   return (
     <div className="session-config-editor" onClick={e => e.stopPropagation()}>
       <label className="session-config-field">
         <span>模型{inheritLabel('model', resolved.model)}</span>
         <select value={draft.model || ''} onChange={e => update('model', e.target.value || undefined)}>
-          <option value="">{resolved.model ? `继承 (${resolved.model})` : '继承默认'}</option>
-          {options.models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          <option value="">{resolved.model ? `继承 (${modelDisplayName(resolved.model)})` : '继承默认'}</option>
+          {options.models.map(m => <option key={`${m.contextId ?? ''}:${m.id}`} value={m.id}>{m.provider ? `${m.provider} / ${m.id}` : m.id}</option>)}
         </select>
       </label>
       <label className="session-config-field">
