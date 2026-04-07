@@ -74,10 +74,8 @@ class DefaultAgent implements AgentService {
     this.preferredModel = (config.preferredModel as string) || '';
     this.logger.info('默认对话代理已初始化');
 
-    // 异步构建模型→提供者映射
-    if (this.preferredModel) {
-      this.buildModelProviderMap();
-    }
+    // 异步构建模型→提供者映射（无论是否有 preferredModel 都需要，以支持 session-manager 动态切换）
+    this.buildModelProviderMap();
   }
 
   /** 构建模型→提供者映射缓存 */
@@ -104,7 +102,7 @@ class DefaultAgent implements AgentService {
    * 2. 全局 preferredModel
    * 3. 默认 LLM 提供者的默认模型
    */
-  private resolveLLM(platform?: string, sessionId?: string): { llm: LLMService; modelOverride?: string } | undefined {
+  private async resolveLLM(platform?: string, sessionId?: string): Promise<{ llm: LLMService; modelOverride?: string } | undefined> {
     let model: string | undefined;
     let llmProviderOverride: string | undefined;
 
@@ -136,6 +134,7 @@ class DefaultAgent implements AgentService {
     const allProviders = this.ctx.getAllServices<LLMService>('llm');
     if (allProviders.length === 0) return undefined;
 
+    // 优先使用缓存映射
     if (this.modelProviderMap) {
       const targetContextId = this.modelProviderMap.get(model);
       if (targetContextId) {
@@ -143,7 +142,20 @@ class DefaultAgent implements AgentService {
         if (found) return { llm: found.instance, modelOverride: model };
       }
     }
-    // 映射未命中：回退到默认提供者，但仍传递 model override
+
+    // 缓存未命中：实时查询所有提供者，找到拥有该模型的那个
+    // 同时刷新缓存以加速后续查询
+    await this.buildModelProviderMap();
+    if (this.modelProviderMap) {
+      const targetContextId = this.modelProviderMap.get(model);
+      if (targetContextId) {
+        const found = allProviders.find(p => p.contextId === targetContextId);
+        if (found) return { llm: found.instance, modelOverride: model };
+      }
+    }
+
+    // 映射仍未命中：回退到默认提供者，但仍传递 model override
+    this.logger.warn(`未找到模型 "${model}" 对应的提供者，回退到默认提供者`);
     return { llm: allProviders[0].instance, modelOverride: model };
   }
 
@@ -281,11 +293,7 @@ class DefaultAgent implements AgentService {
     const sep = '━'.repeat(52);
     const lines: string[] = ['', sep, `  ${tag}  (${elapsedMs}ms)`, sep];
 
-    // 检查是否期望结构化输出
-    const persona = this.ctx.getService<PersonaService>('persona');
-    const expectJson = !!persona?.getOutputFormat?.();
-
-    // 尝试解析结构化输出 (outputFormat JSON)
+    // 尝试解析结构化输出（用于 debug 日志美化展示，不影响行为）
     let parsedFormat: Record<string, unknown> | null = null;
     if (response.content) {
       const raw = response.content.trim();
@@ -331,11 +339,6 @@ class DefaultAgent implements AgentService {
       lines.push('  内容:');
       for (const line of response.content.split('\n')) {
         lines.push(`    ${line}`);
-      }
-      // 期望 JSON 但模型返回了纯文本
-      if (expectJson) {
-        lines.push('');
-        lines.push('  ⚠ 期望结构化输出(JSON)但模型返回了纯文本');
       }
     } else {
       lines.push('  内容: (空)');
@@ -417,7 +420,7 @@ class DefaultAgent implements AgentService {
 
 
 
-      const resolved = this.resolveLLM(incoming.platform, incoming.sessionId);
+      const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
         await this.ctx.emit('message:send', {
@@ -489,28 +492,11 @@ class DefaultAgent implements AgentService {
         );
 
         // 检查是否期望 JSON 输出（persona 有 outputFormat 且 session 未禁用）
+        // agent 仅传递 responseFormat hint，各 LLM provider 自行决定如何处理
+        // （是否启用 JSON Mode、是否与 tools/thinking 冲突等由 provider 内部协调）
         const persona = this.ctx.getService<PersonaService>('persona');
         const expectJson = !!persona?.getOutputFormat?.(personaOpts);
         const responseFormat = expectJson ? 'json_object' as const : undefined;
-
-        // 当工具和 JSON 输出格式共存时，追加工具调用优先级指令
-        // 防止模型在 JSON 回复中描述工具调用意图而不实际发出 tool_call
-        if (llmBeforeData.tools.length > 0 && expectJson) {
-          const sysMsg = llmBeforeData.messages.find(m => m.role === 'system');
-          if (sysMsg) {
-            const toolPriorityText = '\n\n# 工具调用优先\n'
-              + '当你需要调用工具获取信息或执行操作时，必须使用 tool_call，'
-              + '不要在 JSON 回复中描述工具调用意图。'
-              + '仅在你不需要使用任何工具的情况下，才使用上述 JSON 格式输出最终回复。';
-            sysMsg.content += toolPriorityText;
-            const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
-            sysMsg.metadata = {
-              ...sysMsg.metadata,
-              _tokenContributions: { ...prevContributions, toolPriority: toolPriorityText.length },
-            };
-            this.logger.debug('已注入工具调用优先指令（tools + JSON 输出格式共存）');
-          }
-        }
 
         const t0 = Date.now();
         let response = await this.consumeStream(llm, {
@@ -1431,7 +1417,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!data?.sessionId) return;
 
     try {
-      const resolved = agent['resolveLLM'](data.platform, data.sessionId);
+      const resolved = await agent['resolveLLM'](data.platform, data.sessionId);
       if (!resolved) return;
       const { llm } = resolved;
 
