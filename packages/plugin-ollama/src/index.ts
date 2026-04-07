@@ -25,6 +25,7 @@ export const configSchema: ConfigSchema = {
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数（num_predict）' },
   contextLength: { type: 'number', label: '上下文长度', default: 8192, description: '模型上下文窗口大小（num_ctx）' },
   keepAlive: { type: 'string', label: '模型保活时间', default: '5m', description: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）' },
+  thinking: { type: 'boolean', label: '启用思考', default: true, description: '为支持思考的模型启用扩展思考（think 参数）' },
 };
 
 export const defaultConfig = {
@@ -34,6 +35,7 @@ export const defaultConfig = {
   maxTokens: 4096,
   contextLength: 8192,
   keepAlive: '5m',
+  thinking: true,
 };
 
 // ===== 配置 =====
@@ -45,6 +47,7 @@ interface OllamaConfig {
   maxTokens: number;
   contextLength: number;
   keepAlive: string;
+  thinking: boolean;
 }
 
 // ===== Ollama API 消息格式 =====
@@ -52,6 +55,7 @@ interface OllamaConfig {
 interface OllamaMessage {
   role: string;
   content: string;
+  thinking?: string;
   images?: string[];
   tool_calls?: OllamaToolCall[];
 }
@@ -77,12 +81,60 @@ interface OllamaChatResponse {
   message: {
     role: string;
     content: string;
+    thinking?: string;
     tool_calls?: OllamaToolCall[];
   };
   done: boolean;
   total_duration?: number;
   prompt_eval_count?: number;
   eval_count?: number;
+}
+
+// ===== <think> 标签解析辅助 =====
+
+/**
+ * 检查 text 末尾是否有不完整的 tag 前缀。
+ * 返回匹配到的部分长度（0 = 无匹配）。
+ *
+ * 例如 findPartialTag("hello<th", "<think>") → 3（匹配 "<th"）
+ */
+function findPartialTag(text: string, tag: string): number {
+  // 从 tag 长度 -1 开始向下检查，直到 1
+  const maxCheck = Math.min(tag.length - 1, text.length);
+  for (let len = maxCheck; len >= 1; len--) {
+    if (text.endsWith(tag.slice(0, len))) return len;
+  }
+  return 0;
+}
+
+/**
+ * 从完整文本中提取 <think>...</think> 内容。
+ * 返回 { reasoning, content }，reasoning 为思考内容，content 为剩余内容。
+ */
+function extractThinkTags(text: string): { reasoning: string; content: string } {
+  let reasoning = '';
+  let content = '';
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    const openIdx = remaining.indexOf('<think>');
+    if (openIdx === -1) {
+      content += remaining;
+      break;
+    }
+    content += remaining.slice(0, openIdx);
+    remaining = remaining.slice(openIdx + 7);
+    const closeIdx = remaining.indexOf('</think>');
+    if (closeIdx === -1) {
+      // 未闭合的 think 标签，剩余全部视为 reasoning
+      reasoning += remaining;
+      break;
+    }
+    reasoning += remaining.slice(0, closeIdx);
+    remaining = remaining.slice(closeIdx + 8);
+  }
+
+  return { reasoning, content };
 }
 
 // ===== LLM 服务实现 =====
@@ -94,6 +146,7 @@ class OllamaLLMService implements LLMService {
   private maxTokens: number;
   private contextLength: number;
   private keepAlive: string;
+  private thinking: boolean;
   private logger: Logger;
 
   constructor(config: OllamaConfig, logger: Logger) {
@@ -103,6 +156,7 @@ class OllamaLLMService implements LLMService {
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
     this.keepAlive = config.keepAlive;
+    this.thinking = config.thinking;
     this.logger = logger;
   }
 
@@ -144,11 +198,16 @@ class OllamaLLMService implements LLMService {
       body.tools = tools;
     }
 
-    if (request.responseFormat === 'json_object') {
-      body.format = 'json';
+    // 启用原生思考模式（Ollama API think 参数）
+    if (this.thinking) {
+      body.think = true;
     }
 
-    this.logger.debug(`请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    // 注意：不设置 body.format = 'json'，即使 request.responseFormat === 'json_object'
+    // 原因：Ollama 的 JSON 格式约束会抑制 <think> 标签输出，
+    // 且许多模型对 format: json 支持不稳定。JSON 输出由 system prompt 引导。
+
+    this.logger.debug(`请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${this.thinking ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
     if (request.signal) signals.push(request.signal);
@@ -167,8 +226,15 @@ class OllamaLLMService implements LLMService {
 
     const data = (await response.json()) as OllamaChatResponse;
 
+    // 优先使用原生 thinking 字段（Ollama think API），回退到 <think> 标签解析
+    const nativeThinking = data.message.thinking || '';
+    const rawContent = data.message.content || '';
+    const { reasoning: tagReasoning, content: cleanContent } = extractThinkTags(rawContent);
+    const allReasoning = [nativeThinking, tagReasoning].filter(Boolean).join('');
+
     const result: ChatResponse = {
-      content: data.message.content || null,
+      content: cleanContent || null,
+      reasoningContent: allReasoning || null,
     };
 
     if (data.message.tool_calls && data.message.tool_calls.length > 0) {
@@ -215,11 +281,14 @@ class OllamaLLMService implements LLMService {
       body.tools = tools;
     }
 
-    if (request.responseFormat === 'json_object') {
-      body.format = 'json';
+    // 启用原生思考模式
+    if (this.thinking) {
+      body.think = true;
     }
 
-    this.logger.debug(`流式请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息`);
+    // 不使用 body.format = 'json'（见 chat() 方法注释）
+
+    this.logger.debug(`流式请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${this.thinking ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
     if (request.signal) signals.push(request.signal);
@@ -245,6 +314,10 @@ class OllamaLLMService implements LLMService {
     let buffer = '';
     const toolCallBuffers: OllamaToolCall[] = [];
 
+    // <think> 标签流式解析状态
+    let inThink = false;         // 当前是否在 <think> 块内
+    let tagBuffer = '';          // 未确定的部分标签缓冲（如 "<", "<th", "</thi" 等）
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -267,6 +340,13 @@ class OllamaLLMService implements LLMService {
             }
 
             if (data.done) {
+              // 刷出残留的 tagBuffer
+              if (tagBuffer) {
+                if (inThink) yield { reasoningDelta: tagBuffer };
+                else yield { contentDelta: tagBuffer };
+                tagBuffer = '';
+              }
+
               // 最后一个 chunk
               const chunk: ChatStreamChunk = { done: true };
 
@@ -295,8 +375,61 @@ class OllamaLLMService implements LLMService {
               return;
             }
 
+            // 原生 thinking 字段（Ollama think API）—— 优先级高于 <think> 标签解析
+            if (data.message?.thinking) {
+              yield { reasoningDelta: data.message.thinking };
+            }
+
             if (data.message?.content) {
-              yield { contentDelta: data.message.content };
+              // 解析 <think> / </think> 标签，将内部内容路由为 reasoningDelta
+              let text = tagBuffer + data.message.content;
+              tagBuffer = '';
+
+              while (text.length > 0) {
+                if (inThink) {
+                  // 在 think 块内：查找 </think>
+                  const closeIdx = text.indexOf('</think>');
+                  if (closeIdx !== -1) {
+                    // 找到关闭标签
+                    const reasoning = text.slice(0, closeIdx);
+                    if (reasoning) yield { reasoningDelta: reasoning };
+                    text = text.slice(closeIdx + 8); // '</think>'.length === 8
+                    inThink = false;
+                  } else {
+                    // 未找到完整关闭标签，检查末尾是否有不完整的 "</thi..." 等
+                    const partialClose = findPartialTag(text, '</think>');
+                    if (partialClose > 0) {
+                      const safe = text.slice(0, text.length - partialClose);
+                      tagBuffer = text.slice(text.length - partialClose);
+                      if (safe) yield { reasoningDelta: safe };
+                    } else {
+                      yield { reasoningDelta: text };
+                    }
+                    text = '';
+                  }
+                } else {
+                  // 不在 think 块：查找 <think>
+                  const openIdx = text.indexOf('<think>');
+                  if (openIdx !== -1) {
+                    // 找到开启标签
+                    const before = text.slice(0, openIdx);
+                    if (before) yield { contentDelta: before };
+                    text = text.slice(openIdx + 7); // '<think>'.length === 7
+                    inThink = true;
+                  } else {
+                    // 未找到完整开启标签，检查末尾是否有不完整的 "<thi..." 等
+                    const partialOpen = findPartialTag(text, '<think>');
+                    if (partialOpen > 0) {
+                      const safe = text.slice(0, text.length - partialOpen);
+                      tagBuffer = text.slice(text.length - partialOpen);
+                      if (safe) yield { contentDelta: safe };
+                    } else {
+                      yield { contentDelta: text };
+                    }
+                    text = '';
+                  }
+                }
+              }
             }
           } catch { /* skip malformed JSON */ }
         }
@@ -361,6 +494,11 @@ class OllamaLLMService implements LLMService {
       content: msg.content ?? '',
     };
 
+    // 传递思考内容（用于历史上下文）
+    if (msg.role === 'assistant' && msg.reasoningContent) {
+      ollamaMsg.thinking = msg.reasoningContent;
+    }
+
     // 多模态：Ollama 支持 images 字段（base64 或文件路径）
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
       const resolved = await Promise.all(msg.images.map(img => this.resolveImage(img)));
@@ -411,6 +549,7 @@ const MODEL_CAPABILITIES: Record<string, string[]> = {
   'llava-llama3':   ['chat', 'streaming', 'vision'],
   'gemma2':         ['chat', 'streaming'],
   'gemma3':         ['chat', 'tool_calling', 'streaming', 'vision'],
+  'gemma4':         ['chat', 'tool_calling', 'streaming', 'vision'],
   'qwen2.5':        ['chat', 'tool_calling', 'streaming'],
   'qwen2.5-coder':  ['chat', 'tool_calling', 'streaming'],
   'qwen3':          ['chat', 'tool_calling', 'streaming'],
@@ -459,6 +598,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxTokens: (config.maxTokens as number) ?? 4096,
     contextLength: (config.contextLength as number) ?? 8192,
     keepAlive: (config.keepAlive as string) ?? '5m',
+    thinking: config.thinking !== false,
   };
 
   const service = new OllamaLLMService(ollamaConfig, ctx.logger);

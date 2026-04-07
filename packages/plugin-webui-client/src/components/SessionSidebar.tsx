@@ -32,7 +32,7 @@ interface SessionConfigData {
 
 interface ConfigOptions {
   personas: string[];
-  models: Array<{ id: string; capabilities: string[] }>;
+  models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }>;
   toolGroups: Array<{ name: string; label: string }>;
 }
 
@@ -80,7 +80,7 @@ function SessionConfigEditor({ config, options, onSave, onCancel }: {
         <span>模型</span>
         <select value={draft.model || ''} onChange={e => update('model', e.target.value || undefined)}>
           <option value="">继承默认</option>
-          {options.models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          {options.models.map(m => <option key={`${m.contextId ?? ''}:${m.id}`} value={m.id}>{m.provider ? `${m.provider} / ${m.id}` : m.id}</option>)}
         </select>
       </label>
 
