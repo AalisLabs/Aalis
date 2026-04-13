@@ -37,7 +37,7 @@ export const configSchema: ConfigSchema = {
   maxSearchResults: {
     type: 'number',
     label: '搜索结果上限',
-    default: 10,
+    default: 5,
     description: '单次搜索返回的最大工具数量，0 表示不限制',
   },
 };
@@ -46,7 +46,7 @@ export const defaultConfig = {
   enabled: true,
   showToolNames: true,
   maxDirectTools: 5,
-  maxSearchResults: 10,
+  maxSearchResults: 5,
 };
 
 // ===== 常量 =====
@@ -83,6 +83,14 @@ function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
           query: {
             type: 'string',
             description: '工具名称或搜索关键词（空字符串返回所有工具的详细说明）',
+          },
+          limit: {
+            type: 'number',
+            description: '本次返回的最大工具数量（默认由系统配置决定）',
+          },
+          offset: {
+            type: 'number',
+            description: '跳过前 N 条结果，用于翻页（默认 0）',
           },
         },
         required: ['query'],
@@ -160,7 +168,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const enabled = (config.enabled as boolean) ?? true;
   const showToolNames = (config.showToolNames as boolean) ?? true;
   const maxDirectTools = (config.maxDirectTools as number) ?? 5;
-  const maxSearchResults = (config.maxSearchResults as number) ?? 10;
+  const maxSearchResults = (config.maxSearchResults as number) ?? 5;
 
   if (!enabled) {
     logger.info('工具搜索层已禁用');
@@ -172,14 +180,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     definition: buildSearchToolDef(),
     async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+      // limit: 优先用模型传入值，否则用配置的 maxSearchResults
+      const effectiveLimit = (typeof args.limit === 'number' && args.limit > 0)
+        ? Math.floor(args.limit)
+        : (maxSearchResults > 0 ? maxSearchResults : Infinity);
+
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
       const summaries = ctx.tools!.getSummaries(filter);
       const allResults = searchTools(summaries, query);
-      const results = maxSearchResults > 0 ? allResults.slice(0, maxSearchResults) : allResults;
+      const paged = allResults.slice(offset, offset + effectiveLimit);
       // 搜索结果只返回名称和描述，不含 parameters（完整定义由 llm-call:before 注入 tools 数组，避免重复）
 
-      const toolDetails = results.map(t => ({
+      const toolDetails = paged.map(t => ({
         name: t.name,
         description: t.description,
         authority: t.authority,
@@ -187,9 +201,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }));
 
       // 收集搜索结果所在分组中未包含的其他工具，作为关联提示
-      const resultNames = new Set(results.map(r => r.name));
+      const resultNames = new Set(paged.map(r => r.name));
       const relatedNames = new Set<string>();
-      for (const r of results) {
+      for (const r of paged) {
         if (!r.groups?.length) continue;
         for (const s of summaries) {
           if (resultNames.has(s.name) || s.name === SEARCH_TOOL_NAME) continue;
@@ -199,19 +213,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 可用工具总数（排除 search_tools 自身）
       const totalAvailable = summaries.filter(s => s.name !== SEARCH_TOOL_NAME).length;
-      const truncated = maxSearchResults > 0 && allResults.length > maxSearchResults;
+      const hasMore = offset + paged.length < allResults.length;
 
-      logger.debug(`搜索工具 "${query}" → ${results.length}/${totalAvailable} 条结果`);
+      logger.debug(`搜索工具 "${query}" → ${paged.length}/${totalAvailable} 条结果 (offset=${offset}, total=${allResults.length})`);
 
       return JSON.stringify({
-        found: `${results.length}/${totalAvailable}`,
-        ...(truncated ? { truncated: `结果已截断，仅显示前 ${maxSearchResults} 条（共 ${allResults.length} 条匹配）。可用更精确的关键词缩小范围。` } : {}),
+        found: `${paged.length}/${totalAvailable}`,
+        ...(allResults.length > paged.length ? {
+          pagination: {
+            total: allResults.length,
+            offset,
+            returned: paged.length,
+            ...(hasMore ? { nextOffset: offset + paged.length } : {}),
+          },
+        } : {}),
         tools: toolDetails,
         ...(relatedNames.size > 0 ? {
           related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先 search_tools 查询其参数。`,
         } : {}),
-        hint: results.length > 0
+        hint: paged.length > 0
           ? '以上工具现在对你可用，你可以直接调用它们。注意：每个工具的参数结构不同，请严格按照 parameters 定义传参。'
+            + (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
           : '未找到匹配的工具，请尝试其他关键词。',
       });
     },
