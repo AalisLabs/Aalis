@@ -251,6 +251,31 @@ class SQLiteMemoryService implements MemoryService {
     stmt.run(namespace, key);
   }
 
+  async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
+    // 找到最近 N 条消息中含 oldText 的记录 ID
+    const findStmt = this.db.prepare(`
+      SELECT id, content FROM (
+        SELECT id, content FROM messages
+        WHERE sessionId = ? AND content LIKE ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+      )
+    `);
+    const rows = findStmt.all(sessionId, `%${oldText}%`, recentLimit) as Array<{ id: number; content: string }>;
+    if (rows.length === 0) return 0;
+
+    const updateStmt = this.db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+    let count = 0;
+    for (const row of rows) {
+      const updated = row.content.replace(oldText, newText);
+      if (updated !== row.content) {
+        updateStmt.run(updated, row.id);
+        count++;
+      }
+    }
+    return count;
+  }
+
   close(): void {
     this.db.close();
   }
