@@ -76,6 +76,9 @@ export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService 
 // 记忆服务
 export type { MemoryService, ConversationTurn } from './memory.js';
 
+// 消息归档服务
+export type { ArchiveIncomingResult, MessageArchiveService } from './archive.js';
+
 // Embedding 服务
 export type { EmbeddingService } from './embedding.js';
 

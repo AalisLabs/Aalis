@@ -85,6 +85,9 @@ export type {
   // 记忆服务
   MemoryService,
   ConversationTurn,
+  // 消息归档服务
+  ArchiveIncomingResult,
+  MessageArchiveService,
   // Embedding 服务
   EmbeddingService,
   // 向量数据库服务
