@@ -6,7 +6,7 @@ import type {
   Message,
   ConfigSchema,
 } from '@aalis/core';
-import type { LLMService, MemoryService } from '@aalis/core';
+import type { LLMService, MemoryService, MessageArchiveService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -14,6 +14,7 @@ export const name = '@aalis/plugin-memory-summary';
 export const displayName = '记忆摘要';
 export const inject = {
   required: ['memory', 'llm'],
+  optional: ['message-archive'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -295,7 +296,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
 
         // 保存系统事件消息，供前端持久化显示压缩分隔线
-        await memory.saveMessage(sessionId, {
+        const archive = ctx.getService<MessageArchiveService>('message-archive');
+        if (archive) await archive.saveMessage(sessionId, {
           role: 'system',
           content: '对话已压缩',
           name: 'system-event',
@@ -466,7 +468,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           }
 
           // 保存系统事件消息，供前端持久化显示压缩分隔线
-          await memory.saveMessage(data.sessionId, {
+          const archive = ctx.getService<MessageArchiveService>('message-archive');
+          if (archive) await archive.saveMessage(data.sessionId, {
             role: 'system',
             content: '对话已压缩',
             name: 'system-event',

@@ -14,6 +14,7 @@ import type {
   ChatRequest,
   ChatResponse,
   LLMService,
+  MessageArchiveService,
   MemoryService,
   PersonaService,
   PersonaSessionOptions,
@@ -530,16 +531,7 @@ class DefaultAgent implements AgentService {
         const toolCallSummaries: string[] = [];
 
         // 在工具调用循环前，先保存用户消息（确保历史中消息顺序正确）
-        const senderLabel = incoming.nickname ?? incoming.userId;
-        const userContentToSave = senderLabel
-          ? `[${senderLabel}]: ${incoming.content}`
-          : incoming.content;
-        await this.saveToMemory(incoming.sessionId, {
-          role: 'user',
-          content: userContentToSave,
-          timestamp: Date.now(),
-        });
-        this.logImageMemorySave(incoming, userContentToSave);
+        await this.archiveIncomingMessage(incoming);
         let userMessageSaved = true;
 
         // 工具调用循环
@@ -696,16 +688,7 @@ class DefaultAgent implements AgentService {
 
         // 保存用户消息到记忆（如果工具调用循环中未保存 — 无工具调用时）
         if (!userMessageSaved) {
-          const senderLabel2 = incoming.nickname ?? incoming.userId;
-          const userContent2 = senderLabel2
-            ? `[${senderLabel2}]: ${incoming.content}`
-            : incoming.content;
-          await this.saveToMemory(incoming.sessionId, {
-            role: 'user',
-            content: userContent2,
-            timestamp: Date.now(),
-          });
-          this.logImageMemorySave(incoming, userContent2);
+          await this.archiveIncomingMessage(incoming);
         }
 
         // 发出流结束标记
@@ -1272,23 +1255,24 @@ class DefaultAgent implements AgentService {
    * 保存消息到记忆服务
    */
   private async saveToMemory(sessionId: string, message: Message): Promise<void> {
-    const memory = this.ctx.getService<MemoryService>('memory');
-    if (memory) {
+    const archive = this.ctx.getService<MessageArchiveService>('message-archive');
+    if (archive) {
       try {
-        await memory.saveMessage(sessionId, message);
+        await archive.saveMessage(sessionId, message);
       } catch (err) {
         this.logger.warn('保存消息到记忆失败:', err);
       }
     }
   }
 
-  private logImageMemorySave(incoming: IncomingMessage, savedContent: string): void {
-    const info = incoming._imageRecognitionInfo;
-    if (!info || info.imageCount <= 0) return;
-    this.logger.debug(
-      `图片消息已写入记忆: session=${incoming.sessionId}, ` +
-      `images=${info.imageCount}, success=${info.successCount} | ${savedContent.slice(0, 200)}`,
-    );
+  private async archiveIncomingMessage(incoming: IncomingMessage): Promise<void> {
+    const archive = this.ctx.getService<MessageArchiveService>('message-archive');
+    if (!archive) return;
+    try {
+      await archive.archiveIncoming(incoming);
+    } catch (err) {
+      this.logger.warn('归档用户消息失败:', err);
+    }
   }
 }
 
@@ -1300,7 +1284,7 @@ export const displayName = '默认 Agent';
 export const provides = ['agent'];
 
 export const inject = {
-  optional: ['llm', 'memory', 'persona'],
+  optional: ['llm', 'memory', 'persona', 'message-archive'],
 };
 
 export const configSchema: ConfigSchema = {
