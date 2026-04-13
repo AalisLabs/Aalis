@@ -199,7 +199,9 @@ class OllamaLLMService implements LLMService {
     }
 
     // 启用原生思考模式（Ollama API think 参数）
-    if (this.thinking) {
+    // 调用方可通过 request.think === false 显式关闭
+    const shouldThink = request.think !== undefined ? request.think : this.thinking;
+    if (shouldThink) {
       body.think = true;
     }
 
@@ -207,7 +209,7 @@ class OllamaLLMService implements LLMService {
     // 原因：Ollama 的 JSON 格式约束会抑制 <think> 标签输出，
     // 且许多模型对 format: json 支持不稳定。JSON 输出由 system prompt 引导。
 
-    this.logger.debug(`请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${this.thinking ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
     if (request.signal) signals.push(request.signal);
@@ -281,14 +283,15 @@ class OllamaLLMService implements LLMService {
       body.tools = tools;
     }
 
-    // 启用原生思考模式
-    if (this.thinking) {
+    // 启用原生思考模式（调用方可通过 request.think === false 显式关闭）
+    const shouldThink = request.think !== undefined ? request.think : this.thinking;
+    if (shouldThink) {
       body.think = true;
     }
 
     // 不使用 body.format = 'json'（见 chat() 方法注释）
 
-    this.logger.debug(`流式请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${this.thinking ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
     if (request.signal) signals.push(request.signal);
