@@ -526,14 +526,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ── 保存缓冲消息到记忆 ──
 
   /** 利用图像识别服务将图片转为文字描述（用于非触发消息的图片保存） */
-  async function describeImagesForBuffering(images: string[]): Promise<string[]> {
+  async function describeImagesForBuffering(images: string[], localRefPaths: (string | undefined)[]): Promise<string[]> {
     // 优先使用 image-recognition 插件（配置了正确的 vision 模型）
-    const irService = ctx.getService<{ available: boolean; enabled: boolean; describe: (url: string) => Promise<string> }>('image-recognition');
+    const irService = ctx.getService<{ available: boolean; enabled: boolean; describe: (url: string, localRefPath?: string) => Promise<string> }>('image-recognition');
     if (irService?.available && irService.enabled) {
       try {
-        return await Promise.all(images.map(async (url) => {
+        return await Promise.all(images.map(async (url, i) => {
           try {
-            return await irService.describe(url);
+            return await irService.describe(url, localRefPaths[i]);
           } catch {
             return '';
           }
@@ -555,12 +555,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // content 中已包含 [图片 | ref:path] 标记。尝试用 vision LLM 填充描述。
       if (images && images.length > 0) {
-        const descs = await describeImagesForBuffering(images);
+        // 提取本地 ref 路径，与 images 按顺序对应
+        const refPaths: (string | undefined)[] = [];
+        const refRegex = /\[图片 \| ref:([^\]]+)\]/g;
+        let refMatch: RegExpExecArray | null;
+        while ((refMatch = refRegex.exec(contentToSave)) !== null) {
+          refPaths.push(refMatch[1]);
+        }
+
+        const descs = await describeImagesForBuffering(images, refPaths);
         let idx = 0;
         contentToSave = contentToSave.replace(/\[图片 \| ref:([^\]]+)\]/g, (_match, refPath: string) => {
           const desc = descs[idx++];
           return desc ? `[图片: ${desc} | ref:${refPath}]` : `[图片 | ref:${refPath}]`;
         });
+        const successCount = descs.filter(d => d).length;
+        ctx.logger.debug(`图片描述完成: ${successCount}/${images.length} 张成功 | ${contentToSave.slice(0, 200)}`);
       }
 
       await memory.saveMessage(sessionId, {
@@ -568,6 +578,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         content: contentToSave,
         timestamp: Date.now(),
       });
+      if (images && images.length > 0) {
+        ctx.logger.debug(`图片消息已写入记忆: session=${sessionId}, images=${images.length}`);
+      }
     } catch (err) {
       ctx.logger.warn(`保存缓冲消息失败: ${err}`);
     }
