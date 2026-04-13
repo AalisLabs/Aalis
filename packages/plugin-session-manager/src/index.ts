@@ -687,15 +687,16 @@ class SessionManager implements SessionManagerService {
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
     const session = this.sessions.get(sessionId);
-    if (!session) return {};
 
     const result: Omit<SessionConfig, 'sessionDefaults'> = {};
 
-    // 3. 平台 profile（最低优先级）
+    // 3. 平台 profile（最低优先级）—— 无论 session 是否存在都应用
     if (platform) {
       const profile = this.platformProfiles.get(platform);
       if (profile) Object.assign(result, stripDefaults(profile));
     }
+
+    if (!session) return result;
 
     // 2. 父会话 sessionDefaults
     if (session.parentId) {
