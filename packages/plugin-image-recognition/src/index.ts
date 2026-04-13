@@ -579,8 +579,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 清除 images，表示已由中间件消费（不再传递给多模态 LLM）
     msg.images = undefined;
 
-    ctx.logger.debug(`图片解释完成: ${result.info.successCount}/${result.info.imageCount} 张成功 | ${result.info.transformedContent.slice(0, 200)}`);
-
     await next();
   }
 

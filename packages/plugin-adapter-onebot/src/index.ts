@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MemoryService, PersonaService } from '@aalis/core';
+import type { MessageArchiveService, PersonaService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -19,7 +19,7 @@ import { OneBotV12 } from './v12.js';
 export const name = '@aalis/plugin-adapter-onebot';
 export const displayName = 'OneBot 适配器';
 export const inject = {
-  optional: ['llm', 'commands', 'memory', 'persona'],
+  optional: ['llm', 'commands', 'message-archive', 'persona'],
 };
 export const provides = ['platform'];
 export const reusable = true;
@@ -526,43 +526,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ── 保存缓冲消息到记忆 ──
 
   async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string, images?: string[]): Promise<void> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) return;
+    const archive = ctx.getService<MessageArchiveService>('message-archive');
+    if (!archive) return;
     try {
-      const senderLabel = nickname ?? userId;
-      let contentToSave = senderLabel ? `[${senderLabel}]: ${content}` : content;
-
-      // content 中已包含 [图片 | ref:path] 标记。与直接触发路径共用 image-recognition 的统一处理逻辑。
-      if (images && images.length > 0) {
-        const irService = ctx.getService<{
-          available: boolean;
-          enabled: boolean;
-          processMessage: (input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> }) => Promise<{
-            content: string;
-            info: { imageCount: number; successCount: number; descriptions: string[]; transformedContent: string };
-          } | null>;
-        }>('image-recognition');
-
-        if (irService?.available && irService.enabled) {
-          const processed = await irService.processMessage({
-            content: contentToSave,
-            images,
-          });
-          if (processed) {
-            contentToSave = processed.content;
-            ctx.logger.debug(`图片解释完成: ${processed.info.successCount}/${processed.info.imageCount} 张成功 | ${processed.info.transformedContent.slice(0, 200)}`);
-          }
-        }
-      }
-
-      await memory.saveMessage(sessionId, {
-        role: 'user',
-        content: contentToSave,
-        timestamp: Date.now(),
+      await archive.archiveIncoming({
+        content,
+        sessionId,
+        platform: 'onebot',
+        userId,
+        nickname,
+        images,
       });
-      if (images && images.length > 0) {
-        ctx.logger.debug(`图片消息已写入记忆: session=${sessionId}, images=${images.length} | ${contentToSave.slice(0, 200)}`);
-      }
     } catch (err) {
       ctx.logger.warn(`保存缓冲消息失败: ${err}`);
     }
