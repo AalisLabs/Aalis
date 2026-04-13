@@ -525,27 +525,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ── 保存缓冲消息到记忆 ──
 
-  /** 利用图像识别服务将图片转为文字描述（用于非触发消息的图片保存） */
-  async function describeImagesForBuffering(images: string[], localRefPaths: (string | undefined)[]): Promise<string[]> {
-    // 优先使用 image-recognition 插件（配置了正确的 vision 模型）
-    const irService = ctx.getService<{ available: boolean; enabled: boolean; describe: (url: string, localRefPath?: string) => Promise<string> }>('image-recognition');
-    if (irService?.available && irService.enabled) {
-      try {
-        return await Promise.all(images.map(async (url, i) => {
-          try {
-            return await irService.describe(url, localRefPaths[i]);
-          } catch {
-            return '';
-          }
-        }));
-      } catch {
-        return images.map(() => '');
-      }
-    }
-    // 没有 image-recognition 插件 → 不生成描述
-    return images.map(() => '');
-  }
-
   async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string, images?: string[]): Promise<void> {
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory) return;
@@ -553,24 +532,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const senderLabel = nickname ?? userId;
       let contentToSave = senderLabel ? `[${senderLabel}]: ${content}` : content;
 
-      // content 中已包含 [图片 | ref:path] 标记。尝试用 vision LLM 填充描述。
+      // content 中已包含 [图片 | ref:path] 标记。与直接触发路径共用 image-recognition 的统一处理逻辑。
       if (images && images.length > 0) {
-        // 提取本地 ref 路径，与 images 按顺序对应
-        const refPaths: (string | undefined)[] = [];
-        const refRegex = /\[图片 \| ref:([^\]]+)\]/g;
-        let refMatch: RegExpExecArray | null;
-        while ((refMatch = refRegex.exec(contentToSave)) !== null) {
-          refPaths.push(refMatch[1]);
-        }
+        const irService = ctx.getService<{
+          available: boolean;
+          enabled: boolean;
+          processMessage: (input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> }) => Promise<{
+            content: string;
+            info: { imageCount: number; successCount: number; descriptions: string[]; transformedContent: string };
+          } | null>;
+        }>('image-recognition');
 
-        const descs = await describeImagesForBuffering(images, refPaths);
-        let idx = 0;
-        contentToSave = contentToSave.replace(/\[图片 \| ref:([^\]]+)\]/g, (_match, refPath: string) => {
-          const desc = descs[idx++];
-          return desc ? `[图片: ${desc} | ref:${refPath}]` : `[图片 | ref:${refPath}]`;
-        });
-        const successCount = descs.filter(d => d).length;
-        ctx.logger.debug(`图片描述完成: ${successCount}/${images.length} 张成功 | ${contentToSave.slice(0, 200)}`);
+        if (irService?.available && irService.enabled) {
+          const processed = await irService.processMessage({
+            content: contentToSave,
+            images,
+          });
+          if (processed) {
+            contentToSave = processed.content;
+            ctx.logger.debug(`图片解释完成: ${processed.info.successCount}/${processed.info.imageCount} 张成功 | ${processed.info.transformedContent.slice(0, 200)}`);
+          }
+        }
       }
 
       await memory.saveMessage(sessionId, {
@@ -579,7 +561,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         timestamp: Date.now(),
       });
       if (images && images.length > 0) {
-        ctx.logger.debug(`图片消息已写入记忆: session=${sessionId}, images=${images.length}`);
+        ctx.logger.debug(`图片消息已写入记忆: session=${sessionId}, images=${images.length} | ${contentToSave.slice(0, 200)}`);
       }
     } catch (err) {
       ctx.logger.warn(`保存缓冲消息失败: ${err}`);

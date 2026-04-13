@@ -48,6 +48,13 @@ export interface IncomingMessage {
   attachmentOrder?: Array<'image' | 'file'>;
   /** 预处理器生成的图片描述（按 images 原始下标对齐） */
   _imageDescriptions?: string[];
+  /** 图片识别后的调试信息，供统一日志与持久化链路复用 */
+  _imageRecognitionInfo?: {
+    imageCount: number;
+    successCount: number;
+    descriptions: string[];
+    transformedContent: string;
+  };
   /** 预处理器生成的文件描述（按 files 原始下标对齐） */
   _fileDescriptions?: string[];
   /** 会话类型：群聊、私聊、频道等 */
