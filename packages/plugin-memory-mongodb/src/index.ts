@@ -215,6 +215,26 @@ class MongoMemoryService implements MemoryService {
   async deleteMetadata(namespace: string, key: string): Promise<void> {
     await this.meta.deleteOne({ namespace, key });
   }
+
+  async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
+    // 找到最近含 oldText 的消息
+    const docs = await this.collection
+      .find({ sessionId, content: { $regex: oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') } })
+      .sort({ timestamp: -1 })
+      .limit(recentLimit)
+      .toArray();
+    if (docs.length === 0) return 0;
+
+    let count = 0;
+    for (const doc of docs) {
+      if (doc.content && doc.content.includes(oldText)) {
+        const updated = doc.content.replace(oldText, newText);
+        await this.collection.updateOne({ _id: doc._id }, { $set: { content: updated } });
+        count++;
+      }
+    }
+    return count;
+  }
 }
 
 // ===== 插件入口 =====

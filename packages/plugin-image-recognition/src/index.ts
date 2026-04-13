@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
-import type { LLMService } from '@aalis/core';
+import type { LLMService, MemoryService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -8,7 +8,7 @@ export const name = '@aalis/plugin-image-recognition';
 export const displayName = '图像识别';
 export const provides = ['image-recognition'];
 export const inject = {
-  optional: ['llm', 'agent'],
+  optional: ['llm', 'agent', 'memory'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -100,6 +100,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         messages,
         maxTokens: cfg.maxTokens,
         model: cfg.preferredModel || undefined,
+        think: false,
       });
       return response.content?.trim() || '[图片: 无描述]';
     } catch (err) {
@@ -151,17 +152,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       msg.images.map(img => describeImage(visionLLM, img)),
     );
 
-    const descTexts = descriptions
-      .map((desc, i) => `[图片${msg.images!.length > 1 ? (i + 1) : ''}: ${desc}]`);
-
-    // 如果有 attachmentOrder，将图片描述存入 _imageDescriptions，交由后续统一组装
-    if (msg.attachmentOrder) {
-      msg._imageDescriptions = descTexts;
+    // 优先更新 content 中已有的 [图片 | ref:path] 标记
+    const hasRefs = /\[图片 \| ref:[^\]]+\]/.test(msg.content);
+    if (hasRefs) {
+      let idx = 0;
+      msg.content = msg.content.replace(/\[图片 \| ref:([^\]]+)\]/g, (_match, refPath: string) => {
+        const desc = descriptions[idx++] || '无描述';
+        return `[图片: ${desc} | ref:${refPath}]`;
+      });
     } else {
-      const descText = descTexts.join('\n');
-      msg.content = msg.content
-        ? `${msg.content}\n${descText}`
-        : descText;
+      // 非 OneBot 平台（WebUI 等）没有 ref 标记，使用旧逻辑
+      const descTexts = descriptions
+        .map((desc, i) => `[图片${msg.images!.length > 1 ? (i + 1) : ''}: ${desc}]`);
+
+      if (msg.attachmentOrder) {
+        msg._imageDescriptions = descTexts;
+      } else {
+        const descText = descTexts.join('\n');
+        msg.content = msg.content
+          ? `${msg.content}\n${descText}`
+          : descText;
+      }
     }
 
     // 清除 images，表示已由中间件消费（不再传递给多模态 LLM）
@@ -182,10 +193,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }, 900);
   }
 
-  // 注册服务，供其他插件查询图像识别能力是否可用
+  // 注册服务，供其他插件查询图像识别能力和调用描述功能
   ctx.provide('image-recognition', {
     /** 本插件能否处理图片（始终 true，因为插件已加载） */
     available: true,
+    /** 描述单张图片，返回文字描述。供 adapter 等外部插件复用 */
+    async describe(imageUrl: string): Promise<string> {
+      const visionLLM = getVisionLLM();
+      if (!visionLLM) return '';
+      return describeImage(visionLLM, imageUrl);
+    },
+    /** 当前中间件是否启用（启用=由本插件识别，关闭=传给主模型） */
+    enabled: cfg.enabled,
   });
 
   // ── 注册图片分析工具，供 agent 主动调用 ──
@@ -270,6 +289,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           messages,
           maxTokens: cfg.maxTokens,
           model: cfg.preferredModel || undefined,
+          think: false,
         });
 
         const description = response.content?.trim() || '无法识别图片内容';
@@ -280,5 +300,55 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
-  ctx.logger.info(`图像识别中间件已加载 (${cfg.enabled ? '启用' : '直通模式'})，analyze_image 工具已注册`);
+  // ── 注册图片描述回写工具 ──
+
+  ctx.registerTool({
+    safety: 'safe',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'update_image_description',
+        description:
+          '更新历史消息中图片的描述。当你通过 analyze_image 识别了一张历史图片后，' +
+          '调用此工具将描述写回数据库，以便未来检索。',
+        parameters: {
+          type: 'object',
+          properties: {
+            image_ref: {
+              type: 'string',
+              description: '图片引用路径（ref: 后面的部分），如 data/images/onebot_xxx/abc123.jpg',
+            },
+            description: {
+              type: 'string',
+              description: '图片描述文字',
+            },
+            session_id: {
+              type: 'string',
+              description: '图片所在的会话 ID',
+            },
+          },
+          required: ['image_ref', 'description', 'session_id'],
+        },
+      },
+    },
+    handler: async (args) => {
+      const imageRef = String(args.image_ref);
+      const desc = String(args.description);
+      const sessionId = String(args.session_id);
+
+      const memory = ctx.getService<MemoryService>('memory');
+      if (!memory?.updateMessageContent) {
+        return JSON.stringify({ error: '记忆服务不可用或不支持内容更新' });
+      }
+
+      const oldText = `[图片 | ref:${imageRef}]`;
+      const newText = `[图片: ${desc} | ref:${imageRef}]`;
+      const updated = await memory.updateMessageContent(sessionId, oldText, newText);
+      return updated > 0
+        ? `已更新 ${updated} 条消息中的图片描述`
+        : '未找到匹配的图片引用（可能已有描述或引用路径不匹配）';
+    },
+  });
+
+  ctx.logger.info(`图像识别中间件已加载 (${cfg.enabled ? '启用' : '直通模式'})，analyze_image / update_image_description 工具已注册`);
 }

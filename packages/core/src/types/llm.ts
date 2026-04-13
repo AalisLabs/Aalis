@@ -13,6 +13,8 @@ export interface ChatRequest {
   signal?: AbortSignal;
   /** 期望的响应格式。设为 'json_object' 时 LLM 提供者应尽力返回合法 JSON */
   responseFormat?: 'text' | 'json_object';
+  /** 是否启用扩展思考。设为 false 可显式关闭提供者默认的 think 模式 */
+  think?: boolean;
 }
 
 export interface ChatResponse {
