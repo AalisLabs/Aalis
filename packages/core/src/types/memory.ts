@@ -44,4 +44,9 @@ export interface MemoryService {
   listMetadata?(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>>;
   /** 删除元数据条目 */
   deleteMetadata?(namespace: string, key: string): Promise<void>;
+
+  // ----- 消息内容更新（图片描述回写等） -----
+
+  /** 在指定会话的最近 N 条消息中，将 content 里的 oldText 替换为 newText，返回受影响的条数 */
+  updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;
 }

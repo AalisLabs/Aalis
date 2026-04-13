@@ -1,6 +1,9 @@
 import WebSocket from 'ws';
+import { createHash } from 'node:crypto';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MemoryService, PersonaService, LLMService, Message } from '@aalis/core';
+import type { MemoryService, PersonaService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -244,6 +247,59 @@ function nextEcho(): string {
   return `aalis_${Date.now()}_${++echoCounter}`;
 }
 
+// ===== 图片下载缓存 =====
+
+/** 下载图片到本地缓存，返回相对路径（如 data/images/...）。失败返回 null */
+async function downloadAndCacheImage(url: string, sessionId: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    const hash = createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+
+    const contentType = response.headers.get('content-type') ?? '';
+    let ext = 'jpg';
+    if (contentType.includes('png')) ext = 'png';
+    else if (contentType.includes('gif')) ext = 'gif';
+    else if (contentType.includes('webp')) ext = 'webp';
+
+    const safeSessionId = sessionId.replace(/[:/\\]/g, '_');
+    const dirRel = `data/images/${safeSessionId}`;
+    const dirAbs = resolve(process.cwd(), dirRel);
+    await mkdir(dirAbs, { recursive: true });
+
+    const filename = `${hash}.${ext}`;
+    await writeFile(resolve(dirAbs, filename), buffer);
+
+    return `${dirRel}/${filename}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 下载所有图片并替换文本中的 [图片] 标记为 [图片 | ref:path]。
+ * 返回 { text: 替换后文本, localPaths: 本地路径数组（与 images 一一对应） }
+ */
+async function cacheImagesAndRewriteText(
+  text: string,
+  images: string[],
+  sessionId: string,
+): Promise<{ text: string; localPaths: (string | null)[] }> {
+  const localPaths = await Promise.all(
+    images.map(url => downloadAndCacheImage(url, sessionId)),
+  );
+
+  let idx = 0;
+  const rewritten = text.replace(/\[图片\]/g, () => {
+    const path = localPaths[idx++];
+    return path ? `[图片 | ref:${path}]` : '[图片]';
+  });
+
+  return { text: rewritten, localPaths };
+}
+
 // ===== 协议版本实例 =====
 const protocolV11 = new OneBotV11();
 const protocolV12 = new OneBotV12();
@@ -469,24 +525,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ── 保存缓冲消息到记忆 ──
 
-  /** 利用 vision LLM 将图片转为文字描述（用于非触发消息的图片保存） */
+  /** 利用图像识别服务将图片转为文字描述（用于非触发消息的图片保存） */
   async function describeImagesForBuffering(images: string[]): Promise<string[]> {
-    const providers = ctx.getAllServices<LLMService>('llm', ['vision']);
-    const chosen = providers[0];
-    if (!chosen) return images.map(() => '[图片]');
-    try {
-      return await Promise.all(images.map(async (url) => {
-        try {
-          const msgs: Message[] = [{ role: 'user', content: '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如果有）、表情包含义等。用中文回答，控制在100字以内。', images: [url] }];
-          const resp = await chosen.instance.chat({ messages: msgs, maxTokens: 300 });
-          return `[图片: ${resp.content?.trim() || '无描述'}]`;
-        } catch {
-          return '[图片: 识别失败]';
-        }
-      }));
-    } catch {
-      return images.map(() => '[图片]');
+    // 优先使用 image-recognition 插件（配置了正确的 vision 模型）
+    const irService = ctx.getService<{ available: boolean; enabled: boolean; describe: (url: string) => Promise<string> }>('image-recognition');
+    if (irService?.available && irService.enabled) {
+      try {
+        return await Promise.all(images.map(async (url) => {
+          try {
+            return await irService.describe(url);
+          } catch {
+            return '';
+          }
+        }));
+      } catch {
+        return images.map(() => '');
+      }
     }
+    // 没有 image-recognition 插件 → 不生成描述
+    return images.map(() => '');
   }
 
   async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string, images?: string[]): Promise<void> {
@@ -496,12 +553,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const senderLabel = nickname ?? userId;
       let contentToSave = senderLabel ? `[${senderLabel}]: ${content}` : content;
 
-      // 非触发消息的图片描述：转为文字后追加到内容
+      // content 中已包含 [图片 | ref:path] 标记。尝试用 vision LLM 填充描述。
       if (images && images.length > 0) {
         const descs = await describeImagesForBuffering(images);
-        contentToSave = contentToSave
-          ? `${contentToSave}\n${descs.join('\n')}`
-          : descs.join('\n');
+        let idx = 0;
+        contentToSave = contentToSave.replace(/\[图片 \| ref:([^\]]+)\]/g, (_match, refPath: string) => {
+          const desc = descs[idx++];
+          return desc ? `[图片: ${desc} | ref:${refPath}]` : `[图片 | ref:${refPath}]`;
+        });
       }
 
       await memory.saveMessage(sessionId, {
@@ -1106,6 +1165,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     (async () => {
       let groupName: string | undefined;
       let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;
+
+      // 下载并缓存图片，替换文本中的 [图片] 为 [图片 | ref:path]
+      if (event.images && event.images.length > 0) {
+        const { text: rewritten } = await cacheImagesAndRewriteText(
+          event.text, event.images, sessionId,
+        );
+        event.text = rewritten;
+        // images 保持原始 URL，供中间件/多模态模型使用（当前请求内仍有效）
+      }
 
       // 获取群名
       if (event.detailType === 'group' && event.groupId) {

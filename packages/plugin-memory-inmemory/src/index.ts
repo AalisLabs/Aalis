@@ -88,6 +88,20 @@ class InMemoryFallbackService implements MemoryService {
       if (ns.size === 0) this.metadata.delete(namespace);
     }
   }
+
+  async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
+    const history = this.sessions.get(sessionId);
+    if (!history) return 0;
+    let count = 0;
+    const start = Math.max(0, history.length - recentLimit);
+    for (let i = start; i < history.length; i++) {
+      if (history[i].content && history[i].content!.includes(oldText)) {
+        history[i] = { ...history[i], content: history[i].content!.replace(oldText, newText) };
+        count++;
+      }
+    }
+    return count;
+  }
 }
 
 // ===== 插件元数据 =====
