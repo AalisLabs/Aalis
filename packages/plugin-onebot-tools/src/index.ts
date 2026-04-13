@@ -75,6 +75,68 @@ async function callAction(
   return adapter.callAction(callCtx.sessionId, action, params);
 }
 
+// ===== 权限检查辅助 =====
+
+const ROLE_LEVEL: Record<string, number> = { owner: 3, admin: 2, member: 1 };
+
+function roleLevel(role: string): number {
+  return ROLE_LEVEL[role] ?? 0;
+}
+
+/** 查询群成员信息（失败返回 null） */
+async function getGroupMemberInfo(
+  ctx: Context,
+  callCtx: ToolCallContext,
+  groupId: string,
+  userId: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await callAction(ctx, callCtx, 'get_group_member_info', {
+      group_id: Number(groupId),
+      user_id: Number(userId),
+      no_cache: true,
+    }) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** 检查管理操作权限，返回错误消息（null 表示通过或无法验证） */
+async function checkAdminPermission(
+  ctx: Context,
+  callCtx: ToolCallContext,
+  selfId: string,
+  groupId: string,
+  targetUserId?: string,
+  requireOwner?: boolean,
+): Promise<string | null> {
+  const selfInfo = await getGroupMemberInfo(ctx, callCtx, groupId, selfId);
+  if (!selfInfo) return null; // 无法获取自身信息，跳过权限检查
+
+  const selfRole = String(selfInfo.role ?? 'member');
+
+  if (requireOwner && selfRole !== 'owner') {
+    return `操作失败：此操作仅群主可执行（当前角色：${selfRole}）`;
+  }
+  if (selfRole === 'member') {
+    return `操作失败：机器人不是管理员（当前角色：${selfRole}），无法执行管理操作`;
+  }
+
+  if (targetUserId) {
+    const targetInfo = await getGroupMemberInfo(ctx, callCtx, groupId, targetUserId);
+    if (!targetInfo) {
+      return `操作失败：无法获取用户 ${targetUserId} 的信息，该用户可能不在群中`;
+    }
+    const targetRole = String(targetInfo.role ?? 'member');
+    if (roleLevel(targetRole) >= roleLevel(selfRole)) {
+      const targetLabel = targetRole === 'owner' ? '群主' : '管理员';
+      return `操作失败：无法对${targetLabel}执行此操作（机器人角色：${selfRole}，目标角色：${targetRole}）`;
+    }
+  }
+
+  return null;
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -142,16 +204,37 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 3,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
       const duration = typeof args.duration === 'number' ? args.duration : 60;
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId, String(args.user_id));
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_ban', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
         duration,
       });
+
+      // 验证禁言是否生效
+      const info = await getGroupMemberInfo(ctx, callCtx, groupId, String(args.user_id));
+      if (info && 'shut_up_timestamp' in info) {
+        const shutUp = Number(info.shut_up_timestamp);
+        const now = Math.floor(Date.now() / 1000);
+        if (duration === 0) {
+          return shutUp <= now
+            ? `已解除 ${args.user_id} 的禁言`
+            : `解除禁言指令已发送，但用户仍在禁言中`;
+        } else {
+          return shutUp > now
+            ? `已禁言 ${args.user_id}，时长 ${duration} 秒`
+            : `禁言操作未生效（API 返回成功但禁言状态未变化），请检查机器人实际权限`;
+        }
+      }
+
       return duration === 0
         ? `已解除 ${args.user_id} 的禁言`
-        : `已禁言 ${args.user_id}，时长 ${duration} 秒`;
+        : `已禁言 ${args.user_id}，时长 ${duration} 秒（无法验证是否生效）`;
     },
   });
 
@@ -174,7 +257,11 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 3,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId);
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_whole_ban', {
         group_id: Number(groupId),
         enable: !!args.enable,
@@ -203,7 +290,11 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 4,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId, String(args.user_id));
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_kick', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
@@ -233,7 +324,11 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 3,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId);
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_card', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
@@ -262,7 +357,11 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 3,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId);
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_name', {
         group_id: Number(groupId),
         group_name: String(args.group_name),
@@ -291,7 +390,11 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 4,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId, undefined, true);
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_special_title', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
@@ -322,7 +425,11 @@ function registerGroupManagementTools(ctx: Context): void {
     safety: 'dangerous',
     authority: 4,
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+
+      const permError = await checkAdminPermission(ctx, callCtx, selfId, groupId, undefined, true);
+      if (permError) return permError;
+
       await callAction(ctx, callCtx, 'set_group_admin', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
@@ -419,6 +526,33 @@ function registerGroupInfoTools(ctx: Context): void {
         role: m.role,
       }));
       return JSON.stringify(summary);
+    },
+  });
+
+  // ---- 获取机器人自身在群中的角色 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_self_role',
+        description: '获取机器人自身在当前群中的角色（member/admin/owner）和基本信息。',
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    handler: async (_args, callCtx) => {
+      const { selfId, groupId } = requireGroupSession(callCtx);
+      const info = await getGroupMemberInfo(ctx, callCtx, groupId, selfId);
+      if (!info) return '无法获取自身群成员信息';
+      return JSON.stringify({
+        user_id: info.user_id,
+        nickname: info.nickname,
+        card: info.card,
+        role: info.role,
+      });
     },
   });
 
