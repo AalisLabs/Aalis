@@ -34,7 +34,7 @@ export const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '时间注入',
     description: '启用后，当前时间会自动注入到系统提示中',
-    default: false,
+    default: true,
   },
 };
 
@@ -42,7 +42,7 @@ export const defaultConfig = {
   persona: 'default',
   personasDir: 'data/personas',
   statePersistence: false,
-  timeInjection: false,
+  timeInjection: true,
 };
 
 // ===== 角色卡格式 =====
@@ -197,7 +197,8 @@ class PersonaServiceImpl implements PersonaService {
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: false,
       });
-      prompt += `当前时间：${timeStr}\n\n`;
+        prompt += '以下时间由系统实时注入，是你回答时间或日期相关问题时应直接使用的权威当前时间（北京时间）。不要质疑它，也不要调用工具再次获取时间。\n';
+        prompt += `当前时间（北京时间）：${timeStr}\n\n`;
     }
 
     if (effectiveCard.name) {
