@@ -62,9 +62,9 @@ const SEARCH_TOOL_NAME = 'search_tools';
  */
 function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
   let description =
-    '查询【可用工具列表】中某个工具的详细参数说明，以便你调用它。' +
-    '本工具仅用于发现系统中注册的功能性工具（如网络搜索、浏览器等），不会返回任何网络信息或实际内容。' +
-    '\n能直接回答的简单问题无需调用工具；但当你需要获取实时信息、执行外部操作时，应当先用本工具搜索合适的工具再进行调用。';
+    '发现并激活系统中的功能工具。搜索到的工具会被系统自动激活，你可以直接调用它们（参数定义会自动提供，无需再次搜索）。' +
+    '\n本工具仅用于发现可调用的功能工具，不会返回任何实际内容。' +
+    '\n能直接回答的简单问题无需调用工具；需要工具时，先搜索再直接调用即可。';
 
   if (toolNames && toolNames.length > 0) {
     description +=
@@ -82,7 +82,7 @@ function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
         properties: {
           query: {
             type: 'string',
-            description: '工具名称或搜索关键词（空字符串返回所有工具的详细说明）',
+            description: '工具名称或搜索关键词（空字符串返回所有工具摘要）',
           },
           limit: {
             type: 'number',
@@ -229,10 +229,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         } : {}),
         tools: toolDetails,
         ...(relatedNames.size > 0 ? {
-          related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先 search_tools 查询其参数。`,
+          related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先用 search_tools 激活。`,
         } : {}),
         hint: paged.length > 0
-          ? '以上工具现在对你可用，你可以直接调用它们。注意：每个工具的参数结构不同，请严格按照 parameters 定义传参。'
+          ? '以上工具已激活，你现在可以直接调用它们（系统会自动提供完整参数定义，无需再次搜索）。'
             + (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
           : '未找到匹配的工具，请尝试其他关键词。',
       });
