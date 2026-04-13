@@ -1,11 +1,11 @@
-import type { Context, ConfigSchema, ToolCallContext, SessionManagerService, IncomingMessage, SessionInfo } from '@aalis/core';
+import type { Context, ConfigSchema, ToolCallContext, SessionManagerService, IncomingMessage, SessionInfo, MessageArchiveService } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-session-tools';
 export const displayName = '子任务工具';
 export const inject = {
-  optional: ['session-manager', 'memory'],
+  optional: ['session-manager', 'message-archive'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -508,11 +508,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     try {
       // 在子会话历史中合成 tool call 记录，展示报告流程
-      const memory = ctx.getService<import('@aalis/core').MemoryService>('memory');
-      if (memory) {
+      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      if (archive) {
         const syntheticToolCallId = `report-${Date.now()}`;
         // 合成 assistant 消息（含 tool_calls）
-        await memory.saveMessage(data.sessionId, {
+        await archive.saveMessage(data.sessionId, {
           role: 'assistant',
           content: null,
           toolCalls: [{
@@ -526,7 +526,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           timestamp: Date.now(),
         });
         // 合成 tool 结果消息
-        await memory.saveMessage(data.sessionId, {
+        await archive.saveMessage(data.sessionId, {
           role: 'tool',
           content: JSON.stringify({ success: true, message: '结果已报告给父会话' }),
           toolCallId: syntheticToolCallId,
