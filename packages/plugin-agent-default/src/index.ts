@@ -539,6 +539,7 @@ class DefaultAgent implements AgentService {
           content: userContentToSave,
           timestamp: Date.now(),
         });
+        this.logImageMemorySave(incoming, userContentToSave);
         let userMessageSaved = true;
 
         // 工具调用循环
@@ -704,6 +705,7 @@ class DefaultAgent implements AgentService {
             content: userContent2,
             timestamp: Date.now(),
           });
+          this.logImageMemorySave(incoming, userContent2);
         }
 
         // 发出流结束标记
@@ -1278,6 +1280,15 @@ class DefaultAgent implements AgentService {
         this.logger.warn('保存消息到记忆失败:', err);
       }
     }
+  }
+
+  private logImageMemorySave(incoming: IncomingMessage, savedContent: string): void {
+    const info = incoming._imageRecognitionInfo;
+    if (!info || info.imageCount <= 0) return;
+    this.logger.debug(
+      `图片消息已写入记忆: session=${incoming.sessionId}, ` +
+      `images=${info.imageCount}, success=${info.successCount} | ${savedContent.slice(0, 200)}`,
+    );
   }
 }
 

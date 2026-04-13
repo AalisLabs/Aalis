@@ -78,6 +78,17 @@ interface ImageRecognitionConfig {
   gifDescriptionMode: 'combined' | 'separate';
 }
 
+interface ImageProcessResult {
+  content: string;
+  imageDescriptions?: string[];
+  info: {
+    imageCount: number;
+    successCount: number;
+    descriptions: string[];
+    transformedContent: string;
+  };
+}
+
 const DEFAULT_PROMPT = '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如果有）、表情包含义等。用中文回答，控制在100字以内。';
 
 const DEFAULT_ANIMATED_PROMPT = '以下是一个动图/视频的多帧截图（按时间顺序排列）。请综合所有帧描述这个动图/视频的内容，包括动态变化、主要元素和表情包含义等。用中文回答，控制在150字以内。';
@@ -445,6 +456,63 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return describeImage(visionLLM, imageUrl);
   }
 
+  function toEffectiveDescription(raw: string): string {
+    if (!raw) return '';
+    if (raw.startsWith('[图片:') || raw.startsWith('[动图:')) return '';
+    return raw;
+  }
+
+  function extractRefPaths(content: string): string[] {
+    const refPaths: string[] = [];
+    const refRegex = /\[图片 \| ref:([^\]]+)\]/g;
+    let refMatch: RegExpExecArray | null;
+    while ((refMatch = refRegex.exec(content)) !== null) {
+      refPaths.push(refMatch[1]);
+    }
+    return refPaths;
+  }
+
+  async function processImageMessage(
+    visionLLM: LLMService,
+    input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> },
+  ): Promise<ImageProcessResult> {
+    const refPaths = extractRefPaths(input.content);
+    const rawDescriptions = await Promise.all(
+      input.images.map((img, i) => describeAny(visionLLM, img, refPaths[i])),
+    );
+    const descriptions = rawDescriptions.map(toEffectiveDescription);
+
+    let content = input.content;
+    let imageDescriptions: string[] | undefined;
+
+    if (/\[图片 \| ref:[^\]]+\]/.test(content)) {
+      let idx = 0;
+      content = content.replace(/\[图片 \| ref:([^\]]+)\]/g, (_match, refPath: string) => {
+        const desc = descriptions[idx++];
+        return desc ? `[图片: ${desc} | ref:${refPath}]` : `[图片 | ref:${refPath}]`;
+      });
+    } else {
+      const descTexts = descriptions.map((desc, i) => `[图片${input.images.length > 1 ? (i + 1) : ''}: ${desc || '无描述'}]`);
+      imageDescriptions = descTexts;
+
+      if (!input.attachmentOrder) {
+        const descText = descTexts.join('\n');
+        content = content ? `${content}\n${descText}` : descText;
+      }
+    }
+
+    return {
+      content,
+      imageDescriptions,
+      info: {
+        imageCount: input.images.length,
+        successCount: descriptions.filter(Boolean).length,
+        descriptions,
+        transformedContent: content,
+      },
+    };
+  }
+
   /** 下载 URL 到临时文件，返回路径。失败返回 null */
   async function downloadToTemp(url: string): Promise<string | null> {
     try {
@@ -498,46 +566,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       `图像识别中间件：使用 ${chosen.contextId} 识别 ${msg.images.length} 张图片`,
     );
 
-    // 提取 content 中的 ref 路径（如有），与 images 按顺序对应
-    const refPaths: (string | undefined)[] = [];
-    const refRegex = /\[图片 \| ref:([^\]]+)\]/g;
-    let refMatch: RegExpExecArray | null;
-    while ((refMatch = refRegex.exec(msg.content)) !== null) {
-      refPaths.push(refMatch[1]);
-    }
+    const result = await processImageMessage(visionLLM, {
+      content: msg.content,
+      images: msg.images,
+      attachmentOrder: msg.attachmentOrder,
+    });
 
-    // 并行识别所有图片（动图自动提取帧）
-    const descriptions = await Promise.all(
-      msg.images.map((img, i) => describeAny(visionLLM, img, refPaths[i])),
-    );
-
-    // 优先更新 content 中已有的 [图片 | ref:path] 标记
-    const hasRefs = /\[图片 \| ref:[^\]]+\]/.test(msg.content);
-    if (hasRefs) {
-      let idx = 0;
-      msg.content = msg.content.replace(/\[图片 \| ref:([^\]]+)\]/g, (_match, refPath: string) => {
-        const desc = descriptions[idx++] || '无描述';
-        return `[图片: ${desc} | ref:${refPath}]`;
-      });
-    } else {
-      // 非 OneBot 平台（WebUI 等）没有 ref 标记，使用旧逻辑
-      const descTexts = descriptions
-        .map((desc, i) => `[图片${msg.images!.length > 1 ? (i + 1) : ''}: ${desc}]`);
-
-      if (msg.attachmentOrder) {
-        msg._imageDescriptions = descTexts;
-      } else {
-        const descText = descTexts.join('\n');
-        msg.content = msg.content
-          ? `${msg.content}\n${descText}`
-          : descText;
-      }
-    }
+    msg.content = result.content;
+    msg._imageDescriptions = result.imageDescriptions;
+    msg._imageRecognitionInfo = result.info;
 
     // 清除 images，表示已由中间件消费（不再传递给多模态 LLM）
     msg.images = undefined;
 
-    ctx.logger.debug(`图像识别完成：${descriptions.length} 张图片已转为文字描述`);
+    ctx.logger.debug(`图片解释完成: ${result.info.successCount}/${result.info.imageCount} 张成功 | ${result.info.transformedContent.slice(0, 200)}`);
 
     await next();
   }
@@ -568,6 +610,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 过滤掉失败/无描述的占位符，只返回真正有效的描述
       if (result.startsWith('[图片:') || result.startsWith('[动图:') || result === '') return '';
       return result;
+    },
+    async processMessage(input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> }): Promise<ImageProcessResult | null> {
+      const visionLLM = getVisionLLM();
+      if (!visionLLM || !cfg.enabled || input.images.length === 0) return null;
+      return processImageMessage(visionLLM, input);
     },
     /** 当前中间件是否启用（启用=由本插件识别，关闭=传给主模型） */
     enabled: cfg.enabled,
