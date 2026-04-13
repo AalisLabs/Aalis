@@ -462,6 +462,7 @@ class DefaultAgent implements AgentService {
         if (resolved?.enabledToolGroups && resolved.enabledToolGroups.length > 0) {
           enabledGroups = resolved.enabledToolGroups;
         }
+        this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`);
         const tools = this.ctx.tools?.getDefinitions(
           enabledGroups ? { groups: enabledGroups } : undefined,
         ) ?? [];
@@ -496,7 +497,10 @@ class DefaultAgent implements AgentService {
         // （是否启用 JSON Mode、是否与 tools/thinking 冲突等由 provider 内部协调）
         const persona = this.ctx.getService<PersonaService>('persona');
         const expectJson = !!persona?.getOutputFormat?.(personaOpts);
-        const responseFormat = expectJson ? 'json_object' as const : undefined;
+
+        // 有工具时不传 response_format: json_object，避免模型将工具意图写进 JSON 而不产生 tool_calls
+        // persona 的 llm-call:before 钩子会柔化系统提示中的 JSON 约束
+        const responseFormat = (expectJson && llmBeforeData.tools.length === 0) ? 'json_object' as const : undefined;
 
         const t0 = Date.now();
         let response = await this.consumeStream(llm, {
