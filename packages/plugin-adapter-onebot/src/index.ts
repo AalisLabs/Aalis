@@ -69,7 +69,8 @@ export const configSchema: ConfigSchema = {
       fixedInterval: { type: 'number', label: '固定间隔（条）', default: 5, description: '固定模式下每收到 N 条消息触发一次回复。' },
       activityScoreLower: { type: 'number', label: '活跃度下限阈值', default: 0.3, description: '长时间无回复后的触发阈值，越低越容易触发。' },
       activityScoreUpper: { type: 'number', label: '活跃度上限阈值', default: 0.85, description: '刚回复后的触发阈值，越高越不容易再次触发。' },
-      activityDecayMinutes: { type: 'number', label: '衰减时间（分钟）', default: 10, description: '回复后阈值从上限衰减回下限所需时间。' },
+      activityDecayMinutes: { type: 'number', label: '阈值衰减时间（分钟）', default: 10, description: '回复后阈值从上限衰减回下限所需时间。' },
+      scoreDecayMinutes: { type: 'number', label: '发言指数衰减时间（分钟）', default: 0, description: '无人发言后，累积的发言指数线性衰减到 0 所需时间。0 = 不衰减。' },
       triggerOnAt: { type: 'boolean', label: '@ 触发', default: true, description: '消息中包含 @bot 时立刻触发回复。' },
       triggerNames: { type: 'string', label: '触发词 / 昵称', default: '', description: '消息中出现这些词时立刻触发回复，逗号分隔（自动包含人设名称）。' },
       cooldownSeconds: { type: 'number', label: '冷却时间（秒）', default: 10, description: 'AI 回复后的冷却时间。' },
@@ -89,6 +90,8 @@ export const configSchema: ConfigSchema = {
       idleTriggerPrompt: { type: 'textarea', label: '空闲触发提示词', default: '', description: '空闲触发时发送给 Agent 的系统提示。留空使用默认提示。' },
       muteKeywords: { type: 'string', label: '禁言关键词', default: '', description: '逗号分隔。' },
       muteTimeSeconds: { type: 'number', label: '禁言时长（秒）', default: 60 },
+      rateLimitWindow: { type: 'number', label: '限速窗口（秒）', default: 0, description: '防 DDoS：在该时间窗口内最多回复 rateLimitMaxReplies 次。0 = 不限速。' },
+      rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复次数', default: 10, description: '防 DDoS：限速窗口内允许的最大回复次数。' },
     },
   },
 };
@@ -107,6 +110,7 @@ export const defaultConfig = {
     activityScoreLower: 0.3,
     activityScoreUpper: 0.85,
     activityDecayMinutes: 10,
+    scoreDecayMinutes: 0,
     triggerOnAt: true,
     triggerNames: '',
     cooldownSeconds: 10,
@@ -118,6 +122,8 @@ export const defaultConfig = {
     idleTriggerPrompt: '',
     muteKeywords: '',
     muteTimeSeconds: 60,
+    rateLimitWindow: 0,
+    rateLimitMaxReplies: 10,
   },
 };
 
@@ -150,6 +156,7 @@ interface ChatFlowConfig {
   activityScoreLower: number;
   activityScoreUpper: number;
   activityDecayMinutes: number;
+  scoreDecayMinutes: number;
   triggerOnAt: boolean;
   triggerNames: string[];
   cooldownSeconds: number;
@@ -161,6 +168,8 @@ interface ChatFlowConfig {
   idleTriggerPrompt: string;
   muteKeywords: string[];
   muteTimeSeconds: number;
+  rateLimitWindow: number;
+  rateLimitMaxReplies: number;
 }
 
 /** 每个 session 的流控状态 */
@@ -174,6 +183,8 @@ interface FlowSessionState {
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleBackoff: number;
   userInteractions: Map<string, { count: number; lastTime: number }>;
+  /** 滑动窗口内的回复时间戳（用于防 DDoS 限速） */
+  replyTimestamps: number[];
 }
 
 /** 空闲触发标识 */
@@ -195,6 +206,7 @@ function resolveChatFlowConfig(raw: Record<string, unknown>): ChatFlowConfig {
     activityScoreLower: (raw.activityScoreLower as number) ?? 0.3,
     activityScoreUpper: (raw.activityScoreUpper as number) ?? 0.85,
     activityDecayMinutes: (raw.activityDecayMinutes as number) ?? 10,
+    scoreDecayMinutes: (raw.scoreDecayMinutes as number) ?? 0,
     triggerOnAt: (raw.triggerOnAt as boolean) ?? true,
     triggerNames: parseStringList(raw.triggerNames),
     cooldownSeconds: (raw.cooldownSeconds as number) ?? 10,
@@ -206,6 +218,8 @@ function resolveChatFlowConfig(raw: Record<string, unknown>): ChatFlowConfig {
     idleTriggerPrompt: (raw.idleTriggerPrompt as string) || '',
     muteKeywords: parseStringList(raw.muteKeywords),
     muteTimeSeconds: (raw.muteTimeSeconds as number) ?? 60,
+    rateLimitWindow: (raw.rateLimitWindow as number) ?? 0,
+    rateLimitMaxReplies: (raw.rateLimitMaxReplies as number) ?? 10,
   };
 }
 
@@ -427,6 +441,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         idleTimer: null,
         idleBackoff: 1,
         userInteractions: new Map(),
+        replyTimestamps: [],
       };
       flowSessions.set(sessionId, state);
     }
@@ -490,6 +505,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return flowCfg.activityScoreLower + (flowCfg.activityScoreUpper - flowCfg.activityScoreLower) * factor;
   }
 
+  /**
+   * 将 activityScore 按距离上次消息的时间进行线性衰减（原地修改）。
+   * scoreDecayMinutes=0 时不衰减。
+   */
+  function applyScoreDecay(fState: FlowSessionState): void {
+    if (flowCfg.scoreDecayMinutes <= 0 || fState.activityScore <= 0 || fState.lastMessageTime === 0) return;
+    const elapsed = Date.now() - fState.lastMessageTime;
+    const decayMs = flowCfg.scoreDecayMinutes * 60 * 1000;
+    const factor = Math.max(0, 1 - elapsed / decayMs);
+    fState.activityScore *= factor;
+    // 低于极小值直接归零，避免浮点残余
+    if (fState.activityScore < 0.001) fState.activityScore = 0;
+  }
+
   function calculateScoreIncrement(fState: FlowSessionState, userId?: string): number {
     const base = 1.0 / Math.max(1, flowCfg.fixedInterval);
     let userWeight = 1.0;
@@ -513,6 +542,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       case 'both':    return fixedOk || dynamicOk;
       default:        return fixedOk;
     }
+  }
+
+  // ── 防 DDoS 限速 ──
+
+  /**
+   * 检查是否超过限速上限。返回 true 表示已限速（不应回复）。
+   * 同时清理过期的时间戳并在通过时记录本次回复。
+   */
+  function checkRateLimit(fState: FlowSessionState, sessionId: string): boolean {
+    if (flowCfg.rateLimitWindow <= 0 || flowCfg.rateLimitMaxReplies <= 0) return false;
+    const windowMs = flowCfg.rateLimitWindow * 1000;
+    const now = Date.now();
+    // 清除窗口外的旧时间戳
+    fState.replyTimestamps = fState.replyTimestamps.filter(t => now - t < windowMs);
+    if (fState.replyTimestamps.length >= flowCfg.rateLimitMaxReplies) {
+      ctx.logger.info(
+        `[限速] session=${sessionId} | ${flowCfg.rateLimitWindow}s 内已回复 ${fState.replyTimestamps.length}/${flowCfg.rateLimitMaxReplies} 次，拒绝触发`,
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /** 记录一次回复（限速窗口计数） */
+  function recordReply(fState: FlowSessionState): void {
+    fState.replyTimestamps.push(Date.now());
   }
 
   // ── 触发后重置 ──
@@ -620,6 +675,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const fState = getFlowSession(sessionId);
     const now = Date.now();
 
+    // 先对发言指数做时间衰减（基于上一条消息到现在的间隔）
+    applyScoreDecay(fState);
+
     // 更新用户交互记录
     if (userId) {
       const prev = fState.userInteractions.get(userId) ?? { count: 0, lastTime: 0 };
@@ -658,8 +716,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 即时触发（@、名字）
     if (checkImmediateTrigger(content)) {
+      // 防 DDoS：即使被 @ 也要检查限速
+      if (checkRateLimit(fState, sessionId)) {
+        fState.messageCount++;
+        fState.activityScore += calculateScoreIncrement(fState, userId);
+        logFlowStatus(sessionId, fState, '即时触发 → 限速拦截');
+        await saveBufferedMessage(sessionId, content, nickname, userId, images);
+        scheduleIdleTrigger(fState, sessionId, 'onebot');
+        return false;
+      }
       ctx.logger.debug(`即时触发 (@ / 名字): session=${sessionId}`);
       resetAfterTrigger(fState);
+      recordReply(fState);
       fState.idleBackoff = 1;
       logFlowStatus(sessionId, fState, '即时触发 → 计数器归零');
       scheduleIdleTrigger(fState, sessionId, 'onebot');
@@ -672,8 +740,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 间隔触发判定
     if (shouldTrigger(fState)) {
+      // 防 DDoS：检查限速
+      if (checkRateLimit(fState, sessionId)) {
+        logFlowStatus(sessionId, fState, '间隔触发 → 限速拦截');
+        await saveBufferedMessage(sessionId, content, nickname, userId, images);
+        scheduleIdleTrigger(fState, sessionId, 'onebot');
+        return false;
+      }
       logFlowStatus(sessionId, fState, '间隔触发 → 计数器归零');
       resetAfterTrigger(fState);
+      recordReply(fState);
       fState.idleBackoff = 1;
       scheduleIdleTrigger(fState, sessionId, 'onebot');
       return true;
@@ -1353,7 +1429,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    adapter.sendMessage(msg.sessionId, msg.content).catch(err => {
+    adapter.sendMessage(msg.sessionId, msg.content, { skipSplit: msg.source !== 'agent' }).catch(err => {
       ctx.logger.warn(`OneBot 发送消息失败: ${err}`);
     });
   });

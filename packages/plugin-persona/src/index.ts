@@ -82,6 +82,8 @@ class PersonaServiceImpl implements PersonaService {
   currentSessionType?: 'group' | 'private' | 'channel';
   /** 当前消息发送者 ID */
   currentUserId?: string;
+  /** 当前消息发送者昵称 */
+  currentNickname?: string;
   /** 当前群名称（仅群聊时可用） */
   currentGroupName?: string;
 
@@ -229,6 +231,9 @@ class PersonaServiceImpl implements PersonaService {
       }
       if (this.currentUserId) {
         prompt += `当前消息发送者 ID：${this.currentUserId}\n`;
+      }
+      if (this.currentNickname) {
+        prompt += `当前消息发送者昵称：${this.currentNickname}\n`;
       }
     }
 
@@ -414,6 +419,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentSessionId = data.message.sessionId;
     service.currentSessionType = data.message.sessionType;
     service.currentUserId = data.message.userId;
+    service.currentNickname = data.message.nickname;
     service.currentGroupName = data.message.groupName;
     try {
       await next();
@@ -421,6 +427,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       service.currentSessionId = undefined;
       service.currentSessionType = undefined;
       service.currentUserId = undefined;
+      service.currentNickname = undefined;
       service.currentGroupName = undefined;
     }
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
@@ -475,7 +482,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         )
         .replace(
           '任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。',
-          '注意：调用工具时无需输出 JSON，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。',
+          '注意：调用工具时只需要遵循工具调用规范，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。',
         );
       if (systemMsg.content !== original) {
         ctx.logger.debug('persona: 已柔化 JSON 格式约束（检测到工具可用）');

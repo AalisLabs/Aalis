@@ -113,7 +113,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessionId: child.id,
           platform: callCtx.platform || 'internal',
           userId: `parent:${parentId}`,
-          nickname: '',
+          nickname: undefined,
         } satisfies IncomingMessage).catch(err => {
           ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
         });
@@ -245,7 +245,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         sessionId: subtaskId,
         platform: callCtx.platform || 'internal',
         userId: `parent:${callCtx.sessionId}`,
-        nickname: '',
+        nickname: undefined,
       } satisfies IncomingMessage).catch(err => {
         ctx.logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
       });
