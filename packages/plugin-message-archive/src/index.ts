@@ -6,6 +6,7 @@ import type {
   MemoryService,
   MessageArchiveService,
 } from '@aalis/core';
+import { prefixSender, getMessageName } from '@aalis/core';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';
@@ -50,10 +51,7 @@ interface ImageRecognitionService {
 }
 
 function buildIncomingContent(incoming: IncomingMessage): string {
-  const senderLabel = incoming.nickname ?? incoming.userId;
-  let content = senderLabel
-    ? `[${senderLabel}]: ${incoming.content}`
-    : incoming.content;
+  let content = prefixSender(incoming.content, incoming.nickname, incoming.userId);
 
   if (incoming.attachmentOrder && (incoming._fileDescriptions || incoming._imageDescriptions)) {
     const fileDescs = incoming._fileDescriptions ?? [];
@@ -134,6 +132,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const message: Message = {
         role: 'user',
         content,
+        name: getMessageName(working.userId),
         timestamp: Date.now(),
       };
 

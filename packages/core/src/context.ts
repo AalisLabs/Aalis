@@ -331,6 +331,33 @@ export class Context {
     return results;
   }
 
+  /**
+   * 按模型 ID 查找拥有该模型的 LLM 提供者
+   *
+   * 遍历所有已注册的 'llm' 服务，查询各自 listModels()，
+   * 返回第一个拥有该模型的提供者实例。
+   *
+   * @example
+   * const result = await ctx.resolveModelProvider('gpt-4o');
+   * if (result) {
+   *   const llm = result.instance as LLMService;
+   *   await llm.chat({ messages, model: result.model });
+   * }
+   */
+  async resolveModelProvider(modelId: string): Promise<{ instance: unknown; model: string; contextId: string } | undefined> {
+    const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
+    for (const { instance, contextId } of providers) {
+      if (typeof instance.listModels !== 'function') continue;
+      try {
+        const models = await instance.listModels();
+        if (models.some(m => m.id === modelId)) {
+          return { instance, model: modelId, contextId };
+        }
+      } catch { /* skip unavailable provider */ }
+    }
+    return undefined;
+  }
+
   // ---- 注册缓冲（服务延迟就绪支持） ----
 
   /**

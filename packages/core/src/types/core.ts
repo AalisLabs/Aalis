@@ -81,6 +81,8 @@ export interface OutgoingMessage {
   sessionId: string;
   platform?: string;
   reasoningContent?: string;
+  /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
+  source?: 'agent' | 'system' | 'command';
 }
 
 /** 流式消息片段 */

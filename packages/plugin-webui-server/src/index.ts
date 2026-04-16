@@ -1060,7 +1060,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessionId,
           platform: 'webui',
           userId: 'console',
-          nickname: '',
+          nickname: undefined,
           ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
           ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
           ...(msg.attachmentOrder && msg.attachmentOrder.length > 0 ? { attachmentOrder: msg.attachmentOrder } : {}),
