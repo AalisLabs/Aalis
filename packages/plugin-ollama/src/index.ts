@@ -20,7 +20,8 @@ export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
-  defaultModel: { type: 'string', label: '默认模型', default: 'llama3.1', description: '未指定模型时使用的默认模型名称' },
+  customModels: { type: 'textarea', label: '自定义模型', default: '', description: '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。' },
+  timeout: { type: 'number', label: '请求超时 (秒)', default: 120, description: 'LLM 请求超时时间（秒）。大模型或长上下文建议适当调大。0 = 不限制。' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数（num_predict）' },
   contextLength: { type: 'number', label: '上下文长度', default: 8192, description: '模型上下文窗口大小（num_ctx）' },
@@ -30,7 +31,8 @@ export const configSchema: ConfigSchema = {
 
 export const defaultConfig = {
   baseUrl: 'http://localhost:11434',
-  defaultModel: 'llama3.1',
+  customModels: '',
+  timeout: 120,
   temperature: 0.7,
   maxTokens: 4096,
   contextLength: 8192,
@@ -42,7 +44,8 @@ export const defaultConfig = {
 
 interface OllamaConfig {
   baseUrl: string;
-  defaultModel: string;
+  customModels: string[];
+  timeout?: number;
   temperature: number;
   maxTokens: number;
   contextLength: number;
@@ -141,7 +144,9 @@ function extractThinkTags(text: string): { reasoning: string; content: string } 
 
 class OllamaLLMService implements LLMService {
   private baseUrl: string;
-  private defaultModel: string;
+  private customModels: string[];
+  private defaultModel: string | null = null;
+  private timeout: number;
   private temperature: number;
   private maxTokens: number;
   private contextLength: number;
@@ -151,7 +156,8 @@ class OllamaLLMService implements LLMService {
 
   constructor(config: OllamaConfig, logger: Logger) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.defaultModel = config.defaultModel;
+    this.customModels = config.customModels;
+    this.timeout = config.timeout ?? 120000;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
@@ -160,11 +166,28 @@ class OllamaLLMService implements LLMService {
     this.logger = logger;
   }
 
-  getTemperature(): number { return this.temperature; }
-  getMaxTokens(): number { return this.maxTokens; }
-  getContextLength(): number { return this.contextLength; }
+  /** 启动时调用：发现本地模型、检查重复、确定默认模型 */
+  async initialize(): Promise<{ defaultModel: string | null; capabilities: string[] }> {
+    const remote = await this.fetchRemoteModels();
+    const remoteIds = new Set(remote.map(m => m.id));
 
-  async listModels(): Promise<ModelInfo[]> {
+    for (const cm of this.customModels) {
+      if (remoteIds.has(cm)) {
+        this.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，建议去重`);
+      }
+    }
+
+    this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
+    const capabilities = this.defaultModel ? resolveCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
+    return { defaultModel: this.defaultModel, capabilities };
+  }
+
+  private getDefaultModel(): string {
+    if (!this.defaultModel) throw new Error('无可用模型：Ollama 模型列表为空且未配置 customModels');
+    return this.defaultModel;
+  }
+
+  private async fetchRemoteModels(): Promise<ModelInfo[]> {
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`);
       if (!res.ok) return [];
@@ -178,12 +201,25 @@ class OllamaLLMService implements LLMService {
     }
   }
 
+  getTemperature(): number { return this.temperature; }
+  getMaxTokens(): number { return this.maxTokens; }
+  getContextLength(): number { return this.contextLength; }
+
+  async listModels(): Promise<ModelInfo[]> {
+    const remote = await this.fetchRemoteModels();
+    const remoteIds = new Set(remote.map(m => m.id));
+    const custom = this.customModels
+      .filter(id => !remoteIds.has(id))
+      .map(id => ({ id, capabilities: resolveCapabilities(id) }));
+    return [...remote, ...custom];
+  }
+
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.defaultModel,
+      model: request.model ?? this.getDefaultModel(),
       messages,
       stream: false,
       options: {
@@ -211,7 +247,7 @@ class OllamaLLMService implements LLMService {
 
     this.logger.debug(`请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
+    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
     const response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -268,7 +304,7 @@ class OllamaLLMService implements LLMService {
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.defaultModel,
+      model: request.model ?? this.getDefaultModel(),
       messages,
       stream: true,
       options: {
@@ -293,7 +329,7 @@ class OllamaLLMService implements LLMService {
 
     this.logger.debug(`流式请求 Ollama${request.responseFormat === 'json_object' ? ' (JSON format requested, guided by prompt)' : ''}${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(120000)];
+    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
     const response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -562,7 +598,7 @@ const MODEL_CAPABILITIES: Record<string, string[]> = {
   'command-r':      ['chat', 'tool_calling', 'streaming'],
 };
 
-const DEFAULT_CAPABILITIES = ['chat', 'streaming'];
+const DEFAULT_CAPABILITIES = ['chat'];
 
 function resolveCapabilities(model: string, userOverride?: unknown): string[] {
   if (Array.isArray(userOverride) && userOverride.length > 0) {
@@ -584,19 +620,17 @@ function resolveCapabilities(model: string, userOverride?: unknown): string[] {
 
 // ===== 插件入口 =====
 
-/** 收集所有已知模型能力的并集 */
-function getAllCapabilities(): string[] {
-  const caps = new Set<string>();
-  for (const c of Object.values(MODEL_CAPABILITIES)) {
-    for (const cap of c) caps.add(cap);
-  }
-  return [...caps];
+/** 解析自定义模型列表：支持逗号分隔和换行分隔 */
+function parseCustomModels(raw: unknown): string[] {
+  if (!raw || typeof raw !== 'string') return [];
+  return raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const ollamaConfig: OllamaConfig = {
     baseUrl: (config.baseUrl as string) ?? 'http://localhost:11434',
-    defaultModel: (config.defaultModel as string) ?? (config.model as string) ?? 'llama3.1',
+    customModels: parseCustomModels(config.customModels),
+    timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
     contextLength: (config.contextLength as number) ?? 8192,
@@ -605,9 +639,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
 
   const service = new OllamaLLMService(ollamaConfig, ctx.logger);
-  const capabilities = getAllCapabilities();
+  const { defaultModel, capabilities } = await service.initialize();
 
-  ctx.provide('llm', service, { capabilities, label: `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})` });
+  const label = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
+  ctx.provide('llm', service, { capabilities, label });
 
-  ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl} (默认模型: ${ollamaConfig.defaultModel}) [${capabilities.join(', ')}]`);
+  if (defaultModel) {
+    ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]`);
+  } else {
+    ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型`);
+  }
 }
