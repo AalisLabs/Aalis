@@ -1,5 +1,6 @@
 import type { Context, IncomingMessage, OutgoingMessage, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
 import type { MemoryService, ConversationTurn, VectorStoreService, EmbeddingService } from '@aalis/core';
+import { prefixSender } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -129,9 +130,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   ctx.on('message:received', (msg: IncomingMessage) => {
-    const senderLabel = msg.nickname ?? msg.userId;
     pendingUserMessages.set(msg.sessionId, {
-      content: senderLabel ? `[${senderLabel}]: ${msg.content}` : msg.content,
+      content: prefixSender(msg.content, msg.nickname, msg.userId),
       timestamp: Date.now(),
       userId: msg.userId,
       nickname: msg.nickname,

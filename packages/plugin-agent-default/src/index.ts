@@ -22,6 +22,34 @@ import type {
   SessionConfig,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
+import { getSenderLabel, prefixSender } from '@aalis/core';
+
+/**
+ * 将时间戳格式化为可读的时间标签。
+ * 距当前时间较近时使用 HH:mm，跨天时加上日期。
+ */
+function formatTimeLabel(ts: number, now: number): string {
+  const d = new Date(ts);
+  const today = new Date(now);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  const hhmm = `${hours}:${mins}`;
+
+  // 同一天：今天 HH:mm
+  if (
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate()
+  ) {
+    return `今天 ${hhmm}`;
+  }
+  // 跨年：加上年/月/日
+  if (d.getFullYear() !== today.getFullYear()) {
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
+  }
+  // 跨天同年：月/日
+  return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
+}
 
 /**
  * 默认 Agent 实现 —— 对话编排器
@@ -49,8 +77,6 @@ class DefaultAgent implements AgentService {
   private autoCompressThreshold: number;
   /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
   private preferredModel: string;
-  /** 模型 ID → 提供者 contextId 映射缓存 */
-  private modelProviderMap: Map<string, string> | null = null;
 
   /**
    * 活跃 AbortController 表
@@ -74,25 +100,6 @@ class DefaultAgent implements AgentService {
     this.autoCompressThreshold = (config.autoCompressThreshold as number) ?? 0.85;
     this.preferredModel = (config.preferredModel as string) || '';
     this.logger.info('默认对话代理已初始化');
-
-    // 异步构建模型→提供者映射（无论是否有 preferredModel 都需要，以支持 session-manager 动态切换）
-    this.buildModelProviderMap();
-  }
-
-  /** 构建模型→提供者映射缓存 */
-  private async buildModelProviderMap(): Promise<void> {
-    const map = new Map<string, string>();
-    const allProviders = this.ctx.getAllServices<LLMService>('llm');
-    for (const p of allProviders) {
-      if (typeof p.instance.listModels === 'function') {
-        try {
-          const models = await p.instance.listModels();
-          for (const m of models) map.set(m.id, p.contextId);
-        } catch { /* ignore */ }
-      }
-    }
-    this.modelProviderMap = map;
-    this.logger.debug(`Agent 模型映射已构建: ${map.size} 个模型`);
   }
 
   /**
@@ -127,37 +134,20 @@ class DefaultAgent implements AgentService {
       if (found) return { llm: found.instance, modelOverride: model };
     }
 
+    // 无指定模型：使用默认提供者
     if (!model) {
       const llm = this.ctx.getService<LLMService>('llm');
       return llm ? { llm } : undefined;
     }
-    // 有指定模型：查找拥有该模型的提供者
-    const allProviders = this.ctx.getAllServices<LLMService>('llm');
-    if (allProviders.length === 0) return undefined;
 
-    // 优先使用缓存映射
-    if (this.modelProviderMap) {
-      const targetContextId = this.modelProviderMap.get(model);
-      if (targetContextId) {
-        const found = allProviders.find(p => p.contextId === targetContextId);
-        if (found) return { llm: found.instance, modelOverride: model };
-      }
-    }
+    // 有指定模型：通过 core 工具方法查找拥有该模型的提供者
+    const resolved = await this.ctx.resolveModelProvider(model);
+    if (resolved) return { llm: resolved.instance as LLMService, modelOverride: model };
 
-    // 缓存未命中：实时查询所有提供者，找到拥有该模型的那个
-    // 同时刷新缓存以加速后续查询
-    await this.buildModelProviderMap();
-    if (this.modelProviderMap) {
-      const targetContextId = this.modelProviderMap.get(model);
-      if (targetContextId) {
-        const found = allProviders.find(p => p.contextId === targetContextId);
-        if (found) return { llm: found.instance, modelOverride: model };
-      }
-    }
-
-    // 映射仍未命中：回退到默认提供者，但仍传递 model override
+    // 模型未匹配：回退到默认提供者，传递 model override
     this.logger.warn(`未找到模型 "${model}" 对应的提供者，回退到默认提供者`);
-    return { llm: allProviders[0].instance, modelOverride: model };
+    const llm = this.ctx.getService<LLMService>('llm');
+    return llm ? { llm, modelOverride: model } : undefined;
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */
@@ -721,6 +711,7 @@ class DefaultAgent implements AgentService {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             reasoningContent: combinedReasoning,
+            source: 'agent',
           });
         }
 
@@ -781,21 +772,33 @@ class DefaultAgent implements AgentService {
     if (memory) {
       try {
         const history = await memory.getHistory(incoming.sessionId, this.historyLimit);
-        messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
+        const now = Date.now();
+        for (const m of history) {
+          if (m.role === 'system' && m.name === 'system-event') continue;
+          // 为用户消息注入时间标注，帮助 LLM 理解时间先后
+          if (m.role === 'user' && m.timestamp && m.content) {
+            const timeLabel = formatTimeLabel(m.timestamp, now);
+            if (timeLabel && !m.content.startsWith(`(${timeLabel})`)) {
+              m.content = `(${timeLabel}) ${m.content}`;
+            }
+          }
+          messages.push(m);
+        }
       } catch (err) {
         this.logger.warn('获取历史消息失败:', err);
       }
     }
 
     // 3. 当前用户消息（带发送者前缀，与历史消息格式一致）
-    const senderLabel = incoming.nickname ?? incoming.userId;
+    const senderLabel = getSenderLabel(incoming.nickname, incoming.userId);
+    const nowLabel = formatTimeLabel(Date.now(), Date.now());
     let currentContent = senderLabel
-      ? `[${senderLabel}]: ${incoming.content}`
-      : incoming.content;
+      ? `(${nowLabel}) [${senderLabel}]: ${incoming.content}`
+      : `(${nowLabel}) ${incoming.content}`;
 
     // 附加引用回复上下文
     if (incoming.replyTo?.content) {
-      const replyLabel = incoming.replyTo.nickname ?? incoming.replyTo.userId ?? '?';
+      const replyLabel = getSenderLabel(incoming.replyTo.nickname, incoming.replyTo.userId) ?? '?';
       currentContent += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
     }
 
@@ -1403,7 +1406,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!modelName) return '用法: /model set <模型名称>';
       if (!smSvc) return 'session-manager 服务不可用';
       await smSvc.updateSession(cmdCtx.sessionId, { config: { model: modelName } as SessionConfig });
-      await agent['buildModelProviderMap']();
       return `当前会话模型已切换为: ${modelName}（已持久化）`;
     }
 
