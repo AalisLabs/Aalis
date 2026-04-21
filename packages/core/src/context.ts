@@ -4,6 +4,7 @@ import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
 import { LLMRouter, type AggregatedModelInfo, type ModelProviderInfo } from './llm-router.js';
+import { probeCapability } from './types/capabilities.js';
 import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
@@ -181,10 +182,26 @@ export class Context {
     instance: unknown,
     options?: { capabilities?: CapabilityList<TName>; priority?: number; label?: string },
   ): () => void {
+    const caps = options?.capabilities ?? [];
+
+    // dev 模式下按声明的能力探测实例方法，暴露「声明与实现不符」
+    if (process.env.NODE_ENV !== 'production') {
+      const failures: string[] = [];
+      for (const cap of caps) {
+        const result = probeCapability(name, cap as string, instance);
+        if (typeof result === 'string') failures.push(`  - [${cap}] ${result}`);
+      }
+      if (failures.length > 0) {
+        throw new Error(
+          `服务 "${name}" 声明的能力与实例实现不符（provide 拒绝注册）:\n${failures.join('\n')}`,
+        );
+      }
+    }
+
     this._services.register(
       name,
       instance,
-      (options?.capabilities ?? []) as readonly string[] as string[],
+      caps as readonly string[] as string[],
       options?.priority ?? 0,
       this.id,
       options?.label,
@@ -198,7 +215,6 @@ export class Context {
     };
     this._disposables.push(dispose);
 
-    const caps = options?.capabilities ?? [];
     this._events.emit('service:registered', name, [...caps]).catch(err => {
       this.logger.warn(`服务注册事件发射失败 [${name}]:`, err);
     });

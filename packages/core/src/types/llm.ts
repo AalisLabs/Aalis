@@ -135,3 +135,18 @@ declare module './capabilities.js' {
     llm: LLMCapability;
   }
 }
+
+// 注册能力↔方法探测器（dev 模式下在 ctx.provide 时校验）
+import { registerCapabilityProbe } from './capabilities.js';
+
+registerCapabilityProbe('llm', LLMCapabilities.Chat, inst =>
+  typeof (inst as { chat?: unknown }).chat === 'function'
+    ? true
+    : 'LLMService.chat() is required for capability "chat"');
+
+registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>
+  typeof (inst as { chatStream?: unknown }).chatStream === 'function'
+    ? true
+    : 'LLMService.chatStream() is required for capability "streaming"');
+
+// ToolCalling / Vision / Thinking / JsonMode 为参数层能力，由调用方按请求传参判定，不做方法探测。
