@@ -3,6 +3,7 @@ import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
+import { LLMRouter, type AggregatedModelInfo, type ModelProviderInfo } from './llm-router.js';
 import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
@@ -43,11 +44,9 @@ export class Context {
   private _pendingCommands: { def: CommandDefinition; ctxId: string }[] = [];
   private _flushListenerAttached = false;
 
-  /** model→provider 映射缓存（所有 Context 实例通过 ServiceContainer 共享同一数据源） */
-  private _modelProviderCache: Map<string, string> | null = null;
-  private _modelProviderCacheTime = 0;
-  private _modelProviderCachePromise: Promise<Map<string, string>> | null = null;
-  private static readonly MODEL_CACHE_TTL = 60_000; // 60 秒过期
+  /** model→provider 路由器（懒初始化；服务注册/注销时自动失效缓存） */
+  private _llmRouter: LLMRouter | null = null;
+  private _llmRouterInvalidateAttached = false;
 
   /** 全局 mixin 注册表（所有 Context 实例共享） */
   private static _mixins: MixinEntry[] = [];
@@ -326,97 +325,58 @@ export class Context {
   // ---- 领域聚合查询 ----
 
   /**
-   * 聚合所有 LLM 提供者的模型列表
-   *
-   * 遍历所有已注册的 'llm' 服务实例，调用各自的 listModels()，
-   * 将结果合并为一个统一的模型列表（附带提供者标记）。
+   * 取得 LLM 路由器（懒初始化）。
+   * 高级插件可直接操作路由器以获得更细粒度控制；普通使用调用
+   * {@link listAllModels} / {@link resolveModelProvider} 即可。
+   */
+  get llm(): LLMRouter {
+    if (!this._llmRouter) {
+      this._llmRouter = new LLMRouter(this, this.logger);
+    }
+    if (!this._llmRouterInvalidateAttached) {
+      this._llmRouterInvalidateAttached = true;
+      const offReg = this.on('service:registered', (svcName: string) => {
+        if (svcName === 'llm') this._llmRouter?.invalidate();
+      });
+      const offUnreg = this.on('service:unregistered', (svcName: string) => {
+        if (svcName === 'llm') this._llmRouter?.invalidate();
+      });
+      this._disposables.push(offReg, offUnreg);
+    }
+    return this._llmRouter;
+  }
+
+  /**
+   * 聚合所有 LLM 提供者的模型列表。
+   * 等价于 `ctx.llm.listAllModels()`，保留以兼容旧代码。
    *
    * @example
    * const models = await ctx.listAllModels();
-   * // [{ id: 'gpt-4o', capabilities: [...], provider: 'OpenAI (api.openai.com)', contextId: '...' }, ...]
    */
-  async listAllModels(): Promise<Array<{ id: string; capabilities: string[]; provider: string; contextId: string }>> {
-    const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
-    const results: Array<{ id: string; capabilities: string[]; provider: string; contextId: string }> = [];
-
-    await Promise.all(providers.map(async ({ instance, contextId, label }) => {
-      if (typeof instance.listModels !== 'function') return;
-      try {
-        const models = await instance.listModels();
-        for (const m of models) {
-          results.push({ ...m, provider: label ?? contextId, contextId });
-        }
-      } catch (err) {
-        this.logger.warn(`获取模型列表失败 [${contextId}]:`, err);
-      }
-    }));
-
-    return results;
+  listAllModels(): Promise<AggregatedModelInfo[]> {
+    return this.llm.listAllModels();
   }
 
   /**
-   * 按模型 ID 查找拥有该模型的 LLM 提供者
-   *
-   * 内部维护 model→contextId 映射缓存（60 秒 TTL），
-   * 首次调用或缓存过期时自动构建。并发调用共享同一次构建。
+   * 按 model ID 查找拥有该模型的 LLM 提供者。
+   * 等价于 `ctx.llm.resolveModelProvider(modelId)`，保留以兼容旧代码。
    *
    * @example
-   * const result = await ctx.resolveModelProvider('gpt-4o');
-   * if (result) {
-   *   const llm = result.instance as LLMService;
-   *   await llm.chat({ messages, model: result.model });
-   * }
+   * const r = await ctx.resolveModelProvider('gpt-4o');
+   * if (r) await (r.instance as LLMService).chat({ messages, model: r.model });
    */
-  async resolveModelProvider(modelId: string): Promise<{ instance: unknown; model: string; contextId: string } | undefined> {
-    const cache = await this._ensureModelProviderCache();
-    const targetContextId = cache.get(modelId);
-    if (!targetContextId) return undefined;
-
-    const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
-    const found = providers.find(p => p.contextId === targetContextId);
-    return found ? { instance: found.instance, model: modelId, contextId: targetContextId } : undefined;
+  resolveModelProvider(modelId: string): Promise<ModelProviderInfo | undefined> {
+    return this.llm.resolveModelProvider(modelId);
   }
 
-  /**
-   * 获取完整的 model→contextId 映射（带缓存）。
-   * 供需要批量查找或自行路由的插件使用。
-   */
-  async getModelProviderMap(): Promise<Map<string, string>> {
-    return this._ensureModelProviderCache();
+  /** 获取完整的 model→contextId 映射。等价于 `ctx.llm.getModelProviderMap()`。 */
+  getModelProviderMap(): Promise<Map<string, string>> {
+    return this.llm.getModelProviderMap();
   }
 
-  /** 使 model→provider 缓存立即失效（服务注册/注销后调用） */
+  /** 使 model→provider 缓存立即失效。等价于 `ctx.llm.invalidate()`。 */
   invalidateModelProviderCache(): void {
-    this._modelProviderCache = null;
-    this._modelProviderCachePromise = null;
-  }
-
-  private _ensureModelProviderCache(): Promise<Map<string, string>> {
-    const now = Date.now();
-    if (this._modelProviderCache && (now - this._modelProviderCacheTime) < Context.MODEL_CACHE_TTL) {
-      return Promise.resolve(this._modelProviderCache);
-    }
-    if (this._modelProviderCachePromise) return this._modelProviderCachePromise;
-
-    this._modelProviderCachePromise = (async () => {
-      const map = new Map<string, string>();
-      const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
-      for (const { instance, contextId } of providers) {
-        if (typeof instance.listModels !== 'function') continue;
-        try {
-          const models = await instance.listModels();
-          for (const m of models) {
-            if (!map.has(m.id)) map.set(m.id, contextId);
-          }
-        } catch { /* skip unavailable provider */ }
-      }
-      this._modelProviderCache = map;
-      this._modelProviderCacheTime = Date.now();
-      this._modelProviderCachePromise = null;
-      return map;
-    })();
-
-    return this._modelProviderCachePromise;
+    this._llmRouter?.invalidate();
   }
 
   // ---- 注册缓冲（服务延迟就绪支持） ----
