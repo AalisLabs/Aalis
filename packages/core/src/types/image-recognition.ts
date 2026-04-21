@@ -113,3 +113,18 @@ declare module './capabilities.js' {
     'image-recognition': ImageRecognitionCapability;
   }
 }
+
+// 注册能力↔方法探测器
+import { registerCapabilityProbe } from './capabilities.js';
+
+registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.Describe, inst =>
+  typeof (inst as { describe?: unknown }).describe === 'function'
+    ? true
+    : 'ImageRecognitionService.describe() is required for capability "describe"');
+
+registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.ProcessMessage, inst =>
+  typeof (inst as { processMessage?: unknown }).processMessage === 'function'
+    ? true
+    : 'ImageRecognitionService.processMessage() is required for capability "process-message"');
+
+// Animated 为配置/运行时开关，无固定方法签名，不做探测。
