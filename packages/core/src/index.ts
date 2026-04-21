@@ -12,6 +12,7 @@ export { Logger, getLogBuffer, onLogEntry } from './logger.js';
 export { getSenderLabel, prefixSender, getMessageName } from './identity.js';
 export { LLMRouter } from './llm-router.js';
 export type { AggregatedModelInfo, ModelProviderInfo } from './llm-router.js';
+export { registerCapabilityProbe, probeCapability } from './types/index.js';
 export { LLMCapabilities } from './types/index.js';
 export { ImageRecognitionCapabilities } from './types/index.js';
 export { WebSearchCapabilities } from './types/index.js';

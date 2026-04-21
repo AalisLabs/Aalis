@@ -178,3 +178,19 @@ declare module './capabilities.js' {
     'session-manager': SessionManagerCapability;
   }
 }
+
+import { registerCapabilityProbe } from './capabilities.js';
+
+registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionCrud, inst => {
+  const i = inst as { createSession?: unknown; getSession?: unknown; deleteSession?: unknown };
+  return typeof i.createSession === 'function' && typeof i.getSession === 'function' && typeof i.deleteSession === 'function'
+    ? true
+    : 'SessionManagerService.createSession()/getSession()/deleteSession() are required for capability "session-crud"';
+});
+
+registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionTree, inst => {
+  const i = inst as { getTree?: unknown; getChildren?: unknown };
+  return typeof i.getTree === 'function' && typeof i.getChildren === 'function'
+    ? true
+    : 'SessionManagerService.getTree()/getChildren() are required for capability "session-tree"';
+});

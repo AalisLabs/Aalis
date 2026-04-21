@@ -86,3 +86,26 @@ declare module './capabilities.js' {
     memory: MemoryCapability;
   }
 }
+
+import { registerCapabilityProbe } from './capabilities.js';
+
+registerCapabilityProbe('memory', MemoryCapabilities.History, inst =>
+  typeof (inst as { getHistory?: unknown }).getHistory === 'function'
+    && typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
+    ? true
+    : 'MemoryService.saveMessage()/getHistory() are required for capability "history"');
+
+registerCapabilityProbe('memory', MemoryCapabilities.TurnArchive, inst =>
+  typeof (inst as { saveTurn?: unknown }).saveTurn === 'function'
+    ? true
+    : 'MemoryService.saveTurn() is required for capability "turn-archive"');
+
+registerCapabilityProbe('memory', MemoryCapabilities.Metadata, inst =>
+  typeof (inst as { saveMetadata?: unknown }).saveMetadata === 'function'
+    ? true
+    : 'MemoryService.saveMetadata() is required for capability "metadata"');
+
+registerCapabilityProbe('memory', MemoryCapabilities.ContentUpdate, inst =>
+  typeof (inst as { updateMessageContent?: unknown }).updateMessageContent === 'function'
+    ? true
+    : 'MemoryService.updateMessageContent() is required for capability "content-update"');

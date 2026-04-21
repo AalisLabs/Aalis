@@ -75,7 +75,8 @@ export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService,
 export { LLMCapabilities } from './llm.js';
 
 // 服务能力声明框架
-export type { ServiceCapabilityMap, CapabilityOf, CapabilityList } from './capabilities.js';
+export type { ServiceCapabilityMap, CapabilityOf, CapabilityList, CapabilityProbe } from './capabilities.js';
+export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 
 // 图像识别服务
 export type {
