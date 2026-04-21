@@ -9,7 +9,9 @@ import type {
   ChatStreamChunk,
   LLMService,
   ModelInfo,
+  LLMCapability,
 } from '@aalis/core';
+import { LLMCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -154,7 +156,7 @@ class OpenAILLMService implements LLMService {
    * 初始化：发现远端模型，检查自定义模型重复，解析默认模型。
    * 返回 { defaultModel, capabilities } 供插件入口注册使用。
    */
-  async initialize(): Promise<{ defaultModel: string | null; capabilities: string[] }> {
+  async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
     const discovered = await this.fetchRemoteModels();
     const discoveredIds = new Set(discovered.map(m => m.id));
 
@@ -464,26 +466,28 @@ class OpenAILLMService implements LLMService {
 
 // ===== 模型能力映射 =====
 
-const MODEL_CAPABILITIES: Record<string, string[]> = {
-  'gpt-4o':            ['chat', 'tool_calling', 'streaming', 'vision'],
-  'gpt-4o-mini':       ['chat', 'tool_calling', 'streaming', 'vision'],
-  'gpt-4-turbo':       ['chat', 'tool_calling', 'streaming'],
-  'gpt-4':             ['chat', 'tool_calling', 'streaming'],
-  'gpt-3.5-turbo':     ['chat', 'tool_calling', 'streaming'],
-  'o1':                ['chat', 'thinking'],
-  'o1-mini':           ['chat', 'thinking'],
-  'o1-preview':        ['chat', 'thinking'],
-  'o3':                ['chat', 'tool_calling', 'streaming', 'thinking'],
-  'o3-mini':           ['chat', 'tool_calling', 'streaming', 'thinking'],
-  'o4-mini':           ['chat', 'tool_calling', 'streaming', 'thinking'],
+const { Chat, ToolCalling, Streaming, Vision, Thinking } = LLMCapabilities;
+
+const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
+  'gpt-4o':            [Chat, ToolCalling, Streaming, Vision],
+  'gpt-4o-mini':       [Chat, ToolCalling, Streaming, Vision],
+  'gpt-4-turbo':       [Chat, ToolCalling, Streaming],
+  'gpt-4':             [Chat, ToolCalling, Streaming],
+  'gpt-3.5-turbo':     [Chat, ToolCalling, Streaming],
+  'o1':                [Chat, Thinking],
+  'o1-mini':           [Chat, Thinking],
+  'o1-preview':        [Chat, Thinking],
+  'o3':                [Chat, ToolCalling, Streaming, Thinking],
+  'o3-mini':           [Chat, ToolCalling, Streaming, Thinking],
+  'o4-mini':           [Chat, ToolCalling, Streaming, Thinking],
 };
 
-const DEFAULT_CAPABILITIES = ['chat'];
+const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown): string[] {
+function resolveCapabilities(model: string, userOverride?: unknown): LLMCapability[] {
   // 用户显式声明优先
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    return userOverride as string[];
+    return userOverride as LLMCapability[];
   }
   // 精确匹配
   if (MODEL_CAPABILITIES[model]) return MODEL_CAPABILITIES[model];
