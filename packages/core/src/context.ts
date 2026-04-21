@@ -4,19 +4,16 @@ import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
 import { LLMRouter, type AggregatedModelInfo, type ModelProviderInfo } from './llm-router.js';
+import { DisposableChain } from './disposable-chain.js';
+import { MixinRegistry } from './mixin-registry.js';
+import { PlatformRegistry } from './platform-registry.js';
+import { PendingRegistrationBuffer } from './pending-buffer.js';
 import { probeCapability } from './types/capabilities.js';
 import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
-
-/** mixin 记录：哪些方法代理到哪个服务 */
-interface MixinEntry {
-  service: string;
-  methods: string[];
-  contextId: string;
-}
 
 /**
  * 上下文 (Context)
@@ -34,23 +31,20 @@ export class Context {
 
   private _events: EventBus;
   private _services: ServiceContainer;
-  private _disposables: (() => void)[] = [];
+  private _disposables: DisposableChain;
   private _children: Set<Context> = new Set();
   private _parent?: Context;
   private _disposed = false;
 
   /** 注册缓冲：服务尚不可用时暂存，待服务就绪后自动刷入 */
-  private _pendingTools: Omit<RegisteredTool, 'pluginName'>[] = [];
-  private _pendingToolGroups: Omit<ToolGroupInfo, 'pluginName'>[] = [];
-  private _pendingCommands: { def: CommandDefinition; ctxId: string }[] = [];
-  private _flushListenerAttached = false;
+  private _pending: PendingRegistrationBuffer;
 
   /** model→provider 路由器（懒初始化；服务注册/注销时自动失效缓存） */
   private _llmRouter: LLMRouter | null = null;
   private _llmRouterInvalidateAttached = false;
 
-  /** 全局 mixin 注册表（所有 Context 实例共享） */
-  private static _mixins: MixinEntry[] = [];
+  /** 平台注册表（懒初始化；无状态所以不需 invalidate） */
+  private _platformRegistry: PlatformRegistry | null = null;
 
   constructor(options: {
     id: string;
@@ -68,6 +62,15 @@ export class Context {
     this.logger = options.logger;
     this.config = options.config;
     this._parent = options.parent;
+    this._disposables = new DisposableChain(this.logger);
+    this._pending = new PendingRegistrationBuffer(
+      this.id,
+      this._services,
+      this._events,
+      this.logger,
+      this._disposables,
+      (event, handler) => this.on(event, handler),
+    );
   }
 
   // ---- 子系统访问（供高级插件检查/包装用） ----
@@ -292,15 +295,23 @@ export class Context {
   // ---- 平台 ----
 
   /**
+   * 平台注册表（懒初始化）。直接暴露以便高级场景自定义聚合逻辑。
+   */
+  get platforms(): PlatformRegistry {
+    if (!this._platformRegistry) {
+      this._platformRegistry = new PlatformRegistry(this._services);
+    }
+    return this._platformRegistry;
+  }
+
+  /**
    * 获取所有已注册的平台适配器
    *
    * 每个平台插件通过 `ctx.provide('platform', adapter, { capabilities: ['<平台名>'] })`
-   * 注册自身，claim 即为平台标识（如 'onebot', 'cli', 'webui'）。
+   * 注册自身，capability 即为平台标识（如 'onebot', 'cli', 'webui'）。
    */
   getPlatforms(): PlatformAdapter[] {
-    return this._services.getEntries('platform')
-      .map(e => e.instance as PlatformAdapter)
-      .filter(a => a && typeof a.getConnections === 'function');
+    return this.platforms.listAdapters();
   }
 
   /**
@@ -309,11 +320,7 @@ export class Context {
    * 基于各 platform 服务的 capabilities 收集，而非 adapter.platform 字段。
    */
   getPlatformNames(): string[] {
-    const names = new Set<string>();
-    for (const entry of this._services.getEntries('platform')) {
-      for (const cap of entry.capabilities) names.add(cap);
-    }
-    return [...names];
+    return this.platforms.listPlatformNames();
   }
 
   /**
@@ -326,16 +333,7 @@ export class Context {
     capabilities: string[];
     connections: PlatformConnection[];
   }> {
-    return this._services.getEntries('platform').map(entry => {
-      const adapter = entry.instance as PlatformAdapter;
-      return {
-        adapterName: adapter.adapterName,
-        platform: adapter.platform,
-        contextId: entry.contextId,
-        capabilities: [...entry.capabilities],
-        connections: adapter.getConnections(),
-      };
-    });
+    return this.platforms.listDetails();
   }
 
   // ---- 领域聚合查询 ----
@@ -357,7 +355,8 @@ export class Context {
       const offUnreg = this.on('service:unregistered', (svcName: string) => {
         if (svcName === 'llm') this._llmRouter?.invalidate();
       });
-      this._disposables.push(offReg, offUnreg);
+      this._disposables.push(offReg);
+      this._disposables.push(offUnreg);
     }
     return this._llmRouter;
   }
@@ -395,47 +394,7 @@ export class Context {
     this._llmRouter?.invalidate();
   }
 
-  // ---- 注册缓冲（服务延迟就绪支持） ----
-
-  /**
-   * 确保已挂载 service:registered 监听器，
-   * 用于在 tools/commands 服务就绪时自动刷入缓冲队列。
-   */
-  private _ensureFlushListener(): void {
-    if (this._flushListenerAttached) return;
-    this._flushListenerAttached = true;
-
-    const off = this.on('service:registered', (svcName: string) => {
-      if (svcName === 'tools') this._flushPendingTools();
-      if (svcName === 'commands') this._flushPendingCommands();
-    });
-    this._disposables.push(off);
-  }
-
-  private _flushPendingTools(): void {
-    const tools = this.tools;
-    if (!tools) return;
-    for (const tool of this._pendingTools) {
-      const dispose = tools.register(tool, this.id);
-      this._disposables.push(dispose);
-    }
-    this._pendingTools = [];
-    for (const group of this._pendingToolGroups) {
-      const dispose = tools.registerGroup(group, this.id);
-      this._disposables.push(dispose);
-    }
-    this._pendingToolGroups = [];
-  }
-
-  private _flushPendingCommands(): void {
-    const commands = this.commands;
-    if (!commands) return;
-    for (const { def, ctxId } of this._pendingCommands) {
-      const dispose = commands.register(def, ctxId);
-      this._disposables.push(dispose);
-    }
-    this._pendingCommands = [];
-  }
+  // ---- 注册缓冲（服务延迟就绪支持，逻辑已抽到 PendingRegistrationBuffer） ----
 
   // ---- 工具 ----
 
@@ -444,19 +403,7 @@ export class Context {
    * 若 tools 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
    */
   registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void {
-    if (this.tools) {
-      const dispose = this.tools.register(tool, this.id);
-      this._disposables.push(dispose);
-      return dispose;
-    }
-    // 服务尚不可用，缓冲
-    this._pendingTools.push(tool);
-    this._ensureFlushListener();
-    this.logger.debug(`工具 "${tool.definition.function.name}" 已缓冲，等待 tools 服务就绪`);
-    return () => {
-      const idx = this._pendingTools.indexOf(tool);
-      if (idx >= 0) this._pendingTools.splice(idx, 1);
-    };
+    return this._pending.registerTool(tool);
   }
 
   /**
@@ -464,18 +411,7 @@ export class Context {
    * 若 tools 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
    */
   registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
-    if (this.tools) {
-      const dispose = this.tools.registerGroup(group, this.id);
-      this._disposables.push(dispose);
-      return dispose;
-    }
-    this._pendingToolGroups.push(group);
-    this._ensureFlushListener();
-    this.logger.debug(`工具分组 "${group.name}" 已缓冲，等待 tools 服务就绪`);
-    return () => {
-      const idx = this._pendingToolGroups.indexOf(group);
-      if (idx >= 0) this._pendingToolGroups.splice(idx, 1);
-    };
+    return this._pending.registerToolGroup(group);
   }
 
   // ---- 指令 ----
@@ -505,20 +441,7 @@ export class Context {
       safety: options?.safety,
       asTools: options?.asTools,
     };
-    if (this.commands) {
-      const dispose = this.commands.register(def, this.id);
-      this._disposables.push(dispose);
-      return dispose;
-    }
-    // 缓冲
-    const entry = { def, ctxId: this.id };
-    this._pendingCommands.push(entry);
-    this._ensureFlushListener();
-    this.logger.debug(`指令 "${name}" 已缓冲，等待 commands 服务就绪`);
-    return () => {
-      const idx = this._pendingCommands.indexOf(entry);
-      if (idx >= 0) this._pendingCommands.splice(idx, 1);
-    };
+    return this._pending.registerCommand(def);
   }
 
   // ---- Mixin ----
@@ -543,41 +466,8 @@ export class Context {
    * // }
    */
   mixin(serviceName: string, methods: string[]): () => void {
-    const entry: MixinEntry = { service: serviceName, methods, contextId: this.id };
-    Context._mixins.push(entry);
-
-    // 在 Context prototype 上定义 getter，代理到服务
-    for (const method of methods) {
-      if (method in Context.prototype) {
-        this.logger.warn(`mixin: 方法 "${method}" 已存在于 Context，跳过`);
-        continue;
-      }
-      Object.defineProperty(Context.prototype, method, {
-        configurable: true,
-        enumerable: false,
-        get(this: Context) {
-          const svc = this.getService<Record<string, unknown>>(serviceName);
-          if (!svc) return undefined;
-          const val = svc[method];
-          if (typeof val === 'function') return val.bind(svc);
-          return val;
-        },
-      });
-    }
-
-    const dispose = () => {
-      const idx = Context._mixins.indexOf(entry);
-      if (idx >= 0) Context._mixins.splice(idx, 1);
-      for (const method of methods) {
-        // 只有当没有其他 mixin 注册了同名方法时才删除
-        const stillUsed = Context._mixins.some(e => e.methods.includes(method));
-        if (!stillUsed) {
-          delete (Context.prototype as unknown as Record<string, unknown>)[method];
-        }
-      }
-    };
+    const dispose = MixinRegistry.register(Context.prototype, serviceName, methods, this.id, this.logger);
     this._disposables.push(dispose);
-    this.logger.debug(`mixin: ${methods.join(', ')} → ${serviceName}`);
     return dispose;
   }
 
@@ -585,7 +475,7 @@ export class Context {
    * 获取当前所有 mixin 注册信息
    */
   static getMixins(): Array<{ service: string; methods: string[]; contextId: string }> {
-    return Context._mixins.map(e => ({ ...e }));
+    return MixinRegistry.list();
   }
 
   // ---- 中间件/钩子 ----
@@ -640,17 +530,8 @@ export class Context {
     const removedServices = this._services.unregisterByContext(this.id);
 
     // 逆序执行清理（unregisterByContext 已整体移除服务，provide 的 dispose 会安全跳过）
-    for (let i = this._disposables.length - 1; i >= 0; i--) {
-      try {
-        this._disposables[i]();
-      } catch {
-        // 忽略清理错误
-      }
-    }
-    this._disposables = [];
-    this._pendingTools = [];
-    this._pendingToolGroups = [];
-    this._pendingCommands = [];
+    this._disposables.dispose();
+    this._pending.clear();
 
     // 发射服务注销事件，让 App 的自动恢复监听器能响应
     for (const svc of removedServices) {

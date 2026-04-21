@@ -16,3 +16,6 @@ workspace/
 *.log
 *.node
 **/native/target/
+test/
+tests/
+.DS_Store
