@@ -43,6 +43,12 @@ export class Context {
   private _pendingCommands: { def: CommandDefinition; ctxId: string }[] = [];
   private _flushListenerAttached = false;
 
+  /** model→provider 映射缓存（所有 Context 实例通过 ServiceContainer 共享同一数据源） */
+  private _modelProviderCache: Map<string, string> | null = null;
+  private _modelProviderCacheTime = 0;
+  private _modelProviderCachePromise: Promise<Map<string, string>> | null = null;
+  private static readonly MODEL_CACHE_TTL = 60_000; // 60 秒过期
+
   /** 全局 mixin 注册表（所有 Context 实例共享） */
   private static _mixins: MixinEntry[] = [];
 
@@ -334,8 +340,8 @@ export class Context {
   /**
    * 按模型 ID 查找拥有该模型的 LLM 提供者
    *
-   * 遍历所有已注册的 'llm' 服务，查询各自 listModels()，
-   * 返回第一个拥有该模型的提供者实例。
+   * 内部维护 model→contextId 映射缓存（60 秒 TTL），
+   * 首次调用或缓存过期时自动构建。并发调用共享同一次构建。
    *
    * @example
    * const result = await ctx.resolveModelProvider('gpt-4o');
@@ -345,17 +351,55 @@ export class Context {
    * }
    */
   async resolveModelProvider(modelId: string): Promise<{ instance: unknown; model: string; contextId: string } | undefined> {
+    const cache = await this._ensureModelProviderCache();
+    const targetContextId = cache.get(modelId);
+    if (!targetContextId) return undefined;
+
     const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
-    for (const { instance, contextId } of providers) {
-      if (typeof instance.listModels !== 'function') continue;
-      try {
-        const models = await instance.listModels();
-        if (models.some(m => m.id === modelId)) {
-          return { instance, model: modelId, contextId };
-        }
-      } catch { /* skip unavailable provider */ }
+    const found = providers.find(p => p.contextId === targetContextId);
+    return found ? { instance: found.instance, model: modelId, contextId: targetContextId } : undefined;
+  }
+
+  /**
+   * 获取完整的 model→contextId 映射（带缓存）。
+   * 供需要批量查找或自行路由的插件使用。
+   */
+  async getModelProviderMap(): Promise<Map<string, string>> {
+    return this._ensureModelProviderCache();
+  }
+
+  /** 使 model→provider 缓存立即失效（服务注册/注销后调用） */
+  invalidateModelProviderCache(): void {
+    this._modelProviderCache = null;
+    this._modelProviderCachePromise = null;
+  }
+
+  private _ensureModelProviderCache(): Promise<Map<string, string>> {
+    const now = Date.now();
+    if (this._modelProviderCache && (now - this._modelProviderCacheTime) < Context.MODEL_CACHE_TTL) {
+      return Promise.resolve(this._modelProviderCache);
     }
-    return undefined;
+    if (this._modelProviderCachePromise) return this._modelProviderCachePromise;
+
+    this._modelProviderCachePromise = (async () => {
+      const map = new Map<string, string>();
+      const providers = this.getAllServices<{ listModels?(): Promise<Array<{ id: string; capabilities: string[] }>> }>('llm');
+      for (const { instance, contextId } of providers) {
+        if (typeof instance.listModels !== 'function') continue;
+        try {
+          const models = await instance.listModels();
+          for (const m of models) {
+            if (!map.has(m.id)) map.set(m.id, contextId);
+          }
+        } catch { /* skip unavailable provider */ }
+      }
+      this._modelProviderCache = map;
+      this._modelProviderCacheTime = Date.now();
+      this._modelProviderCachePromise = null;
+      return map;
+    })();
+
+    return this._modelProviderCachePromise;
   }
 
   // ---- 注册缓冲（服务延迟就绪支持） ----

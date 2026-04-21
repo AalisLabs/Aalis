@@ -222,25 +222,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const limiter = new RateLimiter(cfg);
 
-  // 压缩功能：模型→提供者映射缓存
-  let modelProviderMap: Map<string, string> | null = null;
-  if (cfg.enableCompression) {
-    (async () => {
-      const map = new Map<string, string>();
-      const allProviders = ctx.getAllServices<LLMService>('llm');
-      for (const p of allProviders) {
-        if (typeof p.instance.listModels === 'function') {
-          try {
-            const models = await p.instance.listModels();
-            for (const m of models) map.set(m.id, p.contextId);
-          } catch { /* ignore */ }
-        }
-      }
-      modelProviderMap = map;
-      ctx.logger.debug(`搜索压缩模型映射已构建: ${map.size} 个模型`);
-    })();
-  }
-
   const DEFAULT_COMPRESSION_PROMPT =
     '请根据用户的搜索意图，将以下搜索结果压缩整合为一段简洁、准确、有条理的摘要。' +
     '保留关键事实、数据和来源，去除重复和无关信息。用中文回答。\n\n' +
@@ -251,12 +232,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const allProviders = ctx.getAllServices<LLMService>('llm');
     if (allProviders.length === 0) return rawResults;
 
-    // 查找目标 LLM 提供者
+    // 通过 Context 统一路由查找目标 LLM 提供者
     let targetLLM: LLMService = allProviders[0].instance;
-    if (cfg.compressionModel && modelProviderMap) {
-      const targetContextId = modelProviderMap.get(cfg.compressionModel);
-      if (targetContextId) {
-        const found = allProviders.find(p => p.contextId === targetContextId);
+    if (cfg.compressionModel) {
+      const resolved = await ctx.resolveModelProvider(cfg.compressionModel);
+      if (resolved) {
+        const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) targetLLM = found.instance;
       }
     }
