@@ -304,23 +304,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     gifDescriptionMode: (config.gifDescriptionMode as 'combined' | 'separate') || 'combined',
   };
 
-  // 模型→提供者映射缓存（启动时异步构建）
-  let modelProviderMap: Map<string, string> | null = null;
-  (async () => {
-    const map = new Map<string, string>();
-    const allProviders = ctx.getAllServices<LLMService>('llm');
-    for (const p of allProviders) {
-      if (typeof p.instance.listModels === 'function') {
-        try {
-          const models = await p.instance.listModels();
-          for (const m of models) map.set(m.id, p.contextId);
-        } catch { /* ignore */ }
-      }
-    }
-    modelProviderMap = map;
-    ctx.logger.debug(`图像识别模型映射已构建: ${map.size} 个模型`);
-  })();
-
   /** 通过 LLM 服务识别单张静态图片 */
   async function describeImage(visionLLM: LLMService, imageUrl: string): Promise<string> {
     const prompt = cfg.prompt || DEFAULT_PROMPT;
@@ -552,11 +535,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 如果用户指定了模型，尝试找到拥有该模型的提供者
-    if (cfg.preferredModel && modelProviderMap) {
-      const mappedProvider = modelProviderMap.get(cfg.preferredModel);
-      if (mappedProvider) {
-        const found = allProviders.find(p => p.contextId === mappedProvider);
+    // 如果用户指定了模型，通过 Context 统一路由找到正确的提供者
+    if (cfg.preferredModel) {
+      const resolved = await ctx.resolveModelProvider(cfg.preferredModel);
+      if (resolved) {
+        const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) chosen = found;
       }
     }
@@ -602,7 +585,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
      * @param localRefPath 可选，本地缓存文件路径（用于动图帧提取）
      */
     async describe(imageUrl: string, localRefPath?: string): Promise<string> {
-      const visionLLM = getVisionLLM();
+      const visionLLM = await getVisionLLM();
       if (!visionLLM) return '';
       const result = await describeAny(visionLLM, imageUrl, localRefPath);
       // 过滤掉失败/无描述的占位符，只返回真正有效的描述
@@ -610,7 +593,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return result;
     },
     async processMessage(input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> }): Promise<ImageProcessResult | null> {
-      const visionLLM = getVisionLLM();
+      const visionLLM = await getVisionLLM();
       if (!visionLLM || !cfg.enabled || input.images.length === 0) return null;
       return processImageMessage(visionLLM, input);
     },
@@ -632,14 +615,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   /** 获取 vision LLM 提供者 */
-  function getVisionLLM(): LLMService | null {
+  async function getVisionLLM(): Promise<LLMService | null> {
     const allProviders = ctx.getAllServices<LLMService>('llm');
     let chosen = allProviders.find(p => p.capabilities.includes('vision')) ?? allProviders[0];
     if (!chosen) return null;
-    if (cfg.preferredModel && modelProviderMap) {
-      const mappedProvider = modelProviderMap.get(cfg.preferredModel);
-      if (mappedProvider) {
-        const found = allProviders.find(p => p.contextId === mappedProvider);
+    if (cfg.preferredModel) {
+      const resolved = await ctx.resolveModelProvider(cfg.preferredModel);
+      if (resolved) {
+        const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) chosen = found;
       }
     }
@@ -677,7 +660,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const imageInput = args.image as string;
         const customPrompt = args.prompt as string | undefined;
 
-        const visionLLM = getVisionLLM();
+        const visionLLM = await getVisionLLM();
         if (!visionLLM) {
           return JSON.stringify({ error: '没有可用的视觉模型' });
         }
