@@ -111,7 +111,7 @@ export interface OneBotProtocol {
   parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'other';
 
   /** 解析消息事件为标准化格式 */
-  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedMessageEvent | null;
+  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null;
 
   /** 解析元事件为标准化格式 */
   parseMetaEvent(raw: OneBotRawEvent): NormalizedMetaEvent;
@@ -132,8 +132,9 @@ export function extractText(segments: OneBotMessageSegment[]): string {
  * 将 OneBot 消息段数组转换为富文本（含 XML 标记），供 LLM 消费。
  * @param segments 消息段数组
  * @param selfId 机器人自身 ID，用于标记 <at self>
+ * @param nicknameMap 可选的 userId→昵称 映射，用于丰富 <at> 标签
  */
-export function segmentsToText(segments: OneBotMessageSegment[], selfId?: string): string {
+export function segmentsToText(segments: OneBotMessageSegment[], selfId?: string, nicknameMap?: Map<string, string>): string {
   return segments.map(seg => {
     switch (seg.type) {
       case 'text':
@@ -141,11 +142,15 @@ export function segmentsToText(segments: OneBotMessageSegment[], selfId?: string
       case 'at': {
         const qq = String(seg.data.qq ?? '');
         if (qq === 'all') return '<at>all</at>';
-        return (selfId && qq === selfId) ? `<at self>${qq}</at>` : `<at>${qq}</at>`;
+        const nick = nicknameMap?.get(qq) ?? qq;
+        const selfAttr = (selfId && qq === selfId) ? ' self' : '';
+        return `<at${selfAttr} id="${qq}">${nick}</at>`;
       }
       case 'mention': {
         const uid = String(seg.data.user_id ?? '');
-        return (selfId && uid === selfId) ? `<at self>${uid}</at>` : `<at>${uid}</at>`;
+        const nick = nicknameMap?.get(uid) ?? uid;
+        const selfAttr = (selfId && uid === selfId) ? ' self' : '';
+        return `<at${selfAttr} id="${uid}">${nick}</at>`;
       }
       case 'mention_all':
         return '<at>all</at>';
@@ -185,14 +190,16 @@ export interface ParsedSegment {
  * 解析内容字符串中的 XML 标记，拆分为抽象消息段列表。
  *
  * 支持的标记：
- * - `<at>id</at>` / `<at self>id</at>` → @提及
+ * - `<at id="QQ">昵称</at>` / `<at self id="QQ">昵称</at>` → @提及（新格式）
+ * - `<at>QQ</at>` / `<at self>QQ</at>` → @提及（旧格式/无昵称兼容）
  * - `<face id="N"/>` → QQ 表情
  * - `<image url="..."/>` → 图片
  * - `<reply id="..."/>` → 引用回复
  */
 export function parseContentToSegments(content: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
-  const regex = /<at(?:\s+self)?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/g;
+  // 匹配新旧两种 at 格式 + face/image/reply
+  const regex = /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -201,14 +208,16 @@ export function parseContentToSegments(content: string): ParsedSegment[] {
       const text = content.slice(lastIndex, match.index);
       if (text) segments.push({ type: 'text', data: { text } });
     }
-    if (match[1] !== undefined) {
-      segments.push({ type: 'at', data: { id: match[1].trim() } });
-    } else if (match[2] !== undefined) {
-      // face 标签：忽略，不转为消息段（防止 LLM 误发 QQ 表情，也兼容v12版本）
+    if (match[1] !== undefined || match[2] !== undefined) {
+      // at 标签：优先用 id 属性（新格式），回退到标签内容（旧格式/纯ID）
+      const id = (match[1] ?? match[2]).trim();
+      segments.push({ type: 'at', data: { id } });
     } else if (match[3] !== undefined) {
-      segments.push({ type: 'image', data: { url: match[3] } });
+      // face 标签：忽略，不转为消息段（防止 LLM 误发 QQ 表情，也兼容v12版本）
     } else if (match[4] !== undefined) {
-      segments.push({ type: 'reply', data: { id: match[4] } });
+      segments.push({ type: 'image', data: { url: match[4] } });
+    } else if (match[5] !== undefined) {
+      segments.push({ type: 'reply', data: { id: match[5] } });
     }
     lastIndex = match.index + match[0].length;
   }

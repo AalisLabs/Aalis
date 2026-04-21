@@ -81,6 +81,7 @@ const DEFAULT_SUMMARY_PROMPT = `你是一个对话摘要助手。请将以下对
 3. 保留对话中提到的人名、地点、时间等关键实体
 4. 保留用户的偏好和习惯信息
 5. 保留情感状态变化、关系动态、讨论中形成的观点
+6. **特别重要**：保留每个发言者的昵称与ID的对应关系。消息中 [昵称(ID)] 格式标注了发言者身份，摘要中必须保留这种对应关系（如"小明(123456)"），以便后续能通过ID或昵称识别同一个人
 6. 忽略纯粹的寒暄和无信息量的重复内容
 7. 如果有之前的摘要，在此基础上整合新内容，确保旧摘要中的重要信息不因新内容加入而被丢弃
 8. 使用第三方视角描述，标注发言者身份（如"用户[小明]..."、"助手..."）
@@ -235,9 +236,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const formattedMessages = messagesToSummarize
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => {
-          const role = m.role === 'user'
-            ? (m.name ? `用户[${m.name}]` : '用户')
-            : '助手';
+          // user content 中已含 [昵称(ID)] 前缀，无需再加 name
+          const role = m.role === 'user' ? '用户' : '助手';
           return `${role}: ${m.content ?? '(空)'}`;
         })
         .join('\n');
