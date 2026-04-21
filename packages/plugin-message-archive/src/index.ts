@@ -5,8 +5,9 @@ import type {
   Message,
   MemoryService,
   MessageArchiveService,
+  ImageRecognitionService,
 } from '@aalis/core';
-import { prefixSender, getMessageName } from '@aalis/core';
+import { prefixSender, getMessageName, MessageArchiveCapabilities } from '@aalis/core';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';
@@ -31,23 +32,6 @@ export const defaultConfig = {
 
 interface PluginConfig {
   debugLogs: boolean;
-}
-
-interface ImageProcessResult {
-  content: string;
-  imageDescriptions?: string[];
-  info: {
-    imageCount: number;
-    successCount: number;
-    descriptions: string[];
-    transformedContent: string;
-  };
-}
-
-interface ImageRecognitionService {
-  available: boolean;
-  enabled: boolean;
-  processMessage?: (input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> }) => Promise<ImageProcessResult | null>;
 }
 
 function buildIncomingContent(incoming: IncomingMessage): string {
@@ -159,6 +143,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
 
   ctx.provide('message-archive', service, {
-    capabilities: ['incoming', 'generic'],
+    capabilities: [MessageArchiveCapabilities.Incoming, MessageArchiveCapabilities.Generic],
   });
 }

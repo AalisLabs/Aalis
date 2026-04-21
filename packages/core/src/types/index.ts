@@ -71,13 +71,45 @@ export type { CLIService } from './cli.js';
 export type { AppService } from './app.js';
 
 // LLM 服务
-export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService } from './llm.js';
+export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService, LLMCapability, LLMCapabilityRegistry } from './llm.js';
+export { LLMCapabilities } from './llm.js';
+
+// 服务能力声明框架
+export type { ServiceCapabilityMap, CapabilityOf, CapabilityList } from './capabilities.js';
+
+// 图像识别服务
+export type {
+  ImageRecognitionService,
+  ImageRecognitionInput,
+  ImageRecognitionResult,
+  ImageRecognitionCapability,
+  ImageRecognitionCapabilityRegistry,
+} from './image-recognition.js';
+export { ImageRecognitionCapabilities } from './image-recognition.js';
+
+// 网络搜索服务
+export type {
+  WebSearchService,
+  WebSearchRequest,
+  WebSearchResponse,
+  WebSearchResult,
+  WebSearchCapability,
+  WebSearchCapabilityRegistry,
+} from './web-search.js';
+export { WebSearchCapabilities } from './web-search.js';
 
 // 记忆服务
-export type { MemoryService, ConversationTurn } from './memory.js';
+export type { MemoryService, ConversationTurn, MemoryCapability, MemoryCapabilityRegistry } from './memory.js';
+export { MemoryCapabilities } from './memory.js';
 
 // 消息归档服务
-export type { ArchiveIncomingResult, MessageArchiveService } from './archive.js';
+export type {
+  ArchiveIncomingResult,
+  MessageArchiveService,
+  MessageArchiveCapability,
+  MessageArchiveCapabilityRegistry,
+} from './archive.js';
+export { MessageArchiveCapabilities } from './archive.js';
 
 // Embedding 服务
 export type { EmbeddingService } from './embedding.js';
@@ -92,4 +124,13 @@ export type { OutputFormatField, OutputFormat, PersonaSessionOptions, PersonaSer
 export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
 
 // 会话管理
-export type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from './session.js';
+export type {
+  SessionInfo,
+  SessionConfig,
+  SessionTreeNode,
+  SessionManagerService,
+  PlatformProfile,
+  SessionManagerCapability,
+  SessionManagerCapabilityRegistry,
+} from './session.js';
+export { SessionManagerCapabilities } from './session.js';

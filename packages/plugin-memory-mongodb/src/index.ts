@@ -2,6 +2,7 @@ import { MongoClient, type Collection, type Db } from 'mongodb';
 import { randomUUID } from 'node:crypto';
 import type { Context, Message, ConfigSchema } from '@aalis/core';
 import type { MemoryService, ConversationTurn } from '@aalis/core';
+import { MemoryCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -268,7 +269,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     await metaCollection.createIndex({ namespace: 1, key: 1 }, { unique: true });
 
     const service = new MongoMemoryService(collection, turnsCollection, metaCollection);
-    ctx.provide('memory', service);
+    ctx.provide('memory', service, {
+      capabilities: [
+        MemoryCapabilities.History,
+        MemoryCapabilities.TurnArchive,
+        MemoryCapabilities.Metadata,
+        MemoryCapabilities.ContentUpdate,
+      ],
+    });
 
     ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
 

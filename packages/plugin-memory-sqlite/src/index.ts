@@ -4,6 +4,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { Context, Message, ConfigSchema } from '@aalis/core';
 import type { MemoryService, ConversationTurn } from '@aalis/core';
+import { MemoryCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -310,7 +311,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const service = new SQLiteMemoryService(db);
 
-    ctx.provide('memory', service, { priority: 10 });
+    ctx.provide('memory', service, {
+      priority: 10,
+      capabilities: [
+        MemoryCapabilities.History,
+        MemoryCapabilities.TurnArchive,
+        MemoryCapabilities.Metadata,
+        MemoryCapabilities.ContentUpdate,
+      ],
+    });
 
     ctx.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
 

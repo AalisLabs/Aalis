@@ -10,6 +10,12 @@ export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
 export { Logger, getLogBuffer, onLogEntry } from './logger.js';
 export { getSenderLabel, prefixSender, getMessageName } from './identity.js';
+export { LLMCapabilities } from './types/index.js';
+export { ImageRecognitionCapabilities } from './types/index.js';
+export { WebSearchCapabilities } from './types/index.js';
+export { MemoryCapabilities } from './types/index.js';
+export { MessageArchiveCapabilities } from './types/index.js';
+export { SessionManagerCapabilities } from './types/index.js';
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
 export type { LogLevel, LogEntry } from './logger.js';
@@ -83,12 +89,22 @@ export type {
   ChatStreamChunk,
   ModelInfo,
   LLMService,
+  LLMCapability,
+  LLMCapabilityRegistry,
+  // 服务能力声明框架
+  ServiceCapabilityMap,
+  CapabilityOf,
+  CapabilityList,
   // 记忆服务
   MemoryService,
   ConversationTurn,
+  MemoryCapability,
+  MemoryCapabilityRegistry,
   // 消息归档服务
   ArchiveIncomingResult,
   MessageArchiveService,
+  MessageArchiveCapability,
+  MessageArchiveCapabilityRegistry,
   // Embedding 服务
   EmbeddingService,
   // 向量数据库服务
@@ -109,4 +125,19 @@ export type {
   SessionTreeNode,
   SessionManagerService,
   PlatformProfile,
+  SessionManagerCapability,
+  SessionManagerCapabilityRegistry,
+  // 图像识别服务
+  ImageRecognitionService,
+  ImageRecognitionInput,
+  ImageRecognitionResult,
+  ImageRecognitionCapability,
+  ImageRecognitionCapabilityRegistry,
+  // 网络搜索服务
+  WebSearchService,
+  WebSearchRequest,
+  WebSearchResponse,
+  WebSearchResult,
+  WebSearchCapability,
+  WebSearchCapabilityRegistry,
 } from './types/index.js';
