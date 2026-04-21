@@ -6,11 +6,16 @@
 
 /**
  * 获取消息发送者的显示标签。
- * 优先使用 nickname，回退到 userId。空字符串视为无值。
- * 返回 undefined 表示无法确定发送者（如 CLI 单用户场景）。
+ * 同时展示 nickname 和 userId 帮助 LLM 关联身份。
+ * - 两者都有时返回 `昵称(ID)`
+ * - 只有 nickname 返回 nickname
+ * - 只有 userId 返回 userId
+ * - 都无返回 undefined
  */
 export function getSenderLabel(nickname?: string, userId?: string): string | undefined {
-  return (nickname && nickname.trim()) || userId || undefined;
+  const nick = nickname?.trim();
+  if (nick && userId) return `${nick}(${userId})`;
+  return nick || userId || undefined;
 }
 
 /**
