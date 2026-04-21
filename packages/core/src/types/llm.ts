@@ -49,7 +49,7 @@ export interface ChatStreamChunk {
 /** 模型信息（含能力声明） */
 export interface ModelInfo {
   id: string;
-  capabilities: string[];
+  capabilities: LLMCapability[];
 }
 
 export interface LLMService {
@@ -61,4 +61,67 @@ export interface LLMService {
   getContextLength(): number;
   /** 列出远端可用模型及其能力 */
   listModels?(): Promise<ModelInfo[]>;
+}
+
+// ----- LLM 能力声明（capability 框架）-----
+
+/**
+ * LLM 服务能力注册表
+ *
+ * 第三方插件可通过 declaration merging 追加新能力：
+ *
+ * ```ts
+ * declare module '@aalis/core' {
+ *   interface LLMCapabilityRegistry {
+ *     AudioInput: 'audio_input';
+ *     FimCompletion: 'fim_completion';
+ *   }
+ * }
+ * ```
+ *
+ * 然后在自己的 LLM 服务里：
+ * ```ts
+ * ctx.provide('llm', service, { capabilities: ['chat', 'audio_input'] });
+ * ```
+ */
+export interface LLMCapabilityRegistry {
+  /** 基础对话能力（必备） */
+  Chat: 'chat';
+  /** 支持工具调用 / function calling */
+  ToolCalling: 'tool_calling';
+  /** 支持流式输出 */
+  Streaming: 'streaming';
+  /** 支持图像输入（多模态） */
+  Vision: 'vision';
+  /** 支持扩展思考 / reasoning */
+  Thinking: 'thinking';
+  /** 支持强制 JSON 输出 (responseFormat='json_object') */
+  JsonMode: 'json_mode';
+}
+
+/** LLM 能力字符串 union（自动包含第三方扩展） */
+export type LLMCapability = LLMCapabilityRegistry[keyof LLMCapabilityRegistry];
+
+/**
+ * LLM 内置能力常量
+ *
+ * 用于注册时引用，避免 magic string 拼写错误：
+ * ```ts
+ * ctx.provide('llm', service, { capabilities: [LLMCapabilities.Chat, LLMCapabilities.Streaming] });
+ * ```
+ */
+export const LLMCapabilities = {
+  Chat: 'chat',
+  ToolCalling: 'tool_calling',
+  Streaming: 'streaming',
+  Vision: 'vision',
+  Thinking: 'thinking',
+  JsonMode: 'json_mode',
+} as const satisfies LLMCapabilityRegistry;
+
+// 注册到全局服务能力映射
+declare module './capabilities.js' {
+  interface ServiceCapabilityMap {
+    llm: LLMCapability;
+  }
 }

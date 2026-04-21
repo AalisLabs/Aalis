@@ -3,7 +3,7 @@ import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService } from './types/index.js';
+import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
@@ -167,16 +167,25 @@ export class Context {
 
   /**
    * 注册服务，返回 dispose 函数用于精确卸载该服务
+   *
+   * `capabilities` 参数按服务名获得强类型约束：
+   * - 已注册服务名（如 `'llm'`, `'memory'`）→ 仅允许对应 union 中的字面量
+   * - 未注册服务名 → 退回 `string`，保留动态扩展空间
+   *
+   * @example
+   * ctx.provide('llm', service, { capabilities: ['chat', 'tool_calling'] });
+   * //                                            ^^^^^^  ^^^^^^^^^^^^^^
+   * //                                            类型安全，拼错 'tool_call' 会编译报错
    */
-  provide(
-    name: string,
+  provide<TName extends string>(
+    name: TName,
     instance: unknown,
-    options?: { capabilities?: string[]; priority?: number; label?: string },
+    options?: { capabilities?: CapabilityList<TName>; priority?: number; label?: string },
   ): () => void {
     this._services.register(
       name,
       instance,
-      options?.capabilities ?? [],
+      (options?.capabilities ?? []) as readonly string[] as string[],
       options?.priority ?? 0,
       this.id,
       options?.label,
@@ -191,7 +200,7 @@ export class Context {
     this._disposables.push(dispose);
 
     const caps = options?.capabilities ?? [];
-    this._events.emit('service:registered', name, caps).catch(err => {
+    this._events.emit('service:registered', name, [...caps]).catch(err => {
       this.logger.warn(`服务注册事件发射失败 [${name}]:`, err);
     });
     this.logger.debug(`服务已注册: ${name}${caps.length ? ` [${caps.join(', ')}]` : ''}`);
@@ -201,16 +210,24 @@ export class Context {
 
   /**
    * 获取服务 (支持能力匹配)
+   *
+   * `requiredCapabilities` 按服务名获得强类型约束（同 `provide()`）。
    */
-  getService<T>(name: string, requiredCapabilities?: string[]): T | undefined {
-    return this._services.get<T>(name, requiredCapabilities);
+  getService<T, TName extends string = string>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): T | undefined {
+    return this._services.get<T>(name, requiredCapabilities as readonly string[] as string[] | undefined);
   }
 
   /**
    * 检查服务是否可用
    */
-  hasService(name: string, requiredCapabilities?: string[]): boolean {
-    return this._services.has(name, requiredCapabilities);
+  hasService<TName extends string>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): boolean {
+    return this._services.has(name, requiredCapabilities as readonly string[] as string[] | undefined);
   }
 
   /**
@@ -246,8 +263,8 @@ export class Context {
    * // 获取所有 LLM 并聚合模型列表
    * const allLLMs = ctx.getAllServices<LLMService>('llm');
    */
-  getAllServices<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
-    return this._services.getAll<T>(name, requiredCapabilities);
+  getAllServices<T, TName extends string = string>(name: TName, requiredCapabilities?: CapabilityList<TName>): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
+    return this._services.getAll<T>(name, requiredCapabilities as readonly string[] as string[] | undefined);
   }
 
   /**

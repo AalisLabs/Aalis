@@ -45,8 +45,44 @@ export interface MemoryService {
   /** 删除元数据条目 */
   deleteMetadata?(namespace: string, key: string): Promise<void>;
 
-  // ----- 消息内容更新（图片描述回写等） -----
-
   /** 在指定会话的最近 N 条消息中，将 content 里的 oldText 替换为 newText，返回受影响的条数 */
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;
+}
+
+// ----- 记忆能力声明（capability 框架）-----
+
+/**
+ * 记忆服务能力注册表
+ *
+ * 第三方可扩展：
+ * ```ts
+ * declare module '@aalis/core' {
+ *   interface MemoryCapabilityRegistry { Persistent: 'persistent'; Encrypted: 'encrypted'; }
+ * }
+ * ```
+ */
+export interface MemoryCapabilityRegistry {
+  /** 基础的消息历史保存/读取 */
+  History: 'history';
+  /** 支持长期对话轮次归档（saveTurn/getTurns） */
+  TurnArchive: 'turn-archive';
+  /** 支持结构化元数据存储（saveMetadata 等） */
+  Metadata: 'metadata';
+  /** 支持消息内容更新（updateMessageContent） */
+  ContentUpdate: 'content-update';
+}
+
+export type MemoryCapability = MemoryCapabilityRegistry[keyof MemoryCapabilityRegistry];
+
+export const MemoryCapabilities = {
+  History: 'history',
+  TurnArchive: 'turn-archive',
+  Metadata: 'metadata',
+  ContentUpdate: 'content-update',
+} as const satisfies MemoryCapabilityRegistry;
+
+declare module './capabilities.js' {
+  interface ServiceCapabilityMap {
+    memory: MemoryCapability;
+  }
 }
