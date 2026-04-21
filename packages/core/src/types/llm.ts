@@ -61,6 +61,16 @@ export interface LLMService {
   getContextLength(): number;
   /** 列出远端可用模型及其能力 */
   listModels?(): Promise<ModelInfo[]>;
+  /**
+   * 提供者自报默认模型 ID。
+   * LLMRouter 在用户未指定 `model` 时可参考此值。
+   */
+  getDefaultModelId?(): string | undefined;
+  /**
+   * 同步/异步判断该提供者是否支持指定模型。
+   * 实现后可让 LLMRouter 跳过 listModels 枚举（快路径）。
+   */
+  supportsModel?(modelId: string): boolean | Promise<boolean>;
 }
 
 // ----- LLM 能力声明（capability 框架）-----
