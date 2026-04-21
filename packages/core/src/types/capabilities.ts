@@ -73,3 +73,69 @@ export type CapabilityOf<TName extends string> =
  * 允许传入只读数组（如 `as const` 字面量）或普通数组。
  */
 export type CapabilityList<TName extends string> = ReadonlyArray<CapabilityOf<TName>>;
+
+// ----- 能力探测（capability ↔ 实例方法 的运行时一致性校验） -----
+//
+// 作用：插件在 `ctx.provide(service, instance, { capabilities: [...] })` 声明能力时，
+// dev 模式下核对实例是否真的实现了该能力要求的成员/方法，尽早暴露「声明与实现不符」。
+//
+// 与 capability 注册表一样，探测器由各服务类型文件**就近**注册（保持模块化）。
+// 对于参数层能力（如 LLM 的 ToolCalling / Vision），由于无法用方法名探测，
+// 通常不注册探测器 —— 未注册 = 不校验，不阻塞。
+
+/**
+ * 能力探测函数：返回 `true` 表示通过；返回字符串表示失败原因。
+ *
+ * @example
+ * const probe: CapabilityProbe = inst =>
+ *   typeof (inst as { chat?: unknown }).chat === 'function'
+ *     ? true
+ *     : 'LLMService.chat() is required for capability "chat"';
+ */
+export type CapabilityProbe = (instance: unknown) => true | string;
+
+const _probes = new Map<string, Map<string, CapabilityProbe>>();
+
+/**
+ * 注册一条能力探测器
+ *
+ * 重复注册相同 `(service, capability)` 会覆盖之前的注册，
+ * 这使得同一服务的不同实现版本可以通过自己的类型文件被覆盖/扩展。
+ */
+export function registerCapabilityProbe(
+  service: string,
+  capability: string,
+  probe: CapabilityProbe,
+): void {
+  let byCap = _probes.get(service);
+  if (!byCap) {
+    byCap = new Map();
+    _probes.set(service, byCap);
+  }
+  byCap.set(capability, probe);
+}
+
+/**
+ * 按服务+能力探测实例
+ *
+ * @returns
+ * - `true`：探测通过
+ * - `string`：探测失败（信息用于报错）
+ * - `null`：没有对应探测器（跳过校验）
+ */
+export function probeCapability(
+  service: string,
+  capability: string,
+  instance: unknown,
+): true | string | null {
+  const byCap = _probes.get(service);
+  if (!byCap) return null;
+  const probe = byCap.get(capability);
+  if (!probe) return null;
+  try {
+    return probe(instance);
+  } catch (err) {
+    return `probe threw: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+

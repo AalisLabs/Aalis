@@ -32,3 +32,15 @@ declare module './capabilities.js' {
     'message-archive': MessageArchiveCapability;
   }
 }
+
+import { registerCapabilityProbe } from './capabilities.js';
+
+registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Incoming, inst =>
+  typeof (inst as { archiveIncoming?: unknown }).archiveIncoming === 'function'
+    ? true
+    : 'MessageArchiveService.archiveIncoming() is required for capability "incoming"');
+
+registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Generic, inst =>
+  typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
+    ? true
+    : 'MessageArchiveService.saveMessage() is required for capability "generic"');
