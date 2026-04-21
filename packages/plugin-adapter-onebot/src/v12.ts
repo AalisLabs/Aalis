@@ -60,13 +60,13 @@ export class OneBotV12 implements OneBotProtocol {
     }
   }
 
-  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedMessageEvent | null {
+  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null {
     const selfId = raw.self?.user_id ? String(raw.self.user_id) : fallbackSelfId;
     const detailType = (raw.detail_type ?? 'private') as string;
     const message = Array.isArray(raw.message) ? raw.message : [];
     // 优先使用消息段生成富文本，回退到 alt_message
     const text = message.length > 0
-      ? segmentsToText(message, selfId)
+      ? segmentsToText(message, selfId, nicknameMap)
       : ((raw.alt_message as string) ?? '');
 
     if (!text.trim()) return null;
