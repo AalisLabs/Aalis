@@ -1,5 +1,6 @@
 import type { Context, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/core';
+import { MemoryCapabilities } from '@aalis/core';
 
 // ===== InMemoryFallbackService 实现 =====
 
@@ -115,7 +116,11 @@ export const provides = ['memory'];
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
   const service = new InMemoryFallbackService();
   ctx.provide('memory', service, {
-    capabilities: ['history'],
+    capabilities: [
+      MemoryCapabilities.History,
+      MemoryCapabilities.Metadata,
+      MemoryCapabilities.ContentUpdate,
+    ],
     priority: -100,
   });
   ctx.logger.info('内存记忆服务已启用 (数据不会持久化)');

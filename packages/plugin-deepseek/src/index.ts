@@ -9,7 +9,9 @@ import type {
   ChatStreamChunk,
   LLMService,
   ModelInfo,
+  LLMCapability,
 } from '@aalis/core';
+import { LLMCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -186,7 +188,7 @@ class DeepSeekLLMService implements LLMService {
   }
 
   /** 启动时调用：发现远端模型、检查重复、确定默认模型 */
-  async initialize(): Promise<{ defaultModel: string | null; capabilities: string[] }> {
+  async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
     const remote = await this.fetchRemoteModels();
     const remoteIds = new Set(remote.map(m => m.id));
 
@@ -599,24 +601,26 @@ class DeepSeekLLMService implements LLMService {
 
 // ===== 模型能力映射 =====
 
-const MODEL_CAPABILITIES: Record<string, string[]> = {
-  'deepseek-chat':     ['chat', 'tool_calling', 'streaming'],
-  'deepseek-reasoner': ['chat', 'tool_calling', 'streaming', 'thinking'],
+const { Chat, ToolCalling, Streaming, Thinking } = LLMCapabilities;
+
+const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
+  'deepseek-chat':     [Chat, ToolCalling, Streaming],
+  'deepseek-reasoner': [Chat, ToolCalling, Streaming, Thinking],
 };
 
-const DEFAULT_CAPABILITIES = ['chat'];
+const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown): string[] {
+function resolveCapabilities(model: string, userOverride?: unknown): LLMCapability[] {
   // 用户显式声明优先
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    return userOverride as string[];
+    return userOverride as LLMCapability[];
   }
   // 精确匹配
   if (MODEL_CAPABILITIES[model]) return MODEL_CAPABILITIES[model];
   // 模糊匹配：模型名包含关键词
   const lower = model.toLowerCase();
-  if (lower.includes('reasoner')) return ['chat', 'tool_calling', 'streaming', 'thinking'];
-  if (lower.includes('chat')) return ['chat', 'tool_calling', 'streaming'];
+  if (lower.includes('reasoner')) return [Chat, ToolCalling, Streaming, Thinking];
+  if (lower.includes('chat')) return [Chat, ToolCalling, Streaming];
   return DEFAULT_CAPABILITIES;
 }
 

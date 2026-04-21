@@ -8,8 +8,10 @@ import type {
   ChatStreamChunk,
   LLMService,
   ModelInfo,
+  LLMCapability,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
+import { LLMCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -167,7 +169,7 @@ class OllamaLLMService implements LLMService {
   }
 
   /** 启动时调用：发现本地模型、检查重复、确定默认模型 */
-  async initialize(): Promise<{ defaultModel: string | null; capabilities: string[] }> {
+  async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
     const remote = await this.fetchRemoteModels();
     const remoteIds = new Set(remote.map(m => m.id));
 
@@ -580,29 +582,31 @@ function safeParseJSON(str: string): Record<string, unknown> {
 
 // ===== 模型能力映射 =====
 
-const MODEL_CAPABILITIES: Record<string, string[]> = {
-  'llama3.1':       ['chat', 'tool_calling', 'streaming'],
-  'llama3.2':       ['chat', 'tool_calling', 'streaming'],
-  'llama3.3':       ['chat', 'tool_calling', 'streaming'],
-  'llava':          ['chat', 'streaming', 'vision'],
-  'llava-llama3':   ['chat', 'streaming', 'vision'],
-  'gemma2':         ['chat', 'streaming'],
-  'gemma3':         ['chat', 'tool_calling', 'streaming', 'vision'],
-  'gemma4':         ['chat', 'tool_calling', 'streaming', 'vision'],
-  'qwen2.5':        ['chat', 'tool_calling', 'streaming'],
-  'qwen2.5-coder':  ['chat', 'tool_calling', 'streaming'],
-  'qwen3':          ['chat', 'tool_calling', 'streaming'],
-  'mistral':        ['chat', 'tool_calling', 'streaming'],
-  'deepseek-r1':    ['chat', 'streaming'],
-  'phi4':           ['chat', 'streaming'],
-  'command-r':      ['chat', 'tool_calling', 'streaming'],
+const { Chat, ToolCalling, Streaming, Vision } = LLMCapabilities;
+
+const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
+  'llama3.1':       [Chat, ToolCalling, Streaming],
+  'llama3.2':       [Chat, ToolCalling, Streaming],
+  'llama3.3':       [Chat, ToolCalling, Streaming],
+  'llava':          [Chat, Streaming, Vision],
+  'llava-llama3':   [Chat, Streaming, Vision],
+  'gemma2':         [Chat, Streaming],
+  'gemma3':         [Chat, ToolCalling, Streaming, Vision],
+  'gemma4':         [Chat, ToolCalling, Streaming, Vision],
+  'qwen2.5':        [Chat, ToolCalling, Streaming],
+  'qwen2.5-coder':  [Chat, ToolCalling, Streaming],
+  'qwen3':          [Chat, ToolCalling, Streaming],
+  'mistral':        [Chat, ToolCalling, Streaming],
+  'deepseek-r1':    [Chat, Streaming],
+  'phi4':           [Chat, Streaming],
+  'command-r':      [Chat, ToolCalling, Streaming],
 };
 
-const DEFAULT_CAPABILITIES = ['chat'];
+const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown): string[] {
+function resolveCapabilities(model: string, userOverride?: unknown): LLMCapability[] {
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    return userOverride as string[];
+    return userOverride as LLMCapability[];
   }
   // 去掉 tag 部分（如 llama3.1:8b → llama3.1）
   const baseName = model.split(':')[0].toLowerCase();
@@ -613,7 +617,7 @@ function resolveCapabilities(model: string, userOverride?: unknown): string[] {
   }
   // 常见视觉模型关键词
   if (baseName.includes('llava') || baseName.includes('vision')) {
-    return ['chat', 'streaming', 'vision'];
+    return [Chat, Streaming, Vision];
   }
   return DEFAULT_CAPABILITIES;
 }

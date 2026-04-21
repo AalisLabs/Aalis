@@ -1,10 +1,12 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { LLMService } from '@aalis/core';
+import type { LLMService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
+import { WebSearchCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-websearch-serper';
 export const displayName = 'Serper 网络搜索';
+export const provides = ['web-search'];
 export const inject = {
   optional: ['llm'],
 };
@@ -202,6 +204,15 @@ function formatSearchResults(data: SerperResponse): string {
   return parts.length > 0 ? parts.join('\n\n') : '未找到搜索结果。';
 }
 
+/** 将 Serper 原始响应转换为标准 WebSearchResult 数组 */
+function toStandardResults(data: SerperResponse): WebSearchResult[] {
+  return (data.organic ?? []).map(item => ({
+    title: item.title,
+    url: item.link,
+    snippet: item.snippet,
+  }));
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -269,6 +280,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     `并发: ${cfg.maxConcurrent}` +
     `${cfg.enableCompression ? ', 压缩: 已启用' : ''})`,
   );
+
+  // 注册为 web-search 服务，供其他插件消费
+  const serperService: WebSearchService = {
+    providerName: 'serper',
+    async search(request: WebSearchRequest): Promise<WebSearchResponse> {
+      const num = Math.min(10, Math.max(1, request.numResults ?? cfg.defaultNumResults));
+      const data = await serperSearch(request.query, cfg.apiKey, num);
+      return {
+        query: request.query,
+        results: toStandardResults(data),
+        answer: data.answerBox?.answer ?? data.answerBox?.snippet,
+        raw: data as unknown as Record<string, unknown>,
+      };
+    },
+  };
+  const { Web, Compression } = WebSearchCapabilities;
+  ctx.provide('web-search', serperService, {
+    capabilities: cfg.enableCompression ? [Web, Compression] : [Web],
+    label: 'Serper',
+  });
 
   // 注册工具分组
   ctx.registerToolGroup({

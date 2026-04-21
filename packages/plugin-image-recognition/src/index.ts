@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
-import type { LLMService, MemoryService } from '@aalis/core';
+import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult } from '@aalis/core';
+import { ImageRecognitionCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -78,16 +79,7 @@ interface ImageRecognitionConfig {
   gifDescriptionMode: 'combined' | 'separate';
 }
 
-interface ImageProcessResult {
-  content: string;
-  imageDescriptions?: string[];
-  info: {
-    imageCount: number;
-    successCount: number;
-    descriptions: string[];
-    transformedContent: string;
-  };
-}
+interface ImageProcessResult extends ImageRecognitionResult {}
 
 const DEFAULT_PROMPT = '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如果有）、表情包含义等。用中文回答，控制在100字以内。';
 
@@ -576,13 +568,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   // 注册服务，供其他插件查询图像识别能力和调用描述功能
-  ctx.provide('image-recognition', {
+  const imageRecognitionService: ImageRecognitionService = {
     /** 本插件能否处理图片（始终 true，因为插件已加载） */
     available: true,
+    /** 当前中间件是否启用（启用=由本插件识别，关闭=传给主模型） */
+    enabled: cfg.enabled,
     /**
      * 描述图片（静态或动图/视频），返回文字描述。失败返回空串。
-     * @param imageUrl 原始图片 URL 或 data URI
-     * @param localRefPath 可选，本地缓存文件路径（用于动图帧提取）
      */
     async describe(imageUrl: string, localRefPath?: string): Promise<string> {
       const visionLLM = await getVisionLLM();
@@ -592,13 +584,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (result.startsWith('[图片:') || result.startsWith('[动图:') || result === '') return '';
       return result;
     },
-    async processMessage(input: { content: string; images: string[]; attachmentOrder?: Array<'image' | 'file'> }): Promise<ImageProcessResult | null> {
+    async processMessage(input: ImageRecognitionInput): Promise<ImageRecognitionResult | null> {
       const visionLLM = await getVisionLLM();
       if (!visionLLM || !cfg.enabled || input.images.length === 0) return null;
       return processImageMessage(visionLLM, input);
     },
-    /** 当前中间件是否启用（启用=由本插件识别，关闭=传给主模型） */
-    enabled: cfg.enabled,
+  };
+
+  const { Describe, ProcessMessage, Animated } = ImageRecognitionCapabilities;
+  ctx.provide('image-recognition', imageRecognitionService, {
+    capabilities: [Describe, ProcessMessage, Animated],
   });
 
   // ── 注册图片分析工具，供 agent 主动调用 ──

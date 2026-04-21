@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Context, ConfigSchema, MemoryService, WebuiPage, PersonaService, LLMService, ToolService, Message } from '@aalis/core';
 import type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from '@aalis/core';
+import { SessionManagerCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -793,7 +794,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 注册服务
   ctx.provide('session-manager', manager, {
-    capabilities: ['session-crud', 'session-tree'],
+    capabilities: [SessionManagerCapabilities.SessionCrud, SessionManagerCapabilities.SessionTree],
     label: '会话管理',
   });
 

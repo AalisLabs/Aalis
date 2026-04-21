@@ -156,3 +156,25 @@ export interface SessionManagerService {
   /** 手动更新会话标题 */
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }
+
+// ----- 会话管理能力声明（capability 框架）-----
+
+export interface SessionManagerCapabilityRegistry {
+  /** 基础 CRUD（create/get/update/delete） */
+  SessionCrud: 'session-crud';
+  /** 支持树形会话（createChildSession/getTree） */
+  SessionTree: 'session-tree';
+}
+
+export type SessionManagerCapability = SessionManagerCapabilityRegistry[keyof SessionManagerCapabilityRegistry];
+
+export const SessionManagerCapabilities = {
+  SessionCrud: 'session-crud',
+  SessionTree: 'session-tree',
+} as const satisfies SessionManagerCapabilityRegistry;
+
+declare module './capabilities.js' {
+  interface ServiceCapabilityMap {
+    'session-manager': SessionManagerCapability;
+  }
+}
