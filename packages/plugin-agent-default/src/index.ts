@@ -22,7 +22,7 @@ import type {
   SessionConfig,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
-import { getSenderLabel, prefixSender } from '@aalis/core';
+import { getSenderLabel, prefixSender, getMessageName } from '@aalis/core';
 
 /**
  * 将时间戳格式化为可读的时间标签。
@@ -841,6 +841,7 @@ class DefaultAgent implements AgentService {
     const userMessage: Message = {
       role: 'user',
       content: currentContent,
+      name: getMessageName(incoming.userId),
       timestamp: Date.now(),
     };
 

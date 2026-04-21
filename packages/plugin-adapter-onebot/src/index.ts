@@ -424,6 +424,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const states: ConnectionState[] = [];
 
+  // ===== 用户昵称缓存（userId → nickname，从每条消息的 sender 信息累积） =====
+  const nicknameCache = new Map<string, string>();
+
   // ===== 聊天流控状态管理 =====
 
   const flowSessions = new Map<string, FlowSessionState>();
@@ -468,7 +471,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function checkImmediateTrigger(content: string): boolean {
     if (flowCfg.triggerOnAt) {
-      if (/<at self>[^<]*<\/at>/.test(content) ||
+      if (/<at self[\s>][^]*?<\/at>/.test(content) ||
           /\[CQ:at,qq=\d+\]/.test(content) ||
           /@\S+/.test(content)) {
         return true;
@@ -1164,8 +1167,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   function handleMessageEvent(state: ConnectionState, raw: OneBotRawEvent): void {
     if (!state.protocol) return;
 
+    // 从 sender 信息累积昵称缓存（在解析消息前，以便 at 标签能查到昵称）
+    const sender = (raw.sender ?? raw.user) as Record<string, unknown> | undefined;
+    const rawUserId = raw.user_id != null ? String(raw.user_id) : undefined;
+    if (rawUserId && sender) {
+      const nick = (sender.card as string) || (sender.nickname as string);
+      if (nick) nicknameCache.set(rawUserId, nick);
+    }
+
     const fallbackSelfId = state.selfId ?? 'unknown';
-    const event = state.protocol.parseMessageEvent(raw, fallbackSelfId);
+    const event = state.protocol.parseMessageEvent(raw, fallbackSelfId, nicknameCache);
     if (!event) return;
 
     // 更新 selfId

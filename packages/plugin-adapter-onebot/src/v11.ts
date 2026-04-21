@@ -69,13 +69,13 @@ export class OneBotV11 implements OneBotProtocol {
     }
   }
 
-  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedMessageEvent | null {
+  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null {
     const selfId = raw.self_id != null ? String(raw.self_id) : fallbackSelfId;
     const detailType = (raw.message_type ?? 'private') as string;
     const message = Array.isArray(raw.message) ? raw.message : [];
     // 优先使用消息段生成富文本（含 <at> 等标记），回退到 raw_message
     const text = message.length > 0
-      ? segmentsToText(message, selfId)
+      ? segmentsToText(message, selfId, nicknameMap)
       : ((raw.raw_message as string) ?? '');
 
     if (!text.trim()) return null;
