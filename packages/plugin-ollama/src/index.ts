@@ -159,7 +159,8 @@ class OllamaLLMService implements LLMService {
   constructor(config: OllamaConfig, logger: Logger) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
-    this.timeout = config.timeout ?? 120000;
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
+    this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
@@ -334,12 +335,28 @@ class OllamaLLMService implements LLMService {
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.any(signals),
-    });
+    const reqStart = Date.now();
+    const slowConnectTimer = setTimeout(() => {
+      this.logger.warn(`Ollama 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/api/chat)`);
+    }, 15_000);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.any(signals),
+      });
+    } catch (err) {
+      clearTimeout(slowConnectTimer);
+      const elapsed = Date.now() - reqStart;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Ollama fetch 失败 (耗时 ${elapsed}ms): ${msg}`);
+      throw err;
+    }
+    clearTimeout(slowConnectTimer);
+    this.logger.debug(`Ollama 响应头到达: status=${response.status}, 耗时 ${Date.now() - reqStart}ms`);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -358,11 +375,23 @@ class OllamaLLMService implements LLMService {
     // <think> 标签流式解析状态
     let inThink = false;         // 当前是否在 <think> 块内
     let tagBuffer = '';          // 未确定的部分标签缓冲（如 "<", "<th", "</thi" 等）
+    let firstChunkLogged = false;
+    const streamStart = Date.now();
+    const streamStallTimer = setTimeout(() => {
+      if (!firstChunkLogged) {
+        this.logger.warn(`Ollama 流停滞：响应头已到但 30s 仍未收到首帧`);
+      }
+    }, 30_000);
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (!firstChunkLogged) {
+          firstChunkLogged = true;
+          clearTimeout(streamStallTimer);
+          this.logger.debug(`Ollama 首帧到达: 耗时 ${Date.now() - streamStart}ms (从响应头算起)`);
+        }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -476,6 +505,7 @@ class OllamaLLMService implements LLMService {
         }
       }
     } finally {
+      clearTimeout(streamStallTimer);
       reader.releaseLock();
     }
 
