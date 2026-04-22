@@ -319,9 +319,6 @@ export function App() {
   /** 刷新后恢复正在生成的流式内容（含 segments + reasoning） */
   const handleStreamResume = useCallback((content: string, reasoningContent: string, serverSegments: ContentSegment[], done: boolean) => {
     setMessages(prev => {
-      const last = prev[prev.length - 1];
-      if (last && last.role === 'assistant' && last.content === content) return prev;
-
       // 将服务端 segments 按是否有 reasoning 分流：有 reasoning 时工具调用归入 reasoningSegments
       const rSegs: ContentSegment[] = [];
       const segs: ContentSegment[] = [];
@@ -338,6 +335,20 @@ export function App() {
       // 如果服务端无 segments 但有 content，创建一个文本段
       if (segs.length === 0 && content) {
         segs.push({ type: 'text', content });
+      }
+
+      const last = prev[prev.length - 1];
+      // 若尾部已是 assistant（可能来自 fetchAndSetMessages 拉到的部分快照，
+      // 或上一次 stream_resume），就地以服务端快照覆盖，避免重复添加。
+      if (last && last.role === 'assistant') {
+        const merged: ChatMessage = {
+          ...last,
+          content,
+          reasoningContent: reasoningContent || last.reasoningContent,
+          reasoningSegments: rSegs.length > 0 ? rSegs : last.reasoningSegments,
+          segments: segs.length > 0 ? segs : last.segments,
+        };
+        return [...prev.slice(0, -1), merged];
       }
 
       const msg: ChatMessage = {

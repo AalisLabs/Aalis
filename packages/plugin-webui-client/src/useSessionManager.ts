@@ -349,8 +349,18 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
         if (d?.messages && activeIdRef.current === sessionId) {
           const msgs = buildChatMessages(d.messages);
           // 若刷新时正处于流式生成（stream_resume 已到达），
-          // 保留 state 尾部的在途 assistant 消息，避免被未含该轮的持久化历史覆盖。
+          // 服务端可能已持久化了一份部分 assistant；去掉它避免与本地在途消息重复。
+          // 同时保留本地 state 尾部的在途 assistant，交由 handleStreamResume 后续合并。
           if (streamingRef.current) {
+            // 剩去 fetched 尾部连续的 assistant + tool 消息（属于未完成的本轮）
+            while (msgs.length > 0) {
+              const tail = msgs[msgs.length - 1];
+              if (tail.role === 'assistant' || tail.role === 'tool') {
+                msgs.pop();
+              } else {
+                break;
+              }
+            }
             const local = messagesRef.current;
             const lastLocal = local[local.length - 1];
             if (lastLocal && lastLocal.role === 'assistant') {
