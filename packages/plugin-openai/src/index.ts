@@ -138,7 +138,8 @@ class OpenAILLMService implements LLMService {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
-    this.timeout = config.timeout ?? 120000;
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
+    this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
@@ -318,12 +319,28 @@ class OpenAILLMService implements LLMService {
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.any(signals),
-    });
+    const reqStart = Date.now();
+    const slowConnectTimer = setTimeout(() => {
+      this.logger.warn(`LLM 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/v1/chat/completions)`);
+    }, 15_000);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.any(signals),
+      });
+    } catch (err) {
+      clearTimeout(slowConnectTimer);
+      const elapsed = Date.now() - reqStart;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`LLM fetch 失败 (耗时 ${elapsed}ms): ${msg}`);
+      throw err;
+    }
+    clearTimeout(slowConnectTimer);
+    this.logger.debug(`LLM 响应头到达: status=${response.status}, 耗时 ${Date.now() - reqStart}ms`);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -338,11 +355,23 @@ class OpenAILLMService implements LLMService {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let firstChunkLogged = false;
+    const streamStart = Date.now();
+    const streamStallTimer = setTimeout(() => {
+      if (!firstChunkLogged) {
+        this.logger.warn(`LLM 流停滞：响应头已到但 30s 仍未收到首帧 SSE`);
+      }
+    }, 30_000);
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (!firstChunkLogged) {
+          firstChunkLogged = true;
+          clearTimeout(streamStallTimer);
+          this.logger.debug(`LLM 首帧到达: 耗时 ${Date.now() - streamStart}ms (从响应头算起)`);
+        }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -400,6 +429,7 @@ class OpenAILLMService implements LLMService {
         }
       }
     } finally {
+      clearTimeout(streamStallTimer);
       reader.releaseLock();
     }
 
