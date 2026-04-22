@@ -348,6 +348,15 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
       .then(d => {
         if (d?.messages && activeIdRef.current === sessionId) {
           const msgs = buildChatMessages(d.messages);
+          // 若刷新时正处于流式生成（stream_resume 已到达），
+          // 保留 state 尾部的在途 assistant 消息，避免被未含该轮的持久化历史覆盖。
+          if (streamingRef.current) {
+            const local = messagesRef.current;
+            const lastLocal = local[local.length - 1];
+            if (lastLocal && lastLocal.role === 'assistant') {
+              msgs.push(lastLocal);
+            }
+          }
           setMessages(msgs);
           messagesCache.current.set(sessionId, msgs);
         }
