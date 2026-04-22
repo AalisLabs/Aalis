@@ -126,15 +126,67 @@ export function App() {
     setLoading(false);
   }, []);
 
+  /** 同步把 streamBufRef 里累积的 delta 刷入消息 state。
+   *  - 由 rAF 回调调用（正常批处理）
+   *  - 由 handleToolCall / handleStream(done) 主动调用（确保顺序一致且不丢尾巴）
+   */
+  const flushStreamBuffer = useCallback(() => {
+    const buf = streamBufRef.current;
+    if (buf.raf) {
+      cancelAnimationFrame(buf.raf);
+      buf.raf = 0;
+    }
+    const cDelta = buf.content;
+    const rDelta = buf.reasoning;
+    if (!cDelta && !rDelta) return;
+    buf.content = '';
+    buf.reasoning = '';
+
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant' && streamingRef.current) {
+        const updated = { ...last };
+        if (rDelta) {
+          updated.reasoningContent = (updated.reasoningContent ?? '') + rDelta;
+          const rSegs = [...(updated.reasoningSegments ?? [])];
+          const lastRS = rSegs[rSegs.length - 1];
+          if (lastRS && lastRS.type === 'text') {
+            rSegs[rSegs.length - 1] = { type: 'text', content: lastRS.content + rDelta };
+          } else {
+            rSegs.push({ type: 'text', content: rDelta });
+          }
+          updated.reasoningSegments = rSegs;
+        }
+        if (cDelta) {
+          updated.content += cDelta;
+          const segments = [...(updated.segments ?? [])];
+          const lastSeg = segments[segments.length - 1];
+          if (lastSeg && lastSeg.type === 'text') {
+            segments[segments.length - 1] = { type: 'text', content: lastSeg.content + cDelta };
+          } else {
+            segments.push({ type: 'text', content: cDelta });
+          }
+          updated.segments = segments;
+        }
+        return [...prev.slice(0, -1), updated];
+      }
+      // 创建新的助手消息
+      streamingRef.current = true;
+      return [...prev, {
+        role: 'assistant' as const,
+        content: cDelta ?? '',
+        reasoningContent: rDelta || undefined,
+        reasoningSegments: rDelta ? [{ type: 'text' as const, content: rDelta }] : [],
+        segments: cDelta ? [{ type: 'text' as const, content: cDelta }] : [],
+        timestamp: Date.now(),
+      }];
+    });
+  }, [setMessages, streamingRef]);
+
   const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => {
     if (done) {
-      // 流结束标记 — 取消挂起 RAF，清空缓冲，解除 loading
-      if (streamBufRef.current.raf) {
-        cancelAnimationFrame(streamBufRef.current.raf);
-        streamBufRef.current.raf = 0;
-      }
-      streamBufRef.current.content = '';
-      streamBufRef.current.reasoning = '';
+      // 流结束标记 — 先把可能挂起的尾巴刷出去，再清状态
+      flushStreamBuffer();
       setLoading(false);
       setToolLimitReached(!!toolLimitReached);
       return;
@@ -144,56 +196,8 @@ export function App() {
     streamBufRef.current.content += contentDelta ?? '';
     streamBufRef.current.reasoning += reasoningDelta ?? '';
     if (streamBufRef.current.raf) return;
-    streamBufRef.current.raf = requestAnimationFrame(() => {
-      const buf = streamBufRef.current;
-      const cDelta = buf.content;
-      const rDelta = buf.reasoning;
-      buf.content = '';
-      buf.reasoning = '';
-      buf.raf = 0;
-      if (!cDelta && !rDelta) return;
-
-      setMessages(prev => {
-        const last = prev[prev.length - 1];
-        if (last && last.role === 'assistant' && streamingRef.current) {
-          const updated = { ...last };
-          if (rDelta) {
-            updated.reasoningContent = (updated.reasoningContent ?? '') + rDelta;
-            const rSegs = [...(updated.reasoningSegments ?? [])];
-            const lastRS = rSegs[rSegs.length - 1];
-            if (lastRS && lastRS.type === 'text') {
-              rSegs[rSegs.length - 1] = { type: 'text', content: lastRS.content + rDelta };
-            } else {
-              rSegs.push({ type: 'text', content: rDelta });
-            }
-            updated.reasoningSegments = rSegs;
-          }
-          if (cDelta) {
-            updated.content += cDelta;
-            const segments = [...(updated.segments ?? [])];
-            const lastSeg = segments[segments.length - 1];
-            if (lastSeg && lastSeg.type === 'text') {
-              segments[segments.length - 1] = { type: 'text', content: lastSeg.content + cDelta };
-            } else {
-              segments.push({ type: 'text', content: cDelta });
-            }
-            updated.segments = segments;
-          }
-          return [...prev.slice(0, -1), updated];
-        }
-        // 创建新的助手消息
-        streamingRef.current = true;
-        return [...prev, {
-          role: 'assistant' as const,
-          content: cDelta ?? '',
-          reasoningContent: rDelta || undefined,
-          reasoningSegments: rDelta ? [{ type: 'text' as const, content: rDelta }] : [],
-          segments: cDelta ? [{ type: 'text' as const, content: cDelta }] : [],
-          timestamp: Date.now(),
-        }];
-      });
-    });
-  }, []);
+    streamBufRef.current.raf = requestAnimationFrame(flushStreamBuffer);
+  }, [flushStreamBuffer, setLoading]);
 
   const handleLog = useCallback((entry: LogEntry) => {
     setLogs(prev => {
@@ -203,6 +207,9 @@ export function App() {
   }, []);
 
   const handleToolCall = useCallback((toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => {
+    // 先把挂起的文本 delta 刷入，确保 tool_call 按真实到达顺序插入
+    // （后台标签页 rAF 被 throttle 时，若不 flush，tool_call 会挤到累积文本的前面）
+    flushStreamBuffer();
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
@@ -251,7 +258,7 @@ export function App() {
       }
       return prev;
     });
-  }, []);
+  }, [flushStreamBuffer]);
 
   const refreshPlugins = useCallback(() => {
     api<{ plugins: PluginInfo[] }>('/api/plugins')
