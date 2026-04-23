@@ -353,13 +353,8 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
           // 同时保留本地 state 尾部的在途 assistant，交由 handleStreamResume 后续合并。
           if (streamingRef.current) {
             // 剩去 fetched 尾部连续的 assistant + tool 消息（属于未完成的本轮）
-            while (msgs.length > 0) {
-              const tail = msgs[msgs.length - 1];
-              if (tail.role === 'assistant' || tail.role === 'tool') {
-                msgs.pop();
-              } else {
-                break;
-              }
+            while (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant') {
+              msgs.pop();
             }
             const local = messagesRef.current;
             const lastLocal = local[local.length - 1];
