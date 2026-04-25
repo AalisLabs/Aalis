@@ -1092,18 +1092,16 @@ class DefaultAgent implements AgentService {
           rcIndices.push(i);
         }
       }
-      // 从最旧开始，先删除非最后一条的推理，仍不够时截断最后一条
+      // 从最旧开始，先截断非最后一条的推理，仍不够时截断最后一条
+      // 注意：DeepSeek 思考模式要求历史中凡有 reasoning_content 的消息必须原样带回，
+      // 不能将字段设为 undefined，否则 API 返回 400。因此只截断，不删除。
       for (let k = 0; k < rcIndices.length && estimated > budget; k++) {
         const idx = rcIndices[k];
         const msg = result[idx];
         const oldTokens = this.estimateMsgTokens(msg);
-        if (k < rcIndices.length - 1) {
-          // 非最新：直接移除推理内容
-          msg.reasoningContent = undefined;
-        } else {
-          // 最新一条：保留头部 200 字符
-          msg.reasoningContent = msg.reasoningContent!.slice(0, 200) + '\n... [推理内容已缩减]';
-        }
+        // 所有条目统一保留头部 200 字符（最新条保留稍多以保持上下文连贯性）
+        const keepLen = k < rcIndices.length - 1 ? 200 : 400;
+        msg.reasoningContent = msg.reasoningContent!.slice(0, keepLen) + '\n... [推理内容已缩减]';
         estimated -= (oldTokens - this.estimateMsgTokens(msg));
       }
     }
