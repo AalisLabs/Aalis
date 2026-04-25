@@ -62,6 +62,27 @@ export interface NormalizedNoticeEvent {
   data?: Record<string, unknown>;
 }
 
+interface NormalizedBaseRequestEvent {
+  selfId: string;
+  /** 发起请求的用户 ID */
+  userId: string;
+  /** 验证信息 */
+  comment?: string;
+  /** 请求 flag，调用处理 API 时必须传回 */
+  flag: string;
+}
+
+/** 标准化后的请求事件（加好友 / 加群 / 邀请入群） */
+export type NormalizedRequestEvent =
+  | (NormalizedBaseRequestEvent & { requestType: 'friend' })
+  | (NormalizedBaseRequestEvent & {
+      requestType: 'group';
+      /** 子类型: 'add' = 用户申请加群, 'invite' = 被邀请入群 */
+      subType: 'add' | 'invite';
+      /** 群 ID */
+      groupId: string;
+    });
+
 /** 标准化后的元事件 */
 export interface NormalizedMetaEvent {
   subType: string;
@@ -107,8 +128,8 @@ export interface OneBotProtocol {
   /** 解析自身信息响应 */
   parseSelfInfo(data: unknown): string | undefined;
 
-  /** 解析原始事件类型: 'message' | 'meta' | 'notice' | 'other' */
-  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'other';
+  /** 解析原始事件类型 */
+  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other';
 
   /** 解析消息事件为标准化格式 */
   parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null;
@@ -118,6 +139,9 @@ export interface OneBotProtocol {
 
   /** 解析通知事件为标准化格式 */
   parseNoticeEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedNoticeEvent | null;
+
+  /** 解析请求事件为标准化格式 */
+  parseRequestEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedRequestEvent | null;
 }
 
 /** 从 OneBot 消息段数组中提取纯文本 */
