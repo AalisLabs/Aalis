@@ -185,6 +185,21 @@ export class OneBotV11 implements OneBotProtocol {
       };
     }
 
+    // 群禁言: notice_type='group_ban', sub_type='ban' | 'lift_ban'
+    if (noticeType === 'group_ban') {
+      return {
+        selfId,
+        noticeType: 'group_ban',
+        subType: subType || undefined,
+        userId: raw.user_id != null ? String(raw.user_id) : undefined,
+        groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+        data: {
+          operatorId: raw.operator_id != null ? String(raw.operator_id) : undefined,
+          duration: raw.duration != null ? Number(raw.duration) : undefined,
+        },
+      };
+    }
+
     // 消息撤回: notice_type='group_recall' / 'friend_recall'
     if (noticeType === 'group_recall' || noticeType === 'friend_recall') {
       return {
