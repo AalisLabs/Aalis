@@ -185,6 +185,8 @@ interface FlowSessionState {
   userInteractions: Map<string, { count: number; lastTime: number }>;
   /** 滑动窗口内的回复时间戳（用于防 DDoS 限速） */
   replyTimestamps: number[];
+  /** 是否已通过 shut_up_timestamp 完成自禁言状态恢复（每会话一次） */
+  muteRecoveryChecked: boolean;
 }
 
 /** 空闲触发标识 */
@@ -445,6 +447,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         idleBackoff: 1,
         userInteractions: new Map(),
         replyTimestamps: [],
+        muteRecoveryChecked: false,
       };
       flowSessions.set(sessionId, state);
     }
@@ -600,6 +603,95 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
+  // ── 平台 notice 入档 ──
+
+  async function archivePlatformNotice(opts: {
+    sessionId: string;
+    noticeType: string;
+    subType?: string;
+    content: string;
+    userId?: string;
+    targetId?: string;
+    groupId?: string;
+    operatorId?: string;
+    data?: Record<string, unknown>;
+  }): Promise<void> {
+    const archive = ctx.getService<MessageArchiveService>('message-archive');
+    if (!archive?.archiveNotice) return;
+    try {
+      await archive.archiveNotice({
+        sessionId: opts.sessionId,
+        noticeType: opts.noticeType,
+        subType: opts.subType,
+        content: opts.content,
+        platform: 'onebot',
+        userId: opts.userId,
+        targetId: opts.targetId,
+        groupId: opts.groupId,
+        operatorId: opts.operatorId,
+        data: opts.data,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      ctx.logger.warn(`notice 入档失败 (${opts.noticeType}): ${err}`);
+    }
+  }
+
+  // ── 通过 sessionId 反查连接 ──
+
+  function findStateBySelfId(selfId: string | undefined): ConnectionState | undefined {
+    if (!selfId) return undefined;
+    return states.find(s => s.selfId === selfId);
+  }
+
+  function parseGroupSessionId(sessionId: string): { selfId?: string; groupId?: string } {
+    // 形如 onebot:{selfId}:group:{groupId}
+    const parts = sessionId.split(':');
+    if (parts.length >= 4 && parts[0] === 'onebot' && parts[2] === 'group') {
+      return { selfId: parts[1], groupId: parts.slice(3).join(':') };
+    }
+    return {};
+  }
+
+  /** 启动/重连后通过 get_group_member_info.shut_up_timestamp 恢复禁言状态 */
+  async function recoverSelfMuteIfNeeded(sessionId: string, fState: FlowSessionState): Promise<void> {
+    if (Date.now() < fState.mutedUntil) return; // 已经在禁言期内，无需查询
+    const { selfId, groupId } = parseGroupSessionId(sessionId);
+    if (!selfId || !groupId) return;
+    const state = findStateBySelfId(selfId);
+    if (!state || state.status !== 'online') return;
+    try {
+      const data = await sendAction(state, 'get_group_member_info', {
+        group_id: Number(groupId) || groupId,
+        user_id: Number(selfId) || selfId,
+        no_cache: true,
+      }) as Record<string, unknown>;
+      const ts = Number(data.shut_up_timestamp ?? 0);
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (ts > nowSec) {
+        const remainSec = ts - nowSec;
+        fState.mutedUntil = ts * 1000;
+        fState.messageCount = 0;
+        fState.activityScore = 0;
+        clearIdleTimer(fState);
+        ctx.logger.info(
+          `[禁言恢复] session=${sessionId} 检测到 shut_up_timestamp=${ts}，剩余 ${remainSec}s，已恢复禁言状态`,
+        );
+        await archivePlatformNotice({
+          sessionId,
+          noticeType: 'group_ban',
+          subType: 'recovered',
+          content: `[notice/group_ban/recovered] 检测到我在该群仍处于禁言状态，剩余约 ${remainSec} 秒（重启/重连后从 shut_up_timestamp 恢复）`,
+          targetId: selfId,
+          groupId,
+          data: { duration: remainSec, until: ts * 1000 },
+        });
+      }
+    } catch {
+      // 静默失败：可能是协议端不支持或群已退出
+    }
+  }
+
   // ── 空闲触发 ──
 
   function scheduleIdleTrigger(fState: FlowSessionState, sessionId: string, platform: string): void {
@@ -674,6 +766,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 空闲触发消息直接放行（替换内容在 middleware 层处理不到，这里直接返回 true）
     if (content === IDLE_TRIGGER_MARKER) return true;
+
+    // 启动后/重连后：通过 shut_up_timestamp 懒查询恢复被禁言状态（每会话一次）
+    const fStateForRecovery = getFlowSession(sessionId);
+    if (!fStateForRecovery.muteRecoveryChecked) {
+      fStateForRecovery.muteRecoveryChecked = true;
+      void recoverSelfMuteIfNeeded(sessionId, fStateForRecovery);
+    }
 
     const fState = getFlowSession(sessionId);
     const now = Date.now();
@@ -972,7 +1071,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       return sendAction(state, action, params);
     },
-  };
+
+    /**
+     * 非标准扩展：返回当前进程内已知"自身被禁言"的群快照。
+     * 用于让 agent 在任意会话中（如私聊）检查自己在哪些群被禁言。
+     * 注意：仅基于已收到的禁言事件 + 启动后懒查询恢复的状态，未收到事件的群不会出现在此列表。
+     */
+    getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }> {
+      const now = Date.now();
+      const out: Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }> = [];
+      for (const [sid, fState] of flowSessions) {
+        if (fState.mutedUntil > now) {
+          const { selfId, groupId } = parseGroupSessionId(sid);
+          if (selfId && groupId) {
+            out.push({
+              selfId,
+              groupId,
+              untilTs: fState.mutedUntil,
+              remainingSec: Math.ceil((fState.mutedUntil - now) / 1000),
+            });
+          }
+        }
+      }
+      return out;
+    },
+  } as PlatformAdapter & { getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }> };
 
   ctx.provide('platform', adapter, { capabilities: ['onebot'] });
 
@@ -1147,6 +1270,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       } catch (err) {
         ctx.logger.debug(`获取 self info 失败: ${err}`);
+      }
+    }
+
+    // 3. 重置该 selfId 下所有群会话的「自禁言恢复检查」标记，
+    //    确保重连后下一条消息会重新通过 shut_up_timestamp 校验当前禁言状态
+    if (state.selfId) {
+      const prefix = `onebot:${state.selfId}:group:`;
+      for (const [sid, fState] of flowSessions) {
+        if (sid.startsWith(prefix)) fState.muteRecoveryChecked = false;
       }
     }
   }
@@ -1326,6 +1458,184 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           });
         })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
       }
+      return;
+    }
+
+    // 群禁言（v11: group_ban / v12: group_member_ban|group_member_unban）
+    // 当被禁言的是 bot 自己时，将该群的流控会话静默掉，避免无意义的回复尝试
+    if (
+      notice.noticeType === 'group_ban' ||
+      notice.noticeType === 'group_member_ban' ||
+      notice.noticeType === 'group_member_unban'
+    ) {
+      if (notice.groupId) {
+        const isLift =
+          notice.noticeType === 'group_member_unban' || notice.subType === 'lift_ban';
+        const isSelf = notice.userId != null && notice.userId === notice.selfId;
+        const sessionId = makeSessionId(notice.selfId, 'group', undefined, notice.groupId);
+        const duration = Number(notice.data?.duration ?? 0);
+        const operatorId = notice.data?.operatorId as string | undefined;
+
+        // 自己被禁言/解禁：更新流控状态
+        if (isSelf) {
+          const fState = getFlowSession(sessionId);
+          if (isLift) {
+            fState.mutedUntil = 0;
+            ctx.logger.info(`[禁言解除] session=${sessionId} 操作者=${operatorId ?? 'unknown'}`);
+          } else {
+            if (duration > 0) {
+              fState.mutedUntil = Date.now() + duration * 1000;
+              ctx.logger.info(
+                `[被禁言] session=${sessionId} 时长=${duration}s 操作者=${operatorId ?? 'unknown'}，` +
+                `将拦截该群所有触发直至禁言结束`,
+              );
+            } else {
+              fState.mutedUntil = Date.now() + flowCfg.muteTimeSeconds * 1000;
+              ctx.logger.info(`[被禁言] session=${sessionId} 时长未知，按配置兜底 ${flowCfg.muteTimeSeconds}s`);
+            }
+            fState.messageCount = 0;
+            fState.activityScore = 0;
+            clearIdleTimer(fState);
+          }
+        }
+
+        // notice 入档（自己 / 他人都记录，便于 agent 感知群内动态）
+        (async () => {
+          const opNick = await resolveNickname(state, operatorId, notice.groupId);
+          const targetNick = isSelf ? '我' : await resolveNickname(state, notice.userId, notice.groupId);
+          const opLabel = opNick ? `${opNick}(${operatorId})` : (operatorId ?? '管理员');
+          const targetLabel = isSelf ? '我' : (targetNick ? `${targetNick}(${notice.userId})` : (notice.userId ?? '某人'));
+          const verb = isLift ? '解除了禁言' : `禁言了 ${duration > 0 ? duration + ' 秒' : '若干时间'}`;
+          const untilTs = isLift ? 0 : (duration > 0 ? Date.now() + duration * 1000 : 0);
+          const untilLabel = untilTs > 0 ? `（解禁于 ${new Date(untilTs).toISOString()}）` : '';
+          const content = `[notice/group_ban${isLift ? '/lift' : ''}] ${opLabel} 把 ${targetLabel} ${verb}${untilLabel}`;
+          await archivePlatformNotice({
+            sessionId,
+            noticeType: notice.noticeType,
+            subType: notice.subType,
+            content,
+            userId: notice.userId,
+            targetId: notice.userId,
+            groupId: notice.groupId,
+            operatorId,
+            data: { duration, isSelf, isLift, untilTs },
+          });
+        })().catch(err => ctx.logger.warn(`group_ban 入档异常: ${err}`));
+      }
+      return;
+    }
+
+    // 消息撤回
+    // v11: group_recall / friend_recall
+    // v12: group_message_delete (sub_type: recall|delete)
+    if (
+      notice.noticeType === 'group_recall' ||
+      notice.noticeType === 'friend_recall' ||
+      notice.noticeType === 'group_message_delete'
+    ) {
+      const isGroup = notice.noticeType !== 'friend_recall';
+      const sessionId = isGroup
+        ? makeSessionId(notice.selfId, 'group', undefined, notice.groupId)
+        : makeSessionId(notice.selfId, 'private', notice.userId);
+      const operatorId = notice.data?.operatorId as string | undefined;
+      const messageId = notice.data?.messageId as string | undefined;
+      (async () => {
+        const userNick = await resolveNickname(state, notice.userId, notice.groupId);
+        const opNick = isGroup ? await resolveNickname(state, operatorId, notice.groupId) : undefined;
+        const userLabel = userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
+        const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
+        const content = isGroup
+          ? `[notice/group_recall] ${opLabel && opLabel !== userLabel ? `${opLabel} 撤回了 ${userLabel} 的消息` : `${userLabel} 撤回了一条消息`}${messageId ? `（msg=${messageId}）` : ''}`
+          : `[notice/friend_recall] ${userLabel} 撤回了一条私聊消息${messageId ? `（msg=${messageId}）` : ''}`;
+        await archivePlatformNotice({
+          sessionId,
+          noticeType: notice.noticeType,
+          content,
+          userId: notice.userId,
+          groupId: notice.groupId,
+          operatorId,
+          data: { messageId },
+        });
+      })().catch(err => ctx.logger.warn(`recall 入档异常: ${err}`));
+      return;
+    }
+
+    // 群成员增减
+    if (notice.noticeType === 'group_increase' || notice.noticeType === 'group_decrease' ||
+        notice.noticeType === 'group_member_increase' || notice.noticeType === 'group_member_decrease') {
+      if (!notice.groupId) return;
+      const isJoin = notice.noticeType === 'group_increase' || notice.noticeType === 'group_member_increase';
+      const sessionId = makeSessionId(notice.selfId, 'group', undefined, notice.groupId);
+      const operatorId = notice.data?.operatorId as string | undefined;
+      const isSelf = notice.userId != null && notice.userId === notice.selfId;
+      (async () => {
+        const userNick = await resolveNickname(state, notice.userId, notice.groupId);
+        const opNick = await resolveNickname(state, operatorId, notice.groupId);
+        const userLabel = isSelf ? '我' : (userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人'));
+        const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
+        let action: string;
+        if (isJoin) {
+          action = notice.subType === 'invite' && opLabel ? `被 ${opLabel} 邀请加入了群` : '加入了群';
+        } else {
+          if (notice.subType === 'kick' && opLabel) action = `被 ${opLabel} 移出群聊`;
+          else if (notice.subType === 'kick_me') action = `被 ${opLabel ?? '管理员'} 移出群聊`;
+          else action = '退出了群聊';
+        }
+        const content = `[notice/${notice.noticeType}${notice.subType ? '/' + notice.subType : ''}] ${userLabel} ${action}`;
+        await archivePlatformNotice({
+          sessionId,
+          noticeType: notice.noticeType,
+          subType: notice.subType,
+          content,
+          userId: notice.userId,
+          groupId: notice.groupId,
+          operatorId,
+          data: { isSelf },
+        });
+      })().catch(err => ctx.logger.warn(`group_member 变动 入档异常: ${err}`));
+      return;
+    }
+
+    // 群管理员变动
+    if (notice.noticeType === 'group_admin' || notice.noticeType === 'group_member_admin') {
+      if (!notice.groupId) return;
+      const sessionId = makeSessionId(notice.selfId, 'group', undefined, notice.groupId);
+      const isSelf = notice.userId != null && notice.userId === notice.selfId;
+      const isSet = notice.subType === 'set' || notice.subType === 'unban' /* spurious */ ;
+      (async () => {
+        const userNick = await resolveNickname(state, notice.userId, notice.groupId);
+        const userLabel = isSelf ? '我' : (userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人'));
+        const action = notice.subType === 'set' ? '被设置为管理员'
+                      : notice.subType === 'unset' ? '被取消管理员' : '管理员状态变化';
+        const content = `[notice/group_admin/${notice.subType ?? 'change'}] ${userLabel} ${action}`;
+        await archivePlatformNotice({
+          sessionId,
+          noticeType: notice.noticeType,
+          subType: notice.subType,
+          content,
+          userId: notice.userId,
+          groupId: notice.groupId,
+          data: { isSelf, isSet },
+        });
+      })().catch(err => ctx.logger.warn(`group_admin 入档异常: ${err}`));
+      return;
+    }
+
+    // 好友添加
+    if (notice.noticeType === 'friend_add' || notice.noticeType === 'friend_increase') {
+      if (!notice.userId) return;
+      const sessionId = makeSessionId(notice.selfId, 'private', notice.userId);
+      (async () => {
+        const userNick = await resolveNickname(state, notice.userId);
+        const userLabel = userNick ? `${userNick}(${notice.userId})` : notice.userId;
+        const content = `[notice/${notice.noticeType}] ${userLabel} 成为了我的好友`;
+        await archivePlatformNotice({
+          sessionId,
+          noticeType: notice.noticeType,
+          content,
+          userId: notice.userId,
+        });
+      })().catch(err => ctx.logger.warn(`friend_add 入档异常: ${err}`));
       return;
     }
 

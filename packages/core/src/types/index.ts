@@ -106,6 +106,7 @@ export { MemoryCapabilities } from './memory.js';
 // 消息归档服务
 export type {
   ArchiveIncomingResult,
+  ArchiveNoticeOptions,
   MessageArchiveService,
   MessageArchiveCapability,
   MessageArchiveCapabilityRegistry,
