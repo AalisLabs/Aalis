@@ -575,12 +575,24 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'scheduler_list_jobs',
-          description: '列出所有已配置的计划任务及其状态。',
-          parameters: { type: 'object', properties: {} },
+          description: '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或分页避免返回过多数据。',
+          parameters: {
+            type: 'object',
+            properties: {
+              keyword: { type: 'string', description: '可选：按任务名称子串模糊匹配（不区分大小写）' },
+              status: {
+                type: 'string',
+                enum: ['enabled', 'disabled', 'paused', 'running', 'all'],
+                description: '可选：按状态过滤，默认 all',
+              },
+              page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+              pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定）' },
+            },
+          },
         },
       },
-      handler: async () => {
-        return JSON.stringify(service.getJobs().map(j => ({
+      handler: async (args) => {
+        const all = service.getJobs().map(j => ({
           name: j.name,
           schedule: j.cron ?? `每 ${j.interval}s`,
           sessionId: j.sessionId,
@@ -589,7 +601,34 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           running: j.running,
           lastRun: j.lastRun ? new Date(j.lastRun).toISOString() : null,
           runCount: j.runCount,
-        })));
+        }));
+        const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+        const status = typeof args.status === 'string' ? args.status : 'all';
+        const filtered = all.filter(j => {
+          if (keyword && !j.name.toLowerCase().includes(keyword)) return false;
+          if (status === 'enabled' && !j.enabled) return false;
+          if (status === 'disabled' && j.enabled) return false;
+          if (status === 'paused' && !j.paused) return false;
+          if (status === 'running' && !j.running) return false;
+          return true;
+        });
+        const page = Math.max(1, Math.floor(Number(args.page) || 1));
+        const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+        const matched = filtered.length;
+        const totalPages = Math.max(1, Math.ceil(matched / pageSize));
+        const curPage = Math.min(page, totalPages);
+        const start = (curPage - 1) * pageSize;
+        return JSON.stringify({
+          total: all.length,
+          matched,
+          page: curPage,
+          pageSize,
+          totalPages,
+          hasMore: curPage < totalPages,
+          ...(keyword ? { keyword } : {}),
+          ...(status !== 'all' ? { status } : {}),
+          jobs: filtered.slice(start, start + pageSize),
+        });
       },
     });
 
