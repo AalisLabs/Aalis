@@ -14,7 +14,21 @@ interface AuthorityOwner {
 }
 
 interface AuthorityCommand {
+  /** override 键 = path.join(':')；同时作为 React key */
+  key: string;
+  /** 同 key（兼容旧字段；React key 用 key） */
   name: string;
+  /** 渲染显示，如 '/clear nuke' */
+  displayName: string;
+  /** 路径末段名 'nuke'，用于子行更紧凑展示 */
+  leafName: string;
+  /** 完整路径 */
+  path: string[];
+  /** 嵌套深度，根=0 */
+  depth: number;
+  isRoot: boolean;
+  hasSubcommands: boolean;
+  hasAction: boolean;
   description: string;
   authority: number;
   safety: string;
@@ -78,6 +92,15 @@ export function AuthorityPage() {
   const [showAddOwner, setShowAddOwner] = useState(false);
   const [editingCmd, setEditingCmd] = useState<string | null>(null);
   const [cmdDraft, setCmdDraft] = useState({ authority: 1, safety: 'safe' });
+  // 子指令展开状态：存储已展开的根指令 key（深度=0 的 key 即根名）
+  const [expandedCmds, setExpandedCmds] = useState<Set<string>>(new Set());
+  const toggleCmdExpand = (key: string) => {
+    setExpandedCmds(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
   const [editingTool, setEditingTool] = useState<string | null>(null);
   const [toolDraft, setToolDraft] = useState({ authority: 1, safety: 'safe' });
 
@@ -90,6 +113,21 @@ export function AuthorityPage() {
       setDangerousDraft({
         allow: (d.dangerousPolicy?.allow ?? []).join(', '),
         duration: d.dangerousPolicy?.duration ?? 0,
+      });
+      // 自动展开"有任意后代被 override"的根指令，方便用户一眼看到自己的修改
+      setExpandedCmds(prev => {
+        const next = new Set(prev);
+        for (const c of d.commands) {
+          if (c.depth > 0 && c.overridden) {
+            const rootKey = c.path[0];
+            next.add(rootKey);
+            // 同时展开沿途的所有祖先（孙级以上情况）
+            for (let i = 1; i < c.path.length - 1; i++) {
+              next.add(c.path.slice(0, i + 1).join(':'));
+            }
+          }
+        }
+        return next;
       });
     } catch {
       setData(null);
@@ -317,59 +355,95 @@ export function AuthorityPage() {
                   <span>安全等级</span>
                   <span>操作</span>
                 </div>
-                {data.commands.map(c => {
-                  const isEditing = editingCmd === c.name;
-                  return (
-                    <div className={`authority-cmd-row ${c.overridden ? 'overridden' : ''}`} key={c.name}>
-                      <span className="authority-cmd-name" title={c.description}>
-                        {data.commandPrefix}{c.name}
-                      </span>
-                      <span className="authority-cmd-plugin">{c.pluginName}</span>
-                      <span>
-                        {isEditing ? (
-                          <input type="number" className="config-edit-input authority-inline-input" min={0}
-                            value={cmdDraft.authority}
-                            onChange={e => setCmdDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
-                            autoFocus />
-                        ) : (
-                          <span className={`authority-badge ${c.authority >= data.ownerAuthority ? 'owner' : c.authority >= 3 ? 'high' : ''}`}>
-                            {c.authority}
-                          </span>
-                        )}
-                      </span>
-                      <span>
-                        {isEditing ? (
-                          <select className="config-edit-input authority-inline-select"
-                            value={cmdDraft.safety}
-                            onChange={e => setCmdDraft(v => ({ ...v, safety: e.target.value }))}>
-                            <option value="safe">safe</option>
-                            <option value="dangerous">dangerous</option>
-                          </select>
-                        ) : (
-                          <span className={`authority-safety-tag ${c.safety}`}>{c.safety}</span>
-                        )}
-                      </span>
-                      <span className="authority-actions">
-                        {isEditing ? (
-                          <>
-                            <button className="btn btn-primary btn-sm" onClick={() => saveCommandOverride(c.name)}>保存</button>
-                            <button className="btn btn-sm" onClick={() => setEditingCmd(null)}>取消</button>
-                          </>
-                        ) : (
-                          <>
-                            <button className="btn btn-sm" onClick={() => {
-                              setEditingCmd(c.name);
-                              setCmdDraft({ authority: c.authority, safety: c.safety });
-                            }}>编辑</button>
-                            {c.overridden && (
-                              <button className="btn btn-sm" onClick={() => resetCommandOverride(c.name)} title="恢复插件默认值">重置</button>
-                            )}
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  );
-                })}
+                {(() => {
+                  // 根据 expandedCmds 过滤：未展开的根，跳过其所有后代
+                  const rows: AuthorityCommand[] = [];
+                  let skipPrefixDepth: number | null = null;
+                  let skipPrefixPath: string[] | null = null;
+                  for (const c of data.commands) {
+                    if (skipPrefixPath && c.depth > skipPrefixDepth! &&
+                        c.path.slice(0, skipPrefixPath.length).join(':') === skipPrefixPath.join(':')) {
+                      continue; // 仍在被折叠的子树内
+                    }
+                    skipPrefixPath = null;
+                    rows.push(c);
+                    if (c.hasSubcommands && !expandedCmds.has(c.key)) {
+                      skipPrefixDepth = c.depth;
+                      skipPrefixPath = c.path;
+                    }
+                  }
+                  return rows.map(c => {
+                    const isEditing = editingCmd === c.key;
+                    const isExpanded = expandedCmds.has(c.key);
+                    return (
+                      <div
+                        className={`authority-cmd-row ${c.overridden ? 'overridden' : ''} ${c.depth > 0 ? 'is-sub' : ''}`}
+                        style={c.depth > 0 ? { paddingLeft: 16 + c.depth * 18 } : undefined}
+                        key={c.key}
+                      >
+                        <span className="authority-cmd-name" title={c.description}>
+                          {c.hasSubcommands && (
+                            <span
+                              className={`authority-cmd-toggle ${isExpanded ? 'open' : ''}`}
+                              onClick={() => toggleCmdExpand(c.key)}
+                              title={isExpanded ? '折叠子指令' : '展开子指令'}
+                              style={{ cursor: 'pointer', display: 'inline-block', width: 14, marginRight: 4, opacity: 0.6 }}
+                            >▶</span>
+                          )}
+                          {c.depth === 0 ? c.displayName : c.leafName}
+                          {c.hasSubcommands && !c.hasAction && (
+                            <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.55 }}>(分组)</span>
+                          )}
+                        </span>
+                        <span className="authority-cmd-plugin">
+                          {c.depth === 0 ? c.pluginName : ''}
+                        </span>
+                        <span>
+                          {isEditing ? (
+                            <input type="number" className="config-edit-input authority-inline-input" min={0}
+                              value={cmdDraft.authority}
+                              onChange={e => setCmdDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
+                              autoFocus />
+                          ) : (
+                            <span className={`authority-badge ${c.authority >= data.ownerAuthority ? 'owner' : c.authority >= 3 ? 'high' : ''}`}>
+                              {c.authority}
+                            </span>
+                          )}
+                        </span>
+                        <span>
+                          {isEditing ? (
+                            <select className="config-edit-input authority-inline-select"
+                              value={cmdDraft.safety}
+                              onChange={e => setCmdDraft(v => ({ ...v, safety: e.target.value }))}>
+                              <option value="safe">safe</option>
+                              <option value="dangerous">dangerous</option>
+                            </select>
+                          ) : (
+                            <span className={`authority-safety-tag ${c.safety}`}>{c.safety}</span>
+                          )}
+                        </span>
+                        <span className="authority-actions">
+                          {isEditing ? (
+                            <>
+                              <button className="btn btn-primary btn-sm" onClick={() => saveCommandOverride(c.key)}>保存</button>
+                              <button className="btn btn-sm" onClick={() => setEditingCmd(null)}>取消</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn btn-sm" onClick={() => {
+                                setEditingCmd(c.key);
+                                setCmdDraft({ authority: c.authority, safety: c.safety });
+                              }}>编辑</button>
+                              {c.overridden && (
+                                <button className="btn btn-sm" onClick={() => resetCommandOverride(c.key)} title="恢复插件默认值">重置</button>
+                              )}
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             )}
           </div>

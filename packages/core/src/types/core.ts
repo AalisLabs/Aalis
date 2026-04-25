@@ -372,13 +372,49 @@ export interface CommandDefinition {
   authority?: number;
   /** 安全级别 (默认 'safe') */
   safety?: SafetyLevel;
-  /** 是否同时注册为 AI 工具 (默认 false) */
+  /** 是否同时注册为 AI 工具 (默认 false)。仅对根指令生效；子指令通过 args 传入 */
   asTools?: boolean;
   /**
    * 执行函数
    * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
+   *
+   * 当存在 subcommands 时，未匹配到任何子指令名的情况下回退到此 action（args 保持原样）。
+   * 若希望"必须指定子指令"，可在此返回 usage 提示。
    */
   action: (ctx: CommandContext) => Promise<string | void>;
+  /**
+   * 子指令树（递归）。匹配规则：
+   * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层并消耗一个 arg
+   * - 命中后调用对应节点的 action（args 为剩余部分）
+   * - 任意一层未命中则停在当前节点，调用其 action
+   *
+   * 权限/安全等级继承：子节点未声明时，继承自其有效父节点（含 override）。
+   * Override 键为冒号拼接的完整路径，如 `clear:nuke`、`db:migrate:up`。
+   */
+  subcommands?: SubcommandDefinition[];
+}
+
+/**
+ * 子指令定义（递归）
+ *
+ * 与 CommandDefinition 类似，但：
+ * - 不能单独注册为工具（asTools 由根指令决定）
+ * - action 可选：仅作为分组节点（仅含 subcommands）时省略，调用即返回 usage 提示
+ * - 子指令的 pluginName 隐式继承自根指令
+ */
+export interface SubcommandDefinition {
+  /** 子指令名称（不含前缀） */
+  name: string;
+  /** 子指令描述 */
+  description: string;
+  /** 最低权限等级；未声明则继承父节点的有效值 */
+  authority?: number;
+  /** 安全级别；未声明则继承父节点的有效值 */
+  safety?: SafetyLevel;
+  /** 执行函数；省略时该节点仅作为分组，调用回退为 usage 提示 */
+  action?: (ctx: CommandContext) => Promise<string | void>;
+  /** 进一步的孙级子指令 */
+  subcommands?: SubcommandDefinition[];
 }
 
 /** 已注册的指令 */

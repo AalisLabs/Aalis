@@ -239,8 +239,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     const auth = ctx.getService<AuthorityService>('authority');
     const users = auth?.listUsers() ?? [];
     const owners: Array<{ platform: string; userId: string }> = ctx.config.get('owners') ?? [];
-    const commands = ctx.commands?.getAll() ?? [];
     const overrides = ctx.commands?.getOverrides() ?? {};
+    // 扁平化所有指令节点（含递归子指令），按深度优先顺序，便于 UI 表格渲染
+    const cmdNodes = ctx.commands?.getAllNodes() ?? [];
     const tools = ctx.tools?.getAll() ?? [];
     const toolOverrides = ctx.tools?.getOverrides() ?? {};
     return {
@@ -250,19 +251,28 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
       commandPrefix: ctx.commands?.prefix ?? '/',
-      commands: commands.map(c => {
-        const o = overrides[c.name];
-        return {
-          name: c.name,
-          description: c.description,
-          authority: o?.authority ?? c.authority ?? 1,
-          safety: o?.safety ?? c.safety ?? 'safe',
-          baseAuthority: c.authority ?? 1,
-          baseSafety: c.safety ?? 'safe',
-          overridden: !!o,
-          pluginName: c.pluginName,
-        };
-      }),
+      commands: cmdNodes.map(n => ({
+        // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'clear:nuke'
+        key: n.key,
+        // 兼容字段：旧前端使用 c.name 做 React key —— 这里给完整 key
+        name: n.key,
+        // 用于显示，如 '/clear nuke'
+        displayName: `${ctx.commands?.prefix ?? '/'}${n.path.join(' ')}`,
+        // 路径段名（'nuke'）用于子行紧凑显示
+        leafName: n.name,
+        path: n.path,
+        depth: n.depth,
+        isRoot: n.isRoot,
+        hasSubcommands: n.hasSubcommands,
+        hasAction: n.hasAction,
+        description: n.description,
+        authority: n.authority,
+        safety: n.safety,
+        baseAuthority: n.baseAuthority,
+        baseSafety: n.baseSafety,
+        overridden: n.overridden,
+        pluginName: n.pluginName,
+      })),
       commandOverrides: overrides,
       tools,
       toolOverrides,
