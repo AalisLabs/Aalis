@@ -45,11 +45,34 @@ export const configSchema: ConfigSchema = {
   },
   splitMessage: {
     label: '消息分条发送',
-    description: '启用后，文本将按标点符号自动拆分为多条消息发送，模拟真人发送习惯',
+    description: '启用后，文本将按选中的符号自动拆分为多条消息发送，模拟真人发送习惯',
     fields: {
       enabled: { type: 'boolean', label: '启用', description: '是否启用消息分条发送', default: false },
       delayPerChar: { type: 'number', label: '每字延迟 (ms)', description: '按下一条消息的字数计算延迟，单位毫秒/字', default: 50 },
       maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟上限（毫秒）', default: 3000 },
+      punctuation: {
+        type: 'multiselect',
+        label: '切割符号',
+        description: '选中哪些符号作为拆分位置。可手动填入自定义符号；特殊字符请使用 token：\n=换行、\t=制表符、space=空格。',
+        allowCustom: true,
+        options: [
+          { label: '。 中文句号', value: '。' },
+          { label: '！ 中文感叹号', value: '！' },
+          { label: '？ 中文问号', value: '？' },
+          { label: '； 中文分号', value: '；' },
+          { label: '， 中文逗号', value: '，' },
+          { label: '、 顿号', value: '、' },
+          { label: '. 英文句号', value: '.' },
+          { label: '! 英文感叹号', value: '!' },
+          { label: '? 英文问号', value: '?' },
+          { label: '; 英文分号', value: ';' },
+          { label: ', 英文逗号', value: ',' },
+          { label: '\\n 换行', value: '\\n' },
+          { label: '\\t 制表符', value: '\\t' },
+          { label: 'space 空格', value: 'space' },
+        ],
+        default: ['。', '！', '？', '.', '!', '?', '\\n'],
+      },
     },
   },
   chatFlow: {
@@ -103,6 +126,7 @@ export const defaultConfig = {
     enabled: false,
     delayPerChar: 50,
     maxDelay: 3000,
+    punctuation: ['。', '！', '？', '.', '!', '?', '\\n'] as string[],
   },
   chatFlow: {
     enabled: false,
@@ -331,13 +355,48 @@ const CONNECT_TIMEOUT = 15000;
 // ===== 消息分条逻辑 =====
 
 /**
+ * 将「切割符号列表」（允许包含 token：\n / \t / \r / space）
+ * 转换为实际字符集合，并去重。
+ */
+function resolvePunctuationChars(items: unknown): Set<string> {
+  const result = new Set<string>();
+  if (!Array.isArray(items)) return result;
+  for (const raw of items) {
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    let decoded: string;
+    switch (raw) {
+      case '\\n': decoded = '\n'; break;
+      case '\\t': decoded = '\t'; break;
+      case '\\r': decoded = '\r'; break;
+      case 'space': decoded = ' '; break;
+      default: decoded = raw;
+    }
+    // 按字符拆，支持用户填入多个符号拼一起的情况
+    for (const ch of decoded) result.add(ch);
+  }
+  return result;
+}
+
+/** 将字符集合转换为正则字符类（转义特殊字符）。 */
+function charsToRegexClass(chars: Set<string>): string {
+  return Array.from(chars).map(ch => {
+    // 正则字符类内需转义的字符
+    if (ch === '\\' || ch === ']' || ch === '^' || ch === '-') return '\\' + ch;
+    if (ch === '\n') return '\\n';
+    if (ch === '\r') return '\\r';
+    if (ch === '\t') return '\\t';
+    return ch;
+  }).join('');
+}
+
+/**
  * 按标点符号（中英文逗号、句号、问号、叹号、分号、顿号、换行等）
  * 将文本拆分为多条消息。XML 标记（<at>、<image> 等）保持与相邻文本在一起。
  * 只拆分纯文本部分，不在 XML 标记中间切割。
  */
-function splitMessageByPunctuation(content: string): string[] {
+function splitMessageByPunctuation(content: string, splitChars: Set<string>): string[] {
   // 如果内容很短或只有 XML 标记，不拆分
-  if (content.length <= 10) return [content];
+  if (content.length <= 10 || splitChars.size === 0) return [content];
 
   // 识别所有 XML 标记的位置，拆分时不切割它们
   const xmlTagRegex = /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
@@ -359,7 +418,9 @@ function splitMessageByPunctuation(content: string): string[] {
   }
 
   // 在文本 token 内部按标点拆分
-  const splitRegex = /(?<=[。！？；\n，、,.!?;])/;
+  const splitClass = charsToRegexClass(splitChars);
+  const splitRegex = new RegExp(`(?<=[${splitClass}])`);
+  const trailingPunctuation = new RegExp(`[${splitClass}\\s]+$`);
   const pieces: string[] = [];
   let current = '';
 
@@ -383,7 +444,6 @@ function splitMessageByPunctuation(content: string): string[] {
   }
 
   // 去除每段尾部标点，过滤空段，合并过短段落
-  const trailingPunctuation = /[。！？；，、,.!?;\s]+$/;
   const result: string[] = [];
   for (const piece of pieces) {
     // 去除尾部标点符号
@@ -409,10 +469,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     : [];
 
   // 消息分条配置
-  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; delayPerChar?: number; maxDelay?: number };
+  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; delayPerChar?: number; maxDelay?: number; punctuation?: unknown };
   const splitEnabled = splitCfg.enabled === true;
   const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
   const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
+  const splitChars = resolvePunctuationChars(
+    splitCfg.punctuation ?? ['。', '！', '？', '.', '!', '?', '\\n'],
+  );
 
   // 聊天流控配置
   const flowCfg = resolveChatFlowConfig((config.chatFlow ?? {}) as Record<string, unknown>);
@@ -647,7 +710,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function findStateBySelfId(selfId: string | undefined): ConnectionState | undefined {
     if (!selfId) return undefined;
-    return states.find(s => s.selfId === selfId);
+    const target = String(selfId);
+    return states.find(s => s.selfId != null && String(s.selfId) === target);
   }
 
   function parseGroupSessionId(sessionId: string): { selfId?: string; groupId?: string } {
@@ -1033,15 +1097,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
 
-      const state = states.find(s => s.selfId === parsed.selfId);
+      let state = findStateBySelfId(parsed.selfId);
+      // 单连接场景下的宽容：如果只有一个在线连接，则允许使用它发送。
+      // 避免历史 sessionId、配置 selfId 忘写 / 不一致导致消息走失。
+      if (!state) {
+        const onlineStates = states.filter(s => s.status === 'online' && s.ws && s.protocol);
+        if (onlineStates.length === 1) {
+          state = onlineStates[0];
+          ctx.logger.debug(`OneBot 未找到 selfId=${parsed.selfId} 的连接，单连接回退使用 selfId=${state.selfId}`);
+        }
+      }
       if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
-        const reason = !state ? '未找到对应连接' : state.status !== 'online' ? `状态=${state.status}` : !state.ws ? 'ws 为空' : '协议未初始化';
+        const knownIds = states.map(s => `${s.selfId ?? '?'}(${s.status})`).join(', ') || '无';
+        const reason = !state
+          ? `未找到对应连接（已知: ${knownIds}）`
+          : state.status !== 'online' ? `状态=${state.status}` : !state.ws ? 'ws 为空' : '协议未初始化';
         ctx.logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
         return;
       }
 
       // 消息分条发送（指令回复等短消息可跳过）
-      const pieces = (splitEnabled && !options?.skipSplit) ? splitMessageByPunctuation(content) : [content];
+      const pieces = (splitEnabled && !options?.skipSplit) ? splitMessageByPunctuation(content, splitChars) : [content];
 
       for (let i = 0; i < pieces.length; i++) {
         const piece = pieces[i].trim();
@@ -1071,7 +1147,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const parsed = parseSessionId(sessionId);
       if (!parsed) throw new Error(`无法解析 sessionId: ${sessionId}`);
 
-      const state = states.find(s => s.selfId === parsed.selfId);
+      const state = findStateBySelfId(parsed.selfId);
       if (!state || state.status !== 'online' || !state.ws) {
         throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
       }
@@ -1153,7 +1229,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const state: ConnectionState = {
       config: connConfig,
       status: 'offline',
-      selfId: connConfig.selfId,
+      selfId: connConfig.selfId != null ? String(connConfig.selfId) : undefined,
       lastPong: 0,
       pendingActions: new Map(),
     };
