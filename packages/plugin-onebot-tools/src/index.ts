@@ -71,6 +71,12 @@ function requireGroupSession(callCtx: ToolCallContext): { selfId: string; groupI
   return { selfId: parsed.selfId, groupId: parsed.targetId };
 }
 
+function requireOneBotSession(callCtx: ToolCallContext): { selfId: string; detailType: string; targetId: string } {
+  const parsed = parseOneBotSession(callCtx.sessionId);
+  if (!parsed) throw new Error('此工具仅在 OneBot 会话中可用');
+  return parsed;
+}
+
 async function callAction(
   ctx: Context,
   callCtx: ToolCallContext,
@@ -186,6 +192,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (cfg.groupInfo.enabled) registerGroupInfoTools(groupedCtx);
     if (cfg.account.enabled) registerAccountTools(groupedCtx);
     if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
+    registerRequestTools(groupedCtx);
   });
 }
 
@@ -310,6 +317,37 @@ function registerGroupManagementTools(ctx: Context): void {
         reject_add_request: !!args.reject_add_request,
       });
       return `已将 ${args.user_id} 踢出群聊`;
+    },
+  });
+
+  // ---- 主动退群 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_leave_group',
+        description: '让机器人主动退出指定 QQ 群。适用于群内持续骚扰、无意义刷屏或不希望继续参与的场景。不会解散群。',
+        parameters: {
+          type: 'object',
+          properties: {
+            group_id: { type: 'string', description: '要退出的群号；在群聊中可省略，默认当前群' },
+          },
+          required: [],
+        },
+      },
+    },
+    safety: 'dangerous',
+    authority: 4,
+    handler: async (args, callCtx) => {
+      const session = requireOneBotSession(callCtx);
+      const groupId = args.group_id ? String(args.group_id) : (session.detailType === 'group' ? session.targetId : '');
+      if (!groupId) return '请提供 group_id，或在要退出的群聊中调用此工具';
+
+      await callAction(ctx, callCtx, 'set_group_leave', {
+        group_id: Number(groupId),
+        is_dismiss: false,
+      });
+      return `已退出群 ${groupId}`;
     },
   });
 
@@ -862,6 +900,36 @@ function registerAccountTools(ctx: Context): void {
     },
   });
 
+  // ---- 删除好友 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_delete_friend',
+        description: '删除指定 QQ 好友。适用于私聊持续骚扰、辱骂、垃圾消息等不希望继续保持好友关系的场景。该接口是 go-cqhttp/NapCat 等 OneBot v11 实现的常见扩展。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: '要删除的好友 QQ 号；在私聊中可省略，默认当前对话用户' },
+          },
+          required: [],
+        },
+      },
+    },
+    safety: 'dangerous',
+    authority: 4,
+    handler: async (args, callCtx) => {
+      const session = requireOneBotSession(callCtx);
+      const userId = args.user_id ? String(args.user_id) : (session.detailType === 'private' ? session.targetId : '');
+      if (!userId) return '请提供 user_id，或在要删除的好友私聊中调用此工具';
+
+      await callAction(ctx, callCtx, 'delete_friend', {
+        user_id: Number(userId),
+      });
+      return `已删除好友 ${userId}`;
+    },
+  });
+
   ctx.logger.info('OneBot 账号 / 好友 / 群列表查询工具已注册');
 }
 
@@ -928,4 +996,86 @@ function registerInteractionTools(ctx: Context): void {
   });
 
   ctx.logger.info('OneBot 特殊交互工具已注册');
+}
+
+// ===== 请求处理工具（好友申请 / 群请求）=====
+
+function registerRequestTools(ctx: Context): void {
+  /** 找到支持 handleFriendRequest 的 OneBot 适配器 */
+  function findRequestAdapter(ctx: Context): PlatformAdapter & {
+    handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
+    handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+  } | undefined {
+    const adapter = ctx.getPlatforms().find(
+      a => a.platform === 'onebot' && typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
+    );
+    return adapter as typeof adapter & {
+      handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
+      handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+    };
+  }
+
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_handle_friend_request',
+        description: '处理 QQ 好友申请，同意或拒绝。仅在收到好友申请通知后才有效。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: '发起好友申请的用户 QQ 号' },
+            approve: { type: 'boolean', description: 'true = 同意，false = 拒绝' },
+            remark: { type: 'string', description: '同意后添加的备注（可选）' },
+          },
+          required: ['user_id', 'approve'],
+        },
+      },
+    },
+    safety: 'dangerous',
+    authority: 3,
+    handler: async (args) => {
+      const adapter = findRequestAdapter(ctx);
+      if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
+      return adapter.handleFriendRequest(
+        String(args.user_id),
+        !!args.approve,
+        args.remark ? String(args.remark) : undefined,
+      );
+    },
+  });
+
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_handle_group_request',
+        description: '处理 QQ 群请求：包括「有人申请加入 bot 管理的群」和「他人邀请 bot 入群」两种情况，同意或拒绝。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: '发起请求的用户 QQ 号' },
+            group_id: { type: 'string', description: '相关群号' },
+            approve: { type: 'boolean', description: 'true = 同意，false = 拒绝' },
+            reason: { type: 'string', description: '拒绝理由（拒绝时有效，可选）' },
+          },
+          required: ['user_id', 'group_id', 'approve'],
+        },
+      },
+    },
+    safety: 'dangerous',
+    authority: 3,
+    handler: async (args) => {
+      const adapter = findRequestAdapter(ctx);
+      if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
+      return adapter.handleGroupRequest(
+        String(args.user_id),
+        String(args.group_id),
+        !!args.approve,
+        args.reason ? String(args.reason) : undefined,
+      );
+    },
+  });
+
+  ctx.logger.info('OneBot 请求处理工具已注册');
 }
