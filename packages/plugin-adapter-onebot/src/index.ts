@@ -10,6 +10,7 @@ import type {
   OneBotRawEvent,
   OneBotActionResponse,
   NormalizedNoticeEvent,
+  NormalizedRequestEvent,
 } from './types.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
@@ -428,6 +429,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== 用户昵称缓存（userId → nickname，从每条消息的 sender 信息累积） =====
   const nicknameCache = new Map<string, string>();
+
+  // ===== 待处理请求（好友/入群）=====
+  // key: userId（好友请求）或 `${userId}:${groupId}`（群请求）
+  const pendingFriendRequests = new Map<string, { flag: string; selfId: string }>();
+  const pendingGroupRequests = new Map<string, { flag: string; subType: string; selfId: string }>();
 
   // ===== 聊天流控状态管理 =====
 
@@ -1096,7 +1102,48 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       return out;
     },
-  } as PlatformAdapter & { getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }> };
+
+    /** 处理好友请求：approve=true 同意，remark 为备注（同意时有效） */
+    async handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string> {
+      const pending = pendingFriendRequests.get(userId);
+      if (!pending) return `未找到来自 ${userId} 的好友申请（可能已过期或已处理）`;
+      const state = findStateBySelfId(pending.selfId);
+      if (!state || state.status !== 'online') return '连接不可用，无法处理请求';
+      await sendAction(state, 'set_friend_add_request', {
+        flag: pending.flag,
+        approve,
+        remark: remark ?? '',
+      });
+      pendingFriendRequests.delete(userId);
+      return approve
+        ? `已同意 ${userId} 的好友申请${remark ? `，备注: ${remark}` : ''}`
+        : `已拒绝 ${userId} 的好友申请`;
+    },
+
+    /** 处理群请求（加群申请或入群邀请）：approve=true 同意，reason 为拒绝理由 */
+    async handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string> {
+      const key = `${userId}:${groupId}`;
+      const pending = pendingGroupRequests.get(key);
+      if (!pending) return `未找到来自 ${userId} 关于群 ${groupId} 的请求（可能已过期或已处理）`;
+      const state = findStateBySelfId(pending.selfId);
+      if (!state || state.status !== 'online') return '连接不可用，无法处理请求';
+      await sendAction(state, 'set_group_add_request', {
+        flag: pending.flag,
+        sub_type: pending.subType,
+        approve,
+        reason: reason ?? '',
+      });
+      pendingGroupRequests.delete(key);
+      const typeLabel = pending.subType === 'invite' ? '入群邀请' : '加群申请';
+      return approve
+        ? `已同意 ${userId} 的${typeLabel}（群 ${groupId}）`
+        : `已拒绝 ${userId} 的${typeLabel}（群 ${groupId}）${reason ? `，理由: ${reason}` : ''}`;
+    },
+  } as PlatformAdapter & {
+    getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
+    handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
+    handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+  };
 
   ctx.provide('platform', adapter, { capabilities: ['onebot'] });
 
@@ -1222,6 +1269,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           handleMetaEvent(state, event);
         } else if (eventType === 'notice') {
           handleNoticeEvent(state, event);
+        } else if (eventType === 'request') {
+          handleRequestEvent(state, event);
         }
       } catch (err) {
         ctx.logger.debug('OneBot 消息解析失败:', err);
@@ -1402,6 +1451,73 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     })().catch(err => {
       ctx.logger.warn(`OneBot 消息处理异常: ${err}`);
     });
+  }
+
+  // ===== 请求事件处理（加好友 / 加群 / 邀请入群）=====
+
+  function handleRequestEvent(state: ConnectionState, raw: OneBotRawEvent): void {
+    if (!state.protocol) return;
+
+    const fallbackSelfId = state.selfId ?? 'unknown';
+    const req: NormalizedRequestEvent | null = state.protocol.parseRequestEvent(raw, fallbackSelfId);
+    if (!req) return;
+
+    const requestLabel = req.requestType === 'group' ? `${req.requestType}/${req.subType}` : req.requestType;
+    const requestGroupId = req.requestType === 'group' ? req.groupId : '-';
+    ctx.logger.info(`OneBot[${state.protocol.version}] 请求事件: ${requestLabel}, userId=${req.userId}, groupId=${requestGroupId}`);
+
+    if (req.requestType === 'friend') {
+      // 存储待处理的好友请求 flag
+      pendingFriendRequests.set(req.userId, { flag: req.flag, selfId: req.selfId });
+
+      // 将请求包装为合成消息，交由 agent 决策（以私聊会话形式发送）
+      const sessionId = makeSessionId(req.selfId, 'private', req.userId);
+      const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
+      const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
+
+      ctx.emit('message:received', {
+        content,
+        sessionId,
+        platform: 'onebot',
+        userId: req.userId,
+        sessionType: 'private',
+      }).catch((err: unknown) => ctx.logger.warn(`请求事件处理失败: ${err}`));
+
+    } else if (req.requestType === 'group') {
+      const key = `${req.userId}:${req.groupId}`;
+      pendingGroupRequests.set(key, { flag: req.flag, subType: req.subType, selfId: req.selfId });
+
+      // 被邀请入群：以私聊形式通知（bot 还没在群里，无法发群消息）
+      const sessionId = makeSessionId(req.selfId, 'private', req.userId);
+      const groupPart = `群 ${req.groupId}`;
+      const commentPart = req.comment ? `，备注："${req.comment}"` : '';
+
+      let content: string;
+      if (req.subType === 'invite') {
+        content = `[系统通知] 用户 ${req.userId} 邀请我加入${groupPart}${commentPart}。请决定是否接受邀请，调用 onebot_handle_group_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
+      } else {
+        // sub_type === 'add': 有人申请加入 bot 管理的群（bot 是管理员）
+        const gsId = makeSessionId(req.selfId, 'group', undefined, req.groupId);
+        content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_handle_group_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
+        ctx.emit('message:received', {
+          content,
+          sessionId: gsId,
+          platform: 'onebot',
+          userId: req.userId,
+          sessionType: 'group',
+          groupId: req.groupId,
+        }).catch((err: unknown) => ctx.logger.warn(`群申请事件处理失败: ${err}`));
+        return;
+      }
+
+      ctx.emit('message:received', {
+        content,
+        sessionId,
+        platform: 'onebot',
+        userId: req.userId,
+        sessionType: 'private',
+      }).catch((err: unknown) => ctx.logger.warn(`邀请事件处理失败: ${err}`));
+    }
   }
 
   function handleNoticeEvent(state: ConnectionState, raw: OneBotRawEvent): void {
