@@ -1,9 +1,8 @@
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import type { Context, Message, ConfigSchema } from '@aalis/core';
-import type { MemoryService, ConversationTurn } from '@aalis/core';
+import type { MemoryService } from '@aalis/core';
 import { MemoryCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -48,23 +47,11 @@ class SQLiteMemoryService implements MemoryService {
         name TEXT,
         timestamp INTEGER NOT NULL,
         archived INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT,
         createdAt TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session
         ON messages(sessionId, timestamp);
-
-      CREATE TABLE IF NOT EXISTS conversation_turns (
-        turnId TEXT PRIMARY KEY,
-        sessionId TEXT NOT NULL,
-        userId TEXT,
-        platform TEXT,
-        userContent TEXT NOT NULL,
-        assistantContent TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_turns_session
-        ON conversation_turns(sessionId, timestamp);
 
       CREATE TABLE IF NOT EXISTS metadata (
         namespace TEXT NOT NULL,
@@ -84,12 +71,22 @@ class SQLiteMemoryService implements MemoryService {
     if (!columns.some(c => c.name === 'reasoningContent')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN reasoningContent TEXT');
     }
+    // 迁移：为旧数据库添加 metadata 列
+    if (!columns.some(c => c.name === 'metadata')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
+    }
+
+  }
+
+  private static parseMetadata(raw: string | null): Record<string, unknown> | undefined {
+    if (!raw) return undefined;
+    try { return JSON.parse(raw) as Record<string, unknown>; } catch { return undefined; }
   }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (sessionId, role, content, toolCalls, toolCallId, name, timestamp, reasoningContent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (sessionId, role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       sessionId,
@@ -100,14 +97,15 @@ class SQLiteMemoryService implements MemoryService {
       message.name ?? null,
       message.timestamp ?? Date.now(),
       message.reasoningContent ?? null,
+      message.metadata ? JSON.stringify(message.metadata) : null,
     );
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const stmt = this.db.prepare(`
-      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
+      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
       FROM (
-        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
+        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
         FROM messages
         WHERE sessionId = ? AND archived = 0
         ORDER BY timestamp DESC
@@ -122,6 +120,7 @@ class SQLiteMemoryService implements MemoryService {
       name: string | null;
       timestamp: number;
       reasoningContent: string | null;
+      metadata: string | null;
     }>;
 
     return rows.map(row => ({
@@ -132,6 +131,7 @@ class SQLiteMemoryService implements MemoryService {
       name: row.name ?? undefined,
       timestamp: row.timestamp,
       reasoningContent: row.reasoningContent ?? undefined,
+      metadata: SQLiteMemoryService.parseMetadata(row.metadata),
     }));
   }
 
@@ -140,42 +140,34 @@ class SQLiteMemoryService implements MemoryService {
     stmt.run(sessionId);
   }
 
-  // ----- 对话轮次归档 -----
-
-  async saveTurn(turn: Omit<ConversationTurn, 'id'>): Promise<string> {
-    const turnId = randomUUID();
-    const stmt = this.db.prepare(`
-      INSERT INTO conversation_turns (turnId, sessionId, userId, platform, userContent, assistantContent, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(turnId, turn.sessionId, turn.userId ?? null, turn.platform ?? null, turn.userContent, turn.assistantContent, turn.timestamp);
-    return turnId;
-  }
-
-  async getTurns(turnIds: string[]): Promise<ConversationTurn[]> {
-    if (turnIds.length === 0) return [];
-    const placeholders = turnIds.map(() => '?').join(',');
-    const stmt = this.db.prepare(`SELECT turnId, sessionId, userId, platform, userContent, assistantContent, timestamp FROM conversation_turns WHERE turnId IN (${placeholders})`);
-    const rows = stmt.all(...turnIds) as Array<{
-      turnId: string; sessionId: string; userId: string | null; platform: string | null;
-      userContent: string; assistantContent: string; timestamp: number;
+  async getMessagesBySessionRange(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]> {
+    let sql = `SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
+               FROM messages
+               WHERE sessionId = ? AND timestamp BETWEEN ? AND ?`;
+    const params: unknown[] = [sessionId, fromTs, toTs];
+    if (roles && roles.length > 0) {
+      sql += ` AND role IN (${roles.map(() => '?').join(',')})`;
+      params.push(...roles);
+    }
+    sql += ' ORDER BY timestamp ASC LIMIT 500';
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params) as Array<{
+      role: string; content: string | null; toolCalls: string | null; toolCallId: string | null;
+      name: string | null; timestamp: number; reasoningContent: string | null; metadata: string | null;
     }>;
     return rows.map(row => ({
-      id: row.turnId,
-      sessionId: row.sessionId,
-      userId: row.userId ?? undefined,
-      platform: row.platform ?? undefined,
-      userContent: row.userContent,
-      assistantContent: row.assistantContent,
+      role: row.role as Message['role'],
+      content: row.content,
+      toolCalls: row.toolCalls ? JSON.parse(row.toolCalls) : undefined,
+      toolCallId: row.toolCallId ?? undefined,
+      name: row.name ?? undefined,
       timestamp: row.timestamp,
+      reasoningContent: row.reasoningContent ?? undefined,
+      metadata: SQLiteMemoryService.parseMetadata(row.metadata),
     }));
   }
 
-  async deleteTurns(sessionId: string): Promise<number> {
-    const stmt = this.db.prepare('DELETE FROM conversation_turns WHERE sessionId = ?');
-    const result = stmt.run(sessionId);
-    return result.changes;
-  }
+  // ----- 范围查询、归档、全历史 -----
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
     const stmt = this.db.prepare(`
@@ -190,9 +182,9 @@ class SQLiteMemoryService implements MemoryService {
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
     const stmt = this.db.prepare(`
-      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
+      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
       FROM (
-        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent
+        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
         FROM messages
         WHERE sessionId = ?
         ORDER BY timestamp DESC
@@ -207,6 +199,7 @@ class SQLiteMemoryService implements MemoryService {
       name: string | null;
       timestamp: number;
       reasoningContent: string | null;
+      metadata: string | null;
     }>;
     return rows.map(row => ({
       role: row.role as Message['role'],
@@ -216,12 +209,12 @@ class SQLiteMemoryService implements MemoryService {
       name: row.name ?? undefined,
       timestamp: row.timestamp,
       reasoningContent: row.reasoningContent ?? undefined,
+      metadata: SQLiteMemoryService.parseMetadata(row.metadata),
     }));
   }
 
   async clearAll(): Promise<void> {
     this.db.exec('DELETE FROM messages');
-    this.db.exec('DELETE FROM conversation_turns');
     this.db.exec('DELETE FROM metadata');
   }
 
@@ -315,7 +308,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       priority: 10,
       capabilities: [
         MemoryCapabilities.History,
-        MemoryCapabilities.TurnArchive,
         MemoryCapabilities.Metadata,
         MemoryCapabilities.ContentUpdate,
       ],
