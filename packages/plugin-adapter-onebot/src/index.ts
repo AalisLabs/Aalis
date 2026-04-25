@@ -1029,7 +1029,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       const state = states.find(s => s.selfId === parsed.selfId);
       if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
-        ctx.logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId}`);
+        const reason = !state ? '未找到对应连接' : state.status !== 'online' ? `状态=${state.status}` : !state.ws ? 'ws 为空' : '协议未初始化';
+        ctx.logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
         return;
       }
 
@@ -1188,6 +1189,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     ws.on('message', (raw) => {
+      // 收到任何消息即说明链路存活，重置心跳计时器
+      state.lastPong = Date.now();
       try {
         const data = JSON.parse(raw.toString());
 
