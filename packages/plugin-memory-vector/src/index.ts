@@ -116,6 +116,25 @@ function parsePlatform(sessionId: string): string {
   return sessionId.split(':')[0] ?? '';
 }
 
+/** 从消息文本中抽取 @提及的用户 ID（各 adapter 输出统一 <at id="X"> 标签） */
+function extractMentions(text: string): string[] {
+  if (!text) return [];
+  const ids = new Set<string>();
+  const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const id = m[1];
+    if (id && id !== 'all') ids.add(id);
+  }
+  return [...ids];
+}
+
+/** 人可读的平台名（cli 不叠加避免噪音） */
+function platformLabel(platform: string | undefined): string {
+  if (!platform || platform === 'cli') return '';
+  return platform;
+}
+
 /** 渲染一条消息为可读文本（含来源标签） */
 function renderMessage(m: Message, max: number): string {
   const meta = (m.metadata ?? {}) as Record<string, unknown>;
@@ -125,10 +144,23 @@ function renderMessage(m: Message, max: number): string {
   const userId = (meta.userId as string | undefined) ?? m.name ?? '';
   const nickname = meta.nickname as string | undefined;
   const groupName = meta.groupName as string | undefined;
+  const platform = platformLabel(meta.platform as string | undefined);
+  const sessionType = meta.sessionType as string | undefined;
 
-  const where = groupName ? `群「${groupName}」/` : '';
+  // 位置描述：优先群名、其次会话类型
+  let where = '';
+  if (groupName) {
+    where = `群「${groupName}」/`;
+  } else if (sessionType === 'private') {
+    where = '私聊/';
+  } else if (sessionType === 'channel') {
+    where = '频道/';
+  }
+  // 平台前缀
+  const platformPrefix = platform ? `${platform}/` : '';
+
   const who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : (userId || '');
-  const tag = `[${where}${who}${who ? ' ' : ''}@ ${date}]`;
+  const tag = `[${platformPrefix}${where}${who}${who ? ' ' : ''}@ ${date}]`;
 
   let body: string;
   switch (m.role) {
@@ -218,6 +250,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (!text) return;
     try {
       const vec = await getEmbedder().embed(text);
+      const mentions = extractMentions(text);
       const metadata: Record<string, unknown> = {
         sessionId: msg.sessionId,
         userId: msg.userId ?? '',
@@ -225,9 +258,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         platform: msg.platform ?? parsePlatform(msg.sessionId),
         groupName: msg.groupName ?? '',
         groupId: msg.groupId ?? '',
+        sessionType: msg.sessionType ?? '',
         timestamp: Date.now(),
         // 兜底内容（messages 表被清空或后端无范围查询时仍可呈现）
         content: text,
+        // @提及到的用户 ID 列表，用于检索时同用户加权
+        mentions,
       };
       await getStore().add(vec, metadata);
       await getStore().save();
@@ -327,14 +363,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
       });
 
-      // 3. 时间加权 + 同用户加权
+      // 3. 时间加权 + 同用户加权（作者匹配 或 当前用户被 @提及，均享 boost）
       const now = Date.now();
       const ranked = filtered.map(c => {
         let score =
           (1 - cfg.search.timeWeight) * c.score +
           cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
-        if (mode === 'user' && curUserId && (c.metadata.userId as string) === curUserId) {
-          score *= cfg.search.userPriorityBoost;
+        if (mode === 'user' && curUserId) {
+          const isAuthor = (c.metadata.userId as string) === curUserId;
+          const mentions = c.metadata.mentions as string[] | undefined;
+          const isMentioned = Array.isArray(mentions) && mentions.includes(curUserId);
+          if (isAuthor || isMentioned) {
+            score *= cfg.search.userPriorityBoost;
+          }
         }
         return { ...c, finalScore: score };
       });
