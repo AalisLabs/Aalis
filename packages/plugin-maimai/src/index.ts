@@ -521,12 +521,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ===== 用户指令（同样的功能，文本入口） =====
   //
-  // 设计说明：
-  // - core 已提供「指令→工具」自动桥接（cmd_<name>），但桥接出来的工具签名是
-  //   `{ args: string }`，对 LLM 不友好。
-  // - 因此这里采用「双注册」：上面注册结构化原生工具供 Agent 调用；
-  //   这里注册指令供人类用户直接打字调用，二者共用 client/格式化逻辑。
-  // - 指令本身保持 asTools 关闭，避免出现两套同义工具。
+  // 设计：Agent 端走结构化原生工具；用户端走指令。两者共用 handle* 函数。
   if (cfg.enableCommands) {
     ctx.command(
       'maimai',

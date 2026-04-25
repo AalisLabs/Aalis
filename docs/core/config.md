@@ -19,7 +19,6 @@ interface AalisConfig {
   disabledPlugins?: string[];
   servicePreferences?: Record<string, string>;
   commandPrefix?: string;          // 指令前缀（默认 '/'）
-  commandAsTools?: boolean;        // 指令注册为 AI 工具
   owners?: UserIdentity[];         // Owner 用户列表
   defaultAuthority?: number;       // 默认权限等级
   ownerAuthority?: number;         // Owner 权限等级
@@ -73,4 +72,3 @@ plugins:
 | `name` | string | 'Aalis' | 机器人名称 |
 | `logLevel` | select | 'info' | 日志等级 |
 | `commandPrefix` | string | '/' | 指令前缀（空 = 无前缀模式） |
-| `commandAsTools` | boolean | false | 指令自动暴露为 AI 工具 |
