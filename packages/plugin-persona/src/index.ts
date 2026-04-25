@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Context, ConfigSchema, SessionManagerService } from '@aalis/core';
 import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from '@aalis/core';
+import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 
 // ===== 插件元数据 =====
 
@@ -120,12 +121,13 @@ class PersonaServiceImpl implements PersonaService {
 
   /** 解析原始 outputFormat 定义 → OutputFormat 结构 */
   private static parseRawOutputFormat(
-    raw: Record<string, { description: string; reply?: boolean }>,
+    raw: Record<string, { description: string; reply?: boolean; type?: string }>,
   ): OutputFormat | undefined {
     const fields: Record<string, OutputFormatField> = {};
     let replyField: string | undefined;
     for (const [key, def] of Object.entries(raw)) {
-      fields[key] = { description: def.description, reply: def.reply };
+      const type = (['string', 'number', 'boolean'].includes(def.type ?? '') ? def.type : 'string') as 'string' | 'number' | 'boolean';
+      fields[key] = { description: def.description, type, reply: def.reply };
       if (def.reply) replyField = key;
     }
     return replyField ? { fields, replyField } : undefined;
@@ -294,7 +296,11 @@ class PersonaServiceImpl implements PersonaService {
       const entries = Object.entries(effectiveFormat.fields);
       entries.forEach(([key, field], i) => {
         const comma = i < entries.length - 1 ? ',' : '';
-        prompt += `  "${key}": "..."${comma}  // ${field.description}${field.reply ? '（发送给用户的回复）' : ''}\n`;
+        let placeholder: string;
+        if (field.type === 'number') placeholder = '0';
+        else if (field.type === 'boolean') placeholder = 'true';
+        else placeholder = '"..."';
+        prompt += `  "${key}": ${placeholder}${comma}  // ${field.description}${field.reply ? '（发送给用户的回复）' : ''}\n`;
       });
       prompt += '}\n';
       if (!customPrompt) {
@@ -556,18 +562,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!outputFormat) {
         const trimmed = data.content.trim();
         if (!trimmed.startsWith('{')) return;
+        const { parsed: obj } = tryParseJsonObject(trimmed);
+        if (!obj) return;
         const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
-        try {
-          const obj = JSON.parse(trimmed);
-          if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return;
-          for (const key of replyKeys) {
-            if (typeof obj[key] === 'string') {
-              data.content = obj[key];
-              ctx.logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
-              return;
-            }
+        for (const key of replyKeys) {
+          if (typeof obj[key] === 'string') {
+            data.content = obj[key] as string;
+            ctx.logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
+            return;
           }
-        } catch { /* 非 JSON，保持原始内容 */ }
+        }
         return;
       }
 
@@ -575,42 +579,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       const clientRendered = service.isClientSideJsonRendering(personaOpts);
 
-      const raw = data.content.trim();
-      // 尝试提取 JSON（兼容模型偶尔附加 markdown 代码块标记或在 JSON 前输出文本）
-      let jsonStr = raw.startsWith('{')
-        ? raw
-        : raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
-      // 若提取结果不以 { 开头，尝试从内容中定位第一个 { 到最后一个 } 的 JSON 块
-      if (!jsonStr.startsWith('{')) {
-        const firstBrace = raw.indexOf('{');
-        const lastBrace = raw.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace > firstBrace) {
-          jsonStr = raw.slice(firstBrace, lastBrace + 1);
-        }
-      }
-      // 尝试解析 JSON，失败时自动修复常见错误后重试
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch {
-        // 修复：XML 属性中的未转义双引号 (如 <face id="14"/>)
-        const repaired = jsonStr.replace(
-          /<(\w+)\s+(\w+)="([^"]*?)"\s*\/>/g,
-          '<$1 $2=\\\"$3\\\" />',
-        );
-        try {
-          parsed = JSON.parse(repaired);
-          ctx.logger.debug('outputFormat JSON 自动修复成功（XML 属性引号转义）');
-        } catch {
-          // 修复：尾部逗号
-          const noTrailing = repaired.replace(/,\s*([\]}])/g, '$1');
-          try {
-            parsed = JSON.parse(noTrailing);
-            ctx.logger.debug('outputFormat JSON 自动修复成功（移除尾部逗号）');
-          } catch {
-            // 所有修复均失败
-          }
-        }
+      const jsonStr = extractJsonCandidate(data.content);
+      const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
+      if (parsed && repairsApplied.length > 0) {
+        ctx.logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
       }
       try {
         if (!parsed) throw new Error('JSON 解析失败');
@@ -655,12 +627,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           } else {
             ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
           }
-          // 状态持久化：保存非回复字段
+          // 状态持久化：保存非回复字段（按 field type 强制类型）
           if (statePersistence) {
             const state: Record<string, unknown> = {};
             for (const key of Object.keys(outputFormat.fields)) {
               if (key !== outputFormat.replyField && parsed[key] !== undefined) {
-                state[key] = parsed[key];
+                const fieldType = outputFormat.fields[key].type ?? 'string';
+                let val = parsed[key];
+                if (fieldType === 'number') {
+                  const n = Number(val);
+                  val = isNaN(n) ? val : n;
+                } else if (fieldType === 'boolean') {
+                  if (typeof val === 'string') val = val === 'true';
+                  else val = Boolean(val);
+                } else {
+                  if (typeof val !== 'string') val = String(val);
+                }
+                state[key] = val;
               }
             }
             if (Object.keys(state).length > 0) {
