@@ -1,3 +1,5 @@
+import { rm, readdir, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type {
   Context,
   ToolService,
@@ -37,6 +39,23 @@ export const defaultConfig = {
 };
 
 // ===== 插件入口 =====
+
+/**
+ * 删除目录及内部所有内容，返回顶层子项数（用于"清了 N 张/N 个会话"提示）。
+ * 目录不存在返回 -1。
+ */
+async function removeDirCounted(dirAbs: string): Promise<number> {
+  try {
+    const st = await stat(dirAbs);
+    if (!st.isDirectory()) return -1;
+    const entries = await readdir(dirAbs);
+    await rm(dirAbs, { recursive: true, force: true });
+    return entries.length;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return -1;
+    throw err;
+  }
+}
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 创建指令注册表并注册为服务
@@ -95,10 +114,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== 内置指令 =====
 
   ctx.command('help', '显示可用指令列表', async () => {
-    const all = commands.getAll();
+    const nodes = commands.getAllNodes();
     const lines = ['**可用指令：**', ''];
-    for (const cmd of all) {
-      lines.push(`- \`${commands.prefix}${cmd.name}\` — ${cmd.description}`);
+    for (const n of nodes) {
+      const indent = '  '.repeat(n.depth);
+      const display = n.depth === 0
+        ? `\`${commands.prefix}${n.name}\``
+        : `\`${n.name}\``;
+      const tag = n.hasSubcommands && !n.hasAction ? '（分组）' : '';
+      lines.push(`${indent}- ${display} — ${n.description}${tag}`);
     }
     return lines.join('\n');
   });
@@ -141,30 +165,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return '正在重启应用…';
   }, { authority: 5, safety: 'dangerous' });
 
-  ctx.command('clear', '清空记忆 (可选: context/summary/vector/all/nuke)', async (cmdCtx) => {
-    const scope = cmdCtx.args[0]?.toLowerCase() || 'all';
-    const validScopes = ['all', 'context', 'summary', 'vector', 'nuke'];
-    if (!validScopes.includes(scope)) {
-      return `未知的清空范围: ${scope}。可用: ${validScopes.join(', ')}`;
-    }
-
-    // 确定清除范围和类型
-    const isGlobal = scope === 'nuke';
-    const types = scope === 'all' || scope === 'nuke'
-      ? undefined  // undefined = 全部类型
-      : [scope];
-
-    // 构建 memory:clear hook 数据（统一入口）
+  // ===== /clear —— 清空记忆 =====
+  // 子指令树：
+  //   /clear           ← 等价 all：清空当前会话所有类型
+  //   /clear context   ← 仅消息历史
+  //   /clear summary   ← 仅摘要
+  //   /clear vector    ← 仅向量
+  //   /clear image     ← 仅图片缓存
+  //   /clear nuke      ← 全局所有会话所有类型（authority=3, dangerous）
+  //
+  // scope='all' 表示全局，'session' 表示当前会话；types=undefined 表示全部类型。
+  type ClearScope = 'session' | 'all';
+  async function runClear(
+    cmdCtx: { sessionId: string },
+    scope: ClearScope,
+    types: string[] | undefined,
+  ): Promise<string> {
+    const isGlobal = scope === 'all';
     const clearData = {
-      scope: isGlobal ? 'all' as const : 'session' as const,
+      scope,
       types,
       sessionId: cmdCtx.sessionId,
       results: [] as Array<{ source: string; success: boolean; message: string }>,
       rollbacks: [] as Array<{ source: string; fn: () => Promise<void> }>,
     };
 
-    // 通过 hook 管道统一编排清除操作
-    // defaultAction 处理基础 memory 服务的清除
     await ctx.hooks.run('memory:clear', clearData, async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory) {
@@ -172,7 +197,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
 
-      // 基础记忆清除（context 类型或全部）
       if (!types || types.includes('context')) {
         try {
           if (isGlobal && memory.clearAll) {
@@ -187,12 +211,36 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           clearData.results.push({ source: 'memory', success: false, message: `清空失败: ${msg}` });
         }
       }
+
+      // 图片缓存清除：与 plugin-adapter-onebot 的目录约定保持一致 data/images/{safeSessionId}/
+      if (!types || types.includes('image')) {
+        try {
+          if (isGlobal) {
+            const dirAbs = resolve(process.cwd(), 'data/images');
+            const removed = await removeDirCounted(dirAbs);
+            clearData.results.push({
+              source: 'image-cache',
+              success: true,
+              message: removed >= 0 ? `所有图片缓存已清空（${removed} 个会话目录）` : '图片缓存目录不存在，无需清空',
+            });
+          } else {
+            const safeSessionId = cmdCtx.sessionId.replace(/[:/\\]/g, '_');
+            const dirAbs = resolve(process.cwd(), 'data/images', safeSessionId);
+            const removed = await removeDirCounted(dirAbs);
+            clearData.results.push({
+              source: 'image-cache',
+              success: true,
+              message: removed >= 0 ? `当前会话图片缓存已清空（${removed} 张）` : '当前会话无图片缓存',
+            });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          clearData.results.push({ source: 'image-cache', success: false, message: `图片缓存清空失败: ${msg}` });
+        }
+      }
     });
 
-    // 检查是否有失败
     const hasFailure = clearData.results.some(r => !r.success);
-
-    // 如果有失败且有可回滚的操作，执行回滚
     if (hasFailure && clearData.rollbacks.length > 0) {
       const rollbackResults: string[] = [];
       for (const rb of clearData.rollbacks) {
@@ -204,7 +252,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           rollbackResults.push(`↩ ${rb.source}: 回滚失败 - ${msg}`);
         }
       }
-      // 将回滚结果追加到输出
       return [
         ...clearData.results.map(r => `${r.success ? '✅' : '❌'} ${r.message}`),
         '',
@@ -213,13 +260,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ].join('\n');
     }
 
-    // 正常输出结果
-    if (clearData.results.length === 0) {
-      return '无可清除的记忆模块。';
-    }
+    if (clearData.results.length === 0) return '无可清除的记忆模块。';
+    return clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`).join('\n');
+  }
 
-    return clearData.results
-      .map(r => `${r.success ? '✅' : '⚠'} ${r.message}`)
-      .join('\n');
-  });
+  ctx.command(
+    'clear',
+    '清空当前会话的全部记忆（消息/摘要/向量/图片）。子指令可只清单一类型',
+    async (cmdCtx) => runClear(cmdCtx, 'session', undefined),
+    {
+      subcommands: [
+        { name: 'context', description: '仅清当前会话的消息历史', action: async (c) => runClear(c, 'session', ['context']) },
+        { name: 'summary', description: '仅清当前会话的摘要', action: async (c) => runClear(c, 'session', ['summary']) },
+        { name: 'vector', description: '仅清当前会话的向量记忆', action: async (c) => runClear(c, 'session', ['vector']) },
+        { name: 'image', description: '仅清当前会话的图片缓存', action: async (c) => runClear(c, 'session', ['image']) },
+        {
+          name: 'nuke',
+          description: '【危险】清空全部会话的所有类型记忆与图片',
+          authority: 3,
+          safety: 'dangerous',
+          action: async (c) => runClear(c, 'all', undefined),
+        },
+      ],
+    },
+  );
 }

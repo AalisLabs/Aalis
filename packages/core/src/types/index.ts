@@ -29,6 +29,7 @@ export type {
   MiddlewareFn,
   CommandContext,
   CommandDefinition,
+  SubcommandDefinition,
   RegisteredCommand,
   PluginGroupInfo,
   ExecutionGuardContext,
@@ -39,7 +40,7 @@ export type {
 export type { HookContextMap } from './hooks.js';
 
 // 指令服务接口
-export type { CommandService } from './commands.js';
+export type { CommandService, CommandNodeInfo } from './commands.js';
 
 // 工具服务接口
 export type { ToolService } from './tools.js';
