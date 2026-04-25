@@ -28,10 +28,3 @@ meta.inject = { required: ['authority'] }
 | `/restart` | 重启应用 | 5 (dangerous) |
 | `/grant` | 设置用户权限 | 2 |
 | `/authority` | 查看权限等级 | 0 |
-
-## 指令→工具桥接
-
-当 `commandAsTools: true` 时：
-- 指令自动暴露为 AI 工具，工具名格式 `cmd_{command_name}`
-- AI 可在对话中主动调用指令
-- 安全等级和权限等级继承自原指令

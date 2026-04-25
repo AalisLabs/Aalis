@@ -372,8 +372,6 @@ export interface CommandDefinition {
   authority?: number;
   /** 安全级别 (默认 'safe') */
   safety?: SafetyLevel;
-  /** 是否同时注册为 AI 工具 (默认 false)。仅对根指令生效；子指令通过 args 传入 */
-  asTools?: boolean;
   /**
    * 执行函数
    * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
@@ -398,7 +396,6 @@ export interface CommandDefinition {
  * 子指令定义（递归）
  *
  * 与 CommandDefinition 类似，但：
- * - 不能单独注册为工具（asTools 由根指令决定）
  * - action 可选：仅作为分组节点（仅含 subcommands）时省略，调用即返回 usage 提示
  * - 子指令的 pluginName 隐式继承自根指令
  */

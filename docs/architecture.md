@@ -287,15 +287,6 @@ Owner    → 最高权限 (配置 ownerAuthority，默认 5)
 执行操作
 ```
 
-## 指令→工具桥接
-
-当 `commandAsTools: true` 时，注册的指令自动暴露为 AI 可调用的工具：
-
-- 工具名: `cmd_{command_name}`
-- 参数: `{ args: string }`
-- AI 可在对话中主动调用指令
-- 安全等级和权限等级继承自原指令
-
 ## 上下文窗口管理算法
 
 `trimMessages()` 采用五阶段裁剪策略适配 LLM 上下文窗口：
