@@ -319,19 +319,53 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'skill_list',
-        description: '列出所有已保存的技能，包括名称、描述和参数信息。',
-        parameters: { type: 'object', properties: {} },
+        description: '列出已保存的技能，支持按关键词 / 标签筛选与分页。技能仓库大时务必使用 keyword 或 tag 过滤，避免一次拉全量。',
+        parameters: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: '可选：按名称与描述子串模糊匹配（不区分大小写）' },
+            tag: { type: 'string', description: '可选：按单个标签筛选' },
+            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+            pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定）' },
+          },
+        },
       },
     },
-    handler: async () => {
-      const skills = service.listSkills();
-      return JSON.stringify(skills.map(s => ({
+    handler: async (args) => {
+      const all = service.listSkills().map(s => ({
         name: s.name,
         description: s.description,
         parameters: s.parameters ? Object.keys(s.parameters) : [],
         tags: s.tags || [],
         execCount: s.execCount ?? 0,
-      })));
+      }));
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+      const tag = typeof args.tag === 'string' ? args.tag.trim() : '';
+      const filtered = all.filter(s => {
+        if (tag && !s.tags.includes(tag)) return false;
+        if (keyword) {
+          const hay = `${s.name} ${s.description ?? ''}`.toLowerCase();
+          if (!hay.includes(keyword)) return false;
+        }
+        return true;
+      });
+      const page = Math.max(1, Math.floor(Number(args.page) || 1));
+      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+      const matched = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(matched / pageSize));
+      const curPage = Math.min(page, totalPages);
+      const start = (curPage - 1) * pageSize;
+      return JSON.stringify({
+        total: all.length,
+        matched,
+        page: curPage,
+        pageSize,
+        totalPages,
+        hasMore: curPage < totalPages,
+        ...(keyword ? { keyword } : {}),
+        ...(tag ? { tag } : {}),
+        skills: filtered.slice(start, start + pageSize),
+      });
     },
   });
 

@@ -292,7 +292,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_list',
-        description: '列出目录中的文件和子目录，包含类型和大小信息。',
+        description: '列出目录中的文件和子目录，支持名称关键词过滤、类型过滤与分页。大目录（上千个条目）务必使用 keyword 或 分页参数，避免一次返回过多数据。',
         parameters: {
           type: 'object',
           properties: {
@@ -304,6 +304,17 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
               type: 'boolean',
               description: '是否显示隐藏文件（以 . 开头，默认 false）',
             },
+            keyword: {
+              type: 'string',
+              description: '可选：按名称子串模糊匹配（不区分大小写）',
+            },
+            type: {
+              type: 'string',
+              enum: ['file', 'directory', 'symlink'],
+              description: '可选：只返回指定类型',
+            },
+            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+            pageSize: { type: 'number', description: '每页条数，默认 50（可自行设定）' },
           },
           required: [],
           additionalProperties: false,
@@ -316,7 +327,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       try {
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
         const showHidden = (args.showHidden as boolean) ?? false;
-        const items = [];
+        const items: Array<{ name: string; type: string; size?: number; modified?: string }> = [];
 
         for (const entry of entries) {
           if (!showHidden && entry.name.startsWith('.')) continue;
@@ -337,10 +348,34 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
           }
         }
 
+        const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+        const typeFilter = typeof args.type === 'string' ? args.type : '';
+        const filtered = items.filter(it => {
+          if (typeFilter && it.type !== typeFilter) return false;
+          if (keyword && !it.name.toLowerCase().includes(keyword)) return false;
+          return true;
+        });
+
+        const page = Math.max(1, Math.floor(Number(args.page) || 1));
+        const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 50));
+        const total = items.length;
+        const matched = filtered.length;
+        const totalPages = Math.max(1, Math.ceil(matched / pageSize));
+        const curPage = Math.min(page, totalPages);
+        const start = (curPage - 1) * pageSize;
+        const pageItems = filtered.slice(start, start + pageSize);
+
         return JSON.stringify({
           path: dirPath,
-          entries: items,
-          total: items.length,
+          total,
+          matched,
+          page: curPage,
+          pageSize,
+          totalPages,
+          hasMore: curPage < totalPages,
+          ...(keyword ? { keyword } : {}),
+          ...(typeFilter ? { type: typeFilter } : {}),
+          entries: pageItems,
         });
       } catch (err) {
         return JSON.stringify({ error: (err as Error).message });
