@@ -184,8 +184,10 @@ export function segmentsToText(segments: OneBotMessageSegment[], selfId?: string
         return '[图片]';
       case 'reply':
         return ''; // 回复引用是元数据，不作为内联内容
-      case 'forward':
-        return '[转发消息]';
+      case 'forward': {
+        const id = seg.data.id != null ? String(seg.data.id) : '';
+        return id ? `<forward id="${id}">[合并转发消息]</forward>` : '[合并转发消息]';
+      }
       case 'record':
         return '[语音]';
       case 'video':
