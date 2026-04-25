@@ -100,7 +100,7 @@ export type {
 export { WebSearchCapabilities } from './web-search.js';
 
 // 记忆服务
-export type { MemoryService, ConversationTurn, MemoryCapability, MemoryCapabilityRegistry } from './memory.js';
+export type { MemoryService, MemoryCapability, MemoryCapabilityRegistry } from './memory.js';
 export { MemoryCapabilities } from './memory.js';
 
 // 消息归档服务

@@ -105,7 +105,6 @@ export type {
   CapabilityList,
   // 记忆服务
   MemoryService,
-  ConversationTurn,
   MemoryCapability,
   MemoryCapabilityRegistry,
   // 消息归档服务

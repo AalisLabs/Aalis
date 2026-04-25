@@ -1,7 +1,6 @@
 import { MongoClient, type Collection, type Db } from 'mongodb';
-import { randomUUID } from 'node:crypto';
 import type { Context, Message, ConfigSchema } from '@aalis/core';
-import type { MemoryService, ConversationTurn } from '@aalis/core';
+import type { MemoryService } from '@aalis/core';
 import { MemoryCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -44,17 +43,7 @@ interface MessageDocument {
   reasoningContent?: string | null;
   timestamp: number;
   archived?: boolean;
-  createdAt: Date;
-}
-
-interface TurnDocument {
-  turnId: string;
-  sessionId: string;
-  userId?: string;
-  platform?: string;
-  userContent: string;
-  assistantContent: string;
-  timestamp: number;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
 }
 
@@ -69,12 +58,10 @@ interface MetadataDocument {
 
 class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
-  private turns: Collection<TurnDocument>;
   private meta: Collection<MetadataDocument>;
 
-  constructor(collection: Collection<MessageDocument>, turns: Collection<TurnDocument>, meta: Collection<MetadataDocument>) {
+  constructor(collection: Collection<MessageDocument>, meta: Collection<MetadataDocument>) {
     this.collection = collection;
-    this.turns = turns;
     this.meta = meta;
   }
 
@@ -88,6 +75,7 @@ class MongoMemoryService implements MemoryService {
       name: message.name,
       reasoningContent: message.reasoningContent ?? null,
       timestamp: message.timestamp ?? Date.now(),
+      metadata: message.metadata,
       createdAt: new Date(),
     });
   }
@@ -108,6 +96,7 @@ class MongoMemoryService implements MemoryService {
       name: doc.name,
       timestamp: doc.timestamp,
       reasoningContent: doc.reasoningContent ?? undefined,
+      metadata: doc.metadata,
     }));
   }
 
@@ -127,6 +116,7 @@ class MongoMemoryService implements MemoryService {
       name: doc.name,
       timestamp: doc.timestamp,
       reasoningContent: doc.reasoningContent ?? undefined,
+      metadata: doc.metadata,
     }));
   }
 
@@ -134,40 +124,20 @@ class MongoMemoryService implements MemoryService {
     await this.collection.deleteMany({ sessionId });
   }
 
-  // ----- 对话轮次归档 -----
-
-  async saveTurn(turn: Omit<ConversationTurn, 'id'>): Promise<string> {
-    const turnId = randomUUID();
-    await this.turns.insertOne({
-      turnId,
-      sessionId: turn.sessionId,
-      userId: turn.userId,
-      platform: turn.platform,
-      userContent: turn.userContent,
-      assistantContent: turn.assistantContent,
-      timestamp: turn.timestamp,
-      createdAt: new Date(),
-    });
-    return turnId;
-  }
-
-  async getTurns(turnIds: string[]): Promise<ConversationTurn[]> {
-    if (turnIds.length === 0) return [];
-    const docs = await this.turns.find({ turnId: { $in: turnIds } }).toArray();
-    return docs.map(doc => ({
-      id: doc.turnId,
-      sessionId: doc.sessionId,
-      userId: doc.userId,
-      platform: doc.platform,
-      userContent: doc.userContent,
-      assistantContent: doc.assistantContent,
-      timestamp: doc.timestamp,
+  async getMessagesBySessionRange(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]> {
+    const filter: Record<string, unknown> = { sessionId, timestamp: { $gte: fromTs, $lte: toTs } };
+    if (roles && roles.length > 0) filter.role = { $in: roles };
+    const docs = await this.collection.find(filter).sort({ timestamp: 1 }).limit(500).toArray();
+    return docs.map(d => ({
+      role: d.role as Message['role'],
+      content: d.content,
+      toolCalls: d.toolCalls as Message['toolCalls'],
+      toolCallId: d.toolCallId,
+      name: d.name,
+      timestamp: d.timestamp,
+      reasoningContent: d.reasoningContent ?? undefined,
+      metadata: d.metadata,
     }));
-  }
-
-  async deleteTurns(sessionId: string): Promise<number> {
-    const result = await this.turns.deleteMany({ sessionId });
-    return result.deletedCount;
   }
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
@@ -189,7 +159,6 @@ class MongoMemoryService implements MemoryService {
 
   async clearAll(): Promise<void> {
     await this.collection.deleteMany({});
-    await this.turns.deleteMany({});
     await this.meta.deleteMany({});
   }
 
@@ -259,20 +228,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     await client.connect();
     const db: Db = client.db(mongoConfig.database);
     const collection = db.collection<MessageDocument>(mongoConfig.collection!);
-    const turnsCollection = db.collection<TurnDocument>('conversation_turns');
     const metaCollection = db.collection<MetadataDocument>('metadata');
 
     // 创建索引
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
-    await turnsCollection.createIndex({ turnId: 1 }, { unique: true });
-    await turnsCollection.createIndex({ sessionId: 1, timestamp: 1 });
     await metaCollection.createIndex({ namespace: 1, key: 1 }, { unique: true });
 
-    const service = new MongoMemoryService(collection, turnsCollection, metaCollection);
+    const service = new MongoMemoryService(collection, metaCollection);
     ctx.provide('memory', service, {
       capabilities: [
         MemoryCapabilities.History,
-        MemoryCapabilities.TurnArchive,
         MemoryCapabilities.Metadata,
         MemoryCapabilities.ContentUpdate,
       ],

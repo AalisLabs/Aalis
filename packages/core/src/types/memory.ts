@@ -2,18 +2,6 @@
 
 import type { Message } from './core.js';
 
-/** 对话轮次归档条目（长期存储） */
-export interface ConversationTurn {
-  /** 唯一标识 */
-  id: string;
-  sessionId: string;
-  userId?: string;
-  platform?: string;
-  userContent: string;
-  assistantContent: string;
-  timestamp: number;
-}
-
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
@@ -25,14 +13,10 @@ export interface MemoryService {
   /** 获取完整历史（含已归档消息），用于 UI 展示 */
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
 
-  // ----- 对话轮次归档（长期存储，供向量检索引用） -----
+  // ----- 范围查询（供向量检索的上下文窗口扩展使用） -----
 
-  /** 保存一个对话轮次，返回 turnId */
-  saveTurn?(turn: Omit<ConversationTurn, 'id'>): Promise<string>;
-  /** 根据 turnId 批量获取轮次内容 */
-  getTurns?(turnIds: string[]): Promise<ConversationTurn[]>;
-  /** 删除指定会话的所有轮次归档 */
-  deleteTurns?(sessionId: string): Promise<number>;
+  /** 范围查询：取指定会话内 [fromTs, toTs] 区间的消息（按时间升序，可按 role 过滤） */
+  getMessagesBySessionRange?(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]>;
 
   // ----- 结构化元数据存储（供会话管理等场景使用） -----
 
@@ -64,8 +48,6 @@ export interface MemoryService {
 export interface MemoryCapabilityRegistry {
   /** 基础的消息历史保存/读取 */
   History: 'history';
-  /** 支持长期对话轮次归档（saveTurn/getTurns） */
-  TurnArchive: 'turn-archive';
   /** 支持结构化元数据存储（saveMetadata 等） */
   Metadata: 'metadata';
   /** 支持消息内容更新（updateMessageContent） */
@@ -76,7 +58,6 @@ export type MemoryCapability = MemoryCapabilityRegistry[keyof MemoryCapabilityRe
 
 export const MemoryCapabilities = {
   History: 'history',
-  TurnArchive: 'turn-archive',
   Metadata: 'metadata',
   ContentUpdate: 'content-update',
 } as const satisfies MemoryCapabilityRegistry;
@@ -94,11 +75,6 @@ registerCapabilityProbe('memory', MemoryCapabilities.History, inst =>
     && typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
     ? true
     : 'MemoryService.saveMessage()/getHistory() are required for capability "history"');
-
-registerCapabilityProbe('memory', MemoryCapabilities.TurnArchive, inst =>
-  typeof (inst as { saveTurn?: unknown }).saveTurn === 'function'
-    ? true
-    : 'MemoryService.saveTurn() is required for capability "turn-archive"');
 
 registerCapabilityProbe('memory', MemoryCapabilities.Metadata, inst =>
   typeof (inst as { saveMetadata?: unknown }).saveMetadata === 'function'
