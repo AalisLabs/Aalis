@@ -68,12 +68,13 @@ export const configSchema: ConfigSchema = {
     description: '控制深度思考。deepseek-v4-flash / deepseek-v4-pro / deepseek-reasoner 默认启用。设置为「关闭」时会显式传递 thinking.type=disabled。',
   },
   reasoningEffort: {
-    type: 'select', label: '推理强度', default: 'high',
+    type: 'select', label: '推理强度', default: 'auto',
     options: [
-      { label: '高（默认）', value: 'high' },
+      { label: '自动（由 API 按场景选 high/max）', value: 'auto' },
+      { label: '高', value: 'high' },
       { label: '最大', value: 'max' },
     ],
-    description: '思考模式下的推理强度（v4 模型）。API 会将 low/medium 映射为 high、xhigh 映射为 max。复杂 Agent 场景选 max。',
+    description: '思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。',
   },
   jsonMode: {
     type: 'boolean', label: 'JSON Mode', default: true,
@@ -101,7 +102,7 @@ interface DeepSeekConfig {
   maxTokens: number;
   contextLength: number;
   strictToolCalls: boolean;
-  reasoningEffort: 'high' | 'max';
+  reasoningEffort: 'auto' | 'high' | 'max';
   jsonMode: boolean;
 }
 
@@ -170,7 +171,7 @@ class DeepSeekLLMService implements LLMService {
   private maxTokens: number;
   private contextLength: number;
   private enableThinking: boolean;
-  private reasoningEffort: 'high' | 'max';
+  private reasoningEffort: 'auto' | 'high' | 'max';
   private strictToolCalls: boolean;
   private jsonMode: boolean;
   private logger;
@@ -339,7 +340,7 @@ class DeepSeekLLMService implements LLMService {
 
     if (this.enableThinking) {
       body.thinking = { type: 'enabled' };
-      body.reasoning_effort = this.reasoningEffort;
+      if (this.reasoningEffort !== 'auto') body.reasoning_effort = this.reasoningEffort;
       // 思考模式下 temperature 等参数不生效
     } else {
       // 显式关闭：v4 系列 API 默认 enabled，不发送字段会保持开启
@@ -426,7 +427,7 @@ class DeepSeekLLMService implements LLMService {
 
     if (this.enableThinking) {
       body.thinking = { type: 'enabled' };
-      body.reasoning_effort = this.reasoningEffort;
+      if (this.reasoningEffort !== 'auto') body.reasoning_effort = this.reasoningEffort;
     } else {
       body.thinking = { type: 'disabled' };
       body.temperature = request.temperature ?? this.temperature;
@@ -707,7 +708,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     maxTokens: (config.maxTokens as number) ?? 8192,
     contextLength: (config.contextLength as number) ?? 131072,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
-    reasoningEffort: ((config.reasoningEffort as string) === 'max' ? 'max' : 'high'),
+    reasoningEffort: (() => {
+      const v = config.reasoningEffort as string | undefined;
+      return v === 'high' || v === 'max' ? v : 'auto';
+    })(),
     jsonMode: (config.jsonMode as boolean) ?? true,
   };
 
