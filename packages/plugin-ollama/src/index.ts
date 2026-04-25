@@ -169,6 +169,10 @@ class OllamaLLMService implements LLMService {
     this.logger = logger;
   }
 
+  /** 启动时快照的模型名集合（本地发现 + 自定义），供 supportsModel 同步查询使用。
+   * Ollama 未启动时退化为仅 customModels；避免运行期 listModels 连接失败污染 LLMRouter 慢路径缓存。 */
+  private knownModelIds: Set<string> = new Set();
+
   /** 启动时调用：发现本地模型、检查重复、确定默认模型 */
   async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
     const remote = await this.fetchRemoteModels();
@@ -180,9 +184,17 @@ class OllamaLLMService implements LLMService {
       }
     }
 
+    // 快照：供路由的 supportsModel 快路径使用
+    this.knownModelIds = new Set([...remoteIds, ...this.customModels]);
+
     this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
     const capabilities = this.defaultModel ? resolveCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
     return { defaultModel: this.defaultModel, capabilities };
+  }
+
+  /** 同步接口：LLMRouter 优先调用，绕开 listModels 依赖远端返回的慢路径 */
+  supportsModel(modelId: string): boolean {
+    return this.knownModelIds.has(modelId);
   }
 
   private getDefaultModel(): string {
