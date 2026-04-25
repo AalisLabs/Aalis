@@ -156,11 +156,15 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
     },
     handler: async () => {
       const now = new Date();
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const offsetParts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+        .formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? '';
       return JSON.stringify({
         iso: now.toISOString(),
-        local: now.toLocaleString(),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        utcOffset: -now.getTimezoneOffset() / 60,
+        local: now.toLocaleString('en-CA', { hour12: false }).replace(',', ''),
+        timezone: tz,
+        offset: offsetParts,
+        utcOffsetHours: -now.getTimezoneOffset() / 60,
         unix: Math.floor(now.getTime() / 1000),
         unixMs: now.getTime(),
       });
