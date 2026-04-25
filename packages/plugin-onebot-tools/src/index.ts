@@ -498,34 +498,70 @@ function registerGroupInfoTools(ctx: Context): void {
     },
   });
 
-  // ---- 获取群成员列表 ----
+  // ---- 获取群成员列表（支持搜索 + 分页）----
   ctx.registerTool({
     definition: {
       type: 'function',
       function: {
         name: 'onebot_get_group_member_list',
-        description: '获取当前群的全部成员列表。注意：大群可能返回数据量很大。',
+        description: '查询当前群的成员列表，支持按昵称/群名片/QQ号关键词搜索、按角色筛选、分页返回。大群（数百上千人）务必使用 keyword 或 role 过滤，避免一次拉取过多数据。',
         parameters: {
           type: 'object',
-          properties: {},
+          properties: {
+            keyword: { type: 'string', description: '可选：按昵称、群名片或 QQ 号子串模糊匹配（不区分大小写）' },
+            role: { type: 'string', enum: ['owner', 'admin', 'member'], description: '可选：按成员角色筛选' },
+            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+            pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定，请根据需要的数据量方式判断）' },
+          },
           required: [],
         },
       },
     },
-    handler: async (_args, callCtx) => {
+    handler: async (args, callCtx) => {
       const { groupId } = requireGroupSession(callCtx);
       const data = await callAction(ctx, callCtx, 'get_group_member_list', {
         group_id: Number(groupId),
       });
       const list = Array.isArray(data) ? data : [];
-      // 精简输出，只保留关键字段
-      const summary = list.map((m: Record<string, unknown>) => ({
+
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+      const roleFilter = typeof args.role === 'string' ? args.role : '';
+      const page = Math.max(1, Math.floor(Number(args.page) || 1));
+      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+
+      // 精简 + 过滤
+      const all = list.map((m: Record<string, unknown>) => ({
         user_id: m.user_id,
-        nickname: m.nickname,
-        card: m.card,
-        role: m.role,
+        nickname: String(m.nickname ?? ''),
+        card: String(m.card ?? ''),
+        role: String(m.role ?? 'member'),
       }));
-      return JSON.stringify(summary);
+      const filtered = all.filter(m => {
+        if (roleFilter && m.role !== roleFilter) return false;
+        if (keyword) {
+          const hay = `${m.user_id} ${m.nickname} ${m.card}`.toLowerCase();
+          if (!hay.includes(keyword)) return false;
+        }
+        return true;
+      });
+
+      const total = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const curPage = Math.min(page, totalPages);
+      const start = (curPage - 1) * pageSize;
+      const items = filtered.slice(start, start + pageSize);
+
+      return JSON.stringify({
+        groupTotal: all.length,
+        matched: total,
+        page: curPage,
+        pageSize,
+        totalPages,
+        hasMore: curPage < totalPages,
+        ...(keyword ? { keyword } : {}),
+        ...(roleFilter ? { role: roleFilter } : {}),
+        members: items,
+      });
     },
   });
 
