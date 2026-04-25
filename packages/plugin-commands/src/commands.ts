@@ -45,8 +45,6 @@ export class CommandRegistry implements CommandService {
   private overrides = new Map<string, { authority?: number; safety?: string }>();
 
   prefix = '/';
-  onToolBridge?: (cmd: RegisteredCommand) => (() => void) | undefined;
-  globalAsTools = false;
 
   constructor(logger: Logger) {
     this.logger = logger.child('commands');
@@ -97,15 +95,9 @@ export class CommandRegistry implements CommandService {
     this.commands.set(name, registered);
     this.logger.debug(`注册指令: ${this.prefix}${name} (来自 ${pluginName})`);
 
-    let toolDispose: (() => void) | undefined;
-    if ((command.asTools || this.globalAsTools) && this.onToolBridge) {
-      toolDispose = this.onToolBridge(registered);
-    }
-
     return () => {
       if (this.commands.get(name)?.pluginName === pluginName) {
         this.commands.delete(name);
-        toolDispose?.();
         this.logger.debug(`注销指令: ${this.prefix}${name}`);
       }
     };

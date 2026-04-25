@@ -13,7 +13,6 @@ interface CommandDefinition {
   action: (ctx: CommandContext) => Promise<string | void>;
   authority?: number;        // 最低权限等级（默认 0）
   safety?: SafetyLevel;      // 'safe' | 'dangerous'
-  asTools?: boolean;         // 是否暴露为 AI 工具
 }
 ```
 
@@ -51,16 +50,6 @@ execute(name, cmdCtx)
   │     authority.confirmDangerous() → 交互式确认
   └─ 调用 action(cmdCtx) → 返回结果
 ```
-
-## 指令→工具桥接
-
-当 `asTools: true`（单指令）或 `commandAsTools: true`（全局）时：
-
-1. 指令自动注册为 AI 工具
-2. 工具名: `cmd_{command_name}`
-3. 参数: `{ args: string }`（工具描述内含指令说明）
-4. 安全等级和权限等级继承自原指令
-5. 工具执行时设置 `skipSafetyCheck=true`（安全检查已在工具层执行过）
 
 ## 覆盖系统
 

@@ -48,10 +48,6 @@ export interface CommandNodeInfo {
 export interface CommandService {
   /** 指令前缀 */
   prefix: string;
-  /** 全局开关：是否将所有指令自动注册为 AI 工具 */
-  globalAsTools: boolean;
-  /** 指令→工具桥接回调（仅对根指令生效） */
-  onToolBridge?: (cmd: RegisteredCommand) => (() => void) | undefined;
 
   register(command: CommandDefinition, pluginName: string): () => void;
   unregisterByPlugin(pluginName: string): void;

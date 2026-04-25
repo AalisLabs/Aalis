@@ -41,7 +41,6 @@ interface AuthorityData {
   defaultAuthority: number;
   ownerAuthority: number;
   commandPrefix: string;
-  commandAsTools: boolean;
   commands: AuthorityCommand[];
   commandOverrides: Record<string, { authority?: number; safety?: string }>;
   tools: AuthorityTool[];

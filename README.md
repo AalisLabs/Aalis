@@ -193,7 +193,6 @@ disabledPlugins:
   - "@aalis/plugin-openai"
 
 commandPrefix: "/"
-commandAsTools: true
 defaultAuthority: 1
 ```
 

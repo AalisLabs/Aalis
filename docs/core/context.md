@@ -132,11 +132,10 @@ ctx.command('echo', '回显消息', async (cmdCtx) => {
   return cmdCtx.args.join(' ') || '(空)';
 }, { authority: 2 });
 
-// 标记为高危指令 + 同时暴露为 AI 工具
+// 标记为高危指令
 ctx.command('restart', '重启应用', async () => { ... }, {
   safety: 'dangerous',
   authority: 5,
-  asTools: true,
 });
 ```
 

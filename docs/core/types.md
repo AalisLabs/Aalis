@@ -454,7 +454,6 @@ interface CommandDefinition {
   description: string;
   authority?: number;      // 默认 1
   safety?: SafetyLevel;    // 默认 'safe'
-  asTools?: boolean;       // 是否同时注册为 AI 工具
   action: (ctx: CommandContext) => Promise<string | void>;
 }
 

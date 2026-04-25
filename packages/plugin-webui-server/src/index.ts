@@ -181,7 +181,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         description: c.description,
         authority: c.authority,
         safety: c.safety,
-        asTools: c.asTools,
       })),
     });
   });

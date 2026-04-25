@@ -32,7 +32,6 @@ export interface CommandInfo {
   description: string;
   authority?: number;
   safety?: string;
-  asTools?: boolean;
 }
 
 export interface SystemStatus {
