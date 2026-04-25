@@ -4,6 +4,8 @@
 export interface OutputFormatField {
   /** 字段用途描述（写入 system prompt 供 LLM 理解） */
   description: string;
+  /** 字段类型（影响 system prompt 占位符和输出后的类型强制） */
+  type?: 'string' | 'number' | 'boolean';
   /** 是否为发送给用户的回复字段（有且仅有一个） */
   reply?: boolean;
 }
