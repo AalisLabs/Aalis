@@ -269,7 +269,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-llm-registry:
+  packages/plugin-maimai:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
