@@ -188,6 +188,10 @@ class DeepSeekLLMService implements LLMService {
     this.logger = ctx.logger;
   }
 
+  /** 启动时快照的模型名集合（远端发现 + 自定义），供 supportsModel 同步查询使用。
+   * 允许远端失败时退化为仅 customModels；运行时不再重拉，避免 listModels 网络抖动污染 LLMRouter 的慢路径缓存。 */
+  private knownModelIds: Set<string> = new Set();
+
   /** 启动时调用：发现远端模型、检查重复、确定默认模型 */
   async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
     const remote = await this.fetchRemoteModels();
@@ -199,9 +203,17 @@ class DeepSeekLLMService implements LLMService {
       }
     }
 
+    // 快照：供路由的 supportsModel 快路径使用
+    this.knownModelIds = new Set([...remoteIds, ...this.customModels]);
+
     this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
     const capabilities = this.defaultModel ? resolveCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
     return { defaultModel: this.defaultModel, capabilities };
+  }
+
+  /** 同步接口：LLMRouter 优先调用，绕开 listModels 依赖远端返回的慢路径 */
+  supportsModel(modelId: string): boolean {
+    return this.knownModelIds.has(modelId);
   }
 
   private getDefaultModel(): string {
