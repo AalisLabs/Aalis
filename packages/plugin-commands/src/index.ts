@@ -2,10 +2,10 @@ import { rm, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type {
   Context,
-  ToolService,
   ConfigSchema,
   AppService,
   MemoryService,
+  ToolService,
 } from '@aalis/core';
 import { CommandRegistry } from './commands.js';
 
@@ -14,9 +14,7 @@ import { CommandRegistry } from './commands.js';
 export const name = '@aalis/plugin-commands';
 export const displayName = '内置指令';
 export const provides = ['commands'];
-export const inject = {
-  optional: ['tools'],
-};
+export const inject = {};
 
 export const configSchema: ConfigSchema = {
   commandPrefix: {
@@ -25,17 +23,10 @@ export const configSchema: ConfigSchema = {
     default: '/',
     description: '指令触发前缀，设为空字符串可使用纯关键词触发',
   },
-  commandAsTools: {
-    type: 'boolean',
-    label: '指令注册为工具',
-    default: false,
-    description: '全局开关：将所有指令自动注册为 AI 工具',
-  },
 };
 
 export const defaultConfig = {
   commandPrefix: '/',
-  commandAsTools: false,
 };
 
 // ===== 插件入口 =====
@@ -67,49 +58,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 配置指令系统
   commands.prefix = (config.commandPrefix as string) ?? '/';
-  commands.globalAsTools = (config.commandAsTools as boolean) ?? false;
 
   // 注册服务
   ctx.provide('commands', commands);
-
-  // 指令→工具桥接
-  commands.onToolBridge = (cmd) => {
-    const tools = ctx.getService<ToolService>('tools');
-    if (!tools) return undefined;
-    return tools.register(
-      {
-        definition: {
-          type: 'function' as const,
-          function: {
-            name: `cmd_${cmd.name}`,
-            description: `[指令] ${cmd.description}`,
-            parameters: {
-              type: 'object',
-              properties: {
-                args: { type: 'string', description: '指令参数(空格分隔)' },
-              },
-              required: [],
-            },
-          },
-        },
-        handler: async (args, callCtx) => {
-          const argsStr = typeof args.args === 'string' ? args.args : '';
-          const result = await commands.execute(cmd.name, {
-            args: argsStr ? argsStr.split(/\s+/) : [],
-            raw: `${commands.prefix}${cmd.name}${argsStr ? ' ' + argsStr : ''}`,
-            sessionId: callCtx.sessionId,
-            platform: callCtx.platform ?? 'unknown',
-            userId: callCtx.userId,
-            skipSafetyCheck: true,
-          });
-          return result ?? '(指令已执行)';
-        },
-        safety: cmd.safety,
-        authority: cmd.authority,
-      },
-      cmd.pluginName,
-    );
-  };
 
   // ===== 内置指令 =====
 

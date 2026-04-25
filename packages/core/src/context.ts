@@ -434,7 +434,6 @@ export class Context {
     options?: {
       authority?: number;
       safety?: SafetyLevel;
-      asTools?: boolean;
       /** 子指令树（递归）。详见 CommandDefinition.subcommands */
       subcommands?: SubcommandDefinition[];
     },
@@ -445,7 +444,6 @@ export class Context {
       action,
       authority: options?.authority,
       safety: options?.safety,
-      asTools: options?.asTools,
       subcommands: options?.subcommands,
     };
     return this._pending.registerCommand(def);
