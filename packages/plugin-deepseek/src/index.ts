@@ -65,11 +65,15 @@ export const configSchema: ConfigSchema = {
       { label: '启用', value: 'enabled' },
       { label: '关闭', value: 'disabled' },
     ],
-    description: '控制深度思考。「自动」会根据模型名称推断（reasoner 模型自动启用）。deepseek-chat 也可手动启用思考模式。',
+    description: '控制深度思考。deepseek-v4-flash / deepseek-v4-pro / deepseek-reasoner 默认启用。设置为「关闭」时会显式传递 thinking.type=disabled。',
   },
-  thinkingBudget: {
-    type: 'number', label: '思考 Token 预算', default: 0,
-    description: '限制思考链最大 token 数（0 = 不限制，由模型自行决定）。设置后可控制思考深度，减少 token 消耗。',
+  reasoningEffort: {
+    type: 'select', label: '推理强度', default: 'high',
+    options: [
+      { label: '高（默认）', value: 'high' },
+      { label: '最大', value: 'max' },
+    ],
+    description: '思考模式下的推理强度（v4 模型）。API 会将 low/medium 映射为 high、xhigh 映射为 max。复杂 Agent 场景选 max。',
   },
   jsonMode: {
     type: 'boolean', label: 'JSON Mode', default: true,
@@ -97,7 +101,7 @@ interface DeepSeekConfig {
   maxTokens: number;
   contextLength: number;
   strictToolCalls: boolean;
-  thinkingBudget: number;
+  reasoningEffort: 'high' | 'max';
   jsonMode: boolean;
 }
 
@@ -166,7 +170,7 @@ class DeepSeekLLMService implements LLMService {
   private maxTokens: number;
   private contextLength: number;
   private enableThinking: boolean;
-  private thinkingBudget: number;
+  private reasoningEffort: 'high' | 'max';
   private strictToolCalls: boolean;
   private jsonMode: boolean;
   private logger;
@@ -182,7 +186,7 @@ class DeepSeekLLMService implements LLMService {
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
     this.enableThinking = enableThinking;
-    this.thinkingBudget = config.thinkingBudget;
+    this.reasoningEffort = config.reasoningEffort;
     this.strictToolCalls = config.strictToolCalls;
     this.jsonMode = config.jsonMode;
     this.logger = ctx.logger;
@@ -205,6 +209,7 @@ class DeepSeekLLMService implements LLMService {
 
     // 快照：供路由的 supportsModel 快路径使用
     this.knownModelIds = new Set([...remoteIds, ...this.customModels]);
+    this.logger.info(`initialize: 远端=${remote.length} 个 [${[...remoteIds].join(',') || '<空>'}], 自定义=${this.customModels.length} 个 [${this.customModels.join(',') || '<空>'}], knownModelIds=${this.knownModelIds.size}`);
 
     this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
     const capabilities = this.defaultModel ? resolveCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
@@ -222,17 +227,23 @@ class DeepSeekLLMService implements LLMService {
   }
 
   private async fetchRemoteModels(): Promise<ModelInfo[]> {
+    const url = `${this.baseUrl}/models`;
     try {
-      const res = await fetch(`${this.baseUrl}/models`, {
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
       });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        this.logger.warn(`fetchRemoteModels 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body.slice(0, 200)}`);
+        return [];
+      }
       const data = (await res.json()) as { data: { id: string }[] };
       return data.data.map(m => ({
         id: m.id,
         capabilities: resolveCapabilities(m.id),
       }));
-    } catch {
+    } catch (err) {
+      this.logger.warn(`fetchRemoteModels 异常 ${url}: ${(err as Error).message}`);
       return [];
     }
   }
@@ -327,11 +338,12 @@ class DeepSeekLLMService implements LLMService {
     };
 
     if (this.enableThinking) {
-      const thinking: Record<string, unknown> = { type: 'enabled' };
-      if (this.thinkingBudget > 0) thinking.budget_tokens = this.thinkingBudget;
-      body.thinking = thinking;
+      body.thinking = { type: 'enabled' };
+      body.reasoning_effort = this.reasoningEffort;
       // 思考模式下 temperature 等参数不生效
     } else {
+      // 显式关闭：v4 系列 API 默认 enabled，不发送字段会保持开启
+      body.thinking = { type: 'disabled' };
       body.temperature = request.temperature ?? this.temperature;
     }
 
@@ -344,7 +356,7 @@ class DeepSeekLLMService implements LLMService {
       body.response_format = { type: 'json_object' };
     }
 
-    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考模式${this.thinkingBudget > 0 ? `, 预算 ${this.thinkingBudget}` : ''})` : ''}${jsonMode ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}${jsonMode ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -413,10 +425,10 @@ class DeepSeekLLMService implements LLMService {
     };
 
     if (this.enableThinking) {
-      const thinking: Record<string, unknown> = { type: 'enabled' };
-      if (this.thinkingBudget > 0) thinking.budget_tokens = this.thinkingBudget;
-      body.thinking = thinking;
+      body.thinking = { type: 'enabled' };
+      body.reasoning_effort = this.reasoningEffort;
     } else {
+      body.thinking = { type: 'disabled' };
       body.temperature = request.temperature ?? this.temperature;
     }
 
@@ -428,7 +440,7 @@ class DeepSeekLLMService implements LLMService {
       body.response_format = { type: 'json_object' };
     }
 
-    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ' (思考模式)' : ''}${jsonMode ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}${jsonMode ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -648,8 +660,13 @@ class DeepSeekLLMService implements LLMService {
 const { Chat, ToolCalling, Streaming, Thinking } = LLMCapabilities;
 
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
-  'deepseek-chat':     [Chat, ToolCalling, Streaming],
+  // 当前 v4 系列（默认启用思考，可通过 thinking.type=disabled 关闭）
+  'deepseek-v4-flash': [Chat, ToolCalling, Streaming, Thinking],
+  'deepseek-v4-pro':   [Chat, ToolCalling, Streaming, Thinking],
+  // 独立推理模型
   'deepseek-reasoner': [Chat, ToolCalling, Streaming, Thinking],
+  // 兼容旧别名（已下线，仅供老配置识别）
+  'deepseek-chat':     [Chat, ToolCalling, Streaming],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
@@ -664,6 +681,10 @@ function resolveCapabilities(model: string, userOverride?: unknown): LLMCapabili
   // 模糊匹配：模型名包含关键词
   const lower = model.toLowerCase();
   if (lower.includes('reasoner')) return [Chat, ToolCalling, Streaming, Thinking];
+  // v4 及后续主线模型默认启用思考
+  if (/\bv[4-9]\b/.test(lower) || lower.includes('-pro') || lower.includes('-flash')) {
+    return [Chat, ToolCalling, Streaming, Thinking];
+  }
   if (lower.includes('chat')) return [Chat, ToolCalling, Streaming];
   return DEFAULT_CAPABILITIES;
 }
@@ -686,7 +707,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     maxTokens: (config.maxTokens as number) ?? 8192,
     contextLength: (config.contextLength as number) ?? 131072,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
-    thinkingBudget: (config.thinkingBudget as number) ?? 0,
+    reasoningEffort: ((config.reasoningEffort as string) === 'max' ? 'max' : 'high'),
     jsonMode: (config.jsonMode as boolean) ?? true,
   };
 
@@ -715,7 +736,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.provide('llm', service, { capabilities, label });
 
   if (defaultModel) {
-    ctx.logger.info(`DeepSeek 已连接: ${deepseekConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]${enableThinking ? ` 思考模式${deepseekConfig.thinkingBudget > 0 ? `(预算 ${deepseekConfig.thinkingBudget})` : ''}` : ''}`);
+    ctx.logger.info(`DeepSeek 已连接: ${deepseekConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]${enableThinking ? ` 思考模式(effort=${deepseekConfig.reasoningEffort})` : ''}`);
   } else {
     ctx.logger.warn(`DeepSeek 已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型`);
   }
