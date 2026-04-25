@@ -48,8 +48,14 @@ function extractMentions(text: string): string[] {
   return [...ids];
 }
 
+/** 单用户平台：无需发送者前缀（不存在多人说话歧义） */
+const SINGLE_USER_PLATFORMS = new Set(['webui', 'cli']);
+
 function buildIncomingContent(incoming: IncomingMessage): string {
-  let content = prefixSender(incoming.content, incoming.nickname, incoming.userId);
+  const useSenderPrefix = !SINGLE_USER_PLATFORMS.has(incoming.platform);
+  let content = useSenderPrefix
+    ? prefixSender(incoming.content, incoming.nickname, incoming.userId)
+    : incoming.content;
 
   if (incoming.attachmentOrder && (incoming._fileDescriptions || incoming._imageDescriptions)) {
     const fileDescs = incoming._fileDescriptions ?? [];
