@@ -1,4 +1,6 @@
-import type { Context, ConfigSchema, PlatformAdapter, ToolCallContext } from '@aalis/core';
+import { readFile } from 'node:fs/promises';
+import { extname, isAbsolute, resolve } from 'node:path';
+import type { Context, ConfigSchema, ImageRecognitionService, PlatformAdapter, ToolCallContext } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -86,6 +88,226 @@ async function callAction(
   const adapter = findOneBotAdapter(ctx);
   if (!adapter?.callAction) throw new Error('OneBot 适配器不可用或不支持 callAction');
   return adapter.callAction(callCtx.sessionId, action, params);
+}
+
+function imageMimeFromPath(path: string): string {
+  const ext = extname(path.split('?')[0]).toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.bmp') return 'image/bmp';
+  return 'image/png';
+}
+
+async function localImageToDataUri(path: string): Promise<string | null> {
+  const filePath = isAbsolute(path) ? path : resolve(process.cwd(), path);
+  try {
+    const buf = await readFile(filePath);
+    return `data:${imageMimeFromPath(filePath)};base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+interface ForwardImageRef {
+  source: string;
+  label: string;
+  segment: Record<string, unknown>;
+}
+
+interface ForwardFormatContext {
+  imageDescriptions: Map<string, string>;
+}
+
+function imageRefKey(ref: ForwardImageRef): string {
+  return `${ref.source}|${JSON.stringify(ref.segment)}`;
+}
+
+function imageSourceFromSegment(data: Record<string, unknown>): string {
+  const direct = data.url ?? data.file;
+  return direct == null ? '' : String(direct);
+}
+
+function extractCqImageRefs(content: string): ForwardImageRef[] {
+  const refs: ForwardImageRef[] = [];
+  const re = /\[CQ:image,([^\]]+)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    const params: Record<string, unknown> = {};
+    for (const part of match[1].split(',')) {
+      const eq = part.indexOf('=');
+      if (eq <= 0) continue;
+      params[part.slice(0, eq)] = part.slice(eq + 1)
+        .replace(/&amp;/g, '&')
+        .replace(/&#91;/g, '[')
+        .replace(/&#93;/g, ']')
+        .replace(/&#44;/g, ',');
+    }
+    const source = imageSourceFromSegment(params);
+    if (source) refs.push({ source, label: '[图片]', segment: params });
+  }
+  return refs;
+}
+
+function extractImageRefsFromContent(content: unknown): ForwardImageRef[] {
+  if (typeof content === 'string') return extractCqImageRefs(content);
+  if (!Array.isArray(content)) return [];
+
+  const refs: ForwardImageRef[] = [];
+  for (const seg of content) {
+    if (!seg || typeof seg !== 'object') continue;
+    const segment = seg as { type?: string; data?: Record<string, unknown> };
+    if (segment.type !== 'image') continue;
+    const data = segment.data ?? {};
+    const source = imageSourceFromSegment(data);
+    if (source) refs.push({ source, label: '[图片]', segment: data });
+  }
+  return refs;
+}
+
+function getForwardMessages(data: unknown): unknown[] {
+  const root = data as Record<string, unknown> | unknown[] | null;
+  if (Array.isArray(root)) return root;
+  if (Array.isArray((root as Record<string, unknown> | null)?.messages)) {
+    return (root as Record<string, unknown>).messages as unknown[];
+  }
+  if (Array.isArray((root as Record<string, unknown> | null)?.message)) {
+    return (root as Record<string, unknown>).message as unknown[];
+  }
+  return [];
+}
+
+function getForwardNodeData(item: unknown): Record<string, unknown> {
+  const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+  if (node.type === 'node' && node.data && typeof node.data === 'object') {
+    return node.data as Record<string, unknown>;
+  }
+  return node;
+}
+
+function getForwardNodeContent(item: unknown): unknown {
+  const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+  const nodeData = getForwardNodeData(item);
+  return nodeData.content ?? node.content ?? nodeData.message ?? node.message;
+}
+
+function collectForwardImageRefs(data: unknown, limit: number): ForwardImageRef[] {
+  return getForwardMessages(data)
+    .slice(0, limit)
+    .flatMap(item => extractImageRefsFromContent(getForwardNodeContent(item)));
+}
+
+async function resolveForwardImageSource(ctx: Context, callCtx: ToolCallContext, ref: ForwardImageRef): Promise<string> {
+  if (/^(https?:|data:)/i.test(ref.source)) return ref.source;
+
+  try {
+    const imageData = await callAction(ctx, callCtx, 'get_image', { file: ref.source }) as Record<string, unknown>;
+    const resolvedSource = imageData.url ?? imageData.file ?? ref.source;
+    if (typeof resolvedSource === 'string') {
+      if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
+      const dataUri = await localImageToDataUri(resolvedSource);
+      if (dataUri) return dataUri;
+      return resolvedSource;
+    }
+  } catch (err) {
+    ctx.logger.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
+  }
+
+  const dataUri = await localImageToDataUri(ref.source);
+  return dataUri ?? ref.source;
+}
+
+async function recognizeForwardImages(ctx: Context, callCtx: ToolCallContext, data: unknown, limit: number): Promise<ForwardFormatContext> {
+  const refs = collectForwardImageRefs(data, limit);
+  const imageDescriptions = new Map<string, string>();
+  if (refs.length === 0) return { imageDescriptions };
+
+  const irService = ctx.getService<ImageRecognitionService>('image-recognition');
+  if (!irService?.available || !irService.describe) {
+    ctx.logger.debug(`合并转发包含 ${refs.length} 张图片，但 image-recognition 服务不可用`);
+    return { imageDescriptions };
+  }
+
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    const key = imageRefKey(ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      const imageSource = await resolveForwardImageSource(ctx, callCtx, ref);
+      const description = await irService.describe(imageSource);
+      if (description) imageDescriptions.set(key, description);
+    } catch (err) {
+      ctx.logger.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
+    }
+  }
+
+  return { imageDescriptions };
+}
+
+function formatMessageContent(content: unknown, context?: ForwardFormatContext): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
+
+  return content.map(seg => {
+    if (!seg || typeof seg !== 'object') return String(seg ?? '');
+    const segment = seg as { type?: string; data?: Record<string, unknown> };
+    const data = segment.data ?? {};
+    switch (segment.type) {
+      case 'text': return String(data.text ?? '');
+      case 'at': return data.qq === 'all' ? '@全体成员' : `@${String(data.qq ?? '')}`;
+      case 'image': {
+        const source = imageSourceFromSegment(data);
+        const desc = source ? context?.imageDescriptions.get(imageRefKey({ source, label: '[图片]', segment: data })) : undefined;
+        return desc ? `[图片: ${desc}]` : '[图片]';
+      }
+      case 'face': return `[表情:${String(data.id ?? '')}]`;
+      case 'reply': return '';
+      case 'forward': return data.id ? `[合并转发:${String(data.id)}]` : '[合并转发]';
+      case 'record': return '[语音]';
+      case 'video': return '[视频]';
+      case 'share': return `[分享:${String(data.title ?? '')}]`;
+      case 'json': return '[JSON卡片]';
+      case 'xml': return '[XML卡片]';
+      default: return segment.type ? `[${segment.type}]` : '';
+    }
+  }).join('');
+}
+
+function formatCqMessageContent(content: string, context?: ForwardFormatContext): string {
+  let imageIndex = 0;
+  return content.replace(/\[CQ:image,([^\]]+)\]/g, (raw) => {
+    const refs = extractCqImageRefs(raw);
+    const ref = refs[0];
+    if (!ref) return '[图片]';
+    imageIndex++;
+    const desc = context?.imageDescriptions.get(imageRefKey(ref));
+    return desc ? `[图片${imageIndex > 1 ? imageIndex : ''}: ${desc}]` : '[图片]';
+  });
+}
+
+function formatForwardMessage(data: unknown, limit: number, context?: ForwardFormatContext): string {
+  const rawMessages = getForwardMessages(data);
+
+  const messages = rawMessages.slice(0, limit);
+  const lines = messages.map((item, index) => {
+    const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    const nodeData = getForwardNodeData(item);
+    const sender = node.sender && typeof node.sender === 'object'
+      ? node.sender as Record<string, unknown>
+      : undefined;
+    const name = String(nodeData.nickname ?? sender?.nickname ?? nodeData.name ?? nodeData.user_id ?? sender?.user_id ?? `节点${index + 1}`);
+    const userId = nodeData.user_id ?? nodeData.uin ?? sender?.user_id;
+    const prefix = userId != null ? `${name}(${String(userId)})` : name;
+    const rawContent = getForwardNodeContent(item);
+    const content = typeof rawContent === 'string'
+      ? formatCqMessageContent(rawContent, context)
+      : formatMessageContent(rawContent, context);
+    return `${index + 1}. ${prefix}: ${content || '[空消息]'}`;
+  });
+
+  const header = `合并转发共 ${rawMessages.length} 条${rawMessages.length > messages.length ? `，以下显示前 ${messages.length} 条` : ''}:`;
+  return lines.length > 0 ? `${header}\n${lines.join('\n')}` : '合并转发内容为空或当前 OneBot 实现返回格式无法识别';
 }
 
 // ===== 权限检查辅助 =====
@@ -523,6 +745,41 @@ function registerGroupManagementTools(ctx: Context): void {
 // ===== 群信息查询工具 =====
 
 function registerGroupInfoTools(ctx: Context): void {
+
+  // ---- 查看合并转发 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_forward_msg',
+        description: '读取合并转发消息内容。收到 <forward id="...">[合并转发消息]</forward> 时，用其中的 id 调用本工具。',
+        parameters: {
+          type: 'object',
+          properties: {
+            forward_id: { type: 'string', description: '合并转发消息 ID，即 forward 消息段 data.id' },
+            limit: { type: 'number', description: '最多返回多少条节点，默认 30' },
+          },
+          required: ['forward_id'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      requireOneBotSession(callCtx);
+      const forwardId = String(args.forward_id);
+      const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
+
+      let data: unknown;
+      try {
+        data = await callAction(ctx, callCtx, 'get_forward_msg', { id: forwardId });
+      } catch (err) {
+        ctx.logger.debug(`get_forward_msg(id) 失败，尝试 message_id 参数: ${err}`);
+        data = await callAction(ctx, callCtx, 'get_forward_msg', { message_id: forwardId });
+      }
+
+      const formatContext = await recognizeForwardImages(ctx, callCtx, data, limit);
+      return formatForwardMessage(data, limit, formatContext);
+    },
+  });
 
   // ---- 获取群信息 ----
   ctx.registerTool({
