@@ -592,6 +592,99 @@ function registerGroupInfoTools(ctx: Context): void {
     },
   });
 
+  // ---- 查询自身在当前群是否被禁言 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_self_mute_status',
+        description:
+          '查询机器人自身的禁言状态。默认查当前群；可传 group_id 跨群查询（也可用于在私聊中查某个群是否被禁言）。' +
+          '当历史记忆里出现 [notice/group_ban] 提示时，可调用此工具确认当前实时状态再决定是否发言。',
+        parameters: {
+          type: 'object',
+          properties: {
+            group_id: { type: 'string', description: '可选。指定群号。缺省时查当前会话所在群（私聊时缺省会报错，请显式传入）。' },
+          },
+          required: [],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const parsed = parseOneBotSession(callCtx.sessionId);
+      if (!parsed) throw new Error('此工具仅在 OneBot 会话中可用');
+      const selfId = parsed.selfId;
+      let groupId = args.group_id ? String(args.group_id) : '';
+      if (!groupId) {
+        if (parsed.detailType !== 'group') {
+          return JSON.stringify({ available: false, reason: '当前不在群聊中，请显式传入 group_id' });
+        }
+        groupId = parsed.targetId;
+      }
+      // 跨群查询时，构造一个目标群的临时 sessionId 以复用 callAction
+      const probeSessionId = `onebot:${selfId}:group:${groupId}`;
+      const adapter = findOneBotAdapter(ctx);
+      if (!adapter?.callAction) return JSON.stringify({ available: false, reason: 'OneBot 适配器不可用' });
+      let info: Record<string, unknown> | null = null;
+      try {
+        info = await adapter.callAction(probeSessionId, 'get_group_member_info', {
+          group_id: Number(groupId),
+          user_id: Number(selfId),
+          no_cache: true,
+        }) as Record<string, unknown>;
+      } catch (err) {
+        return JSON.stringify({ available: false, reason: `查询失败: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      if (!info) return JSON.stringify({ available: false, reason: '无法获取群成员信息' });
+      const ts = Number(info.shut_up_timestamp ?? 0);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const muted = ts > nowSec;
+      return JSON.stringify({
+        available: true,
+        muted,
+        shutUpTimestamp: ts,
+        untilIso: muted ? new Date(ts * 1000).toISOString() : null,
+        remainingSeconds: muted ? ts - nowSec : 0,
+        groupId,
+        selfId,
+      });
+    },
+  });
+
+  // ---- 列出所有当前被禁言的群（基于内存事件快照，跨会话可用） ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_list_self_mutes',
+        description:
+          '列出机器人自身当前被禁言的所有群（基于已收到的禁言事件 + 启动后从 shut_up_timestamp 恢复的状态快照）。' +
+          '可在任何会话（包括私聊）调用，用于自查"我目前在哪些群里被禁言、还剩多久"。' +
+          '注意：未收到事件且未触发过的群可能不在列表中，最权威的方式仍是 onebot_get_self_mute_status(group_id)。',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+    },
+    handler: async () => {
+      const adapter = findOneBotAdapter(ctx) as (PlatformAdapter & {
+        getSelfMutes?: () => Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
+      }) | undefined;
+      if (!adapter?.getSelfMutes) {
+        return JSON.stringify({ supported: false, reason: '当前 OneBot 适配器版本不支持 getSelfMutes' });
+      }
+      const mutes = adapter.getSelfMutes();
+      return JSON.stringify({
+        supported: true,
+        count: mutes.length,
+        mutes: mutes.map(m => ({
+          selfId: m.selfId,
+          groupId: m.groupId,
+          untilIso: new Date(m.untilTs).toISOString(),
+          remainingSeconds: m.remainingSec,
+        })),
+      });
+    },
+  });
+
   ctx.logger.info('OneBot 群信息查询工具已注册');
 }
 

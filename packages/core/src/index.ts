@@ -110,6 +110,7 @@ export type {
   MemoryCapabilityRegistry,
   // 消息归档服务
   ArchiveIncomingResult,
+  ArchiveNoticeOptions,
   MessageArchiveService,
   MessageArchiveCapability,
   MessageArchiveCapabilityRegistry,

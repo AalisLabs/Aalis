@@ -140,6 +140,10 @@ export class OneBotV12 implements OneBotProtocol {
       userId: raw.user_id != null ? String(raw.user_id) : undefined,
       targetId: raw.target_id != null ? String(raw.target_id) : undefined,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
+      data: {
+        operatorId: raw.operator_id != null ? String(raw.operator_id) : undefined,
+        duration: raw.duration != null ? Number(raw.duration) : undefined,
+      },
     };
   }
 }

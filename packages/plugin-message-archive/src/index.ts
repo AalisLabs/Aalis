@@ -6,6 +6,7 @@ import type {
   MemoryService,
   MessageArchiveService,
   ImageRecognitionService,
+  ArchiveNoticeOptions,
 } from '@aalis/core';
 import { prefixSender, getMessageName, MessageArchiveCapabilities } from '@aalis/core';
 
@@ -140,9 +141,47 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         imageRecognitionInfo: working._imageRecognitionInfo,
       };
     },
+
+    async archiveNotice(opts: ArchiveNoticeOptions): Promise<Message | null> {
+      const text = (opts.content ?? '').trim();
+      if (!text) return null;
+
+      const metadata: Record<string, unknown> = {
+        kind: 'notice',
+        noticeType: opts.noticeType,
+      };
+      if (opts.subType) metadata.subType = opts.subType;
+      if (opts.platform) metadata.platform = opts.platform;
+      if (opts.userId) metadata.userId = opts.userId;
+      if (opts.targetId) metadata.targetId = opts.targetId;
+      if (opts.groupId) metadata.groupId = opts.groupId;
+      if (opts.operatorId) metadata.operatorId = opts.operatorId;
+      if (opts.data) Object.assign(metadata, opts.data);
+
+      const message: Message = {
+        role: 'system',
+        content: text,
+        timestamp: opts.timestamp ?? Date.now(),
+        metadata,
+      };
+
+      await memory.saveMessage(opts.sessionId, message);
+
+      if (cfg.debugLogs) {
+        ctx.logger.debug(
+          `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? '/' + opts.subType : ''} | ${text.slice(0, 200)}`,
+        );
+      }
+
+      return message;
+    },
   };
 
   ctx.provide('message-archive', service, {
-    capabilities: [MessageArchiveCapabilities.Incoming, MessageArchiveCapabilities.Generic],
+    capabilities: [
+      MessageArchiveCapabilities.Incoming,
+      MessageArchiveCapabilities.Generic,
+      MessageArchiveCapabilities.Notice,
+    ],
   });
 }
