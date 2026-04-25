@@ -1,5 +1,6 @@
 import type { Context, IncomingMessage, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
 import type { MemoryService, VectorStoreService, EmbeddingService } from '@aalis/core';
+import { prefixSender } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -135,6 +136,14 @@ function platformLabel(platform: string | undefined): string {
   return platform;
 }
 
+/** 剖掉 agent 在某条消息开头注入的临时时间标签（如 "(刚刚) " / "(3 分钟前) "）。
+ * 只剖首个括号对，保留后续内容（包括 [发送者] 前缀）。
+ */
+function stripTimeLabel(content: string): string {
+  if (!content) return content;
+  return content.replace(/^\([^)]{1,16}\)\s+/, '');
+}
+
 /** 渲染一条消息为可读文本（含来源标签） */
 function renderMessage(m: Message, max: number): string {
   const meta = (m.metadata ?? {}) as Record<string, unknown>;
@@ -162,22 +171,26 @@ function renderMessage(m: Message, max: number): string {
   const who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : (userId || '');
   const tag = `[${platformPrefix}${where}${who}${who ? ' ' : ''}@ ${date}]`;
 
+  // 渲染时剥掉历史消息内已有的 sender 前缀（archive 入库时加的 [Alice(123)]: ...）
+  // 来源标签 tag 已表达完整身份，避免双重前缀
+  const cleanContent = (m.content ?? '').replace(/^\[[^\]]{1,80}\]:\s+/, '');
+
   let body: string;
   switch (m.role) {
     case 'user':
-      body = `用户: ${truncate(m.content, max)}`;
+      body = `用户: ${truncate(cleanContent, max)}`;
       break;
     case 'assistant':
-      body = `助手: ${truncate(m.content, max)}`;
+      body = `助手: ${truncate(cleanContent, max)}`;
       break;
     case 'system':
-      body = `系统: ${truncate(m.content, max)}`;
+      body = `系统: ${truncate(cleanContent, max)}`;
       break;
     case 'tool':
-      body = `工具(${m.name ?? ''}): ${truncate(m.content, max)}`;
+      body = `工具(${m.name ?? ''}): ${truncate(cleanContent, max)}`;
       break;
     default:
-      body = truncate(m.content, max);
+      body = truncate(cleanContent, max);
   }
   return `${tag} ${body}`;
 }
@@ -246,11 +259,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // === 索引：仅对 user 消息建索引，触发即写（不依赖 assistant 是否回复） ===
 
   async function indexUserMessage(msg: IncomingMessage): Promise<void> {
-    const text = msg.content?.trim();
-    if (!text) return;
+    const rawText = msg.content?.trim();
+    if (!rawText) return;
     try {
-      const vec = await getEmbedder().embed(text);
-      const mentions = extractMentions(text);
+      // 方案 C：与 archive 入库格式一致、与检索侧对称。
+      // embed 带发送者前缀的文本，使身份信号进入向量空间；不加临时时间标签。
+      const embedText = prefixSender(rawText, msg.nickname, msg.userId);
+      const vec = await getEmbedder().embed(embedText);
+      const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
         sessionId: msg.sessionId,
         userId: msg.userId ?? '',
@@ -260,8 +276,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         groupId: msg.groupId ?? '',
         sessionType: msg.sessionType ?? '',
         timestamp: Date.now(),
-        // 兜底内容（messages 表被清空或后端无范围查询时仍可呈现）
-        content: text,
+        // 兜底内容：存原始纯净文本（供渲染兜底使用，不含发送者前缀）
+        content: rawText,
         // @提及到的用户 ID 列表，用于检索时同用户加权
         mentions,
       };
@@ -342,7 +358,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         return;
       }
 
-      const queryVec = await getEmbedder().embed(lastUserMsg.content);
+      const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
       const candidates = await getStore().search(queryVec, candidateCount);
 
       // 1. 阈值过滤
