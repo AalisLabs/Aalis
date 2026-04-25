@@ -12,7 +12,7 @@ export const configSchema: ConfigSchema = {
   groupManagement: {
     label: '群管理工具',
     fields: {
-      enabled: { type: 'boolean', label: '启用群管理工具', default: true, description: '禁言、踢人、设置群名片等' },
+      enabled: { type: 'boolean', label: '启用群管理工具', default: true, description: '禁言、踢人、设置群名片、撤回消息等' },
     },
   },
   groupInfo: {
@@ -21,10 +21,16 @@ export const configSchema: ConfigSchema = {
       enabled: { type: 'boolean', label: '启用群信息查询', default: true, description: '查询群/成员信息' },
     },
   },
+  account: {
+    label: '账号与好友',
+    fields: {
+      enabled: { type: 'boolean', label: '启用账号与好友查询', default: true, description: '群列表、好友列表、陆陆信息、陈生人信息等' },
+    },
+  },
   interaction: {
     label: '特殊交互',
     fields: {
-      enabled: { type: 'boolean', label: '启用特殊交互', default: true, description: '戳一戳等' },
+      enabled: { type: 'boolean', label: '启用特殊交互', default: true, description: '戳一戳、群打卡等' },
     },
   },
 };
@@ -32,6 +38,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   groupManagement: { enabled: true },
   groupInfo: { enabled: true },
+  account: { enabled: true },
   interaction: { enabled: true },
 };
 
@@ -171,11 +178,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const cfg = {
       groupManagement: { enabled: true, ...(config.groupManagement as Record<string, unknown> ?? {}) },
       groupInfo: { enabled: true, ...(config.groupInfo as Record<string, unknown> ?? {}) },
+      account: { enabled: true, ...(config.account as Record<string, unknown> ?? {}) },
       interaction: { enabled: true, ...(config.interaction as Record<string, unknown> ?? {}) },
     };
 
     if (cfg.groupManagement.enabled) registerGroupManagementTools(groupedCtx);
     if (cfg.groupInfo.enabled) registerGroupInfoTools(groupedCtx);
+    if (cfg.account.enabled) registerAccountTools(groupedCtx);
     if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
   });
 }
@@ -441,6 +450,35 @@ function registerGroupManagementTools(ctx: Context): void {
     },
   });
 
+  // ---- 撤回消息 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_delete_msg',
+        description: '撤回一条消息（群聊或私聊均可）。需要 message_id（来自历史消息或事件）。机器人对他人消息的撤回需要管理员权限。',
+        parameters: {
+          type: 'object',
+          properties: {
+            message_id: { type: 'string', description: '要撤回的消息 ID' },
+          },
+          required: ['message_id'],
+        },
+      },
+    },
+    safety: 'dangerous',
+    authority: 3,
+    handler: async (args, callCtx) => {
+      // 不限制必须是群聊；私聊也可撤回机器人自己发出的消息
+      const parsed = parseOneBotSession(callCtx.sessionId);
+      if (!parsed) throw new Error('此工具仅在 OneBot 会话中可用');
+      await callAction(ctx, callCtx, 'delete_msg', {
+        message_id: Number(args.message_id),
+      });
+      return `已撤回消息 ${args.message_id}`;
+    },
+  });
+
   ctx.logger.info('OneBot 群管理工具已注册');
 }
 
@@ -471,27 +509,28 @@ function registerGroupInfoTools(ctx: Context): void {
     },
   });
 
-  // ---- 获取群成员信息 ----
+  // ---- 获取群成员信息（user_id 可缺省查自身）----
   ctx.registerTool({
     definition: {
       type: 'function',
       function: {
         name: 'onebot_get_group_member_info',
-        description: '获取指定群成员的详细信息（昵称、群名片、角色等）。',
+        description: '获取群成员详细信息（昵称、群名片、角色、禁言状态等）。不传 user_id 时查询机器人自身。',
         parameters: {
           type: 'object',
           properties: {
-            user_id: { type: 'string', description: '要查询的用户QQ号' },
+            user_id: { type: 'string', description: '可选：要查询的用户 QQ 号。缺省查询机器人自身。' },
           },
-          required: ['user_id'],
+          required: [],
         },
       },
     },
     handler: async (args, callCtx) => {
-      const { groupId } = requireGroupSession(callCtx);
+      const { selfId, groupId } = requireGroupSession(callCtx);
+      const userId = args.user_id ? String(args.user_id) : selfId;
       const data = await callAction(ctx, callCtx, 'get_group_member_info', {
         group_id: Number(groupId),
-        user_id: Number(args.user_id),
+        user_id: Number(userId),
         no_cache: true,
       });
       return JSON.stringify(data);
@@ -561,33 +600,6 @@ function registerGroupInfoTools(ctx: Context): void {
         ...(keyword ? { keyword } : {}),
         ...(roleFilter ? { role: roleFilter } : {}),
         members: items,
-      });
-    },
-  });
-
-  // ---- 获取机器人自身在群中的角色 ----
-  ctx.registerTool({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'onebot_get_self_role',
-        description: '获取机器人自身在当前群中的角色（member/admin/owner）和基本信息。',
-        parameters: {
-          type: 'object',
-          properties: {},
-          required: [],
-        },
-      },
-    },
-    handler: async (_args, callCtx) => {
-      const { selfId, groupId } = requireGroupSession(callCtx);
-      const info = await getGroupMemberInfo(ctx, callCtx, groupId, selfId);
-      if (!info) return '无法获取自身群成员信息';
-      return JSON.stringify({
-        user_id: info.user_id,
-        nickname: info.nickname,
-        card: info.card,
-        role: info.role,
       });
     },
   });
@@ -686,6 +698,171 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   ctx.logger.info('OneBot 群信息查询工具已注册');
+}
+
+// ===== 账号 / 好友 / 群列表查询工具 =====
+
+function registerAccountTools(ctx: Context): void {
+
+  // ---- 群列表 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_group_list',
+        description:
+          '获取机器人加入的所有群列表（OneBot v11: get_group_list）。' +
+          '支持按群名/群号关键词搜索、分页返回。' +
+          '可在任何会话调用（包括私聊），用于查询「我在哪些群」。',
+        parameters: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: '可选：按群名或群号子串模糊匹配（不区分大小写）' },
+            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+            pageSize: { type: 'number', description: '每页条数，默认 30' },
+          },
+          required: [],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const data = await callAction(ctx, callCtx, 'get_group_list', {});
+      const list = Array.isArray(data) ? data as Array<Record<string, unknown>> : [];
+
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+      const page = Math.max(1, Math.floor(Number(args.page) || 1));
+      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+
+      const all = list.map(g => ({
+        group_id: g.group_id,
+        group_name: String(g.group_name ?? ''),
+        member_count: g.member_count,
+        max_member_count: g.max_member_count,
+      }));
+      const filtered = keyword
+        ? all.filter(g => `${g.group_id} ${g.group_name}`.toLowerCase().includes(keyword))
+        : all;
+
+      const total = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const curPage = Math.min(page, totalPages);
+      const start = (curPage - 1) * pageSize;
+      const items = filtered.slice(start, start + pageSize);
+
+      return JSON.stringify({
+        accountTotal: all.length,
+        matched: total,
+        page: curPage,
+        pageSize,
+        totalPages,
+        hasMore: curPage < totalPages,
+        ...(keyword ? { keyword } : {}),
+        groups: items,
+      });
+    },
+  });
+
+  // ---- 好友列表 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_friend_list',
+        description:
+          '获取机器人的好友列表（OneBot v11: get_friend_list）。' +
+          '支持按昵称/备注/QQ号关键词搜索、分页返回。',
+        parameters: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: '可选：按昵称、备注或 QQ 号子串模糊匹配（不区分大小写）' },
+            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+            pageSize: { type: 'number', description: '每页条数，默认 30' },
+          },
+          required: [],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const data = await callAction(ctx, callCtx, 'get_friend_list', {});
+      const list = Array.isArray(data) ? data as Array<Record<string, unknown>> : [];
+
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+      const page = Math.max(1, Math.floor(Number(args.page) || 1));
+      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+
+      const all = list.map(f => ({
+        user_id: f.user_id,
+        nickname: String(f.nickname ?? ''),
+        remark: String(f.remark ?? ''),
+      }));
+      const filtered = keyword
+        ? all.filter(f => `${f.user_id} ${f.nickname} ${f.remark}`.toLowerCase().includes(keyword))
+        : all;
+
+      const total = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const curPage = Math.min(page, totalPages);
+      const start = (curPage - 1) * pageSize;
+      const items = filtered.slice(start, start + pageSize);
+
+      return JSON.stringify({
+        accountTotal: all.length,
+        matched: total,
+        page: curPage,
+        pageSize,
+        totalPages,
+        hasMore: curPage < totalPages,
+        ...(keyword ? { keyword } : {}),
+        friends: items,
+      });
+    },
+  });
+
+  // ---- 陌生人 / 任意 QQ 号信息 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_stranger_info',
+        description:
+          '查询任意 QQ 号的公开资料（OneBot v11: get_stranger_info）。' +
+          '不需要对方是好友或同群。常用于私聊会话或跨群查人。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: '要查询的 QQ 号' },
+            no_cache: { type: 'boolean', description: '是否跳过缓存强制刷新，默认 false' },
+          },
+          required: ['user_id'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const data = await callAction(ctx, callCtx, 'get_stranger_info', {
+        user_id: Number(args.user_id),
+        no_cache: !!args.no_cache,
+      });
+      return JSON.stringify(data);
+    },
+  });
+
+  // ---- 机器人自身账号信息 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_login_info',
+        description: '获取机器人自身的登录账号信息（QQ 号、昵称）。',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+    },
+    handler: async (_args, callCtx) => {
+      const data = await callAction(ctx, callCtx, 'get_login_info', {});
+      return JSON.stringify(data);
+    },
+  });
+
+  ctx.logger.info('OneBot 账号 / 好友 / 群列表查询工具已注册');
 }
 
 // ===== 特殊交互工具 =====
