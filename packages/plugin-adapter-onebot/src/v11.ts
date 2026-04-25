@@ -4,6 +4,7 @@ import type {
   NormalizedMessageEvent,
   NormalizedMetaEvent,
   NormalizedNoticeEvent,
+  NormalizedRequestEvent,
   SendMessageParams,
 } from './types.js';
 import { segmentsToText, parseContentToSegments, toV11Segments } from './types.js';
@@ -60,11 +61,12 @@ export class OneBotV11 implements OneBotProtocol {
     return info?.user_id != null ? String(info.user_id) : undefined;
   }
 
-  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'other' {
+  parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other' {
     switch (raw.post_type) {
       case 'message': return 'message';
       case 'meta_event': return 'meta';
       case 'notice': return 'notice';
+      case 'request': return 'request';
       default: return 'other';
     }
   }
@@ -222,5 +224,28 @@ export class OneBotV11 implements OneBotProtocol {
       userId: raw.user_id != null ? String(raw.user_id) : undefined,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
     };
+  }
+
+  parseRequestEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedRequestEvent | null {
+    const selfId = raw.self_id != null ? String(raw.self_id) : fallbackSelfId;
+    const requestType = (raw.request_type ?? '') as string;
+    const userId = raw.user_id != null ? String(raw.user_id) : '';
+    const flag = raw.flag != null ? String(raw.flag) : '';
+    const comment = raw.comment != null ? String(raw.comment) : undefined;
+
+    if (!userId || !flag) return null;
+
+    if (requestType === 'friend') {
+      return { selfId, requestType: 'friend', userId, flag, comment };
+    }
+
+    if (requestType === 'group') {
+      const subType = raw.sub_type === 'add' || raw.sub_type === 'invite' ? raw.sub_type : undefined;
+      const groupId = raw.group_id != null ? String(raw.group_id) : undefined;
+      if (!subType || !groupId) return null;
+      return { selfId, requestType: 'group', subType, userId, groupId, flag, comment };
+    }
+
+    return null;
   }
 }
