@@ -35,6 +35,19 @@ interface PluginConfig {
   debugLogs: boolean;
 }
 
+/** 从消息文本中抽取 @提及的用户 ID 列表（平台无关：依赖各 adapter 输出统一的 <at id="X"> 标签） */
+function extractMentions(text: string): string[] {
+  if (!text) return [];
+  const ids = new Set<string>();
+  const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const id = m[1];
+    if (id && id !== 'all') ids.add(id);
+  }
+  return [...ids];
+}
+
 function buildIncomingContent(incoming: IncomingMessage): string {
   let content = prefixSender(incoming.content, incoming.nickname, incoming.userId);
 
@@ -123,6 +136,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (working.groupId) meta.groupId = working.groupId;
       if (working.groupName) meta.groupName = working.groupName;
       if (working.sessionType) meta.sessionType = working.sessionType;
+      const mentions = extractMentions(content);
+      if (mentions.length > 0) meta.mentions = mentions;
 
       const message: Message = {
         role: 'user',
