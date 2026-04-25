@@ -114,11 +114,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       const content = buildIncomingContent(working);
+
+      // 把会话身份信息存入 metadata，供向量检索/上下文渲染等场景使用
+      const meta: Record<string, unknown> = {};
+      if (working.userId) meta.userId = working.userId;
+      if (working.nickname) meta.nickname = working.nickname;
+      if (working.platform) meta.platform = working.platform;
+      if (working.groupId) meta.groupId = working.groupId;
+      if (working.groupName) meta.groupName = working.groupName;
+      if (working.sessionType) meta.sessionType = working.sessionType;
+
       const message: Message = {
         role: 'user',
         content,
         name: getMessageName(working.userId),
         timestamp: Date.now(),
+        metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
 
       if (cfg.debugLogs && working._imageRecognitionInfo) {

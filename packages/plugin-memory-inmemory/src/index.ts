@@ -23,6 +23,7 @@ class InMemoryFallbackService implements MemoryService {
       name: message.name,
       reasoningContent: message.reasoningContent,
       timestamp: message.timestamp ?? Date.now(),
+      metadata: message.metadata,
     });
   }
 
@@ -59,6 +60,18 @@ class InMemoryFallbackService implements MemoryService {
     const active = this.sessions.get(sessionId) ?? [];
     const all = [...archived, ...active];
     return all.slice(-limit);
+  }
+
+  async getMessagesBySessionRange(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]> {
+    const archived = this.archivedSessions.get(sessionId) ?? [];
+    const active = this.sessions.get(sessionId) ?? [];
+    const all = [...archived, ...active];
+    return all.filter(m => {
+      const ts = m.timestamp ?? 0;
+      if (ts < fromTs || ts > toTs) return false;
+      if (roles && roles.length > 0 && !roles.includes(m.role)) return false;
+      return true;
+    }).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }
 
   // ----- 结构化元数据存储 -----
