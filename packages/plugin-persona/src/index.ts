@@ -504,8 +504,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           '# 输出格式（最终回复时使用）\n当你完成所有必要的工具调用后，最终回复时使用以下 JSON 格式：',
         )
         .replace(
-          '任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。',
-          '注意：调用工具时只需要遵循工具调用规范，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。',
+          'JSON 中只允许包含以上字段，禁止添加任何额外字段（例如 think、reason、reasoning 等）。\n任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。',
+          'JSON 中只允许包含以上字段，禁止添加任何额外字段（例如 think、reason、reasoning 等）。\n注意：调用工具时只需要遵循工具调用规范，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。',
         );
       if (systemMsg.content !== original) {
         ctx.logger.debug('persona: 已柔化 JSON 格式约束（检测到工具可用）');
