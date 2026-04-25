@@ -60,12 +60,14 @@ export type {
   MiddlewareNext,
   CommandContext,
   CommandDefinition,
+  SubcommandDefinition,
   RegisteredCommand,
   // 执行守卫
   ExecutionGuardContext,
   ExecutionGuard,
   // 服务接口（抽象契约，具体实现由插件提供）
   CommandService,
+  CommandNodeInfo,
   ToolService,
   // Agent 服务
   AgentService,
