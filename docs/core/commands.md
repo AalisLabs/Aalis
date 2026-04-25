@@ -71,13 +71,43 @@ commandOverrides:
   shutdown:
     authority: 3         # 降低关闭指令的权限要求
     safety: safe         # 改为安全操作（不需确认）
+  # 子指令使用冲号拼接路径作为键（可递归多层）
+  clear:nuke:
+    authority: 4
 ```
 
 ```typescript
 commands.setOverride('shutdown', { authority: 3, safety: 'safe' });
+commands.setOverride('clear:nuke', { authority: 4 });
 commands.removeOverride('shutdown');
 commands.getOverrides();
 ```
+
+## 子指令（递归）
+
+指令可在 `subcommands` 中声明子指令，子指令本身可再含 `subcommands` 形成任意层级：
+
+```typescript
+ctx.command('clear', '清空当前会话', async (c) => runClear(c, 'session'),
+  {
+    subcommands: [
+      { name: 'image', description: '仅清图片缓存', action: async (c) => clearImages(c) },
+      { name: 'nuke', description: '【危险】全局清空',
+        authority: 3, safety: 'dangerous',
+        action: async (c) => runClear(c, 'all') },
+    ],
+  });
+```
+
+解析与路由：
+- 分析用户输入后，根据 `args` 逐层匹配子指令名，命中则下沉一层并消耗一个 arg
+- 任一层未命中则停在当前节点，调用其 `action`（`args` 为剩余部分）
+- 节点未提供 `action` 时会返回自动生成的 usage
+
+权限/安全级继承：
+- 每个节点未声明 `authority`/`safety` 时继承父节点的有效值（已应用 override）
+- 与根一致，每个节点也可被单独 override，键 = 冒号拼接的路径（如 `clear:nuke`、`db:migrate:up`）
+- WebUI「权限」页以可折叠的缩进行展示完整指令树，每一节点可独立编辑
 
 ## 内置指令参考
 
@@ -85,7 +115,12 @@ commands.getOverrides();
 |---|---|---|---|---|
 | `/help` | — | 显示帮助信息 | 0 | safe |
 | `/status` | — | 系统状态 | 0 | safe |
-| `/clear` | `[context\|summary\|vector\|all\|nuke]` | 清空消息/记忆 | 0 | safe |
+| `/clear` | — | 清空当前会话全部记忆（含图片缓存） | 0 | safe |
+| `/clear context` | — | 仅清消息历史 | 0 | safe |
+| `/clear summary` | — | 仅清摘要 | 0 | safe |
+| `/clear vector` | — | 仅清向量记忆 | 0 | safe |
+| `/clear image` | — | 仅清图片缓存 | 0 | safe |
+| `/clear nuke` | — | 【危险】全局所有会话 | 3 | dangerous |
 | `/model` | `[model_name]` | 查看或切换会话模型 | 0 | safe |
 | `/tools` | — | 列出所有 AI 工具 | 0 | safe |
 | `/shutdown` | — | 关闭应用 | 5 | dangerous |

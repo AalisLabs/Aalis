@@ -21,7 +21,7 @@ meta.inject = { required: ['authority'] }
 |---|---|---|
 | `/help` | 显示帮助信息 | 0 |
 | `/status` | 系统状态 | 0 |
-| `/clear [scope]` | 清空记忆（context/summary/vector/all/nuke） | 0 |
+| `/clear [scope]` | 清空记忆（子指令：context/summary/vector/image/nuke） | 0 |
 | `/model` | 查看或切换会话模型 | 0 |
 | `/tools` | 列出所有 AI 工具 | 0 |
 | `/shutdown` | 关闭应用 | 5 (dangerous) |

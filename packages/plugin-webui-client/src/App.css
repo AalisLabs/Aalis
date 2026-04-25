@@ -3188,6 +3188,26 @@ details[open] > .tool-call-summary::before {
   background: rgba(124, 111, 247, 0.04);
 }
 
+/* 子指令行：略淡背景 + 左侧细线表示从属关系 */
+.authority-cmd-row.is-sub {
+  background: rgba(0, 0, 0, 0.015);
+  border-left: 2px solid var(--border);
+}
+
+.authority-cmd-row.is-sub.overridden {
+  background: rgba(124, 111, 247, 0.06);
+}
+
+.authority-cmd-toggle {
+  font-size: 9px;
+  transition: transform 0.15s;
+  user-select: none;
+}
+
+.authority-cmd-toggle.open {
+  transform: rotate(90deg);
+}
+
 .authority-cmd-name {
   color: var(--primary);
   font-family: 'SF Mono', 'Fira Code', monospace;

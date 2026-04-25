@@ -301,7 +301,7 @@ outputFormat:
 | 命令 | 描述 | 权限 |
 |---|---|---|
 | `/help` | 显示帮助信息 | 0 |
-| `/clear [context\|summary\|vector\|all\|nuke]` | 清空指定范围的消息/记忆 | 0 |
+| `/clear` | 清空当前会话全部记忆；子指令 `context\|summary\|vector\|image` 按需清；`nuke` 全局所有会话（需高权限） | 0 |
 | `/status` | 显示系统状态 | 0 |
 | `/model` | 查看或切换会话模型 | 0 |
 | `/tools` | 列出所有 AI 工具 | 0 |
