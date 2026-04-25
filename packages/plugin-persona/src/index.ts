@@ -61,6 +61,10 @@ interface PersonaCard {
   traits?: string[];
   greeting?: string;
   outputFormat?: Record<string, { description: string; reply?: boolean }>;
+  /** 角色卡自定义的「JSON 输出说明」，用于替换插件默认的强制提示文案。
+   *  字段 schema 仍由插件根据 outputFormat.fields 自动渲染并附在文本之后。
+   *  仅在 outputFormat 存在时生效。 */
+  outputFormatPrompt?: string;
   nick_name?: string[];
   mute_keyword?: string[];
   /** JSON 内容由客户端渲染，服务端不提取回复字段 */
@@ -169,6 +173,7 @@ class PersonaServiceImpl implements PersonaService {
               traits: parsed.traits as string[] | undefined,
               greeting: parsed.greeting as string | undefined,
               outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
+              outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
               nick_name: parsed.nick_name as string[] | undefined,
               mute_keyword: parsed.mute_keyword as string[] | undefined,
               clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
@@ -275,8 +280,16 @@ class PersonaServiceImpl implements PersonaService {
       ? undefined
       : this.getCardOutputFormat(effectiveCard);
     if (effectiveFormat) {
-      prompt += '\n\n# 输出格式（强制）\n';
-      prompt += '你的每一次回复都必须严格使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
+      // 角色卡若提供 outputFormatPrompt，则用其替换默认 header/footer；
+      // schema 块仍由插件根据 fields 自动生成，避免与字段定义脱节。
+      const customPrompt = effectiveCard.outputFormatPrompt?.trim();
+      prompt += '\n\n';
+      if (customPrompt) {
+        prompt += customPrompt + '\n';
+      } else {
+        prompt += '# 输出格式（强制）\n';
+        prompt += '你的每一次回复都必须严格使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
+      }
       prompt += '{\n';
       const entries = Object.entries(effectiveFormat.fields);
       entries.forEach(([key, field], i) => {
@@ -284,8 +297,10 @@ class PersonaServiceImpl implements PersonaService {
         prompt += `  "${key}": "..."${comma}  // ${field.description}${field.reply ? '（发送给用户的回复）' : ''}\n`;
       });
       prompt += '}\n';
-      prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。\n';
-      prompt += '任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。';
+      if (!customPrompt) {
+        prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。\n';
+        prompt += '任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。';
+      }
     }
 
     return prompt;
@@ -378,6 +393,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         traits: parsed.traits as string[] | undefined,
         greeting: parsed.greeting as string | undefined,
         outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
+        outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
         nick_name: parsed.nick_name as string[] | undefined,
         mute_keyword: parsed.mute_keyword as string[] | undefined,
         clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
