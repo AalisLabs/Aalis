@@ -36,6 +36,12 @@ export const configSchema: ConfigSchema = {
     description: '启用后，当前时间会自动注入到系统提示中',
     default: true,
   },
+  timeZone: {
+    type: 'string',
+    label: '时区 (IANA)',
+    description: '例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。',
+    default: '',
+  },
 };
 
 export const defaultConfig = {
@@ -43,6 +49,7 @@ export const defaultConfig = {
   personasDir: 'data/personas',
   statePersistence: false,
   timeInjection: true,
+  timeZone: '',
 };
 
 // ===== 角色卡格式 =====
@@ -69,6 +76,7 @@ class PersonaServiceImpl implements PersonaService {
   private fileName: string;
   private statePersistence: boolean;
   private timeInjection: boolean;
+  private timeZone: string;
   /** 按名称缓存的角色卡（用于 session 级 persona 切换） */
   private cardCache = new Map<string, PersonaCard | null>();
   /** 按名称缓存的 OutputFormat */
@@ -91,13 +99,14 @@ class PersonaServiceImpl implements PersonaService {
     card: PersonaCard,
     searchDirs: string[],
     fileName: string,
-    options: { statePersistence: boolean; timeInjection: boolean },
+    options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
   ) {
     this.card = card;
     this.searchDirs = searchDirs;
     this.fileName = fileName;
     this.statePersistence = options.statePersistence;
     this.timeInjection = options.timeInjection;
+    this.timeZone = options.timeZone;
 
     // 解析基础 outputFormat
     if (card.outputFormat) {
@@ -193,14 +202,26 @@ class PersonaServiceImpl implements PersonaService {
     // 时间注入
     if (this.timeInjection) {
       const now = new Date();
+      // 解析有效时区：配置 > 系统本地
+      let tz = this.timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      // 验证时区合法性，无效时回退到系统本地
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: tz });
+      } catch {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      }
+      // 计算 UTC 偏移（如 +08:00 / -05:00）用于消除歧义
+      const offsetParts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+        .formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? '';
       const timeStr = now.toLocaleString('zh-CN', {
-        timeZone: 'Asia/Shanghai',
+        timeZone: tz,
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit',
+        weekday: 'short',
         hour12: false,
       });
-        prompt += '以下时间由系统实时注入，是你回答时间或日期相关问题时应直接使用的权威当前时间（北京时间）。不要质疑它，也不要调用工具再次获取时间。\n';
-        prompt += `当前时间（北京时间）：${timeStr}\n\n`;
+      prompt += '以下时间由系统实时注入，是你回答时间或日期相关问题时应直接使用的权威当前时间。不要质疑它，也不要调用工具再次获取时间。\n';
+      prompt += `当前时间：${timeStr}（${tz}${offsetParts ? ` ${offsetParts}` : ''}）\n\n`;
     }
 
     if (effectiveCard.name) {
@@ -323,6 +344,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const personasDir = (config.personasDir as string) || 'data/personas';
   const statePersistence = (config.statePersistence as boolean) ?? false;
   const timeInjection = (config.timeInjection as boolean) ?? false;
+  const timeZone = (config.timeZone as string) ?? '';
   const configDir = ctx.config.getConfigDir();
 
   // 收集所有候选目录
@@ -383,6 +405,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const service = new PersonaServiceImpl(card, searchDirs, personaName as string, {
     statePersistence,
     timeInjection,
+    timeZone,
   });
   ctx.provide('persona', service);
 
