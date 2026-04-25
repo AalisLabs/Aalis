@@ -501,7 +501,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       systemMsg.content = systemMsg.content
         .replace(
           '# 输出格式（强制）\n你的每一次回复都必须严格使用以下 JSON 格式，不要输出 JSON 之外的任何内容：',
-          '# 输出格式（最终回复时使用）\n当你完成所有必要的工具调用后，最终回复时使用以下 JSON 格式：',
+          '# 输出格式（最终回复时必须使用）\n每当你需要输出文字回复时（无论是否调用了工具），必须使用以下 JSON 格式，不要输出 JSON 之外的任何内容：',
         )
         .replace(
           'JSON 中只允许包含以上字段，禁止添加任何额外字段（例如 think、reason、reasoning 等）。\n任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。',
