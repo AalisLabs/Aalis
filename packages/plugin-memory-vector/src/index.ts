@@ -32,6 +32,10 @@ export const configSchema: ConfigSchema = {
         type: 'number', label: '单条截断字数', default: 200,
         description: '每条消息呈现给 LLM 时的字符上限，超出截断',
       },
+      summaryMaxChars: {
+        type: 'number', label: '摘要截断字数', default: 1200,
+        description: '会话摘要命中时呈现给 LLM 的字符上限。摘要是高密度长期记忆，默认应明显高于单条消息',
+      },
       minScore: {
         type: 'number', label: '最低相似度阈值', default: 0,
         description: '0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤',
@@ -72,6 +76,7 @@ export const defaultConfig = {
     timeWeight: 0.3,
     userPriorityBoost: 2.0,
     perItemMaxChars: 200,
+    summaryMaxChars: 1200,
     minScore: 0,
   },
   contextExpand: {
@@ -91,6 +96,7 @@ interface VectorMemoryConfig {
     timeWeight: number;
     userPriorityBoost: number;
     perItemMaxChars: number;
+    summaryMaxChars: number;
     minScore: number;
   };
   contextExpand: {
@@ -195,6 +201,29 @@ function renderMessage(m: Message, max: number): string {
   return `${tag} ${body}`;
 }
 
+/** 渲染向量命中。summary 不是聊天消息，使用独立标签和更宽的截断上限。 */
+function renderMemoryEntry(m: Message, messageMax: number, summaryMax: number): string {
+  const meta = (m.metadata ?? {}) as Record<string, unknown>;
+  if (meta.kind === 'summary') {
+    const ts = m.timestamp ?? 0;
+    const date = new Date(ts).toLocaleString('zh-CN');
+    const platform = platformLabel(meta.platform as string | undefined);
+    const groupName = meta.groupName as string | undefined;
+    const sessionType = meta.sessionType as string | undefined;
+    const where = groupName
+      ? `群「${groupName}」/`
+      : sessionType === 'private'
+        ? '私聊/'
+        : sessionType === 'channel'
+          ? '频道/'
+          : '';
+    const platformPrefix = platform ? `${platform}/` : '';
+    const tag = `[${platformPrefix}${where}会话摘要 @ ${date}]`;
+    return `${tag} 摘要: ${truncate(m.content ?? '', summaryMax)}`;
+  }
+  return renderMessage(m, messageMax);
+}
+
 /** 给消息生成稳定 key 用于跨命中去重（sessionId + timestamp + role + content hash） */
 function messageKey(sessionId: string, m: Message): string {
   return `${sessionId}|${m.timestamp ?? 0}|${m.role}|${(m.content ?? '').slice(0, 64)}`;
@@ -235,6 +264,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       timeWeight: Math.max(0, Math.min(1, (searchRaw.timeWeight as number) ?? 0.3)),
       userPriorityBoost: Math.max(1, (searchRaw.userPriorityBoost as number) ?? 2.0),
       perItemMaxChars: Math.max(20, (searchRaw.perItemMaxChars as number) ?? 200),
+      summaryMaxChars: Math.max(200, (searchRaw.summaryMaxChars as number) ?? 1200),
       minScore: Math.max(0, Math.min(1, (searchRaw.minScore as number) ?? 0)),
     },
     contextExpand: {
@@ -247,7 +277,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.logger.info(
     `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery ? '可用' : '不可用'}, ` +
     `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
-    `单条截断=${cfg.search.perItemMaxChars}字, minScore=${cfg.search.minScore}`,
+    `单条截断=${cfg.search.perItemMaxChars}字, 摘要截断=${cfg.search.summaryMaxChars}字, minScore=${cfg.search.minScore}`,
   );
 
   if (!hasRangeQuery && cfg.contextExpand.window > 0) {
@@ -516,6 +546,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
               for (let i = start; i < end; i++) {
                 const m = sorted[i];
                 if (!m.content) continue;
+                if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
                 if (currentContents.has((m.content ?? '').trim())) continue;
                 const key = messageKey(sid, m);
                 if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: m });
@@ -555,7 +586,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         (a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0),
       );
 
-      const lines = sortedAll.map(({ msg }) => renderMessage(msg, cfg.search.perItemMaxChars));
+      const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars, cfg.search.summaryMaxChars));
 
       const contextBlock =
         '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n'
@@ -681,7 +712,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           };
           return {
             score: Number(r.finalScore.toFixed(4)),
-            text: renderMessage(m, cfg.search.perItemMaxChars),
+            text: renderMemoryEntry(m, cfg.search.perItemMaxChars, cfg.search.summaryMaxChars),
             sessionId: r.metadata.sessionId,
             kind: r.metadata.kind ?? 'message',
           };
