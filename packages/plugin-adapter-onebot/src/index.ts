@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
+import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection, PlatformSessionCandidate } from '@aalis/core';
 import type { MessageArchiveService, PersonaService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
@@ -98,7 +98,18 @@ export const configSchema: ConfigSchema = {
       triggerOnAt: { type: 'boolean', label: '@ 触发', default: true, description: '消息中包含 @bot 时立刻触发回复。' },
       triggerNames: { type: 'string', label: '触发词 / 昵称', default: '', description: '消息中出现这些词时立刻触发回复，逗号分隔（自动包含人设名称）。' },
       cooldownSeconds: { type: 'number', label: '冷却时间（秒）', default: 10, description: 'AI 回复后的冷却时间。' },
-      enableIdleTrigger: { type: 'boolean', label: '空闲主动触发', default: false, description: '长时间无人说话时 AI 是否主动发起话题。' },
+      enableIdleTrigger: { type: 'boolean', label: '空闲主动触发', default: false, description: '【已废弃】请使用 idleTriggerScope。' },
+      idleTriggerScope: {
+        type: 'select',
+        label: '空闲主动触发范围',
+        options: [
+          { label: '关闭', value: 'off' },
+          { label: '会话级（原原生闲聊定时）', value: 'session' },
+          { label: '平台级（交给 advisor 跨会话决策）', value: 'platform' },
+        ],
+        default: 'off',
+        description: '决定由谁发起主动话题。session 为原本会话级 idleTimer；platform 不起 per-session timer，由 plugin-advisor 在平台级tick中选一个会话发起。',
+      },
       idleTriggerMinutes: { type: 'number', label: '空闲间隔（分钟）', default: 180 },
       idleTriggerStyle: {
         type: 'select',
@@ -140,6 +151,7 @@ export const defaultConfig = {
     triggerNames: '',
     cooldownSeconds: 10,
     enableIdleTrigger: false,
+    idleTriggerScope: 'off' as 'off' | 'session' | 'platform',
     idleTriggerMinutes: 180,
     idleTriggerStyle: 'exponential' as const,
     idleTriggerMaxMinutes: 1440,
@@ -187,6 +199,7 @@ interface ChatFlowConfig {
   triggerNames: string[];
   cooldownSeconds: number;
   enableIdleTrigger: boolean;
+  idleTriggerScope: 'off' | 'session' | 'platform';
   idleTriggerMinutes: number;
   idleTriggerStyle: 'exponential' | 'fixed';
   idleTriggerMaxMinutes: number;
@@ -236,6 +249,12 @@ function resolveChatFlowConfig(raw: Record<string, unknown>): ChatFlowConfig {
     triggerNames: parseStringList(raw.triggerNames),
     cooldownSeconds: (raw.cooldownSeconds as number) ?? 10,
     enableIdleTrigger: (raw.enableIdleTrigger as boolean) ?? false,
+    idleTriggerScope: ((): 'off' | 'session' | 'platform' => {
+      const v = raw.idleTriggerScope;
+      if (v === 'off' || v === 'session' || v === 'platform') return v;
+      // 未明设 scope 时：以旧字段 enableIdleTrigger 作为崩溃后退（true→session, false→off）
+      return raw.enableIdleTrigger === true ? 'session' : 'off';
+    })(),
     idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? 180,
     idleTriggerStyle: (raw.idleTriggerStyle as ChatFlowConfig['idleTriggerStyle']) ?? 'exponential',
     idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? 1440,
@@ -499,6 +518,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== 聊天流控状态管理 =====
 
   const flowSessions = new Map<string, FlowSessionState>();
+
+  /** 会话级元数据（仅用于 listSessionCandidates 时给 advisor 提供 hint） */
+  const sessionMeta = new Map<string, { sessionType: string; groupName?: string; partnerNickname?: string }>();
+
+  function noteSessionMeta(sessionId: string, sessionType: string, opts?: { groupName?: string; partnerNickname?: string }): void {
+    const prev = sessionMeta.get(sessionId);
+    sessionMeta.set(sessionId, {
+      sessionType,
+      groupName: opts?.groupName ?? prev?.groupName,
+      partnerNickname: opts?.partnerNickname ?? prev?.partnerNickname,
+    });
+  }
 
   function getFlowSession(sessionId: string): FlowSessionState {
     let state = flowSessions.get(sessionId);
@@ -764,7 +795,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function scheduleIdleTrigger(fState: FlowSessionState, sessionId: string, platform: string): void {
     clearIdleTimer(fState);
-    if (!flowCfg.enableIdleTrigger) return;
+    // 仅 'session' 范围下起 per-session timer；'platform' 交给 advisor 接管
+    if (flowCfg.idleTriggerScope !== 'session') return;
 
     let delayMs: number;
     if (flowCfg.idleTriggerStyle === 'exponential') {
@@ -1210,6 +1242,65 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return out;
     },
 
+    /**
+     * 列出当前活跃的会话候选（仅元数据快照）。
+     * 供 plugin-advisor 在跨会话决策时使用：先拿到所有候选，再按需召回。
+     */
+    listSessionCandidates(): PlatformSessionCandidate[] {
+      const now = Date.now();
+      const out: PlatformSessionCandidate[] = [];
+      const seen = new Set<string>();
+
+      for (const [sid, fState] of flowSessions) {
+        seen.add(sid);
+        const meta = sessionMeta.get(sid);
+        const sessionType = meta?.sessionType ?? parseSessionId(sid)?.detailType ?? 'unknown';
+        const isMuted = fState.mutedUntil > now;
+        const isOnCooldown = fState.cooldownUntil > now;
+
+        let replyBudgetRemaining: number | undefined;
+        if (flowCfg.enabled && flowCfg.rateLimitWindow > 0 && flowCfg.rateLimitMaxReplies > 0) {
+          const windowStart = now - flowCfg.rateLimitWindow * 1000;
+          const used = fState.replyTimestamps.filter(t => t > windowStart).length;
+          replyBudgetRemaining = Math.max(0, flowCfg.rateLimitMaxReplies - used);
+        }
+
+        let hint: string | undefined;
+        if (sessionType === 'group') hint = meta?.groupName ? `群「${meta.groupName}」` : '群聊';
+        else if (sessionType === 'private') hint = meta?.partnerNickname ? `私聊：${meta.partnerNickname}` : '私聊';
+        else hint = sessionType;
+
+        out.push({
+          sessionId: sid,
+          platform: 'onebot',
+          sessionType,
+          lastActivityAt: fState.lastMessageTime || undefined,
+          lastBotSentAt: fState.lastReplyTime || undefined,
+          isMuted,
+          isOnCooldown,
+          replyBudgetRemaining,
+          hint,
+        });
+      }
+
+      // 也补上仅 sessionMeta 中存在（曾收到过消息但 flowSessions 未建立 state）的项
+      for (const [sid, meta] of sessionMeta) {
+        if (seen.has(sid)) continue;
+        out.push({
+          sessionId: sid,
+          platform: 'onebot',
+          sessionType: meta.sessionType,
+          hint: meta.sessionType === 'group'
+            ? (meta.groupName ? `群「${meta.groupName}」` : '群聊')
+            : meta.sessionType === 'private'
+              ? (meta.partnerNickname ? `私聊：${meta.partnerNickname}` : '私聊')
+              : meta.sessionType,
+        });
+      }
+
+      return out;
+    },
+
     /** 处理好友请求：approve=true 同意，remark 为备注（同意时有效） */
     async handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string> {
       const pending = pendingFriendRequests.get(userId);
@@ -1544,6 +1635,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 流控判定：返回 false 表示拦截（消息已缓冲到记忆）
       const shouldEmit = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname, event.images);
       if (!shouldEmit) return;
+
+      // 记录会话元数据（advisor.listSessionCandidates 用）
+      if (sessionType) {
+        noteSessionMeta(sessionId, sessionType, {
+          groupName,
+          partnerNickname: sessionType === 'private' ? event.nickname : undefined,
+        });
+      }
 
       ctx.emit('message:received', {
         content: event.text,
