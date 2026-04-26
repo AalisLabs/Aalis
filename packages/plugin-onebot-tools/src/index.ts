@@ -744,23 +744,22 @@ function registerGroupInfoTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_forward_msg',
-        description: '读取合并转发消息内容。收到 <forward id="...">[合并转发消息]</forward> 时，用其中的 id 调用本工具。',
+        description: '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，用其中的 id 调用本工具。',
         parameters: {
           type: 'object',
           properties: {
-            forward_id: { type: 'string', description: '合并转发消息 ID，即 forward 消息段 data.id' },
+            id: { type: 'string', description: '合并转发 ID（forward 消息段的 data.id），与 OneBot v11 标准参数名一致' },
             limit: { type: 'number', description: '最多返回多少条节点，默认 30' },
           },
-          required: ['forward_id'],
+          required: ['id'],
         },
       },
     },
     handler: async (args, callCtx) => {
       requireOneBotSession(callCtx);
-      // 兼容 forward_id / id 两种参数名（LLM 从 <forward id="..."> 占位符中
-      // 很容易推出以 "id" 作为参数名）。
-      const rawId = args.forward_id ?? args.id;
-      if (!rawId) return '参数错误：缺少 forward_id。';
+      // OneBot v11 标准参数名是 id；保留 forward_id 作为兼容别名（旧 schema 的遗留）。
+      const rawId = args.id ?? args.forward_id;
+      if (!rawId) return '参数错误：缺少 id（合并转发 ID）。';
       const forwardId = String(rawId);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
