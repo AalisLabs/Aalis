@@ -8,6 +8,21 @@ import type {
 } from '@aalis/core';
 import type { LLMService, MemoryService, MessageArchiveService } from '@aalis/core';
 
+// ===== 事件类型扩展（declaration merging，避免污染 core） =====
+
+/** 会话摘要已生成事件载荷 */
+export interface MemorySummaryGeneratedPayload {
+  sessionId: string;
+  summary: string;
+  timestamp: number;
+}
+
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'memory:summary-generated': [payload: MemorySummaryGeneratedPayload];
+  }
+}
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-summary';
@@ -277,7 +292,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
 
       if (summaryText.trim()) {
-        store.upsertSummary(sessionId, summaryText.trim(), messagesToSummarize.length, totalCount);
+        const finalSummary = summaryText.trim();
+        const summaryTs = Date.now();
+        store.upsertSummary(sessionId, finalSummary, messagesToSummarize.length, totalCount);
+
+        // 广播摘要生成事件：向量记忆等插件可订阅以入库长期检索
+        ctx.emit('memory:summary-generated', {
+          sessionId,
+          summary: finalSummary,
+          timestamp: summaryTs,
+        }).catch(() => {});
 
         // 真正的压缩：从数据库删除旧消息，只保留最近 keepRecent 条
         // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
@@ -453,7 +477,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
 
         if (summaryText.trim()) {
-          store.upsertSummary(data.sessionId, summaryText.trim(), messagesToSummarize.length, allHistory.length);
+          const finalSummary = summaryText.trim();
+          const summaryTs = Date.now();
+          store.upsertSummary(data.sessionId, finalSummary, messagesToSummarize.length, allHistory.length);
+
+          // 广播摘要生成事件：向量记忆等插件可订阅以入库长期检索
+          ctx.emit('memory:summary-generated', {
+            sessionId: data.sessionId,
+            summary: finalSummary,
+            timestamp: summaryTs,
+          }).catch(() => {});
+
           // 安全调整：避免裁剪点落在 tool call 组中间
           let safeKeepRecent = cfg.keepRecent;
           while (safeKeepRecent < allHistory.length) {
