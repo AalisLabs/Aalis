@@ -757,7 +757,11 @@ function registerGroupInfoTools(ctx: Context): void {
     },
     handler: async (args, callCtx) => {
       requireOneBotSession(callCtx);
-      const forwardId = String(args.forward_id);
+      // 兼容 forward_id / id 两种参数名（LLM 从 <forward id="..."> 占位符中
+      // 很容易推出以 "id" 作为参数名）。
+      const rawId = args.forward_id ?? args.id;
+      if (!rawId) return '参数错误：缺少 forward_id。';
+      const forwardId = String(rawId);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
       // 适配器的 callAction 已对 get_forward_msg 做了多参数键回退（id/message_id/res_id/m_resid）
