@@ -262,12 +262,17 @@ export class PluginManager {
     entry.config = config;
     this.rootCtx.config.setPluginConfig(name, config);
 
-    // 如果插件在运行中，需要重新加载
+    // 若插件在运行中，dispose 旧上下文后转为 pending 重新激活
     if (entry.state === 'active' && entry.context) {
       entry.context.dispose();
       entry.context = undefined;
       entry.state = 'pending';
       this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+      await this.softReload();
+    } else if (entry.state === 'error') {
+      // 之前 apply 抛错而停在 error 态：新配置可能修复问题，重置为 pending 重试
+      entry.state = 'pending';
+      entry.error = undefined;
       await this.softReload();
     }
 
@@ -383,7 +388,8 @@ export class PluginManager {
           changed = true;
         }
 
-        // Phase 2: 尝试激活 pending 插件
+        // Phase 2: 尝试激活 pending 插件（不重试 error 态——error 仅由 updatePluginConfig 触发的显式重置驱动，
+        // 避免依赖每次抖动都把同一个错误重新打印一遍）
         for (const entry of this.plugins.values()) {
           if (entry.state !== 'pending') continue;
           const prevState = entry.state;
