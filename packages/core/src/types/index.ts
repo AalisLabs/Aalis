@@ -49,7 +49,7 @@ export type { ToolService } from './tools.js';
 export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js';
 
 // 平台适配器
-export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformManagerService } from './platform.js';
+export type { PlatformConnection, PlatformSelfIdentity, PlatformSessionCandidate, PlatformAdapter, PlatformManagerService } from './platform.js';
 
 // WebUI 服务与声明式页面组件
 export type {

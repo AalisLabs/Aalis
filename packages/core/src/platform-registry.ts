@@ -1,5 +1,5 @@
 import type { ServiceContainer } from './service.js';
-import type { PlatformAdapter, PlatformConnection, PlatformSelfIdentity } from './types/index.js';
+import type { PlatformAdapter, PlatformConnection, PlatformSelfIdentity, PlatformSessionCandidate } from './types/index.js';
 
 /**
  * 平台注册表
@@ -67,5 +67,23 @@ export class PlatformRegistry {
       return adapter.getSelfIdentity?.(sessionId);
     }
     return undefined;
+  }
+
+  /**
+   * 收集所有平台（或指定平台）的会话候选快照。
+   */
+  listSessionCandidates(platform?: string): PlatformSessionCandidate[] {
+    const out: PlatformSessionCandidate[] = [];
+    for (const entry of this.services.getEntries('platform')) {
+      const adapter = entry.instance as PlatformAdapter;
+      if (!adapter || typeof adapter.listSessionCandidates !== 'function') continue;
+      if (platform && adapter.platform !== platform) continue;
+      try {
+        for (const c of adapter.listSessionCandidates()) out.push(c);
+      } catch {
+        // 单个 adapter 失败不影响其他
+      }
+    }
+    return out;
   }
 }
