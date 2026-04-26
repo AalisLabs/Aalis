@@ -1139,7 +1139,7 @@ function registerAccountTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_login_info',
-        description: '获取机器人自身的登录账号信息（QQ 号、昵称）。',
+        description: '显式查询当前 OneBot 连接的登录账号信息（QQ 号、昵称）。仅在用户要求核实账号、诊断连接或需要最新平台返回值时使用。',
         parameters: { type: 'object', properties: {}, required: [] },
       },
     },
