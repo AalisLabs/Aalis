@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection, PlatformSessionCandidate } from '@aalis/core';
-import type { MessageArchiveService, PersonaService } from '@aalis/core';
+import type { MessageArchiveService, PersonaService, ImageRecognitionService, LLMService, MemoryService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -12,7 +12,8 @@ import type {
   NormalizedNoticeEvent,
   NormalizedRequestEvent,
 } from './types.js';
-import { collectForwardSegments, formatForwardInline } from './types.js';
+import { collectForwardSegments } from './types.js';
+import { expandForward, buildEnvelope } from './forward.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
 
@@ -130,6 +131,19 @@ export const configSchema: ConfigSchema = {
       rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复次数', default: 10, description: '防 DDoS：限速窗口内允许的最大回复次数。' },
     },
   },
+  forward: {
+    label: '合并转发处理',
+    description: '收到 <forward> 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要',
+    fields: {
+      enabled: { type: 'boolean', label: '启用自动展开', default: true, description: '关闭后保留原始占位符，由 LLM 自行决定是否调工具读取。' },
+      maxDepth: { type: 'number', label: '嵌套深度上限', default: 3, description: '递归展开嵌套合并转发的最大层数（顶层=1）。' },
+      maxNodesPerLevel: { type: 'number', label: '单层节点上限', default: 30, description: '每层最多展开多少条节点。超过部分会被截断。' },
+      imageRecognition: { type: 'boolean', label: '识别内部图片', default: true, description: '把转发内的图片送入 image-recognition 服务转写为文字描述。需要该服务可用。' },
+      summarize: { type: 'boolean', label: '生成摘要', default: true, description: '展开后调用 LLM 生成一段摘要，作为消息正文进入对话/记忆/向量库；原文保留在缓存。' },
+      summaryModel: { type: 'string', label: '摘要模型', default: '', description: '留空使用默认 LLM 服务的默认模型；填模型 ID 则通过 LLMRouter 路由到对应 provider。建议挑便宜/快的模型。' },
+      summaryMaxChars: { type: 'number', label: '摘要最大字数', default: 400, description: '提示给摘要模型的目标长度上限。' },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -162,6 +176,15 @@ export const defaultConfig = {
     muteTimeSeconds: 60,
     rateLimitWindow: 0,
     rateLimitMaxReplies: 10,
+  },
+  forward: {
+    enabled: true,
+    maxDepth: 3,
+    maxNodesPerLevel: 30,
+    imageRecognition: true,
+    summarize: true,
+    summaryModel: '',
+    summaryMaxChars: 400,
   },
 };
 
@@ -497,6 +520,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 聊天流控配置
   const flowCfg = resolveChatFlowConfig((config.chatFlow ?? {}) as Record<string, unknown>);
+
+  // 合并转发处理配置
+  const fwdRaw = (config.forward ?? {}) as Record<string, unknown>;
+  const forwardCfg = {
+    enabled: fwdRaw.enabled !== false,
+    maxDepth: typeof fwdRaw.maxDepth === 'number' ? Math.max(1, Math.floor(fwdRaw.maxDepth)) : 3,
+    maxNodesPerLevel: typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
+    imageRecognition: fwdRaw.imageRecognition !== false,
+    summarize: fwdRaw.summarize !== false,
+    summaryModel: typeof fwdRaw.summaryModel === 'string' ? fwdRaw.summaryModel.trim() : '',
+    summaryMaxChars: typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
+  };
 
   if (connections.length === 0) {
     ctx.logger.info('OneBot 适配器未配置任何连接');
@@ -1047,31 +1082,61 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== 合并转发自动展开 =====
 
   /**
-   * 合并转发内容缓存：id → 已展开文本。
+   * 合并转发原文缓存：id → 完整原文 / 摘要 / 元信息。
    *
-   * 收到一条带 forward 段的消息时，立即拉取原文并写入文本，避免：
-   * 1) LLM 对着占位符“看不见内容”；
-   * 2) 后续走 onebot_get_forward_msg 工具时同一份转发被反复请求；
-   * 3) 转发在协议端过期后历史里彻底找不回内容。
+   * 收到一条带 forward 段的消息时，立即递归拉取原文、做图像识别、生成摘要，
+   * 并把完整原文写入此缓存（也会同步到 MemoryService.saveMetadata 做持久化），
+   * 这样：
+   *   1) LLM 在对话上下文里看到的是"信封 + 摘要"，不被超长原文淹没；
+   *   2) 想看细节时调 onebot_get_forward_msg 工具直接命中缓存/持久化层；
+   *   3) 摘要会随 message:received 进入历史归档与向量库，被语义召回。
    *
-   * 缓存有 TTL，过期后清理（默认 1h），避免长期占内存。
+   * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
    */
-  const forwardCache = new Map<string, { text: string; expiresAt: number }>();
+  interface ForwardEntry {
+    fullText: string;
+    summary: string | null;
+    count: number;
+    participants: string[];
+    expandedAt: number;
+  }
+  const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
   const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
+  const FORWARD_METADATA_NS = 'onebot:forward';
 
-  /** 缓存接口（供 onebot-tools 等使用 callAction 路径时复用） */
-  function getCachedForward(id: string): string | undefined {
-    const entry = forwardCache.get(id);
-    if (!entry) return undefined;
-    if (entry.expiresAt < Date.now()) {
+  function getCachedForward(id: string): ForwardEntry | undefined {
+    const c = forwardCache.get(id);
+    if (!c) return undefined;
+    if (c.expiresAt < Date.now()) {
       forwardCache.delete(id);
       return undefined;
     }
-    return entry.text;
+    return c.entry;
   }
 
-  function setCachedForward(id: string, text: string): void {
-    forwardCache.set(id, { text, expiresAt: Date.now() + FORWARD_CACHE_TTL_MS });
+  function setCachedForward(id: string, entry: ForwardEntry): void {
+    forwardCache.set(id, { entry, expiresAt: Date.now() + FORWARD_CACHE_TTL_MS });
+    // 同步持久化（best-effort，不阻塞主流程）
+    const memory = ctx.getService<MemoryService>('memory');
+    if (memory?.saveMetadata) {
+      memory.saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
+        .catch((err: unknown) => ctx.logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
+    }
+  }
+
+  /** 从持久化层加载（缓存未命中时尝试） */
+  async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
+    const memory = ctx.getService<MemoryService>('memory');
+    if (!memory?.getMetadata) return undefined;
+    try {
+      const data = await memory.getMetadata(FORWARD_METADATA_NS, id);
+      if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {
+        return data as unknown as ForwardEntry;
+      }
+    } catch (err) {
+      ctx.logger.debug(`forward metadata 读取失败 id=${id}: ${err}`);
+    }
+    return undefined;
   }
 
   /**
@@ -1099,19 +1164,82 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return null;
   }
 
+  /** 用 LLM 给一段 forward 原文生成摘要；失败/未配置则返回 null。 */
+  async function summarizeForward(
+    text: string,
+    hint: { count: number; participants: string[] },
+  ): Promise<string | null> {
+    if (!forwardCfg.summarize) return null;
+
+    let llm: LLMService | undefined;
+    let modelOverride: string | undefined;
+
+    if (forwardCfg.summaryModel) {
+      try {
+        const resolved = await ctx.llm.resolveModelProvider(forwardCfg.summaryModel);
+        if (!resolved) {
+          ctx.logger.warn(`forward 摘要：找不到模型 ${forwardCfg.summaryModel}，回退到默认 LLM`);
+        } else {
+          llm = resolved.instance as LLMService;
+          modelOverride = resolved.model;
+        }
+      } catch (err) {
+        ctx.logger.debug(`forward 摘要：路由模型失败 ${forwardCfg.summaryModel}: ${err}`);
+      }
+    }
+
+    if (!llm) {
+      llm = ctx.getService<LLMService>('llm');
+    }
+    if (!llm || typeof llm.chat !== 'function') {
+      ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
+      return null;
+    }
+
+    // 控制输入长度，避免触发 context 上限
+    const inputLimit = 8000;
+    const trimmedInput = text.length > inputLimit
+      ? text.slice(0, inputLimit) + '\n…（原文已截断）'
+      : text;
+
+    const sys = '你是消息摘要助手。给定一段聊天合并转发的原始内容，用简体中文输出一段不超过指定字数的摘要：\n'
+      + '- 概括话题主线、关键事实、参与人态度；\n'
+      + '- 涉及图片识别结果时，把视觉信息也写进来；\n'
+      + '- 不要逐条复述、不要使用列表、不要寒暄、不要解释自己；\n'
+      + '- 控制在目标字数以内，重要细节保留，无关寒暄略去。';
+    const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 字。\n\n原文：\n${trimmedInput}`;
+
+    try {
+      const resp = await llm.chat({
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.3,
+        maxTokens: Math.max(200, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
+        model: modelOverride,
+      });
+      const out = (resp.content ?? '').trim();
+      return out || null;
+    } catch (err) {
+      ctx.logger.warn(`forward 摘要生成失败: ${err}`);
+      return null;
+    }
+  }
+
   /**
    * 把 event.text 中所有 <forward id="X">[合并转发消息]</forward> 占位符
-   * 替换为可读的内联文本（多节点列表）。已成功展开的内容会写入 forwardCache，
-   * 失败的占位符保留并附简短失败标记。
+   * 替换为"信封文本"（含摘要）；完整原文写入 forwardCache + memory metadata。
    *
    * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
-   * 这种情况下完全无需走网络。
+   * 这种情况下顶层无需走网络。
    */
   async function expandForwardsInText(
     state: ConnectionState,
     text: string,
     rawSegments: import('./types.js').OneBotMessageSegment[] | undefined,
   ): Promise<string> {
+    if (!forwardCfg.enabled) return text;
     if (!text.includes('<forward id=')) return text;
 
     // 收集 message 段中已自带 inline content 的 forward
@@ -1128,35 +1256,78 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     while ((m = idRe.exec(text)) !== null) ids.add(m[1]);
     if (ids.size === 0) return text;
 
-    const expansions = new Map<string, string>();
+    const irService = forwardCfg.imageRecognition
+      ? ctx.getService<ImageRecognitionService>('image-recognition')
+      : undefined;
+    const recognizeImage = irService?.available && irService.describe
+      ? (src: string) => irService.describe!(src)
+      : undefined;
+
+    const envelopeMap = new Map<string, string>();
     for (const id of ids) {
-      const cached = getCachedForward(id);
-      if (cached) {
-        expansions.set(id, cached);
+      // 1) 命中内存缓存
+      let entry = getCachedForward(id);
+      // 2) 命中持久化（重启后场景）
+      if (!entry) {
+        const persisted = await loadPersistedForward(id);
+        if (persisted) {
+          setCachedForward(id, persisted);
+          entry = persisted;
+        }
+      }
+      if (entry) {
+        envelopeMap.set(id, buildEnvelope(
+          { id, count: entry.count, participants: entry.participants, fullText: entry.fullText, truncatedDepth: false, truncatedNodes: false },
+          entry.summary,
+        ));
         continue;
       }
-      const inline = inlineMap.get(id);
-      if (inline) {
-        const formatted = formatForwardInline(id, inline);
-        setCachedForward(id, formatted);
-        expansions.set(id, formatted);
-        continue;
-      }
-      const data = await fetchForwardOnce(state, id);
-      if (data) {
-        const formatted = formatForwardInline(id, data);
-        setCachedForward(id, formatted);
-        expansions.set(id, formatted);
-      } else {
-        // 失败时不缓存，但替换为带标记的占位避免 LLM 重复尝试同一个工具
-        expansions.set(
+
+      // 3) 递归展开
+      try {
+        const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
+          fetchForward: (childId: string) => fetchForwardOnce(state, childId),
+          recognizeImage,
+          maxDepth: forwardCfg.maxDepth,
+          maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
+          imageRecognitionEnabled: forwardCfg.imageRecognition,
+        });
+
+        if (!expanded.fullText.trim()) {
+          envelopeMap.set(
+            id,
+            `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
+          );
+          continue;
+        }
+
+        // 4) 摘要（best-effort）
+        const summary = await summarizeForward(expanded.fullText, {
+          count: expanded.count,
+          participants: expanded.participants,
+        });
+
+        // 5) 入缓存 + 持久化
+        const stored: ForwardEntry = {
+          fullText: expanded.fullText,
+          summary,
+          count: expanded.count,
+          participants: expanded.participants,
+          expandedAt: Date.now(),
+        };
+        setCachedForward(id, stored);
+
+        envelopeMap.set(id, buildEnvelope(expanded, summary));
+      } catch (err) {
+        ctx.logger.warn(`forward 展开失败 id=${id}: ${err}`);
+        envelopeMap.set(
           id,
-          `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
+          `<forward id="${id}">[合并转发消息：展开过程出错]</forward>`,
         );
       }
     }
 
-    return text.replace(idRe, (raw, id: string) => expansions.get(id) ?? raw);
+    return text.replace(idRe, (raw, id: string) => envelopeMap.get(id) ?? raw);
   }
 
 
@@ -1311,16 +1482,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (action === 'get_forward_msg') {
         const id = String(params.id ?? params.message_id ?? params.res_id ?? params.m_resid ?? '');
         if (id) {
-          const cached = getCachedForward(id);
-          // 缓存里存的是已渲染文本，转换回结构化对象给上层工具用并不划算；
-          // 但我们附带一份 raw 缓存以避免重复抓取。
-          if (cached) return { __aalisForwardInline: cached };
-          const data = await fetchForwardOnce(state, id);
-          if (data) {
-            // 同步一份 inline 文本到缓存，便于复用
-            try { setCachedForward(id, formatForwardInline(id, data)); } catch { /* noop */ }
-            return data;
+          // 内存缓存
+          let entry = getCachedForward(id);
+          // 持久化兜底（重启后场景）
+          if (!entry) {
+            const persisted = await loadPersistedForward(id);
+            if (persisted) {
+              setCachedForward(id, persisted);
+              entry = persisted;
+            }
           }
+          if (entry) {
+            // 返回完整原文 + 摘要（如果有）。工具层会优先使用 fullText 渲染。
+            return {
+              __aalisForwardEntry: true,
+              fullText: entry.fullText,
+              summary: entry.summary,
+              count: entry.count,
+              participants: entry.participants,
+            };
+          }
+          const data = await fetchForwardOnce(state, id);
+          if (data) return data;
           throw new Error('get_forward_msg 失败：所有参数键（id/message_id/res_id/m_resid）均无法取得内容');
         }
       }
