@@ -8,21 +8,6 @@ import type {
 } from '@aalis/core';
 import type { LLMService, MemoryService, MessageArchiveService } from '@aalis/core';
 
-// ===== 事件类型扩展（declaration merging，避免污染 core） =====
-
-/** 会话摘要已生成事件载荷 */
-export interface MemorySummaryGeneratedPayload {
-  sessionId: string;
-  summary: string;
-  timestamp: number;
-}
-
-declare module '@aalis/core' {
-  interface AalisEvents {
-    'memory:summary-generated': [payload: MemorySummaryGeneratedPayload];
-  }
-}
-
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-summary';
@@ -322,13 +307,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           name: 'system-event',
           timestamp: summaryTs,
         });
-
-        // 广播摘要生成事件：timestamp 与压缩分隔线一致，向量命中时可稳定扩展前后消息
-        ctx.emit('memory:summary-generated', {
-          sessionId,
-          summary: finalSummary,
-          timestamp: summaryTs,
-        }).catch(() => {});
       }
     } catch (err) {
       ctx.logger.warn('生成会话摘要失败:', err);
@@ -504,13 +482,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             name: 'system-event',
             timestamp: summaryTs,
           });
-
-          // 广播摘要生成事件：timestamp 与压缩分隔线一致，向量命中时可稳定扩展前后消息
-          ctx.emit('memory:summary-generated', {
-            sessionId: data.sessionId,
-            summary: finalSummary,
-            timestamp: summaryTs,
-          }).catch(() => {});
 
           // 通知前端：压缩完成
           ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
