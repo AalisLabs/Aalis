@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection, PlatformSessionCandidate } from '@aalis/core';
+import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
 import type { MessageArchiveService, PersonaService, ImageRecognitionService, LLMService, MemoryService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
@@ -16,22 +16,6 @@ import { collectForwardSegments } from './types.js';
 import { expandForward, buildEnvelope } from './forward.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
-
-// ===== advisor 服务最小接口（避免对 @aalis/plugin-advisor 的强依赖） =====
-interface AdvisorRecommendationLite {
-  sessionId: string;
-  score: number;
-  reason: string;
-  topicHint: string;
-}
-interface AdvisorAnswerLite {
-  answer: string;
-  recommendations: AdvisorRecommendationLite[];
-  shouldAct: boolean;
-}
-interface AdvisorService {
-  query(args: { mode?: 'analyze' | 'proactive'; platform?: string; sessionId?: string; question?: string }): Promise<AdvisorAnswerLite>;
-}
 
 // ===== 插件元数据 =====
 
@@ -910,11 +894,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ── 平台级空闲触发（idleTriggerScope='platform'）──
   //
-  // 设计：advisor 完全被动，不再自带 timer。adapter 在此自管一个全局 tick：
-  //   - strategy='fixed'   每 idleTriggerMinutes 分钟无条件询问 advisor；
-  //   - strategy='all-quiet' 当所有候选会话最近一次活动（含收到的消息与 bot 自己的回复）
-  //                          都至少静默 idleTriggerMinutes 分钟时才询问。
-  // advisor 不可用 → 跳过本次 tick；下次还会再试。
+  // 在所有 onebot 会话（按 strategy 判定的）静默期后，从可发送候选里挑一个 emit
+  // message:received(source:'idle-trigger')，由主 agent 基于人设/记忆生成开场白。
+  //   - strategy='fixed'     每 idleTriggerMinutes 分钟固定触发；
+  //   - strategy='all-quiet' 所有会话最近一次活动（含 bot 自己的回复）≥ 阈值才触发。
+  // 候选挑选：sendable（未禁言/冷却/限速耗尽）中 lastActivity 最久远的一个，
+  // 即"最久未联系"的那个，最自然。
   let platformIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let platformIdleRunning = false;
 
@@ -932,55 +917,48 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const last = Math.max(fState.lastMessageTime, fState.lastReplyTime);
       if (last > maxLast) maxLast = last;
     }
-    if (maxLast === 0) return 0; // 无活动记录，立即触发（首次启动场景）
+    if (maxLast === 0) return 0;
     const elapsed = Date.now() - maxLast;
     return Math.max(0, thresholdMs - elapsed);
   }
 
-  /** 是否存在至少一个 sendable 候选（未禁言/冷却/限速耗尽） */
-  function hasSendableCandidate(): boolean {
-    if (!adapter.listSessionCandidates) return false;
-    const candidates = adapter.listSessionCandidates();
-    return candidates.some(c =>
-      !c.isMuted && !c.isOnCooldown
-      && (c.replyBudgetRemaining === undefined || c.replyBudgetRemaining > 0));
+  /** 选一个最适合主动开聊的 sessionId；无可选返回 null */
+  function pickIdleTarget(): { sessionId: string; lastActivity: number } | null {
+    const now = Date.now();
+    let best: { sessionId: string; lastActivity: number } | null = null;
+    for (const [sid, fState] of flowSessions) {
+      if (fState.mutedUntil > now) continue;
+      if (fState.cooldownUntil > now) continue;
+      if (flowCfg.enabled && flowCfg.rateLimitWindow > 0 && flowCfg.rateLimitMaxReplies > 0) {
+        const windowStart = now - flowCfg.rateLimitWindow * 1000;
+        const used = fState.replyTimestamps.filter(t => t > windowStart).length;
+        if (used >= flowCfg.rateLimitMaxReplies) continue;
+      }
+      const lastActivity = Math.max(fState.lastMessageTime, fState.lastReplyTime);
+      if (!best || lastActivity < best.lastActivity) {
+        best = { sessionId: sid, lastActivity };
+      }
+    }
+    return best;
   }
 
   async function runPlatformIdleOnce(): Promise<void> {
     if (platformIdleRunning) return;
     platformIdleRunning = true;
     try {
-      if (!hasSendableCandidate()) {
+      const target = pickIdleTarget();
+      if (!target) {
         ctx.logger.debug('platform idle tick: 无可发送候选，跳过');
         return;
       }
-      const advisor = ctx.getService<AdvisorService>('advisor');
-      if (!advisor || typeof advisor.query !== 'function') {
-        ctx.logger.debug('platform idle tick: advisor 服务不可用，跳过');
-        return;
-      }
-      const result = await advisor.query({ mode: 'proactive', platform: 'onebot' });
-      if (!result.shouldAct || result.recommendations.length === 0) {
-        ctx.logger.debug(`platform idle tick: shouldAct=false (recs=${result.recommendations.length})`);
-        return;
-      }
-      const top = result.recommendations[0];
-      // 二次校验该候选当下仍可发
-      const cands = adapter.listSessionCandidates ? adapter.listSessionCandidates() : [];
-      const candidate = cands.find(c => c.sessionId === top.sessionId);
-      if (!candidate || candidate.isMuted || candidate.isOnCooldown
-        || (candidate.replyBudgetRemaining !== undefined && candidate.replyBudgetRemaining <= 0)) {
-        ctx.logger.debug(`platform idle tick: 推荐的 ${top.sessionId} 当下不可发，放弃`);
-        return;
-      }
+      const promptHint = flowCfg.idleTriggerPrompt
+        || '当前所有会话已沉寂一段时间。请根据人设主动开启一个轻松的话题或问候。';
       ctx.logger.info(
-        `platform idle tick: 主动开聊 → ${top.sessionId} (score=${top.score.toFixed(2)}) reason=${top.reason}`,
+        `platform idle tick: 主动开聊 → ${target.sessionId} (idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
       );
-      const promptHint = top.topicHint
-        || `请根据人设主动开启一个轻松的话题。原因：${top.reason}`;
       await ctx.emit('message:received', {
         content: promptHint,
-        sessionId: top.sessionId,
+        sessionId: target.sessionId,
         platform: 'onebot',
         source: 'idle-trigger',
       });
@@ -1696,65 +1674,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           }
         }
       }
-      return out;
-    },
-
-    /**
-     * 列出当前活跃的会话候选（仅元数据快照）。
-     * 供 plugin-advisor 在跨会话决策时使用：先拿到所有候选，再按需召回。
-     */
-    listSessionCandidates(): PlatformSessionCandidate[] {
-      const now = Date.now();
-      const out: PlatformSessionCandidate[] = [];
-      const seen = new Set<string>();
-
-      for (const [sid, fState] of flowSessions) {
-        seen.add(sid);
-        const meta = sessionMeta.get(sid);
-        const sessionType = meta?.sessionType ?? parseSessionId(sid)?.detailType ?? 'unknown';
-        const isMuted = fState.mutedUntil > now;
-        const isOnCooldown = fState.cooldownUntil > now;
-
-        let replyBudgetRemaining: number | undefined;
-        if (flowCfg.enabled && flowCfg.rateLimitWindow > 0 && flowCfg.rateLimitMaxReplies > 0) {
-          const windowStart = now - flowCfg.rateLimitWindow * 1000;
-          const used = fState.replyTimestamps.filter(t => t > windowStart).length;
-          replyBudgetRemaining = Math.max(0, flowCfg.rateLimitMaxReplies - used);
-        }
-
-        let hint: string | undefined;
-        if (sessionType === 'group') hint = meta?.groupName ? `群「${meta.groupName}」` : '群聊';
-        else if (sessionType === 'private') hint = meta?.partnerNickname ? `私聊：${meta.partnerNickname}` : '私聊';
-        else hint = sessionType;
-
-        out.push({
-          sessionId: sid,
-          platform: 'onebot',
-          sessionType,
-          lastActivityAt: fState.lastMessageTime || undefined,
-          lastBotSentAt: fState.lastReplyTime || undefined,
-          isMuted,
-          isOnCooldown,
-          replyBudgetRemaining,
-          hint,
-        });
-      }
-
-      // 也补上仅 sessionMeta 中存在（曾收到过消息但 flowSessions 未建立 state）的项
-      for (const [sid, meta] of sessionMeta) {
-        if (seen.has(sid)) continue;
-        out.push({
-          sessionId: sid,
-          platform: 'onebot',
-          sessionType: meta.sessionType,
-          hint: meta.sessionType === 'group'
-            ? (meta.groupName ? `群「${meta.groupName}」` : '群聊')
-            : meta.sessionType === 'private'
-              ? (meta.partnerNickname ? `私聊：${meta.partnerNickname}` : '私聊')
-              : meta.sessionType,
-        });
-      }
-
       return out;
     },
 
