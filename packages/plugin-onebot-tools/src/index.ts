@@ -749,16 +749,20 @@ function registerGroupInfoTools(ctx: Context): void {
           type: 'object',
           properties: {
             id: { type: 'string', description: '合并转发 ID（forward 消息段的 data.id），与 OneBot v11 标准参数名一致' },
+            message_id: { type: 'string', description: '兼容别名：部分模型会误把 forward id 填到 message_id；优先使用 id' },
+            forward_id: { type: 'string', description: '兼容别名：旧版工具 schema 使用过该名称；优先使用 id' },
+            res_id: { type: 'string', description: '兼容别名：部分 OneBot 实现使用的合并转发资源 ID；优先使用 id' },
+            m_resid: { type: 'string', description: '兼容别名：部分 OneBot 实现使用的合并转发资源 ID；优先使用 id' },
             limit: { type: 'number', description: '最多返回多少条节点，默认 30' },
           },
-          required: ['id'],
+          required: [],
         },
       },
     },
     handler: async (args, callCtx) => {
       requireOneBotSession(callCtx);
-      // OneBot v11 标准参数名是 id；保留 forward_id 作为兼容别名（旧 schema 的遗留）。
-      const rawId = args.id ?? args.forward_id;
+      // OneBot v11 标准参数名是 id；其余名称仅作兼容别名。
+      const rawId = args.id ?? args.message_id ?? args.forward_id ?? args.res_id ?? args.m_resid;
       if (!rawId) return '参数错误：缺少 id（合并转发 ID）。';
       const forwardId = String(rawId);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
