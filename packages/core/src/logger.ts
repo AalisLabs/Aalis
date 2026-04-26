@@ -27,6 +27,7 @@ const LEVEL_COLORS: Record<LogLevel, (s: string) => string> = {
 const logBuffer: LogEntry[] = [];
 const LOG_BUFFER_MAX = 500;
 const logListeners: Set<(entry: LogEntry) => void> = new Set();
+let consoleSinkEnabled = true;
 
 export function getLogBuffer(): LogEntry[] {
   return logBuffer;
@@ -35,6 +36,14 @@ export function getLogBuffer(): LogEntry[] {
 export function onLogEntry(listener: (entry: LogEntry) => void): () => void {
   logListeners.add(listener);
   return () => { logListeners.delete(listener); };
+}
+
+export function setConsoleLogSinkEnabled(enabled: boolean): void {
+  consoleSinkEnabled = enabled;
+}
+
+export function isConsoleLogSinkEnabled(): boolean {
+  return consoleSinkEnabled;
 }
 
 export class Logger {
@@ -78,10 +87,12 @@ export class Logger {
     const colorFn = LEVEL_COLORS[level];
     const prefix = `${chalk.gray(timestamp)} ${colorFn(level.toUpperCase().padEnd(5))} ${chalk.magenta(this.scope)}`;
 
-    if (args.length > 0) {
-      console.log(`${prefix} ${message}`, ...args);
-    } else {
-      console.log(`${prefix} ${message}`);
+    if (consoleSinkEnabled) {
+      if (args.length > 0) {
+        console.log(`${prefix} ${message}`, ...args);
+      } else {
+        console.log(`${prefix} ${message}`);
+      }
     }
 
     // 写入缓冲区
