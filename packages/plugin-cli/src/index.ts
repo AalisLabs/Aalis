@@ -29,7 +29,7 @@ export const configSchema: ConfigSchema = {
       { label: '状态', value: 'status' },
     ],
   },
-  logLines: { type: 'number', label: '日志行数', default: 200, description: 'CLI 日志视图保留的最近日志条数' },
+  logLines: { type: 'number', label: '日志行数', default: 200, description: 'CLI 日志视图保留的最近日志条数。0 = 不限（仅受 core 环形缓冲 500 条限制）' },
 };
 
 export const defaultConfig = {
@@ -56,7 +56,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
     startupView: parseStartupView(config.startupView),
     lastView: parseView(config.lastView, 'chat'),
-    logLines: Math.max(50, Number(config.logLines ?? defaultConfig.logLines) || defaultConfig.logLines),
+    logLines: (() => {
+      const v = Number(config.logLines ?? defaultConfig.logLines);
+      if (!Number.isFinite(v) || v < 0) return defaultConfig.logLines;
+      // 0 = 不限，使用 core 环形缓冲的上限（500）代替
+      if (v === 0) return Number.MAX_SAFE_INTEGER;
+      return Math.max(50, v);
+    })(),
   };
 
   const sessionId = cliConfig.sessionId;
@@ -556,6 +562,10 @@ class CliTui {
     if (this.view === 'chat') {
       visible = raw.slice(-height);
     } else if (this.view === 'logs') {
+      // 限制 logScroll，使最顶端日志固定在窗口顶部后无法继续向上滚动
+      // （否则会出现"内容从下往上消失"的视觉错觉）
+      const maxLogScroll = Math.max(0, raw.length - height);
+      if (this.logScroll > maxLogScroll) this.logScroll = maxLogScroll;
       const end = Math.max(0, raw.length - this.logScroll);
       visible = raw.slice(Math.max(0, end - height), end);
     } else {
@@ -596,9 +606,10 @@ class CliTui {
       const head  = `${ts} ${level} ${scope} `;
       const headW = visibleLen(head);
       const msgW  = Math.max(1, inner - headW);
-      const msg   = stringWidth(entry.message) <= msgW
-        ? entry.message
-        : clipExact(entry.message, msgW);
+      // 多行消息（如 agent debug 分隔条 '━'.repeat(52)）会让光标跳到下一行，
+      // 在 alternate screen 中覆盖已绘制内容。统一压成单行展示，并消除 \r / \t。
+      const flat = sanitizeForSingleLine(entry.message);
+      const msg  = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
       return `  ${head}${msg}`;
     });
   }
@@ -770,4 +781,18 @@ function padAnsi(s: string, width: number): string {
 /** 行尾补宽 + \x1b[K 清残影 */
 function clearLine(s: string, width: number): string {
   return padAnsi(s, width) + '\x1b[K';
+}
+
+/**
+ * 清洗多行 / 含控制字符的日志消息，使之可安全渲染到 alternate screen 单行内。
+ * - \r\n / \r / \n 一律折叠为 ' ↵ '（可见的回车标记）
+ * - \t 换为 4 个空格
+ * - 其它 C0 控制字符（\x00-\x1F 除 \x1b 颜色序列）剔除
+ */
+function sanitizeForSingleLine(s: string): string {
+  return s
+    .replace(/\r\n|\r|\n/g, ' \u21b5 ')
+    .replace(/\t/g, '    ')
+    // 保留 ESC（颜色），剔除其它 C0 控制字符
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '');
 }
