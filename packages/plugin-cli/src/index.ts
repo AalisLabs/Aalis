@@ -30,6 +30,12 @@ export const configSchema: ConfigSchema = {
     ],
   },
   logLines: { type: 'number', label: '日志行数', default: 200, description: 'CLI 日志视图保留的最近日志条数。0 = 不限（仅受 core 环形缓冲 500 条限制）' },
+  enableMouse: {
+    type: 'boolean',
+    label: '启用鼠标滚动',
+    default: false,
+    description: '启用后 CLI 可接收鼠标滚轮事件，但终端拖拽选择文本会被鼠标上报占用。默认关闭以便选择复制文本。',
+  },
 };
 
 export const defaultConfig = {
@@ -38,6 +44,7 @@ export const defaultConfig = {
   startupView: 'last',
   lastView: 'chat',
   logLines: 200,
+  enableMouse: false,
 };
 
 type CLIView = 'chat' | 'logs' | 'status' | 'help';
@@ -48,6 +55,7 @@ interface CLIConfig {
   startupView: 'last' | CLIView;
   lastView: CLIView;
   logLines: number;
+  enableMouse: boolean;
 }
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -56,6 +64,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
     startupView: parseStartupView(config.startupView),
     lastView: parseView(config.lastView, 'chat'),
+    enableMouse: config.enableMouse === true,
     logLines: (() => {
       const v = Number(config.logLines ?? defaultConfig.logLines);
       if (!Number.isFinite(v) || v < 0) return defaultConfig.logLines;
@@ -158,13 +167,15 @@ class CliTui {
     this.running = true;
 
     setConsoleLogSinkEnabled(false);
-    // 进入备用屏幕缓冲区，隐藏光标；启用鼠标 SGR 上报（用于滚轮）
+    // 进入备用屏幕缓冲区，隐藏光标。鼠标上报默认关闭，避免占用终端文本选择。
     // 1049h: 备用屏 / 25l: 隐藏光标 / 1000h: 基本鼠标事件 / 1006h: SGR 扩展模式
-    output.write('\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H');
+    output.write('\x1b[?1049h\x1b[?25l');
+    if (this.config.enableMouse) output.write('\x1b[?1000h\x1b[?1006h');
+    output.write('\x1b[2J\x1b[H');
     readline.emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     input.resume();
-    input.on('data', this.handleData);
+    if (this.config.enableMouse) input.on('data', this.handleData);
 
     this.removeLogListener = onLogEntry((entry) => {
       this.logLines.push(entry);
@@ -194,7 +205,7 @@ class CliTui {
     this.removeLogListener?.();
     this.removeLogListener = null;
     input.off('keypress', this.handleKeypress);
-    input.off('data', this.handleData);
+    if (this.config.enableMouse) input.off('data', this.handleData);
     output.off('resize', this.queueRender);
     if (input.isTTY) input.setRawMode(false);
     setConsoleLogSinkEnabled(true);
