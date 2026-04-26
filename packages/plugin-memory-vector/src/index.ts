@@ -259,6 +259,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // === 索引：仅对 user 消息建索引，触发即写（不依赖 assistant 是否回复） ===
 
   async function indexUserMessage(msg: IncomingMessage): Promise<void> {
+    // 跳过非真实用户输入：闲聊主动触发等系统级伪 incoming，不应进入向量库
+    if (msg.source === 'idle-trigger') return;
     const rawText = msg.content?.trim();
     if (!rawText) return;
     try {
@@ -291,6 +293,56 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.on('message:received', (msg: IncomingMessage) => {
     void indexUserMessage(msg);
   });
+
+  // === 索引：会话摘要进入向量库 ===
+  // 摘要由 memory-summary 触发后广播事件，此处订阅并 embed 入库
+  // 命中后通过 contextExpand 仍可还原原会话的对话上下文
+  async function indexSummary(payload: {
+    sessionId: string;
+    summary: string;
+    timestamp: number;
+    platform?: string;
+    groupName?: string;
+    groupId?: string;
+    sessionType?: string;
+  }): Promise<void> {
+    const text = payload.summary?.trim();
+    if (!text) return;
+    try {
+      const vec = await getEmbedder().embed(text);
+      const metadata: Record<string, unknown> = {
+        sessionId: payload.sessionId,
+        userId: '',
+        nickname: '',
+        platform: payload.platform ?? parsePlatform(payload.sessionId),
+        groupName: payload.groupName ?? '',
+        groupId: payload.groupId ?? '',
+        sessionType: payload.sessionType ?? '',
+        timestamp: payload.timestamp,
+        content: text,
+        mentions: [],
+        // 标记此条目为会话摘要，便于检索侧识别（与原始消息区分）
+        kind: 'summary',
+      };
+      await getStore().add(vec, metadata);
+      await getStore().save();
+      ctx.logger.debug(`摘要已入向量库: session=${payload.sessionId}, 长度=${text.length}`);
+    } catch (err) {
+      ctx.logger.warn('摘要向量索引失败:', err);
+    }
+  }
+
+  ctx.on('memory:summary-generated', ((payload: {
+    sessionId: string;
+    summary: string;
+    timestamp: number;
+    platform?: string;
+    groupName?: string;
+    groupId?: string;
+    sessionType?: string;
+  }) => {
+    void indexSummary(payload);
+  }) as unknown as (...args: unknown[]) => void);
 
   // === 统一记忆清除 ===
 
@@ -522,4 +574,131 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     await next();
   }, 50);
+
+  // === 工具：主动语义召回 ===
+  // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'memory_recall',
+        description:
+          '从长期向量记忆中检索与某个关键词或问题相关的历史对话片段。' +
+          '适用场景：用户提到「上次」「以前」「之前」等指代；' +
+          '你需要核实自己或某个用户过往说过/承诺过什么；' +
+          '当前对话上下文不足以回答而你怀疑历史里有线索时。' +
+          '注意：每轮对话开始前已自动注入了 topK 条相关命中，请勿重复调用。' +
+          '只在默认注入信息不足或需要换关键词重查时才使用本工具。',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: '检索关键词或自然语言问题。建议提炼成短句而非整段文本。',
+            },
+            topK: {
+              type: 'number',
+              description: `返回条数。默认 ${cfg.search.topK}，最多 15。`,
+            },
+            scope: {
+              type: 'string',
+              enum: ['session', 'platform', 'all'],
+              description:
+                'session=仅当前会话；platform=同平台所有会话；all=全部。' +
+                `默认沿用插件配置（当前=${cfg.crossSessionMode}）。` +
+                '为安全起见，scope 只能比插件配置更窄，不能更宽。',
+            },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    handler: async (args, callCtx): Promise<string> => {
+      const query = String(args.query ?? '').trim();
+      if (!query) return JSON.stringify({ error: 'query 不能为空' });
+
+      const requestedTopK = Math.min(15, Math.max(1, Number(args.topK) || cfg.search.topK));
+      const requestedScope = args.scope as 'session' | 'platform' | 'all' | undefined;
+
+      // scope 收紧规则：插件配置 isolated 时强制 session；否则取插件配置和请求的较严者
+      const modeRank: Record<CrossSessionMode | 'session', number> = {
+        isolated: 0,
+        session: 0,
+        user: 1,
+        platform: 2,
+        all: 3,
+      };
+      const cfgRank = modeRank[cfg.crossSessionMode];
+      const reqRank = requestedScope ? modeRank[requestedScope] : cfgRank;
+      const effectiveRank = Math.min(cfgRank, reqRank);
+      const effectiveScope: 'session' | 'platform' | 'all' =
+        effectiveRank <= 0 ? 'session' : effectiveRank === 2 ? 'platform' : 'all';
+
+      const curSessionId = callCtx.sessionId;
+      const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+
+      try {
+        const storeSize = await getStore().size();
+        if (storeSize === 0) {
+          return JSON.stringify({ ok: true, query, results: [], message: '向量库为空' });
+        }
+
+        const queryVec = await getEmbedder().embed(query);
+        const candidates = await getStore().search(queryVec, Math.min(requestedTopK * 4, storeSize));
+
+        const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
+
+        const filtered = passThreshold.filter(c => {
+          if (effectiveScope === 'session') return c.metadata.sessionId === curSessionId;
+          if (effectiveScope === 'platform') {
+            return (c.metadata.platform as string) === curPlatform
+              || parsePlatform(c.metadata.sessionId as string) === curPlatform;
+          }
+          return true;
+        });
+
+        const now = Date.now();
+        const ranked = filtered.map(c => {
+          const score =
+            (1 - cfg.search.timeWeight) * c.score +
+            cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
+          return { ...c, finalScore: score };
+        });
+        ranked.sort((a, b) => b.finalScore - a.finalScore);
+
+        const top = ranked.slice(0, requestedTopK);
+        if (top.length === 0) {
+          return JSON.stringify({ ok: true, query, results: [], message: '无命中' });
+        }
+
+        const results = top.map(r => {
+          const m: Message = {
+            role: 'user',
+            content: (r.metadata.content as string) ?? '',
+            timestamp: (r.metadata.timestamp as number) ?? 0,
+            name: r.metadata.userId as string | undefined,
+            metadata: r.metadata,
+          };
+          return {
+            score: Number(r.finalScore.toFixed(4)),
+            text: renderMessage(m, cfg.search.perItemMaxChars),
+            sessionId: r.metadata.sessionId,
+            kind: r.metadata.kind ?? 'message',
+          };
+        });
+
+        return JSON.stringify({
+          ok: true,
+          query,
+          scope: effectiveScope,
+          count: results.length,
+          results,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.logger.warn(`memory_recall 失败: ${msg}`);
+        return JSON.stringify({ error: `检索失败: ${msg}` });
+      }
+    },
+  });
 }
