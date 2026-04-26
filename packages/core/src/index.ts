@@ -76,7 +76,6 @@ export type {
   // 平台适配器
   PlatformConnection,
   PlatformSelfIdentity,
-  PlatformSessionCandidate,
   PlatformAdapter,
   PlatformManagerService,
   PluginGroupInfo,

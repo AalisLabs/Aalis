@@ -45,10 +45,6 @@ export function apply(ctx: Context): void {
     getSelfIdentity(platform: string, sessionId?: string) {
       return ctx.getPlatformSelfIdentity(platform, sessionId);
     },
-
-    listSessionCandidates(platform?: string) {
-      return ctx.getPlatformSessionCandidates(platform);
-    },
   };
 
   ctx.provide('platform-manager', manager);
