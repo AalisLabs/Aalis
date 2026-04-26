@@ -11,8 +11,6 @@ export interface ChatRequest {
   model?: string;
   /** 中止信号，用于取消正在进行的 LLM 调用 */
   signal?: AbortSignal;
-  /** 期望的响应格式。设为 'json_object' 时 LLM 提供者应尽力返回合法 JSON */
-  responseFormat?: 'text' | 'json_object';
   /** 是否启用扩展思考。设为 false 可显式关闭提供者默认的 think 模式 */
   think?: boolean;
 }
@@ -105,8 +103,6 @@ export interface LLMCapabilityRegistry {
   Vision: 'vision';
   /** 支持扩展思考 / reasoning */
   Thinking: 'thinking';
-  /** 支持强制 JSON 输出 (responseFormat='json_object') */
-  JsonMode: 'json_mode';
 }
 
 /** LLM 能力字符串 union（自动包含第三方扩展） */
@@ -126,7 +122,6 @@ export const LLMCapabilities = {
   Streaming: 'streaming',
   Vision: 'vision',
   Thinking: 'thinking',
-  JsonMode: 'json_mode',
 } as const satisfies LLMCapabilityRegistry;
 
 // 注册到全局服务能力映射
@@ -149,4 +144,4 @@ registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>
     ? true
     : 'LLMService.chatStream() is required for capability "streaming"');
 
-// ToolCalling / Vision / Thinking / JsonMode 为参数层能力，由调用方按请求传参判定，不做方法探测。
+// ToolCalling / Vision / Thinking 为参数层能力，由调用方按请求传参判定，不做方法探测。
