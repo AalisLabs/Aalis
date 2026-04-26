@@ -531,15 +531,14 @@ class DefaultAgent implements AgentService {
             metadata: assistantMetadata,
           });
 
-          // 持久化 assistant 消息（含 toolCalls），确保历史记录完整
-          await this.saveToMemory(incoming.sessionId, {
+          const assistantToolMessage: Message = {
             role: 'assistant',
             content: response.content,
             toolCalls: response.toolCalls,
             reasoningContent: response.reasoningContent,
-            timestamp: Date.now(),
             metadata: assistantMetadata,
-          });
+          };
+          const toolMessages: Message[] = [];
 
           // 执行每个工具调用
           for (const toolCall of response.toolCalls) {
@@ -599,20 +598,16 @@ class DefaultAgent implements AgentService {
               result,
             });
 
-            llmBeforeData.messages.push({
+            const toolMessage: Message = {
               role: 'tool',
               content: result,
               toolCallId: toolCall.id,
-            });
-
-            // 持久化 tool 结果消息
-            await this.saveToMemory(incoming.sessionId, {
-              role: 'tool',
-              content: result,
-              toolCallId: toolCall.id,
-              timestamp: Date.now(),
-            });
+            };
+            llmBeforeData.messages.push(toolMessage);
+            toolMessages.push(toolMessage);
           }
+
+          await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages);
 
           // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
           const nextLlmData = { messages: llmBeforeData.messages, tools: [...originalTools], sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform };
@@ -759,7 +754,10 @@ class DefaultAgent implements AgentService {
     const memory = this.ctx.getService<MemoryService>('memory');
     if (memory) {
       try {
-        const history = await memory.getHistory(incoming.sessionId, this.historyLimit);
+        const history = this.sanitizeToolCallHistory(
+          await memory.getHistory(incoming.sessionId, this.historyLimit),
+          incoming.sessionId,
+        );
         const now = Date.now();
         for (const m of history) {
           if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
@@ -1268,6 +1266,59 @@ class DefaultAgent implements AgentService {
     if (incoming.groupName) metadata.groupName = incoming.groupName;
     if (incoming.sessionType) metadata.sessionType = incoming.sessionType;
     return Object.keys(metadata).length > 0 ? metadata : undefined;
+  }
+
+  private async saveToolCallGroup(sessionId: string, assistantMessage: Message, toolMessages: Message[]): Promise<void> {
+    const timestamp = Date.now();
+    await this.saveToMemory(sessionId, { ...assistantMessage, timestamp });
+    for (let i = 0; i < toolMessages.length; i++) {
+      await this.saveToMemory(sessionId, { ...toolMessages[i], timestamp: timestamp + i + 1 });
+    }
+  }
+
+  private sanitizeToolCallHistory(history: Message[], sessionId: string): Message[] {
+    const result: Message[] = [];
+    let dropped = 0;
+
+    for (let i = 0; i < history.length; i++) {
+      const message = history[i];
+
+      if (message.role === 'tool') {
+        dropped++;
+        continue;
+      }
+
+      if (message.role === 'assistant' && message.toolCalls?.length) {
+        const expectedIds = new Set(message.toolCalls.map(tc => tc.id));
+        const seenIds = new Set<string>();
+        const tools: Message[] = [];
+        let j = i + 1;
+
+        while (j < history.length && history[j].role === 'tool') {
+          const toolMessage = history[j];
+          const id = toolMessage.toolCallId;
+          if (!id || !expectedIds.has(id) || seenIds.has(id)) break;
+          tools.push(toolMessage);
+          seenIds.add(id);
+          j++;
+        }
+
+        if (seenIds.size === expectedIds.size) {
+          result.push(message, ...tools);
+        } else {
+          dropped += 1 + tools.length;
+        }
+        i = j - 1;
+        continue;
+      }
+
+      result.push(message);
+    }
+
+    if (dropped > 0) {
+      this.logger.warn(`历史消息中发现不完整工具调用组，已跳过 ${dropped} 条 (session=${sessionId})`);
+    }
+    return result;
   }
 
   private isSameMessage(a: Message, b: Message): boolean {
