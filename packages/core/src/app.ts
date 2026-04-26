@@ -31,7 +31,12 @@ export interface AppOptions {
   hooks?: HookRegistry;
   /** 注入自定义配置管理器（默认新建） */
   config?: ConfigManager;
-  /** 自定义必需服务列表（默认: webui-server, webui-client, cli） */
+  /**
+   * 自定义必需服务列表。
+   *
+   * 例如 `['webui-server', 'cli']` 表示这些服务必须至少有一个提供者在运行。
+   * 默认 `[]`——core 不假设任何具体服务存在，由应用入口显式传入。
+   */
   requiredServices?: string[];
 }
 
@@ -51,7 +56,7 @@ export interface AppOptions {
  *   events: new EventBus(),
  *   services: new ServiceContainer(),
  *   hooks: new HookRegistry(),
- *   requiredServices: [], // 沙盒不需要 webui/cli
+ *   requiredServices: [], // 沙盒不需要任何预设服务
  * });
  */
 export function createApp(options?: AppOptions | string): App {
@@ -113,7 +118,7 @@ export class App {
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.ctx, this.logger);
-    this.requiredServices = opts.requiredServices ?? [...App.DEFAULT_REQUIRED_SERVICES];
+    this.requiredServices = opts.requiredServices ?? [];
     this.plugins.requiredServices = this.requiredServices;
     this.packagesDir = resolve(process.cwd(), 'packages');
 
@@ -618,14 +623,6 @@ export class App {
     this.ctx.dispose();
     this.logger.info('已停止');
   }
-
-  /**
-   * 默认必需服务列表
-   *
-   * 这些服务必须至少有一个提供者在运行。
-   * 可通过 AppOptions.requiredServices 自定义覆盖。
-   */
-  private static readonly DEFAULT_REQUIRED_SERVICES = ['webui-server', 'cli'] as const;
 
   /**
    * 检查核心必需服务是否就绪，缺失时自动寻找并启动提供者
