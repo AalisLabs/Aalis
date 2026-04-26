@@ -1,7 +1,9 @@
 import * as readline from 'node:readline';
 import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
-import type { AppService, AuthorityService, CLIService, ConfigSchema, Context, LogEntry, PersonaService, PlatformAdapter, PlatformConnection } from '@aalis/core';
+import stringWidth from 'string-width';
+import cliTruncate from 'cli-truncate';
+import type { AppService, AuthorityService, CLIService, ConfigSchema, Context, LogEntry, PersonaService, PlatformAdapter, PlatformConnection, StreamChunkMessage } from '@aalis/core';
 import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -81,7 +83,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.on('message:send', (msg) => {
     if (msg.sessionId !== sessionId) return;
+    if (tui?.consumeStreamedSend()) return; // 同一轮已流式输出，跳过重复
     adapter.sendMessage(msg.sessionId, msg.content);
+  });
+
+  ctx.on('message:stream', (chunk) => {
+    if (chunk.sessionId !== sessionId) return;
+    tui?.applyStreamChunk(chunk);
   });
 
   ctx.on('app:started', () => {
@@ -111,7 +119,13 @@ class CliTui {
   private chatLines: string[] = [];
   private logLines: LogEntry[];
   private logScroll = 0;
+  private statusScroll = 0;
+  private helpScroll = 0;
   private removeLogListener: (() => void) | null = null;
+  // 流式状态：记录本 session 当前正在生成的 assistant 回复首行在 chatLines 中的下标
+  private streamingStartIndex: number | null = null;
+  private streamingContent = '';
+  private streamedRecently = false;
   private confirmResolver: ((value: boolean) => void) | null = null;
   private confirmText = '';
   private renderQueued = false;
@@ -135,6 +149,8 @@ class CliTui {
     this.running = true;
 
     setConsoleLogSinkEnabled(false);
+    // 进入备用屏幕缓冲区，隐藏光标；退出时自动恢复原终端内容（类似 vim/htop）
+    output.write('\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H');
     readline.emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     input.resume();
@@ -147,7 +163,7 @@ class CliTui {
 
     const persona = this.ctx.getService<PersonaService>('persona');
     const assistantName = persona?.getPersonaName() ?? 'Aalis';
-    this.chatLines.push(`欢迎使用 ${assistantName}。按 Ctrl+G 查看快捷键。`);
+    this.chatLines.push(chalk.gray(`∘ 欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`));
 
     this.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async (request) => {
       return this.askConfirm(`/${request.name} 是高危指令，按 y 确认，其他键取消`);
@@ -170,14 +186,67 @@ class CliTui {
     output.off('resize', this.queueRender);
     if (input.isTTY) input.setRawMode(false);
     setConsoleLogSinkEnabled(true);
-    output.write('\x1b[?25h\x1b[2J\x1b[H');
+    // 退出备用屏幕缓冲区，恢复原终端内容
+    output.write('\x1b[?25h\x1b[?1049l');
   }
 
   pushAssistant(content: string): void {
     if (!content.trim()) return;
-    for (const line of content.split('\n')) this.chatLines.push(`${chalk.green('Aalis')}> ${line}`);
+    this.appendAssistantLines(content);
     this.trimChat();
     if (this.view === 'chat') this.queueRender();
+  }
+
+  /**
+   * 上一轮 是否有流式内容。调用后会重置。转发文件时 message:send 看到流完整后重复发送，需要跳过。
+   */
+  consumeStreamedSend(): boolean {
+    if (this.streamedRecently) {
+      this.streamedRecently = false;
+      return true;
+    }
+    return false;
+  }
+
+  applyStreamChunk(chunk: StreamChunkMessage): void {
+    if (chunk.done) {
+      // 完结本轮流式
+      if (this.streamingStartIndex !== null) {
+        this.streamedRecently = true;
+        this.streamingStartIndex = null;
+        this.streamingContent = '';
+        if (this.view === 'chat') this.queueRender();
+      }
+      return;
+    }
+    if (!chunk.contentDelta) return;
+    // 首个块：创建一个新的 assistant 条目
+    if (this.streamingStartIndex === null) {
+      this.streamingContent = '';
+      this.streamingStartIndex = this.chatLines.length;
+      this.chatLines.push(`${chalk.green('✦ Aalis')} ${chalk.gray('│')} `);
+    }
+    this.streamingContent += chunk.contentDelta;
+    // 根据累积内容重建该消息占据的行
+    const rebuilt = this.formatAssistantBlock(this.streamingContent);
+    this.chatLines.splice(this.streamingStartIndex, this.chatLines.length - this.streamingStartIndex, ...rebuilt);
+    this.trimChat();
+    if (this.view === 'chat') this.queueRender();
+  }
+
+  private appendAssistantLines(content: string): void {
+    const lines = this.formatAssistantBlock(content);
+    for (const l of lines) this.chatLines.push(l);
+  }
+
+  private formatAssistantBlock(content: string): string[] {
+    const out: string[] = [];
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const head = i === 0 ? `${chalk.green('✦ Aalis')} ${chalk.gray('│')} ` : `         ${chalk.gray('│')} `;
+      out.push(head + lines[i]);
+    }
+    return out;
   }
 
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
@@ -205,7 +274,22 @@ class CliTui {
     if (key.name === 'escape') { this.switchView(this.previousView); return; }
 
     if (this.view === 'logs') { this.handleLogsKey(key); return; }
+    if (this.view === 'status') { this.handleScrollKey(key, 'statusScroll'); return; }
+    if (this.view === 'help') { this.handleScrollKey(key, 'helpScroll'); return; }
     if (this.view !== 'chat') return;
+
+    // 换行快捷：Ctrl+J / Shift+Enter / Alt+Enter / 原始 \n 输入
+    const isNewline =
+      (key.ctrl && key.name === 'j') ||
+      (key.shift && key.name === 'return') ||
+      (key.meta && (key.name === 'return' || key.name === 'enter')) ||
+      (!key.ctrl && !key.meta && chunk === '\n' && key.name !== 'return');
+    if (isNewline) {
+      this.inputLine = this.inputLine.slice(0, this.cursor) + '\n' + this.inputLine.slice(this.cursor);
+      this.cursor++;
+      this.queueRender();
+      return;
+    }
 
     if (key.name === 'return') { await this.submitLine(); return; }
     if (key.name === 'backspace') {
@@ -248,6 +332,15 @@ class CliTui {
     this.queueRender();
   }
 
+  private handleScrollKey(key: readline.Key, field: 'statusScroll' | 'helpScroll'): void {
+    if (key.name === 'up') this[field] = Math.max(0, this[field] - 1);
+    else if (key.name === 'down') this[field] = this[field] + 1;
+    else if (key.name === 'pageup') this[field] = Math.max(0, this[field] - 10);
+    else if (key.name === 'pagedown') this[field] = this[field] + 10;
+    else if (key.name === 'home') this[field] = 0;
+    this.queueRender();
+  }
+
   private async submitLine(): Promise<void> {
     const text = this.inputLine.trim();
     this.inputLine = '';
@@ -258,7 +351,11 @@ class CliTui {
 
     this.history.push(text);
     if (this.history.length > 100) this.history.shift();
-    this.chatLines.push(`${chalk.blue(this.config.prompt)}> ${text}`);
+    const userLines = text.split('\n');
+    for (let i = 0; i < userLines.length; i++) {
+      const head = i === 0 ? `${chalk.cyan('❯ ' + this.config.prompt)} ${chalk.gray('│')} ` : `${' '.repeat(visibleLen('❯ ' + this.config.prompt))} ${chalk.gray('│')} `;
+      this.chatLines.push(head + userLines[i]);
+    }
     this.trimChat();
 
     const parsed = this.ctx.commands?.parseCommand(text);
@@ -269,7 +366,7 @@ class CliTui {
         args: parsed.args,
         raw: parsed.raw,
       });
-      if (result) this.chatLines.push(`${chalk.yellow('System')}> ${result}`);
+      if (result) this.chatLines.push(`${chalk.yellow('◆ System')} ${chalk.gray('│')} ${result}`);
       this.trimChat();
       this.queueRender();
       if (parsed.name === 'shutdown' || parsed.name === 'restart') this.stop();
@@ -338,45 +435,96 @@ class CliTui {
   private render(): void {
     if (!this.running) return;
     const width = Math.max(40, output.columns || 100);
-    const height = Math.max(12, output.rows || 30);
-    const bodyHeight = height - 4;
+    const height = Math.max(14, output.rows || 30);
+    // 输入框可变高度（多行输入）：内容行数 + 上下边框，最多 8 行内容
+    const inputContentLines = this.computeInputDisplayLines(width);
+    const inputBoxHeight = inputContentLines.length + 2;
+    // 布局：header(1) + sep(1) + body + inputBox(inputBoxHeight) + footer(1)
+    const bodyHeight = Math.max(3, height - 3 - inputBoxHeight);
 
-    output.write('\x1b[?25l\x1b[2J\x1b[H');
-    output.write(this.renderHeader(width));
-    output.write('\n');
-    output.write(this.renderBody(width, bodyHeight));
-    output.write('\n');
-    output.write(this.renderFooter(width));
-    output.write('\n');
-    output.write(this.renderInput(width));
-    output.write('\x1b[?25h');
+    const out: string[] = [];
+    out.push(this.renderHeader(width));
+    out.push(chalk.gray(LINE_H.repeat(width)));
+    out.push(...this.renderBody(width, bodyHeight));
+    out.push(...this.renderInputBox(width, inputContentLines));
+    out.push(this.renderFooter(width));
+
+    output.write('\x1b[?25l\x1b[H');
+    output.write(out.map(line => clearLine(line, width)).join('\n'));
+    if (this.view === 'chat' && !this.confirmText) {
+      // 计算光标在多行输入中的 (row, col)
+      const { row: cRow, col: cCol } = this.cursorPosInInput(width);
+      // 行号布局（1-based）：1=header, 2=sep, 3..2+bodyHeight=body, 之后是 inputBox(顶/中.../底), 最后是 footer
+      const inputMidStartRow = 2 + bodyHeight + 1 + 1; // header+sep+body+boxTop = 1+1+bodyHeight+1，再 +1 进入第一行内容
+      const screenRow = inputMidStartRow + cRow;
+      const promptLen = cRow === 0 ? visibleLen(this.makePrompt()) : visibleLen(this.makeContPrompt());
+      const screenCol = 2 /* │ 之后 */ + promptLen + cCol;
+      output.write(`\x1b[${screenRow};${screenCol}H\x1b[?25h`);
+    }
   }
 
   private renderHeader(width: number): string {
-    const title = ` Aalis CLI [${this.view}] `;
-    const right = this.ctx.disposed ? 'disposed ' : 'online ';
-    return chalk.inverse((title + ' '.repeat(Math.max(1, width - title.length - right.length)) + right).slice(0, width));
+    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'default';
+    const left = ` ${chalk.bold.magenta('●')} ${chalk.bold('Aalis')} ${chalk.gray('·')} ${chalk.cyan(persona)} `;
+    const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[]).map(v => {
+      const label = v.toUpperCase();
+      return v === this.view ? chalk.bold.cyan(`[${label}]`) : chalk.gray(` ${label} `);
+    }).join(' ');
+    const status = this.confirmResolver
+      ? chalk.yellow('● confirm')
+      : chalk.green('● online');
+    const right = ` ${tabs}  ${status} `;
+    const pad = Math.max(1, width - visibleLen(left) - visibleLen(right));
+    return left + ' '.repeat(pad) + right;
   }
 
-  private renderBody(width: number, height: number): string {
-    const lines = this.getBodyLines(width, height);
-    while (lines.length < height) lines.push('');
-    return lines.slice(0, height).map(line => fitLine(line, width)).join('\n');
+  private renderBody(width: number, height: number): string[] {
+    const raw = this.getBodyLines(width, height);
+    // 应用滚动 / 取末尾
+    let visible: string[];
+    if (this.view === 'chat') {
+      visible = raw.slice(-height);
+    } else if (this.view === 'logs') {
+      const end = Math.max(0, raw.length - this.logScroll);
+      visible = raw.slice(Math.max(0, end - height), end);
+    } else {
+      const scroll = this.view === 'status' ? this.statusScroll : this.helpScroll;
+      const maxScroll = Math.max(0, raw.length - height);
+      const offset = Math.min(scroll, maxScroll);
+      visible = raw.slice(offset, offset + height);
+    }
+    while (visible.length < height) visible.push('');
+    return visible.slice(0, height).map(line => clipAnsi(line, width));
   }
 
-  private getBodyLines(width: number, height: number): string[] {
-    if (this.view === 'logs') return this.getLogViewLines(height);
+  private getBodyLines(width: number, _height: number): string[] {
+    if (this.view === 'logs') return this.getLogViewLines(width);
     if (this.view === 'status') return this.getStatusViewLines();
     if (this.view === 'help') return this.getHelpViewLines();
-    return this.chatLines.slice(-height).map(line => line.length > width ? line.slice(0, width - 1) : line);
+    return this.getChatViewLines(width);
   }
 
-  private getLogViewLines(height: number): string[] {
-    const end = Math.max(0, this.logLines.length - this.logScroll);
-    const start = Math.max(0, end - height);
-    return this.logLines.slice(start, end).map(entry => {
-      const level = entry.level.toUpperCase().padEnd(5);
-      return `${entry.timestamp} ${level} ${entry.scope} ${entry.message}`;
+  private getChatViewLines(width: number): string[] {
+    const lines: string[] = [];
+    const inner = width - 2; // 缩进 2 列
+    for (const raw of this.chatLines) {
+      // 宽度感知截断为单行；超长内容直接尾部省略。
+      lines.push('  ' + clipAnsi(raw, inner));
+    }
+    return lines;
+  }
+
+  private getLogViewLines(width: number): string[] {
+    const inner = width - 2;
+    return this.logLines.map(entry => {
+      const ts = chalk.gray(entry.timestamp);
+      const level = LEVEL_TAG[entry.level];
+      const scope = chalk.dim(entry.scope.padEnd(18).slice(0, 18));
+      const head = `${ts} ${level} ${scope} `;
+      const msg = entry.message;
+      const headLen = visibleLen(head);
+      const first = head + clipAnsi(msg, Math.max(1, inner - headLen));
+      return `  ${first}`;
     });
   }
 
@@ -384,51 +532,167 @@ class CliTui {
     const services = this.ctx.listServices();
     const platform = this.ctx.getService<PlatformAdapter>('platform');
     const connections = platform?.getConnections?.() ?? [];
-    return [
-      '状态',
-      '',
-      `服务数量: ${services.length}`,
-      `服务列表: ${services.join(', ') || '-'}`,
-      '',
-      `当前 CLI session: ${this.sessionId}`,
-      `日志缓存: ${this.logLines.length}/${this.config.logLines}`,
-      '',
-      '平台连接:',
-      ...(connections.length > 0 ? connections.map(c => `- ${c.platform}:${c.id} ${c.status}`) : ['- 无平台连接信息']),
-    ];
+    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? '-';
+    const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
+    const kv = (k: string, v: string) => `    ${chalk.gray(k.padEnd(14))} ${v}`;
+    const out: string[] = [];
+    out.push(sec('运行时'));
+    out.push(kv('persona', persona));
+    out.push(kv('cli session', this.sessionId));
+    out.push(kv('log buffer', `${this.logLines.length} / ${this.config.logLines}`));
+    out.push('');
+    out.push(sec(`服务 (${services.length})`));
+    for (const s of services) out.push(`    ${chalk.green('●')} ${s}`);
+    out.push('');
+    out.push(sec(`平台连接 (${connections.length})`));
+    if (connections.length === 0) out.push(`    ${chalk.gray('— 无')}`);
+    else for (const c of connections) {
+      const dot = c.status === 'online' ? chalk.green('●') : c.status === 'connecting' ? chalk.yellow('●') : chalk.red('●');
+      out.push(`    ${dot} ${chalk.cyan(c.platform)}:${c.id} ${chalk.gray(c.status)}`);
+    }
+    return out.map(l => l.length === 0 ? '' : ` ${l}`);
   }
 
   private getHelpViewLines(): string[] {
-    return [
-      '快捷键',
-      '',
-      '^T  Chat    切回聊天输入',
-      '^L  Logs    查看日志；上下/PageUp/PageDown 滚动',
-      '^S  Status  查看服务和连接状态',
-      '^G  Help    查看当前帮助',
-      'Esc 返回上一个视图',
-      '^C  退出',
-      '',
-      '说明',
-      '日志视图和状态视图不接收聊天输入，避免“看日志时还在输入指令”的混乱。',
-      '需要和 agent 交流时按 ^T 回到 Chat。',
-    ];
+    const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
+    const row = (k: string, v: string) => `    ${chalk.cyan(k.padEnd(10))} ${chalk.gray(v)}`;
+    const out: string[] = [];
+    out.push(sec('视图切换'));
+    out.push(row('Ctrl+T', 'Chat   ·  聊天 / 命令输入'));
+    out.push(row('Ctrl+L', 'Logs   ·  实时日志'));
+    out.push(row('Ctrl+S', 'Status ·  服务与平台状态'));
+    out.push(row('Ctrl+G', 'Help   ·  当前页'));
+    out.push(row('Esc',    '返回上一个视图'));
+    out.push(row('Ctrl+C', '退出'));
+    out.push('');
+    out.push(sec('滚动 (Logs / Status / Help)'));
+    out.push(row('↑ / ↓',   '逐行滚动'));
+    out.push(row('PgUp/Dn', '翻页'));
+    out.push(row('Home',    '回到顶部'));
+    out.push('');
+    out.push(sec('编辑'));
+    out.push(row('Enter',     '提交输入'));
+    out.push(row('Ctrl+J',    '插入换行（macOS Ctrl+Enter）'));
+    out.push(row('Shift+Ent', '插入换行（如终端支持）'));
+    out.push(row('↑ / ↓',     '历史记录回溯（chat 视图）'));
+    out.push('');
+    out.push(sec('提示'));
+    out.push(`    ${chalk.gray('• 完整日志写入 data/latest.log（每次启动覆盖）；可用 tail -f 查看。')}`);
+    out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
+    out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
+    return out.map(l => l.length === 0 ? '' : ` ${l}`);
+  }
+
+  /** 计算输入框的多行内容（不含边框、不含 padding） */
+  private computeInputDisplayLines(width: number): string[] {
+    const inner = width - 2;
+    if (this.confirmText) return [`${chalk.yellow('?')} ${this.confirmText}`];
+    if (this.view !== 'chat') {
+      const total = this.view === 'logs' ? this.logLines.length
+        : this.view === 'status' ? this.getStatusViewLines().length
+        : this.getHelpViewLines().length;
+      const scroll = this.view === 'logs' ? this.logScroll
+        : this.view === 'status' ? this.statusScroll
+        : this.helpScroll;
+      return [chalk.gray(`${this.view} · ${total} 行 · scroll ${scroll}  ·  按 Ctrl+T 回到聊天`)];
+    }
+    const inputLines = this.inputLine.split('\n');
+    const display: string[] = [];
+    const promptLen = visibleLen(this.makePrompt());
+    const contLen = visibleLen(this.makeContPrompt());
+    const maxBody = Math.max(1, inner - Math.max(promptLen, contLen));
+    for (let i = 0; i < inputLines.length; i++) {
+      const head = i === 0 ? this.makePrompt() : this.makeContPrompt();
+      // 宽度感知截断（CJK / emoji 占 2 列），不加省略号以免误导
+      const body = clipExact(inputLines[i], maxBody);
+      display.push(head + body);
+    }
+    // 限制最多 8 行
+    if (display.length > 8) return display.slice(-8);
+    return display;
+  }
+
+  /** 根据 cursor 索引计算其在多行输入中的 (row, col)，col 为终端可见列宽 */
+  private cursorPosInInput(_width: number): { row: number; col: number } {
+    if (this.view !== 'chat' || this.confirmText) return { row: 0, col: 0 };
+    const before = this.inputLine.slice(0, this.cursor);
+    const lines = before.split('\n');
+    return { row: lines.length - 1, col: stringWidth(lines[lines.length - 1]) };
+  }
+
+  private renderInputBox(width: number, contentLines: string[]): string[] {
+    const inner = width - 2;
+    const top = chalk.gray(`${BOX_TL}${LINE_H.repeat(inner)}${BOX_TR}`);
+    const mid = contentLines.map(line => `${chalk.gray(BOX_V)}${padAnsi(line, inner)}${chalk.gray(BOX_V)}`);
+    const bot = chalk.gray(`${BOX_BL}${LINE_H.repeat(inner)}${BOX_BR}`);
+    return [top, ...mid, bot];
+  }
+
+  private makePrompt(): string {
+    return `${chalk.cyan('❯')} ${chalk.bold(this.config.prompt)} `;
+  }
+
+  private makeContPrompt(): string {
+    return `${chalk.gray('…')} ${' '.repeat(this.config.prompt.length)} `;
   }
 
   private renderFooter(width: number): string {
-    return chalk.inverse(fitLine(' ^T Chat  ^L Logs  ^S Status  ^G Help  Esc Back  ^C Exit ', width));
-  }
-
-  private renderInput(width: number): string {
-    if (this.confirmText) return fitLine(`${chalk.yellow('?')} ${this.confirmText}`, width);
-    if (this.view !== 'chat') return chalk.gray(fitLine('非聊天视图：按 ^T 回到 Chat 后输入消息', width));
-    const prefix = `${chalk.blue(this.config.prompt)}${chalk.gray('>')} `;
-    const cursorLine = this.inputLine.slice(0, this.cursor) + chalk.inverse(this.inputLine[this.cursor] ?? ' ') + this.inputLine.slice(this.cursor + 1);
-    return fitLine(prefix + cursorLine, width);
+    const items = [
+      `${chalk.cyan('^T')} chat`,
+      `${chalk.cyan('^L')} logs`,
+      `${chalk.cyan('^S')} status`,
+      `${chalk.cyan('^G')} help`,
+      `${chalk.cyan('Esc')} back`,
+      `${chalk.cyan('^C')} exit`,
+    ].join(chalk.gray('  ·  '));
+    const left = ` ${items} `;
+    return padAnsi(chalk.gray.dim(left), width);
   }
 }
 
-function fitLine(line: string, width: number): string {
-  if (line.length > width) return line.slice(0, width - 1);
-  return line + ' '.repeat(Math.max(0, width - line.length));
+// ===== 视觉常量 / 工具 =====
+
+const LINE_H = '─';
+const BOX_TL = '╭';
+const BOX_TR = '╮';
+const BOX_BL = '╰';
+const BOX_BR = '╯';
+const BOX_V  = '│';
+
+const LEVEL_TAG: Record<LogEntry['level'], string> = {
+  debug: chalk.gray('DBG'),
+  info: chalk.cyan('INF'),
+  warn: chalk.yellow('WRN'),
+  error: chalk.red('ERR'),
+};
+
+/** 终端可见宽度（处理 ANSI / CJK / emoji / 零宽字符） */
+function visibleLen(s: string): number {
+  return stringWidth(s);
+}
+
+/** 按终端列宽截断（保留 ANSI 颜色），尾部加省略号 */
+function clipAnsi(s: string, width: number): string {
+  if (width <= 0) return '';
+  if (stringWidth(s) <= width) return s;
+  return cliTruncate(s, width, { position: 'end', preferTruncationOnSpace: false });
+}
+
+/** 按终端列宽截断（保留 ANSI 颜色），不加省略号 — 用于输入框等所见即所得场景 */
+function clipExact(s: string, width: number): string {
+  if (width <= 0) return '';
+  if (stringWidth(s) <= width) return s;
+  return cliTruncate(s, width, { position: 'end', preferTruncationOnSpace: false, truncationCharacter: '' });
+}
+
+/** 按终端列宽右侧补空格 */
+function padAnsi(s: string, width: number): string {
+  const w = stringWidth(s);
+  if (w >= width) return clipAnsi(s, width);
+  return s + ' '.repeat(width - w);
+}
+
+/** 行尾补宽 + \x1b[K 清残影 */
+function clearLine(s: string, width: number): string {
+  return padAnsi(s, width) + '\x1b[K';
 }
