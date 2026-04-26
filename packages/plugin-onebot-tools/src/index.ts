@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
-import type { Context, ConfigSchema, ImageRecognitionService, PlatformAdapter, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema, ImageRecognitionService, MessageArchiveService, PlatformAdapter, ToolCallContext } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -35,6 +35,13 @@ export const configSchema: ConfigSchema = {
       enabled: { type: 'boolean', label: '启用特殊交互', default: true, description: '戳一戳、群打卡等' },
     },
   },
+  messaging: {
+    label: '主动发送消息',
+    fields: {
+      enabled: { type: 'boolean', label: '启用主动发送', default: true, description: '允许 agent 向任意私聊 / 群聊主动发送消息（用于代为转达、跨会话通知等场景）' },
+      allowCrossSession: { type: 'boolean', label: '允许跨会话发送', default: true, description: '关闭后只能向当前会话发送（等价于普通回复，几乎没有意义，仅作降权开关）' },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -42,6 +49,7 @@ export const defaultConfig = {
   groupInfo: { enabled: true },
   account: { enabled: true },
   interaction: { enabled: true },
+  messaging: { enabled: true, allowCrossSession: true },
 };
 
 // ===== 辅助函数 =====
@@ -408,12 +416,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       groupInfo: { enabled: true, ...(config.groupInfo as Record<string, unknown> ?? {}) },
       account: { enabled: true, ...(config.account as Record<string, unknown> ?? {}) },
       interaction: { enabled: true, ...(config.interaction as Record<string, unknown> ?? {}) },
+      messaging: { enabled: true, allowCrossSession: true, ...(config.messaging as Record<string, unknown> ?? {}) },
     };
 
     if (cfg.groupManagement.enabled) registerGroupManagementTools(groupedCtx);
     if (cfg.groupInfo.enabled) registerGroupInfoTools(groupedCtx);
     if (cfg.account.enabled) registerAccountTools(groupedCtx);
     if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
+    if (cfg.messaging.enabled) registerMessagingTools(groupedCtx, !!cfg.messaging.allowCrossSession);
     registerRequestTools(groupedCtx);
   });
 }
@@ -1233,6 +1243,130 @@ function registerInteractionTools(ctx: Context): void {
   });
 
   ctx.logger.info('OneBot 特殊交互工具已注册');
+}
+
+// ===== 主动发送消息工具 =====
+//
+// OneBot v11/v12 官方协议参考（onebot.dev）：
+//   v11 send_private_msg: { user_id: int64, message: msg, auto_escape?: bool }
+//   v11 send_group_msg:   { group_id: int64, message: msg, auto_escape?: bool }
+//   v12 send_message:     { detail_type: 'private'|'group'|'channel', user_id?, group_id?, ... , message: segment[] }
+// 适配器内部已封装 buildSendMessage()，按已连接协议版本自动选择上述 action。
+// 这里只需调用 adapter.sendMessage(targetSessionId, content)。
+
+/** 适配器上的非标准限速闸门（OneBot 适配器提供） */
+interface OneBotProactiveRateGate {
+  checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string };
+}
+
+function registerMessagingTools(ctx: Context, allowCrossSession: boolean): void {
+
+  // ---- 主动发送消息（任意私聊 / 群聊）----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_send_message',
+        description:
+          '向指定 QQ 用户（私聊）或 QQ 群（群聊）主动发送消息。该工具为通用出站通道，' +
+          '适用于任何需要向“当前会话以外”发消息的场景，包括但不限于：' +
+          '(1) 用户让你向另一人/另一群转告信息；' +
+          '(2) 你自主决定向某位好友打招呼、问候、分享、提醒；' +
+          '(3) 向某个群发布公告 / 结果 / 总结；' +
+          '(4) 任何你判断合适的跨会话主动联系。\n' +
+          '不需要用户明示“转告”才能调用。但调用前请确认 target_id 准确无误。\n' +
+          '消息体支持纯文本，也支持 Aalis 标准富文本标记：<at qq="123"/>、<image url="..."/>、<reply id="..."/>、<face id="..."/>。\n' +
+          '限制：发送目标用户必须是 bot 已加好友的人；发送目标群必须是 bot 所在的群。' +
+          '频率受限于适配器的 chat-flow 限速设置（防 DDoS），如被限速会在返回值中告知。',
+        parameters: {
+          type: 'object',
+          properties: {
+            target_type: {
+              type: 'string',
+              enum: ['private', 'group'],
+              description: 'private = 私聊（向某个 QQ 号），group = 群聊（向某个群号）',
+            },
+            target_id: {
+              type: 'string',
+              description: '目标 QQ 号（私聊）或群号（群聊）',
+            },
+            content: {
+              type: 'string',
+              description: '要发送的消息内容（纯文本或带富文本标记）',
+            },
+          },
+          required: ['target_type', 'target_id', 'content'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const targetType = String(args.target_type ?? '').toLowerCase();
+      const targetId = String(args.target_id ?? '').trim();
+      const content = String(args.content ?? '');
+
+      if (targetType !== 'private' && targetType !== 'group') {
+        return `参数错误：target_type 必须为 'private' 或 'group'，收到 '${args.target_type}'`;
+      }
+      if (!targetId) return '参数错误：target_id 不能为空';
+      if (!content.trim()) return '参数错误：content 不能为空';
+
+      const current = requireOneBotSession(callCtx);
+
+      // 跨会话开关：若关闭，仅允许向当前会话发送（等价于普通回复）
+      if (!allowCrossSession) {
+        if (current.detailType !== targetType || current.targetId !== targetId) {
+          return '操作被拒绝：跨会话主动发送已在配置中关闭，仅允许向当前会话发送';
+        }
+      }
+
+      const adapter = findOneBotAdapter(ctx);
+      if (!adapter?.sendMessage) {
+        throw new Error('OneBot 适配器不可用或不支持 sendMessage');
+      }
+
+      // 复用当前会话所属的 selfId（即 bot 自身），构造目标 sessionId
+      const targetSessionId = `onebot:${current.selfId}:${targetType}:${targetId}`;
+
+      // 限速闸门：复用 chat-flow 的滑动窗口限速，防止 prompt injection 导致群发/骚扰
+      const gate = (adapter as PlatformAdapter & OneBotProactiveRateGate).checkAndRecordProactiveSend;
+      if (typeof gate === 'function') {
+        const verdict = gate.call(adapter, targetSessionId);
+        if (!verdict.allowed) {
+          return `发送被限速拦截：${verdict.reason ?? '超出限速阈值'}`;
+        }
+      }
+
+      try {
+        await adapter.sendMessage(targetSessionId, content);
+      } catch (err) {
+        return `发送失败：${(err as Error).message}`;
+      }
+
+      // 写入目标会话记忆，让 bot 在后续对话中能记得自己刚说过什么
+      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      if (archive?.saveMessage) {
+        try {
+          await archive.saveMessage(targetSessionId, {
+            role: 'assistant',
+            content,
+            timestamp: Date.now(),
+            metadata: {
+              source: 'proactive',
+              originSessionId: callCtx.sessionId,
+            },
+          });
+        } catch (err) {
+          ctx.logger.warn(`主动发送写入目标会话记忆失败: ${err}`);
+        }
+      }
+
+      const targetLabel = targetType === 'private' ? `用户 ${targetId}` : `群 ${targetId}`;
+      ctx.logger.info(`[主动发送] selfId=${current.selfId} -> ${targetLabel}: ${content.slice(0, 60)}${content.length > 60 ? '...' : ''}`);
+      return `已向${targetLabel}发送消息`;
+    },
+  });
+
+  ctx.logger.info('OneBot 主动发送消息工具已注册');
 }
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
