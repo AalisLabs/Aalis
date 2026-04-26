@@ -744,27 +744,21 @@ function registerGroupInfoTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_forward_msg',
-        description: '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，用其中的 id 调用本工具。',
+        description: '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，必须把尖括号里的 id 字符串作为参数 id 传入；不要使用 message_id、forward_id、res_id 或 m_resid。',
         parameters: {
           type: 'object',
           properties: {
             id: { type: 'string', description: '合并转发 ID（forward 消息段的 data.id），与 OneBot v11 标准参数名一致' },
-            message_id: { type: 'string', description: '兼容别名：部分模型会误把 forward id 填到 message_id；优先使用 id' },
-            forward_id: { type: 'string', description: '兼容别名：旧版工具 schema 使用过该名称；优先使用 id' },
-            res_id: { type: 'string', description: '兼容别名：部分 OneBot 实现使用的合并转发资源 ID；优先使用 id' },
-            m_resid: { type: 'string', description: '兼容别名：部分 OneBot 实现使用的合并转发资源 ID；优先使用 id' },
             limit: { type: 'number', description: '最多返回多少条节点，默认 30' },
           },
-          required: [],
+          required: ['id'],
         },
       },
     },
     handler: async (args, callCtx) => {
       requireOneBotSession(callCtx);
-      // OneBot v11 标准参数名是 id；其余名称仅作兼容别名。
-      const rawId = args.id ?? args.message_id ?? args.forward_id ?? args.res_id ?? args.m_resid;
-      if (!rawId) return '参数错误：缺少 id（合并转发 ID）。';
-      const forwardId = String(rawId);
+      if (!args.id) return '参数错误：缺少 id（合并转发 ID）。请使用 <forward id="..."> 中的 id 字符串，不要使用 message_id。';
+      const forwardId = String(args.id);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
       // 适配器的 callAction 已对 get_forward_msg 做了多参数键回退（id/message_id/res_id/m_resid）
