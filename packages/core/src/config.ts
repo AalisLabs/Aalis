@@ -33,8 +33,6 @@ export interface AalisConfig {
   };
   /** 管理员对单条指令的权限/安全等级覆盖 */
   commandOverrides?: Record<string, { authority?: number; safety?: string }>;
-  /** 管理员对工具的权限/安全等级覆盖 */
-  toolOverrides?: Record<string, { authority?: number; safety?: string }>;
 }
 
 const DEFAULT_CONFIG: AalisConfig = {
@@ -297,10 +295,6 @@ export class ConfigManager {
       obj.commandOverrides = this.config.commandOverrides;
     }
 
-    if (this.config.toolOverrides && Object.keys(this.config.toolOverrides).length > 0) {
-      obj.toolOverrides = this.config.toolOverrides;
-    }
-
     return obj;
   }
 
@@ -361,7 +355,6 @@ export class ConfigManager {
       ownerAuthority: (parsed['ownerAuthority'] as number) ?? DEFAULT_CONFIG.ownerAuthority,
       dangerousPolicy: (parsed['dangerousPolicy'] as AalisConfig['dangerousPolicy']) ?? undefined,
       commandOverrides: (parsed['commandOverrides'] as AalisConfig['commandOverrides']) ?? undefined,
-      toolOverrides: (parsed['toolOverrides'] as AalisConfig['toolOverrides']) ?? undefined,
     };
   }
 }

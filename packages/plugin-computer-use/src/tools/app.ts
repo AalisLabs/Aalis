@@ -20,8 +20,6 @@ export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpMana
 
   // ── app_launch ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -96,8 +94,6 @@ export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpMana
 
   // ── app_close ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {

@@ -41,12 +41,8 @@ interface AuthorityCommand {
 interface AuthorityTool {
   name: string;
   description: string;
-  authority: number;
-  safety: string;
-  baseAuthority: number;
-  baseSafety: string;
-  overridden: boolean;
   pluginName: string;
+  groups?: string[];
 }
 
 interface AuthorityData {
@@ -58,7 +54,6 @@ interface AuthorityData {
   commands: AuthorityCommand[];
   commandOverrides: Record<string, { authority?: number; safety?: string }>;
   tools: AuthorityTool[];
-  toolOverrides: Record<string, { authority?: number; safety?: string }>;
   dangerousPolicy: {
     allow?: string[];
     duration?: number;
@@ -100,9 +95,6 @@ export function AuthorityPage() {
       return next;
     });
   };
-  const [editingTool, setEditingTool] = useState<string | null>(null);
-  const [toolDraft, setToolDraft] = useState({ authority: 1, safety: 'safe' });
-
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -219,18 +211,6 @@ export function AuthorityPage() {
   const resetCommandOverride = async (name: string) => {
     await pageAction('@aalis/plugin-authority', 'resetCommandOverride', { name });
     flash(`指令 ${name} 已恢复默认`);
-    refresh();
-  };
-
-  const saveToolOverride = async (name: string) => {
-    await pageAction('@aalis/plugin-authority', 'setToolOverride', { name, authority: toolDraft.authority, safety: toolDraft.safety });
-    setEditingTool(null);
-    flash(`工具 ${name} 权限已更新`);
-    refresh();
-  };
-  const resetToolOverride = async (name: string) => {
-    await pageAction('@aalis/plugin-authority', 'resetToolOverride', { name });
-    flash(`工具 ${name} 已恢复默认`);
     refresh();
   };
 
@@ -449,11 +429,11 @@ export function AuthorityPage() {
         )}
       </div>
 
-      {/* 工具权限 */}
+      {/* 工具清单 */}
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('tools')}>
-          <span className="config-block-title">工具权限</span>
-          <span className="config-block-hint">自定义每个 AI 工具的所需权限等级与安全等级，修改后优先于插件默认值</span>
+          <span className="config-block-title">AI 工具</span>
+          <span className="config-block-hint">工具已从用户权限审查中剥离，此处仅展示当前已注册工具</span>
           <span className={`config-block-toggle ${openSections.has('tools') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('tools') && (
@@ -465,63 +445,17 @@ export function AuthorityPage() {
                 <div className="authority-cmd-header">
                   <span>工具</span>
                   <span>来源</span>
-                  <span>权限等级</span>
-                  <span>安全等级</span>
-                  <span>操作</span>
+                  <span>分组</span>
                 </div>
-                {data.tools.map(t => {
-                  const isEditing = editingTool === t.name;
-                  return (
-                    <div className={`authority-cmd-row ${t.overridden ? 'overridden' : ''}`} key={t.name}>
-                      <span className="authority-cmd-name" title={t.description}>
-                        {t.name}
-                      </span>
-                      <span className="authority-cmd-plugin">{t.pluginName}</span>
-                      <span>
-                        {isEditing ? (
-                          <input type="number" className="config-edit-input authority-inline-input" min={0}
-                            value={toolDraft.authority}
-                            onChange={e => setToolDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
-                            autoFocus />
-                        ) : (
-                          <span className={`authority-badge ${t.authority >= data.ownerAuthority ? 'owner' : t.authority >= 3 ? 'high' : ''}`}>
-                            {t.authority}
-                          </span>
-                        )}
-                      </span>
-                      <span>
-                        {isEditing ? (
-                          <select className="config-edit-input authority-inline-select"
-                            value={toolDraft.safety}
-                            onChange={e => setToolDraft(v => ({ ...v, safety: e.target.value }))}>
-                            <option value="safe">safe</option>
-                            <option value="dangerous">dangerous</option>
-                          </select>
-                        ) : (
-                          <span className={`authority-safety-tag ${t.safety}`}>{t.safety}</span>
-                        )}
-                      </span>
-                      <span className="authority-actions">
-                        {isEditing ? (
-                          <>
-                            <button className="btn btn-primary btn-sm" onClick={() => saveToolOverride(t.name)}>保存</button>
-                            <button className="btn btn-sm" onClick={() => setEditingTool(null)}>取消</button>
-                          </>
-                        ) : (
-                          <>
-                            <button className="btn btn-sm" onClick={() => {
-                              setEditingTool(t.name);
-                              setToolDraft({ authority: t.authority, safety: t.safety });
-                            }}>编辑</button>
-                            {t.overridden && (
-                              <button className="btn btn-sm" onClick={() => resetToolOverride(t.name)} title="恢复插件默认值">重置</button>
-                            )}
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  );
-                })}
+                {data.tools.map(t => (
+                  <div className="authority-cmd-row" key={t.name}>
+                    <span className="authority-cmd-name" title={t.description}>
+                      {t.name}
+                    </span>
+                    <span className="authority-cmd-plugin">{t.pluginName}</span>
+                    <span>{t.groups?.length ? t.groups.join(', ') : '通用'}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

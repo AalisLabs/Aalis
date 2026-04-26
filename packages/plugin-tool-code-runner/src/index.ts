@@ -136,8 +136,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ==================== run_python ====================
   if (cfg.python.enabled) {
     groupCtx.registerTool({
-      safety: 'dangerous',
-      authority: 2,
       definition: {
         type: 'function',
         function: {
@@ -196,8 +194,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ==================== run_javascript ====================
   if (cfg.javascript.enabled) {
     groupCtx.registerTool({
-      safety: 'dangerous',
-      authority: 2,
       definition: {
         type: 'function',
         function: {

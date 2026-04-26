@@ -625,7 +625,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {
@@ -698,7 +697,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ── 注册图片描述回写工具 ──
 
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {

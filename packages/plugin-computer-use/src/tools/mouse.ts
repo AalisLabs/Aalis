@@ -9,8 +9,6 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
 
   // ── mouse_drag ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -53,8 +51,6 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
 
   // ── mouse_scroll ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
