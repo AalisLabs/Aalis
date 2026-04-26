@@ -1,18 +1,25 @@
-import { App, onLogEntry } from '@aalis/core';
+import { App, getLogBuffer, onLogEntry, type LogEntry } from '@aalis/core';
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 const LOG_FILE = 'data/latest.log';
 
+function formatEntry(entry: LogEntry): string {
+  const safeMsg = entry.message.replace(/\r?\n/g, '\\n');
+  return `${entry.timestamp}|${entry.level}|${entry.scope}|${safeMsg}\n`;
+}
+
 async function setupFileLogger(): Promise<void> {
-  // 每次启动覆盖 latest.log；订阅 onLogEntry 异步追加，core 不感知文件 sink。
+  // 文件 sink 完全在 core 外实现：
+  //   1) 启动时清空 latest.log；
+  //   2) 先把 core 的环形缓冲（已发生的日志）一次性写入，避免漏掉本函数被调用前的条目；
+  //   3) 再订阅 onLogEntry 持续追加新日志。
   await mkdir(dirname(LOG_FILE), { recursive: true });
-  await writeFile(LOG_FILE, '');
+  const initial = getLogBuffer().map(formatEntry).join('');
+  await writeFile(LOG_FILE, initial);
   let queue = Promise.resolve();
   onLogEntry((entry) => {
-    const safeMsg = entry.message.replace(/\r?\n/g, '\\n');
-    const line = `${entry.timestamp}|${entry.level}|${entry.scope}|${safeMsg}\n`;
-    queue = queue.then(() => appendFile(LOG_FILE, line)).catch(() => {});
+    queue = queue.then(() => appendFile(LOG_FILE, formatEntry(entry))).catch(() => {});
   });
 }
 
