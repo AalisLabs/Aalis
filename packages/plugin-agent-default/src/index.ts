@@ -86,6 +86,9 @@ class DefaultAgent implements AgentService {
    */
   private activeControllers = new Map<string, AbortController>();
 
+  /** 同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入。 */
+  private archiveQueues = new Map<string, Promise<void>>();
+
   /** 已注册的预处理器（name → { priority, dispose }） */
   private preprocessors = new Map<string, { priority: number; dispose: () => void }>();
 
@@ -384,7 +387,7 @@ class DefaultAgent implements AgentService {
     this.activeControllers.set(lane, controller);
 
     try {
-      await this._handleMessageInner(incoming, controller.signal);
+      await this._handleMessageInner(incoming, controller.signal, lane);
     } finally {
       // 仅清理自己创建的 controller（避免清掉后续新请求的）
       if (this.activeControllers.get(lane) === controller) {
@@ -393,7 +396,7 @@ class DefaultAgent implements AgentService {
     }
   }
 
-  private async _handleMessageInner(incoming: IncomingMessage, signal: AbortSignal): Promise<void> {
+  private async _handleMessageInner(incoming: IncomingMessage, signal: AbortSignal, lane: string): Promise<void> {
     // Hook: message:before — 插件可以修改或拦截消息
     // 中间件不调用 next() 即可中断整个流程（包括 LLM 调用）
     const msgHookData: { message: IncomingMessage; metadata: Record<string, unknown> } = {
@@ -409,6 +412,7 @@ class DefaultAgent implements AgentService {
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
       incoming = msgHookData.message;
 
+      const archivedIncoming = await this.archiveIncomingMessageInOrder(lane, incoming);
 
 
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
@@ -447,7 +451,7 @@ class DefaultAgent implements AgentService {
             }
           : undefined;
 
-        const messages = await this.buildMessages(incoming, personaOpts);
+        const messages = await this.buildMessages(incoming, personaOpts, archivedIncoming);
         // 通过 resolved config 获取工具分组
         let enabledGroups: string[] | undefined;
         if (resolved?.enabledToolGroups && resolved.enabledToolGroups.length > 0) {
@@ -509,9 +513,6 @@ class DefaultAgent implements AgentService {
         // 收集工具调用摘要
         const toolCallSummaries: string[] = [];
 
-        // 在工具调用循环前，先保存用户消息（确保历史中消息顺序正确）
-        await this.archiveIncomingMessage(incoming);
-        let userMessageSaved = true;
         const assistantMetadata = this.buildAssistantMetadata(incoming);
 
         // 工具调用循环
@@ -667,11 +668,6 @@ class DefaultAgent implements AgentService {
           replyContent = '';
         }
 
-        // 保存用户消息到记忆（如果工具调用循环中未保存 — 无工具调用时）
-        if (!userMessageSaved) {
-          await this.archiveIncomingMessage(incoming);
-        }
-
         // 发出流结束标记
         await this.ctx.emit('message:stream', {
           sessionId: incoming.sessionId,
@@ -752,7 +748,7 @@ class DefaultAgent implements AgentService {
   /**
    * 构建发送给 LLM 的消息列表
    */
-  private async buildMessages(incoming: IncomingMessage, personaOpts?: PersonaSessionOptions): Promise<Message[]> {
+  private async buildMessages(incoming: IncomingMessage, personaOpts?: PersonaSessionOptions, archivedIncoming?: Message): Promise<Message[]> {
     const messages: Message[] = [];
 
     // 1. 系统提示
@@ -766,6 +762,7 @@ class DefaultAgent implements AgentService {
         const history = await memory.getHistory(incoming.sessionId, this.historyLimit);
         const now = Date.now();
         for (const m of history) {
+          if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
           if (m.role === 'system' && m.name === 'system-event') continue;
           // 为用户消息注入时间标注，帮助 LLM 理解时间先后
           if (m.role === 'user' && m.timestamp && m.content) {
@@ -1273,15 +1270,41 @@ class DefaultAgent implements AgentService {
     return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 
-  private async archiveIncomingMessage(incoming: IncomingMessage): Promise<void> {
-    // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
-    if (incoming.source === 'idle-trigger') return;
-    const archive = this.ctx.getService<MessageArchiveService>('message-archive');
-    if (!archive) return;
+  private isSameMessage(a: Message, b: Message): boolean {
+    return a.role === b.role
+      && (a.timestamp ?? 0) === (b.timestamp ?? 0)
+      && (a.name ?? '') === (b.name ?? '')
+      && (a.content ?? '') === (b.content ?? '');
+  }
+
+  private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMessage): Promise<Message | undefined> {
+    const previous = this.archiveQueues.get(lane) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this.archiveIncomingMessage(incoming));
+    const tail = current.then(() => undefined, () => undefined);
+    this.archiveQueues.set(lane, tail);
+
     try {
-      await archive.archiveIncoming(incoming);
+      return await current;
+    } finally {
+      if (this.archiveQueues.get(lane) === tail) {
+        this.archiveQueues.delete(lane);
+      }
+    }
+  }
+
+  private async archiveIncomingMessage(incoming: IncomingMessage): Promise<Message | undefined> {
+    // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
+    if (incoming.source === 'idle-trigger') return undefined;
+    const archive = this.ctx.getService<MessageArchiveService>('message-archive');
+    if (!archive) return undefined;
+    try {
+      const result = await archive.archiveIncoming(incoming);
+      return result.message;
     } catch (err) {
       this.logger.warn('归档用户消息失败:', err);
+      return undefined;
     }
   }
 }
