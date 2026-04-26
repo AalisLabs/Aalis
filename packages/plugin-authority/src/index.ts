@@ -21,7 +21,7 @@ class AuthorityManager implements AuthorityService {
 
   getAuthority(platform: string, userId?: string): number {
     if (!userId) return this.config.get('defaultAuthority') ?? 1;
-    if (platform === 'webui' && userId === 'console') {
+    if ((platform === 'webui' || platform === 'cli') && userId === 'console') {
       return this.config.get('ownerAuthority') ?? 5;
     }
     const owners = this.config.get('owners') ?? [];
@@ -76,7 +76,7 @@ class AuthorityManager implements AuthorityService {
 
   isOwner(platform: string, userId?: string): boolean {
     if (!userId) return false;
-    if (platform === 'webui' && userId === 'console') return true;
+    if ((platform === 'webui' || platform === 'cli') && userId === 'console') return true;
     const owners = this.config.get('owners') ?? [];
     return owners.some((o: { platform: string; userId: string }) => o.platform === platform && o.userId === userId);
   }

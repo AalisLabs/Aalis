@@ -451,6 +451,7 @@ class CliTui {
       const result = await this.ctx.commands!.execute(parsed.name, {
         sessionId: this.sessionId,
         platform: 'cli',
+        userId: 'console',
         args: parsed.args,
         raw: parsed.raw,
       });
