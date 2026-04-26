@@ -133,6 +133,9 @@ class CliTui {
   private streamingContent = '';
   private streamedRecently = false;
   private confirmResolver: ((value: boolean) => void) | null = null;
+  /** 鼠标 SGR 序列在处理中：readline 会把序列中间的数字/分号拆成独立 keypress，
+   * 需要从看到 \x1b[< 起到看到 M/m 为止吞掉所有 keypress。 */
+  private inMouseSeq = false;
   private confirmText = '';
   private renderQueued = false;
   private closing = false;
@@ -155,15 +158,17 @@ class CliTui {
     this.running = true;
 
     setConsoleLogSinkEnabled(false);
-    // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll mode
-    // 1007h 让终端在 alt screen 中把滚轮事件翻译成 ↑/↓ 方向键发给程序，
-    // 我们只需正常处理方向键即可获得滚轮翻页；同时不开启 1000/1006 鼠标点击
-    // 上报，左键拖拽选择文本与右键复制完全保持终端原生行为。
-    output.write('\x1b[?1049h\x1b[?25l\x1b[?1007h');
+    // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll（兜底，部分终端不支持）
+    // 1000h+1006h: SGR 鼠标上报，覆盖滚轮事件以便所有终端都能滚动
+    // 注意：开启 1000h 后终端会把左/右键也发给程序，导致原生选择被吞。
+    // 我们在 handleData 里仅处理滚轮 (button 64/65)，其它按键事件直接忽略。
+    // 选择文本时按住平台修饰键即可绕过鼠标上报（见 help 页提示）。
+    output.write('\x1b[?1049h\x1b[?25l\x1b[?1007h\x1b[?1000h\x1b[?1006h');
     output.write('\x1b[2J\x1b[H');
     readline.emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     input.resume();
+    input.on('data', this.handleData);
 
     this.removeLogListener = onLogEntry((entry) => {
       this.logLines.push(entry);
@@ -193,11 +198,12 @@ class CliTui {
     this.removeLogListener?.();
     this.removeLogListener = null;
     input.off('keypress', this.handleKeypress);
+    input.off('data', this.handleData);
     output.off('resize', this.queueRender);
     if (input.isTTY) input.setRawMode(false);
     setConsoleLogSinkEnabled(true);
-    // 关闭 alternate scroll、恢复光标、退出备用屏幕
-    output.write('\x1b[?1007l\x1b[?25h\x1b[?1049l');
+    // 关闭 SGR / 鼠标上报 / alternate scroll、恢复光标、退出备用屏幕
+    output.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
   }
 
   pushAssistant(content: string): void {
@@ -288,8 +294,54 @@ class CliTui {
     }
   }
 
+  /** SGR 鼠标事件：\x1b[<button;col;row(M|m)。仅处理滚轮（button 64=up, 65=down，加 4/8/16 表示 Shift/Alt/Ctrl）；
+   *  其它按键 (0/1/2 = 左/中/右) 一律丢弃，避免抢走原生选择/复制。 */
+  private handleData = (chunk: Buffer | string): void => {
+    if (!this.running) return;
+    const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    if (!s.includes('\x1b[<')) return;
+    const re = /\x1b\[<(\d+);\d+;\d+([Mm])/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) {
+      if (m[2] !== 'M') continue; // 滚轮只发 'M'，无 release
+      const button = parseInt(m[1], 10);
+      const base = button & ~28; // 去掉 Shift(4)/Alt(8)/Ctrl(16)
+      const big = (button & 4) !== 0; // Shift+滚轮 = 翻页
+      if (base === 64) this.scrollCurrentView(+1, big);
+      else if (base === 65) this.scrollCurrentView(-1, big);
+      // base === 0/1/2 (左/中/右) 直接忽略：让用户在终端层做选择/复制
+    }
+  };
+
+  /** 统一的滚动入口：direction +1 = 往旧/上滚，-1 = 往新/下滚。 */
+  private scrollCurrentView(direction: 1 | -1, big: boolean): void {
+    const step = (big ? 10 : 3) * direction;
+    if (this.view === 'logs') {
+      const max = Math.max(0, this.logLines.length - 1);
+      this.logScroll = Math.max(0, Math.min(max, this.logScroll + step));
+    } else if (this.view === 'status') {
+      this.statusScroll = Math.max(0, this.statusScroll - step);
+    } else if (this.view === 'help') {
+      this.helpScroll = Math.max(0, this.helpScroll - step);
+    } else {
+      return;
+    }
+    this.queueRender();
+  }
+
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
     if (!this.running) return;
+    // 鼠标 SGR 序列状态机：从 \x1b[< 到 M/m 之间的所有 keypress 都吞掉
+    if (key.sequence?.startsWith('\x1b[<') || (chunk && chunk.startsWith('\x1b[<'))) {
+      this.inMouseSeq = true;
+      return;
+    }
+    if (this.inMouseSeq) {
+      if (chunk === 'M' || chunk === 'm' || key.sequence === 'M' || key.sequence === 'm') {
+        this.inMouseSeq = false;
+      }
+      return;
+    }
 
     if (this.confirmResolver) {
       const ok = key.name === 'y' || chunk.toLowerCase() === 'y';
@@ -629,7 +681,8 @@ class CliTui {
     out.push(`    ${chalk.gray('• 完整日志写入 data/latest.log（每次启动覆盖）；可用 tail -f 查看。')}`);
     out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
     out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
-    out.push(`    ${chalk.gray('• 鼠标滚轮可滚动 Logs / Status / Help；左键选择 + 右键复制保持终端原生行为。')}`);
+    out.push(`    ${chalk.gray('• 鼠标滚轮可滚动 Logs / Status / Help。')}`);
+    out.push(`    ${chalk.gray(`• 选择 / 复制文本：${selectionHint()}`)}`);
     return out.map(l => l.length === 0 ? '' : ` ${l}`);
   }
 
@@ -759,4 +812,18 @@ function sanitizeForSingleLine(s: string): string {
     .replace(/\t/g, '    ')
     // 保留 ESC（颜色），剔除其它 C0 控制字符
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '');
+}
+
+/** 不同平台终端绕过鼠标上报、回到原生选择/复制的指引 */
+function selectionHint(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return '按住 Option（⌥）拖拽选择，再用 ⌘C 复制（iTerm2 / Terminal.app / VS Code 终端通用）';
+    case 'win32':
+      return 'Windows Terminal 按住 Shift 拖拽选择，右键复制；ConEmu 按住 Alt 拖拽';
+    case 'linux':
+      return 'GNOME/Konsole/xterm 按住 Shift 拖拽选择，再用 Ctrl+Shift+C 复制';
+    default:
+      return '按住 Shift（多数终端）或 Option（macOS）拖拽即可绕过鼠标上报';
+  }
 }
