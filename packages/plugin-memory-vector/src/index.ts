@@ -32,10 +32,6 @@ export const configSchema: ConfigSchema = {
         type: 'number', label: '单条截断字数', default: 200,
         description: '每条消息呈现给 LLM 时的字符上限，超出截断',
       },
-      summaryMaxChars: {
-        type: 'number', label: '摘要截断字数', default: 1200,
-        description: '会话摘要命中时呈现给 LLM 的字符上限。摘要是高密度长期记忆，默认应明显高于单条消息',
-      },
       minScore: {
         type: 'number', label: '最低相似度阈值', default: 0,
         description: '0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤',
@@ -76,7 +72,6 @@ export const defaultConfig = {
     timeWeight: 0.3,
     userPriorityBoost: 2.0,
     perItemMaxChars: 200,
-    summaryMaxChars: 1200,
     minScore: 0,
   },
   contextExpand: {
@@ -96,7 +91,6 @@ interface VectorMemoryConfig {
     timeWeight: number;
     userPriorityBoost: number;
     perItemMaxChars: number;
-    summaryMaxChars: number;
     minScore: number;
   };
   contextExpand: {
@@ -201,26 +195,8 @@ function renderMessage(m: Message, max: number): string {
   return `${tag} ${body}`;
 }
 
-/** 渲染向量命中。summary 不是聊天消息，使用独立标签和更宽的截断上限。 */
-function renderMemoryEntry(m: Message, messageMax: number, summaryMax: number): string {
-  const meta = (m.metadata ?? {}) as Record<string, unknown>;
-  if (meta.kind === 'summary') {
-    const ts = m.timestamp ?? 0;
-    const date = new Date(ts).toLocaleString('zh-CN');
-    const platform = platformLabel(meta.platform as string | undefined);
-    const groupName = meta.groupName as string | undefined;
-    const sessionType = meta.sessionType as string | undefined;
-    const where = groupName
-      ? `群「${groupName}」/`
-      : sessionType === 'private'
-        ? '私聊/'
-        : sessionType === 'channel'
-          ? '频道/'
-          : '';
-    const platformPrefix = platform ? `${platform}/` : '';
-    const tag = `[${platformPrefix}${where}会话摘要 @ ${date}]`;
-    return `${tag} 摘要: ${truncate(m.content ?? '', summaryMax)}`;
-  }
+/** 渲染向量命中（均为 user 消息）。 */
+function renderMemoryEntry(m: Message, messageMax: number): string {
   return renderMessage(m, messageMax);
 }
 
@@ -264,7 +240,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       timeWeight: Math.max(0, Math.min(1, (searchRaw.timeWeight as number) ?? 0.3)),
       userPriorityBoost: Math.max(1, (searchRaw.userPriorityBoost as number) ?? 2.0),
       perItemMaxChars: Math.max(20, (searchRaw.perItemMaxChars as number) ?? 200),
-      summaryMaxChars: Math.max(200, (searchRaw.summaryMaxChars as number) ?? 1200),
       minScore: Math.max(0, Math.min(1, (searchRaw.minScore as number) ?? 0)),
     },
     contextExpand: {
@@ -277,7 +252,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.logger.info(
     `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery ? '可用' : '不可用'}, ` +
     `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
-    `单条截断=${cfg.search.perItemMaxChars}字, 摘要截断=${cfg.search.summaryMaxChars}字, minScore=${cfg.search.minScore}`,
+    `单条截断=${cfg.search.perItemMaxChars}字, minScore=${cfg.search.minScore}`,
   );
 
   if (!hasRangeQuery && cfg.contextExpand.window > 0) {
@@ -323,56 +298,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.on('message:received', (msg: IncomingMessage) => {
     void indexUserMessage(msg);
   });
-
-  // === 索引：会话摘要进入向量库 ===
-  // 摘要由 memory-summary 触发后广播事件，此处订阅并 embed 入库
-  // 命中后通过 contextExpand 仍可还原原会话的对话上下文
-  async function indexSummary(payload: {
-    sessionId: string;
-    summary: string;
-    timestamp: number;
-    platform?: string;
-    groupName?: string;
-    groupId?: string;
-    sessionType?: string;
-  }): Promise<void> {
-    const text = payload.summary?.trim();
-    if (!text) return;
-    try {
-      const vec = await getEmbedder().embed(text);
-      const metadata: Record<string, unknown> = {
-        sessionId: payload.sessionId,
-        userId: '',
-        nickname: '',
-        platform: payload.platform ?? parsePlatform(payload.sessionId),
-        groupName: payload.groupName ?? '',
-        groupId: payload.groupId ?? '',
-        sessionType: payload.sessionType ?? '',
-        timestamp: payload.timestamp,
-        content: text,
-        mentions: [],
-        // 标记此条目为会话摘要，便于检索侧识别（与原始消息区分）
-        kind: 'summary',
-      };
-      await getStore().add(vec, metadata);
-      await getStore().save();
-      ctx.logger.debug(`摘要已入向量库: session=${payload.sessionId}, 长度=${text.length}`);
-    } catch (err) {
-      ctx.logger.warn('摘要向量索引失败:', err);
-    }
-  }
-
-  ctx.on('memory:summary-generated', ((payload: {
-    sessionId: string;
-    summary: string;
-    timestamp: number;
-    platform?: string;
-    groupName?: string;
-    groupId?: string;
-    sessionType?: string;
-  }) => {
-    void indexSummary(payload);
-  }) as unknown as (...args: unknown[]) => void);
 
   // === 统一记忆清除 ===
 
@@ -563,7 +488,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const sid = r.metadata.sessionId as string | undefined;
         const ts = r.metadata.timestamp as number | undefined;
         if (!sid || ts === undefined) continue;
-        if (r.metadata.kind !== 'summary' && r.metadata.content === '对话已压缩') continue;
+        if (r.metadata.content === '对话已压缩') continue;
         const fakeMsg: Message = {
           role: 'user',
           content: (r.metadata.content as string) ?? '',
@@ -587,7 +512,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         (a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0),
       );
 
-      const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars, cfg.search.summaryMaxChars));
+      const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
 
       const contextBlock =
         '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n'
@@ -713,9 +638,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           };
           return {
             score: Number(r.finalScore.toFixed(4)),
-            text: renderMemoryEntry(m, cfg.search.perItemMaxChars, cfg.search.summaryMaxChars),
+            text: renderMemoryEntry(m, cfg.search.perItemMaxChars),
             sessionId: r.metadata.sessionId,
-            kind: r.metadata.kind ?? 'message',
           };
         });
 
