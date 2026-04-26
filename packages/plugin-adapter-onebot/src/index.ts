@@ -12,6 +12,7 @@ import type {
   NormalizedNoticeEvent,
   NormalizedRequestEvent,
 } from './types.js';
+import { collectForwardSegments, formatForwardInline } from './types.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
 
@@ -1043,6 +1044,122 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
+  // ===== 合并转发自动展开 =====
+
+  /**
+   * 合并转发内容缓存：id → 已展开文本。
+   *
+   * 收到一条带 forward 段的消息时，立即拉取原文并写入文本，避免：
+   * 1) LLM 对着占位符“看不见内容”；
+   * 2) 后续走 onebot_get_forward_msg 工具时同一份转发被反复请求；
+   * 3) 转发在协议端过期后历史里彻底找不回内容。
+   *
+   * 缓存有 TTL，过期后清理（默认 1h），避免长期占内存。
+   */
+  const forwardCache = new Map<string, { text: string; expiresAt: number }>();
+  const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
+
+  /** 缓存接口（供 onebot-tools 等使用 callAction 路径时复用） */
+  function getCachedForward(id: string): string | undefined {
+    const entry = forwardCache.get(id);
+    if (!entry) return undefined;
+    if (entry.expiresAt < Date.now()) {
+      forwardCache.delete(id);
+      return undefined;
+    }
+    return entry.text;
+  }
+
+  function setCachedForward(id: string, text: string): void {
+    forwardCache.set(id, { text, expiresAt: Date.now() + FORWARD_CACHE_TTL_MS });
+  }
+
+  /**
+   * 拉取一条合并转发的内容，依次尝试多种参数键。
+   * 不同 OneBot 实现接受的字段不同：标准为 id，NapCat/Lagrange 部分版本接受
+   * message_id / res_id / m_resid。
+   */
+  async function fetchForwardOnce(state: ConnectionState, id: string): Promise<unknown | null> {
+    const attempts: Array<Record<string, unknown>> = [
+      { id },
+      { message_id: id },
+      { res_id: id },
+      { m_resid: id },
+    ];
+    let lastErr: unknown;
+    for (const params of attempts) {
+      try {
+        return await sendAction(state, 'get_forward_msg', params);
+      } catch (err) {
+        lastErr = err;
+        continue;
+      }
+    }
+    ctx.logger.debug(`get_forward_msg 全部参数尝试失败 id=${id}: ${lastErr}`);
+    return null;
+  }
+
+  /**
+   * 把 event.text 中所有 <forward id="X">[合并转发消息]</forward> 占位符
+   * 替换为可读的内联文本（多节点列表）。已成功展开的内容会写入 forwardCache，
+   * 失败的占位符保留并附简短失败标记。
+   *
+   * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
+   * 这种情况下完全无需走网络。
+   */
+  async function expandForwardsInText(
+    state: ConnectionState,
+    text: string,
+    rawSegments: import('./types.js').OneBotMessageSegment[] | undefined,
+  ): Promise<string> {
+    if (!text.includes('<forward id=')) return text;
+
+    // 收集 message 段中已自带 inline content 的 forward
+    const inlineMap = new Map<string, unknown[]>();
+    if (rawSegments && Array.isArray(rawSegments)) {
+      for (const f of collectForwardSegments(rawSegments)) {
+        if (f.inlineNodes && f.inlineNodes.length > 0) inlineMap.set(f.id, f.inlineNodes);
+      }
+    }
+
+    const idRe = /<forward id="([^"]+)">\[合并转发消息\]<\/forward>/g;
+    const ids = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = idRe.exec(text)) !== null) ids.add(m[1]);
+    if (ids.size === 0) return text;
+
+    const expansions = new Map<string, string>();
+    for (const id of ids) {
+      const cached = getCachedForward(id);
+      if (cached) {
+        expansions.set(id, cached);
+        continue;
+      }
+      const inline = inlineMap.get(id);
+      if (inline) {
+        const formatted = formatForwardInline(id, inline);
+        setCachedForward(id, formatted);
+        expansions.set(id, formatted);
+        continue;
+      }
+      const data = await fetchForwardOnce(state, id);
+      if (data) {
+        const formatted = formatForwardInline(id, data);
+        setCachedForward(id, formatted);
+        expansions.set(id, formatted);
+      } else {
+        // 失败时不缓存，但替换为带标记的占位避免 LLM 重复尝试同一个工具
+        expansions.set(
+          id,
+          `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
+        );
+      }
+    }
+
+    return text.replace(idRe, (raw, id: string) => expansions.get(id) ?? raw);
+  }
+
+
   // ----- Action 发送 -----
 
   function sendAction(
@@ -1188,6 +1305,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const state = findStateBySelfId(parsed.selfId);
       if (!state || state.status !== 'online' || !state.ws) {
         throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
+      }
+
+      // 合并转发：优先走缓存（消息到达时已抓过一次），失败再依次尝试多种参数键。
+      if (action === 'get_forward_msg') {
+        const id = String(params.id ?? params.message_id ?? params.res_id ?? params.m_resid ?? '');
+        if (id) {
+          const cached = getCachedForward(id);
+          // 缓存里存的是已渲染文本，转换回结构化对象给上层工具用并不划算；
+          // 但我们附带一份 raw 缓存以避免重复抓取。
+          if (cached) return { __aalisForwardInline: cached };
+          const data = await fetchForwardOnce(state, id);
+          if (data) {
+            // 同步一份 inline 文本到缓存，便于复用
+            try { setCachedForward(id, formatForwardInline(id, data)); } catch { /* noop */ }
+            return data;
+          }
+          throw new Error('get_forward_msg 失败：所有参数键（id/message_id/res_id/m_resid）均无法取得内容');
+        }
       }
 
       return sendAction(state, action, params);
@@ -1613,6 +1748,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         );
         event.text = rewritten;
         // images 保持原始 URL，供中间件/多模态模型使用（当前请求内仍有效）
+      }
+
+      // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
+      // 这样 LLM 不必再调用工具，且展开后的内容会随 message:received 进入历史归档。
+      if (event.text.includes('<forward id=')) {
+        try {
+          event.text = await expandForwardsInText(state, event.text, event.message);
+        } catch (err) {
+          ctx.logger.debug(`合并转发自动展开失败: ${err}`);
+        }
       }
 
       // 获取群名
