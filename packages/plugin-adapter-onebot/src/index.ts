@@ -17,6 +17,22 @@ import { expandForward, buildEnvelope } from './forward.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
 
+// ===== advisor 服务最小接口（避免对 @aalis/plugin-advisor 的强依赖） =====
+interface AdvisorRecommendationLite {
+  sessionId: string;
+  score: number;
+  reason: string;
+  topicHint: string;
+}
+interface AdvisorAnswerLite {
+  answer: string;
+  recommendations: AdvisorRecommendationLite[];
+  shouldAct: boolean;
+}
+interface AdvisorService {
+  query(args: { mode?: 'analyze' | 'proactive'; platform?: string; sessionId?: string; question?: string }): Promise<AdvisorAnswerLite>;
+}
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-adapter-onebot';
@@ -100,19 +116,28 @@ export const configSchema: ConfigSchema = {
       triggerOnAt: { type: 'boolean', label: '@ 触发', default: true, description: '消息中包含 @bot 时立刻触发回复。' },
       triggerNames: { type: 'string', label: '触发词 / 昵称', default: '', description: '消息中出现这些词时立刻触发回复，逗号分隔（自动包含人设名称）。' },
       cooldownSeconds: { type: 'number', label: '冷却时间（秒）', default: 10, description: 'AI 回复后的冷却时间。' },
-      enableIdleTrigger: { type: 'boolean', label: '空闲主动触发', default: false, description: '【已废弃】请使用 idleTriggerScope。' },
       idleTriggerScope: {
         type: 'select',
         label: '空闲主动触发范围',
         options: [
           { label: '关闭', value: 'off' },
-          { label: '会话级（原原生闲聊定时）', value: 'session' },
-          { label: '平台级（交给 advisor 跨会话决策）', value: 'platform' },
+          { label: '会话级（per-session 定时）', value: 'session' },
+          { label: '平台级（调用 advisor 跨会话决策）', value: 'platform' },
         ],
         default: 'off',
-        description: '决定由谁发起主动话题。session 为原本会话级 idleTimer；platform 不起 per-session timer，由 plugin-advisor 在平台级tick中选一个会话发起。',
+        description: '决定由谁发起主动话题。session 为原本会话级 idleTimer；platform 走适配器级轮询，遇到间隔/静默条件后调用 advisor 服务选一个会话发起。',
       },
-      idleTriggerMinutes: { type: 'number', label: '空闲间隔（分钟）', default: 180 },
+      idleTriggerStrategy: {
+        type: 'select',
+        label: '平台级触发策略',
+        options: [
+          { label: '所有会话都静默 N 分钟后触发', value: 'all-quiet' },
+          { label: '每 N 分钟固定轮询', value: 'fixed' },
+        ],
+        default: 'all-quiet',
+        description: '仅 idleTriggerScope=platform 时生效。all-quiet 更接近人类习惯，有会话活跃时不打扰。',
+      },
+      idleTriggerMinutes: { type: 'number', label: '空闲间隔/静默阈值（分钟）', default: 180, description: 'session：per-session 定时起点；platform+fixed：轮询间隔；platform+all-quiet：所有会话需静默多久后才触发。' },
       idleTriggerStyle: {
         type: 'select',
         label: '空闲重试风格',
@@ -165,8 +190,8 @@ export const defaultConfig = {
     triggerOnAt: true,
     triggerNames: '',
     cooldownSeconds: 10,
-    enableIdleTrigger: false,
     idleTriggerScope: 'off' as 'off' | 'session' | 'platform',
+    idleTriggerStrategy: 'all-quiet' as 'all-quiet' | 'fixed',
     idleTriggerMinutes: 180,
     idleTriggerStyle: 'exponential' as const,
     idleTriggerMaxMinutes: 1440,
@@ -222,8 +247,8 @@ interface ChatFlowConfig {
   triggerOnAt: boolean;
   triggerNames: string[];
   cooldownSeconds: number;
-  enableIdleTrigger: boolean;
   idleTriggerScope: 'off' | 'session' | 'platform';
+  idleTriggerStrategy: 'all-quiet' | 'fixed';
   idleTriggerMinutes: number;
   idleTriggerStyle: 'exponential' | 'fixed';
   idleTriggerMaxMinutes: number;
@@ -272,12 +297,14 @@ function resolveChatFlowConfig(raw: Record<string, unknown>): ChatFlowConfig {
     triggerOnAt: (raw.triggerOnAt as boolean) ?? true,
     triggerNames: parseStringList(raw.triggerNames),
     cooldownSeconds: (raw.cooldownSeconds as number) ?? 10,
-    enableIdleTrigger: (raw.enableIdleTrigger as boolean) ?? false,
     idleTriggerScope: ((): 'off' | 'session' | 'platform' => {
       const v = raw.idleTriggerScope;
       if (v === 'off' || v === 'session' || v === 'platform') return v;
-      // 未明设 scope 时：以旧字段 enableIdleTrigger 作为崩溃后退（true→session, false→off）
-      return raw.enableIdleTrigger === true ? 'session' : 'off';
+      return 'off';
+    })(),
+    idleTriggerStrategy: ((): 'all-quiet' | 'fixed' => {
+      const v = raw.idleTriggerStrategy;
+      return v === 'fixed' ? 'fixed' : 'all-quiet';
     })(),
     idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? 180,
     idleTriggerStyle: (raw.idleTriggerStyle as ChatFlowConfig['idleTriggerStyle']) ?? 'exponential',
@@ -879,6 +906,118 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       clearTimeout(fState.idleTimer);
       fState.idleTimer = null;
     }
+  }
+
+  // ── 平台级空闲触发（idleTriggerScope='platform'）──
+  //
+  // 设计：advisor 完全被动，不再自带 timer。adapter 在此自管一个全局 tick：
+  //   - strategy='fixed'   每 idleTriggerMinutes 分钟无条件询问 advisor；
+  //   - strategy='all-quiet' 当所有候选会话最近一次活动（含收到的消息与 bot 自己的回复）
+  //                          都至少静默 idleTriggerMinutes 分钟时才询问。
+  // advisor 不可用 → 跳过本次 tick；下次还会再试。
+  let platformIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  let platformIdleRunning = false;
+
+  function stopPlatformIdleTick(): void {
+    if (platformIdleTimer) {
+      clearTimeout(platformIdleTimer);
+      platformIdleTimer = null;
+    }
+  }
+
+  /** 计算"距离全部会话静默达标"还需等多少 ms；若已达标返回 0；无活跃会话返回 0。 */
+  function timeUntilAllQuiet(thresholdMs: number): number {
+    let maxLast = 0;
+    for (const fState of flowSessions.values()) {
+      const last = Math.max(fState.lastMessageTime, fState.lastReplyTime);
+      if (last > maxLast) maxLast = last;
+    }
+    if (maxLast === 0) return 0; // 无活动记录，立即触发（首次启动场景）
+    const elapsed = Date.now() - maxLast;
+    return Math.max(0, thresholdMs - elapsed);
+  }
+
+  /** 是否存在至少一个 sendable 候选（未禁言/冷却/限速耗尽） */
+  function hasSendableCandidate(): boolean {
+    if (!adapter.listSessionCandidates) return false;
+    const candidates = adapter.listSessionCandidates();
+    return candidates.some(c =>
+      !c.isMuted && !c.isOnCooldown
+      && (c.replyBudgetRemaining === undefined || c.replyBudgetRemaining > 0));
+  }
+
+  async function runPlatformIdleOnce(): Promise<void> {
+    if (platformIdleRunning) return;
+    platformIdleRunning = true;
+    try {
+      if (!hasSendableCandidate()) {
+        ctx.logger.debug('platform idle tick: 无可发送候选，跳过');
+        return;
+      }
+      const advisor = ctx.getService<AdvisorService>('advisor');
+      if (!advisor || typeof advisor.query !== 'function') {
+        ctx.logger.debug('platform idle tick: advisor 服务不可用，跳过');
+        return;
+      }
+      const result = await advisor.query({ mode: 'proactive', platform: 'onebot' });
+      if (!result.shouldAct || result.recommendations.length === 0) {
+        ctx.logger.debug(`platform idle tick: shouldAct=false (recs=${result.recommendations.length})`);
+        return;
+      }
+      const top = result.recommendations[0];
+      // 二次校验该候选当下仍可发
+      const cands = adapter.listSessionCandidates ? adapter.listSessionCandidates() : [];
+      const candidate = cands.find(c => c.sessionId === top.sessionId);
+      if (!candidate || candidate.isMuted || candidate.isOnCooldown
+        || (candidate.replyBudgetRemaining !== undefined && candidate.replyBudgetRemaining <= 0)) {
+        ctx.logger.debug(`platform idle tick: 推荐的 ${top.sessionId} 当下不可发，放弃`);
+        return;
+      }
+      ctx.logger.info(
+        `platform idle tick: 主动开聊 → ${top.sessionId} (score=${top.score.toFixed(2)}) reason=${top.reason}`,
+      );
+      const promptHint = top.topicHint
+        || `请根据人设主动开启一个轻松的话题。原因：${top.reason}`;
+      await ctx.emit('message:received', {
+        content: promptHint,
+        sessionId: top.sessionId,
+        platform: 'onebot',
+        source: 'idle-trigger',
+      });
+    } catch (err) {
+      ctx.logger.warn(`platform idle tick 执行失败: ${err}`);
+    } finally {
+      platformIdleRunning = false;
+    }
+  }
+
+  function schedulePlatformIdleTick(): void {
+    stopPlatformIdleTick();
+    if (flowCfg.idleTriggerScope !== 'platform') return;
+    if (flowCfg.idleTriggerMinutes <= 0) return;
+    const baseMs = flowCfg.idleTriggerMinutes * 60_000;
+
+    let delay: number;
+    if (flowCfg.idleTriggerStrategy === 'fixed') {
+      delay = baseMs;
+    } else {
+      // all-quiet：动态计算到达静默阈值还需多久；若已达标则立即触发
+      delay = timeUntilAllQuiet(baseMs);
+      if (delay === 0) delay = 1000; // 立刻 tick（避免同步递归调用栈）
+    }
+
+    platformIdleTimer = setTimeout(async () => {
+      // 触发时再校验一次（all-quiet：需要静默仍达标）
+      if (flowCfg.idleTriggerStrategy === 'all-quiet') {
+        const remaining = timeUntilAllQuiet(baseMs);
+        if (remaining > 0) {
+          schedulePlatformIdleTick();
+          return;
+        }
+      }
+      await runPlatformIdleOnce();
+      schedulePlatformIdleTick();
+    }, delay);
   }
 
   // ── debug 日志：展示消息计数和发言指数 ──
@@ -2420,9 +2559,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       connectOne(connConfig);
     }
+    schedulePlatformIdleTick();
   });
 
   ctx.on('dispose', () => {
+    stopPlatformIdleTick();
     // 清理流控定时器
     for (const [, fState] of flowSessions) {
       clearIdleTimer(fState);

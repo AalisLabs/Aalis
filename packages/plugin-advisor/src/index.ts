@@ -57,20 +57,6 @@ export const configSchema: ConfigSchema = {
     default: 20,
     description: 'get_session_recent 工具默认返回的最大条数。',
   },
-  idleEnabled: {
-    type: 'boolean',
-    label: '启用平台级空闲 tick',
-    default: false,
-    description:
-      '启用后，按 idleTickMinutes 间隔轮询所有平台候选会话，由顾问决定是否要主动开聊。' +
-      '通常配合 OneBot 适配器的 idleTriggerScope=platform 使用，避免双重触发。',
-  },
-  idleTickMinutes: {
-    type: 'number',
-    label: 'tick 间隔（分钟）',
-    default: 30,
-    description: '平台级 tick 的轮询间隔。建议 ≥ 10 分钟。',
-  },
   systemPrompt: {
     type: 'textarea',
     label: '顾问系统提示词',
@@ -84,8 +70,6 @@ export const defaultConfig = {
   maxIterations: 3,
   maxRecommendations: 3,
   recentMessageLimit: 20,
-  idleEnabled: false,
-  idleTickMinutes: 30,
   systemPrompt: '',
 };
 
@@ -94,8 +78,6 @@ interface AdvisorConfig {
   maxIterations: number;
   maxRecommendations: number;
   recentMessageLimit: number;
-  idleEnabled: boolean;
-  idleTickMinutes: number;
   systemPrompt: string;
 }
 
@@ -471,66 +453,6 @@ class AdvisorImpl implements AdvisorService {
   }
 }
 
-// ===== 平台级空闲 tick =====
-
-function startIdleTick(ctx: Context, advisor: AdvisorImpl, cfg: AdvisorConfig): () => void {
-  if (!cfg.idleEnabled) return () => {};
-  const intervalMs = Math.max(60_000, cfg.idleTickMinutes * 60_000);
-  let running = false;
-  const timer = setInterval(async () => {
-    if (running) return;
-    running = true;
-    try {
-      const platforms = ctx.getPlatformNames();
-      for (const platform of platforms) {
-        const candidates = ctx.getPlatformSessionCandidates(platform);
-        if (candidates.length === 0) continue;
-        // 仅当至少存在一个 sendable 候选时才询问 advisor
-        const sendable = candidates.filter(c =>
-          !c.isMuted &&
-          !c.isOnCooldown &&
-          (c.replyBudgetRemaining === undefined || c.replyBudgetRemaining > 0));
-        if (sendable.length === 0) continue;
-
-        let result: AdvisorAnswer;
-        try {
-          result = await advisor.query({ mode: 'proactive', platform });
-        } catch (err) {
-          ctx.logger.warn(`advisor tick query 失败 (${platform}): ${err}`);
-          continue;
-        }
-        if (!result.shouldAct || result.recommendations.length === 0) {
-          ctx.logger.debug(`advisor tick (${platform}): shouldAct=false, ${result.recommendations.length} 候选`);
-          continue;
-        }
-        const top = result.recommendations[0];
-        const candidate = sendable.find(c => c.sessionId === top.sessionId);
-        if (!candidate) {
-          ctx.logger.debug(`advisor 推荐了不可发送的会话 ${top.sessionId}，跳过`);
-          continue;
-        }
-        ctx.logger.info(
-          `advisor tick (${platform}): 主动开聊 → ${top.sessionId} (score=${top.score.toFixed(2)}) reason=${top.reason}`,
-        );
-        const promptHint = top.topicHint
-          || `请根据人设主动开启一个轻松的话题。原因：${top.reason}`;
-        await ctx.emit('message:received', {
-          content: promptHint,
-          sessionId: top.sessionId,
-          platform,
-          source: 'idle-trigger',
-        });
-      }
-    } catch (err) {
-      ctx.logger.warn(`advisor tick 异常: ${err}`);
-    } finally {
-      running = false;
-    }
-  }, intervalMs);
-
-  return () => clearInterval(timer);
-}
-
 // ===== 入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -539,8 +461,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxIterations: Math.max(1, (config.maxIterations as number) ?? 3),
     maxRecommendations: Math.max(1, (config.maxRecommendations as number) ?? 3),
     recentMessageLimit: Math.max(1, (config.recentMessageLimit as number) ?? 20),
-    idleEnabled: (config.idleEnabled as boolean) ?? false,
-    idleTickMinutes: Math.max(1, (config.idleTickMinutes as number) ?? 30),
     systemPrompt: (config.systemPrompt as string) ?? '',
   };
 
@@ -548,8 +468,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('advisor', advisor);
 
   ctx.logger.info(
-    `跨会话顾问已启动: model=${cfg.model || '默认 LLM'}, maxIter=${cfg.maxIterations}, ` +
-    `idle=${cfg.idleEnabled ? `每 ${cfg.idleTickMinutes} 分钟` : '关闭'}`,
+    `跨会话顾问已启动（被动模式）: model=${cfg.model || '默认 LLM'}, maxIter=${cfg.maxIterations}`,
   );
 
   // 注册「主智能体可调用的 advisor_query 工具」（独立分组，需在会话/平台
@@ -591,15 +510,5 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       });
       return JSON.stringify(result);
     },
-  });
-
-  // 平台级 idle tick（启动后才开始）
-  let stopTick: (() => void) | null = null;
-  ctx.on('app:started', () => {
-    stopTick = startIdleTick(ctx, advisor, cfg);
-  });
-  ctx.on('app:stopping', () => {
-    stopTick?.();
-    stopTick = null;
   });
 }
