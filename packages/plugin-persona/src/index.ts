@@ -91,8 +91,14 @@ class PersonaServiceImpl implements PersonaService {
   private sessionStates = new Map<string, Record<string, unknown>>();
   /** 当前正在处理的 sessionId（由 message:before 中间件设置） */
   currentSessionId?: string;
+  /** 当前平台 */
+  currentPlatform?: string;
   /** 当前会话类型 */
   currentSessionType?: 'group' | 'private' | 'channel';
+  /** 当前平台上的自身账号 ID */
+  currentSelfId?: string;
+  /** 当前平台上的自身账号昵称 */
+  currentSelfNickname?: string;
   /** 当前消息发送者 ID */
   currentUserId?: string;
   /** 当前消息发送者昵称 */
@@ -245,6 +251,15 @@ class PersonaServiceImpl implements PersonaService {
     // 会话上下文注入
     if (this.currentSessionId) {
       prompt += '\n\n# 当前会话环境\n';
+      if (this.currentPlatform) {
+        prompt += `当前平台：${this.currentPlatform}\n`;
+      }
+      if (this.currentSelfId || this.currentSelfNickname) {
+        const selfLabel = this.currentSelfNickname
+          ? `${this.currentSelfNickname}${this.currentSelfId ? `（${this.currentSelfId}）` : ''}`
+          : this.currentSelfId;
+        prompt += `你在当前平台的账号：${selfLabel}\n`;
+      }
       if (this.currentSessionType === 'group') {
         // 解析 sessionId 提取群号
         const parts = this.currentSessionId.split(':');
@@ -263,6 +278,7 @@ class PersonaServiceImpl implements PersonaService {
       if (this.currentNickname) {
         prompt += `当前消息发送者昵称：${this.currentNickname}\n`;
       }
+      prompt += '短期历史范围：上下文中的历史消息均来自当前会话，即上述群聊/私聊/频道；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
     }
 
     // 状态持久化注入
@@ -462,7 +478,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 跟踪当前会话信息（始终启用，用于 session 上下文注入和状态持久化）
   ctx.middleware('message:before', async (data, next) => {
     service.currentSessionId = data.message.sessionId;
+    service.currentPlatform = data.message.platform;
     service.currentSessionType = data.message.sessionType;
+    const selfIdentity = ctx.getPlatformSelfIdentity(data.message.platform, data.message.sessionId);
+    service.currentSelfId = selfIdentity?.selfId;
+    service.currentSelfNickname = selfIdentity?.nickname;
     service.currentUserId = data.message.userId;
     service.currentNickname = data.message.nickname;
     service.currentGroupName = data.message.groupName;
@@ -470,7 +490,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       await next();
     } finally {
       service.currentSessionId = undefined;
+      service.currentPlatform = undefined;
       service.currentSessionType = undefined;
+      service.currentSelfId = undefined;
+      service.currentSelfNickname = undefined;
       service.currentUserId = undefined;
       service.currentNickname = undefined;
       service.currentGroupName = undefined;
