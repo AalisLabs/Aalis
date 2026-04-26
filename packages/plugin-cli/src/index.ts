@@ -33,8 +33,8 @@ export const configSchema: ConfigSchema = {
   enableMouse: {
     type: 'boolean',
     label: '启用鼠标滚动',
-    default: true,
-    description: '启用后 CLI 可接收鼠标滚轮事件。运行时可按 Ctrl+Y 临时切换，关闭后便于拖拽选择文本。',
+    default: false,
+    description: '启用后 CLI 可接收鼠标滚轮事件，但终端拖拽选择会被鼠标上报占用。默认关闭，运行时可按 Ctrl+Y 临时切换。',
   },
 };
 
@@ -44,7 +44,7 @@ export const defaultConfig = {
   startupView: 'last',
   lastView: 'chat',
   logLines: 200,
-  enableMouse: true,
+  enableMouse: false,
 };
 
 type CLIView = 'chat' | 'logs' | 'status' | 'help';
@@ -64,7 +64,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
     startupView: parseStartupView(config.startupView),
     lastView: parseView(config.lastView, 'chat'),
-    enableMouse: config.enableMouse !== false,
+    enableMouse: config.enableMouse === true,
     logLines: (() => {
       const v = Number(config.logLines ?? defaultConfig.logLines);
       if (!Number.isFinite(v) || v < 0) return defaultConfig.logLines;
@@ -169,7 +169,7 @@ class CliTui {
     this.running = true;
 
     setConsoleLogSinkEnabled(false);
-    // 进入备用屏幕缓冲区，隐藏光标。鼠标上报可运行时切换，兼顾滚轮和文本选择。
+    // 进入备用屏幕缓冲区，隐藏光标。鼠标上报默认关闭，避免占用终端文本选择。
     // 1049h: 备用屏 / 25l: 隐藏光标 / 1000h: 基本鼠标事件 / 1006h: SGR 扩展模式
     output.write('\x1b[?1049h\x1b[?25l');
     if (this.mouseEnabled) output.write('\x1b[?1000h\x1b[?1006h');
@@ -691,7 +691,7 @@ class CliTui {
     out.push(row('Ctrl+L', 'Logs   ·  实时日志'));
     out.push(row('Ctrl+S', 'Status ·  服务与平台状态'));
     out.push(row('Ctrl+G', 'Help   ·  当前页'));
-    out.push(row('Ctrl+Y', '鼠标滚轮监听开关'));
+    out.push(row('Ctrl+Y', '鼠标滚轮监听开关（开启时会占用拖拽选择）'));
     out.push(row('Esc',    '返回上一个视图'));
     out.push(row('Ctrl+C', '退出'));
     out.push('');
@@ -710,6 +710,7 @@ class CliTui {
     out.push(`    ${chalk.gray('• 完整日志写入 data/latest.log（每次启动覆盖）；可用 tail -f 查看。')}`);
     out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
     out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
+    out.push(`    ${chalk.gray('• 鼠标监听关闭时可正常拖拽选择文本；开启后通常需按 Ctrl+Y 关闭再选择。')}`);
     return out.map(l => l.length === 0 ? '' : ` ${l}`);
   }
 
