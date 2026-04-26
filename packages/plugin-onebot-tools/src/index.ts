@@ -26,7 +26,7 @@ export const configSchema: ConfigSchema = {
   account: {
     label: '账号与好友',
     fields: {
-      enabled: { type: 'boolean', label: '启用账号与好友查询', default: true, description: '群列表、好友列表、陆陆信息、陈生人信息等' },
+      enabled: { type: 'boolean', label: '启用账号与好友查询', default: true, description: '群列表、好友列表等' },
     },
   },
   interaction: {
