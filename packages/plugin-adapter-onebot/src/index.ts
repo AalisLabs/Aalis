@@ -1156,6 +1156,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
 
     /**
+     * 非标准扩展：主动发送消息前的限速校验 + 计数。
+     *
+     * 复用 chat-flow 的滑动窗口限速参数（rateLimitWindow / rateLimitMaxReplies），
+     * 让"agent 主动发起的消息"（如转告、跨会话通知）与 chat-flow 触发的回复
+     * 共享同一个 per-session 限速桶，统一防 DDoS / 防 prompt-injection 群发滥用。
+     *
+     * - rateLimitWindow=0 或 chatFlow.enabled=false 时直接放行（不计数）。
+     * - 通过时记录一次 reply 时间戳；被拒时不记录。
+     */
+    checkAndRecordProactiveSend(sessionId: string): { allowed: boolean; reason?: string } {
+      if (!flowCfg.enabled || flowCfg.rateLimitWindow <= 0 || flowCfg.rateLimitMaxReplies <= 0) {
+        return { allowed: true };
+      }
+      const fState = getFlowSession(sessionId);
+      if (checkRateLimit(fState, sessionId)) {
+        return {
+          allowed: false,
+          reason: `${flowCfg.rateLimitWindow}s 内已发送 ${fState.replyTimestamps.length}/${flowCfg.rateLimitMaxReplies} 次，已达上限`,
+        };
+      }
+      recordReply(fState);
+      return { allowed: true };
+    },
+
+    /**
      * 非标准扩展：返回当前进程内已知"自身被禁言"的群快照。
      * 用于让 agent 在任意会话中（如私聊）检查自己在哪些群被禁言。
      * 注意：仅基于已收到的禁言事件 + 启动后懒查询恢复的状态，未收到事件的群不会出现在此列表。
