@@ -20,8 +20,6 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
 
   // ── click ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -95,8 +93,6 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
 
   // ── type_text ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -143,8 +139,6 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
 
   // ── focus_app ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {

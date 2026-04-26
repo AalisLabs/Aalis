@@ -150,10 +150,6 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
-  /** 安全级别 (默认 'safe') */
-  safety?: SafetyLevel;
-  /** 最低权限等级 (默认 1) */
-  authority?: number;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
 }
@@ -162,8 +158,6 @@ export interface RegisteredTool {
 export interface ToolSummary {
   name: string;
   description: string;
-  authority: number;
-  safety: SafetyLevel;
   groups?: string[];
 }
 
@@ -182,13 +176,13 @@ export interface ToolGroupInfo {
 // ----- 执行守卫 -----
 
 /**
- * 执行守卫上下文 —— 在工具/指令执行前进行权限检查的最小信息
+ * 执行守卫上下文 —— 在指令执行前进行权限检查的最小信息
  */
 export interface ExecutionGuardContext {
-  /** 操作名称（工具名或指令名） */
+  /** 操作名称（指令名） */
   name: string;
   /** 操作类型 */
-  type: 'tool' | 'command';
+  type: 'command';
   /** 声明的最低权限等级 */
   authority: number;
   /** 声明的安全等级 */
@@ -199,7 +193,7 @@ export interface ExecutionGuardContext {
   platform: string;
   /** 用户 ID */
   userId?: string;
-  /** 操作参数（工具调用时） */
+  /** 操作参数 */
   args?: Record<string, unknown>;
   /** 是否跳过安全等级检查（指令的工具桥接等场景） */
   skipSafetyCheck?: boolean;

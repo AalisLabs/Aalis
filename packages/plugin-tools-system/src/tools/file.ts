@@ -118,8 +118,6 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
 
   // ==================== file_write ====================
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 2,
     definition: {
       type: 'function',
       function: {
