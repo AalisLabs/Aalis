@@ -163,7 +163,7 @@ class CliTui {
 
     const persona = this.ctx.getService<PersonaService>('persona');
     const assistantName = persona?.getPersonaName() ?? 'Aalis';
-    this.chatLines.push(chalk.gray(`∘ 欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`));
+    this.chatLines.push(chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`));
 
     this.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async (request) => {
       return this.askConfirm(`/${request.name} 是高危指令，按 y 确认，其他键取消`);
@@ -224,7 +224,8 @@ class CliTui {
     if (this.streamingStartIndex === null) {
       this.streamingContent = '';
       this.streamingStartIndex = this.chatLines.length;
-      this.chatLines.push(`${chalk.green('✦ Aalis')} ${chalk.gray('│')} `);
+      // 占位行，formatAssistantBlock 会立即替换
+      this.chatLines.push('');
     }
     this.streamingContent += chunk.contentDelta;
     // 根据累积内容重建该消息占据的行
@@ -239,14 +240,34 @@ class CliTui {
     for (const l of lines) this.chatLines.push(l);
   }
 
+  /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */
+  private labelCol(): number {
+    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'Aalis';
+    return Math.max(
+      visibleLen('✦ ' + persona),  // assistant
+      visibleLen('❯ ' + this.config.prompt), // user
+      visibleLen('◆ System'),     // system
+      visibleLen('∘'),            // welcome
+    );
+  }
+
+  /** 把 label 右侧补空格到 labelCol 宽，再加 ` │ ` */
+  private formatHead(label: string): string {
+    const col = this.labelCol();
+    const pad = Math.max(0, col - visibleLen(label));
+    return label + ' '.repeat(pad) + ' ' + chalk.gray('│') + ' ';
+  }
+
+  private formatCont(): string {
+    const col = this.labelCol();
+    return ' '.repeat(col) + ' ' + chalk.gray('│') + ' ';
+  }
+
   private formatAssistantBlock(content: string): string[] {
-    const out: string[] = [];
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const head = i === 0 ? `${chalk.green('✦ Aalis')} ${chalk.gray('│')} ` : `         ${chalk.gray('│')} `;
-      out.push(head + lines[i]);
-    }
-    return out;
+    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'Aalis';
+    const firstHead = this.formatHead(chalk.green('✦ ' + persona));
+    const contHead = this.formatCont();
+    return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
 
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
@@ -351,10 +372,10 @@ class CliTui {
 
     this.history.push(text);
     if (this.history.length > 100) this.history.shift();
-    const userLines = text.split('\n');
-    for (let i = 0; i < userLines.length; i++) {
-      const head = i === 0 ? `${chalk.cyan('❯ ' + this.config.prompt)} ${chalk.gray('│')} ` : `${' '.repeat(visibleLen('❯ ' + this.config.prompt))} ${chalk.gray('│')} `;
-      this.chatLines.push(head + userLines[i]);
+    const firstHead = this.formatHead(chalk.cyan('❯ ' + this.config.prompt));
+    const contHead = this.formatCont();
+    for (const [i, line] of text.split('\n').entries()) {
+      this.chatLines.push((i === 0 ? firstHead : contHead) + line);
     }
     this.trimChat();
 
@@ -366,7 +387,7 @@ class CliTui {
         args: parsed.args,
         raw: parsed.raw,
       });
-      if (result) this.chatLines.push(`${chalk.yellow('◆ System')} ${chalk.gray('│')} ${result}`);
+      if (result) this.chatLines.push(this.formatHead(chalk.yellow('◆ System')) + result);
       this.trimChat();
       this.queueRender();
       if (parsed.name === 'shutdown' || parsed.name === 'restart') this.stop();
@@ -516,15 +537,19 @@ class CliTui {
 
   private getLogViewLines(width: number): string[] {
     const inner = width - 2;
+    // 与 console 输出格式保持一致：ts LEVEL scope message
+    // scope 不截断，不足时消息尖努进行无省略号截断
     return this.logLines.map(entry => {
-      const ts = chalk.gray(entry.timestamp);
+      const ts    = chalk.gray(entry.timestamp);
       const level = LEVEL_TAG[entry.level];
-      const scope = chalk.dim(entry.scope.padEnd(18).slice(0, 18));
-      const head = `${ts} ${level} ${scope} `;
-      const msg = entry.message;
-      const headLen = visibleLen(head);
-      const first = head + clipAnsi(msg, Math.max(1, inner - headLen));
-      return `  ${first}`;
+      const scope = chalk.magenta(entry.scope);
+      const head  = `${ts} ${level} ${scope} `;
+      const headW = visibleLen(head);
+      const msgW  = Math.max(1, inner - headW);
+      const msg   = stringWidth(entry.message) <= msgW
+        ? entry.message
+        : clipExact(entry.message, msgW);
+      return `  ${head}${msg}`;
     });
   }
 
@@ -660,10 +685,10 @@ const BOX_BR = '╯';
 const BOX_V  = '│';
 
 const LEVEL_TAG: Record<LogEntry['level'], string> = {
-  debug: chalk.gray('DBG'),
-  info: chalk.cyan('INF'),
-  warn: chalk.yellow('WRN'),
-  error: chalk.red('ERR'),
+  debug: chalk.gray('DEBUG'),
+  info:  chalk.cyan('INFO '),
+  warn:  chalk.yellow('WARN '),
+  error: chalk.red('ERROR'),
 };
 
 /** 终端可见宽度（处理 ANSI / CJK / emoji / 零宽字符） */
