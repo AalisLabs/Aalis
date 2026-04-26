@@ -17,7 +17,6 @@ export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): voi
 
   // ── list_apps ── (合并 window_list + ui_processes)
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {
@@ -105,8 +104,6 @@ export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): voi
 
   // ── window_resize ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {

@@ -72,8 +72,6 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
 
   // ── screen_capture ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {

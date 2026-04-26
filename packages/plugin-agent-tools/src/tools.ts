@@ -4,9 +4,7 @@ import type {
   ToolCallContext,
   ToolSummary,
   ToolGroupInfo,
-  SafetyLevel,
   ToolService,
-  ExecutionGuard,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
@@ -18,16 +16,12 @@ import type { Logger } from '@aalis/core';
  */
 export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
-  private _overrides = new Map<string, { authority?: number; safety?: string }>();
   private _groups = new Map<string, ToolGroupInfo>();
   private logger: Logger;
-  private _guard?: ExecutionGuard;
 
   constructor(logger: Logger) {
     this.logger = logger.child('tools');
   }
-
-  setExecutionGuard(guard: ExecutionGuard): void { this._guard = guard; }
 
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void {
     const name = tool.definition.function.name;
@@ -68,13 +62,9 @@ export class ToolRegistry implements ToolService {
       tools = tools.filter(t => !t.groups || t.groups.length === 0);
     }
     return tools.map(t => {
-      const name = t.definition.function.name;
-      const o = this._overrides.get(name);
       return {
-        name,
+        name: t.definition.function.name,
         description: t.definition.function.description,
-        authority: o?.authority ?? t.authority ?? 1,
-        safety: (o?.safety as SafetyLevel) ?? t.safety ?? 'safe',
         groups: t.groups,
       };
     });
@@ -83,46 +73,17 @@ export class ToolRegistry implements ToolService {
   getAll(): Array<{
     name: string;
     description: string;
-    authority: number;
-    safety: string;
-    baseAuthority: number;
-    baseSafety: string;
-    overridden: boolean;
     pluginName: string;
     groups?: string[];
   }> {
     return [...this.tools.values()].map(t => {
-      const name = t.definition.function.name;
-      const o = this._overrides.get(name);
       return {
-        name,
+        name: t.definition.function.name,
         description: t.definition.function.description,
-        authority: o?.authority ?? t.authority ?? 1,
-        safety: o?.safety ?? t.safety ?? 'safe',
-        baseAuthority: t.authority ?? 1,
-        baseSafety: t.safety ?? 'safe',
-        overridden: !!o,
         pluginName: t.pluginName,
         groups: t.groups,
       };
     });
-  }
-
-  setOverride(name: string, override: { authority?: number; safety?: string }): void {
-    this._overrides.set(name, override);
-  }
-
-  removeOverride(name: string): void { this._overrides.delete(name); }
-
-  getOverrides(): Record<string, { authority?: number; safety?: string }> {
-    const result: Record<string, { authority?: number; safety?: string }> = {};
-    for (const [name, o] of this._overrides) result[name] = o;
-    return result;
-  }
-
-  loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void {
-    this._overrides.clear();
-    for (const [name, o] of Object.entries(overrides)) this._overrides.set(name, o);
   }
 
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void {
@@ -148,21 +109,6 @@ export class ToolRegistry implements ToolService {
   ): Promise<string> {
     const tool = this.tools.get(toolName);
     if (!tool) return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
-
-    if (this._guard) {
-      const override = this._overrides.get(toolName);
-      const rejection = await this._guard({
-        name: toolName,
-        type: 'tool',
-        authority: override?.authority ?? tool.authority ?? 1,
-        safety: (override?.safety ?? tool.safety ?? 'safe') as SafetyLevel,
-        sessionId: callCtx.sessionId,
-        platform: callCtx.platform ?? 'unknown',
-        userId: callCtx.userId,
-        args,
-      });
-      if (rejection) return JSON.stringify({ error: rejection });
-    }
 
     try {
       const result = await tool.handler(args, callCtx);

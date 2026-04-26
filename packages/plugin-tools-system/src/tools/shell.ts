@@ -65,8 +65,6 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
 
   // ==================== exec ====================
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -160,8 +158,6 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
 
   // ==================== exec_background ====================
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -331,8 +327,6 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
 
   // ==================== process_kill ====================
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 2,
     definition: {
       type: 'function',
       function: {

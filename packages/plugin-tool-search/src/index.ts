@@ -196,8 +196,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const toolDetails = paged.map(t => ({
         name: t.name,
         description: t.description,
-        authority: t.authority,
-        safety: t.safety,
       }));
 
       // 收集搜索结果所在分组中未包含的其他工具，作为关联提示

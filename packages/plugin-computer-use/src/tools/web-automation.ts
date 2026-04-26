@@ -56,8 +56,6 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
 
   // ── web_connect ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -164,7 +162,6 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
 
   // ── web_inspect ──
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {
@@ -228,8 +225,6 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
 
   // ── web_action ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -305,8 +300,6 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
 
   // ── web_eval ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 5,
     definition: {
       type: 'function',
       function: {

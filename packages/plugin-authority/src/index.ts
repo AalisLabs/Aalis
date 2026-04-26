@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, WebuiPage, ConfigManager, Logger, App, ToolService, CommandService, ExecutionGuardContext, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from '@aalis/core';
+import type { Context, WebuiPage, ConfigManager, Logger, App, CommandService, ExecutionGuardContext, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from '@aalis/core';
 
 // ===== AuthorityManager 实现 =====
 
@@ -148,7 +148,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   const guard = async (guardCtx: ExecutionGuardContext): Promise<string | null> => {
     const userAuth = authority.getAuthority(guardCtx.platform, guardCtx.userId);
     if (userAuth < guardCtx.authority) {
-      return `权限不足: ${guardCtx.type === 'command' ? '指令' : '工具'} "${guardCtx.name}" 需要权限等级 ${guardCtx.authority}，当前用户等级 ${userAuth}`;
+      return `权限不足: 指令 "${guardCtx.name}" 需要权限等级 ${guardCtx.authority}，当前用户等级 ${userAuth}`;
     }
     if (guardCtx.safety === 'dangerous' && !guardCtx.skipSafetyCheck) {
       const confirmed = await authority.confirmDangerous({
@@ -159,18 +159,16 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
         platform: guardCtx.platform,
       });
       if (!confirmed) {
-        return guardCtx.type === 'command'
-          ? `已取消执行指令 ${guardCtx.name}。`
-          : `用户已取消执行工具 "${guardCtx.name}"`;
+        return `已取消执行指令 ${guardCtx.name}。`;
       }
     }
     return null;
   };
 
-  // 注入到已有的 tools/commands 服务
+  // 注入到已有的 commands 服务；AI 工具不再走用户权限审查
   const injectGuard = (svcName: string) => {
-    if (svcName === 'tools' || svcName === 'commands') {
-      const svc = ctx.getService<ToolService | CommandService>(svcName);
+    if (svcName === 'commands') {
+      const svc = ctx.getService<CommandService>(svcName);
       if (svc?.setExecutionGuard) {
         svc.setExecutionGuard(guard);
         ctx.logger.debug(`权限守卫已注入: ${svcName}`);
@@ -182,7 +180,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   injectGuard('tools');
   injectGuard('commands');
 
-  // 未来注册的服务也注入（处理 authority 先于 tools/commands 加载的情况）
+  // 未来注册的服务也注入（处理 authority 先于 commands 加载的情况）
   ctx.on('service:registered', (name: string) => injectGuard(name));
 
   // ===== 应用停止时保存 =====
@@ -243,7 +241,6 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     // 扁平化所有指令节点（含递归子指令），按深度优先顺序，便于 UI 表格渲染
     const cmdNodes = ctx.commands?.getAllNodes() ?? [];
     const tools = ctx.tools?.getAll() ?? [];
-    const toolOverrides = ctx.tools?.getOverrides() ?? {};
     return {
       users,
       owners,
@@ -275,7 +272,6 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       })),
       commandOverrides: overrides,
       tools,
-      toolOverrides,
     };
   },
 
@@ -370,34 +366,4 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     return { message: `指令 ${name} 覆盖已重置` };
   },
 
-  /** 更新单条工具的权限覆盖 */
-  async setToolOverride(ctx, args) {
-    const { name, authority, safety } = args;
-    if (!name || typeof name !== 'string') throw new Error('name 必填');
-    const app = ctx.getService<App>('app');
-    if (!app) throw new Error('App 不可用');
-    const override: { authority?: number; safety?: string } = {};
-    if (typeof authority === 'number') override.authority = authority;
-    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
-    if (Object.keys(override).length === 0) {
-      ctx.tools?.removeOverride(name);
-    } else {
-      ctx.tools?.setOverride(name, override);
-    }
-    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
-    app.saveConfig();
-    return { message: `工具 ${name} 权限已更新` };
-  },
-
-  /** 重置工具覆盖 */
-  async resetToolOverride(ctx, args) {
-    const { name } = args;
-    if (!name || typeof name !== 'string') throw new Error('name 必填');
-    const app = ctx.getService<App>('app');
-    if (!app) throw new Error('App 不可用');
-    ctx.tools?.removeOverride(name);
-    ctx.config.set('toolOverrides', ctx.tools?.getOverrides() ?? {});
-    app.saveConfig();
-    return { message: `工具 ${name} 覆盖已重置` };
-  },
 };

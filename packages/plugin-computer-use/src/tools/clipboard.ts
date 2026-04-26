@@ -9,8 +9,6 @@ export function registerClipboardTools(ctx: Context, adapter: PlatformAdapter): 
 
   // ── clipboard_read ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
@@ -35,8 +33,6 @@ export function registerClipboardTools(ctx: Context, adapter: PlatformAdapter): 
 
   // ── clipboard_write ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
