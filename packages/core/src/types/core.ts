@@ -310,6 +310,8 @@ export interface AalisEvents {
   'plugin:unloaded': [name: string];
   'plugins:changed': [];
   'ready': [];
+  /** 应用已启动完成，适合 CLI / TUI 等用户交互入口接管终端 */
+  'app:started': [];
   'dispose': [];
   'restarting': [];
   /** 应用正在启动（start() 开头，在服务检查和消息路由注册之前） */

@@ -574,6 +574,7 @@ export class App {
     this.ctx.config.watch(() => this.handleConfigFileChanged());
 
     this.logger.info('启动完成');
+    await this.ctx.emit('app:started');
   }
 
   /**
