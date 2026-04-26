@@ -262,10 +262,13 @@ class AdvisorImpl implements AdvisorService {
 
       const toolCalls = resp.toolCalls ?? [];
       // 把 assistant 这一轮加入历史
+      // 注意：DeepSeek 思考模式要求 history 中带 reasoning_content 的 assistant
+      // 消息必须原样回传，否则 400。其他 provider 忽略此字段不影响。
       messages.push({
         role: 'assistant',
         content: resp.content ?? '',
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        reasoningContent: resp.reasoningContent ?? undefined,
       });
 
       if (toolCalls.length === 0) {
