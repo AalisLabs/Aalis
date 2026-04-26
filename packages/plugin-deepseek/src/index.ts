@@ -76,10 +76,6 @@ export const configSchema: ConfigSchema = {
     ],
     description: '思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。',
   },
-  jsonMode: {
-    type: 'boolean', label: 'JSON Mode', default: true,
-    description: '启用后强制模型输出合法 JSON（response_format: json_object）。当工具可用时自动禁用以避免冲突。',
-  },
 };
 
 export const defaultConfig = {
@@ -103,7 +99,6 @@ interface DeepSeekConfig {
   contextLength: number;
   strictToolCalls: boolean;
   reasoningEffort: 'auto' | 'high' | 'max';
-  jsonMode: boolean;
 }
 
 // ===== DeepSeek API 消息格式 =====
@@ -173,7 +168,6 @@ class DeepSeekLLMService implements LLMService {
   private enableThinking: boolean;
   private reasoningEffort: 'auto' | 'high' | 'max';
   private strictToolCalls: boolean;
-  private jsonMode: boolean;
   private logger;
 
   constructor(ctx: Context, config: DeepSeekConfig, enableThinking: boolean) {
@@ -189,7 +183,6 @@ class DeepSeekLLMService implements LLMService {
     this.enableThinking = enableThinking;
     this.reasoningEffort = config.reasoningEffort;
     this.strictToolCalls = config.strictToolCalls;
-    this.jsonMode = config.jsonMode;
     this.logger = ctx.logger;
   }
 
@@ -262,60 +255,6 @@ class DeepSeekLLMService implements LLMService {
     this.enableThinking = value;
   }
 
-  /**
-   * 判断是否应启用 JSON Mode
-   * 条件：调用方请求 json_object + 配置启用 + 非思考模式 + 消息含 json 关键词（DeepSeek API 要求）
-   * 注意：当请求包含 tools 时不启用 JSON Mode——DeepSeek 模型在同时收到
-   * response_format 和 tools 时会将工具调用意图写入 JSON content，
-   * 而不产生实际的 tool_calls，导致工具永远不被执行。
-   */
-  private shouldUseJsonMode(request: ChatRequest, messages: APIMessage[]): boolean {
-    if (request.responseFormat !== 'json_object') return false;
-    if (!this.jsonMode) return false;
-    if (this.enableThinking) return false;
-    if (request.tools && request.tools.length > 0) return false;
-    return messages.some(m => typeof m.content === 'string' && /json/i.test(m.content));
-  }
-
-  /**
-   * JSON 安全调用：内部处理 DeepSeek JSON Mode 的已知问题
-   * 1. 空内容重试（DeepSeek 文档注意事项 #4：JSON Output 有概率返回空 content）
-   * 2. 纯文本格式转换（模型未遵循 JSON 指令时，追加消息要求格式化）
-   */
-  private async chatWithJsonRetry(request: ChatRequest): Promise<ChatResponse> {
-    const response = await this.chat(request);
-
-    // 有工具调用时不需要 JSON 内容
-    if (response.toolCalls?.length) return response;
-
-    // 空内容重试
-    if (!response.content?.trim()) {
-      this.logger.debug('JSON Mode 返回空内容，重试原始请求');
-      const retry = await this.chat(request);
-      if (retry.content?.trim()) return retry;
-      return response;
-    }
-
-    // 非 JSON 内容：格式转换
-    if (!response.content.trim().startsWith('{')) {
-      this.logger.debug('JSON 格式转换：将纯文本回复转为结构化 JSON');
-      const retryRequest: ChatRequest = {
-        ...request,
-        messages: [
-          ...request.messages,
-          { role: 'assistant', content: response.content },
-          { role: 'user', content: '请将你上面的回复严格转换为系统提示中要求的 JSON 格式，保留回复的完整内容，填充所有字段。只输出 JSON，不要输出其他任何内容。' },
-        ],
-        tools: undefined,
-        temperature: 0.3,
-      };
-      const retry = await this.chat(retryRequest);
-      if (retry.content?.trim().startsWith('{')) return retry;
-    }
-
-    return response;
-  }
-
   getTemperature(): number {
     return this.temperature;
   }
@@ -352,12 +291,7 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    const jsonMode = this.shouldUseJsonMode(request, messages);
-    if (jsonMode) {
-      body.response_format = { type: 'json_object' };
-    }
-
-    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}${jsonMode ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -413,9 +347,8 @@ class DeepSeekLLMService implements LLMService {
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
-    const jsonMode = this.shouldUseJsonMode(request, messages);
 
-    // ===== 统一流式路径（JSON Mode 和普通模式共用） =====
+    // ===== 统一流式路径 =====
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -437,11 +370,7 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
-    if (jsonMode) {
-      body.response_format = { type: 'json_object' };
-    }
-
-    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}${jsonMode ? ' (JSON Mode)' : ''}: ${body.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -590,15 +519,6 @@ class DeepSeekLLMService implements LLMService {
       toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
     }
 
-    // JSON Mode 空内容重试：DeepSeek 文档注意事项 #4（JSON Output 有概率返回空 content）
-    if (jsonMode && !accContent.trim() && toolCalls.length === 0) {
-      this.logger.debug('JSON Mode 流式返回空内容，重试原始请求');
-      const retry = await this.chat(request);
-      if (retry.content) yield { contentDelta: retry.content };
-      yield { done: true, toolCalls: retry.toolCalls, usage: retry.usage };
-      return;
-    }
-
     yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
   }
 
@@ -712,7 +632,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const v = config.reasoningEffort as string | undefined;
       return v === 'high' || v === 'max' ? v : 'auto';
     })(),
-    jsonMode: (config.jsonMode as boolean) ?? true,
   };
 
   if (!deepseekConfig.apiKey) {
