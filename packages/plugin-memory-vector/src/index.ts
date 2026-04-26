@@ -168,31 +168,14 @@ function renderMessage(m: Message, max: number): string {
   // 平台前缀
   const platformPrefix = platform ? `${platform}/` : '';
 
-  const who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : (userId || '');
+  const who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : userId;
   const tag = `[${platformPrefix}${where}${who}${who ? ' ' : ''}@ ${date}]`;
 
   // 渲染时剥掉历史消息内已有的 sender 前缀（archive 入库时加的 [Alice(123)]: ...）
   // 来源标签 tag 已表达完整身份，避免双重前缀
   const cleanContent = (m.content ?? '').replace(/^\[[^\]]{1,80}\]:\s+/, '');
 
-  let body: string;
-  switch (m.role) {
-    case 'user':
-      body = `用户: ${truncate(cleanContent, max)}`;
-      break;
-    case 'assistant':
-      body = `助手: ${truncate(cleanContent, max)}`;
-      break;
-    case 'system':
-      body = `系统: ${truncate(cleanContent, max)}`;
-      break;
-    case 'tool':
-      body = `工具(${m.name ?? ''}): ${truncate(cleanContent, max)}`;
-      break;
-    default:
-      body = truncate(cleanContent, max);
-  }
-  return `${tag} ${body}`;
+  return `${tag} ${truncate(cleanContent, max)}`;
 }
 
 /** 渲染向量命中（均为 user 消息）。 */
