@@ -289,8 +289,8 @@ class PersonaServiceImpl implements PersonaService {
       if (customPrompt) {
         prompt += customPrompt + '\n';
       } else {
-        prompt += '# 输出格式（强制）\n';
-        prompt += '你的每一次回复都必须严格使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
+        prompt += '# 输出格式（最终回复时必须使用）\n';
+        prompt += '每当你需要输出文字回复时（无论是否调用了工具），必须使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
       }
       prompt += '{\n';
       const entries = Object.entries(effectiveFormat.fields);
@@ -305,7 +305,7 @@ class PersonaServiceImpl implements PersonaService {
       prompt += '}\n';
       if (!customPrompt) {
         prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。\n';
-        prompt += '任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。';
+        prompt += '注意：调用工具时只需要遵循工具调用规范，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。';
       }
     }
 
@@ -485,57 +485,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (baseFormat) {
     ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
   }
-
-  // llm-call:before 钩子：有工具时柔化 JSON 格式约束
-  // JSON 输出格式与原生 tool_calls 冲突：DeepSeek 等模型在看到强 JSON 约束时
-  // 倾向于把工具意图写进 JSON 而不产生实际 tool_calls。
-  // 解法：有工具可用时柔化 JSON 约束，让模型自由使用原生工具。
-  ctx.middleware('llm-call:before', async (data, next) => {
-    if (data.tools.length === 0) {
-      await next();
-      return;
-    }
-
-    // 解析当前会话的 outputFormat
-    let personaOpts: PersonaSessionOptions | undefined;
-    try {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
-      if (sm && data.sessionId) {
-        const resolved = sm.resolveConfig(data.sessionId, data.platform);
-        personaOpts = {
-          persona: resolved.persona,
-          disableOutputFormat: resolved.disableOutputFormat,
-          clientSideJsonRendering: resolved.clientSideJsonRendering,
-        };
-      }
-    } catch { /* session-manager 不可用 */ }
-
-    const outputFormat = service.getOutputFormat(personaOpts);
-    if (!outputFormat) {
-      await next();
-      return;
-    }
-
-    // 对系统提示中的 JSON 格式约束进行柔化
-    const systemMsg = data.messages.find((m: { role: string }) => m.role === 'system');
-    if (systemMsg?.content) {
-      const original = systemMsg.content;
-      systemMsg.content = systemMsg.content
-        .replace(
-          '# 输出格式（强制）\n你的每一次回复都必须严格使用以下 JSON 格式，不要输出 JSON 之外的任何内容：',
-          '# 输出格式（最终回复时必须使用）\n每当你需要输出文字回复时（无论是否调用了工具），必须使用以下 JSON 格式，不要输出 JSON 之外的任何内容：',
-        )
-        .replace(
-          'JSON 中只允许包含以上字段，禁止添加任何额外字段（例如 think、reason、reasoning 等）。\n任何不符合此 JSON 格式的回复都会被系统丢弃，导致发言失败。即使只是一句简短回复，也必须使用完整 JSON 结构。',
-          'JSON 中只允许包含以上字段，禁止添加任何额外字段（例如 think、reason、reasoning 等）。\n注意：调用工具时只需要遵循工具调用规范，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。',
-        );
-      if (systemMsg.content !== original) {
-        ctx.logger.debug('persona: 已柔化 JSON 格式约束（检测到工具可用）');
-      }
-    }
-
-    await next();
-  }, 50); // 中等优先级，在 tool-search (100) 之后执行
 
   ctx.middleware('response:before', async (data, next) => {
     await next();
