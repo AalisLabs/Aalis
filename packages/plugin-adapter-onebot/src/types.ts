@@ -108,6 +108,12 @@ export interface OneBotActionResponse {
   echo?: string;
 }
 
+/** 协议层解析出的机器人自身账号信息 */
+export interface OneBotSelfInfo {
+  userId?: string;
+  nickname?: string;
+}
+
 /** 发送消息参数 (标准化) */
 export interface SendMessageParams {
   detailType: string;
@@ -126,7 +132,7 @@ export interface OneBotProtocol {
   getSelfInfoAction(): string;
 
   /** 解析自身信息响应 */
-  parseSelfInfo(data: unknown): string | undefined;
+  parseSelfInfo(data: unknown): OneBotSelfInfo;
 
   /** 解析原始事件类型 */
   parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other';
