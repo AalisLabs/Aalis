@@ -760,12 +760,19 @@ function registerGroupInfoTools(ctx: Context): void {
       const forwardId = String(args.forward_id);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
+      // 适配器的 callAction 已对 get_forward_msg 做了多参数键回退（id/message_id/res_id/m_resid）
+      // 并维护了一份接收时即抓取的缓存。这里直接调用即可。
       let data: unknown;
       try {
         data = await callAction(ctx, callCtx, 'get_forward_msg', { id: forwardId });
       } catch (err) {
-        ctx.logger.debug(`get_forward_msg(id) 失败，尝试 message_id 参数: ${err}`);
-        data = await callAction(ctx, callCtx, 'get_forward_msg', { message_id: forwardId });
+        return `合并转发读取失败：${err instanceof Error ? err.message : String(err)}。该转发可能已在协议端过期，或当前 OneBot 实现不支持跨会话读取。`;
+      }
+
+      // 适配器在缓存命中时返回 { __aalisForwardInline: '...已渲染的内联文本...' }，
+      // 这是已经按 <forward id="..."> 包裹好的可读文本，直接回给 LLM 即可。
+      if (data && typeof data === 'object' && '__aalisForwardInline' in (data as Record<string, unknown>)) {
+        return String((data as Record<string, unknown>).__aalisForwardInline);
       }
 
       const formatContext = await recognizeForwardImages(ctx, callCtx, data, limit);
