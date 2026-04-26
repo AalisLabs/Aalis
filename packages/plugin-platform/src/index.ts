@@ -41,6 +41,10 @@ export function apply(ctx: Context): void {
     getPlatformNames(): string[] {
       return ctx.getPlatformNames();
     },
+
+    getSelfIdentity(platform: string, sessionId?: string) {
+      return ctx.getPlatformSelfIdentity(platform, sessionId);
+    },
   };
 
   ctx.provide('platform-manager', manager);
