@@ -1256,6 +1256,8 @@ class DefaultAgent implements AgentService {
   }
 
   private async archiveIncomingMessage(incoming: IncomingMessage): Promise<void> {
+    // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
+    if (incoming.source === 'idle-trigger') return;
     const archive = this.ctx.getService<MessageArchiveService>('message-archive');
     if (!archive) return;
     try {
