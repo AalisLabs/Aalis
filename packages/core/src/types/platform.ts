@@ -27,6 +27,33 @@ export interface PlatformSelfIdentity {
 }
 
 /**
+ * 跨会话决策候选 —— 平台向 advisor / 调度器暴露当前所有可用会话的快照。
+ *
+ * 仅描述会话级元数据（活跃度/限速/禁言等），不携带消息内容。
+ * 内容获取由调用方按需通过 memory / 摘要服务自行查询。
+ */
+export interface PlatformSessionCandidate {
+  /** 平台会话 ID（含平台前缀） */
+  sessionId: string;
+  /** 平台名（与 sessionId 前缀一致） */
+  platform: string;
+  /** 会话类型（'group' / 'private' / 'channel' 或平台自定义） */
+  sessionType: string;
+  /** 该会话最近一条消息的时间戳（含用户消息与 bot 自身消息） */
+  lastActivityAt?: number;
+  /** 该会话上 bot 最近一次发送消息的时间戳 */
+  lastBotSentAt?: number;
+  /** 当前是否处于禁言状态（无法发送） */
+  isMuted?: boolean;
+  /** 当前是否处于 cooldown（短期不应再发） */
+  isOnCooldown?: boolean;
+  /** 限速窗口内剩余可发条数；undefined 表示未启用限速 */
+  replyBudgetRemaining?: number;
+  /** 简短描述（如群名 / 对端昵称），用于 LLM 决策时识别 */
+  hint?: string;
+}
+
+/**
  * 平台适配器 —— 每个平台插件实现此接口
  *
  * 提供统一的平台抽象，使核心可以查询所有已接入平台的连接状态，
@@ -59,6 +86,14 @@ export interface PlatformAdapter {
    * @param params    API 参数
    */
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>;
+  /**
+   * 列出当前活跃的会话候选（仅元数据，不含消息内容）。
+   *
+   * 供 plugin-advisor 等跨会话决策插件使用：在判断「现在是否应该向某个
+   * 群/私聊主动说话」时，先拿到所有候选会话快照，再按 advisor 自己的策略
+   * 召回内容、做 LLM 决策。
+   */
+  listSessionCandidates?(): PlatformSessionCandidate[];
 }
 
 // ----- 平台管理服务接口 -----
@@ -82,4 +117,6 @@ export interface PlatformManagerService {
   getPlatformNames(): string[];
   /** 获取指定平台在当前会话中的自身身份 */
   getSelfIdentity?(platform: string, sessionId?: string): PlatformSelfIdentity | undefined;
+  /** 列出（指定平台或所有平台的）会话候选，供 advisor 等跨会话决策使用 */
+  listSessionCandidates?(platform?: string): PlatformSessionCandidate[];
 }
