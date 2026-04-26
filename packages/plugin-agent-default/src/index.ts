@@ -512,6 +512,7 @@ class DefaultAgent implements AgentService {
         // 在工具调用循环前，先保存用户消息（确保历史中消息顺序正确）
         await this.archiveIncomingMessage(incoming);
         let userMessageSaved = true;
+        const assistantMetadata = this.buildAssistantMetadata(incoming);
 
         // 工具调用循环
         let iterations = 0;
@@ -526,6 +527,7 @@ class DefaultAgent implements AgentService {
             content: response.content,
             toolCalls: response.toolCalls,
             reasoningContent: response.reasoningContent,
+            metadata: assistantMetadata,
           });
 
           // 持久化 assistant 消息（含 toolCalls），确保历史记录完整
@@ -535,6 +537,7 @@ class DefaultAgent implements AgentService {
             toolCalls: response.toolCalls,
             reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
+            metadata: assistantMetadata,
           });
 
           // 执行每个工具调用
@@ -691,6 +694,7 @@ class DefaultAgent implements AgentService {
             content: replyContent,
             reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
+            metadata: assistantMetadata,
           });
 
           // 发送给流式客户端时使用合并版本（客户端流式阶段已自行维护 reasoningSegments）
@@ -1253,6 +1257,20 @@ class DefaultAgent implements AgentService {
         this.logger.warn('保存消息到记忆失败:', err);
       }
     }
+  }
+
+  private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
+    const identity = this.ctx.getPlatformSelfIdentity(incoming.platform, incoming.sessionId);
+    const metadata: Record<string, unknown> = {
+      platform: incoming.platform,
+      senderType: 'assistant',
+    };
+    if (identity?.selfId) metadata.userId = identity.selfId;
+    if (identity?.nickname) metadata.nickname = identity.nickname;
+    if (incoming.groupId) metadata.groupId = incoming.groupId;
+    if (incoming.groupName) metadata.groupName = incoming.groupName;
+    if (incoming.sessionType) metadata.sessionType = incoming.sessionType;
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 
   private async archiveIncomingMessage(incoming: IncomingMessage): Promise<void> {
