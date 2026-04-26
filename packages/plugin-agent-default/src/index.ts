@@ -483,16 +483,6 @@ class DefaultAgent implements AgentService {
           `temperature=${temperature}, maxTokens=${maxTokens}`,
         );
 
-        // 检查是否期望 JSON 输出（persona 有 outputFormat 且 session 未禁用）
-        // agent 仅传递 responseFormat hint，各 LLM provider 自行决定如何处理
-        // （是否启用 JSON Mode、是否与 tools/thinking 冲突等由 provider 内部协调）
-        const persona = this.ctx.getService<PersonaService>('persona');
-        const expectJson = !!persona?.getOutputFormat?.(personaOpts);
-
-        // 有工具时不传 response_format: json_object，避免模型将工具意图写进 JSON 而不产生 tool_calls
-        // persona 的 llm-call:before 钩子会柔化系统提示中的 JSON 约束
-        const responseFormat = (expectJson && llmBeforeData.tools.length === 0) ? 'json_object' as const : undefined;
-
         const t0 = Date.now();
         let response = await this.consumeStream(llm, {
           messages: llmBeforeData.messages,
@@ -501,7 +491,6 @@ class DefaultAgent implements AgentService {
           maxTokens,
           model: modelOverride,
           signal,
-          responseFormat,
         }, incoming.sessionId, incoming.platform, signal);
 
         this.debugLogResponse(response, Date.now() - t0);
@@ -639,7 +628,6 @@ class DefaultAgent implements AgentService {
             maxTokens,
             model: modelOverride,
             signal,
-            responseFormat,
           }, incoming.sessionId, incoming.platform, signal);
 
           this.debugLogResponse(response, Date.now() - tN, iterations);
