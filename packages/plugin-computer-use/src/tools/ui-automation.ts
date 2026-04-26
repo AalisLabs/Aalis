@@ -108,7 +108,6 @@ export function registerUIAutomationTools(ctx: Context): void {
 
   // ── ui_tree ──
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {
@@ -160,7 +159,6 @@ export function registerUIAutomationTools(ctx: Context): void {
 
   // ── ui_find ──
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {
@@ -236,7 +234,6 @@ export function registerUIAutomationTools(ctx: Context): void {
 
   // ── ui_element_at ──
   ctx.registerTool({
-    safety: 'safe',
     definition: {
       type: 'function',
       function: {

@@ -439,8 +439,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
       const duration = typeof args.duration === 'number' ? args.duration : 60;
@@ -492,8 +490,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
 
@@ -525,8 +521,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 4,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
 
@@ -558,8 +552,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 4,
     handler: async (args, callCtx) => {
       const session = requireOneBotSession(callCtx);
       const groupId = args.group_id ? String(args.group_id) : (session.detailType === 'group' ? session.targetId : '');
@@ -590,8 +582,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
 
@@ -623,8 +613,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
 
@@ -656,8 +644,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 4,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
 
@@ -691,8 +677,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 4,
     handler: async (args, callCtx) => {
       const { selfId, groupId } = requireGroupSession(callCtx);
 
@@ -726,8 +710,6 @@ function registerGroupManagementTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args, callCtx) => {
       // 不限制必须是群聊；私聊也可撤回机器人自己发出的消息
       const parsed = parseOneBotSession(callCtx.sessionId);
@@ -1173,8 +1155,6 @@ function registerAccountTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 4,
     handler: async (args, callCtx) => {
       const session = requireOneBotSession(callCtx);
       const userId = args.user_id ? String(args.user_id) : (session.detailType === 'private' ? session.targetId : '');
@@ -1289,8 +1269,6 @@ function registerRequestTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args) => {
       const adapter = findRequestAdapter(ctx);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
@@ -1320,8 +1298,6 @@ function registerRequestTools(ctx: Context): void {
         },
       },
     },
-    safety: 'dangerous',
-    authority: 3,
     handler: async (args) => {
       const adapter = findRequestAdapter(ctx);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';

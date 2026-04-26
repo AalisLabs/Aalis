@@ -978,8 +978,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   if (cfg.enableTrading) {
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1020,8 +1018,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 2,
       definition: {
         type: 'function',
         function: {
@@ -1048,8 +1044,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 2,
       definition: {
         type: 'function',
         function: {
@@ -1084,8 +1078,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1118,8 +1110,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1144,8 +1134,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1173,8 +1161,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1216,8 +1202,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 2,
       definition: {
         type: 'function',
         function: {
@@ -1254,8 +1238,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1338,8 +1320,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   if (cfg.enableAlgo) {
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {
@@ -1388,8 +1368,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     reg({
-      safety: 'dangerous',
-      authority: 2,
       definition: {
         type: 'function',
         function: {
@@ -1472,8 +1450,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   if (cfg.enableTransfer) {
     reg({
-      safety: 'dangerous',
-      authority: 3,
       definition: {
         type: 'function',
         function: {

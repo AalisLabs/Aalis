@@ -6,7 +6,6 @@ import type {
   ToolCallContext,
   ToolSummary,
   ToolGroupInfo,
-  ExecutionGuard,
 } from './core.js';
 
 /**
@@ -33,11 +32,6 @@ export interface ToolService {
   getAll(): Array<{
     name: string;
     description: string;
-    authority: number;
-    safety: string;
-    baseAuthority: number;
-    baseSafety: string;
-    overridden: boolean;
     pluginName: string;
     groups?: string[];
   }>;
@@ -49,14 +43,6 @@ export interface ToolService {
   ): Promise<string>;
 
   unregisterByPlugin(pluginName: string): void;
-
-  /** 设置执行守卫（由权限插件注入） */
-  setExecutionGuard(guard: ExecutionGuard): void;
-
-  loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void;
-  setOverride(name: string, override: { authority?: number; safety?: string }): void;
-  removeOverride(name: string): void;
-  getOverrides(): Record<string, { authority?: number; safety?: string }>;
 
   /** 注册工具分组 */
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;

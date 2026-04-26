@@ -9,8 +9,6 @@ export function registerKeyboardTools(ctx: Context, adapter: PlatformAdapter): v
 
   // ── keyboard_press ──
   ctx.registerTool({
-    safety: 'dangerous',
-    authority: 3,
     definition: {
       type: 'function',
       function: {
