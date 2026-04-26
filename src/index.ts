@@ -9,6 +9,9 @@ function formatEntry(entry: LogEntry): string {
   return `${entry.timestamp}|${entry.level}|${entry.scope}|${safeMsg}\n`;
 }
 
+/** 文件日志写入队列 —— 由 setupFileLogger 维护，shutdown 前需 await 以保证最后几条日志落盘 */
+let fileLoggerQueue: Promise<void> = Promise.resolve();
+
 async function setupFileLogger(): Promise<void> {
   // 文件 sink 完全在 core 外实现：
   //   1) 启动时清空 latest.log；
@@ -17,10 +20,14 @@ async function setupFileLogger(): Promise<void> {
   await mkdir(dirname(LOG_FILE), { recursive: true });
   const initial = getLogBuffer().map(formatEntry).join('');
   await writeFile(LOG_FILE, initial);
-  let queue = Promise.resolve();
   onLogEntry((entry) => {
-    queue = queue.then(() => appendFile(LOG_FILE, formatEntry(entry))).catch(() => {});
+    fileLoggerQueue = fileLoggerQueue.then(() => appendFile(LOG_FILE, formatEntry(entry))).catch(() => {});
   });
+}
+
+/** 等待所有挂起的文件日志写入落盘 */
+async function flushFileLogger(): Promise<void> {
+  await fileLoggerQueue.catch(() => {});
 }
 
 async function main() {
@@ -40,6 +47,10 @@ async function main() {
     if (stopping) return;
     stopping = true;
     await app.stop();
+    // app.stop() 期间和之后插件可能仍在 logger.info('已停止') 等，
+    // 给微任务一个 tick 把它们入队，再等队列清空，确保 latest.log 含完整关闭日志
+    await new Promise<void>(r => setImmediate(r));
+    await flushFileLogger();
     process.exit(0);
   };
 
