@@ -34,10 +34,11 @@ export const inject = {
 
 export const configSchema: ConfigSchema = {
   model: {
-    type: 'string',
-    label: '模型 ID',
+    type: 'select',
+    label: '模型',
     default: '',
-    description: '为顾问指定专属模型 ID（覆盖 llm 服务默认）。留空使用全局默认 LLM。',
+    dynamicOptions: 'llm',
+    description: '为顾问指定专属模型（覆盖 llm 服务默认）。留空使用全局默认 LLM。',
   },
   maxIterations: {
     type: 'number',

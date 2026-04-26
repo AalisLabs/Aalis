@@ -165,7 +165,7 @@ export const configSchema: ConfigSchema = {
       maxNodesPerLevel: { type: 'number', label: '单层节点上限', default: 30, description: '每层最多展开多少条节点。超过部分会被截断。' },
       imageRecognition: { type: 'boolean', label: '识别内部图片', default: true, description: '把转发内的图片送入 image-recognition 服务转写为文字描述。需要该服务可用。' },
       summarize: { type: 'boolean', label: '生成摘要', default: true, description: '展开后调用 LLM 生成一段摘要，作为消息正文进入对话/记忆/向量库；原文保留在缓存。' },
-      summaryModel: { type: 'string', label: '摘要模型', default: '', description: '留空使用默认 LLM 服务的默认模型；填模型 ID 则通过 LLMRouter 路由到对应 provider。建议挑便宜/快的模型。' },
+      summaryModel: { type: 'select', label: '摘要模型', default: '', dynamicOptions: 'llm', description: '留空使用默认 LLM 服务的默认模型；选定后通过 LLMRouter 路由到对应 provider。建议挑便宜/快的模型。' },
       summaryMaxChars: { type: 'number', label: '摘要最大字数', default: 400, description: '提示给摘要模型的目标长度上限。' },
     },
   },
