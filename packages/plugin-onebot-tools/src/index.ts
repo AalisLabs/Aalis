@@ -761,7 +761,7 @@ function registerGroupInfoTools(ctx: Context): void {
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
       // 适配器的 callAction 已对 get_forward_msg 做了多参数键回退（id/message_id/res_id/m_resid）
-      // 并维护了一份接收时即抓取的缓存。这里直接调用即可。
+      // 并维护了一份接收时即抓取并展开（含摘要与图像识别）的缓存。
       let data: unknown;
       try {
         data = await callAction(ctx, callCtx, 'get_forward_msg', { id: forwardId });
@@ -769,10 +769,13 @@ function registerGroupInfoTools(ctx: Context): void {
         return `合并转发读取失败：${err instanceof Error ? err.message : String(err)}。该转发可能已在协议端过期，或当前 OneBot 实现不支持跨会话读取。`;
       }
 
-      // 适配器在缓存命中时返回 { __aalisForwardInline: '...已渲染的内联文本...' }，
-      // 这是已经按 <forward id="..."> 包裹好的可读文本，直接回给 LLM 即可。
-      if (data && typeof data === 'object' && '__aalisForwardInline' in (data as Record<string, unknown>)) {
-        return String((data as Record<string, unknown>).__aalisForwardInline);
+      // 适配器在缓存命中时返回 ForwardEntry 形状（含 fullText / summary / 元信息）。
+      // 此时直接返回原文给 LLM，无需再做协议端结构解析。
+      if (data && typeof data === 'object' && (data as Record<string, unknown>).__aalisForwardEntry) {
+        const entry = data as { fullText: string; summary: string | null; count: number; participants: string[] };
+        const header = `合并转发共 ${entry.count} 条，参与人：${entry.participants.join(', ') || '未知'}`;
+        const summaryLine = entry.summary ? `\n摘要：${entry.summary}\n` : '\n';
+        return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
 
       const formatContext = await recognizeForwardImages(ctx, callCtx, data, limit);
