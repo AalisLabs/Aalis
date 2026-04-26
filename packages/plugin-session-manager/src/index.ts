@@ -843,8 +843,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       .finally(() => titleGenerating.delete(sessionId));
   });
 
-  // 应用停止时持久化
-  ctx.on('dispose', async () => {
+  // 应用停止时持久化：在 app:stopping 阶段执行，此时各 memory 插件尚未 dispose（数据库连接仍在）
+  ctx.on('app:stopping', async () => {
     await manager.shutdown();
   });
 
