@@ -9,7 +9,7 @@ import { MixinRegistry } from './mixin-registry.js';
 import { PlatformRegistry } from './platform-registry.js';
 import { PendingRegistrationBuffer } from './pending-buffer.js';
 import { probeCapability } from './types/capabilities.js';
-import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
+import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, PlatformSessionCandidate, ToolService, CommandService, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
@@ -341,6 +341,14 @@ export class Context {
    */
   getPlatformSelfIdentity(platform: string, sessionId?: string) {
     return this.platforms.getSelfIdentity(platform, sessionId);
+  }
+
+  /**
+   * 获取（指定平台或全部平台的）会话候选快照，供 advisor / 调度器
+   * 做跨会话决策。
+   */
+  getPlatformSessionCandidates(platform?: string): PlatformSessionCandidate[] {
+    return this.platforms.listSessionCandidates(platform);
   }
 
   // ---- 领域聚合查询 ----
