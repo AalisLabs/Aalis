@@ -327,7 +327,7 @@ export function buildEnvelope(
   const meta = `count=${expanded.count} participants="${expanded.participants.join(', ')}"${expanded.truncatedDepth ? ' truncatedDepth' : ''}${expanded.truncatedNodes ? ' truncatedNodes' : ''}`;
 
   if (summary && summary.trim()) {
-    return `<forward id="${expanded.id}" ${meta}>\n摘要：${summary.trim()}\n（如需查看原文请使用 onebot_get_forward_msg 工具，id="${expanded.id}"）\n</forward>`;
+    return `<forward id="${expanded.id}" ${meta}>\n摘要：${summary.trim()}\n</forward>`;
   }
 
   // 摘要不可用：信封内退化到截断的原文
