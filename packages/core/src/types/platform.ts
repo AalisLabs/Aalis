@@ -8,10 +8,22 @@ export interface PlatformConnection {
   platform: string;
   /** 机器人自身 ID（仅协议平台使用） */
   selfId?: string;
+  /** 机器人自身昵称/显示名（仅协议平台使用） */
+  selfNickname?: string;
   /** 连接状态 */
   status: 'online' | 'offline' | 'connecting';
   /** 额外信息 (如 OneBot 的实现名称、版本等) */
   detail?: Record<string, unknown>;
+}
+
+/** 平台自身身份（机器人/账号），用于 prompt 注入和历史消息归档 */
+export interface PlatformSelfIdentity {
+  /** 平台名称 (如 'onebot', 'cli', 'webui') */
+  platform: string;
+  /** 平台账号 ID（协议平台通常可用） */
+  selfId?: string;
+  /** 平台账号昵称/显示名 */
+  nickname?: string;
 }
 
 /**
@@ -31,6 +43,8 @@ export interface PlatformAdapter {
   getConnections(): PlatformConnection[];
   /** 向指定 sessionId 发送纯文本消息 */
   sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void>;
+  /** 获取当前平台账号自身身份；多连接平台可用 sessionId 定位具体连接 */
+  getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;
   /**
    * 适配器是否至少有一个可用连接
    * 默认实现：检查 getConnections() 中是否有 status === 'online'
@@ -66,4 +80,6 @@ export interface PlatformManagerService {
   getConnections(): PlatformConnection[];
   /** 获取所有已注册的平台名称 */
   getPlatformNames(): string[];
+  /** 获取指定平台在当前会话中的自身身份 */
+  getSelfIdentity?(platform: string, sessionId?: string): PlatformSelfIdentity | undefined;
 }

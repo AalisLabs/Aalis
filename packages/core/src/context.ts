@@ -336,6 +336,13 @@ export class Context {
     return this.platforms.listDetails();
   }
 
+  /**
+   * 获取指定平台在某会话中的自身身份（机器人/账号）。
+   */
+  getPlatformSelfIdentity(platform: string, sessionId?: string) {
+    return this.platforms.getSelfIdentity(platform, sessionId);
+  }
+
   // ---- 领域聚合查询 ----
 
   /**

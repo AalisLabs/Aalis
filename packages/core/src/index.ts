@@ -75,6 +75,7 @@ export type {
   PreprocessorInfo,
   // 平台适配器
   PlatformConnection,
+  PlatformSelfIdentity,
   PlatformAdapter,
   PlatformManagerService,
   PluginGroupInfo,

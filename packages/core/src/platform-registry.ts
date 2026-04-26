@@ -1,5 +1,5 @@
 import type { ServiceContainer } from './service.js';
-import type { PlatformAdapter, PlatformConnection } from './types/index.js';
+import type { PlatformAdapter, PlatformConnection, PlatformSelfIdentity } from './types/index.js';
 
 /**
  * 平台注册表
@@ -55,5 +55,17 @@ export class PlatformRegistry {
         connections: adapter.getConnections(),
       };
     });
+  }
+
+  /**
+   * 获取某个平台账号自身身份。
+   */
+  getSelfIdentity(platform: string, sessionId?: string): PlatformSelfIdentity | undefined {
+    for (const entry of this.services.getEntries('platform')) {
+      const adapter = entry.instance as PlatformAdapter;
+      if (!adapter || adapter.platform !== platform) continue;
+      return adapter.getSelfIdentity?.(sessionId);
+    }
+    return undefined;
   }
 }
