@@ -214,9 +214,6 @@ interface FlowSessionState {
   muteRecoveryChecked: boolean;
 }
 
-/** 空闲触发标识 */
-const IDLE_TRIGGER_MARKER = '__chat_flow_idle_trigger__';
-
 function parseStringList(val: unknown): string[] {
   if (Array.isArray(val)) return val.filter(Boolean).map(String);
   if (typeof val === 'string' && val.trim()) {
@@ -789,10 +786,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (flowCfg.idleTriggerStyle === 'exponential') {
           fState.idleBackoff = Math.min(fState.idleBackoff * 2, 64);
         }
+        // 将 marker 转换为有意义的 system 提示，避免垃圾文本进入 LLM/记忆。
+        // 同时设置 source = 'idle-trigger'，让 archive 与向量层可识别并跳过写入。
+        const idlePrompt = (flowCfg.idleTriggerPrompt && flowCfg.idleTriggerPrompt.trim())
+          || '当前群已长时间无人发言，请根据人设主动开启一个轻松的话题或问候。不要提及“系统提示”或表明你是被触发发言的。';
         await ctx.emit('message:received', {
-          content: IDLE_TRIGGER_MARKER,
+          content: idlePrompt,
           sessionId,
           platform,
+          source: 'idle-trigger',
         });
         scheduleIdleTrigger(fState, sessionId, platform);
       } catch (err) {
@@ -833,9 +835,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ): Promise<boolean> {
     // 只对群聊启用流控
     if (!flowCfg.enabled || sessionType !== 'group') return true;
-
-    // 空闲触发消息直接放行（替换内容在 middleware 层处理不到，这里直接返回 true）
-    if (content === IDLE_TRIGGER_MARKER) return true;
 
     // 启动后/重连后：通过 shut_up_timestamp 懒查询恢复被禁言状态（每会话一次）
     const fStateForRecovery = getFlowSession(sessionId);
