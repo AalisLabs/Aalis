@@ -390,6 +390,7 @@ export function App() {
         setMessages(prev => [...prev, {
           role: 'system' as const,
           content: '对话已压缩',
+          name: 'system-event',
           timestamp: Date.now(),
         }]);
         // 短暂延迟后清除临时计时器状态
