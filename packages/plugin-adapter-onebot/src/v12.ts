@@ -47,9 +47,12 @@ export class OneBotV12 implements OneBotProtocol {
     return 'get_self_info';
   }
 
-  parseSelfInfo(data: unknown): string | undefined {
-    const info = data as { user_id?: string | number };
-    return info?.user_id != null ? String(info.user_id) : undefined;
+  parseSelfInfo(data: unknown) {
+    const info = data as { user_id?: string | number; user_name?: string; nickname?: string };
+    return {
+      userId: info?.user_id != null ? String(info.user_id) : undefined,
+      nickname: info?.nickname ? String(info.nickname) : info?.user_name ? String(info.user_name) : undefined,
+    };
   }
 
   parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other' {

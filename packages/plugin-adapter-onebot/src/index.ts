@@ -160,6 +160,7 @@ interface ConnectionState {
   ws?: WebSocket;
   status: 'online' | 'offline' | 'connecting';
   selfId?: string;
+  selfNickname?: string;
   protocol?: OneBotProtocol;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   heartbeatTimer?: ReturnType<typeof setInterval>;
@@ -1077,12 +1078,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         id: `onebot:${s.selfId ?? s.config.url}`,
         platform: 'onebot',
         selfId: s.selfId,
+        selfNickname: s.selfNickname,
         status: s.status,
         detail: {
           url: s.config.url,
           protocol: s.protocol?.version ?? 'unknown',
+          nickname: s.selfNickname,
         },
       }));
+    },
+
+    getSelfIdentity(sessionId?: string) {
+      const parsed = sessionId ? parseSessionId(sessionId) : null;
+      const state = parsed
+        ? findStateBySelfId(parsed.selfId)
+        : states.find(s => s.status === 'online' && (s.selfId || s.selfNickname));
+      if (!state || (!state.selfId && !state.selfNickname)) return undefined;
+      return {
+        platform: 'onebot',
+        selfId: state.selfId,
+        nickname: state.selfNickname,
+      };
     },
 
     isReady(): boolean {
@@ -1096,16 +1112,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
 
-      let state = findStateBySelfId(parsed.selfId);
-      // 单连接场景下的宽容：如果只有一个在线连接，则允许使用它发送。
-      // 避免历史 sessionId、配置 selfId 忘写 / 不一致导致消息走失。
-      if (!state) {
-        const onlineStates = states.filter(s => s.status === 'online' && s.ws && s.protocol);
-        if (onlineStates.length === 1) {
-          state = onlineStates[0];
-          ctx.logger.debug(`OneBot 未找到 selfId=${parsed.selfId} 的连接，单连接回退使用 selfId=${state.selfId}`);
-        }
-      }
+      const state = findStateBySelfId(parsed.selfId);
       if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
         const knownIds = states.map(s => `${s.selfId ?? '?'}(${s.status})`).join(', ') || '无';
         const reason = !state
@@ -1410,15 +1417,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    // 2. 获取 self info
-    if (!state.selfId) {
+    // 2. 获取 self info（即使配置已给 selfId，也尝试补齐昵称）
+    if (!state.selfId || !state.selfNickname) {
       try {
         const action = state.protocol.getSelfInfoAction();
         const data = await sendAction(state, action, {});
-        const selfId = state.protocol.parseSelfInfo(data);
-        if (selfId) {
-          state.selfId = selfId;
-          ctx.logger.info(`OneBot self_id: ${state.selfId} (via ${action})`);
+        const selfInfo = state.protocol.parseSelfInfo(data);
+        if (selfInfo.userId) state.selfId = selfInfo.userId;
+        if (selfInfo.nickname) state.selfNickname = selfInfo.nickname;
+        if (selfInfo.userId || selfInfo.nickname) {
+          const namePart = state.selfNickname ? `, nickname=${state.selfNickname}` : '';
+          ctx.logger.info(`OneBot self_id: ${state.selfId ?? '?'}${namePart} (via ${action})`);
         }
       } catch (err) {
         ctx.logger.debug(`获取 self info 失败: ${err}`);
