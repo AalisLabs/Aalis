@@ -296,14 +296,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const summaryTs = Date.now();
         store.upsertSummary(sessionId, finalSummary, messagesToSummarize.length, totalCount);
 
-        // 广播摘要生成事件：向量记忆等插件可订阅以入库长期检索
-        ctx.emit('memory:summary-generated', {
-          sessionId,
-          summary: finalSummary,
-          timestamp: summaryTs,
-        }).catch(() => {});
-
-        // 真正的压缩：从数据库删除旧消息，只保留最近 keepRecent 条
+        // 真正的压缩：将旧消息标记为 archived，只保留最近 keepRecent 条作为热上下文
         // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
         let safeKeepRecent = cfg.keepRecent;
         while (safeKeepRecent < allHistory.length) {
@@ -316,9 +309,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
         if (memory.trimHistory) {
           const deleted = await memory.trimHistory(sessionId, safeKeepRecent);
-          ctx.logger.info(`会话已压缩: session=${sessionId}, 删除 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
+          ctx.logger.info(`会话已压缩: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
         } else {
-          ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未删除');
+          ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
         }
 
         // 保存系统事件消息，供前端持久化显示压缩分隔线
@@ -327,8 +320,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           role: 'system',
           content: '对话已压缩',
           name: 'system-event',
-          timestamp: Date.now(),
+          timestamp: summaryTs,
         });
+
+        // 广播摘要生成事件：timestamp 与压缩分隔线一致，向量命中时可稳定扩展前后消息
+        ctx.emit('memory:summary-generated', {
+          sessionId,
+          summary: finalSummary,
+          timestamp: summaryTs,
+        }).catch(() => {});
       }
     } catch (err) {
       ctx.logger.warn('生成会话摘要失败:', err);
@@ -481,13 +481,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           const summaryTs = Date.now();
           store.upsertSummary(data.sessionId, finalSummary, messagesToSummarize.length, allHistory.length);
 
-          // 广播摘要生成事件：向量记忆等插件可订阅以入库长期检索
-          ctx.emit('memory:summary-generated', {
-            sessionId: data.sessionId,
-            summary: finalSummary,
-            timestamp: summaryTs,
-          }).catch(() => {});
-
           // 安全调整：避免裁剪点落在 tool call 组中间
           let safeKeepRecent = cfg.keepRecent;
           while (safeKeepRecent < allHistory.length) {
@@ -500,7 +493,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           }
           if (memory.trimHistory) {
             const deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
-            ctx.logger.info(`压缩完成: session=${data.sessionId}, 删除 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
+            ctx.logger.info(`压缩完成: session=${data.sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
           }
 
           // 保存系统事件消息，供前端持久化显示压缩分隔线
@@ -509,8 +502,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             role: 'system',
             content: '对话已压缩',
             name: 'system-event',
-            timestamp: Date.now(),
+            timestamp: summaryTs,
           });
+
+          // 广播摘要生成事件：timestamp 与压缩分隔线一致，向量命中时可稳定扩展前后消息
+          ctx.emit('memory:summary-generated', {
+            sessionId: data.sessionId,
+            summary: finalSummary,
+            timestamp: summaryTs,
+          }).catch(() => {});
 
           // 通知前端：压缩完成
           ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
