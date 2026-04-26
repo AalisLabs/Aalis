@@ -563,6 +563,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const sid = r.metadata.sessionId as string | undefined;
         const ts = r.metadata.timestamp as number | undefined;
         if (!sid || ts === undefined) continue;
+        if (r.metadata.kind !== 'summary' && r.metadata.content === '对话已压缩') continue;
         const fakeMsg: Message = {
           role: 'user',
           content: (r.metadata.content as string) ?? '',
