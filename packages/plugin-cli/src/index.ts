@@ -33,8 +33,8 @@ export const configSchema: ConfigSchema = {
   enableMouse: {
     type: 'boolean',
     label: '启用鼠标滚动',
-    default: false,
-    description: '启用后 CLI 可接收鼠标滚轮事件，但终端拖拽选择文本会被鼠标上报占用。默认关闭以便选择复制文本。',
+    default: true,
+    description: '启用后 CLI 可接收鼠标滚轮事件。运行时可按 Ctrl+Y 临时切换，关闭后便于拖拽选择文本。',
   },
 };
 
@@ -44,7 +44,7 @@ export const defaultConfig = {
   startupView: 'last',
   lastView: 'chat',
   logLines: 200,
-  enableMouse: false,
+  enableMouse: true,
 };
 
 type CLIView = 'chat' | 'logs' | 'status' | 'help';
@@ -64,7 +64,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
     startupView: parseStartupView(config.startupView),
     lastView: parseView(config.lastView, 'chat'),
-    enableMouse: config.enableMouse === true,
+    enableMouse: config.enableMouse !== false,
     logLines: (() => {
       const v = Number(config.logLines ?? defaultConfig.logLines);
       if (!Number.isFinite(v) || v < 0) return defaultConfig.logLines;
@@ -148,6 +148,7 @@ class CliTui {
   private confirmText = '';
   private renderQueued = false;
   private closing = false;
+  private mouseEnabled: boolean;
 
   constructor(
     private ctx: Context,
@@ -156,6 +157,7 @@ class CliTui {
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
     this.logLines = getLogBuffer().slice(-config.logLines);
+    this.mouseEnabled = config.enableMouse;
   }
 
   isRunning(): boolean {
@@ -167,15 +169,15 @@ class CliTui {
     this.running = true;
 
     setConsoleLogSinkEnabled(false);
-    // 进入备用屏幕缓冲区，隐藏光标。鼠标上报默认关闭，避免占用终端文本选择。
+    // 进入备用屏幕缓冲区，隐藏光标。鼠标上报可运行时切换，兼顾滚轮和文本选择。
     // 1049h: 备用屏 / 25l: 隐藏光标 / 1000h: 基本鼠标事件 / 1006h: SGR 扩展模式
     output.write('\x1b[?1049h\x1b[?25l');
-    if (this.config.enableMouse) output.write('\x1b[?1000h\x1b[?1006h');
+    if (this.mouseEnabled) output.write('\x1b[?1000h\x1b[?1006h');
     output.write('\x1b[2J\x1b[H');
     readline.emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     input.resume();
-    if (this.config.enableMouse) input.on('data', this.handleData);
+    if (this.mouseEnabled) input.on('data', this.handleData);
 
     this.removeLogListener = onLogEntry((entry) => {
       this.logLines.push(entry);
@@ -205,7 +207,7 @@ class CliTui {
     this.removeLogListener?.();
     this.removeLogListener = null;
     input.off('keypress', this.handleKeypress);
-    if (this.config.enableMouse) input.off('data', this.handleData);
+    input.off('data', this.handleData);
     output.off('resize', this.queueRender);
     if (input.isTTY) input.setRawMode(false);
     setConsoleLogSinkEnabled(true);
@@ -293,6 +295,14 @@ class CliTui {
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
 
+  private appendSystemLines(content: string): void {
+    const firstHead = this.formatHead(chalk.yellow('◆ System'));
+    const contHead = this.formatCont();
+    for (const [i, line] of content.split('\n').entries()) {
+      this.chatLines.push((i === 0 ? firstHead : contHead) + line);
+    }
+  }
+
   /** SGR 鼠标事件：\x1b[<button;col;row(M|m)。仅处理滚轮（button 64=up, 65=down，加 4/8/16 表示 Shift/Alt/Ctrl）。 */
   private handleData = (chunk: Buffer | string): void => {
     if (!this.running) return;
@@ -359,6 +369,7 @@ class CliTui {
     if (key.ctrl && key.name === 't') { this.switchView('chat'); return; }
     if (key.ctrl && key.name === 's') { this.switchView('status'); return; }
     if (key.ctrl && key.name === 'g') { this.switchView('help'); return; }
+    if (key.ctrl && key.name === 'y') { this.toggleMouse(); return; }
     if (key.name === 'escape') { this.switchView(this.previousView); return; }
 
     if (this.view === 'logs') { this.handleLogsKey(key); return; }
@@ -455,7 +466,7 @@ class CliTui {
         args: parsed.args,
         raw: parsed.raw,
       });
-      if (result) this.chatLines.push(this.formatHead(chalk.yellow('◆ System')) + result);
+      if (result) this.appendSystemLines(result);
       this.trimChat();
       this.queueRender();
       if (parsed.name === 'shutdown' || parsed.name === 'restart') this.stop();
@@ -506,6 +517,26 @@ class CliTui {
     const pluginConfig = this.ctx.config.getPluginConfig(name);
     this.ctx.config.setPluginConfig(name, { ...pluginConfig, lastView: view });
     this.ctx.getService<AppService>('app')?.saveConfig();
+  }
+
+  private toggleMouse(): void {
+    this.setMouseEnabled(!this.mouseEnabled);
+    this.appendSystemLines(`鼠标滚轮监听已${this.mouseEnabled ? '开启' : '关闭'}`);
+    this.trimChat();
+    this.queueRender();
+  }
+
+  private setMouseEnabled(enabled: boolean): void {
+    if (this.mouseEnabled === enabled) return;
+    this.mouseEnabled = enabled;
+    if (enabled) {
+      input.on('data', this.handleData);
+      output.write('\x1b[?1000h\x1b[?1006h');
+    } else {
+      output.write('\x1b[?1006l\x1b[?1000l');
+      input.off('data', this.handleData);
+      this.inMouseSeq = false;
+    }
   }
 
   private trimChat(): void {
@@ -660,6 +691,7 @@ class CliTui {
     out.push(row('Ctrl+L', 'Logs   ·  实时日志'));
     out.push(row('Ctrl+S', 'Status ·  服务与平台状态'));
     out.push(row('Ctrl+G', 'Help   ·  当前页'));
+    out.push(row('Ctrl+Y', '鼠标滚轮监听开关'));
     out.push(row('Esc',    '返回上一个视图'));
     out.push(row('Ctrl+C', '退出'));
     out.push('');
@@ -740,6 +772,7 @@ class CliTui {
       `${chalk.cyan('^L')} logs`,
       `${chalk.cyan('^S')} status`,
       `${chalk.cyan('^G')} help`,
+      `${chalk.cyan('^Y')} mouse ${this.mouseEnabled ? 'on' : 'off'}`,
       `${chalk.cyan('Esc')} back`,
       `${chalk.cyan('^C')} exit`,
     ].join(chalk.gray('  ·  '));
