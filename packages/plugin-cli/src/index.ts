@@ -127,6 +127,9 @@ class CliTui {
   private streamingContent = '';
   private streamedRecently = false;
   private confirmResolver: ((value: boolean) => void) | null = null;
+  /** 鼠标 SGR 序列在处理中：readline 会把序列中间的数字/分号拆成独立 keypress，
+   * 需要从看到 \x1b[< 起到看到 M/m 为止吞掉所有 keypress。 */
+  private inMouseSeq = false;
   private confirmText = '';
   private renderQueued = false;
   private closing = false;
@@ -149,11 +152,13 @@ class CliTui {
     this.running = true;
 
     setConsoleLogSinkEnabled(false);
-    // 进入备用屏幕缓冲区，隐藏光标；退出时自动恢复原终端内容（类似 vim/htop）
-    output.write('\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H');
+    // 进入备用屏幕缓冲区，隐藏光标；启用鼠标 SGR 上报（用于滚轮）
+    // 1049h: 备用屏 / 25l: 隐藏光标 / 1000h: 基本鼠标事件 / 1006h: SGR 扩展模式
+    output.write('\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H');
     readline.emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     input.resume();
+    input.on('data', this.handleData);
 
     this.removeLogListener = onLogEntry((entry) => {
       this.logLines.push(entry);
@@ -183,11 +188,12 @@ class CliTui {
     this.removeLogListener?.();
     this.removeLogListener = null;
     input.off('keypress', this.handleKeypress);
+    input.off('data', this.handleData);
     output.off('resize', this.queueRender);
     if (input.isTTY) input.setRawMode(false);
     setConsoleLogSinkEnabled(true);
-    // 退出备用屏幕缓冲区，恢复原终端内容
-    output.write('\x1b[?25h\x1b[?1049l');
+    // 关闭鼠标上报、退出备用屏幕缓冲区、恢复光标
+    output.write('\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l');
   }
 
   pushAssistant(content: string): void {
@@ -270,8 +276,52 @@ class CliTui {
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
 
+  /** SGR 鼠标事件：\x1b[<button;col;row(M|m)。仅处理滚轮（button 64=up, 65=down，加 4/8/16 表示 Shift/Alt/Ctrl）。 */
+  private handleData = (chunk: Buffer | string): void => {
+    if (!this.running) return;
+    const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    if (!s.includes('\x1b[<')) return;
+    const re = /\x1b\[<(\d+);\d+;\d+([Mm])/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) {
+      if (m[2] !== 'M') continue; // 滚轮只发 'M'，无 release
+      const button = parseInt(m[1], 10);
+      const base = button & ~28; // 去掉 Shift(4)/Alt(8)/Ctrl(16)
+      const big = (button & 4) !== 0; // Shift+滚轮 = 翻页
+      if (base === 64) this.scrollCurrentView(+1, big);
+      else if (base === 65) this.scrollCurrentView(-1, big);
+    }
+  };
+
+  /** 统一的滚动入口：direction +1 = 往旧/上滚，-1 = 往新/下滚。 */
+  private scrollCurrentView(direction: 1 | -1, big: boolean): void {
+    const step = (big ? 10 : 3) * direction;
+    if (this.view === 'logs') {
+      const max = Math.max(0, this.logLines.length - 1);
+      this.logScroll = Math.max(0, Math.min(max, this.logScroll + step));
+    } else if (this.view === 'status') {
+      this.statusScroll = Math.max(0, this.statusScroll - step);
+    } else if (this.view === 'help') {
+      this.helpScroll = Math.max(0, this.helpScroll - step);
+    } else {
+      return;
+    }
+    this.queueRender();
+  }
+
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
     if (!this.running) return;
+    // 鼠标 SGR 序列状态机：从 \x1b[< 到 M/m 之间的所有 keypress 都吞掉
+    if (key.sequence?.startsWith('\x1b[<') || (chunk && chunk.startsWith('\x1b[<'))) {
+      this.inMouseSeq = true;
+      return;
+    }
+    if (this.inMouseSeq) {
+      if (chunk === 'M' || chunk === 'm' || key.sequence === 'M' || key.sequence === 'm') {
+        this.inMouseSeq = false;
+      }
+      return;
+    }
 
     if (this.confirmResolver) {
       const ok = key.name === 'y' || chunk.toLowerCase() === 'y';
