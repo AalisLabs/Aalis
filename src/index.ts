@@ -33,7 +33,11 @@ async function flushFileLogger(): Promise<void> {
 async function main() {
   await setupFileLogger();
 
-  const app = new App();
+  const app = new App({
+    // 应用层声明：核心功能依赖以下服务至少各有一个提供者运行
+    // （core 自身不假设这些服务存在，必须由应用入口显式声明）
+    requiredServices: ['webui-server', 'cli'],
+  });
 
   // 自动扫描 packages/ 并加载所有插件
   await app.autoLoadPlugins();
