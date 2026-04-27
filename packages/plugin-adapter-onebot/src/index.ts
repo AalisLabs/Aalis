@@ -1334,11 +1334,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.3,
-        maxTokens: Math.max(200, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
+        // 摘要为纯抽取任务，关闭 reasoning 避免 thinking tokens 吞噬输出预算。
+        think: false,
+        // 中文按 1 字 ≈ 1 token 估算，再留 50% 余量；并设 800 token 下限兜底。
+        maxTokens: Math.max(800, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
         model: modelOverride,
       });
       const out = (resp.content ?? '').trim();
-      return out || null;
+      if (!out) {
+        ctx.logger.debug(`forward 摘要返回空内容: model=${modelOverride ?? 'default'}, chars=${forwardCfg.summaryMaxChars}`);
+        return null;
+      }
+      return out;
     } catch (err) {
       ctx.logger.warn(`forward 摘要生成失败: ${err}`);
       return null;
