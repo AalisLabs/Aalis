@@ -797,42 +797,18 @@ class DefaultAgent implements AgentService {
       }
     }
 
-    // 3. 当前用户消息（带发送者前缀，与历史消息格式一致）
+    // 3. 当前用户消息
+    //
+    // 内容主体由 message-archive 烘焙：sender 前缀 / 引用回复 / 图片描述 / 附件描述
+    // 都已经写进 archivedIncoming.content。这里只在外层加一个时间标注，
+    // 保证「LLM 看到的当前消息」与「历史消息」「向量库存档」三者一致。
     const senderLabel = getSenderLabel(incoming.nickname, incoming.userId);
     const nowLabel = formatTimeLabel(Date.now(), Date.now());
-    let currentContent = senderLabel
-      ? `(${nowLabel}) [${senderLabel}]: ${incoming.content}`
-      : `(${nowLabel}) ${incoming.content}`;
-
-    // 附加引用回复上下文
-    if (incoming.replyTo?.content) {
-      const replyLabel = getSenderLabel(incoming.replyTo.nickname, incoming.replyTo.userId) ?? '?';
-      currentContent += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
-    }
-
-    // 根据 attachmentOrder 按上传顺序组装附件描述
-    if (incoming.attachmentOrder && (incoming._fileDescriptions || incoming._imageDescriptions)) {
-      const fileDescs = incoming._fileDescriptions ?? [];
-      const imageDescs = incoming._imageDescriptions ?? [];
-      let fi = 0, ii = 0;
-      const ordered: string[] = [];
-      for (const type of incoming.attachmentOrder) {
-        if (type === 'file' && fi < fileDescs.length) {
-          ordered.push(fileDescs[fi++]);
-        } else if (type === 'image' && ii < imageDescs.length) {
-          ordered.push(imageDescs[ii++]);
-        }
-      }
-      // 追加剩余未匹配的描述
-      while (fi < fileDescs.length) ordered.push(fileDescs[fi++]);
-      while (ii < imageDescs.length) ordered.push(imageDescs[ii++]);
-      if (ordered.length > 0) {
-        const attachText = ordered.join('\n');
-        currentContent = currentContent
-          ? `${currentContent}\n${attachText}`
-          : attachText;
-      }
-    }
+    const archivedBody = archivedIncoming?.content;
+    const fallbackBody = senderLabel
+      ? `[${senderLabel}]: ${incoming.content}`
+      : incoming.content;
+    let currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
 
     // 检测预处理附件内容——引导 LLM 综合分析而非逐项转述
     const hasPreprocessed = /\[图片\d*[:：]|\[文件[:：]|--- 文件内容 ---/.test(currentContent);
