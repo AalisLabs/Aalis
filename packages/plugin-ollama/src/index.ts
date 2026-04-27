@@ -251,10 +251,10 @@ class OllamaLLMService implements LLMService {
 
     // 启用原生思考模式（Ollama API think 参数）
     // 调用方可通过 request.think === false 显式关闭
+    // 必须显式传 think:false 才能关闭 gemma4:31b 等原生 thinking 模型的思考；
+    // 仅省略字段会被模型默认启用思考，导致 content 为空。
     const shouldThink = request.think !== undefined ? request.think : this.thinking;
-    if (shouldThink) {
-      body.think = true;
-    }
+    body.think = shouldThink;
 
     this.logger.debug(`请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
@@ -331,10 +331,9 @@ class OllamaLLMService implements LLMService {
     }
 
     // 启用原生思考模式（调用方可通过 request.think === false 显式关闭）
+    // 必须显式传 think:false 才能关闭原生 thinking 模型的思考。
     const shouldThink = request.think !== undefined ? request.think : this.thinking;
-    if (shouldThink) {
-      body.think = true;
-    }
+    body.think = shouldThink;
 
     this.logger.debug(`流式请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
 
