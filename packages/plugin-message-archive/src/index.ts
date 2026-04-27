@@ -8,7 +8,7 @@ import type {
   ImageRecognitionService,
   ArchiveNoticeOptions,
 } from '@aalis/core';
-import { prefixSender, getMessageName, MessageArchiveCapabilities } from '@aalis/core';
+import { prefixSender, getSenderLabel, getMessageName, MessageArchiveCapabilities } from '@aalis/core';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';
@@ -56,6 +56,14 @@ function buildIncomingContent(incoming: IncomingMessage): string {
   let content = useSenderPrefix
     ? prefixSender(incoming.content, incoming.nickname, incoming.userId)
     : incoming.content;
+
+  // 引用回复：把被引用消息的标签 + 内容拼到末尾，作为不可分割的上下文
+  // 与图片描述、forward 摘要相同处理逻辑——把"非当前指令"的素材烘焙进归档文本，
+  // 这样下一轮从 memory 拉历史时仍能看到引用关系。
+  if (incoming.replyTo?.content) {
+    const replyLabel = getSenderLabel(incoming.replyTo.nickname, incoming.replyTo.userId) ?? '?';
+    content += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
+  }
 
   if (incoming.attachmentOrder && (incoming._fileDescriptions || incoming._imageDescriptions)) {
     const fileDescs = incoming._fileDescriptions ?? [];
