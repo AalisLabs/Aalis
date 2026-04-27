@@ -296,6 +296,38 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     gifDescriptionMode: (config.gifDescriptionMode as 'combined' | 'separate') || 'combined',
   };
 
+  // ===== 描述缓存（按 URL 键值，TTL 24h） =====
+  // 用于「同一张图被多次引用」场景：主消息流首次识别后写缓存，
+  // 后续 fetchReplyMessage 等路径直接复用，免一次视觉 LLM 调用。
+  interface CachedDescription { desc: string; expiresAt: number }
+  const descriptionCache = new Map<string, CachedDescription>();
+  const DESCRIPTION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const DESCRIPTION_CACHE_MAX = 1000;
+
+  function rememberDescription(imageUrl: string, raw: string): void {
+    const effective = toEffectiveDescription(raw);
+    if (!effective) return;
+    if (descriptionCache.size >= DESCRIPTION_CACHE_MAX) {
+      // 简单 LRU：删除最早插入项（Map 保持插入顺序）
+      const firstKey = descriptionCache.keys().next().value;
+      if (firstKey !== undefined) descriptionCache.delete(firstKey);
+    }
+    descriptionCache.set(imageUrl, {
+      desc: effective,
+      expiresAt: Date.now() + DESCRIPTION_CACHE_TTL_MS,
+    });
+  }
+
+  function lookupCachedDescription(imageUrl: string): string | null {
+    const c = descriptionCache.get(imageUrl);
+    if (!c) return null;
+    if (c.expiresAt < Date.now()) {
+      descriptionCache.delete(imageUrl);
+      return null;
+    }
+    return c.desc;
+  }
+
   /** 通过 LLM 服务识别单张静态图片 */
   async function describeImage(visionLLM: LLMService, imageUrl: string): Promise<string> {
     const prompt = cfg.prompt || DEFAULT_PROMPT;
@@ -411,24 +443,33 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     imageUrl: string,
     localRefPath?: string,
   ): Promise<string> {
+    // 命中描述缓存：跳过视觉模型调用
+    const cached = lookupCachedDescription(imageUrl);
+    if (cached) return cached;
+
     // 判断是否动图/视频
     const checkPath = localRefPath || imageUrl;
+    let result: string;
     if (isAnimatedFormat(checkPath) && localRefPath) {
-      return describeAnimated(visionLLM, localRefPath);
-    }
-    // 有本地文件但没有 ref 的动图场景（如 URL 是 .gif）
-    if (isAnimatedFormat(imageUrl) && !localRefPath) {
-      // 临时下载到本地再提取帧
+      result = await describeAnimated(visionLLM, localRefPath);
+    } else if (isAnimatedFormat(imageUrl) && !localRefPath) {
+      // 有 .gif/.mp4 等 URL 但没有本地 ref：临时下载再提取帧
       const tmpFile = await downloadToTemp(imageUrl);
       if (tmpFile) {
         try {
-          return await describeAnimated(visionLLM, tmpFile);
+          result = await describeAnimated(visionLLM, tmpFile);
         } finally {
           await rm(tmpFile, { force: true }).catch(() => {});
         }
+      } else {
+        result = await describeImage(visionLLM, imageUrl);
       }
+    } else {
+      result = await describeImage(visionLLM, imageUrl);
     }
-    return describeImage(visionLLM, imageUrl);
+
+    rememberDescription(imageUrl, result);
+    return result;
   }
 
   function toEffectiveDescription(raw: string): string {
@@ -589,11 +630,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!visionLLM || !cfg.enabled || input.images.length === 0) return null;
       return processImageMessage(visionLLM, input);
     },
+    /** 仅查描述缓存，不会触发视觉模型调用 */
+    lookupDescription(imageUrl: string): string | null {
+      return lookupCachedDescription(imageUrl);
+    },
   };
 
-  const { Describe, ProcessMessage, Animated } = ImageRecognitionCapabilities;
+  const { Describe, ProcessMessage, Animated, DescriptionCache } = ImageRecognitionCapabilities;
   ctx.provide('image-recognition', imageRecognitionService, {
-    capabilities: [Describe, ProcessMessage, Animated],
+    capabilities: [Describe, ProcessMessage, Animated, DescriptionCache],
   });
 
   // ── 注册图片分析工具，供 agent 主动调用 ──

@@ -73,6 +73,12 @@ export interface ImageRecognitionService {
    * 不可用或 images 为空时返回 null。
    */
   processMessage(input: ImageRecognitionInput): Promise<ImageRecognitionResult | null>;
+
+  /**
+   * 查询已缓存的图片描述（不会触发识别）。未命中返回 null。
+   * 用于引用回复等场景：同一张图片在主消息流程中被识别过后，可以免费复用。
+   */
+  lookupDescription?(imageUrl: string): string | null;
 }
 
 // ----- 图像识别能力声明（capability 框架）-----
@@ -96,6 +102,8 @@ export interface ImageRecognitionCapabilityRegistry {
   ProcessMessage: 'process-message';
   /** 支持动图/视频帧提取 */
   Animated: 'animated';
+  /** 描述缓存查询 */
+  DescriptionCache: 'description-cache';
 }
 
 /** 图像识别能力字符串 union（自动包含第三方扩展） */
@@ -106,6 +114,7 @@ export const ImageRecognitionCapabilities = {
   Describe: 'describe',
   ProcessMessage: 'process-message',
   Animated: 'animated',
+  DescriptionCache: 'description-cache',
 } as const satisfies ImageRecognitionCapabilityRegistry;
 
 declare module './capabilities.js' {
@@ -126,5 +135,10 @@ registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.Proces
   typeof (inst as { processMessage?: unknown }).processMessage === 'function'
     ? true
     : 'ImageRecognitionService.processMessage() is required for capability "process-message"');
+
+registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.DescriptionCache, inst =>
+  typeof (inst as { lookupDescription?: unknown }).lookupDescription === 'function'
+    ? true
+    : 'ImageRecognitionService.lookupDescription() is required for capability "description-cache"');
 
 // Animated 为配置/运行时开关，无固定方法签名，不做探测。

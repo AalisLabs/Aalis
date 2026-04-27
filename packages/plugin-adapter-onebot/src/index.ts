@@ -12,7 +12,7 @@ import type {
   NormalizedNoticeEvent,
   NormalizedRequestEvent,
 } from './types.js';
-import { collectForwardSegments } from './types.js';
+import { collectForwardSegments, segmentsToText } from './types.js';
 import { expandForward, buildEnvelope } from './forward.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
@@ -1170,7 +1170,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
-  /** 获取引用消息的内容 */
+  /**
+   * 获取引用消息的内容并渲染为可读文本。
+   *
+   * 与主消息流程对称：
+   * - 复用 segmentsToText 完整渲染所有段（at / 图片 / forward 占位 / face / record / video …）
+   * - 嵌套 forward：调用 expandForwardsInText 展开为信封+摘要
+   * - 图片：仅在描述缓存命中时注入识别结果，未命中保留 `[图片]` 占位符
+   *   （主消息流的图片识别会自动写缓存，因此先发图、后被引用的常见路径能复用）
+   */
   async function fetchReplyMessage(state: ConnectionState, messageId: string): Promise<{
     content?: string; userId?: string; nickname?: string;
   } | null> {
@@ -1178,16 +1186,51 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const data = await sendAction(state, 'get_msg', {
         message_id: Number(messageId) || messageId,
       }) as Record<string, unknown>;
-      const message = Array.isArray(data.message) ? data.message : [];
+      const segments = Array.isArray(data.message)
+        ? (data.message as import('./types.js').OneBotMessageSegment[])
+        : [];
       const sender = data.sender as Record<string, unknown> | undefined;
-      // 提取纯文本内容
-      let content = '';
-      for (const seg of message) {
-        const s = seg as Record<string, unknown>;
-        if (s.type === 'text') content += String((s.data as Record<string, unknown>)?.text ?? '');
+
+      // 1. 用与主流程同款渲染器把所有段转成可读文本
+      let content = segments.length > 0
+        ? segmentsToText(segments, state.selfId)
+        : ((data.raw_message as string) ?? '');
+
+      // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销）
+      if (content.includes('<forward id=')) {
+        try {
+          content = await expandForwardsInText(state, content, segments);
+        } catch (err) {
+          ctx.logger.debug(`引用消息中的合并转发展开失败: ${err}`);
+        }
       }
+
+      // 3. 引用消息中的图片：仅查描述缓存复用，不主动触发视觉模型
+      if (content.includes('[图片]')) {
+        const ir = ctx.getService<ImageRecognitionService>('image-recognition');
+        if (ir?.lookupDescription) {
+          const imageUrls: string[] = [];
+          for (const seg of segments) {
+            const s = seg as unknown as Record<string, unknown>;
+            if (s.type === 'image') {
+              const url = (s.data as Record<string, unknown>)?.url;
+              if (typeof url === 'string') imageUrls.push(url);
+            }
+          }
+          if (imageUrls.length > 0) {
+            let urlIdx = 0;
+            content = content.replace(/\[图片\]/g, () => {
+              const url = imageUrls[urlIdx++];
+              if (!url) return '[图片]';
+              const desc = ir.lookupDescription!(url);
+              return desc ? `[图片: ${desc}]` : '[图片]';
+            });
+          }
+        }
+      }
+
       return {
-        content: content || (data.raw_message as string) || undefined,
+        content: content || undefined,
         userId: data.user_id != null ? String(data.user_id) : undefined,
         nickname: (sender?.card as string) || (sender?.nickname as string) || undefined,
       };
