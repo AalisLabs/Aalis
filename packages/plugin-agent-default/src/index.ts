@@ -561,63 +561,70 @@ class DefaultAgent implements AgentService {
           };
           const toolMessages: Message[] = [];
 
-          // 执行每个工具调用
-          for (const toolCall of response.toolCalls) {
-            let args: Record<string, unknown>;
-            try {
-              args = JSON.parse(toolCall.function.arguments);
-            } catch {
-              args = {};
-            }
+          // 并行执行所有工具调用（互不依赖的工具无需串行等待）
+          const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
 
-            // Hook: tool-call:before — 插件可以拦截或修改工具调用
-            const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
-            await this.ctx.hooks.run('tool-call:before', toolBeforeData);
+          const parallelResults = await Promise.all(
+            response.toolCalls.map(async (toolCall) => {
+              let args: Record<string, unknown>;
+              try {
+                args = JSON.parse(toolCall.function.arguments);
+              } catch {
+                args = {};
+              }
 
-            // 通知平台：工具开始执行
-            await this.ctx.emit('tool:execute', {
-              sessionId: incoming.sessionId,
-              platform: incoming.platform,
-              toolName: toolBeforeData.name,
-              args: toolBeforeData.args,
-              phase: 'start',
-            });
+              // Hook: tool-call:before — 插件可以拦截或修改工具调用
+              const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
+              await this.ctx.hooks.run('tool-call:before', toolBeforeData);
 
-            this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
-            const toolT0 = Date.now();
-            let result = await (this.ctx.tools?.execute(
-              toolBeforeData.name,
-              toolBeforeData.args,
-              toolCtx,
-            ) ?? Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
+              // 通知平台：工具开始执行
+              await this.ctx.emit('tool:execute', {
+                sessionId: incoming.sessionId,
+                platform: incoming.platform,
+                toolName: toolBeforeData.name,
+                args: toolBeforeData.args,
+                phase: 'start',
+              });
 
-            // Hook: tool-call:after — 插件可以处理工具执行结果
-            const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
-            await this.ctx.hooks.run('tool-call:after', toolAfterData);
-            result = toolAfterData.result;
+              this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
+              const toolT0 = Date.now();
+              let result = await (this.ctx.tools?.execute(
+                toolBeforeData.name,
+                toolBeforeData.args,
+                toolCtx,
+              ) ?? Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
 
-            // 工具结果截断：按上下文窗口比例限制单条工具结果长度
-            const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
-            if (result.length > toolResultMaxChars) {
-              this.logger.info(`工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`);
-              result = result.slice(0, toolResultMaxChars) + `\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
-            }
+              // Hook: tool-call:after — 插件可以处理工具执行结果
+              const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
+              await this.ctx.hooks.run('tool-call:after', toolAfterData);
+              result = toolAfterData.result;
 
-            this.logger.debug(`工具完成: ${toolBeforeData.name} (${Date.now() - toolT0}ms) 结果=${result}`);
+              // 工具结果截断：按上下文窗口比例限制单条工具结果长度
+              if (result.length > toolResultMaxChars) {
+                this.logger.info(`工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`);
+                result = result.slice(0, toolResultMaxChars) + `\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
+              }
 
-            // 记录工具调用摘要（工具名 + 关键结果概要）
+              this.logger.debug(`工具完成: ${toolBeforeData.name} (${Date.now() - toolT0}ms) 结果=${result}`);
+
+              // 通知平台：工具执行完成
+              await this.ctx.emit('tool:execute', {
+                sessionId: incoming.sessionId,
+                platform: incoming.platform,
+                toolName: toolBeforeData.name,
+                args: toolBeforeData.args,
+                phase: 'end',
+                result,
+              });
+
+              return { toolCall, result };
+            }),
+          );
+
+          // 按原始 toolCalls 顺序将结果推入消息列表
+          for (const { toolCall, result } of parallelResults) {
             const resultPreview = result.length > 200 ? result.slice(0, 200) + '...' : result;
-            toolCallSummaries.push(`[${toolBeforeData.name}] ${resultPreview}`);
-
-            // 通知平台：工具执行完成
-            await this.ctx.emit('tool:execute', {
-              sessionId: incoming.sessionId,
-              platform: incoming.platform,
-              toolName: toolBeforeData.name,
-              args: toolBeforeData.args,
-              phase: 'end',
-              result,
-            });
+            toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
 
             const toolMessage: Message = {
               role: 'tool',
