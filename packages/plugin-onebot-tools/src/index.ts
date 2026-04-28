@@ -995,6 +995,67 @@ function registerGroupInfoTools(ctx: Context): void {
     },
   });
 
+  // ---- 获取消息 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_msg',
+        description: '按 message_id 获取单条消息的完整内容（包括发送者、消息段等）。可用于回溯查看历史中的某条消息，或在收到撤回通知后查看被撤回的内容。不限定会话类型，群聊和私聊消息均可查询。',
+        parameters: {
+          type: 'object',
+          properties: {
+            message_id: { type: 'string', description: '消息 ID' },
+          },
+          required: ['message_id'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      requireOneBotSession(callCtx);
+      if (!args.message_id) return '参数错误：缺少 message_id';
+      try {
+        const data = await callAction(ctx, callCtx, 'get_msg', {
+          message_id: Number(args.message_id),
+        });
+        return JSON.stringify(data);
+      } catch (err) {
+        return `获取消息失败：${err instanceof Error ? err.message : String(err)}。该消息可能已过期或不在当前 OneBot 实现的作用域内。`;
+      }
+    },
+  });
+
+  // ---- 获取群荣誉信息 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_group_honor_info',
+        description: '获取当前群的荣誉信息（龙王、群聊之火、群聊炽焰、冒尖小春笋、快乐之源）。可用于感知群内活跃成员、话题引导等。',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['talkative', 'performer', 'legend', 'strong_newbie', 'emotion', 'all'],
+              description: '荣誉类型：talkative=龙王, performer=群聊之火, legend=群聊炽焰, strong_newbie=冒尖小春笋, emotion=快乐之源, all=全部。默认 all。',
+            },
+          },
+          required: [],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const { groupId } = requireGroupSession(callCtx);
+      const honorType = typeof args.type === 'string' ? args.type : 'all';
+      const data = await callAction(ctx, callCtx, 'get_group_honor_info', {
+        group_id: Number(groupId),
+        type: honorType,
+      });
+      return JSON.stringify(data);
+    },
+  });
+
   ctx.logger.info('OneBot 群信息查询工具已注册');
 }
 
@@ -1227,6 +1288,34 @@ function registerInteractionTools(ctx: Context): void {
         });
       }
       return `已戳了 ${args.user_id} 一下`;
+    },
+  });
+
+  // ---- 发送好友赞 ----
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_send_like',
+        description: '给指定 QQ 用户发送好友赞（每个好友每天最多 10 次）。低成本的社交互动，适用于表达友好、打招呼等场景。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: '要赞的用户 QQ 号' },
+            times: { type: 'number', description: '赞的次数，默认 1，每天每个好友最多 10 次' },
+          },
+          required: ['user_id'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      requireOneBotSession(callCtx);
+      const times = Math.min(10, Math.max(1, typeof args.times === 'number' ? Math.floor(args.times) : 1));
+      await callAction(ctx, callCtx, 'send_like', {
+        user_id: Number(args.user_id),
+        times,
+      });
+      return `已给 ${args.user_id} 发送了 ${times} 次赞`;
     },
   });
 
