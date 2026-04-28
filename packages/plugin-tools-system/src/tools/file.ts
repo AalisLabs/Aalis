@@ -202,26 +202,33 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       const oldText = args.oldText as string;
       const newText = args.newText as string;
 
-      try {
-        const content = await fs.readFile(filePath, 'utf-8');
+      if (!oldText) {
+        return JSON.stringify({ error: 'oldText 不能为空' });
+      }
 
-        // 检查唯一匹配
-        const firstIndex = content.indexOf(oldText);
+      try {
+        // 读取时统一换行符为 LF，避免 CRLF/LF 差异导致匹配失败
+        const raw = await fs.readFile(filePath, 'utf-8');
+        const content = raw.replace(/\r\n/g, '\n');
+        const normalizedOld = oldText.replace(/\r\n/g, '\n');
+
+        // 检查唯一匹配：从匹配结束位置之后搜索第二次出现，避免长文本内部自重叠误报
+        const firstIndex = content.indexOf(normalizedOld);
         if (firstIndex === -1) {
           return JSON.stringify({
             error: '在文件中未找到 oldText。请确保文本精确匹配（包括空格和缩进）。',
           });
         }
 
-        const secondIndex = content.indexOf(oldText, firstIndex + 1);
+        const secondIndex = content.indexOf(normalizedOld, firstIndex + normalizedOld.length);
         if (secondIndex !== -1) {
           return JSON.stringify({
             error: 'oldText 在文件中有多处匹配。请提供更多上下文以确保唯一匹配。',
-            matchCount: content.split(oldText).length - 1,
+            matchCount: content.split(normalizedOld).length - 1,
           });
         }
 
-        const newContent = content.replace(oldText, newText);
+        const newContent = content.replace(normalizedOld, newText);
         await fs.writeFile(filePath, newContent, 'utf-8');
 
         // 返回编辑区域附近的上下文
