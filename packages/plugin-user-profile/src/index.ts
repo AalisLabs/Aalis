@@ -652,6 +652,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
     next,
   ) => {
+    if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'user-profile')) {
+      await next();
+      return;
+    }
+
     const blocksToInsert: string[] = [];
     const trigger = data.triggerType ?? 'direct';
     const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
@@ -715,7 +720,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (blocksToInsert.length > 0) {
       const idx = data.messages.findIndex(m => m.role === 'system');
       const insertAt = idx >= 0 ? idx + 1 : 0;
-      data.messages.splice(insertAt, 0, ...blocksToInsert.map(content => ({ role: 'system' as const, content })));
+      data.messages.splice(insertAt, 0, ...blocksToInsert.map(content => ({
+        role: 'system' as const,
+        content,
+        metadata: { source: 'user-profile' },
+      })));
     }
 
     await next();
