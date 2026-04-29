@@ -875,6 +875,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessionId,
           platform,
           source: 'idle-trigger',
+          triggerType: 'idle',
         });
         scheduleIdleTrigger(fState, sessionId, platform);
       } catch (err) {
@@ -961,6 +962,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         sessionId: target.sessionId,
         platform: 'onebot',
         source: 'idle-trigger',
+        triggerType: 'idle',
       });
     } catch (err) {
       ctx.logger.warn(`platform idle tick 执行失败: ${err}`);
@@ -1018,9 +1020,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     userId?: string,
     nickname?: string,
     images?: string[],
-  ): Promise<boolean> {
-    // 只对群聊启用流控
-    if (!flowCfg.enabled || sessionType !== 'group') return true;
+  ): Promise<'direct' | 'immediate' | 'interval' | null> {
+    // 只对群聊启用流控；私聊/频道等默认 'direct'
+    if (!flowCfg.enabled || sessionType !== 'group') return 'direct';
 
     // 启动后/重连后：通过 shut_up_timestamp 懒查询恢复被禁言状态（每会话一次）
     const fStateForRecovery = getFlowSession(sessionId);
@@ -1051,14 +1053,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       logFlowStatus(sessionId, fState, '禁言 → 计数器归零');
       await saveBufferedMessage(sessionId, content, nickname, userId, images);
       scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return false;
+      return null;
     }
 
     // 仍在禁言中
     if (now < fState.mutedUntil) {
       logFlowStatus(sessionId, fState, '禁言中');
       await saveBufferedMessage(sessionId, content, nickname, userId, images);
-      return false;
+      return null;
     }
 
     // 仍在冷却中
@@ -1068,7 +1070,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       logFlowStatus(sessionId, fState, '冷却中');
       await saveBufferedMessage(sessionId, content, nickname, userId, images);
       scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return false;
+      return null;
     }
 
     // 即时触发（@、名字）
@@ -1080,7 +1082,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         logFlowStatus(sessionId, fState, '即时触发 → 限速拦截');
         await saveBufferedMessage(sessionId, content, nickname, userId, images);
         scheduleIdleTrigger(fState, sessionId, 'onebot');
-        return false;
+        return null;
       }
       ctx.logger.debug(`即时触发 (@ / 名字): session=${sessionId}`);
       resetAfterTrigger(fState);
@@ -1088,7 +1090,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       fState.idleBackoff = 1;
       logFlowStatus(sessionId, fState, '即时触发 → 计数器归零');
       scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return true;
+      return 'immediate';
     }
 
     // 累加计数和评分
@@ -1102,21 +1104,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         logFlowStatus(sessionId, fState, '间隔触发 → 限速拦截');
         await saveBufferedMessage(sessionId, content, nickname, userId, images);
         scheduleIdleTrigger(fState, sessionId, 'onebot');
-        return false;
+        return null;
       }
       logFlowStatus(sessionId, fState, '间隔触发 → 计数器归零');
       resetAfterTrigger(fState);
       recordReply(fState);
       fState.idleBackoff = 1;
       scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return true;
+      return 'interval';
     }
 
     // 未触发，缓冲消息
     logFlowStatus(sessionId, fState, '未触发');
     await saveBufferedMessage(sessionId, content, nickname, userId, images);
     scheduleIdleTrigger(fState, sessionId, 'onebot');
-    return false;
+    return null;
   }
 
   // ----- 群信息缓存 -----
@@ -2069,9 +2071,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
       }
 
-      // 流控判定：返回 false 表示拦截（消息已缓冲到记忆）
-      const shouldEmit = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname, event.images);
-      if (!shouldEmit) return;
+      // 流控判定：返回 null 表示拦截（消息已缓冲到记忆），其他为触发类型
+      const triggerType = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname, event.images);
+      if (!triggerType) return;
 
       // 记录会话元数据（advisor.listSessionCandidates 用）
       if (sessionType) {
@@ -2092,6 +2094,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         groupName,
         groupId: event.groupId,
         replyTo,
+        triggerType,
       });
     })().catch(err => {
       ctx.logger.warn(`OneBot 消息处理异常: ${err}`);

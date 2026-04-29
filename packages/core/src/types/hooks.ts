@@ -29,7 +29,7 @@ export interface HookContextMap {
   'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
   'response:before': { content: string; sessionId: string };
   // LLM 调用钩子
-  'llm-call:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string };
+  'llm-call:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string; triggerType?: IncomingMessage['triggerType'] };
   'llm-call:after': { response: ChatResponse; messages: Message[] };
   // 记忆清除钩子（统一编排）
   'memory:clear': {
