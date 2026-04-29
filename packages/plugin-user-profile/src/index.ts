@@ -97,6 +97,12 @@ export const configSchema: ConfigSchema = {
     default: '',
     dynamicOptions: 'llm',
   },
+  allowGlobalBackfill: {
+    type: 'boolean',
+    label: '允许跨群补齐副档案',
+    description: '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
+    default: false,
+  },
 };
 
 export const defaultConfig = {
@@ -112,6 +118,7 @@ export const defaultConfig = {
   relationIncrementImmediate: 1.5,
   relationIncrementInterval: 0.5,
   extractModel: '',
+  allowGlobalBackfill: false,
 };
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
@@ -162,6 +169,7 @@ interface UserProfileConfig {
   relationIncrementImmediate: number;
   relationIncrementInterval: number;
   extractModel: string;
+  allowGlobalBackfill: boolean;
 }
 
 /** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
@@ -210,6 +218,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     relationIncrementImmediate: Math.max(0, (config.relationIncrementImmediate as number) ?? 1.5),
     relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
     extractModel: typeof config.extractModel === 'string' ? config.extractModel.trim() : '',
+    allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
   };
 
   /** 每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
@@ -707,7 +716,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (addOther(uid, plat, nick)) break;
       }
 
-      if (others.size < candidateLimit) {
+      if (cfg.allowGlobalBackfill && others.size < candidateLimit) {
         const memory = ctx.getService<MemoryService>('memory');
         if (memory?.listMetadata) {
           try {
