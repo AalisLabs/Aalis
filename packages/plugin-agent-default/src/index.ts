@@ -681,7 +681,13 @@ class DefaultAgent implements AgentService {
 
         // Hook: response:before — 插件可以修改最终回复
         // JSON 解析/修复统一由 persona 的 response:before 钩子处理
-        const responseData = { content: replyContent, sessionId: incoming.sessionId };
+        const responseData = {
+          content: replyContent,
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          userId: incoming.userId,
+          triggerType: incoming.triggerType,
+        };
         await this.ctx.hooks.run('response:before', responseData);
         replyContent = responseData.content;
 
