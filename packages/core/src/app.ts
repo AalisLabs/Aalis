@@ -217,11 +217,8 @@ export class App {
       }
     }
 
-    // 将插件默认配置中缺失的字段同步到配置文件
+    // 将插件默认配置中缺失的字段同步到配置文件（内部已按需保存）
     this.syncPluginDefaults();
-
-    // 确保核心配置的所有字段都落盘到 YAML（补齐用户可能缺少的条目）
-    this.saveConfig();
   }
 
   /**
