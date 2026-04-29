@@ -336,6 +336,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     const existing = store.getSummary(sessionId);
     if (existing?.summary) {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-summary')) {
+        await next();
+        return;
+      }
+
       // 动态计算摘要 token 预算
       const summaryBudget = getSummaryTokenBudget();
       const summaryTokens = Math.ceil(existing.summary.length / 3);
