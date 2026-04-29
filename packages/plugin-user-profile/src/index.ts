@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema, Message, OutgoingMessage } from '@aalis/core';
+import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { MemoryService, LLMService } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
@@ -30,11 +30,11 @@ export const configSchema: ConfigSchema = {
     description: '关闭后既不提取也不注入',
     default: true,
   },
-  extractCooldownSec: {
+  extractEveryNMessages: {
     type: 'number',
-    label: '提取冷却（秒）',
-    description: '同一用户两次事实提取的最小时间间隔，避免每条消息都触发 LLM',
-    default: 90,
+    label: '每 N 条消息提取一次',
+    description: '同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）',
+    default: 5,
   },
   historyForExtraction: {
     type: 'number',
@@ -70,7 +70,7 @@ export const configSchema: ConfigSchema = {
 
 export const defaultConfig = {
   enabled: true,
-  extractCooldownSec: 90,
+  extractEveryNMessages: 5,
   historyForExtraction: 8,
   maxFactsPerUser: 30,
   maxFactCharsPerItem: 80,
@@ -102,7 +102,7 @@ interface UserProfile {
 
 interface UserProfileConfig {
   enabled: boolean;
-  extractCooldownSec: number;
+  extractEveryNMessages: number;
   historyForExtraction: number;
   maxFactsPerUser: number;
   maxFactCharsPerItem: number;
@@ -145,7 +145,7 @@ function renderHistoryForExtract(history: Message[]): string {
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg: UserProfileConfig = {
     enabled: (config.enabled as boolean) ?? true,
-    extractCooldownSec: Math.max(10, (config.extractCooldownSec as number) ?? 90),
+    extractEveryNMessages: Math.max(1, (config.extractEveryNMessages as number) ?? 5),
     historyForExtraction: Math.max(2, (config.historyForExtraction as number) ?? 8),
     maxFactsPerUser: Math.max(5, (config.maxFactsPerUser as number) ?? 30),
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
@@ -158,8 +158,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return;
   }
 
-  /** 每用户上次提取时间，用于冷却 */
-  const lastExtractAt = new Map<string, number>();
+  /** 每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
+  const userMessageCount = new Map<string, number>();
   /** 防止同一用户的提取并发触发 */
   const inflightExtractions = new Set<string>();
 
@@ -356,33 +356,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return merged;
   }
 
-  /** 后台触发一次事实提取（带冷却 + 并发互斥） */
-  async function triggerExtractionAsync(sessionId: string): Promise<void> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getHistory) return;
-    let history: Message[];
-    try {
-      history = await memory.getHistory(sessionId, cfg.historyForExtraction);
-    } catch {
-      return;
-    }
-    // 找最近一条 user 消息，从其 metadata 推断身份
-    const lastUser = [...history].reverse().find(m => m.role === 'user');
-    if (!lastUser) return;
-    const meta = (lastUser.metadata ?? {}) as Record<string, unknown>;
-    const userId = typeof meta.userId === 'string' ? meta.userId : undefined;
-    if (!userId) return;
-    const platform = typeof meta.platform === 'string' ? meta.platform : '';
-    const nickname = typeof meta.nickname === 'string' ? meta.nickname : undefined;
-
+  /**
+   * 后台触发一次事实提取（并发互斥）。
+   * userId/platform/nickname 直接由调用方传入，不再从 history 里猜。
+   */
+  async function triggerExtractionForUser(
+    sessionId: string,
+    userId: string,
+    platform: string,
+    nickname: string | undefined,
+  ): Promise<void> {
     const userKey = userKeyOf(platform, userId);
-    const now = Date.now();
-    if (now - (lastExtractAt.get(userKey) ?? 0) < cfg.extractCooldownSec * 1000) return;
+    // 若同一用户已有提取在飞，跳过（消息计数继续累加，下次 N 条后再尝试）
     if (inflightExtractions.has(userKey)) return;
-    lastExtractAt.set(userKey, now);
     inflightExtractions.add(userKey);
-
+    const memory = ctx.getService<MemoryService>('memory');
     try {
+      if (!memory?.getHistory) return;
+      const history = await memory.getHistory(sessionId, cfg.historyForExtraction);
       const profile = (await loadProfile(userKey)) ?? { facts: [], updatedAt: 0 };
       const ops = await llmExtractFacts(history, profile.facts, nickname, userId);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
@@ -398,12 +389,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
-  // ─── 事件触发：助手回复完后异步提取 ───
-  ctx.on('message:send', (msg: OutgoingMessage) => {
-    if (msg.source && msg.source !== 'agent') return;
-    if (!msg.sessionId) return;
-    void triggerExtractionAsync(msg.sessionId);
-  });
+  // ─── 入站消息计数触发：每人独立计数，无论 Aalis 是否回复 ───
+  // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
+  ctx.middleware('message:before', async (
+    data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string } },
+    next,
+  ) => {
+    const { sessionId, userId, platform, nickname } = data.message;
+    if (userId) {
+      const userKey = userKeyOf(platform, userId);
+      const count = (userMessageCount.get(userKey) ?? 0) + 1;
+      userMessageCount.set(userKey, count);
+      if (count % cfg.extractEveryNMessages === 0) {
+        void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
+          (err: unknown) => ctx.logger.debug(
+            `事实提取异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+      }
+    }
+    await next();
+  }, 800);
 
   /** 将一个用户的 Fact[] 渲染为分组文本块 */
   function renderProfileBlock(facts: Fact[], label: string, compact: boolean): string {
@@ -532,7 +538,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }, 10);
 
   ctx.logger.info(
-    `用户事实档案已启用 (cooldown=${cfg.extractCooldownSec}s, history=${cfg.historyForExtraction}, `
+    `用户事实档案已启用 (every=${cfg.extractEveryNMessages}msgs, history=${cfg.historyForExtraction}, `
     + `maxFacts=${cfg.maxFactsPerUser}, namespace=${PROFILE_NS})`,
   );
 }
