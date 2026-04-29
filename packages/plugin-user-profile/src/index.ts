@@ -676,33 +676,70 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    // 2. 群聊其他参与者：从 messages 的 metadata 中收集 userId，加载档案
+    // 2. 群聊其他参与者：按最近互动优先加载档案
+    //    - 先从当前 LLM 上下文的 messages 中倒序收集最近发言者
+    //    - 再从跨会话 user:profile metadata 中按 lastInteractionAt 倒序补齐
     //    - hasPrimarySpeaker 为 true 时排除主发言者
     //    - hasPrimarySpeaker 为 false 时（interval/idle）所有人平等显示
     if (cfg.maxOtherParticipants > 0) {
-      const others = new Map<string, { nickname?: string; platform?: string }>();
-      for (const msg of data.messages) {
+      const primaryKey = hasPrimarySpeaker && data.userId ? userKeyOf(data.platform, data.userId) : undefined;
+      const others = new Map<string, { userId: string; nickname?: string; platform?: string }>();
+      const candidateLimit = Math.max(cfg.maxOtherParticipants * 5, cfg.maxOtherParticipants + 10);
+
+      function addOther(userId: string, platform?: string, nickname?: string): boolean {
+        const uid = userId.trim();
+        if (!uid) return false;
+        const userKey = userKeyOf(platform, uid);
+        if (primaryKey && userKey === primaryKey) return false;
+        if (others.has(userKey)) return false;
+        others.set(userKey, { userId: uid, nickname, platform });
+        return others.size >= candidateLimit;
+      }
+
+      for (let i = data.messages.length - 1; i >= 0; i--) {
+        const msg = data.messages[i];
         if (msg.role !== 'user') continue;
         const meta = (msg.metadata ?? {}) as Record<string, unknown>;
         const uid = typeof meta.userId === 'string' ? meta.userId.trim() : undefined;
         if (!uid) continue;
-        if (hasPrimarySpeaker && uid === data.userId) continue;
-        if (others.has(uid)) continue;
         const plat = typeof meta.platform === 'string' ? meta.platform : data.platform ?? '';
         const nick = typeof meta.nickname === 'string' ? meta.nickname : undefined;
-        others.set(uid, { nickname: nick, platform: plat });
-        if (others.size >= cfg.maxOtherParticipants) break;
+        if (addOther(uid, plat, nick)) break;
+      }
+
+      if (others.size < candidateLimit) {
+        const memory = ctx.getService<MemoryService>('memory');
+        if (memory?.listMetadata) {
+          try {
+            const globalRecent = await memory.listMetadata(PROFILE_NS);
+            globalRecent.sort((a, b) => {
+              const at = typeof a.data.lastInteractionAt === 'number' ? a.data.lastInteractionAt : 0;
+              const bt = typeof b.data.lastInteractionAt === 'number' ? b.data.lastInteractionAt : 0;
+              return bt - at;
+            });
+            for (const item of globalRecent) {
+              if (others.size >= candidateLimit) break;
+              const sep = item.key.indexOf(':');
+              if (sep < 0) continue;
+              const platform = item.key.slice(0, sep);
+              const uid = item.key.slice(sep + 1);
+              addOther(uid, platform);
+            }
+          } catch (err) {
+            ctx.logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
       }
       if (others.size > 0) {
         const snippets: string[] = [];
-        for (const [uid, info] of others) {
-          const key = userKeyOf(info.platform, uid);
+        for (const [key, info] of others) {
           let profile: UserProfile | undefined;
           try { profile = await loadProfile(key); } catch { /* 静默跳过 */ }
           if (!profile || !profile.facts.some(isFactActive)) continue;
-          const label = info.nickname ? `${info.nickname}（${uid}）` : uid;
+          const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
           const relationLine = renderRelationLine(profile);
           snippets.push(renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : ''));
+          if (snippets.length >= cfg.maxOtherParticipants) break;
         }
         if (snippets.length > 0) {
           // 标题根据语义切换：有主发言者 → 「其他参与者」；无主发言者 → 「在场参与者」
