@@ -64,9 +64,24 @@ export const defaultConfig = {
   maxFactCharsPerItem: 80,
 };
 
+/** 事实分类，用于 LLM 在同类下做覆写决策 */
+type FactCategory = '兴趣爱好' | '职业身份' | '人际关系' | '近期处境' | '价值观' | '性格特征' | '偏好' | '忌讳' | '其他';
+const KNOWN_CATEGORIES: FactCategory[] = ['兴趣爱好', '职业身份', '人际关系', '近期处境', '价值观', '性格特征', '偏好', '忌讳', '其他'];
+
+interface Fact {
+  /** 稳定短 ID，LLM 通过它精确指定要 update / remove 的事实 */
+  id: string;
+  /** 事实正文 */
+  text: string;
+  /** 事实分类，可空 */
+  category?: FactCategory;
+  /** 最近一次写入或更新的时间戳 */
+  updatedAt: number;
+}
+
 interface UserProfile {
-  /** 关于该用户的事实列表（最新写入的在末尾） */
-  facts: string[];
+  /** 关于该用户的事实列表（最新更新的在末尾） */
+  facts: Fact[];
   /** 上次提取/合并的时间戳 */
   updatedAt: number;
 }
@@ -77,6 +92,16 @@ interface UserProfileConfig {
   historyForExtraction: number;
   maxFactsPerUser: number;
   maxFactCharsPerItem: number;
+}
+
+/** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
+function genFactId(existing: Set<string>): string {
+  for (let i = 0; i < 8; i++) {
+    const id = 'f' + Math.random().toString(36).slice(2, 7);
+    if (!existing.has(id)) return id;
+  }
+  // 极端兜底：加时间戳后缀
+  return 'f' + Date.now().toString(36).slice(-5);
 }
 
 /** 从形如 ```json ... ``` 的文本里抠出 JSON 子串 */
@@ -124,14 +149,37 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return `${platform ?? ''}:${userId}`;
   }
 
-  /** 读取一个用户的现有档案（不存在返回 undefined） */
+  /** 读取一个用户的现有档案（不存在返回 undefined）。兼容旧格式 string[]，自动迁移 */
   async function loadProfile(userKey: string): Promise<UserProfile | undefined> {
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory?.getMetadata) return undefined;
     try {
       const doc = await memory.getMetadata(PROFILE_NS, userKey);
       if (!doc) return undefined;
-      const facts = Array.isArray(doc.facts) ? (doc.facts as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+      const raw = Array.isArray(doc.facts) ? (doc.facts as unknown[]) : [];
+      const usedIds = new Set<string>();
+      const facts: Fact[] = [];
+      for (const item of raw) {
+        if (typeof item === 'string' && item.trim()) {
+          // 旧格式：string → 包装为 Fact
+          const id = genFactId(usedIds);
+          usedIds.add(id);
+          facts.push({ id, text: item.trim(), updatedAt: 0 });
+        } else if (item && typeof item === 'object') {
+          const obj = item as Record<string, unknown>;
+          const text = typeof obj.text === 'string' ? obj.text.trim() : '';
+          if (!text) continue;
+          let id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : genFactId(usedIds);
+          // 去重 id
+          while (usedIds.has(id)) id = genFactId(usedIds);
+          usedIds.add(id);
+          const cat = typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
+            ? (obj.category as FactCategory)
+            : undefined;
+          const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
+          facts.push({ id, text, category: cat, updatedAt });
+        }
+      }
       return { facts, updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0 };
     } catch (err) {
       ctx.logger.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
@@ -149,32 +197,47 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
-  /** 调用 LLM 从历史中提取/修订事实 */
+  interface ExtractAddItem { text: string; category?: FactCategory }
+  interface ExtractUpdateItem { id: string; text: string; category?: FactCategory }
+  interface ExtractResult { add: ExtractAddItem[]; update: ExtractUpdateItem[]; remove: string[] }
+
+  function normalizeCategory(v: unknown): FactCategory | undefined {
+    if (typeof v !== 'string') return undefined;
+    return (KNOWN_CATEGORIES as string[]).includes(v) ? (v as FactCategory) : undefined;
+  }
+
+  /** 调用 LLM 从历史中提取/修订事实，返回 add / update / remove 三类操作 */
   async function llmExtractFacts(
     history: Message[],
-    existingFacts: string[],
+    existingFacts: Fact[],
     nickname: string | undefined,
     userId: string,
-  ): Promise<{ add: string[]; remove: string[] }> {
+  ): Promise<ExtractResult> {
     const llm = ctx.getService<LLMService>('llm');
-    if (!llm?.chat) return { add: [], remove: [] };
+    const empty: ExtractResult = { add: [], update: [], remove: [] };
+    if (!llm?.chat) return empty;
 
     const sys = '你是用户档案管理员。请从给定的对话历史中识别「关于该用户值得长期记住」的事实，'
-      + '包括但不限于：兴趣爱好、职业身份、人际关系、近期处境、价值观、明显的个性特征、'
-      + '已表达过的偏好或忌讳。'
+      + '维护一份精炼、准确、不冗余的档案。'
+      + '\n\n你可以执行三种操作（在一次输出里组合）：'
+      + '\n- add: 添加新事实，需指定 text 与 category'
+      + '\n- update: 用 id 精确替换某条已知事实（用于含义重叠或表述需要修正的情况，**优先使用 update 而非 add 来避免重复**）'
+      + '\n- remove: 用 id 删除已被推翻、过时、或确认错误的事实'
       + '\n\n规则：'
-      + '\n1. 仅提取与该用户本人相关的事实，不要记录闲聊话题或一次性话语'
-      + '\n2. 与已知事实重复的不要再加'
-      + '\n3. 如果已知事实中有明显被新对话推翻或过时的，列入 remove'
-      + '\n4. 每条事实用一句简洁中文，不超过 80 字，不带「用户」「他」等代词，直接陈述'
-      + '\n5. 如果没有可提取的新事实，add 输出空数组'
-      + '\n\n输出严格的 JSON：{"add": ["事实1", "事实2"], "remove": ["要删除的旧事实原文"]}';
+      + '\n1. 仅记录与该用户本人相关、值得长期记住的事实，不记闲聊话题或一次性话语'
+      + '\n2. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条'
+      + '\n3. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除'
+      + '\n4. 每条 text 用一句简洁中文，不超过 80 字，不带「用户」「他」等代词，直接陈述事实'
+      + '\n5. 如果没有任何更新，三个数组都返回空'
+      + `\n6. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}`
+      + '\n\n输出严格的 JSON（不要其他文本）：'
+      + '\n{"add": [{"text": "...", "category": "..."}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "..."}], "remove": ["已知事实的id"]}';
 
     const factListText = existingFacts.length > 0
-      ? existingFacts.map((f, i) => `${i + 1}. ${f}`).join('\n')
+      ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
       : '（暂无）';
     const who = nickname ? `${nickname}（${userId}）` : userId;
-    const user = `# 该用户标识\n${who}\n\n# 已知事实\n${factListText}\n\n# 最近对话历史\n${renderHistoryForExtract(history)}`;
+    const user = `# 该用户标识\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 最近对话历史\n${renderHistoryForExtract(history)}`;
 
     try {
       const resp = await llm.chat({
@@ -183,44 +246,95 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           { role: 'user', content: user },
         ],
         temperature: 0.2,
-        maxTokens: 600,
+        maxTokens: 800,
         think: false,
       });
       const text = (resp.content ?? '').trim();
-      if (!text) return { add: [], remove: [] };
+      if (!text) return empty;
       const jsonStr = extractJsonBlock(text);
-      const parsed = JSON.parse(jsonStr) as { add?: unknown; remove?: unknown };
-      const add = Array.isArray(parsed.add)
-        ? (parsed.add as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      const parsed = JSON.parse(jsonStr) as { add?: unknown; update?: unknown; remove?: unknown };
+      const add: ExtractAddItem[] = Array.isArray(parsed.add)
+        ? (parsed.add as unknown[]).flatMap(x => {
+            if (!x || typeof x !== 'object') return [];
+            const o = x as Record<string, unknown>;
+            const t = typeof o.text === 'string' ? o.text.trim() : '';
+            if (!t) return [];
+            return [{ text: t, category: normalizeCategory(o.category) }];
+          })
         : [];
-      const remove = Array.isArray(parsed.remove)
-        ? (parsed.remove as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      const update: ExtractUpdateItem[] = Array.isArray(parsed.update)
+        ? (parsed.update as unknown[]).flatMap(x => {
+            if (!x || typeof x !== 'object') return [];
+            const o = x as Record<string, unknown>;
+            const id = typeof o.id === 'string' ? o.id.trim() : '';
+            const t = typeof o.text === 'string' ? o.text.trim() : '';
+            if (!id || !t) return [];
+            return [{ id, text: t, category: normalizeCategory(o.category) }];
+          })
         : [];
-      return { add, remove };
+      const remove: string[] = Array.isArray(parsed.remove)
+        ? (parsed.remove as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(s => s.trim())
+        : [];
+      return { add, update, remove };
     } catch (err) {
       ctx.logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
-      return { add: [], remove: [] };
+      return empty;
     }
   }
 
-  /** 合并 add/remove 到现有事实，应用上限与单条裁剪 */
-  function mergeFacts(existing: string[], add: string[], remove: string[]): string[] {
-    const removeSet = new Set(remove.map(s => s.trim()));
-    let merged = existing.filter(f => !removeSet.has(f.trim()));
-    const existingSet = new Set(merged.map(s => s.trim()));
-    for (const f of add) {
-      const trimmed = f.trim();
-      if (!trimmed || existingSet.has(trimmed)) continue;
-      const clipped = trimmed.length > cfg.maxFactCharsPerItem
-        ? trimmed.slice(0, cfg.maxFactCharsPerItem) + '…'
-        : trimmed;
-      merged.push(clipped);
-      existingSet.add(trimmed);
+  function clipText(s: string): string {
+    return s.length > cfg.maxFactCharsPerItem
+      ? s.slice(0, cfg.maxFactCharsPerItem) + '…'
+      : s;
+  }
+
+  /** 合并 add/update/remove 到现有事实，应用上限与单条裁剪 */
+  function mergeFacts(existing: Fact[], ops: ExtractResult): Fact[] {
+    const now = Date.now();
+    const byId = new Map<string, Fact>();
+    for (const f of existing) byId.set(f.id, f);
+
+    // 1. remove：精确按 id
+    for (const id of ops.remove) byId.delete(id);
+
+    // 2. update：按 id 替换（id 不存在则降级为 add）
+    const usedIds = new Set(byId.keys());
+    for (const u of ops.update) {
+      const text = clipText(u.text);
+      if (byId.has(u.id)) {
+        const old = byId.get(u.id)!;
+        byId.set(u.id, {
+          id: u.id,
+          text,
+          category: u.category ?? old.category,
+          updatedAt: now,
+        });
+      } else {
+        const id = genFactId(usedIds);
+        usedIds.add(id);
+        byId.set(id, { id, text, category: u.category, updatedAt: now });
+      }
     }
+
+    // 3. add：新增（按 text 去重，避免 LLM 同 batch 重复加同一句）
+    const textSet = new Set(Array.from(byId.values()).map(f => f.text));
+    for (const a of ops.add) {
+      const text = clipText(a.text);
+      if (textSet.has(text)) continue;
+      const id = genFactId(usedIds);
+      usedIds.add(id);
+      byId.set(id, { id, text, category: a.category, updatedAt: now });
+      textSet.add(text);
+    }
+
+    // 4. 总量上限：按 updatedAt 升序淘汰最久未更新的
+    let merged = Array.from(byId.values());
     if (merged.length > cfg.maxFactsPerUser) {
-      // 保留最近写入的（数组尾部），淘汰最旧的
-      merged = merged.slice(-cfg.maxFactsPerUser);
+      merged.sort((a, b) => a.updatedAt - b.updatedAt);
+      merged = merged.slice(merged.length - cfg.maxFactsPerUser);
     }
+    // 输出按 updatedAt 升序，最近更新的排在尾部（注入 prompt 时一致）
+    merged.sort((a, b) => a.updatedAt - b.updatedAt);
     return merged;
   }
 
@@ -252,11 +366,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     try {
       const profile = (await loadProfile(userKey)) ?? { facts: [], updatedAt: 0 };
-      const { add, remove } = await llmExtractFacts(history, profile.facts, nickname, userId);
-      if (add.length === 0 && remove.length === 0) return;
-      const newFacts = mergeFacts(profile.facts, add, remove);
+      const ops = await llmExtractFacts(history, profile.facts, nickname, userId);
+      if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
+      const newFacts = mergeFacts(profile.facts, ops);
       await saveProfile(userKey, { facts: newFacts, updatedAt: Date.now() });
-      ctx.logger.debug(`用户档案已更新 (${userKey}): +${add.length} -${remove.length} → ${newFacts.length} 条`);
+      ctx.logger.debug(
+        `用户档案已更新 (${userKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
+      );
     } catch (err) {
       ctx.logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -283,10 +399,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const userKey = userKeyOf(data.platform, data.userId);
     const profile = await loadProfile(userKey);
     if (profile && profile.facts.length > 0) {
+      // 按 category 分组渲染，可读性更好
+      const groups = new Map<string, string[]>();
+      for (const f of profile.facts) {
+        const key = f.category ?? '其他';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(f.text);
+      }
+      const sections: string[] = [];
+      for (const cat of KNOWN_CATEGORIES) {
+        const items = groups.get(cat);
+        if (items && items.length > 0) sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+      }
+      // 兜底：未在已知 category 列表中的项
+      for (const [cat, items] of groups) {
+        if (!(KNOWN_CATEGORIES as string[]).includes(cat) && items.length > 0) {
+          sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+        }
+      }
       const block = `# 关于当前对话者（${data.userId}）的已知事实\n`
         + '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。'
-        + '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n'
-        + profile.facts.map(f => `- ${f}`).join('\n');
+        + '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n'
+        + sections.join('\n\n');
       // 插入到第一条 system 之后（保持 persona system 在最前）
       const idx = data.messages.findIndex(m => m.role === 'system');
       const insertAt = idx >= 0 ? idx + 1 : 0;
