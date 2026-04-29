@@ -54,6 +54,18 @@ export const configSchema: ConfigSchema = {
     description: '超出会被裁断，避免 LLM 输出长段落代替事实',
     default: 80,
   },
+  maxOtherParticipants: {
+    type: 'number',
+    label: '群聊其他参与者档案上限',
+    description: '群聊中除当前发言者外，最多加载多少人的档案摘要注入 LLM。0 表示禁用群聊多用户注入',
+    default: 3,
+  },
+  maxFactsForOthers: {
+    type: 'number',
+    label: '其他参与者摘要条数上限',
+    description: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
+    default: 5,
+  },
 };
 
 export const defaultConfig = {
@@ -62,6 +74,8 @@ export const defaultConfig = {
   historyForExtraction: 8,
   maxFactsPerUser: 30,
   maxFactCharsPerItem: 80,
+  maxOtherParticipants: 3,
+  maxFactsForOthers: 5,
 };
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
@@ -92,6 +106,8 @@ interface UserProfileConfig {
   historyForExtraction: number;
   maxFactsPerUser: number;
   maxFactCharsPerItem: number;
+  maxOtherParticipants: number;
+  maxFactsForOthers: number;
 }
 
 /** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
@@ -133,6 +149,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     historyForExtraction: Math.max(2, (config.historyForExtraction as number) ?? 8),
     maxFactsPerUser: Math.max(5, (config.maxFactsPerUser as number) ?? 30),
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
+    maxOtherParticipants: Math.max(0, (config.maxOtherParticipants as number) ?? 3),
+    maxFactsForOthers: Math.max(1, (config.maxFactsForOthers as number) ?? 5),
   };
 
   if (!cfg.enabled) {
@@ -387,45 +405,97 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     void triggerExtractionAsync(msg.sessionId);
   });
 
-  // ─── LLM 调用前注入：把当前用户的事实档案放进 system 消息 ───
+  /** 将一个用户的 Fact[] 渲染为分组文本块 */
+  function renderProfileBlock(facts: Fact[], label: string, compact: boolean): string {
+    const groups = new Map<string, string[]>();
+    // compact 模式（群聊背景参与者）：只取最近更新的 N 条，不分组
+    const subset = compact
+      ? [...facts].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cfg.maxFactsForOthers)
+      : facts;
+    for (const f of subset) {
+      const key = f.category ?? '其他';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(f.text);
+    }
+    if (compact) {
+      // compact 模式：平铺，不加分组标题
+      return `### ${label}\n` + subset.map(f => `- ${f.text}`).join('\n');
+    }
+    const sections: string[] = [];
+    for (const cat of KNOWN_CATEGORIES) {
+      const items = groups.get(cat);
+      if (items && items.length > 0) sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+    }
+    for (const [cat, items] of groups) {
+      if (!(KNOWN_CATEGORIES as string[]).includes(cat) && items.length > 0) {
+        sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+      }
+    }
+    return sections.join('\n\n');
+  }
+
+  // ─── LLM 调用前注入：主发言者完整档案 + 群聊其他参与者摘要 ───
   ctx.middleware('llm-call:before', async (
     data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
     next,
   ) => {
-    if (!data.userId) {
-      await next();
-      return;
+    const blocksToInsert: string[] = [];
+
+    // 1. 主发言者：完整档案
+    if (data.userId) {
+      const userKey = userKeyOf(data.platform, data.userId);
+      const profile = await loadProfile(userKey);
+      if (profile && profile.facts.length > 0) {
+        const body = renderProfileBlock(profile.facts, data.userId, false);
+        const block = `# 关于当前对话者（${data.userId}）的已知事实\n`
+          + '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。'
+          + '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n'
+          + body;
+        blocksToInsert.push(block);
+      }
     }
-    const userKey = userKeyOf(data.platform, data.userId);
-    const profile = await loadProfile(userKey);
-    if (profile && profile.facts.length > 0) {
-      // 按 category 分组渲染，可读性更好
-      const groups = new Map<string, string[]>();
-      for (const f of profile.facts) {
-        const key = f.category ?? '其他';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key)!.push(f.text);
+
+    // 2. 群聊其他参与者：从 messages 的 metadata 中收集其他 userId
+    if (cfg.maxOtherParticipants > 0) {
+      // 按出现顺序去重，排除主发言者
+      const others = new Map<string, { nickname?: string; platform?: string }>();
+      for (const msg of data.messages) {
+        if (msg.role !== 'user') continue;
+        const meta = (msg.metadata ?? {}) as Record<string, unknown>;
+        const uid = typeof meta.userId === 'string' ? meta.userId.trim() : undefined;
+        if (!uid || uid === data.userId || others.has(uid)) continue;
+        const plat = typeof meta.platform === 'string' ? meta.platform : data.platform ?? '';
+        const nick = typeof meta.nickname === 'string' ? meta.nickname : undefined;
+        others.set(uid, { nickname: nick, platform: plat });
+        if (others.size >= cfg.maxOtherParticipants) break;
       }
-      const sections: string[] = [];
-      for (const cat of KNOWN_CATEGORIES) {
-        const items = groups.get(cat);
-        if (items && items.length > 0) sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
-      }
-      // 兜底：未在已知 category 列表中的项
-      for (const [cat, items] of groups) {
-        if (!(KNOWN_CATEGORIES as string[]).includes(cat) && items.length > 0) {
-          sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+      if (others.size > 0) {
+        const snippets: string[] = [];
+        for (const [uid, info] of others) {
+          const key = userKeyOf(info.platform, uid);
+          let profile: UserProfile | undefined;
+          try { profile = await loadProfile(key); } catch { /* 静默跳过 */ }
+          if (!profile || profile.facts.length === 0) continue;
+          const label = info.nickname ? `${info.nickname}（${uid}）` : uid;
+          snippets.push(renderProfileBlock(profile.facts, label, true));
+        }
+        if (snippets.length > 0) {
+          const block = `# 群聊其他参与者背景摘要\n`
+            + '以下是同一会话中其他参与者的基本档案，供你在群聊语境中参考，了解他们是谁。'
+            + '不要主动透露这些信息，只在自然相关时使用：\n\n'
+            + snippets.join('\n\n');
+          blocksToInsert.push(block);
         }
       }
-      const block = `# 关于当前对话者（${data.userId}）的已知事实\n`
-        + '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。'
-        + '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n'
-        + sections.join('\n\n');
-      // 插入到第一条 system 之后（保持 persona system 在最前）
+    }
+
+    if (blocksToInsert.length > 0) {
       const idx = data.messages.findIndex(m => m.role === 'system');
       const insertAt = idx >= 0 ? idx + 1 : 0;
-      data.messages.splice(insertAt, 0, { role: 'system', content: block });
+      // 一次 splice 全部插入，保持块间顺序
+      data.messages.splice(insertAt, 0, ...blocksToInsert.map(content => ({ role: 'system' as const, content })));
     }
+
     await next();
   });
 
