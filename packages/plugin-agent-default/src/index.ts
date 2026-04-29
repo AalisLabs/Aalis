@@ -94,8 +94,8 @@ class DefaultAgent implements AgentService {
   private maxToolIterations: number;
   /** 单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断 */
   private toolResultMaxRatio: number;
-  /** token 使用率超过此比例时自动触发压缩 (0~1) */
-  private autoCompressThreshold: number;
+  /** 内存裁剪触发比例 (0~1)：估算输入 token 占 contextLength 的比例上限，超过则触发本次调用的内存裁剪 */
+  private trimThresholdRatio: number;
   /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
   private preferredModel: string;
 
@@ -121,7 +121,7 @@ class DefaultAgent implements AgentService {
     this.historyLimit = (config.historyLimit as number) ?? 50;
     this.maxToolIterations = (config.maxToolIterations as number) ?? 30;
     this.toolResultMaxRatio = (config.toolResultMaxRatio as number) ?? 0.15;
-    this.autoCompressThreshold = (config.autoCompressThreshold as number) ?? 0.85;
+    this.trimThresholdRatio = (config.trimThresholdRatio as number) ?? 1.0;
     this.preferredModel = (config.preferredModel as string) || '';
     this.logger.info('默认对话代理已初始化');
   }
@@ -453,8 +453,9 @@ class DefaultAgent implements AgentService {
       const maxTokens = llm.getMaxTokens();
       const maxToolIterations = this.maxToolIterations;
       const contextLength = llm.getContextLength();
-      // 预留 token 预算 = 上下文长度 - 最大输出 token - 安全余量
-      const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
+      // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
+      // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 占满物理上限才裁剪
+      const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
 
       try {
         // 统一解析 session 配置（一次解析，多处复用）
@@ -1006,12 +1007,6 @@ class DefaultAgent implements AgentService {
         reservedForReply: maxTokens,
       },
     }).catch(() => {});
-
-    // 自动压缩触发：当 token 使用率超过阈值时
-    if (usageRatio >= this.autoCompressThreshold) {
-      this.logger.info(`Token 使用率 ${(usageRatio * 100).toFixed(1)}% 超过阈值 ${(this.autoCompressThreshold * 100).toFixed(0)}%，触发自动压缩`);
-      this.ctx.emit('session:compress', { sessionId, reason: 'auto', usageRatio }).catch(() => {});
-    }
   }
 
   /**
@@ -1410,11 +1405,11 @@ export const configSchema: ConfigSchema = {
     default: 0.15,
     description: '单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15%',
   },
-  autoCompressThreshold: {
+  trimThresholdRatio: {
     type: 'number',
-    label: '自动压缩阈值',
-    default: 0.85,
-    description: 'Token 使用率超过此比例 (0~1) 时自动触发对话压缩。例如 0.85 表示 85%',
+    label: '裁剪触发比例',
+    default: 1.0,
+    description: '估算输入 token 占上下文长度的比例上限 (0~1)。本次调用超过该比例才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示占满物理上限才裁剪；如需提前护航可调低。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
   },
 };
 
@@ -1425,7 +1420,7 @@ export const defaultConfig = {
   historyLimit: 50,
   maxToolIterations: 30,
   toolResultMaxRatio: 0.15,
-  autoCompressThreshold: 0.85,
+  trimThresholdRatio: 1.0,
 };
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {

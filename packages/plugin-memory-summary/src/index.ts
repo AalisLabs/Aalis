@@ -42,6 +42,12 @@ export const configSchema: ConfigSchema = {
     default: 0.05,
     description: '摘要占模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。 实际 token 上限 = contextLength × 比例，自动适配不同模型',
   },
+  autoCompressThreshold: {
+    type: 'number',
+    label: 'Token 预压缩阈值',
+    default: 0.7,
+    description: '监听 agent 发出的 token:usage 事件，当使用率超过此比例 (0~1) 时启动后台压缩。默认 0.7 实现“临界前预压缩”，让本轮调用仍然能用原始上下文完成，压缩后的成果下一轮生效。设为 0 则禁用 token 触发。',
+  },
   summaryPrompt: {
     type: 'string',
     label: '摘要生成提示词',
@@ -54,6 +60,7 @@ export const defaultConfig = {
   threshold: 30,
   keepRecent: 20,
   summaryTokenRatio: 0.05,
+  autoCompressThreshold: 0.7,
   summaryPrompt: '',
 };
 
@@ -67,6 +74,8 @@ interface SummaryConfig {
   keepRecent: number;
   /** 摘要占模型上下文窗口的比例 (0~1) */
   summaryTokenRatio: number;
+  /** Token 使用率超过此比例时启动后台压缩 (0~1)，0 表示禁用 */
+  autoCompressThreshold: number;
   /** 自定义摘要提示词 */
   summaryPrompt: string;
 }
@@ -177,6 +186,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     threshold: (config.threshold as number) ?? 30,
     keepRecent: (config.keepRecent as number) ?? 20,
     summaryTokenRatio: (config.summaryTokenRatio as number) ?? 0.05,
+    autoCompressThreshold: (config.autoCompressThreshold as number) ?? 0.7,
     summaryPrompt: (config.summaryPrompt as string) ?? '',
   };
 
@@ -361,6 +371,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ctx.logger.warn('异步摘要生成失败:', err);
     });
   }, 0);
+
+  // === 监听 token:usage 事件，预压缩触发 ===
+  // agent 在每次 LLM 调用前发出 token 使用统计；
+  // 当使用率超过 autoCompressThreshold（默认 0.7）时，转发为 session:compress(reason='auto') 启动后台压缩。
+  // 注意：generateSummary/session:compress 内部已有 summarizing 锁，这里再做一次提前判断避免无谓 emit。
+  ctx.on('token:usage', async (...args: unknown[]) => {
+    const data = args[0] as { sessionId: string; usageRatio: number };
+    if (!data?.sessionId) return;
+    if (cfg.autoCompressThreshold <= 0) return;
+    if (data.usageRatio < cfg.autoCompressThreshold) return;
+    if (summarizing.has(data.sessionId)) return;
+    ctx.logger.info(`Token 使用率 ${(data.usageRatio * 100).toFixed(1)}% 超过阈值 ${(cfg.autoCompressThreshold * 100).toFixed(0)}%，触发后台压缩`);
+    ctx.emit('session:compress', { sessionId: data.sessionId, reason: 'auto', usageRatio: data.usageRatio }).catch(() => {});
+  });
 
   // === 监听手动/自动压缩事件 ===
   ctx.on('session:compress', async (...args: unknown[]) => {
