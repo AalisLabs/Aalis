@@ -329,6 +329,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
     next: MiddlewareNext,
   ) => {
+    if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-vector')) {
+      await next();
+      return;
+    }
+
     const userMessages = data.messages.filter(m => m.role === 'user');
     const lastUserMsg = userMessages[userMessages.length - 1];
     if (!lastUserMsg?.content) {

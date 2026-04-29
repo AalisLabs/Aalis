@@ -28,7 +28,7 @@ export const configSchema: ConfigSchema = {
   statePersistence: {
     type: 'boolean',
     label: '状态持久化',
-    description: '启用后，角色状态（好感度、心情等 outputFormat 字段）会在对话间持久保存并注入到下一轮提示中',
+    description: '启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中',
     default: false,
   },
   timeInjection: {
@@ -139,7 +139,6 @@ class PersonaServiceImpl implements PersonaService {
     return replyField ? { fields, replyField } : undefined;
   }
 
-  /** 保存会话状态 */
   /** 保存会话状态 */
   saveSessionState(sessionId: string, state: Record<string, unknown>): void {
     this.sessionStates.set(sessionId, state);
@@ -282,11 +281,11 @@ class PersonaServiceImpl implements PersonaService {
     }
 
     // 状态持久化注入
-    if (this.statePersistence && this.currentSessionId) {
-      const state = this.sessionStates.get(this.currentSessionId);
+    if (this.statePersistence) {
+      const state = this.currentSessionId ? this.sessionStates.get(this.currentSessionId) : undefined;
       if (state && Object.keys(state).length > 0) {
         prompt += '\n\n# 你上一轮的状态\n';
-        prompt += '以下是你上一轮回复中的状态，请基于此状态继续，并根据本轮对话更新：\n';
+        prompt += '以下是你上一轮回复中的角色状态，请基于此状态继续，并根据本轮对话更新：\n';
         for (const [k, v] of Object.entries(state)) {
           prompt += `${k}: ${v}\n`;
         }
@@ -306,7 +305,7 @@ class PersonaServiceImpl implements PersonaService {
         prompt += customPrompt + '\n';
       } else {
         prompt += '# 输出格式（最终回复时必须使用）\n';
-        prompt += '每当你需要输出文字回复时（无论是否调用了工具），必须使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
+        prompt += '每当你最终需要输出文字回复时（工具调用过程中不需要遵循此格式，只需要按照工具定义规范回复即可。但是最终回复的内容必须遵循此格式），需要使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
       }
       prompt += '{\n';
       const entries = Object.entries(effectiveFormat.fields);
@@ -486,9 +485,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentUserId = data.message.userId;
     service.currentNickname = data.message.nickname;
     service.currentGroupName = data.message.groupName;
+
     try {
       await next();
     } finally {
+      // 清理运行时上下文，避免泄漏到下一次调用
       service.currentSessionId = undefined;
       service.currentPlatform = undefined;
       service.currentSessionType = undefined;
@@ -517,7 +518,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const sm = ctx.getService<SessionManagerService>('session-manager');
         if (sm && data.sessionId) {
-          const resolved = sm.resolveConfig(data.sessionId);
+          const resolved = sm.resolveConfig(data.sessionId, data.platform);
           personaOpts = {
             persona: resolved.persona,
             disableOutputFormat: resolved.disableOutputFormat,
