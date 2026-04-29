@@ -99,7 +99,7 @@ export const configSchema: ConfigSchema = {
   },
   allowGlobalBackfill: {
     type: 'boolean',
-    label: '允许跨群补齐副档案',
+    label: '允许跨会话补齐副档案',
     description: '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
     default: false,
   },
@@ -334,10 +334,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       + '\n- update: 用 id 精确替换某条已知事实（用于含义重叠或表述需要修正的情况，**优先使用 update 而非 add 来避免重复**）'
       + '\n- remove: 用 id 删除已被推翻、过时、或确认错误的事实'
       + '\n\n规则：'
-      + '\n1. 仅记录与该用户本人相关、值得长期记住的事实，不记闲聊话题或一次性话语'
+      + `\n1. 仅记录与「该用户」本人相关、值得长期记住的事实，不记闲聊话题或一次性话语；群聊历史中可能含多人发言（以发送者前缀区分），只关注目标用户自身的发言`
       + '\n2. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条'
       + '\n3. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除'
-      + '\n4. 每条 text 用一句简洁中文，不超过 80 字，不带「用户」「他」等代词，直接陈述事实'
+      + `\n4. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实`
       + '\n5. 如果没有任何更新，三个数组都返回空'
       + `\n6. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}`
       + '\n7. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary'
@@ -544,7 +544,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const ops = await llmExtractFacts(history, profile.facts, nickname, userId);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
       const newFacts = mergeFacts(profile.facts, ops);
-      await saveProfile(userKey, { ...profile, facts: newFacts, updatedAt: Date.now() });
+      // 重新读取最新档案，避免覆盖提取期间（LLM 调用时）已写入的 relationScore 等字段
+      const freshProfile = (await loadProfile(userKey)) ?? profile;
+      await saveProfile(userKey, { ...freshProfile, facts: newFacts, updatedAt: Date.now() });
       ctx.logger.debug(
         `用户档案已更新 (${userKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
@@ -782,7 +784,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId?: string;
     results: Array<{ source: string; success: boolean; message: string }>;
   }, next) => {
-    if (data.types && !data.types.includes('user-profile') && !data.types.includes('persona')) {
+    if (data.types && !data.types.includes('user-profile')) {
       await next();
       return;
     }
