@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "eval:behavior": "node evals/profile-behavior-eval.mjs"
   },
   "dependencies": {
     "@aalis/core": "workspace:*"

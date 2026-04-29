@@ -66,6 +66,36 @@ export const configSchema: ConfigSchema = {
     description: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
     default: 5,
   },
+  temporaryFactMaxAgeDays: {
+    type: 'number',
+    label: '临时事实保留天数',
+    description: 'temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出',
+    default: 90,
+  },
+  relationScoreDecayPerDay: {
+    type: 'number',
+    label: '关系强度每日衰减',
+    description: '用户长期未互动时，relationScore 每天衰减的分数。0 表示不衰减',
+    default: 0.5,
+  },
+  relationIncrementDirect: {
+    type: 'number',
+    label: '私聊关系增量',
+    description: 'direct 触发时每条消息增加的关系强度',
+    default: 1,
+  },
+  relationIncrementImmediate: {
+    type: 'number',
+    label: '主动呼叫关系增量',
+    description: '群聊 @/名字主动触发时每条消息增加的关系强度',
+    default: 1.5,
+  },
+  relationIncrementInterval: {
+    type: 'number',
+    label: '群聊被动参与关系增量',
+    description: '群聊频率/活跃度被动触发或普通入站消息增加的关系强度',
+    default: 0.5,
+  },
   extractModel: {
     type: 'select',
     label: '提取用模型',
@@ -83,12 +113,18 @@ export const defaultConfig = {
   maxFactCharsPerItem: 80,
   maxOtherParticipants: 3,
   maxFactsForOthers: 5,
+  temporaryFactMaxAgeDays: 90,
+  relationScoreDecayPerDay: 0.5,
+  relationIncrementDirect: 1,
+  relationIncrementImmediate: 1.5,
+  relationIncrementInterval: 0.5,
   extractModel: '',
 };
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
 type FactCategory = '兴趣爱好' | '职业身份' | '人际关系' | '近期处境' | '价值观' | '性格特征' | '偏好' | '忌讳' | '其他';
 const KNOWN_CATEGORIES: FactCategory[] = ['兴趣爱好', '职业身份', '人际关系', '近期处境', '价值观', '性格特征', '偏好', '忌讳', '其他'];
+type FactTemporality = 'permanent' | 'temporary';
 
 interface Fact {
   /** 稳定短 ID，LLM 通过它精确指定要 update / remove 的事实 */
@@ -97,6 +133,12 @@ interface Fact {
   text: string;
   /** 事实分类，可空 */
   category?: FactCategory;
+  /** 事实时效：temporary 会随时间淡出 prompt；permanent 长期有效 */
+  temporality?: FactTemporality;
+  /** 首次学习到该事实的时间戳 */
+  observedAt?: number;
+  /** LLM 提取出的自然语言时间线索，如“最近”“上周”“2026年4月” */
+  timeHint?: string;
   /** 最近一次写入或更新的时间戳 */
   updatedAt: number;
 }
@@ -104,6 +146,12 @@ interface Fact {
 interface UserProfile {
   /** 关于该用户的事实列表（最新更新的在末尾） */
   facts: Fact[];
+  /** 0~100，基于持续互动累计并随时间衰减的关系强度 */
+  relationScore?: number;
+  /** 已观察到的入站互动次数 */
+  interactionCount?: number;
+  /** 最近一次互动时间 */
+  lastInteractionAt?: number;
   /** 上次提取/合并的时间戳 */
   updatedAt: number;
 }
@@ -116,6 +164,11 @@ interface UserProfileConfig {
   maxFactCharsPerItem: number;
   maxOtherParticipants: number;
   maxFactsForOthers: number;
+  temporaryFactMaxAgeDays: number;
+  relationScoreDecayPerDay: number;
+  relationIncrementDirect: number;
+  relationIncrementImmediate: number;
+  relationIncrementInterval: number;
   extractModel: string;
 }
 
@@ -160,6 +213,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
     maxOtherParticipants: Math.max(0, (config.maxOtherParticipants as number) ?? 3),
     maxFactsForOthers: Math.max(1, (config.maxFactsForOthers as number) ?? 5),
+    temporaryFactMaxAgeDays: Math.max(0, (config.temporaryFactMaxAgeDays as number) ?? 90),
+    relationScoreDecayPerDay: Math.max(0, (config.relationScoreDecayPerDay as number) ?? 0.5),
+    relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
+    relationIncrementImmediate: Math.max(0, (config.relationIncrementImmediate as number) ?? 1.5),
+    relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
     extractModel: typeof config.extractModel === 'string' ? config.extractModel.trim() : '',
   };
 
@@ -177,6 +235,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return `${platform ?? ''}:${userId}`;
   }
 
+  function normalizeTemporality(v: unknown, category?: FactCategory): FactTemporality {
+    if (v === 'permanent' || v === 'temporary') return v;
+    return category === '近期处境' ? 'temporary' : 'permanent';
+  }
+
+  function normalizeTextField(v: unknown): string | undefined {
+    if (typeof v !== 'string') return undefined;
+    const s = v.trim();
+    return s.length > 0 ? s.slice(0, 40) : undefined;
+  }
+
   /** 读取一个用户的现有档案（不存在返回 undefined）。兼容旧格式 string[]，自动迁移 */
   async function loadProfile(userKey: string): Promise<UserProfile | undefined> {
     const memory = ctx.getService<MemoryService>('memory');
@@ -192,7 +261,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           // 旧格式：string → 包装为 Fact
           const id = genFactId(usedIds);
           usedIds.add(id);
-          facts.push({ id, text: item.trim(), updatedAt: 0 });
+          facts.push({ id, text: item.trim(), temporality: 'permanent', updatedAt: 0 });
         } else if (item && typeof item === 'object') {
           const obj = item as Record<string, unknown>;
           const text = typeof obj.text === 'string' ? obj.text.trim() : '';
@@ -205,10 +274,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             ? (obj.category as FactCategory)
             : undefined;
           const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
-          facts.push({ id, text, category: cat, updatedAt });
+          const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : (updatedAt || undefined);
+          facts.push({
+            id,
+            text,
+            category: cat,
+            temporality: normalizeTemporality(obj.temporality, cat),
+            observedAt,
+            timeHint: normalizeTextField(obj.timeHint),
+            updatedAt,
+          });
         }
       }
-      return { facts, updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0 };
+      return {
+        facts,
+        relationScore: typeof doc.relationScore === 'number' ? Math.min(100, Math.max(0, doc.relationScore)) : 0,
+        interactionCount: typeof doc.interactionCount === 'number' ? Math.max(0, Math.floor(doc.interactionCount)) : 0,
+        lastInteractionAt: typeof doc.lastInteractionAt === 'number' ? doc.lastInteractionAt : undefined,
+        updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0,
+      };
     } catch (err) {
       ctx.logger.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       return undefined;
@@ -221,12 +305,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!memory?.saveMetadata) return;
     await memory.saveMetadata(PROFILE_NS, userKey, {
       facts: profile.facts,
+      relationScore: profile.relationScore ?? 0,
+      interactionCount: profile.interactionCount ?? 0,
+      lastInteractionAt: profile.lastInteractionAt,
       updatedAt: profile.updatedAt,
     });
   }
 
-  interface ExtractAddItem { text: string; category?: FactCategory }
-  interface ExtractUpdateItem { id: string; text: string; category?: FactCategory }
+  interface ExtractAddItem { text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string }
+  interface ExtractUpdateItem { id: string; text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string }
   interface ExtractResult { add: ExtractAddItem[]; update: ExtractUpdateItem[]; remove: string[] }
 
   function normalizeCategory(v: unknown): FactCategory | undefined {
@@ -258,8 +345,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       + '\n4. 每条 text 用一句简洁中文，不超过 80 字，不带「用户」「他」等代词，直接陈述事实'
       + '\n5. 如果没有任何更新，三个数组都返回空'
       + `\n6. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}`
+      + '\n7. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary'
+      + '\n8. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串'
       + '\n\n输出严格的 JSON（不要其他文本）：'
-      + '\n{"add": [{"text": "...", "category": "..."}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "..."}], "remove": ["已知事实的id"]}';
+      + '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "..."}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "..."}], "remove": ["已知事实的id"]}';
 
     const factListText = existingFacts.length > 0
       ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
@@ -288,7 +377,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             const o = x as Record<string, unknown>;
             const t = typeof o.text === 'string' ? o.text.trim() : '';
             if (!t) return [];
-            return [{ text: t, category: normalizeCategory(o.category) }];
+            const category = normalizeCategory(o.category);
+            return [{
+              text: t,
+              category,
+              temporality: normalizeTemporality(o.temporality, category),
+              timeHint: normalizeTextField(o.timeHint),
+            }];
           })
         : [];
       const update: ExtractUpdateItem[] = Array.isArray(parsed.update)
@@ -298,7 +393,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             const id = typeof o.id === 'string' ? o.id.trim() : '';
             const t = typeof o.text === 'string' ? o.text.trim() : '';
             if (!id || !t) return [];
-            return [{ id, text: t, category: normalizeCategory(o.category) }];
+            const category = normalizeCategory(o.category);
+            return [{
+              id,
+              text: t,
+              category,
+              temporality: normalizeTemporality(o.temporality, category),
+              timeHint: normalizeTextField(o.timeHint),
+            }];
           })
         : [];
       const remove: string[] = Array.isArray(parsed.remove)
@@ -315,6 +417,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return s.length > cfg.maxFactCharsPerItem
       ? s.slice(0, cfg.maxFactCharsPerItem) + '…'
       : s;
+  }
+
+  function clampRelationScore(score: number): number {
+    return Math.min(100, Math.max(0, Math.round(score * 10) / 10));
+  }
+
+  function relationIncrementFor(triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined): number {
+    if (triggerType === 'immediate') return cfg.relationIncrementImmediate;
+    if (triggerType === 'interval') return cfg.relationIncrementInterval;
+    if (triggerType === 'idle') return 0;
+    return cfg.relationIncrementDirect;
+  }
+
+  function applyRelationUpdate(profile: UserProfile, triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined): UserProfile {
+    const now = Date.now();
+    const last = profile.lastInteractionAt;
+    const daysSinceLast = last ? Math.max(0, (now - last) / 86_400_000) : 0;
+    const decayed = clampRelationScore((profile.relationScore ?? 0) - daysSinceLast * cfg.relationScoreDecayPerDay);
+    const nextScore = clampRelationScore(decayed + relationIncrementFor(triggerType));
+    return {
+      ...profile,
+      relationScore: nextScore,
+      interactionCount: (profile.interactionCount ?? 0) + (triggerType === 'idle' ? 0 : 1),
+      lastInteractionAt: triggerType === 'idle' ? profile.lastInteractionAt : now,
+      updatedAt: now,
+    };
   }
 
   /** 合并 add/update/remove 到现有事实，应用上限与单条裁剪 */
@@ -336,12 +464,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           id: u.id,
           text,
           category: u.category ?? old.category,
+          temporality: u.temporality ?? old.temporality ?? normalizeTemporality(undefined, u.category ?? old.category),
+          observedAt: old.observedAt ?? now,
+          timeHint: u.timeHint ?? old.timeHint,
           updatedAt: now,
         });
       } else {
         const id = genFactId(usedIds);
         usedIds.add(id);
-        byId.set(id, { id, text, category: u.category, updatedAt: now });
+        byId.set(id, {
+          id,
+          text,
+          category: u.category,
+          temporality: u.temporality ?? normalizeTemporality(undefined, u.category),
+          observedAt: now,
+          timeHint: u.timeHint,
+          updatedAt: now,
+        });
       }
     }
 
@@ -352,7 +491,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (textSet.has(text)) continue;
       const id = genFactId(usedIds);
       usedIds.add(id);
-      byId.set(id, { id, text, category: a.category, updatedAt: now });
+      byId.set(id, {
+        id,
+        text,
+        category: a.category,
+        temporality: a.temporality ?? normalizeTemporality(undefined, a.category),
+        observedAt: now,
+        timeHint: a.timeHint,
+        updatedAt: now,
+      });
       textSet.add(text);
     }
 
@@ -385,11 +532,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       if (!memory?.getHistory) return;
       const history = await memory.getHistory(sessionId, cfg.historyForExtraction);
-      const profile = (await loadProfile(userKey)) ?? { facts: [], updatedAt: 0 };
+      const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
       const ops = await llmExtractFacts(history, profile.facts, nickname, userId);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
       const newFacts = mergeFacts(profile.facts, ops);
-      await saveProfile(userKey, { facts: newFacts, updatedAt: Date.now() });
+      await saveProfile(userKey, { ...profile, facts: newFacts, updatedAt: Date.now() });
       ctx.logger.debug(
         `用户档案已更新 (${userKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
@@ -400,15 +547,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
+  async function updateRelationForUser(
+    userKey: string,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined,
+  ): Promise<void> {
+    const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
+    await saveProfile(userKey, applyRelationUpdate(profile, triggerType));
+  }
+
   // ─── 入站消息计数触发：每人独立计数，无论 Aalis 是否回复 ───
   // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
   ctx.middleware('message:before', async (
-    data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string } },
+    data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string; triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' } },
     next,
   ) => {
-    const { sessionId, userId, platform, nickname } = data.message;
+    const { sessionId, userId, platform, nickname, triggerType } = data.message;
     if (userId) {
       const userKey = userKeyOf(platform, userId);
+      try {
+        await updateRelationForUser(userKey, triggerType);
+      } catch (err) {
+        ctx.logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+      }
       const count = (userMessageCount.get(userKey) ?? 0) + 1;
       userMessageCount.set(userKey, count);
       if (count % cfg.extractEveryNMessages === 0) {
@@ -422,33 +582,59 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     await next();
   }, 800);
 
+  function isFactActive(fact: Fact): boolean {
+    if (fact.temporality !== 'temporary') return true;
+    if (cfg.temporaryFactMaxAgeDays <= 0) return true;
+    const base = fact.updatedAt || fact.observedAt || 0;
+    if (!base) return true;
+    return Date.now() - base <= cfg.temporaryFactMaxAgeDays * 86_400_000;
+  }
+
+  function renderFactLine(fact: Fact, includeMeta: boolean): string {
+    if (!includeMeta) return `- ${fact.text}`;
+    const meta: string[] = [];
+    if (fact.timeHint) meta.push(`时间线索：${fact.timeHint}`);
+    const observed = fact.observedAt || fact.updatedAt;
+    if (observed) meta.push(`记录于：${new Date(observed).toLocaleDateString('zh-CN')}`);
+    if (fact.temporality === 'temporary') meta.push('临时状态');
+    return meta.length > 0 ? `- ${fact.text}（${meta.join('；')}）` : `- ${fact.text}`;
+  }
+
   /** 将一个用户的 Fact[] 渲染为分组文本块 */
   function renderProfileBlock(facts: Fact[], label: string, compact: boolean): string {
     const groups = new Map<string, string[]>();
+    const activeFacts = facts.filter(isFactActive);
     // compact 模式（群聊背景参与者）：只取最近更新的 N 条，不分组
     const subset = compact
-      ? [...facts].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cfg.maxFactsForOthers)
-      : facts;
+      ? [...activeFacts].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cfg.maxFactsForOthers)
+      : activeFacts;
     for (const f of subset) {
       const key = f.category ?? '其他';
       if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(f.text);
+      groups.get(key)!.push(renderFactLine(f, !compact));
     }
     if (compact) {
       // compact 模式：平铺，不加分组标题
-      return `### ${label}\n` + subset.map(f => `- ${f.text}`).join('\n');
+      return `### ${label}\n` + subset.map(f => renderFactLine(f, false)).join('\n');
     }
     const sections: string[] = [];
     for (const cat of KNOWN_CATEGORIES) {
       const items = groups.get(cat);
-      if (items && items.length > 0) sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+      if (items && items.length > 0) sections.push(`## ${cat}\n` + items.join('\n'));
     }
     for (const [cat, items] of groups) {
       if (!(KNOWN_CATEGORIES as string[]).includes(cat) && items.length > 0) {
-        sections.push(`## ${cat}\n` + items.map(t => `- ${t}`).join('\n'));
+        sections.push(`## ${cat}\n` + items.join('\n'));
       }
     }
     return sections.join('\n\n');
+  }
+
+  function renderRelationLine(profile: UserProfile): string {
+    const score = profile.relationScore ?? 0;
+    const count = profile.interactionCount ?? 0;
+    if (score <= 0 && count <= 0) return '';
+    return `关系强度：${score.toFixed(1)}/100；累计互动：${count} 次。`;
   }
 
   // ─── LLM 调用前注入：根据 triggerType 区分主发言者语义 ───
@@ -474,11 +660,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (hasPrimarySpeaker && data.userId) {
       const userKey = userKeyOf(data.platform, data.userId);
       const profile = await loadProfile(userKey);
-      if (profile && profile.facts.length > 0) {
+      if (profile && profile.facts.some(isFactActive)) {
         const body = renderProfileBlock(profile.facts, data.userId, false);
+        const relationLine = renderRelationLine(profile);
         const block = `# 关于当前对话者（${data.userId}）的已知事实\n`
           + '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。'
           + '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n'
+          + (relationLine ? `${relationLine}\n\n` : '')
           + body;
         blocksToInsert.push(block);
       }
@@ -507,9 +695,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const key = userKeyOf(info.platform, uid);
           let profile: UserProfile | undefined;
           try { profile = await loadProfile(key); } catch { /* 静默跳过 */ }
-          if (!profile || profile.facts.length === 0) continue;
+          if (!profile || !profile.facts.some(isFactActive)) continue;
           const label = info.nickname ? `${info.nickname}（${uid}）` : uid;
-          snippets.push(renderProfileBlock(profile.facts, label, true));
+          const relationLine = renderRelationLine(profile);
+          snippets.push(renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : ''));
         }
         if (snippets.length > 0) {
           // 标题根据语义切换：有主发言者 → 「其他参与者」；无主发言者 → 「在场参与者」
