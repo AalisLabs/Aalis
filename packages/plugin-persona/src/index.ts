@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Context, ConfigSchema, SessionManagerService } from '@aalis/core';
-import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField, MemoryService } from '@aalis/core';
+import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from '@aalis/core';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 
 // ===== 插件元数据 =====
@@ -10,12 +10,6 @@ import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 export const name = '@aalis/plugin-persona';
 export const displayName = '人设系统';
 export const provides = ['persona'];
-export const inject = {
-  optional: ['memory'],
-};
-
-/** 跨用户关系状态在 memory metadata 中的 namespace */
-const PERSONA_STATE_NS = 'persona:state';
 
 export const configSchema: ConfigSchema = {
   persona: {
@@ -34,18 +28,8 @@ export const configSchema: ConfigSchema = {
   statePersistence: {
     type: 'boolean',
     label: '状态持久化',
-    description: '启用后，角色状态（好感度、心情等 outputFormat 字段）会在对话间持久保存并注入到下一轮提示中',
+    description: '启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中',
     default: false,
-  },
-  stateScope: {
-    type: 'select',
-    label: '状态作用域',
-    description: 'session：状态按会话隔离（群聊里所有人共享一份）；user：状态按平台用户隔离（跨群跨私聊延续，模拟真实人际关系）。仅在 statePersistence=true 时生效，且需要 memory 插件提供 metadata 能力',
-    default: 'session',
-    options: [
-      { label: '按会话（默认，向后兼容）', value: 'session' },
-      { label: '按用户（推荐用于陪伴场景）', value: 'user' },
-    ],
   },
   timeInjection: {
     type: 'boolean',
@@ -65,12 +49,9 @@ export const defaultConfig = {
   persona: 'default',
   personasDir: 'data/personas',
   statePersistence: false,
-  stateScope: 'session',
   timeInjection: true,
   timeZone: '',
 };
-
-type StateScope = 'session' | 'user';
 
 // ===== 角色卡格式 =====
 
@@ -99,7 +80,6 @@ class PersonaServiceImpl implements PersonaService {
   private searchDirs: string[];
   private fileName: string;
   private statePersistence: boolean;
-  private stateScope: StateScope;
   private timeInjection: boolean;
   private timeZone: string;
   /** 按名称缓存的角色卡（用于 session 级 persona 切换） */
@@ -107,10 +87,8 @@ class PersonaServiceImpl implements PersonaService {
   /** 按名称缓存的 OutputFormat */
   private formatCache = new Map<string, OutputFormat | null>();
 
-  /** 每个 session 的持久化状态（stateScope=session 时使用） */
+  /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
-  /** 每个用户的持久化状态运行时缓存（stateScope=user 时使用，key = `${platform}:${userId}`） */
-  private userStates = new Map<string, Record<string, unknown>>();
   /** 当前正在处理的 sessionId（由 message:before 中间件设置） */
   currentSessionId?: string;
   /** 当前平台 */
@@ -132,13 +110,12 @@ class PersonaServiceImpl implements PersonaService {
     card: PersonaCard,
     searchDirs: string[],
     fileName: string,
-    options: { statePersistence: boolean; stateScope: StateScope; timeInjection: boolean; timeZone: string },
+    options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
   ) {
     this.card = card;
     this.searchDirs = searchDirs;
     this.fileName = fileName;
     this.statePersistence = options.statePersistence;
-    this.stateScope = options.stateScope;
     this.timeInjection = options.timeInjection;
     this.timeZone = options.timeZone;
 
@@ -165,29 +142,6 @@ class PersonaServiceImpl implements PersonaService {
   /** 保存会话状态 */
   saveSessionState(sessionId: string, state: Record<string, unknown>): void {
     this.sessionStates.set(sessionId, state);
-  }
-
-  /** 设置用户级状态运行时缓存（仅负责内存部分，落库由中间件完成） */
-  setUserStateCache(userKey: string, state: Record<string, unknown> | undefined): void {
-    if (state) this.userStates.set(userKey, state);
-    else this.userStates.delete(userKey);
-  }
-
-  /** 读取用户级状态运行时缓存 */
-  getUserStateCache(userKey: string): Record<string, unknown> | undefined {
-    return this.userStates.get(userKey);
-  }
-
-  /** stateScope 访问器（供中间件使用） */
-  getStateScope(): StateScope {
-    return this.stateScope;
-  }
-
-  /** 计算 currentUserId/currentPlatform 组成的用户 key（仅在中间件上下文有效） */
-  getCurrentUserKey(): string | undefined {
-    if (!this.currentUserId) return undefined;
-    const platform = this.currentPlatform ?? '';
-    return `${platform}:${this.currentUserId}`;
   }
 
   /** 清除指定会话的状态 */
@@ -328,19 +282,10 @@ class PersonaServiceImpl implements PersonaService {
 
     // 状态持久化注入
     if (this.statePersistence) {
-      let state: Record<string, unknown> | undefined;
-      let header = '# 你上一轮的状态';
-      let intro = '以下是你上一轮回复中的状态，请基于此状态继续，并根据本轮对话更新：';
-      if (this.stateScope === 'user') {
-        const userKey = this.getCurrentUserKey();
-        if (userKey) state = this.userStates.get(userKey);
-        header = `# 你与当前对话者（${this.currentNickname ?? this.currentUserId ?? '未知'}）的关系状态`;
-        intro = '以下是你跨对话与该用户积累的关系状态。请基于此延续，并根据本轮互动更新：';
-      } else if (this.currentSessionId) {
-        state = this.sessionStates.get(this.currentSessionId);
-      }
+      const state = this.currentSessionId ? this.sessionStates.get(this.currentSessionId) : undefined;
       if (state && Object.keys(state).length > 0) {
-        prompt += `\n\n${header}\n${intro}\n`;
+        prompt += '\n\n# 你上一轮的状态\n';
+        prompt += '以下是你上一轮回复中的角色状态，请基于此状态继续，并根据本轮对话更新：\n';
         for (const [k, v] of Object.entries(state)) {
           prompt += `${k}: ${v}\n`;
         }
@@ -434,8 +379,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const personaName = (config.persona as string) || 'default';
   const personasDir = (config.personasDir as string) || 'data/personas';
   const statePersistence = (config.statePersistence as boolean) ?? false;
-  const stateScopeRaw = (config.stateScope as string) ?? 'session';
-  const stateScope: StateScope = stateScopeRaw === 'user' ? 'user' : 'session';
   const timeInjection = (config.timeInjection as boolean) ?? false;
   const timeZone = (config.timeZone as string) ?? '';
   const configDir = ctx.config.getConfigDir();
@@ -498,15 +441,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const service = new PersonaServiceImpl(card, searchDirs, personaName as string, {
     statePersistence,
-    stateScope,
     timeInjection,
     timeZone,
   });
   ctx.provide('persona', service);
-
-  if (statePersistence && stateScope === 'user') {
-    ctx.logger.info('persona 状态作用域 = user（跨会话按平台用户持久化）');
-  }
 
   // 参与 memory:clear 清除当前会话的 persona 状态
   ctx.middleware('memory:clear', async (data: {
@@ -524,19 +462,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       if (data.scope === 'all') {
         service.clearAllStates();
-        // user 作用域：清掉 metadata 中所有用户关系档案
-        if (statePersistence && stateScope === 'user') {
-          const memory = ctx.getService<MemoryService>('memory');
-          if (memory?.listMetadata && memory?.deleteMetadata) {
-            try {
-              const items = await memory.listMetadata(PERSONA_STATE_NS);
-              for (const it of items) await memory.deleteMetadata(PERSONA_STATE_NS, it.key);
-              if (items.length > 0) ctx.logger.info(`persona:state 已清空 (${items.length} 条用户关系档案)`);
-            } catch (err) {
-              ctx.logger.warn(`清空 persona:state metadata 失败: ${err instanceof Error ? err.message : String(err)}`);
-            }
-          }
-        }
         data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
       } else if (data.sessionId) {
         service.clearSessionState(data.sessionId);
@@ -561,26 +486,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentNickname = data.message.nickname;
     service.currentGroupName = data.message.groupName;
 
-    // user 作用域：从 metadata 加载该用户的关系状态到运行时缓存
-    let userKey: string | undefined;
-    if (statePersistence && stateScope === 'user' && data.message.userId) {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (memory?.getMetadata) {
-        userKey = `${data.message.platform ?? ''}:${data.message.userId}`;
-        try {
-          const stored = await memory.getMetadata(PERSONA_STATE_NS, userKey);
-          service.setUserStateCache(userKey, stored);
-        } catch (err) {
-          ctx.logger.debug(`加载用户状态失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-
     try {
       await next();
     } finally {
       // 清理运行时上下文，避免泄漏到下一次调用
-      if (userKey) service.setUserStateCache(userKey, undefined);
       service.currentSessionId = undefined;
       service.currentPlatform = undefined;
       service.currentSessionType = undefined;
@@ -711,28 +620,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               }
             }
             if (Object.keys(state).length > 0) {
-              if (stateScope === 'user') {
-                // user 作用域：合并到 metadata，必要时压缩 interaction
-                const memory = ctx.getService<MemoryService>('memory');
-                if (memory?.saveMetadata) {
-                  const userKey = service.getCurrentUserKey();
-                  if (userKey) {
-                    try {
-                      const existing = (await memory.getMetadata?.(PERSONA_STATE_NS, userKey)) ?? {};
-                      const merged: Record<string, unknown> = { ...existing, ...state };
-                      await memory.saveMetadata(PERSONA_STATE_NS, userKey, merged);
-                      service.setUserStateCache(userKey, merged);
-                      ctx.logger.debug(`关系状态已持久化 (user=${userKey})`);
-                    } catch (err) {
-                      ctx.logger.warn(`持久化用户状态失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
-                    }
-                  }
-                }
-              } else {
-                // session 作用域：内存缓存（既有行为）
-                service.saveSessionState(data.sessionId, state);
-                ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
-              }
+              service.saveSessionState(data.sessionId, state);
+              ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
             }
           }
         }
