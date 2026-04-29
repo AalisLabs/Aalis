@@ -67,10 +67,11 @@ export const configSchema: ConfigSchema = {
     default: 5,
   },
   extractModel: {
-    type: 'string',
-    label: '提取用模型 ID',
-    description: '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐填写廉价/快速模型（如 deepseek-chat）以降低成本',
+    type: 'select',
+    label: '提取用模型',
+    description: '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐选择廉价/快速模型（如 deepseek-chat）以降低成本',
     default: '',
+    dynamicOptions: 'llm',
   },
 };
 
