@@ -451,15 +451,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return sections.join('\n\n');
   }
 
-  // ─── LLM 调用前注入：主发言者完整档案 + 群聊其他参与者摘要 ───
+  // ─── LLM 调用前注入：根据 triggerType 区分主发言者语义 ───
+  //   direct/immediate/undefined → data.userId 是主发言者，注入完整档案 + 其他参与者摘要
+  //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
+  //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
   ctx.middleware('llm-call:before', async (
-    data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
+    data: {
+      messages: Message[];
+      tools: unknown[];
+      sessionId?: string;
+      userId?: string;
+      platform?: string;
+      triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+    },
     next,
   ) => {
     const blocksToInsert: string[] = [];
+    const trigger = data.triggerType ?? 'direct';
+    const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
 
-    // 1. 主发言者：完整档案
-    if (data.userId) {
+    // 1. 主发言者完整档案：仅在确实有人在「和 Aalis 对话」时注入
+    if (hasPrimarySpeaker && data.userId) {
       const userKey = userKeyOf(data.platform, data.userId);
       const profile = await loadProfile(userKey);
       if (profile && profile.facts.length > 0) {
@@ -472,15 +484,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    // 2. 群聊其他参与者：从 messages 的 metadata 中收集其他 userId
+    // 2. 群聊其他参与者：从 messages 的 metadata 中收集 userId，加载档案
+    //    - hasPrimarySpeaker 为 true 时排除主发言者
+    //    - hasPrimarySpeaker 为 false 时（interval/idle）所有人平等显示
     if (cfg.maxOtherParticipants > 0) {
-      // 按出现顺序去重，排除主发言者
       const others = new Map<string, { nickname?: string; platform?: string }>();
       for (const msg of data.messages) {
         if (msg.role !== 'user') continue;
         const meta = (msg.metadata ?? {}) as Record<string, unknown>;
         const uid = typeof meta.userId === 'string' ? meta.userId.trim() : undefined;
-        if (!uid || uid === data.userId || others.has(uid)) continue;
+        if (!uid) continue;
+        if (hasPrimarySpeaker && uid === data.userId) continue;
+        if (others.has(uid)) continue;
         const plat = typeof meta.platform === 'string' ? meta.platform : data.platform ?? '';
         const nick = typeof meta.nickname === 'string' ? meta.nickname : undefined;
         others.set(uid, { nickname: nick, platform: plat });
@@ -497,10 +512,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           snippets.push(renderProfileBlock(profile.facts, label, true));
         }
         if (snippets.length > 0) {
-          const block = `# 群聊其他参与者背景摘要\n`
-            + '以下是同一会话中其他参与者的基本档案，供你在群聊语境中参考，了解他们是谁。'
-            + '不要主动透露这些信息，只在自然相关时使用：\n\n'
-            + snippets.join('\n\n');
+          // 标题根据语义切换：有主发言者 → 「其他参与者」；无主发言者 → 「在场参与者」
+          const title = hasPrimarySpeaker ? '群聊其他参与者背景摘要' : '在场参与者背景摘要';
+          const intro = hasPrimarySpeaker
+            ? '以下是同一会话中其他参与者的基本档案，供你在群聊语境中参考，了解他们是谁。'
+            : '当前没有人直接呼叫你，以下是会话中近期出现过的参与者档案，供你判断要不要插话以及和谁互动。';
+          const block = `# ${title}\n${intro}不要主动透露这些信息，只在自然相关时使用：\n\n` + snippets.join('\n\n');
           blocksToInsert.push(block);
         }
       }
@@ -509,7 +526,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (blocksToInsert.length > 0) {
       const idx = data.messages.findIndex(m => m.role === 'system');
       const insertAt = idx >= 0 ? idx + 1 : 0;
-      // 一次 splice 全部插入，保持块间顺序
       data.messages.splice(insertAt, 0, ...blocksToInsert.map(content => ({ role: 'system' as const, content })));
     }
 
