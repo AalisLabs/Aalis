@@ -510,6 +510,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
   }
 
+  // llm-call:before 钩子：在每次 LLM 调用前将格式提醒作为 system 消息附加到 messages 末尾
+  // 三明治提示法：格式说明既在 system prompt 开头，也在每轮调用前重复一次，
+  // 防止长 tool-call 链条后模型"遗忘"输出 JSON 格式。
+  const FORMAT_REMINDER_SOURCE = 'persona-format-reminder';
+  ctx.middleware('llm-call:before', async (data, next) => {
+    // 无 outputFormat 的角色卡不需要提醒
+    if (baseFormat) {
+      // 幂等：若末尾已存在提醒（上一次迭代注入的），先移除再重新附加（保持最新位置）
+      const msgs = data.messages;
+      const last = msgs[msgs.length - 1];
+      if (last?.role === 'system' && (last as { metadata?: { source?: string } }).metadata?.source === FORMAT_REMINDER_SOURCE) {
+        msgs.pop();
+      }
+
+      // 构造简短提醒（避免重复完整 schema，只强调格式要求）
+      const reminder = `[格式提醒] 本轮回复必须输出纯 JSON，字段包含：${Object.keys(baseFormat.fields).join('、')}。不要包裹 markdown 代码块。`;
+      msgs.push({
+        role: 'system',
+        content: reminder,
+        metadata: { source: FORMAT_REMINDER_SOURCE },
+      });
+    }
+    await next();
+  });
+
   ctx.middleware('response:before', async (data, next) => {
     await next();
 
