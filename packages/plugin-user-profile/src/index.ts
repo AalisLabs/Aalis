@@ -66,6 +66,12 @@ export const configSchema: ConfigSchema = {
     description: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
     default: 5,
   },
+  extractModel: {
+    type: 'string',
+    label: '提取用模型 ID',
+    description: '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐填写廉价/快速模型（如 deepseek-chat）以降低成本',
+    default: '',
+  },
 };
 
 export const defaultConfig = {
@@ -76,6 +82,7 @@ export const defaultConfig = {
   maxFactCharsPerItem: 80,
   maxOtherParticipants: 3,
   maxFactsForOthers: 5,
+  extractModel: '',
 };
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
@@ -108,6 +115,7 @@ interface UserProfileConfig {
   maxFactCharsPerItem: number;
   maxOtherParticipants: number;
   maxFactsForOthers: number;
+  extractModel: string;
 }
 
 /** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
@@ -151,6 +159,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
     maxOtherParticipants: Math.max(0, (config.maxOtherParticipants as number) ?? 3),
     maxFactsForOthers: Math.max(1, (config.maxFactsForOthers as number) ?? 5),
+    extractModel: typeof config.extractModel === 'string' ? config.extractModel.trim() : '',
   };
 
   if (!cfg.enabled) {
@@ -266,6 +275,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         temperature: 0.2,
         maxTokens: 800,
         think: false,
+        ...(cfg.extractModel ? { model: cfg.extractModel } : {}),
       });
       const text = (resp.content ?? '').trim();
       if (!text) return empty;
