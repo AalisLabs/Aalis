@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Context, ConfigSchema, SessionManagerService } from '@aalis/core';
-import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField, MemoryService, LLMService } from '@aalis/core';
+import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField, MemoryService } from '@aalis/core';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 
 // ===== 插件元数据 =====
@@ -11,7 +11,7 @@ export const name = '@aalis/plugin-persona';
 export const displayName = '人设系统';
 export const provides = ['persona'];
 export const inject = {
-  optional: ['memory', 'llm'],
+  optional: ['memory'],
 };
 
 /** 跨用户关系状态在 memory metadata 中的 namespace */
@@ -47,12 +47,6 @@ export const configSchema: ConfigSchema = {
       { label: '按用户（推荐用于陪伴场景）', value: 'user' },
     ],
   },
-  interactionMaxChars: {
-    type: 'number',
-    label: 'interaction 字段压缩阈值',
-    description: '当 interaction 字段超出该字符数时，自动调用 LLM 压缩成 relationSummary 长期记忆，避免无限累积。仅在 stateScope=user 时生效',
-    default: 180,
-  },
   timeInjection: {
     type: 'boolean',
     label: '时间注入',
@@ -72,50 +66,11 @@ export const defaultConfig = {
   personasDir: 'data/personas',
   statePersistence: false,
   stateScope: 'session',
-  interactionMaxChars: 180,
   timeInjection: true,
   timeZone: '',
 };
 
 type StateScope = 'session' | 'user';
-
-/**
- * 压缩 interaction 流水为长期关系摘要。
- * 调用主 LLM 服务，用极简 prompt + think:false 控制开销与延迟。
- * LLM 不可用或失败时返回 undefined，由调用方决定回退策略。
- */
-async function compressRelation(
-  ctx: Context,
-  oldSummary: string,
-  newInteraction: string,
-  maxChars: number,
-): Promise<string | undefined> {
-  const llm = ctx.getService<LLMService>('llm');
-  if (!llm?.chat) return undefined;
-  const target = Math.min(220, Math.max(120, maxChars));
-  const sys = `你是关系档案管理员。请将旧的关系摘要与新的互动流水整合压缩为一段不超过 ${target} 字的中文关系摘要。`
-    + `保留关键事件与情感脉络（喜好、约定、冲突、和解、关心的话题），删除日常寒暄与套话。`
-    + `用第三人称叙述，不分要点。直接输出摘要正文，不要任何前缀、解释或引号。`;
-  const user = `[旧摘要]\n${oldSummary || '（无）'}\n\n[新互动流水]\n${newInteraction}`;
-  try {
-    const resp = await llm.chat({
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.3,
-      maxTokens: Math.max(300, target * 2),
-      think: false,
-    });
-    const text = (resp.content ?? '').trim();
-    if (!text) return undefined;
-    // 防御性截断：模型偶发超长时强制裁剪
-    return text.length > target * 1.5 ? text.slice(0, Math.floor(target * 1.5)) : text;
-  } catch (err) {
-    ctx.logger.debug(`关系摘要压缩失败：${err instanceof Error ? err.message : String(err)}`);
-    return undefined;
-  }
-}
 
 // ===== 角色卡格式 =====
 
@@ -386,29 +341,7 @@ class PersonaServiceImpl implements PersonaService {
       }
       if (state && Object.keys(state).length > 0) {
         prompt += `\n\n${header}\n${intro}\n`;
-        const reservedKeys = new Set(['lastInteractionAt', 'relationSummary']);
-        // 1. 距上次对话的时间感（仅 user 作用域）
-        const lastTs = typeof state.lastInteractionAt === 'number' ? (state.lastInteractionAt as number) : 0;
-        if (this.stateScope === 'user' && lastTs > 0) {
-          const diffMs = Date.now() - lastTs;
-          const days = Math.floor(diffMs / 86400000);
-          const hours = Math.floor(diffMs / 3600000);
-          const minutes = Math.floor(diffMs / 60000);
-          let label: string;
-          if (days >= 1) label = `${days} 天前`;
-          else if (hours >= 1) label = `${hours} 小时前`;
-          else if (minutes >= 5) label = `${minutes} 分钟前`;
-          else label = '刚刚';
-          prompt += `距上次互动：${label}\n`;
-        }
-        // 2. 长期关系摘要（仅 user 作用域）
-        const summary = state.relationSummary;
-        if (this.stateScope === 'user' && typeof summary === 'string' && summary.trim()) {
-          prompt += `长期关系摘要：${summary}\n`;
-        }
-        // 3. 其他常规字段
         for (const [k, v] of Object.entries(state)) {
-          if (reservedKeys.has(k)) continue;
           prompt += `${k}: ${v}\n`;
         }
       }
@@ -503,7 +436,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const statePersistence = (config.statePersistence as boolean) ?? false;
   const stateScopeRaw = (config.stateScope as string) ?? 'session';
   const stateScope: StateScope = stateScopeRaw === 'user' ? 'user' : 'session';
-  const interactionMaxChars = Math.max(60, (config.interactionMaxChars as number) ?? 180);
   const timeInjection = (config.timeInjection as boolean) ?? false;
   const timeZone = (config.timeZone as string) ?? '';
   const configDir = ctx.config.getConfigDir();
@@ -788,18 +720,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                     try {
                       const existing = (await memory.getMetadata?.(PERSONA_STATE_NS, userKey)) ?? {};
                       const merged: Record<string, unknown> = { ...existing, ...state };
-                      // interaction 压缩：避免长期累积撑爆字段
-                      const interaction = typeof merged.interaction === 'string' ? merged.interaction as string : '';
-                      if (interaction.length > interactionMaxChars) {
-                        const oldSummary = typeof merged.relationSummary === 'string' ? merged.relationSummary as string : '';
-                        const compressed = await compressRelation(ctx, oldSummary, interaction, interactionMaxChars);
-                        if (compressed) {
-                          merged.relationSummary = compressed;
-                          merged.interaction = '';
-                          ctx.logger.debug(`interaction 已压缩为关系摘要 (user=${userKey}, ${compressed.length} 字)`);
-                        }
-                      }
-                      merged.lastInteractionAt = Date.now();
                       await memory.saveMetadata(PERSONA_STATE_NS, userKey, merged);
                       service.setUserStateCache(userKey, merged);
                       ctx.logger.debug(`关系状态已持久化 (user=${userKey})`);
