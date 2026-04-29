@@ -716,7 +716,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (addOther(uid, plat, nick)) break;
       }
 
-      if (cfg.allowGlobalBackfill && others.size < candidateLimit) {
+      if (cfg.allowGlobalBackfill && others.size > 0 && others.size < candidateLimit) {
         const memory = ctx.getService<MemoryService>('memory');
         if (memory?.listMetadata) {
           try {
