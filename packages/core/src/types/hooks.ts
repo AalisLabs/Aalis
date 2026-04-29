@@ -27,9 +27,9 @@ export interface HookContextMap {
   'message:route': { message: IncomingMessage; agent: AgentService | undefined };
   'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
   'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
-  'response:before': { content: string; sessionId: string };
+  'response:before': { content: string; sessionId: string; platform?: string; userId?: string; triggerType?: IncomingMessage['triggerType'] };
   // LLM 调用钩子
-  'llm-call:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string };
+  'llm-call:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string; triggerType?: IncomingMessage['triggerType'] };
   'llm-call:after': { response: ChatResponse; messages: Message[] };
   // 记忆清除钩子（统一编排）
   'memory:clear': {
