@@ -74,6 +74,15 @@ export interface IncomingMessage {
   };
   /** 通知子类型（如 poke、group_upload 等非消息事件） */
   noticeType?: string;
+  /**
+   * 触发类型（适配器侧设置，下游插件可据此区分主发言者语义）：
+   * - 'direct'    私聊或单一用户直连（默认语义：userId 是主发言者）
+   * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）
+   * - 'interval'  群聊中因消息频率/活跃度被动触发（无明确主发言者，userId 仅为最后一条消息发送者）
+   * - 'idle'      空闲自动触发（无 userId / 无主发言者）
+   * 未设置时下游插件按 'direct' 兼容处理。
+   */
+  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
 }
 
 export interface OutgoingMessage {
