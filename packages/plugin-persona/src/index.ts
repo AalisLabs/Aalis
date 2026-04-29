@@ -518,7 +518,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const sm = ctx.getService<SessionManagerService>('session-manager');
         if (sm && data.sessionId) {
-          const resolved = sm.resolveConfig(data.sessionId);
+          const resolved = sm.resolveConfig(data.sessionId, data.platform);
           personaOpts = {
             persona: resolved.persona,
             disableOutputFormat: resolved.disableOutputFormat,
