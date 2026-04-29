@@ -24,16 +24,10 @@ export const inject = {
 const PROFILE_NS = 'user:profile';
 
 export const configSchema: ConfigSchema = {
-  enabled: {
-    type: 'boolean',
-    label: '启用',
-    description: '关闭后既不提取也不注入',
-    default: true,
-  },
   extractEveryNMessages: {
     type: 'number',
     label: '每 N 条消息提取一次',
-    description: '同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）',
+    description: '同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案）',
     default: 5,
   },
   historyForExtraction: {
@@ -106,7 +100,6 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  enabled: true,
   extractEveryNMessages: 5,
   historyForExtraction: 8,
   maxFactsPerUser: 30,
@@ -157,7 +150,6 @@ interface UserProfile {
 }
 
 interface UserProfileConfig {
-  enabled: boolean;
   extractEveryNMessages: number;
   historyForExtraction: number;
   maxFactsPerUser: number;
@@ -206,8 +198,7 @@ function renderHistoryForExtract(history: Message[]): string {
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg: UserProfileConfig = {
-    enabled: (config.enabled as boolean) ?? true,
-    extractEveryNMessages: Math.max(1, (config.extractEveryNMessages as number) ?? 5),
+    extractEveryNMessages: (config.extractEveryNMessages as number) ?? 5,
     historyForExtraction: Math.max(2, (config.historyForExtraction as number) ?? 8),
     maxFactsPerUser: Math.max(5, (config.maxFactsPerUser as number) ?? 30),
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
@@ -220,11 +211,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
     extractModel: typeof config.extractModel === 'string' ? config.extractModel.trim() : '',
   };
-
-  if (!cfg.enabled) {
-    ctx.logger.info('用户事实档案已禁用');
-    return;
-  }
 
   /** 每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
   const userMessageCount = new Map<string, number>();
@@ -571,7 +557,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       const count = (userMessageCount.get(userKey) ?? 0) + 1;
       userMessageCount.set(userKey, count);
-      if (count % cfg.extractEveryNMessages === 0) {
+      if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
         void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
           (err: unknown) => ctx.logger.debug(
             `事实提取异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`,
@@ -763,7 +749,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }, 10);
 
   ctx.logger.info(
-    `用户事实档案已启用 (every=${cfg.extractEveryNMessages}msgs, history=${cfg.historyForExtraction}, `
+    `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : cfg.extractEveryNMessages + 'msgs'}, history=${cfg.historyForExtraction}, `
     + `maxFacts=${cfg.maxFactsPerUser}, namespace=${PROFILE_NS})`,
   );
 }
