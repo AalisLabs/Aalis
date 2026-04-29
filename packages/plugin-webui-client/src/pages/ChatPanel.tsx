@@ -174,10 +174,8 @@ function parsePartialJson(raw: string): PartialField[] | null {
 
 /** 友好的 JSON 字段标签映射 */
 const FIELD_LABELS: Record<string, string> = {
-  favor: '好感度',
   mood: '心情',
   state: '状态',
-  interaction: '互动',
   desire: '发言欲望',
   current_action: '当前动作',
   think: '思考',
