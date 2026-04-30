@@ -677,7 +677,9 @@ class DefaultAgent implements AgentService {
           this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
         }
 
-        let replyContent = response.content ?? '';
+        // 保留原始 LLM 输出，用于存入 memory（避免纯文本历史污染 few-shot 示例）
+        const rawLlmContent = response.content ?? '';
+        let replyContent = rawLlmContent;
 
         // Hook: response:before — 插件可以修改最终回复
         // JSON 解析/修复统一由 persona 的 response:before 钩子处理
@@ -714,10 +716,11 @@ class DefaultAgent implements AgentService {
             ? allReasoning.join('\n\n---\n\n')
             : undefined;
 
-          // 保存最终 assistant 回复：只存最后一次 LLM 调用的 reasoning（中间消息已各自保存了自己的 reasoning）
+          // 保存最终 assistant 回复：存原始 LLM 输出（rawLlmContent），保持 JSON 格式完整，
+          // 避免解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
-            content: replyContent,
+            content: rawLlmContent,
             reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
             metadata: assistantMetadata,
