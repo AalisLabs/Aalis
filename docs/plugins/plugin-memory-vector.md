@@ -24,8 +24,8 @@ meta.inject = { required: ['vectorstore', 'embedding'] }
 
 ## 工作原理
 
-1. **消息入库**: 监听 `message:received` 和 `message:send` 事件，将消息 embed 后存入 vectorstore
-2. **语义检索**: 通过 `llm-call:before` 中间件（优先级 50），在 LLM 调用前：
+1. **消息入库**: 监听 `inbound:message` 和 `outbound:message` 事件，将消息 embed 后存入 vectorstore
+2. **语义检索**: 通过 `agent:llm:before` 中间件（优先级 50），在 LLM 调用前：
    - 将用户最新消息 embed 为查询向量
    - 从 vectorstore 检索 topK 条最相关历史片段
    - 使用时间衰减加权重排: `recencyScore = exp(-0.1 * days)`

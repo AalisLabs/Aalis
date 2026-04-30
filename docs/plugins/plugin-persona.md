@@ -49,7 +49,7 @@ outputFormat:
 当角色卡定义了 `outputFormat` 时：
 
 1. 在 system prompt 中追加 JSON 格式要求，指示 LLM 以特定 JSON 结构回复
-2. 注册 `response:before` 中间件，解析 LLM 输出中的 JSON
+2. 注册 `agent:reply:before` 中间件，解析 LLM 输出中的 JSON
 3. 提取 `replyField`（标记为 `reply: true` 的字段）作为最终发送给用户的回复
 4. 当回复字段为空字符串时跳过发送
 

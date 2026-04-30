@@ -43,13 +43,13 @@ Context 是插件的执行上下文，同时也是 Aalis 扩展性的基石：
 
 ```typescript
 // 监听（返回 dispose 函数，ctx 销毁时自动清理）
-const off = ctx.on('message:received', async (msg) => { ... });
+const off = ctx.on('inbound:message', async (msg) => { ... });
 
 // 一次性监听
 ctx.once('ready', () => { ... });
 
 // 发出事件
-await ctx.emit('message:send', outMsg);
+await ctx.emit('outbound:message', outMsg);
 ```
 
 ## 服务 API（IoC + 能力匹配）
@@ -86,20 +86,20 @@ ctx.preferService('llm', 'plugin-deepseek-context-id');
 
 ```typescript
 // 注册中间件（不调用 next = 中断整个管道）
-ctx.middleware('message:before', async (data, next) => {
+ctx.middleware('agent:input:before', async (data, next) => {
   if (shouldBlock(data.message)) return; // 中断
   data.message.content += ' [已审核]';   // 修改
   await next();                           // 继续
 }, 200); // priority=200
 
 // 注入上下文到 LLM 调用
-ctx.middleware('llm-call:before', async (data, next) => {
+ctx.middleware('agent:llm:before', async (data, next) => {
   data.messages.unshift({ role: 'system', content: '额外指令...' });
   await next();
 });
 
 // 后处理（先 next 再修改）
-ctx.middleware('response:before', async (data, next) => {
+ctx.middleware('agent:reply:before', async (data, next) => {
   await next();
   data.content = transform(data.content);
 }, 50);

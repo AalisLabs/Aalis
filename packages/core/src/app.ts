@@ -549,18 +549,18 @@ export class App {
     // 检查核心必需服务，缺失时自动寻找并启动提供者
     await this.ensureRequiredServices();
 
-    // 将 message:received 事件路由到 agent 服务
-    // 通过 'message:route' 钩子管道，沙盒插件可拦截并替换路由逻辑
-    this.ctx.on('message:received', async (msg) => {
+    // 将 inbound:message 事件路由到 agent 服务
+    // 通过 'agent:route' 钩子管道，沙盒插件可拦截并替换路由逻辑
+    this.ctx.on('inbound:message', async (msg) => {
       const agent = this.ctx.getService<AgentService>('agent');
       const routeData = { message: msg, agent };
 
-      await this.hooks.run('message:route', routeData, async () => {
+      await this.hooks.run('agent:route', routeData, async () => {
         if (routeData.agent) {
           await routeData.agent.handleMessage(routeData.message);
         } else {
           this.logger.warn('Agent 服务不可用，消息将不会被处理');
-          await this.ctx.emit('message:send', {
+          await this.ctx.emit('outbound:message', {
             content: '[系统] Agent 服务不可用，请检查插件配置。',
             sessionId: routeData.message.sessionId,
             platform: routeData.message.platform,

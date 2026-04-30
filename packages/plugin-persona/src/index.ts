@@ -89,7 +89,7 @@ class PersonaServiceImpl implements PersonaService {
 
   /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
-  /** 当前正在处理的 sessionId（由 message:before 中间件设置） */
+  /** 当前正在处理的 sessionId（由 agent:input:before 中间件设置） */
   currentSessionId?: string;
   /** 当前平台 */
   currentPlatform?: string;
@@ -480,7 +480,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }, 10);
 
   // 跟踪当前会话信息（始终启用，用于 session 上下文注入和状态持久化）
-  ctx.middleware('message:before', async (data, next) => {
+  ctx.middleware('agent:input:before', async (data, next) => {
     service.currentSessionId = data.message.sessionId;
     service.currentPlatform = data.message.platform;
     service.currentSessionType = data.message.sessionType;
@@ -506,7 +506,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }, 999); // 最高优先级，保证在所有其他中间件之前设置
 
-  // response:before 钩子：统一处理 JSON 解析
+  // agent:reply:before 钩子：统一处理 JSON 解析
   // 1. 有 outputFormat 时：结构化解析 + 状态持久化
   // 2. 无 outputFormat 时：回退提取（模型意外用 JSON 包裹回复时自动解包）
   const baseFormat = service.getOutputFormat();
@@ -515,7 +515,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
   }
 
-  ctx.middleware('response:before', async (data, next) => {
+  ctx.middleware('agent:reply:before', async (data, next) => {
     await next();
 
     // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法

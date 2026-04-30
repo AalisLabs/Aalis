@@ -17,8 +17,7 @@ interface HookEntry<T> {
  * - 调用 next() 继续管道
  * - 不调用 next() 来中断流程（包括 defaultAction）
  *
- * 第三方插件可通过 TS declaration merging 扩展 HookContextMap，
- * 也可以使用任意字符串 key（运行时安全）。
+ * 第三方插件可通过 TS declaration merging 扩展 HookContextMap。
  */
 export class HookRegistry {
   private hooks = new Map<string, HookEntry<any>[]>();

@@ -309,11 +309,20 @@ export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArra
  * ```
  */
 export interface AalisEvents {
-  'message:received': [message: IncomingMessage];
-  /** 入站消息已落库（来自 message-archive.archiveIncoming）。无论是否触发 agent 回复都会发出。 */
-  'message:archived': [data: { sessionId: string; incoming: IncomingMessage; content: string }];
-  'message:send': [message: OutgoingMessage];
-  'message:stream': [chunk: StreamChunkMessage];
+  'inbound:message': [message: IncomingMessage];
+  /**
+   * 入站消息已落库（来自 message-archive.archiveIncoming）。无论是否触发 agent 回复都会发出。
+   *
+   * 这是所有「派生持久数据」（向量索引、用户画像事实抽取、消息计数等）应当统一挂载的锚点：
+   * 既保证只对真正进入历史的消息生效，又不依赖 agent 是否回复。
+   *
+   * payload 字段：
+   * - `incoming`：原始入参（含 platform/userId/nickname/groupName/triggerType 等会话上下文，未必持久化）
+   * - `archivedMessage`：实际写入 memory 的 `Message`（经过预处理器变换后的最终内容，可能与 `incoming.content` 不同）
+   */
+  'inbound:message:archived': [data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }];
+  'outbound:message': [message: OutgoingMessage];
+  'outbound:stream': [chunk: StreamChunkMessage];
   'tool:execute': [info: ToolExecuteMessage];
   'service:registered': [name: string, capabilities: string[]];
   'service:unregistered': [name: string];
@@ -335,7 +344,7 @@ export interface AalisEvents {
   'session:completed': [session: import('./session.js').SessionInfo];
   'session:deleted': [sessionId: string];
   'session:switched': [sessionId: string];
-  // 允许任意字符串 key（运行时安全，类型兜底）
+  // 允许任意字符串 key 兜底（运行时事件总线开放，但鼓励第三方插件通过 declaration merging 显式声明事件签名以获得类型安全）
   [key: string]: unknown[];
 }
 

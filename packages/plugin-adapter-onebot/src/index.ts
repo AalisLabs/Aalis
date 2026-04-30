@@ -870,7 +870,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // 同时设置 source = 'idle-trigger'，让 archive 与向量层可识别并跳过写入。
         const idlePrompt = (flowCfg.idleTriggerPrompt && flowCfg.idleTriggerPrompt.trim())
           || '当前群已长时间无人发言，请根据人设主动开启一个轻松的话题或问候。不要提及“系统提示”或表明你是被触发发言的。';
-        await ctx.emit('message:received', {
+        await ctx.emit('inbound:message', {
           content: idlePrompt,
           sessionId,
           platform,
@@ -896,7 +896,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ── 平台级空闲触发（idleTriggerScope='platform'）──
   //
   // 在所有 onebot 会话（按 strategy 判定的）静默期后，从可发送候选里挑一个 emit
-  // message:received(source:'idle-trigger')，由主 agent 基于人设/记忆生成开场白。
+  // inbound:message(source:'idle-trigger')，由主 agent 基于人设/记忆生成开场白。
   //   - strategy='fixed'     每 idleTriggerMinutes 分钟固定触发；
   //   - strategy='all-quiet' 所有会话最近一次活动（含 bot 自己的回复）≥ 阈值才触发。
   // 候选挑选：sendable（未禁言/冷却/限速耗尽）中 lastActivity 最久远的一个，
@@ -957,7 +957,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ctx.logger.info(
         `platform idle tick: 主动开聊 → ${target.sessionId} (idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
       );
-      await ctx.emit('message:received', {
+      await ctx.emit('inbound:message', {
         content: promptHint,
         sessionId: target.sessionId,
         platform: 'onebot',
@@ -1251,7 +1251,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
    * 这样：
    *   1) LLM 在对话上下文里看到的是"信封 + 摘要"，不被超长原文淹没；
    *   2) 想看细节时调 onebot_get_forward_msg 工具直接命中缓存/持久化层；
-   *   3) 摘要会随 message:received 进入历史归档与向量库，被语义召回。
+   *   3) 摘要会随 inbound:message 进入历史归档与向量库，被语义召回。
    *
    * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
    */
@@ -2045,7 +2045,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
-      // 这样 LLM 不必再调用工具，且展开后的内容会随 message:received 进入历史归档。
+      // 这样 LLM 不必再调用工具，且展开后的内容会随 inbound:message 进入历史归档。
       if (event.text.includes('<forward id=')) {
         try {
           event.text = await expandForwardsInText(state, event.text, event.message);
@@ -2083,7 +2083,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
       }
 
-      ctx.emit('message:received', {
+      ctx.emit('inbound:message', {
         content: event.text,
         sessionId,
         platform: 'onebot',
@@ -2123,7 +2123,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
       const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
 
-      ctx.emit('message:received', {
+      ctx.emit('inbound:message', {
         content,
         sessionId,
         platform: 'onebot',
@@ -2147,7 +2147,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // sub_type === 'add': 有人申请加入 bot 管理的群（bot 是管理员）
         const gsId = makeSessionId(req.selfId, 'group', undefined, req.groupId);
         content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_handle_group_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
-        ctx.emit('message:received', {
+        ctx.emit('inbound:message', {
           content,
           sessionId: gsId,
           platform: 'onebot',
@@ -2158,7 +2158,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
 
-      ctx.emit('message:received', {
+      ctx.emit('inbound:message', {
         content,
         sessionId,
         platform: 'onebot',
@@ -2196,7 +2196,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const who = nick ? `${nick}(${notice.userId})` : notice.userId;
           const content = `[戳一戳: ${who} 戳了你]`;
           const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
-          ctx.emit('message:received', {
+          ctx.emit('inbound:message', {
             content,
             sessionId,
             platform: 'onebot',
@@ -2214,7 +2214,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const who = nick ? `${nick}(${notice.userId})` : notice.userId;
           const content = `[戳一戳: ${who} 戳了你]`;
           const sessionId = makeSessionId(selfId, 'private', notice.userId);
-          ctx.emit('message:received', {
+          ctx.emit('inbound:message', {
             content,
             sessionId,
             platform: 'onebot',
@@ -2406,14 +2406,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 群文件上传 → 转化为 message:received
+    // 群文件上传 → 转化为 inbound:message
     if (notice.noticeType === 'group_upload' && notice.groupId) {
       const selfId = notice.selfId;
       const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
       const fileName = notice.data?.fileName ?? '未知文件';
       const content = `[文件上传: ${notice.userId} 上传了 ${fileName}]`;
 
-      ctx.emit('message:received', {
+      ctx.emit('inbound:message', {
         content,
         sessionId,
         platform: 'onebot',
@@ -2455,7 +2455,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
   ];
 
-  ctx.middleware('llm-call:before', async (data, next) => {
+  ctx.middleware('agent:llm:before', async (data, next) => {
     if (data.sessionId?.includes(':group:')) {
       // 在最后一条用户消息前插入时间感知提示
       let lastUserIdx = -1;
@@ -2497,7 +2497,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ----- 监听消息回复事件 -----
 
-  ctx.on('message:send', (msg) => {
+  ctx.on('outbound:message', (msg) => {
     if (!msg.sessionId.startsWith('onebot:')) return;
     if (!msg.content?.trim()) {
       ctx.logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);

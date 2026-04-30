@@ -327,7 +327,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 中间件：在 LLM 调用前注入摘要 ===
   // 优先级 40（低于 vector-memory 的 50，确保摘要在向量记忆之后注入）
-  ctx.middleware('llm-call:before', async (data, next) => {
+  ctx.middleware('agent:llm:before', async (data, next) => {
     const sessionId = data.sessionId;
     if (!sessionId) {
       await next();
@@ -367,9 +367,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     await next();
   }, 40);
 
-  // === 在 message:after 钩子触发摘要生成 ===
+  // === 在 agent:turn:after 钩子触发摘要生成 ===
   // 每轮对话结束后，异步检查是否需要生成摘要
-  ctx.middleware('message:after', async (data, next) => {
+  ctx.middleware('agent:turn:after', async (data, next) => {
     await next();
     // 异步触发，不阻塞主流程
     generateSummary(data.sessionId).catch(err => {

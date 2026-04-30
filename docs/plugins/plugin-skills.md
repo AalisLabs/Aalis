@@ -5,7 +5,7 @@
 
 ## 概述
 
-AI 可自主学习和管理的技能系统。技能以 YAML 格式存储，支持模板参数化（`{{param}}` 语法），可在 `llm-call:before` 钩子中自动注入相关技能到上下文。
+AI 可自主学习和管理的技能系统。技能以 YAML 格式存储，支持模板参数化（`{{param}}` 语法），可在 `agent:llm:before` 钩子中自动注入相关技能到上下文。
 
 ## 插件声明
 
@@ -34,5 +34,5 @@ meta.inject = { optional: ['llm'] }
 
 1. AI 通过工具管理技能 CRUD
 2. 技能存储在 `data/skills/` 目录下的 YAML 文件中
-3. `llm-call:before` 钩子自动将相关技能注入为 system 消息
+3. `agent:llm:before` 钩子自动将相关技能注入为 system 消息
 4. 技能模板支持 `{{param}}` 参数替换，从工具调用参数中取值

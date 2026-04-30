@@ -108,7 +108,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
 
         // 异步派发任务消息，触发 agent 处理（不等待完成）
-        ctx.emit('message:received', {
+        ctx.emit('inbound:message', {
           content: task,
           sessionId: child.id,
           platform: callCtx.platform || 'internal',
@@ -240,7 +240,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 派发消息
-      ctx.emit('message:received', {
+      ctx.emit('inbound:message', {
         content: message,
         sessionId: subtaskId,
         platform: callCtx.platform || 'internal',
@@ -371,7 +371,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const SUBTASK_CONTEXT_MARKER = '--- 子任务上下文 ---';
   const PARENT_CONTEXT_MARKER = '--- 活跃子任务提醒 ---';
 
-  ctx.middleware('llm-call:before', async (data, next) => {
+  ctx.middleware('agent:llm:before', async (data, next) => {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) { await next(); return; }
 
@@ -493,8 +493,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ---- 子任务自动完成 ----
   // 当子任务 agent 正常回复后，自动将回复内容作为结果完成会话
   // 同时在子会话历史中合成一条 tool call 记录，展示"报告给父会话"的流程
-  ctx.middleware('message:after', async (data, next) => {
+  ctx.middleware('agent:turn:after', async (data, next) => {
     await next();
+
+    // 仅在本轮真正产生回复时回报父会话；silent / aborted 不应触发自动完成
+    if (data.outcome !== 'replied') return;
 
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) return;
@@ -503,8 +506,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!session?.parentId) return; // 非子任务
     if (session.status === 'completed' || session.status === 'error') return; // 已完成
 
-    const result = data.response;
-    if (!result || typeof result !== 'string' || result.trim().length === 0) return;
+    const result = data.reply;
+    if (!result || result.trim().length === 0) return;
 
     try {
       // 在子会话历史中合成 tool call 记录，展示报告流程
@@ -539,7 +542,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } catch (err) {
       ctx.logger.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
     }
-  }, 50); // 低优先级，在其他 message:after 处理之后运行
+  }, 50); // 低优先级，在其他 agent:turn:after 处理之后运行
 
   ctx.logger.info('子任务工具已注册');
 }

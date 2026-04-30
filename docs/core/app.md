@@ -30,7 +30,7 @@ const app = new App(configPath?: string);
 1. 如果没有 `memory` 服务，注册内存 fallback（priority=-100）
 2. 应用配置中的服务偏好
 3. 检查必需服务可用性（`webui-server`, `webui-client`, `cli`）
-4. 注册 `message:received` → `agent.handleMessage()` 路由
+4. 注册 `inbound:message` → `agent.handleMessage()` 路由
 5. 发出 `ready` 事件
 
 ### `app.stop()`
