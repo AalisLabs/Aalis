@@ -58,6 +58,7 @@ export const configSchema: ConfigSchema = {
   maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
   strictToolCalls: { type: 'boolean', label: 'Strict 工具调用', default: false, description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）' },
+  forceJsonOutput: { type: 'boolean', label: '强制 JSON 输出', default: false, description: '启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。' },
   thinkingMode: {
     type: 'select', label: '思考模式', default: 'auto',
     options: [
@@ -98,6 +99,7 @@ interface DeepSeekConfig {
   maxTokens: number;
   contextLength: number;
   strictToolCalls: boolean;
+  forceJsonOutput: boolean;
   reasoningEffort: 'auto' | 'high' | 'max';
 }
 
@@ -168,6 +170,7 @@ class DeepSeekLLMService implements LLMService {
   private enableThinking: boolean;
   private reasoningEffort: 'auto' | 'high' | 'max';
   private strictToolCalls: boolean;
+  private forceJsonOutput: boolean;
   private logger;
 
   constructor(ctx: Context, config: DeepSeekConfig, enableThinking: boolean) {
@@ -183,6 +186,7 @@ class DeepSeekLLMService implements LLMService {
     this.enableThinking = enableThinking;
     this.reasoningEffort = config.reasoningEffort;
     this.strictToolCalls = config.strictToolCalls;
+    this.forceJsonOutput = config.forceJsonOutput ?? false;
     this.logger = ctx.logger;
   }
 
@@ -291,6 +295,11 @@ class DeepSeekLLMService implements LLMService {
       body.tools = tools;
     }
 
+    // 强制 JSON 输出：工具调用走 tool_calls 字段，不受 response_format 影响
+    if (this.forceJsonOutput) {
+      body.response_format = { type: 'json_object' };
+    }
+
     this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
@@ -368,6 +377,11 @@ class DeepSeekLLMService implements LLMService {
 
     if (tools && tools.length > 0) {
       body.tools = tools;
+    }
+
+    // 强制 JSON 输出：工具调用走 tool_calls 字段，不受 response_format 影响
+    if (this.forceJsonOutput) {
+      body.response_format = { type: 'json_object' };
     }
 
     this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`);
@@ -628,6 +642,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     maxTokens: (config.maxTokens as number) ?? 8192,
     contextLength: (config.contextLength as number) ?? 131072,
     strictToolCalls: (config.strictToolCalls as boolean) ?? false,
+    forceJsonOutput: (config.forceJsonOutput as boolean) ?? false,
     reasoningEffort: (() => {
       const v = config.reasoningEffort as string | undefined;
       return v === 'high' || v === 'max' ? v : 'auto';
