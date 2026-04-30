@@ -497,13 +497,13 @@ export class Context {
    *
    * @example
    * // 在消息发送给 LLM 前添加额外指令
-   * ctx.middleware('llm-call:before', async (data, next) => {
+   * ctx.middleware('agent:llm:before', async (data, next) => {
    *   data.messages.unshift({ role: 'system', content: '额外指令...' });
    *   await next();
    * });
    *
    * // 过滤掉某些用户消息
-   * ctx.middleware('message:before', async (data, next) => {
+   * ctx.middleware('agent:input:before', async (data, next) => {
    *   if (data.message.content.includes('spam')) return; // 不调用 next = 中断
    *   await next();
    * });

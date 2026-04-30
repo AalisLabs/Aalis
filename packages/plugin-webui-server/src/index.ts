@@ -1054,7 +1054,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           return;
         }
 
-        await ctx.emit('message:received', {
+        await ctx.emit('inbound:message', {
           content: trimmed,
           sessionId,
           platform: 'webui',
@@ -1167,7 +1167,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 监听 AI 回复
-  ctx.on('message:send', (msg: OutgoingMessage) => {
+  ctx.on('outbound:message', (msg: OutgoingMessage) => {
     // 生成完成，延迟清理缓冲区（给客户端重连拉取历史留出时间窗口）
     const buf = streamBuffers.get(msg.sessionId);
     if (buf) {
@@ -1195,7 +1195,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 监听流式增量推送
-  ctx.on('message:stream', (chunk: StreamChunkMessage) => {
+  ctx.on('outbound:stream', (chunk: StreamChunkMessage) => {
     // 累积到缓冲区
     if (!chunk.done) {
       let buf = streamBuffers.get(chunk.sessionId);

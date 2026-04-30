@@ -278,8 +278,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  ctx.on('message:received', (msg: IncomingMessage) => {
-    void indexUserMessage(msg);
+  // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
+  // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
+  ctx.on('inbound:message:archived', (data) => {
+    void indexUserMessage(data.incoming);
   });
 
   // === 统一记忆清除 ===
@@ -325,7 +327,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 检索并注入上下文 ===
 
-  ctx.middleware('llm-call:before', async (
+  ctx.middleware('agent:llm:before', async (
     data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
     next: MiddlewareNext,
   ) => {

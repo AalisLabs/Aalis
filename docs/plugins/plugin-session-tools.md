@@ -23,7 +23,7 @@ meta.inject = { required: ['session-manager'] }
 
 ## 工作方式
 
-1. `create_subtask` 在当前会话下创建子会话，向子会话发送 `message:received` 事件
+1. `create_subtask` 在当前会话下创建子会话，向子会话发送 `inbound:message` 事件
 2. 子任务在独立上下文中执行，拥有自己的工具集和消息历史
 3. `wait_subtasks` 轮询子会话状态，直到所有指定的子任务完成
 4. 子任务完成后触发 `session:completed` 事件

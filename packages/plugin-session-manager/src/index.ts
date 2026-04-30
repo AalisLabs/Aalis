@@ -807,7 +807,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // ===== 会话状态自治管理 =====
   // 监听消息事件，自动维护会话状态（从 Agent 职责中迁出）
 
-  ctx.on('message:received', (msg: { sessionId: string }) => {
+  ctx.on('inbound:message', (msg: { sessionId: string }) => {
     if (!msg.sessionId) return;
     const session = manager.getSession(msg.sessionId);
     if (session && session.status !== 'active') {
@@ -815,7 +815,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  ctx.on('message:send', (msg: { sessionId: string }) => {
+  ctx.on('outbound:message', (msg: { sessionId: string }) => {
     if (!msg.sessionId) return;
     const session = manager.getSession(msg.sessionId);
     if (session && session.status === 'active') {
@@ -828,7 +828,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题
   const TITLE_PLATFORMS = new Set(['webui', 'cli']);
   const titleGenerating = new Set<string>();
-  ctx.on('message:received', (msg: { content: string; sessionId: string; platform?: string }) => {
+  ctx.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
     const { sessionId, platform } = msg;
     if (!sessionId || titleGenerating.has(sessionId)) return;
     // 仅对指定平台生成标题
