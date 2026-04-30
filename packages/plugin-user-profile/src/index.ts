@@ -567,11 +567,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ─── 入站消息计数触发：每人独立计数，无论 Aalis 是否回复 ───
   // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
+  // 关系分数与计数在消息入库前更新；事实提取在 next() 之后触发，确保当前消息已写入 memory
   ctx.middleware('message:before', async (
     data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string; triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' } },
     next,
   ) => {
     const { sessionId, userId, platform, nickname, triggerType } = data.message;
+    let shouldExtract = false;
     if (userId) {
       const userKey = userKeyOf(platform, userId);
       try {
@@ -582,14 +584,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const count = (userMessageCount.get(userKey) ?? 0) + 1;
       userMessageCount.set(userKey, count);
       if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
-        void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
-          (err: unknown) => ctx.logger.debug(
-            `事实提取异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`,
-          ),
-        );
+        shouldExtract = true;
       }
     }
     await next();
+    // 消息已写入 memory，再触发事实提取，避免遗漏当前消息
+    if (shouldExtract && userId) {
+      void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
+        (err: unknown) => ctx.logger.debug(
+          `事实提取异常 (${userKeyOf(platform, userId)}): ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    }
   }, 800);
 
   function isFactActive(fact: Fact): boolean {
