@@ -36,14 +36,14 @@
 | -------------------- | -------------------------------------------- |
 | 会话配置解析         | 从 session-manager 读取每个会话的 LLM/工具配置  |
 | 工具调用循环         | 最多 N 次迭代的工具调用                        |
-| 流式响应             | `message:stream` 事件                        |
+| 流式响应             | `outbound:stream` 事件                        |
 | AbortController      | 按 `sessionId::source` 管理中断               |
 
 ### 2.3 scheduler 提供的能力
 
 | 能力                 | 说明                                         |
 | -------------------- | -------------------------------------------- |
-| Cron / 定时触发      | 向指定 sessionId 发送 `message:received`      |
+| Cron / 定时触发      | 向指定 sessionId 发送 `inbound:message`      |
 | 动态任务 CRUD        | 运行时增删改任务                              |
 | 并发控制             | `maxConcurrent` 限制                          |
 
@@ -340,7 +340,7 @@ Scheduler (每日 09:00 触发)
   │
   ├─ 配置: { sessionId: "daily-report-session", content: "生成每日市场报告" }
   │
-  ▼ message:received → Agent 处理
+  ▼ inbound:message → Agent 处理
   │
   ├─ Agent 判断需要拆分（同上流程）
   ├─ task_decompose → 创建子任务
@@ -378,7 +378,7 @@ class TaskExecutionEngine {
    * 执行单个任务
    *
    * 1. 创建 AbortController（用于超时/取消）
-   * 2. 向任务对应的 sessionId 发送 message:received 事件
+   * 2. 向任务对应的 sessionId 发送 inbound:message 事件
    * 3. 监听 session:completed 事件（等待 task_report）
    * 4. 超时则标记为 failed 并取消子任务
    */
@@ -456,7 +456,7 @@ task-orchestrator 通过 `webuiPages` 注册独立页面：
 
 ```
 执行子任务:
-  向 sessionId 发送 message:received 事件
+  向 sessionId 发送 inbound:message 事件
   Agent 按正常流程处理（session config 已通过 session-manager 设置）
 
 Agent → orchestrator:
@@ -468,7 +468,7 @@ Agent → orchestrator:
 
 ```
 方案 A: Scheduler 作为触发源
-  scheduler job → message:received → agent → task_decompose → orchestrator
+  scheduler job → inbound:message → agent → task_decompose → orchestrator
 
 方案 B: Orchestrator 直接集成 (推荐)
   orchestrator 可注册自己的定时任务，定时创建根任务：
@@ -483,7 +483,7 @@ Agent → orchestrator:
 ```
 
 推荐方案 A — scheduler 只负责定时触发，orchestrator 只负责编排。  
-两者通过 sessionId 和 message:received 事件解耦。
+两者通过 sessionId 和 inbound:message 事件解耦。
 
 ---
 

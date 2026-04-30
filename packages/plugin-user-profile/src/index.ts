@@ -567,8 +567,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ─── 关系分数：在 agent 触发回复路径上更新 ───
   // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
-  // 关系强度与"是否触发回复"绑定，因此仍走 message:before 中间件。
-  ctx.middleware('message:before', async (
+  // 关系强度与"是否触发回复"绑定，因此仍走 agent:input:before 中间件。
+  ctx.middleware('agent:input:before', async (
     data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string; triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' } },
     next,
   ) => {
@@ -585,9 +585,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }, 800);
 
   // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
-  // 监听 message-archive 在 archiveIncoming 落库成功后发出的 message:archived 事件，
+  // 监听 message-archive 在 archiveIncoming 落库成功后发出的 inbound:message:archived 事件，
   // 确保缓冲消息（onebot saveBufferedMessage 等不触发 agent 回复的路径）也能纳入计数。
-  ctx.on('message:archived', (...args: unknown[]) => {
+  ctx.on('inbound:message:archived', (...args: unknown[]) => {
     const data = args[0] as { sessionId: string; incoming: { userId?: string; platform?: string; nickname?: string } };
     const { sessionId, incoming } = data;
     const { userId, platform, nickname } = incoming;
@@ -664,7 +664,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   //   direct/immediate/undefined → data.userId 是主发言者，注入完整档案 + 其他参与者摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
-  ctx.middleware('llm-call:before', async (
+  ctx.middleware('agent:llm:before', async (
     data: {
       messages: Message[];
       tools: unknown[];

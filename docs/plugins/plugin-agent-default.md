@@ -28,17 +28,17 @@ meta.inject = { optional: ['llm', 'memory', 'persona'] }
 2. **加载历史**: 从 memory 服务获取最近消息
 3. **收集工具**: 从 ToolRegistry 获取所有已注册工具定义
 4. **执行 Hook 管道**:
-   - `message:before` — 消息预处理/拦截
-   - `llm-call:before` — 注入记忆上下文、替换工具列表
+   - `agent:input:before` — 消息预处理/拦截
+   - `agent:llm:before` — 注入记忆上下文、替换工具列表
    - `trimMessages()` — 按 token 预算裁剪上下文
    - `chatStream()` — 流式调用 LLM
-   - `llm-call:after` — 处理 LLM 响应
+   - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多 `maxToolIterations` 次）:
-     - `tool-call:before` → 执行工具 → `tool-call:after`
-   - `response:before` — 后处理回复内容
-   - `message:after` — 消息处理完成通知
+     - `agent:tool:before` → 执行工具 → `agent:tool:after`
+   - `agent:reply:before` — 后处理回复内容
+   - `agent:turn:after` — 消息处理完成通知
 5. **保存**: 用户消息和助手回复存入 memory
-6. **发送**: 通过 `message:send` 事件分发到各平台
+6. **发送**: 通过 `outbound:message` 事件分发到各平台
 
 ## 上下文裁剪算法
 

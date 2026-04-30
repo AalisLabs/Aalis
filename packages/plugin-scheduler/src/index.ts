@@ -6,7 +6,7 @@ import { resolve, dirname } from 'node:path';
 // plugin-scheduler — 让 AI 从"被动"变"主动"
 //
 // 支持 cron 表达式和固定间隔两种调度方式。
-// 每个任务向指定 session 发送 message:received 事件，
+// 每个任务向指定 session 发送 inbound:message 事件，
 // source='scheduler' 使其绕过流控、且不打断用户会话。
 // ════════════════════════════════════════════════════════════
 
@@ -338,7 +338,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         source: 'scheduler',
       };
 
-      await ctx.emit('message:received', message);
+      await ctx.emit('inbound:message', message);
 
       rt.lastRun = Date.now();
       rt.runCount++;

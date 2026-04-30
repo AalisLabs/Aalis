@@ -368,9 +368,10 @@ export const configSchema: ConfigSchema = {
 
 ```typescript
 interface AalisEvents {
-  'message:received': [message: IncomingMessage];
-  'message:send': [message: OutgoingMessage];
-  'message:stream': [chunk: StreamChunkMessage];
+  'inbound:message': [message: IncomingMessage];
+  'inbound:message:archived': [data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }];
+  'outbound:message': [message: OutgoingMessage];
+  'outbound:stream': [chunk: StreamChunkMessage];
   'tool:execute': [info: ToolExecuteMessage];
   'service:registered': [name: string, capabilities: string[]];
   'service:unregistered': [name: string];
@@ -390,14 +391,14 @@ interface AalisEvents {
 
 ```typescript
 interface HookContextMap {
-  'message:before': { message: IncomingMessage; metadata: Record<string, unknown> };
-  'message:after': { message: IncomingMessage; response: string; sessionId: string; metadata: Record<string, unknown> };
-  'llm-call:before': { messages: Message[]; tools: ToolDefinition[] };
-  'llm-call:after': { response: ChatResponse; messages: Message[] };
-  'tool-call:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
-  'tool-call:after': { name: string; result: string; toolCallContext: ToolCallContext };
-  'response:before': { content: string; sessionId: string };
-  [key: string]: Record<string, unknown>;  // 运行时安全兜底
+  'agent:input:before': { message: IncomingMessage; metadata: Record<string, unknown> };
+  'agent:turn:after': { message: IncomingMessage; reply: string; sessionId: string; metadata: Record<string, unknown> };
+  'agent:route': { message: IncomingMessage; agent: AgentService | undefined };
+  'agent:llm:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string; triggerType?: IncomingMessage['triggerType'] };
+  'agent:llm:after': { response: ChatResponse; messages: Message[] };
+  'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
+  'agent:tool:after': { name: string; result: string; toolCallContext: ToolCallContext };
+  'agent:reply:before': { content: string; sessionId: string; platform?: string; userId?: string; triggerType?: IncomingMessage['triggerType'] };
 }
 ```
 

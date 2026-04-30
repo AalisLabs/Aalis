@@ -25,7 +25,7 @@ meta.inject = {} // 无依赖
 
 ## 工作原理
 
-通过 `llm-call:before` 中间件（优先级 100）：
+通过 `agent:llm:before` 中间件（优先级 100）：
 
 1. **检查阈值**: 如果注册工具数 ≤ `maxDirectTools`，直接传递所有工具
 2. **替换工具列表**: 将 `data.tools` 替换为 `search_tools` 定义 + 已发现工具的定义
