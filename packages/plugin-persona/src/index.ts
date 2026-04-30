@@ -325,7 +325,7 @@ class PersonaServiceImpl implements PersonaService {
           prompt += `- ${key}：${field.description}${field.reply ? '（发送给用户的回复，不想说话则填空字符串）' : ''}\n`;
         });
         prompt += '\n调用工具时无需遵守此格式，正常使用工具即可。\n';
-        prompt += '工具全部调用完毕后，必须按上述 JSON 格式输出最终回复，不得输出自然语言。';
+        prompt += '工具全部调用完毕后，必须按上述 JSON 格式输出最终回复，不得输出纯文本。';
       }
     }
 
