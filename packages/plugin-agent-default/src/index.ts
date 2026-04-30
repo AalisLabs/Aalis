@@ -81,7 +81,7 @@ const INPUT_CONVENTIONS = [
  * 3. 收集可用工具 (tools registry)
  * 4. 调用 LLM 服务
  * 5. 执行工具调用循环
- * 6. 发出 message:send 事件
+ * 6. 发出 outbound:message 事件
  *
  * 外部插件可以注册高优先级的 AgentService 来完全替换此默认实现。
  */
@@ -195,7 +195,7 @@ class DefaultAgent implements AgentService {
   /**
    * 注册消息预处理器
    *
-   * 底层通过 message:before 中间件实现。
+   * 底层通过 agent:input:before 中间件实现。
    * 同名注册会自动替换旧的预处理器。
    */
   registerPreprocessor(name: string, handler: PreprocessorFn, priority = 500): () => void {
@@ -203,7 +203,7 @@ class DefaultAgent implements AgentService {
     const existing = this.preprocessors.get(name);
     if (existing) existing.dispose();
 
-    const dispose = this.ctx.middleware('message:before', async (data, next) => {
+    const dispose = this.ctx.middleware('agent:input:before', async (data, next) => {
       await handler(data.message, next);
     }, priority);
 
@@ -270,7 +270,7 @@ class DefaultAgent implements AgentService {
       }
       if (chunk.contentDelta) {
         content += chunk.contentDelta;
-        await this.ctx.emit('message:stream', {
+        await this.ctx.emit('outbound:stream', {
           sessionId,
           platform,
           contentDelta: chunk.contentDelta,
@@ -278,7 +278,7 @@ class DefaultAgent implements AgentService {
       }
       if (chunk.reasoningDelta) {
         reasoningContent += chunk.reasoningDelta;
-        await this.ctx.emit('message:stream', {
+        await this.ctx.emit('outbound:stream', {
           sessionId,
           platform,
           reasoningDelta: chunk.reasoningDelta,
@@ -418,7 +418,7 @@ class DefaultAgent implements AgentService {
   }
 
   private async _handleMessageInner(incoming: IncomingMessage, signal: AbortSignal, lane: string): Promise<void> {
-    // Hook: message:before — 插件可以修改或拦截消息
+    // Hook: agent:input:before — 插件可以修改或拦截消息
     // 中间件不调用 next() 即可中断整个流程（包括 LLM 调用）
     const msgHookData: { message: IncomingMessage; metadata: Record<string, unknown> } = {
       message: incoming,
@@ -427,7 +427,7 @@ class DefaultAgent implements AgentService {
 
     let handled = false;
 
-    await this.ctx.hooks.run('message:before', msgHookData, async () => {
+    await this.ctx.hooks.run('agent:input:before', msgHookData, async () => {
       handled = true;
       // ===== defaultAction: 全部消息处理逻辑在此 =====
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
@@ -439,7 +439,7 @@ class DefaultAgent implements AgentService {
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
-        await this.ctx.emit('message:send', {
+        await this.ctx.emit('outbound:message', {
           content: '[系统] LLM 服务不可用，请检查配置。',
           sessionId: incoming.sessionId,
           platform: incoming.platform,
@@ -493,9 +493,9 @@ class DefaultAgent implements AgentService {
         // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
         const originalTools = [...tools];
 
-        // Hook: llm-call:before — 插件可以修改消息或工具列表
+        // Hook: agent:llm:before — 插件可以修改消息或工具列表
         const llmBeforeData = { messages, tools, sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform, triggerType: incoming.triggerType };
-        await this.ctx.hooks.run('llm-call:before', llmBeforeData);
+        await this.ctx.hooks.run('agent:llm:before', llmBeforeData);
 
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
@@ -521,9 +521,9 @@ class DefaultAgent implements AgentService {
 
         this.debugLogResponse(response, Date.now() - t0);
 
-        // Hook: llm-call:after — 插件可以处理 LLM 返回结果
+        // Hook: agent:llm:after — 插件可以处理 LLM 返回结果
         const llmAfterData = { response, messages: llmBeforeData.messages };
-        await this.ctx.hooks.run('llm-call:after', llmAfterData);
+        await this.ctx.hooks.run('agent:llm:after', llmAfterData);
         response = llmAfterData.response;
 
         // 收集所有思考内容
@@ -574,9 +574,9 @@ class DefaultAgent implements AgentService {
                 args = {};
               }
 
-              // Hook: tool-call:before — 插件可以拦截或修改工具调用
+              // Hook: agent:tool:before — 插件可以拦截或修改工具调用
               const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
-              await this.ctx.hooks.run('tool-call:before', toolBeforeData);
+              await this.ctx.hooks.run('agent:tool:before', toolBeforeData);
 
               // 通知平台：工具开始执行
               await this.ctx.emit('tool:execute', {
@@ -595,9 +595,9 @@ class DefaultAgent implements AgentService {
                 toolCtx,
               ) ?? Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
 
-              // Hook: tool-call:after — 插件可以处理工具执行结果
+              // Hook: agent:tool:after — 插件可以处理工具执行结果
               const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
-              await this.ctx.hooks.run('tool-call:after', toolAfterData);
+              await this.ctx.hooks.run('agent:tool:after', toolAfterData);
               result = toolAfterData.result;
 
               // 工具结果截断：按上下文窗口比例限制单条工具结果长度
@@ -640,7 +640,7 @@ class DefaultAgent implements AgentService {
 
           // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
           const nextLlmData = { messages: llmBeforeData.messages, tools: [...originalTools], sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform, triggerType: incoming.triggerType };
-          await this.ctx.hooks.run('llm-call:before', nextLlmData);
+          await this.ctx.hooks.run('agent:llm:before', nextLlmData);
 
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
@@ -661,7 +661,7 @@ class DefaultAgent implements AgentService {
           this.debugLogResponse(response, Date.now() - tN, iterations);
 
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
-          await this.ctx.hooks.run('llm-call:after', nextLlmAfterData);
+          await this.ctx.hooks.run('agent:llm:after', nextLlmAfterData);
           response = nextLlmAfterData.response;
 
           if (response.reasoningContent) {
@@ -681,8 +681,8 @@ class DefaultAgent implements AgentService {
         const rawLlmContent = response.content ?? '';
         let replyContent = rawLlmContent;
 
-        // Hook: response:before — 插件可以修改最终回复
-        // JSON 解析/修复统一由 persona 的 response:before 钩子处理
+        // Hook: agent:reply:before — 插件可以修改最终回复
+        // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
         const responseData = {
           content: replyContent,
           sessionId: incoming.sessionId,
@@ -690,7 +690,7 @@ class DefaultAgent implements AgentService {
           userId: incoming.userId,
           triggerType: incoming.triggerType,
         };
-        await this.ctx.hooks.run('response:before', responseData);
+        await this.ctx.hooks.run('agent:reply:before', responseData);
         replyContent = responseData.content;
 
         // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
@@ -701,7 +701,7 @@ class DefaultAgent implements AgentService {
         }
 
         // 发出流结束标记
-        await this.ctx.emit('message:stream', {
+        await this.ctx.emit('outbound:stream', {
           sessionId: incoming.sessionId,
           platform: incoming.platform,
           done: true,
@@ -727,7 +727,7 @@ class DefaultAgent implements AgentService {
           });
 
           // 发送给流式客户端时使用合并版本（客户端流式阶段已自行维护 reasoningSegments）
-          await this.ctx.emit('message:send', {
+          await this.ctx.emit('outbound:message', {
             content: replyContent,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
@@ -736,10 +736,12 @@ class DefaultAgent implements AgentService {
           });
         }
 
-        // Hook: message:after — 插件可以在完整消息周期结束后做后处理
-        await this.ctx.hooks.run('message:after', {
+        // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
+        const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
+        await this.ctx.hooks.run('agent:turn:after', {
           message: incoming,
-          response: replyContent,
+          reply: replyContent,
+          outcome: turnOutcome,
           sessionId: incoming.sessionId,
           metadata: msgHookData.metadata,
         });
@@ -749,7 +751,7 @@ class DefaultAgent implements AgentService {
         // 中止错误 — 静默退出，已生成的流内容保留在前端
         if (err instanceof DOMException && err.name === 'AbortError') {
           this.logger.info(`生成已中止: session=${incoming.sessionId}`);
-          await this.ctx.emit('message:stream', {
+          await this.ctx.emit('outbound:stream', {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             done: true,
@@ -760,7 +762,7 @@ class DefaultAgent implements AgentService {
 
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`处理消息失败: ${message}`);
-        await this.ctx.emit('message:send', {
+        await this.ctx.emit('outbound:message', {
           content: `[错误] ${message}`,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
@@ -770,7 +772,7 @@ class DefaultAgent implements AgentService {
 
     // 消息被拦截（如流控缓冲），通知前端结束 loading
     if (!handled) {
-      await this.ctx.emit('message:stream', {
+      await this.ctx.emit('outbound:stream', {
         sessionId: incoming.sessionId,
         platform: incoming.platform,
         done: true,
@@ -1526,14 +1528,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
       }
 
-      // 运行 llm-call:before 中间件以获取注入的 system 消息（摘要、向量记忆等）+ 工具搜索层过滤
+      // 运行 agent:llm:before 中间件以获取注入的 system 消息（摘要、向量记忆等）+ 工具搜索层过滤
       const sm = ctx.getService<SessionManagerService>('session-manager');
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
       const tools = ctx.tools?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
 
       const llmBeforeData = { messages, tools, sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
-      await ctx.hooks.run('llm-call:before', llmBeforeData);
+      await ctx.hooks.run('agent:llm:before', llmBeforeData);
 
       agent['emitTokenUsage'](data.sessionId, data.platform ?? '', llmBeforeData.messages, llmBeforeData.tools, contextLength, maxTokens, tokenBudget);
     } catch (err) {

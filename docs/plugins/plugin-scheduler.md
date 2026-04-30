@@ -35,5 +35,5 @@ meta.inject = { required: ['session-manager'] }
 
 1. AI 通过 `schedule_task` 工具创建定时任务
 2. 调度器按 cron 表达式或间隔触发任务
-3. 触发时向目标会话发送 `message:received` 事件，`source` 设为 `scheduler`
+3. 触发时向目标会话发送 `inbound:message` 事件，`source` 设为 `scheduler`
 4. 调度消息绕过流控中间件的速率限制

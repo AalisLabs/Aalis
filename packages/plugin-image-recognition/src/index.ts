@@ -603,7 +603,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (agent?.registerPreprocessor) {
     agent.registerPreprocessor('image-recognition', preprocessImages, 900);
   } else {
-    ctx.middleware('message:before', async (data, next) => {
+    ctx.middleware('agent:input:before', async (data, next) => {
       await preprocessImages(data.message, next);
     }, 900);
   }

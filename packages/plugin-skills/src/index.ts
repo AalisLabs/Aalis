@@ -487,9 +487,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   });
 
-  // ── 在 llm-call:before 钩子中注入可用技能摘要 ──
+  // ── 在 agent:llm:before 钩子中注入可用技能摘要 ──
 
-  ctx.middleware('llm-call:before', async (data, next) => {
+  ctx.middleware('agent:llm:before', async (data, next) => {
     const skills = service.listSkills();
     if (skills.length > 0) {
       const skillSummary = skills.map(s =>
@@ -512,7 +512,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       }
     }
     await next();
-  }, -10); // 低优先级，在其他 llm-call:before 之后
+  }, -10); // 低优先级，在其他 agent:llm:before 之后
 
   logger.info(`技能系统已启动 (目录: ${skillsDir}, 已加载 ${skillsCache.length} 个技能)`);
 }

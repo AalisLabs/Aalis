@@ -40,7 +40,7 @@ export interface AgentService {
   /**
    * 注册消息预处理器
    *
-   * 预处理器在 `message:before` 阶段运行，可以修改 IncomingMessage（如将图片转文字、解析文件）。
+   * 预处理器在 `agent:input:before` 阶段运行，可以修改 IncomingMessage（如将图片转文字、解析文件）。
    * 底层通过中间件系统实现，priority 越大越先执行。
    *
    * @param name 预处理器名称（用于日志和调试）

@@ -413,7 +413,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (agent?.registerPreprocessor) {
     agent.registerPreprocessor('file-reader', preprocessFiles, 950);
   } else {
-    ctx.middleware('message:before', async (data, next) => {
+    ctx.middleware('agent:input:before', async (data, next) => {
       await preprocessFiles(data.message, next);
     }, 950);
   }

@@ -24,8 +24,8 @@ meta.inject = { required: ['llm', 'memory'] }
 
 ## 工作方式
 
-1. 通过 `message:after` 钩子监控消息数量
+1. 通过 `agent:turn:after` 钩子监控消息数量
 2. 当消息数 ≥ `triggerCount` 时触发摘要
 3. 取最旧的 `count - keepRecent` 条消息交给 LLM 生成摘要
-4. 摘要以 system 消息形式在 `llm-call:before` 钩子中注入到上下文
+4. 摘要以 system 消息形式在 `agent:llm:before` 钩子中注入到上下文
 5. 摘要结果持久化到 SQLite（独立表），与原始消息分开存储

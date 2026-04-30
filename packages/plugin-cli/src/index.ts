@@ -87,13 +87,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
   ctx.provide('cli', cliService);
 
-  ctx.on('message:send', (msg) => {
+  ctx.on('outbound:message', (msg) => {
     if (msg.sessionId !== sessionId) return;
     if (tui?.consumeStreamedSend()) return; // 同一轮已流式输出，跳过重复
     adapter.sendMessage(msg.sessionId, msg.content);
   });
 
-  ctx.on('message:stream', (chunk) => {
+  ctx.on('outbound:stream', (chunk) => {
     if (chunk.sessionId !== sessionId) return;
     tui?.applyStreamChunk(chunk);
   });
@@ -214,7 +214,7 @@ class CliTui {
   }
 
   /**
-   * 上一轮 是否有流式内容。调用后会重置。转发文件时 message:send 看到流完整后重复发送，需要跳过。
+   * 上一轮 是否有流式内容。调用后会重置。转发文件时 outbound:message 看到流完整后重复发送，需要跳过。
    */
   consumeStreamedSend(): boolean {
     if (this.streamedRecently) {
@@ -465,7 +465,7 @@ class CliTui {
       return;
     }
 
-    await this.ctx.emit('message:received', { content: text, sessionId: this.sessionId, platform: 'cli' });
+    await this.ctx.emit('inbound:message', { content: text, sessionId: this.sessionId, platform: 'cli' });
   }
 
   private recallHistory(delta: -1 | 1): void {

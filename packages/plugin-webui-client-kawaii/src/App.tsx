@@ -63,7 +63,7 @@ export function App() {
   const streamingRef = useRef(false);
 
   const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
-    // message:send 到达时，用完整内容更新最后一个文本段，保留所有 segments
+    // outbound:message 到达时，用完整内容更新最后一个文本段，保留所有 segments
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant' && streamingRef.current) {
@@ -77,7 +77,7 @@ export function App() {
           segments.push({ type: 'text', content });
         }
         // 保留流式阶段已构建好的 reasoningSegments（含 tool_call 结构），
-        // 不用 message:send 的扁平合并文本覆盖
+        // 不用 outbound:message 的扁平合并文本覆盖
         const reasoningSegments = last.reasoningSegments;
         return [...prev.slice(0, -1), {
           ...last,

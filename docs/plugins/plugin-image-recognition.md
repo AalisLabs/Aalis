@@ -16,7 +16,7 @@ meta.inject = { required: [{ service: 'llm', capabilities: ['vision'] }] }
 
 ## 工作方式
 
-1. 通过 `message:before` 钩子拦截包含图片的消息
+1. 通过 `agent:input:before` 钩子拦截包含图片的消息
 2. 调用具有 `vision` 能力的 LLM 服务
 3. 以 ~300 token 的预算生成图片描述
 4. 将描述文本追加到消息内容中

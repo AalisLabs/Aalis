@@ -191,7 +191,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const summaries = ctx.tools!.getSummaries(filter);
       const allResults = searchTools(summaries, query);
       const paged = allResults.slice(offset, offset + effectiveLimit);
-      // 搜索结果只返回名称和描述，不含 parameters（完整定义由 llm-call:before 注入 tools 数组，避免重复）
+      // 搜索结果只返回名称和描述，不含 parameters（完整定义由 agent:llm:before 注入 tools 数组，避免重复）
 
       const toolDetails = paged.map(t => ({
         name: t.name,
@@ -237,8 +237,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
-  // 注册 llm-call:before 钩子 —— 高优先级，替换工具列表
-  ctx.middleware('llm-call:before', async (data, next) => {
+  // 注册 agent:llm:before 钩子 —— 高优先级，替换工具列表
+  ctx.middleware('agent:llm:before', async (data, next) => {
     const allDefs = data.tools;
 
     // 工具数量不超过阈值时，跳过搜索层 (+1 因为 search_tools 自身也在列表中)
