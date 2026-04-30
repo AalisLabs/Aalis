@@ -304,8 +304,8 @@ class PersonaServiceImpl implements PersonaService {
       if (customPrompt) {
         prompt += customPrompt + '\n';
       } else {
-        prompt += '# 输出格式（最终回复时必须使用）\n';
-        prompt += '每当你最终需要输出文字回复时（工具调用过程中不需要遵循此格式，只需要按照工具定义规范回复即可。但是最终回复的内容必须遵循此格式），需要使用以下 JSON 格式，不要输出 JSON 之外的任何内容：\n';
+        prompt += '# 输出格式（必须严格遵守）\n';
+        prompt += '你的每一条文字回复都必须且只能是一个合法 JSON 对象。不得在 JSON 前后输出任何其他内容，不得使用 markdown 代码块包裹。\n\n';
       }
       prompt += '{\n';
       const entries = Object.entries(effectiveFormat.fields);
@@ -315,12 +315,17 @@ class PersonaServiceImpl implements PersonaService {
         if (field.type === 'number') placeholder = '0';
         else if (field.type === 'boolean') placeholder = 'true';
         else placeholder = '"..."';
-        prompt += `  "${key}": ${placeholder}${comma}  // ${field.description}${field.reply ? '（发送给用户的回复）' : ''}\n`;
+        prompt += `  "${key}": ${placeholder}${comma}\n`;
       });
       prompt += '}\n';
       if (!customPrompt) {
-        prompt += '严格遵守此格式。直接输出纯 JSON，不要包裹 markdown 代码块标记。\n';
-        prompt += '注意：调用工具时只需要遵循工具调用规范，正常使用工具即可。所有工具调用完成后，再按此格式输出最终回复。';
+        // 单独输出字段说明，避免行内注释干扰 JSON 解析
+        prompt += '\n字段说明：\n';
+        entries.forEach(([key, field]) => {
+          prompt += `- ${key}：${field.description}${field.reply ? '（发送给用户的回复，不想说话则填空字符串）' : ''}\n`;
+        });
+        prompt += '\n调用工具时无需遵守此格式，正常使用工具即可。\n';
+        prompt += '工具全部调用完毕后，必须按上述 JSON 格式输出最终回复，不得输出自然语言。';
       }
     }
 
