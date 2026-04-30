@@ -565,15 +565,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     await saveProfile(userKey, applyRelationUpdate(profile, triggerType));
   }
 
-  // ─── 入站消息计数触发：每人独立计数，无论 Aalis 是否回复 ───
+  // ─── 关系分数：在 agent 触发回复路径上更新 ───
   // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
-  // 关系分数与计数在消息入库前更新；事实提取在 next() 之后触发，确保当前消息已写入 memory
+  // 关系强度与"是否触发回复"绑定，因此仍走 message:before 中间件。
   ctx.middleware('message:before', async (
     data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string; triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' } },
     next,
   ) => {
-    const { sessionId, userId, platform, nickname, triggerType } = data.message;
-    let shouldExtract = false;
+    const { userId, platform, triggerType } = data.message;
     if (userId) {
       const userKey = userKeyOf(platform, userId);
       try {
@@ -581,22 +580,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       } catch (err) {
         ctx.logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       }
-      const count = (userMessageCount.get(userKey) ?? 0) + 1;
-      userMessageCount.set(userKey, count);
-      if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
-        shouldExtract = true;
-      }
     }
     await next();
-    // 消息已写入 memory，再触发事实提取，避免遗漏当前消息
-    if (shouldExtract && userId) {
-      void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
-        (err: unknown) => ctx.logger.debug(
-          `事实提取异常 (${userKeyOf(platform, userId)}): ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
-    }
   }, 800);
+
+  // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
+  // 监听 message-archive 在 archiveIncoming 落库成功后发出的 message:archived 事件，
+  // 确保缓冲消息（onebot saveBufferedMessage 等不触发 agent 回复的路径）也能纳入计数。
+  ctx.on('message:archived', (...args: unknown[]) => {
+    const data = args[0] as { sessionId: string; incoming: { userId?: string; platform?: string; nickname?: string } };
+    const { sessionId, incoming } = data;
+    const { userId, platform, nickname } = incoming;
+    if (!userId) return;
+
+    const userKey = userKeyOf(platform, userId);
+    const count = (userMessageCount.get(userKey) ?? 0) + 1;
+    userMessageCount.set(userKey, count);
+    if (cfg.extractEveryNMessages <= 0 || count % cfg.extractEveryNMessages !== 0) return;
+
+    void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
+      (err: unknown) => ctx.logger.debug(
+        `事实提取异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+  });
 
   function isFactActive(fact: Fact): boolean {
     if (fact.temporality !== 'temporary') return true;

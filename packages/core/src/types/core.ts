@@ -310,6 +310,8 @@ export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArra
  */
 export interface AalisEvents {
   'message:received': [message: IncomingMessage];
+  /** 入站消息已落库（来自 message-archive.archiveIncoming）。无论是否触发 agent 回复都会发出。 */
+  'message:archived': [data: { sessionId: string; incoming: IncomingMessage; content: string }];
   'message:send': [message: OutgoingMessage];
   'message:stream': [chunk: StreamChunkMessage];
   'tool:execute': [info: ToolExecuteMessage];

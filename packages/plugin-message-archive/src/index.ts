@@ -175,6 +175,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         );
       }
 
+      // 通知监听者：入站消息已落库（用于触发用户档案事实提取等后台任务）
+      // 与 agent 是否回复无关，所有走 archiveIncoming 的消息都会发出
+      ctx.emit('message:archived', {
+        sessionId: working.sessionId,
+        incoming: working,
+        content,
+      }).catch(err => ctx.logger.debug(`message:archived 事件分发失败: ${err}`));
+
       return {
         message,
         content,

@@ -1,6 +1,68 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray, ServiceProviderInfo } from '../types';
 import { api } from '../api';
+
+// ===== 数字输入框（解决小数输入被截断问题） =====
+// 受控 number input 在输入 0.0x 时会被 Number() 取整覆盖，
+// 用本地字符串状态隔离，只在值合法且"完整"时才向外 onChange。
+function NumberInput({ value, onChange, className }: { value: unknown; onChange: (v: number | '') => void; className?: string }) {
+  const externalStr = value === undefined || value === null || value === '' ? '' : String(value);
+  const [inputStr, setInputStr] = useState(externalStr);
+  const externalRef = useRef(externalStr);
+
+  // 外部值变化时同步（但不覆盖用户正在输入的中间态）
+  useEffect(() => {
+    const newExt = value === undefined || value === null || value === '' ? '' : String(value);
+    if (newExt !== externalRef.current) {
+      externalRef.current = newExt;
+      // 只有外部值与当前输入解析结果不同时才覆盖（用户未在编辑小数尾部）
+      const parsed = inputStr === '' ? '' : Number(inputStr);
+      if (String(parsed) !== inputStr) {
+        // 用户正在输入中间态（如 "0."），不覆盖
+        return;
+      }
+      setInputStr(newExt);
+    }
+  }, [value]);
+
+  return (
+    <input
+      className={className}
+      type="text"
+      inputMode="decimal"
+      value={inputStr}
+      onChange={e => {
+        const v = e.target.value;
+        setInputStr(v);
+        if (v === '' || v === '-') {
+          onChange('');
+        } else if (!v.endsWith('.') && !v.endsWith('0') && !isNaN(Number(v))) {
+          // 完整数字：立即通知
+          onChange(Number(v));
+        } else if (!v.endsWith('.') && !isNaN(Number(v))) {
+          // 末尾带 0 的小数（如 0.10）也通知，但不改 inputStr
+          onChange(Number(v));
+        }
+      }}
+      onBlur={e => {
+        const v = e.target.value;
+        if (v === '' || v === '-') {
+          onChange('');
+          setInputStr('');
+        } else {
+          const n = Number(v);
+          if (!isNaN(n)) {
+            onChange(n);
+            externalRef.current = String(n);
+            // blur 时不重置 inputStr，保留用户输入的小数形式
+          } else {
+            setInputStr(externalRef.current);
+          }
+        }
+      }}
+    />
+  );
+}
 
 // ===== 扁平化 / 还原嵌套对象（编辑用） =====
 
@@ -211,14 +273,10 @@ function SchemaFormField({
 
   if (field.type === 'number') {
     return (
-      <input
+      <NumberInput
         className="config-edit-input"
-        type="number"
-        value={value === undefined || value === null ? '' : String(value)}
-        onChange={e => {
-          const v = e.target.value;
-          onChange(v === '' ? '' : Number(v));
-        }}
+        value={value}
+        onChange={onChange}
       />
     );
   }
