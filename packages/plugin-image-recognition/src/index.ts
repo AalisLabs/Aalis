@@ -7,6 +7,26 @@ import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } fr
 import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult } from '@aalis/core';
 import { ImageRecognitionCapabilities } from '@aalis/core';
 
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeImageRef(input: string): string {
+  return input.trim().replace(/^ref:/, '');
+}
+
+function findImageDescriptionTokens(messages: Message[], imageRef: string): string[] {
+  const normalizedRef = normalizeImageRef(imageRef);
+  const refPattern = escapeRegExp(normalizedRef);
+  const tokenPattern = new RegExp(`\\[图片(?:: [^\\]\\n]*?)? \\| ref:${refPattern}\\]`, 'g');
+  const tokens = new Set<string>();
+  for (const message of messages) {
+    const content = message.content ?? '';
+    for (const match of content.matchAll(tokenPattern)) tokens.add(match[0]);
+  }
+  return [...tokens];
+}
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-image-recognition';
@@ -762,29 +782,42 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             },
             session_id: {
               type: 'string',
-              description: '图片所在的会话 ID',
+              description: '图片所在的会话 ID。可选；不填时使用当前会话。',
             },
           },
-          required: ['image_ref', 'description', 'session_id'],
+          required: ['image_ref', 'description'],
         },
       },
     },
-    handler: async (args) => {
-      const imageRef = String(args.image_ref);
+    handler: async (args, callCtx) => {
+      const imageRef = normalizeImageRef(String(args.image_ref));
       const desc = String(args.description);
-      const sessionId = String(args.session_id);
+      const sessionId = typeof args.session_id === 'string' && args.session_id.trim()
+        ? args.session_id.trim()
+        : callCtx.sessionId;
 
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.updateMessageContent) {
         return JSON.stringify({ error: '记忆服务不可用或不支持内容更新' });
       }
 
-      const oldText = `[图片 | ref:${imageRef}]`;
       const newText = `[图片: ${desc} | ref:${imageRef}]`;
-      const updated = await memory.updateMessageContent(sessionId, oldText, newText);
+      const history = memory.getFullHistory
+        ? await memory.getFullHistory(sessionId, 200)
+        : await memory.getHistory(sessionId, 200);
+      const oldTexts = findImageDescriptionTokens(history, imageRef);
+      if (oldTexts.length === 0) {
+        oldTexts.push(`[图片 | ref:${imageRef}]`);
+      }
+
+      let updated = 0;
+      for (const oldText of oldTexts) {
+        if (oldText === newText) continue;
+        updated += await memory.updateMessageContent(sessionId, oldText, newText, 200);
+      }
       return updated > 0
         ? `已更新 ${updated} 条消息中的图片描述`
-        : '未找到匹配的图片引用（可能已有描述或引用路径不匹配）';
+        : `未找到匹配的图片引用（session=${sessionId}，可能引用路径不匹配或描述已相同）`;
     },
   });
 
