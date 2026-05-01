@@ -7,7 +7,7 @@ import type { Context, ConfigSchema, ImageRecognitionService, MessageArchiveServ
 export const name = '@aalis/plugin-onebot-tools';
 export const displayName = 'OneBot 工具';
 export const inject = {
-  optional: ['platform'],
+  optional: ['platform', 'session-history'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -42,6 +42,16 @@ export const configSchema: ConfigSchema = {
       allowCrossSession: { type: 'boolean', label: '允许跨会话发送', default: true, description: '关闭后只能向当前会话发送（等价于普通回复，几乎没有意义，仅作降权开关）' },
     },
   },
+  sessionHistory: {
+    label: '会话历史读取',
+    fields: {
+      enabled: { type: 'boolean', label: '启用 OneBot 会话历史读取', default: true, description: '允许按群号/QQ 号读取对应 OneBot 会话的近期历史' },
+      maxLimit: { type: 'number', label: '单次最多读取条数', default: 30 },
+      allowGroupReadPrivate: { type: 'boolean', label: '允许群聊读取私聊历史', default: false },
+      allowCrossSelf: { type: 'boolean', label: '允许跨机器人账号读取', default: false },
+      includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -50,6 +60,7 @@ export const defaultConfig = {
   account: { enabled: true },
   interaction: { enabled: true },
   messaging: { enabled: true, allowCrossSession: true },
+  sessionHistory: { enabled: true, maxLimit: 30, allowGroupReadPrivate: false, allowCrossSelf: false, includeArchivedDefault: false },
 };
 
 // ===== 辅助函数 =====
@@ -85,6 +96,17 @@ function requireOneBotSession(callCtx: ToolCallContext): { selfId: string; detai
   const parsed = parseOneBotSession(callCtx.sessionId);
   if (!parsed) throw new Error('此工具仅在 OneBot 会话中可用');
   return parsed;
+}
+
+function buildOneBotSessionId(selfId: string, detailType: string, targetId: string): string {
+  return `onebot:${selfId}:${detailType}:${targetId}`;
+}
+
+interface SessionHistoryService {
+  getHistory(
+    options: { sessionId: string; limit?: number; includeArchived?: boolean },
+    callCtx: ToolCallContext,
+  ): Promise<Record<string, unknown>>;
 }
 
 async function callAction(
@@ -417,6 +439,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       account: { enabled: true, ...(config.account as Record<string, unknown> ?? {}) },
       interaction: { enabled: true, ...(config.interaction as Record<string, unknown> ?? {}) },
       messaging: { enabled: true, allowCrossSession: true, ...(config.messaging as Record<string, unknown> ?? {}) },
+      sessionHistory: {
+        enabled: true,
+        maxLimit: 30,
+        allowGroupReadPrivate: false,
+        allowCrossSelf: false,
+        includeArchivedDefault: false,
+        ...(config.sessionHistory as Record<string, unknown> ?? {}),
+      },
     };
 
     if (cfg.groupManagement.enabled) registerGroupManagementTools(groupedCtx);
@@ -424,6 +454,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (cfg.account.enabled) registerAccountTools(groupedCtx);
     if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
     if (cfg.messaging.enabled) registerMessagingTools(groupedCtx, !!cfg.messaging.allowCrossSession);
+    if (cfg.sessionHistory.enabled) registerSessionHistoryTools(groupedCtx, {
+      maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 30)),
+      allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
+      allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
+      includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
+    });
     registerRequestTools(groupedCtx);
   });
 }
@@ -1467,6 +1503,134 @@ function registerMessagingTools(ctx: Context, allowCrossSession: boolean): void 
   });
 
   ctx.logger.info('OneBot 主动发送消息工具已注册');
+}
+
+interface OneBotSessionHistoryConfig {
+  maxLimit: number;
+  allowGroupReadPrivate: boolean;
+  allowCrossSelf: boolean;
+  includeArchivedDefault: boolean;
+}
+
+function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConfig): void {
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_resolve_session_id',
+        description: '把 OneBot 群号或 QQ 号解析成 Aalis 内部 sessionId。用于确认目标会话 ID，不读取历史。',
+        parameters: {
+          type: 'object',
+          properties: {
+            target_type: {
+              type: 'string',
+              enum: ['group', 'private'],
+              description: 'group = 群聊，private = 私聊',
+            },
+            target_id: { type: 'string', description: '群号或 QQ 号' },
+            self_id: { type: 'string', description: '机器人账号。可选，默认使用当前 OneBot 会话的 selfId' },
+          },
+          required: ['target_type', 'target_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const current = requireOneBotSession(callCtx);
+      const targetType = String(args.target_type ?? '').toLowerCase();
+      const targetId = String(args.target_id ?? '').trim();
+      if (targetType !== 'group' && targetType !== 'private') {
+        return JSON.stringify({ error: `target_type 必须为 group 或 private，收到 ${args.target_type}` });
+      }
+      if (!targetId) return JSON.stringify({ error: 'target_id 不能为空' });
+      const selfId = args.self_id ? String(args.self_id).trim() : current.selfId;
+      if (!selfId) return JSON.stringify({ error: '无法确定 self_id' });
+      if (!cfg.allowCrossSelf && selfId !== current.selfId) {
+        return JSON.stringify({ error: '当前配置不允许跨机器人账号解析会话', currentSelfId: current.selfId, requestedSelfId: selfId });
+      }
+      return JSON.stringify({
+        ok: true,
+        sessionId: buildOneBotSessionId(selfId, targetType, targetId),
+        selfId,
+        targetType,
+        targetId,
+      });
+    },
+  });
+
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_get_session_history',
+        description: [
+          '按 QQ 群号或 QQ 号读取对应 OneBot 会话最近若干条历史消息。',
+          '适用场景：用户明确要求你回忆某个群/私聊最近说过什么，或需要核实另一个 OneBot 会话的原文上下文。',
+          '默认禁止从群聊读取私聊历史；如需语义搜索历史，请优先使用 memory_recall。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            target_type: {
+              type: 'string',
+              enum: ['group', 'private'],
+              description: 'group = 群聊（target_id 为群号），private = 私聊（target_id 为 QQ 号）',
+            },
+            target_id: { type: 'string', description: '群号或 QQ 号' },
+            limit: { type: 'number', description: `读取最近多少条，默认 20，最多 ${cfg.maxLimit}` },
+            self_id: { type: 'string', description: '机器人账号。可选，默认使用当前 OneBot 会话的 selfId' },
+            include_archived: { type: 'boolean', description: '是否包含已归档消息。默认使用插件配置。' },
+          },
+          required: ['target_type', 'target_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const current = requireOneBotSession(callCtx);
+      const targetType = String(args.target_type ?? '').toLowerCase();
+      const targetId = String(args.target_id ?? '').trim();
+      if (targetType !== 'group' && targetType !== 'private') {
+        return JSON.stringify({ error: `target_type 必须为 group 或 private，收到 ${args.target_type}` });
+      }
+      if (!targetId) return JSON.stringify({ error: 'target_id 不能为空' });
+
+      const selfId = args.self_id ? String(args.self_id).trim() : current.selfId;
+      if (!selfId) return JSON.stringify({ error: '无法确定 self_id' });
+      if (!cfg.allowCrossSelf && selfId !== current.selfId) {
+        return JSON.stringify({ error: '当前配置不允许跨机器人账号读取会话历史', currentSelfId: current.selfId, requestedSelfId: selfId });
+      }
+      if (current.detailType === 'group' && targetType === 'private' && !cfg.allowGroupReadPrivate) {
+        return JSON.stringify({ error: '当前配置不允许从群聊读取私聊历史' });
+      }
+
+      const history = ctx.getService<SessionHistoryService>('session-history');
+      if (!history) return JSON.stringify({ error: 'session-history 服务不可用，请启用 @aalis/plugin-session-tools 的 historyAccess' });
+
+      const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || 20)));
+      const includeArchived = typeof args.include_archived === 'boolean'
+        ? args.include_archived
+        : cfg.includeArchivedDefault;
+      const sessionId = buildOneBotSessionId(selfId, targetType, targetId);
+
+      try {
+        const result = await history.getHistory({ sessionId, limit, includeArchived }, callCtx);
+        return JSON.stringify({
+          ...result,
+          sessionId,
+          selfId,
+          targetType,
+          targetId,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.logger.warn(`onebot_get_session_history 失败 (${sessionId}): ${message}`);
+        return JSON.stringify({ error: `读取 OneBot 会话历史失败: ${message}` });
+      }
+    },
+  });
+
+  ctx.logger.info('OneBot 会话历史工具已注册');
 }
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
