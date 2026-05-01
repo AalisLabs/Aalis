@@ -17,6 +17,6 @@ workspace/
 *.node
 *.tsbuildinfo
 **/native/target/
-test/
-tests/
+/test/
+/tests/
 .DS_Store
