@@ -16,7 +16,8 @@ export const configSchema: ConfigSchema = {
   workingDirectory: {
     type: 'string',
     label: '工作目录',
-    description: '工具执行时的默认工作目录，留空则使用进程当前目录',
+    default: 'workspace:/',
+    description: 'Shell 等执行工具的默认逻辑目录。使用 storage URI，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
   },
   shell: {
     label: 'Shell 工具',
@@ -66,7 +67,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  workingDirectory: '',
+  workingDirectory: 'workspace:/',
   shell: { enabled: true, defaultTimeout: 30000, maxTimeout: 300000, maxOutputSize: 65536 },
   file: { enabled: true, maxReadSize: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['workspace', 'tmp'] },
   system: { enabled: true },
@@ -87,7 +88,7 @@ export interface ToolsBasicConfig {
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
-  const cwd = cfg.workingDirectory || process.cwd();
+  const cwdUri = cfg.workingDirectory || 'workspace:/';
 
   /** 创建带分组标记的工具注册代理 */
   function ctxWithGroups(groups: string[]): Context {
@@ -111,7 +112,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册各工具组
   if (cfg.shell.enabled) {
-    registerShellTools(ctxWithGroups(['system']), { cwd, ...cfg.shell });
+    const storage = ctx.getService<StorageService>('storage');
+    registerShellTools(ctxWithGroups(['system']), { cwdUri, storage, ...cfg.shell });
     ctx.logger.info('Shell 工具已启用');
   }
 
@@ -124,7 +126,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (cfg.system.enabled) {
     const persona = ctx.getService<{ isTimeInjectionEnabled?(): boolean }>('persona');
     const skipTimeTool = !!persona?.isTimeInjectionEnabled?.();
-    registerSystemTools(ctxWithGroups(['system']), { cwd, skipTimeTool });
+    registerSystemTools(ctxWithGroups(['system']), { cwd: cwdUri, skipTimeTool });
     ctx.logger.info('系统工具已启用' + (skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''));
   }
 
@@ -144,7 +146,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return lines.join('\n');
   });
 
-  ctx.logger.info(`机器交互工具插件已启动 (工作目录: ${cwd})`);
+  ctx.logger.info(`机器交互工具插件已启动 (工作目录: ${cwdUri})`);
 }
 
 // ===== 辅助函数 =====
@@ -156,7 +158,7 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
   const http = config.http as Record<string, unknown> | undefined;
 
   return {
-    workingDirectory: (config.workingDirectory as string) ?? '',
+    workingDirectory: (config.workingDirectory as string) ?? 'workspace:/',
     shell: {
       enabled: (shell?.enabled as boolean) ?? true,
       defaultTimeout: (shell?.defaultTimeout as number) ?? 30000,

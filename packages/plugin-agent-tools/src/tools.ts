@@ -68,6 +68,7 @@ export class ToolRegistry implements ToolService {
         name: t.definition.function.name,
         description: t.definition.function.description,
         groups: t.groups,
+        permissions: this.getStaticPermissions(t),
       };
     });
   }
@@ -78,6 +79,7 @@ export class ToolRegistry implements ToolService {
     pluginName: string;
     authority?: number;
     safety?: import('@aalis/core').SafetyLevel;
+    permissions?: string[];
     groups?: string[];
   }> {
     return [...this.tools.values()].map(t => {
@@ -87,6 +89,7 @@ export class ToolRegistry implements ToolService {
         pluginName: t.pluginName,
         authority: t.authority,
         safety: t.safety,
+        permissions: this.getStaticPermissions(t),
         groups: t.groups,
       };
     });
@@ -122,12 +125,14 @@ export class ToolRegistry implements ToolService {
 
     const authority = tool.authority ?? 1;
     const safety = tool.safety ?? 'safe';
+    const permissions = await this.resolvePermissions(tool, args, callCtx);
     if (this._guard) {
       const denied = await this._guard({
         name: toolName,
         type: 'tool',
         authority,
         safety,
+        permissions,
         sessionId: callCtx.sessionId,
         platform: callCtx.platform ?? 'unknown',
         userId: callCtx.userId,
@@ -166,4 +171,21 @@ export class ToolRegistry implements ToolService {
       }
     }
   }
+
+  private getStaticPermissions(tool: RegisteredTool): string[] {
+    return unique([`tool:${tool.definition.function.name}`, ...(tool.permissions ?? [])]);
+  }
+
+  private async resolvePermissions(
+    tool: RegisteredTool,
+    args: Record<string, unknown>,
+    callCtx: ToolCallContext,
+  ): Promise<string[]> {
+    const dynamic = tool.resolvePermissions ? await tool.resolvePermissions(args, callCtx) : [];
+    return unique([...this.getStaticPermissions(tool), ...dynamic]);
+  }
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }

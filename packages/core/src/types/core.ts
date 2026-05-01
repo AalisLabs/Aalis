@@ -5,6 +5,9 @@
 /** 安全等级：safe=安全操作, dangerous=高危操作 */
 export type SafetyLevel = 'safe' | 'dangerous';
 
+/** 细粒度权限标识，如 tool:file.write、storage:workspace:read */
+export type PermissionId = string;
+
 /** 用户身份标识 */
 export interface UserIdentity {
   platform: string;
@@ -163,6 +166,10 @@ export interface RegisteredTool {
   authority?: number;
   /** 安全级别 (默认 'safe') */
   safety?: SafetyLevel;
+  /** 静态权限标识，用于透明展示与策略匹配 */
+  permissions?: PermissionId[];
+  /** 根据工具参数解析动态权限，如 storage:workspace:write */
+  resolvePermissions?: (args: Record<string, unknown>, ctx: ToolCallContext) => PermissionId[] | Promise<PermissionId[]>;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
 }
@@ -172,6 +179,7 @@ export interface ToolSummary {
   name: string;
   description: string;
   groups?: string[];
+  permissions?: PermissionId[];
 }
 
 /** 工具分组信息 */
@@ -200,6 +208,8 @@ export interface ExecutionGuardContext {
   authority: number;
   /** 声明的安全等级 */
   safety: SafetyLevel;
+  /** 细粒度权限标识 */
+  permissions?: PermissionId[];
   /** 会话 ID */
   sessionId: string;
   /** 来源平台 */
@@ -392,6 +402,8 @@ export interface CommandDefinition {
   authority?: number;
   /** 安全级别 (默认 'safe') */
   safety?: SafetyLevel;
+  /** 静态权限标识，用于透明展示与策略匹配 */
+  permissions?: PermissionId[];
   /**
    * 执行函数
    * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
@@ -428,6 +440,8 @@ export interface SubcommandDefinition {
   authority?: number;
   /** 安全级别；未声明则继承父节点的有效值 */
   safety?: SafetyLevel;
+  /** 静态权限标识；会与父节点权限共同生效 */
+  permissions?: PermissionId[];
   /** 执行函数；省略时该节点仅作为分组，调用回退为 usage 提示 */
   action?: (ctx: CommandContext) => Promise<string | void>;
   /** 进一步的孙级子指令 */

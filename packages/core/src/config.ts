@@ -31,6 +31,11 @@ export interface AalisConfig {
     /** 白名单启用时间戳 (ms)，运行时自动设置 */
     enabledAt?: number;
   };
+  /** 细粒度权限策略：deny 优先；allow 为空表示默认放行 */
+  permissionPolicy?: {
+    allow?: string[];
+    deny?: string[];
+  };
   /** 管理员对单条指令的权限/安全等级覆盖 */
   commandOverrides?: Record<string, { authority?: number; safety?: string }>;
 }
@@ -291,6 +296,10 @@ export class ConfigManager {
       }
     }
 
+    if (this.config.permissionPolicy && Object.keys(this.config.permissionPolicy).length > 0) {
+      obj.permissionPolicy = this.config.permissionPolicy;
+    }
+
     if (this.config.commandOverrides && Object.keys(this.config.commandOverrides).length > 0) {
       obj.commandOverrides = this.config.commandOverrides;
     }
@@ -354,6 +363,7 @@ export class ConfigManager {
       defaultAuthority: (parsed['defaultAuthority'] as number) ?? DEFAULT_CONFIG.defaultAuthority,
       ownerAuthority: (parsed['ownerAuthority'] as number) ?? DEFAULT_CONFIG.ownerAuthority,
       dangerousPolicy: (parsed['dangerousPolicy'] as AalisConfig['dangerousPolicy']) ?? undefined,
+      permissionPolicy: (parsed['permissionPolicy'] as AalisConfig['permissionPolicy']) ?? undefined,
       commandOverrides: (parsed['commandOverrides'] as AalisConfig['commandOverrides']) ?? undefined,
     };
   }
