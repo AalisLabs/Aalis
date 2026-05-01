@@ -62,6 +62,11 @@ export interface StorageService {
   writeFile(uri: string, data: string | Buffer): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
   delete(uri: string): Promise<void>;
+  /**
+   * 将逻辑 storage URI 解析为本地实现内部路径。
+   * 仅供 shell/code-runner 等必须交给本机进程的插件使用；不应暴露给 Agent 或用户输入结果。
+   */
+  resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
 }
 
 // ----- 存储能力声明 -----
@@ -71,6 +76,7 @@ export interface StorageCapabilityRegistry {
   Read: 'read';
   Write: 'write';
   Delete: 'delete';
+  LocalPath: 'local-path';
 }
 
 export type StorageCapability = StorageCapabilityRegistry[keyof StorageCapabilityRegistry];
@@ -80,6 +86,7 @@ export const StorageCapabilities = {
   Read: 'read',
   Write: 'write',
   Delete: 'delete',
+  LocalPath: 'local-path',
 } as const satisfies StorageCapabilityRegistry;
 
 declare module './capabilities.js' {
@@ -112,3 +119,8 @@ registerCapabilityProbe('storage', StorageCapabilities.Delete, inst =>
   typeof (inst as { delete?: unknown }).delete === 'function'
     ? true
     : 'StorageService.delete() is required for capability "delete"');
+
+registerCapabilityProbe('storage', StorageCapabilities.LocalPath, inst =>
+  typeof (inst as { resolveLocalPath?: unknown }).resolveLocalPath === 'function'
+    ? true
+    : 'StorageService.resolveLocalPath() is required for capability "local-path"');

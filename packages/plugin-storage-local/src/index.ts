@@ -175,6 +175,17 @@ class LocalStorageService implements StorageService {
     this.logger.warn(`storage.delete ${toUri(rootDef.name, relPath)}`);
   }
 
+  async resolveLocalPath(uri: string, access: 'read' | 'write' | 'delete' = 'read'): Promise<string> {
+    const { root, relPath } = parseUri(uri);
+    const permission = access === 'delete' ? 'deletable' : access === 'write' ? 'writable' : 'readable';
+    const rootDef = this.requireRoot(root, permission);
+    const abs = access === 'write'
+      ? await this.resolveForWrite(rootDef, relPath)
+      : await this.resolveExisting(rootDef, relPath);
+    this.logger.debug(`storage.resolveLocalPath ${toUri(rootDef.name, relPath)} access=${access}`);
+    return abs;
+  }
+
   private requireRoot(root: string, permission: 'readable' | 'writable' | 'deletable'): RootDefinition {
     const rootDef = this.roots.get(root);
     if (!rootDef) throw new Error(`未知存储根: ${root}`);

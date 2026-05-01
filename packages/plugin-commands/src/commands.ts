@@ -24,6 +24,8 @@ interface ResolvedCommand {
   effectiveAuthority: number;
   /** 应用 override + 父继承后的有效安全级别 */
   effectiveSafety: SafetyLevel;
+  /** 默认 command:<path> 加声明权限 */
+  permissions: string[];
 }
 
 /**
@@ -126,6 +128,7 @@ export class CommandRegistry implements CommandService {
     const rootOvr = this.overrides.get(name);
     let effectiveAuthority = rootOvr?.authority ?? root.authority ?? 1;
     let effectiveSafety: SafetyLevel = (rootOvr?.safety as SafetyLevel) ?? root.safety ?? 'safe';
+    const declaredPermissions = [...(root.permissions ?? [])];
 
     while (node.subcommands && node.subcommands.length > 0 && i < args.length) {
       const sub = node.subcommands.find(s => s.name === args[i]);
@@ -136,6 +139,7 @@ export class CommandRegistry implements CommandService {
       const ovr = this.overrides.get(path.join(':'));
       effectiveAuthority = ovr?.authority ?? sub.authority ?? effectiveAuthority;
       effectiveSafety = (ovr?.safety as SafetyLevel) ?? sub.safety ?? effectiveSafety;
+      declaredPermissions.push(...(sub.permissions ?? []));
     }
 
     return {
@@ -145,6 +149,7 @@ export class CommandRegistry implements CommandService {
       remainingArgs: args.slice(i),
       effectiveAuthority,
       effectiveSafety,
+      permissions: unique([`command:${path.join(':')}`, ...declaredPermissions]),
     };
   }
 
@@ -152,7 +157,7 @@ export class CommandRegistry implements CommandService {
   getAllNodes(): CommandNodeInfo[] {
     const out: CommandNodeInfo[] = [];
     for (const root of this.commands.values()) {
-      this.walkNode(root, [root.name], root.authority ?? 1, root.safety ?? 'safe', 0, root.pluginName, true, out);
+      this.walkNode(root, [root.name], root.authority ?? 1, root.safety ?? 'safe', [], 0, root.pluginName, true, out);
     }
     return out;
   }
@@ -169,6 +174,7 @@ export class CommandRegistry implements CommandService {
     path: string[],
     parentEffectiveAuthority: number,
     parentEffectiveSafety: SafetyLevel,
+    parentPermissions: string[],
     depth: number,
     pluginName: string,
     isRoot: boolean,
@@ -178,6 +184,8 @@ export class CommandRegistry implements CommandService {
     const ovr = this.overrides.get(key);
     const baseAuthority = node.authority ?? parentEffectiveAuthority;
     const baseSafety: SafetyLevel = node.safety ?? parentEffectiveSafety;
+    const basePermissions = node.permissions ?? [];
+    const permissions = unique([`command:${key}`, ...parentPermissions, ...basePermissions]);
     const effAuthority = ovr?.authority ?? baseAuthority;
     const effSafety: SafetyLevel = (ovr?.safety as SafetyLevel) ?? baseSafety;
     out.push({
@@ -188,8 +196,10 @@ export class CommandRegistry implements CommandService {
       description: node.description,
       authority: effAuthority,
       safety: effSafety,
+      permissions,
       baseAuthority,
       baseSafety,
+      basePermissions,
       overridden: !!ovr,
       isRoot,
       hasSubcommands: !!(node.subcommands && node.subcommands.length > 0),
@@ -198,7 +208,7 @@ export class CommandRegistry implements CommandService {
     });
     if (node.subcommands) {
       for (const sub of node.subcommands) {
-        this.walkNode(sub, [...path, sub.name], effAuthority, effSafety, depth + 1, pluginName, false, out);
+        this.walkNode(sub, [...path, sub.name], effAuthority, effSafety, permissions, depth + 1, pluginName, false, out);
       }
     }
   }
@@ -214,6 +224,7 @@ export class CommandRegistry implements CommandService {
         type: 'command',
         authority: resolved.effectiveAuthority,
         safety: resolved.effectiveSafety,
+        permissions: resolved.permissions,
         sessionId: cmdCtx.sessionId,
         platform: cmdCtx.platform,
         userId: cmdCtx.userId,
@@ -260,4 +271,8 @@ export class CommandRegistry implements CommandService {
       }
     }
   }
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }

@@ -14,6 +14,8 @@ export interface RunnerConfig {
   maxTimeout: number;
   maxOutputSize: number;
   cwd: string;
+  tmpDir: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface RunResult {
@@ -52,8 +54,8 @@ export async function runCode(
     config.maxTimeout,
   );
 
-  // 创建临时目录 + 文件（统一放在 workspace/.tmp/code-runner/ 下）
-  const baseDir = join(config.cwd, 'workspace', '.tmp', 'code-runner');
+  // 创建临时目录 + 文件（调用方保证 tmpDir 来自 storage 的受控本地路径）
+  const baseDir = config.tmpDir;
   await mkdir(baseDir, { recursive: true });
   const tmpDir = await mkdtemp(join(baseDir, 'run-'));
   const tmpFile = join(tmpDir, `script${ext}`);
@@ -67,7 +69,7 @@ export async function runCode(
 
       const child = spawn(interpreter, [...extraArgs, tmpFile], {
         cwd: config.cwd,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+        env: { ...(config.env ?? {}), PYTHONIOENCODING: 'utf-8' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 

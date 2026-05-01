@@ -23,10 +23,14 @@ export interface CommandNodeInfo {
   authority: number;
   /** 有效安全级别 */
   safety: SafetyLevel;
+  /** 细粒度权限标识（含默认 command:<path> 与声明值） */
+  permissions: string[];
   /** 节点本身声明的 authority；缺省时与父继承值相同 */
   baseAuthority: number;
   /** 节点本身声明的 safety；缺省时与父继承值相同 */
   baseSafety: SafetyLevel;
+  /** 节点自身声明的权限标识（不含默认 command:<path>） */
+  basePermissions: string[];
   /** 当前键是否存在 override 配置 */
   overridden: boolean;
   /** 是否为根指令 */

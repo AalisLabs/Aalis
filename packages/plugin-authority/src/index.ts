@@ -42,7 +42,7 @@ class AuthorityManager implements AuthorityService {
     this.logger.debug(`设置用户权限: ${key} → ${level}`);
   }
 
-  isDangerousAllowed(name: string): boolean {
+  isDangerousAllowed(name: string, permissions: string[] = []): boolean {
     const policy = this.config.get('dangerousPolicy');
     if (!policy?.allow || policy.allow.length === 0) return false;
     // 有限时策略时检查过期；缺少 enabledAt 视为已过期（重启后自动失效）
@@ -54,8 +54,7 @@ class AuthorityManager implements AuthorityService {
         return false;
       }
     }
-    if (policy.allow.includes('*')) return true;
-    return policy.allow.includes(name);
+    return this.matchAny(policy.allow, [name, ...permissions]);
   }
 
   setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void {
@@ -63,7 +62,7 @@ class AuthorityManager implements AuthorityService {
   }
 
   async confirmDangerous(request: DangerousConfirmRequest): Promise<boolean> {
-    if (this.isDangerousAllowed(request.name)) return true;
+    if (this.isDangerousAllowed(request.name, request.permissions)) return true;
     const grant = this.consumeDangerousGrant(request);
     if (grant) {
       this.logger.info(`命中高危会话授权: ${request.type}:${request.name} session=${request.sessionId} grant=${grant.id} used=${grant.used}${grant.maxUses ? `/${grant.maxUses}` : ''}`);
@@ -84,6 +83,30 @@ class AuthorityManager implements AuthorityService {
       }
     }
     return false;
+  }
+
+  checkPermissionPolicy(permissions: string[]): string | null {
+    const policy = this.config.get('permissionPolicy') as { allow?: string[]; deny?: string[] } | undefined;
+    if (!policy) return null;
+    const deny = policy.deny ?? [];
+    if (deny.length > 0 && this.matchAny(deny, permissions)) {
+      return `权限策略拒绝: ${permissions.join(', ')}`;
+    }
+    const allow = policy.allow ?? [];
+    if (allow.length > 0 && !this.matchAny(allow, permissions)) {
+      return `权限策略未允许: ${permissions.join(', ')}`;
+    }
+    return null;
+  }
+
+  private matchAny(patterns: string[], values: string[]): boolean {
+    return patterns.some(pattern => values.some(value => this.matchPattern(pattern, value)));
+  }
+
+  private matchPattern(pattern: string, value: string): boolean {
+    if (pattern === '*' || pattern === value) return true;
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*');
+    return new RegExp(`^${escaped}$`).test(value);
   }
 
   listDangerousGrants(): DangerousGrant[] {
@@ -109,6 +132,7 @@ class AuthorityManager implements AuthorityService {
       if (grant.sessionId !== request.sessionId) continue;
       if (grant.platform !== request.platform) continue;
       if (grant.userId && request.userId && grant.userId !== request.userId) continue;
+      if (!this.samePermissions(grant.permissions, request.permissions)) continue;
       grant.used++;
       if (grant.maxUses && grant.used >= grant.maxUses) {
         this.dangerousGrants.delete(grant.id);
@@ -126,6 +150,7 @@ class AuthorityManager implements AuthorityService {
       id: `grant_${Date.now()}_${++this.grantSeq}`,
       name: request.name,
       type: request.type,
+      permissions: request.permissions,
       sessionId: request.sessionId,
       platform: request.platform,
       userId: request.userId,
@@ -146,6 +171,13 @@ class AuthorityManager implements AuthorityService {
         this.logger.debug(`高危会话授权已过期: ${id}`);
       }
     }
+  }
+
+  private samePermissions(a: string[] | undefined, b: string[] | undefined): boolean {
+    const left = [...new Set(a ?? [])].sort();
+    const right = [...new Set(b ?? [])].sort();
+    if (left.length !== right.length) return false;
+    return left.every((value, index) => value === right[index]);
   }
 
   isOwner(platform: string, userId?: string): boolean {
@@ -224,11 +256,14 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
     if (userAuth < guardCtx.authority) {
       return `权限不足: 指令 "${guardCtx.name}" 需要权限等级 ${guardCtx.authority}，当前用户等级 ${userAuth}`;
     }
+    const permissionDenied = authority.checkPermissionPolicy(guardCtx.permissions ?? [`${guardCtx.type}:${guardCtx.name}`]);
+    if (permissionDenied) return permissionDenied;
     if (guardCtx.safety === 'dangerous' && !guardCtx.skipSafetyCheck) {
       const confirmed = await authority.confirmDangerous({
         name: guardCtx.name,
         type: guardCtx.type,
         args: guardCtx.args,
+        permissions: guardCtx.permissions,
         sessionId: guardCtx.sessionId,
         platform: guardCtx.platform,
           userId: guardCtx.userId,
@@ -328,6 +363,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
       ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
+      permissionPolicy: ctx.config.get('permissionPolicy') ?? {},
       dangerousGrants: auth?.listDangerousGrants() ?? [],
       commandPrefix: ctx.commands?.prefix ?? '/',
       commands: cmdNodes.map(n => ({
@@ -347,8 +383,10 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
         description: n.description,
         authority: n.authority,
         safety: n.safety,
+        permissions: n.permissions,
         baseAuthority: n.baseAuthority,
         baseSafety: n.baseSafety,
+        basePermissions: n.basePermissions,
         overridden: n.overridden,
         pluginName: n.pluginName,
       })),

@@ -10,7 +10,6 @@
 
 import * as os from 'node:os';
 import * as process from 'node:process';
-import * as path from 'node:path';
 import type { Context } from '@aalis/core';
 
 interface SystemConfig {
@@ -68,7 +67,6 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
         },
         user: {
           name: os.userInfo().username,
-          home: os.homedir(),
           shell: os.userInfo().shell ?? undefined,
         },
         cwd: config.cwd,
@@ -102,6 +100,9 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
         },
       },
     },
+    authority: 5,
+    safety: 'dangerous',
+    permissions: ['tool:env.get', 'system:env.read'],
     handler: async (args) => {
       const names = args.names as string[] | undefined;
       const pattern = args.pattern as string | undefined;
@@ -188,7 +189,6 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
     handler: async () => {
       return JSON.stringify({
         cwd: config.cwd,
-        processCwd: process.cwd(),
       });
     },
   });
