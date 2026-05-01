@@ -8,7 +8,7 @@ import path from 'node:path';
 export const name = '@aalis/plugin-tool-code-runner';
 export const displayName = '代码执行器';
 export const inject = {
-  optional: ['storage'],
+  required: [{ service: 'storage', capabilities: ['local-path'] }],
 };
 
 export const configSchema: ConfigSchema = {

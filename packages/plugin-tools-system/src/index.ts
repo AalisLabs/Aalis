@@ -113,14 +113,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 注册各工具组
   if (cfg.shell.enabled) {
     const storage = ctx.getService<StorageService>('storage');
-    registerShellTools(ctxWithGroups(['system']), { cwdUri, storage, ...cfg.shell });
-    ctx.logger.info('Shell 工具已启用');
+    if (storage?.resolveLocalPath) {
+      registerShellTools(ctxWithGroups(['system']), { cwdUri, storage, ...cfg.shell });
+      ctx.logger.info('Shell 工具已启用');
+    } else {
+      ctx.logger.warn('Shell 工具需要 storage local-path 能力，已跳过注册');
+    }
   }
 
   if (cfg.file.enabled) {
     const storage = ctx.getService<StorageService>('storage');
-    registerFileTools(ctxWithGroups(['system']), { ...cfg.file, storage });
-    ctx.logger.info('文件工具已启用');
+    if (storage) {
+      registerFileTools(ctxWithGroups(['system']), { ...cfg.file, storage });
+      ctx.logger.info('文件工具已启用');
+    } else {
+      ctx.logger.warn('文件工具需要 storage 服务，已跳过注册');
+    }
   }
 
   if (cfg.system.enabled) {
