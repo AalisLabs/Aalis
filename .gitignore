@@ -20,3 +20,6 @@ workspace/
 /test/
 /tests/
 .DS_Store
+.tmp/
+.temp/
+.cache/
