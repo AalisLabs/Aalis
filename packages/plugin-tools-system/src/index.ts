@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema, StorageService } from '@aalis/core';
 import { registerShellTools } from './tools/shell.js';
 import { registerFileTools } from './tools/file.js';
 import { registerSystemTools } from './tools/system.js';
@@ -9,7 +9,7 @@ import { registerHttpTools } from './tools/http.js';
 export const name = '@aalis/plugin-tools-system';
 export const displayName = '系统工具';
 export const inject = {
-  optional: ['commands', 'persona'],
+  optional: ['commands', 'persona', 'storage'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -33,6 +33,20 @@ export const configSchema: ConfigSchema = {
       enabled: { type: 'boolean', label: '启用文件工具', default: true },
       maxReadSize: { type: 'number', label: '最大读取字节', default: 1048576 },
       maxWriteSize: { type: 'number', label: '最大写入字节', default: 10485760 },
+      defaultRoot: { type: 'string', label: '默认存储根', default: 'workspace', description: '普通相对路径会被解释到这个 storage 根' },
+      allowedRoots: {
+        type: 'multiselect',
+        label: '允许访问的存储根',
+        default: ['workspace', 'tmp'],
+        options: [
+          { label: 'Workspace', value: 'workspace' },
+          { label: '临时目录', value: 'tmp' },
+          { label: 'Data', value: 'data' },
+          { label: '插件数据', value: 'pluginData' },
+          { label: '日志', value: 'logs' },
+        ],
+        allowCustom: true,
+      },
     },
   },
   system: {
@@ -54,7 +68,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   workingDirectory: '',
   shell: { enabled: true, defaultTimeout: 30000, maxTimeout: 300000, maxOutputSize: 65536 },
-  file: { enabled: true, maxReadSize: 1048576, maxWriteSize: 10485760 },
+  file: { enabled: true, maxReadSize: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['workspace', 'tmp'] },
   system: { enabled: true },
   http: { enabled: true, defaultTimeout: 30000, maxResponseSize: 1048576 },
 };
@@ -64,7 +78,7 @@ export const defaultConfig = {
 export interface ToolsBasicConfig {
   workingDirectory: string;
   shell: { enabled: boolean; defaultTimeout: number; maxTimeout: number; maxOutputSize: number };
-  file: { enabled: boolean; maxReadSize: number; maxWriteSize: number };
+  file: { enabled: boolean; maxReadSize: number; maxWriteSize: number; defaultRoot: string; allowedRoots: string[] };
   system: { enabled: boolean };
   http: { enabled: boolean; defaultTimeout: number; maxResponseSize: number };
 }
@@ -102,7 +116,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   if (cfg.file.enabled) {
-    registerFileTools(ctxWithGroups(['system']), { cwd, ...cfg.file });
+    const storage = ctx.getService<StorageService>('storage');
+    registerFileTools(ctxWithGroups(['system']), { ...cfg.file, storage });
     ctx.logger.info('文件工具已启用');
   }
 
@@ -152,6 +167,10 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
       enabled: (file?.enabled as boolean) ?? true,
       maxReadSize: (file?.maxReadSize as number) ?? 1048576,
       maxWriteSize: (file?.maxWriteSize as number) ?? 10485760,
+      defaultRoot: (file?.defaultRoot as string) ?? 'workspace',
+      allowedRoots: Array.isArray(file?.allowedRoots)
+        ? (file.allowedRoots as unknown[]).filter((root): root is string => typeof root === 'string')
+        : ['workspace', 'tmp'],
     },
     system: {
       enabled: (system?.enabled as boolean) ?? true,

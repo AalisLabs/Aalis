@@ -22,6 +22,7 @@ export { LLMCapabilities } from './types/index.js';
 export { ImageRecognitionCapabilities } from './types/index.js';
 export { WebSearchCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
+export { StorageCapabilities } from './types/index.js';
 export { MessageArchiveCapabilities } from './types/index.js';
 export { SessionManagerCapabilities } from './types/index.js';
 export type { PluginModule } from './plugin.js';
@@ -110,6 +111,16 @@ export type {
   MemoryService,
   MemoryCapability,
   MemoryCapabilityRegistry,
+  // 存储服务
+  StorageRootKind,
+  StorageRootInfo,
+  StorageEntry,
+  StorageStat,
+  StorageListResult,
+  StorageReadStreamResult,
+  StorageService,
+  StorageCapability,
+  StorageCapabilityRegistry,
   // 消息归档服务
   ArchiveIncomingResult,
   ArchiveNoticeOptions,
@@ -130,6 +141,9 @@ export type {
   AuthorityService,
   DangerousConfirmRequest,
   DangerousConfirmHandler,
+  DangerousConfirmResult,
+  DangerousGrantRequest,
+  DangerousGrant,
   // 会话管理
   SessionInfo,
   SessionConfig,

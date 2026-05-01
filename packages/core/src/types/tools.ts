@@ -33,6 +33,8 @@ export interface ToolService {
     name: string;
     description: string;
     pluginName: string;
+    authority?: number;
+    safety?: import('./core.js').SafetyLevel;
     groups?: string[];
   }>;
 
@@ -41,6 +43,9 @@ export interface ToolService {
     args: Record<string, unknown>,
     callCtx: ToolCallContext,
   ): Promise<string>;
+
+  /** 注入执行守卫，用于权限等级与 dangerous 二次确认 */
+  setExecutionGuard?(guard: import('./core.js').ExecutionGuard): void;
 
   unregisterByPlugin(pluginName: string): void;
 

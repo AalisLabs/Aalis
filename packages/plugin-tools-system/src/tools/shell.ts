@@ -95,6 +95,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         },
       },
     },
+    authority: 5,
+    safety: 'dangerous',
     handler: async (args, callCtx) => {
       const command = args.command as string;
       const cwd = (args.cwd as string) || config.cwd;
@@ -182,6 +184,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         },
       },
     },
+    authority: 5,
+    safety: 'dangerous',
     handler: async (args, callCtx) => {
       const command = args.command as string;
       const cwd = (args.cwd as string) || config.cwd;
@@ -298,6 +302,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         },
       },
     },
+    authority: 5,
+    safety: 'dangerous',
     handler: async (args, callCtx) => {
       const processId = args.processId as string;
       const tail = args.tail as number | undefined;
