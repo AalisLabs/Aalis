@@ -35,6 +35,7 @@ export interface ToolService {
     pluginName: string;
     authority?: number;
     safety?: import('./core.js').SafetyLevel;
+    permissions?: string[];
     groups?: string[];
   }>;
 
