@@ -262,6 +262,25 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-game-activity:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-image-recognition:
     dependencies:
       '@aalis/core':
@@ -500,6 +519,19 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-session-channel:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-session-manager:
     dependencies:
       '@aalis/core':
@@ -534,6 +566,22 @@ importers:
       yaml:
         specifier: ^2.7.0
         version: 2.8.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-slay-spire-agent:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-game-activity':
+        specifier: workspace:*
+        version: link:../plugin-game-activity
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
