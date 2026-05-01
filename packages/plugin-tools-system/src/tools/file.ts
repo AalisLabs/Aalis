@@ -45,6 +45,12 @@ function ensureRootAllowed(uri: string, config: FileConfig): void {
   }
 }
 
+function storagePermission(args: Record<string, unknown>, config: FileConfig, op: 'read' | 'write' | 'delete'): string[] {
+  const uri = toStorageUri(args.path as string | undefined, config);
+  const root = rootOf(uri);
+  return [`storage:${op}`, `storage:${root}:${op}`];
+}
+
 function requireStorage(config: FileConfig): StorageService {
   if (!config.storage) throw new Error('storage 服务不可用，文件工具已进入安全停用状态');
   return config.storage;
@@ -87,6 +93,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         },
       },
     },
+    permissions: ['tool:file.read', 'storage:read'],
+    resolvePermissions: (args) => storagePermission(args, config, 'read'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -152,6 +160,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     },
     authority: 3,
     safety: 'dangerous',
+    permissions: ['tool:file.write', 'storage:write'],
+    resolvePermissions: (args) => storagePermission(args, config, 'write'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -191,6 +201,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     },
     authority: 3,
     safety: 'dangerous',
+    permissions: ['tool:file.edit', 'storage:write'],
+    resolvePermissions: (args) => storagePermission(args, config, 'write'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -255,6 +267,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     },
     authority: 3,
     safety: 'dangerous',
+    permissions: ['tool:file.append', 'storage:write'],
+    resolvePermissions: (args) => storagePermission(args, config, 'write'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -299,6 +313,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     },
     authority: 3,
     safety: 'dangerous',
+    permissions: ['tool:file.delete', 'storage:delete'],
+    resolvePermissions: (args) => storagePermission(args, config, 'delete'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -334,6 +350,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         },
       },
     },
+    permissions: ['tool:file.list', 'storage:read'],
+    resolvePermissions: (args) => storagePermission(args, config, 'read'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -401,6 +419,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         },
       },
     },
+    permissions: ['tool:file.info', 'storage:read'],
+    resolvePermissions: (args) => storagePermission(args, config, 'read'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -443,6 +463,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         },
       },
     },
+    permissions: ['tool:file.search', 'storage:read'],
+    resolvePermissions: (args) => storagePermission(args, config, 'read'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
@@ -488,6 +510,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         },
       },
     },
+    permissions: ['tool:file.tree', 'storage:read'],
+    resolvePermissions: (args) => storagePermission(args, config, 'read'),
     handler: async (args) => {
       try {
         const storage = requireStorage(config);

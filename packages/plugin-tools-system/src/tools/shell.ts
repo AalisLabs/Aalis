@@ -11,10 +11,12 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { platform } from 'node:os';
-import type { Context } from '@aalis/core';
+import path from 'node:path';
+import type { Context, StorageService } from '@aalis/core';
 
 interface ShellConfig {
-  cwd: string;
+  cwdUri: string;
+  storage?: StorageService;
   defaultTimeout: number;
   maxTimeout: number;
   maxOutputSize: number;
@@ -52,6 +54,32 @@ function truncateOutput(output: string, maxSize: number): string {
   return truncated + `\n...[输出截断，超过 ${maxSize} 字节]`;
 }
 
+function toStorageUri(input: string | undefined, fallback: string): string {
+  const value = (input || fallback).trim();
+  if (!value) return 'workspace:/';
+  if (/^[a-zA-Z]:[\\/]/.test(value)) throw new Error('cwd 必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
+  if (path.isAbsolute(value)) throw new Error('cwd 必须使用 storage URI（如 workspace:/project）或相对 workspace 的路径，不能使用宿主机绝对路径');
+  return `workspace:/${value.replace(/^\/+/, '')}`;
+}
+
+async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: string; localPath: string }> {
+  if (!config.storage?.resolveLocalPath) {
+    throw new Error('Shell 工具需要支持 local-path 能力的 storage 服务');
+  }
+  const uri = toStorageUri(typeof cwdArg === 'string' ? cwdArg : undefined, config.cwdUri);
+  return { uri, localPath: await config.storage.resolveLocalPath(uri, 'read') };
+}
+
+function safeEnv(): NodeJS.ProcessEnv {
+  const keep = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'];
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of keep) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
+  return env;
+}
+
 export function registerShellTools(ctx: Context, config: ShellConfig): void {
   const isWin = platform() === 'win32';
   const shellCmd = isWin ? 'cmd' : '/bin/sh';
@@ -83,7 +111,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
             },
             cwd: {
               type: 'string',
-              description: '命令执行的工作目录（可选，默认使用配置的工作目录）',
+              description: '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
             },
             timeout: {
               type: 'number',
@@ -97,15 +125,16 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     },
     authority: 5,
     safety: 'dangerous',
+    permissions: ['tool:shell.exec', 'system:process.exec'],
     handler: async (args, callCtx) => {
       const command = args.command as string;
-      const cwd = (args.cwd as string) || config.cwd;
+      const cwd = await resolveCwd(config, args.cwd);
       const timeout = Math.min(
         Math.max(1000, (args.timeout as number) || config.defaultTimeout),
         config.maxTimeout,
       );
 
-      ctx.logger.debug(`exec: ${command} (cwd: ${cwd}, timeout: ${timeout}ms)`);
+      ctx.logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
 
       return new Promise<string>((resolve) => {
         let stdout = '';
@@ -113,8 +142,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         let killed = false;
 
         const child = spawn(shellCmd, [shellFlag, command], {
-          cwd,
-          env: process.env,
+          cwd: cwd.localPath,
+          env: safeEnv(),
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout,
         });
@@ -176,7 +205,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
             },
             cwd: {
               type: 'string',
-              description: '命令执行的工作目录（可选）',
+              description: '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
             },
           },
           required: ['command'],
@@ -186,15 +215,16 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     },
     authority: 5,
     safety: 'dangerous',
+    permissions: ['tool:shell.exec_background', 'system:process.exec', 'system:process.background'],
     handler: async (args, callCtx) => {
       const command = args.command as string;
-      const cwd = (args.cwd as string) || config.cwd;
+      const cwd = await resolveCwd(config, args.cwd);
       const id = `proc_${++processIdCounter}`;
       const processes = getSessionProcesses(callCtx.sessionId);
 
       const child = spawn(shellCmd, [shellFlag, command], {
-        cwd,
-        env: process.env,
+        cwd: cwd.localPath,
+        env: safeEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
       });
@@ -263,6 +293,9 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         },
       },
     },
+    authority: 5,
+    safety: 'dangerous',
+    permissions: ['tool:process.list', 'system:process.read'],
     handler: async (_args, callCtx) => {
       const processes = getSessionProcesses(callCtx.sessionId);
       const list = [...processes.values()].map(p => ({
@@ -304,6 +337,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     },
     authority: 5,
     safety: 'dangerous',
+    permissions: ['tool:process.read', 'system:process.read'],
     handler: async (args, callCtx) => {
       const processId = args.processId as string;
       const tail = args.tail as number | undefined;
@@ -355,6 +389,9 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         },
       },
     },
+    authority: 5,
+    safety: 'dangerous',
+    permissions: ['tool:process.kill', 'system:process.kill'],
     handler: async (args, callCtx) => {
       const processId = args.processId as string;
       const signal = (args.signal as string) || 'SIGTERM';

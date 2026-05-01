@@ -8,6 +8,8 @@ export interface DangerousConfirmRequest {
   type: 'command' | 'tool';
   /** 操作参数（工具调用时存在） */
   args?: Record<string, unknown>;
+  /** 细粒度权限标识 */
+  permissions?: string[];
   /** 会话 ID */
   sessionId: string;
   /** 来源平台 */
@@ -34,6 +36,8 @@ export interface DangerousGrant {
   id: string;
   name: string;
   type: 'command' | 'tool';
+  /** 创建授权时绑定的权限集合 */
+  permissions?: string[];
   sessionId: string;
   platform: string;
   userId?: string;
@@ -51,7 +55,7 @@ export interface AuthorityService {
   getAuthority(platform: string, userId?: string): number;
   setAuthority(platform: string, userId: string, level: number): void;
   isOwner(platform: string, userId?: string): boolean;
-  isDangerousAllowed(name: string): boolean;
+  isDangerousAllowed(name: string, permissions?: string[]): boolean;
   confirmDangerous(request: DangerousConfirmRequest): Promise<boolean>;
   listDangerousGrants(): DangerousGrant[];
   revokeDangerousGrant(id: string): boolean;

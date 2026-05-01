@@ -1,11 +1,15 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema, StorageService } from '@aalis/core';
 import { runCode, type RunnerConfig } from './runner.js';
 import { platform } from 'node:os';
+import path from 'node:path';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-tool-code-runner';
 export const displayName = '代码执行器';
+export const inject = {
+  optional: ['storage'],
+};
 
 export const configSchema: ConfigSchema = {
   python: {
@@ -52,8 +56,9 @@ export const configSchema: ConfigSchema = {
   },
   workingDirectory: {
     type: 'string',
-    label: '工作目录',
-    description: '脚本执行时的工作目录，留空使用进程当前目录',
+    label: '逻辑工作目录',
+    default: 'workspace:/',
+    description: '脚本执行时的 storage URI 工作目录，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
   },
 };
 
@@ -63,7 +68,7 @@ export const defaultConfig = {
   defaultTimeout: 60000,
   maxTimeout: 300000,
   maxOutputSize: 131072,
-  workingDirectory: '',
+  workingDirectory: 'workspace:/',
 };
 
 // ===== 配置解析 =====
@@ -92,7 +97,39 @@ function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
     defaultTimeout: (config.defaultTimeout as number) ?? 60000,
     maxTimeout: (config.maxTimeout as number) ?? 300000,
     maxOutputSize: (config.maxOutputSize as number) ?? 131072,
-    workingDirectory: (config.workingDirectory as string) ?? '',
+    workingDirectory: (config.workingDirectory as string) ?? 'workspace:/',
+  };
+}
+
+function toStorageUri(input: string | undefined, fallback: string): string {
+  const value = (input || fallback).trim();
+  if (!value) return 'workspace:/';
+  if (/^[a-zA-Z]:[\\/]/.test(value)) throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
+  if (path.isAbsolute(value)) throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  return `workspace:/${value.replace(/^\/+/, '')}`;
+}
+
+function safeEnv(): NodeJS.ProcessEnv {
+  const keep = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'];
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of keep) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
+  return env;
+}
+
+async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<RunnerConfig> {
+  const storage = ctx.getService<StorageService>('storage');
+  if (!storage?.resolveLocalPath) throw new Error('代码执行器需要支持 local-path 能力的 storage 服务');
+  const cwdUri = toStorageUri(cfg.workingDirectory, 'workspace:/');
+  return {
+    defaultTimeout: cfg.defaultTimeout,
+    maxTimeout: cfg.maxTimeout,
+    maxOutputSize: cfg.maxOutputSize,
+    cwd: await storage.resolveLocalPath(cwdUri, 'read'),
+    tmpDir: await storage.resolveLocalPath('tmp:/code-runner', 'write'),
+    env: safeEnv(),
   };
 }
 
@@ -100,14 +137,7 @@ function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
-  const cwd = cfg.workingDirectory || process.cwd();
-
-  const runnerConfig: RunnerConfig = {
-    defaultTimeout: cfg.defaultTimeout,
-    maxTimeout: cfg.maxTimeout,
-    maxOutputSize: cfg.maxOutputSize,
-    cwd,
-  };
+  const cwdUri = toStorageUri(cfg.workingDirectory, 'workspace:/');
 
   // 创建带分组标记的注册代理
   function ctxWithGroups(groups: string[]): Context {
@@ -155,7 +185,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             '- 将最终结果通过 print() 输出，该输出会作为工具返回值\n' +
             '- 可使用标准库和已安装的第三方库（如 numpy, sympy, pandas 等）\n' +
             '- 处理多个文件时，在一个脚本内循环处理并汇总输出，效率远高于多次调用\n' +
-            '- 若需读写文件，可使用绝对路径或相对于工作目录的路径',
+            '- 若需读写文件，请优先使用相对于逻辑工作目录的路径；不要依赖宿主机绝对路径',
           parameters: {
             type: 'object',
             properties: {
@@ -173,10 +203,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           },
         },
       },
+      authority: 5,
+      safety: 'dangerous',
+      permissions: ['tool:code.python', 'system:process.exec', 'runtime:python'],
       handler: async (args) => {
         const code = args.code as string;
         const timeout = args.timeout as number | undefined;
         ctx.logger.debug(`run_python: ${code.length} 字符`);
+        const runnerConfig = await createRunnerConfig(ctx, cfg);
         const result = await runCode(
           cfg.python.interpreter,
           code,
@@ -228,10 +262,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           },
         },
       },
+      authority: 5,
+      safety: 'dangerous',
+      permissions: ['tool:code.javascript', 'system:process.exec', 'runtime:javascript'],
       handler: async (args) => {
         const code = args.code as string;
         const timeout = args.timeout as number | undefined;
         ctx.logger.debug(`run_javascript: ${code.length} 字符`);
+        const runnerConfig = await createRunnerConfig(ctx, cfg);
         const result = await runCode(
           cfg.javascript.interpreter,
           code,
@@ -246,5 +284,5 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info(`JavaScript 代码执行工具已启用 (解释器: ${cfg.javascript.interpreter})`);
   }
 
-  ctx.logger.info(`代码执行器插件已启动 (工作目录: ${cwd})`);
+  ctx.logger.info(`代码执行器插件已启动 (工作目录: ${cwdUri})`);
 }
