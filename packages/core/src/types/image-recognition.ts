@@ -12,6 +12,8 @@ export interface ImageRecognitionInput {
   content: string;
   /** 图片列表（URL / data URI / 本地路径） */
   images: string[];
+  /** 可选：当前消息、引用消息或最近上下文，用于指导图片识别重点 */
+  context?: string;
   /** 可选：附件出现顺序，用于在 transformedContent 中保留图文混排 */
   attachmentOrder?: Array<'image' | 'file'>;
 }
