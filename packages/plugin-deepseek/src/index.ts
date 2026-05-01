@@ -281,7 +281,9 @@ class DeepSeekLLMService implements LLMService {
       max_tokens: request.maxTokens ?? 8192,
     };
 
-    if (this.enableThinking) {
+    const shouldThink = request.think !== undefined ? request.think : this.enableThinking;
+
+    if (shouldThink) {
       body.thinking = { type: 'enabled' };
       if (this.reasoningEffort !== 'auto') body.reasoning_effort = this.reasoningEffort;
       // 思考模式下 temperature 等参数不生效
@@ -300,7 +302,7 @@ class DeepSeekLLMService implements LLMService {
       body.response_format = { type: 'json_object' };
     }
 
-    this.logger.debug(`请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(`请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -367,7 +369,9 @@ class DeepSeekLLMService implements LLMService {
       stream: true,
     };
 
-    if (this.enableThinking) {
+    const shouldThink = request.think !== undefined ? request.think : this.enableThinking;
+
+    if (shouldThink) {
       body.thinking = { type: 'enabled' };
       if (this.reasoningEffort !== 'auto') body.reasoning_effort = this.reasoningEffort;
     } else {
@@ -384,7 +388,7 @@ class DeepSeekLLMService implements LLMService {
       body.response_format = { type: 'json_object' };
     }
 
-    this.logger.debug(`流式请求 DeepSeek${this.enableThinking ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`);
+    this.logger.debug(`流式请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
