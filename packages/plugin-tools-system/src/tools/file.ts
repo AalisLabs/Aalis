@@ -1,30 +1,66 @@
 /**
  * 文件操作工具组
  *
- * 参考 internal-framework 的 read / write / edit 工具与我自身的文件工具，提供：
- * - file_read: 读取文件内容（支持行范围、编码）
- * - file_write: 创建或覆盖文件（自动创建目录）
- * - file_edit: 精确字符串替换编辑
- * - file_append: 追加内容到文件末尾
- * - file_list: 列出目录内容
- * - file_info: 获取文件/目录的元信息
- * - file_search: 在文件中搜索文本（grep 风格）
- * - file_tree: 递归显示目录树结构
+ * 文件工具统一通过 storage 服务访问受控根目录：
+ * - storage URI: workspace:/path/to/file、tmp:/run/a.txt
+ * - 普通相对路径会被解释为 workspace:/...
+ * - 绝对路径被拒绝，避免直接触达宿主文件系统
  */
 
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import { existsSync, type Stats } from 'node:fs';
-import type { Context } from '@aalis/core';
+import { basename } from 'node:path';
+import type { Context, StorageService } from '@aalis/core';
 
 interface FileConfig {
-  cwd: string;
   maxReadSize: number;
   maxWriteSize: number;
+  allowedRoots: string[];
+  defaultRoot: string;
+  storage?: StorageService;
 }
 
-function resolvePath(filePath: string, cwd: string): string {
-  return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+function normalizePath(input: string): string {
+  return input.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function toStorageUri(input: string | undefined, config: FileConfig): string {
+  const raw = (input || '').trim();
+  if (!raw || raw === '.') return `${config.defaultRoot}:/`;
+  if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
+    throw new Error('文件工具不允许使用宿主绝对路径，请使用 workspace:/path 或相对 workspace 的路径');
+  }
+  if (raw.includes(':/')) return raw;
+  return `${config.defaultRoot}:/${normalizePath(raw)}`;
+}
+
+function rootOf(uri: string): string {
+  const idx = uri.indexOf(':/');
+  if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}`);
+  return uri.slice(0, idx);
+}
+
+function ensureRootAllowed(uri: string, config: FileConfig): void {
+  const root = rootOf(uri);
+  if (!config.allowedRoots.includes(root)) {
+    throw new Error(`文件工具不允许访问 ${root}:/。当前允许: ${config.allowedRoots.join(', ')}`);
+  }
+}
+
+function requireStorage(config: FileConfig): StorageService {
+  if (!config.storage) throw new Error('storage 服务不可用，文件工具已进入安全停用状态');
+  return config.storage;
+}
+
+async function readText(storage: StorageService, uri: string): Promise<string> {
+  const data = await storage.readFile(uri, 'utf-8');
+  return typeof data === 'string' ? data : data.toString('utf-8');
+}
+
+function jsonError(err: unknown): string {
+  return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function registerFileTools(ctx: Context, config: FileConfig): void {
@@ -36,27 +72,15 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       function: {
         name: 'file_read',
         description:
-          '读取文件的内容。支持指定行范围以读取大文件的部分内容。' +
-          '对于二进制文件返回 base64 编码或提示。',
+          '读取受控存储中的文件。路径使用 workspace:/path、tmp:/path，或相对 workspace 的路径。' +
+          '不允许读取宿主绝对路径。支持指定行范围读取大文件的部分内容。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '文件路径（绝对路径或相对于工作目录的路径）',
-            },
-            startLine: {
-              type: 'number',
-              description: '起始行号（从 1 开始，可选）',
-            },
-            endLine: {
-              type: 'number',
-              description: '结束行号（包含，可选）',
-            },
-            encoding: {
-              type: 'string',
-              description: '编码方式（可选，默认 utf-8，可用 base64 读取二进制文件）',
-            },
+            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            startLine: { type: 'number', description: '起始行号（从 1 开始，可选）' },
+            endLine: { type: 'number', description: '结束行号（包含，可选）' },
+            encoding: { type: 'string', description: '编码方式（可选，默认 utf-8；base64 读取二进制）' },
           },
           required: ['path'],
           additionalProperties: false,
@@ -64,54 +88,46 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     handler: async (args) => {
-      const filePath = resolvePath(args.path as string, config.cwd);
-      const encoding = (args.encoding as BufferEncoding) || 'utf-8';
-
       try {
-        const stat = await fs.stat(filePath);
-        if (stat.isDirectory()) {
-          return JSON.stringify({ error: '路径是一个目录，请使用 file_list' });
-        }
-        if (stat.size > config.maxReadSize) {
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        const info = await storage.stat(uri);
+        if (info.isDirectory) return JSON.stringify({ error: '路径是一个目录，请使用 file_list' });
+        if (info.size > config.maxReadSize) {
           return JSON.stringify({
-            error: `文件过大 (${stat.size} 字节)，超过限制 ${config.maxReadSize} 字节。请使用 startLine/endLine 参数读取部分内容。`,
-            size: stat.size,
+            error: `文件过大 (${info.size} 字节)，超过限制 ${config.maxReadSize} 字节。请使用 startLine/endLine 参数读取部分内容。`,
+            size: info.size,
+            uri,
           });
         }
 
-        if (encoding === 'base64') {
-          const buffer = await fs.readFile(filePath);
-          return JSON.stringify({
-            path: filePath,
-            encoding: 'base64',
-            size: stat.size,
-            content: buffer.toString('base64'),
-          });
+        if ((args.encoding as string | undefined) === 'base64') {
+          const buffer = await storage.readFile(uri);
+          const content = Buffer.isBuffer(buffer) ? buffer.toString('base64') : Buffer.from(buffer).toString('base64');
+          return JSON.stringify({ uri, encoding: 'base64', size: info.size, content });
         }
 
-        const content = await fs.readFile(filePath, 'utf-8');
+        const content = await readText(storage, uri);
         const lines = content.split('\n');
         const totalLines = lines.length;
-
         const startLine = (args.startLine as number) || 1;
         const endLine = (args.endLine as number) || totalLines;
         const start = Math.max(1, startLine) - 1;
         const end = Math.min(totalLines, endLine);
-
-        const selectedLines = lines.slice(start, end);
-        const result = selectedLines
+        const selectedLines = lines.slice(start, end)
           .map((line, i) => `${start + i + 1}\t${line}`)
           .join('\n');
 
         return JSON.stringify({
-          path: filePath,
+          uri,
           totalLines,
           startLine: start + 1,
           endLine: end,
-          content: result,
+          content: selectedLines,
         });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
       }
     },
   });
@@ -122,47 +138,34 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_write',
-        description:
-          '创建或覆盖文件。如果目标目录不存在会自动创建。' +
-          '警告：会完全覆盖已有文件内容。如需部分修改请使用 file_edit。',
+        description: '在受控存储中创建或覆盖文件。危险操作：会完全覆盖已有文件内容。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '文件路径',
-            },
-            content: {
-              type: 'string',
-              description: '要写入的内容',
-            },
+            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            content: { type: 'string', description: '要写入的内容' },
           },
           required: ['path', 'content'],
           additionalProperties: false,
         },
       },
     },
+    authority: 3,
+    safety: 'dangerous',
     handler: async (args) => {
-      const filePath = resolvePath(args.path as string, config.cwd);
-      const content = args.content as string;
-
-      if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
-        return JSON.stringify({
-          error: `内容过大，超过限制 ${config.maxWriteSize} 字节`,
-        });
-      }
-
       try {
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, content, 'utf-8');
-        const stat = await fs.stat(filePath);
-        return JSON.stringify({
-          path: filePath,
-          size: stat.size,
-          message: '文件写入成功',
-        });
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        const content = args.content as string;
+        if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
+          return JSON.stringify({ error: `内容过大，超过限制 ${config.maxWriteSize} 字节` });
+        }
+        await storage.writeFile(uri, content);
+        const info = await storage.stat(uri);
+        return JSON.stringify({ uri, size: info.size, message: '文件写入成功' });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
       }
     },
   });
@@ -173,53 +176,37 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_edit',
-        description:
-          '通过精确的字符串替换来编辑文件。找到 oldText 并替换为 newText。' +
-          'oldText 必须在文件中唯一匹配。建议包含足够的上下文行以确保唯一匹配。',
+        description: '通过唯一精确字符串替换编辑受控存储中的文件。危险操作：会修改文件内容。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '文件路径',
-            },
-            oldText: {
-              type: 'string',
-              description: '要被替换的原始文本（必须精确匹配，包括缩进和换行）',
-            },
-            newText: {
-              type: 'string',
-              description: '替换后的新文本',
-            },
+            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            oldText: { type: 'string', description: '要被替换的原始文本（必须唯一精确匹配）' },
+            newText: { type: 'string', description: '替换后的新文本' },
           },
           required: ['path', 'oldText', 'newText'],
           additionalProperties: false,
         },
       },
     },
+    authority: 3,
+    safety: 'dangerous',
     handler: async (args) => {
-      const filePath = resolvePath(args.path as string, config.cwd);
-      const oldText = args.oldText as string;
-      const newText = args.newText as string;
-
-      if (!oldText) {
-        return JSON.stringify({ error: 'oldText 不能为空' });
-      }
-
       try {
-        // 读取时统一换行符为 LF，避免 CRLF/LF 差异导致匹配失败
-        const raw = await fs.readFile(filePath, 'utf-8');
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        const oldText = args.oldText as string;
+        const newText = args.newText as string;
+        if (!oldText) return JSON.stringify({ error: 'oldText 不能为空' });
+
+        const raw = await readText(storage, uri);
         const content = raw.replace(/\r\n/g, '\n');
         const normalizedOld = oldText.replace(/\r\n/g, '\n');
-
-        // 检查唯一匹配：从匹配结束位置之后搜索第二次出现，避免长文本内部自重叠误报
         const firstIndex = content.indexOf(normalizedOld);
         if (firstIndex === -1) {
-          return JSON.stringify({
-            error: '在文件中未找到 oldText。请确保文本精确匹配（包括空格和缩进）。',
-          });
+          return JSON.stringify({ error: '在文件中未找到 oldText。请确保文本精确匹配（包括空格和缩进）。' });
         }
-
         const secondIndex = content.indexOf(normalizedOld, firstIndex + normalizedOld.length);
         if (secondIndex !== -1) {
           return JSON.stringify({
@@ -229,21 +216,21 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         }
 
         const newContent = content.replace(normalizedOld, newText);
-        await fs.writeFile(filePath, newContent, 'utf-8');
+        if (Buffer.byteLength(newContent, 'utf-8') > config.maxWriteSize) {
+          return JSON.stringify({ error: `编辑后内容过大，超过限制 ${config.maxWriteSize} 字节` });
+        }
+        await storage.writeFile(uri, newContent);
 
-        // 返回编辑区域附近的上下文
         const newIndex = newContent.indexOf(newText);
         const before = newContent.slice(0, newIndex).split('\n');
         const editLines = newText.split('\n');
-        const startLine = before.length;
-
         return JSON.stringify({
-          path: filePath,
+          uri,
           message: '编辑成功',
-          editedLines: { start: startLine, count: editLines.length },
+          editedLines: { start: before.length, count: editLines.length },
         });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
       }
     },
   });
@@ -254,39 +241,73 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_append',
-        description: '将内容追加到文件末尾。如果文件不存在则创建。',
+        description: '向受控存储中的文件末尾追加内容。危险操作：会修改文件内容。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '文件路径',
-            },
-            content: {
-              type: 'string',
-              description: '要追加的内容',
-            },
+            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            content: { type: 'string', description: '要追加的内容' },
           },
           required: ['path', 'content'],
           additionalProperties: false,
         },
       },
     },
+    authority: 3,
+    safety: 'dangerous',
     handler: async (args) => {
-      const filePath = resolvePath(args.path as string, config.cwd);
-      const content = args.content as string;
-
       try {
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.appendFile(filePath, content, 'utf-8');
-        const stat = await fs.stat(filePath);
-        return JSON.stringify({
-          path: filePath,
-          size: stat.size,
-          message: '内容追加成功',
-        });
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        const appendContent = args.content as string;
+        let existing = '';
+        try {
+          existing = await readText(storage, uri);
+        } catch {
+          existing = '';
+        }
+        const content = existing + appendContent;
+        if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
+          return JSON.stringify({ error: `追加后内容过大，超过限制 ${config.maxWriteSize} 字节` });
+        }
+        await storage.writeFile(uri, content);
+        const info = await storage.stat(uri);
+        return JSON.stringify({ uri, size: info.size, message: '内容追加成功' });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
+      }
+    },
+  });
+
+  // ==================== file_delete ====================
+  ctx.registerTool({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'file_delete',
+        description: '删除受控存储中的文件或目录。危险操作：目录会递归删除。',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件/目录路径' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        },
+      },
+    },
+    authority: 3,
+    safety: 'dangerous',
+    handler: async (args) => {
+      try {
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        await storage.delete(uri);
+        return JSON.stringify({ uri, message: '删除成功' });
+      } catch (err) {
+        return jsonError(err);
       }
     },
   });
@@ -297,29 +318,16 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_list',
-        description: '列出目录中的文件和子目录，支持名称关键词过滤、类型过滤与分页。大目录（上千个条目）务必使用 keyword 或 分页参数，避免一次返回过多数据。',
+        description: '列出受控存储目录中的文件和子目录，支持关键词过滤、类型过滤与分页。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '目录路径（可选，默认工作目录）',
-            },
-            showHidden: {
-              type: 'boolean',
-              description: '是否显示隐藏文件（以 . 开头，默认 false）',
-            },
-            keyword: {
-              type: 'string',
-              description: '可选：按名称子串模糊匹配（不区分大小写）',
-            },
-            type: {
-              type: 'string',
-              enum: ['file', 'directory', 'symlink'],
-              description: '可选：只返回指定类型',
-            },
+            path: { type: 'string', description: '目录 storage URI 或相对 workspace 的路径，默认 workspace:/' },
+            showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
+            keyword: { type: 'string', description: '按名称子串模糊匹配（不区分大小写）' },
+            type: { type: 'string', enum: ['file', 'directory'], description: '只返回指定类型' },
             page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-            pageSize: { type: 'number', description: '每页条数，默认 50（可自行设定）' },
+            pageSize: { type: 'number', description: '每页条数，默认 50' },
           },
           required: [],
           additionalProperties: false,
@@ -327,53 +335,41 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     handler: async (args) => {
-      const dirPath = resolvePath((args.path as string) || '.', config.cwd);
-
       try {
-        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string | undefined, config);
+        ensureRootAllowed(uri, config);
+        const result = await storage.list(uri);
         const showHidden = (args.showHidden as boolean) ?? false;
-        const items: Array<{ name: string; type: string; size?: number; modified?: string }> = [];
-
-        for (const entry of entries) {
-          if (!showHidden && entry.name.startsWith('.')) continue;
-          try {
-            const fullPath = path.join(dirPath, entry.name);
-            const stat = await fs.stat(fullPath);
-            items.push({
-              name: entry.name,
-              type: entry.isDirectory() ? 'directory' : entry.isSymbolicLink() ? 'symlink' : 'file',
-              size: entry.isDirectory() ? undefined : stat.size,
-              modified: stat.mtime.toISOString(),
-            });
-          } catch {
-            items.push({
-              name: entry.name,
-              type: 'unknown',
-            });
-          }
-        }
-
         const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
         const typeFilter = typeof args.type === 'string' ? args.type : '';
-        const filtered = items.filter(it => {
-          if (typeFilter && it.type !== typeFilter) return false;
-          if (keyword && !it.name.toLowerCase().includes(keyword)) return false;
+        const filtered = result.entries.filter(entry => {
+          if (!showHidden && entry.name.startsWith('.')) return false;
+          if (typeFilter === 'file' && entry.isDirectory) return false;
+          if (typeFilter === 'directory' && !entry.isDirectory) return false;
+          if (keyword && !entry.name.toLowerCase().includes(keyword)) return false;
           return true;
         });
-
         const page = Math.max(1, Math.floor(Number(args.page) || 1));
         const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 50));
-        const total = items.length;
-        const matched = filtered.length;
-        const totalPages = Math.max(1, Math.ceil(matched / pageSize));
+        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
         const curPage = Math.min(page, totalPages);
         const start = (curPage - 1) * pageSize;
-        const pageItems = filtered.slice(start, start + pageSize);
+        const pageItems = filtered.slice(start, start + pageSize).map(entry => ({
+          name: entry.name,
+          uri: entry.uri,
+          path: entry.path,
+          type: entry.isDirectory ? 'directory' : 'file',
+          size: entry.isDirectory ? undefined : entry.size,
+          modified: entry.mtime,
+        }));
 
         return JSON.stringify({
-          path: dirPath,
-          total,
-          matched,
+          uri,
+          root: result.root.name,
+          path: result.path,
+          total: result.entries.length,
+          matched: filtered.length,
           page: curPage,
           pageSize,
           totalPages,
@@ -383,7 +379,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
           entries: pageItems,
         });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
       }
     },
   });
@@ -394,14 +390,11 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_info',
-        description: '获取文件或目录的详细元信息（大小、权限、修改时间等）。',
+        description: '获取受控存储中文件或目录的元信息。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '文件或目录路径',
-            },
+            path: { type: 'string', description: 'storage URI 或相对 workspace 的路径' },
           },
           required: ['path'],
           additionalProperties: false,
@@ -409,39 +402,22 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     handler: async (args) => {
-      const filePath = resolvePath(args.path as string, config.cwd);
-
       try {
-        const stat = await fs.stat(filePath);
-        const isFile = stat.isFile();
-
-        const info: Record<string, unknown> = {
-          path: filePath,
-          type: stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'file',
-          size: stat.size,
-          permissions: `0o${(stat.mode & 0o777).toString(8)}`,
-          created: stat.birthtime.toISOString(),
-          modified: stat.mtime.toISOString(),
-          accessed: stat.atime.toISOString(),
-        };
-
-        if (isFile) {
-          const ext = path.extname(filePath).toLowerCase();
-          info.extension = ext;
-          // 粗略的行数统计
-          if (stat.size < config.maxReadSize && isTextExtension(ext)) {
-            const content = await fs.readFile(filePath, 'utf-8');
-            info.lineCount = content.split('\n').length;
-          }
-        }
-
-        if (stat.isSymbolicLink()) {
-          info.target = await fs.readlink(filePath);
-        }
-
-        return JSON.stringify(info);
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        const info = await storage.stat(uri);
+        return JSON.stringify({
+          uri,
+          path: info.path,
+          type: info.isDirectory ? 'directory' : 'file',
+          size: info.size,
+          created: info.birthtime,
+          modified: info.mtime,
+          extension: info.ext,
+        });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
       }
     },
   });
@@ -452,31 +428,15 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_search',
-        description:
-          '在文件中搜索匹配的文本行（类似 grep）。支持正则表达式和大小写控制。',
+        description: '在受控存储文件中搜索匹配文本行。支持正则表达式和大小写控制。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '要搜索的文件路径',
-            },
-            pattern: {
-              type: 'string',
-              description: '搜索模式（纯文本或正则表达式）',
-            },
-            isRegex: {
-              type: 'boolean',
-              description: '模式是否为正则表达式（默认 false）',
-            },
-            ignoreCase: {
-              type: 'boolean',
-              description: '是否忽略大小写（默认 true）',
-            },
-            maxResults: {
-              type: 'number',
-              description: '最大返回结果数（默认 50）',
-            },
+            path: { type: 'string', description: '要搜索的文件 storage URI 或相对 workspace 的路径' },
+            pattern: { type: 'string', description: '搜索模式（纯文本或正则表达式）' },
+            isRegex: { type: 'boolean', description: '模式是否为正则表达式（默认 false）' },
+            ignoreCase: { type: 'boolean', description: '是否忽略大小写（默认 true）' },
+            maxResults: { type: 'number', description: '最大返回结果数（默认 50，最多 200）' },
           },
           required: ['path', 'pattern'],
           additionalProperties: false,
@@ -484,40 +444,26 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     handler: async (args) => {
-      const filePath = resolvePath(args.path as string, config.cwd);
-      const pattern = args.pattern as string;
-      const isRegex = (args.isRegex as boolean) ?? false;
-      const ignoreCase = (args.ignoreCase as boolean) ?? true;
-      const maxResults = Math.min((args.maxResults as number) || 50, 200);
-
       try {
-        const content = await fs.readFile(filePath, 'utf-8');
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string, config);
+        ensureRootAllowed(uri, config);
+        const content = await readText(storage, uri);
         const lines = content.split('\n');
+        const pattern = args.pattern as string;
+        const ignoreCase = (args.ignoreCase as boolean) ?? true;
+        const maxResults = Math.min((args.maxResults as number) || 50, 200);
+        const regex = (args.isRegex as boolean) ?? false
+          ? new RegExp(pattern, ignoreCase ? 'i' : '')
+          : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
+
         const matches: Array<{ line: number; content: string }> = [];
-
-        let regex: RegExp;
-        if (isRegex) {
-          regex = new RegExp(pattern, ignoreCase ? 'i' : '');
-        } else {
-          const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          regex = new RegExp(escaped, ignoreCase ? 'i' : '');
-        }
-
         for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
-          if (regex.test(lines[i])) {
-            matches.push({ line: i + 1, content: lines[i] });
-          }
+          if (regex.test(lines[i])) matches.push({ line: i + 1, content: lines[i] });
         }
-
-        return JSON.stringify({
-          path: filePath,
-          pattern,
-          matches,
-          matchCount: matches.length,
-          truncated: matches.length >= maxResults,
-        });
+        return JSON.stringify({ uri, pattern, matches, matchCount: matches.length, truncated: matches.length >= maxResults });
       } catch (err) {
-        return JSON.stringify({ error: (err as Error).message });
+        return jsonError(err);
       }
     },
   });
@@ -528,27 +474,14 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_tree',
-        description:
-          '递归显示目录的树形结构。用于快速了解项目布局。',
+        description: '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。',
         parameters: {
           type: 'object',
           properties: {
-            path: {
-              type: 'string',
-              description: '根目录路径（可选，默认工作目录）',
-            },
-            maxDepth: {
-              type: 'number',
-              description: '最大递归深度（默认 3）',
-            },
-            showHidden: {
-              type: 'boolean',
-              description: '是否显示隐藏文件（默认 false）',
-            },
-            pattern: {
-              type: 'string',
-              description: '文件名过滤模式（简单 glob: *.ts, *.py 等）',
-            },
+            path: { type: 'string', description: '根目录 storage URI 或相对 workspace 的路径，默认 workspace:/' },
+            maxDepth: { type: 'number', description: '最大递归深度（默认 3，最多 10）' },
+            showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
+            pattern: { type: 'string', description: '文件名过滤模式（简单 glob: *.ts, *.py 等）' },
           },
           required: [],
           additionalProperties: false,
@@ -556,75 +489,56 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     handler: async (args) => {
-      const dirPath = resolvePath((args.path as string) || '.', config.cwd);
-      const maxDepth = Math.min((args.maxDepth as number) || 3, 10);
-      const showHidden = (args.showHidden as boolean) ?? false;
-      const pattern = args.pattern as string | undefined;
+      try {
+        const storage = requireStorage(config);
+        const uri = toStorageUri(args.path as string | undefined, config);
+        ensureRootAllowed(uri, config);
+        const maxDepth = Math.min((args.maxDepth as number) || 3, 10);
+        const showHidden = (args.showHidden as boolean) ?? false;
+        const pattern = args.pattern as string | undefined;
+        const lines: string[] = [`${basename(uri) || rootOf(uri) + ':/'}`];
+        let totalFiles = 0;
+        let totalDirs = 0;
 
-      const lines: string[] = [];
-      let totalFiles = 0;
-      let totalDirs = 0;
+        async function walk(currentUri: string, prefix: string, depth: number): Promise<void> {
+          if (depth > maxDepth) return;
+          const result = await storage.list(currentUri).catch(() => null);
+          if (!result) return;
+          const entries = result.entries
+            .filter(entry => showHidden || !entry.name.startsWith('.'))
+            .filter(entry => entry.isDirectory || !pattern || matchGlob(entry.name, pattern))
+            .sort((a, b) => {
+              if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            });
 
-      async function walk(dir: string, prefix: string, depth: number): Promise<void> {
-        if (depth > maxDepth) return;
-
-        const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => null);
-        if (!entries) return;
-
-        const filtered = entries.filter(e => showHidden || !String(e.name).startsWith('.'));
-        const sorted = filtered.sort((a, b) => {
-          if (a.isDirectory() && !b.isDirectory()) return -1;
-          if (!a.isDirectory() && b.isDirectory()) return 1;
-          return String(a.name).localeCompare(String(b.name));
-        });
-
-        for (let i = 0; i < sorted.length; i++) {
-          const entry = sorted[i];
-          const isLast = i === sorted.length - 1;
-          const connector = isLast ? '└── ' : '├── ';
-          const childPrefix = prefix + (isLast ? '    ' : '│   ');
-
-          if (entry.isDirectory()) {
-            totalDirs++;
-            lines.push(`${prefix}${connector}${String(entry.name)}/`);
-            await walk(path.join(dir, String(entry.name)), childPrefix, depth + 1);
-          } else {
-            if (pattern && !matchGlob(String(entry.name), pattern)) continue;
-            totalFiles++;
-            lines.push(`${prefix}${connector}${String(entry.name)}`);
+          for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            const isLast = i === entries.length - 1;
+            const connector = isLast ? '└── ' : '├── ';
+            const childPrefix = prefix + (isLast ? '    ' : '│   ');
+            if (entry.isDirectory) {
+              totalDirs++;
+              lines.push(`${prefix}${connector}${entry.name}/`);
+              await walk(entry.uri, childPrefix, depth + 1);
+            } else {
+              totalFiles++;
+              lines.push(`${prefix}${connector}${entry.name}`);
+            }
           }
         }
+
+        await walk(uri, '', 1);
+        return JSON.stringify({ uri, tree: lines.join('\n'), summary: `${totalDirs} 个目录，${totalFiles} 个文件` });
+      } catch (err) {
+        return jsonError(err);
       }
-
-      lines.push(path.basename(dirPath) + '/');
-      await walk(dirPath, '', 1);
-
-      return JSON.stringify({
-        path: dirPath,
-        tree: lines.join('\n'),
-        summary: `${totalDirs} 个目录，${totalFiles} 个文件`,
-      });
     },
   });
 }
 
-// ===== 辅助函数 =====
-
-function isTextExtension(ext: string): boolean {
-  const textExts = new Set([
-    '.txt', '.md', '.json', '.yaml', '.yml', '.xml', '.html', '.htm',
-    '.css', '.js', '.ts', '.tsx', '.jsx', '.py', '.rb', '.go', '.rs',
-    '.java', '.c', '.cpp', '.h', '.hpp', '.sh', '.bash', '.zsh',
-    '.toml', '.ini', '.cfg', '.conf', '.env', '.log', '.csv',
-    '.sql', '.vue', '.svelte', '.astro',
-  ]);
-  return textExts.has(ext);
-}
-
 function matchGlob(name: string, pattern: string): boolean {
-  // 简单 glob 匹配：支持 * 和 ?
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  const regexStr = escapeRegExp(pattern)
     .replace(/\*/g, '.*')
     .replace(/\?/g, '.');
   return new RegExp(`^${regexStr}$`, 'i').test(name);
