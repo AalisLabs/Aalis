@@ -39,6 +39,9 @@ const backgroundProcesses = new Map<string, Map<string, ManagedProcess>>();
 
 let processIdCounter = 0;
 
+/** 每个 session 最多保留多少条已完成进程记录 */
+const MAX_DONE_PROCESSES_PER_SESSION = 20;
+
 function getSessionProcesses(sessionId: string): Map<string, ManagedProcess> {
   let map = backgroundProcesses.get(sessionId);
   if (!map) {
@@ -46,6 +49,16 @@ function getSessionProcesses(sessionId: string): Map<string, ManagedProcess> {
     backgroundProcesses.set(sessionId, map);
   }
   return map;
+}
+
+/** 清理 session 中已完成的旧进程，防止长时间运行后内存无限增长 */
+function pruneDoneProcesses(processes: Map<string, ManagedProcess>): void {
+  const done = [...processes.entries()].filter(([, p]) => p.done);
+  if (done.length <= MAX_DONE_PROCESSES_PER_SESSION) return;
+  // 按启动时间升序，删除最旧的超出部分
+  done.sort(([, a], [, b]) => a.startedAt - b.startedAt);
+  const toRemove = done.slice(0, done.length - MAX_DONE_PROCESSES_PER_SESSION);
+  for (const [id] of toRemove) processes.delete(id);
 }
 
 function truncateOutput(output: string, maxSize: number): string {
@@ -298,6 +311,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     permissions: ['tool:process.list', 'system:process.read'],
     handler: async (_args, callCtx) => {
       const processes = getSessionProcesses(callCtx.sessionId);
+      pruneDoneProcesses(processes);
       const list = [...processes.values()].map(p => ({
         processId: p.id,
         pid: p.pid,

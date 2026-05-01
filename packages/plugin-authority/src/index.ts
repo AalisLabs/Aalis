@@ -266,7 +266,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
         permissions: guardCtx.permissions,
         sessionId: guardCtx.sessionId,
         platform: guardCtx.platform,
-          userId: guardCtx.userId,
+        userId: guardCtx.userId,
       });
       if (!confirmed) {
         return `已取消执行${guardCtx.type === 'command' ? '指令' : '工具'} ${guardCtx.name}。`;
