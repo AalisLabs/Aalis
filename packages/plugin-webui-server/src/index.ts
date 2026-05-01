@@ -1,10 +1,10 @@
 import { createServer } from 'node:http';
-import { resolve, dirname, basename, extname, relative, join } from 'node:path';
+import { resolve, dirname, basename, extname, relative, join, isAbsolute } from 'node:path';
 import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService, StorageService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -13,7 +13,7 @@ export const name = '@aalis/plugin-webui-server';
 export const displayName = 'WebUI 服务端';
 export const provides = ['webui-server', 'platform'];
 export const inject = {
-  optional: ['authority', 'commands'],
+  optional: ['authority', 'commands', 'storage'],
 };
 
 export const webuiPages: WebuiPage[] = [
@@ -28,12 +28,15 @@ export const webuiPages: WebuiPage[] = [
 export const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
   host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
-  workspaceRoot: { type: 'string', label: '文件管理根目录', default: 'workspace', description: '文件管理页面可访问的根目录。默认为 workspace/，设为 / 可访问整个系统（需注意安全）' },
+  fileRoot: { type: 'string', label: '文件浏览根', default: 'workspace', description: '文件管理页面使用的 storage 根 ID，默认 workspace' },
+  workspaceRoot: { type: 'string', label: '兼容文件根目录', default: 'workspace', description: '缺少 storage 服务时的兼容文件根目录' },
 };
 
 export const defaultConfig = {
   port: 3000,
   host: '127.0.0.1',
+  fileRoot: 'workspace',
+  workspaceRoot: 'workspace',
 };
 
 // ===== 配置 =====
@@ -41,6 +44,7 @@ export const defaultConfig = {
 interface WebUIConfig {
   port: number;
   host: string;
+  fileRoot: string;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -104,6 +108,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const uiConfig: WebUIConfig = {
     port: (config.port as number) ?? 3000,
     host: (config.host as string) ?? '127.0.0.1',
+    fileRoot: (config.fileRoot as string) || 'workspace',
   };
 
   const expressApp = express();
@@ -780,12 +785,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
   /** 每个 session 最多一个待确认请求 */
-  const pendingSessionConfirms = new Map<string, { resolve: (v: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
+  type PendingConfirmResult = boolean | { allowed: boolean; grant?: { scope: 'once' | 'session'; durationSeconds?: number; maxUses?: number } };
+  const pendingSessionConfirms = new Map<string, { resolve: (v: PendingConfirmResult) => void; timer: ReturnType<typeof setTimeout> }>();
 
   ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', async (request) => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
-    const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作，确认执行请输入 Y，否则输入其他任意值。`;
+    const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 允许本会话 10 分钟；其他任意输入取消。`;
 
     // 以确认消息形式发送（不影响客户端 loading/streaming 状态）
     const payload: WSOutgoing = {
@@ -806,7 +812,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     if (!sent) return false;
 
-    return new Promise<boolean>((resolve) => {
+    return new Promise<PendingConfirmResult>((resolve) => {
       const timer = setTimeout(() => {
         pendingSessionConfirms.delete(request.sessionId);
         // 超时后向会话发送提示
@@ -827,21 +833,58 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ---------- 文件管理 API ----------
 
+  const storage = ctx.getService<StorageService>('storage');
   const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
   const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
+
+  function storageUri(relPath: string): string {
+    const cleanPath = relPath.replace(/^\/+/, '');
+    return `${uiConfig.fileRoot}:/${cleanPath}`;
+  }
+
+  function pathFromStorageUri(uri: string): string {
+    const idx = uri.indexOf(':/');
+    return idx >= 0 ? uri.slice(idx + 2) : uri;
+  }
+
+  function storageRootBrowsable(): boolean {
+    const root = storage?.listRoots().find(r => r.name === uiConfig.fileRoot);
+    return Boolean(root?.browsable);
+  }
+
+  function sendStorageError(res: express.Response, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message.includes('路径不合法') || message.includes('不允许') ? 403
+      : message.includes('不存在') || message.includes('ENOENT') ? 404
+        : message.includes('不是目录') || message.includes('不能') || message.includes('不合法') ? 400
+          : 500;
+    res.status(status).json({ error: message });
+  }
 
   /** 安全路径解析：确保在 workspace 目录内，防止路径穿越 */
   function safeResolvePath(relPath: string): string | null {
     // 规范化并解析
     const abs = resolve(workspaceRoot, relPath);
     // 确保结果在 workspace 内
-    if (!abs.startsWith(workspaceRoot)) return null;
+    const rel = relative(workspaceRoot, abs);
+    if (rel.startsWith('..') || isAbsolute(rel)) return null;
     return abs;
   }
 
   // 列出目录内容
-  expressApp.get('/api/files', (req, res) => {
+  expressApp.get('/api/files', async (req, res) => {
     const dir = String(req.query.path || '');
+    if (storage) {
+      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      try {
+        const result = await storage.list(storageUri(dir));
+        res.json({ path: result.path, entries: result.entries });
+      } catch (err) {
+        sendStorageError(res, err);
+      }
+      return;
+    }
+
     const abs = safeResolvePath(dir);
     if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
     if (!existsSync(abs)) { res.status(404).json({ error: '目录不存在' }); return; }
@@ -877,8 +920,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 获取文件/目录详情
-  expressApp.get('/api/files/info', (req, res) => {
+  expressApp.get('/api/files/info', async (req, res) => {
     const filePath = String(req.query.path || '');
+    if (storage) {
+      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      try {
+        const info = await storage.stat(storageUri(filePath));
+        res.json(info);
+      } catch (err) {
+        sendStorageError(res, err);
+      }
+      return;
+    }
+
     const abs = safeResolvePath(filePath);
     if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
     if (!existsSync(abs)) { res.status(404).json({ error: '不存在' }); return; }
@@ -895,8 +949,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 下载文件
-  expressApp.get('/api/files/download', (req, res) => {
+  expressApp.get('/api/files/download', async (req, res) => {
     const filePath = String(req.query.path || '');
+    if (storage) {
+      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      try {
+        const result = await storage.createReadStream(storageUri(filePath));
+        const fileName = basename(result.stat.name);
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        res.setHeader('Content-Length', result.stat.size);
+        result.stream.pipe(res);
+      } catch (err) {
+        sendStorageError(res, err);
+      }
+      return;
+    }
+
     const abs = safeResolvePath(filePath);
     if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
     if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
@@ -909,17 +977,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 重命名
-  expressApp.post('/api/files/rename', (req, res) => {
+  expressApp.post('/api/files/rename', async (req, res) => {
     const { path: filePath, newName } = req.body ?? {};
     if (!filePath || !newName) { res.status(400).json({ error: '缺少参数' }); return; }
     if (typeof newName !== 'string' || newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
       res.status(400).json({ error: '文件名不合法' }); return;
     }
+    if (storage) {
+      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      try {
+        const newUri = await storage.rename(storageUri(String(filePath)), String(newName));
+        res.json({ ok: true, newPath: pathFromStorageUri(newUri) });
+      } catch (err) {
+        sendStorageError(res, err);
+      }
+      return;
+    }
+
     const abs = safeResolvePath(String(filePath));
     if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
     if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
     const newPath = resolve(dirname(abs), String(newName));
-    if (!newPath.startsWith(workspaceRoot)) { res.status(403).json({ error: '目标路径不合法' }); return; }
+    const newRel = relative(workspaceRoot, newPath);
+    if (newRel.startsWith('..') || isAbsolute(newRel)) { res.status(403).json({ error: '目标路径不合法' }); return; }
     if (existsSync(newPath)) { res.status(409).json({ error: '目标名称已存在' }); return; }
     try {
       renameSync(abs, newPath);
@@ -930,9 +1010,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 删除
-  expressApp.post('/api/files/delete', (req, res) => {
+  expressApp.post('/api/files/delete', async (req, res) => {
     const { path: filePath } = req.body ?? {};
     if (!filePath) { res.status(400).json({ error: '缺少参数' }); return; }
+    if (storage) {
+      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      try {
+        await storage.delete(storageUri(String(filePath)));
+        res.json({ ok: true });
+      } catch (err) {
+        sendStorageError(res, err);
+      }
+      return;
+    }
+
     const abs = safeResolvePath(String(filePath));
     if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
     if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
@@ -1036,8 +1127,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (pending) {
           clearTimeout(pending.timer);
           pendingSessionConfirms.delete(sessionId);
-          const confirmed = trimmed.toLowerCase() === 'y';
-          pending.resolve(confirmed);
+          const answer = trimmed.toLowerCase();
+          if (answer === 'ys' || answer === 'y session') {
+            pending.resolve({ allowed: true, grant: { scope: 'session', durationSeconds: 600, maxUses: 30 } });
+          } else {
+            pending.resolve(answer === 'y');
+          }
           // 不继续处理此消息，交给原始命令/工具执行流返回结果
           return;
         }

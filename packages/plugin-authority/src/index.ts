@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, WebuiPage, ConfigManager, Logger, App, CommandService, ExecutionGuardContext, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from '@aalis/core';
+import type { Context, WebuiPage, ConfigManager, Logger, App, CommandService, ToolService, ExecutionGuardContext, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant } from '@aalis/core';
 
 // ===== AuthorityManager 实现 =====
 
@@ -11,6 +11,8 @@ class AuthorityManager implements AuthorityService {
   private filePath: string;
   private dirty = false;
   private confirmHandlers = new Map<string, DangerousConfirmHandler>();
+  private dangerousGrants = new Map<string, DangerousGrant>();
+  private grantSeq = 0;
 
   constructor(config: ConfigManager, logger: Logger) {
     this.config = config;
@@ -62,16 +64,88 @@ class AuthorityManager implements AuthorityService {
 
   async confirmDangerous(request: DangerousConfirmRequest): Promise<boolean> {
     if (this.isDangerousAllowed(request.name)) return true;
+    const grant = this.consumeDangerousGrant(request);
+    if (grant) {
+      this.logger.info(`命中高危会话授权: ${request.type}:${request.name} session=${request.sessionId} grant=${grant.id} used=${grant.used}${grant.maxUses ? `/${grant.maxUses}` : ''}`);
+      return true;
+    }
     const handler = this.confirmHandlers.get(request.platform);
     if (handler) {
       try {
-        return await handler(request);
+        const result = await handler(request);
+        const normalized = this.normalizeConfirmResult(result);
+        if (normalized.allowed && normalized.grant?.scope === 'session') {
+          this.createDangerousGrant(request, normalized);
+        }
+        return normalized.allowed;
       } catch (err) {
         this.logger.warn(`高危确认回调异常: ${err}`);
         return false;
       }
     }
     return false;
+  }
+
+  listDangerousGrants(): DangerousGrant[] {
+    this.pruneDangerousGrants();
+    return [...this.dangerousGrants.values()].map(grant => ({ ...grant }));
+  }
+
+  revokeDangerousGrant(id: string): boolean {
+    const ok = this.dangerousGrants.delete(id);
+    if (ok) this.logger.info(`已撤销高危会话授权: ${id}`);
+    return ok;
+  }
+
+  private normalizeConfirmResult(result: boolean | DangerousConfirmResult): DangerousConfirmResult {
+    return typeof result === 'boolean' ? { allowed: result } : result;
+  }
+
+  private consumeDangerousGrant(request: DangerousConfirmRequest): DangerousGrant | undefined {
+    this.pruneDangerousGrants();
+    for (const grant of this.dangerousGrants.values()) {
+      if (grant.type !== request.type) continue;
+      if (grant.name !== request.name) continue;
+      if (grant.sessionId !== request.sessionId) continue;
+      if (grant.platform !== request.platform) continue;
+      if (grant.userId && request.userId && grant.userId !== request.userId) continue;
+      grant.used++;
+      if (grant.maxUses && grant.used >= grant.maxUses) {
+        this.dangerousGrants.delete(grant.id);
+      }
+      return grant;
+    }
+    return undefined;
+  }
+
+  private createDangerousGrant(request: DangerousConfirmRequest, result: DangerousConfirmResult): void {
+    const grantRequest = result.grant;
+    if (!grantRequest || grantRequest.scope !== 'session') return;
+    const durationSeconds = Math.max(1, Math.min(grantRequest.durationSeconds ?? 600, 3600));
+    const grant: DangerousGrant = {
+      id: `grant_${Date.now()}_${++this.grantSeq}`,
+      name: request.name,
+      type: request.type,
+      sessionId: request.sessionId,
+      platform: request.platform,
+      userId: request.userId,
+      expiresAt: Date.now() + durationSeconds * 1000,
+      maxUses: grantRequest.maxUses,
+      used: 0,
+      createdAt: Date.now(),
+    };
+    this.dangerousGrants.set(grant.id, grant);
+    this.logger.info(`创建高危会话授权: ${request.type}:${request.name} session=${request.sessionId} duration=${durationSeconds}s maxUses=${grant.maxUses ?? 'unlimited'} grant=${grant.id}`);
+  }
+
+  private pruneDangerousGrants(): void {
+    const now = Date.now();
+    for (const [id, grant] of this.dangerousGrants) {
+      if (grant.expiresAt <= now || (grant.maxUses && grant.used >= grant.maxUses)) {
+        this.dangerousGrants.delete(id);
+        this.logger.debug(`高危会话授权已过期: ${id}`);
+      }
+    }
   }
 
   isOwner(platform: string, userId?: string): boolean {
@@ -157,18 +231,25 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
         args: guardCtx.args,
         sessionId: guardCtx.sessionId,
         platform: guardCtx.platform,
+          userId: guardCtx.userId,
       });
       if (!confirmed) {
-        return `已取消执行指令 ${guardCtx.name}。`;
+        return `已取消执行${guardCtx.type === 'command' ? '指令' : '工具'} ${guardCtx.name}。`;
       }
     }
     return null;
   };
 
-  // 注入到已有的 commands 服务；AI 工具不再走用户权限审查
+  // 注入到已有的 commands/tools 服务
   const injectGuard = (svcName: string) => {
     if (svcName === 'commands') {
       const svc = ctx.getService<CommandService>(svcName);
+      if (svc?.setExecutionGuard) {
+        svc.setExecutionGuard(guard);
+        ctx.logger.debug(`权限守卫已注入: ${svcName}`);
+      }
+    } else if (svcName === 'tools') {
+      const svc = ctx.getService<ToolService>(svcName);
       if (svc?.setExecutionGuard) {
         svc.setExecutionGuard(guard);
         ctx.logger.debug(`权限守卫已注入: ${svcName}`);
@@ -247,6 +328,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
       ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
+      dangerousGrants: auth?.listDangerousGrants() ?? [],
       commandPrefix: ctx.commands?.prefix ?? '/',
       commands: cmdNodes.map(n => ({
         // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'clear:nuke'
@@ -322,6 +404,16 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     ctx.config.set('dangerousPolicy', policy);
     app.saveConfig();
     return { message: '高危策略已更新' };
+  },
+
+  /** 撤销一个高危会话授权 */
+  async revokeDangerousGrant(ctx, args) {
+    const id = args.id as string;
+    if (!id) throw new Error('id 必须是字符串');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    const ok = auth.revokeDangerousGrant(id);
+    return { ok, message: ok ? '授权已撤销' : '授权不存在或已过期' };
   },
 
   /** 更新全局权限配置（defaultAuthority, ownerAuthority） */

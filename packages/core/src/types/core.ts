@@ -159,6 +159,10 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
+  /** 最低权限等级 (默认 1) */
+  authority?: number;
+  /** 安全级别 (默认 'safe') */
+  safety?: SafetyLevel;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
 }
@@ -191,7 +195,7 @@ export interface ExecutionGuardContext {
   /** 操作名称（指令名） */
   name: string;
   /** 操作类型 */
-  type: 'command';
+  type: 'command' | 'tool';
   /** 声明的最低权限等级 */
   authority: number;
   /** 声明的安全等级 */
