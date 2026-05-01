@@ -5,6 +5,7 @@ import type {
   ToolSummary,
   ToolGroupInfo,
   ToolService,
+  ExecutionGuard,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
@@ -18,6 +19,7 @@ export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
   private _groups = new Map<string, ToolGroupInfo>();
   private logger: Logger;
+  private _guard?: ExecutionGuard;
 
   constructor(logger: Logger) {
     this.logger = logger.child('tools');
@@ -74,6 +76,8 @@ export class ToolRegistry implements ToolService {
     name: string;
     description: string;
     pluginName: string;
+    authority?: number;
+    safety?: import('@aalis/core').SafetyLevel;
     groups?: string[];
   }> {
     return [...this.tools.values()].map(t => {
@@ -81,6 +85,8 @@ export class ToolRegistry implements ToolService {
         name: t.definition.function.name,
         description: t.definition.function.description,
         pluginName: t.pluginName,
+        authority: t.authority,
+        safety: t.safety,
         groups: t.groups,
       };
     });
@@ -102,6 +108,10 @@ export class ToolRegistry implements ToolService {
     return [...this._groups.values()];
   }
 
+  setExecutionGuard(guard: ExecutionGuard): void {
+    this._guard = guard;
+  }
+
   async execute(
     toolName: string,
     args: Record<string, unknown>,
@@ -110,7 +120,29 @@ export class ToolRegistry implements ToolService {
     const tool = this.tools.get(toolName);
     if (!tool) return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
 
+    const authority = tool.authority ?? 1;
+    const safety = tool.safety ?? 'safe';
+    if (this._guard) {
+      const denied = await this._guard({
+        name: toolName,
+        type: 'tool',
+        authority,
+        safety,
+        sessionId: callCtx.sessionId,
+        platform: callCtx.platform ?? 'unknown',
+        userId: callCtx.userId,
+        args,
+      });
+      if (denied) {
+        this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${denied}`);
+        return JSON.stringify({ error: denied });
+      }
+    }
+
     try {
+      if (safety === 'dangerous') {
+        this.logger.info(`危险工具执行: ${toolName} session=${callCtx.sessionId} platform=${callCtx.platform ?? 'unknown'} args=${JSON.stringify(args)}`);
+      }
       const result = await tool.handler(args, callCtx);
       this.logger.debug(`工具 ${toolName} 执行成功`);
       return result;

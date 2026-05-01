@@ -104,6 +104,20 @@ export { WebSearchCapabilities } from './web-search.js';
 export type { MemoryService, MemoryCapability, MemoryCapabilityRegistry } from './memory.js';
 export { MemoryCapabilities } from './memory.js';
 
+// 存储服务
+export type {
+  StorageRootKind,
+  StorageRootInfo,
+  StorageEntry,
+  StorageStat,
+  StorageListResult,
+  StorageReadStreamResult,
+  StorageService,
+  StorageCapability,
+  StorageCapabilityRegistry,
+} from './storage.js';
+export { StorageCapabilities } from './storage.js';
+
 // 消息归档服务
 export type {
   ArchiveIncomingResult,
@@ -124,7 +138,7 @@ export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
 export type { OutputFormatField, OutputFormat, PersonaSessionOptions, PersonaService } from './persona.js';
 
 // 权限服务
-export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler } from './authority.js';
+export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrantRequest, DangerousGrant } from './authority.js';
 
 // 会话管理
 export type {
