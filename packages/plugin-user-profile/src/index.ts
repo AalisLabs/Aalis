@@ -428,7 +428,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   function clampRelationScore(score: number): number {
-    return Math.min(100, Math.max(0, Math.round(score * 10) / 10));
+    return Math.min(100, Math.max(0, Math.round(score * 100) / 100));
   }
 
   function relationIncrementFor(triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined): number {
@@ -657,7 +657,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const score = profile.relationScore ?? 0;
     const count = profile.interactionCount ?? 0;
     if (score <= 0 && count <= 0) return '';
-    return `关系强度：${score.toFixed(1)}/100；累计互动：${count} 次。`;
+    return `关系强度：${score.toFixed(2)}/100；累计互动：${count} 次。`;
   }
 
   // ─── LLM 调用前注入：根据 triggerType 区分主发言者语义 ───
@@ -837,7 +837,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return `📭 暂无档案数据 (${userKey})`;
       }
       const block = renderProfileBlock(profile.facts, userKey, false);
-      const meta = `关系强度：${profile.relationScore?.toFixed(1) ?? '0.0'}/100，互动次数：${profile.interactionCount ?? 0}`;
+      const meta = `关系强度：${profile.relationScore?.toFixed(2) ?? '0.00'}/100，互动次数：${profile.interactionCount ?? 0}`;
       return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
     },
     {
