@@ -442,6 +442,14 @@ export class Context {
       authority?: number;
       safety?: SafetyLevel;
       permissions?: string[];
+      /** 位置参数声明 */
+      arguments?: CommandDefinition['arguments'];
+      /** 选项声明 */
+      options?: CommandDefinition['options'];
+      /** 自定义用法文本 */
+      usage?: string;
+      /** 示例 */
+      examples?: string[];
       /** 子指令树（递归）。详见 CommandDefinition.subcommands */
       subcommands?: SubcommandDefinition[];
     },
@@ -453,6 +461,10 @@ export class Context {
       authority: options?.authority,
       safety: options?.safety,
       permissions: options?.permissions,
+      arguments: options?.arguments,
+      options: options?.options,
+      usage: options?.usage,
+      examples: options?.examples,
       subcommands: options?.subcommands,
     };
     return this._pending.registerCommand(def);
