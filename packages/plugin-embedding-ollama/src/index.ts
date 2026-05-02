@@ -11,11 +11,15 @@ export const reusable = true;
 export const configSchema: ConfigSchema = {
   baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
   model: { type: 'select', label: 'Embedding 模型', default: 'nomic-embed-text', dynamicOptions: 'embedding', description: '用于生成文本向量的模型' },
+  timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 30000, description: '单次 embedding 请求超时时间' },
+  retries: { type: 'number', label: '失败重试次数', default: 1, description: 'fetch 失败或 5xx 时的重试次数' },
 };
 
 export const defaultConfig = {
   baseUrl: 'http://localhost:11434',
   model: 'nomic-embed-text',
+  timeoutMs: 30000,
+  retries: 1,
 };
 
 // ===== 配置 =====
@@ -23,6 +27,13 @@ export const defaultConfig = {
 interface OllamaEmbeddingConfig {
   baseUrl: string;
   model: string;
+  timeoutMs: number;
+  retries: number;
+}
+
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 // ===== 服务实现 =====
@@ -30,12 +41,40 @@ interface OllamaEmbeddingConfig {
 class OllamaEmbeddingService implements EmbeddingService {
   private baseUrl: string;
   private model: string;
+  private timeoutMs: number;
+  private retries: number;
   /** 缓存新旧 API 检测结果：true=新版 /api/embed，false=旧版 /api/embeddings */
   private useNewApi: boolean | null = null;
 
-  constructor(baseUrl: string, model: string) {
+  constructor(baseUrl: string, model: string, timeoutMs: number, retries: number) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.model = model;
+    this.timeoutMs = Math.max(1000, timeoutMs);
+    this.retries = Math.max(0, Math.floor(retries));
+  }
+
+  private async postJson(path: string, body: Record<string, unknown>): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= this.retries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const res = await fetch(`${this.baseUrl}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (res.ok || res.status < 500 || attempt >= this.retries) return res;
+        lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= this.retries) throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new Error(`Ollama embedding 请求失败: ${formatError(lastErr)}`);
   }
 
   async embed(text: string): Promise<number[]> {
@@ -55,11 +94,7 @@ class OllamaEmbeddingService implements EmbeddingService {
 
   /** 新版 Ollama API: POST /api/embed */
   private async embedNew(text: string): Promise<number[]> {
-    const res = await fetch(`${this.baseUrl}/api/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.model, input: text }),
-    });
+    const res = await this.postJson('/api/embed', { model: this.model, input: text });
     if (!res.ok) {
       throw new Error(`Ollama embedding 请求失败: ${res.status} ${res.statusText}`);
     }
@@ -69,11 +104,7 @@ class OllamaEmbeddingService implements EmbeddingService {
 
   /** 旧版 Ollama API: POST /api/embeddings */
   private async embedLegacy(text: string): Promise<number[]> {
-    const res = await fetch(`${this.baseUrl}/api/embeddings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.model, prompt: text }),
-    });
+    const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text });
     if (!res.ok) {
       throw new Error(`Ollama embedding 请求失败: ${res.status} ${res.statusText}`);
     }
@@ -100,8 +131,10 @@ class OllamaEmbeddingService implements EmbeddingService {
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const baseUrl = (config.baseUrl as string) ?? 'http://localhost:11434';
   const model = (config.model as string) ?? 'nomic-embed-text';
+  const timeoutMs = (config.timeoutMs as number) ?? 30000;
+  const retries = (config.retries as number) ?? 1;
 
-  const service = new OllamaEmbeddingService(baseUrl, model);
+  const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, retries);
 
   // 启动时检查连通性（失败不阻塞，只警告）
   try {

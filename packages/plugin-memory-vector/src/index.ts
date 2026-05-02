@@ -113,6 +113,11 @@ function truncate(text: string | undefined | null, max: number): string {
   return s.slice(0, max) + '…';
 }
 
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.stack || err.message;
+  return String(err);
+}
+
 function parsePlatform(sessionId: string): string {
   return sessionId.split(':')[0] ?? '';
 }
@@ -246,6 +251,33 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 索引：仅对 user 消息建索引，触发即写（不依赖 assistant 是否回复） ===
 
+  const MAX_PENDING_INDEX_MESSAGES = 200;
+  const pendingIndexMessages: IncomingMessage[] = [];
+  let indexing = false;
+
+  function enqueueIndexMessage(msg: IncomingMessage): void {
+    pendingIndexMessages.push(msg);
+    if (pendingIndexMessages.length > MAX_PENDING_INDEX_MESSAGES) {
+      const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - MAX_PENDING_INDEX_MESSAGES).length;
+      ctx.logger.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
+    }
+    void drainIndexQueue();
+  }
+
+  async function drainIndexQueue(): Promise<void> {
+    if (indexing) return;
+    indexing = true;
+    try {
+      while (pendingIndexMessages.length > 0) {
+        const next = pendingIndexMessages.shift()!;
+        await indexUserMessage(next);
+      }
+    } finally {
+      indexing = false;
+      if (pendingIndexMessages.length > 0) void drainIndexQueue();
+    }
+  }
+
   async function indexUserMessage(msg: IncomingMessage): Promise<void> {
     // 跳过非真实用户输入：闲聊主动触发等系统级伪 incoming，不应进入向量库
     if (msg.source === 'idle-trigger') return;
@@ -274,14 +306,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       await getStore().add(vec, metadata);
       await getStore().save();
     } catch (err) {
-      ctx.logger.warn('向量索引失败:', err);
+      ctx.logger.warn(`向量索引失败: ${formatError(err)}`);
     }
   }
 
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
   // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
   ctx.on('inbound:message:archived', (data) => {
-    void indexUserMessage(data.incoming);
+    enqueueIndexMessage(data.incoming);
   });
 
   // === 统一记忆清除 ===
@@ -319,7 +351,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
-      ctx.logger.warn('向量清空失败:', err);
+      ctx.logger.warn(`向量清空失败: ${formatError(err)}`);
     }
 
     await next();
@@ -516,7 +548,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         metadata: { source: 'memory-vector' },
       });
     } catch (err) {
-      ctx.logger.warn('向量记忆检索失败:', err);
+      ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
     }
 
     await next();
