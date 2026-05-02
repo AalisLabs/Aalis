@@ -367,7 +367,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       dangerousGrants: auth?.listDangerousGrants() ?? [],
       commandPrefix: ctx.commands?.prefix ?? '/',
       commands: cmdNodes.map(n => ({
-        // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'clear:nuke'
+        // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'clear:all'
         key: n.key,
         // 兼容字段：旧前端使用 c.name 做 React key —— 这里给完整 key
         name: n.key,

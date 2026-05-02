@@ -132,6 +132,14 @@ ctx.command('echo', '回显消息', async (cmdCtx) => {
   return cmdCtx.args.join(' ') || '(空)';
 }, { authority: 2 });
 
+// 声明式选项
+ctx.command('clear', '清空记忆', async (cmdCtx) => {
+  const types = cmdCtx.options?.type as string[] | undefined;
+  return clearMemory(types);
+}, {
+  options: [{ name: 'type', alias: 't', type: 'string[]', description: '清理类型' }],
+});
+
 // 标记为高危指令
 ctx.command('restart', '重启应用', async () => { ... }, {
   safety: 'dangerous',

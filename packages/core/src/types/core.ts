@@ -463,7 +463,7 @@ export interface CommandDefinition {
    * - 任意一层未命中则停在当前节点，调用其 action
    *
    * 权限/安全等级继承：子节点未声明时，继承自其有效父节点（含 override）。
-   * Override 键为冒号拼接的完整路径，如 `clear:nuke`、`db:migrate:up`。
+    * Override 键为冒号拼接的完整路径，如 `clear:all`、`db:migrate:up`。
    */
   subcommands?: SubcommandDefinition[];
 }
