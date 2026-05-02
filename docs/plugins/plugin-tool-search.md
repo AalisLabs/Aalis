@@ -22,15 +22,30 @@ meta.inject = {} // 无依赖
 | `enabled` | boolean | true | 是否启用工具搜索层 |
 | `showToolNames` | boolean | true | 系统提示中附带工具名称列表 |
 | `maxDirectTools` | number | 5 | 工具数 ≤ 此阈值时跳过搜索层，直接传递所有工具 |
+| `maxSearchResults` | number | 5 | 单次 `search_tools` 返回的最大工具数量，0 表示不限制 |
+| `alwaysDirectTools` | string[] | [] | 直出工具名单；即使启用搜索层，也始终传递这些工具的完整定义 |
 
 ## 工作原理
 
 通过 `agent:llm:before` 中间件（优先级 100）：
 
 1. **检查阈值**: 如果注册工具数 ≤ `maxDirectTools`，直接传递所有工具
-2. **替换工具列表**: 将 `data.tools` 替换为 `search_tools` 定义 + 已发现工具的定义
-3. **追踪已发现工具**: 解析消息历史中 `search_tools` 调用结果，追踪 LLM 已知哪些工具
-4. **可选**: 在 `search_tools` 描述中列出所有工具名称供 LLM 参考
+2. **应用直出名单**: `alwaysDirectTools` 中的工具始终保留完整定义，适合搜索、轻量查询等高频入口工具
+3. **替换工具列表**: 将 `data.tools` 替换为 `search_tools` 定义 + 直出工具定义 + 已发现工具定义
+4. **追踪已发现工具**: 解析消息历史中 `search_tools` 调用结果，追踪 LLM 已知哪些工具
+5. **可选**: 在 `search_tools` 描述中列出所有工具名称供 LLM 参考
+
+示例：
+
+```yaml
+"@aalis/plugin-tool-search":
+  enabled: true
+  showToolNames: true
+  maxDirectTools: 5
+  maxSearchResults: 10
+  alwaysDirectTools:
+    - web_search
+```
 
 ### `search_tools` 工具
 
