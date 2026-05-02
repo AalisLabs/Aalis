@@ -58,11 +58,11 @@ export const configSchema: ConfigSchema = {
     fields: {
       concurrency: {
         type: 'number', label: '最大并发索引数', default: 10,
-        description: '同时进行的后台 embedding + 向量写入任务数。建议 2~10；过高可能压垮本地 embedding 服务。',
+        description: '同时进行的后台 embedding + 向量写入任务数。0 或负数表示不限制；建议 2~10，过高可能压垮本地 embedding 服务。',
       },
       maxQueueSize: {
         type: 'number', label: '最大索引队列长度', default: 500,
-        description: '待索引消息队列上限。超出后丢弃最旧待索引消息，避免内存无限增长。',
+        description: '待索引消息队列上限。0 或负数表示不限制；超出后丢弃最旧待索引消息，避免内存无限增长。',
       },
     },
   },
@@ -258,8 +258,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       crossSession: expandRaw.crossSession !== false,
     },
     indexing: {
-      concurrency: Math.max(1, Math.floor((indexingRaw.concurrency as number) ?? 10)),
-      maxQueueSize: Math.max(0, Math.floor((indexingRaw.maxQueueSize as number) ?? 500)),
+      concurrency: Math.floor((indexingRaw.concurrency as number) ?? 10),
+      maxQueueSize: Math.floor((indexingRaw.maxQueueSize as number) ?? 500),
     },
     crossSessionMode: (config.crossSessionMode as CrossSessionMode) ?? 'all',
   };
@@ -268,7 +268,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery ? '可用' : '不可用'}, ` +
     `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
     `单条截断=${cfg.search.perItemMaxChars}字, minScore=${cfg.search.minScore}, ` +
-    `indexConcurrency=${cfg.indexing.concurrency}, indexQueue=${cfg.indexing.maxQueueSize}`,
+    `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
+    `indexQueue=${cfg.indexing.maxQueueSize <= 0 ? 'unlimited' : cfg.indexing.maxQueueSize}`,
   );
 
   if (!hasRangeQuery && cfg.contextExpand.window > 0) {
@@ -283,12 +284,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   let activeIndexers = 0;
 
   function enqueueIndexMessage(msg: IncomingMessage): void {
-    if (cfg.indexing.maxQueueSize === 0) {
-      ctx.logger.warn('向量索引队列已禁用，跳过新入站消息索引');
-      return;
-    }
     pendingIndexMessages.push(msg);
-    if (pendingIndexMessages.length > cfg.indexing.maxQueueSize) {
+    if (cfg.indexing.maxQueueSize > 0 && pendingIndexMessages.length > cfg.indexing.maxQueueSize) {
       const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - cfg.indexing.maxQueueSize).length;
       ctx.logger.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
     }
@@ -296,7 +293,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   async function drainIndexQueue(): Promise<void> {
-    while (activeIndexers < cfg.indexing.concurrency && pendingIndexMessages.length > 0) {
+    while ((cfg.indexing.concurrency <= 0 || activeIndexers < cfg.indexing.concurrency) && pendingIndexMessages.length > 0) {
       const next = pendingIndexMessages.shift()!;
       activeIndexers++;
       void (async () => {
