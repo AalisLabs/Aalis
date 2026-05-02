@@ -1,6 +1,6 @@
 # App — 应用容器
 
-`App` 是 Aalis 的顶层容器，负责初始化所有子系统、管理插件生命周期和内置指令。
+`App` 是 Aalis 的顶层容器，负责初始化核心子系统、管理插件生命周期和启动消息路由。指令、权限、工具等能力由插件提供。
 
 **源码**: `packages/core/src/app.ts`
 
@@ -12,7 +12,7 @@ const app = new App(configPath?: string);
 
 - 加载 YAML 配置文件（默认 `aalis.config.yaml`）
 - 初始化根 Context + 所有核心子系统
-- 注册内置指令
+- 提供 `app` 服务并管理插件加载
 
 ## 关键属性
 
@@ -55,12 +55,16 @@ const app = new App(configPath?: string);
 
 保存配置 → 发出 `restarting` 事件 → 关闭当前进程 → spawn 新进程。
 
-## 内置指令
+## 基础指令
+
+App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-commands` 提供 `/help`、`/status`、`/clear`、`/shutdown`、`/restart`，`@aalis/plugin-authority` 提供 `/grant`、`/authority`。
 
 | 指令 | 权限 | 安全等级 | 说明 |
 |---|---|---|---|
 | `/help` | 0 | safe | 列出所有已注册指令 |
 | `/status` | 0 | safe | 显示系统状态（服务可用性、工具数、指令数） |
+| `/clear [--type/-t <type>]` | 0 | safe | 清空当前会话指定类型记忆 |
+| `/clear all [--type/-t <type>]` | 3 | dangerous | 全局清空指定类型记忆 |
 | `/shutdown` | 5 | dangerous | 关闭应用 |
 | `/restart` | 5 | dangerous | 重启应用 |
 | `/grant <platform:userId> <level>` | 2 | safe | 设置用户权限（不可授予 ≥ 自身权限） |

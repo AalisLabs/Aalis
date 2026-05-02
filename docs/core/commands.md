@@ -2,7 +2,8 @@
 
 管理指令的注册、解析、权限检查和执行。
 
-**源码**: `packages/core/src/commands.ts`
+**类型源码**: `packages/core/src/types/core.ts`, `packages/core/src/types/commands.ts`  
+**默认实现**: `packages/plugin-commands/src/commands.ts`
 
 ## 指令定义
 
@@ -139,7 +140,7 @@ ctx.command('clear', '清空当前会话', async (c) => runClear(c, 'session'),
 - 与根一致，每个节点也可被单独 override，键 = 冒号拼接的路径（如 `clear:all`、`db:migrate:up`）
 - WebUI「权限」页以可折叠的缩进行展示完整指令树，每一节点可独立编辑
 
-## 内置指令参考
+## 基础指令参考
 
 | 指令 | 参数 | 说明 | 权限 | 安全等级 |
 |---|---|---|---|---|

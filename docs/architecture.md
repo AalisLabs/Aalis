@@ -331,8 +331,7 @@ Owner    → 最高权限 (配置 ownerAuthority，默认 5)
 | `scheduler:job:start` | `jobId` | 定时任务开始 |
 | `scheduler:job:done` | `jobId` | 定时任务完成 |
 | `scheduler:job:error` | `jobId, error` | 定时任务出错 |
-| `memory:clear-all` | `sessionId` | 清除所有记忆 |
-| `memory:clear-session` | `sessionId, type` | 清除指定会话记忆 |
+| `memory:clear` | `scope, types?, sessionId?, results, rollbacks` | 统一记忆清理编排 |
 | `service:registered` | `name, capabilities[]` | 服务注册 |
 | `service:unregistered` | `name` | 服务移除 |
 | `plugin:loaded` | `name` | 插件加载 |

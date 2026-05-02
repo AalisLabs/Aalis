@@ -5,14 +5,14 @@
 
 ## 概述
 
-内置指令注册与执行系统，支持指令前缀配置、递归子指令、声明式参数/选项解析和指令→工具自动桥接。
+内置指令注册与执行系统，支持指令前缀配置、递归子指令和声明式参数/选项解析。
 
 ## 插件声明
 
 ```typescript
 meta.name = '@aalis/plugin-commands'
 meta.provides = ['commands']
-meta.inject = { required: ['authority'] }
+meta.inject = {}
 ```
 
 ## 内置指令

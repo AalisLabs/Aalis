@@ -46,8 +46,6 @@ await ctx.emit('outbound:message', outMsg);
 | `scheduler:job:start` | `jobId` | 定时任务开始 |
 | `scheduler:job:done` | `jobId` | 定时任务完成 |
 | `scheduler:job:error` | `jobId, error` | 定时任务出错 |
-| `memory:clear-all` | `sessionId` | 清除所有记忆 |
-| `memory:clear-session` | `sessionId, type` | 清除指定会话记忆 |
 | `service:registered` | `name, capabilities[]` | 服务注册 |
 | `service:unregistered` | `name` | 服务移除 |
 | `plugin:loaded` | `name` | 插件加载 |
@@ -55,6 +53,7 @@ await ctx.emit('outbound:message', outMsg);
 | `plugins:changed` | — | 插件状态变更 |
 | `app:starting` | — | 应用启动中 |
 | `ready` | — | 应用启动完成 |
+| `app:started` | — | 应用启动完成后，适合 CLI/TUI 接管终端 |
 | `app:stopping` | — | 应用停止中 |
 | `dispose` | — | 应用关闭 |
 | `restarting` | — | 应用即将重启 |
@@ -132,6 +131,7 @@ ctx.hooks.unregisterByContext(contextId);
 | `agent:tool:before` | `{ name: string, args: Record<string, unknown>, toolCallContext: ToolCallContext }` | 修改工具调用参数 |
 | `agent:tool:after` | `{ name: string, result: string, toolCallContext: ToolCallContext }` | 处理工具返回结果 |
 | `agent:reply:before` | `{ content: string, sessionId: string }` | 修改最终回复内容 |
+| `memory:clear` | `{ scope, types?, sessionId?, results, rollbacks }` | 统一记忆清理编排，供 `/clear` 与各记忆插件协作 |
 
 ### 中间件特性
 

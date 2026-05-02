@@ -18,9 +18,9 @@ import type {
  * key = path.join(':') 同时也是 override 的查找键。
  */
 export interface CommandNodeInfo {
-  /** 完整路径，如 ['clear', 'nuke'] */
+  /** 完整路径，如 ['clear', 'all'] */
   path: string[];
-  /** override 键 = path.join(':')，如 'clear:nuke' */
+  /** override 键 = path.join(':')，如 'clear:all' */
   key: string;
   /** 节点自身的名字（path 末段） */
   name: string;
@@ -76,7 +76,7 @@ export interface CommandService {
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
   has(name: string): boolean;
   get(name: string): RegisteredCommand | undefined;
-  /** 仅返回根指令；保持向后兼容（如工具桥接、Dashboard chip） */
+  /** 仅返回根指令；保持向后兼容（如 Dashboard chip） */
   getAll(): RegisteredCommand[];
   /**
    * 返回所有节点的扁平化视图（含递归子指令），按深度优先顺序。
@@ -85,7 +85,7 @@ export interface CommandService {
   getAllNodes(): CommandNodeInfo[];
   /**
    * 根据路径解析具体节点，返回扁平视图。未命中返回 undefined。
-   * 路径示例：'clear' 或 'clear:nuke' 或 ['clear','nuke']。
+    * 路径示例：'clear' 或 'clear:all' 或 ['clear','all']。
    */
   getNode(path: string | string[]): CommandNodeInfo | undefined;
 
