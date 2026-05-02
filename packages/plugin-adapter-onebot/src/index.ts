@@ -153,6 +153,13 @@ export const configSchema: ConfigSchema = {
       summaryMaxChars: { type: 'number', label: '摘要最大字数', default: 400, description: '提示给摘要模型的目标长度上限。' },
     },
   },
+  reply: {
+    label: '引用消息处理',
+    description: '收到引用回复时如何展开被引用消息链',
+    fields: {
+      maxDepth: { type: 'number', label: '引用链深度上限', default: 5, description: '递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。' },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -194,6 +201,9 @@ export const defaultConfig = {
     summarize: true,
     summaryModel: '',
     summaryMaxChars: 400,
+  },
+  reply: {
+    maxDepth: 5,
   },
 };
 
@@ -542,6 +552,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     summarize: fwdRaw.summarize !== false,
     summaryModel: typeof fwdRaw.summaryModel === 'string' ? fwdRaw.summaryModel.trim() : '',
     summaryMaxChars: typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
+  };
+
+  // 引用消息处理配置
+  const replyRaw = (config.reply ?? {}) as Record<string, unknown>;
+  const replyCfg = {
+    maxDepth: typeof replyRaw.maxDepth === 'number' ? Math.max(1, Math.floor(replyRaw.maxDepth)) : 5,
   };
 
   if (connections.length === 0) {
@@ -1194,8 +1210,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   async function fetchReplyMessage(state: ConnectionState, messageId: string, depth = 0, seen = new Set<string>()): Promise<{
     content?: string; userId?: string; nickname?: string;
   } | null> {
-    const MAX_REPLY_CHAIN_DEPTH = 5;
-    if (depth >= MAX_REPLY_CHAIN_DEPTH || seen.has(messageId)) return null;
+    if (depth >= replyCfg.maxDepth || seen.has(messageId)) return null;
     seen.add(messageId);
     try {
       const data = await sendAction(state, 'get_msg', {
