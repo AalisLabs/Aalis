@@ -112,7 +112,6 @@ aalis/
 │   ├── plugin-cli/                  # 终端对话界面
 │   ├── plugin-webui-server/         # Web 管理后端（Express + WebSocket）
 │   ├── plugin-webui-client/         # Web 管理前端（React SPA）
-│   ├── plugin-webui-client-kawaii/  # Web 前端 Kawaii 主题变体
 │   │
 │   ├── plugin-platform/             # 平台管理聚合
 │   ├── plugin-authority/            # 权限管理系统
