@@ -45,7 +45,7 @@ interface ParsedCommandArgs {
  * 子指令支持：
  * - CommandDefinition.subcommands 可递归嵌套（子、孙、…）
  * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层
- * - Override 键为冒号拼接的完整路径：`clear:nuke`、`db:migrate:up`
+ * - Override 键为冒号拼接的完整路径：`clear:all`、`db:migrate:up`
  * - authority/safety 子节点未声明时继承父节点的有效值（含 override）
  */
 export class CommandRegistry implements CommandService {
@@ -117,7 +117,7 @@ export class CommandRegistry implements CommandService {
 
   get(name: string): RegisteredCommand | undefined { return this.commands.get(name); }
 
-  /** 仅返回根指令，保持向后兼容（工具桥接、Dashboard 概览） */
+  /** 仅返回根指令，保持向后兼容（Dashboard 概览等旧调用方） */
   getAll(): RegisteredCommand[] { return [...this.commands.values()]; }
 
   /**
@@ -229,6 +229,15 @@ export class CommandRegistry implements CommandService {
     const resolved = this.resolve(name, cmdCtx.args);
     if (!resolved) return `未知指令: ${this.prefix}${name}。输入 ${this.prefix}help 查看帮助。`;
 
+    const action = resolved.node.action;
+    // 纯分组节点（无 action）：返回 usage 提示
+    if (!action) {
+      return this.formatUsage(resolved.node, resolved.path);
+    }
+
+    const parsed = this.parseArgsForNode(resolved.node, resolved.path, resolved.remainingArgs);
+    if (typeof parsed === 'string') return parsed;
+
     if (this._guard) {
       const rejection = await this._guard({
         // 使用完整路径做权限标识；guard 内部以名称匹配高危白名单，建议白名单也用冒号路径
@@ -245,15 +254,7 @@ export class CommandRegistry implements CommandService {
       if (rejection) return rejection;
     }
 
-    const action = resolved.node.action;
-    // 纯分组节点（无 action）：返回 usage 提示
-    if (!action) {
-      return this.formatUsage(resolved.node, resolved.path);
-    }
-
     try {
-      const parsed = this.parseArgsForNode(resolved.node, resolved.path, resolved.remainingArgs);
-      if (typeof parsed === 'string') return parsed;
       const subCtx: CommandContext = {
         ...cmdCtx,
         args: parsed.args,

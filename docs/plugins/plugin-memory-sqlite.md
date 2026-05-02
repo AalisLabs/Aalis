@@ -28,5 +28,5 @@ meta.inject = {} // 无依赖
 - 自动创建 `messages` 表和 `sessionId + timestamp` 复合索引
 - 启用 WAL 模式以提升并发性能
 - `getHistory()` 倒序取最新 N 条后正序返回
-- 注册 `/clear` 指令：清空当前会话的聊天历史和向量记忆
+- 可被 `/clear` 间接调用：命令插件通过 `MemoryService.clearSession()` / `clearAll()` 清理消息历史
 - dispose 时关闭数据库连接

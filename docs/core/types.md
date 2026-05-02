@@ -455,6 +455,10 @@ interface CommandDefinition {
   description: string;
   authority?: number;      // 默认 1
   safety?: SafetyLevel;    // 默认 'safe'
+  arguments?: CommandArgumentDefinition[];
+  options?: CommandOptionDefinition[];
+  usage?: string;
+  examples?: string[];
   action: (ctx: CommandContext) => Promise<string | void>;
 }
 
@@ -463,8 +467,20 @@ interface CommandContext {
   platform: string;
   userId?: string;
   args: string[];
+  operands?: Record<string, unknown>;
+  options?: Record<string, unknown>;
   raw: string;
   skipSafetyCheck?: boolean;
+}
+
+interface CommandOptionDefinition {
+  name: string;
+  alias?: string | string[];
+  type: 'string' | 'number' | 'boolean' | 'enum' | 'string[]';
+  choices?: string[];
+  default?: unknown;
+  required?: boolean;
+  description?: string;
 }
 
 type SafetyLevel = 'safe' | 'dangerous';
