@@ -192,6 +192,19 @@ function extractJsonBlock(text: string): string {
   return text.trim();
 }
 
+function decimalPlaces(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const text = String(value).toLowerCase();
+  const exponentIndex = text.indexOf('e');
+  if (exponentIndex >= 0) {
+    const mantissa = text.slice(0, exponentIndex);
+    const exponent = Number(text.slice(exponentIndex + 1));
+    const mantissaDecimals = mantissa.split('.')[1]?.replace(/0+$/, '').length ?? 0;
+    return Math.max(0, mantissaDecimals - exponent);
+  }
+  return text.split('.')[1]?.replace(/0+$/, '').length ?? 0;
+}
+
 /** 渲染历史消息为「时间 + 角色 + 文本」的简洁形式，喂给提取 LLM */
 function renderHistoryForExtract(history: Message[]): string {
   return history
@@ -225,6 +238,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const userMessageCount = new Map<string, number>();
   /** 防止同一用户的提取并发触发 */
   const inflightExtractions = new Set<string>();
+  const relationScorePrecision = Math.min(6, Math.max(
+    decimalPlaces(cfg.relationScoreDecayPerDay),
+    decimalPlaces(cfg.relationIncrementDirect),
+    decimalPlaces(cfg.relationIncrementImmediate),
+    decimalPlaces(cfg.relationIncrementInterval),
+  ));
 
   function userKeyOf(platform: string | undefined, userId: string): string {
     return `${platform ?? ''}:${userId}`;
@@ -428,7 +447,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   function clampRelationScore(score: number): number {
-    return Math.min(100, Math.max(0, Math.round(score * 100) / 100));
+    const factor = 10 ** relationScorePrecision;
+    return Math.min(100, Math.max(0, Math.round(score * factor) / factor));
   }
 
   function relationIncrementFor(triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined): number {
@@ -657,7 +677,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const score = profile.relationScore ?? 0;
     const count = profile.interactionCount ?? 0;
     if (score <= 0 && count <= 0) return '';
-    return `关系强度：${score.toFixed(2)}/100；累计互动：${count} 次。`;
+    return `关系强度：${score.toFixed(relationScorePrecision)}/100；累计互动：${count} 次。`;
   }
 
   // ─── LLM 调用前注入：根据 triggerType 区分主发言者语义 ───
@@ -837,7 +857,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return `📭 暂无档案数据 (${userKey})`;
       }
       const block = renderProfileBlock(profile.facts, userKey, false);
-      const meta = `关系强度：${profile.relationScore?.toFixed(2) ?? '0.00'}/100，互动次数：${profile.interactionCount ?? 0}`;
+      const meta = `关系强度：${(profile.relationScore ?? 0).toFixed(relationScorePrecision)}/100，互动次数：${profile.interactionCount ?? 0}`;
       return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
     },
     {
