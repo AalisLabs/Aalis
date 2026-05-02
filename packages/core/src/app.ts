@@ -171,7 +171,7 @@ export class App {
    * 规则:
    * - 跳过 package.json 中标记 `"aalis": { "core": true }` 的包
    * - 其余包全部视为插件，通过 dynamic import() 加载
-   * - tools 和 commands 服务由核心提供，插件无需声明依赖即可使用
+    * - commands、tools 等业务服务由插件提供；Context 会缓冲相关注册直到服务就绪
    */
   async autoLoadPlugins(packagesDir?: string): Promise<void> {
     // 0. 加载内置插件（必须在外部插件之前）
