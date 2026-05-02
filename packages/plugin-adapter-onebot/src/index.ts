@@ -1181,9 +1181,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
    * - 图片：仅在描述缓存命中时注入识别结果，未命中保留 `[图片]` 占位符
    *   （主消息流的图片识别会自动写缓存，因此先发图、后被引用的常见路径能复用）
    */
-  async function fetchReplyMessage(state: ConnectionState, messageId: string): Promise<{
+  function findReplySegmentId(segments: import('./types.js').OneBotMessageSegment[]): string | undefined {
+    for (const seg of segments) {
+      if (seg.type !== 'reply') continue;
+      const data = seg.data as Record<string, unknown> | undefined;
+      const id = data?.id ?? data?.message_id;
+      if (id != null) return String(id);
+    }
+    return undefined;
+  }
+
+  async function fetchReplyMessage(state: ConnectionState, messageId: string, depth = 0, seen = new Set<string>()): Promise<{
     content?: string; userId?: string; nickname?: string;
   } | null> {
+    const MAX_REPLY_CHAIN_DEPTH = 5;
+    if (depth >= MAX_REPLY_CHAIN_DEPTH || seen.has(messageId)) return null;
+    seen.add(messageId);
     try {
       const data = await sendAction(state, 'get_msg', {
         message_id: Number(messageId) || messageId,
@@ -1192,11 +1205,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ? (data.message as import('./types.js').OneBotMessageSegment[])
         : [];
       const sender = data.sender as Record<string, unknown> | undefined;
+      const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
 
       // 1. 用与主流程同款渲染器把所有段转成可读文本
       let content = segments.length > 0
         ? segmentsToText(segments, state.selfId)
         : ((data.raw_message as string) ?? '');
+
+      const nestedReplyId = findReplySegmentId(segments);
+      if (nestedReplyId) {
+        const nested = await fetchReplyMessage(state, nestedReplyId, depth + 1, seen);
+        if (nested?.content) {
+          const nestedLabel = nested.nickname || nested.userId || '?';
+          content += `\n[该引用消息又引用 ${nestedLabel} 的消息: ${nested.content}]`;
+        }
+      }
 
       // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销）
       if (content.includes('<forward id=')) {
@@ -1234,7 +1257,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return {
         content: content || undefined,
         userId: data.user_id != null ? String(data.user_id) : undefined,
-        nickname: (sender?.card as string) || (sender?.nickname as string) || undefined,
+        nickname,
       };
     } catch {
       return null;
