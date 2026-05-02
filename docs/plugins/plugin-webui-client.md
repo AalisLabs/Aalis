@@ -43,10 +43,6 @@ meta.inject = { required: [{ service: 'webui-server', capabilities: ['api-v1'] }
 | Logs | 实时日志流 |
 | DynamicPage | 插件注册的动态页面（技能库等） |
 
-## 主题变体
-
-`@aalis/plugin-webui-client-kawaii` 是独立的前端主题包，提供粉色系 Kawaii 风格 UI，包含樱花飘落动效。两者共享相同组件架构，仅 CSS 变量和部分样式不同。
-
 ## 流恢复 (Stream Resume)
 
 前端通过 `stream_resume` WebSocket 消息类型支持页面刷新后的流恢复。当用户刷新页面时，服务端将已缓冲的流式内容一次性推送，实现无缝续流体验。
