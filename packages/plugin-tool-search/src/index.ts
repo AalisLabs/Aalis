@@ -40,6 +40,13 @@ export const configSchema: ConfigSchema = {
     default: 5,
     description: '单次搜索返回的最大工具数量，0 表示不限制',
   },
+  alwaysDirectTools: {
+    type: 'multiselect',
+    label: '直出工具名单',
+    default: [],
+    allowCustom: true,
+    description: '即使启用工具搜索层，也始终直接暴露这些工具的完整定义。填写工具名，如 web_search。',
+  },
 };
 
 export const defaultConfig = {
@@ -47,6 +54,7 @@ export const defaultConfig = {
   showToolNames: true,
   maxDirectTools: 5,
   maxSearchResults: 5,
+  alwaysDirectTools: [],
 };
 
 // ===== 常量 =====
@@ -161,6 +169,14 @@ function extractDiscoveredTools(
   return discovered;
 }
 
+function normalizeToolNames(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean));
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -169,6 +185,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const showToolNames = (config.showToolNames as boolean) ?? true;
   const maxDirectTools = (config.maxDirectTools as number) ?? 5;
   const maxSearchResults = (config.maxSearchResults as number) ?? 5;
+  const alwaysDirectTools = normalizeToolNames(config.alwaysDirectTools);
+  const warnedMissingDirectTools = new Set<string>();
 
   if (!enabled) {
     logger.info('工具搜索层已禁用');
@@ -256,12 +274,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       .filter(n => n !== SEARCH_TOOL_NAME);
     const searchDef = buildSearchToolDef(showToolNames ? otherToolNames : undefined);
 
-    // 构建筛选后的工具列表：search_tools + 已发现的工具完整定义
+    // 构建筛选后的工具列表：search_tools + 直出工具 + 已发现工具完整定义
     const filtered: ToolDefinition[] = [searchDef];
-    if (discovered.size > 0) {
-      for (const def of allDefs) {
-        if (def.function.name !== SEARCH_TOOL_NAME && discovered.has(def.function.name)) {
-          filtered.push(def);
+    const visibleToolNames = new Set<string>();
+    let directVisibleCount = 0;
+    for (const def of allDefs) {
+      const toolName = def.function.name;
+      if (toolName === SEARCH_TOOL_NAME) continue;
+      if (!alwaysDirectTools.has(toolName) && !discovered.has(toolName)) continue;
+      if (visibleToolNames.has(toolName)) continue;
+      visibleToolNames.add(toolName);
+      if (alwaysDirectTools.has(toolName)) directVisibleCount += 1;
+      filtered.push(def);
+    }
+
+    if (alwaysDirectTools.size > 0) {
+      for (const toolName of alwaysDirectTools) {
+        if (!otherToolNames.includes(toolName) && !warnedMissingDirectTools.has(toolName)) {
+          warnedMissingDirectTools.add(toolName);
+          logger.warn(`直出工具未注册或当前不可用: ${toolName}`);
         }
       }
     }
@@ -269,7 +300,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     data.tools = filtered;
     logger.debug(
       `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个` +
-      ` (已发现 ${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
+      ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
     );
 
     await next();
