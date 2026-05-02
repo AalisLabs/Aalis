@@ -6,6 +6,7 @@ import type {
   AppService,
   MemoryService,
   ToolService,
+  CommandContext,
 } from '@aalis/core';
 import { CommandRegistry } from './commands.js';
 
@@ -46,6 +47,49 @@ async function removeDirCounted(dirAbs: string): Promise<number> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return -1;
     throw err;
   }
+}
+
+const CLEAR_TYPES = [
+  { id: 'context', label: '消息历史与会话上下文' },
+  { id: 'summary', label: '会话摘要' },
+  { id: 'vector', label: '向量记忆' },
+  { id: 'image', label: '图片缓存' },
+  { id: 'persona', label: '会话角色状态' },
+  { id: 'user-profile', label: '用户档案（仅全局清理）' },
+] as const;
+
+const CLEAR_TYPE_ALIASES: Record<string, string> = {
+  history: 'context',
+  messages: 'context',
+  profile: 'user-profile',
+  profiles: 'user-profile',
+};
+
+function normalizeClearTypes(raw: unknown): string[] | undefined {
+  const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
+  const types = values
+    .flatMap(v => String(v).split(','))
+    .map(v => v.trim())
+    .filter(Boolean)
+    .map(v => CLEAR_TYPE_ALIASES[v] ?? v);
+  if (types.length === 0 || types.includes('all')) return undefined;
+  const known = new Set(CLEAR_TYPES.map(t => t.id));
+  const unknown = types.find(t => !known.has(t as typeof CLEAR_TYPES[number]['id']));
+  if (unknown) throw new Error(`未知清理类型: ${unknown}。可用类型: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`);
+  return [...new Set(types)];
+}
+
+function renderClearTypeList(): string {
+  return [
+    '**可清理类型：**',
+    '',
+    ...CLEAR_TYPES.map(type => `- ${type.id}: ${type.label}`),
+    '',
+    '示例：',
+    '- /clear --type context,summary',
+    '- /clear -t vector -t image',
+    '- /clear all --type all',
+  ].join('\n');
 }
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -117,15 +161,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }, { authority: 5, safety: 'dangerous' });
 
   // ===== /clear —— 清空记忆 =====
-  // 子指令树：
-  //   /clear           ← 等价 all：清空当前会话所有类型
-  //   /clear context   ← 仅消息历史
-  //   /clear summary   ← 仅摘要
-  //   /clear vector    ← 仅向量
-  //   /clear image     ← 仅图片缓存
-  //   /clear nuke      ← 全局所有会话所有类型（authority=3, dangerous）
-  //
-  // scope='all' 表示全局，'session' 表示当前会话；types=undefined 表示全部类型。
+  // 默认清当前会话；全局清理通过显式危险子指令 /clear all 进入，避免把高危语义藏在普通选项里。
   type ClearScope = 'session' | 'all';
   async function runClear(
     cmdCtx: { sessionId: string },
@@ -215,22 +251,58 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`).join('\n');
   }
 
+  async function runClearFromOptions(cmdCtx: CommandContext, scope: ClearScope): Promise<string> {
+    if (cmdCtx.args.length > 0) {
+      return [
+        `未知参数: ${cmdCtx.args.join(' ')}`,
+        '',
+        '使用 /clear list 查看可清理类型；使用 /help 查看完整用法。',
+      ].join('\n');
+    }
+    let types: string[] | undefined;
+    try {
+      types = normalizeClearTypes(cmdCtx.options?.type);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    return runClear(cmdCtx, scope, types);
+  }
+
   ctx.command(
     'clear',
-    '清空当前会话的全部记忆（消息/摘要/向量/图片）。子指令可只清单一类型',
-    async (cmdCtx) => runClear(cmdCtx, 'session', undefined),
+    '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型',
+    async (cmdCtx) => runClearFromOptions(cmdCtx, 'session'),
     {
-      subcommands: [
-        { name: 'context', description: '仅清当前会话的消息历史', action: async (c) => runClear(c, 'session', ['context']) },
-        { name: 'summary', description: '仅清当前会话的摘要', action: async (c) => runClear(c, 'session', ['summary']) },
-        { name: 'vector', description: '仅清当前会话的向量记忆', action: async (c) => runClear(c, 'session', ['vector']) },
-        { name: 'image', description: '仅清当前会话的图片缓存', action: async (c) => runClear(c, 'session', ['image']) },
+      options: [
         {
-          name: 'nuke',
-          description: '【危险】清空全部会话的所有类型记忆与图片',
+          name: 'type',
+          alias: 't',
+          type: 'string[]',
+          description: `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`,
+        },
+      ],
+      examples: [
+        '/clear',
+        '/clear --type context,summary',
+        '/clear -t vector -t image',
+        '/clear all --type all',
+      ],
+      subcommands: [
+        { name: 'list', description: '列出可清理类型', action: async () => renderClearTypeList() },
+        {
+          name: 'all',
+          description: '【危险】按 --type 清空全部会话；未指定类型时清空全部类型',
           authority: 3,
           safety: 'dangerous',
-          action: async (c) => runClear(c, 'all', undefined),
+          options: [
+            {
+              name: 'type',
+              alias: 't',
+              type: 'string[]',
+              description: `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`,
+            },
+          ],
+          action: async (c) => runClearFromOptions(c, 'all'),
         },
       ],
     },

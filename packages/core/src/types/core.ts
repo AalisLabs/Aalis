@@ -386,10 +386,46 @@ export interface CommandContext {
   userId?: string;
   /** 指令参数 (命令名之后的部分，按空格分割) */
   args: string[];
+  /** 按指令声明解析出的具名位置参数 */
+  operands?: Record<string, unknown>;
+  /** 按指令声明解析出的选项参数 */
+  options?: Record<string, unknown>;
   /** 原始输入文本 */
   raw: string;
   /** 跳过安全等级检查（用于工具桥接等已在上层完成检查的场景） */
   skipSafetyCheck?: boolean;
+}
+
+export type CommandValueType = 'string' | 'number' | 'boolean' | 'enum' | 'string[]';
+
+export interface CommandArgumentDefinition {
+  /** 位置参数名称 */
+  name: string;
+  /** 参数类型。text 会消费剩余所有参数并拼回文本 */
+  type: 'string' | 'number' | 'boolean' | 'text';
+  /** 参数描述 */
+  description?: string;
+  /** 是否必填 */
+  required?: boolean;
+  /** 是否消费剩余所有参数 */
+  variadic?: boolean;
+}
+
+export interface CommandOptionDefinition {
+  /** 长选项名，如 type 对应 --type */
+  name: string;
+  /** 短别名或额外长别名，如 t 对应 -t */
+  alias?: string | string[];
+  /** 选项类型 */
+  type: CommandValueType;
+  /** 选项描述 */
+  description?: string;
+  /** enum 可选值 */
+  choices?: string[];
+  /** 默认值 */
+  default?: unknown;
+  /** 是否必填 */
+  required?: boolean;
 }
 
 /** 指令定义 */
@@ -404,6 +440,14 @@ export interface CommandDefinition {
   safety?: SafetyLevel;
   /** 静态权限标识，用于透明展示与策略匹配 */
   permissions?: PermissionId[];
+  /** 位置参数声明 */
+  arguments?: CommandArgumentDefinition[];
+  /** 选项声明 */
+  options?: CommandOptionDefinition[];
+  /** 自定义用法文本 */
+  usage?: string;
+  /** 示例 */
+  examples?: string[];
   /**
    * 执行函数
    * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
@@ -442,6 +486,14 @@ export interface SubcommandDefinition {
   safety?: SafetyLevel;
   /** 静态权限标识；会与父节点权限共同生效 */
   permissions?: PermissionId[];
+  /** 位置参数声明 */
+  arguments?: CommandArgumentDefinition[];
+  /** 选项声明 */
+  options?: CommandOptionDefinition[];
+  /** 自定义用法文本 */
+  usage?: string;
+  /** 示例 */
+  examples?: string[];
   /** 执行函数；省略时该节点仅作为分组，调用回退为 usage 提示 */
   action?: (ctx: CommandContext) => Promise<string | void>;
   /** 进一步的孙级子指令 */
