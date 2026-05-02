@@ -11,8 +11,34 @@ interface CommandDefinition {
   name: string;              // 指令名
   description: string;       // 描述
   action: (ctx: CommandContext) => Promise<string | void>;
-  authority?: number;        // 最低权限等级（默认 0）
+  authority?: number;        // 最低权限等级（默认 1）
   safety?: SafetyLevel;      // 'safe' | 'dangerous'
+  arguments?: CommandArgumentDefinition[];
+  options?: CommandOptionDefinition[];
+  usage?: string;
+  examples?: string[];
+}
+```
+
+参数声明是指令自己的元数据，不改变核心的职责边界；解析器只负责把用户输入转成结构化 `ctx.operands` / `ctx.options`，具体业务仍由插件 action 实现。
+
+```typescript
+interface CommandArgumentDefinition {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'text';
+  required?: boolean;
+  variadic?: boolean;
+  description?: string;
+}
+
+interface CommandOptionDefinition {
+  name: string;                 // --name
+  alias?: string | string[];    // -n 或额外长别名
+  type: 'string' | 'number' | 'boolean' | 'enum' | 'string[]';
+  choices?: string[];
+  default?: unknown;
+  required?: boolean;
+  description?: string;
 }
 ```
 
@@ -23,7 +49,9 @@ interface CommandContext {
   sessionId: string;
   platform: string;
   userId?: string;
-  args: string[];            // 按空格分割的参数
+  args: string[];            // 去掉已解析选项后的剩余位置参数
+  operands?: Record<string, unknown>; // 按 arguments 声明解析出的参数
+  options?: Record<string, unknown>;  // 按 options 声明解析出的选项
   raw: string;               // 原始输入文本
   skipSafetyCheck?: boolean; // 工具桥接时跳过重复确认
 }
@@ -35,6 +63,15 @@ interface CommandContext {
 
 - **有前缀模式** (`prefix = '/'`): 匹配 `/指令名 参数...`
 - **无前缀模式** (`prefix = ''`): 匹配 `指令名 参数...`（精确匹配指令名）
+- 支持引号包裹的参数，如 `/echo "hello world"`
+
+执行时会按命中节点的声明解析选项：
+
+- `--name value`
+- `--name=value`
+- `--flag` / `--no-flag`（boolean）
+- `-t value`（当 option 声明 `alias: 't'`）
+- `string[]` 支持重复传入或逗号分隔，如 `-t vector -t image`、`--type context,summary`
 
 ## 指令执行流程
 
@@ -60,14 +97,14 @@ commandOverrides:
   shutdown:
     authority: 3         # 降低关闭指令的权限要求
     safety: safe         # 改为安全操作（不需确认）
-  # 子指令使用冲号拼接路径作为键（可递归多层）
-  clear:nuke:
+  # 子指令使用冒号拼接路径作为键（可递归多层）
+  clear:all:
     authority: 4
 ```
 
 ```typescript
 commands.setOverride('shutdown', { authority: 3, safety: 'safe' });
-commands.setOverride('clear:nuke', { authority: 4 });
+commands.setOverride('clear:all', { authority: 4 });
 commands.removeOverride('shutdown');
 commands.getOverrides();
 ```
@@ -79,10 +116,14 @@ commands.getOverrides();
 ```typescript
 ctx.command('clear', '清空当前会话', async (c) => runClear(c, 'session'),
   {
+    options: [
+      { name: 'type', alias: 't', type: 'string[]', description: '清理类型' },
+    ],
     subcommands: [
-      { name: 'image', description: '仅清图片缓存', action: async (c) => clearImages(c) },
-      { name: 'nuke', description: '【危险】全局清空',
+      { name: 'list', description: '列出可清理类型', action: async () => listClearTypes() },
+      { name: 'all', description: '【危险】全局清空',
         authority: 3, safety: 'dangerous',
+        options: [{ name: 'type', alias: 't', type: 'string[]' }],
         action: async (c) => runClear(c, 'all') },
     ],
   });
@@ -90,12 +131,12 @@ ctx.command('clear', '清空当前会话', async (c) => runClear(c, 'session'),
 
 解析与路由：
 - 分析用户输入后，根据 `args` 逐层匹配子指令名，命中则下沉一层并消耗一个 arg
-- 任一层未命中则停在当前节点，调用其 `action`（`args` 为剩余部分）
+- 任一层未命中则停在当前节点，调用其 `action`（`args` 为去掉已解析选项后的剩余位置参数）
 - 节点未提供 `action` 时会返回自动生成的 usage
 
 权限/安全级继承：
 - 每个节点未声明 `authority`/`safety` 时继承父节点的有效值（已应用 override）
-- 与根一致，每个节点也可被单独 override，键 = 冒号拼接的路径（如 `clear:nuke`、`db:migrate:up`）
+- 与根一致，每个节点也可被单独 override，键 = 冒号拼接的路径（如 `clear:all`、`db:migrate:up`）
 - WebUI「权限」页以可折叠的缩进行展示完整指令树，每一节点可独立编辑
 
 ## 内置指令参考
@@ -104,12 +145,9 @@ ctx.command('clear', '清空当前会话', async (c) => runClear(c, 'session'),
 |---|---|---|---|---|
 | `/help` | — | 显示帮助信息 | 0 | safe |
 | `/status` | — | 系统状态 | 0 | safe |
-| `/clear` | — | 清空当前会话全部记忆（含图片缓存） | 0 | safe |
-| `/clear context` | — | 仅清消息历史 | 0 | safe |
-| `/clear summary` | — | 仅清摘要 | 0 | safe |
-| `/clear vector` | — | 仅清向量记忆 | 0 | safe |
-| `/clear image` | — | 仅清图片缓存 | 0 | safe |
-| `/clear nuke` | — | 【危险】全局所有会话 | 3 | dangerous |
+| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | 0 | safe |
+| `/clear list` | — | 列出可清理类型 | 0 | safe |
+| `/clear all` | `[--type/-t <type>]` | 【危险】清空全部会话指定类型；默认全部类型 | 3 | dangerous |
 | `/model` | `[model_name]` | 查看或切换会话模型 | 0 | safe |
 | `/tools` | — | 列出所有 AI 工具 | 0 | safe |
 | `/shutdown` | — | 关闭应用 | 5 | dangerous |

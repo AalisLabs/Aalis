@@ -7,6 +7,8 @@ import type {
   SubcommandDefinition,
   SafetyLevel,
   ExecutionGuard,
+  CommandArgumentDefinition,
+  CommandOptionDefinition,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
@@ -26,6 +28,12 @@ interface ResolvedCommand {
   effectiveSafety: SafetyLevel;
   /** 默认 command:<path> 加声明权限 */
   permissions: string[];
+}
+
+interface ParsedCommandArgs {
+  args: string[];
+  operands: Record<string, unknown>;
+  options: Record<string, unknown>;
 }
 
 /**
@@ -77,12 +85,12 @@ export class CommandRegistry implements CommandService {
     if (this.prefix) {
       if (!trimmed.startsWith(this.prefix)) return null;
       const rest = trimmed.slice(this.prefix.length);
-      const parts = rest.split(/\s+/);
+      const parts = tokenize(rest);
       const name = parts[0];
       if (!name) return null;
       return { name, args: parts.slice(1), raw: trimmed };
     }
-    const parts = trimmed.split(/\s+/);
+    const parts = tokenize(trimmed);
     const name = parts[0];
     if (this.commands.has(name)) return { name, args: parts.slice(1), raw: trimmed };
     return null;
@@ -205,6 +213,10 @@ export class CommandRegistry implements CommandService {
       hasSubcommands: !!(node.subcommands && node.subcommands.length > 0),
       hasAction: typeof node.action === 'function',
       pluginName,
+      arguments: node.arguments,
+      options: node.options,
+      usage: node.usage,
+      examples: node.examples,
     });
     if (node.subcommands) {
       for (const sub of node.subcommands) {
@@ -240,7 +252,14 @@ export class CommandRegistry implements CommandService {
     }
 
     try {
-      const subCtx: CommandContext = { ...cmdCtx, args: resolved.remainingArgs };
+      const parsed = this.parseArgsForNode(resolved.node, resolved.path, resolved.remainingArgs);
+      if (typeof parsed === 'string') return parsed;
+      const subCtx: CommandContext = {
+        ...cmdCtx,
+        args: parsed.args,
+        operands: parsed.operands,
+        options: parsed.options,
+      };
       const result = await action(subCtx);
       return result ?? undefined;
     } catch (err) {
@@ -252,15 +271,116 @@ export class CommandRegistry implements CommandService {
 
   private formatUsage(node: CommandDefinition | SubcommandDefinition, path: string[]): string {
     const head = `${this.prefix}${path.join(' ')}`;
-    const lines = [`用法: ${head} <subcommand>`, ''];
+    if (node.usage) return node.usage;
+    const argText = node.arguments?.map(arg => {
+      const body = arg.variadic ? `...${arg.name}` : arg.name;
+      return arg.required ? `<${body}>` : `[${body}]`;
+    }).join(' ');
+    const optionText = node.options && node.options.length > 0 ? ' [options]' : '';
+    const subText = node.subcommands && node.subcommands.length > 0 && !node.action ? ' <subcommand>' : '';
+    const lines = [`用法: ${head}${subText}${argText ? ` ${argText}` : ''}${optionText}`, ''];
     lines.push(`${node.description}`);
+    if (node.arguments && node.arguments.length > 0) {
+      lines.push('', '参数：');
+      for (const arg of node.arguments) {
+        lines.push(`  ${arg.required ? '<' : '['}${arg.name}${arg.required ? '>' : ']'} — ${arg.description ?? arg.type}`);
+      }
+    }
+    if (node.options && node.options.length > 0) {
+      lines.push('', '选项：');
+      for (const opt of node.options) {
+        const aliases = toAliases(opt).map(a => a.length === 1 ? `-${a}` : `--${a}`).join(', ');
+        const choices = opt.choices && opt.choices.length > 0 ? ` (${opt.choices.join('|')})` : '';
+        lines.push(`  --${opt.name}${aliases ? `, ${aliases}` : ''} — ${opt.description ?? opt.type}${choices}`);
+      }
+    }
     if (node.subcommands && node.subcommands.length > 0) {
       lines.push('', '可用子指令：');
       for (const sub of node.subcommands) {
         lines.push(`  ${sub.name} — ${sub.description}`);
       }
     }
+    if (node.examples && node.examples.length > 0) {
+      lines.push('', '示例：');
+      for (const example of node.examples) lines.push(`  ${example}`);
+    }
     return lines.join('\n');
+  }
+
+  private parseArgsForNode(node: CommandDefinition | SubcommandDefinition, path: string[], rawArgs: string[]): ParsedCommandArgs | string {
+    const optionDefs = node.options ?? [];
+    const argumentDefs = node.arguments ?? [];
+    const options = this.defaultOptions(optionDefs);
+    const positionals: string[] = [];
+
+    for (let i = 0; i < rawArgs.length; i++) {
+      const token = rawArgs[i];
+      if (token === '--') {
+        positionals.push(...rawArgs.slice(i + 1));
+        break;
+      }
+      if (token.startsWith('--') && token.length > 2) {
+        const eq = token.indexOf('=');
+        const rawName = eq >= 0 ? token.slice(2, eq) : token.slice(2);
+        const negated = rawName.startsWith('no-');
+        const name = negated ? rawName.slice(3) : rawName;
+        const def = findOption(optionDefs, name);
+        if (!def) return `未知选项: --${name}\n\n${this.formatUsage(node, path)}`;
+        let rawValue = eq >= 0 ? token.slice(eq + 1) : undefined;
+        if (def.type === 'boolean') {
+          options[def.name] = negated ? false : rawValue === undefined ? true : parseBoolean(rawValue);
+        } else {
+          if (rawValue === undefined) {
+            i += 1;
+            rawValue = rawArgs[i];
+          }
+          if (rawValue === undefined) return `选项 --${name} 缺少取值`;
+          options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
+        }
+        continue;
+      }
+      if (token.startsWith('-') && token.length > 1) {
+        const alias = token.slice(1);
+        const def = findOption(optionDefs, alias);
+        if (!def) return `未知选项: -${alias}\n\n${this.formatUsage(node, path)}`;
+        if (def.type === 'boolean') {
+          options[def.name] = true;
+        } else {
+          i += 1;
+          const rawValue = rawArgs[i];
+          if (rawValue === undefined) return `选项 -${alias} 缺少取值`;
+          options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
+        }
+        continue;
+      }
+      positionals.push(token);
+    }
+
+    for (const def of optionDefs) {
+      if (def.required && options[def.name] === undefined) return `缺少必填选项: --${def.name}`;
+    }
+
+    const operands: Record<string, unknown> = {};
+    let cursor = 0;
+    for (const def of argumentDefs) {
+      const values = def.variadic || def.type === 'text' ? positionals.slice(cursor) : positionals.slice(cursor, cursor + 1);
+      if (values.length === 0) {
+        if (def.required) return `缺少必填参数: ${def.name}`;
+        continue;
+      }
+      operands[def.name] = parseArgumentValue(def, values);
+      cursor += values.length;
+    }
+
+    return { args: positionals, operands, options };
+  }
+
+  private defaultOptions(optionDefs: CommandOptionDefinition[]): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const def of optionDefs) {
+      if (def.default !== undefined) out[def.name] = def.default;
+    }
+    return out;
   }
 
   unregisterByPlugin(pluginName: string): void {
@@ -275,4 +395,78 @@ export class CommandRegistry implements CommandService {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function tokenize(input: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  for (const ch of input) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function toAliases(def: CommandOptionDefinition): string[] {
+  if (!def.alias) return [];
+  return Array.isArray(def.alias) ? def.alias : [def.alias];
+}
+
+function findOption(defs: CommandOptionDefinition[], nameOrAlias: string): CommandOptionDefinition | undefined {
+  return defs.find(def => def.name === nameOrAlias || toAliases(def).includes(nameOrAlias));
+}
+
+function parseBoolean(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function parseOptionValue(def: CommandOptionDefinition, rawValue: string, previous: unknown): unknown {
+  if (def.type === 'number') return Number(rawValue);
+  if (def.type === 'boolean') return parseBoolean(rawValue);
+  if (def.type === 'enum') {
+    if (def.choices && !def.choices.includes(rawValue)) {
+      throw new Error(`选项 --${def.name} 只能是: ${def.choices.join(', ')}`);
+    }
+    return rawValue;
+  }
+  if (def.type === 'string[]') {
+    const current = Array.isArray(previous) ? previous as string[] : [];
+    return [...current, ...rawValue.split(',').map(s => s.trim()).filter(Boolean)];
+  }
+  return rawValue;
+}
+
+function parseArgumentValue(def: CommandArgumentDefinition, values: string[]): unknown {
+  const raw = def.variadic || def.type === 'text' ? values.join(' ') : values[0];
+  if (def.type === 'number') return Number(raw);
+  if (def.type === 'boolean') return parseBoolean(raw);
+  return raw;
 }

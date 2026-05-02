@@ -1,6 +1,15 @@
 // ===== 指令服务接口 =====
 
-import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, ExecutionGuard, SafetyLevel } from './core.js';
+import type {
+  CommandDefinition,
+  RegisteredCommand,
+  CommandContext,
+  SubcommandDefinition,
+  ExecutionGuard,
+  SafetyLevel,
+  CommandArgumentDefinition,
+  CommandOptionDefinition,
+} from './core.js';
 
 /**
  * 指令树节点的扁平化视图（用于 WebUI 渲染、help 输出等）。
@@ -41,6 +50,14 @@ export interface CommandNodeInfo {
   hasAction: boolean;
   /** 注册此根指令的插件名（同根的所有后代共用） */
   pluginName: string;
+  /** 位置参数声明 */
+  arguments?: CommandArgumentDefinition[];
+  /** 选项声明 */
+  options?: CommandOptionDefinition[];
+  /** 自定义用法文本 */
+  usage?: string;
+  /** 示例 */
+  examples?: string[];
 }
 
 /**
