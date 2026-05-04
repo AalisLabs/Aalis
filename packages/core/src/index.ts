@@ -59,6 +59,7 @@ export type {
   ConfigSchema,
   AalisEvents,
   HookContextMap,
+  InboundPhaseData,
   MiddlewareFn,
   MiddlewareNext,
   CommandContext,

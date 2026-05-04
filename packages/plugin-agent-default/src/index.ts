@@ -113,7 +113,7 @@ class DefaultAgent implements AgentService {
   private archiveQueues = new Map<string, Promise<void>>();
 
   /** 已注册的预处理器（name → { priority, dispose }） */
-  private preprocessors = new Map<string, { priority: number; dispose: () => void }>();
+  private preprocessors = new Map<string, { dispose: () => void }>();
 
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
@@ -197,17 +197,21 @@ class DefaultAgent implements AgentService {
   /**
    * 注册消息预处理器
    *
+  /**
+   * 注册输入预处理器（如图片识别、文件读取、用户画像等）。
+   * 多个预处理器按注册顺序串行执行（Koa-style 洋葱模型）。
+   *
    * 底层通过 agent:input:before 中间件实现。
    * 同名注册会自动替换旧的预处理器。
    */
-  registerPreprocessor(name: string, handler: PreprocessorFn, priority = 500): () => void {
+  registerPreprocessor(name: string, handler: PreprocessorFn): () => void {
     // 同名替换
     const existing = this.preprocessors.get(name);
     if (existing) existing.dispose();
 
     const dispose = this.ctx.middleware('agent:input:before', async (data, next) => {
       await handler(data.message, next);
-    }, priority);
+    });
 
     const cleanup = () => {
       dispose();
@@ -215,18 +219,17 @@ class DefaultAgent implements AgentService {
       this.logger.info(`预处理器已注销: ${name}`);
     };
 
-    this.preprocessors.set(name, { priority, dispose: cleanup });
-    this.logger.info(`预处理器已注册: ${name} (priority: ${priority})`);
+    this.preprocessors.set(name, { dispose: cleanup });
+    this.logger.info(`预处理器已注册: ${name}`);
     return cleanup;
   }
 
   /**
-   * 获取当前所有已注册预处理器的元信息
+  /**
+   * 获取当前所有已注册预处理器的元信息（按注册顺序返回）
    */
   getPreprocessors(): PreprocessorInfo[] {
-    return [...this.preprocessors.entries()]
-      .map(([name, { priority }]) => ({ name, priority }))
-      .sort((a, b) => b.priority - a.priority);
+    return [...this.preprocessors.keys()].map(name => ({ name }));
   }
 
   /**

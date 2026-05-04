@@ -602,7 +602,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
     await next();
-  }, 800);
+  });
 
   // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
   // 监听 message-archive 在 archiveIncoming 落库成功后发出的 inbound:message:archived 事件，
@@ -840,7 +840,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       data.results.push({ source: 'user-profile', success: false, message: `用户档案清空失败: ${m}` });
     }
     await next();
-  }, 10);
+  });
 
   // ─── /profile 指令族 ───
   // /profile              查看自己的档案
