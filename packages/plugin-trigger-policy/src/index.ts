@@ -31,7 +31,14 @@ export const inject = {
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用触发策略', default: defaultTriggerPolicyConfig.enabled },
   platforms: { type: 'string', label: '生效平台（逗号分隔，空=全部）', default: '' },
-  intervalMode: { type: 'string', label: '间隔模式（fixed/dynamic/both）', default: defaultTriggerPolicyConfig.intervalMode },
+  intervalMode: {
+    type: 'select', label: '间隔模式', default: defaultTriggerPolicyConfig.intervalMode,
+    options: [
+      { label: 'fixed (仅按计数)', value: 'fixed' },
+      { label: 'dynamic (仅按评分阈值)', value: 'dynamic' },
+      { label: 'both (任一满足)', value: 'both' },
+    ],
+  },
   triggerOnAt: { type: 'boolean', label: '检测 @ 提及', default: defaultTriggerPolicyConfig.triggerOnAt },
   triggerNames: { type: 'string', label: '触发名别名（逗号分隔）', default: '' },
   muteKeywords: { type: 'string', label: '禁言关键词（逗号分隔）', default: '' },
@@ -121,7 +128,14 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       return next();
     }
 
-    const decision = service.decide(message);
+    let decision: ReturnType<typeof service.decide>;
+    try {
+      decision = service.decide(message);
+    } catch (err) {
+      ctx.logger.warn(`[trigger] decide() 异常，默认放行: ${err}`);
+      await next();
+      return;
+    }
     if (decision.kind === 'immediate' || decision.kind === 'interval') {
       ctx.logger.debug(`[trigger] ${decision.kind} 触发 (${decision.reason}): session=${message.sessionId}`);
       flow?.recordTriggered(message.sessionId);
