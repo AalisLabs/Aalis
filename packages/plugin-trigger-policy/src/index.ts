@@ -30,7 +30,6 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用触发策略', default: defaultTriggerPolicyConfig.enabled },
   scopes: {
     type: 'multiselect',
     label: '生效作用域',

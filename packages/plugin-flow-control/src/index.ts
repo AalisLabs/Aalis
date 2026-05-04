@@ -39,7 +39,6 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用流控', default: defaultFlowControlConfig.enabled },
   scopes: {
     type: 'multiselect',
     label: '生效作用域',
