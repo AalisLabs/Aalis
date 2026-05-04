@@ -1,11 +1,9 @@
 import type { HookContextMap, MiddlewareFn, MiddlewareNext } from './types/index.js';
-import { HOOK_DEFAULT_PRIORITY } from './constants.js';
 
 interface HookEntry<T> {
   fn: MiddlewareFn<T>;
   priority: number;
   contextId: string;
-  order: number;
 }
 
 /**
@@ -23,7 +21,6 @@ interface HookEntry<T> {
  */
 export class HookRegistry {
   private hooks = new Map<string, HookEntry<any>[]>();
-  private nextOrder = 0;
 
   /**
    * 注册中间件，返回 dispose 函数
@@ -31,7 +28,7 @@ export class HookRegistry {
   register<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
-    priority: number = HOOK_DEFAULT_PRIORITY,
+    priority: number = 0,
     contextId: string = 'root',
   ): () => void {
     let list = this.hooks.get(hook);
@@ -39,10 +36,10 @@ export class HookRegistry {
       list = [];
       this.hooks.set(hook, list);
     }
-    const entry: HookEntry<HookContextMap[K]> = { fn, priority, contextId, order: this.nextOrder++ };
+    const entry: HookEntry<HookContextMap[K]> = { fn, priority, contextId };
     list.push(entry);
-    // 按优先级降序排列；同优先级按注册顺序稳定执行。
-    list.sort((a, b) => (b.priority - a.priority) || (a.order - b.order));
+    // 按优先级降序排列
+    list.sort((a, b) => b.priority - a.priority);
 
     return () => {
       const idx = list!.indexOf(entry);
