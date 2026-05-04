@@ -203,31 +203,48 @@ disabled ←─(手动禁用)─ active
 
 ## 中间件钩子管道
 
-钩子（Hook）是有序的中间件管道，插件可拦截核心流程的各阶段。
+钩子（Hook）是命名的中间件管道，插件可拦截核心流程的各阶段。
 
 ### 执行模型
 
 ```
-hooks.run(hookName, data, defaultAction)
+hooks.run(hookName, data, defaultAction?) → reachedEnd: boolean
   │
   ▼
-中间件 A (priority=200) ─── await fn(data, next)
-  │ next()                     │ 不调用 next() → 中断
-  ▼                             ▼
-中间件 B (priority=100)      管道终止，defaultAction 不执行
+handler A（先注册）─── await fn(data, next)
+  │ next()              │ 不调用 next() → 链终止
+  ▼                      ▼
+handler B（后注册）   管道返回 false，defaultAction 不执行
   │ next()
   ▼
-中间件 C (priority=0)
-  │ next()
-  ▼
-defaultAction() ← 所有中间件通过后执行
+defaultAction()        ← 所有 handler 通过后执行
 ```
 
-### 钩子列表
+**关键约定**：
+- 同一钩子内多个 handler 按 **注册顺序** 执行洋葱模型，无优先级数字
+- 不调用 `next()` 即中止整个管道（含 defaultAction）；`hooks.run()` 返回 `false`
+- 跨钩子的顺序由调度方（如 plugin-gateway）显式决定
+
+### Gateway 入站生命周期相位
+
+入站消息按以下命名相位**顺序**串行执行；任一相位被 swallow 即停止后续调度：
+
+| 相位 | 数据载荷 | 占据者 | 默认动作 |
+|---|---|---|---|
+| `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
+| `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
+| `inbound:trigger` | `InboundPhaseData` | plugin-trigger-policy | （无）|
+| `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)` |
+
+`InboundPhaseData = { message, metadata, agent }`，对象在四个相位间共享传递。
+第三方插件可注册到任一相位获得清晰的语义位置——无需理解优先级数字、无需与其他插件协商占位。
+
+### 其他钩子
 
 | 钩子名 | 数据 | 用途 |
 |---|---|---|
-| `agent:input:before` | `{ message, metadata }` | 修改/拦截收到的消息（图像识别、文件提取、流控拦截） |
+| `outbound:dispatch` | `{ message, metadata }` | 出站主管道；默认动作是 `emit('outbound:message')`，handler 可脱敏 / 限速 / 审计。 |
+| `agent:input:before` | `{ message, metadata }` | 修改/拦截收到的消息（图像识别、文件提取） |
 | `agent:turn:after` | `{ message, reply, sessionId, metadata }` | agent 回复周期完成后（摘要触发、子任务完成检测） |
 | `agent:llm:before` | `{ messages, tools, sessionId }` | 修改发给 LLM 的消息列表和工具（记忆注入、技能注入、工具搜索替换） |
 | `agent:llm:after` | `{ response, messages }` | 处理 LLM 返回的响应 |
@@ -235,11 +252,16 @@ defaultAction() ← 所有中间件通过后执行
 | `agent:tool:after` | `{ name, result, toolCallContext }` | 处理工具返回结果 |
 | `agent:reply:before` | `{ content, sessionId }` | 修改最终回复内容（persona JSON 解析） |
 
-中间件按优先级降序执行，通过调用 `next()` 传递控制权。**不调用 `next()` 即中止整个管道（包括 defaultAction）**——这是拦截消息的标准做法。
+> 历史上的 `gateway:inbound` / `gateway:outbound` / `agent:route` 钩子已废弃。
+> 入站请使用 `inbound:*` 相位，出站请使用 `outbound:dispatch`。
+
+### 遥测事件
+
+`gateway:phase:done` 在每个 inbound 相位结束后发出，携带 `{ phase, reachedEnd, durationMs, sessionId, platform }`，可用于度量耗时与 swallow 率，对主流程零侵入。
 
 ### 扩展自定义钩子
 
-插件可以定义并触发自己的钩子，第三方可注入中间件：
+插件可以定义并触发自己的钩子，第三方可注入 handler：
 
 ```typescript
 // 定义钩子的插件
@@ -247,7 +269,7 @@ await ctx.hooks.run('my-plugin:before', { task: taskData }, async () => {
   // defaultAction
 });
 
-// 拦截钩子的第三方插件
+// 注入 handler 的第三方插件
 ctx.middleware('my-plugin:before', async (data, next) => {
   data.task.modified = true;
   await next();

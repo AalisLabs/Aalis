@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Context, MemoryService, Message, IncomingMessage } from '@aalis/core';
+import type { Context, GatewayService, MemoryService, Message, IncomingMessage } from '@aalis/core';
 import type {
   BroadcastOptions,
   ChannelInboundEvent,
@@ -175,10 +175,16 @@ export class SessionChannelManager implements SessionChannelService {
     if (!content) return;
     const exclude = new Set(opts?.exclude ?? []);
     const source = opts?.source ?? 'system';
+    const gateway = this.ctx.getService<GatewayService>('gateway');
     for (const sessionId of ch.boundSessions) {
       if (exclude.has(sessionId)) continue;
       // 不写 platform；具体平台由 sessionId 路由表决定（onebot 适配器自己识别）
-      await this.ctx.emit('outbound:message', { content, sessionId, source });
+      const msg = { content, sessionId, source };
+      if (gateway) {
+        await gateway.dispatchOutbound(msg);
+      } else {
+        await this.ctx.emit('outbound:message', msg);
+      }
     }
   }
 

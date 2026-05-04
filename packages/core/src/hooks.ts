@@ -2,20 +2,26 @@ import type { HookContextMap, MiddlewareFn, MiddlewareNext } from './types/index
 
 interface HookEntry<T> {
   fn: MiddlewareFn<T>;
-  priority: number;
   contextId: string;
 }
 
 /**
- * 钩子注册表 —— 管理中间件管道
+ * 钩子注册表 —— 命名生命周期事件的 handler 总线
  *
- * 插件通过 ctx.middleware(hook, fn) 注册中间件。
- * Agent 在关键流程点执行 hooks.run(hook, data, defaultAction)。
+ * 设计哲学：每个钩子键代表一个 **语义清晰的生命周期事件**（例如
+ * `inbound:command` / `inbound:flow` / `agent:llm:before`），handler
+ * 在事件内部按 **注册顺序** 串行执行洋葱模型 (Koa-style next)。
  *
- * 中间件按优先级排序（数字越大越先执行），可以：
+ * 不再使用数字 priority：相位之间的次序由调度方（plugin-gateway 等）
+ * 显式表达；相位内部的 handler 应顺序无关，或由相位拥有方约定。
+ *
+ * 插件通过 `ctx.middleware(hook, fn)` 注册 handler。
+ * 服务在关键流程点执行 `hooks.run(hook, data, defaultAction)`。
+ *
+ * Handler 可以：
  * - 修改 data 对象（引用传递）
  * - 调用 next() 继续管道
- * - 不调用 next() 来中断流程（包括 defaultAction）
+ * - 不调用 next() 来中断流程（包括 defaultAction）—— 标准的"已处理"信号
  *
  * 第三方插件可通过 TS declaration merging 扩展 HookContextMap。
  */
@@ -23,12 +29,12 @@ export class HookRegistry {
   private hooks = new Map<string, HookEntry<any>[]>();
 
   /**
-   * 注册中间件，返回 dispose 函数
+   * 注册 handler，返回 dispose 函数。
+   * 同一钩子键内的多个 handler 按注册顺序执行。
    */
   register<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
-    priority: number = 0,
     contextId: string = 'root',
   ): () => void {
     let list = this.hooks.get(hook);
@@ -36,10 +42,8 @@ export class HookRegistry {
       list = [];
       this.hooks.set(hook, list);
     }
-    const entry: HookEntry<HookContextMap[K]> = { fn, priority, contextId };
+    const entry: HookEntry<HookContextMap[K]> = { fn, contextId };
     list.push(entry);
-    // 按优先级降序排列
-    list.sort((a, b) => b.priority - a.priority);
 
     return () => {
       const idx = list!.indexOf(entry);
@@ -48,33 +52,40 @@ export class HookRegistry {
   }
 
   /**
-   * 执行中间件管道
+   * 执行钩子链
    *
-   * 中间件不调用 next() 即可中断整个管道（包括 defaultAction）。
+   * Handler 不调用 next() 即可中断整个管道（包括 defaultAction）。
    * 这是拦截/跳过的标准手段，无需额外的 skip 标志。
    *
-   * @param hook - 钩子名称
-   * @param data - 传递给中间件的数据对象（会被中间件修改）
-   * @param defaultAction - 所有中间件通过后的默认操作
+   * 返回 `true` 表示链路完整走完（执行了 defaultAction，或本就没有 handler）；
+   * 返回 `false` 表示被某个 handler swallow。
+   * 调度方（如 plugin-gateway 多相位调度）可据此决定是否进入后续相位。
+   *
+   * @param hook - 钩子键（命名生命周期事件）
+   * @param data - 传递给 handler 的数据对象（会被 handler 修改）
+   * @param defaultAction - 所有 handler 都 next() 通过后的默认操作
    */
   async run<K extends string & keyof HookContextMap>(
     hook: K,
     data: HookContextMap[K],
     defaultAction?: () => Promise<void>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const list = this.hooks.get(hook) ?? [];
     let index = 0;
+    let reachedEnd = false;
 
     const next: MiddlewareNext = async () => {
       if (index < list.length) {
         const entry = list[index++];
         await entry.fn(data, next);
-      } else if (defaultAction) {
-        await defaultAction();
+      } else {
+        reachedEnd = true;
+        if (defaultAction) await defaultAction();
       }
     };
 
     await next();
+    return reachedEnd;
   }
 
   /**
