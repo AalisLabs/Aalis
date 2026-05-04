@@ -708,6 +708,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
+    // 特殊处理 gateway-scopes：返回 platform×sessionType 笛卡尔积，
+    // 用于 plugin-flow-control / plugin-trigger-policy 的多选作用域配置。
+    if (serviceName === 'gateway-scopes') {
+      const platforms = ctx.getPlatformNames();
+      // 常见会话类型；若未来 adapter 引入新类型，用户可在 UI 里手动输入（allowCustom）
+      const sessionTypes = ['group', 'private', 'channel', 'guild', 'direct'];
+      const scopes: Array<{ value: string; label: string }> = [];
+      // 全部
+      scopes.push({ value: '*', label: '* （全部平台 × 全部类型）' });
+      // 仅按 sessionType 通配
+      for (const t of sessionTypes) scopes.push({ value: `*:${t}`, label: `*:${t} （所有平台的 ${t} 会话）` });
+      // 仅按 platform 通配
+      for (const p of platforms) scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部会话）` });
+      // 精确组合
+      for (const p of platforms) {
+        for (const t of sessionTypes) {
+          scopes.push({ value: `${p}:${t}`, label: `${p}:${t}` });
+        }
+      }
+      res.json({ models: scopes.map(s => s.value), details: scopes });
+      return;
+    }
+
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
       const groups = ctx.tools?.getGroups() ?? [];

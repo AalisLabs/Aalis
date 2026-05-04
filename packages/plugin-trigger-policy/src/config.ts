@@ -2,13 +2,15 @@
 
 export interface TriggerPolicyConfig {
   enabled: boolean;
-  /** 仅对这些 platform 生效（空数组=所有 platform） */
+  /** 仅对这些 platform 生效；已被 scopes 取代，仅作兼容回退。 */
   platforms: string[];
-  /**
-   * 仅对这些会话类型生效（空数组=所有）。
-   * 默认 ['group']：私聊 / CLI / WebUI 不需触发判定，直接走 agent。
-   */
+  /** 仅对这些会话类型生效；已被 scopes 取代，仅作兼容回退。 */
   sessionTypes: string[];
+  /**
+   * 统一作用域名单：platform:sessionType，支持 *。
+   * 默认 ['*:group']；空数组 = 不生效（等于禁用触发策略）。
+   */
+  scopes: string[];
   /** 模式：fixed=按计数，dynamic=按评分阈值，both=任一满足 */
   intervalMode: 'fixed' | 'dynamic' | 'both';
   /** 是否检测 @ 提及作为即时触发 */
@@ -24,7 +26,8 @@ export interface TriggerPolicyConfig {
 export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   enabled: true,
   platforms: [],
-  sessionTypes: ['group'],
+  sessionTypes: [],
+  scopes: ['*:group'],
   intervalMode: 'both',
   triggerOnAt: true,
   triggerNames: [],
@@ -45,7 +48,8 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
   return {
     enabled: (raw.enabled as boolean) ?? d.enabled,
     platforms: parseStringList(raw.platforms),
-    sessionTypes: raw.sessionTypes === undefined ? d.sessionTypes : parseStringList(raw.sessionTypes),
+    sessionTypes: parseStringList(raw.sessionTypes),
+    scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
     intervalMode: ((): TriggerPolicyConfig['intervalMode'] => {
       const v = raw.intervalMode;
       return v === 'fixed' || v === 'dynamic' || v === 'both' ? v : d.intervalMode;
@@ -71,4 +75,22 @@ export function isSessionTypeEnabled(cfg: TriggerPolicyConfig, sessionType: stri
   if (cfg.sessionTypes.length === 0) return true;
   if (!sessionType) return false;
   return cfg.sessionTypes.includes(sessionType);
+}
+
+/** scope 匹配：platform:sessionType。详见 plugin-flow-control 同名函数。 */
+export function isScopeEnabled(
+  cfg: TriggerPolicyConfig,
+  platform: string | undefined,
+  sessionType: string | undefined,
+): boolean {
+  if (cfg.scopes.length === 0) return false;
+  const p = platform ?? '';
+  const t = sessionType ?? '';
+  for (const raw of cfg.scopes) {
+    const [sp, st] = raw.includes(':') ? raw.split(':', 2) : [raw, '*'];
+    const platOk = sp === '*' || sp === '' || sp === p;
+    const typeOk = st === '*' || st === '' || st === t;
+    if (platOk && typeOk) return true;
+  }
+  return false;
 }
