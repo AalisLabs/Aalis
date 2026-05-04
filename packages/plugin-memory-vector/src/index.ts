@@ -384,7 +384,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
 
     await next();
-  }, 10);
+  });
 
   // === 检索并注入上下文 ===
 
@@ -581,7 +581,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
 
     await next();
-  }, 50);
+  });
 
   // === 工具：主动语义召回 ===
   // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
