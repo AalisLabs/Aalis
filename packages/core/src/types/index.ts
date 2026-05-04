@@ -40,7 +40,7 @@ export type {
 } from './core.js';
 
 // 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
-export type { HookContextMap } from './hooks.js';
+export type { HookContextMap, InboundPhaseData } from './hooks.js';
 
 // 指令服务接口
 export type { CommandService, CommandNodeInfo } from './commands.js';
