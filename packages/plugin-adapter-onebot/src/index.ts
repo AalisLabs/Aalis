@@ -542,8 +542,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           data: { duration: remainSec, until: ts * 1000 },
         });
       }
-    } catch {
+    } catch (err) {
       // 静默失败：可能是协议端不支持或群已退出
+      ctx.logger.debug(`[禁言恢复] session=${sessionId} shut_up_timestamp 查询失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
