@@ -149,7 +149,7 @@ interface ConnectionState {
 // 适配器只保留两个最小桥接：
 //   - 群禁言事件 → ctx.getService<FlowControlService>('flow-control').setMuted()
 //   - shut_up_timestamp 启动恢复 → 同上
-// 其他路径全部走 gateway:inbound 中间件链。
+// 其他路径全部走 inbound:command/flow/trigger/dispatch 生命周期相位。
 
 // ===== 工具函数 =====
 
@@ -1434,7 +1434,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.debug(`OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`);
 
-    // 注：指令解析已迁移到 plugin-commands 的 gateway:inbound 中间件；
+    // 注：指令解析已迁移到 plugin-commands 的 inbound:command 相位；
     // 适配器只负责将原始消息送入 inbound:message 总线，由 gateway 链路统一拦截。
 
     const sessionType = event.detailType === 'group' ? 'group'
@@ -1484,7 +1484,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 适配器不再做流控/触发判定 —— 一律送入 inbound:message，
-      // 由 plugin-flow-control / plugin-trigger-policy 在 gateway:inbound 中间件链
+      // 由 plugin-flow-control / plugin-trigger-policy 在 inbound:flow / inbound:trigger 相位
       // 决定是否吞噬、归档、或继续派发给 agent。
       // 启动后/重连后通过 shut_up_timestamp 懒查询恢复禁言状态（每会话一次）
       if (sessionType === 'group') {
@@ -1510,7 +1510,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         groupName,
         groupId: event.groupId,
         replyTo,
-        // triggerType 由 trigger-policy 在 gateway:inbound 中间件中填充
+        // triggerType 由 trigger-policy 在 inbound:trigger 相位中填充
       });
     })().catch(err => {
       ctx.logger.warn(`OneBot 消息处理异常: ${err}`);
