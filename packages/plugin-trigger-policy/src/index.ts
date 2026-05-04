@@ -35,6 +35,7 @@ export const configSchema: ConfigSchema = {
   triggerOnAt: { type: 'boolean', label: '检测 @ 提及', default: defaultTriggerPolicyConfig.triggerOnAt },
   triggerNames: { type: 'string', label: '触发名别名（逗号分隔）', default: '' },
   muteKeywords: { type: 'string', label: '禁言关键词（逗号分隔）', default: '' },
+  muteTimeSeconds: { type: 'number', label: '禁言关键词命中时长（秒）', default: defaultTriggerPolicyConfig.muteTimeSeconds },
 };
 
 export const defaultConfig = defaultTriggerPolicyConfig;
@@ -90,6 +91,12 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   ctx.provide('trigger-policy', service);
 
+  ctx.logger.info(
+    `[trigger] 已启用 (模式=${cfg.intervalMode}, @提及=${cfg.triggerOnAt}, ` +
+    `别名=${cfg.triggerNames.length}, mute关键词=${cfg.muteKeywords.length}, ` +
+    `mute时长=${cfg.muteTimeSeconds}s, 平台范围=${cfg.platforms.length === 0 ? '全部' : cfg.platforms.join(',')})`,
+  );
+
   // ===== gateway:inbound 中间件：触发判定 =====
   // priority=700 → 在 flow-control(900) 之后；进入此中间件意味着已通过冷却/限速闸门。
   ctx.middleware('gateway:inbound', async (data, next) => {
@@ -101,9 +108,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
     // mute 关键词命中：设置自禁言并 swallow
     if (checkMuteKeyword(ctx, cfg, message.content)) {
-      ctx.logger.info(`[trigger] mute 关键词命中 → swallow + setMuted: ${message.sessionId}`);
-      // 默认禁言时长 60s；具体值由 flow-control 自身配置控制（这里只是触发器）
-      flow?.setMuted(message.sessionId, 60);
+      ctx.logger.info(
+        `[trigger] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${message.sessionId}`,
+      );
+      flow?.setMuted(message.sessionId, cfg.muteTimeSeconds);
       await shadowArchive(message);
       return; // swallow
     }

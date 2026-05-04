@@ -227,13 +227,17 @@ defaultAction() ← 所有中间件通过后执行
 
 | 钩子名 | 数据 | 用途 |
 |---|---|---|
-| `agent:input:before` | `{ message, metadata }` | 修改/拦截收到的消息（图像识别、文件提取、流控拦截） |
+| `gateway:inbound` | `{ message, metadata, agent }` | 入站主管道；默认动作是 `agent.handleMessage`。**命令拦截 / 流控 / 触发策略均在此实现**。 |
+| `gateway:outbound` | `{ message, metadata }` | 出站主管道；默认动作是 `emit('outbound:message')`，中间件可脱敏 / 限速 / 审计。 |
+| `agent:input:before` | `{ message, metadata }` | 修改/拦截收到的消息（图像识别、文件提取） |
 | `agent:turn:after` | `{ message, reply, sessionId, metadata }` | agent 回复周期完成后（摘要触发、子任务完成检测） |
 | `agent:llm:before` | `{ messages, tools, sessionId }` | 修改发给 LLM 的消息列表和工具（记忆注入、技能注入、工具搜索替换） |
 | `agent:llm:after` | `{ response, messages }` | 处理 LLM 返回的响应 |
 | `agent:tool:before` | `{ name, args, toolCallContext }` | 修改工具调用参数 |
 | `agent:tool:after` | `{ name, result, toolCallContext }` | 处理工具返回结果 |
 | `agent:reply:before` | `{ content, sessionId }` | 修改最终回复内容（persona JSON 解析） |
+
+> `agent:route` 钩子已废弃（原是 core 内置的路由插点）。请使用 `gateway:inbound`。
 
 中间件按优先级降序执行，通过调用 `next()` 传递控制权。**不调用 `next()` 即中止整个管道（包括 defaultAction）**——这是拦截消息的标准做法。
 
