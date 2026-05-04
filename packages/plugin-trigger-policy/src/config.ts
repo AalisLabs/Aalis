@@ -1,7 +1,6 @@
 // ----- 触发策略配置 -----
 
 export interface TriggerPolicyConfig {
-  enabled: boolean;
   /**
    * 统一作用域名单：platform:sessionType，支持 *。
    * 默认 ['*:group']；空数组 = 不生效（等于禁用触发策略）。
@@ -20,7 +19,6 @@ export interface TriggerPolicyConfig {
 }
 
 export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
-  enabled: true,
   scopes: ['*:group'],
   intervalMode: 'both',
   triggerOnAt: true,
@@ -40,7 +38,6 @@ function parseStringList(val: unknown): string[] {
 export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): TriggerPolicyConfig {
   const d = defaultTriggerPolicyConfig;
   return {
-    enabled: (raw.enabled as boolean) ?? d.enabled,
     scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
     intervalMode: ((): TriggerPolicyConfig['intervalMode'] => {
       const v = raw.intervalMode;
