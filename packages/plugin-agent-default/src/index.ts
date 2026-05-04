@@ -1379,10 +1379,8 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
-   *
-   * 应用入口已通过 `requiredServices: ['gateway']` 强制声明 gateway，
-   * 实践中 fallback 路径仅用于沙盒/测试或 gateway 启动失败的退化场景。
+  * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
+  * 完整发行入口通常会要求 gateway；最小应用/测试场景仍可不加载 gateway。
    */
   private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const gateway = this.ctx.getService<GatewayService>('gateway');
