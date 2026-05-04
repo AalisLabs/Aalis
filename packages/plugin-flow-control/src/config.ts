@@ -5,6 +5,13 @@ export interface FlowControlConfig {
   enabled: boolean;
   /** 仅对这些 platform 生效（空数组=所有 platform） */
   platforms: string[];
+  /**
+   * 仅对这些会话类型生效（空数组=所有会话类型）。
+   * 默认 ['group']：与历史 OneBot ChatFlow 一致，只对群聊限速/冷却，
+   * 避免一对一私聊 / CLI / WebUI 被误伤。
+   * 可设为 [] 对所有会话启用，或加入 'channel'/'guild' 等未来型别。
+   */
+  sessionTypes: string[];
 
   /** 固定间隔：每 N 条消息累计一次触发 */
   fixedInterval: number;
@@ -41,6 +48,7 @@ export interface FlowControlConfig {
 export const defaultFlowControlConfig: FlowControlConfig = {
   enabled: true,
   platforms: [],
+  sessionTypes: ['group'],
   fixedInterval: 5,
   activityScoreLower: 0.3,
   activityScoreUpper: 0.85,
@@ -72,6 +80,7 @@ export function resolveFlowControlConfig(raw: Record<string, unknown>): FlowCont
   return {
     enabled: (raw.enabled as boolean) ?? d.enabled,
     platforms: parseStringList(raw.platforms),
+    sessionTypes: raw.sessionTypes === undefined ? d.sessionTypes : parseStringList(raw.sessionTypes),
     fixedInterval: (raw.fixedInterval as number) ?? d.fixedInterval,
     activityScoreLower: (raw.activityScoreLower as number) ?? d.activityScoreLower,
     activityScoreUpper: (raw.activityScoreUpper as number) ?? d.activityScoreUpper,
@@ -102,4 +111,11 @@ export function isPlatformEnabled(cfg: FlowControlConfig, platform: string | und
   if (cfg.platforms.length === 0) return true;
   if (!platform) return false;
   return cfg.platforms.includes(platform);
+}
+
+/** 会话类型是否在流控生效范围内。空白名单 = 全部生效。 */
+export function isSessionTypeEnabled(cfg: FlowControlConfig, sessionType: string | undefined): boolean {
+  if (cfg.sessionTypes.length === 0) return true;
+  if (!sessionType) return false;
+  return cfg.sessionTypes.includes(sessionType);
 }
