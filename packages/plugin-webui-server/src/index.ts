@@ -708,6 +708,35 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
+    // 特殊处理 gateway-scopes：基于已注册 adapter.sessionTypes 真实声明生成
+    // platform×sessionType 的笛卡尔积。无声明的 adapter 视为单会话（不展开 sessionType）。
+    if (serviceName === 'gateway-scopes') {
+      const adapters = ctx.getPlatforms();
+      const platformTypes = new Map<string, readonly string[]>();
+      const allTypes = new Set<string>();
+      for (const a of adapters) {
+        const types = a.sessionTypes ?? [];
+        platformTypes.set(a.platform, types);
+        for (const t of types) allTypes.add(t);
+      }
+      const scopes: Array<{ value: string; label: string }> = [];
+      scopes.push({ value: '*', label: '* （全部平台 × 全部类型）' });
+      for (const t of [...allTypes].sort()) {
+        scopes.push({ value: `*:${t}`, label: `*:${t} （所有平台的 ${t} 会话）` });
+      }
+      for (const [p, types] of platformTypes) {
+        if (types.length === 0) {
+          // 单会话平台 (cli/webui)：只列 platform 通配
+          scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 单会话）` });
+        } else {
+          scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部类型）` });
+          for (const t of types) scopes.push({ value: `${p}:${t}`, label: `${p}:${t}` });
+        }
+      }
+      res.json({ models: scopes.map(s => s.value), details: scopes });
+      return;
+    }
+
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
       const groups = ctx.tools?.getGroups() ?? [];
@@ -1502,6 +1531,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const adapter: PlatformAdapter = {
     adapterName: 'WebUI',
     platform: 'webui',
+    sessionTypes: [], // WebUI 单会话，不区分 sessionType
     getConnections(): PlatformConnection[] {
       // 统计所有活跃 WebSocket 客户端
       const activeCount = [...allClients].filter(ws => ws.readyState === WebSocket.OPEN).length;

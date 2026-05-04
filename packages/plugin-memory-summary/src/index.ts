@@ -365,7 +365,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
 
     await next();
-  }, 40);
+  });
 
   // === 在 agent:turn:after 钩子触发摘要生成 ===
   // 每轮对话结束后，异步检查是否需要生成摘要
@@ -375,7 +375,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     generateSummary(data.sessionId).catch(err => {
       ctx.logger.warn('异步摘要生成失败:', err);
     });
-  }, 0);
+  });
 
   // === 监听 token:usage 事件，预压缩触发 ===
   // agent 在每次 LLM 调用前发出 token 使用统计；
@@ -559,7 +559,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
 
     await next();
-  }, 10);
+  });
 
   // 清理
   ctx.on('dispose', () => {
