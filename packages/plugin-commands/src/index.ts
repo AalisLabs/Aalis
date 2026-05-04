@@ -9,6 +9,7 @@ import type {
   ToolService,
   CommandContext,
 } from '@aalis/core';
+import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
 import { CommandRegistry } from './commands.js';
 
 // ===== 插件元数据 =====
@@ -111,7 +112,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   //
   // 历史上 OneBot 适配器内联拦截命令；现已迁移到 gateway:inbound 中间件，
   // 所有平台共享同一套命令解析路径。
-  // 高优先级 (priority=1000) 确保命令检测在触发策略 / 流控之前执行。
+  // 高优先级 (GATEWAY_MIDDLEWARE_PRIORITY.COMMANDS=1000) 确保命令检测在触发策略 / 流控之前执行。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
     // 内部触发（idle-trigger 等无 userId）不参与命令解析
@@ -146,7 +147,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ctx.logger.warn(`指令执行失败: ${err}`);
     }
     // 命令命中：不调用 next() —— 中断后续中间件（包括 agent 默认派发）
-  }, 1000);
+  }, GATEWAY_MIDDLEWARE_PRIORITY.COMMANDS);
 
   // ===== 内置指令 =====
 

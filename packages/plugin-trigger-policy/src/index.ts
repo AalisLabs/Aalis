@@ -7,6 +7,7 @@ import type {
   TriggerDecision,
   TriggerPolicyService,
 } from '@aalis/core';
+import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
 import {
   type TriggerPolicyConfig,
   defaultTriggerPolicyConfig,
@@ -105,7 +106,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   );
 
   // ===== gateway:inbound 中间件：触发判定 =====
-  // priority=700 → 在 flow-control(900) 之后；进入此中间件意味着已通过冷却/限速闸门。
+  // priority=GATEWAY_MIDDLEWARE_PRIORITY.TRIGGER_POLICY(700) → 在 flow-control(900) 之后；进入此中间件意味着已通过冷却/限速闸门。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
     if (!isPlatformEnabled(cfg, message.platform)) return next();
@@ -147,7 +148,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     ctx.logger.debug(`[trigger] swallow (${decision.reason}): session=${message.sessionId}`);
     await shadowArchive(message);
     // flow-control 已在前置中调度 idle，无需重复
-  }, 700);
+  }, GATEWAY_MIDDLEWARE_PRIORITY.TRIGGER_POLICY);
 }
 
 export type { TriggerPolicyConfig };

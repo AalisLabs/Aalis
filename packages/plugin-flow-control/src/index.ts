@@ -7,6 +7,7 @@ import type {
   MessageArchiveService,
   OutgoingMessage,
 } from '@aalis/core';
+import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
 import {
   type FlowControlConfig,
   defaultFlowControlConfig,
@@ -207,7 +208,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   );
 
   // ===== gateway:inbound 中间件：流控前置闸门 =====
-  // priority=900 → 在 commands(1000) 之后、trigger-policy(700) 之前。
+  // priority=GATEWAY_MIDDLEWARE_PRIORITY.FLOW_CONTROL(900) → 在 commands(1000) 之后、trigger-policy(700) 之前。
   // 设计取舍：流控只对群会话（sessionType=='group'）生效；
   // 私聊 / 频道 / CLI / WebUI 直接放行 —— 与历史 OneBot ChatFlow 行为一致，
   // 避免一对一直接对话被冷却 / 限速误伤。
@@ -242,7 +243,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     }
     // 通过流控前置闸门：交给下一中间件（trigger-policy / agent）
     await next();
-  }, 900);
+  }, GATEWAY_MIDDLEWARE_PRIORITY.FLOW_CONTROL);
 
   // 出站消息后记录冷却 / 重置退避（同样仅对群会话计入流控）
   ctx.on('outbound:message', (msg: OutgoingMessage) => {
@@ -257,7 +258,28 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   ctx.on('ready', () => {
     platformIdle.start();
   });
+
+  // 长寿进程下避免 states 无限增长：每天扫描一次，清理 30 天未活动且无禁言/冷却挂起的会话
+  const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const sweepTimer = setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [sid, s] of states) {
+      const lastActive = Math.max(s.lastMessageTime, s.lastReplyTime);
+      const hasPending = s.mutedUntil > now || s.cooldownUntil > now || !!s.idleTimer;
+      if (!hasPending && lastActive > 0 && now - lastActive > SESSION_TTL_MS) {
+        clearSessionIdle(s);
+        states.delete(sid);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) ctx.logger.debug(`[flow] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
+  }, SWEEP_INTERVAL_MS);
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+
   ctx.on('dispose', () => {
+    clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);
     states.clear();

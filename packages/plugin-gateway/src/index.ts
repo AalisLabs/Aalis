@@ -42,10 +42,18 @@ export function apply(ctx: Context): void {
   async function processInbound(message: IncomingMessage): Promise<void> {
     const agent = ctx.getService<AgentService>('agent');
     const data = { message, metadata: {} as Record<string, unknown>, agent };
+    let reachedDefault = false;
     try {
       await ctx.hooks.run('gateway:inbound', data, async () => {
+        reachedDefault = true;
         await defaultDispatch(data.message, data.agent);
       });
+      // 中间件链未走到默认动作 → 被某一环 swallow（命令命中 / 流控吞掉 / 触发策略未达阈值）
+      if (!reachedDefault) {
+        logger.debug(
+          `[gateway:inbound] 消息未触达 agent (被中间件 swallow): session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
+        );
+      }
     } catch (err) {
       logger.warn(`gateway:inbound 处理异常: ${err}`);
     }
