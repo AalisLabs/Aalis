@@ -4,7 +4,7 @@
 
 ## 定位
 
-历史上 OneBot 适配器内置了一整套 ChatFlow 状态机，覆盖：消息计数、活跃指数衰减、禁言/冷却/限速窗口、空闲主动触发。该逻辑已抽到本插件，作为 `gateway:inbound` 的中间件 + 一个 `flow-control` 服务，让 CLI / WebUI / 未来其他平台都能复用同一套防 DDoS / 主动开聊机制。
+历史上 OneBot 适配器内置了一整套 ChatFlow 状态机，覆盖：消息计数、活跃指数衰减、禁言/冷却/限速窗口、空闲主动触发。该逻辑已抽到本插件，作为 `inbound:flow` 相位的 handler + 一个 `flow-control` 服务，让 CLI / WebUI / 未来其他平台都能复用同一套防 DDoS / 主动开聊机制。
 
 ## 注册的服务
 
@@ -12,10 +12,10 @@
 |---|---|---|
 | `flow-control` | `FlowControlService` | `recordIncoming` / `recordReply` / `recordTriggered` / `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted` / `getStateSnapshot` / `getThreshold` / `rescheduleIdle` |
 
-## 中间件
+## 接入相位
 
 ```
-gateway:inbound  priority=900
+inbound:flow   （由 plugin-gateway 在 inbound:command 之后、inbound:trigger 之前触发）
 ```
 
 仅对 `sessionType === 'group'` 的入站消息生效（私聊/CLI/WebUI 直接放行，与历史 OneBot ChatFlow 行为一致）。命中以下任一条件即 `shadowArchive` + swallow（不调用 `next()`）：
