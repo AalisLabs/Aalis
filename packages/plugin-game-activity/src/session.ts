@@ -41,8 +41,6 @@ export class GameActivitySession {
   /** Long-running decision conversation. First entry is the system prompt. */
   private history: Message[] = [];
 
-  private readonly systemPrompt: string;
-
   private readonly historyOptions: GameActivityHistoryOptions;
 
   private compressedSummary: string | undefined;
@@ -55,7 +53,6 @@ export class GameActivitySession {
   ) {
     this.adapter = adapter;
     this.hello = hello;
-    this.systemPrompt = systemPrompt;
     this.historyOptions = normalizeHistoryOptions(historyOptions);
     this.history.push({ role: 'system', content: systemPrompt });
   }

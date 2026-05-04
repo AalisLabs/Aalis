@@ -24,7 +24,7 @@ import type {
   GatewayService,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
-import { getSenderLabel, prefixSender, getMessageName } from '@aalis/core';
+import { getSenderLabel, getMessageName } from '@aalis/core';
 
 /**
  * 将时间戳格式化为可读的时间标签。

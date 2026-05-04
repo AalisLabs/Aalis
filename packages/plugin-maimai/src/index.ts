@@ -1,7 +1,6 @@
 import type {
   Context,
   ConfigSchema,
-  ToolCallContext,
   CommandContext,
   MemoryService,
 } from '@aalis/core';
@@ -526,7 +525,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     ctx.command(
       'maimai',
       '舞萌 DX 查分。子指令：info/b50/recent/song/bind/unbind',
-      async (cmdCtx) => formatHelp(),
+      async () => formatHelp(),
       {
         subcommands: [
           {

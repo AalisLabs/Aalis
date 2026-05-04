@@ -1,6 +1,6 @@
 import { Context } from './context.js';
 import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, DependencyDeclaration, ConfigSchema, ExtendDeclaration, WebuiPage } from './types/index.js';
+import type { InjectDeclaration, ConfigSchema, ExtendDeclaration, WebuiPage } from './types/index.js';
 import type { Logger } from './logger.js';
 
 // ----- 插件定义格式 -----
@@ -328,7 +328,7 @@ export class PluginManager {
    * 移除一个多实例插件（不允许移除主实例）
    */
   async removeInstance(instanceId: string): Promise<boolean> {
-    const { moduleName, suffix } = parseInstanceId(instanceId);
+    const { suffix } = parseInstanceId(instanceId);
     if (!suffix) {
       this.logger.warn(`不能移除主实例 "${instanceId}"`);
       return false;

@@ -158,7 +158,6 @@ interface APIChatResponse {
 // ===== LLM 服务实现 =====
 
 class DeepSeekLLMService implements LLMService {
-  private ctx: Context;
   private apiKey: string;
   private baseUrl: string;
   private customModels: string[];
@@ -174,7 +173,6 @@ class DeepSeekLLMService implements LLMService {
   private logger;
 
   constructor(ctx: Context, config: DeepSeekConfig, enableThinking: boolean) {
-    this.ctx = ctx;
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;

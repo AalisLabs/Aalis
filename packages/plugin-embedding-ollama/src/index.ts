@@ -22,15 +22,6 @@ export const defaultConfig = {
   retries: 1,
 };
 
-// ===== 配置 =====
-
-interface OllamaEmbeddingConfig {
-  baseUrl: string;
-  model: string;
-  timeoutMs: number;
-  retries: number;
-}
-
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);

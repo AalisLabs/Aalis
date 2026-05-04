@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, memo, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';

@@ -139,7 +139,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     authority: 5,
     safety: 'dangerous',
     permissions: ['tool:shell.exec', 'system:process.exec'],
-    handler: async (args, callCtx) => {
+    handler: async (args, _callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);
       const timeout = Math.min(
@@ -440,7 +440,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
 
   // 清理：插件卸载时终止所有后台进程
   ctx.on('dispose', async () => {
-    for (const [sessionId, processes] of backgroundProcesses) {
+    for (const [, processes] of backgroundProcesses) {
       for (const [, managed] of processes) {
         if (!managed.done) {
           try { managed.process.kill('SIGTERM'); } catch {}
