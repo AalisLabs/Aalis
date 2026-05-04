@@ -7,8 +7,9 @@
 //   - 出站：提供 `dispatchOutbound()` 接口，运行 `gateway:outbound` 钩子链，
 //           默认动作是向 `outbound:message` 事件总线广播，平台插件接收并发送。
 //
-// core 不再绑定具体的路由实现，gateway 服务由 plugin-gateway 提供，
-// 应用入口通过 `requiredServices` 声明依赖。
+// core 不再绑定具体的路由实现，gateway 服务由 plugin-gateway 提供。
+// 完整发行入口可通过 `requiredServices` 声明 gateway 依赖；最小应用可不加载 gateway，
+// 由 core fallback 入站路由直接派发给 agent。
 
 import type { IncomingMessage, OutgoingMessage } from './core.js';
 
