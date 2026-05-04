@@ -18,8 +18,6 @@ export type PreprocessorFn = (
 export interface PreprocessorInfo {
   /** 预处理器名称 */
   name: string;
-  /** 优先级（越大越先执行） */
-  priority: number;
 }
 
 /**
@@ -48,7 +46,7 @@ export interface AgentService {
    * @param priority 优先级（默认 500，越大越先执行）
    * @returns dispose 函数，调用后注销此预处理器
    */
-  registerPreprocessor?(name: string, handler: PreprocessorFn, priority?: number): () => void;
+  registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
 
   /** 获取当前所有已注册预处理器的元信息 */
   getPreprocessors?(): PreprocessorInfo[];
