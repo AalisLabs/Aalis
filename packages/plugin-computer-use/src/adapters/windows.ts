@@ -10,16 +10,13 @@ import { execFile, spawn } from 'node:child_process';
 import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import type { PlatformAdapter, Point, Region, ScreenInfo, WindowInfo, MouseButton } from '../platform.js';
-
-const execFileAsync = promisify(execFile);
 
 function runPowerShell(script: string, timeout = 10000): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', script],
       { timeout, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout, stderr) => {
+      (err, stdout, _stderr) => {
         if (err) reject(err);
         else resolve(stdout.trim());
       }

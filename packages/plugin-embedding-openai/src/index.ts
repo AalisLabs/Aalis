@@ -19,14 +19,6 @@ export const defaultConfig = {
   model: 'text-embedding-3-small',
 };
 
-// ===== 配置 =====
-
-interface OpenAIEmbeddingConfig {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-}
-
 // ===== 服务实现 =====
 
 class OpenAIEmbeddingService implements EmbeddingService {

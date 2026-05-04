@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray, ServiceProviderInfo } from '../types';
-import { api } from '../api';
+import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray } from '../types';
 
 // ===== 数字输入框（解决小数输入被截断问题） =====
 // 受控 number input 在输入 0.0x 时会被 Number() 取整覆盖，

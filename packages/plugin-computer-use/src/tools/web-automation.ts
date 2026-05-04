@@ -10,12 +10,8 @@
  * 适合 AX API 无法有效识别内部 UI 的现代 Web 技术应用（QQ、VS Code、Discord 等）。
  */
 
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { Context } from '@aalis/core';
 import { CdpManager, type DomNode } from '../cdp/client.js';
-
-const execFile = promisify(execFileCb);
 
 /** 将 DomNode 树格式化为 AI 友好的文本 */
 function formatDomTree(node: DomNode, indent: number = 0): string {

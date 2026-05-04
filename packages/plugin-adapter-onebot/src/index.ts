@@ -3,13 +3,12 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MessageArchiveService, PersonaService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
+import type { MessageArchiveService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
   OneBotRawEvent,
   OneBotActionResponse,
-  NormalizedNoticeEvent,
   NormalizedRequestEvent,
 } from './types.js';
 import { collectForwardSegments, segmentsToText } from './types.js';
@@ -1251,7 +1250,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     state.ws = ws;
 
     // 诊断：捕获 unexpected-response（服务器返回非 101 时触发，且不会触发 error）
-    ws.on('unexpected-response', (req, res) => {
+    ws.on('unexpected-response', (_req, res) => {
       ctx.logger.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
       let body = '';
       res.on('data', (chunk: Buffer) => { body += chunk.toString(); });

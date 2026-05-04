@@ -1,6 +1,5 @@
 import type { DisposableChain } from './disposable-chain.js';
 import type { Logger } from './logger.js';
-import type { EventBus } from './events.js';
 import type { ServiceContainer } from './service.js';
 import type { RegisteredTool, ToolGroupInfo, CommandDefinition, ToolService, CommandService, AalisEvents } from './types/index.js';
 
@@ -28,7 +27,6 @@ export class PendingRegistrationBuffer {
   constructor(
     private readonly contextId: string,
     private readonly services: ServiceContainer,
-    private readonly events: EventBus,
     private readonly logger: Logger,
     private readonly disposables: DisposableChain,
     /** 由 Context 注入的 `on(event, handler)` —— 让生命周期统一托管 */

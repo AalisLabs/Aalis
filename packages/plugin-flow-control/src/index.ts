@@ -3,7 +3,6 @@ import type {
   ConfigSchema,
   FlowControlService,
   FlowSessionStateSnapshot,
-  GatewayService,
   MessageArchiveService,
   OutgoingMessage,
 } from '@aalis/core';
