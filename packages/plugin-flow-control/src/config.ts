@@ -3,18 +3,11 @@
 export interface FlowControlConfig {
   /** 是否启用流控（关闭时所有判定都返回 false / 放行） */
   enabled: boolean;
-  /** 仅对这些 platform 生效（空数组=所有 platform）；已被 scopes 取代，仅作兼容回退。 */
-  platforms: string[];
-  /**
-   * 仅对这些会话类型生效；已被 scopes 取代，仅作兼容回退。
-   */
-  sessionTypes: string[];
   /**
    * 统一作用域名单（multiselect），元素格式 "platform:sessionType"，
    * 支持 "*" 通配：onebot:group / onebot:* / *:group / * 。
    * 默认 ['*:group'] 与历史 OneBot ChatFlow 行为一致。
    * 空数组 = 不生效（等于禁用流控）。
-   * 若同时设置了 platforms / sessionTypes，会随 scopes 一同生效（以严格为准）。
    */
   scopes: string[];
 
@@ -52,8 +45,6 @@ export interface FlowControlConfig {
 
 export const defaultFlowControlConfig: FlowControlConfig = {
   enabled: true,
-  platforms: [],
-  sessionTypes: [],
   scopes: ['*:group'],
   fixedInterval: 5,
   activityScoreLower: 0.3,
@@ -85,8 +76,6 @@ export function resolveFlowControlConfig(raw: Record<string, unknown>): FlowCont
   const d = defaultFlowControlConfig;
   return {
     enabled: (raw.enabled as boolean) ?? d.enabled,
-    platforms: parseStringList(raw.platforms),
-    sessionTypes: parseStringList(raw.sessionTypes),
     scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
     fixedInterval: (raw.fixedInterval as number) ?? d.fixedInterval,
     activityScoreLower: (raw.activityScoreLower as number) ?? d.activityScoreLower,
@@ -113,25 +102,7 @@ export function resolveFlowControlConfig(raw: Record<string, unknown>): FlowCont
   };
 }
 
-export function isPlatformEnabled(cfg: FlowControlConfig, platform: string | undefined): boolean {
-  if (!cfg.enabled) return false;
-  if (cfg.platforms.length === 0) return true;
-  if (!platform) return false;
-  return cfg.platforms.includes(platform);
-}
-
-/** 会话类型是否在流控生效范围内。空白名单 = 全部生效。 */
-export function isSessionTypeEnabled(cfg: FlowControlConfig, sessionType: string | undefined): boolean {
-  if (cfg.sessionTypes.length === 0) return true;
-  if (!sessionType) return false;
-  return cfg.sessionTypes.includes(sessionType);
-}
-
-/**
- * 统一作用域匹配：`(platform, sessionType)` 是否命中 cfg.scopes 中任一项（支持 *）。
- * 与上面两个 legacy 函数的关系：三者採取 AND（任一不过则放行），
- * 避免老配置与新配置冲突时产生意外限速。
- */
+/** 统一作用域匹配：`(platform, sessionType)` 是否命中 cfg.scopes 中任一项（支持 *）。 */
 export function isScopeEnabled(
   cfg: FlowControlConfig,
   platform: string | undefined,
