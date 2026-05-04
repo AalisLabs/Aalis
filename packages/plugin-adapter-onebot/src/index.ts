@@ -2042,26 +2042,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.debug(`OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`);
 
-    // 指令处理
-    const parsed = ctx.commands?.parseCommand(event.text);
-    if (parsed) {
-      ctx.commands!.execute(parsed.name, {
-        sessionId,
-        platform: 'onebot',
-        userId: event.userId,
-        args: parsed.args,
-        raw: parsed.raw,
-      }).then((result) => {
-        if (result) {
-          adapter.sendMessage(sessionId, result, { skipSplit: true }).catch(err => {
-            ctx.logger.warn(`OneBot 指令回复失败: ${err}`);
-          });
-        }
-      }).catch(err => {
-        ctx.logger.warn(`OneBot 指令执行失败: ${err}`);
-      });
-      return;
-    }
+    // 注：指令解析已迁移到 plugin-commands 的 gateway:inbound 中间件；
+    // 适配器只负责将原始消息送入 inbound:message 总线，由 gateway 链路统一拦截。
 
     const sessionType = event.detailType === 'group' ? 'group'
       : event.detailType === 'private' ? 'private'
