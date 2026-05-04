@@ -4,6 +4,7 @@ import type {
   Context,
   ConfigSchema,
   AppService,
+  GatewayService,
   MemoryService,
   ToolService,
   CommandContext,
@@ -105,6 +106,47 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册服务
   ctx.provide('commands', commands);
+
+  // ===== Gateway 入站拦截：命令命中则执行并中断 agent 路由 =====
+  //
+  // 历史上 OneBot 适配器内联拦截命令；现已迁移到 gateway:inbound 中间件，
+  // 所有平台共享同一套命令解析路径。
+  // 高优先级 (priority=1000) 确保命令检测在触发策略 / 流控之前执行。
+  ctx.middleware('gateway:inbound', async (data, next) => {
+    const { message } = data;
+    // 内部触发（idle-trigger 等无 userId）不参与命令解析
+    if (!message.content) return next();
+
+    const parsed = commands.parseCommand(message.content);
+    if (!parsed) return next();
+
+    try {
+      const result = await commands.execute(parsed.name, {
+        sessionId: message.sessionId,
+        platform: message.platform,
+        userId: message.userId,
+        args: parsed.args,
+        raw: parsed.raw,
+      });
+      if (result) {
+        const gateway = ctx.getService<GatewayService>('gateway');
+        const reply = {
+          content: result,
+          sessionId: message.sessionId,
+          platform: message.platform,
+          source: 'command' as const,
+        };
+        if (gateway) {
+          await gateway.dispatchOutbound(reply);
+        } else {
+          await ctx.emit('outbound:message', reply);
+        }
+      }
+    } catch (err) {
+      ctx.logger.warn(`指令执行失败: ${err}`);
+    }
+    // 命令命中：不调用 next() —— 中断后续中间件（包括 agent 默认派发）
+  }, 1000);
 
   // ===== 内置指令 =====
 
