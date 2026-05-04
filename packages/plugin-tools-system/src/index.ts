@@ -139,7 +139,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   if (cfg.http.enabled) {
-    registerHttpTools(ctxWithGroups(['system']), cfg.http);
+    const storage = ctx.getService<StorageService>('storage');
+    registerHttpTools(ctxWithGroups(['system']), { ...cfg.http, storage });
     ctx.logger.info('HTTP 工具已启用');
   }
 
