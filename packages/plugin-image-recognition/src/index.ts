@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
-import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult } from '@aalis/core';
+import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
 import { ImageRecognitionCapabilities } from '@aalis/core';
 
 function escapeRegExp(input: string): string {
@@ -113,7 +113,7 @@ function compactText(input: string | null | undefined, maxLength = 500): string 
 function buildVisionPrompt(basePrompt: string, context?: string): string {
   const trimmedContext = compactText(context, 1200);
   if (!trimmedContext) return basePrompt;
-  return `${basePrompt}\n\n上下文/用户需求：\n${trimmedContext}\n\n请优先围绕上下文中的问题或需求分析图片；如果上下文不足，再给出客观描述。`;
+  return `${basePrompt}\n\n上下文/用户需求：\n${trimmedContext}\n\n请把上下文作为理解图片重点的线索，优先回应其中的问题、引用和近期话题；但不要让上下文覆盖图片本身可见事实。如果上下文不足，再给出客观描述。`;
 }
 
 const execFileAsync = promisify(execFile);
@@ -522,7 +522,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return refPaths;
   }
 
-  async function buildIncomingImageContext(msg: IncomingMessage): Promise<string> {
+  async function buildIncomingImageContext(msg: IncomingMessage, options?: ImageRecognitionContextOptions): Promise<string> {
     const parts: string[] = [];
     const current = compactText(msg.content, 500);
     if (current) parts.push(`当前消息: ${current}`);
@@ -534,12 +534,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const memory = ctx.getService<MemoryService>('memory');
     if (memory?.getHistory) {
       try {
-        const recent = await memory.getHistory(msg.sessionId, 4);
+        const recent = await memory.getHistory(msg.sessionId, options?.beforeLimit ?? 4);
         const lines = recent
           .filter(m => m.role === 'user' || m.role === 'assistant')
           .map(m => `${m.role}: ${compactText(m.content, 220)}`)
           .filter(line => !line.endsWith(':'));
-        if (lines.length > 0) parts.push(`最近对话:\n${lines.join('\n')}`);
+        if (lines.length > 0) parts.push(`最近前文:\n${lines.join('\n')}`);
       } catch (err) {
         ctx.logger.debug(`读取图片识别上下文失败: ${err instanceof Error ? err.message : err}`);
       }
@@ -691,15 +691,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!visionLLM || !cfg.enabled || input.images.length === 0) return null;
       return processImageMessage(visionLLM, input);
     },
+    async buildContext(message: IncomingMessage, options?: ImageRecognitionContextOptions): Promise<string> {
+      return buildIncomingImageContext(message, options);
+    },
     /** 仅查描述缓存，不会触发视觉模型调用 */
     lookupDescription(imageUrl: string): string | null {
       return lookupCachedDescription(imageUrl);
     },
   };
 
-  const { Describe, ProcessMessage, Animated, DescriptionCache } = ImageRecognitionCapabilities;
+  const { Describe, ProcessMessage, BuildContext, Animated, DescriptionCache } = ImageRecognitionCapabilities;
   ctx.provide('image-recognition', imageRecognitionService, {
-    capabilities: [Describe, ProcessMessage, Animated, DescriptionCache],
+    capabilities: [Describe, ProcessMessage, BuildContext, Animated, DescriptionCache],
   });
 
   // ── 注册图片分析工具，供 agent 主动调用 ──
