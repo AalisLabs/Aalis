@@ -1,6 +1,3 @@
-import Database from 'better-sqlite3';
-import { resolve } from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
 import type {
   Context,
   Message,
@@ -18,12 +15,6 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
-  dbPath: {
-    type: 'string',
-    label: '数据库路径',
-    default: 'data/aalis.db',
-    description: '摘要存储的 SQLite 数据库路径',
-  },
   threshold: {
     type: 'number',
     label: '摘要触发阈值',
@@ -56,7 +47,6 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  dbPath: 'data/aalis.db',
   threshold: 30,
   keepRecent: 20,
   summaryTokenRatio: 0.05,
@@ -67,7 +57,6 @@ export const defaultConfig = {
 // ===== 配置 =====
 
 interface SummaryConfig {
-  dbPath: string;
   /** 当会话消息 > threshold 时，触发摘要生成 */
   threshold: number;
   /** 摘要时保留最近 N 条消息不参与摘要 */
@@ -103,78 +92,64 @@ const DEFAULT_SUMMARY_PROMPT = `你是一个对话摘要助手。请将以下对
 11. 保留助手在对话中制定的工作计划、承诺要做的事情、以及用户尚未被满足的请求`;
 
 // ===== 摘要存储 =====
+//
+// 通过 MemoryService 的 metadata API 持久化摘要，让摘要与对话历史共享同一存储后端
+// （sqlite/mongodb/inmemory）。namespace 固定为 'summary'，key 为 sessionId。
+// metadata payload 形如 { summary, coveredUpTo, messageCount, updatedAt }。
+
+const SUMMARY_NAMESPACE = 'summary';
+
+interface SummaryRecord {
+  summary: string;
+  coveredUpTo: number;
+  messageCount: number;
+}
 
 class SummaryStore {
-  private db: Database.Database;
-
-  constructor(dbPath: string) {
-    const dbDir = resolve(dbPath, '..');
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true });
-    }
-
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS session_summaries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sessionId TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        coveredUpTo INTEGER NOT NULL,
-        messageCount INTEGER NOT NULL DEFAULT 0,
-        createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-        updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+  constructor(private readonly memory: MemoryService) {
+    if (!memory.saveMetadata || !memory.getMetadata) {
+      throw new Error(
+        '[memory-summary] 当前 memory 实现缺少 metadata 能力（saveMetadata/getMetadata），无法存储摘要',
       );
-      CREATE INDEX IF NOT EXISTS idx_summaries_session
-        ON session_summaries(sessionId);
-    `);
-  }
-
-  /** 获取某个会话最新的摘要 */
-  getSummary(sessionId: string): { summary: string; coveredUpTo: number; messageCount: number } | null {
-    const row = this.db.prepare(`
-      SELECT summary, coveredUpTo, messageCount
-      FROM session_summaries
-      WHERE sessionId = ?
-      ORDER BY coveredUpTo DESC
-      LIMIT 1
-    `).get(sessionId) as { summary: string; coveredUpTo: number; messageCount: number } | undefined;
-
-    return row ?? null;
-  }
-
-  /** 更新或插入会话摘要 */
-  upsertSummary(sessionId: string, summary: string, coveredUpTo: number, messageCount: number): void {
-    const existing = this.getSummary(sessionId);
-    if (existing) {
-      this.db.prepare(`
-        UPDATE session_summaries
-        SET summary = ?, coveredUpTo = ?, messageCount = ?, updatedAt = datetime('now')
-        WHERE sessionId = ? AND id = (
-          SELECT id FROM session_summaries WHERE sessionId = ? ORDER BY coveredUpTo DESC LIMIT 1
-        )
-      `).run(summary, coveredUpTo, messageCount, sessionId, sessionId);
-    } else {
-      this.db.prepare(`
-        INSERT INTO session_summaries (sessionId, summary, coveredUpTo, messageCount)
-        VALUES (?, ?, ?, ?)
-      `).run(sessionId, summary, coveredUpTo, messageCount);
     }
   }
 
-  /** 删除会话的所有摘要 */
-  clearSession(sessionId: string): void {
-    this.db.prepare('DELETE FROM session_summaries WHERE sessionId = ?').run(sessionId);
+  async getSummary(sessionId: string): Promise<SummaryRecord | null> {
+    const data = await this.memory.getMetadata!(SUMMARY_NAMESPACE, sessionId);
+    if (!data) return null;
+    return {
+      summary: String(data.summary ?? ''),
+      coveredUpTo: Number(data.coveredUpTo ?? 0),
+      messageCount: Number(data.messageCount ?? 0),
+    };
   }
 
-  /** 清空所有会话的摘要 */
-  clearAll(): void {
-    this.db.exec('DELETE FROM session_summaries');
+  async upsertSummary(
+    sessionId: string,
+    summary: string,
+    coveredUpTo: number,
+    messageCount: number,
+  ): Promise<void> {
+    await this.memory.saveMetadata!(SUMMARY_NAMESPACE, sessionId, {
+      summary,
+      coveredUpTo,
+      messageCount,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
-  close(): void {
-    this.db.close();
+  async clearSession(sessionId: string): Promise<void> {
+    if (this.memory.deleteMetadata) {
+      await this.memory.deleteMetadata(SUMMARY_NAMESPACE, sessionId);
+    }
+  }
+
+  async clearAll(): Promise<void> {
+    if (!this.memory.listMetadata || !this.memory.deleteMetadata) return;
+    const items = await this.memory.listMetadata(SUMMARY_NAMESPACE);
+    for (const item of items) {
+      await this.memory.deleteMetadata(SUMMARY_NAMESPACE, item.key);
+    }
   }
 }
 
@@ -182,7 +157,6 @@ class SummaryStore {
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const cfg: SummaryConfig = {
-    dbPath: (config.dbPath as string) ?? 'data/aalis.db',
     threshold: (config.threshold as number) ?? 30,
     keepRecent: (config.keepRecent as number) ?? 20,
     summaryTokenRatio: (config.summaryTokenRatio as number) ?? 0.05,
@@ -190,10 +164,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     summaryPrompt: (config.summaryPrompt as string) ?? '',
   };
 
-  const dbPath = resolve(ctx.config.getConfigDir(), cfg.dbPath);
-  const store = new SummaryStore(dbPath);
+  const memory = ctx.getService<MemoryService>('memory');
+  if (!memory) {
+    ctx.logger.warn('memory 服务不可用，摘要插件将不会启动');
+    return;
+  }
+  const store = new SummaryStore(memory);
 
-  ctx.logger.info('会话摘要插件已启动');
+  ctx.logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
   // 正在摘要中的 session，避免并发重复摘要
   const summarizing = new Set<string>();
@@ -235,7 +213,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (totalCount < cfg.threshold) return;
 
       // 检查是否已有摘要
-      const existing = store.getSummary(sessionId);
+      const existing = await store.getSummary(sessionId);
 
       // 取所有待摘要的旧消息（除最近 keepRecent 条之外的）
       const messagesToSummarize = allHistory.slice(0, totalCount - cfg.keepRecent);
@@ -289,7 +267,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (summaryText.trim()) {
         const finalSummary = summaryText.trim();
         const summaryTs = Date.now();
-        store.upsertSummary(sessionId, finalSummary, messagesToSummarize.length, totalCount);
+        await store.upsertSummary(sessionId, finalSummary, messagesToSummarize.length, totalCount);
 
         // 真正的压缩：将旧消息标记为 archived，只保留最近 keepRecent 条作为热上下文
         // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
@@ -334,7 +312,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
 
-    const existing = store.getSummary(sessionId);
+    const existing = await store.getSummary(sessionId);
     if (existing?.summary) {
       if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-summary')) {
         await next();
@@ -426,7 +404,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           return;
         }
 
-        const existing = store.getSummary(data.sessionId);
+        const existing = await store.getSummary(data.sessionId);
         const formattedMessages = messagesToSummarize
           .filter(m => m.role === 'user' || m.role === 'assistant')
           .map(m => `${m.role === 'user' ? (m.name ? `用户[${m.name}]` : '用户') : '助手'}: ${m.content ?? '(空)'}`)
@@ -486,7 +464,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         if (summaryText.trim()) {
           const finalSummary = summaryText.trim();
           const summaryTs = Date.now();
-          store.upsertSummary(data.sessionId, finalSummary, messagesToSummarize.length, allHistory.length);
+          await store.upsertSummary(data.sessionId, finalSummary, messagesToSummarize.length, allHistory.length);
 
           // 安全调整：避免裁剪点落在 tool call 组中间
           let safeKeepRecent = cfg.keepRecent;
@@ -544,11 +522,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     try {
       if (data.scope === 'all') {
-        store.clearAll();
+        await store.clearAll();
         data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
         ctx.logger.info('所有会话摘要已清空');
       } else if (data.sessionId) {
-        store.clearSession(data.sessionId);
+        await store.clearSession(data.sessionId);
         data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
         ctx.logger.info(`会话摘要已清空: session=${data.sessionId}`);
       }
@@ -563,7 +541,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 清理
   ctx.on('dispose', () => {
-    store.close();
-    ctx.logger.info('会话摘要数据库已关闭');
+    ctx.logger.info('会话摘要插件已卸载');
   });
 }
