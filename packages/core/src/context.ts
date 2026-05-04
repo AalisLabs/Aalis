@@ -66,7 +66,6 @@ export class Context {
     this._pending = new PendingRegistrationBuffer(
       this.id,
       this._services,
-      this._events,
       this.logger,
       this._disposables,
       (event, handler) => this.on(event, handler),

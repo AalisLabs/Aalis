@@ -193,10 +193,6 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   let skillsCache: SkillDefinition[] = loadAllSkills();
 
-  function refreshCache(): void {
-    skillsCache = loadAllSkills();
-  }
-
   // ── 核心服务实现 ──
 
   const service: SkillsService = {

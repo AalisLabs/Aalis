@@ -1,9 +1,9 @@
-import type { Context, ToolCallContext } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell,
   ImageRun, AlignmentType, BorderStyle, WidthType, PageBreak,
-  Header, Footer, TableOfContents, NumberFormat,
-  convertInchesToTwip, ExternalHyperlink,
+  Header, Footer, TableOfContents,
+  convertInchesToTwip,
   LevelFormat,
 } from 'docx';
 import { writeFileSync, mkdirSync } from 'node:fs';

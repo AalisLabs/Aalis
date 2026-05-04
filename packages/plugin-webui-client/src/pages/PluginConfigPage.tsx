@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Radio, Workflow, Link2, Loader2 } from 'lucide-react';
 import { api } from '../api';
-import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, isSchemaField } from '../components/SchemaForm';
+import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
 import type { PluginInfo, ConfigSchema, SchemaField, ServiceInfo } from '../types';
 

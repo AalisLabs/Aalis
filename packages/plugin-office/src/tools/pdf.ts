@@ -1,6 +1,6 @@
 import type { Context } from '@aalis/core';
 import { PDFDocument, StandardFonts, rgb, PageSizes } from 'pdf-lib';
-import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { DocSessionManager } from '../session.js';
