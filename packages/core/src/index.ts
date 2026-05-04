@@ -2,7 +2,7 @@
 
 export { App, createApp } from './app.js';
 export type { AppOptions } from './app.js';
-export { GATEWAY_MIDDLEWARE_PRIORITY } from './constants.js';
+export { GATEWAY_MIDDLEWARE_PRIORITY, HOOK_DEFAULT_PRIORITY } from './constants.js';
 export { Context } from './context.js';
 export { EventBus } from './events.js';
 export { ServiceContainer, ScopedServiceContainer } from './service.js';
