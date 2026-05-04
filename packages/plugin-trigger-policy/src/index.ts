@@ -12,6 +12,7 @@ import {
   type TriggerPolicyConfig,
   defaultTriggerPolicyConfig,
   isPlatformEnabled,
+  isSessionTypeEnabled,
   resolveTriggerPolicyConfig,
 } from './config.js';
 import {
@@ -32,6 +33,7 @@ export const inject = {
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用触发策略', default: defaultTriggerPolicyConfig.enabled },
   platforms: { type: 'string', label: '生效平台（逗号分隔，空=全部）', default: '' },
+  sessionTypes: { type: 'string', label: '生效会话类型（逗号分隔，空=全部）', default: defaultTriggerPolicyConfig.sessionTypes.join(','), description: '默认 group；不在名单内的会话直接放行，不走 @/阈值判定。' },
   intervalMode: {
     type: 'select', label: '间隔模式', default: defaultTriggerPolicyConfig.intervalMode,
     options: [
@@ -66,8 +68,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   const service: TriggerPolicyService = {
     decide(message): TriggerDecision {
-      if (message.sessionType !== 'group') {
-        return { kind: 'direct', reason: 'non-group session, always pass' };
+      if (!isSessionTypeEnabled(cfg, message.sessionType)) {
+        return { kind: 'direct', reason: `sessionType '${message.sessionType ?? '?'}' not in trigger scope` };
       }
       if (checkImmediateTrigger(ctx, cfg, message.content)) {
         return { kind: 'immediate', reason: '@/name match' };
@@ -124,8 +126,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       return; // swallow
     }
 
-    // 私聊/直接消息：直接放行
-    if (message.sessionType !== 'group') {
+    // 不在生效会话类型内（默认除 group 之外）：直接放行
+    if (!isSessionTypeEnabled(cfg, message.sessionType)) {
       return next();
     }
 
