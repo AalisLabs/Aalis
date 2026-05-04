@@ -6,6 +6,8 @@
 //
 // 第三方若要实现替代方案（如调用专用视觉 API），只需满足本接口即可。
 
+import type { IncomingMessage } from './core.js';
+
 /** 图像识别处理消息的输入 */
 export interface ImageRecognitionInput {
   /** 文本内容 */
@@ -16,6 +18,12 @@ export interface ImageRecognitionInput {
   context?: string;
   /** 可选：附件出现顺序，用于在 transformedContent 中保留图文混排 */
   attachmentOrder?: Array<'image' | 'file'>;
+}
+
+/** 图像识别上下文构造选项 */
+export interface ImageRecognitionContextOptions {
+  /** 最近前文条数，默认由实现决定 */
+  beforeLimit?: number;
 }
 
 /** 图像识别处理消息的结果 */
@@ -40,6 +48,7 @@ export interface ImageRecognitionResult {
  * 内置能力（`ImageRecognitionCapabilityRegistry`）：
  * - `describe`: 单张图片描述
  * - `process-message`: 整条消息批处理（图文混排）
+ * - `build-context`: 为图片识别构造上下文
  * - `animated`: 支持 GIF/视频帧提取与综合描述
  *
  * 第三方可扩展能力：
@@ -77,6 +86,12 @@ export interface ImageRecognitionService {
   processMessage(input: ImageRecognitionInput): Promise<ImageRecognitionResult | null>;
 
   /**
+   * 为含图消息构造视觉识别上下文。
+   * 实现应把上下文作为识别线索，而不是覆盖图片事实的强约束。
+   */
+  buildContext?(message: IncomingMessage, options?: ImageRecognitionContextOptions): Promise<string>;
+
+  /**
    * 查询已缓存的图片描述（不会触发识别）。未命中返回 null。
    * 用于引用回复等场景：同一张图片在主消息流程中被识别过后，可以免费复用。
    */
@@ -102,6 +117,8 @@ export interface ImageRecognitionCapabilityRegistry {
   Describe: 'describe';
   /** 批处理整条消息（含图文混排） */
   ProcessMessage: 'process-message';
+  /** 构造图片识别上下文 */
+  BuildContext: 'build-context';
   /** 支持动图/视频帧提取 */
   Animated: 'animated';
   /** 描述缓存查询 */
@@ -115,6 +132,7 @@ export type ImageRecognitionCapability = ImageRecognitionCapabilityRegistry[keyo
 export const ImageRecognitionCapabilities = {
   Describe: 'describe',
   ProcessMessage: 'process-message',
+  BuildContext: 'build-context',
   Animated: 'animated',
   DescriptionCache: 'description-cache',
 } as const satisfies ImageRecognitionCapabilityRegistry;
@@ -137,6 +155,11 @@ registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.Proces
   typeof (inst as { processMessage?: unknown }).processMessage === 'function'
     ? true
     : 'ImageRecognitionService.processMessage() is required for capability "process-message"');
+
+registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.BuildContext, inst =>
+  typeof (inst as { buildContext?: unknown }).buildContext === 'function'
+    ? true
+    : 'ImageRecognitionService.buildContext() is required for capability "build-context"');
 
 registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.DescriptionCache, inst =>
   typeof (inst as { lookupDescription?: unknown }).lookupDescription === 'function'

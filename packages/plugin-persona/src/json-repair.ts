@@ -9,6 +9,14 @@ type RepairStep = { name: string; apply: (s: string) => string };
 
 const repairSteps: RepairStep[] = [
   {
+    // 模型有时会在 JSON 字符串里直接写英文引号，例如：
+    // "message": "他说"你好"然后走了"
+    // 严格 JSON 需要把内部引号转义。这里用状态机判断：字符串中的引号只有在
+    // 后续字符像 JSON 分隔符（: , } ] 或结尾）时才视为闭合，否则转义。
+    name: '字符串内部裸引号转义',
+    apply: escapeBareQuotesInStrings,
+  },
+  {
     // 模型偶尔会在 message 里写 <face id="14"/> 之类的 XML 标签，
     // 但属性引号没转义，导致 JSON 解析在字符串中提前断开。
     name: 'XML 属性引号转义',
@@ -51,6 +59,72 @@ function countOutsideStrings(s: string, ch: string): number {
     if (!inString && c === ch) count++;
   }
   return count;
+}
+
+function nextNonWhitespace(s: string, start: number): string {
+  for (let i = start; i < s.length; i++) {
+    if (!/\s/.test(s[i])) return s[i];
+  }
+  return '';
+}
+
+function isJsonValueStart(c: string): boolean {
+  return c === '"' || c === '{' || c === '[' || c === '-' || /[0-9tfn]/.test(c);
+}
+
+function isLikelyClosingQuote(s: string, quoteIndex: number): boolean {
+  const next = nextNonWhitespace(s, quoteIndex + 1);
+  if (next === '' || next === ':' || next === '}' || next === ']') return true;
+  if (next !== ',') return false;
+
+  const commaIndex = s.indexOf(',', quoteIndex + 1);
+  if (commaIndex < 0) return false;
+  const afterComma = nextNonWhitespace(s, commaIndex + 1);
+  return isJsonValueStart(afterComma) || afterComma === '}' || afterComma === ']';
+}
+
+function escapeBareQuotesInStrings(s: string): string {
+  let out = '';
+  let inString = false;
+  let escape = false;
+  let changed = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+
+    if (escape) {
+      out += c;
+      escape = false;
+      continue;
+    }
+
+    if (c === '\\') {
+      out += c;
+      if (inString) escape = true;
+      continue;
+    }
+
+    if (c === '"') {
+      if (!inString) {
+        inString = true;
+        out += c;
+        continue;
+      }
+
+      if (isLikelyClosingQuote(s, i)) {
+        inString = false;
+        out += c;
+      } else {
+        out += '\\"';
+        changed = true;
+      }
+      continue;
+    }
+
+    out += c;
+  }
+
+  return changed ? out : s;
 }
 
 /**

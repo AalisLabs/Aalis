@@ -683,7 +683,14 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:reply:before — 插件可以修改最终回复
         // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
-        const responseData = {
+        const responseData: {
+          content: string;
+          archiveContent?: string;
+          sessionId: string;
+          platform?: string;
+          userId?: string;
+          triggerType?: typeof incoming.triggerType;
+        } = {
           content: replyContent,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
@@ -692,6 +699,7 @@ class DefaultAgent implements AgentService {
         };
         await this.ctx.hooks.run('agent:reply:before', responseData);
         replyContent = responseData.content;
+        const archiveContent = responseData.archiveContent ?? rawLlmContent;
 
         // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
         const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
@@ -716,11 +724,11 @@ class DefaultAgent implements AgentService {
             ? allReasoning.join('\n\n---\n\n')
             : undefined;
 
-          // 保存最终 assistant 回复：存原始 LLM 输出（rawLlmContent），保持 JSON 格式完整，
-          // 避免解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
+          // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
+          // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
           await this.saveToMemory(incoming.sessionId, {
             role: 'assistant',
-            content: rawLlmContent,
+            content: archiveContent,
             reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
             metadata: assistantMetadata,

@@ -126,9 +126,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (working.images && working.images.length > 0 && !working._imageRecognitionInfo) {
         const irService = ctx.getService<ImageRecognitionService>('image-recognition');
         if (irService?.available && irService.enabled && irService.processMessage) {
+          const context = await irService.buildContext?.(working);
           const processed = await irService.processMessage({
             content: working.content,
             images: working.images,
+            context,
             attachmentOrder: working.attachmentOrder,
           });
           if (processed) {

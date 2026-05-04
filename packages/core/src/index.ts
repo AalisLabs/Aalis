@@ -158,6 +158,7 @@ export type {
   // 图像识别服务
   ImageRecognitionService,
   ImageRecognitionInput,
+  ImageRecognitionContextOptions,
   ImageRecognitionResult,
   ImageRecognitionCapability,
   ImageRecognitionCapabilityRegistry,
