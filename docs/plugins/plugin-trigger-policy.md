@@ -12,13 +12,13 @@
 |---|---|---|
 | `trigger-policy` | `TriggerPolicyService` | `decide(message)` / `getBotNames()` / `detectMuteKeyword(content)` |
 
-## 中间件
+## 接入相位
 
 ```
-gateway:inbound  priority=700
+inbound:trigger   （由 plugin-gateway 在 inbound:flow 之后、inbound:dispatch 之前触发）
 ```
 
-依赖 `flow-control` 的状态快照：进入此中间件意味着已经通过冷却/限速闸门。
+依赖 `flow-control` 的状态快照：进入此相位意味着已经通过冷却/限速闸门。
 
 判定流程：
 
