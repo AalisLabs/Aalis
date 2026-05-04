@@ -548,9 +548,13 @@ export class App {
     // 检查核心必需服务，缺失时自动寻找并启动提供者
     await this.ensureRequiredServices();
 
-    // 注：消息路由职责已迁移到 @aalis/plugin-gateway。
-    // core 不再监听 `inbound:message`，应用层应通过 `requiredServices` 声明对 `gateway` 服务的依赖。
-    // gateway 服务负责监听 `inbound:message`、运行 `gateway:inbound` 钩子链、调用 agent.handleMessage。
+    // 注：消息路由职责优先由 @aalis/plugin-gateway 承担。
+    // 若用户没有在 requiredServices 中声明 'gateway'、且系统中也没有任何 gateway
+    // 服务实现，core 会安装一个最小路由作为兜底：直接把 inbound:message 派发给
+    // agent.handleMessage —— 行为等价于历史上 core 内置的简单分发，避免消息丢失。
+    if (!this.ctx.hasService('gateway')) {
+      this.installFallbackInboundRouter();
+    }
 
     // 发出 ready 事件
     await this.ctx.emit('ready');
@@ -622,5 +626,38 @@ export class App {
         this.logger.error(`必需服务 "${service}" 无法恢复！系统功能将受限。`);
       }
     }
+  }
+
+  /**
+   * 兜底入站路由 —— 当系统中没有任何 'gateway' 服务时安装。
+   *
+   * 行为：监听 `inbound:message`，直接调用 `agent.handleMessage`；如果连 agent
+   * 都没有，回 emit 一条系统占位消息到 `outbound:message`。这等价于历史上 core
+   * 内置的简单分发逻辑，保证最小可用，也是 `plugin-gateway` 缺席时的安全网。
+   *
+   * 一旦后续有插件 `provide('gateway', ...)`，本兜底监听不会自动卸载，但
+   * gateway 自身会作为 `inbound:message` 的另一个监听者并行运行；用户应当通过
+   * `requiredServices: ['gateway']` 明确选择 gateway 路由以避免双路径派发。
+   */
+  private installFallbackInboundRouter(): void {
+    this.logger.info('未检测到 gateway 服务，安装最小入站路由作为兜底（直接派发给 agent）');
+    this.ctx.on('inbound:message', async (msg) => {
+      const agent = this.ctx.getService<{ handleMessage(m: unknown): Promise<void> }>('agent');
+      if (agent) {
+        try {
+          await agent.handleMessage(msg);
+        } catch (err) {
+          this.logger.warn(`[fallback-router] agent.handleMessage 异常: ${err}`);
+        }
+        return;
+      }
+      this.logger.warn('[fallback-router] agent 与 gateway 均不可用，消息无法处理');
+      await this.ctx.emit('outbound:message', {
+        content: '[系统] Agent 与 Gateway 服务均不可用，请检查插件配置。',
+        sessionId: (msg as { sessionId: string }).sessionId,
+        platform: (msg as { platform: string }).platform,
+        source: 'system',
+      });
+    });
   }
 }
