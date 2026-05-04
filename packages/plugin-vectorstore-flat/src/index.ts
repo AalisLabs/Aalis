@@ -52,7 +52,7 @@ class FlatVectorStore implements VectorStoreService {
   private readonly dataPath: string;
   private dirty = false;
 
-  constructor(private readonly storagePath: string, private readonly logger?: { warn: (msg: string, ...args: unknown[]) => void }) {
+  constructor(storagePath: string, private readonly logger?: { warn: (msg: string, ...args: unknown[]) => void }) {
     this.dataPath = resolve(storagePath, 'vectors.json');
 
     try {

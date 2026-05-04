@@ -6,7 +6,6 @@ import rehypeHighlight from 'rehype-highlight';
 import { api, pageAction } from '../api';
 import { SchemaForm } from './SchemaForm';
 import type {
-  ConfigSchema,
   WebuiComponent, WebuiStatComponent, WebuiTableComponent,
   WebuiFormComponent, WebuiActionsComponent, WebuiInfoComponent,
   WebuiMarkdownComponent, WebuiTabsComponent, WebuiIframeComponent, WebuiPageDef,

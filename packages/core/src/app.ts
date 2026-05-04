@@ -363,9 +363,6 @@ export class App {
     this.logger.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
 
     try {
-      // 使用 npm pack 下载到临时目录，然后解压到 packages/
-      const tempTgz = resolve(this.packagesDir, `${dirName}.tgz`);
-
       await this.exec('npm', ['pack', npmPkg, '--pack-destination', this.packagesDir]);
 
       // npm pack 产出的文件名格式: scope-name-version.tgz
