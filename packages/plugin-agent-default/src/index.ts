@@ -2,6 +2,7 @@ import type {
   Context,
   AgentService,
   IncomingMessage,
+  OutgoingMessage,
   Message,
   ToolCallContext,
   ToolCall,
@@ -20,6 +21,7 @@ import type {
   PersonaSessionOptions,
   SessionManagerService,
   SessionConfig,
+  GatewayService,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 import { getSenderLabel, prefixSender, getMessageName } from '@aalis/core';
@@ -439,10 +441,11 @@ class DefaultAgent implements AgentService {
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
-        await this.ctx.emit('outbound:message', {
+        await this.dispatchOutbound({
           content: '[系统] LLM 服务不可用，请检查配置。',
           sessionId: incoming.sessionId,
           platform: incoming.platform,
+          source: 'system',
         });
         return;
       }
@@ -735,7 +738,7 @@ class DefaultAgent implements AgentService {
           });
 
           // 发送给流式客户端时使用合并版本（客户端流式阶段已自行维护 reasoningSegments）
-          await this.ctx.emit('outbound:message', {
+          await this.dispatchOutbound({
             content: replyContent,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
@@ -770,10 +773,11 @@ class DefaultAgent implements AgentService {
 
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`处理消息失败: ${message}`);
-        await this.ctx.emit('outbound:message', {
+        await this.dispatchOutbound({
           content: `[错误] ${message}`,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
+          source: 'system',
         });
       }
     });
@@ -1372,6 +1376,22 @@ class DefaultAgent implements AgentService {
       this.logger.warn('归档用户消息失败:', err);
       return undefined;
     }
+  }
+
+  /**
+   * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
+   *
+   * 应用入口已通过 `requiredServices: ['gateway']` 强制声明 gateway，
+   * 实践中 fallback 路径仅用于沙盒/测试或 gateway 启动失败的退化场景。
+   */
+  private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
+    const gateway = this.ctx.getService<GatewayService>('gateway');
+    if (gateway) {
+      await gateway.dispatchOutbound(message);
+      return;
+    }
+    this.logger.warn('Gateway 服务不可用，回退至 ctx.emit(outbound:message)');
+    await this.ctx.emit('outbound:message', message);
   }
 }
 
