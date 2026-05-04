@@ -2,10 +2,6 @@
 
 export interface TriggerPolicyConfig {
   enabled: boolean;
-  /** 仅对这些 platform 生效；已被 scopes 取代，仅作兼容回退。 */
-  platforms: string[];
-  /** 仅对这些会话类型生效；已被 scopes 取代，仅作兼容回退。 */
-  sessionTypes: string[];
   /**
    * 统一作用域名单：platform:sessionType，支持 *。
    * 默认 ['*:group']；空数组 = 不生效（等于禁用触发策略）。
@@ -25,8 +21,6 @@ export interface TriggerPolicyConfig {
 
 export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   enabled: true,
-  platforms: [],
-  sessionTypes: [],
   scopes: ['*:group'],
   intervalMode: 'both',
   triggerOnAt: true,
@@ -47,8 +41,6 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
   const d = defaultTriggerPolicyConfig;
   return {
     enabled: (raw.enabled as boolean) ?? d.enabled,
-    platforms: parseStringList(raw.platforms),
-    sessionTypes: parseStringList(raw.sessionTypes),
     scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
     intervalMode: ((): TriggerPolicyConfig['intervalMode'] => {
       const v = raw.intervalMode;
@@ -61,20 +53,6 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
       ? Math.floor(raw.muteTimeSeconds)
       : d.muteTimeSeconds,
   };
-}
-
-export function isPlatformEnabled(cfg: TriggerPolicyConfig, platform: string | undefined): boolean {
-  if (!cfg.enabled) return false;
-  if (cfg.platforms.length === 0) return true;
-  if (!platform) return false;
-  return cfg.platforms.includes(platform);
-}
-
-/** 会话类型是否在触发判定范围内。空白名单 = 全部生效。 */
-export function isSessionTypeEnabled(cfg: TriggerPolicyConfig, sessionType: string | undefined): boolean {
-  if (cfg.sessionTypes.length === 0) return true;
-  if (!sessionType) return false;
-  return cfg.sessionTypes.includes(sessionType);
 }
 
 /** scope 匹配：platform:sessionType。详见 plugin-flow-control 同名函数。 */

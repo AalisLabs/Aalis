@@ -11,9 +11,7 @@ import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
 import {
   type TriggerPolicyConfig,
   defaultTriggerPolicyConfig,
-  isPlatformEnabled,
   isScopeEnabled,
-  isSessionTypeEnabled,
   resolveTriggerPolicyConfig,
 } from './config.js';
 import {
@@ -41,8 +39,6 @@ export const configSchema: ConfigSchema = {
     allowCustom: true,
     description: '格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认 *:group。',
   },
-  platforms: { type: 'string', label: '[兼容] 生效平台', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。' },
-  sessionTypes: { type: 'string', label: '[兼容] 生效会话类型', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。' },
   intervalMode: {
     type: 'select', label: '间隔模式', default: defaultTriggerPolicyConfig.intervalMode,
     options: [
@@ -77,8 +73,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   const service: TriggerPolicyService = {
     decide(message): TriggerDecision {
-      if (!isScopeEnabled(cfg, message.platform, message.sessionType) ||
-          !isSessionTypeEnabled(cfg, message.sessionType)) {
+      if (!isScopeEnabled(cfg, message.platform, message.sessionType)) {
         return { kind: 'direct', reason: `scope 不在触发策略名单内 (${message.platform ?? '?'}:${message.sessionType ?? '?'})` };
       }
       if (checkImmediateTrigger(ctx, cfg, message.content)) {
@@ -121,7 +116,6 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // priority=GATEWAY_MIDDLEWARE_PRIORITY.TRIGGER_POLICY(700) → 在 flow-control(900) 之后；进入此中间件意味着已通过冷却/限速闸门。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
-    if (!isPlatformEnabled(cfg, message.platform)) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入跳过策略
 
     const flow = ctx.getService<FlowControlService>('flow-control');
@@ -140,8 +134,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     }
 
     // 不在触发策略作用域内（默认 *:group）：直接放行
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType) ||
-        !isSessionTypeEnabled(cfg, message.sessionType)) {
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) {
       return next();
     }
 
