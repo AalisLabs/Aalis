@@ -27,6 +27,14 @@ meta.inject = { required: [{ service: 'llm', capabilities: ['vision'] }] }
 
 - 当前消息最多保留 500 字
 - 引用消息最多保留 500 字
-- 最近前文默认取最近 4 条 `user`/`assistant` 消息，每条最多 220 字
+- 最近前文默认取最近 4 条 `user`/`assistant` 消息，每条最多 220 字，可通过 `contextHistoryLimit` 调整；设为 0 可关闭历史上下文
 - 传给视觉模型前，整体上下文最多保留 1200 字
 - 上下文只作为识别重点的线索，不应覆盖图片本身可见事实
+
+示例：
+
+```yaml
+plugins:
+  "@aalis/plugin-image-recognition":
+    contextHistoryLimit: 8
+```

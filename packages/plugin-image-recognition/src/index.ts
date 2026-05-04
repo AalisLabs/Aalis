@@ -63,6 +63,12 @@ export const configSchema: ConfigSchema = {
     default: '',
     description: '自定义图像识别提示词。留空使用默认提示。',
   },
+  contextHistoryLimit: {
+    type: 'number',
+    label: '上下文历史条数',
+    default: 4,
+    description: '图片识别时读取最近多少条 user/assistant 历史消息作为前文线索。设为 0 可关闭历史上下文。',
+  },
   gifMaxFrames: {
     type: 'number',
     label: 'GIF/视频最大提取帧数',
@@ -84,6 +90,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   enabled: true,
   maxTokens: 300,
+  contextHistoryLimit: 4,
   gifMaxFrames: 5,
   gifDescriptionMode: 'combined',
 };
@@ -95,6 +102,7 @@ interface ImageRecognitionConfig {
   enabled: boolean;
   maxTokens: number;
   prompt: string;
+  contextHistoryLimit: number;
   gifMaxFrames: number;
   gifDescriptionMode: 'combined' | 'separate';
 }
@@ -323,6 +331,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     enabled: (config.enabled as boolean) ?? true,
     maxTokens: (config.maxTokens as number) ?? 300,
     prompt: (config.prompt as string) || '',
+    contextHistoryLimit: Math.max(0, Math.floor((config.contextHistoryLimit as number) ?? 4)),
     gifMaxFrames: Math.max(1, (config.gifMaxFrames as number) ?? 5),
     gifDescriptionMode: (config.gifDescriptionMode as 'combined' | 'separate') || 'combined',
   };
@@ -532,9 +541,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const memory = ctx.getService<MemoryService>('memory');
-    if (memory?.getHistory) {
+    const beforeLimit = Math.max(0, Math.floor(options?.beforeLimit ?? cfg.contextHistoryLimit));
+    if (beforeLimit > 0 && memory?.getHistory) {
       try {
-        const recent = await memory.getHistory(msg.sessionId, options?.beforeLimit ?? 4);
+        const recent = await memory.getHistory(msg.sessionId, beforeLimit);
         const lines = recent
           .filter(m => m.role === 'user' || m.role === 'assistant')
           .map(m => `${m.role}: ${compactText(m.content, 220)}`)
