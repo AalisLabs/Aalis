@@ -39,16 +39,6 @@ export interface HookContextMap {
     metadata: Record<string, unknown>;
   };
   /**
-   * 消息路由钩子（**已废弃**，由 `gateway:inbound` 取代）。
-   *
-   * 历史上 core/app.ts 直接监听 `inbound:message` 并通过本钩子分发到 agent。
-   * 路由职责现已迁移到 `@aalis/plugin-gateway`，core 不再发起本钩子。
-   * 仍保留类型以兼容旧插件，gateway 实现可选择性地继续触发。
-   *
-   * @deprecated 请改用 `gateway:inbound`
-   */
-  'agent:route': { message: IncomingMessage; agent: AgentService | undefined };
-  /**
    * Gateway 入站钩子链（洋葱模型）。
    *
    * 默认动作：调用 `agent.handleMessage(message)`。
