@@ -40,7 +40,7 @@ export type {
 } from './core.js';
 
 // 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
-export type { HookContextMap } from './hooks.js';
+export type { HookContextMap, InboundPhaseData } from './hooks.js';
 
 // 指令服务接口
 export type { CommandService, CommandNodeInfo } from './commands.js';
@@ -53,6 +53,15 @@ export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js'
 
 // 平台适配器
 export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformManagerService } from './platform.js';
+
+// Gateway 服务（消息流编排中枢）
+export type { GatewayService } from './gateway.js';
+
+// 流控服务（每会话计数/冷却/限速/闲置调度）
+export type { FlowControlService, FlowSessionStateSnapshot } from './flow-control.js';
+
+// 触发策略服务（@/名字/间隔/评分 决策）
+export type { TriggerPolicyService, TriggerDecision, TriggerKind } from './trigger-policy.js';
 
 // WebUI 服务与声明式页面组件
 export type {

@@ -672,11 +672,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 优先使用 agent.registerPreprocessor，回退到 ctx.middleware
   const agent = ctx.getService<AgentService>('agent');
   if (agent?.registerPreprocessor) {
-    agent.registerPreprocessor('image-recognition', preprocessImages, 900);
+    agent.registerPreprocessor('image-recognition', preprocessImages);
   } else {
     ctx.middleware('agent:input:before', async (data, next) => {
       await preprocessImages(data.message, next);
-    }, 900);
+    });
   }
 
   // 注册服务，供其他插件查询图像识别能力和调用描述功能

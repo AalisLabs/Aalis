@@ -39,6 +39,15 @@ export interface PlatformAdapter {
   adapterName: string;
   /** 平台标识 (如 'cli', 'webui', 'onebot', 'telegram', 'discord') */
   platform: string;
+  /**
+   * 平台可能发出的 IncomingMessage.sessionType 枚举。
+   *
+   * 消费者（如 plugin-flow-control / plugin-trigger-policy）可以从中汇总出
+   * 真实可选作用域，避免在 UI 上臆造不存在的选项。
+   *
+   * 未声明表示适配器不区分 sessionType（如 cli / webui 都是单会话）。
+   */
+  sessionTypes?: readonly string[];
   /** 获取当前所有连接 */
   getConnections(): PlatformConnection[];
   /** 向指定 sessionId 发送纯文本消息 */
