@@ -12,6 +12,7 @@ import {
   type TriggerPolicyConfig,
   defaultTriggerPolicyConfig,
   isPlatformEnabled,
+  isScopeEnabled,
   isSessionTypeEnabled,
   resolveTriggerPolicyConfig,
 } from './config.js';
@@ -32,8 +33,16 @@ export const inject = {
 
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用触发策略', default: defaultTriggerPolicyConfig.enabled },
-  platforms: { type: 'string', label: '生效平台（逗号分隔，空=全部）', default: '' },
-  sessionTypes: { type: 'string', label: '生效会话类型（逗号分隔，空=全部）', default: defaultTriggerPolicyConfig.sessionTypes.join(','), description: '默认 group；不在名单内的会话直接放行，不走 @/阈值判定。' },
+  scopes: {
+    type: 'multiselect',
+    label: '生效作用域',
+    default: defaultTriggerPolicyConfig.scopes,
+    dynamicOptions: 'gateway-scopes',
+    allowCustom: true,
+    description: '格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认 *:group。',
+  },
+  platforms: { type: 'string', label: '[兼容] 生效平台', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。' },
+  sessionTypes: { type: 'string', label: '[兼容] 生效会话类型', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。' },
   intervalMode: {
     type: 'select', label: '间隔模式', default: defaultTriggerPolicyConfig.intervalMode,
     options: [
@@ -68,8 +77,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   const service: TriggerPolicyService = {
     decide(message): TriggerDecision {
-      if (!isSessionTypeEnabled(cfg, message.sessionType)) {
-        return { kind: 'direct', reason: `sessionType '${message.sessionType ?? '?'}' not in trigger scope` };
+      if (!isScopeEnabled(cfg, message.platform, message.sessionType) ||
+          !isSessionTypeEnabled(cfg, message.sessionType)) {
+        return { kind: 'direct', reason: `scope 不在触发策略名单内 (${message.platform ?? '?'}:${message.sessionType ?? '?'})` };
       }
       if (checkImmediateTrigger(ctx, cfg, message.content)) {
         return { kind: 'immediate', reason: '@/name match' };
@@ -104,7 +114,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   ctx.logger.info(
     `[trigger] 已启用 (模式=${cfg.intervalMode}, @提及=${cfg.triggerOnAt}, ` +
     `别名=${cfg.triggerNames.length}, mute关键词=${cfg.muteKeywords.length}, ` +
-    `mute时长=${cfg.muteTimeSeconds}s, 平台范围=${cfg.platforms.length === 0 ? '全部' : cfg.platforms.join(',')})`,
+    `mute时长=${cfg.muteTimeSeconds}s, scopes=${cfg.scopes.join('|') || '<空>'})`,
   );
 
   // ===== gateway:inbound 中间件：触发判定 =====
@@ -126,8 +136,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       return; // swallow
     }
 
-    // 不在生效会话类型内（默认除 group 之外）：直接放行
-    if (!isSessionTypeEnabled(cfg, message.sessionType)) {
+    // 不在触发策略作用域内（默认 *:group）：直接放行
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType) ||
+        !isSessionTypeEnabled(cfg, message.sessionType)) {
       return next();
     }
 
