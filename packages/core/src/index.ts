@@ -84,6 +84,13 @@ export type {
   PlatformManagerService,
   // Gateway 服务（消息流编排中枢）
   GatewayService,
+  // 流控服务
+  FlowControlService,
+  FlowSessionStateSnapshot,
+  // 触发策略服务
+  TriggerPolicyService,
+  TriggerDecision,
+  TriggerKind,
   PluginGroupInfo,
   // WebUI 服务
   WebUIService,

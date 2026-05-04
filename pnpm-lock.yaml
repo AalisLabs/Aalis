@@ -262,6 +262,19 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-flow-control:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-game-activity:
     dependencies:
       '@aalis/core':
@@ -685,6 +698,19 @@ importers:
         version: 5.9.3
 
   packages/plugin-tools-system:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-trigger-policy:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
