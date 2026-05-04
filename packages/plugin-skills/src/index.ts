@@ -512,7 +512,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       }
     }
     await next();
-  }, -10); // 低优先级，在其他 agent:llm:before 之后
+  });
 
   logger.info(`技能系统已启动 (目录: ${skillsDir}, 已加载 ${skillsCache.length} 个技能)`);
 }
