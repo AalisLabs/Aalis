@@ -12,6 +12,7 @@ import {
   type FlowControlConfig,
   defaultFlowControlConfig,
   isPlatformEnabled,
+  isScopeEnabled,
   isSessionTypeEnabled,
   resolveFlowControlConfig,
 } from './config.js';
@@ -41,8 +42,16 @@ export const inject = {
 
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用流控', default: defaultFlowControlConfig.enabled },
-  platforms: { type: 'string', label: '生效平台（逗号分隔，空=全部）', default: '' },
-  sessionTypes: { type: 'string', label: '生效会话类型（逗号分隔，空=全部）', default: defaultFlowControlConfig.sessionTypes.join(','), description: '默认 group，与历史 OneBot 行为一致；可填 private/channel/guild 等。' },
+  scopes: {
+    type: 'multiselect',
+    label: '生效作用域',
+    default: defaultFlowControlConfig.scopes,
+    dynamicOptions: 'gateway-scopes',
+    allowCustom: true,
+    description: '格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
+  },
+  platforms: { type: 'string', label: '[兼容] 生效平台', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。建议留空。' },
+  sessionTypes: { type: 'string', label: '[兼容] 生效会话类型', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。建议留空。' },
   fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）', default: defaultFlowControlConfig.fixedInterval },
   activityScoreLower: { type: 'number', label: '活跃指数下限', default: defaultFlowControlConfig.activityScoreLower },
   activityScoreUpper: { type: 'number', label: '活跃指数上限', default: defaultFlowControlConfig.activityScoreUpper },
@@ -206,7 +215,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   ctx.logger.info(
     `[flow] 已启用 (固定间隔=${cfg.fixedInterval}, 阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, ` +
     `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
-    `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, 平台范围=${cfg.platforms.length === 0 ? '全部' : cfg.platforms.join(',')})`,
+    `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'})`,
   );
 
   // ===== gateway:inbound 中间件：流控前置闸门 =====
@@ -215,9 +224,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // 与历史 OneBot ChatFlow 行为一致；可通过配置扩展到 channel/guild 等。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
-    if (!isPlatformEnabled(cfg, message.platform)) return next();
+    if (!isPlatformEnabled(cfg, message.platform)) return next();        // legacy AND
+    if (!isSessionTypeEnabled(cfg, message.sessionType)) return next();   // legacy AND
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) return next(); // 主作用域
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
-    if (!isSessionTypeEnabled(cfg, message.sessionType)) return next(); // 不在流控会话类型名单内
 
     service.ensureState(message.sessionId, message.platform);
     service.recordIncoming(message.sessionId, message.platform, message.userId);
