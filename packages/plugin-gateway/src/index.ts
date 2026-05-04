@@ -60,7 +60,9 @@ export function apply(ctx: Context): void {
     try {
       // 前三相位：任一相位被 swallow 即停止后续调度
       for (const phase of [INBOUND_PHASE.COMMAND, INBOUND_PHASE.FLOW, INBOUND_PHASE.TRIGGER] as const) {
+        const t0 = performance.now();
         const reachedEnd = await ctx.hooks.run(phase, data);
+        ctx.emit('gateway:phase:done', { phase, reachedEnd, durationMs: performance.now() - t0, sessionId: message.sessionId, platform: message.platform });
         if (!reachedEnd) {
           logger.debug(
             `[${phase}] 消息被 swallow，未触达 agent: session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
@@ -70,9 +72,11 @@ export function apply(ctx: Context): void {
       }
 
       // 第四相位：dispatch —— 默认动作为调用 agent
-      await ctx.hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
+      const t0 = performance.now();
+      const reachedEnd = await ctx.hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
       });
+      ctx.emit('gateway:phase:done', { phase: INBOUND_PHASE.DISPATCH, reachedEnd, durationMs: performance.now() - t0, sessionId: message.sessionId, platform: message.platform });
     } catch (err) {
       logger.warn(`入站处理异常: ${err}`);
     }
