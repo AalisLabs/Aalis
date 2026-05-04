@@ -86,6 +86,7 @@ export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 export type {
   ImageRecognitionService,
   ImageRecognitionInput,
+  ImageRecognitionContextOptions,
   ImageRecognitionResult,
   ImageRecognitionCapability,
   ImageRecognitionCapabilityRegistry,

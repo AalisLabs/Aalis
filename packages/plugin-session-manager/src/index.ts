@@ -75,6 +75,14 @@ export const defaultConfig = {
 
 const METADATA_NAMESPACE = 'sessions';
 
+type MemoryClearData = {
+  scope: 'session' | 'all';
+  types?: string[];
+  sessionId?: string;
+  results: Array<{ source: string; success: boolean; message: string }>;
+  rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+};
+
 
 // ===== WebuiPages（声明式 UI） =====
 
@@ -518,12 +526,7 @@ class SessionManager implements SessionManagerService {
 
     this.sessions.delete(id);
 
-    // 清理消息历史
-    try {
-      await this.memory.clearSession(id);
-    } catch (err) {
-      this.ctx.logger.warn(`清理会话历史失败 [${id}]:`, err);
-    }
+    await this.clearDeletedSessionData(id);
 
     // 如果删除的是活跃会话，切换到剩余会话
     if (this.activeSessionId === id) {
@@ -537,6 +540,30 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     await this.ctx.emit('session:deleted', id);
     this.ctx.logger.info(`会话删除: ${session.name} (${id})`);
+  }
+
+  private async clearDeletedSessionData(id: string): Promise<void> {
+    const clearData: MemoryClearData = {
+      scope: 'session',
+      sessionId: id,
+      results: [],
+      rollbacks: [],
+    };
+
+    await this.ctx.hooks.run('memory:clear', clearData, async () => {
+      try {
+        await this.memory.clearSession(id);
+        clearData.results.push({ source: 'memory', success: true, message: '会话消息历史已清空' });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        clearData.results.push({ source: 'memory', success: false, message: `会话消息历史清空失败: ${msg}` });
+      }
+    });
+
+    const failed = clearData.results.filter(r => !r.success);
+    if (failed.length > 0) {
+      this.ctx.logger.warn(`会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`);
+    }
   }
 
   // ---- 活跃会话 ----

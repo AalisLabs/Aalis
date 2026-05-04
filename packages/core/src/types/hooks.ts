@@ -42,7 +42,7 @@ export interface HookContextMap {
   'agent:route': { message: IncomingMessage; agent: AgentService | undefined };
   'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
   'agent:tool:after': { name: string; result: string; toolCallContext: ToolCallContext };
-  'agent:reply:before': { content: string; sessionId: string; platform?: string; userId?: string; triggerType?: IncomingMessage['triggerType'] };
+  'agent:reply:before': { content: string; archiveContent?: string; sessionId: string; platform?: string; userId?: string; triggerType?: IncomingMessage['triggerType'] };
   // LLM 调用钩子
   'agent:llm:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string; triggerType?: IncomingMessage['triggerType'] };
   'agent:llm:after': { response: ChatResponse; messages: Message[] };

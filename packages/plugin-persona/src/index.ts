@@ -588,6 +588,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
 
         if (typeof reply === 'string') {
+          if (parsed[outputFormat.replyField] !== reply) {
+            parsed[outputFormat.replyField] = reply;
+          }
+          data.archiveContent = JSON.stringify(parsed);
+
           // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
           if (!clientRendered) {
             data.content = reply;
