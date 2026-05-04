@@ -21,6 +21,7 @@ export const inject = {
 
 export function apply(ctx: Context): void {
   const logger = ctx.logger.child('gateway');
+  logger.info('消息网关已启动 (gateway:inbound / gateway:outbound 钩子链就绪)');
 
   /** 调用 agent 处理消息；agent 不可用时给出兜底回复（沿用旧 core 行为）。 */
   async function defaultDispatch(message: IncomingMessage, agent: AgentService | undefined): Promise<void> {

@@ -181,12 +181,22 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   ctx.provide('flow-control', service);
 
+  ctx.logger.info(
+    `[flow] 已启用 (固定间隔=${cfg.fixedInterval}, 阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, ` +
+    `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
+    `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, 平台范围=${cfg.platforms.length === 0 ? '全部' : cfg.platforms.join(',')})`,
+  );
+
   // ===== gateway:inbound 中间件：流控前置闸门 =====
   // priority=900 → 在 commands(1000) 之后、trigger-policy(700) 之前。
+  // 设计取舍：流控只对群会话（sessionType=='group'）生效；
+  // 私聊 / 频道 / CLI / WebUI 直接放行 —— 与历史 OneBot ChatFlow 行为一致，
+  // 避免一对一直接对话被冷却 / 限速误伤。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
     if (!isPlatformEnabled(cfg, message.platform)) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
+    if (message.sessionType !== 'group') return next();   // 非群会话跳过流控
 
     service.ensureState(message.sessionId, message.platform);
     service.recordIncoming(message.sessionId, message.platform, message.userId);
@@ -194,9 +204,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     const s = states.get(message.sessionId)!;
 
     if (service.isMuted(message.sessionId)) {
+      // 禁言期不重置 idle timer：避免在禁言结束后被立即唤醒重复触发。
       logStatus(message.sessionId, s, '禁言中 → 吞噬');
       await shadowArchive(message);
-      service.rescheduleIdle(message.sessionId, message.platform);
       return; // swallow
     }
     if (service.isCoolingDown(message.sessionId)) {
@@ -215,12 +225,12 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     await next();
   }, 900);
 
-  // 出站消息后记录冷却 / 重置退避
+  // 出站消息后记录冷却 / 重置退避（同样仅对群会话计入流控）
   ctx.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
     const s = states.get(msg.sessionId);
-    if (!s) return;
+    if (!s) return; // 没有 state 说明该 session 从未走过群流控（私聊/CLI 等），跳过
     service.recordReply(msg.sessionId, s.platform);
   });
 

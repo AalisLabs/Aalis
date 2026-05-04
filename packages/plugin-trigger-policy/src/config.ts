@@ -12,6 +12,8 @@ export interface TriggerPolicyConfig {
   triggerNames: string[];
   /** mute 关键词（命中时设置自禁言） */
   muteKeywords: string[];
+  /** mute 关键词命中时通知 flow-control 设置的禁言时长（秒） */
+  muteTimeSeconds: number;
 }
 
 export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
@@ -21,6 +23,7 @@ export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   triggerOnAt: true,
   triggerNames: [],
   muteKeywords: [],
+  muteTimeSeconds: 60,
 };
 
 function parseStringList(val: unknown): string[] {
@@ -43,6 +46,9 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
     triggerOnAt: (raw.triggerOnAt as boolean) ?? d.triggerOnAt,
     triggerNames: parseStringList(raw.triggerNames),
     muteKeywords: parseStringList(raw.muteKeywords),
+    muteTimeSeconds: typeof raw.muteTimeSeconds === 'number' && raw.muteTimeSeconds > 0
+      ? Math.floor(raw.muteTimeSeconds)
+      : d.muteTimeSeconds,
   };
 }
 
