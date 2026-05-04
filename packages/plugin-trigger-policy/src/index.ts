@@ -132,6 +132,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         `[trigger] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${message.sessionId}`,
       );
       flow?.setMuted(message.sessionId, cfg.muteTimeSeconds);
+      // 与 dev OneBot ChatFlow 一致：设置自禁言后调度一次 idle，
+      // 让禁言结束附近能正常进入"长期静默→主动招呼"路径。
+      flow?.rescheduleIdle(message.sessionId, message.platform);
       await shadowArchive(message);
       return; // swallow
     }
@@ -150,15 +153,24 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       await next();
       return;
     }
+
+    // 统一状态日志（与历史 dev OneBot ChatFlow 的"消息计数/发言指数"日志保持一致）：
+    // 让运维可以一眼看到"还差多少条/多少分会触发"。
+    const snap = flow?.getStateSnapshot(message.sessionId);
+    const threshold = flow?.getThreshold(message.sessionId);
+    const stateStr = snap
+      ? `计数=${snap.messageCount}/${snap.fixedInterval} | 指数=${snap.activityScore.toFixed(3)} (阈值=${(threshold ?? 0).toFixed(3)})`
+      : '无 flow 状态';
+
     if (decision.kind === 'immediate' || decision.kind === 'interval') {
-      ctx.logger.debug(`[trigger] ${decision.kind} 触发 (${decision.reason}): session=${message.sessionId}`);
+      ctx.logger.debug(`[trigger] ${decision.kind} → 触发 | session=${message.sessionId} | ${stateStr} | ${decision.reason}`);
       flow?.recordTriggered(message.sessionId);
       message.triggerType = decision.kind;
       await next();
       return;
     }
     // swallow
-    ctx.logger.debug(`[trigger] swallow (${decision.reason}): session=${message.sessionId}`);
+    ctx.logger.debug(`[trigger] 未触发 → 吞噬 | session=${message.sessionId} | ${stateStr} | ${decision.reason}`);
     await shadowArchive(message);
     // flow-control 已在前置中调度 idle，无需重复
   }, GATEWAY_MIDDLEWARE_PRIORITY.TRIGGER_POLICY);

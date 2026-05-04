@@ -1001,6 +1001,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const adapter: PlatformAdapter = {
     adapterName: 'OneBot',
     platform: 'onebot',
+    sessionTypes: ['group', 'private'],
 
     getConnections(): PlatformConnection[] {
       return states.map(s => ({
