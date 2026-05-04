@@ -265,7 +265,7 @@ export interface ExtendDeclaration {
   mixins?: Record<string, string[]>;
 }
 
-// ----- 配置 Schema (internal-framework-style) -----
+// ----- 配置 Schema  -----
 
 export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea';
 
