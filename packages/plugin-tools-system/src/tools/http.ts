@@ -3,17 +3,21 @@
  *
  * 提供：
  * - http_request: 发送 HTTP 请求（GET/POST/PUT/DELETE 等）
- * - http_download: 下载文件到本地
+ * - http_download: 下载文件到 storage 受控路径
  */
 
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type { Context } from '@aalis/core';
+import type { StorageService } from '@aalis/core';
 
 interface HttpConfig {
   defaultTimeout: number;
   maxResponseSize: number;
+  storage?: StorageService;
 }
+
+const MAX_REDIRECTS = 5;
 
 export function registerHttpTools(ctx: Context, config: HttpConfig): void {
 
@@ -62,24 +66,6 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
       const body = args.body as string | undefined;
       const timeout = (args.timeout as number) || config.defaultTimeout;
 
-      // 安全检查：只允许 http/https
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        return JSON.stringify({ error: '仅支持 http:// 和 https:// 协议' });
-      }
-
-      // 防止内网 SSRF：阻止请求常见内网地址
-      try {
-        const parsed = new URL(url);
-        const hostname = parsed.hostname;
-        if (isPrivateHost(hostname)) {
-          return JSON.stringify({
-            error: '安全限制：不允许请求内网地址。如需访问本地服务请使用 exec 工具。',
-          });
-        }
-      } catch {
-        return JSON.stringify({ error: '无效的 URL' });
-      }
-
       try {
         const fetchOptions: RequestInit = {
           method,
@@ -94,7 +80,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
           }
         }
 
-        const response = await fetch(url, fetchOptions);
+        const response = await safeFetch(url, fetchOptions);
         const contentType = response.headers.get('content-type') || '';
         const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
 
@@ -146,7 +132,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
       type: 'function',
       function: {
         name: 'http_download',
-        description: '从 URL 下载文件到本地指定路径。',
+        description: '从 URL 下载文件到受 storage 服务保护的路径。',
         parameters: {
           type: 'object',
           properties: {
@@ -156,7 +142,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
             },
             savePath: {
               type: 'string',
-              description: '保存到的本地文件路径',
+              description: '保存路径。支持 storage URI（如 workspace:/downloads/a.txt、tmp:/a.txt）；相对路径会保存到 workspace:/ 下；禁止宿主机绝对路径。',
             },
             timeout: {
               type: 'number',
@@ -173,21 +159,12 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
       const savePath = args.savePath as string;
       const timeout = (args.timeout as number) || config.defaultTimeout * 3;
 
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        return JSON.stringify({ error: '仅支持 http:// 和 https:// 协议' });
+      if (!config.storage) {
+        return JSON.stringify({ error: 'HTTP 下载需要 storage 服务' });
       }
 
       try {
-        const parsed = new URL(url);
-        if (isPrivateHost(parsed.hostname)) {
-          return JSON.stringify({ error: '安全限制：不允许请求内网地址' });
-        }
-      } catch {
-        return JSON.stringify({ error: '无效的 URL' });
-      }
-
-      try {
-        const response = await fetch(url, {
+        const response = await safeFetch(url, {
           signal: AbortSignal.timeout(timeout),
         });
 
@@ -197,14 +174,25 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
           });
         }
 
-        const buffer = Buffer.from(await response.arrayBuffer());
-        const resolvedPath = path.isAbsolute(savePath) ? savePath : path.resolve(process.cwd(), savePath);
+        const contentLength = Number(response.headers.get('content-length') || 0);
+        if (contentLength > config.maxResponseSize) {
+          return JSON.stringify({
+            error: `下载内容过大 (${contentLength} 字节)，超过限制 ${config.maxResponseSize} 字节`,
+          });
+        }
 
-        await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
-        await fs.writeFile(resolvedPath, buffer);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.byteLength > config.maxResponseSize) {
+          return JSON.stringify({
+            error: `下载内容过大 (${buffer.byteLength} 字节)，超过限制 ${config.maxResponseSize} 字节`,
+          });
+        }
+
+        const storageUri = toStorageUri(savePath);
+        await config.storage.writeFile(storageUri, buffer);
 
         return JSON.stringify({
-          path: resolvedPath,
+          path: storageUri,
           size: buffer.length,
           contentType: response.headers.get('content-type') || 'unknown',
           message: '下载完成',
@@ -219,28 +207,89 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
 
 // ===== 辅助函数 =====
 
-function isPrivateHost(hostname: string): boolean {
-  // IPv4 私有地址
-  if (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '0.0.0.0' ||
-    hostname.startsWith('10.') ||
-    hostname.startsWith('192.168.') ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  ) {
+async function safeFetch(url: string, init: RequestInit): Promise<Response> {
+  let current = await validatePublicHttpUrl(url);
+  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+    const response = await fetch(current.href, { ...init, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.headers.get('location');
+    if (!location) return response;
+    current = await validatePublicHttpUrl(new URL(location, current).href);
+  }
+  throw new Error(`重定向次数超过上限 (${MAX_REDIRECTS})`);
+}
+
+async function validatePublicHttpUrl(rawUrl: string): Promise<URL> {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('仅支持 http:// 和 https:// 协议');
+  }
+  if (await isPrivateHost(parsed.hostname)) {
+    throw new Error('安全限制：不允许请求内网地址。如需访问本地服务请使用 shell 工具。');
+  }
+  return parsed;
+}
+
+async function isPrivateHost(hostname: string): Promise<boolean> {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!normalized || normalized === 'localhost') return true;
+
+  if (isPrivateIp(normalized)) return true;
+
+  try {
+    const addresses = await lookup(normalized, { all: true, verbatim: true });
+    return addresses.some(({ address }) => isPrivateIp(address));
+  } catch {
     return true;
   }
+}
 
-  // 172.16.0.0 - 172.31.255.255
-  if (hostname.startsWith('172.')) {
-    const second = parseInt(hostname.split('.')[1], 10);
-    if (second >= 16 && second <= 31) return true;
+function isPrivateIp(address: string): boolean {
+  const version = isIP(address);
+  if (version === 4) return isPrivateIpv4(address);
+  if (version === 6) return isPrivateIpv6(address);
+  return false;
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split('.').map(part => Number(part));
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return true;
   }
+  const [a, b] = parts;
+  return a === 0
+    || a === 10
+    || a === 127
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19))
+    || a >= 224;
+}
 
-  // 169.254.x.x (link-local)
-  if (hostname.startsWith('169.254.')) return true;
+function isPrivateIpv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (normalized === '::' || normalized === '::1') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
+
+  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateIpv4(mapped[1]);
 
   return false;
+}
+
+function toStorageUri(input: string): string {
+  const value = input.trim();
+  if (!value) throw new Error('保存路径不能为空');
+  if (/^[a-zA-Z]:[\\/]/.test(value)) {
+    throw new Error('保存路径必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
+  if (value.startsWith('/')) {
+    throw new Error('保存路径必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  }
+  return `workspace:/${value.replace(/^\/+/, '')}`;
 }
