@@ -12,6 +12,7 @@ import {
   type FlowControlConfig,
   defaultFlowControlConfig,
   isPlatformEnabled,
+  isSessionTypeEnabled,
   resolveFlowControlConfig,
 } from './config.js';
 import {
@@ -41,6 +42,7 @@ export const inject = {
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用流控', default: defaultFlowControlConfig.enabled },
   platforms: { type: 'string', label: '生效平台（逗号分隔，空=全部）', default: '' },
+  sessionTypes: { type: 'string', label: '生效会话类型（逗号分隔，空=全部）', default: defaultFlowControlConfig.sessionTypes.join(','), description: '默认 group，与历史 OneBot 行为一致；可填 private/channel/guild 等。' },
   fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）', default: defaultFlowControlConfig.fixedInterval },
   activityScoreLower: { type: 'number', label: '活跃指数下限', default: defaultFlowControlConfig.activityScoreLower },
   activityScoreUpper: { type: 'number', label: '活跃指数上限', default: defaultFlowControlConfig.activityScoreUpper },
@@ -209,14 +211,13 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   // ===== gateway:inbound 中间件：流控前置闸门 =====
   // priority=GATEWAY_MIDDLEWARE_PRIORITY.FLOW_CONTROL(900) → 在 commands(1000) 之后、trigger-policy(700) 之前。
-  // 设计取舍：流控只对群会话（sessionType=='group'）生效；
-  // 私聊 / 频道 / CLI / WebUI 直接放行 —— 与历史 OneBot ChatFlow 行为一致，
-  // 避免一对一直接对话被冷却 / 限速误伤。
+  // 设计取舍：流控默认只对群会话（sessionTypes=['group']）生效，
+  // 与历史 OneBot ChatFlow 行为一致；可通过配置扩展到 channel/guild 等。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
     if (!isPlatformEnabled(cfg, message.platform)) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
-    if (message.sessionType !== 'group') return next();   // 非群会话跳过流控
+    if (!isSessionTypeEnabled(cfg, message.sessionType)) return next(); // 不在流控会话类型名单内
 
     service.ensureState(message.sessionId, message.platform);
     service.recordIncoming(message.sessionId, message.platform, message.userId);

@@ -4,6 +4,11 @@ export interface TriggerPolicyConfig {
   enabled: boolean;
   /** 仅对这些 platform 生效（空数组=所有 platform） */
   platforms: string[];
+  /**
+   * 仅对这些会话类型生效（空数组=所有）。
+   * 默认 ['group']：私聊 / CLI / WebUI 不需触发判定，直接走 agent。
+   */
+  sessionTypes: string[];
   /** 模式：fixed=按计数，dynamic=按评分阈值，both=任一满足 */
   intervalMode: 'fixed' | 'dynamic' | 'both';
   /** 是否检测 @ 提及作为即时触发 */
@@ -19,6 +24,7 @@ export interface TriggerPolicyConfig {
 export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   enabled: true,
   platforms: [],
+  sessionTypes: ['group'],
   intervalMode: 'both',
   triggerOnAt: true,
   triggerNames: [],
@@ -39,6 +45,7 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
   return {
     enabled: (raw.enabled as boolean) ?? d.enabled,
     platforms: parseStringList(raw.platforms),
+    sessionTypes: raw.sessionTypes === undefined ? d.sessionTypes : parseStringList(raw.sessionTypes),
     intervalMode: ((): TriggerPolicyConfig['intervalMode'] => {
       const v = raw.intervalMode;
       return v === 'fixed' || v === 'dynamic' || v === 'both' ? v : d.intervalMode;
@@ -57,4 +64,11 @@ export function isPlatformEnabled(cfg: TriggerPolicyConfig, platform: string | u
   if (cfg.platforms.length === 0) return true;
   if (!platform) return false;
   return cfg.platforms.includes(platform);
+}
+
+/** 会话类型是否在触发判定范围内。空白名单 = 全部生效。 */
+export function isSessionTypeEnabled(cfg: TriggerPolicyConfig, sessionType: string | undefined): boolean {
+  if (cfg.sessionTypes.length === 0) return true;
+  if (!sessionType) return false;
+  return cfg.sessionTypes.includes(sessionType);
 }

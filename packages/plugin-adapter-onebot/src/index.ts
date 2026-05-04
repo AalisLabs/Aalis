@@ -77,13 +77,6 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
-  chatFlow: {
-    label: '聊天流控（已迁移）',
-    description: '⚠️ 已迁移到独立插件 @aalis/plugin-flow-control + @aalis/plugin-trigger-policy。OneBot 自身不再维护此配置；本节仅作占位说明。',
-    fields: {
-      _migrated: { type: 'boolean', label: '已迁移', description: '请删除此配置块并启用 plugin-flow-control / plugin-trigger-policy。', default: true },
-    },
-  },
   forward: {
     label: '合并转发处理',
     description: '收到 <forward> 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要',
@@ -113,9 +106,6 @@ export const defaultConfig = {
     delayPerChar: 50,
     maxDelay: 3000,
     punctuation: ['。', '！', '？', '.', '!', '?', '\\n'] as string[],
-  },
-  chatFlow: {
-    // 已迁移：保留空对象避免老配置报错
   },
   forward: {
     enabled: true,
