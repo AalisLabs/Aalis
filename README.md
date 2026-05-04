@@ -115,7 +115,11 @@ aalis/
 │   │
 │   ├── plugin-platform/             # 平台管理聚合
 │   ├── plugin-authority/            # 权限管理系统
-│   └── plugin-commands/             # 指令系统与工具桥接
+│   ├── plugin-commands/             # 指令系统与工具桥接
+│   │
+│   ├── plugin-gateway/              # 消息流网关（inbound:command/flow/trigger/dispatch 生命周期相位）
+│   ├── plugin-flow-control/         # 平台无关流控：禁言/冷却/限速/闲置触发
+│   └── plugin-trigger-policy/       # 平台无关触发策略：@/名字/关键词/计数/评分
 └── src/
     └── index.ts                   # 主入口
 ```
@@ -138,6 +142,9 @@ aalis/
 | `scheduler` | 定时任务调度 | plugin-scheduler |
 | `authority` | 权限等级与高危操作管理 | plugin-authority |
 | `commands` | 指令注册与工具桥接 | plugin-commands |
+| `gateway` | 入站/出站消息编排（`inbound:command/flow/trigger/dispatch` 相位 + `outbound:dispatch` 钩子） | plugin-gateway |
+| `flow-control` | 平台无关流控（禁言/冷却/限速/闲置触发） | plugin-flow-control |
+| `trigger-policy` | 平台无关触发策略（@/名字/关键词/计数/评分） | plugin-trigger-policy |
 
 ## 快速开始
 

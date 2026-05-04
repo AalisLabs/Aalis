@@ -71,6 +71,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const adapter: PlatformAdapter = {
     adapterName: 'CLI',
     platform: 'cli',
+    sessionTypes: [], // CLI 单会话，不区分 sessionType
     getConnections(): PlatformConnection[] {
       return [{ id: sessionId, platform: 'cli', status: tui?.isRunning() ? 'online' : 'offline' }];
     },

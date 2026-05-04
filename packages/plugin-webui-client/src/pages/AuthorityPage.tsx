@@ -48,6 +48,8 @@ interface AuthorityTool {
 interface AuthorityData {
   users: AuthorityUser[];
   owners: AuthorityOwner[];
+  /** 当前可选平台列表（来自已注册的 platform 服务 + 既有用户/owner 的平台） */
+  platforms?: string[];
   defaultAuthority: number;
   ownerAuthority: number;
   commandPrefix: string;
@@ -225,6 +227,11 @@ export function AuthorityPage() {
     <div className="page-content page-authority">
       {message && <div className="toast">{message}</div>}
 
+      {/* 平台候选项（供 newOwner / newUser 输入框 list 引用） */}
+      <datalist id="authority-platforms">
+        {(data.platforms ?? []).map(p => <option key={p} value={p} />)}
+      </datalist>
+
       {/* 概览 */}
       <div className="section-label">概览</div>
       <div className="overview-grid">
@@ -379,10 +386,14 @@ export function AuthorityPage() {
                         </span>
                         <span>
                           {isEditing ? (
-                            <input type="number" className="config-edit-input authority-inline-input" min={0}
+                            <select className="config-edit-input authority-inline-input"
                               value={cmdDraft.authority}
                               onChange={e => setCmdDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
-                              autoFocus />
+                              autoFocus>
+                              {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
+                                <option key={lv} value={lv}>{lv}</option>
+                              ))}
+                            </select>
                           ) : (
                             <span className={`authority-badge ${c.authority >= data.ownerAuthority ? 'owner' : c.authority >= 3 ? 'high' : ''}`}>
                               {c.authority}
@@ -479,6 +490,7 @@ export function AuthorityPage() {
             {showAddOwner && (
               <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
                 <input className="config-edit-input" placeholder="平台 (如 onebot)"
+                  list="authority-platforms"
                   value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
                 <input className="config-edit-input" placeholder="用户 ID"
                   value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
@@ -531,11 +543,17 @@ export function AuthorityPage() {
             {showAddUser && (
               <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
                 <input className="config-edit-input" placeholder="平台 (如 onebot)"
+                  list="authority-platforms"
                   value={newUser.platform} onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))} />
                 <input className="config-edit-input" placeholder="用户 ID"
                   value={newUser.userId} onChange={e => setNewUser(v => ({ ...v, userId: e.target.value }))} />
-                <input className="config-edit-input" type="number" placeholder="权限等级" min={0}
-                  value={newUser.authority} onChange={e => setNewUser(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))} />
+                <select className="config-edit-input" title="权限等级"
+                  value={newUser.authority}
+                  onChange={e => setNewUser(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}>
+                  {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
+                    <option key={lv} value={lv}>{lv}{lv === data.defaultAuthority ? ' (默认)' : ''}{lv === data.ownerAuthority ? ' (Owner)' : ''}</option>
+                  ))}
+                </select>
                 <button className="btn btn-primary btn-sm" onClick={addUser} disabled={!newUser.platform || !newUser.userId}>确认</button>
               </div>
             )}
@@ -560,10 +578,14 @@ export function AuthorityPage() {
                       <span className="authority-cell-id">{u.userId}</span>
                       <span>
                         {isEditing ? (
-                          <input type="number" className="config-edit-input authority-inline-input" min={0}
+                          <select className="config-edit-input authority-inline-input"
                             value={editUser!.authority}
                             onChange={e => setEditUser(prev => prev ? { ...prev, authority: parseInt(e.target.value) || 0 } : null)}
-                            autoFocus />
+                            autoFocus>
+                            {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
+                              <option key={lv} value={lv}>{lv}</option>
+                            ))}
+                          </select>
                         ) : (
                           <span className={`authority-badge ${u.authority >= data.ownerAuthority ? 'owner' : u.authority >= 3 ? 'high' : ''}`}>
                             {u.authority}
