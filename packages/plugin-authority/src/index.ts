@@ -357,9 +357,20 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     // 扁平化所有指令节点（含递归子指令），按深度优先顺序，便于 UI 表格渲染
     const cmdNodes = ctx.commands?.getAllNodes() ?? [];
     const tools = ctx.tools?.getAll() ?? [];
+    // 当前已注册的平台 contextId 列表（用于 WebUI 下拉选择，避免手写）
+    const platformEntries = ctx.serviceContainer?.getEntries?.('platform') ?? [];
+    const platformsFromServices = platformEntries.map(e => e.contextId);
+    const platformsFromUsers = users.map(u => u.platform);
+    const platformsFromOwners = owners.map(o => o.platform);
+    const platforms = Array.from(new Set([
+      ...platformsFromServices,
+      ...platformsFromUsers,
+      ...platformsFromOwners,
+    ])).filter(Boolean);
     return {
       users,
       owners,
+      platforms,
       defaultAuthority: ctx.config.get('defaultAuthority') ?? 1,
       ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
