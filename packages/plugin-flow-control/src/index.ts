@@ -7,7 +7,7 @@ import type {
   MessageArchiveService,
   OutgoingMessage,
 } from '@aalis/core';
-import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
+import { INBOUND_PHASE } from '@aalis/core';
 import {
   type FlowControlConfig,
   defaultFlowControlConfig,
@@ -213,11 +213,11 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'})`,
   );
 
-  // ===== gateway:inbound 中间件：流控前置闸门 =====
-  // priority=GATEWAY_MIDDLEWARE_PRIORITY.FLOW_CONTROL(900) → 在 commands(1000) 之后、trigger-policy(700) 之前。
+  // ===== inbound:flow 相位：流控前置闸门 =====
+  // 由 plugin-gateway 在 inbound:command 之后、inbound:trigger 之前触发。
   // 设计取舍：流控默认只对群会话（sessionTypes=['group']）生效，
   // 与历史 OneBot ChatFlow 行为一致；可通过配置扩展到 channel/guild 等。
-  ctx.middleware('gateway:inbound', async (data, next) => {
+  ctx.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;
     if (!isScopeEnabled(cfg, message.platform, message.sessionType)) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
@@ -245,9 +245,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       service.rescheduleIdle(message.sessionId, message.platform);
       return; // swallow
     }
-    // 通过流控前置闸门：交给下一中间件（trigger-policy / agent）
+    // 通过流控前置闸门：交给下一相位（inbound:trigger → inbound:dispatch）
     await next();
-  }, GATEWAY_MIDDLEWARE_PRIORITY.FLOW_CONTROL);
+  });
 
   // 出站消息后记录冷却 / 重置退避（同样仅对群会话计入流控）
   ctx.on('outbound:message', (msg: OutgoingMessage) => {
