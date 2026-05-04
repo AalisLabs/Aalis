@@ -1,8 +1,6 @@
 // ----- 流控配置类型与默认值 -----
 
 export interface FlowControlConfig {
-  /** 是否启用流控（关闭时所有判定都返回 false / 放行） */
-  enabled: boolean;
   /**
    * 统一作用域名单（multiselect），元素格式 "platform:sessionType"，
    * 支持 "*" 通配：onebot:group / onebot:* / *:group / * 。
@@ -44,7 +42,6 @@ export interface FlowControlConfig {
 }
 
 export const defaultFlowControlConfig: FlowControlConfig = {
-  enabled: true,
   scopes: ['*:group'],
   fixedInterval: 5,
   activityScoreLower: 0.3,
@@ -75,7 +72,6 @@ function parseStringList(val: unknown): string[] {
 export function resolveFlowControlConfig(raw: Record<string, unknown>): FlowControlConfig {
   const d = defaultFlowControlConfig;
   return {
-    enabled: (raw.enabled as boolean) ?? d.enabled,
     scopes: raw.scopes === undefined ? d.scopes : parseStringList(raw.scopes),
     fixedInterval: (raw.fixedInterval as number) ?? d.fixedInterval,
     activityScoreLower: (raw.activityScoreLower as number) ?? d.activityScoreLower,
