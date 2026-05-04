@@ -5,7 +5,6 @@ import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, parseInstanceId, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
-import type { AgentService } from './types/index.js';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -549,25 +548,9 @@ export class App {
     // 检查核心必需服务，缺失时自动寻找并启动提供者
     await this.ensureRequiredServices();
 
-    // 将 inbound:message 事件路由到 agent 服务
-    // 通过 'agent:route' 钩子管道，沙盒插件可拦截并替换路由逻辑
-    this.ctx.on('inbound:message', async (msg) => {
-      const agent = this.ctx.getService<AgentService>('agent');
-      const routeData = { message: msg, agent };
-
-      await this.hooks.run('agent:route', routeData, async () => {
-        if (routeData.agent) {
-          await routeData.agent.handleMessage(routeData.message);
-        } else {
-          this.logger.warn('Agent 服务不可用，消息将不会被处理');
-          await this.ctx.emit('outbound:message', {
-            content: '[系统] Agent 服务不可用，请检查插件配置。',
-            sessionId: routeData.message.sessionId,
-            platform: routeData.message.platform,
-          });
-        }
-      });
-    });
+    // 注：消息路由职责已迁移到 @aalis/plugin-gateway。
+    // core 不再监听 `inbound:message`，应用层应通过 `requiredServices` 声明对 `gateway` 服务的依赖。
+    // gateway 服务负责监听 `inbound:message`、运行 `gateway:inbound` 钩子链、调用 agent.handleMessage。
 
     // 发出 ready 事件
     await this.ctx.emit('ready');
