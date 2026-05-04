@@ -712,16 +712,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 用于 plugin-flow-control / plugin-trigger-policy 的多选作用域配置。
     if (serviceName === 'gateway-scopes') {
       const platforms = ctx.getPlatformNames();
-      // 常见会话类型；若未来 adapter 引入新类型，用户可在 UI 里手动输入（allowCustom）
-      const sessionTypes = ['group', 'private', 'channel', 'guild', 'direct'];
+      // 仅使用 core IncomingMessage.sessionType 类型定义中已有的值；
+      // 平台如有新类型（如 'thread'），用户可在 UI 里通过 allowCustom 手动输入。
+      const sessionTypes = ['group', 'private', 'channel'];
       const scopes: Array<{ value: string; label: string }> = [];
       // 全部
       scopes.push({ value: '*', label: '* （全部平台 × 全部类型）' });
       // 仅按 sessionType 通配
       for (const t of sessionTypes) scopes.push({ value: `*:${t}`, label: `*:${t} （所有平台的 ${t} 会话）` });
       // 仅按 platform 通配
-      for (const p of platforms) scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部会话）` });
-      // 精确组合
+      for (const p of platforms) scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部类型）` });
+      // 精确组合（仅已注册平台 × 已知类型）
       for (const p of platforms) {
         for (const t of sessionTypes) {
           scopes.push({ value: `${p}:${t}`, label: `${p}:${t}` });
