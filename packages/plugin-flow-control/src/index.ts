@@ -11,9 +11,7 @@ import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
 import {
   type FlowControlConfig,
   defaultFlowControlConfig,
-  isPlatformEnabled,
   isScopeEnabled,
-  isSessionTypeEnabled,
   resolveFlowControlConfig,
 } from './config.js';
 import {
@@ -50,8 +48,6 @@ export const configSchema: ConfigSchema = {
     allowCustom: true,
     description: '格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
   },
-  platforms: { type: 'string', label: '[兼容] 生效平台', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。建议留空。' },
-  sessionTypes: { type: 'string', label: '[兼容] 生效会话类型', default: '', description: '已被 scopes 取代；填入后与 scopes 取 AND。建议留空。' },
   fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）', default: defaultFlowControlConfig.fixedInterval },
   activityScoreLower: { type: 'number', label: '活跃指数下限', default: defaultFlowControlConfig.activityScoreLower },
   activityScoreUpper: { type: 'number', label: '活跃指数上限', default: defaultFlowControlConfig.activityScoreUpper },
@@ -224,9 +220,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // 与历史 OneBot ChatFlow 行为一致；可通过配置扩展到 channel/guild 等。
   ctx.middleware('gateway:inbound', async (data, next) => {
     const { message } = data;
-    if (!isPlatformEnabled(cfg, message.platform)) return next();        // legacy AND
-    if (!isSessionTypeEnabled(cfg, message.sessionType)) return next();   // legacy AND
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) return next(); // 主作用域
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
 
     service.ensureState(message.sessionId, message.platform);
