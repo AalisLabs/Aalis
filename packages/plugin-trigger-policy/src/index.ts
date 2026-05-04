@@ -7,7 +7,7 @@ import type {
   TriggerDecision,
   TriggerPolicyService,
 } from '@aalis/core';
-import { GATEWAY_MIDDLEWARE_PRIORITY } from '@aalis/core';
+import { INBOUND_PHASE } from '@aalis/core';
 import {
   type TriggerPolicyConfig,
   defaultTriggerPolicyConfig,
@@ -111,9 +111,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     `mute时长=${cfg.muteTimeSeconds}s, scopes=${cfg.scopes.join('|') || '<空>'})`,
   );
 
-  // ===== gateway:inbound 中间件：触发判定 =====
-  // priority=GATEWAY_MIDDLEWARE_PRIORITY.TRIGGER_POLICY(700) → 在 flow-control(900) 之后；进入此中间件意味着已通过冷却/限速闸门。
-  ctx.middleware('gateway:inbound', async (data, next) => {
+  // ===== inbound:trigger 相位：触发判定 =====
+  // 由 plugin-gateway 在 inbound:flow 之后、inbound:dispatch 之前触发。
+  // 进入本相位意味着已通过冷却/限速闸门。
+  ctx.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     const { message } = data;
     if (message.source === 'idle-trigger') return next(); // 内部注入跳过策略
 
@@ -165,7 +166,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     ctx.logger.debug(`[trigger] 未触发 → 吞噬 | session=${message.sessionId} | ${stateStr} | ${decision.reason}`);
     await shadowArchive(message);
     // flow-control 已在前置中调度 idle，无需重复
-  }, GATEWAY_MIDDLEWARE_PRIORITY.TRIGGER_POLICY);
+  });
 }
 
 export type { TriggerPolicyConfig };
