@@ -2,6 +2,7 @@ import type {
   Context,
   AgentService,
   IncomingMessage,
+  OutgoingMessage,
   Message,
   ToolCallContext,
   ToolCall,
@@ -20,6 +21,7 @@ import type {
   PersonaSessionOptions,
   SessionManagerService,
   SessionConfig,
+  GatewayService,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 import { getSenderLabel, prefixSender, getMessageName } from '@aalis/core';
@@ -111,7 +113,7 @@ class DefaultAgent implements AgentService {
   private archiveQueues = new Map<string, Promise<void>>();
 
   /** 已注册的预处理器（name → { priority, dispose }） */
-  private preprocessors = new Map<string, { priority: number; dispose: () => void }>();
+  private preprocessors = new Map<string, { dispose: () => void }>();
 
   constructor(ctx: Context, config: Record<string, unknown>) {
     this.ctx = ctx;
@@ -195,17 +197,21 @@ class DefaultAgent implements AgentService {
   /**
    * 注册消息预处理器
    *
+  /**
+   * 注册输入预处理器（如图片识别、文件读取、用户画像等）。
+   * 多个预处理器按注册顺序串行执行（Koa-style 洋葱模型）。
+   *
    * 底层通过 agent:input:before 中间件实现。
    * 同名注册会自动替换旧的预处理器。
    */
-  registerPreprocessor(name: string, handler: PreprocessorFn, priority = 500): () => void {
+  registerPreprocessor(name: string, handler: PreprocessorFn): () => void {
     // 同名替换
     const existing = this.preprocessors.get(name);
     if (existing) existing.dispose();
 
     const dispose = this.ctx.middleware('agent:input:before', async (data, next) => {
       await handler(data.message, next);
-    }, priority);
+    });
 
     const cleanup = () => {
       dispose();
@@ -213,18 +219,17 @@ class DefaultAgent implements AgentService {
       this.logger.info(`预处理器已注销: ${name}`);
     };
 
-    this.preprocessors.set(name, { priority, dispose: cleanup });
-    this.logger.info(`预处理器已注册: ${name} (priority: ${priority})`);
+    this.preprocessors.set(name, { dispose: cleanup });
+    this.logger.info(`预处理器已注册: ${name}`);
     return cleanup;
   }
 
   /**
-   * 获取当前所有已注册预处理器的元信息
+  /**
+   * 获取当前所有已注册预处理器的元信息（按注册顺序返回）
    */
   getPreprocessors(): PreprocessorInfo[] {
-    return [...this.preprocessors.entries()]
-      .map(([name, { priority }]) => ({ name, priority }))
-      .sort((a, b) => b.priority - a.priority);
+    return [...this.preprocessors.keys()].map(name => ({ name }));
   }
 
   /**
@@ -439,10 +444,11 @@ class DefaultAgent implements AgentService {
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
-        await this.ctx.emit('outbound:message', {
+        await this.dispatchOutbound({
           content: '[系统] LLM 服务不可用，请检查配置。',
           sessionId: incoming.sessionId,
           platform: incoming.platform,
+          source: 'system',
         });
         return;
       }
@@ -735,7 +741,7 @@ class DefaultAgent implements AgentService {
           });
 
           // 发送给流式客户端时使用合并版本（客户端流式阶段已自行维护 reasoningSegments）
-          await this.ctx.emit('outbound:message', {
+          await this.dispatchOutbound({
             content: replyContent,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
@@ -770,10 +776,11 @@ class DefaultAgent implements AgentService {
 
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`处理消息失败: ${message}`);
-        await this.ctx.emit('outbound:message', {
+        await this.dispatchOutbound({
           content: `[错误] ${message}`,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
+          source: 'system',
         });
       }
     });
@@ -1372,6 +1379,20 @@ class DefaultAgent implements AgentService {
       this.logger.warn('归档用户消息失败:', err);
       return undefined;
     }
+  }
+
+  /**
+  * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
+  * 完整发行入口通常会要求 gateway；最小应用/测试场景仍可不加载 gateway。
+   */
+  private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
+    const gateway = this.ctx.getService<GatewayService>('gateway');
+    if (gateway) {
+      await gateway.dispatchOutbound(message);
+      return;
+    }
+    this.logger.warn('Gateway 服务不可用，回退至 ctx.emit(outbound:message)');
+    await this.ctx.emit('outbound:message', message);
   }
 }
 

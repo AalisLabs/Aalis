@@ -226,7 +226,7 @@ function SchemaFormField({
     );
   }
 
-  if (field.type === 'select') {
+  if (field.type === 'select' || (field.type === 'string' && (field.options?.length || field.dynamicOptions || field.dynamicProviders))) {
     const dynamicKey = field.dynamicOptions;
     const dynamicModels = dynamicKey ? modelCache[dynamicKey] : undefined;
     const providerKey = field.dynamicProviders;

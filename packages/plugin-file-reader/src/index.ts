@@ -411,11 +411,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 优先使用 agent.registerPreprocessor，回退到 ctx.middleware
   const agent = ctx.getService<AgentService>('agent');
   if (agent?.registerPreprocessor) {
-    agent.registerPreprocessor('file-reader', preprocessFiles, 950);
+    agent.registerPreprocessor('file-reader', preprocessFiles);
   } else {
     ctx.middleware('agent:input:before', async (data, next) => {
       await preprocessFiles(data.message, next);
-    }, 950);
+    });
   }
 
   // 注册 file-reader 服务，供其他插件（如 WebUI）查询文件上传能力是否可用

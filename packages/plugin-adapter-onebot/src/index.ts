@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MessageArchiveService, PersonaService, ImageRecognitionService, LLMService, MemoryService } from '@aalis/core';
+import type { MessageArchiveService, PersonaService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -22,7 +22,7 @@ import { OneBotV12 } from './v12.js';
 export const name = '@aalis/plugin-adapter-onebot';
 export const displayName = 'OneBot 适配器';
 export const inject = {
-  optional: ['llm', 'commands', 'message-archive', 'persona'],
+  optional: ['llm', 'commands', 'message-archive', 'persona', 'flow-control'],
 };
 export const provides = ['platform'];
 export const reusable = true;
@@ -77,69 +77,6 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
-  chatFlow: {
-    label: '聊天流控',
-    description: '控制群聊中 AI 回复的触发频率，支持固定间隔和动态活跃度评分两种模式',
-    fields: {
-      enabled: { type: 'boolean', label: '启用', description: '是否启用聊天流控（仅对群聊生效）', default: false },
-      intervalMode: {
-        type: 'select',
-        label: '间隔模式',
-        options: [
-          { label: '固定消息条数', value: 'fixed' },
-          { label: '动态活跃度评分', value: 'dynamic' },
-          { label: '满足任一即触发', value: 'both' },
-        ],
-        default: 'both',
-      },
-      fixedInterval: { type: 'number', label: '固定间隔（条）', default: 5, description: '固定模式下每收到 N 条消息触发一次回复。' },
-      activityScoreLower: { type: 'number', label: '活跃度下限阈值', default: 0.3, description: '长时间无回复后的触发阈值，越低越容易触发。' },
-      activityScoreUpper: { type: 'number', label: '活跃度上限阈值', default: 0.85, description: '刚回复后的触发阈值，越高越不容易再次触发。' },
-      activityDecayMinutes: { type: 'number', label: '阈值衰减时间（分钟）', default: 10, description: '回复后阈值从上限衰减回下限所需时间。' },
-      scoreDecayMinutes: { type: 'number', label: '发言指数衰减时间（分钟）', default: 10, description: '无人发言后，累积的发言指数线性衰减到 0 所需时间。0 = 不衰减。' },
-      triggerOnAt: { type: 'boolean', label: '@ 触发', default: true, description: '消息中包含 @bot 时立刻触发回复。' },
-      triggerNames: { type: 'string', label: '触发词 / 昵称', default: '', description: '消息中出现这些词时立刻触发回复，逗号分隔（自动包含人设名称）。' },
-      cooldownSeconds: { type: 'number', label: '冷却时间（秒）', default: 10, description: 'AI 回复后的冷却时间。' },
-      idleTriggerScope: {
-        type: 'select',
-        label: '空闲主动触发范围',
-        options: [
-          { label: '关闭', value: 'off' },
-          { label: '会话级（per-session 定时）', value: 'session' },
-          { label: '平台级（调用 advisor 跨会话决策）', value: 'platform' },
-        ],
-        default: 'off',
-        description: '决定由谁发起主动话题。session 为原本会话级 idleTimer；platform 走适配器级轮询，遇到间隔/静默条件后调用 advisor 服务选一个会话发起。',
-      },
-      idleTriggerStrategy: {
-        type: 'select',
-        label: '平台级触发策略',
-        options: [
-          { label: '所有会话都静默 N 分钟后触发', value: 'all-quiet' },
-          { label: '每 N 分钟固定轮询', value: 'fixed' },
-        ],
-        default: 'all-quiet',
-        description: '仅 idleTriggerScope=platform 时生效。all-quiet 更接近人类习惯，有会话活跃时不打扰。',
-      },
-      idleTriggerMinutes: { type: 'number', label: '空闲间隔/静默阈值（分钟）', default: 180, description: 'session：per-session 定时起点；platform+fixed：轮询间隔；platform+all-quiet：所有会话需静默多久后才触发。' },
-      idleTriggerStyle: {
-        type: 'select',
-        label: '空闲重试风格',
-        options: [
-          { label: '指数退避', value: 'exponential' },
-          { label: '固定间隔', value: 'fixed' },
-        ],
-        default: 'exponential',
-      },
-      idleTriggerMaxMinutes: { type: 'number', label: '空闲最大间隔（分钟）', default: 1440 },
-      idleTriggerJitter: { type: 'boolean', label: '空闲抖动', default: true },
-      idleTriggerPrompt: { type: 'textarea', label: '空闲触发提示词', default: '', description: '空闲触发时发送给 Agent 的系统提示。留空使用默认提示。' },
-      muteKeywords: { type: 'string', label: '禁言关键词', default: '', description: '逗号分隔。' },
-      muteTimeSeconds: { type: 'number', label: '禁言时长（秒）', default: 60 },
-      rateLimitWindow: { type: 'number', label: '限速窗口（秒）', default: 0, description: '防 DDoS：在该时间窗口内最多回复 rateLimitMaxReplies 次。0 = 不限速。' },
-      rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复次数', default: 10, description: '防 DDoS：限速窗口内允许的最大回复次数。' },
-    },
-  },
   forward: {
     label: '合并转发处理',
     description: '收到 <forward> 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要',
@@ -169,29 +106,6 @@ export const defaultConfig = {
     delayPerChar: 50,
     maxDelay: 3000,
     punctuation: ['。', '！', '？', '.', '!', '?', '\\n'] as string[],
-  },
-  chatFlow: {
-    enabled: false,
-    intervalMode: 'both' as const,
-    fixedInterval: 5,
-    activityScoreLower: 0.3,
-    activityScoreUpper: 0.85,
-    activityDecayMinutes: 10,
-    scoreDecayMinutes: 10,
-    triggerOnAt: true,
-    triggerNames: '',
-    cooldownSeconds: 10,
-    idleTriggerScope: 'off' as 'off' | 'session' | 'platform',
-    idleTriggerStrategy: 'all-quiet' as 'all-quiet' | 'fixed',
-    idleTriggerMinutes: 180,
-    idleTriggerStyle: 'exponential' as const,
-    idleTriggerMaxMinutes: 1440,
-    idleTriggerJitter: true,
-    idleTriggerPrompt: '',
-    muteKeywords: '',
-    muteTimeSeconds: 60,
-    rateLimitWindow: 0,
-    rateLimitMaxReplies: 10,
   },
   forward: {
     enabled: true,
@@ -227,90 +141,15 @@ interface ConnectionState {
   }>;
 }
 
-// ===== 聊天流控类型 =====
-
-/** 聊天流控配置（解析后） */
-interface ChatFlowConfig {
-  enabled: boolean;
-  intervalMode: 'fixed' | 'dynamic' | 'both';
-  fixedInterval: number;
-  activityScoreLower: number;
-  activityScoreUpper: number;
-  activityDecayMinutes: number;
-  scoreDecayMinutes: number;
-  triggerOnAt: boolean;
-  triggerNames: string[];
-  cooldownSeconds: number;
-  idleTriggerScope: 'off' | 'session' | 'platform';
-  idleTriggerStrategy: 'all-quiet' | 'fixed';
-  idleTriggerMinutes: number;
-  idleTriggerStyle: 'exponential' | 'fixed';
-  idleTriggerMaxMinutes: number;
-  idleTriggerJitter: boolean;
-  idleTriggerPrompt: string;
-  muteKeywords: string[];
-  muteTimeSeconds: number;
-  rateLimitWindow: number;
-  rateLimitMaxReplies: number;
-}
-
-/** 每个 session 的流控状态 */
-interface FlowSessionState {
-  messageCount: number;
-  lastReplyTime: number;
-  lastMessageTime: number;
-  activityScore: number;
-  cooldownUntil: number;
-  mutedUntil: number;
-  idleTimer: ReturnType<typeof setTimeout> | null;
-  idleBackoff: number;
-  userInteractions: Map<string, { count: number; lastTime: number }>;
-  /** 滑动窗口内的回复时间戳（用于防 DDoS 限速） */
-  replyTimestamps: number[];
-  /** 是否已通过 shut_up_timestamp 完成自禁言状态恢复（每会话一次） */
-  muteRecoveryChecked: boolean;
-}
-
-function parseStringList(val: unknown): string[] {
-  if (Array.isArray(val)) return val.filter(Boolean).map(String);
-  if (typeof val === 'string' && val.trim()) {
-    return val.split(',').map(s => s.trim()).filter(Boolean);
-  }
-  return [];
-}
-
-function resolveChatFlowConfig(raw: Record<string, unknown>): ChatFlowConfig {
-  return {
-    enabled: (raw.enabled as boolean) ?? false,
-    intervalMode: (raw.intervalMode as ChatFlowConfig['intervalMode']) ?? 'both',
-    fixedInterval: (raw.fixedInterval as number) ?? 5,
-    activityScoreLower: (raw.activityScoreLower as number) ?? 0.3,
-    activityScoreUpper: (raw.activityScoreUpper as number) ?? 0.85,
-    activityDecayMinutes: (raw.activityDecayMinutes as number) ?? 10,
-    scoreDecayMinutes: (raw.scoreDecayMinutes as number) ?? 0,
-    triggerOnAt: (raw.triggerOnAt as boolean) ?? true,
-    triggerNames: parseStringList(raw.triggerNames),
-    cooldownSeconds: (raw.cooldownSeconds as number) ?? 10,
-    idleTriggerScope: ((): 'off' | 'session' | 'platform' => {
-      const v = raw.idleTriggerScope;
-      if (v === 'off' || v === 'session' || v === 'platform') return v;
-      return 'off';
-    })(),
-    idleTriggerStrategy: ((): 'all-quiet' | 'fixed' => {
-      const v = raw.idleTriggerStrategy;
-      return v === 'fixed' ? 'fixed' : 'all-quiet';
-    })(),
-    idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? 180,
-    idleTriggerStyle: (raw.idleTriggerStyle as ChatFlowConfig['idleTriggerStyle']) ?? 'exponential',
-    idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? 1440,
-    idleTriggerJitter: (raw.idleTriggerJitter as boolean) ?? true,
-    idleTriggerPrompt: (raw.idleTriggerPrompt as string) || '',
-    muteKeywords: parseStringList(raw.muteKeywords),
-    muteTimeSeconds: (raw.muteTimeSeconds as number) ?? 60,
-    rateLimitWindow: (raw.rateLimitWindow as number) ?? 0,
-    rateLimitMaxReplies: (raw.rateLimitMaxReplies as number) ?? 10,
-  };
-}
+// ===== 聊天流控类型（已迁移）=====
+//
+// 旧的 ChatFlowConfig / FlowSessionState / 流控函数已抽出到独立插件：
+//   - @aalis/plugin-flow-control   （计数 / 冷却 / 限速 / idle 调度）
+//   - @aalis/plugin-trigger-policy （@/名字检测 + 间隔/评分判定）
+// 适配器只保留两个最小桥接：
+//   - 群禁言事件 → ctx.getService<FlowControlService>('flow-control').setMuted()
+//   - shut_up_timestamp 启动恢复 → 同上
+// 其他路径全部走 inbound:command/flow/trigger/dispatch 生命周期相位。
 
 // ===== 工具函数 =====
 
@@ -539,8 +378,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     splitCfg.punctuation ?? ['。', '！', '？', '.', '!', '?', '\\n'],
   );
 
-  // 聊天流控配置
-  const flowCfg = resolveChatFlowConfig((config.chatFlow ?? {}) as Record<string, unknown>);
+  // 聊天流控配置已迁移至 plugin-flow-control / plugin-trigger-policy。
 
   // 合并转发处理配置
   const fwdRaw = (config.forward ?? {}) as Record<string, unknown>;
@@ -564,10 +402,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info('OneBot 适配器未配置任何连接');
   }
 
-  if (flowCfg.enabled) {
-    ctx.logger.info(`聊天流控已启用 (模式: ${flowCfg.intervalMode}, 间隔: ${flowCfg.fixedInterval}条, 阈值: ${flowCfg.activityScoreLower}~${flowCfg.activityScoreUpper})`);
-  }
-
   const states: ConnectionState[] = [];
 
   // ===== 用户昵称缓存（userId → nickname，从每条消息的 sender 信息累积） =====
@@ -578,9 +412,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const pendingFriendRequests = new Map<string, { flag: string; selfId: string }>();
   const pendingGroupRequests = new Map<string, { flag: string; subType: string; selfId: string }>();
 
-  // ===== 聊天流控状态管理 =====
-
-  const flowSessions = new Map<string, FlowSessionState>();
+  // ===== 桥接：会话元数据 + 平台 notice 入档 + 自禁言桥接 =====
+  //
+  // 流控/触发判定均已迁移；适配器只保留以下三类辅助：
+  //  1. sessionMeta —— advisor.listSessionCandidates 提供 hint
+  //  2. archivePlatformNotice —— 平台事件入档
+  //  3. recoverSelfMute / 群禁言 notice → flow-control.setMuted（由 flow-control 插件实际暂停触发）
 
   /** 会话级元数据（仅用于 listSessionCandidates 时给 advisor 提供 hint） */
   const sessionMeta = new Map<string, { sessionType: string; groupName?: string; partnerNickname?: string }>();
@@ -594,173 +431,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
-  function getFlowSession(sessionId: string): FlowSessionState {
-    let state = flowSessions.get(sessionId);
-    if (!state) {
-      state = {
-        messageCount: 0,
-        lastReplyTime: 0,
-        lastMessageTime: 0,
-        activityScore: 0,
-        cooldownUntil: 0,
-        mutedUntil: 0,
-        idleTimer: null,
-        idleBackoff: 1,
-        userInteractions: new Map(),
-        replyTimestamps: [],
-        muteRecoveryChecked: false,
-      };
-      flowSessions.set(sessionId, state);
-    }
-    return state;
-  }
+  /** 自禁言记录（sessionId → untilTs，毫秒），用于 adapter.getSelfMutes() */
+  const selfMuted = new Map<string, number>();
+  /** 已通过 shut_up_timestamp 完成恢复检查的会话集合 */
+  const muteRecoveryChecked = new Set<string>();
 
-  // ── 从 persona 获取 bot 名称用于触发检测 ──
-
-  function getBotNames(): string[] {
-    const names = [...flowCfg.triggerNames];
-    const persona = ctx.getService<PersonaService>('persona');
-    if (persona) {
-      const personaName = persona.getPersonaName();
-      if (personaName && !names.includes(personaName)) names.push(personaName);
-      const nickNames = persona.getNickNames?.() ?? [];
-      for (const nn of nickNames) {
-        if (nn && !names.includes(nn)) names.push(nn);
-      }
-    }
-    return names;
-  }
-
-  // ── 即时触发检测 ──
-
-  function checkImmediateTrigger(content: string): boolean {
-    if (flowCfg.triggerOnAt) {
-      if (/<at self[\s>][^]*?<\/at>/.test(content) ||
-          /\[CQ:at,qq=\d+\]/.test(content) ||
-          /@\S+/.test(content)) {
-        return true;
-      }
-    }
-    const names = getBotNames();
-    for (const name of names) {
-      if (name && content.includes(name)) return true;
-    }
-    return false;
-  }
-
-  // ── 禁言检测 ──
-
-  function checkMuteKeyword(content: string): boolean {
-    for (const keyword of flowCfg.muteKeywords) {
-      if (content.includes(keyword)) return true;
-    }
-    const persona = ctx.getService<PersonaService>('persona');
-    const personaMuteKw = persona?.getMuteKeywords?.() ?? [];
-    for (const keyword of personaMuteKw) {
-      if (content.includes(keyword)) return true;
-    }
-    return false;
-  }
-
-  // ── 动态阈值计算 ──
-
-  function getCurrentThreshold(fState: FlowSessionState): number {
-    if (fState.lastReplyTime === 0) return flowCfg.activityScoreLower;
-    const elapsed = Date.now() - fState.lastReplyTime;
-    const decayMs = flowCfg.activityDecayMinutes * 60 * 1000;
-    const factor = Math.max(0, 1 - elapsed / decayMs);
-    return flowCfg.activityScoreLower + (flowCfg.activityScoreUpper - flowCfg.activityScoreLower) * factor;
-  }
-
-  /**
-   * 将 activityScore 按距离上次消息的时间进行线性衰减（原地修改）。
-   * scoreDecayMinutes=0 时不衰减。
-   */
-  function applyScoreDecay(fState: FlowSessionState): void {
-    if (flowCfg.scoreDecayMinutes <= 0 || fState.activityScore <= 0 || fState.lastMessageTime === 0) return;
-    const elapsed = Date.now() - fState.lastMessageTime;
-    const decayMs = flowCfg.scoreDecayMinutes * 60 * 1000;
-    const factor = Math.max(0, 1 - elapsed / decayMs);
-    fState.activityScore *= factor;
-    // 低于极小值直接归零，避免浮点残余
-    if (fState.activityScore < 0.001) fState.activityScore = 0;
-  }
-
-  function calculateScoreIncrement(fState: FlowSessionState, userId?: string): number {
-    const base = 1.0 / Math.max(1, flowCfg.fixedInterval);
-    let userWeight = 1.0;
-    if (userId) {
-      const interaction = fState.userInteractions.get(userId);
-      if (interaction) {
-        userWeight = 1.0 + 0.5 * Math.min(interaction.count / 10, 1.0);
-      }
-    }
-    return base * userWeight;
-  }
-
-  // ── 触发判定 ──
-
-  function shouldTrigger(fState: FlowSessionState): boolean {
-    const fixedOk = fState.messageCount >= flowCfg.fixedInterval;
-    const dynamicOk = fState.activityScore >= getCurrentThreshold(fState);
-    switch (flowCfg.intervalMode) {
-      case 'fixed':   return fixedOk;
-      case 'dynamic': return dynamicOk;
-      case 'both':    return fixedOk || dynamicOk;
-      default:        return fixedOk;
-    }
-  }
-
-  // ── 防 DDoS 限速 ──
-
-  /**
-   * 检查是否超过限速上限。返回 true 表示已限速（不应回复）。
-   * 同时清理过期的时间戳并在通过时记录本次回复。
-   */
-  function checkRateLimit(fState: FlowSessionState, sessionId: string): boolean {
-    if (flowCfg.rateLimitWindow <= 0 || flowCfg.rateLimitMaxReplies <= 0) return false;
-    const windowMs = flowCfg.rateLimitWindow * 1000;
-    const now = Date.now();
-    // 清除窗口外的旧时间戳
-    fState.replyTimestamps = fState.replyTimestamps.filter(t => now - t < windowMs);
-    if (fState.replyTimestamps.length >= flowCfg.rateLimitMaxReplies) {
-      ctx.logger.info(
-        `[限速] session=${sessionId} | ${flowCfg.rateLimitWindow}s 内已回复 ${fState.replyTimestamps.length}/${flowCfg.rateLimitMaxReplies} 次，拒绝触发`,
-      );
-      return true;
-    }
-    return false;
-  }
-
-  /** 记录一次回复（限速窗口计数） */
-  function recordReply(fState: FlowSessionState): void {
-    fState.replyTimestamps.push(Date.now());
-  }
-
-  // ── 触发后重置 ──
-
-  function resetAfterTrigger(fState: FlowSessionState): void {
-    fState.messageCount = 0;
-    fState.activityScore = 0;
-    fState.lastReplyTime = Date.now();
-  }
-
-  // ── 保存缓冲消息到记忆 ──
-
-  async function saveBufferedMessage(sessionId: string, content: string, nickname?: string, userId?: string, images?: string[]): Promise<void> {
-    const archive = ctx.getService<MessageArchiveService>('message-archive');
-    if (!archive) return;
-    try {
-      await archive.archiveIncoming({
-        content,
-        sessionId,
-        platform: 'onebot',
-        userId,
-        nickname,
-        images,
-      });
-    } catch (err) {
-      ctx.logger.warn(`保存缓冲消息失败: ${err}`);
+  function setSelfMute(sessionId: string, durationSec: number, platform = 'onebot'): void {
+    const flow = ctx.getService<FlowControlService>('flow-control');
+    if (durationSec > 0) {
+      selfMuted.set(sessionId, Date.now() + durationSec * 1000);
+      flow?.setMuted(sessionId, durationSec, platform);
+    } else {
+      selfMuted.delete(sessionId);
+      flow?.setMuted(sessionId, 0);
     }
   }
 
@@ -798,7 +481,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
-  // ── 通过 sessionId 反查连接 ──
+  // ── 通过 selfId 反查连接 ──
 
   function findStateBySelfId(selfId: string | undefined): ConnectionState | undefined {
     if (!selfId) return undefined;
@@ -815,9 +498,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return {};
   }
 
-  /** 启动/重连后通过 get_group_member_info.shut_up_timestamp 恢复禁言状态 */
-  async function recoverSelfMuteIfNeeded(sessionId: string, fState: FlowSessionState): Promise<void> {
-    if (Date.now() < fState.mutedUntil) return; // 已经在禁言期内，无需查询
+  /** 启动/重连后通过 get_group_member_info.shut_up_timestamp 恢复禁言状态（每会话一次） */
+  async function recoverSelfMuteIfNeeded(sessionId: string): Promise<void> {
+    if (muteRecoveryChecked.has(sessionId)) return;
+    muteRecoveryChecked.add(sessionId);
+    const existing = selfMuted.get(sessionId) ?? 0;
+    if (Date.now() < existing) return;
     const { selfId, groupId } = parseGroupSessionId(sessionId);
     if (!selfId || !groupId) return;
     const state = findStateBySelfId(selfId);
@@ -832,10 +518,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const nowSec = Math.floor(Date.now() / 1000);
       if (ts > nowSec) {
         const remainSec = ts - nowSec;
-        fState.mutedUntil = ts * 1000;
-        fState.messageCount = 0;
-        fState.activityScore = 0;
-        clearIdleTimer(fState);
+        setSelfMute(sessionId, remainSec);
         ctx.logger.info(
           `[禁言恢复] session=${sessionId} 检测到 shut_up_timestamp=${ts}，剩余 ${remainSec}s，已恢复禁言状态`,
         );
@@ -849,292 +532,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           data: { duration: remainSec, until: ts * 1000 },
         });
       }
-    } catch {
-      // 静默失败：可能是协议端不支持或群已退出
-    }
-  }
-
-  // ── 空闲触发 ──
-
-  function scheduleIdleTrigger(fState: FlowSessionState, sessionId: string, platform: string): void {
-    clearIdleTimer(fState);
-    // 仅 'session' 范围下起 per-session timer；'platform' 交给 advisor 接管
-    if (flowCfg.idleTriggerScope !== 'session') return;
-
-    let delayMs: number;
-    if (flowCfg.idleTriggerStyle === 'exponential') {
-      delayMs = Math.min(
-        flowCfg.idleTriggerMinutes * fState.idleBackoff * 60 * 1000,
-        flowCfg.idleTriggerMaxMinutes * 60 * 1000,
-      );
-    } else {
-      delayMs = flowCfg.idleTriggerMinutes * 60 * 1000;
-    }
-
-    if (flowCfg.idleTriggerJitter) {
-      const jitter = delayMs * (0.1 * (Math.random() * 2 - 1));
-      delayMs = Math.max(60_000, delayMs + jitter);
-    }
-
-    fState.idleTimer = setTimeout(async () => {
-      try {
-        ctx.logger.info(`空闲触发: session=${sessionId} (退避 x${fState.idleBackoff})`);
-        if (flowCfg.idleTriggerStyle === 'exponential') {
-          fState.idleBackoff = Math.min(fState.idleBackoff * 2, 64);
-        }
-        // 将 marker 转换为有意义的 system 提示，避免垃圾文本进入 LLM/记忆。
-        // 同时设置 source = 'idle-trigger'，让 archive 与向量层可识别并跳过写入。
-        const idlePrompt = (flowCfg.idleTriggerPrompt && flowCfg.idleTriggerPrompt.trim())
-          || '当前群已长时间无人发言，请根据人设主动开启一个轻松的话题或问候。不要提及“系统提示”或表明你是被触发发言的。';
-        await ctx.emit('inbound:message', {
-          content: idlePrompt,
-          sessionId,
-          platform,
-          source: 'idle-trigger',
-          triggerType: 'idle',
-        });
-        scheduleIdleTrigger(fState, sessionId, platform);
-      } catch (err) {
-        ctx.logger.warn(`空闲触发执行失败: ${err}`);
-      }
-    }, delayMs);
-
-    ctx.logger.debug(`空闲触发已调度: session=${sessionId}, ${Math.round(delayMs / 60_000)}分钟后`);
-  }
-
-  function clearIdleTimer(fState: FlowSessionState): void {
-    if (fState.idleTimer) {
-      clearTimeout(fState.idleTimer);
-      fState.idleTimer = null;
-    }
-  }
-
-  // ── 平台级空闲触发（idleTriggerScope='platform'）──
-  //
-  // 在所有 onebot 会话（按 strategy 判定的）静默期后，从可发送候选里挑一个 emit
-  // inbound:message(source:'idle-trigger')，由主 agent 基于人设/记忆生成开场白。
-  //   - strategy='fixed'     每 idleTriggerMinutes 分钟固定触发；
-  //   - strategy='all-quiet' 所有会话最近一次活动（含 bot 自己的回复）≥ 阈值才触发。
-  // 候选挑选：sendable（未禁言/冷却/限速耗尽）中 lastActivity 最久远的一个，
-  // 即"最久未联系"的那个，最自然。
-  let platformIdleTimer: ReturnType<typeof setTimeout> | null = null;
-  let platformIdleRunning = false;
-
-  function stopPlatformIdleTick(): void {
-    if (platformIdleTimer) {
-      clearTimeout(platformIdleTimer);
-      platformIdleTimer = null;
-    }
-  }
-
-  /** 计算"距离全部会话静默达标"还需等多少 ms；若已达标返回 0；无活跃会话返回 0。 */
-  function timeUntilAllQuiet(thresholdMs: number): number {
-    let maxLast = 0;
-    for (const fState of flowSessions.values()) {
-      const last = Math.max(fState.lastMessageTime, fState.lastReplyTime);
-      if (last > maxLast) maxLast = last;
-    }
-    if (maxLast === 0) return 0;
-    const elapsed = Date.now() - maxLast;
-    return Math.max(0, thresholdMs - elapsed);
-  }
-
-  /** 选一个最适合主动开聊的 sessionId；无可选返回 null */
-  function pickIdleTarget(): { sessionId: string; lastActivity: number } | null {
-    const now = Date.now();
-    let best: { sessionId: string; lastActivity: number } | null = null;
-    for (const [sid, fState] of flowSessions) {
-      if (fState.mutedUntil > now) continue;
-      if (fState.cooldownUntil > now) continue;
-      if (flowCfg.enabled && flowCfg.rateLimitWindow > 0 && flowCfg.rateLimitMaxReplies > 0) {
-        const windowStart = now - flowCfg.rateLimitWindow * 1000;
-        const used = fState.replyTimestamps.filter(t => t > windowStart).length;
-        if (used >= flowCfg.rateLimitMaxReplies) continue;
-      }
-      const lastActivity = Math.max(fState.lastMessageTime, fState.lastReplyTime);
-      if (!best || lastActivity < best.lastActivity) {
-        best = { sessionId: sid, lastActivity };
-      }
-    }
-    return best;
-  }
-
-  async function runPlatformIdleOnce(): Promise<void> {
-    if (platformIdleRunning) return;
-    platformIdleRunning = true;
-    try {
-      const target = pickIdleTarget();
-      if (!target) {
-        ctx.logger.debug('platform idle tick: 无可发送候选，跳过');
-        return;
-      }
-      const promptHint = flowCfg.idleTriggerPrompt
-        || '当前所有会话已沉寂一段时间。请根据人设主动开启一个轻松的话题或问候。';
-      ctx.logger.info(
-        `platform idle tick: 主动开聊 → ${target.sessionId} (idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
-      );
-      await ctx.emit('inbound:message', {
-        content: promptHint,
-        sessionId: target.sessionId,
-        platform: 'onebot',
-        source: 'idle-trigger',
-        triggerType: 'idle',
-      });
     } catch (err) {
-      ctx.logger.warn(`platform idle tick 执行失败: ${err}`);
-    } finally {
-      platformIdleRunning = false;
+      // 静默失败：可能是协议端不支持或群已退出
+      ctx.logger.debug(`[禁言恢复] session=${sessionId} shut_up_timestamp 查询失败: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
-
-  function schedulePlatformIdleTick(): void {
-    stopPlatformIdleTick();
-    if (flowCfg.idleTriggerScope !== 'platform') return;
-    if (flowCfg.idleTriggerMinutes <= 0) return;
-    const baseMs = flowCfg.idleTriggerMinutes * 60_000;
-
-    let delay: number;
-    if (flowCfg.idleTriggerStrategy === 'fixed') {
-      delay = baseMs;
-    } else {
-      // all-quiet：动态计算到达静默阈值还需多久；若已达标则立即触发
-      delay = timeUntilAllQuiet(baseMs);
-      if (delay === 0) delay = 1000; // 立刻 tick（避免同步递归调用栈）
-    }
-
-    platformIdleTimer = setTimeout(async () => {
-      // 触发时再校验一次（all-quiet：需要静默仍达标）
-      if (flowCfg.idleTriggerStrategy === 'all-quiet') {
-        const remaining = timeUntilAllQuiet(baseMs);
-        if (remaining > 0) {
-          schedulePlatformIdleTick();
-          return;
-        }
-      }
-      await runPlatformIdleOnce();
-      schedulePlatformIdleTick();
-    }, delay);
-  }
-
-  // ── debug 日志：展示消息计数和发言指数 ──
-
-  function logFlowStatus(sessionId: string, fState: FlowSessionState, label: string): void {
-    const threshold = getCurrentThreshold(fState);
-    ctx.logger.debug(
-      `[流控] ${label} | session=${sessionId} | ` +
-      `消息计数=${fState.messageCount}/${flowCfg.fixedInterval} | ` +
-      `发言指数=${fState.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)}, 范围=${flowCfg.activityScoreLower}~${flowCfg.activityScoreUpper})`
-    );
-  }
-
-  // ── 流控核心判定：返回 true 表示放行，false 表示拦截 ──
-
-  async function handleFlowControl(
-    sessionId: string,
-    content: string,
-    sessionType: string | undefined,
-    userId?: string,
-    nickname?: string,
-    images?: string[],
-  ): Promise<'direct' | 'immediate' | 'interval' | null> {
-    // 只对群聊启用流控；私聊/频道等默认 'direct'
-    if (!flowCfg.enabled || sessionType !== 'group') return 'direct';
-
-    // 启动后/重连后：通过 shut_up_timestamp 懒查询恢复被禁言状态（每会话一次）
-    const fStateForRecovery = getFlowSession(sessionId);
-    if (!fStateForRecovery.muteRecoveryChecked) {
-      fStateForRecovery.muteRecoveryChecked = true;
-      void recoverSelfMuteIfNeeded(sessionId, fStateForRecovery);
-    }
-
-    const fState = getFlowSession(sessionId);
-    const now = Date.now();
-
-    // 先对发言指数做时间衰减（基于上一条消息到现在的间隔）
-    applyScoreDecay(fState);
-
-    // 更新用户交互记录
-    if (userId) {
-      const prev = fState.userInteractions.get(userId) ?? { count: 0, lastTime: 0 };
-      fState.userInteractions.set(userId, { count: prev.count + 1, lastTime: now });
-    }
-    fState.lastMessageTime = now;
-
-    // 禁言检测
-    if (checkMuteKeyword(content)) {
-      fState.mutedUntil = now + flowCfg.muteTimeSeconds * 1000;
-      fState.messageCount = 0;
-      fState.activityScore = 0;
-      ctx.logger.info(`禁言触发: session=${sessionId}, ${flowCfg.muteTimeSeconds}秒`);
-      logFlowStatus(sessionId, fState, '禁言 → 计数器归零');
-      await saveBufferedMessage(sessionId, content, nickname, userId, images);
-      scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return null;
-    }
-
-    // 仍在禁言中
-    if (now < fState.mutedUntil) {
-      logFlowStatus(sessionId, fState, '禁言中');
-      await saveBufferedMessage(sessionId, content, nickname, userId, images);
-      return null;
-    }
-
-    // 仍在冷却中
-    if (now < fState.cooldownUntil) {
-      fState.messageCount++;
-      fState.activityScore += calculateScoreIncrement(fState, userId);
-      logFlowStatus(sessionId, fState, '冷却中');
-      await saveBufferedMessage(sessionId, content, nickname, userId, images);
-      scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return null;
-    }
-
-    // 即时触发（@、名字）
-    if (checkImmediateTrigger(content)) {
-      // 防 DDoS：即使被 @ 也要检查限速
-      if (checkRateLimit(fState, sessionId)) {
-        fState.messageCount++;
-        fState.activityScore += calculateScoreIncrement(fState, userId);
-        logFlowStatus(sessionId, fState, '即时触发 → 限速拦截');
-        await saveBufferedMessage(sessionId, content, nickname, userId, images);
-        scheduleIdleTrigger(fState, sessionId, 'onebot');
-        return null;
-      }
-      ctx.logger.debug(`即时触发 (@ / 名字): session=${sessionId}`);
-      resetAfterTrigger(fState);
-      recordReply(fState);
-      fState.idleBackoff = 1;
-      logFlowStatus(sessionId, fState, '即时触发 → 计数器归零');
-      scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return 'immediate';
-    }
-
-    // 累加计数和评分
-    fState.messageCount++;
-    fState.activityScore += calculateScoreIncrement(fState, userId);
-
-    // 间隔触发判定
-    if (shouldTrigger(fState)) {
-      // 防 DDoS：检查限速
-      if (checkRateLimit(fState, sessionId)) {
-        logFlowStatus(sessionId, fState, '间隔触发 → 限速拦截');
-        await saveBufferedMessage(sessionId, content, nickname, userId, images);
-        scheduleIdleTrigger(fState, sessionId, 'onebot');
-        return null;
-      }
-      logFlowStatus(sessionId, fState, '间隔触发 → 计数器归零');
-      resetAfterTrigger(fState);
-      recordReply(fState);
-      fState.idleBackoff = 1;
-      scheduleIdleTrigger(fState, sessionId, 'onebot');
-      return 'interval';
-    }
-
-    // 未触发，缓冲消息
-    logFlowStatus(sessionId, fState, '未触发');
-    await saveBufferedMessage(sessionId, content, nickname, userId, images);
-    scheduleIdleTrigger(fState, sessionId, 'onebot');
-    return null;
   }
 
   // ----- 群信息缓存 -----
@@ -1600,6 +1001,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const adapter: PlatformAdapter = {
     adapterName: 'OneBot',
     platform: 'onebot',
+    sessionTypes: ['group', 'private'],
 
     getConnections(): PlatformConnection[] {
       return states.map(s => ({
@@ -1722,47 +1124,37 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     /**
      * 非标准扩展：主动发送消息前的限速校验 + 计数。
      *
-     * 复用 chat-flow 的滑动窗口限速参数（rateLimitWindow / rateLimitMaxReplies），
-     * 让"agent 主动发起的消息"（如转告、跨会话通知）与 chat-flow 触发的回复
-     * 共享同一个 per-session 限速桶，统一防 DDoS / 防 prompt-injection 群发滥用。
-     *
-     * - rateLimitWindow=0 或 chatFlow.enabled=false 时直接放行（不计数）。
-     * - 通过时记录一次 reply 时间戳；被拒时不记录。
+     * 委托 plugin-flow-control 的 isRateLimited / recordReply。
+     * 若 flow-control 未加载或会话不存在，默认放行（不限速）。
      */
     checkAndRecordProactiveSend(sessionId: string): { allowed: boolean; reason?: string } {
-      if (!flowCfg.enabled || flowCfg.rateLimitWindow <= 0 || flowCfg.rateLimitMaxReplies <= 0) {
-        return { allowed: true };
-      }
-      const fState = getFlowSession(sessionId);
-      if (checkRateLimit(fState, sessionId)) {
+      const flow = ctx.getService<FlowControlService>('flow-control');
+      if (!flow) return { allowed: true };
+      if (flow.isRateLimited(sessionId)) {
         return {
           allowed: false,
-          reason: `${flowCfg.rateLimitWindow}s 内已发送 ${fState.replyTimestamps.length}/${flowCfg.rateLimitMaxReplies} 次，已达上限`,
+          reason: '已达限速上限（由 flow-control 决定）',
         };
       }
-      recordReply(fState);
+      flow.recordReply(sessionId, 'onebot');
       return { allowed: true };
     },
 
     /**
      * 非标准扩展：返回当前进程内已知"自身被禁言"的群快照。
-     * 用于让 agent 在任意会话中（如私聊）检查自己在哪些群被禁言。
-     * 注意：仅基于已收到的禁言事件 + 启动后懒查询恢复的状态，未收到事件的群不会出现在此列表。
+     * 数据来自适配器自身的 selfMuted（由 group_ban notice 与 shut_up_timestamp 恢复维护）。
      */
     getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }> {
       const now = Date.now();
       const out: Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }> = [];
-      for (const [sid, fState] of flowSessions) {
-        if (fState.mutedUntil > now) {
+      for (const [sid, untilTs] of selfMuted) {
+        if (untilTs > now) {
           const { selfId, groupId } = parseGroupSessionId(sid);
           if (selfId && groupId) {
-            out.push({
-              selfId,
-              groupId,
-              untilTs: fState.mutedUntil,
-              remainingSec: Math.ceil((fState.mutedUntil - now) / 1000),
-            });
+            out.push({ selfId, groupId, untilTs, remainingSec: Math.ceil((untilTs - now) / 1000) });
           }
+        } else {
+          selfMuted.delete(sid);
         }
       }
       return out;
@@ -1996,8 +1388,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     //    确保重连后下一条消息会重新通过 shut_up_timestamp 校验当前禁言状态
     if (state.selfId) {
       const prefix = `onebot:${state.selfId}:group:`;
-      for (const [sid, fState] of flowSessions) {
-        if (sid.startsWith(prefix)) fState.muteRecoveryChecked = false;
+      for (const sid of Array.from(muteRecoveryChecked)) {
+        if (sid.startsWith(prefix)) muteRecoveryChecked.delete(sid);
       }
     }
   }
@@ -2042,26 +1434,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.debug(`OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`);
 
-    // 指令处理
-    const parsed = ctx.commands?.parseCommand(event.text);
-    if (parsed) {
-      ctx.commands!.execute(parsed.name, {
-        sessionId,
-        platform: 'onebot',
-        userId: event.userId,
-        args: parsed.args,
-        raw: parsed.raw,
-      }).then((result) => {
-        if (result) {
-          adapter.sendMessage(sessionId, result, { skipSplit: true }).catch(err => {
-            ctx.logger.warn(`OneBot 指令回复失败: ${err}`);
-          });
-        }
-      }).catch(err => {
-        ctx.logger.warn(`OneBot 指令执行失败: ${err}`);
-      });
-      return;
-    }
+    // 注：指令解析已迁移到 plugin-commands 的 inbound:command 相位；
+    // 适配器只负责将原始消息送入 inbound:message 总线，由 gateway 链路统一拦截。
 
     const sessionType = event.detailType === 'group' ? 'group'
       : event.detailType === 'private' ? 'private'
@@ -2109,9 +1483,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
       }
 
-      // 流控判定：返回 null 表示拦截（消息已缓冲到记忆），其他为触发类型
-      const triggerType = await handleFlowControl(sessionId, event.text, sessionType, event.userId, event.nickname, event.images);
-      if (!triggerType) return;
+      // 适配器不再做流控/触发判定 —— 一律送入 inbound:message，
+      // 由 plugin-flow-control / plugin-trigger-policy 在 inbound:flow / inbound:trigger 相位
+      // 决定是否吞噬、归档、或继续派发给 agent。
+      // 启动后/重连后通过 shut_up_timestamp 懒查询恢复禁言状态（每会话一次）
+      if (sessionType === 'group') {
+        void recoverSelfMuteIfNeeded(sessionId);
+      }
 
       // 记录会话元数据（advisor.listSessionCandidates 用）
       if (sessionType) {
@@ -2132,7 +1510,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         groupName,
         groupId: event.groupId,
         replyTo,
-        triggerType,
+        // triggerType 由 trigger-policy 在 inbound:trigger 相位中填充
       });
     })().catch(err => {
       ctx.logger.warn(`OneBot 消息处理异常: ${err}`);
@@ -2281,26 +1659,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const duration = Number(notice.data?.duration ?? 0);
         const operatorId = notice.data?.operatorId as string | undefined;
 
-        // 自己被禁言/解禁：更新流控状态
+        // 自己被禁言/解禁：通过 flow-control.setMuted 桥接（无 flow-control 时仅维护本地 selfMuted）
         if (isSelf) {
-          const fState = getFlowSession(sessionId);
           if (isLift) {
-            fState.mutedUntil = 0;
+            setSelfMute(sessionId, 0);
             ctx.logger.info(`[禁言解除] session=${sessionId} 操作者=${operatorId ?? 'unknown'}`);
           } else {
-            if (duration > 0) {
-              fState.mutedUntil = Date.now() + duration * 1000;
-              ctx.logger.info(
-                `[被禁言] session=${sessionId} 时长=${duration}s 操作者=${operatorId ?? 'unknown'}，` +
-                `将拦截该群所有触发直至禁言结束`,
-              );
-            } else {
-              fState.mutedUntil = Date.now() + flowCfg.muteTimeSeconds * 1000;
-              ctx.logger.info(`[被禁言] session=${sessionId} 时长未知，按配置兜底 ${flowCfg.muteTimeSeconds}s`);
-            }
-            fState.messageCount = 0;
-            fState.activityScore = 0;
-            clearIdleTimer(fState);
+            // 时长未知时按 60s 兜底（旧 flowCfg.muteTimeSeconds 默认值）
+            const dur = duration > 0 ? duration : 60;
+            setSelfMute(sessionId, dur);
+            ctx.logger.info(
+              `[被禁言] session=${sessionId} 时长=${dur}s 操作者=${operatorId ?? 'unknown'}，` +
+              `已通知 flow-control 暂停该群触发`,
+            );
           }
         }
 
@@ -2543,17 +1914,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     ctx.logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
 
-    // 流控：设置冷却、重置退避
-    if (flowCfg.enabled) {
-      const fState = flowSessions.get(msg.sessionId);
-      if (fState) {
-        if (flowCfg.cooldownSeconds > 0) {
-          fState.cooldownUntil = Date.now() + flowCfg.cooldownSeconds * 1000;
-        }
-        fState.idleBackoff = 1;
-        scheduleIdleTrigger(fState, msg.sessionId, 'onebot');
-      }
-    }
+    // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
 
     adapter.sendMessage(msg.sessionId, msg.content, { skipSplit: msg.source !== 'agent' }).catch(err => {
       ctx.logger.warn(`OneBot 发送消息失败: ${err}`);
@@ -2570,16 +1931,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       connectOne(connConfig);
     }
-    schedulePlatformIdleTick();
   });
 
   ctx.on('dispose', () => {
-    stopPlatformIdleTick();
-    // 清理流控定时器
-    for (const [, fState] of flowSessions) {
-      clearIdleTimer(fState);
-    }
-    flowSessions.clear();
+    selfMuted.clear();
+    muteRecoveryChecked.clear();
 
     for (const state of states) {
       if (state.reconnectTimer) clearTimeout(state.reconnectTimer);

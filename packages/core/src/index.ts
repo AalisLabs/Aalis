@@ -2,6 +2,8 @@
 
 export { App, createApp } from './app.js';
 export type { AppOptions } from './app.js';
+export { INBOUND_PHASE, INBOUND_PHASE_ORDER } from './constants.js';
+export type { InboundPhase } from './constants.js';
 export { Context } from './context.js';
 export { EventBus } from './events.js';
 export { ServiceContainer, ScopedServiceContainer } from './service.js';
@@ -57,6 +59,7 @@ export type {
   ConfigSchema,
   AalisEvents,
   HookContextMap,
+  InboundPhaseData,
   MiddlewareFn,
   MiddlewareNext,
   CommandContext,
@@ -82,6 +85,15 @@ export type {
   PlatformSelfIdentity,
   PlatformAdapter,
   PlatformManagerService,
+  // Gateway 服务（消息流编排中枢）
+  GatewayService,
+  // 流控服务
+  FlowControlService,
+  FlowSessionStateSnapshot,
+  // 触发策略服务
+  TriggerPolicyService,
+  TriggerDecision,
+  TriggerKind,
   PluginGroupInfo,
   // WebUI 服务
   WebUIService,

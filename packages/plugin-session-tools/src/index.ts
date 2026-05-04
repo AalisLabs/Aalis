@@ -583,7 +583,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     await next();
-  }, 900); // 高优先级，在其他中间件之前运行
+  });
 
   // ---- 子任务自动完成 ----
   // 当子任务 agent 正常回复后，自动将回复内容作为结果完成会话
@@ -637,7 +637,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } catch (err) {
       ctx.logger.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
     }
-  }, 50); // 低优先级，在其他 agent:turn:after 处理之后运行
+  });
 
   ctx.logger.info('子任务工具已注册');
 }

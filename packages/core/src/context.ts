@@ -507,7 +507,11 @@ export class Context {
   // ---- 中间件/钩子 ----
 
   /**
-   * 注册中间件，拦截核心流程
+   * 注册命名生命周期事件 handler（中间件管道）
+   *
+   * 同一钩子键内的多个 handler 按 **注册顺序** 执行洋葱模型 (next 语义)，
+   * 不再使用数字优先级。相位间的次序由调度方（如 plugin-gateway 的入站
+   * 多相位调度）显式表达。
    *
    * @example
    * // 在消息发送给 LLM 前添加额外指令
@@ -516,18 +520,17 @@ export class Context {
    *   await next();
    * });
    *
-   * // 过滤掉某些用户消息
-   * ctx.middleware('agent:input:before', async (data, next) => {
-   *   if (data.message.content.includes('spam')) return; // 不调用 next = 中断
+   * // 命令命中后中断后续处理
+   * ctx.middleware('inbound:command', async (data, next) => {
+   *   if (handled(data.message)) return; // 不调用 next = 中断
    *   await next();
    * });
    */
   middleware<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
-    priority?: number,
   ): () => void {
-    const dispose = this.hooks.register(hook, fn, priority, this.id);
+    const dispose = this.hooks.register(hook, fn, this.id);
     this._disposables.push(dispose);
     return dispose;
   }

@@ -477,7 +477,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
     }
     await next();
-  }, 10);
+  });
 
   // 跟踪当前会话信息（始终启用，用于 session 上下文注入和状态持久化）
   ctx.middleware('agent:input:before', async (data, next) => {
@@ -504,7 +504,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       service.currentNickname = undefined;
       service.currentGroupName = undefined;
     }
-  }, 999); // 最高优先级，保证在所有其他中间件之前设置
+  });
 
   // agent:reply:before 钩子：统一处理 JSON 解析
   // 1. 有 outputFormat 时：结构化解析 + 状态持久化
