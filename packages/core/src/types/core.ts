@@ -358,6 +358,24 @@ export interface AalisEvents {
   'session:completed': [session: import('./session.js').SessionInfo];
   'session:deleted': [sessionId: string];
   'session:switched': [sessionId: string];
+  /**
+   * Gateway 某个入站相位执行完毕（无论是否被 swallow）。
+   *
+   * 遥测插件可订阅此事件以：
+   *   - 记录每个相位耗时
+   *   - 统计 swallow 率
+   *   - 追踪消息在管道中的流转路径
+   *
+   * 对主流程零侵入：observer 的异常不会影响入站处理。
+   */
+  'gateway:phase:done': [data: {
+    phase: string;
+    /** true = 链走到底（未被 swallow）；false = 某 handler 未调用 next() 终止了链 */
+    reachedEnd: boolean;
+    durationMs: number;
+    sessionId: string;
+    platform: string;
+  }];
   // 允许任意字符串 key 兜底（运行时事件总线开放，但鼓励第三方插件通过 declaration merging 显式声明事件签名以获得类型安全）
   [key: string]: unknown[];
 }
