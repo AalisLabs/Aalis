@@ -49,10 +49,29 @@ export const configSchema: ConfigSchema = {
   muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）', default: defaultFlowControlConfig.muteTimeSeconds },
   rateLimitWindow: { type: 'number', label: '限速窗口（秒，0=关闭）', default: defaultFlowControlConfig.rateLimitWindow },
   rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数', default: defaultFlowControlConfig.rateLimitMaxReplies },
-  idleTriggerScope: { type: 'string', label: '闲置触发范围（off/session/platform）', default: defaultFlowControlConfig.idleTriggerScope },
-  idleTriggerStrategy: { type: 'string', label: '闲置触发策略（all-quiet/fixed）', default: defaultFlowControlConfig.idleTriggerStrategy },
+  idleTriggerScope: {
+    type: 'select', label: '闲置触发范围', default: defaultFlowControlConfig.idleTriggerScope,
+    options: [
+      { label: 'off (关闭)', value: 'off' },
+      { label: 'session (每会话独立定时)', value: 'session' },
+      { label: 'platform (跨会话选举)', value: 'platform' },
+    ],
+  },
+  idleTriggerStrategy: {
+    type: 'select', label: '闲置触发策略', default: defaultFlowControlConfig.idleTriggerStrategy,
+    options: [
+      { label: 'all-quiet (所有会话都静默时)', value: 'all-quiet' },
+      { label: 'fixed (固定间隔)', value: 'fixed' },
+    ],
+  },
   idleTriggerMinutes: { type: 'number', label: '闲置触发分钟', default: defaultFlowControlConfig.idleTriggerMinutes },
-  idleTriggerStyle: { type: 'string', label: '闲置触发风格（exponential/fixed）', default: defaultFlowControlConfig.idleTriggerStyle },
+  idleTriggerStyle: {
+    type: 'select', label: '闲置触发风格', default: defaultFlowControlConfig.idleTriggerStyle,
+    options: [
+      { label: 'exponential (指数退避)', value: 'exponential' },
+      { label: 'fixed (固定)', value: 'fixed' },
+    ],
+  },
   idleTriggerMaxMinutes: { type: 'number', label: '闲置触发上限分钟', default: defaultFlowControlConfig.idleTriggerMaxMinutes },
   idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动', default: defaultFlowControlConfig.idleTriggerJitter },
   idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示', default: defaultFlowControlConfig.idleTriggerPrompt },
