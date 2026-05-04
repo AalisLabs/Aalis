@@ -54,6 +54,9 @@ export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js'
 // 平台适配器
 export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformManagerService } from './platform.js';
 
+// Gateway 服务（消息流编排中枢）
+export type { GatewayService } from './gateway.js';
+
 // WebUI 服务与声明式页面组件
 export type {
   WebUIService,

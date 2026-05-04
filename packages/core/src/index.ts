@@ -82,6 +82,8 @@ export type {
   PlatformSelfIdentity,
   PlatformAdapter,
   PlatformManagerService,
+  // Gateway 服务（消息流编排中枢）
+  GatewayService,
   PluginGroupInfo,
   // WebUI 服务
   WebUIService,
