@@ -4,7 +4,9 @@ import type {
   OutgoingMessage,
   AgentService,
   GatewayService,
+  InboundPhaseData,
 } from '@aalis/core';
+import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/core';
 
 // ----- 元数据 -----
 
@@ -21,7 +23,9 @@ export const inject = {
 
 export function apply(ctx: Context): void {
   const logger = ctx.logger.child('gateway');
-  logger.info('消息网关已启动 (gateway:inbound / gateway:outbound 钩子链就绪)');
+  logger.info(
+    `消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`,
+  );
 
   /** 调用 agent 处理消息；agent 不可用时给出兜底回复（沿用旧 core 行为）。 */
   async function defaultDispatch(message: IncomingMessage, agent: AgentService | undefined): Promise<void> {
@@ -38,36 +42,51 @@ export function apply(ctx: Context): void {
     });
   }
 
-  /** 入站处理：运行 `gateway:inbound` 钩子链，默认动作为调用 agent。 */
+  /**
+   * 入站处理：按 INBOUND_PHASE_ORDER 顺序运行四个命名相位。
+   *
+   * 相位规则（hooks.run 返回 false 即被某 handler swallow，整个管道立即停止）：
+   *   1. inbound:command  — plugin-commands 在此拦截命令；命中则不进入后续相位
+   *   2. inbound:flow     — plugin-flow-control 在此做禁言/冷却/限速闸门
+   *   3. inbound:trigger  — plugin-trigger-policy 在此判定是否触发 agent
+   *   4. inbound:dispatch — 默认动作：调用 agent.handleMessage（plugin-gateway 提供）
+   *
+   * 任一中前三相位被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
+   */
   async function processInbound(message: IncomingMessage): Promise<void> {
     const agent = ctx.getService<AgentService>('agent');
-    const data = { message, metadata: {} as Record<string, unknown>, agent };
-    let reachedDefault = false;
+    const data: InboundPhaseData = { message, metadata: {}, agent };
+
     try {
-      await ctx.hooks.run('gateway:inbound', data, async () => {
-        reachedDefault = true;
+      // 前三相位：任一相位被 swallow 即停止后续调度
+      for (const phase of [INBOUND_PHASE.COMMAND, INBOUND_PHASE.FLOW, INBOUND_PHASE.TRIGGER] as const) {
+        const reachedEnd = await ctx.hooks.run(phase, data);
+        if (!reachedEnd) {
+          logger.debug(
+            `[${phase}] 消息被 swallow，未触达 agent: session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
+          );
+          return;
+        }
+      }
+
+      // 第四相位：dispatch —— 默认动作为调用 agent
+      await ctx.hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
       });
-      // 中间件链未走到默认动作 → 被某一环 swallow（命令命中 / 流控吞掉 / 触发策略未达阈值）
-      if (!reachedDefault) {
-        logger.debug(
-          `[gateway:inbound] 消息未触达 agent (被中间件 swallow): session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
-        );
-      }
     } catch (err) {
-      logger.warn(`gateway:inbound 处理异常: ${err}`);
+      logger.warn(`入站处理异常: ${err}`);
     }
   }
 
-  /** 出站派发：运行 `gateway:outbound` 钩子链，默认动作为 emit 到 outbound:message。 */
+  /** 出站派发：运行 `outbound:dispatch` 钩子链，默认动作为 emit 到 outbound:message。 */
   async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const data = { message, metadata: {} as Record<string, unknown> };
     try {
-      await ctx.hooks.run('gateway:outbound', data, async () => {
+      await ctx.hooks.run('outbound:dispatch', data, async () => {
         await ctx.emit('outbound:message', data.message);
       });
     } catch (err) {
-      logger.warn(`gateway:outbound 处理异常: ${err}`);
+      logger.warn(`outbound:dispatch 处理异常: ${err}`);
     }
   }
 
