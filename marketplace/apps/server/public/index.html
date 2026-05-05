@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>Aalis Marketplace · Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font: 14px/1.5 system-ui, -apple-system, "PingFang SC", sans-serif; margin: 0; background: #fafafa; color: #222; }
+    header { padding: 16px 24px; background: #1f2937; color: #fff; }
+    main { padding: 24px; display: grid; gap: 24px; max-width: 1100px; margin: 0 auto; }
+    section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    th { background: #f9fafb; }
+    code { font: 12px/1 ui-monospace, Menlo, monospace; background: #f3f4f6; padding: 2px 4px; border-radius: 3px; }
+    button { background: #2563eb; color: #fff; border: 0; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    button.danger { background: #dc2626; }
+    button.muted { background: #6b7280; }
+    .status-pending { color: #b45309; }
+    .status-approved { color: #15803d; }
+    .status-blocked { color: #b91c1c; }
+    .perm { display: inline-block; margin: 0 2px 2px 0; padding: 1px 6px; background: #eef2ff; color: #3730a3; border-radius: 3px; font-size: 11px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    input[type=text] { padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; }
+    .empty { color: #9ca3af; padding: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header><strong>Aalis Marketplace</strong> · admin</header>
+  <main>
+    <section>
+      <h2>发布者白名单</h2>
+      <div id="publishers"></div>
+      <details style="margin-top:12px">
+        <summary>新增发布者</summary>
+        <form id="addPublisher" class="row" style="margin-top:8px">
+          <input name="id" placeholder="id (如 pub_xxx)" required />
+          <input name="name" placeholder="display name" required />
+          <input name="publicKey" placeholder="Ed25519 公钥 (base64, 32 bytes)" style="flex:1" required />
+          <input name="token" placeholder="admin token (可选)" />
+          <button type="submit">添加</button>
+        </form>
+      </details>
+    </section>
+
+    <section>
+      <h2>插件 <span class="row" style="float:right;font-weight:normal;font-size:12px"><label>过滤：<select id="filter"><option value="all">全部</option><option value="pending">pending</option><option value="approved">approved</option><option value="blocked">blocked</option></select></label></span></h2>
+      <div id="plugins"></div>
+    </section>
+  </main>
+
+<script type="module">
+const $ = sel => document.querySelector(sel);
+
+async function refresh() {
+  const audit = $('#filter').value;
+  const list = await fetch('/v1/plugins?audit=' + encodeURIComponent(audit)).then(r => r.json());
+  renderPublishers(list.publishers || []);
+  renderPlugins(list.items || []);
+}
+
+function renderPublishers(publishers) {
+  if (!publishers.length) {
+    $('#publishers').innerHTML = '<div class="empty">尚无发布者</div>';
+    return;
+  }
+  const rows = publishers.map(p => `
+    <tr>
+      <td><code>${escape(p.id)}</code></td>
+      <td>${escape(p.name)}</td>
+      <td><code style="word-break:break-all;font-size:11px">${escape(p.publicKey)}</code></td>
+      <td>${escape(p.createdAt)}</td>
+    </tr>`).join('');
+  $('#publishers').innerHTML = `<table><thead><tr><th>id</th><th>name</th><th>publicKey</th><th>createdAt</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderPlugins(items) {
+  if (!items.length) {
+    $('#plugins').innerHTML = '<div class="empty">尚无插件</div>';
+    return;
+  }
+  const rows = items.map(it => `
+    <tr>
+      <td><strong>${escape(it.name)}</strong><div style="color:#6b7280;font-size:12px">${escape(it.displayName || '')}</div></td>
+      <td><code>${escape(it.latest)}</code><div style="color:#9ca3af;font-size:11px">共 ${it.versions.length} 版本</div></td>
+      <td>${(it.permissions || []).map(p => `<span class="perm">${escape(p)}</span>`).join('')}</td>
+      <td><span class="status-${it.audit}">${escape(it.audit)}</span></td>
+      <td class="row">
+        <button data-act="approve" data-name="${escape(it.name)}" data-version="${escape(it.latest)}">通过</button>
+        <button class="danger" data-act="block" data-name="${escape(it.name)}" data-version="${escape(it.latest)}">封禁</button>
+        <button class="muted" data-act="pending" data-name="${escape(it.name)}" data-version="${escape(it.latest)}">置 pending</button>
+      </td>
+    </tr>`).join('');
+  $('#plugins').innerHTML = `<table><thead><tr><th>name</th><th>latest</th><th>permissions</th><th>audit</th><th>动作</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $('#plugins').onclick = onPluginAction;
+}
+
+async function onPluginAction(ev) {
+  const btn = ev.target.closest('button');
+  if (!btn) return;
+  const audit = btn.dataset.act === 'approve' ? 'approved' : btn.dataset.act === 'block' ? 'blocked' : 'pending';
+  const token = prompt('admin token（如果服务端配置了 MARKETPLACE_ADMIN_TOKEN，否则留空）') || '';
+  const headers = { 'content-type': 'application/json' };
+  if (token) headers['authorization'] = 'Bearer ' + token;
+  await fetch('/admin/audit', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: btn.dataset.name, version: btn.dataset.version, audit }),
+  });
+  refresh();
+}
+
+$('#filter').onchange = refresh;
+$('#addPublisher').onsubmit = async ev => {
+  ev.preventDefault();
+  const f = ev.currentTarget;
+  const data = Object.fromEntries(new FormData(f));
+  const headers = { 'content-type': 'application/json' };
+  if (data.token) headers['authorization'] = 'Bearer ' + data.token;
+  delete data.token;
+  const res = await fetch('/admin/publishers', { method: 'POST', headers, body: JSON.stringify(data) });
+  if (!res.ok) {
+    alert('失败: ' + await res.text());
+    return;
+  }
+  f.reset();
+  refresh();
+};
+
+function escape(s) {
+  return String(s ?? '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+refresh();
+</script>
+</body>
+</html>
