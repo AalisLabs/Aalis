@@ -12,8 +12,9 @@ export const provides = ['storage'];
 /**
  * 这个插件不是沙箱。它做三件事：
  *
- * 1. 给项目里的若干目录起稳定的名字（workspace / data / tmp / pluginData / logs，
- *    以及用户在 customRoots 里加的根），让上层用 URI 表示文件，避免到处写绝对路径。
+ * 1. 给若干本机目录起稳定的名字（roots 数组里声明，包括默认 workspace/data/tmp/
+ *    pluginData/logs，以及用户加的任何根），让上层用 URI 表示文件，避免到处写
+ *    宿主机绝对路径。
  * 2. 在每条 API 内对 `..` 穿越做规范化与校验，防止"workspace:/../../etc/passwd"
  *    这类逻辑越界 bug。
  * 3. 把所有读/写/删过一道 logger，作为统一审计点。
@@ -21,78 +22,58 @@ export const provides = ['storage'];
  * 它无法阻止 run_python / shell 等子进程在拿到 cwd 之后访问 OS 用户可访问的任何文件——
  * 这种隔离只能靠 OS 用户权限或容器层。请按这个边界来理解和配置。
  *
- * 当 agent 需要访问"内置根之外"的目录（如外接磁盘、用户文档夹）时，
- * 推荐通过 customRoots 显式起一个名字，而不是去掉这层。
+ * 关于 browsable：仅是给"文件浏览器类 UI"的 hint。当前 plugin-webui-server 的文件页
+ * 实际只显示其 fileRoot 配置指向的那一个根（默认 workspace），其它根的 browsable=true
+ * 不会让它们出现在文件页里——那些根仅供 agent/工具按 URI 寻址使用。
+ *
+ * 当 agent 需要访问"内置 5 个根之外"的目录时：
+ *   - 推荐：在 roots 里加一条具名根（如 share / project_x），路径限定到目标目录
+ *   - 一刀切：在 roots 里加 { name: host, path: '/' }，agent 即可用 host:/绝对路径 访问
+ *     宿主机任何位置（高危，启动时会有 WARN 日志）
  */
 
 export const configSchema: ConfigSchema = {
-  workspaceRoot: { type: 'string', label: 'Workspace 目录', default: 'workspace', description: '用户可见文件产物的根目录' },
-  dataRoot: { type: 'string', label: 'Data 目录', default: 'data', description: 'Aalis 内部状态数据目录' },
-  tmpRoot: { type: 'string', label: '临时目录', default: 'workspace/.tmp', description: '临时文件目录' },
-  pluginDataRoot: { type: 'string', label: '插件数据目录', default: 'data/plugins', description: '插件持久化私有数据目录' },
-  logsRoot: { type: 'string', label: '日志目录', default: 'data', description: '日志文件所在目录' },
-  exposeDataToBrowser: { type: 'boolean', label: '允许浏览 Data', default: false, description: '是否允许通用文件浏览器显示 data 根目录' },
-  exposeTmpToBrowser: { type: 'boolean', label: '允许浏览临时文件', default: false, description: '是否允许通用文件浏览器显示 tmp 根目录' },
-  hostRoot: {
-    label: '直通宿主机根 (host:/)',
-    description:
-      '⚠ 高危：开启后注册名为 host 的根指向文件系统根，allowing agent/工具用 host:/绝对路径 直接访问宿主机任意文件。' +
-      '仅在你完全信任当前 agent + 配置时启用；建议优先使用 customRoots 起一个最小范围的命名根。',
-    fields: {
-      enabled: { type: 'boolean', label: '启用 host:/ 根', default: false },
-      readable: { type: 'boolean', label: '允许读', default: true },
-      writable: { type: 'boolean', label: '允许写', default: false },
-      deletable: { type: 'boolean', label: '允许删除', default: false },
-      browsable: { type: 'boolean', label: '允许在文件浏览器显示', default: false, description: '默认关闭，避免 WebUI 暴露整个文件系统' },
-    },
-  },
-  customRoots: {
+  roots: {
     type: 'array',
-    label: '自定义命名根',
+    label: '存储根目录',
     description:
-      '为内置 5 个根之外的任意目录起一个名字，便于 agent 通过 URI 访问外部文件。' +
-      '注意：自定义根不会被沙箱保护——所有内置根的免责声明同样适用。',
-    default: [],
+      '所有可用根都在这里声明（包括 workspace/data/tmp 等内置根）。' +
+      '直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。' +
+      'browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，' +
+      '其它根仅作为工具/agent 寻址使用）。',
+    default: [
+      { name: 'workspace', path: 'workspace', label: 'Workspace', kind: 'workspace', browsable: true,  readable: true, writable: true,  deletable: true  },
+      { name: 'data',      path: 'data',      label: 'Data',      kind: 'data',      browsable: false, readable: true, writable: true,  deletable: false },
+      { name: 'tmp',       path: 'workspace/.tmp', label: '临时文件', kind: 'tmp',  browsable: false, readable: true, writable: true,  deletable: true  },
+      { name: 'pluginData',path: 'data/plugins',   label: '插件数据', kind: 'pluginData', browsable: false, readable: true, writable: true, deletable: false },
+      { name: 'logs',      path: 'data',      label: '日志',      kind: 'logs',      browsable: false, readable: true, writable: false, deletable: false },
+      // 高危直通：取消注释或改 enabled 字段无意义——存在即注册。如需 host:/ 直通根，把下行加进 roots：
+      // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
+    ],
     items: {
-      name: { type: 'string', label: '根名 (URI scheme)', description: '只允许英数与下划线，例如 share' },
-      path: { type: 'string', label: '本机路径', description: '可绝对，亦可相对项目根；不存在会自动创建' },
-      label: { type: 'string', label: '展示名称', default: '' },
-      kind: { type: 'string', label: '类型标签', default: 'custom', description: '语义提示，常用值：custom / external / shared' },
-      browsable: { type: 'boolean', label: '允许在文件浏览器显示', default: true },
-      readable: { type: 'boolean', label: '允许读', default: true },
-      writable: { type: 'boolean', label: '允许写', default: false },
-      deletable: { type: 'boolean', label: '允许删除', default: false },
+      name:      { type: 'string',  label: '根名 (URI scheme)', description: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share' },
+      path:      { type: 'string',  label: '本机路径',          description: '可绝对，亦可相对项目根；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。' },
+      label:     { type: 'string',  label: '展示名称',          default: '' },
+      kind:      { type: 'string',  label: '类型标签',          default: 'custom', description: '语义提示：workspace / data / tmp / pluginData / logs / custom / external / shared / host' },
+      browsable: { type: 'boolean', label: 'WebUI 浏览器可见 (hint)', default: false, description: 'hint：当前实现下仅当 webui-server.fileRoot 指向本根时此开关才生效' },
+      readable:  { type: 'boolean', label: '允许读',            default: true },
+      writable:  { type: 'boolean', label: '允许写',            default: false },
+      deletable: { type: 'boolean', label: '允许删除',          default: false },
     },
   },
 };
 
 export const defaultConfig = {
-  workspaceRoot: 'workspace',
-  dataRoot: 'data',
-  tmpRoot: 'workspace/.tmp',
-  pluginDataRoot: 'data/plugins',
-  logsRoot: 'data',
-  exposeDataToBrowser: false,
-  exposeTmpToBrowser: false,
-  hostRoot: {
-    enabled: false,
-    readable: true,
-    writable: false,
-    deletable: false,
-    browsable: false,
-  },
-  customRoots: [] as CustomRootConfig[],
+  roots: [
+    { name: 'workspace',  path: 'workspace',      label: 'Workspace', kind: 'workspace',  browsable: true,  readable: true, writable: true,  deletable: true  },
+    { name: 'data',       path: 'data',           label: 'Data',      kind: 'data',       browsable: false, readable: true, writable: true,  deletable: false },
+    { name: 'tmp',        path: 'workspace/.tmp', label: '临时文件',  kind: 'tmp',        browsable: false, readable: true, writable: true,  deletable: true  },
+    { name: 'pluginData', path: 'data/plugins',   label: '插件数据',  kind: 'pluginData', browsable: false, readable: true, writable: true,  deletable: false },
+    { name: 'logs',       path: 'data',           label: '日志',      kind: 'logs',       browsable: false, readable: true, writable: false, deletable: false },
+  ] as RootEntryConfig[],
 };
 
-interface HostRootConfig {
-  enabled?: boolean;
-  readable?: boolean;
-  writable?: boolean;
-  deletable?: boolean;
-  browsable?: boolean;
-}
-
-interface CustomRootConfig {
+interface RootEntryConfig {
   name: string;
   path: string;
   label?: string;
@@ -330,7 +311,10 @@ class LocalStorageService implements StorageService {
 
 async function createRoot(name: string, label: string, kind: string, rootPath: string, options: Omit<StorageRootInfo, 'name' | 'label' | 'kind'>): Promise<RootDefinition> {
   const abs = resolve(process.cwd(), rootPath);
-  await mkdir(abs, { recursive: true });
+  // path 已是文件系统根（'/'）等存在的目录时不需要创建；其它情况 mkdir -p
+  if (rootPath !== '/' && rootPath !== '') {
+    await mkdir(abs, { recursive: true });
+  }
   return {
     name,
     label,
@@ -340,34 +324,32 @@ async function createRoot(name: string, label: string, kind: string, rootPath: s
   };
 }
 
-const RESERVED_ROOT_NAMES = new Set(['workspace', 'data', 'tmp', 'pluginData', 'logs']);
 const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
-async function buildCustomRoots(
-  raw: unknown,
-  logger: Logger,
-): Promise<RootDefinition[]> {
-  if (!Array.isArray(raw)) return [];
+/** 从 raw config.roots 构造可用根。空/异常时回退到 defaultConfig.roots。 */
+async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefinition[]> {
+  let entries: RootEntryConfig[] = Array.isArray(rawRoots) ? (rawRoots as RootEntryConfig[]).slice() : [];
+  if (entries.length === 0) {
+    logger.warn('storage roots 配置为空，将注册默认 5 个内置根（workspace/data/tmp/pluginData/logs）');
+    entries = (defaultConfig.roots as RootEntryConfig[]).slice();
+  }
+
   const out: RootDefinition[] = [];
   const seen = new Set<string>();
-  for (const item of raw as CustomRootConfig[]) {
+  for (const item of entries) {
     if (!item || typeof item !== 'object') continue;
     const name = String(item.name || '').trim();
-    const path = String(item.path || '').trim();
+    const path = String(item.path ?? '').trim();
     if (!name || !path) {
-      logger.warn(`customRoots 跳过无效项 (name/path 为空): ${JSON.stringify(item)}`);
+      logger.warn(`roots 跳过无效项 (name/path 为空): ${JSON.stringify(item)}`);
       continue;
     }
     if (!ROOT_NAME_RE.test(name)) {
-      logger.warn(`customRoots 跳过非法根名 ${name}（仅允许字母/数字/下划线/连字符，且需以字母开头）`);
-      continue;
-    }
-    if (RESERVED_ROOT_NAMES.has(name)) {
-      logger.warn(`customRoots 跳过保留根名 ${name}`);
+      logger.warn(`roots 跳过非法根名 ${name}（仅允许字母/数字/下划线/连字符，且需以字母开头）`);
       continue;
     }
     if (seen.has(name)) {
-      logger.warn(`customRoots 跳过重复根名 ${name}`);
+      logger.warn(`roots 跳过重复根名 ${name}`);
       continue;
     }
     seen.add(name);
@@ -378,19 +360,22 @@ async function buildCustomRoots(
         item.kind || 'custom',
         path,
         {
-          browsable: item.browsable !== false,
+          browsable: item.browsable === true,
           readable: item.readable !== false,
           writable: item.writable === true,
           deletable: item.deletable === true,
         },
       );
-      logger.info(
-        `已注册自定义根 ${name}:/ -> ${root.realPath}` +
-          ` (browsable=${root.browsable} read=${root.readable} write=${root.writable} delete=${root.deletable})`,
+      const isHostScope = root.realPath === '/' || root.realPath.length <= 3;
+      const log = isHostScope ? logger.warn.bind(logger) : logger.info.bind(logger);
+      log(
+        `root ${name}:/ -> ${root.realPath}` +
+          ` (browsable=${root.browsable} read=${root.readable} write=${root.writable} delete=${root.deletable})` +
+          (isHostScope ? '  ⚠ 该根接近/等于文件系统根，agent 通过此根可访问宿主机大量文件' : ''),
       );
       out.push(root);
     } catch (err) {
-      logger.warn(`customRoots 注册失败 ${name}: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`root 注册失败 ${name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return out;
@@ -398,60 +383,8 @@ async function buildCustomRoots(
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const logger = ctx.logger.child('storage');
-  const builtin = await Promise.all([
-    createRoot('workspace', 'Workspace', 'workspace', String(config.workspaceRoot ?? 'workspace'), {
-      browsable: true,
-      readable: true,
-      writable: true,
-      deletable: true,
-    }),
-    createRoot('data', 'Data', 'data', String(config.dataRoot ?? 'data'), {
-      browsable: Boolean(config.exposeDataToBrowser),
-      readable: true,
-      writable: true,
-      deletable: false,
-    }),
-    createRoot('tmp', '临时文件', 'tmp', String(config.tmpRoot ?? 'workspace/.tmp'), {
-      browsable: Boolean(config.exposeTmpToBrowser),
-      readable: true,
-      writable: true,
-      deletable: true,
-    }),
-    createRoot('pluginData', '插件数据', 'pluginData', String(config.pluginDataRoot ?? 'data/plugins'), {
-      browsable: false,
-      readable: true,
-      writable: true,
-      deletable: false,
-    }),
-    createRoot('logs', '日志', 'logs', String(config.logsRoot ?? 'data'), {
-      browsable: false,
-      readable: true,
-      writable: false,
-      deletable: false,
-    }),
-  ]);
-
-  const custom = await buildCustomRoots(config.customRoots, logger);
-  const roots = [...builtin, ...custom];
-
-  const hostCfg = (config.hostRoot ?? {}) as HostRootConfig;
-  if (hostCfg.enabled) {
-    try {
-      const hostRoot = await createRoot('host', '宿主机根 (host:/)', 'host', '/', {
-        browsable: hostCfg.browsable === true,
-        readable: hostCfg.readable !== false,
-        writable: hostCfg.writable === true,
-        deletable: hostCfg.deletable === true,
-      });
-      logger.warn(
-        `已启用 host:/ 直通根 (read=${hostRoot.readable} write=${hostRoot.writable} delete=${hostRoot.deletable} browsable=${hostRoot.browsable})。` +
-          ` agent/工具现在可用 host:/<绝对路径> 访问宿主机任意文件。`,
-      );
-      roots.push(hostRoot);
-    } catch (err) {
-      logger.warn(`host 根注册失败: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  const roots = await buildRoots(config.roots, logger);
+  if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
 
   const storage = new LocalStorageService(roots, logger);
   ctx.provide('storage', storage, {
