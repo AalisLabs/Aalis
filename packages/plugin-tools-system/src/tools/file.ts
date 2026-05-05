@@ -43,9 +43,11 @@ function toStorageUri(input: string | undefined, config: FileConfig): string {
     const hostRootAvailable = (config.storage?.listRoots() ?? []).some(r => r.name === 'host');
     const hint = hostRootAvailable
       ? `若确需访问宿主机绝对路径，可改用 host:/${stripped}（host 根已开启）。`
-      : `如要访问宿主机文件，可在 storage 配置里把目标目录加成具名根（roots 数组），或开启 host:/ 直通根；之后改用 <根名>:/<路径>。`;
+      : `如要访问宿主机文件，可在 storage 配置里把目标目录加成具名根（roots 数组），或把 host 根加进 roots（path: "/"）；之后改用 <根名>:/<路径>。`;
     throw new Error(
-      `文件工具不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 workspace:/path）或 workspace 内的相对路径。${describeRoots(config)}。${hint}`,
+      `文件工具不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 workspace:/path）或 workspace 内的相对路径。` +
+        `${describeRoots(config)}。${hint} ` +
+        `提示：调用 file_list({ path: "/" }) 可获得所有 storage 根的清单。`,
     );
   }
   if (raw.includes(':/')) return raw;
@@ -410,11 +412,14 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_list',
-        description: '列出受控存储目录中的文件和子目录，支持关键词过滤、类型过滤与分页。',
+        description:
+          '列出受控存储目录中的文件和子目录，支持关键词过滤、类型过滤与分页。' +
+          '把 path 设为 "/" 或 "*" 可以查看所有可用 storage 根（workspace/data/tmp/...，' +
+          '以及自定义根），用作"我能访问哪些目录"的入口。',
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: '目录 storage URI 或相对 workspace 的路径，默认 workspace:/' },
+            path: { type: 'string', description: '目录 storage URI 或相对 workspace 的路径，默认 workspace:/。设为 "/" 列出所有根。' },
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
             keyword: { type: 'string', description: '按名称子串模糊匹配（不区分大小写）' },
             type: { type: 'string', enum: ['file', 'directory'], description: '只返回指定类型' },
@@ -427,11 +432,46 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     permissions: ['tool:file.list', 'storage:read'],
-    resolvePermissions: (args) => storagePermission(args, config, 'read'),
+    resolvePermissions: (args) => {
+      const raw = (args.path as string | undefined) ?? '';
+      // "/" / "*" 走 roots 视图，不需要按根做精细权限
+      if (raw.trim() === '/' || raw.trim() === '*') return ['tool:file.list', 'storage:read'];
+      return storagePermission(args, config, 'read');
+    },
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string | undefined, config);
+        const raw = ((args.path as string | undefined) ?? '').trim();
+
+        // 特殊入口："/" 或 "*" 表示"列出所有 storage 根"
+        if (raw === '/' || raw === '*') {
+          const allRoots = storage.listRoots();
+          const allowedSet = new Set(config.allowedRoots);
+          const entries = allRoots.map(r => ({
+            name: r.name,
+            uri: `${r.name}:/`,
+            path: '',
+            type: 'directory' as const,
+            size: undefined,
+            modified: undefined,
+            label: r.label,
+            kind: r.kind,
+            readable: r.readable,
+            writable: r.writable,
+            deletable: r.deletable,
+            allowedByThisTool: allowedSet.has(r.name),
+          }));
+          return JSON.stringify({
+            uri: '/',
+            note:
+              '这是 storage 根的清单（不是宿主机文件系统目录）。' +
+              `本工具的 file.allowedRoots 当前限制为 [${config.allowedRoots.join(', ')}]，` +
+              '其它根虽然存在但本工具不会读写它们。要访问具体根的内容，请用 path: "<根名>:/"。',
+            roots: entries,
+          });
+        }
+
+        const uri = toStorageUri(raw || undefined, config);
         ensureRootAllowed(uri, config);
         const result = await storage.list(uri);
         const showHidden = (args.showHidden as boolean) ?? false;
