@@ -632,13 +632,12 @@ export class App {
    * 都没有，回 emit 一条系统占位消息到 `outbound:message`。这等价于历史上 core
    * 内置的简单分发逻辑，保证最小可用，也是 `plugin-gateway` 缺席时的安全网。
    *
-   * 一旦后续有插件 `provide('gateway', ...)`，本兜底监听不会自动卸载，但
-   * gateway 自身会作为 `inbound:message` 的另一个监听者并行运行；用户应当通过
-   * `requiredServices: ['gateway']` 明确选择 gateway 路由以避免双路径派发。
+   * 一旦后续有插件 `provide('gateway', ...)`，本兜底监听会自动卸载，避免
+   * fallback 与 gateway 对同一 inbound:message 双路径派发。
    */
   private installFallbackInboundRouter(): void {
     this.logger.info('未检测到 gateway 服务，安装最小入站路由作为兜底（直接派发给 agent）');
-    this.ctx.on('inbound:message', async (msg) => {
+    const disposeFallback = this.ctx.on('inbound:message', async (msg) => {
       const agent = this.ctx.getService<{ handleMessage(m: unknown): Promise<void> }>('agent');
       if (agent) {
         try {
@@ -655,6 +654,13 @@ export class App {
         platform: (msg as { platform: string }).platform,
         source: 'system',
       });
+    });
+
+    const disposeGatewayWatch = this.ctx.on('service:registered', (name) => {
+      if (name !== 'gateway') return;
+      disposeFallback();
+      disposeGatewayWatch();
+      this.logger.info('检测到 gateway 服务，已卸载最小入站路由兜底');
     });
   }
 }
