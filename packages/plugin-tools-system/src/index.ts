@@ -33,6 +33,7 @@ export const configSchema: ConfigSchema = {
     fields: {
       enabled: { type: 'boolean', label: '启用文件工具', default: true },
       maxReadSize: { type: 'number', label: '最大读取字节', default: 1048576 },
+      maxSearchBytes: { type: 'number', label: '单次搜索最大扫描字节', default: 1048576 },
       maxWriteSize: { type: 'number', label: '最大写入字节', default: 10485760 },
       defaultRoot: { type: 'string', label: '默认存储根', default: 'workspace', description: '普通相对路径会被解释到这个 storage 根' },
       allowedRoots: {
@@ -69,7 +70,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   workingDirectory: 'workspace:/',
   shell: { enabled: true, defaultTimeout: 30000, maxTimeout: 300000, maxOutputSize: 65536 },
-  file: { enabled: true, maxReadSize: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['workspace', 'tmp'] },
+  file: { enabled: true, maxReadSize: 1048576, maxSearchBytes: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['workspace', 'tmp'] },
   system: { enabled: true },
   http: { enabled: true, defaultTimeout: 30000, maxResponseSize: 1048576 },
 };
@@ -79,7 +80,7 @@ export const defaultConfig = {
 export interface ToolsBasicConfig {
   workingDirectory: string;
   shell: { enabled: boolean; defaultTimeout: number; maxTimeout: number; maxOutputSize: number };
-  file: { enabled: boolean; maxReadSize: number; maxWriteSize: number; defaultRoot: string; allowedRoots: string[] };
+  file: { enabled: boolean; maxReadSize: number; maxSearchBytes: number; maxWriteSize: number; defaultRoot: string; allowedRoots: string[] };
   system: { enabled: boolean };
   http: { enabled: boolean; defaultTimeout: number; maxResponseSize: number };
 }
@@ -177,6 +178,7 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
     file: {
       enabled: (file?.enabled as boolean) ?? true,
       maxReadSize: (file?.maxReadSize as number) ?? 1048576,
+      maxSearchBytes: (file?.maxSearchBytes as number) ?? 1048576,
       maxWriteSize: (file?.maxWriteSize as number) ?? 10485760,
       defaultRoot: (file?.defaultRoot as string) ?? 'workspace',
       allowedRoots: Array.isArray(file?.allowedRoots)
