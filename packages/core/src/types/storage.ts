@@ -53,6 +53,20 @@ export interface StorageReadStreamResult {
   stat: StorageStat;
 }
 
+/**
+ * StorageService 的职责定位：
+ *
+ * 1) **命名根**：把项目里的几个目录起一个稳定名字（workspace / data / tmp /
+ *    pluginData / logs，以及用户自定义根），让上层用 URI（`name:/path`）表示文件，
+ *    而不是把绝对路径硬编码到配置或工具调用里。
+ * 2) **路径解析**：对 storage URI 做规范化、根内 `..` 穿越保护、symlink realpath 校验。
+ *    这是为防止上层代码意外越界（防 bug），不是用来对抗恶意子进程。
+ * 3) **审计点**：所有读/写/删都经过 logger，便于事后排查。
+ *
+ * 它**不是**沙箱：`resolveLocalPath` 一旦把绝对路径交给 `run_python`、shell 等子进程，
+ * 子进程可以访问当前 OS 用户能访问的任何文件。真正的隔离应该靠 OS 用户权限或容器，
+ * 不应该指望这一层。
+ */
 export interface StorageService {
   listRoots(): StorageRootInfo[];
   list(uri: string): Promise<StorageListResult>;
@@ -63,8 +77,10 @@ export interface StorageService {
   rename(uri: string, newName: string): Promise<string>;
   delete(uri: string): Promise<void>;
   /**
-   * 将逻辑 storage URI 解析为本地实现内部路径。
-   * 仅供 shell/code-runner 等必须交给本机进程的插件使用；不应暴露给 Agent 或用户输入结果。
+   * 把 storage URI 解析为本机绝对路径，给必须使用本地路径的子进程（shell、code-runner）用。
+   *
+   * 注意：解析过程会校验目标位于声明的根内，但**不会限制后续子进程的访问范围**。
+   * 调用方必须自觉只把这条路径用作"工作目录/起点"，不要把它当成沙箱边界。
    */
   resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
 }

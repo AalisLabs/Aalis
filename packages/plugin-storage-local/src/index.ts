@@ -6,8 +6,24 @@ import { StorageCapabilities } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 
 export const name = '@aalis/plugin-storage-local';
-export const displayName = '本地安全存储';
+export const displayName = '本地存储根（命名 + 路径解析）';
 export const provides = ['storage'];
+
+/**
+ * 这个插件不是沙箱。它做三件事：
+ *
+ * 1. 给项目里的若干目录起稳定的名字（workspace / data / tmp / pluginData / logs，
+ *    以及用户在 customRoots 里加的根），让上层用 URI 表示文件，避免到处写绝对路径。
+ * 2. 在每条 API 内对 `..` 穿越做规范化与校验，防止"workspace:/../../etc/passwd"
+ *    这类逻辑越界 bug。
+ * 3. 把所有读/写/删过一道 logger，作为统一审计点。
+ *
+ * 它无法阻止 run_python / shell 等子进程在拿到 cwd 之后访问 OS 用户可访问的任何文件——
+ * 这种隔离只能靠 OS 用户权限或容器层。请按这个边界来理解和配置。
+ *
+ * 当 agent 需要访问"内置根之外"的目录（如外接磁盘、用户文档夹）时，
+ * 推荐通过 customRoots 显式起一个名字，而不是去掉这层。
+ */
 
 export const configSchema: ConfigSchema = {
   workspaceRoot: { type: 'string', label: 'Workspace 目录', default: 'workspace', description: '用户可见文件产物的根目录' },
@@ -17,6 +33,37 @@ export const configSchema: ConfigSchema = {
   logsRoot: { type: 'string', label: '日志目录', default: 'data', description: '日志文件所在目录' },
   exposeDataToBrowser: { type: 'boolean', label: '允许浏览 Data', default: false, description: '是否允许通用文件浏览器显示 data 根目录' },
   exposeTmpToBrowser: { type: 'boolean', label: '允许浏览临时文件', default: false, description: '是否允许通用文件浏览器显示 tmp 根目录' },
+  hostRoot: {
+    label: '直通宿主机根 (host:/)',
+    description:
+      '⚠ 高危：开启后注册名为 host 的根指向文件系统根，allowing agent/工具用 host:/绝对路径 直接访问宿主机任意文件。' +
+      '仅在你完全信任当前 agent + 配置时启用；建议优先使用 customRoots 起一个最小范围的命名根。',
+    fields: {
+      enabled: { type: 'boolean', label: '启用 host:/ 根', default: false },
+      readable: { type: 'boolean', label: '允许读', default: true },
+      writable: { type: 'boolean', label: '允许写', default: false },
+      deletable: { type: 'boolean', label: '允许删除', default: false },
+      browsable: { type: 'boolean', label: '允许在文件浏览器显示', default: false, description: '默认关闭，避免 WebUI 暴露整个文件系统' },
+    },
+  },
+  customRoots: {
+    type: 'array',
+    label: '自定义命名根',
+    description:
+      '为内置 5 个根之外的任意目录起一个名字，便于 agent 通过 URI 访问外部文件。' +
+      '注意：自定义根不会被沙箱保护——所有内置根的免责声明同样适用。',
+    default: [],
+    items: {
+      name: { type: 'string', label: '根名 (URI scheme)', description: '只允许英数与下划线，例如 share' },
+      path: { type: 'string', label: '本机路径', description: '可绝对，亦可相对项目根；不存在会自动创建' },
+      label: { type: 'string', label: '展示名称', default: '' },
+      kind: { type: 'string', label: '类型标签', default: 'custom', description: '语义提示，常用值：custom / external / shared' },
+      browsable: { type: 'boolean', label: '允许在文件浏览器显示', default: true },
+      readable: { type: 'boolean', label: '允许读', default: true },
+      writable: { type: 'boolean', label: '允许写', default: false },
+      deletable: { type: 'boolean', label: '允许删除', default: false },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -27,7 +74,34 @@ export const defaultConfig = {
   logsRoot: 'data',
   exposeDataToBrowser: false,
   exposeTmpToBrowser: false,
+  hostRoot: {
+    enabled: false,
+    readable: true,
+    writable: false,
+    deletable: false,
+    browsable: false,
+  },
+  customRoots: [] as CustomRootConfig[],
 };
+
+interface HostRootConfig {
+  enabled?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  deletable?: boolean;
+  browsable?: boolean;
+}
+
+interface CustomRootConfig {
+  name: string;
+  path: string;
+  label?: string;
+  kind?: string;
+  browsable?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  deletable?: boolean;
+}
 
 interface RootDefinition extends StorageRootInfo {
   realPath: string;
@@ -266,8 +340,65 @@ async function createRoot(name: string, label: string, kind: string, rootPath: s
   };
 }
 
+const RESERVED_ROOT_NAMES = new Set(['workspace', 'data', 'tmp', 'pluginData', 'logs']);
+const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+async function buildCustomRoots(
+  raw: unknown,
+  logger: Logger,
+): Promise<RootDefinition[]> {
+  if (!Array.isArray(raw)) return [];
+  const out: RootDefinition[] = [];
+  const seen = new Set<string>();
+  for (const item of raw as CustomRootConfig[]) {
+    if (!item || typeof item !== 'object') continue;
+    const name = String(item.name || '').trim();
+    const path = String(item.path || '').trim();
+    if (!name || !path) {
+      logger.warn(`customRoots 跳过无效项 (name/path 为空): ${JSON.stringify(item)}`);
+      continue;
+    }
+    if (!ROOT_NAME_RE.test(name)) {
+      logger.warn(`customRoots 跳过非法根名 ${name}（仅允许字母/数字/下划线/连字符，且需以字母开头）`);
+      continue;
+    }
+    if (RESERVED_ROOT_NAMES.has(name)) {
+      logger.warn(`customRoots 跳过保留根名 ${name}`);
+      continue;
+    }
+    if (seen.has(name)) {
+      logger.warn(`customRoots 跳过重复根名 ${name}`);
+      continue;
+    }
+    seen.add(name);
+    try {
+      const root = await createRoot(
+        name,
+        item.label || name,
+        item.kind || 'custom',
+        path,
+        {
+          browsable: item.browsable !== false,
+          readable: item.readable !== false,
+          writable: item.writable === true,
+          deletable: item.deletable === true,
+        },
+      );
+      logger.info(
+        `已注册自定义根 ${name}:/ -> ${root.realPath}` +
+          ` (browsable=${root.browsable} read=${root.readable} write=${root.writable} delete=${root.deletable})`,
+      );
+      out.push(root);
+    } catch (err) {
+      logger.warn(`customRoots 注册失败 ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return out;
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const roots = await Promise.all([
+  const logger = ctx.logger.child('storage');
+  const builtin = await Promise.all([
     createRoot('workspace', 'Workspace', 'workspace', String(config.workspaceRoot ?? 'workspace'), {
       browsable: true,
       readable: true,
@@ -300,14 +431,37 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }),
   ]);
 
-  const storage = new LocalStorageService(roots, ctx.logger.child('storage'));
+  const custom = await buildCustomRoots(config.customRoots, logger);
+  const roots = [...builtin, ...custom];
+
+  const hostCfg = (config.hostRoot ?? {}) as HostRootConfig;
+  if (hostCfg.enabled) {
+    try {
+      const hostRoot = await createRoot('host', '宿主机根 (host:/)', 'host', '/', {
+        browsable: hostCfg.browsable === true,
+        readable: hostCfg.readable !== false,
+        writable: hostCfg.writable === true,
+        deletable: hostCfg.deletable === true,
+      });
+      logger.warn(
+        `已启用 host:/ 直通根 (read=${hostRoot.readable} write=${hostRoot.writable} delete=${hostRoot.deletable} browsable=${hostRoot.browsable})。` +
+          ` agent/工具现在可用 host:/<绝对路径> 访问宿主机任意文件。`,
+      );
+      roots.push(hostRoot);
+    } catch (err) {
+      logger.warn(`host 根注册失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const storage = new LocalStorageService(roots, logger);
   ctx.provide('storage', storage, {
     capabilities: [
       StorageCapabilities.List,
       StorageCapabilities.Read,
       StorageCapabilities.Write,
       StorageCapabilities.Delete,
+      StorageCapabilities.LocalPath,
     ],
-    label: 'Local Safe Storage',
+    label: '本地存储根',
   });
 }
