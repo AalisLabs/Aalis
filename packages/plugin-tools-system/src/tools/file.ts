@@ -8,10 +8,12 @@
  */
 
 import { basename } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { Context, StorageService } from '@aalis/core';
 
 interface FileConfig {
   maxReadSize: number;
+  maxSearchBytes: number;
   maxWriteSize: number;
   allowedRoots: string[];
   defaultRoot: string;
@@ -67,6 +69,56 @@ function jsonError(err: unknown): string {
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function searchTextStream(
+  storage: StorageService,
+  uri: string,
+  regex: RegExp,
+  startLine: number,
+  maxResults: number,
+  maxSearchBytes: number,
+): Promise<{
+  matches: Array<{ line: number; content: string }>;
+  scannedBytes: number;
+  scannedLines: number;
+  truncated: boolean;
+  nextStartLine?: number;
+}> {
+  const { stream } = await storage.createReadStream(uri);
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  const matches: Array<{ line: number; content: string }> = [];
+  let lineNumber = 0;
+  let scannedBytes = 0;
+  let scannedLines = 0;
+  let truncated = false;
+
+  try {
+    for await (const line of lines) {
+      lineNumber++;
+      if (lineNumber < startLine) continue;
+
+      scannedLines++;
+      scannedBytes += Buffer.byteLength(line, 'utf-8') + 1;
+      if (regex.test(line)) matches.push({ line: lineNumber, content: line });
+
+      if (matches.length >= maxResults || scannedBytes >= maxSearchBytes) {
+        truncated = true;
+        stream.destroy();
+        break;
+      }
+    }
+  } finally {
+    lines.close();
+  }
+
+  return {
+    matches,
+    scannedBytes,
+    scannedLines,
+    truncated,
+    ...(truncated ? { nextStartLine: lineNumber + 1 } : {}),
+  };
 }
 
 export function registerFileTools(ctx: Context, config: FileConfig): void {
@@ -456,7 +508,9 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             pattern: { type: 'string', description: '搜索模式（纯文本或正则表达式）' },
             isRegex: { type: 'boolean', description: '模式是否为正则表达式（默认 false）' },
             ignoreCase: { type: 'boolean', description: '是否忽略大小写（默认 true）' },
+            startLine: { type: 'number', description: '从第几行开始搜索（默认 1，用于继续上次截断搜索）' },
             maxResults: { type: 'number', description: '最大返回结果数（默认 50，最多 200）' },
+            maxSearchBytes: { type: 'number', description: `单次最多扫描字节数（默认/上限 ${config.maxSearchBytes}）` },
           },
           required: ['path', 'pattern'],
           additionalProperties: false,
@@ -470,20 +524,34 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
-        const content = await readText(storage, uri);
-        const lines = content.split('\n');
+        const info = await storage.stat(uri);
+        if (info.isDirectory) return JSON.stringify({ error: '路径是一个目录，请指定文件路径' });
         const pattern = args.pattern as string;
         const ignoreCase = (args.ignoreCase as boolean) ?? true;
         const maxResults = Math.min((args.maxResults as number) || 50, 200);
+        const startLine = Math.max(1, Math.floor(Number(args.startLine) || 1));
+        const maxSearchBytes = Math.min(
+          Math.max(1024, Math.floor(Number(args.maxSearchBytes) || config.maxSearchBytes)),
+          config.maxSearchBytes,
+        );
         const regex = (args.isRegex as boolean) ?? false
           ? new RegExp(pattern, ignoreCase ? 'i' : '')
           : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
 
-        const matches: Array<{ line: number; content: string }> = [];
-        for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
-          if (regex.test(lines[i])) matches.push({ line: i + 1, content: lines[i] });
-        }
-        return JSON.stringify({ uri, pattern, matches, matchCount: matches.length, truncated: matches.length >= maxResults });
+        const result = await searchTextStream(storage, uri, regex, startLine, maxResults, maxSearchBytes);
+        return JSON.stringify({
+          uri,
+          pattern,
+          fileSize: info.size,
+          startLine,
+          maxSearchBytes,
+          matches: result.matches,
+          matchCount: result.matches.length,
+          scannedBytes: result.scannedBytes,
+          scannedLines: result.scannedLines,
+          truncated: result.truncated,
+          ...(result.nextStartLine ? { nextStartLine: result.nextStartLine } : {}),
+        });
       } catch (err) {
         return jsonError(err);
       }
