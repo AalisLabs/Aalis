@@ -24,11 +24,29 @@ function normalizePath(input: string): string {
   return input.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
+function describeRoots(config: FileConfig): string {
+  const roots = config.storage?.listRoots() ?? [];
+  const writable = roots.filter(r => r.writable).map(r => r.name);
+  const readable = roots.filter(r => r.readable).map(r => r.name);
+  const allowed = config.allowedRoots.filter(r => readable.includes(r));
+  const parts: string[] = [];
+  if (allowed.length) parts.push(`当前工具允许根: ${allowed.join(', ')}`);
+  if (writable.length) parts.push(`可写根: ${writable.join(', ')}`);
+  return parts.join('；');
+}
+
 function toStorageUri(input: string | undefined, config: FileConfig): string {
   const raw = (input || '').trim();
   if (!raw || raw === '.') return `${config.defaultRoot}:/`;
   if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
-    throw new Error('文件工具不允许使用宿主绝对路径，请使用 workspace:/path 或相对 workspace 的路径');
+    const stripped = raw.replace(/^[a-zA-Z]:[\\/]+|^\/+/, '');
+    const hostRootAvailable = (config.storage?.listRoots() ?? []).some(r => r.name === 'host');
+    const hint = hostRootAvailable
+      ? `若确需访问宿主机绝对路径，可改用 host:/${stripped}（host 根已开启）。`
+      : `如要访问宿主机文件，可在 storage 配置里把目标目录加成具名根（roots 数组），或开启 host:/ 直通根；之后改用 <根名>:/<路径>。`;
+    throw new Error(
+      `文件工具不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 workspace:/path）或 workspace 内的相对路径。${describeRoots(config)}。${hint}`,
+    );
   }
   if (raw.includes(':/')) return raw;
   return `${config.defaultRoot}:/${normalizePath(raw)}`;
@@ -36,14 +54,20 @@ function toStorageUri(input: string | undefined, config: FileConfig): string {
 
 function rootOf(uri: string): string {
   const idx = uri.indexOf(':/');
-  if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}`);
+  if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}（应为 <根名>:/<相对路径>，例如 workspace:/notes/a.md）`);
   return uri.slice(0, idx);
 }
 
 function ensureRootAllowed(uri: string, config: FileConfig): void {
   const root = rootOf(uri);
   if (!config.allowedRoots.includes(root)) {
-    throw new Error(`文件工具不允许访问 ${root}:/。当前允许: ${config.allowedRoots.join(', ')}`);
+    const known = (config.storage?.listRoots() ?? []).map(r => r.name);
+    const unknown = !known.includes(root);
+    throw new Error(
+      unknown
+        ? `根 "${root}" 不存在。当前已注册根: ${known.join(', ') || '(无)'}；本工具允许: ${config.allowedRoots.join(', ')}`
+        : `本工具不允许访问 ${root}:/。允许的根: ${config.allowedRoots.join(', ')}（如需放开，改 file.allowedRoots 配置）`,
+    );
   }
 }
 
