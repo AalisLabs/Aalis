@@ -890,6 +890,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.status(status).json({ error: message });
   }
 
+  function sendStorageUnavailable(res: express.Response): void {
+    res.status(503).json({ error: '文件管理需要 storage 服务' });
+  }
+
   /** 安全路径解析：确保在 workspace 目录内，防止路径穿越 */
   function safeResolvePath(relPath: string): string | null {
     // 规范化并解析
@@ -903,6 +907,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 列出目录内容
   expressApp.get('/api/files', async (req, res) => {
     const dir = String(req.query.path || '');
+    if (!storage) { sendStorageUnavailable(res); return; }
     if (storage) {
       if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
       try {
@@ -951,6 +956,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取文件/目录详情
   expressApp.get('/api/files/info', async (req, res) => {
     const filePath = String(req.query.path || '');
+    if (!storage) { sendStorageUnavailable(res); return; }
     if (storage) {
       if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
       try {
@@ -980,6 +986,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 下载文件
   expressApp.get('/api/files/download', async (req, res) => {
     const filePath = String(req.query.path || '');
+    if (!storage) { sendStorageUnavailable(res); return; }
     if (storage) {
       if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
       try {
@@ -1012,6 +1019,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (typeof newName !== 'string' || newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
       res.status(400).json({ error: '文件名不合法' }); return;
     }
+    if (!storage) { sendStorageUnavailable(res); return; }
     if (storage) {
       if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
       try {
@@ -1042,6 +1050,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   expressApp.post('/api/files/delete', async (req, res) => {
     const { path: filePath } = req.body ?? {};
     if (!filePath) { res.status(400).json({ error: '缺少参数' }); return; }
+    if (!storage) { sendStorageUnavailable(res); return; }
     if (storage) {
       if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
       try {

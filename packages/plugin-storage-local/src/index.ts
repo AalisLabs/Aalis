@@ -208,6 +208,12 @@ class LocalStorageService implements StorageService {
     const existingParent = await this.findExistingParent(dirname(lexical));
     const parent = await realpath(existingParent);
     if (!isInside(root.realPath, parent)) throw new Error('路径不合法');
+    try {
+      const target = await lstat(lexical);
+      if (target.isSymbolicLink()) throw new Error('不允许写入符号链接');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     return lexical;
   }
 

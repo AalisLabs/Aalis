@@ -22,6 +22,8 @@ export interface TodoItem {
 const store = new Map<string, TodoItem[]>();
 
 const TODO_NAMESPACE = 'todo-list';
+const MAX_TODO_ITEMS = 50;
+const MAX_TODO_TITLE_LENGTH = 120;
 
 /** 将 todo 持久化到 MemoryService */
 async function persistTodos(ctx: Context, sessionId: string, items: TodoItem[]): Promise<void> {
@@ -149,12 +151,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!Array.isArray(rawList)) {
         return JSON.stringify({ error: 'todoList 必须是数组' });
       }
+      if (rawList.length > MAX_TODO_ITEMS) {
+        return JSON.stringify({ error: `todoList 最多允许 ${MAX_TODO_ITEMS} 项` });
+      }
+      const longTitleIndex = rawList.findIndex((item: unknown) => {
+        const obj = item as Record<string, unknown>;
+        return String(obj.title ?? '').length > MAX_TODO_TITLE_LENGTH;
+      });
+      if (longTitleIndex >= 0) {
+        return JSON.stringify({ error: `第 ${longTitleIndex + 1} 项 todo 标题最多允许 ${MAX_TODO_TITLE_LENGTH} 个字符` });
+      }
 
       const items: TodoItem[] = rawList.map((item: unknown) => {
         const obj = item as Record<string, unknown>;
+        const title = String(obj.title ?? '');
         return {
           id: Number(obj.id),
-          title: String(obj.title ?? ''),
+          title,
           status: (['not-started', 'in-progress', 'completed'].includes(obj.status as string)
             ? obj.status as TodoItem['status']
             : 'not-started'),
