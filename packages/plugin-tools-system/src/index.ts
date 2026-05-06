@@ -39,8 +39,10 @@ export const configSchema: ConfigSchema = {
       allowedRoots: {
         type: 'multiselect',
         label: '允许访问的存储根',
-        default: ['workspace', 'tmp'],
+        default: ['*'],
+        description: '设为 * 时允许访问 storage 中全部 readable 根；也可以显式列出根名。写入/删除仍受各根自身权限限制。',
         options: [
+          { label: '全部可读根', value: '*' },
           { label: 'Workspace', value: 'workspace' },
           { label: '临时目录', value: 'tmp' },
           { label: 'Data', value: 'data' },
@@ -70,7 +72,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   workingDirectory: 'workspace:/',
   shell: { enabled: true, defaultTimeout: 30000, maxTimeout: 300000, maxOutputSize: 65536 },
-  file: { enabled: true, maxReadSize: 1048576, maxSearchBytes: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['workspace', 'tmp'] },
+  file: { enabled: true, maxReadSize: 1048576, maxSearchBytes: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['*'] },
   system: { enabled: true },
   http: { enabled: true, defaultTimeout: 30000, maxResponseSize: 1048576 },
 };
@@ -166,6 +168,9 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
   const file = config.file as Record<string, unknown> | undefined;
   const system = config.system as Record<string, unknown> | undefined;
   const http = config.http as Record<string, unknown> | undefined;
+  const configuredAllowedRoots = Array.isArray(file?.allowedRoots)
+    ? (file.allowedRoots as unknown[]).filter((root): root is string => typeof root === 'string')
+    : [];
 
   return {
     workingDirectory: (config.workingDirectory as string) ?? 'workspace:/',
@@ -181,9 +186,7 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
       maxSearchBytes: (file?.maxSearchBytes as number) ?? 1048576,
       maxWriteSize: (file?.maxWriteSize as number) ?? 10485760,
       defaultRoot: (file?.defaultRoot as string) ?? 'workspace',
-      allowedRoots: Array.isArray(file?.allowedRoots)
-        ? (file.allowedRoots as unknown[]).filter((root): root is string => typeof root === 'string')
-        : ['workspace', 'tmp'],
+      allowedRoots: configuredAllowedRoots.length ? configuredAllowedRoots : ['*'],
     },
     system: {
       enabled: (system?.enabled as boolean) ?? true,
