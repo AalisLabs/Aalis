@@ -20,6 +20,22 @@ interface FileConfig {
   storage?: StorageService;
 }
 
+interface StorageRootConflictView {
+  name: string;
+  selected: RootConflictProvider;
+  shadowed: RootConflictProvider[];
+}
+
+interface RootConflictProvider {
+  providerId: string;
+  provider?: string;
+  label?: string;
+  kind: string;
+  readable: boolean;
+  writable: boolean;
+  deletable: boolean;
+}
+
 const ALL_ROOTS = '*';
 
 function normalizePath(input: string): string {
@@ -28,6 +44,11 @@ function normalizePath(input: string): string {
 
 function getKnownRoots(config: FileConfig) {
   return config.storage?.listRoots() ?? [];
+}
+
+function getRootConflicts(storage: StorageService): StorageRootConflictView[] {
+  const maybeRouter = storage as StorageService & { getRootConflicts?: () => StorageRootConflictView[] };
+  return typeof maybeRouter.getRootConflicts === 'function' ? maybeRouter.getRootConflicts() : [];
 }
 
 function getAllowedRoots(config: FileConfig): string[] {
@@ -463,29 +484,73 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         // 特殊入口："/" 或 "*" 表示"列出所有 storage 根"
         if (raw === '/' || raw === '*') {
           const allRoots = storage.listRoots();
+          const conflicts = getRootConflicts(storage);
+          const conflictByName = new Map(conflicts.map(conflict => [conflict.name, conflict]));
           const allowedSet = new Set(getAllowedRoots(config));
-          const entries = allRoots.map(r => ({
-            name: r.name,
-            uri: `${r.name}:/`,
-            path: '',
-            type: 'directory' as const,
-            size: undefined,
-            modified: undefined,
-            label: r.label,
-            kind: r.kind,
-            readable: r.readable,
-            writable: r.writable,
-            deletable: r.deletable,
-            allowedByThisTool: allowedSet.has(r.name),
-          }));
+          const entries = allRoots.map(r => {
+            const conflict = conflictByName.get(r.name);
+            return {
+              name: r.name,
+              uri: `${r.name}:/`,
+              path: '',
+              type: 'directory' as const,
+              size: undefined,
+              modified: undefined,
+              label: r.label,
+              kind: r.kind,
+              readable: r.readable,
+              writable: r.writable,
+              deletable: r.deletable,
+              allowedByThisTool: allowedSet.has(r.name),
+              ...(conflict
+                ? {
+                  conflict: {
+                    selectedProviderId: conflict.selected.providerId,
+                    selectedProvider: conflict.selected.provider,
+                    shadowedProviders: conflict.shadowed.map(root => ({
+                      providerId: root.providerId,
+                      provider: root.provider,
+                      label: root.label,
+                      kind: root.kind,
+                      readable: root.readable,
+                      writable: root.writable,
+                      deletable: root.deletable,
+                    })),
+                  },
+                }
+                : {}),
+            };
+          });
           return JSON.stringify({
             uri: '/',
             note:
               '这是 storage 根的清单（不是宿主机文件系统目录）。' +
               `本工具当前允许根为 [${allowedRootsText(config)}]` +
               (config.allowedRoots.includes(ALL_ROOTS) ? '（file.allowedRoots: ["*"]，自动包含全部可读根）' : `（file.allowedRoots: [${config.allowedRoots.join(', ')}]）`) +
-              '。要访问具体根的内容，请用 path: "<根名>:/"。',
+              '。要访问具体根的内容，请用 path: "<根名>:/"。' +
+              (conflicts.length ? `检测到 ${conflicts.length} 个同名根冲突；冲突根会按 provider 优先级选择一个，其余列在 conflicts/shadowedProviders 中。` : ''),
             roots: entries,
+            conflicts: conflicts.map(conflict => ({
+              name: conflict.name,
+              selected: {
+                providerId: conflict.selected.providerId,
+                provider: conflict.selected.provider,
+                label: conflict.selected.label,
+                kind: conflict.selected.kind,
+                readable: conflict.selected.readable,
+                writable: conflict.selected.writable,
+                deletable: conflict.selected.deletable,
+              },
+              shadowed: conflict.shadowed.map(root => ({
+                providerId: root.providerId,
+                provider: root.provider,
+                label: root.label,
+                kind: root.kind,
+                readable: root.readable,
+                writable: root.writable,
+                deletable: root.deletable,
+              })),
+            })),
           });
         }
 
