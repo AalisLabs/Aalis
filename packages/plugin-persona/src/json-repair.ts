@@ -127,28 +127,54 @@ function escapeBareQuotesInStrings(s: string): string {
   return changed ? out : s;
 }
 
+/** 找到第一个顶层 JSON 对象的结束位置；忽略字符串里的括号与转义。 */
+function findBalancedJsonObjectEnd(s: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+
+    if (escape) { escape = false; continue; }
+    if (c === '\\') {
+      if (inString) escape = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return i;
+      if (depth < 0) return -1;
+    }
+  }
+
+  return -1;
+}
+
 /**
  * 从模型原始输出里提取 JSON 子串。
  * - 去掉 ```json / ``` 围栏
- * - 若整体不是 '{' 起头，则取第一个 '{' 到最后一个 '}' 的片段
- * - 若都找不到，则返回 trim 后的原文
+ * - 从第一个 '{' 开始，取第一个配平的顶层对象
+ * - 允许对象后面追加说明/推理/多余文本；这些尾巴会被忽略
+ * - 若找不到配平对象，则返回 trim 后的候选文本，交给后续修复步骤处理
  */
 export function extractJsonCandidate(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
 
-  let candidate = trimmed.startsWith('{')
-    ? trimmed
-    : trimmed.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
+  const unfenced = trimmed.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+  const firstBrace = unfenced.indexOf('{');
+  if (firstBrace < 0) return unfenced;
 
-  if (!candidate.startsWith('{')) {
-    const firstBrace = trimmed.indexOf('{');
-    const lastBrace = trimmed.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      candidate = trimmed.slice(firstBrace, lastBrace + 1);
-    }
-  }
-  return candidate;
+  const end = findBalancedJsonObjectEnd(unfenced, firstBrace);
+  return end >= firstBrace ? unfenced.slice(firstBrace, end + 1) : unfenced.slice(firstBrace);
 }
 
 export interface RepairResult {
