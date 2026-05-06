@@ -4,7 +4,6 @@ import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
 import { LLMRouter, type AggregatedModelInfo, type ModelProviderInfo } from './llm-router.js';
-import { StorageRouter } from './storage-router.js';
 import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
 import { PendingRegistrationBuffer } from './pending-buffer.js';
@@ -42,10 +41,6 @@ export class Context {
   /** model→provider 路由器（懒初始化；服务注册/注销时自动失效缓存） */
   private _llmRouter: LLMRouter | null = null;
   private _llmRouterInvalidateAttached = false;
-
-  /** 存储路由器（懒初始化；服务注册/注销时自动失效根名映射缓存） */
-  private _storageRouter: StorageRouter | null = null;
-  private _storageRouterInvalidateAttached = false;
 
   constructor(options: {
     id: string;
@@ -348,33 +343,6 @@ export class Context {
   /** 使 model→provider 缓存立即失效。等价于 `ctx.llm.invalidate()`。 */
   invalidateModelProviderCache(): void {
     this._llmRouter?.invalidate();
-  }
-
-  /**
-   * 取得存储路由器（懒初始化）。
-   *
-   * 该路由器本身实现 `StorageService`，会把所有已注册的 'storage' provider
-   * 当成一个统一的 storage 视图：`listRoots()` 合并所有根，按 URI 根名分发
-   * 读写删等调用。建议依赖 storage 的工具/插件用 `ctx.storage`，而不是
-   * `ctx.getService('storage')`，这样 agent 可以一次看到所有 provider 的根
-   * （如本地、SMB、FTP），不必每个调用方自己聚合。
-   */
-  get storage(): StorageRouter {
-    if (!this._storageRouter) {
-      this._storageRouter = new StorageRouter(this, this.logger);
-    }
-    if (!this._storageRouterInvalidateAttached) {
-      this._storageRouterInvalidateAttached = true;
-      const offReg = this.on('service:registered', (svcName: string) => {
-        if (svcName === 'storage') this._storageRouter?.invalidate();
-      });
-      const offUnreg = this.on('service:unregistered', (svcName: string) => {
-        if (svcName === 'storage') this._storageRouter?.invalidate();
-      });
-      this._disposables.push(offReg);
-      this._disposables.push(offUnreg);
-    }
-    return this._storageRouter;
   }
 
   // ---- 注册缓冲（服务延迟就绪支持，逻辑已抽到 PendingRegistrationBuffer） ----

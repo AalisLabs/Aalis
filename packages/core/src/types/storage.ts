@@ -93,6 +93,7 @@ export interface StorageCapabilityRegistry {
   Write: 'write';
   Delete: 'delete';
   LocalPath: 'local-path';
+  Router: 'router';
 }
 
 export type StorageCapability = StorageCapabilityRegistry[keyof StorageCapabilityRegistry];
@@ -103,6 +104,7 @@ export const StorageCapabilities = {
   Write: 'write',
   Delete: 'delete',
   LocalPath: 'local-path',
+  Router: 'router',
 } as const satisfies StorageCapabilityRegistry;
 
 declare module './capabilities.js' {
