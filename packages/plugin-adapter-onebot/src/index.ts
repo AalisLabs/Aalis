@@ -233,10 +233,13 @@ async function cacheImagesAndRewriteText(
   );
 
   let idx = 0;
-  const rewritten = text.replace(/\[图片\]/g, () => {
+  let rewritten = text.replace(/\[图片\]/g, () => {
     const path = localPaths[idx++];
     return path ? `[图片 | ref:${path}]` : '[图片]';
   });
+
+  const remaining = localPaths.slice(idx).map(path => path ? `[图片 | ref:${path}]` : '[图片]');
+  if (remaining.length > 0) rewritten += remaining.join('');
 
   return { text: rewritten, localPaths };
 }
