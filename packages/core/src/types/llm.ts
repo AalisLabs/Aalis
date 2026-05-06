@@ -93,7 +93,8 @@ export interface ModelProviderInfo {
  *
  * 同名 facade 模式（与 plugin-storage-router 对齐）：路由器注册为 'llm' 服务的一个
  * 普通 provider，同时带 'router' capability。它对外实现 LLMService，内部聚合并转发到
- * 其他同名 LLM provider。
+ * 其他同名 LLM provider。router 只静态声明自身真实提供的 facade 能力；vision / tool_calling
+ * 等后端能力仍由真实 provider 暴露，并由 router 在请求转发时动态选择。
  *
  * - 普通调用：getService<LLMService>('llm')?.chat(...)
  * - 路由扩展：getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(model)
