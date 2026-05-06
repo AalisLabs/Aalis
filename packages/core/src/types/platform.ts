@@ -89,6 +89,16 @@ export interface PlatformManagerService {
   getConnections(): PlatformConnection[];
   /** 获取所有已注册的平台名称 */
   getPlatformNames(): string[];
+  /** 获取所有合规的平台适配器实例 */
+  getAdapters(): PlatformAdapter[];
+  /** 获取所有平台适配器及其连接详情 */
+  getDetails(): Array<{
+    adapterName: string;
+    platform: string;
+    contextId: string;
+    capabilities: string[];
+    connections: PlatformConnection[];
+  }>;
   /** 获取指定平台在当前会话中的自身身份 */
   getSelfIdentity?(platform: string, sessionId?: string): PlatformSelfIdentity | undefined;
 }
