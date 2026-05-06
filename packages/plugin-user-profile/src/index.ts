@@ -1,5 +1,5 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { MemoryService, LLMService } from '@aalis/core';
+import type { MemoryService, LLMService, LLMRouterService } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案
@@ -374,7 +374,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     let extractLlm: LLMService | undefined = llm;
     let extractModelId: string | undefined;
     if (cfg.extractModel) {
-      const routed = await ctx.resolveModelProvider(cfg.extractModel);
+      const routed = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(cfg.extractModel);
       if (routed) {
         extractLlm = routed.instance as LLMService;
         extractModelId = routed.model;

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
-import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
+import type { LLMService, LLMRouterService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
 import { ImageRecognitionCapabilities } from '@aalis/core';
 
 function escapeRegExp(input: string): string {
@@ -640,7 +640,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 如果用户指定了模型，通过 Context 统一路由找到正确的提供者
     if (cfg.preferredModel) {
-      const resolved = await ctx.resolveModelProvider(cfg.preferredModel);
+      const resolved = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(cfg.preferredModel);
       if (resolved) {
         const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) chosen = found;
@@ -734,7 +734,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     let chosen = allProviders.find(p => p.capabilities.includes('vision')) ?? allProviders[0];
     if (!chosen) return null;
     if (cfg.preferredModel) {
-      const resolved = await ctx.resolveModelProvider(cfg.preferredModel);
+      const resolved = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(cfg.preferredModel);
       if (resolved) {
         const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) chosen = found;
