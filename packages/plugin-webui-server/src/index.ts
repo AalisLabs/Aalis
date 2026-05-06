@@ -4,7 +4,7 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService, LLMRouterService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -692,7 +692,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取所有 LLM 模型（聚合所有 LLM 提供者）
   expressApp.get('/api/llm-models', async (_req, res) => {
     try {
-      const models = await ctx.listAllModels();
+      const models = await (ctx.getService<LLMRouterService>('llm-router')?.listAllModels() ?? Promise.resolve([]));
       res.json({ models });
     } catch {
       res.json({ models: [] });

@@ -1,4 +1,4 @@
-import type { Context, LLMService, Message } from '@aalis/core';
+import type { Context, LLMService, LLMRouterService, Message } from '@aalis/core';
 import type { GameActivityAdapter, DecisionRuntime, AdapterActionChoice } from './adapter.js';
 import type {
   BridgeHelloEvent,
@@ -262,7 +262,7 @@ export async function resolveDecisionRuntime(
   if (!defaultLlm) return undefined;
 
   if (decisionModel.trim()) {
-    const routed = await ctx.resolveModelProvider(decisionModel.trim());
+    const routed = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(decisionModel.trim());
     if (routed) {
       return {
         llm: routed.instance as LLMService,

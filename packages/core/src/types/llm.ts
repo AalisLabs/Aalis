@@ -71,6 +71,42 @@ export interface LLMService {
   supportsModel?(modelId: string): boolean | Promise<boolean>;
 }
 
+// ----- LLM 路由服务接口（plugin-llm-router 提供）-----
+
+/** 聚合后的模型条目（携带提供者标识） */
+export interface AggregatedModelInfo {
+  id: string;
+  capabilities: LLMCapability[];
+  provider: string;
+  contextId: string;
+}
+
+/** 模型路由解析结果 */
+export interface ModelProviderInfo {
+  instance: unknown;
+  model: string;
+  contextId: string;
+}
+
+/**
+ * LLM 路由服务 —— 由 plugin-llm-router 提供。
+ *
+ * 与 `LLMService` 是两个独立服务名（'llm-router' vs 'llm'），不互相覆盖。
+ * 调用方可按需选用：
+ * - 想"按 model id 找 provider"：getService<LLMRouterService>('llm-router')
+ * - 想"直接用某个 provider"：getService<LLMService>('llm')
+ */
+export interface LLMRouterService {
+  /** 聚合所有 LLM 提供者的模型列表 */
+  listAllModels(): Promise<AggregatedModelInfo[]>;
+  /** 按 model ID 查找拥有该模型的 LLM 提供者 */
+  resolveModelProvider(modelId: string): Promise<ModelProviderInfo | undefined>;
+  /** 完整 model→contextId 映射 */
+  getModelProviderMap(): Promise<Map<string, string>>;
+  /** 使内部缓存立即失效 */
+  invalidate(): void;
+}
+
 // ----- LLM 能力声明（capability 框架）-----
 
 /**

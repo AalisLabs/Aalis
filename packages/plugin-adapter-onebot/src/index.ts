@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MessageArchiveService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
+import type { MessageArchiveService, ImageRecognitionService, LLMService, LLMRouterService, MemoryService, FlowControlService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -776,7 +776,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     if (forwardCfg.summaryModel) {
       try {
-        const resolved = await ctx.llm.resolveModelProvider(forwardCfg.summaryModel);
+        const resolved = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(forwardCfg.summaryModel);
         if (!resolved) {
           ctx.logger.warn(`forward 摘要：找不到模型 ${forwardCfg.summaryModel}，回退到默认 LLM`);
         } else {

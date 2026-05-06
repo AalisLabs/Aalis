@@ -12,8 +12,6 @@ export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
 export { Logger, getLogBuffer, onLogEntry, setConsoleLogSinkEnabled, isConsoleLogSinkEnabled } from './logger.js';
 export { getSenderLabel, prefixSender, getMessageName } from './identity.js';
-export { LLMRouter } from './llm-router.js';
-export type { AggregatedModelInfo, ModelProviderInfo } from './llm-router.js';
 export { DisposableChain } from './disposable-chain.js';
 export { MixinRegistry } from './mixin-registry.js';
 export type { MixinEntry } from './mixin-registry.js';
@@ -117,6 +115,9 @@ export type {
   LLMService,
   LLMCapability,
   LLMCapabilityRegistry,
+  AggregatedModelInfo,
+  ModelProviderInfo,
+  LLMRouterService,
   // 服务能力声明框架
   ServiceCapabilityMap,
   CapabilityOf,
