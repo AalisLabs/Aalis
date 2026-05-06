@@ -169,7 +169,7 @@ class DefaultAgent implements AgentService {
     }
 
     // 有指定模型：通过 core 工具方法查找拥有该模型的提供者
-    const resolved = await this.ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(model);
+    const resolved = await this.ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(model);
     if (resolved) return { llm: resolved.instance as LLMService, modelOverride: model };
 
     // 模型未匹配：回退到默认提供者，传递 model override

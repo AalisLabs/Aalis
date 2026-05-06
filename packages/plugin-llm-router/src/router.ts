@@ -9,10 +9,13 @@ interface LLMProviderShape {
 /**
  * LLM 路由器
  *
- * 独立服务名 'llm-router' —— 不与 'llm' 同名注册，避免劫持 service preferences。
- * 调用方按需选择：
- * - getService('llm-router').resolveModelProvider(id) → 找拥有该 model 的 provider
- * - getService('llm') → 直接拿默认 LLM provider（由 servicePreferences.llm 指定）
+ * 同名 facade 模式（与 plugin-storage-router 对齐）：通过
+ * `ctx.provide('llm', router, { capabilities: ['router'] })` 注册为 'llm' 服务
+ * 的一个提供者，带 'router' 能力标记。消费者按需选择：
+ * - getService('llm', ['router']) → 拿路由器本身（调用 listAllModels / resolveModelProvider）
+ * - getService('llm') → 拿默认真提供者（由 servicePreferences.llm 指定）
+ *
+ * 自我排除：枚举 'llm' 服务时过滤掉 instance === this，避免无限递归。
  */
 export class LLMRouter implements LLMRouterService {
   private _cache: Map<string, string> | null = null;
@@ -22,8 +25,14 @@ export class LLMRouter implements LLMRouterService {
 
   constructor(private readonly ctx: Context, private readonly logger: Logger) {}
 
+  /** 仅枚举真正的 LLM provider，排除路由器自身 */
+  private getProviders(): Array<{ instance: LLMProviderShape; contextId: string; label?: string }> {
+    return this.ctx.getAllServices<LLMProviderShape>('llm')
+      .filter(e => (e.instance as unknown) !== this);
+  }
+
   async listAllModels(): Promise<AggregatedModelInfo[]> {
-    const providers = this.ctx.getAllServices<LLMProviderShape>('llm');
+    const providers = this.getProviders();
     const results: AggregatedModelInfo[] = [];
     await Promise.all(providers.map(async ({ instance, contextId, label }) => {
       if (typeof instance.listModels !== 'function') return;
@@ -40,7 +49,7 @@ export class LLMRouter implements LLMRouterService {
   }
 
   async resolveModelProvider(modelId: string): Promise<ModelProviderInfo | undefined> {
-    const providers = this.ctx.getAllServices<LLMProviderShape>('llm');
+    const providers = this.getProviders();
     for (const { instance, contextId } of providers) {
       if (typeof instance.supportsModel === 'function') {
         try {
@@ -75,7 +84,7 @@ export class LLMRouter implements LLMRouterService {
 
     this._cachePromise = (async () => {
       const map = new Map<string, string>();
-      const providers = this.ctx.getAllServices<LLMProviderShape>('llm');
+      const providers = this.getProviders();
       for (const { instance, contextId } of providers) {
         if (typeof instance.listModels !== 'function') continue;
         try {

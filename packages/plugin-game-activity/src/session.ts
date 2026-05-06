@@ -262,7 +262,7 @@ export async function resolveDecisionRuntime(
   if (!defaultLlm) return undefined;
 
   if (decisionModel.trim()) {
-    const routed = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(decisionModel.trim());
+    const routed = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(decisionModel.trim());
     if (routed) {
       return {
         llm: routed.instance as LLMService,
