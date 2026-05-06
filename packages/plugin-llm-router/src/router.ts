@@ -1,11 +1,9 @@
 import type {
-  AggregatedModelInfo,
   ChatRequest,
   ChatResponse,
   ChatStreamChunk,
   Context,
   LLMCapability,
-  LLMRouterService,
   LLMService,
   Logger,
   ModelInfo,
@@ -40,14 +38,14 @@ interface ResolvedProvider {
  *
  * 对外 API（消费者视角）：
  * - `getService<LLMService>('llm')?.chat({ model, ... })` —— router 内部按 model 路由
- * - `getService<LLMRouterService>('llm', ['router'])?.listAllModels()` —— 仅 introspection
+ * - `getService<LLMService>('llm', ['router'])?.listModels()` —— router 聚合后返回 ModelInfo[]（带 provider/contextId），只用于 introspection
  *
  * 内部细节（resolveModelProvider / getModelProviderMap / invalidate）不再作为公开 API；
  * 调用方应直接通过 LLMService.chat 让 router 路由，而不是手动解析 provider 后调 chat。
  *
  * 自我排除：枚举 'llm' 服务时过滤掉 instance === this，避免无限递归。
  */
-export class LLMRouter implements LLMService, LLMRouterService {
+export class LLMRouter implements LLMService {
   private _cache: Map<string, string> | null = null;
   private _cacheTime = 0;
   private _cachePromise: Promise<Map<string, string>> | null = null;
@@ -94,10 +92,10 @@ export class LLMRouter implements LLMService, LLMRouterService {
 
   async listModels(): Promise<ModelInfo[]> {
     const seen = new Map<string, ModelInfo>();
-    for (const model of await this.listAllModels()) {
+    for (const model of await this._listAllProviders()) {
       const existing = seen.get(model.id);
       if (!existing) {
-        seen.set(model.id, { id: model.id, capabilities: model.capabilities });
+        seen.set(model.id, { id: model.id, capabilities: model.capabilities, provider: model.provider, contextId: model.contextId });
       } else {
         const caps = new Set<LLMCapability>([...existing.capabilities, ...model.capabilities]);
         existing.capabilities = [...caps];
@@ -114,9 +112,9 @@ export class LLMRouter implements LLMService, LLMRouterService {
     return (await this.resolveModelProvider(modelId)) !== undefined;
   }
 
-  async listAllModels(): Promise<AggregatedModelInfo[]> {
+  private async _listAllProviders(): Promise<ModelInfo[]> {
     const providers = this.getProviders();
-    const results: AggregatedModelInfo[] = [];
+    const results: ModelInfo[] = [];
     await Promise.all(providers.map(async ({ instance, contextId, label }) => {
       if (typeof instance.listModels !== 'function') return;
       try {

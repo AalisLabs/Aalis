@@ -15,7 +15,6 @@ import type {
   ChatRequest,
   ChatResponse,
   LLMService,
-  LLMRouterService,
   MessageArchiveService,
   MemoryService,
   PersonaService,
@@ -1481,10 +1480,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 仅 /model（无参数）时列出可用模型
       if (!target) {
         let models: string[] = [];
-        const router = ctx.getService<LLMRouterService>('llm', ['router']);
-        if (router) {
+        const llm = ctx.getService<LLMService>('llm');
+        if (llm && typeof llm.listModels === 'function') {
           try {
-            models = (await router.listAllModels()).map(m => m.id);
+            models = (await llm.listModels()).map(m => m.id);
           } catch { /* ignore */ }
         }
         if (models.length === 0) {
