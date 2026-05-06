@@ -17,7 +17,9 @@ import { CommandRegistry } from './commands.js';
 export const name = '@aalis/plugin-commands';
 export const displayName = '内置指令';
 export const provides = ['commands'];
-export const inject = {};
+export const inject = {
+  required: ['gateway'],
+};
 
 export const configSchema: ConfigSchema = {
   commandPrefix: {

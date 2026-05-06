@@ -545,13 +545,10 @@ export class App {
     // 检查核心必需服务，缺失时自动寻找并启动提供者
     await this.ensureRequiredServices();
 
-    // 注：消息路由职责优先由 @aalis/plugin-gateway 承担。
-    // 若用户没有在 requiredServices 中声明 'gateway'、且系统中也没有任何 gateway
-    // 服务实现，core 会安装一个最小路由作为兜底：直接把 inbound:message 派发给
-    // agent.handleMessage —— 行为等价于历史上 core 内置的简单分发，避免消息丢失。
-    if (!this.ctx.hasService('gateway')) {
-      this.installFallbackInboundRouter();
-    }
+    // 注：消息路由（inbound 多相位编排、outbound 钩子链）完全由
+    // @aalis/plugin-gateway 承担。core 不内置任何消息派发兜底——若 gateway
+    // 缺席，依赖它的插件会因为 inject.required 不满足而不激活，这正是
+    // 反应式生命周期想要的"清晰失败"，而不是悄无声息地绕过 flow / trigger 等策略。
 
     // 发出 ready 事件
     await this.ctx.emit('ready');
@@ -625,42 +622,4 @@ export class App {
     }
   }
 
-  /**
-   * 兜底入站路由 —— 当系统中没有任何 'gateway' 服务时安装。
-   *
-   * 行为：监听 `inbound:message`，直接调用 `agent.handleMessage`；如果连 agent
-   * 都没有，回 emit 一条系统占位消息到 `outbound:message`。这等价于历史上 core
-   * 内置的简单分发逻辑，保证最小可用，也是 `plugin-gateway` 缺席时的安全网。
-   *
-   * 一旦后续有插件 `provide('gateway', ...)`，本兜底监听会自动卸载，避免
-   * fallback 与 gateway 对同一 inbound:message 双路径派发。
-   */
-  private installFallbackInboundRouter(): void {
-    this.logger.info('未检测到 gateway 服务，安装最小入站路由作为兜底（直接派发给 agent）');
-    const disposeFallback = this.ctx.on('inbound:message', async (msg) => {
-      const agent = this.ctx.getService<{ handleMessage(m: unknown): Promise<void> }>('agent');
-      if (agent) {
-        try {
-          await agent.handleMessage(msg);
-        } catch (err) {
-          this.logger.warn(`[fallback-router] agent.handleMessage 异常: ${err}`);
-        }
-        return;
-      }
-      this.logger.warn('[fallback-router] agent 与 gateway 均不可用，消息无法处理');
-      await this.ctx.emit('outbound:message', {
-        content: '[系统] Agent 与 Gateway 服务均不可用，请检查插件配置。',
-        sessionId: (msg as { sessionId: string }).sessionId,
-        platform: (msg as { platform: string }).platform,
-        source: 'system',
-      });
-    });
-
-    const disposeGatewayWatch = this.ctx.on('service:registered', (name) => {
-      if (name !== 'gateway') return;
-      disposeFallback();
-      disposeGatewayWatch();
-      this.logger.info('检测到 gateway 服务，已卸载最小入站路由兜底');
-    });
-  }
 }
