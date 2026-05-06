@@ -248,6 +248,7 @@ const protocolV12 = new OneBotV12();
 // ===== 重连配置 =====
 const RECONNECT_INTERVAL = 5000;
 const ACTION_TIMEOUT = 30000;
+const INVITE_CARD_SUPPRESS_WINDOW = 2 * 60 * 1000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const CONNECT_TIMEOUT = 15000;
@@ -410,6 +411,35 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // key: userId（好友请求）或 `${userId}:${groupId}`（群请求）
   const pendingFriendRequests = new Map<string, { flag: string; selfId: string }>();
   const pendingGroupRequests = new Map<string, { flag: string; subType: string; selfId: string }>();
+  const pendingInviteCardSuppressions = new Map<string, number>();
+
+  function inviteCardSuppressionKey(selfId: string, userId: string): string {
+    return `${selfId}:${userId}`;
+  }
+
+  function rememberInviteCardSuppression(req: NormalizedRequestEvent): void {
+    if (req.requestType !== 'group' || req.subType !== 'invite') return;
+    pendingInviteCardSuppressions.set(
+      inviteCardSuppressionKey(req.selfId, req.userId),
+      Date.now() + INVITE_CARD_SUPPRESS_WINDOW,
+    );
+  }
+
+  function shouldSuppressInviteCardMessage(event: { selfId: string; detailType: string; userId?: string; text: string }): boolean {
+    if (event.detailType !== 'private' || !event.userId || event.text.trim() !== '[JSON卡片]') return false;
+
+    const key = inviteCardSuppressionKey(event.selfId, event.userId);
+    const pending = pendingInviteCardSuppressions.get(key);
+    if (!pending) return false;
+
+    if (pending < Date.now()) {
+      pendingInviteCardSuppressions.delete(key);
+      return false;
+    }
+
+    pendingInviteCardSuppressions.delete(key);
+    return true;
+  }
 
   // ===== 桥接：会话元数据 + 平台 notice 入档 + 自禁言桥接 =====
   //
@@ -1426,6 +1456,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       state.selfId = event.selfId;
     }
 
+    if (shouldSuppressInviteCardMessage(event)) {
+      ctx.logger.debug(`OneBot[${state.protocol.version}] 忽略重复入群邀请 JSON 卡片: userId=${event.userId}`);
+      return;
+    }
+
     const sessionId = makeSessionId(
       event.selfId, event.detailType,
       event.userId, event.groupId, event.guildId, event.channelId,
@@ -1549,6 +1584,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } else if (req.requestType === 'group') {
       const key = `${req.userId}:${req.groupId}`;
       pendingGroupRequests.set(key, { flag: req.flag, subType: req.subType, selfId: req.selfId });
+      rememberInviteCardSuppression(req);
 
       // 被邀请入群：以私聊形式通知（bot 还没在群里，无法发群消息）
       const sessionId = makeSessionId(req.selfId, 'private', req.userId);
