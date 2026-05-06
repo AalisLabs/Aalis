@@ -37,6 +37,8 @@ export class ServiceContainer {
 
   /**
    * 注册一个服务实例
+   *
+   * @returns 刚插入的 ServiceEntry，调用方可以该引用调用 {@link unregisterEntry} 精确删除这一条。
    */
   register(
     name: string,
@@ -45,21 +47,23 @@ export class ServiceContainer {
     priority: number = 0,
     contextId: string = 'root',
     label?: string,
-  ): void {
+  ): ServiceEntry {
     let list = this.entries.get(name);
     if (!list) {
       list = [];
       this.entries.set(name, list);
     }
-    list.push({
+    const entry: ServiceEntry = {
       instance,
       capabilities: new Set(capabilities),
       priority,
       contextId,
       label,
-    });
+    };
+    list.push(entry);
     // 按优先级降序排列
     list.sort((a, b) => b.priority - a.priority);
+    return entry;
   }
 
   /**
@@ -108,7 +112,25 @@ export class ServiceContainer {
   }
 
   /**
-   * 移除指定服务名下某个 contextId 的提供者（精确卸载单条目）
+   * 按 entry 引用精确删除某个提供者（推荐）
+   *
+   * 避免 "同一 contextId 多次 register" 场景下按 contextId 删除会命中错误条目的 footgun。
+   * @returns 是否成功删除
+   */
+  unregisterEntry(name: string, entry: ServiceEntry): boolean {
+    const list = this.entries.get(name);
+    if (!list) return false;
+    const idx = list.indexOf(entry);
+    if (idx < 0) return false;
+    list.splice(idx, 1);
+    if (list.length === 0) this.entries.delete(name);
+    return true;
+  }
+
+  /**
+   * 移除指定服务名下某个 contextId 的提供者（同 contextId 只删除第一条，合并路径不推荐）
+   *
+   * @deprecated 请优先使用 {@link unregisterEntry}。
    * @returns 是否成功移除
    */
   unregister(name: string, contextId: string): boolean {

@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { resolve, dirname, basename, extname, relative, join, isAbsolute } from 'node:path';
 import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,7 @@ import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService, LLMRouterService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
+import { createAuthSystem, openBrowser } from './auth.js';
 
 // ===== 插件元数据 =====
 
@@ -30,6 +32,7 @@ export const configSchema: ConfigSchema = {
   host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
   fileRoot: { type: 'string', label: '文件浏览根', default: 'workspace', description: '文件管理页面使用的 storage 根 ID，默认 workspace' },
   workspaceRoot: { type: 'string', label: '兼容文件根目录', default: 'workspace', description: '缺少 storage 服务时的兼容文件根目录' },
+  autoOpen: { type: 'boolean', label: '启动时自动打开浏览器', default: true, description: '启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭' },
 };
 
 export const defaultConfig = {
@@ -37,6 +40,7 @@ export const defaultConfig = {
   host: '127.0.0.1',
   fileRoot: 'workspace',
   workspaceRoot: 'workspace',
+  autoOpen: true,
 };
 
 // ===== 配置 =====
@@ -45,6 +49,7 @@ interface WebUIConfig {
   port: number;
   host: string;
   fileRoot: string;
+  autoOpen: boolean;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -109,12 +114,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     port: (config.port as number) ?? 3000,
     host: (config.host as string) ?? '127.0.0.1',
     fileRoot: (config.fileRoot as string) || 'workspace',
+    autoOpen: (config.autoOpen as boolean | undefined) ?? true,
   };
 
+  // 一次性 token：仅内存、进程重启轮换
+  const authToken = randomBytes(24).toString('hex');
+  const auth = createAuthSystem(authToken, ctx.logger.child('auth'));
+
   const expressApp = express();
-  expressApp.use(express.json());
+  expressApp.use(express.json({ limit: '10mb' }));
+  expressApp.use(auth.middleware);
   const server = createServer(expressApp);
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    verifyClient: (info, cb) => {
+      if (auth.verifyWsClient(info.req)) cb(true);
+      else cb(false, 401, 'unauthenticated');
+    },
+  });
   const sessions = new Map<string, Set<WebSocket>>();
   const logSubscribers = new Set<WebSocket>();
   const allClients = new Set<WebSocket>();
@@ -1528,7 +1546,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     server.listen(uiConfig.port, uiConfig.host, () => {
-      ctx.logger.info(`WebUI 已启动: http://${uiConfig.host}:${uiConfig.port}`);
+      const url = `http://${uiConfig.host}:${uiConfig.port}/`;
+      ctx.logger.info(`WebUI 已启动: ${url}`);
+      ctx.logger.info(`首次访问请使用以下 URL（token 仅本次启动有效，重启轮换）: ${url}?token=${authToken}`);
+      if (uiConfig.autoOpen) openBrowser(`${url}?token=${authToken}`);
     });
   });
 
