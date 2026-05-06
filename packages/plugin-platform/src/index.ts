@@ -1,4 +1,5 @@
-import type { Context, PlatformConnection, PlatformManagerService, App } from '@aalis/core';
+import type { Context, PlatformConnection, PlatformAdapter, PlatformManagerService, App } from '@aalis/core';
+import { PlatformRegistry } from './registry.js';
 
 // ----- 元数据 -----
 
@@ -14,6 +15,7 @@ export const inject = {
 
 export function apply(ctx: Context): void {
   const getApp = (): App | undefined => ctx.getService<App>('app');
+  const registry = new PlatformRegistry(ctx.serviceContainer);
 
   const manager: PlatformManagerService = {
     getPluginGroups() {
@@ -35,15 +37,23 @@ export function apply(ctx: Context): void {
     },
 
     getConnections(): PlatformConnection[] {
-      return ctx.getPlatformDetails().flatMap(d => d.connections);
+      return registry.listDetails().flatMap(d => d.connections);
     },
 
     getPlatformNames(): string[] {
-      return ctx.getPlatformNames();
+      return registry.listPlatformNames();
+    },
+
+    getAdapters(): PlatformAdapter[] {
+      return registry.listAdapters();
+    },
+
+    getDetails() {
+      return registry.listDetails();
     },
 
     getSelfIdentity(platform: string, sessionId?: string) {
-      return ctx.getPlatformSelfIdentity(platform, sessionId);
+      return registry.getSelfIdentity(platform, sessionId);
     },
   };
 

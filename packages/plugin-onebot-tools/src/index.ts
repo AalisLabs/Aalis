@@ -1,13 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
-import type { Context, ConfigSchema, ImageRecognitionService, MessageArchiveService, PlatformAdapter, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema, ImageRecognitionService, MessageArchiveService, PlatformAdapter, PlatformManagerService, ToolCallContext } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-onebot-tools';
 export const displayName = 'OneBot 工具';
 export const inject = {
-  optional: ['platform', 'session-history'],
+  optional: ['platform', 'platform-manager', 'session-history'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -78,7 +78,8 @@ function parseOneBotSession(sessionId: string): { selfId: string; detailType: st
 
 /** 从上下文中找到支持 callAction 的 OneBot 平台适配器 */
 function findOneBotAdapter(ctx: Context): PlatformAdapter | undefined {
-  return ctx.getPlatforms().find(
+  const pm = ctx.getService<PlatformManagerService>('platform-manager');
+  return pm?.getAdapters().find(
     a => a.platform === 'onebot' && typeof a.callAction === 'function',
   );
 }
@@ -419,7 +420,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 仅当 OneBot 平台可用时才注册工具
   // 使用 ready 事件确保平台已加载
   ctx.on('ready', () => {
-    if (!ctx.getPlatformNames().includes('onebot')) {
+    if (!ctx.getService<PlatformManagerService>('platform-manager')?.getPlatformNames().includes('onebot')) {
       ctx.logger.info('未检测到 OneBot 平台，跳过 OneBot 工具注册');
       return;
     }
@@ -1641,7 +1642,7 @@ function registerRequestTools(ctx: Context): void {
     handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
     handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
   } | undefined {
-    const adapter = ctx.getPlatforms().find(
+    const adapter = ctx.getService<PlatformManagerService>('platform-manager')?.getAdapters().find(
       a => a.platform === 'onebot' && typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
     );
     return adapter as typeof adapter & {

@@ -22,6 +22,7 @@ import type {
   SessionManagerService,
   SessionConfig,
   GatewayService,
+  PlatformManagerService,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 import { getSenderLabel, getMessageName } from '@aalis/core';
@@ -1277,7 +1278,7 @@ class DefaultAgent implements AgentService {
   }
 
   private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
-    const identity = this.ctx.getPlatformSelfIdentity(incoming.platform, incoming.sessionId);
+    const identity = this.ctx.getService<PlatformManagerService>('platform-manager')?.getSelfIdentity?.(incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
       senderType: 'assistant',
@@ -1404,7 +1405,7 @@ export const displayName = '默认 Agent';
 export const provides = ['agent'];
 
 export const inject = {
-  optional: ['llm', 'memory', 'persona', 'message-archive'],
+  optional: ['llm', 'memory', 'persona', 'message-archive', 'platform-manager'],
 };
 
 export const configSchema: ConfigSchema = {
