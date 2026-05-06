@@ -1,5 +1,5 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { LLMService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
+import type { LLMService, LLMRouterService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
 import { WebSearchCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -246,7 +246,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 通过 Context 统一路由查找目标 LLM 提供者
     let targetLLM: LLMService = allProviders[0].instance;
     if (cfg.compressionModel) {
-      const resolved = await ctx.resolveModelProvider(cfg.compressionModel);
+      const resolved = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(cfg.compressionModel);
       if (resolved) {
         const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) targetLLM = found.instance;
