@@ -809,7 +809,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     if (forwardCfg.summaryModel) {
       try {
-        const resolved = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(forwardCfg.summaryModel);
+        const resolved = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(forwardCfg.summaryModel);
         if (!resolved) {
           ctx.logger.warn(`forward 摘要：找不到模型 ${forwardCfg.summaryModel}，回退到默认 LLM`);
         } else {
