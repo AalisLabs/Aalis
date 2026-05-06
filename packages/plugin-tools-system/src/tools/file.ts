@@ -20,15 +20,32 @@ interface FileConfig {
   storage?: StorageService;
 }
 
+const ALL_ROOTS = '*';
+
 function normalizePath(input: string): string {
   return input.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
+function getKnownRoots(config: FileConfig) {
+  return config.storage?.listRoots() ?? [];
+}
+
+function getAllowedRoots(config: FileConfig): string[] {
+  if (config.allowedRoots.includes(ALL_ROOTS)) {
+    return getKnownRoots(config).filter(r => r.readable).map(r => r.name);
+  }
+  return config.allowedRoots;
+}
+
+function allowedRootsText(config: FileConfig): string {
+  const allowed = getAllowedRoots(config);
+  return allowed.length ? allowed.join(', ') : '(无)';
+}
+
 function describeRoots(config: FileConfig): string {
-  const roots = config.storage?.listRoots() ?? [];
+  const roots = getKnownRoots(config);
   const writable = roots.filter(r => r.writable).map(r => r.name);
-  const readable = roots.filter(r => r.readable).map(r => r.name);
-  const allowed = config.allowedRoots.filter(r => readable.includes(r));
+  const allowed = getAllowedRoots(config).filter(r => roots.some(known => known.name === r && known.readable));
   const parts: string[] = [];
   if (allowed.length) parts.push(`当前工具允许根: ${allowed.join(', ')}`);
   if (writable.length) parts.push(`可写根: ${writable.join(', ')}`);
@@ -62,13 +79,13 @@ function rootOf(uri: string): string {
 
 function ensureRootAllowed(uri: string, config: FileConfig): void {
   const root = rootOf(uri);
-  if (!config.allowedRoots.includes(root)) {
-    const known = (config.storage?.listRoots() ?? []).map(r => r.name);
+  if (!getAllowedRoots(config).includes(root)) {
+    const known = getKnownRoots(config).map(r => r.name);
     const unknown = !known.includes(root);
     throw new Error(
       unknown
-        ? `根 "${root}" 不存在。当前已注册根: ${known.join(', ') || '(无)'}；本工具允许: ${config.allowedRoots.join(', ')}`
-        : `本工具不允许访问 ${root}:/。允许的根: ${config.allowedRoots.join(', ')}（如需放开，改 file.allowedRoots 配置）`,
+        ? `根 "${root}" 不存在。当前已注册根: ${known.join(', ') || '(无)'}；本工具允许: ${allowedRootsText(config)}`
+        : `本工具不允许访问 ${root}:/。允许的根: ${allowedRootsText(config)}（如需放开，改 file.allowedRoots 配置；可设为 ["*"] 允许全部可读根）`,
     );
   }
 }
@@ -446,7 +463,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         // 特殊入口："/" 或 "*" 表示"列出所有 storage 根"
         if (raw === '/' || raw === '*') {
           const allRoots = storage.listRoots();
-          const allowedSet = new Set(config.allowedRoots);
+          const allowedSet = new Set(getAllowedRoots(config));
           const entries = allRoots.map(r => ({
             name: r.name,
             uri: `${r.name}:/`,
@@ -465,8 +482,9 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             uri: '/',
             note:
               '这是 storage 根的清单（不是宿主机文件系统目录）。' +
-              `本工具的 file.allowedRoots 当前限制为 [${config.allowedRoots.join(', ')}]，` +
-              '其它根虽然存在但本工具不会读写它们。要访问具体根的内容，请用 path: "<根名>:/"。',
+              `本工具当前允许根为 [${allowedRootsText(config)}]` +
+              (config.allowedRoots.includes(ALL_ROOTS) ? '（file.allowedRoots: ["*"]，自动包含全部可读根）' : `（file.allowedRoots: [${config.allowedRoots.join(', ')}]）`) +
+              '。要访问具体根的内容，请用 path: "<根名>:/"。',
             roots: entries,
           });
         }
