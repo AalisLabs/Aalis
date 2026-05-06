@@ -115,8 +115,6 @@ export type {
   LLMService,
   LLMCapability,
   LLMCapabilityRegistry,
-  AggregatedModelInfo,
-  LLMRouterService,
   // 服务能力声明框架
   ServiceCapabilityMap,
   CapabilityOf,
