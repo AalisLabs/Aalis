@@ -1,48 +1,11 @@
-import { App, getLogBuffer, onLogEntry, type LogEntry } from '@aalis/core';
-import { mkdir, writeFile, appendFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { App } from '@aalis/core';
+import { setupFileLogger } from './runtime/file-logger.js';
+import { installTerminalStateRestorer } from './runtime/terminal.js';
 
-const LOG_FILE = 'data/latest.log';
-
-function restoreTerminalState(): void {
-  try {
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
-  } catch { /* ignore */ }
-  try {
-    process.stdout.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
-  } catch { /* ignore */ }
-}
-
-process.once('exit', restoreTerminalState);
-
-function formatEntry(entry: LogEntry): string {
-  const safeMsg = entry.message.replace(/\r?\n/g, '\\n');
-  return `${entry.timestamp}|${entry.level}|${entry.scope}|${safeMsg}\n`;
-}
-
-/** 文件日志写入队列 —— 由 setupFileLogger 维护，shutdown 前需 await 以保证最后几条日志落盘 */
-let fileLoggerQueue: Promise<void> = Promise.resolve();
-
-async function setupFileLogger(): Promise<void> {
-  // 文件 sink 完全在 core 外实现：
-  //   1) 启动时清空 latest.log；
-  //   2) 先把 core 的环形缓冲（已发生的日志）一次性写入，避免漏掉本函数被调用前的条目；
-  //   3) 再订阅 onLogEntry 持续追加新日志。
-  await mkdir(dirname(LOG_FILE), { recursive: true });
-  const initial = getLogBuffer().map(formatEntry).join('');
-  await writeFile(LOG_FILE, initial);
-  onLogEntry((entry) => {
-    fileLoggerQueue = fileLoggerQueue.then(() => appendFile(LOG_FILE, formatEntry(entry))).catch(() => {});
-  });
-}
-
-/** 等待所有挂起的文件日志写入落盘 */
-async function flushFileLogger(): Promise<void> {
-  await fileLoggerQueue.catch(() => {});
-}
+installTerminalStateRestorer();
 
 async function main() {
-  await setupFileLogger();
+  const fileLogger = await setupFileLogger();
 
   const app = new App({
     // 应用层声明：核心功能依赖以下服务至少各有一个提供者运行
@@ -65,7 +28,7 @@ async function main() {
     // app.stop() 期间和之后插件可能仍在 logger.info('已停止') 等，
     // 给微任务一个 tick 把它们入队，再等队列清空，确保 latest.log 含完整关闭日志
     await new Promise<void>(r => setImmediate(r));
-    await flushFileLogger();
+    await fileLogger.flush();
     process.exit(0);
   };
 
