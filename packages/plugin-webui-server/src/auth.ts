@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import type { IncomingMessage } from 'node:http';
+import { spawn } from 'node:child_process';
 import type { Logger } from '@aalis/core';
 
 const COOKIE_NAME = 'aalis_webui_token';
@@ -163,8 +164,6 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
  * 失败静默；此为便利功能，不影响服务启动。
  */
 export function openBrowser(url: string): void {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { spawn } = require('node:child_process') as typeof import('node:child_process');
   try {
     if (process.platform === 'darwin') {
       spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
