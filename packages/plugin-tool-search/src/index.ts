@@ -70,7 +70,7 @@ const SEARCH_TOOL_NAME = 'search_tools';
  */
 function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
   let description =
-    '发现并激活系统中的功能工具。搜索到的工具会被系统自动激活，你可以直接调用它们（参数定义会自动提供，无需再次搜索）。' +
+    '发现并激活系统中的功能工具。搜索到的工具会被系统自动激活，你可以直接调用它们（搜索结果直接包含完整参数定义）。' +
     '\n本工具仅用于发现可调用的功能工具，不会返回任何实际内容。' +
     '\n能直接回答的简单问题无需调用工具；需要工具时，先搜索再直接调用即可。';
 
@@ -209,12 +209,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const summaries = ctx.tools!.getSummaries(filter);
       const allResults = searchTools(summaries, query);
       const paged = allResults.slice(offset, offset + effectiveLimit);
-      // 搜索结果只返回名称和描述，不含 parameters（完整定义由 agent:llm:before 注入 tools 数组，避免重复）
+      // 搜索结果直接包含完整参数定义（parameters schema），配合 getDefinitions 提供
 
-      const toolDetails = paged.map(t => ({
-        name: t.name,
-        description: t.description,
-      }));
+      // 获取完整工具定义（含 parameters schema），构建查找表
+      const defs = ctx.tools!.getDefinitions(filter);
+      const defMap = new Map(defs.map(d => [d.function.name, d]));
+
+      const toolDetails = paged.map(t => {
+        const def = defMap.get(t.name);
+        return {
+          name: t.name,
+          description: t.description,
+          parameters: def?.function.parameters,
+        };
+      });
 
       // 收集搜索结果所在分组中未包含的其他工具，作为关联提示
       const resultNames = new Set(paged.map(r => r.name));
@@ -248,7 +256,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先用 search_tools 激活。`,
         } : {}),
         hint: paged.length > 0
-          ? '以上工具已激活，你现在可以直接调用它们（系统会自动提供完整参数定义，无需再次搜索）。'
+          ? '以上工具已激活。搜索结果已包含完整参数定义（parameters），你现在可以直接调用，无需再次搜索。'
             + (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
           : '未找到匹配的工具，请尝试其他关键词。',
       });
