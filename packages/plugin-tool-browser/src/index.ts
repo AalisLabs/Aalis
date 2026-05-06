@@ -17,6 +17,9 @@ interface BrowserConfig {
   maxPages: number;
   executablePath: string;
   maxContentLength: number;
+  allowedProtocols: string[];
+  blockPrivate: boolean;
+  allowedHosts: string[];
 }
 
 interface PageSlot {
@@ -65,6 +68,13 @@ export const configSchema: ConfigSchema = {
     default: 50000,
     description: '返回给 Agent 的页面文本最大字符数。',
   },
+  blockPrivate: {
+    type: 'boolean',
+    label: '封锁内网与本地',
+    default: true,
+    description: '拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。',
+  },
+  // allowedProtocols（默认 [http,https]）与 allowedHosts（默认 []）请直接在 aalis.config.yaml 中编辑。
 };
 
 export const defaultConfig = {
@@ -75,6 +85,9 @@ export const defaultConfig = {
   maxPages: 5,
   executablePath: '',
   maxContentLength: 50000,
+  allowedProtocols: ['http', 'https'],
+  blockPrivate: true,
+  allowedHosts: [] as string[],
 };
 
 // ──────────── WebUI 页面 ────────────
@@ -247,8 +260,11 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
     handler: async (args) => {
       try {
+        const targetUrl = args.url as string;
+        const urlError = validateUrl(targetUrl, config);
+        if (urlError) return JSON.stringify({ error: urlError });
         const { id, slot } = await getOrCreatePage(args.pageId as string);
-        await slot.page.goto(args.url as string, { waitUntil: 'networkidle2', timeout: config.defaultTimeout });
+        await slot.page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: config.defaultTimeout });
         if (args.waitFor) {
           await slot.page.waitForSelector(args.waitFor as string, { timeout: config.defaultTimeout });
         }
@@ -569,5 +585,56 @@ function resolveConfig(raw: Record<string, unknown>): BrowserConfig {
     maxPages: (raw.maxPages as number) ?? 5,
     executablePath: (raw.executablePath as string) ?? '',
     maxContentLength: (raw.maxContentLength as number) ?? 50000,
+    allowedProtocols: Array.isArray(raw.allowedProtocols) ? raw.allowedProtocols as string[] : ['http', 'https'],
+    blockPrivate: (raw.blockPrivate as boolean | undefined) ?? true,
+    allowedHosts: Array.isArray(raw.allowedHosts) ? raw.allowedHosts as string[] : [],
   };
+}
+
+/**
+ * URL 安全校验：协议白名单 + 内网/本地封锁
+ * @returns 错误描述字符串；null 表示通过
+ */
+function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
+  let parsed: URL;
+  try { parsed = new URL(rawUrl); } catch { return `URL 格式不合法: ${rawUrl}`; }
+
+  const protocol = parsed.protocol.replace(/:$/, '').toLowerCase();
+  if (!config.allowedProtocols.includes(protocol)) {
+    return `协议 "${protocol}" 不在允许列表 [${config.allowedProtocols.join(', ')}]`;
+  }
+
+  if (config.blockPrivate) {
+    const host = parsed.hostname.toLowerCase();
+    if (config.allowedHosts.includes(host)) return null; // 白名单跳过
+    if (isPrivateOrLoopback(host)) {
+      return `拒绝访问内网/本地地址 "${host}"（blockPrivate=true）`;
+    }
+  }
+  return null;
+}
+
+function isPrivateOrLoopback(host: string): boolean {
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === '0.0.0.0') return true;
+
+  // IPv6
+  if (host === '::1' || host === '[::1]') return true;
+  if (host.startsWith('[fe80') || host.startsWith('[fc') || host.startsWith('[fd')) return true;
+  if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
+    if (/^[0-9a-f:]+$/.test(host)) return true;
+  }
+
+  // IPv4
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [parseInt(m[1], 10), parseInt(m[2], 10)];
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 0) return true;
+  return false;
 }
