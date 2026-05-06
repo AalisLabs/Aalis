@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema, StorageService } from '@aalis/core';
 import { runCode, type RunnerConfig } from './runner.js';
 import { platform } from 'node:os';
 import path from 'node:path';
@@ -120,8 +120,8 @@ function safeEnv(): NodeJS.ProcessEnv {
 }
 
 async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<RunnerConfig> {
-  if (!ctx.hasService('storage')) throw new Error('代码执行器需要 storage 服务');
-  const storage = ctx.storage;
+  const storage = ctx.getService<StorageService>('storage');
+  if (!storage?.resolveLocalPath) throw new Error('代码执行器需要 storage 服务（且支持 local-path）');
   const cwdUri = toStorageUri(cfg.workingDirectory, 'workspace:/');
   return {
     defaultTimeout: cfg.defaultTimeout,

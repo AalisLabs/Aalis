@@ -4,7 +4,7 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -864,7 +864,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ---------- 文件管理 API ----------
 
-  const storage = ctx.hasService('storage') ? ctx.storage : undefined;
+  const storage = ctx.getService<StorageService>('storage') ?? undefined;
   const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
   const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
 
