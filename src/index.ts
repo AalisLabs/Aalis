@@ -4,6 +4,17 @@ import { dirname } from 'node:path';
 
 const LOG_FILE = 'data/latest.log';
 
+function restoreTerminalState(): void {
+  try {
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  } catch { /* ignore */ }
+  try {
+    process.stdout.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
+  } catch { /* ignore */ }
+}
+
+process.once('exit', restoreTerminalState);
+
 function formatEntry(entry: LogEntry): string {
   const safeMsg = entry.message.replace(/\r?\n/g, '\\n');
   return `${entry.timestamp}|${entry.level}|${entry.scope}|${safeMsg}\n`;
