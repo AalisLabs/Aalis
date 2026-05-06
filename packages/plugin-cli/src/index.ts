@@ -140,6 +140,7 @@ class CliTui {
   private confirmText = '';
   private renderQueued = false;
   private closing = false;
+  private readonly restoreOnExit = () => restoreTerminalState();
 
   constructor(
     private ctx: Context,
@@ -170,6 +171,7 @@ class CliTui {
     if (input.isTTY) input.setRawMode(true);
     input.resume();
     input.on('data', this.handleData);
+    process.once('exit', this.restoreOnExit);
 
     this.removeLogListener = onLogEntry((entry) => {
       this.logLines.push(entry);
@@ -201,10 +203,9 @@ class CliTui {
     input.off('keypress', this.handleKeypress);
     input.off('data', this.handleData);
     output.off('resize', this.queueRender);
-    if (input.isTTY) input.setRawMode(false);
+    process.off('exit', this.restoreOnExit);
+    restoreTerminalState();
     setConsoleLogSinkEnabled(true);
-    // 关闭 SGR / 鼠标上报 / alternate scroll、恢复光标、退出备用屏幕
-    output.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
   }
 
   pushAssistant(content: string): void {
@@ -769,6 +770,19 @@ const LEVEL_TAG: Record<LogEntry['level'], string> = {
   warn:  chalk.yellow('WARN '),
   error: chalk.red('ERROR'),
 };
+
+/**
+ * 兜底恢复终端状态：进程在 TUI 启动后异常退出时，Context dispose 可能来不及执行。
+ * 这里关闭鼠标上报、恢复光标、退出备用屏，并关闭 raw mode。
+ */
+function restoreTerminalState(): void {
+  try {
+    if (input.isTTY) input.setRawMode(false);
+  } catch { /* ignore */ }
+  try {
+    output.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
+  } catch { /* ignore */ }
+}
 
 /** 终端可见宽度（处理 ANSI / CJK / emoji / 零宽字符） */
 function visibleLen(s: string): number {
