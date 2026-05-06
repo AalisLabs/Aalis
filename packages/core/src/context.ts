@@ -191,7 +191,7 @@ export class Context {
       }
     }
 
-    this._services.register(
+    const entry = this._services.register(
       name,
       instance,
       caps as readonly string[] as string[],
@@ -201,7 +201,7 @@ export class Context {
     );
 
     const dispose = () => {
-      const removed = this._services.unregister(name, this.id);
+      const removed = this._services.unregisterEntry(name, entry);
       if (removed) {
         this._events.emit('service:unregistered', name).catch(() => {});
       }
