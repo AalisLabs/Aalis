@@ -5,7 +5,7 @@ import { Context } from './context.js';
 import { ConfigManager } from './config.js';
 import { PluginManager, parseInstanceId, type PluginModule } from './plugin.js';
 import { Logger, type LogLevel } from './logger.js';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFileSync, existsSync } from 'node:fs';
@@ -333,7 +333,12 @@ export class App {
       if (this.plugins.getPlugin(pkg.name)) continue;
 
       try {
-        const mod = await import(pathToFileURL(pkg.entry).href + '?t=' + Date.now()) as PluginModule;
+        // 用入口文件 mtime 做缓存键：未修改则走 ESM 缓存，改了的才重载
+        let cacheKey = '';
+        try {
+          cacheKey = '?t=' + (await stat(pkg.entry)).mtimeMs;
+        } catch { /* stat 失败时用空 key，让 import 自己报错 */ }
+        const mod = await import(pathToFileURL(pkg.entry).href + cacheKey) as PluginModule;
         await this.plugin(mod);
         loaded.push(pkg.name);
         this.logger.info(`热加载插件: ${pkg.name}`);
