@@ -635,9 +635,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             }
           }
         }
-      } catch {
-        // 解析失败时保留原始内容，不影响正常流程
-        ctx.logger.debug('outputFormat 解码失败，保留原始回复');
+      } catch (err) {
+        // 解析失败时保留原始内容，不影响正常流程；带上原因方便定位下一条修复规则。
+        const message = err instanceof Error ? err.message : String(err);
+        const preview = jsonStr.length > 300 ? jsonStr.slice(0, 300) + '...' : jsonStr;
+        ctx.logger.debug(`outputFormat 解码失败，保留原始回复：${message}; json=${preview}`);
       }
     });
 }
