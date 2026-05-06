@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { Context, ConfigSchema, StorageService } from '@aalis/core';
 import { registerShellTools } from './tools/shell.js';
 import { registerFileTools } from './tools/file.js';
 import { registerSystemTools } from './tools/system.js';
@@ -115,8 +115,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册各工具组
   if (cfg.shell.enabled) {
-    if (ctx.hasService('storage')) {
-      registerShellTools(ctxWithGroups(['system']), { cwdUri, storage: ctx.storage, ...cfg.shell });
+    const storage = ctx.getService<StorageService>('storage');
+    if (storage) {
+      registerShellTools(ctxWithGroups(['system']), { cwdUri, storage, ...cfg.shell });
       ctx.logger.info('Shell 工具已启用');
     } else {
       ctx.logger.warn('Shell 工具需要 storage 服务，已跳过注册');
@@ -124,8 +125,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   if (cfg.file.enabled) {
-    if (ctx.hasService('storage')) {
-      registerFileTools(ctxWithGroups(['system']), { ...cfg.file, storage: ctx.storage });
+    const storage = ctx.getService<StorageService>('storage');
+    if (storage) {
+      registerFileTools(ctxWithGroups(['system']), { ...cfg.file, storage });
       ctx.logger.info('文件工具已启用');
     } else {
       ctx.logger.warn('文件工具需要 storage 服务，已跳过注册');
@@ -140,7 +142,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   if (cfg.http.enabled) {
-    const storage = ctx.hasService('storage') ? ctx.storage : undefined;
+    const storage = ctx.getService<StorageService>('storage') ?? undefined;
     registerHttpTools(ctxWithGroups(['system']), { ...cfg.http, storage });
     ctx.logger.info('HTTP 工具已启用');
   }
