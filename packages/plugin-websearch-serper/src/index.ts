@@ -246,7 +246,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 通过 Context 统一路由查找目标 LLM 提供者
     let targetLLM: LLMService = allProviders[0].instance;
     if (cfg.compressionModel) {
-      const resolved = await ctx.getService<LLMRouterService>('llm-router')?.resolveModelProvider(cfg.compressionModel);
+      const resolved = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(cfg.compressionModel);
       if (resolved) {
         const found = allProviders.find(p => p.contextId === resolved.contextId);
         if (found) targetLLM = found.instance;

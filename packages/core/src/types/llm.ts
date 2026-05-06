@@ -91,10 +91,10 @@ export interface ModelProviderInfo {
 /**
  * LLM 路由服务 —— 由 plugin-llm-router 提供。
  *
- * 与 `LLMService` 是两个独立服务名（'llm-router' vs 'llm'），不互相覆盖。
- * 调用方可按需选用：
- * - 想"按 model id 找 provider"：getService<LLMRouterService>('llm-router')
- * - 想"直接用某个 provider"：getService<LLMService>('llm')
+ * 同名 facade 模式（与 plugin-storage-router 对齐）：路由器以 'router' capability
+ * 注册为 'llm' 服务的一个提供者，与真提供者并列。调用方按需选用：
+ * - 想“按 model id 找 provider”：getService<LLMRouterService>('llm', ['router'])
+ * - 想“直接用某个 provider”：getService<LLMService>('llm')——返回 servicePreferences.llm 指定的默认实现
  */
 export interface LLMRouterService {
   /** 聚合所有 LLM 提供者的模型列表 */
@@ -139,6 +139,8 @@ export interface LLMCapabilityRegistry {
   Vision: 'vision';
   /** 支持扩展思考 / reasoning */
   Thinking: 'thinking';
+  /** 路由器 facade（按 model id 查找提供者，不提供 chat） */
+  Router: 'router';
 }
 
 /** LLM 能力字符串 union（自动包含第三方扩展） */
@@ -158,6 +160,7 @@ export const LLMCapabilities = {
   Streaming: 'streaming',
   Vision: 'vision',
   Thinking: 'thinking',
+  Router: 'router',
 } as const satisfies LLMCapabilityRegistry;
 
 // 注册到全局服务能力映射
