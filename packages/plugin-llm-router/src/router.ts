@@ -157,6 +157,13 @@ export class LLMRouter implements LLMService, LLMRouterService {
     if (request.model) {
       const resolved = await this.resolveModelProvider(request.model);
       if (resolved) {
+        const provider = this.getProviders().find(p => p.contextId === resolved.contextId);
+        if (provider && !this.hasCapabilities(provider, requiredCapabilities)) {
+          throw new Error(
+            `模型 "${request.model}" 的 provider ${resolved.contextId} 不满足请求能力 ` +
+              `[${requiredCapabilities.join(', ')}]`,
+          );
+        }
         return {
           instance: resolved.instance as LLMProviderShape,
           routedRequest: request,
@@ -185,13 +192,17 @@ export class LLMRouter implements LLMService, LLMRouterService {
     }
     if (requiredCapabilities.length === 0) return providers[0];
 
-    const found = providers.find(p => requiredCapabilities.every(c => p.capabilities.includes(c)));
+    const found = providers.find(p => this.hasCapabilities(p, requiredCapabilities));
     if (found) return found;
 
     this.logger.warn(
       `没有找到同时满足能力 [${requiredCapabilities.join(', ')}] 的 LLM provider，回退到默认 provider ${providers[0].contextId}`,
     );
     return providers[0];
+  }
+
+  private hasCapabilities(provider: LLMProviderEntry, requiredCapabilities: string[]): boolean {
+    return requiredCapabilities.every(c => provider.capabilities.includes(c));
   }
 
   private getDefaultProvider(): LLMProviderEntry | undefined {
