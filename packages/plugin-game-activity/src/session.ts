@@ -1,4 +1,4 @@
-import type { Context, LLMService, LLMRouterService, Message } from '@aalis/core';
+import type { Context, LLMService, Message } from '@aalis/core';
 import type { GameActivityAdapter, DecisionRuntime, AdapterActionChoice } from './adapter.js';
 import type {
   BridgeHelloEvent,
@@ -261,17 +261,7 @@ export async function resolveDecisionRuntime(
   const defaultLlm = ctx.getService<LLMService>('llm');
   if (!defaultLlm) return undefined;
 
-  if (decisionModel.trim()) {
-    const routed = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(decisionModel.trim());
-    if (routed) {
-      return {
-        llm: routed.instance as LLMService,
-        modelOverride: routed.model,
-        timeoutMs,
-        think,
-      };
-    }
-  }
-
-  return { llm: defaultLlm, timeoutMs, think };
+  // 指定 decisionModel 时，通过 chat({model}) 让 router 路由到拥有该模型的 provider
+  const modelOverride = decisionModel.trim() || undefined;
+  return { llm: defaultLlm, modelOverride, timeoutMs, think };
 }

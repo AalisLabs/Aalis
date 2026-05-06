@@ -9,7 +9,6 @@ import type {
   LLMService,
   Logger,
   ModelInfo,
-  ModelProviderInfo,
 } from '@aalis/core';
 
 interface LLMProviderShape extends Partial<LLMService> {
@@ -25,6 +24,13 @@ interface LLMProviderEntry {
   label?: string;
 }
 
+/** 模型路由解析结果（router 内部类型，不对外暴露） */
+interface ResolvedProvider {
+  instance: LLMProviderShape;
+  model: string;
+  contextId: string;
+}
+
 /**
  * LLM 路由器
  *
@@ -32,8 +38,12 @@ interface LLMProviderEntry {
  * provider，同时带 'router' 能力。对外实现 LLMService；对内聚合并转发到其他同名
  * LLM provider。
  *
- * - getService('llm') → 可直接拿到路由器并 chat/chatStream
- * - getService('llm', ['router']) → 拿路由器扩展 API（listAllModels / resolveModelProvider）
+ * 对外 API（消费者视角）：
+ * - `getService<LLMService>('llm')?.chat({ model, ... })` —— router 内部按 model 路由
+ * - `getService<LLMRouterService>('llm', ['router'])?.listAllModels()` —— 仅 introspection
+ *
+ * 内部细节（resolveModelProvider / getModelProviderMap / invalidate）不再作为公开 API；
+ * 调用方应直接通过 LLMService.chat 让 router 路由，而不是手动解析 provider 后调 chat。
  *
  * 自我排除：枚举 'llm' 服务时过滤掉 instance === this，避免无限递归。
  */
@@ -121,7 +131,8 @@ export class LLMRouter implements LLMService, LLMRouterService {
     return results;
   }
 
-  async resolveModelProvider(modelId: string): Promise<ModelProviderInfo | undefined> {
+  /** 路由器内部：按 model ID 查找 provider；不对外暴露，调用方应使用 chat({model}) */
+  private async resolveModelProvider(modelId: string): Promise<ResolvedProvider | undefined> {
     const providers = this.getProviders();
     for (const { instance, contextId } of providers) {
       if (typeof instance.supportsModel === 'function') {
@@ -143,6 +154,7 @@ export class LLMRouter implements LLMService, LLMRouterService {
     return this._ensureCache();
   }
 
+  /** 路由器内部缓存失效（由 plugin index 在 service 注册/注销时调用） */
   invalidate(): void {
     this._cache = null;
     this._cachePromise = null;
