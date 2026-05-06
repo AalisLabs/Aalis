@@ -125,7 +125,14 @@ export class ToolRegistry implements ToolService {
 
     const authority = tool.authority ?? 1;
     const safety = tool.safety ?? 'safe';
-    const permissions = await this.resolvePermissions(tool, args, callCtx);
+    let permissions: string[];
+    try {
+      permissions = await this.resolvePermissions(tool, args, callCtx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`工具 ${toolName} 权限解析失败: ${message}`);
+      return JSON.stringify({ error: message });
+    }
     if (this._guard) {
       const denied = await this._guard({
         name: toolName,
