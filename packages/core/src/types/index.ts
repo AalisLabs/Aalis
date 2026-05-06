@@ -84,7 +84,7 @@ export type { CLIService } from './cli.js';
 export type { AppService } from './app.js';
 
 // LLM 服务
-export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService, LLMCapability, LLMCapabilityRegistry, AggregatedModelInfo, ModelProviderInfo, LLMRouterService } from './llm.js';
+export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService, LLMCapability, LLMCapabilityRegistry, AggregatedModelInfo, LLMRouterService } from './llm.js';
 export { LLMCapabilities } from './llm.js';
 
 // 服务能力声明框架

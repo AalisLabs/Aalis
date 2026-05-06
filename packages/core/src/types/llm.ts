@@ -81,13 +81,6 @@ export interface AggregatedModelInfo {
   contextId: string;
 }
 
-/** 模型路由解析结果 */
-export interface ModelProviderInfo {
-  instance: unknown;
-  model: string;
-  contextId: string;
-}
-
 /**
  * LLM 路由服务 —— 由 plugin-llm-router 提供。
  *
@@ -96,18 +89,19 @@ export interface ModelProviderInfo {
  * 其他同名 LLM provider。router 只静态声明自身真实提供的 facade 能力；vision / tool_calling
  * 等后端能力仍由真实 provider 暴露，并由 router 在请求转发时动态选择。
  *
- * - 普通调用：getService<LLMService>('llm')?.chat(...)
- * - 路由扩展：getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(model)
+ * 调用约定（重要）：
+ * - **绝大多数调用方只应使用 `LLMService`**：`getService<LLMService>('llm')?.chat({ model, ... })`
+ *   即可。router.chat 内部会按 `request.model` 路由到拥有该模型的 provider，并按消息内容
+ *   （images / tools / think）自动校验 provider capability，失败时抛出明确错误。
+ * - 仅当确实需要"枚举所有可用模型"（例如 WebUI 模型选择器、配置面板）时才使用本接口。
+ *
+ * `resolveModelProvider` / `getModelProviderMap` 等内部路由细节**不再**作为公共 API 暴露——
+ * 调用方手动解析 provider 再 `instance.chat(...)` 是反模式（绕开 facade 重复 router 已做的事），
+ * 应改为 `llm.chat({ model })` 让 router 自己路由。
  */
 export interface LLMRouterService {
-  /** 聚合所有 LLM 提供者的模型列表 */
+  /** 聚合所有 LLM 提供者的模型列表（带 provider 来源信息） */
   listAllModels(): Promise<AggregatedModelInfo[]>;
-  /** 按 model ID 查找拥有该模型的 LLM 提供者 */
-  resolveModelProvider(modelId: string): Promise<ModelProviderInfo | undefined>;
-  /** 完整 model→contextId 映射 */
-  getModelProviderMap(): Promise<Map<string, string>>;
-  /** 使内部缓存立即失效 */
-  invalidate(): void;
 }
 
 // ----- LLM 能力声明（capability 框架）-----
