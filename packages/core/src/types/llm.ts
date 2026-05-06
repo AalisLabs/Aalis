@@ -44,10 +44,14 @@ export interface ChatStreamChunk {
   };
 }
 
-/** 模型信息（含能力声明） */
+/** 模型信息（含能力声明）。router 聚合后的条目会携带 provider/contextId 归属。 */
 export interface ModelInfo {
   id: string;
   capabilities: LLMCapability[];
+  /** router 聚合时填充（展示用 label 或 instanceId） */
+  provider?: string;
+  /** router 聚合时填充（用于精确定位提供者） */
+  contextId?: string;
 }
 
 export interface LLMService {
@@ -69,39 +73,6 @@ export interface LLMService {
    * 实现后可让 LLMRouter 跳过 listModels 枚举（快路径）。
    */
   supportsModel?(modelId: string): boolean | Promise<boolean>;
-}
-
-// ----- LLM 路由服务接口（plugin-llm-router 提供）-----
-
-/** 聚合后的模型条目（携带提供者标识） */
-export interface AggregatedModelInfo {
-  id: string;
-  capabilities: LLMCapability[];
-  provider: string;
-  contextId: string;
-}
-
-/**
- * LLM 路由服务 —— 由 plugin-llm-router 提供。
- *
- * 同名 facade 模式（与 plugin-storage-router 对齐）：路由器注册为 'llm' 服务的一个
- * 普通 provider，同时带 'router' capability。它对外实现 LLMService，内部聚合并转发到
- * 其他同名 LLM provider。router 只静态声明自身真实提供的 facade 能力；vision / tool_calling
- * 等后端能力仍由真实 provider 暴露，并由 router 在请求转发时动态选择。
- *
- * 调用约定（重要）：
- * - **绝大多数调用方只应使用 `LLMService`**：`getService<LLMService>('llm')?.chat({ model, ... })`
- *   即可。router.chat 内部会按 `request.model` 路由到拥有该模型的 provider，并按消息内容
- *   （images / tools / think）自动校验 provider capability，失败时抛出明确错误。
- * - 仅当确实需要"枚举所有可用模型"（例如 WebUI 模型选择器、配置面板）时才使用本接口。
- *
- * `resolveModelProvider` / `getModelProviderMap` 等内部路由细节**不再**作为公共 API 暴露——
- * 调用方手动解析 provider 再 `instance.chat(...)` 是反模式（绕开 facade 重复 router 已做的事），
- * 应改为 `llm.chat({ model })` 让 router 自己路由。
- */
-export interface LLMRouterService {
-  /** 聚合所有 LLM 提供者的模型列表（带 provider 来源信息） */
-  listAllModels(): Promise<AggregatedModelInfo[]>;
 }
 
 // ----- LLM 能力声明（capability 框架）-----

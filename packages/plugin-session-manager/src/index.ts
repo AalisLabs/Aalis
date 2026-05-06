@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Context, ConfigSchema, MemoryService, WebuiPage, PersonaService, LLMService, LLMRouterService, ToolService, Message } from '@aalis/core';
+import type { Context, ConfigSchema, MemoryService, WebuiPage, PersonaService, LLMService, ToolService, Message } from '@aalis/core';
 import type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from '@aalis/core';
 import { SessionManagerCapabilities } from '@aalis/core';
 
@@ -231,7 +231,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     // 可用 LLM 模型列表（聚合所有提供者）
     let models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }> = [];
     try {
-      models = await (ctx.getService<LLMRouterService>('llm', ['router'])?.listAllModels() ?? Promise.resolve([]));
+      models = await (ctx.getService<LLMService>('llm')?.listModels?.() ?? Promise.resolve([]));
     } catch { /* llm 服务不可用 */ }
 
     // 工具分组列表
