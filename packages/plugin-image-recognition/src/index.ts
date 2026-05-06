@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
-import type { LLMService, LLMRouterService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
+import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
 import { ImageRecognitionCapabilities } from '@aalis/core';
 
 function escapeRegExp(input: string): string {
@@ -637,27 +637,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 寻找图像识别用的 LLM 提供者
-    const allProviders = ctx.getAllServices<LLMService>('llm');
-    let chosen = allProviders.find(p => p.capabilities.includes('vision')) ?? allProviders[0];
-    if (!chosen) {
+    // 统一走默认 'llm' 服务（router）：chat 会根据消息中的 images 自动要求 vision capability，
+    // 并依 preferredModel 路由到拥有该模型且支持 vision 的 provider。
+    const visionLLM = ctx.getService<LLMService>('llm');
+    if (!visionLLM) {
       ctx.logger.warn('没有可用的 LLM 提供者，图片将被忽略');
       await next();
       return;
     }
 
-    // 如果用户指定了模型，通过 Context 统一路由找到正确的提供者
-    if (cfg.preferredModel) {
-      const resolved = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(cfg.preferredModel);
-      if (resolved) {
-        const found = allProviders.find(p => p.contextId === resolved.contextId);
-        if (found) chosen = found;
-      }
-    }
-
-    const visionLLM = chosen.instance;
     ctx.logger.debug(
-      `图像识别中间件：使用 ${chosen.contextId} 识别 ${msg.images.length} 张图片`,
+      `图像识别中间件：识别 ${msg.images.length} 张图片${cfg.preferredModel ? `（model=${cfg.preferredModel}）` : ''}`,
     );
 
     const result = await processImageMessage(visionLLM, {
@@ -736,19 +726,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return `data:${mime};base64,${buf.toString('base64')}`;
   }
 
-  /** 获取 vision LLM 提供者 */
+  /** 获取 vision LLM（默认 'llm' 服务）；router 会根据 images + preferredModel 路由 */
   async function getVisionLLM(): Promise<LLMService | null> {
-    const allProviders = ctx.getAllServices<LLMService>('llm');
-    let chosen = allProviders.find(p => p.capabilities.includes('vision')) ?? allProviders[0];
-    if (!chosen) return null;
-    if (cfg.preferredModel) {
-      const resolved = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(cfg.preferredModel);
-      if (resolved) {
-        const found = allProviders.find(p => p.contextId === resolved.contextId);
-        if (found) chosen = found;
-      }
-    }
-    return chosen.instance;
+    return ctx.getService<LLMService>('llm') ?? null;
   }
 
   ctx.registerTool({

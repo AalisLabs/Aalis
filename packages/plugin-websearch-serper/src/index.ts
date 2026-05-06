@@ -1,5 +1,5 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { LLMService, LLMRouterService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
+import type { LLMService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
 import { WebSearchCapabilities } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -240,18 +240,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   /** 使用 LLM 压缩搜索结果 */
   async function compressResults(query: string, rawResults: string): Promise<string> {
-    const allProviders = ctx.getAllServices<LLMService>('llm');
-    if (allProviders.length === 0) return rawResults;
-
-    // 通过 Context 统一路由查找目标 LLM 提供者
-    let targetLLM: LLMService = allProviders[0].instance;
-    if (cfg.compressionModel) {
-      const resolved = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(cfg.compressionModel);
-      if (resolved) {
-        const found = allProviders.find(p => p.contextId === resolved.contextId);
-        if (found) targetLLM = found.instance;
-      }
-    }
+    // 通过默认 'llm' 服务（router）调用，传 model 让 router 路由
+    const targetLLM = ctx.getService<LLMService>('llm');
+    if (!targetLLM) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
     const prompt = promptTemplate

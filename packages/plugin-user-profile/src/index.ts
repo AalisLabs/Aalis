@@ -1,5 +1,5 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { MemoryService, LLMService, LLMRouterService } from '@aalis/core';
+import type { MemoryService, LLMService } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案
@@ -370,18 +370,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const who = nickname ? `${nickname}（${userId}）` : userId;
     const user = `# 该用户标识\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 最近对话历史\n${renderHistoryForExtract(history)}`;
 
-    // 若指定了提取模型，通过路由器找到正确的 provider 实例；否则使用默认 LLM
-    let extractLlm: LLMService | undefined = llm;
-    let extractModelId: string | undefined;
-    if (cfg.extractModel) {
-      const routed = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(cfg.extractModel);
-      if (routed) {
-        extractLlm = routed.instance as LLMService;
-        extractModelId = routed.model;
-      } else {
-        ctx.logger.warn(`用户档案提取：找不到模型 "${cfg.extractModel}" 的提供者，回退到默认 LLM`);
-      }
-    }
+    // 提取模型若指定，则通过 chat({model}) 让 router 路由；否则用默认 LLM。
+    const extractLlm: LLMService = llm;
+    const extractModelId: string | undefined = cfg.extractModel || undefined;
 
     try {
       const resp = await extractLlm!.chat({

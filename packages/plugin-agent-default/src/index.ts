@@ -162,20 +162,11 @@ class DefaultAgent implements AgentService {
       if (found) return { llm: found.instance, modelOverride: model };
     }
 
-    // 无指定模型：使用默认提供者
-    if (!model) {
-      const llm = this.ctx.getService<LLMService>('llm');
-      return llm ? { llm } : undefined;
-    }
-
-    // 有指定模型：通过 core 工具方法查找拥有该模型的提供者
-    const resolved = await this.ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(model);
-    if (resolved) return { llm: resolved.instance as LLMService, modelOverride: model };
-
-    // 模型未匹配：回退到默认提供者，传递 model override
-    this.logger.warn(`未找到模型 "${model}" 对应的提供者，回退到默认提供者`);
+    // 默认走 'llm' 服务（router 注册时会作为最高优先级 provider）；
+    // 有 model 时通过 chat({model}) 让 router 路由到拥有该模型的 provider。
     const llm = this.ctx.getService<LLMService>('llm');
-    return llm ? { llm, modelOverride: model } : undefined;
+    if (!llm) return undefined;
+    return model ? { llm, modelOverride: model } : { llm };
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */

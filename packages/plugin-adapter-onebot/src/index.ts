@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MessageArchiveService, ImageRecognitionService, LLMService, LLMRouterService, MemoryService, FlowControlService } from '@aalis/core';
+import type { MessageArchiveService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -804,26 +804,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
-    let llm: LLMService | undefined;
-    let modelOverride: string | undefined;
-
-    if (forwardCfg.summaryModel) {
-      try {
-        const resolved = await ctx.getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(forwardCfg.summaryModel);
-        if (!resolved) {
-          ctx.logger.warn(`forward 摘要：找不到模型 ${forwardCfg.summaryModel}，回退到默认 LLM`);
-        } else {
-          llm = resolved.instance as LLMService;
-          modelOverride = resolved.model;
-        }
-      } catch (err) {
-        ctx.logger.debug(`forward 摘要：路由模型失败 ${forwardCfg.summaryModel}: ${err}`);
-      }
-    }
-
-    if (!llm) {
-      llm = ctx.getService<LLMService>('llm');
-    }
+    // 走默认 'llm' 服务（router）；指定模型时通过 chat({model}) 让 router 路由
+    const llm = ctx.getService<LLMService>('llm');
+    const modelOverride = forwardCfg.summaryModel || undefined;
     if (!llm || typeof llm.chat !== 'function') {
       ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
       return null;
