@@ -34,7 +34,8 @@ export const name = '@aalis/plugin-flow-control';
 export const displayName = '消息流控';
 export const provides = ['flow-control'];
 export const inject = {
-  optional: ['gateway', 'message-archive'],
+  required: ['gateway'],
+  optional: ['message-archive'],
 };
 
 export const configSchema: ConfigSchema = {
