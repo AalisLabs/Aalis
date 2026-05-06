@@ -7,7 +7,6 @@ import { LLMRouter, type AggregatedModelInfo, type ModelProviderInfo } from './l
 import { StorageRouter } from './storage-router.js';
 import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
-import { PlatformRegistry } from './platform-registry.js';
 import { PendingRegistrationBuffer } from './pending-buffer.js';
 import { probeCapability } from './types/capabilities.js';
 import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
@@ -47,9 +46,6 @@ export class Context {
   /** 存储路由器（懒初始化；服务注册/注销时自动失效根名映射缓存） */
   private _storageRouter: StorageRouter | null = null;
   private _storageRouterInvalidateAttached = false;
-
-  /** 平台注册表（懒初始化；无状态所以不需 invalidate） */
-  private _platformRegistry: PlatformRegistry | null = null;
 
   constructor(options: {
     id: string;
@@ -294,57 +290,6 @@ export class Context {
    */
   preferService(name: string, contextId: string): boolean {
     return this._services.prefer(name, contextId);
-  }
-
-  // ---- 平台 ----
-
-  /**
-   * 平台注册表（懒初始化）。直接暴露以便高级场景自定义聚合逻辑。
-   */
-  get platforms(): PlatformRegistry {
-    if (!this._platformRegistry) {
-      this._platformRegistry = new PlatformRegistry(this._services);
-    }
-    return this._platformRegistry;
-  }
-
-  /**
-   * 获取所有已注册的平台适配器
-   *
-   * 每个平台插件通过 `ctx.provide('platform', adapter, { capabilities: ['<平台名>'] })`
-   * 注册自身，capability 即为平台标识（如 'onebot', 'cli', 'webui'）。
-   */
-  getPlatforms(): PlatformAdapter[] {
-    return this.platforms.listAdapters();
-  }
-
-  /**
-   * 获取所有已注册的平台名称（去重）
-   *
-   * 基于各 platform 服务的 capabilities 收集，而非 adapter.platform 字段。
-   */
-  getPlatformNames(): string[] {
-    return this.platforms.listPlatformNames();
-  }
-
-  /**
-   * 获取所有平台适配器及其连接详情
-   */
-  getPlatformDetails(): Array<{
-    adapterName: string;
-    platform: string;
-    contextId: string;
-    capabilities: string[];
-    connections: PlatformConnection[];
-  }> {
-    return this.platforms.listDetails();
-  }
-
-  /**
-   * 获取指定平台在某会话中的自身身份（机器人/账号）。
-   */
-  getPlatformSelfIdentity(platform: string, sessionId?: string) {
-    return this.platforms.getSelfIdentity(platform, sessionId);
   }
 
   // ---- 领域聚合查询 ----

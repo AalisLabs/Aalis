@@ -19,7 +19,6 @@ export type { AggregatedStorageRoot, StorageRootConflict } from './storage-route
 export { DisposableChain } from './disposable-chain.js';
 export { MixinRegistry } from './mixin-registry.js';
 export type { MixinEntry } from './mixin-registry.js';
-export { PlatformRegistry } from './platform-registry.js';
 export { PendingRegistrationBuffer } from './pending-buffer.js';
 export { registerCapabilityProbe, probeCapability } from './types/index.js';
 export { LLMCapabilities } from './types/index.js';
