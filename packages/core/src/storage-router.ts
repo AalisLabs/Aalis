@@ -16,6 +16,18 @@ export interface AggregatedStorageRoot extends StorageRootInfo {
   provider?: string;
 }
 
+/** 同名存储根冲突明细 */
+export interface StorageRootConflict {
+  /** 冲突的根名 */
+  name: string;
+  /** 当前实际生效的根（最高优先级 provider） */
+  selected: AggregatedStorageRoot;
+  /** 被遮蔽、不会被 URI 路由到的同名根 */
+  shadowed: AggregatedStorageRoot[];
+  /** 所有候选根，按 provider 优先级从高到低排列 */
+  providers: Array<AggregatedStorageRoot & { selected: boolean }>;
+}
+
 /**
  * 存储路由器
  *
@@ -60,6 +72,29 @@ export class StorageRouter implements StorageService {
       }
     }
     return out;
+  }
+
+  /** 返回同名根冲突明细；用于 UI/工具输出，让用户知道哪些根被优先级遮蔽 */
+  getRootConflicts(): StorageRootConflict[] {
+    const grouped = new Map<string, AggregatedStorageRoot[]>();
+    for (const root of this.listAllRoots()) {
+      const roots = grouped.get(root.name);
+      if (roots) roots.push(root);
+      else grouped.set(root.name, [root]);
+    }
+
+    const conflicts: StorageRootConflict[] = [];
+    for (const [name, roots] of grouped) {
+      if (roots.length <= 1) continue;
+      const [selected, ...shadowed] = roots;
+      conflicts.push({
+        name,
+        selected,
+        shadowed,
+        providers: roots.map((root, index) => ({ ...root, selected: index === 0 })),
+      });
+    }
+    return conflicts;
   }
 
   // ---- StorageService 实现：合并根 + 按根分发 ----

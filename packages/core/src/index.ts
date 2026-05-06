@@ -15,7 +15,7 @@ export { getSenderLabel, prefixSender, getMessageName } from './identity.js';
 export { LLMRouter } from './llm-router.js';
 export type { AggregatedModelInfo, ModelProviderInfo } from './llm-router.js';
 export { StorageRouter } from './storage-router.js';
-export type { AggregatedStorageRoot } from './storage-router.js';
+export type { AggregatedStorageRoot, StorageRootConflict } from './storage-router.js';
 export { DisposableChain } from './disposable-chain.js';
 export { MixinRegistry } from './mixin-registry.js';
 export type { MixinEntry } from './mixin-registry.js';
