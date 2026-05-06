@@ -3,7 +3,6 @@ import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
-import { LLMRouter, type AggregatedModelInfo, type ModelProviderInfo } from './llm-router.js';
 import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
 import { PendingRegistrationBuffer } from './pending-buffer.js';
@@ -37,10 +36,6 @@ export class Context {
 
   /** 注册缓冲：服务尚不可用时暂存，待服务就绪后自动刷入 */
   private _pending: PendingRegistrationBuffer;
-
-  /** model→provider 路由器（懒初始化；服务注册/注销时自动失效缓存） */
-  private _llmRouter: LLMRouter | null = null;
-  private _llmRouterInvalidateAttached = false;
 
   constructor(options: {
     id: string;
@@ -285,64 +280,6 @@ export class Context {
    */
   preferService(name: string, contextId: string): boolean {
     return this._services.prefer(name, contextId);
-  }
-
-  // ---- 领域聚合查询 ----
-
-  /**
-   * 取得 LLM 路由器（懒初始化）。
-   * 高级插件可直接操作路由器以获得更细粒度控制；普通使用调用
-   * {@link listAllModels} / {@link resolveModelProvider} 即可。
-   */
-  get llm(): LLMRouter {
-    if (!this._llmRouter) {
-      this._llmRouter = new LLMRouter(this, this.logger);
-    }
-    if (!this._llmRouterInvalidateAttached) {
-      this._llmRouterInvalidateAttached = true;
-      const offReg = this.on('service:registered', (svcName: string) => {
-        if (svcName === 'llm') this._llmRouter?.invalidate();
-      });
-      const offUnreg = this.on('service:unregistered', (svcName: string) => {
-        if (svcName === 'llm') this._llmRouter?.invalidate();
-      });
-      this._disposables.push(offReg);
-      this._disposables.push(offUnreg);
-    }
-    return this._llmRouter;
-  }
-
-  /**
-   * 聚合所有 LLM 提供者的模型列表。
-   * 等价于 `ctx.llm.listAllModels()`，保留以兼容旧代码。
-   *
-   * @example
-   * const models = await ctx.listAllModels();
-   */
-  listAllModels(): Promise<AggregatedModelInfo[]> {
-    return this.llm.listAllModels();
-  }
-
-  /**
-   * 按 model ID 查找拥有该模型的 LLM 提供者。
-   * 等价于 `ctx.llm.resolveModelProvider(modelId)`，保留以兼容旧代码。
-   *
-   * @example
-   * const r = await ctx.resolveModelProvider('gpt-4o');
-   * if (r) await (r.instance as LLMService).chat({ messages, model: r.model });
-   */
-  resolveModelProvider(modelId: string): Promise<ModelProviderInfo | undefined> {
-    return this.llm.resolveModelProvider(modelId);
-  }
-
-  /** 获取完整的 model→contextId 映射。等价于 `ctx.llm.getModelProviderMap()`。 */
-  getModelProviderMap(): Promise<Map<string, string>> {
-    return this.llm.getModelProviderMap();
-  }
-
-  /** 使 model→provider 缓存立即失效。等价于 `ctx.llm.invalidate()`。 */
-  invalidateModelProviderCache(): void {
-    this._llmRouter?.invalidate();
   }
 
   // ---- 注册缓冲（服务延迟就绪支持，逻辑已抽到 PendingRegistrationBuffer） ----
