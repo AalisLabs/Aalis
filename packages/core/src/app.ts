@@ -333,7 +333,7 @@ export class App {
       if (this.plugins.getPlugin(pkg.name)) continue;
 
       try {
-        const mod = await import(pathToFileURL(pkg.entry).href) as PluginModule;
+        const mod = await import(pathToFileURL(pkg.entry).href + '?t=' + Date.now()) as PluginModule;
         await this.plugin(mod);
         loaded.push(pkg.name);
         this.logger.info(`热加载插件: ${pkg.name}`);
