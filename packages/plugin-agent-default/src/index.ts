@@ -1489,14 +1489,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 仅 /model（无参数）时列出可用模型
       if (!target) {
-        const allProviders = ctx.getAllServices<LLMService>('llm');
-        const models: string[] = [];
-        for (const p of allProviders) {
-          if (typeof p.instance.listModels === 'function') {
-            try {
-              const list = await p.instance.listModels();
-              for (const m of list) models.push(m.id);
-            } catch { /* ignore */ }
+        let models: string[] = [];
+        const router = ctx.getService<LLMRouterService>('llm', ['router']);
+        if (router) {
+          try {
+            models = (await router.listAllModels()).map(m => m.id);
+          } catch { /* ignore */ }
+        }
+        if (models.length === 0) {
+          const allProviders = ctx.getAllServices<LLMService>('llm')
+            .filter(p => !p.capabilities.includes('router'));
+          for (const p of allProviders) {
+            if (typeof p.instance.listModels === 'function') {
+              try {
+                const list = await p.instance.listModels();
+                for (const m of list) models.push(m.id);
+              } catch { /* ignore */ }
+            }
           }
         }
         if (models.length > 0) {

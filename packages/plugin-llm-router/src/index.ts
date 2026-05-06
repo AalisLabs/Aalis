@@ -1,3 +1,4 @@
+import { LLMCapabilities } from '@aalis/core';
 import type { Context } from '@aalis/core';
 import { LLMRouter } from './router.js';
 
@@ -20,10 +21,17 @@ export function apply(ctx: Context): void {
     if (svcName === 'llm') router.invalidate();
   });
 
-  // 以 'router' capability 注册为 'llm' 服务的提供者（与 storage-router 对齐）：
-  // - 消费者拿路由器：getService('llm', ['router']) → router
-  // - 默认 LLM：getService('llm') → 由 servicePreferences.llm 指定的真提供者
-  ctx.provide('llm', router, { capabilities: ['router'] });
+  // 以同名 facade 模式注册为 'llm' 服务：对外像普通 LLMService，内部聚合其他 LLM provider。
+  ctx.provide('llm', router, {
+    capabilities: [
+      LLMCapabilities.Chat,
+      LLMCapabilities.Streaming,
+      LLMCapabilities.ToolCalling,
+      LLMCapabilities.Vision,
+      LLMCapabilities.Thinking,
+      LLMCapabilities.Router,
+    ],
+  });
 }
 
 export { LLMRouter } from './router.js';
