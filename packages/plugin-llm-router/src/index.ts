@@ -25,10 +25,6 @@ export function apply(ctx: Context): void {
   ctx.provide('llm', router, {
     capabilities: [
       LLMCapabilities.Chat,
-      LLMCapabilities.Streaming,
-      LLMCapabilities.ToolCalling,
-      LLMCapabilities.Vision,
-      LLMCapabilities.Thinking,
       LLMCapabilities.Router,
     ],
   });
