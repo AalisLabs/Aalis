@@ -26,6 +26,7 @@ export const name = '@aalis/plugin-trigger-policy';
 export const displayName = '触发策略';
 export const provides = ['trigger-policy'];
 export const inject = {
+  required: ['gateway'],
   optional: ['flow-control', 'persona', 'message-archive'],
 };
 
