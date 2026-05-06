@@ -1,11 +1,35 @@
 import { App } from '@aalis/core';
-import { setupFileLogger } from './runtime/file-logger.js';
+import { appendCrashLog, setupFileLogger, type FileLoggerHandle } from './runtime/file-logger.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
 
+let fileLogger: FileLoggerHandle | undefined;
+let handlingFatal = false;
+
+async function exitWithFatalLog(label: string, err: unknown): Promise<never> {
+  if (handlingFatal) process.exit(1);
+  handlingFatal = true;
+
+  console.error(`${label}:`, err);
+  try {
+    await fileLogger?.flush();
+    await appendCrashLog(label, err);
+  } catch { /* ignore */ }
+  process.exit(1);
+}
+
+process.on('uncaughtException', (err) => {
+  void exitWithFatalLog('未捕获异常', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  void exitWithFatalLog('未处理 Promise 拒绝', reason);
+});
+
 async function main() {
-  const fileLogger = await setupFileLogger();
+  const activeFileLogger = await setupFileLogger();
+  fileLogger = activeFileLogger;
 
   const app = new App({
     // 应用层声明：核心功能依赖以下服务至少各有一个提供者运行
@@ -28,7 +52,7 @@ async function main() {
     // app.stop() 期间和之后插件可能仍在 logger.info('已停止') 等，
     // 给微任务一个 tick 把它们入队，再等队列清空，确保 latest.log 含完整关闭日志
     await new Promise<void>(r => setImmediate(r));
-    await fileLogger.flush();
+    await activeFileLogger.flush();
     process.exit(0);
   };
 
@@ -36,7 +60,4 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((err) => {
-  console.error('启动失败:', err);
-  process.exit(1);
-});
+main().catch((err) => void exitWithFatalLog('启动失败', err));
