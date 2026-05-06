@@ -91,10 +91,12 @@ export interface ModelProviderInfo {
 /**
  * LLM 路由服务 —— 由 plugin-llm-router 提供。
  *
- * 同名 facade 模式（与 plugin-storage-router 对齐）：路由器以 'router' capability
- * 注册为 'llm' 服务的一个提供者，与真提供者并列。调用方按需选用：
- * - 想“按 model id 找 provider”：getService<LLMRouterService>('llm', ['router'])
- * - 想“直接用某个 provider”：getService<LLMService>('llm')——返回 servicePreferences.llm 指定的默认实现
+ * 同名 facade 模式（与 plugin-storage-router 对齐）：路由器注册为 'llm' 服务的一个
+ * 普通 provider，同时带 'router' capability。它对外实现 LLMService，内部聚合并转发到
+ * 其他同名 LLM provider。
+ *
+ * - 普通调用：getService<LLMService>('llm')?.chat(...)
+ * - 路由扩展：getService<LLMRouterService>('llm', ['router'])?.resolveModelProvider(model)
  */
 export interface LLMRouterService {
   /** 聚合所有 LLM 提供者的模型列表 */
