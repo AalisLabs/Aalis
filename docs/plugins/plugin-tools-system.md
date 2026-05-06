@@ -28,6 +28,8 @@ meta.inject = { required: ['tools'] }
 | `file.enabled` | boolean | true | 启用文件工具 |
 | `file.maxReadSize` | number | 1048576 | 最大读取大小 (1MB) |
 | `file.maxWriteSize` | number | 10485760 | 最大写入大小 (10MB) |
+| `file.defaultRoot` | string | `workspace` | 相对路径默认解释到的 storage 根 |
+| `file.allowedRoots` | string[] | [`*`] | 文件工具可访问的 storage 根；`*` 表示所有 readable 根，写入/删除仍受根自身权限限制 |
 | **system** (分组) | | | |
 | `system.enabled` | boolean | true | 启用系统信息工具 |
 | **http** (分组) | | | |
