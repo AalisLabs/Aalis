@@ -577,6 +577,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const desc = descriptions[idx++];
         return desc ? `[图片: ${desc} | ref:${refPath}]` : `[图片 | ref:${refPath}]`;
       });
+      const remaining = descriptions.slice(idx).map((desc, i) => {
+        const imageIndex = idx + i;
+        const label = input.images.length > 1 ? `图片${imageIndex + 1}` : '图片';
+        return `[${label}: ${desc || '无描述'}]`;
+      });
+      if (remaining.length > 0) {
+        content = content ? `${content}\n${remaining.join('\n')}` : remaining.join('\n');
+      }
     } else {
       const descTexts = descriptions.map((desc, i) => `[图片${input.images.length > 1 ? (i + 1) : ''}: ${desc || '无描述'}]`);
       imageDescriptions = descTexts;
