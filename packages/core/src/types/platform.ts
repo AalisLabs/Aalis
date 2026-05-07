@@ -52,6 +52,19 @@ export interface PlatformAdapter {
   getConnections(): PlatformConnection[];
   /** 向指定 sessionId 发送纯文本消息 */
   sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void>;
+  /**
+   * 判断该 adapter 是否能处理给定 sessionId（**路由用**）。
+   *
+   * - PlatformRouter 按 sessionId 路由时枚举所有 adapter 调此方法定位归属
+   * - 未实现时 router 默认 fallback 为 `sessionId.startsWith(this.platform + ':')`
+   *   —— 适合 sessionId 形如 `<platform>:<...>` 的协议平台（如 onebot）
+   * - sessionId 不携带 platform 前缀的 adapter（如 cli 的自定义 sessionId）
+   *   **必须**显式实现此方法
+   *
+   * 与 LLMService.supportsModel 的设计意图对称：每个 provider 自报"我接不接这个 key"，
+   * router 不假设 key 的格式约定。
+   */
+  canHandle?(sessionId: string): boolean | Promise<boolean>;
   /** 获取当前平台账号自身身份；多连接平台可用 sessionId 定位具体连接 */
   getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;
   /**
