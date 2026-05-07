@@ -3,6 +3,7 @@
 export type {
   SafetyLevel,
   UserIdentity,
+  ContentSegment,
   Message,
   IncomingMessage,
   OutgoingMessage,

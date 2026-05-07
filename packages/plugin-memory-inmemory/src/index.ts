@@ -24,6 +24,7 @@ class InMemoryFallbackService implements MemoryService {
       reasoningContent: message.reasoningContent,
       timestamp: message.timestamp ?? Date.now(),
       metadata: message.metadata,
+      segments: message.segments,
     });
   }
 

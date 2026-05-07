@@ -37,6 +37,7 @@ export type {
   OutgoingMessage,
   StreamChunkMessage,
   ToolExecuteMessage,
+  ContentSegment,
   ToolFunction,
   ToolDefinition,
   ToolCall,

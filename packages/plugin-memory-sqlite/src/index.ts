@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { Context, Message, ConfigSchema } from '@aalis/core';
+import type { Context, Message, ConfigSchema, ContentSegment } from '@aalis/core';
 import type { MemoryService } from '@aalis/core';
 import { MemoryCapabilities } from '@aalis/core';
 
@@ -75,6 +75,10 @@ class SQLiteMemoryService implements MemoryService {
     if (!columns.some(c => c.name === 'metadata')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
     }
+    // 迁移：为旧数据库添加 segments 列（存放统一时间线 JSON）
+    if (!columns.some(c => c.name === 'segments')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN segments TEXT');
+    }
 
   }
 
@@ -83,10 +87,18 @@ class SQLiteMemoryService implements MemoryService {
     try { return JSON.parse(raw) as Record<string, unknown>; } catch { return undefined; }
   }
 
+  private static parseSegments(raw: string | null): ContentSegment[] | undefined {
+    if (!raw) return undefined;
+    try {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr as ContentSegment[] : undefined;
+    } catch { return undefined; }
+  }
+
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (sessionId, role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (sessionId, role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       sessionId,
@@ -98,14 +110,15 @@ class SQLiteMemoryService implements MemoryService {
       message.timestamp ?? Date.now(),
       message.reasoningContent ?? null,
       message.metadata ? JSON.stringify(message.metadata) : null,
+      message.segments ? JSON.stringify(message.segments) : null,
     );
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const stmt = this.db.prepare(`
-      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
+      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
       FROM (
-        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
+        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
         FROM messages
         WHERE sessionId = ? AND archived = 0
         ORDER BY timestamp DESC
@@ -121,6 +134,7 @@ class SQLiteMemoryService implements MemoryService {
       timestamp: number;
       reasoningContent: string | null;
       metadata: string | null;
+      segments: string | null;
     }>;
 
     return rows.map(row => ({
@@ -131,6 +145,7 @@ class SQLiteMemoryService implements MemoryService {
       name: row.name ?? undefined,
       timestamp: row.timestamp,
       reasoningContent: row.reasoningContent ?? undefined,
+      segments: SQLiteMemoryService.parseSegments(row.segments),
       metadata: SQLiteMemoryService.parseMetadata(row.metadata),
     }));
   }
@@ -141,7 +156,7 @@ class SQLiteMemoryService implements MemoryService {
   }
 
   async getMessagesBySessionRange(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]> {
-    let sql = `SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
+    let sql = `SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
                FROM messages
                WHERE sessionId = ? AND timestamp BETWEEN ? AND ?`;
     const params: unknown[] = [sessionId, fromTs, toTs];
@@ -153,7 +168,7 @@ class SQLiteMemoryService implements MemoryService {
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as Array<{
       role: string; content: string | null; toolCalls: string | null; toolCallId: string | null;
-      name: string | null; timestamp: number; reasoningContent: string | null; metadata: string | null;
+      name: string | null; timestamp: number; reasoningContent: string | null; metadata: string | null; segments: string | null;
     }>;
     return rows.map(row => ({
       role: row.role as Message['role'],
@@ -163,6 +178,7 @@ class SQLiteMemoryService implements MemoryService {
       name: row.name ?? undefined,
       timestamp: row.timestamp,
       reasoningContent: row.reasoningContent ?? undefined,
+      segments: SQLiteMemoryService.parseSegments(row.segments),
       metadata: SQLiteMemoryService.parseMetadata(row.metadata),
     }));
   }
@@ -182,9 +198,9 @@ class SQLiteMemoryService implements MemoryService {
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
     const stmt = this.db.prepare(`
-      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
+      SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
       FROM (
-        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata
+        SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
         FROM messages
         WHERE sessionId = ?
         ORDER BY timestamp DESC
@@ -200,6 +216,7 @@ class SQLiteMemoryService implements MemoryService {
       timestamp: number;
       reasoningContent: string | null;
       metadata: string | null;
+      segments: string | null;
     }>;
     return rows.map(row => ({
       role: row.role as Message['role'],
@@ -209,6 +226,7 @@ class SQLiteMemoryService implements MemoryService {
       name: row.name ?? undefined,
       timestamp: row.timestamp,
       reasoningContent: row.reasoningContent ?? undefined,
+      segments: SQLiteMemoryService.parseSegments(row.segments),
       metadata: SQLiteMemoryService.parseMetadata(row.metadata),
     }));
   }
