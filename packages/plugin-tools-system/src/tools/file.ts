@@ -185,6 +185,30 @@ async function searchTextStream(
   };
 }
 
+/**
+ * 递归收集目录下所有非隐藏的文件 URI（深度优先、字典序稳定）。
+ * 用于 file_search 在目录上的批量搜索。失败的子目录会被跳过而不抛出。
+ */
+async function collectFiles(storage: StorageService, dirUri: string): Promise<string[]> {
+  const out: string[] = [];
+  async function walk(uri: string): Promise<void> {
+    const result = await storage.list(uri).catch(() => null);
+    if (!result) return;
+    const entries = [...result.entries]
+      .filter(e => !e.name.startsWith('.'))
+      .sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    for (const entry of entries) {
+      if (entry.isDirectory) await walk(entry.uri);
+      else out.push(entry.uri);
+    }
+  }
+  await walk(dirUri);
+  return out;
+}
+
 export function registerFileTools(ctx: Context, config: FileConfig): void {
 
   // ==================== file_read ====================
@@ -647,11 +671,11 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_search',
-        description: '在受控存储文件中搜索匹配文本行。支持正则表达式和大小写控制。',
+        description: '在受控存储中按行搜索匹配文本。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。',
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: '要搜索的文件 storage URI 或相对 workspace 的路径' },
+            path: { type: 'string', description: '要搜索的文件或目录的 storage URI 或相对 workspace 的路径' },
             pattern: { type: 'string', description: '搜索模式（纯文本或正则表达式）' },
             isRegex: { type: 'boolean', description: '模式是否为正则表达式（默认 false）' },
             ignoreCase: { type: 'boolean', description: '是否忽略大小写（默认 true）' },
@@ -672,7 +696,6 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
-        if (info.isDirectory) return JSON.stringify({ error: '路径是一个目录，请指定文件路径' });
         const pattern = args.pattern as string;
         const ignoreCase = (args.ignoreCase as boolean) ?? true;
         const maxResults = Math.min((args.maxResults as number) || 50, 200);
@@ -684,6 +707,54 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         const regex = (args.isRegex as boolean) ?? false
           ? new RegExp(pattern, ignoreCase ? 'i' : '')
           : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
+
+        // 目录：递归收集所有文件并逐个搜索，预算（maxResults / maxSearchBytes）跨文件累加。
+        if (info.isDirectory) {
+          const files = await collectFiles(storage, uri);
+          const allMatches: Array<{ uri: string; line: number; content: string }> = [];
+          let totalScannedBytes = 0;
+          let totalScannedLines = 0;
+          let scannedFiles = 0;
+          let truncated = false;
+          let nextStartFile: string | undefined;
+
+          for (const fileUri of files) {
+            scannedFiles++;
+            const remainingResults = maxResults - allMatches.length;
+            const remainingBytes = maxSearchBytes - totalScannedBytes;
+            if (remainingResults <= 0 || remainingBytes <= 0) {
+              truncated = true;
+              nextStartFile = fileUri;
+              break;
+            }
+            const r = await searchTextStream(
+              storage, fileUri, regex, 1, remainingResults, remainingBytes,
+            ).catch(() => null);
+            if (!r) continue;
+            for (const m of r.matches) allMatches.push({ uri: fileUri, ...m });
+            totalScannedBytes += r.scannedBytes;
+            totalScannedLines += r.scannedLines;
+            if (r.truncated && allMatches.length >= maxResults) {
+              truncated = true;
+              nextStartFile = fileUri;
+              break;
+            }
+          }
+
+          return JSON.stringify({
+            uri,
+            pattern,
+            isDirectory: true,
+            totalFiles: files.length,
+            scannedFiles,
+            matches: allMatches,
+            matchCount: allMatches.length,
+            scannedBytes: totalScannedBytes,
+            scannedLines: totalScannedLines,
+            truncated,
+            ...(nextStartFile ? { nextStartFile } : {}),
+          });
+        }
 
         const result = await searchTextStream(storage, uri, regex, startLine, maxResults, maxSearchBytes);
         return JSON.stringify({
