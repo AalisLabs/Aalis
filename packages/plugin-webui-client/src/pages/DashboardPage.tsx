@@ -77,7 +77,7 @@ export function DashboardPage({
   };
 
   const serviceEntries = servicesData
-    ? Object.entries(servicesData).filter(([name]) => name !== 'platform' && name !== 'app' && name !== 'llm')
+    ? Object.entries(servicesData)
     : [];
 
   // 根据 /api/service-groups 返回的分组信息将服务分层
