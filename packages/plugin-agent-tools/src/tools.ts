@@ -14,6 +14,15 @@ import type { Logger } from '@aalis/core';
  *
  * 由 plugin-agent-tools 创建并注册为服务 'tools'，
  * 所有插件通过 ctx.registerTool() 注册工具，通过 ctx.tools 访问。
+ *
+ * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
+ * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
+ * - register() 返回 disposer，插件 dispose 时按 pluginName 自动注销
+ * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
+ *
+ * 与 LLM/Storage/Platform 路由器（同名 facade 模式）的差异：
+ * - 这里没有"多个底层 provider"概念——所有工具都直接落到这个 Map
+ * - 因此不需要 ctx.getAllServices('tools') 枚举，也不需要 'router' capability
  */
 export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
@@ -24,6 +33,8 @@ export class ToolRegistry implements ToolService {
   constructor(logger: Logger) {
     this.logger = logger.child('tools');
   }
+
+  // ---- 注册 / 注销 ----
 
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void {
     const name = tool.definition.function.name;
@@ -39,6 +50,8 @@ export class ToolRegistry implements ToolService {
       }
     };
   }
+
+  // ---- 查询 ----
 
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[] {
     const tools = [...this.tools.values()];
@@ -111,6 +124,8 @@ export class ToolRegistry implements ToolService {
     return [...this._groups.values()];
   }
 
+  // ---- 执行 ----
+
   setExecutionGuard(guard: ExecutionGuard): void {
     this._guard = guard;
   }
@@ -178,6 +193,8 @@ export class ToolRegistry implements ToolService {
       }
     }
   }
+
+  // ---- 内部 ----
 
   private getStaticPermissions(tool: RegisteredTool): string[] {
     return unique([`tool:${tool.definition.function.name}`, ...(tool.permissions ?? [])]);

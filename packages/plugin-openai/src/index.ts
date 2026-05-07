@@ -154,7 +154,7 @@ class OpenAILLMService implements LLMService {
   }
 
   /** 启动时快照的模型名集合（远端发现 + 自定义），供 supportsModel 同步查询使用。
-   * 远端失败时退化为仅 customModels；运行时不重拉，避免网络抖动污染 LLMRouter 慢路径缓存。 */
+   * 远端失败时退化为仅 customModels；运行时不重拉，避免网络抖动影响 LLMRouter 的 supportsModel 返回值。 */
   private knownModelIds: Set<string> = new Set();
 
   /**
@@ -185,7 +185,7 @@ class OpenAILLMService implements LLMService {
     return { defaultModel: this.defaultModel, capabilities };
   }
 
-  /** 同步接口：LLMRouter 优先调用，绕开 listModels 依赖远端返回的慢路径 */
+  /** 同步接口：LLMRouter 按 model 路由时调用此方法定位归属 provider */
   supportsModel(modelId: string): boolean {
     return this.knownModelIds.has(modelId);
   }

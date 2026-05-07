@@ -9,12 +9,14 @@ import type {
   ModelInfo,
 } from '@aalis/core';
 
+/** Provider 端额外可选方法（不强制写入 LLMService 主接口） */
 interface LLMProviderShape extends Partial<LLMService> {
   listModels?(): Promise<Array<{ id: string; capabilities: LLMCapability[] }>>;
   supportsModel?(modelId: string): boolean | Promise<boolean>;
   getDefaultModelId?(): string | undefined;
 }
 
+/** 经 ctx.getAllServices 枚举出的 provider 条目 */
 interface LLMProviderEntry {
   instance: LLMProviderShape;
   contextId: string;
@@ -22,42 +24,35 @@ interface LLMProviderEntry {
   label?: string;
 }
 
-/** 模型路由解析结果（router 内部类型，不对外暴露） */
-interface ResolvedProvider {
-  instance: LLMProviderShape;
-  model: string;
-  contextId: string;
-}
-
 /**
  * LLM 路由器
  *
- * 同名 facade 模式（与 plugin-storage-router 对齐）：注册为 'llm' 服务的一个普通
- * provider，同时带 'router' 能力。对外实现 LLMService；对内聚合并转发到其他同名
- * LLM provider。
+ * 同名 facade 模式（与 plugin-storage-router 对齐）：通过
+ * `ctx.provide('llm', router, { capabilities: ['router'] })` 注册成 'llm' 服务的
+ * "高优先级聚合层"。底层 provider 仍以 `provide('llm', impl)` 单独存在，router
+ * 通过 `ctx.getAllServices('llm')` 枚举它们并按 ChatRequest.model 分发。
  *
  * 对外 API（消费者视角）：
  * - `getService<LLMService>('llm')?.chat({ model, ... })` —— router 内部按 model 路由
- * - `getService<LLMService>('llm', ['router'])?.listModels()` —— router 聚合后返回 ModelInfo[]（带 provider/contextId），只用于 introspection
- *
- * 内部细节（resolveModelProvider / getModelProviderMap / invalidate）不再作为公开 API；
- * 调用方应直接通过 LLMService.chat 让 router 路由，而不是手动解析 provider 后调 chat。
+ * - `getService<LLMService>('llm', ['router'])?.listModels()` —— 聚合所有 provider 的模型，
+ *   返回 ModelInfo[]（带 provider/contextId），供 introspection 使用
  *
  * 自我排除：枚举 'llm' 服务时过滤掉 instance === this，避免无限递归。
+ *
+ * 路由策略：当 ChatRequest 指定了 model，router 调用各 provider 的 supportsModel(id)
+ * 同步快路径定位归属；未指定 model 时回退到默认 provider（首个满足能力要求的）。
+ * provider 必须实现 supportsModel —— 没实现则该 provider 永远拿不到按 model 路由的请求。
  */
 export class LLMRouter implements LLMService {
-  private _cache: Map<string, string> | null = null;
-  private _cacheTime = 0;
-  private _cachePromise: Promise<Map<string, string>> | null = null;
-  private static readonly CACHE_TTL = 60_000;
-
   constructor(private readonly ctx: Context, private readonly logger: Logger) {}
 
-  /** 仅枚举真正的 LLM provider，排除路由器自身 */
+  /** 仅枚举真正的 LLM provider，排除 router 自身 */
   private getProviders(): LLMProviderEntry[] {
     return this.ctx.getAllServices<LLMProviderShape>('llm')
       .filter(e => (e.instance as unknown) !== this);
   }
+
+  // ---- LLMService 实现：按 model 路由到具体 provider ----
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const { instance, routedRequest, contextId } = await this.resolveProviderForRequest(request);
@@ -76,86 +71,59 @@ export class LLMRouter implements LLMService {
   }
 
   getTemperature(): number {
-    const provider = this.getDefaultProviderOrThrow();
-    return provider.instance.getTemperature?.() ?? 0.7;
+    return this.getDefaultProviderOrThrow().instance.getTemperature?.() ?? 0.7;
   }
 
   getMaxTokens(): number {
-    const provider = this.getDefaultProviderOrThrow();
-    return provider.instance.getMaxTokens?.() ?? 4096;
+    return this.getDefaultProviderOrThrow().instance.getMaxTokens?.() ?? 4096;
   }
 
   getContextLength(): number {
-    const provider = this.getDefaultProviderOrThrow();
-    return provider.instance.getContextLength?.() ?? 8192;
-  }
-
-  async listModels(): Promise<ModelInfo[]> {
-    const seen = new Map<string, ModelInfo>();
-    for (const model of await this._listAllProviders()) {
-      const existing = seen.get(model.id);
-      if (!existing) {
-        seen.set(model.id, { id: model.id, capabilities: model.capabilities, provider: model.provider, contextId: model.contextId });
-      } else {
-        const caps = new Set<LLMCapability>([...existing.capabilities, ...model.capabilities]);
-        existing.capabilities = [...caps];
-      }
-    }
-    return [...seen.values()];
+    return this.getDefaultProviderOrThrow().instance.getContextLength?.() ?? 8192;
   }
 
   getDefaultModelId(): string | undefined {
     return this.getDefaultProvider()?.instance.getDefaultModelId?.();
   }
 
-  async supportsModel(modelId: string): Promise<boolean> {
-    return (await this.resolveModelProvider(modelId)) !== undefined;
-  }
-
-  private async _listAllProviders(): Promise<ModelInfo[]> {
-    const providers = this.getProviders();
-    const results: ModelInfo[] = [];
-    await Promise.all(providers.map(async ({ instance, contextId, label }) => {
-      if (typeof instance.listModels !== 'function') return;
+  /** 聚合所有 provider 的模型；同 ID 出现在多个 provider 时合并 capabilities */
+  async listModels(): Promise<ModelInfo[]> {
+    const seen = new Map<string, ModelInfo>();
+    for (const { instance, contextId, label } of this.getProviders()) {
+      if (typeof instance.listModels !== 'function') continue;
       try {
         const models = await instance.listModels();
         for (const m of models) {
-          results.push({ ...m, provider: label ?? contextId, contextId });
+          const existing = seen.get(m.id);
+          if (!existing) {
+            seen.set(m.id, { id: m.id, capabilities: m.capabilities, provider: label ?? contextId, contextId });
+          } else {
+            const caps = new Set<LLMCapability>([...existing.capabilities, ...m.capabilities]);
+            existing.capabilities = [...caps];
+          }
         }
       } catch (err) {
         this.logger.warn(`获取模型列表失败 [${contextId}]:`, err);
       }
-    }));
-    return results;
-  }
-
-  /** 路由器内部：按 model ID 查找 provider；不对外暴露，调用方应使用 chat({model}) */
-  private async resolveModelProvider(modelId: string): Promise<ResolvedProvider | undefined> {
-    const providers = this.getProviders();
-    for (const { instance, contextId } of providers) {
-      if (typeof instance.supportsModel === 'function') {
-        try {
-          if (await instance.supportsModel(modelId)) {
-            return { instance, model: modelId, contextId };
-          }
-        } catch { /* fall through */ }
-      }
     }
-    const cache = await this._ensureCache();
-    const targetContextId = cache.get(modelId);
-    if (!targetContextId) return undefined;
-    const found = providers.find(p => p.contextId === targetContextId);
-    return found ? { instance: found.instance, model: modelId, contextId: targetContextId } : undefined;
+    return [...seen.values()];
   }
 
-  getModelProviderMap(): Promise<Map<string, string>> {
-    return this._ensureCache();
+  async supportsModel(modelId: string): Promise<boolean> {
+    return (await this.resolveModelProvider(modelId)) !== undefined;
   }
 
-  /** 路由器内部缓存失效（由 plugin index 在 service 注册/注销时调用） */
-  invalidate(): void {
-    this._cache = null;
-    this._cachePromise = null;
+  // ---- 内部 ----
+
+  /** 按 model ID 查找拥有该模型的 provider；未命中返回 undefined */
+  private async resolveModelProvider(modelId: string): Promise<LLMProviderEntry | undefined> {
+    for (const provider of this.getProviders()) {
+      if (typeof provider.instance.supportsModel !== 'function') continue;
+      try {
+        if (await provider.instance.supportsModel(modelId)) return provider;
+      } catch { /* fall through */ }
+    }
+    return undefined;
   }
 
   private async resolveProviderForRequest(
@@ -165,20 +133,15 @@ export class LLMRouter implements LLMService {
     const requiredCapabilities = this.getRequiredCapabilities(request, extraRequiredCapabilities);
 
     if (request.model) {
-      const resolved = await this.resolveModelProvider(request.model);
-      if (resolved) {
-        const provider = this.getProviders().find(p => p.contextId === resolved.contextId);
-        if (provider && !this.hasCapabilities(provider, requiredCapabilities)) {
+      const provider = await this.resolveModelProvider(request.model);
+      if (provider) {
+        if (!this.hasCapabilities(provider, requiredCapabilities)) {
           throw new Error(
-            `模型 "${request.model}" 的 provider ${resolved.contextId} 不满足请求能力 ` +
+            `模型 "${request.model}" 的 provider ${provider.contextId} 不满足请求能力 ` +
               `[${requiredCapabilities.join(', ')}]`,
           );
         }
-        return {
-          instance: resolved.instance as LLMProviderShape,
-          routedRequest: request,
-          contextId: resolved.contextId,
-        };
+        return { instance: provider.instance, routedRequest: request, contextId: provider.contextId };
       }
       this.logger.warn(`未找到模型 "${request.model}" 对应的 LLM provider，将回退到默认 provider`);
     }
@@ -223,33 +186,5 @@ export class LLMRouter implements LLMService {
     const provider = this.getDefaultProvider();
     if (!provider) throw new Error('没有可用的 LLM provider');
     return provider;
-  }
-
-  private _ensureCache(): Promise<Map<string, string>> {
-    const now = Date.now();
-    if (this._cache && (now - this._cacheTime) < LLMRouter.CACHE_TTL) {
-      return Promise.resolve(this._cache);
-    }
-    if (this._cachePromise) return this._cachePromise;
-
-    this._cachePromise = (async () => {
-      const map = new Map<string, string>();
-      const providers = this.getProviders();
-      for (const { instance, contextId } of providers) {
-        if (typeof instance.listModels !== 'function') continue;
-        try {
-          const models = await instance.listModels();
-          for (const m of models) {
-            if (!map.has(m.id)) map.set(m.id, contextId);
-          }
-        } catch { /* skip */ }
-      }
-      this._cache = map;
-      this._cacheTime = Date.now();
-      this._cachePromise = null;
-      return map;
-    })();
-
-    return this._cachePromise;
   }
 }

@@ -30,11 +30,22 @@ export interface StorageRootConflict {
 /**
  * 存储路由器
  *
- * 同名 facade 模式：通过 `ctx.provide('storage', router, { capabilities: ['router'] })`
- * 注册成 storage 服务的"高优先级聚合层"。底层 provider 仍以 `provide('storage', impl)`
- * 单独存在，router 通过 `getAllServices('storage')` 枚举它们并按 URI 根名分发。
+ * 同名 facade 模式（与 plugin-llm-router 对齐）：通过
+ * `ctx.provide('storage', router, { capabilities: ['router'] })` 注册成 'storage' 服务的
+ * "高优先级聚合层"。底层 provider 仍以 `provide('storage', impl)` 单独存在，router
+ * 通过 `ctx.getAllServices('storage')` 枚举它们并按 URI 根名分发。
  *
- * 自我排除：枚举 storage 服务时过滤掉 instance === this，避免无限递归。
+ * 对外 API（消费者视角）：
+ * - `getService<StorageService>('storage')?.list(uri)` —— router 内部按 URI 根路由
+ * - `getService<StorageRouter>('storage', ['router'])?.listAllRoots()` —— 聚合所有根，
+ *   返回带 provider/contextId 的 AggregatedStorageRoot[]，供 introspection / 冲突诊断使用
+ *
+ * 自我排除：枚举 'storage' 服务时过滤掉 instance === this，避免无限递归。
+ *
+ * 路由策略：URI 形如 `<root>:/<path>`，router 解析根名后查 rootMap 定位 provider。
+ * 同名根冲突时按 provider 优先级取首个，其余被遮蔽（getRootConflicts() 可查询）。
+ *
+ * 缓存：rootMap 在 service register/unregister 时由 plugin index 触发 invalidate()。
  */
 export class StorageRouter implements StorageService {
   private _rootMap: Map<string, string> | null = null;

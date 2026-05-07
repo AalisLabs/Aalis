@@ -61,7 +61,16 @@ export interface LLMService {
   getMaxTokens(): number;
   /** 模型上下文窗口大小（token 数） */
   getContextLength(): number;
-  /** 列出远端可用模型及其能力 */
+  /**
+   * 列出该 provider 推荐展示给用户的模型集合（**展示用**）。
+   *
+   * - 用于 WebUI 模型下拉等 introspection 场景
+   * - 通常是远端拉取 + 用户配置的 customModels 合并的"已知子集"
+   * - **不**用于 LLMRouter 的按 model 路由判断
+   *
+   * 与 `supportsModel` 的差异：listModels 只返回"我知道的"，supportsModel 还能
+   * 表达"我虽然不知道但能转发处理"（如 OpenAI 兼容 endpoint 的通配直通）。
+   */
   listModels?(): Promise<ModelInfo[]>;
   /**
    * 提供者自报默认模型 ID。
@@ -69,8 +78,14 @@ export interface LLMService {
    */
   getDefaultModelId?(): string | undefined;
   /**
-   * 同步/异步判断该提供者是否支持指定模型。
-   * 实现后可让 LLMRouter 跳过 listModels 枚举（快路径）。
+   * 判断该 provider 是否能处理指定 model id（**路由用**）。
+   *
+   * - LLMRouter 按 ChatRequest.model 路由时枚举所有 provider 调此方法定位归属
+   * - 未实现则该 provider 不会被按 model 路由到（`listModels` 也救不了）
+   * - 可表达 listModels 之外的语义：前缀通配、白名单、"任意 id 都接"等
+   *
+   * 默认推导：`@aalis/plugin-llm-router` 导出 `defaultSupportsModel(listModels)`，
+   * 适合不需要通配/直通语义的 provider 直接复用。
    */
   supportsModel?(modelId: string): boolean | Promise<boolean>;
 }
