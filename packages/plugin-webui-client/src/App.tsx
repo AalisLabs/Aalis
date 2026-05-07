@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
@@ -7,16 +7,18 @@ import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAut
 import { useWebSocket } from './useWebSocket';
 import type { TokenUsageData } from './useWebSocket';
 import { useSessionManager } from './useSessionManager';
+// Dashboard 与 ChatPanel 是首屏主路径，保持同步加载；其余页面路由级懒加载。
 import { DashboardPage } from './pages/DashboardPage';
-import { PluginConfigPage } from './pages/PluginConfigPage';
-import { MarketplacePage } from './pages/MarketplacePage';
 import { ChatPanel } from './pages/ChatPanel';
-import { PlatformPage } from './pages/PlatformPage';
-import { AuthorityPage } from './pages/AuthorityPage';
-import { LogPage } from './pages/LogPage';
-import { SessionsPage } from './pages/SessionsPage';
-import { FilesPage } from './pages/FilesPage';
-import { DynamicPage } from './components/DynamicPage';
+
+const PluginConfigPage = lazy(() => import('./pages/PluginConfigPage').then(m => ({ default: m.PluginConfigPage })));
+const MarketplacePage = lazy(() => import('./pages/MarketplacePage').then(m => ({ default: m.MarketplacePage })));
+const PlatformPage = lazy(() => import('./pages/PlatformPage').then(m => ({ default: m.PlatformPage })));
+const AuthorityPage = lazy(() => import('./pages/AuthorityPage').then(m => ({ default: m.AuthorityPage })));
+const LogPage = lazy(() => import('./pages/LogPage').then(m => ({ default: m.LogPage })));
+const SessionsPage = lazy(() => import('./pages/SessionsPage').then(m => ({ default: m.SessionsPage })));
+const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })));
+const DynamicPage = lazy(() => import('./components/DynamicPage').then(m => ({ default: m.DynamicPage })));
 
 export function App() {
   const [input, setInput] = useState('');
@@ -628,11 +630,13 @@ export function App() {
         </div>
 
         <div className="content-body">
-          {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
-          {!activeDynamicPage && activePageDef?.renderer && (
-            renderCustomPage(activePageDef.renderer, activePageDef.plugin) ||
-            <div className="empty-hint" style={{ padding: 24 }}>此客户端不支持渲染器「{activePageDef.renderer}」</div>
-          )}
+          <Suspense fallback={<div className="empty-hint" style={{ padding: 24 }}>加载中…</div>}>
+            {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
+            {!activeDynamicPage && activePageDef?.renderer && (
+              renderCustomPage(activePageDef.renderer, activePageDef.plugin) ||
+              <div className="empty-hint" style={{ padding: 24 }}>此客户端不支持渲染器「{activePageDef.renderer}」</div>
+            )}
+          </Suspense>
         </div>
       </main>
 
