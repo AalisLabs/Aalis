@@ -742,27 +742,42 @@ function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: Ses
             {chatMessages.map((msg, i) => (
               <DetailMessageView key={i} msg={msg} />
             ))}
-            {/* 流式输出中的实时内容 */}
-            {stream.isStreaming && (stream.segments.length > 0 || stream.reasoningSegments.length > 0) && (
+            {/* 流式输出中的实时内容（统一时间线） */}
+            {stream.isStreaming && stream.segments.length > 0 && (
               <div className="detail-message assistant streaming">
                 <div className="detail-msg-role">助手 <span className="streaming-indicator">●</span></div>
-                {stream.reasoningSegments.length > 0 && (
-                  <details className="thinking-block" open>
-                    <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-                    <div className="thinking-content">
-                      {stream.reasoningSegments.map((seg, j) => (
-                        <DetailSegment key={j} seg={seg} />
-                      ))}
-                    </div>
-                  </details>
-                )}
-                {stream.segments.length > 0 && (
-                  <div className="detail-msg-content detail-msg-md">
-                    {stream.segments.map((seg, j) => (
-                      <DetailSegment key={j} seg={seg} />
-                    ))}
-                  </div>
-                )}
+                <div className="detail-msg-content detail-msg-md">
+                  {(() => {
+                    const blocks: React.ReactNode[] = [];
+                    let i = 0;
+                    while (i < stream.segments.length) {
+                      const seg = stream.segments[i];
+                      if (seg.type === 'reasoning_text') {
+                        let text = '';
+                        while (i < stream.segments.length && stream.segments[i].type === 'reasoning_text') {
+                          text += (stream.segments[i] as Extract<ContentSegment, { type: 'reasoning_text' }>).content;
+                          i++;
+                        }
+                        if (text) {
+                          blocks.push(
+                            <details key={`r-${i}`} className="thinking-block" open>
+                              <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+                              <div className="thinking-content">
+                                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                                  {preprocessLaTeX(text)}
+                                </ReactMarkdown>
+                              </div>
+                            </details>
+                          );
+                        }
+                        continue;
+                      }
+                      blocks.push(<DetailSegment key={i} seg={seg} />);
+                      i++;
+                    }
+                    return blocks;
+                  })()}
+                </div>
               </div>
             )}
           </div>
@@ -774,7 +789,7 @@ function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: Ses
 
 /** 渲染单个 segment（文本用 Markdown，工具调用用折叠块） */
 function DetailSegment({ seg }: { seg: ContentSegment }) {
-  if (seg.type === 'text') {
+  if (seg.type === 'text' || seg.type === 'reasoning_text') {
     return seg.content ? (
       <div className="detail-text-segment">
         <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
@@ -808,48 +823,7 @@ function DetailSegment({ seg }: { seg: ContentSegment }) {
 function DetailMessageView({ msg }: { msg: ChatMessage }) {
   const roleLabel = msg.role === 'user' ? '用户' : '助手';
 
-  // 思考过程渲染：优先使用 reasoningSegments（结构化，含工具调用），否则 fallback 到 reasoningContent
-  const thinkingBlock = msg.role === 'assistant' && (
-    msg.reasoningSegments && msg.reasoningSegments.length > 0 ? (
-      <details className="thinking-block">
-        <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-        <div className="thinking-content">
-          {msg.reasoningSegments.map((seg, j) => (
-            <DetailSegment key={j} seg={seg} />
-          ))}
-        </div>
-      </details>
-    ) : msg.reasoningContent ? (
-      <details className="thinking-block">
-        <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-        <div className="thinking-content">
-          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
-            {preprocessLaTeX(msg.reasoningContent)}
-          </ReactMarkdown>
-        </div>
-      </details>
-    ) : null
-  );
-
-  // 有 segments 的助手消息 — 使用结构化渲染
-  if (msg.role === 'assistant' && msg.segments && msg.segments.length > 0) {
-    return (
-      <div className={`detail-message ${msg.role}`}>
-        <div className="detail-msg-role">{roleLabel}</div>
-        {thinkingBlock}
-        <div className="detail-msg-content detail-msg-md">
-          {msg.segments.map((seg, j) => (
-            <DetailSegment key={j} seg={seg} />
-          ))}
-        </div>
-        {msg.timestamp > 0 && (
-          <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
-        )}
-      </div>
-    );
-  }
-
-  // 纯文本消息 / 用户消息保持原样
+  // 用户消息：纯文本
   if (msg.role === 'user') {
     return (
       <div className={`detail-message ${msg.role}`}>
@@ -862,11 +836,62 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
     );
   }
 
-  // 助手消息无 segments — 整条渲染 Markdown
+  // 助手消息有 segments：按统一时间线渲染，相邻 reasoning_text 合并为折叠块
+  if (msg.role === 'assistant' && msg.segments && msg.segments.length > 0) {
+    const blocks: React.ReactNode[] = [];
+    let i = 0;
+    while (i < msg.segments.length) {
+      const seg = msg.segments[i];
+      if (seg.type === 'reasoning_text') {
+        let text = '';
+        while (i < msg.segments.length && msg.segments[i].type === 'reasoning_text') {
+          text += (msg.segments[i] as Extract<ContentSegment, { type: 'reasoning_text' }>).content;
+          i++;
+        }
+        if (text) {
+          blocks.push(
+            <details key={`r-${i}`} className="thinking-block">
+              <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+              <div className="thinking-content">
+                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                  {preprocessLaTeX(text)}
+                </ReactMarkdown>
+              </div>
+            </details>
+          );
+        }
+        continue;
+      }
+      blocks.push(<DetailSegment key={i} seg={seg} />);
+      i++;
+    }
+    return (
+      <div className={`detail-message ${msg.role}`}>
+        <div className="detail-msg-role">{roleLabel}</div>
+        <div className="detail-msg-content detail-msg-md">{blocks}</div>
+        {msg.timestamp > 0 && (
+          <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
+        )}
+      </div>
+    );
+  }
+
+  // 老数据 fallback：reasoning + content 两段式
+  const fallbackThinking = msg.role === 'assistant' && msg.reasoningContent ? (
+    <details className="thinking-block">
+      <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+      <div className="thinking-content">
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+          {preprocessLaTeX(msg.reasoningContent)}
+        </ReactMarkdown>
+      </div>
+    </details>
+  ) : null;
+
   return (
     <div className={`detail-message ${msg.role}`}>
       <div className="detail-msg-role">{roleLabel}</div>
-      {thinkingBlock}
+      {fallbackThinking}
       <div className="detail-msg-content detail-msg-md">
         <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
           {msg.content}

@@ -443,45 +443,70 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
           })}
         </div>
       )}
-      {msg.role === 'assistant' && msg.reasoningSegments && msg.reasoningSegments.length > 0 ? (
-        <details className="thinking-block">
-          <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-          <div className="thinking-content">
-            {msg.reasoningSegments.map((seg, j) =>
-              seg.type === 'text' ? (
-                seg.content ? (
-                  <ReactMarkdown key={j} remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
-                    {preprocessLaTeX(seg.content)}
-                  </ReactMarkdown>
-                ) : null
-              ) : (
-                <ToolCallBlock key={j} seg={seg} index={j} />
-              )
-            )}
-          </div>
-        </details>
-      ) : msg.role === 'assistant' && msg.reasoningContent ? (
-        <details className="thinking-block">
-          <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-          <div className="thinking-content">
-            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
-              {preprocessLaTeX(msg.reasoningContent!)}
-            </ReactMarkdown>
-          </div>
-        </details>
-      ) : null}
       {msg.role === 'assistant' && msg.segments && msg.segments.length > 0 ? (
+        // 统一时间线渲染：相邻 reasoning_text 段合并成一个折叠块（默认折叠），
+        // text 段渲染为 markdown 气泡，tool_call 段渲染为工具卡片。所有顺序与模型输出一致。
         <div className="message-bubble">
-          {msg.segments.map((seg, j) =>
-            seg.type === 'text' ? (
-              seg.content ? (
-                <AssistantContent key={j} content={seg.content} />
-              ) : null
-            ) : (
-              <ToolCallBlock key={j} seg={seg} index={j} />
-            )
-          )}
+          {(() => {
+            const out: React.ReactNode[] = [];
+            let i = 0;
+            while (i < msg.segments.length) {
+              const seg = msg.segments[i];
+              if (seg.type === 'reasoning_text') {
+                // 合并连续的 reasoning_text（中间允许 tool_call 也归入同一思考块？
+                // 这里只合并连续的 reasoning_text；若中间出现 tool_call，则先关闭一个思考块）
+                const group: typeof msg.segments = [];
+                while (i < msg.segments.length && msg.segments[i].type === 'reasoning_text') {
+                  group.push(msg.segments[i]);
+                  i++;
+                }
+                const text = group
+                  .filter((s): s is Extract<ContentSegment, { type: 'reasoning_text' }> => s.type === 'reasoning_text')
+                  .map(s => s.content)
+                  .join('');
+                if (text) {
+                  out.push(
+                    <details key={`r-${i}`} className="thinking-block">
+                      <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+                      <div className="thinking-content">
+                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                          {preprocessLaTeX(text)}
+                        </ReactMarkdown>
+                      </div>
+                    </details>
+                  );
+                }
+                continue;
+              }
+              if (seg.type === 'text') {
+                if (seg.content) {
+                  out.push(<AssistantContent key={`t-${i}`} content={seg.content} />);
+                }
+                i++;
+                continue;
+              }
+              // tool_call
+              out.push(<ToolCallBlock key={`tc-${i}`} seg={seg} index={i} />);
+              i++;
+            }
+            return out;
+          })()}
         </div>
+      ) : msg.role === 'assistant' && msg.reasoningContent ? (
+        // 老数据 fallback：无 segments，只能两段式（reasoning 折叠块 + 内容气泡）
+        <>
+          <details className="thinking-block">
+            <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+            <div className="thinking-content">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                {preprocessLaTeX(msg.reasoningContent)}
+              </ReactMarkdown>
+            </div>
+          </details>
+          <div className="message-bubble">
+            <AssistantContent content={msg.content} />
+          </div>
+        </>
       ) : (
         <div className="message-bubble">
           {msg.role === 'assistant' ? (

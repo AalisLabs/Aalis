@@ -16,6 +16,20 @@ export interface UserIdentity {
 
 // ----- 消息 -----
 
+/**
+ * 内容时间线分段（按到达顺序记录助手输出的真实结构）。
+ * - text：正常对话文本
+ * - reasoning_text：思考/推理文本（部分模型如 DeepSeek-R1、Ollama thinking 会产出）
+ * - tool_call：工具调用片段（startTime/endTime 用于时长展示）
+ *
+ * 该数组若存在则为渲染顺序的真相；同时 message.content / reasoningContent
+ * 仍保留为派生镜像，供 LLM API 与历史压缩等纯文本消费者使用。
+ */
+export type ContentSegment =
+  | { type: 'text'; content: string }
+  | { type: 'reasoning_text'; content: string }
+  | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
@@ -24,6 +38,12 @@ export interface Message {
   name?: string;
   timestamp?: number;
   reasoningContent?: string | null;
+  /**
+   * 助手输出的有序时间线（含 text / reasoning_text / tool_call）。
+   * 仅 assistant 消息可能携带；存在时为 UI 渲染的权威来源，
+   * content 与 reasoningContent 应与之保持一致（由生产方在累积时同步写）。
+   */
+  segments?: ContentSegment[];
   /** 图片列表（base64 data URL 或 HTTP URL），用于多模态 LLM */
   images?: string[];
   /** 元数据：用于标记消息来源等信息（不会发送给 LLM） */
@@ -93,6 +113,8 @@ export interface OutgoingMessage {
   sessionId: string;
   platform?: string;
   reasoningContent?: string;
+  /** 助手输出的有序时间线（与 Message.segments 含义一致），存在时为 webui 等消费者顺序渲染的依据 */
+  segments?: ContentSegment[];
   /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
   source?: 'agent' | 'system' | 'command';
 }

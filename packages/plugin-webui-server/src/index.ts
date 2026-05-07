@@ -81,7 +81,11 @@ interface WSOutgoing {
   toolArgs?: Record<string, unknown>;
   toolResult?: string;
   toolPhase?: 'start' | 'end';
-  segments?: Array<{ type: 'text'; content: string } | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string }>;
+  segments?: Array<
+    | { type: 'text'; content: string }
+    | { type: 'reasoning_text'; content: string }
+    | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number }
+  >;
   todoItems?: unknown[];
   // token_usage 字段
   tokenUsage?: {
@@ -137,8 +141,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const logSubscribers = new Set<WebSocket>();
   const allClients = new Set<WebSocket>();
 
-  // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复
-  type BufferSegment = { type: 'text'; content: string } | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string };
+  // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复。
+  // segments 是按到达顺序追加的统一时间线：text / reasoning_text / tool_call 三种段都按真实时序混排。
+  // content / reasoningContent 仅作为派生镜像（供老路径读取与 LLM 调用边界使用）。
+  type BufferSegment =
+    | { type: 'text'; content: string }
+    | { type: 'reasoning_text'; content: string }
+    | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
   const streamBuffers = new Map<string, { content: string; reasoningContent: string; segments: BufferSegment[]; generating: boolean }>();
 
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
@@ -1332,11 +1341,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const sockets = sessions.get(msg.sessionId);
     if (!sockets) return;
 
+    // 优先使用 agent 显式提供的 segments；否则回退到累积缓冲（保留交错顺序）
+    const segments = msg.segments ?? buf?.segments;
     const payload: WSOutgoing = {
       type: 'message',
       content: msg.content,
       sessionId: msg.sessionId,
       reasoningContent: msg.reasoningContent,
+      segments: segments && segments.length > 0 ? segments : undefined,
     };
     const json = JSON.stringify(payload);
 
@@ -1358,7 +1370,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       if (chunk.contentDelta) {
         buf.content += chunk.contentDelta;
-        // 追加到 segments：合并连续文本
+        // 追加到 segments：合并连续 text
         const last = buf.segments[buf.segments.length - 1];
         if (last && last.type === 'text') {
           last.content += chunk.contentDelta;
@@ -1366,7 +1378,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           buf.segments.push({ type: 'text', content: chunk.contentDelta });
         }
       }
-      if (chunk.reasoningDelta) buf.reasoningContent += chunk.reasoningDelta;
+      if (chunk.reasoningDelta) {
+        buf.reasoningContent += chunk.reasoningDelta;
+        // 同样追加到统一时间线：合并连续 reasoning_text
+        const last = buf.segments[buf.segments.length - 1];
+        if (last && last.type === 'reasoning_text') {
+          last.content += chunk.reasoningDelta;
+        } else {
+          buf.segments.push({ type: 'reasoning_text', content: chunk.reasoningDelta });
+        }
+      }
     }
     const sockets = sessions.get(chunk.sessionId);
     if (!sockets) return;
@@ -1397,13 +1418,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       streamBuffers.set(info.sessionId, buf);
     }
     if (info.phase === 'start') {
-      buf.segments.push({ type: 'tool_call', name: info.toolName, args: info.args ?? {} });
+      buf.segments.push({ type: 'tool_call', name: info.toolName, args: info.args ?? {}, startTime: Date.now() });
     } else if (info.phase === 'end') {
       // 找到最后一个同名且无结果的 tool_call segment，填充结果
       for (let i = buf.segments.length - 1; i >= 0; i--) {
         const seg = buf.segments[i];
         if (seg.type === 'tool_call' && seg.name === info.toolName && seg.result == null) {
           seg.result = info.result;
+          seg.endTime = Date.now();
           break;
         }
       }

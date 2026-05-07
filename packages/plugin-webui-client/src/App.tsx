@@ -53,8 +53,16 @@ export function App() {
   const session = useSessionManager(pageDefs);
   const { messages, setMessages, loading, setLoading, streamingRef } = session;
 
-  /** 流式 delta 累积缓冲区，由 RAF 批量刷入 state */
-  const streamBufRef = useRef({ content: '', reasoning: '', raf: 0 as number });
+  /**
+   * 流式 delta 累积缓冲区。
+   * pending 是一个**按到达顺序**记录的事件队列：每条只带一种 delta（content 或 reasoning），
+   * 由 RAF 一次性批量 flush 进 message.segments。这样 RAF 在后台标签被 throttle 时，
+   * 即使一帧内累积了多个 delta，flush 仍能保持原本的 content / reasoning 交错顺序。
+   */
+  const streamBufRef = useRef({
+    pending: [] as Array<{ kind: 'content' | 'reasoning'; text: string }>,
+    raf: 0 as number,
+  });
 
   /** WS 推送 sessions_changed 时递增，通知 SessionsPage 刷新 */
   const [sessionsRefreshSignal, setSessionsRefreshSignal] = useState(0);
@@ -85,48 +93,76 @@ export function App() {
   // 压缩状态: null=空闲, 'start'=正在压缩, 'done'=完成, 'error'=失败
   const [compressingStatus, setCompressingStatus] = useState<'start' | 'done' | 'error' | null>(null);
 
-  const handleIncoming = useCallback((content: string, reasoningContent?: string) => {
+  /**
+   * 把单个 typed segment 追加到时间线尾部，并合并相邻同类 text/reasoning_text。
+   * 不修改入参，返回新数组。
+   */
+  const appendSegmentToTimeline = (timeline: ContentSegment[] | undefined, seg: ContentSegment): ContentSegment[] => {
+    const arr = timeline ? [...timeline] : [];
+    const last = arr[arr.length - 1];
+    if (seg.type === 'text' && last && last.type === 'text') {
+      arr[arr.length - 1] = { type: 'text', content: last.content + seg.content };
+    } else if (seg.type === 'reasoning_text' && last && last.type === 'reasoning_text') {
+      arr[arr.length - 1] = { type: 'reasoning_text', content: last.content + seg.content };
+    } else {
+      arr.push(seg);
+    }
+    return arr;
+  };
+
+  /** 从 segments 派生扁平 content / reasoningContent（供 LLM API 镜像与老代码使用） */
+  const deriveTextFromSegments = (segments: ContentSegment[] | undefined): { content: string; reasoning: string } => {
+    let content = '';
+    let reasoning = '';
+    for (const s of segments ?? []) {
+      if (s.type === 'text') content += s.content;
+      else if (s.type === 'reasoning_text') reasoning += s.content;
+    }
+    return { content, reasoning };
+  };
+
+  const handleIncoming = useCallback((content: string, reasoningContent?: string, serverSegments?: ContentSegment[]) => {
     // 取消 handleStream 尚未执行的 RAF，防止它在 streamingRef 已置 false 后
     // 创建重复的 assistant 消息（竞态：RAF 回调晚于 handleIncoming 执行）
     if (streamBufRef.current.raf) {
       cancelAnimationFrame(streamBufRef.current.raf);
       streamBufRef.current.raf = 0;
     }
-    // 清空残留缓冲（已由最终的完整内容替代）
-    streamBufRef.current.content = '';
-    streamBufRef.current.reasoning = '';
+    streamBufRef.current.pending = [];
 
-    // outbound:message 到达时，用完整内容更新最后一个文本段，保留所有 segments
+    // outbound:message 到达：以服务端为准锁定最终内容。
+    // 优先信任服务端 segments（含真实顺序）；缺省时回退用 content + reasoningContent 重建。
     setMessages(prev => {
       const last = prev[prev.length - 1];
+      const finalSegments: ContentSegment[] = serverSegments && serverSegments.length > 0
+        ? serverSegments
+        : reasoningContent
+          ? [{ type: 'reasoning_text', content: reasoningContent }, { type: 'text', content }]
+          : [{ type: 'text', content }];
+
       if (last && last.role === 'assistant' && streamingRef.current) {
         streamingRef.current = false;
-        const segments = [...(last.segments ?? [])];
-        // 更新最后一个 text segment 为最终完整内容
-        const lastSeg = segments[segments.length - 1];
-        if (lastSeg && lastSeg.type === 'text') {
-          segments[segments.length - 1] = { type: 'text', content };
-        } else {
-          segments.push({ type: 'text', content });
-        }
-        // 保留流式阶段已构建好的 reasoningSegments（含 tool_call 结构），
-        // 不用 outbound:message 的扁平合并文本覆盖
-        const reasoningSegments = last.reasoningSegments;
         return [...prev.slice(0, -1), {
           ...last,
           content,
           reasoningContent: reasoningContent ?? last.reasoningContent,
-          reasoningSegments: reasoningSegments ?? last.reasoningSegments,
-          segments,
+          segments: finalSegments,
         }];
       }
       streamingRef.current = false;
-      return [...prev, { role: 'assistant' as const, content, reasoningContent, segments: [{ type: 'text' as const, content }], timestamp: Date.now() }];
+      return [...prev, {
+        role: 'assistant' as const,
+        content,
+        reasoningContent,
+        segments: finalSegments,
+        timestamp: Date.now(),
+      }];
     });
     setLoading(false);
   }, []);
 
-  /** 同步把 streamBufRef 里累积的 delta 刷入消息 state。
+  /**
+   * 把 streamBufRef.pending 队列里所有事件**按顺序**刷入消息 segments。
    *  - 由 rAF 回调调用（正常批处理）
    *  - 由 handleToolCall / handleStream(done) 主动调用（确保顺序一致且不丢尾巴）
    */
@@ -136,48 +172,37 @@ export function App() {
       cancelAnimationFrame(buf.raf);
       buf.raf = 0;
     }
-    const cDelta = buf.content;
-    const rDelta = buf.reasoning;
-    if (!cDelta && !rDelta) return;
-    buf.content = '';
-    buf.reasoning = '';
+    if (buf.pending.length === 0) return;
+    const events = buf.pending;
+    buf.pending = [];
 
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant' && streamingRef.current) {
-        const updated = { ...last };
-        if (rDelta) {
-          updated.reasoningContent = (updated.reasoningContent ?? '') + rDelta;
-          const rSegs = [...(updated.reasoningSegments ?? [])];
-          const lastRS = rSegs[rSegs.length - 1];
-          if (lastRS && lastRS.type === 'text') {
-            rSegs[rSegs.length - 1] = { type: 'text', content: lastRS.content + rDelta };
-          } else {
-            rSegs.push({ type: 'text', content: rDelta });
-          }
-          updated.reasoningSegments = rSegs;
+        let segments = last.segments ?? [];
+        for (const ev of events) {
+          segments = appendSegmentToTimeline(segments, { type: ev.kind === 'content' ? 'text' : 'reasoning_text', content: ev.text });
         }
-        if (cDelta) {
-          updated.content += cDelta;
-          const segments = [...(updated.segments ?? [])];
-          const lastSeg = segments[segments.length - 1];
-          if (lastSeg && lastSeg.type === 'text') {
-            segments[segments.length - 1] = { type: 'text', content: lastSeg.content + cDelta };
-          } else {
-            segments.push({ type: 'text', content: cDelta });
-          }
-          updated.segments = segments;
-        }
-        return [...prev.slice(0, -1), updated];
+        const { content, reasoning } = deriveTextFromSegments(segments);
+        return [...prev.slice(0, -1), {
+          ...last,
+          content,
+          reasoningContent: reasoning || undefined,
+          segments,
+        }];
       }
       // 创建新的助手消息
       streamingRef.current = true;
+      let segments: ContentSegment[] = [];
+      for (const ev of events) {
+        segments = appendSegmentToTimeline(segments, { type: ev.kind === 'content' ? 'text' : 'reasoning_text', content: ev.text });
+      }
+      const { content, reasoning } = deriveTextFromSegments(segments);
       return [...prev, {
         role: 'assistant' as const,
-        content: cDelta ?? '',
-        reasoningContent: rDelta || undefined,
-        reasoningSegments: rDelta ? [{ type: 'text' as const, content: rDelta }] : [],
-        segments: cDelta ? [{ type: 'text' as const, content: cDelta }] : [],
+        content,
+        reasoningContent: reasoning || undefined,
+        segments,
         timestamp: Date.now(),
       }];
     });
@@ -185,18 +210,19 @@ export function App() {
 
   const handleStream = useCallback((contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => {
     if (done) {
-      // 流结束标记 — 先把可能挂起的尾巴刷出去，再清状态
       flushStreamBuffer();
       setLoading(false);
       setToolLimitReached(!!toolLimitReached);
       return;
     }
 
-    // 累积 delta 到 ref，由 RAF 批量刷入 state（避免每个 delta 都触发渲染）
-    streamBufRef.current.content += contentDelta ?? '';
-    streamBufRef.current.reasoning += reasoningDelta ?? '';
-    if (streamBufRef.current.raf) return;
-    streamBufRef.current.raf = requestAnimationFrame(flushStreamBuffer);
+    // 单个 chunk 通常只带 content 或 reasoning 之一（OpenAI 兼容 SSE 行为）；
+    // 若同时存在则按 reasoning → content 顺序追加（与 DeepSeek 字段顺序一致）。
+    const buf = streamBufRef.current;
+    if (reasoningDelta) buf.pending.push({ kind: 'reasoning', text: reasoningDelta });
+    if (contentDelta) buf.pending.push({ kind: 'content', text: contentDelta });
+    if (buf.raf) return;
+    buf.raf = requestAnimationFrame(flushStreamBuffer);
   }, [flushStreamBuffer, setLoading]);
 
   const handleLog = useCallback((entry: LogEntry) => {
@@ -208,22 +234,13 @@ export function App() {
 
   const handleToolCall = useCallback((toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => {
     // 先把挂起的文本 delta 刷入，确保 tool_call 按真实到达顺序插入
-    // （后台标签页 rAF 被 throttle 时，若不 flush，tool_call 会挤到累积文本的前面）
     flushStreamBuffer();
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
         const now = Date.now();
         if (last && last.role === 'assistant') {
-          // 只要消息曾产生过 reasoning，所有工具调用均归入思考过程
-          const hasReasoning = !!(last.reasoningContent || (last.reasoningSegments && last.reasoningSegments.length > 0));
-          if (hasReasoning) {
-            const rSegs = [...(last.reasoningSegments ?? [])];
-            rSegs.push({ type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
-            return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
-          }
-          const segments = [...(last.segments ?? [])];
-          segments.push({ type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
+          const segments = appendSegmentToTimeline(last.segments, { type: 'tool_call', name: toolName, args: toolArgs, startTime: now });
           return [...prev.slice(0, -1), { ...last, segments }];
         }
         streamingRef.current = true;
@@ -234,24 +251,14 @@ export function App() {
           timestamp: Date.now(),
         }];
       }
-      // toolPhase === 'end'——填充结果，先查 reasoningSegments 再查 segments
-      if (last && last.role === 'assistant') {
+      // toolPhase === 'end'——按时间线倒序找首个未填结果的同名 tool_call
+      if (last && last.role === 'assistant' && last.segments) {
         const endNow = Date.now();
-        if (last.reasoningSegments) {
-          const rSegs = [...last.reasoningSegments];
-          const idx = rSegs.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
-          if (idx !== -1) {
-            const seg = rSegs[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
-            rSegs[idx] = { ...seg, result: toolResult, endTime: endNow };
-            return [...prev.slice(0, -1), { ...last, reasoningSegments: rSegs }];
-          }
-        }
-        if (last.segments) {
-          const segments = [...last.segments];
-          const idx = segments.findIndex(s => s.type === 'tool_call' && s.name === toolName && s.result == null);
-          if (idx !== -1) {
-            const seg = segments[idx] as Extract<ContentSegment, { type: 'tool_call' }>;
-            segments[idx] = { ...seg, result: toolResult, endTime: endNow };
+        const segments = [...last.segments];
+        for (let i = segments.length - 1; i >= 0; i--) {
+          const s = segments[i];
+          if (s.type === 'tool_call' && s.name === toolName && s.result == null) {
+            segments[i] = { ...s, result: toolResult, endTime: endNow };
             return [...prev.slice(0, -1), { ...last, segments }];
           }
         }
@@ -315,51 +322,36 @@ export function App() {
     setTodoItems(items as TodoItem[]);
   }, []);
 
-  /** 刷新后恢复正在生成的流式内容 */
-  /** 刷新后恢复正在生成的流式内容（含 segments + reasoning） */
+  /** 刷新后恢复正在生成的流式内容（统一时间线，服务端为权威） */
   const handleStreamResume = useCallback((content: string, reasoningContent: string, serverSegments: ContentSegment[], done: boolean) => {
     setMessages(prev => {
-      // 将服务端 segments 按是否有 reasoning 分流：有 reasoning 时工具调用归入 reasoningSegments
-      const rSegs: ContentSegment[] = [];
-      const segs: ContentSegment[] = [];
-      if (reasoningContent) {
-        rSegs.push({ type: 'text', content: reasoningContent });
-      }
-      for (const seg of serverSegments) {
-        if (seg.type === 'tool_call' && reasoningContent) {
-          rSegs.push(seg);
-        } else {
-          segs.push(seg);
-        }
-      }
-      // 如果服务端无 segments 但有 content，创建一个文本段
-      if (segs.length === 0 && content) {
-        segs.push({ type: 'text', content });
+      // 服务端 segments 已是按到达顺序的统一时间线（含 text / reasoning_text / tool_call）；
+      // 直接采用，无需再按 reasoning 是否存在做分桶。
+      let segments: ContentSegment[] = serverSegments && serverSegments.length > 0
+        ? serverSegments
+        : [];
+      if (segments.length === 0) {
+        // 兼容：服务端未提供 segments（理论上不会发生），用扁平串重建两段式
+        if (reasoningContent) segments.push({ type: 'reasoning_text', content: reasoningContent });
+        if (content) segments.push({ type: 'text', content });
       }
 
       const last = prev[prev.length - 1];
-      // 若尾部已是 assistant（可能来自 fetchAndSetMessages 拉到的部分快照，
-      // 或上一次 stream_resume），就地以服务端快照覆盖，避免重复添加。
       if (last && last.role === 'assistant') {
-        const merged: ChatMessage = {
+        return [...prev.slice(0, -1), {
           ...last,
           content,
           reasoningContent: reasoningContent || last.reasoningContent,
-          reasoningSegments: rSegs.length > 0 ? rSegs : last.reasoningSegments,
-          segments: segs.length > 0 ? segs : last.segments,
-        };
-        return [...prev.slice(0, -1), merged];
+          segments,
+        }];
       }
-
-      const msg: ChatMessage = {
-        role: 'assistant',
+      return [...prev, {
+        role: 'assistant' as const,
         content,
         reasoningContent: reasoningContent || undefined,
-        reasoningSegments: rSegs.length > 0 ? rSegs : undefined,
-        segments: segs.length > 0 ? segs : undefined,
+        segments,
         timestamp: Date.now(),
-      };
-      return [...prev, msg];
+      }];
     });
     if (!done) {
       streamingRef.current = true;
