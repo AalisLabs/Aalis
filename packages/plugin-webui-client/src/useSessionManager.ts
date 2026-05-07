@@ -20,14 +20,17 @@ export interface RawMessage {
   toolCallId?: string;
   name?: string;
   reasoningContent?: string;
+  /** 持久化的有序时间线（新格式）：text / reasoning_text / tool_call 按真实到达顺序混排 */
+  segments?: ContentSegment[];
   timestamp?: number;
 }
 
 /**
  * 将后端返回的结构化消息数组（含 assistant/tool/user/system）转换为前端 ChatMessage 数组。
- * 连续的 assistant + tool 消息组合为一个 ChatMessage，
- * 思考内容（reasoningContent）与工具调用交织构建为 reasoningSegments，
- * 最终回复文本放入 segments。
+ *
+ * 新格式：assistant 消息已带 segments 字段，直接使用，保持模型给出的真实交错顺序。
+ * 老格式（无 segments）：fallback 到把 reasoning_text 全部前置 + content/tool_calls 后置，
+ * 老数据无从恢复真实顺序，只能尽量好看。
  */
 export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
   const result: ChatMessage[] = [];
@@ -63,86 +66,70 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
     if (msg.role === 'assistant') {
       // 收集连续的 assistant + tool 消息组成一个 ChatMessage
       const segments: ContentSegment[] = [];
-      const reasoningSegments: ContentSegment[] = [];
-      // 跟踪已收集的中间 reasoning 文本，用于去重旧格式 combined reasoning
-      const intermediateReasonings: string[] = [];
+      const reasoningOnly: ContentSegment[] = []; // 老格式 fallback：先收集 reasoning，最后前置
       let lastTimestamp = msg.timestamp ?? 0;
       let finalContent = '';
+      // 新格式：若任意一条 assistant 已带 segments，则采用该完整时间线（覆盖之前老路径累积）
+      let anyTimelineSegments = false;
 
       while (i < raw.length && (raw[i].role === 'assistant' || raw[i].role === 'tool')) {
         const cur = raw[i];
 
+        if (cur.role === 'assistant' && cur.segments && cur.segments.length > 0) {
+          // 新格式：assistant 自带统一时间线 segments，是整轮（含所有中间工具迭代）的规范权威时间线。
+          // agent-default 在工具循环中会先以"老格式"保存中间 assistant + tool 消息，
+          // 最后再保存一条带 turnSegments 的最终 assistant —— 这里直接覆盖之前累积，避免重复。
+          anyTimelineSegments = true;
+          segments.length = 0;
+          reasoningOnly.length = 0;
+          for (const seg of cur.segments) segments.push(seg);
+          lastTimestamp = cur.timestamp ?? lastTimestamp;
+          i++;
+          continue;
+        }
+
         if (cur.role === 'assistant' && cur.toolCalls && cur.toolCalls.length > 0) {
-          // 带工具调用的 assistant 消息
-          // 有 reasoningContent → 归入 reasoningSegments（思考阶段）；否则归入 segments（普通内容）
-          const target = cur.reasoningContent ? reasoningSegments : segments;
+          // 老格式：带工具调用的 assistant
           if (cur.reasoningContent) {
-            reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
-            intermediateReasonings.push(cur.reasoningContent);
+            reasoningOnly.push({ type: 'reasoning_text', content: cur.reasoningContent });
           }
           if (cur.content) {
-            target.push({ type: 'text', content: cur.content });
+            segments.push({ type: 'text', content: cur.content });
           }
           for (const tc of cur.toolCalls) {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
-            target.push({ type: 'tool_call', name: tc.function.name, args });
+            segments.push({ type: 'tool_call', name: tc.function.name, args });
           }
           lastTimestamp = cur.timestamp ?? lastTimestamp;
           i++;
         } else if (cur.role === 'tool' && cur.toolCallId) {
-          // tool 结果消息：优先在 reasoningSegments 中查找未填充的 tool_call，再查 segments
-          const segR = reasoningSegments.findLast(
-            s => s.type === 'tool_call' && s.result === undefined
-          );
-          if (segR && segR.type === 'tool_call') {
-            segR.result = cur.content ?? '';
-          } else {
-            const segS = segments.findLast(
-              s => s.type === 'tool_call' && s.result === undefined
-            );
-            if (segS && segS.type === 'tool_call') {
-              segS.result = cur.content ?? '';
+          // tool 结果：填充 segments 中最后一个未填的 tool_call
+          for (let j = segments.length - 1; j >= 0; j--) {
+            const s = segments[j];
+            if (s.type === 'tool_call' && s.result === undefined) {
+              s.result = cur.content ?? '';
+              break;
             }
           }
           i++;
         } else if (cur.role === 'assistant') {
-          // 无 toolCalls 的 assistant 消息
+          // 无 toolCalls 的 assistant
           if (i === raw.length - 1 || raw[i + 1]?.role === 'user' || raw[i + 1]?.role === 'system') {
-            // 最终回复：提取新增的 reasoning（兼容旧格式 combined reasoning）
+            // 最终回复
             if (cur.reasoningContent) {
-              if (intermediateReasonings.length > 0) {
-                // 旧格式可能存的是 combined reasoning，需要去重
-                const prefix = intermediateReasonings.join('\n\n---\n\n');
-                if (cur.reasoningContent.startsWith(prefix)) {
-                  let remainder = cur.reasoningContent.substring(prefix.length);
-                  if (remainder.startsWith('\n\n---\n\n')) {
-                    remainder = remainder.substring('\n\n---\n\n'.length);
-                  }
-                  if (remainder.trim()) {
-                    reasoningSegments.push({ type: 'text', content: remainder });
-                  }
-                } else {
-                  // 新格式：独立 reasoning，直接添加
-                  reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
-                }
-              } else {
-                reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
-              }
+              reasoningOnly.push({ type: 'reasoning_text', content: cur.reasoningContent });
             }
             finalContent = cur.content ?? '';
             lastTimestamp = cur.timestamp ?? lastTimestamp;
             i++;
             break;
           }
-          // 中间 assistant 消息（无工具调用）
+          // 中间 assistant
           if (cur.reasoningContent) {
-            reasoningSegments.push({ type: 'text', content: cur.reasoningContent });
-            intermediateReasonings.push(cur.reasoningContent);
-            if (cur.content) {
-              reasoningSegments.push({ type: 'text', content: cur.content });
-            }
-          } else if (cur.content) {
+            reasoningOnly.push({ type: 'reasoning_text', content: cur.reasoningContent });
+          }
+          if (cur.content) {
             segments.push({ type: 'text', content: cur.content });
           }
           lastTimestamp = cur.timestamp ?? lastTimestamp;
@@ -152,32 +139,31 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
         }
       }
 
-      // 如果 reasoningSegments 中没有任何 text 段（无 reasoning），
-      // 将工具调用移回 segments（兼容非 reasoning 模型）
-      const hasReasoningText = reasoningSegments.some(s => s.type === 'text');
-      if (!hasReasoningText && reasoningSegments.length > 0) {
-        segments.push(...reasoningSegments);
-        reasoningSegments.length = 0;
+      // 拼装最终时间线：
+      // - 新格式：直接使用规范权威时间线；archiveContent 与 segments 末尾文本可能不一致
+      //   （如 persona 对 JSON 做了修复），此处选择忠实模型原始输出。
+      // - 老格式：reasoning 前置 + 已收集 segments + finalContent
+      let timeline: ContentSegment[];
+      if (anyTimelineSegments) {
+        timeline = segments;
+      } else {
+        timeline = [...reasoningOnly, ...segments];
+        if (finalContent) timeline.push({ type: 'text', content: finalContent });
       }
 
-      // 构建合并 reasoningContent 字符串（用于无 segments 的兼容渲染）
-      const allReasoningTexts = reasoningSegments
-        .filter((s): s is Extract<ContentSegment, { type: 'text' }> => s.type === 'text')
-        .map(s => s.content);
-      const reasoningContent = allReasoningTexts.length > 0
-        ? allReasoningTexts.join('\n\n---\n\n')
-        : undefined;
-
-      if (finalContent) {
-        segments.push({ type: 'text', content: finalContent });
+      // 派生扁平 reasoningContent / content 镜像
+      let mirrorReasoning = '';
+      let mirrorContent = '';
+      for (const s of timeline) {
+        if (s.type === 'reasoning_text') mirrorReasoning += s.content;
+        else if (s.type === 'text') mirrorContent += s.content;
       }
 
       result.push({
         role: 'assistant',
-        content: finalContent || msg.content || '',
-        segments: segments.length > 0 ? segments : undefined,
-        reasoningContent,
-        reasoningSegments: reasoningSegments.length > 0 ? reasoningSegments : undefined,
+        content: mirrorContent || finalContent || msg.content || '',
+        segments: timeline.length > 0 ? timeline : undefined,
+        reasoningContent: mirrorReasoning || undefined,
         timestamp: lastTimestamp,
       });
       continue;

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { getSessionId, onSessionChange } from './api';
-import type { LogEntry } from './types';
+import type { LogEntry, ContentSegment } from './types';
 
 export interface TokenUsageData {
   contextWindow: number;
@@ -25,7 +25,7 @@ export interface TokenUsageData {
 }
 
 export function useWebSocket(
-  onMessage: (content: string, reasoningContent?: string) => void,
+  onMessage: (content: string, reasoningContent?: string, segments?: ContentSegment[]) => void,
   onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void,
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
@@ -35,7 +35,7 @@ export function useWebSocket(
   onSessionSwitched?: (sessionId: string) => void,
   onSessionsChanged?: () => void,
   onTodoUpdated?: (items: unknown[]) => void,
-  onStreamResume?: (content: string, reasoningContent: string, segments: Array<{ type: 'text'; content: string } | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string }>, done: boolean) => void,
+  onStreamResume?: (content: string, reasoningContent: string, segments: ContentSegment[], done: boolean) => void,
   onConfirm?: (content: string) => void,
   onTokenUsage?: (usage: TokenUsageData) => void,
   onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void,
@@ -76,7 +76,7 @@ export function useWebSocket(
           if (data.type === 'stream') {
             onStream(data.contentDelta, data.reasoningDelta, data.done, data.toolLimitReached);
           } else if (data.type === 'message' && data.content) {
-            onMessage(data.content, data.reasoningContent);
+            onMessage(data.content, data.reasoningContent, data.segments);
           } else if (data.type === 'tool_call' && data.toolName) {
             onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {

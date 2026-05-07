@@ -8,15 +8,23 @@ export interface TodoItem {
 
 export type ContentSegment =
   | { type: 'text'; content: string }
+  | { type: 'reasoning_text'; content: string }
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  /**
+   * 派生镜像：所有 reasoning_text 段拼接的字符串。
+   * 仅当无 segments（旧数据/老路径）时由历史构建器写入用于回退渲染。
+   * 渲染时优先用 segments；本字段保留以兼容仍读它的代码。
+   */
   reasoningContent?: string;
+  /**
+   * 助手输出的有序时间线（text / reasoning_text / tool_call 按真实到达顺序混排）。
+   * 存在时为渲染权威依据；不存在时回退到 content + reasoningContent 的两段式。
+   */
   segments?: ContentSegment[];
-  /** 思考阶段的 segments（文本与工具调用交替） */
-  reasoningSegments?: ContentSegment[];
   /** 附带的图片（base64 data URL）*/
   images?: string[];
   /** 附带的文件名列表（仅用于显示） */
