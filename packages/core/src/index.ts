@@ -22,6 +22,7 @@ export { ImageRecognitionCapabilities } from './types/index.js';
 export { WebSearchCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
 export { StorageCapabilities } from './types/index.js';
+export { PlatformCapabilities } from './types/index.js';
 export { MessageArchiveCapabilities } from './types/index.js';
 export { SessionManagerCapabilities } from './types/index.js';
 export type { PluginModule } from './plugin.js';
@@ -81,7 +82,9 @@ export type {
   PlatformConnection,
   PlatformSelfIdentity,
   PlatformAdapter,
-  PlatformManagerService,
+  PlatformService,
+  PlatformCapability,
+  PlatformCapabilityRegistry,
   // Gateway 服务（消息流编排中枢）
   GatewayService,
   // 流控服务

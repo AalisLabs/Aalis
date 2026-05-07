@@ -70,26 +70,28 @@ export interface PlatformAdapter {
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>;
 }
 
-// ----- 平台管理服务接口 -----
+// ----- 平台聚合服务接口（同名 facade） -----
 
 import type { PluginGroupInfo } from './core.js';
 
 /**
- * 平台管理服务 —— 平台子系统协调器
+ * 平台聚合服务 —— 同名 facade，对外暴露为 `'platform'`
  *
- * 聚合所有平台适配器的连接状态，
- * 为 Dashboard 提供插件分组信息。
+ * 与 storage-router / llm-router 同模式：以 `capability:['router']`
+ * 注册到 `'platform'` 服务名下，consumer 通过 `ctx.getService('platform')`
+ * 拿到聚合层；如需访问具体某个 adapter，可用
+ * `ctx.getService<PlatformAdapter>('platform', ['<platform-name>'])`。
  *
  * 默认由 plugin-platform 提供。
  */
-export interface PlatformManagerService {
+export interface PlatformService {
   /** 获取平台子系统的插件分组（基于 provides ∩ inject 自动计算） */
   getPluginGroups(): PluginGroupInfo[];
   /** 获取所有平台的聚合连接列表 */
   getConnections(): PlatformConnection[];
   /** 获取所有已注册的平台名称 */
   getPlatformNames(): string[];
-  /** 获取所有合规的平台适配器实例 */
+  /** 获取所有合规的平台适配器实例（不含 router 自身） */
   getAdapters(): PlatformAdapter[];
   /** 获取所有平台适配器及其连接详情 */
   getDetails(): Array<{
@@ -101,4 +103,22 @@ export interface PlatformManagerService {
   }>;
   /** 获取指定平台在当前会话中的自身身份 */
   getSelfIdentity?(platform: string, sessionId?: string): PlatformSelfIdentity | undefined;
+}
+
+// ----- 平台能力声明 -----
+
+export interface PlatformCapabilityRegistry {
+  Router: 'router';
+}
+
+export type PlatformCapability = PlatformCapabilityRegistry[keyof PlatformCapabilityRegistry];
+
+export const PlatformCapabilities = {
+  Router: 'router',
+} as const satisfies PlatformCapabilityRegistry;
+
+declare module './capabilities.js' {
+  interface ServiceCapabilityMap {
+    platform: PlatformCapability | string;
+  }
 }

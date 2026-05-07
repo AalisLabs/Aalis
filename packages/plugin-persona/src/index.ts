@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { Context, ConfigSchema, SessionManagerService, PlatformManagerService } from '@aalis/core';
+import type { Context, ConfigSchema, SessionManagerService, PlatformService } from '@aalis/core';
 import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from '@aalis/core';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 
@@ -11,7 +11,7 @@ export const name = '@aalis/plugin-persona';
 export const displayName = '人设系统';
 export const provides = ['persona'];
 export const inject = {
-  optional: ['platform-manager'],
+  optional: ['platform'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -487,7 +487,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentSessionId = data.message.sessionId;
     service.currentPlatform = data.message.platform;
     service.currentSessionType = data.message.sessionType;
-    const selfIdentity = ctx.getService<PlatformManagerService>('platform-manager')?.getSelfIdentity?.(data.message.platform, data.message.sessionId);
+    const selfIdentity = ctx.getService<PlatformService>('platform')?.getSelfIdentity?.(data.message.platform, data.message.sessionId);
     service.currentSelfId = selfIdentity?.selfId;
     service.currentSelfNickname = selfIdentity?.nickname;
     service.currentUserId = data.message.userId;

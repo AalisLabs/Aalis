@@ -52,7 +52,8 @@ export type { ToolService } from './tools.js';
 export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js';
 
 // 平台适配器
-export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformManagerService } from './platform.js';
+export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformService, PlatformCapability, PlatformCapabilityRegistry } from './platform.js';
+export { PlatformCapabilities } from './platform.js';
 
 // Gateway 服务（消息流编排中枢）
 export type { GatewayService } from './gateway.js';
