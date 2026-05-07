@@ -42,7 +42,12 @@ interface ParsedCommandArgs {
  * 由 plugin-commands 创建并注册为服务 'commands'，
  * 所有插件通过 ctx.command() 注册指令，通过 ctx.commands 访问。
  *
- * 子指令支持：
+ * 与 plugin-agent-tools/ToolRegistry 同属"中心 Registry 模式"：
+ * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
+ * - register() 返回 disposer，插件 dispose 时由 Context 链路自动注销
+ * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
+ *
+ * 子指令支持（CommandRegistry 特有）：
  * - CommandDefinition.subcommands 可递归嵌套（子、孙、…）
  * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层
  * - Override 键为冒号拼接的完整路径：`clear:all`、`db:migrate:up`
@@ -59,6 +64,8 @@ export class CommandRegistry implements CommandService {
   constructor(logger: Logger) {
     this.logger = logger.child('commands');
   }
+
+  // ---- 配置覆盖（authority / safety override）----
 
   loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void {
     this.overrides.clear();
@@ -77,7 +84,11 @@ export class CommandRegistry implements CommandService {
     return result;
   }
 
+  // ---- 执行守卫 ----
+
   setExecutionGuard(guard: ExecutionGuard): void { this._guard = guard; }
+
+  // ---- 解析 / 注册 / 查询 ----
 
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null {
     const trimmed = input.trim();
@@ -224,6 +235,8 @@ export class CommandRegistry implements CommandService {
       }
     }
   }
+
+  // ---- 执行 ----
 
   async execute(name: string, cmdCtx: CommandContext): Promise<string | undefined> {
     const resolved = this.resolve(name, cmdCtx.args);
@@ -383,6 +396,8 @@ export class CommandRegistry implements CommandService {
     }
     return out;
   }
+
+  // ---- 批量注销 ----
 
   unregisterByPlugin(pluginName: string): void {
     for (const [name, cmd] of this.commands) {
