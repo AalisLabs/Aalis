@@ -23,6 +23,7 @@ import type {
   SessionConfig,
   GatewayService,
   PlatformService,
+  ContentSegment,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 import { getSenderLabel, getMessageName } from '@aalis/core';
@@ -246,7 +247,10 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 消费流式 LLM 调用，累积完整响应，同时向前端推送增量事件
+   * 消费流式 LLM 调用，累积完整响应，同时向前端推送增量事件。
+   *
+   * 同时构建本轮调用的 segments 时间线（按 chunk 到达顺序记录 text / reasoning_text，
+   * 相邻同类合并）——用于上层将多轮调用 + 工具执行交错拼接成统一时间线。
    */
   private async consumeStream(
     llm: LLMService,
@@ -254,11 +258,20 @@ class DefaultAgent implements AgentService {
     sessionId: string,
     platform: string,
     signal?: AbortSignal,
-  ): Promise<ChatResponse> {
+  ): Promise<ChatResponse & { segments: ContentSegment[] }> {
     let content = '';
     let reasoningContent = '';
     let toolCalls: ToolCall[] | undefined;
     let usage: ChatResponse['usage'] | undefined;
+    const segments: ContentSegment[] = [];
+    const appendDelta = (kind: 'text' | 'reasoning_text', delta: string) => {
+      const last = segments[segments.length - 1];
+      if (last && last.type === kind) {
+        segments[segments.length - 1] = { type: kind, content: last.content + delta };
+      } else {
+        segments.push({ type: kind, content: delta });
+      }
+    };
 
     for await (const chunk of llm.chatStream(request)) {
       // 检查中止信号
@@ -267,6 +280,7 @@ class DefaultAgent implements AgentService {
       }
       if (chunk.contentDelta) {
         content += chunk.contentDelta;
+        appendDelta('text', chunk.contentDelta);
         await this.ctx.emit('outbound:stream', {
           sessionId,
           platform,
@@ -275,6 +289,7 @@ class DefaultAgent implements AgentService {
       }
       if (chunk.reasoningDelta) {
         reasoningContent += chunk.reasoningDelta;
+        appendDelta('reasoning_text', chunk.reasoningDelta);
         await this.ctx.emit('outbound:stream', {
           sessionId,
           platform,
@@ -294,6 +309,7 @@ class DefaultAgent implements AgentService {
       reasoningContent: reasoningContent || undefined,
       toolCalls,
       usage,
+      segments,
     };
   }
 
@@ -508,7 +524,7 @@ class DefaultAgent implements AgentService {
         );
 
         const t0 = Date.now();
-        let response = await this.consumeStream(llm, {
+        const firstResult = await this.consumeStream(llm, {
           messages: llmBeforeData.messages,
           tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
           temperature,
@@ -516,6 +532,12 @@ class DefaultAgent implements AgentService {
           model: modelOverride,
           signal,
         }, incoming.sessionId, incoming.platform, signal);
+
+        // 维护本轮（一次完整对话回合）的统一时间线 segments：
+        // 多次 LLM 调用 + 工具执行的输出按到达顺序拼接，保留模型原本的"思考/回答/工具/思考/回答"交错。
+        const turnSegments: ContentSegment[] = [...firstResult.segments];
+
+        let response: ChatResponse = firstResult;
 
         this.debugLogResponse(response, Date.now() - t0);
 
@@ -603,8 +625,9 @@ class DefaultAgent implements AgentService {
                 this.logger.info(`工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`);
                 result = result.slice(0, toolResultMaxChars) + `\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
               }
+              const toolEndTime = Date.now();
 
-              this.logger.debug(`工具完成: ${toolBeforeData.name} (${Date.now() - toolT0}ms) 结果=${result}`);
+              this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
 
               // 通知平台：工具执行完成
               await this.ctx.emit('tool:execute', {
@@ -616,12 +639,12 @@ class DefaultAgent implements AgentService {
                 result,
               });
 
-              return { toolCall, result };
+              return { toolCall, result, toolName: toolBeforeData.name, toolArgs: toolBeforeData.args, startTime: toolT0, endTime: toolEndTime };
             }),
           );
 
-          // 按原始 toolCalls 顺序将结果推入消息列表
-          for (const { toolCall, result } of parallelResults) {
+          // 按原始 toolCalls 顺序将结果推入消息列表 + 时间线
+          for (const { toolCall, result, toolName, toolArgs, startTime, endTime } of parallelResults) {
             const resultPreview = result.length > 200 ? result.slice(0, 200) + '...' : result;
             toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
 
@@ -632,6 +655,16 @@ class DefaultAgent implements AgentService {
             };
             llmBeforeData.messages.push(toolMessage);
             toolMessages.push(toolMessage);
+
+            // 工具调用追加到本回合的统一时间线
+            turnSegments.push({
+              type: 'tool_call',
+              name: toolName,
+              args: toolArgs,
+              result,
+              startTime,
+              endTime,
+            });
           }
 
           await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages);
@@ -647,7 +680,7 @@ class DefaultAgent implements AgentService {
           this.emitTokenUsage(incoming.sessionId, incoming.platform, nextLlmData.messages, nextLlmData.tools, contextLength, maxTokens, tokenBudget);
 
           const tN = Date.now();
-          response = await this.consumeStream(llm, {
+          const nextResult = await this.consumeStream(llm, {
             messages: nextLlmData.messages,
             tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
             temperature,
@@ -655,6 +688,8 @@ class DefaultAgent implements AgentService {
             model: modelOverride,
             signal,
           }, incoming.sessionId, incoming.platform, signal);
+          turnSegments.push(...nextResult.segments);
+          response = nextResult;
 
           this.debugLogResponse(response, Date.now() - tN, iterations);
 
@@ -730,15 +765,17 @@ class DefaultAgent implements AgentService {
             reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
             metadata: assistantMetadata,
+            segments: turnSegments.length > 0 ? turnSegments : undefined,
           });
 
-          // 发送给流式客户端时使用合并版本（客户端流式阶段已自行维护 reasoningSegments）
+          // 发送给流式客户端时使用合并版本（统一时间线 segments 同时给出，前端按到达顺序渲染）
           await this.dispatchOutbound({
             content: replyContent,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             reasoningContent: combinedReasoning,
             source: 'agent',
+            segments: turnSegments.length > 0 ? turnSegments : undefined,
           });
         }
 
