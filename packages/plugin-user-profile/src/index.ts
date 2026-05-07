@@ -222,24 +222,46 @@ function isTargetUserMessage(message: Message, userId: string, platform: string)
   return !msgPlatform || !platform || msgPlatform === platform;
 }
 
-function sanitizeProfileSourceContent(content: string): string {
-  return content
-    .split('\n')
-    .filter(line => !/^\[引用 .+ 的消息: .+\]$/.test(line.trim()))
-    .join('\n')
-    .trim();
+/**
+ * 将文本标准化为可子串匹配的形式：去空白、去常见标点、toLowerCase。
+ * 用于 sourceQuote 校验，容忍 LLM 轻微原词改写。
+ */
+function normalizeForQuoteMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[。，、；：？！“”‘’（）《》【】.,;:?!"'()\[\]<>\-_~`*]/g, '');
 }
 
-/** 渲染目标用户自己的发言，喂给提取 LLM；群聊中不混入其他人的消息 */
-function renderHistoryForExtract(history: Message[], userId: string): string {
+/**
+ * 拼接目标用户自己发言作为 sourceQuote 校验语料。
+ * 只包含目标用户 role==='user' 且 metadata.userId 匹配的消息。
+ */
+function buildTargetUserCorpus(history: Message[], userId: string, platform: string): string {
+  return history
+    .filter(m => isTargetUserMessage(m, userId, platform))
+    .map(m => m.content ?? '')
+    .join('\n');
+}
+
+/**
+ * 渲染完整会话历史供提取 LLM 作为消歧上下文：
+ * 每行带身份标签区分「目标用户」与「其他用户」，
+ * 不做 strip（引用原话不会在目标用户语料中出现，sourceQuote 校验能拦住）。
+ */
+function renderHistoryForExtract(history: Message[], userId: string, platform: string): string {
   return history
     .filter(m => m.role === 'user' && m.content)
     .map(m => {
       const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
       const nickname = metadataString(m, 'nickname');
-      const label = nickname ? `${nickname}（${userId}）` : userId;
-      const content = sanitizeProfileSourceContent(m.content ?? '');
-      return content ? `[${time}] 目标用户 ${label}: ${content}` : '';
+      const msgUserId = getMessageUserId(m) ?? '';
+      const msgPlatform = metadataString(m, 'platform');
+      const isTarget = msgUserId === userId && (!msgPlatform || !platform || msgPlatform === platform);
+      const label = nickname ? `${nickname}(${msgUserId || '?'})` : (msgUserId || '?');
+      const tag = isTarget ? '目标用户' : '其他用户';
+      const content = (m.content ?? '').trim();
+      return content ? `[${time}] [${tag} ${label}]: ${content}` : '';
     })
     .filter(Boolean)
     .join('\n');
@@ -358,8 +380,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
-  interface ExtractAddItem { text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string }
-  interface ExtractUpdateItem { id: string; text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string }
+  interface ExtractAddItem { text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string; sourceQuote?: string }
+  interface ExtractUpdateItem { id: string; text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string; sourceQuote?: string }
   interface ExtractResult { add: ExtractAddItem[]; update: ExtractUpdateItem[]; remove: string[] }
 
   function normalizeCategory(v: unknown): FactCategory | undefined {
@@ -373,34 +395,38 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     existingFacts: Fact[],
     nickname: string | undefined,
     userId: string,
+    platform: string,
   ): Promise<ExtractResult> {
     const llm = ctx.getService<LLMService>('llm');
     const empty: ExtractResult = { add: [], update: [], remove: [] };
     if (!llm?.chat) return empty;
 
-    const sys = '你是用户档案管理员。请从给定的目标用户发言中识别「关于该用户值得长期记住」的事实，'
-      + '维护一份精炼、准确、不冗余的档案。'
+    const sys = '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：'
+      + '`[目标用户 X(uid)]` 或 `[其他用户 Y(uid)]`。上下文仅供消歧，'
+      + '**只允许根据「目标用户」自己的发言写入事实**，不能根据其他用户、Aalis 的猜测或提问写入事实。'
       + '\n\n你可以执行三种操作（在一次输出里组合）：'
-      + '\n- add: 添加新事实，需指定 text 与 category'
-      + '\n- update: 用 id 精确替换某条已知事实（用于含义重叠或表述需要修正的情况，**优先使用 update 而非 add 来避免重复**）'
-      + '\n- remove: 用 id 删除已被推翻、过时、或确认错误的事实'
+      + '\n- add: 添加新事实，需指定 text、category、sourceQuote'
+      + '\n- update: 用 id 精确替换某条已知事实，同样需 sourceQuote（优先使用 update 而非 add 来避免重复）'
+      + '\n- remove: 用 id 删除已被推翻、过时的事实（不需 sourceQuote）'
       + '\n\n规则：'
-      + `\n1. 仅记录与「该用户」本人相关、值得长期记住的事实，不记闲聊话题或一次性话语；只允许根据「目标用户」自己的发言写入事实，不能根据 Aalis 的猜测、提问、引用消息或其他人的发言写入事实`
-      + '\n2. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条'
-      + '\n3. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除'
-      + `\n4. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实`
-      + '\n5. 如果没有任何更新，三个数组都返回空'
-      + `\n6. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}`
-      + '\n7. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary'
-      + '\n8. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串'
+      + '\n1. 仅记录与「目标用户」本人相关、值得长期记住的事实。如果某条事实的原始依据来自「其他用户」的发言，即使该信息是关于目标用户的，也**不允许**写入（他人可能说错、说反话、记错）'
+      + '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写'
+      + '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条'
+      + '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除'
+      + `\n5. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实`
+      + '\n6. 如果没有任何更新，三个数组都返回空'
+      + `\n7. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}`
+      + '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary'
+      + '\n9. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串'
       + '\n\n输出严格的 JSON（不要其他文本）：'
-      + '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "..."}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "..."}], "remove": ["已知事实的id"]}';
+      + '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]}';
 
     const factListText = existingFacts.length > 0
       ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
       : '（暂无）';
     const who = nickname ? `${nickname}（${userId}）` : userId;
-    const user = `# 该用户标识\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 目标用户最近发言（已按身份过滤）\n${renderHistoryForExtract(history, userId) || '（暂无可用于提取的目标用户发言）'}`;
+    const renderedHistory = renderHistoryForExtract(history, userId, platform);
+    const user = `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
 
     // 提取模型若指定，则通过 chat({model}) 让 router 路由；否则用默认 LLM。
     const extractLlm: LLMService = llm;
@@ -428,11 +454,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             const t = typeof o.text === 'string' ? o.text.trim() : '';
             if (!t) return [];
             const category = normalizeCategory(o.category);
+            const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
             return [{
               text: t,
               category,
               temporality: normalizeTemporality(o.temporality, category),
               timeHint: normalizeTextField(o.timeHint),
+              sourceQuote,
             }];
           })
         : [];
@@ -444,19 +472,51 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             const t = typeof o.text === 'string' ? o.text.trim() : '';
             if (!id || !t) return [];
             const category = normalizeCategory(o.category);
+            const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
             return [{
               id,
               text: t,
               category,
               temporality: normalizeTemporality(o.temporality, category),
               timeHint: normalizeTextField(o.timeHint),
+              sourceQuote,
             }];
           })
         : [];
       const remove: string[] = Array.isArray(parsed.remove)
         ? (parsed.remove as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(s => s.trim())
         : [];
-      return { add, update, remove };
+
+      // sourceQuote 校验：每条 add/update 的 sourceQuote 必须能在「目标用户」语料中找到。
+      const targetCorpus = normalizeForQuoteMatch(buildTargetUserCorpus(history, userId, platform));
+      const validateSourceQuote = (item: { text: string; sourceQuote?: string }, kind: 'add' | 'update'): boolean => {
+        const q = item.sourceQuote?.trim() ?? '';
+        if (!q) {
+          ctx.logger.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
+          return false;
+        }
+        const normalized = normalizeForQuoteMatch(q);
+        if (!normalized || !targetCorpus.includes(normalized)) {
+          ctx.logger.warn(
+            `[user-profile] 丢弃 ${kind} fact（sourceQuote 不在目标用户 ${userId} 发言中）: text="${item.text}" quote="${q}"`,
+          );
+          return false;
+        }
+        return true;
+      };
+      const validatedAdd = add.filter(item => validateSourceQuote(item, 'add'));
+      const validatedUpdate = update.filter(item => validateSourceQuote(item, 'update'));
+      // 剥除 sourceQuote，不入库
+      const stripQuote = <T extends { sourceQuote?: string }>(item: T): Omit<T, 'sourceQuote'> => {
+        const { sourceQuote: _omit, ...rest } = item;
+        void _omit;
+        return rest;
+      };
+      return {
+        add: validatedAdd.map(stripQuote) as ExtractAddItem[],
+        update: validatedUpdate.map(stripQuote) as ExtractUpdateItem[],
+        remove,
+      };
     } catch (err) {
       ctx.logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
@@ -582,14 +642,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const memory = ctx.getService<MemoryService>('memory');
     try {
       if (!memory?.getHistory) return;
-      const fetchLimit = Math.max(cfg.historyForExtraction, cfg.historyForExtraction * 4);
-      const rawHistory = await memory.getHistory(sessionId, fetchLimit);
-      const history = rawHistory
-        .filter(message => isTargetUserMessage(message, userId, platform))
-        .slice(-cfg.historyForExtraction);
-      if (history.length === 0) return;
+      const history = await memory.getHistory(sessionId, cfg.historyForExtraction);
+      // 序列中至少需要一条目标用户发言，否则没有可提取语料
+      if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
       const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
-      const ops = await llmExtractFacts(history, profile.facts, nickname, userId);
+      const ops = await llmExtractFacts(history, profile.facts, nickname, userId, platform);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
       const newFacts = mergeFacts(profile.facts, ops);
       // 重新读取最新档案，避免覆盖提取期间（LLM 调用时）已写入的 relationScore 等字段
