@@ -75,6 +75,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     getConnections(): PlatformConnection[] {
       return [{ id: sessionId, platform: 'cli', status: tui?.isRunning() ? 'online' : 'offline' }];
     },
+    // sessionId 由配置直接给出（不带 platform 前缀），需显式声明只接管自己的 sessionId
+    canHandle(sid: string): boolean {
+      return sid === sessionId;
+    },
     async sendMessage(_sessionId: string, content: string): Promise<void> {
       tui?.pushAssistant(content);
     },

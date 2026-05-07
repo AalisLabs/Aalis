@@ -1,6 +1,6 @@
-import type { Context, PlatformConnection, PlatformAdapter, PlatformService, App } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import { PlatformCapabilities } from '@aalis/core';
-import { PlatformRegistry } from './registry.js';
+import { PlatformRouter } from './router.js';
 
 // ----- 元数据 -----
 
@@ -16,48 +16,10 @@ export const inject = {
 // ----- 入口 -----
 
 export function apply(ctx: Context): void {
-  const getApp = (): App | undefined => ctx.getService<App>('app');
-  const registry = new PlatformRegistry(ctx.serviceContainer);
-
-  const facade: PlatformService = {
-    getPluginGroups() {
-      const app = getApp();
-      if (!app) return [];
-
-      // 本插件 inject.optional = ['platform']
-      // 找到所有 provides 包含 'platform' 的活跃插件 → 归入平台子系统
-      const targetServices = new Set(['platform']);
-      const grouped: string[] = [];
-
-      for (const p of app.plugins.getStatus()) {
-        if (p.provides?.some(s => targetServices.has(s))) {
-          grouped.push(p.instanceId);
-        }
-      }
-
-      return [{ label: '平台接入', plugins: grouped }];
-    },
-
-    getConnections(): PlatformConnection[] {
-      return registry.listDetails().flatMap(d => d.connections);
-    },
-
-    getPlatformNames(): string[] {
-      return registry.listPlatformNames();
-    },
-
-    getAdapters(): PlatformAdapter[] {
-      return registry.listAdapters();
-    },
-
-    getDetails() {
-      return registry.listDetails();
-    },
-
-    getSelfIdentity(platform: string, sessionId?: string) {
-      return registry.getSelfIdentity(platform, sessionId);
-    },
-  };
-
-  ctx.provide('platform', facade, { capabilities: [PlatformCapabilities.Router] });
+  // PlatformRouter 同时实现 PlatformService（聚合视图）和 PlatformAdapter（按 sessionId 路由），
+  // 直接以同名 facade 注册。consumer 按需以两种接口之一获取。
+  const router = new PlatformRouter(ctx, ctx.logger.child('platform-router'));
+  ctx.provide('platform', router, { capabilities: [PlatformCapabilities.Router] });
 }
+
+export { PlatformRouter } from './router.js';
