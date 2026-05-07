@@ -205,15 +205,43 @@ function decimalPlaces(value: number): number {
   return text.split('.')[1]?.replace(/0+$/, '').length ?? 0;
 }
 
-/** 渲染历史消息为「时间 + 角色 + 文本」的简洁形式，喂给提取 LLM */
-function renderHistoryForExtract(history: Message[]): string {
+function metadataString(message: Message, key: string): string | undefined {
+  const value = message.metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function getMessageUserId(message: Message): string | undefined {
+  return metadataString(message, 'userId') ?? message.name;
+}
+
+function isTargetUserMessage(message: Message, userId: string, platform: string): boolean {
+  if (message.role !== 'user' || !message.content) return false;
+  const msgUserId = getMessageUserId(message);
+  if (msgUserId !== userId) return false;
+  const msgPlatform = metadataString(message, 'platform');
+  return !msgPlatform || !platform || msgPlatform === platform;
+}
+
+function sanitizeProfileSourceContent(content: string): string {
+  return content
+    .split('\n')
+    .filter(line => !/^\[引用 .+ 的消息: .+\]$/.test(line.trim()))
+    .join('\n')
+    .trim();
+}
+
+/** 渲染目标用户自己的发言，喂给提取 LLM；群聊中不混入其他人的消息 */
+function renderHistoryForExtract(history: Message[], userId: string): string {
   return history
-    .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+    .filter(m => m.role === 'user' && m.content)
     .map(m => {
       const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
-      const role = m.role === 'user' ? '用户' : 'Aalis';
-      return `[${time}] ${role}: ${m.content}`;
+      const nickname = metadataString(m, 'nickname');
+      const label = nickname ? `${nickname}（${userId}）` : userId;
+      const content = sanitizeProfileSourceContent(m.content ?? '');
+      return content ? `[${time}] 目标用户 ${label}: ${content}` : '';
     })
+    .filter(Boolean)
     .join('\n');
 }
 
@@ -234,7 +262,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
   };
 
-  /** 每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
+  /** 每会话每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
   const userMessageCount = new Map<string, number>();
   /** 防止同一用户的提取并发触发 */
   const inflightExtractions = new Set<string>();
@@ -247,6 +275,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function userKeyOf(platform: string | undefined, userId: string): string {
     return `${platform ?? ''}:${userId}`;
+  }
+
+  function extractionCountKeyOf(sessionId: string, platform: string | undefined, userId: string): string {
+    return `${sessionId}:${userKeyOf(platform, userId)}`;
   }
 
   function normalizeTemporality(v: unknown, category?: FactCategory): FactTemporality {
@@ -346,14 +378,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const empty: ExtractResult = { add: [], update: [], remove: [] };
     if (!llm?.chat) return empty;
 
-    const sys = '你是用户档案管理员。请从给定的对话历史中识别「关于该用户值得长期记住」的事实，'
+    const sys = '你是用户档案管理员。请从给定的目标用户发言中识别「关于该用户值得长期记住」的事实，'
       + '维护一份精炼、准确、不冗余的档案。'
       + '\n\n你可以执行三种操作（在一次输出里组合）：'
       + '\n- add: 添加新事实，需指定 text 与 category'
       + '\n- update: 用 id 精确替换某条已知事实（用于含义重叠或表述需要修正的情况，**优先使用 update 而非 add 来避免重复**）'
       + '\n- remove: 用 id 删除已被推翻、过时、或确认错误的事实'
       + '\n\n规则：'
-      + `\n1. 仅记录与「该用户」本人相关、值得长期记住的事实，不记闲聊话题或一次性话语；群聊历史中可能含多人发言（以发送者前缀区分），只关注目标用户自身的发言`
+      + `\n1. 仅记录与「该用户」本人相关、值得长期记住的事实，不记闲聊话题或一次性话语；只允许根据「目标用户」自己的发言写入事实，不能根据 Aalis 的猜测、提问、引用消息或其他人的发言写入事实`
       + '\n2. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条'
       + '\n3. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除'
       + `\n4. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实`
@@ -368,7 +400,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
       : '（暂无）';
     const who = nickname ? `${nickname}（${userId}）` : userId;
-    const user = `# 该用户标识\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 最近对话历史\n${renderHistoryForExtract(history)}`;
+    const user = `# 该用户标识\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 目标用户最近发言（已按身份过滤）\n${renderHistoryForExtract(history, userId) || '（暂无可用于提取的目标用户发言）'}`;
 
     // 提取模型若指定，则通过 chat({model}) 让 router 路由；否则用默认 LLM。
     const extractLlm: LLMService = llm;
@@ -550,7 +582,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const memory = ctx.getService<MemoryService>('memory');
     try {
       if (!memory?.getHistory) return;
-      const history = await memory.getHistory(sessionId, cfg.historyForExtraction);
+      const fetchLimit = Math.max(cfg.historyForExtraction, cfg.historyForExtraction * 4);
+      const rawHistory = await memory.getHistory(sessionId, fetchLimit);
+      const history = rawHistory
+        .filter(message => isTargetUserMessage(message, userId, platform))
+        .slice(-cfg.historyForExtraction);
+      if (history.length === 0) return;
       const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
       const ops = await llmExtractFacts(history, profile.facts, nickname, userId);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
@@ -604,14 +641,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const { userId, platform, nickname } = incoming;
     if (!userId) return;
 
-    const userKey = userKeyOf(platform, userId);
-    const count = (userMessageCount.get(userKey) ?? 0) + 1;
-    userMessageCount.set(userKey, count);
+    const countKey = extractionCountKeyOf(sessionId, platform, userId);
+    const count = (userMessageCount.get(countKey) ?? 0) + 1;
+    userMessageCount.set(countKey, count);
     if (cfg.extractEveryNMessages <= 0 || count % cfg.extractEveryNMessages !== 0) return;
 
     void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
       (err: unknown) => ctx.logger.debug(
-        `事实提取异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`,
+        `事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`,
       ),
     );
   });
