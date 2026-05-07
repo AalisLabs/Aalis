@@ -5,7 +5,7 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformManagerService, WebuiPage, PersonaService, AuthorityService, LLMService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformService, WebuiPage, PersonaService, AuthorityService, LLMService } from '@aalis/core';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 import { createAuthSystem, openBrowser } from './auth.js';
 
@@ -15,7 +15,7 @@ export const name = '@aalis/plugin-webui-server';
 export const displayName = 'WebUI 服务端';
 export const provides = ['webui-server', 'platform'];
 export const inject = {
-  optional: ['authority', 'commands', 'storage', 'platform-manager'],
+  optional: ['authority', 'commands', 'storage', 'platform'],
 };
 
 export const webuiPages: WebuiPage[] = [
@@ -582,7 +582,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取所有平台适配器及其连接状态
   expressApp.get('/api/platforms', (_req, res) => {
-    const pm = ctx.getService<PlatformManagerService>('platform-manager');
+    const pm = ctx.getService<PlatformService>('platform');
     res.json({ platforms: pm?.getDetails() ?? [] });
   });
 
@@ -635,11 +635,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // 3. 平台子系统
-    const platformMgr = ctx.getService<PlatformManagerService>('platform-manager');
+    const platformMgr = ctx.getService<PlatformService>('platform');
     if (platformMgr?.getPluginGroups) {
       const platGroups = platformMgr.getPluginGroups();
       const platServices = new Set<string>();
-      platServices.add('platform-manager');
+      platServices.add('platform');
       // webui-client 属于平台子系统
       if (ctx.hasService('webui-client')) platServices.add('webui-client');
       for (const g of platGroups) {
@@ -723,7 +723,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 特殊处理 platform：通过 core 的 getPlatformNames() 获取已注册的平台名称
     if (serviceName === 'platform') {
-      const pm = ctx.getService<PlatformManagerService>('platform-manager');
+      const pm = ctx.getService<PlatformService>('platform');
       res.json({ models: pm?.getPlatformNames() ?? [] });
       return;
     }
@@ -731,7 +731,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 特殊处理 gateway-scopes：基于已注册 adapter.sessionTypes 真实声明生成
     // platform×sessionType 的笛卡尔积。无声明的 adapter 视为单会话（不展开 sessionType）。
     if (serviceName === 'gateway-scopes') {
-      const adapters = ctx.getService<PlatformManagerService>('platform-manager')?.getAdapters() ?? [];
+      const adapters = ctx.getService<PlatformService>('platform')?.getAdapters() ?? [];
       const platformTypes = new Map<string, readonly string[]>();
       const allTypes = new Set<string>();
       for (const a of adapters) {

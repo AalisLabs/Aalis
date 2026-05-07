@@ -5,14 +5,17 @@
 
 ## 概述
 
-平台管理聚合服务，收集所有注册了 `platform` 服务的插件信息，提供统一的平台连接状态查询和平台名称发现接口。
+平台管理聚合服务（同名 facade）。以 `provides:['platform']` + `capability:['router']`
+注册到 `platform` 服务名下，对外作为聚合层 `PlatformService` 暴露所有平台适配器的连接、
+身份和分组信息；底层各平台插件（cli/webui/onebot 等）仍以 `ctx.provide('platform', adapter)`
+方式注册自己的适配器实例。与 storage-router / llm-router 同模式。
 
 ## 插件声明
 
 ```typescript
 meta.name = '@aalis/plugin-platform'
-meta.provides = ['platform-manager']
-meta.inject = {}
+meta.provides = ['platform']
+meta.inject = { optional: ['platform'] }
 ```
 
 ## 工作方式
