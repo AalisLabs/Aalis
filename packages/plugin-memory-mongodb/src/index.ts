@@ -44,6 +44,7 @@ interface MessageDocument {
   timestamp: number;
   archived?: boolean;
   metadata?: Record<string, unknown>;
+  segments?: unknown[];
   createdAt: Date;
 }
 
@@ -76,6 +77,7 @@ class MongoMemoryService implements MemoryService {
       reasoningContent: message.reasoningContent ?? null,
       timestamp: message.timestamp ?? Date.now(),
       metadata: message.metadata,
+      segments: message.segments,
       createdAt: new Date(),
     });
   }
@@ -96,6 +98,7 @@ class MongoMemoryService implements MemoryService {
       name: doc.name,
       timestamp: doc.timestamp,
       reasoningContent: doc.reasoningContent ?? undefined,
+      segments: doc.segments as Message["segments"],
       metadata: doc.metadata,
     }));
   }
@@ -116,6 +119,7 @@ class MongoMemoryService implements MemoryService {
       name: doc.name,
       timestamp: doc.timestamp,
       reasoningContent: doc.reasoningContent ?? undefined,
+      segments: doc.segments as Message["segments"],
       metadata: doc.metadata,
     }));
   }
@@ -136,6 +140,7 @@ class MongoMemoryService implements MemoryService {
       name: d.name,
       timestamp: d.timestamp,
       reasoningContent: d.reasoningContent ?? undefined,
+      segments: d.segments as Message["segments"],
       metadata: d.metadata,
     }));
   }
