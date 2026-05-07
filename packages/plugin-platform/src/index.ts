@@ -1,11 +1,13 @@
-import type { Context, PlatformConnection, PlatformAdapter, PlatformManagerService, App } from '@aalis/core';
+import type { Context, PlatformConnection, PlatformAdapter, PlatformService, App } from '@aalis/core';
+import { PlatformCapabilities } from '@aalis/core';
 import { PlatformRegistry } from './registry.js';
 
 // ----- 元数据 -----
 
 export const name = '@aalis/plugin-platform';
 export const displayName = '平台管理';
-export const provides = ['platform-manager'];
+// 同名 facade：以 'platform' 服务名注册聚合层，capability='router'
+export const provides = ['platform'];
 
 export const inject = {
   optional: ['platform'],
@@ -17,7 +19,7 @@ export function apply(ctx: Context): void {
   const getApp = (): App | undefined => ctx.getService<App>('app');
   const registry = new PlatformRegistry(ctx.serviceContainer);
 
-  const manager: PlatformManagerService = {
+  const facade: PlatformService = {
     getPluginGroups() {
       const app = getApp();
       if (!app) return [];
@@ -57,5 +59,5 @@ export function apply(ctx: Context): void {
     },
   };
 
-  ctx.provide('platform-manager', manager);
+  ctx.provide('platform', facade, { capabilities: [PlatformCapabilities.Router] });
 }

@@ -633,7 +633,7 @@ class CliTui {
 
   private getStatusViewLines(): string[] {
     const services = this.ctx.listServices();
-    const platform = this.ctx.getService<PlatformAdapter>('platform');
+    const platform = this.ctx.getService<PlatformAdapter>('platform', ['cli']);
     const connections = platform?.getConnections?.() ?? [];
     const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? '-';
     const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
