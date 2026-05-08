@@ -800,7 +800,6 @@ export function ChatPanel({
   return (
     <div
       className={`chat-panel${isDragging ? ' drag-over' : ''}`}
-      style={{ width }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
