@@ -215,14 +215,14 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   };
 
   const handleFetchModels = (service: string) => {
-    api<{ models: string[]; providers?: Array<{ model: string; provider: string }> }>(`/api/models/${service}`)
+    api<{
+      models: string[];
+      providers?: Array<{ value: string; model: string; provider: string; contextId: string }>;
+    }>(`/api/models/${service}`)
       .then(r => {
-        const provMap = new Map<string, string>();
-        for (const p of r.providers ?? []) provMap.set(p.model, p.provider);
-        const items = (r.models ?? []).map(m => ({
-          label: provMap.has(m) ? `${provMap.get(m)} / ${m}` : m,
-          value: m,
-        }));
+        const items = (r.providers && r.providers.length > 0)
+          ? r.providers.map(p => ({ label: `${p.provider} / ${p.model}`, value: p.value }))
+          : (r.models ?? []).map(m => ({ label: m, value: m }));
         modelCache.current = { ...modelCache.current, [service]: items };
       })
       .catch(() => {});

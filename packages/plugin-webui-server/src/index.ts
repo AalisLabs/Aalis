@@ -793,28 +793,46 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     try {
       // 聚合所有提供者的模型列表
+      // - LLM 路由要求精确锁定 (provider, model)，所以 value 编码为 "<contextId>::<modelId>"
+      //   复合 ref（见 @aalis/core parseModelRef/formatModelRef）。同 model id 在多 provider
+      //   中并存时不会被合并——前端 select 会同时列出供用户精确选择。
+      // - 其他服务（embedding 等）listModels 返回 string[]，保持原样（plain id）。
       const allProviders = ctx.getAllServices<{ listModels?(): Promise<unknown[]> }>(serviceName);
-      const aggregated: Array<{ model: string; provider: string; capabilities: string[] }> = [];
-      const flatModels: string[] = [];
+      const aggregated: Array<{
+        value: string;
+        model: string;
+        provider: string;
+        contextId: string;
+        capabilities: string[];
+      }> = [];
+      const flatValues: string[] = [];
+      const isLLM = serviceName === 'llm';
 
       for (const provider of allProviders) {
         if (typeof provider.instance.listModels !== 'function') continue;
         try {
           const models = await provider.instance.listModels();
           for (const m of models) {
-            // LLM listModels() returns ModelInfo[], embedding returns string[]
+            // LLM listModels() returns ModelInfo[]，embedding 等返回 string[]
             const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
             const modelId = isModelInfo ? (m as Record<string, unknown>).id as string : String(m);
             const modelCaps = isModelInfo ? (m as Record<string, unknown>).capabilities as string[] : provider.capabilities;
-            aggregated.push({ model: modelId, provider: provider.label ?? provider.contextId, capabilities: modelCaps });
-            flatModels.push(modelId);
+            const value = isLLM ? `${provider.contextId}::${modelId}` : modelId;
+            aggregated.push({
+              value,
+              model: modelId,
+              provider: provider.label ?? provider.contextId,
+              contextId: provider.contextId,
+              capabilities: modelCaps,
+            });
+            flatValues.push(value);
           }
         } catch {
           // 单个提供者获取模型失败不影响整体
         }
       }
 
-      res.json({ models: flatModels, providers: aggregated });
+      res.json({ models: flatValues, providers: aggregated });
     } catch {
       res.json({ models: [] });
     }
