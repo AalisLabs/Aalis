@@ -130,6 +130,7 @@ class CliTui {
   private chatLines: string[] = [];
   private logLines: LogEntry[];
   private logScroll = 0;
+  private logWrap = false;
   private statusScroll = 0;
   private helpScroll = 0;
   private removeLogListener: (() => void) | null = null;
@@ -419,6 +420,12 @@ class CliTui {
   };
 
   private handleLogsKey(key: readline.Key): void {
+    if (key.ctrl && key.name === 'w') {
+      this.logWrap = !this.logWrap;
+      this.logScroll = 0;
+      this.queueRender();
+      return;
+    }
     const maxScroll = Math.max(0, this.logLines.length - 1);
     if (key.name === 'up') this.logScroll = Math.min(maxScroll, this.logScroll + 1);
     else if (key.name === 'down') this.logScroll = Math.max(0, this.logScroll - 1);
@@ -619,20 +626,39 @@ class CliTui {
   private getLogViewLines(width: number): string[] {
     const inner = width - 2;
     // 与 console 输出格式保持一致：ts LEVEL scope message
-    // scope 不截断，不足时消息尖努进行无省略号截断
-    return this.logLines.map(entry => {
+    const lines: string[] = [];
+    for (const entry of this.logLines) {
       const ts    = chalk.gray(entry.timestamp);
       const level = LEVEL_TAG[entry.level];
       const scope = chalk.magenta(entry.scope);
       const head  = `${ts} ${level} ${scope} `;
       const headW = visibleLen(head);
       const msgW  = Math.max(1, inner - headW);
-      // 多行消息（如 agent debug 分隔条 '━'.repeat(52)）会让光标跳到下一行，
-      // 在 alternate screen 中覆盖已绘制内容。统一压成单行展示，并消除 \r / \t。
-      const flat = sanitizeForSingleLine(entry.message);
-      const msg  = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
-      return `  ${head}${msg}`;
-    });
+
+      if (!this.logWrap) {
+        // 默认：压成单行展示（避免 alternate screen 中跨行覆盖）
+        const flat = sanitizeForSingleLine(entry.message);
+        const msg  = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
+        lines.push(`  ${head}${msg}`);
+        continue;
+      }
+
+      // 换行模式：保留真实换行 + 按宽度软折行；每个续行用 contHead 缩进对齐到消息列
+      const contHead = ' '.repeat(headW);
+      const rawLines = entry.message.replace(/\r\n|\r/g, '\n').replace(/\t/g, '    ').split('\n');
+      let isFirst = true;
+      for (const raw of rawLines) {
+        // 按可见宽度软折行
+        const wrapped = wrapByVisibleWidth(raw, msgW);
+        const segs = wrapped.length > 0 ? wrapped : [''];
+        for (const seg of segs) {
+          const prefix = isFirst ? head : contHead;
+          lines.push(`  ${prefix}${seg}`);
+          isFirst = false;
+        }
+      }
+    }
+    return lines;
   }
 
   private getStatusViewLines(): string[] {
@@ -676,6 +702,7 @@ class CliTui {
     out.push(row('↑ / ↓',   '逐行滚动'));
     out.push(row('PgUp/Dn', '翻页'));
     out.push(row('Home',    '回到顶部'));
+    out.push(row('Ctrl+W',  '日志页：切换换行模式（多行完整展示）'));
     out.push('');
     out.push(sec('编辑'));
     out.push(row('Enter',     '提交输入'));
@@ -746,14 +773,18 @@ class CliTui {
   }
 
   private renderFooter(width: number): string {
-    const items = [
+    const baseItems = [
       `${chalk.cyan('^T')} chat`,
       `${chalk.cyan('^L')} logs`,
       `${chalk.cyan('^S')} status`,
       `${chalk.cyan('^G')} help`,
       `${chalk.cyan('Esc')} back`,
       `${chalk.cyan('^C')} exit`,
-    ].join(chalk.gray('  ·  '));
+    ];
+    if (this.view === 'logs') {
+      baseItems.push(`${chalk.cyan('^W')} wrap:${this.logWrap ? chalk.green('on') : chalk.gray('off')}`);
+    }
+    const items = baseItems.join(chalk.gray('  ·  '));
     const left = ` ${items} `;
     return padAnsi(chalk.gray.dim(left), width);
   }
@@ -805,6 +836,38 @@ function clipExact(s: string, width: number): string {
   if (width <= 0) return '';
   if (stringWidth(s) <= width) return s;
   return cliTruncate(s, width, { position: 'end', preferTruncationOnSpace: false, truncationCharacter: '' });
+}
+
+/**
+ * 把单行字符串按可见宽度软折行（CJK 算 2 列，emoji/ANSI 不破坏）。
+ * 返回若干段，每段宽度 ≤ width。空字符串返回 [''] 以保留视觉空行。
+ */
+function wrapByVisibleWidth(s: string, width: number): string[] {
+  if (width <= 0) return [s];
+  if (stringWidth(s) <= width) return [s];
+  const segs: string[] = [];
+  let remaining = s;
+  // 防御：极端长字符串避免无限循环
+  while (remaining.length > 0 && segs.length < 1000) {
+    if (stringWidth(remaining) <= width) {
+      segs.push(remaining);
+      break;
+    }
+    // cli-truncate 在 width 处截断，得到第一段
+    const head = cliTruncate(remaining, width, { position: 'end', preferTruncationOnSpace: false, truncationCharacter: '' });
+    if (!head) break;
+    segs.push(head);
+    // 计算消耗的字符数：以可见宽度对齐，逐字符切到与 head 同等宽度
+    let consumed = 0;
+    let acc = 0;
+    for (const ch of remaining) {
+      acc += stringWidth(ch);
+      consumed += ch.length;
+      if (acc >= stringWidth(head)) break;
+    }
+    remaining = remaining.slice(consumed);
+  }
+  return segs.length > 0 ? segs : [''];
 }
 
 /** 按终端列宽右侧补空格 */
