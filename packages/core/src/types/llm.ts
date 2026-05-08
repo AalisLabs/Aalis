@@ -9,6 +9,17 @@ export interface ChatRequest {
   maxTokens?: number;
   /** 覆盖模型（不指定则使用服务默认模型） */
   model?: string;
+  /**
+   * 精确指定 provider（contextId / instanceId，如 `@aalis/plugin-openai`）。
+   *
+   * - 指定时 LLMRouter 直接路由到该 provider，不再依赖 model id 的全局唯一性
+   * - 未指定时 router 退化为"在所有 provider 的 listModels 中查找该 model id"，
+   *   命中多个 / 零个均会抛错
+   * - 这是解决"多个 provider 都声称支持同名 model"歧义的唯一正确手段
+   *
+   * 推荐通过 `parseModelRef("<provider>::<model>")` 从配置/UI 取值。
+   */
+  provider?: string;
   /** 中止信号，用于取消正在进行的 LLM 调用 */
   signal?: AbortSignal;
   /** 是否启用扩展思考。设为 false 可显式关闭提供者默认的 think 模式 */
@@ -62,14 +73,13 @@ export interface LLMService {
   /** 模型上下文窗口大小（token 数） */
   getContextLength(): number;
   /**
-   * 列出该 provider 推荐展示给用户的模型集合（**展示用**）。
+   * 列出该 provider 推荐展示给用户的模型集合。
    *
-   * - 用于 WebUI 模型下拉等 introspection 场景
-   * - 通常是远端拉取 + 用户配置的 customModels 合并的"已知子集"
-   * - **不**用于 LLMRouter 的按 model 路由判断
-   *
-   * 与 `supportsModel` 的差异：listModels 只返回"我知道的"，supportsModel 还能
-   * 表达"我虽然不知道但能转发处理"（如 OpenAI 兼容 endpoint 的通配直通）。
+   * - WebUI 下拉框、各插件 dynamicOptions:'llm' 的候选来源
+   * - 同时也是 LLMRouter 在仅指定 model 不指定 provider 时的定位依据
+   *   （在哪个 provider 的 listModels 里 → 归该 provider）
+   * - 如果 provider 希望支持“任意 model id 直通”（OpenAI 兼容 endpoint 通配），
+   *   用户需显式指定 `request.provider`；Router 不会仅凭 model id 猜测。
    */
   listModels?(): Promise<ModelInfo[]>;
   /**
@@ -77,17 +87,6 @@ export interface LLMService {
    * LLMRouter 在用户未指定 `model` 时可参考此值。
    */
   getDefaultModelId?(): string | undefined;
-  /**
-   * 判断该 provider 是否能处理指定 model id（**路由用**）。
-   *
-   * - LLMRouter 按 ChatRequest.model 路由时枚举所有 provider 调此方法定位归属
-   * - 未实现则该 provider 不会被按 model 路由到（`listModels` 也救不了）
-   * - 可表达 listModels 之外的语义：前缀通配、白名单、"任意 id 都接"等
-   *
-   * 默认推导：`@aalis/plugin-llm-router` 导出 `defaultSupportsModel(listModels)`，
-   * 适合不需要通配/直通语义的 provider 直接复用。
-   */
-  supportsModel?(modelId: string): boolean | Promise<boolean>;
 }
 
 // ----- LLM 能力声明（capability 框架）-----

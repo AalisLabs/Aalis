@@ -79,6 +79,8 @@ export interface AdapterActionChoice {
 // ── runtime ─────────────────────────────────────────────────────────────────
 export interface DecisionRuntime {
   llm: LLMService;
+  /** When `decisionModel` is configured this overrides default LLM provider (contextId). */
+  providerOverride?: string;
   /** When `decisionModel` is configured this overrides default LLM model. */
   modelOverride?: string;
   /** ms — soft cap for an LLM decision call. */

@@ -79,13 +79,15 @@ export function PluginConfigPage({
   const fetchModels = useCallback(async (service: string) => {
     if (modelCache[service]) return;
     try {
-      const res = await api<{ models: string[]; providers?: Array<{ model: string; provider: string }> }>(`/api/models/${encodeURIComponent(service)}`);
-      const provMap = new Map<string, string>();
-      for (const p of res.providers ?? []) provMap.set(p.model, p.provider);
-      const items = (res.models ?? []).map(m => ({
-        label: provMap.has(m) ? `${provMap.get(m)} / ${m}` : m,
-        value: m,
-      }));
+      const res = await api<{
+        models: string[];
+        providers?: Array<{ value: string; model: string; provider: string; contextId: string }>;
+      }>(`/api/models/${encodeURIComponent(service)}`);
+      // 优先从 providers 构造（含复合 value 与 "provider / model" label）；
+      // 未提供 providers 的服务回退到 plain models 列表。
+      const items = (res.providers && res.providers.length > 0)
+        ? res.providers.map(p => ({ label: `${p.provider} / ${p.model}`, value: p.value }))
+        : (res.models ?? []).map(m => ({ label: m, value: m }));
       setModelCache(prev => ({ ...prev, [service]: items }));
     } catch {
       setModelCache(prev => ({ ...prev, [service]: [] }));

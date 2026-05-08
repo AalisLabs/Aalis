@@ -53,6 +53,7 @@ export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'DeepSeek API 密钥' },
   baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.deepseek.com', description: 'API 端点地址，可替换为兼容的第三方服务' },
   customModels: { type: 'textarea', label: '自定义模型', default: '', description: '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。' },
+  modelCapabilities: { type: 'textarea', label: '模型能力覆盖', default: '', description: '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming' },
   timeout: { type: 'number', label: '请求超时 (秒)', default: 120, description: 'LLM 请求超时时间（秒）。思考模式下建议 180-300 秒。0 = 不限制。' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
@@ -82,6 +83,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   baseUrl: 'https://api.deepseek.com',
   customModels: '',
+  modelCapabilities: '',
   timeout: 120,
   temperature: 0.7,
   maxTokens: 8192,
@@ -94,6 +96,7 @@ interface DeepSeekConfig {
   apiKey: string;
   baseUrl: string;
   customModels: string[];
+  modelCapabilities: Map<string, LLMCapability[]>;
   timeout?: number;
   temperature: number;
   maxTokens: number;
@@ -161,6 +164,7 @@ class DeepSeekLLMService implements LLMService {
   private apiKey: string;
   private baseUrl: string;
   private customModels: string[];
+  private modelCapabilities: Map<string, LLMCapability[]>;
   private defaultModel: string | null = null;
   private timeout: number;
   private temperature: number;
@@ -176,6 +180,7 @@ class DeepSeekLLMService implements LLMService {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
+    this.modelCapabilities = config.modelCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
@@ -188,10 +193,6 @@ class DeepSeekLLMService implements LLMService {
     this.logger = ctx.logger;
   }
 
-  /** 启动时快照的模型名集合（远端发现 + 自定义），供 supportsModel 同步查询使用。
-   * 允许远端失败时退化为仅 customModels；运行时不再重拉，避免 listModels 网络抖动影响 LLMRouter 的 supportsModel 返回值。 */
-  private knownModelIds: Set<string> = new Set();
-
   /** 启动时调用：发现远端模型、检查重复、确定默认模型 */
   async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
     const remote = await this.fetchRemoteModels();
@@ -202,19 +203,16 @@ class DeepSeekLLMService implements LLMService {
         this.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，建议去重`);
       }
     }
-
-    // 快照：供路由的 supportsModel 快路径使用
-    this.knownModelIds = new Set([...remoteIds, ...this.customModels]);
-    this.logger.info(`initialize: 远端=${remote.length} 个 [${[...remoteIds].join(',') || '<空>'}], 自定义=${this.customModels.length} 个 [${this.customModels.join(',') || '<空>'}], knownModelIds=${this.knownModelIds.size}`);
+    this.logger.info(`initialize: 远端=${remote.length} 个 [${[...remoteIds].join(',') || '<空>'}], 自定义=${this.customModels.length} 个 [${this.customModels.join(',') || '<空>'}]`);
 
     this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
-    const capabilities = this.defaultModel ? resolveCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
+    const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
     return { defaultModel: this.defaultModel, capabilities };
   }
 
-  /** 同步接口：LLMRouter 按 model 路由时调用此方法定位归属 provider */
-  supportsModel(modelId: string): boolean {
-    return this.knownModelIds.has(modelId);
+  /** 优先用用户覆盖（modelCapabilities 配置），否则走启发式推断。 */
+  private resolveModelCapabilities(modelId: string): LLMCapability[] {
+    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId));
   }
 
   private getDefaultModel(): string {
@@ -236,7 +234,7 @@ class DeepSeekLLMService implements LLMService {
       const data = (await res.json()) as { data: { id: string }[] };
       return data.data.map(m => ({
         id: m.id,
-        capabilities: resolveCapabilities(m.id),
+        capabilities: this.resolveModelCapabilities(m.id),
       }));
     } catch (err) {
       this.logger.warn(`fetchRemoteModels 异常 ${url}: ${(err as Error).message}`);
@@ -249,7 +247,7 @@ class DeepSeekLLMService implements LLMService {
     const remoteIds = new Set(remote.map(m => m.id));
     const custom = this.customModels
       .filter(id => !remoteIds.has(id))
-      .map(id => ({ id, capabilities: resolveCapabilities(id) }));
+      .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
     return [...remote, ...custom];
   }
 
@@ -634,11 +632,28 @@ function parseCustomModels(raw: unknown): string[] {
   return raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
 }
 
+/** 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...` */
+function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
+  const out = new Map<string, LLMCapability[]>();
+  if (!raw || typeof raw !== 'string') return out;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx < 0) continue;
+    const modelId = trimmed.slice(0, colonIdx).trim();
+    const caps = trimmed.slice(colonIdx + 1).split(',').map(s => s.trim()).filter(Boolean) as LLMCapability[];
+    if (modelId && caps.length > 0) out.set(modelId, caps);
+  }
+  return out;
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const deepseekConfig: DeepSeekConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
     customModels: parseCustomModels(config.customModels),
+    modelCapabilities: parseModelCapabilities(config.modelCapabilities),
     timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 8192,
