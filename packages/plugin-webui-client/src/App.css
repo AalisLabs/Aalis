@@ -2148,6 +2148,17 @@ body {
   display: flex;
   gap: 6px;
   flex-wrap: nowrap;
+  cursor: pointer;
+}
+
+.log-entry:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.04));
+}
+
+.log-entry.expanded {
+  flex-wrap: wrap;
+  background: var(--surface-hover, rgba(255,255,255,0.06));
+  align-items: flex-start;
 }
 
 .log-entry .log-time {
@@ -2176,6 +2187,21 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.log-entry.expanded .log-msg {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  flex: 1 1 100%;
+}
+
+.log-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  align-self: center;
 }
 
 /* ===== 插件配置页 ===== */
