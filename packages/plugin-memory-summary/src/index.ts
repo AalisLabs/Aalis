@@ -210,11 +210,31 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 正在摘要中的 session，避免并发重复摘要
   const summarizing = new Set<string>();
 
-  /** 根据当前 LLM 的上下文窗口动态计算摘要 token 上限 */
-  function getSummaryTokenBudget(): number {
+  /**
+   * 根据当前实际使用的模型计算摘要 token 上限。
+   *
+   * - global 模式：用 router 默认 provider 的窗口（与历史行为兼容）
+   * - custom 模式：通过 router.getContextLengthFor(model, provider) 查询所选模型的真实窗口
+   *
+   * 这样可避免“router 默认是 128k → 实际摘要在 4k 模型上跑”的预算失真。
+   */
+  async function getSummaryTokenBudget(): Promise<number> {
     const llm = ctx.getService<LLMService>('llm');
     if (!llm) return 2048; // fallback
-    const contextLength = llm.getContextLength();
+    const override = getSummaryModelOverride();
+    const router = llm as LLMService & {
+      getContextLengthFor?(model?: string, provider?: string): Promise<number>;
+    };
+    let contextLength: number;
+    if (typeof router.getContextLengthFor === 'function' && (override.model || override.provider)) {
+      try {
+        contextLength = await router.getContextLengthFor(override.model, override.provider);
+      } catch {
+        contextLength = llm.getContextLength();
+      }
+    } else {
+      contextLength = llm.getContextLength();
+    }
     return Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio));
   }
 
@@ -280,7 +300,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         .join('\n');
 
       // 构建摘要请求
-      const summaryBudget = getSummaryTokenBudget();
+      const summaryBudget = await getSummaryTokenBudget();
       const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
       const summaryMessages: Message[] = [
         { role: 'system', content: summarySystemPrompt + budgetHint },
@@ -370,7 +390,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
 
       // 动态计算摘要 token 预算
-      const summaryBudget = getSummaryTokenBudget();
+      const summaryBudget = await getSummaryTokenBudget();
       const summaryTokens = Math.ceil(existing.summary.length / 3);
       let summaryContent = existing.summary;
 
@@ -476,7 +496,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           }
         } catch { /* ignore */ }
 
-        const summaryBudget = getSummaryTokenBudget();
+        const summaryBudget = await getSummaryTokenBudget();
         const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
         const summaryMessages: Message[] = [
           { role: 'system', content: summarySystemPrompt + budgetHint },
