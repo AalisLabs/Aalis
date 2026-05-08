@@ -63,6 +63,12 @@ export interface ModelInfo {
   provider?: string;
   /** router 聚合时填充（用于精确定位提供者） */
   contextId?: string;
+  /**
+   * 模型上下文窗口大小（token）。provider 在 listModels() 中填入该模型的真实窗口，
+   * 调用方（如 memory-summary）可据此为不同模型计算合适的 token 预算。
+   * 未提供时调用方应回退到 LLMService.getContextLength()。
+   */
+  contextLength?: number;
 }
 
 export interface LLMService {
