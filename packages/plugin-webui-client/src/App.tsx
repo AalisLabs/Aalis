@@ -74,29 +74,22 @@ export function App() {
 
   const [chatWidth, setChatWidth] = useState(420);
 
-  // 折叠状态：左侧导航栏 / 中间内容区。两者独立控制，持久化在 localStorage。
-  // 折叠后点击对应的浮动展开按钮恢复。
+  // 左侧（导航栏 + 内容面板）整体折叠状态。持久化在 localStorage。
+  // 折叠后只剩聊天列占满整屏；浮动展开按钮在最左侧。
   // 窄屏（≤900px）首次访问自动折叠：避免抽屉式 overlay 默认遮挡聊天面板。
-  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(() => {
     try {
-      const v = localStorage.getItem('aalis.layout.navCollapsed');
+      const v = localStorage.getItem('aalis.layout.leftCollapsed');
       if (v !== null) return v === '1';
-      return window.matchMedia('(max-width: 900px)').matches;
-    } catch { return false; }
-  });
-  const [contentCollapsed, setContentCollapsed] = useState<boolean>(() => {
-    try {
-      const v = localStorage.getItem('aalis.layout.contentCollapsed');
-      if (v !== null) return v === '1';
+      // 兼容旧 key
+      const legacy = localStorage.getItem('aalis.layout.contentCollapsed');
+      if (legacy !== null) return legacy === '1';
       return window.matchMedia('(max-width: 900px)').matches;
     } catch { return false; }
   });
   useEffect(() => {
-    try { localStorage.setItem('aalis.layout.navCollapsed', navCollapsed ? '1' : '0'); } catch { /* ignore */ }
-  }, [navCollapsed]);
-  useEffect(() => {
-    try { localStorage.setItem('aalis.layout.contentCollapsed', contentCollapsed ? '1' : '0'); } catch { /* ignore */ }
-  }, [contentCollapsed]);
+    try { localStorage.setItem('aalis.layout.leftCollapsed', leftCollapsed ? '1' : '0'); } catch { /* ignore */ }
+  }, [leftCollapsed]);
 
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
@@ -624,9 +617,9 @@ export function App() {
   const activeDynamicPage = activePageDef?.content ? activePageDef : undefined;
 
   return (
-    <div className={`app-layout ${navCollapsed ? 'nav-collapsed' : ''} ${contentCollapsed ? 'content-collapsed' : ''}`}>
+    <div className={`app-layout ${leftCollapsed ? 'left-collapsed' : ''}`}>
       {/* 左侧导航 */}
-      {!navCollapsed && (
+      {!leftCollapsed && (
       <nav className="nav-rail">
         <div className="nav-rail-top">
           <div className="nav-logo">A</div>
@@ -642,29 +635,23 @@ export function App() {
           ))}
         </div>
         <div className="nav-rail-bottom">
-          <button
-            className="nav-collapse-btn"
-            onClick={() => setNavCollapsed(true)}
-            title="折叠导航栏"
-            aria-label="折叠导航栏"
-          >‹</button>
           <div className={`nav-status ${connected ? 'online' : 'offline'}`} title={connected ? '已连接' : '离线'} />
         </div>
       </nav>
       )}
 
-      {/* 折叠后的浮动展开按钮（左侧） */}
-      {navCollapsed && (
+      {/* 折叠后的浮动展开按钮 */}
+      {leftCollapsed && (
         <button
-          className="floating-expand-btn floating-expand-nav"
-          onClick={() => setNavCollapsed(false)}
-          title="展开导航栏"
-          aria-label="展开导航栏"
+          className="floating-expand-btn floating-expand-left"
+          onClick={() => setLeftCollapsed(false)}
+          title="展开侧边栏"
+          aria-label="展开侧边栏"
         >›</button>
       )}
 
       {/* 左侧内容区 */}
-      {!contentCollapsed && (
+      {!leftCollapsed && (
       <main className="content-area">
         <div className="content-header">
           <span className="content-title">
@@ -672,9 +659,9 @@ export function App() {
           </span>
           <button
             className="content-collapse-btn"
-            onClick={() => setContentCollapsed(true)}
-            title="折叠此面板（仅显示聊天）"
-            aria-label="折叠内容面板"
+            onClick={() => setLeftCollapsed(true)}
+            title="折叠侧边栏（仅显示聊天）"
+            aria-label="折叠侧边栏"
           >‹</button>
         </div>
 
@@ -690,18 +677,8 @@ export function App() {
       </main>
       )}
 
-      {/* 折叠后的浮动展开按钮（中间面板） */}
-      {contentCollapsed && (
-        <button
-          className="floating-expand-btn floating-expand-content"
-          onClick={() => setContentCollapsed(false)}
-          title="展开内容面板"
-          aria-label="展开内容面板"
-        >›</button>
-      )}
-
       {/* 拖拽分隔条（仅在内容区可见时显示） */}
-      {!contentCollapsed && (
+      {!leftCollapsed && (
       <div
         className="resize-handle"
         onMouseDown={e => {
@@ -735,7 +712,7 @@ export function App() {
       {/* 右侧固定聊天面板：内容折叠时占满剩余宽度 */}
       <div
         className="chat-column"
-        style={contentCollapsed ? { flex: 1, minWidth: 0 } : { width: chatWidth, minWidth: chatWidth }}
+        style={leftCollapsed ? undefined : { width: chatWidth, minWidth: chatWidth }}
       >
         <ChatPanel
           messages={messages}
