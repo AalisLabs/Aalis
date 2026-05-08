@@ -100,22 +100,6 @@ export interface WebuiTabsComponent {
   items: Array<{ key: string; label: string; content: WebuiComponent[] }>;
 }
 
-/** 内嵌页面（iframe） */
-export interface WebuiIframeComponent {
-  type: 'iframe';
-  /** 标题 */
-  label?: string;
-  /**
-   * 内容来源。支持三种格式：
-   * - handler 方法名：调用插件 webuiHandler，返回 { html: string }
-   * - 以 '/' 开头的路径：视为服务端相对路径（如 /api/plugin-page/xxx）
-   * - 以 'http' 开头的完整 URL
-   */
-  source: string;
-  /** iframe 高度，如 '600px' 或 '100%'（默认 '100%'） */
-  height?: string;
-}
-
 /** 所有声明式页面组件的联合类型 */
 export type WebuiComponent =
   | WebuiStatComponent
@@ -124,8 +108,7 @@ export type WebuiComponent =
   | WebuiActionsComponent
   | WebuiInfoComponent
   | WebuiMarkdownComponent
-  | WebuiTabsComponent
-  | WebuiIframeComponent;
+  | WebuiTabsComponent;
 
 /** 插件可声明的 WebUI 页面 */
 export interface WebuiPage {
