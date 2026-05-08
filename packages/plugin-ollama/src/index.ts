@@ -23,6 +23,7 @@ export const reusable = true;
 export const configSchema: ConfigSchema = {
   baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
   customModels: { type: 'textarea', label: '自定义模型', default: '', description: '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。' },
+  modelCapabilities: { type: 'textarea', label: '模型能力覆盖', default: '', description: '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：qwen2.5:7b: chat,tool_calling,streaming' },
   timeout: { type: 'number', label: '请求超时 (秒)', default: 120, description: 'LLM 请求超时时间（秒）。大模型或长上下文建议适当调大。0 = 不限制。' },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数（num_predict）' },
@@ -34,6 +35,7 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   baseUrl: 'http://localhost:11434',
   customModels: '',
+  modelCapabilities: '',
   timeout: 120,
   temperature: 0.7,
   maxTokens: 4096,
@@ -47,6 +49,7 @@ export const defaultConfig = {
 interface OllamaConfig {
   baseUrl: string;
   customModels: string[];
+  modelCapabilities: Map<string, LLMCapability[]>;
   timeout?: number;
   temperature: number;
   maxTokens: number;
@@ -147,6 +150,7 @@ function extractThinkTags(text: string): { reasoning: string; content: string } 
 class OllamaLLMService implements LLMService {
   private baseUrl: string;
   private customModels: string[];
+  private modelCapabilities: Map<string, LLMCapability[]>;
   private defaultModel: string | null = null;
   private timeout: number;
   private temperature: number;
@@ -159,6 +163,7 @@ class OllamaLLMService implements LLMService {
   constructor(config: OllamaConfig, logger: Logger) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
+    this.modelCapabilities = config.modelCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
@@ -168,10 +173,6 @@ class OllamaLLMService implements LLMService {
     this.thinking = config.thinking;
     this.logger = logger;
   }
-
-  /** 启动时快照的模型名集合（本地发现 + 自定义），供 supportsModel 同步查询使用。
-   * Ollama 未启动时退化为仅 customModels；避免运行期 listModels 连接失败影响 LLMRouter 的 supportsModel 返回值。 */
-  private knownModelIds: Set<string> = new Set();
 
   /** 启动时调用：发现本地模型、检查重复、确定默认模型 */
   async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
@@ -184,17 +185,14 @@ class OllamaLLMService implements LLMService {
       }
     }
 
-    // 快照：供路由的 supportsModel 快路径使用
-    this.knownModelIds = new Set([...remoteIds, ...this.customModels]);
-
     this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
-    const capabilities = this.defaultModel ? resolveCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
+    const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
     return { defaultModel: this.defaultModel, capabilities };
   }
 
-  /** 同步接口：LLMRouter 按 model 路由时调用此方法定位归属 provider */
-  supportsModel(modelId: string): boolean {
-    return this.knownModelIds.has(modelId);
+  /** 优先用用户覆盖（modelCapabilities 配置），否则走启发式推断。 */
+  private resolveModelCapabilities(modelId: string): LLMCapability[] {
+    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId));
   }
 
   private getDefaultModel(): string {
@@ -209,7 +207,7 @@ class OllamaLLMService implements LLMService {
       const data = (await res.json()) as { models: { name: string }[] };
       return data.models.map(m => ({
         id: m.name,
-        capabilities: resolveCapabilities(m.name),
+        capabilities: this.resolveModelCapabilities(m.name),
       }));
     } catch {
       return [];
@@ -225,7 +223,7 @@ class OllamaLLMService implements LLMService {
     const remoteIds = new Set(remote.map(m => m.id));
     const custom = this.customModels
       .filter(id => !remoteIds.has(id))
-      .map(id => ({ id, capabilities: resolveCapabilities(id) }));
+      .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
     return [...remote, ...custom];
   }
 
@@ -665,10 +663,27 @@ function parseCustomModels(raw: unknown): string[] {
   return raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
 }
 
+/** 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...` */
+function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
+  const out = new Map<string, LLMCapability[]>();
+  if (!raw || typeof raw !== 'string') return out;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx < 0) continue;
+    const modelId = trimmed.slice(0, colonIdx).trim();
+    const caps = trimmed.slice(colonIdx + 1).split(',').map(s => s.trim()).filter(Boolean) as LLMCapability[];
+    if (modelId && caps.length > 0) out.set(modelId, caps);
+  }
+  return out;
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const ollamaConfig: OllamaConfig = {
     baseUrl: (config.baseUrl as string) ?? 'http://localhost:11434',
     customModels: parseCustomModels(config.customModels),
+    modelCapabilities: parseModelCapabilities(config.modelCapabilities),
     timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,

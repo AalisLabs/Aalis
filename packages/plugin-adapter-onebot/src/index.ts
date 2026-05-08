@@ -4,6 +4,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
 import type { MessageArchiveService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
+import { parseModelRef } from '@aalis/core';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
@@ -804,9 +805,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
-    // 走默认 'llm' 服务（router）；指定模型时通过 chat({model}) 让 router 路由
+    // 走默认 'llm' 服务（router）；summaryModel 可以是复合 ref `<contextId>::<modelId>`
     const llm = ctx.getService<LLMService>('llm');
-    const modelOverride = forwardCfg.summaryModel || undefined;
+    const summaryRef = parseModelRef(forwardCfg.summaryModel || undefined);
     if (!llm || typeof llm.chat !== 'function') {
       ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
       return null;
@@ -837,11 +838,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         think: false,
         // 中文按 1 字 ≈ 1 token 估算，再留 50% 余量；并设 800 token 下限兜底。
         maxTokens: Math.max(800, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
-        model: modelOverride,
+        ...(summaryRef.provider ? { provider: summaryRef.provider } : {}),
+        ...(summaryRef.model ? { model: summaryRef.model } : {}),
       });
       const out = (resp.content ?? '').trim();
       if (!out) {
-        ctx.logger.debug(`forward 摘要返回空内容: model=${modelOverride ?? 'default'}, chars=${forwardCfg.summaryMaxChars}`);
+        ctx.logger.debug(`forward 摘要返回空内容: model=${forwardCfg.summaryModel || 'default'}, chars=${forwardCfg.summaryMaxChars}`);
         return null;
       }
       return out;
