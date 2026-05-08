@@ -183,8 +183,7 @@ body {
   gap: 10px;
 }
 
-/* 折叠按钮（导航栏内 / 内容头内） */
-.nav-collapse-btn,
+/* 折叠按钮（内容头内） */
 .content-collapse-btn {
   display: flex;
   align-items: center;
@@ -202,7 +201,6 @@ body {
   transition: all var(--transition);
 }
 
-.nav-collapse-btn:hover,
 .content-collapse-btn:hover {
   color: var(--text);
   background: var(--surface-hover);
@@ -212,7 +210,7 @@ body {
   margin-left: auto;
 }
 
-/* 折叠后浮动展开按钮：贴在边缘，纵向居中 */
+/* 折叠后浮动展开按钮：贴在屏幕左缘，纵向居中 */
 .floating-expand-btn {
   position: fixed;
   top: 50%;
@@ -236,18 +234,15 @@ body {
   background: var(--surface-hover);
 }
 
-.floating-expand-nav {
+.floating-expand-left {
   left: 0;
 }
 
-.floating-expand-content {
-  /* 当 nav 仍在显示时，浮动按钮贴在 nav-rail 之后；nav 折叠时贴在屏幕左缘 */
-  left: var(--nav-width);
-  border-radius: 0 8px 8px 0;
-}
-
-.app-layout.nav-collapsed .floating-expand-content {
-  left: 0;
+/* 整体折叠时：聊天列占满剩余宽度（覆盖 .chat-column 的 flex-shrink:0） */
+.app-layout.left-collapsed .chat-column {
+  flex: 1 1 0%;
+  width: auto;
+  min-width: 0;
 }
 
 .nav-status {
@@ -4932,12 +4927,8 @@ td.col-actions { text-align: right; }
   }
 
   /* 浮动展开按钮固定在屏幕左缘 */
-  .floating-expand-nav,
-  .floating-expand-content {
+  .floating-expand-left {
     left: 0 !important;
-  }
-  .app-layout.nav-collapsed .floating-expand-content {
-    left: 0;
   }
 
   /* 内容头收缩内边距 */
