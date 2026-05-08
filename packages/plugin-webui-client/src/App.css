@@ -178,7 +178,76 @@ body {
 .nav-rail-bottom {
   padding: 12px 6px;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 折叠按钮（导航栏内 / 内容头内） */
+.nav-collapse-btn,
+.content-collapse-btn {
+  display: flex;
+  align-items: center;
   justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: all var(--transition);
+}
+
+.nav-collapse-btn:hover,
+.content-collapse-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.content-collapse-btn {
+  margin-left: auto;
+}
+
+/* 折叠后浮动展开按钮：贴在边缘，纵向居中 */
+.floating-expand-btn {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+  z-index: 30;
+  font-size: 16px;
+  line-height: 1;
+  transition: all var(--transition);
+}
+
+.floating-expand-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.floating-expand-nav {
+  left: 0;
+}
+
+.floating-expand-content {
+  /* 当 nav 仍在显示时，浮动按钮贴在 nav-rail 之后；nav 折叠时贴在屏幕左缘 */
+  left: var(--nav-width);
+  border-radius: 0 8px 8px 0;
+}
+
+.app-layout.nav-collapsed .floating-expand-content {
+  left: 0;
 }
 
 .nav-status {
