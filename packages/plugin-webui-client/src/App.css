@@ -50,6 +50,40 @@ body {
   height: 100%;
 }
 
+/* 左侧（导航 + 内容）整体容器：用 max-width / opacity 过渡实现平滑折叠 */
+.left-panels {
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-width: 1000px;
+  opacity: 1;
+}
+
+/* 仅在折叠切换时启用过渡，避免 resize 拖拽与之冲突 */
+.app-layout.animating .left-panels {
+  transition:
+    max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.app-layout.animating .chat-column {
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app-layout.left-collapsed .left-panels {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-12px);
+  pointer-events: none;
+}
+
+/* 折叠时聊天列占满剩余宽度（覆盖 .chat-column { flex-shrink: 0 }） */
+.app-layout.left-collapsed .chat-column {
+  flex: 1 1 0%;
+  width: auto !important;
+  min-width: 0 !important;
+}
+
 /* ===== 左侧导航栏 ===== */
 
 .nav-rail {
@@ -236,13 +270,6 @@ body {
 
 .floating-expand-left {
   left: 0;
-}
-
-/* 整体折叠时：聊天列占满剩余宽度（覆盖 .chat-column 的 flex-shrink:0） */
-.app-layout.left-collapsed .chat-column {
-  flex: 1 1 0%;
-  width: auto;
-  min-width: 0;
 }
 
 .nav-status {
