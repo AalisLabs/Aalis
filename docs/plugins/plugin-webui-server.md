@@ -31,8 +31,7 @@ meta.inject = {} // 无依赖
 | `/api/status` | GET | 系统状态、服务可用性、上传能力检测 |
 | `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息） |
 | `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |
-| `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器 |
-| `/api/plugin-page/:plugin/:page` | GET | 插件 HTML 页面渲染（iframe 支持） |
+| `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器（统一 RPC 入口） |
 | `/api/config` | GET/PUT | 全局配置读写（安全字段 + 重启检测） |
 | `/api/authority` | — | 权限管理（用户列表、owner 设置） |
 | `/api/services` | GET | 服务列表与能力查询 |
