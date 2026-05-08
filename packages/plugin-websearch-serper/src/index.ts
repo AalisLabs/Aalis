@@ -1,6 +1,7 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { LLMService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
 import { WebSearchCapabilities } from '@aalis/core';
+import { parseModelRef } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -252,10 +253,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const messages: Message[] = [{ role: 'user', content: prompt }];
 
     try {
+      const ref = parseModelRef(cfg.compressionModel || undefined);
       const response = await targetLLM.chat({
         messages,
         maxTokens: 1024,
-        model: cfg.compressionModel || undefined,
+        ...(ref.provider ? { provider: ref.provider } : {}),
+        ...(ref.model ? { model: ref.model } : {}),
       });
       return response.content?.trim() || rawResults;
     } catch (err) {
