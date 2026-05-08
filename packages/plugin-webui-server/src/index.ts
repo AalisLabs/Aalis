@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { resolve, dirname, basename, extname, relative, join, isAbsolute } from 'node:path';
-import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, createReadStream } from 'node:fs';
+import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, createReadStream, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -33,6 +33,23 @@ export const configSchema: ConfigSchema = {
   fileRoot: { type: 'string', label: '文件浏览根', default: 'workspace', description: '文件管理页面使用的 storage 根 ID，默认 workspace' },
   workspaceRoot: { type: 'string', label: '兼容文件根目录', default: 'workspace', description: '缺少 storage 服务时的兼容文件根目录' },
   autoOpen: { type: 'boolean', label: '启动时自动打开浏览器', default: true, description: '启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭' },
+  tokenMode: {
+    type: 'select',
+    label: 'Token 策略',
+    default: 'persist',
+    options: [
+      { label: '每次启动随机生成（重启即轮换）', value: 'ephemeral' },
+      { label: '首次生成后持久化（重启不掉登录）', value: 'persist' },
+      { label: '使用下方固定 token', value: 'fixed' },
+    ],
+    description: 'ephemeral=旧行为；persist=token 写入 data/.webui-token，读取复用；fixed=使用 fixedToken 字段。所有模式下都会同时写出便利文件 data/webui-access.txt 包含访问 URL。',
+  },
+  fixedToken: {
+    type: 'string',
+    label: '固定 Token（仅 tokenMode=fixed 生效）',
+    default: '',
+    description: '请使用足够长的随机字符串。生产环境强烈建议通过环境变量或受限文件保存。',
+  },
 };
 
 export const defaultConfig = {
@@ -41,6 +58,8 @@ export const defaultConfig = {
   fileRoot: 'workspace',
   workspaceRoot: 'workspace',
   autoOpen: true,
+  tokenMode: 'persist',
+  fixedToken: '',
 };
 
 // ===== 配置 =====
@@ -50,6 +69,8 @@ interface WebUIConfig {
   host: string;
   fileRoot: string;
   autoOpen: boolean;
+  tokenMode: 'ephemeral' | 'persist' | 'fixed';
+  fixedToken: string;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -119,10 +140,70 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     host: (config.host as string) ?? '127.0.0.1',
     fileRoot: (config.fileRoot as string) || 'workspace',
     autoOpen: (config.autoOpen as boolean | undefined) ?? true,
+    tokenMode: ((config.tokenMode as string) === 'ephemeral' || (config.tokenMode as string) === 'fixed') ? (config.tokenMode as 'ephemeral' | 'fixed') : 'persist',
+    fixedToken: (config.fixedToken as string) ?? '',
   };
 
-  // 一次性 token：仅内存、进程重启轮换
-  const authToken = randomBytes(24).toString('hex');
+  // ---- Token 解析 ----
+  // - ephemeral：每次启动随机生成（旧行为）
+  // - persist：首次生成后写入 data/.webui-token，重启复用（默认）
+  // - fixed：使用 fixedToken 配置项；为空时降级为 persist
+  // 所有模式都会写出 data/webui-access.txt 便于查找访问 URL（不写日志要求）
+  const dataDir = resolve(process.cwd(), 'data');
+  const tokenFile = join(dataDir, '.webui-token');
+  const accessFile = join(dataDir, 'webui-access.txt');
+
+  function ensureDataDir(): void {
+    try { if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true }); } catch { /* ignore */ }
+  }
+
+  function resolveAuthToken(): string {
+    if (uiConfig.tokenMode === 'fixed' && uiConfig.fixedToken.trim()) {
+      return uiConfig.fixedToken.trim();
+    }
+    if (uiConfig.tokenMode === 'persist' || uiConfig.tokenMode === 'fixed') {
+      ensureDataDir();
+      try {
+        if (existsSync(tokenFile)) {
+          const existing = readFileSync(tokenFile, 'utf-8').trim();
+          if (existing) return existing;
+        }
+      } catch { /* ignore */ }
+      const fresh = randomBytes(24).toString('hex');
+      try {
+        writeFileSync(tokenFile, fresh, { encoding: 'utf-8' });
+        try { chmodSync(tokenFile, 0o600); } catch { /* ignore */ }
+      } catch (err) {
+        ctx.logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
+      }
+      return fresh;
+    }
+    // ephemeral
+    return randomBytes(24).toString('hex');
+  }
+
+  function writeAccessFile(url: string, token: string): void {
+    ensureDataDir();
+    const lines = [
+      '# Aalis WebUI 访问凭据（自动生成）',
+      `# 生成时间: ${new Date().toISOString()}`,
+      `# Token 模式: ${uiConfig.tokenMode}`,
+      '',
+      `URL: ${url}`,
+      `Token: ${token}`,
+      `一键登录: ${url}?token=${token}`,
+      '',
+      '# 提示：将该一键登录链接粘贴到浏览器即可自动设置 cookie',
+    ];
+    try {
+      writeFileSync(accessFile, lines.join('\n') + '\n', { encoding: 'utf-8' });
+      try { chmodSync(accessFile, 0o600); } catch { /* ignore */ }
+    } catch (err) {
+      ctx.logger.warn(`写入访问文件失败: ${(err as Error).message}`);
+    }
+  }
+
+  const authToken = resolveAuthToken();
   const auth = createAuthSystem(authToken, ctx.logger.child('auth'));
 
   const expressApp = express();
@@ -1560,9 +1641,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     server.listen(uiConfig.port, uiConfig.host, () => {
       const url = `http://${uiConfig.host}:${uiConfig.port}/`;
+      const accessUrl = `${url}?token=${authToken}`;
+      writeAccessFile(url, authToken);
       ctx.logger.info(`WebUI 已启动: ${url}`);
-      ctx.logger.info(`首次访问请使用以下 URL（token 仅本次启动有效，重启轮换）: ${url}?token=${authToken}`);
-      if (uiConfig.autoOpen) openBrowser(`${url}?token=${authToken}`);
+      const tokenHint = uiConfig.tokenMode === 'ephemeral'
+        ? 'token 仅本次启动有效，重启轮换'
+        : uiConfig.tokenMode === 'fixed'
+          ? 'token 来自配置 fixedToken，固定不变'
+          : 'token 已持久化到 data/.webui-token，重启沿用';
+      ctx.logger.info(`首次访问请使用以下 URL（${tokenHint}）: ${accessUrl}`);
+      ctx.logger.info(`访问凭据已写入: ${accessFile}`);
+      if (uiConfig.autoOpen) openBrowser(accessUrl);
     });
   });
 

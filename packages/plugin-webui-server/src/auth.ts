@@ -49,7 +49,7 @@ button:disabled{opacity:.5;cursor:wait}
 </style></head>
 <body><form class="card" id="f">
 <h1>Aalis WebUI</h1>
-<p>请输入启动日志中显示的访问 token。token 仅当次启动有效。</p>
+<p>请输入启动日志或 data/webui-access.txt 中显示的访问 token。</p>
 ${note}
 <input id="t" type="password" autocomplete="off" placeholder="访问 token" autofocus required>
 <button type="submit" id="b">登录</button>
