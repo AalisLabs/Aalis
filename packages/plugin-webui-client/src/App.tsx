@@ -76,11 +76,20 @@ export function App() {
 
   // 折叠状态：左侧导航栏 / 中间内容区。两者独立控制，持久化在 localStorage。
   // 折叠后点击对应的浮动展开按钮恢复。
+  // 窄屏（≤900px）首次访问自动折叠：避免抽屉式 overlay 默认遮挡聊天面板。
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem('aalis.layout.navCollapsed') === '1'; } catch { return false; }
+    try {
+      const v = localStorage.getItem('aalis.layout.navCollapsed');
+      if (v !== null) return v === '1';
+      return window.matchMedia('(max-width: 900px)').matches;
+    } catch { return false; }
   });
   const [contentCollapsed, setContentCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem('aalis.layout.contentCollapsed') === '1'; } catch { return false; }
+    try {
+      const v = localStorage.getItem('aalis.layout.contentCollapsed');
+      if (v !== null) return v === '1';
+      return window.matchMedia('(max-width: 900px)').matches;
+    } catch { return false; }
   });
   useEffect(() => {
     try { localStorage.setItem('aalis.layout.navCollapsed', navCollapsed ? '1' : '0'); } catch { /* ignore */ }
