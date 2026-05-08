@@ -219,7 +219,10 @@ class OpenAILLMService implements LLMService {
     const custom = this.customModels
       .filter(id => !remoteIds.has(id))
       .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
-    return [...remote, ...custom];
+    // 当前实现下所有模型共用同一 contextLength 配置项；为路由器（getContextLengthFor）
+    // 提供有效查询数据，附在每个 ModelInfo 上。如果未来支持按模型差异化窗口，
+    // 应在配置里增加 modelContextLengths 映射并在此覆盖。
+    return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
   }
 
   /** 优先用用户覆盖（modelCapabilities 配置），否则走启发式推断。 */

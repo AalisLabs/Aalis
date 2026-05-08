@@ -92,6 +92,46 @@ export class LLMRouter implements LLMService {
     return this.getDefaultProviderOrThrow().instance.getContextLength?.() ?? 8192;
   }
 
+  /**
+   * 查询特定 (provider, model) 组合的上下文窗口大小。
+   *
+   * 优先级：
+   * 1. 在目标 provider 的 listModels() 中找到匹配条目并读取 contextLength
+   * 2. 退化为 provider.getContextLength()（provider 自报的"默认/通用"窗口）
+   * 3. 最终兜底 8192
+   *
+   * 设计动机：摘要、向量召回等"次要 LLM 调用方"可能选用与主对话不同的 model，
+   * 需要按真实模型窗口计算 token 预算，避免因 router 默认 provider 窗口偏差导致预算失真。
+   *
+   * @param model    可选 model id；未指定走默认逻辑
+   * @param provider 可选 contextId；未指定时按 model 在所有 provider 中查找（不命中则用默认 provider）
+   */
+  async getContextLengthFor(model?: string, provider?: string): Promise<number> {
+    const providers = this.getProviders();
+    if (providers.length === 0) return 8192;
+
+    let target: LLMProviderEntry | undefined;
+    if (provider) {
+      target = providers.find(p => p.contextId === provider);
+    } else if (model) {
+      const candidates = await this.findProvidersByModel(providers, model);
+      target = candidates[0];
+    }
+    target = target ?? providers[0];
+
+    if (model && typeof target.instance.listModels === 'function') {
+      try {
+        const models = await target.instance.listModels();
+        const found = models.find(m => m.id === model);
+        if (found?.contextLength && found.contextLength > 0) return found.contextLength;
+      } catch (err) {
+        this.logger.warn(`listModels 失败 [${target.contextId}]，回退到 getContextLength():`, err);
+      }
+    }
+
+    return target.instance.getContextLength?.() ?? 8192;
+  }
+
   getDefaultModelId(): string | undefined {
     return this.getDefaultProvider()?.instance.getDefaultModelId?.();
   }
@@ -105,7 +145,13 @@ export class LLMRouter implements LLMService {
       try {
         const models = await instance.listModels();
         for (const m of models) {
-          out.push({ id: m.id, capabilities: m.capabilities, provider: label ?? contextId, contextId });
+          out.push({
+            id: m.id,
+            capabilities: m.capabilities,
+            provider: label ?? contextId,
+            contextId,
+            ...(m.contextLength ? { contextLength: m.contextLength } : {}),
+          });
         }
       } catch (err) {
         this.logger.warn(`获取模型列表失败 [${contextId}]:`, err);
