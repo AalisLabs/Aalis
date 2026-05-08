@@ -12,6 +12,8 @@ export { ConfigManager, CORE_CONFIG_SCHEMA } from './config.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
 export { Logger, getLogBuffer, onLogEntry, setConsoleLogSinkEnabled, isConsoleLogSinkEnabled } from './logger.js';
 export { getSenderLabel, prefixSender, getMessageName } from './identity.js';
+export { parseModelRef, formatModelRef } from './model-ref.js';
+export type { ModelRef } from './model-ref.js';
 export { DisposableChain } from './disposable-chain.js';
 export { MixinRegistry } from './mixin-registry.js';
 export type { MixinEntry } from './mixin-registry.js';

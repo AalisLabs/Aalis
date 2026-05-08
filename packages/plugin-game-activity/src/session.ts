@@ -1,4 +1,5 @@
 import type { Context, LLMService, Message } from '@aalis/core';
+import { parseModelRef } from '@aalis/core';
 import type { GameActivityAdapter, DecisionRuntime, AdapterActionChoice } from './adapter.js';
 import type {
   BridgeHelloEvent,
@@ -119,6 +120,7 @@ export class GameActivitySession {
         maxTokens: 240,
         signal: ac.signal,
         ...(runtime.think !== undefined ? { think: runtime.think } : {}),
+        ...(runtime.providerOverride ? { provider: runtime.providerOverride } : {}),
         ...(runtime.modelOverride ? { model: runtime.modelOverride } : {}),
       });
       return (resp.content ?? '').trim();
@@ -202,6 +204,7 @@ export class GameActivitySession {
       temperature: 0.2,
       maxTokens: this.historyOptions.summaryMaxTokens,
       think: false,
+      ...(runtime.providerOverride ? { provider: runtime.providerOverride } : {}),
       ...(runtime.modelOverride ? { model: runtime.modelOverride } : {}),
     });
     return (resp.content ?? '').trim();
@@ -250,7 +253,7 @@ function truncateMessageContent(content: string, maxLength: number): string {
 
 /**
  * Produces the runtime config for a session by resolving the configured
- * decision model through Aalis' provider router.
+ * decision model through Aalis' provider router. 支持复合 ref `<contextId>::<modelId>`。
  */
 export async function resolveDecisionRuntime(
   ctx: Context,
@@ -261,7 +264,7 @@ export async function resolveDecisionRuntime(
   const defaultLlm = ctx.getService<LLMService>('llm');
   if (!defaultLlm) return undefined;
 
-  // 指定 decisionModel 时，通过 chat({model}) 让 router 路由到拥有该模型的 provider
-  const modelOverride = decisionModel.trim() || undefined;
-  return { llm: defaultLlm, modelOverride, timeoutMs, think };
+  // 拆解复合 ref，并通过 chat({provider, model}) 让 router 精确路由
+  const ref = parseModelRef(decisionModel.trim() || undefined);
+  return { llm: defaultLlm, providerOverride: ref.provider, modelOverride: ref.model, timeoutMs, think };
 }

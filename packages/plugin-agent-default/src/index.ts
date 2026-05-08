@@ -26,7 +26,7 @@ import type {
   ContentSegment,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
-import { getSenderLabel, getMessageName } from '@aalis/core';
+import { getSenderLabel, getMessageName, parseModelRef } from '@aalis/core';
 
 /**
  * 将时间戳格式化为可读的时间标签。
@@ -131,42 +131,42 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 根据优先级链获取 LLM 服务和模型覆盖
+   * 根据优先级链获取 LLM 服务与 (provider, model) 覆盖
    *
    * 优先级（从高到低）：
    * 1. session-manager resolveConfig (= 会话 config > 父 sessionDefaults > 平台 profile)
    * 2. 全局 preferredModel
    * 3. 默认 LLM 提供者的默认模型
+   *
+   * model 字段可以是复合 ref `"<contextId>::<modelId>"`，由 parseModelRef 拆分。
+   * llmProvider 字段为充足优先级（允许在不指定模型的情况下锁定 provider 走其默认 model）。
    */
-  private async resolveLLM(platform?: string, sessionId?: string): Promise<{ llm: LLMService; modelOverride?: string } | undefined> {
-    let model: string | undefined;
-    let llmProviderOverride: string | undefined;
+  private async resolveLLM(platform?: string, sessionId?: string): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined> {
+    let rawModel: string | undefined;
+    let providerOverride: string | undefined;
 
     // 1. session-manager resolveConfig: 会话 > 父 sessionDefaults > 平台 profile
     const sm = this.ctx.getService<SessionManagerService>('session-manager');
     if (sm && sessionId) {
       const resolved = sm.resolveConfig(sessionId, platform);
-      if (resolved.model) model = resolved.model;
-      if (resolved.llmProvider) llmProviderOverride = resolved.llmProvider;
+      if (resolved.model) rawModel = resolved.model;
+      if (resolved.llmProvider) providerOverride = resolved.llmProvider;
     }
 
     // 2. 全局 preferredModel
-    if (!model) {
-      model = this.preferredModel;
+    if (!rawModel) {
+      rawModel = this.preferredModel || undefined;
     }
 
-    // 如果指定了 llmProvider（contextId），直接查找该提供者
-    if (llmProviderOverride) {
-      const allProviders = this.ctx.getAllServices<LLMService>('llm');
-      const found = allProviders.find(p => p.contextId === llmProviderOverride);
-      if (found) return { llm: found.instance, modelOverride: model };
-    }
+    // 拆解复合 ref；model 字段内隐含的 provider 优先低于显式 llmProvider 字段
+    const ref = parseModelRef(rawModel);
+    if (!providerOverride && ref.provider) providerOverride = ref.provider;
+    const modelOverride = ref.model;
 
-    // 默认走 'llm' 服务（router 注册时会作为最高优先级 provider）；
-    // 有 model 时通过 chat({model}) 让 router 路由到拥有该模型的 provider。
+    // 总是走 'llm' router；provider/model 都交给 ChatRequest 让 router 精确分发。
     const llm = this.ctx.getService<LLMService>('llm');
     if (!llm) return undefined;
-    return model ? { llm, modelOverride: model } : { llm };
+    return { llm, providerOverride, modelOverride };
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */
@@ -460,7 +460,7 @@ class DefaultAgent implements AgentService {
         });
         return;
       }
-      const { llm, modelOverride } = resolved;
+      const { llm, modelOverride, providerOverride } = resolved;
 
       // 从 LLM 服务读取参数
       const temperature = llm.getTemperature();
@@ -530,6 +530,7 @@ class DefaultAgent implements AgentService {
           temperature,
           maxTokens,
           model: modelOverride,
+          provider: providerOverride,
           signal,
         }, incoming.sessionId, incoming.platform, signal);
 
@@ -686,6 +687,7 @@ class DefaultAgent implements AgentService {
             temperature,
             maxTokens,
             model: modelOverride,
+            provider: providerOverride,
             signal,
           }, incoming.sessionId, incoming.platform, signal);
           turnSegments.push(...nextResult.segments);

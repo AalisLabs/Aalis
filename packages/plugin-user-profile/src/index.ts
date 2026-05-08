@@ -1,5 +1,6 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { MemoryService, LLMService } from '@aalis/core';
+import { parseModelRef } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案
@@ -428,9 +429,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const renderedHistory = renderHistoryForExtract(history, userId, platform);
     const user = `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
 
-    // 提取模型若指定，则通过 chat({model}) 让 router 路由；否则用默认 LLM。
+    // 提取模型若指定，则通过 chat({provider, model}) 让 router 精确路由；否则用默认 LLM。
     const extractLlm: LLMService = llm;
-    const extractModelId: string | undefined = cfg.extractModel || undefined;
+    const extractRef = parseModelRef(cfg.extractModel || undefined);
 
     try {
       const resp = await extractLlm!.chat({
@@ -441,7 +442,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         temperature: 0.2,
         maxTokens: 800,
         think: false,
-        ...(extractModelId ? { model: extractModelId } : {}),
+        ...(extractRef.provider ? { provider: extractRef.provider } : {}),
+        ...(extractRef.model ? { model: extractRef.model } : {}),
       });
       const text = (resp.content ?? '').trim();
       if (!text) return empty;

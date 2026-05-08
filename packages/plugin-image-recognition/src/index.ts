@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
 import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
 import { ImageRecognitionCapabilities } from '@aalis/core';
+import { parseModelRef } from '@aalis/core';
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -381,10 +382,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ];
 
     try {
+      const ref = parseModelRef(cfg.preferredModel || undefined);
       const response = await visionLLM.chat({
         messages,
         maxTokens: cfg.maxTokens,
-        model: cfg.preferredModel || undefined,
+        ...(ref.provider ? { provider: ref.provider } : {}),
+        ...(ref.model ? { model: ref.model } : {}),
         think: false,
       });
       return response.content?.trim() || '[图片: 无描述]';
@@ -441,10 +444,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ];
 
     try {
+      const ref = parseModelRef(cfg.preferredModel || undefined);
       const response = await visionLLM.chat({
         messages,
         maxTokens: cfg.maxTokens,
-        model: cfg.preferredModel || undefined,
+        ...(ref.provider ? { provider: ref.provider } : {}),
+        ...(ref.model ? { model: ref.model } : {}),
         think: false,
       });
       return response.content?.trim() || '[动图: 无描述]';
@@ -803,10 +808,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const prompt = buildVisionPrompt(customPrompt || cfg.prompt || DEFAULT_PROMPT, context);
         const messages: Message[] = [{ role: 'user', content: prompt, images: [imageUrl] }];
 
+        const ref = parseModelRef(cfg.preferredModel || undefined);
         const response = await visionLLM.chat({
           messages,
           maxTokens: cfg.maxTokens,
-          model: cfg.preferredModel || undefined,
+          ...(ref.provider ? { provider: ref.provider } : {}),
+          ...(ref.model ? { model: ref.model } : {}),
           think: false,
         });
 
