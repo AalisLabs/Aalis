@@ -248,7 +248,8 @@ class DeepSeekLLMService implements LLMService {
     const custom = this.customModels
       .filter(id => !remoteIds.has(id))
       .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
-    return [...remote, ...custom];
+    // contextLength 为 provider 全局配置；附到每个 ModelInfo 上以便 router.getContextLengthFor 查询
+    return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
   }
 
   setEnableThinking(value: boolean): void {

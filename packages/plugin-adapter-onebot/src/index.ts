@@ -943,6 +943,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
         setCachedForward(id, stored);
 
+        // 成功路径可观测：摘要预览 + 节点数 / 参与人 / 是否截断 / 摘要长度
+        const previewSrc = summary ?? expanded.fullText;
+        const preview = previewSrc.length > 80 ? previewSrc.slice(0, 80) + '…' : previewSrc;
+        const truncFlag = (expanded.truncatedDepth || expanded.truncatedNodes) ? ' [truncated]' : '';
+        ctx.logger.debug(
+          `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]`
+          + ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} preview="${preview.replace(/\n/g, ' ')}"`,
+        );
+
         envelopeMap.set(id, buildEnvelope(expanded, summary));
       } catch (err) {
         ctx.logger.warn(`forward 展开失败 id=${id}: ${err}`);
