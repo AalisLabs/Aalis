@@ -294,33 +294,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
-  // 插件页面：返回原始 HTML 内容（供 iframe 组件使用）
-  expressApp.get('/api/plugin-page/:plugin/:page', async (req, res) => {
-    const { plugin: pluginName, page: pageName } = req.params;
-
-    const app = getApp();
-    if (!app) { res.status(500).send('App 不可用'); return; }
-
-    const entry = app.plugins.getPlugin(pluginName);
-    if (!entry || entry.state !== 'active') { res.status(404).send('插件不存在或未激活'); return; }
-
-    const handler = entry.module.webuiHandlers?.[pageName];
-    if (typeof handler !== 'function') { res.status(404).send('页面处理器不存在'); return; }
-    if (!entry.context) { res.status(500).send('插件上下文不可用'); return; }
-
-    try {
-      const result = await handler(entry.context, {});
-      if (result && typeof result === 'object' && 'html' in result && typeof (result as Record<string, unknown>).html === 'string') {
-        res.type('html').send((result as { html: string }).html);
-      } else {
-        res.status(400).send('处理器未返回 { html: string }');
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).send(msg);
-    }
-  });
-
   // 获取当前全局配置
   expressApp.get('/api/config', (_req, res) => {
     const allConfig = ctx.config.getAll();
