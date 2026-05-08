@@ -145,7 +145,13 @@ export class LLMRouter implements LLMService {
       try {
         const models = await instance.listModels();
         for (const m of models) {
-          out.push({ id: m.id, capabilities: m.capabilities, provider: label ?? contextId, contextId });
+          out.push({
+            id: m.id,
+            capabilities: m.capabilities,
+            provider: label ?? contextId,
+            contextId,
+            ...(m.contextLength ? { contextLength: m.contextLength } : {}),
+          });
         }
       } catch (err) {
         this.logger.warn(`获取模型列表失败 [${contextId}]:`, err);
