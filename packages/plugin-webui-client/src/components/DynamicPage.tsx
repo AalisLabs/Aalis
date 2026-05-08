@@ -8,7 +8,7 @@ import { SchemaForm } from './SchemaForm';
 import type {
   WebuiComponent, WebuiStatComponent, WebuiTableComponent,
   WebuiFormComponent, WebuiActionsComponent, WebuiInfoComponent,
-  WebuiMarkdownComponent, WebuiTabsComponent, WebuiIframeComponent, WebuiPageDef,
+  WebuiMarkdownComponent, WebuiTabsComponent, WebuiPageDef,
 } from '../types';
 
 const dynStatIconMap: Record<string, ReactElement> = {
@@ -371,37 +371,6 @@ function DynTabs({ comp, pluginName }: { comp: WebuiTabsComponent; pluginName: s
   );
 }
 
-function DynIframe({ comp, pluginName }: { comp: WebuiIframeComponent; pluginName: string }) {
-  const [html, setHtml] = useState<string | null>(null);
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    const source = comp.source;
-    if (source.startsWith('http://') || source.startsWith('https://') || source.startsWith('/')) {
-      setSrc(source);
-    } else {
-      pageAction<{ html: string }>(pluginName, source)
-        .then(r => { if (r?.html) setHtml(r.html); })
-        .catch(() => {});
-    }
-  }, [pluginName, comp.source]);
-
-  const height = comp.height ?? '100%';
-
-  return (
-    <div className="dyn-iframe-block">
-      {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
-      {src ? (
-        <iframe src={src} style={{ width: '100%', height, border: 'none' }} sandbox="allow-scripts allow-same-origin" />
-      ) : html ? (
-        <iframe srcDoc={html} style={{ width: '100%', height, border: 'none' }} sandbox="allow-scripts" />
-      ) : (
-        <div className="empty-hint">加载中...</div>
-      )}
-    </div>
-  );
-}
-
 function DynamicComponent({ component, pluginName }: { component: WebuiComponent; pluginName: string }) {
   switch (component.type) {
     case 'stat': return <DynStat comp={component} pluginName={pluginName} />;
@@ -411,7 +380,6 @@ function DynamicComponent({ component, pluginName }: { component: WebuiComponent
     case 'info': return <DynInfo comp={component} pluginName={pluginName} />;
     case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} />;
     case 'tabs': return <DynTabs comp={component} pluginName={pluginName} />;
-    case 'iframe': return <DynIframe comp={component} pluginName={pluginName} />;
     default: return null;
   }
 }
