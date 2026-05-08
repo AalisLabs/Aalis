@@ -44,6 +44,28 @@ export const configSchema: ConfigSchema = {
     label: '摘要生成提示词',
     description: '用于指导 LLM 生成摘要的系统提示词',
   },
+  summaryModelMode: {
+    type: 'select',
+    label: '摘要模型来源',
+    default: 'global',
+    options: [
+      { label: '沿用全局默认 LLM', value: 'global' },
+      { label: '自定义 provider/model', value: 'custom' },
+    ],
+    description: 'global=沿用全局默认 LLM；custom=使用下方 summaryProvider/summaryModel 指定的模型。session（沿用会话当轮模型）暂未实现。',
+  },
+  summaryProvider: {
+    type: 'string',
+    label: '摘要 Provider（contextId）',
+    default: '',
+    description: '仅当 summaryModelMode=custom 时生效。例如 @aalis/plugin-openai。留空时由 router 按 model 自动定位。',
+  },
+  summaryModel: {
+    type: 'string',
+    label: '摘要 Model',
+    default: '',
+    description: '仅当 summaryModelMode=custom 时生效。例如 gpt-4o-mini、deepseek-chat。',
+  },
 };
 
 export const defaultConfig = {
@@ -52,6 +74,9 @@ export const defaultConfig = {
   summaryTokenRatio: 0.05,
   autoCompressThreshold: 0.7,
   summaryPrompt: '',
+  summaryModelMode: 'global',
+  summaryProvider: '',
+  summaryModel: '',
 };
 
 // ===== 配置 =====
@@ -67,6 +92,12 @@ interface SummaryConfig {
   autoCompressThreshold: number;
   /** 自定义摘要提示词 */
   summaryPrompt: string;
+  /** 摘要模型来源：global=全局默认 LLM；custom=指定 provider+model */
+  summaryModelMode: 'global' | 'custom';
+  /** custom 模式下的 provider contextId */
+  summaryProvider: string;
+  /** custom 模式下的 model id */
+  summaryModel: string;
 }
 
 // ===== 默认摘要生成提示词 =====
@@ -162,6 +193,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     summaryTokenRatio: (config.summaryTokenRatio as number) ?? 0.05,
     autoCompressThreshold: (config.autoCompressThreshold as number) ?? 0.7,
     summaryPrompt: (config.summaryPrompt as string) ?? '',
+    summaryModelMode: ((config.summaryModelMode as string) === 'custom' ? 'custom' : 'global'),
+    summaryProvider: (config.summaryProvider as string) ?? '',
+    summaryModel: (config.summaryModel as string) ?? '',
   };
 
   const memory = ctx.getService<MemoryService>('memory');
@@ -176,16 +210,51 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 正在摘要中的 session，避免并发重复摘要
   const summarizing = new Set<string>();
 
-  /** 根据当前 LLM 的上下文窗口动态计算摘要 token 上限 */
-  function getSummaryTokenBudget(): number {
+  /**
+   * 根据当前实际使用的模型计算摘要 token 上限。
+   *
+   * - global 模式：用 router 默认 provider 的窗口（与历史行为兼容）
+   * - custom 模式：通过 router.getContextLengthFor(model, provider) 查询所选模型的真实窗口
+   *
+   * 这样可避免“router 默认是 128k → 实际摘要在 4k 模型上跑”的预算失真。
+   */
+  async function getSummaryTokenBudget(): Promise<number> {
     const llm = ctx.getService<LLMService>('llm');
     if (!llm) return 2048; // fallback
-    const contextLength = llm.getContextLength();
+    const override = getSummaryModelOverride();
+    const router = llm as LLMService & {
+      getContextLengthFor?(model?: string, provider?: string): Promise<number>;
+    };
+    let contextLength: number;
+    if (typeof router.getContextLengthFor === 'function' && (override.model || override.provider)) {
+      try {
+        contextLength = await router.getContextLengthFor(override.model, override.provider);
+      } catch {
+        contextLength = llm.getContextLength();
+      }
+    } else {
+      contextLength = llm.getContextLength();
+    }
     return Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio));
   }
 
   // 摘要生成提示词
   const summarySystemPrompt = cfg.summaryPrompt || DEFAULT_SUMMARY_PROMPT;
+
+  /**
+   * 根据 summaryModelMode 返回附加给 ChatRequest 的 provider/model 字段。
+   * - global：返回空对象，沿用 LLMRouter 的默认 provider+model
+   * - custom：返回 { provider?, model? }，交给 router 路由
+   *
+   * 注意：custom 模式下若 summaryProvider/summaryModel 都为空，会退化为 global 行为。
+   */
+  function getSummaryModelOverride(): { provider?: string; model?: string } {
+    if (cfg.summaryModelMode !== 'custom') return {};
+    const out: { provider?: string; model?: string } = {};
+    if (cfg.summaryProvider) out.provider = cfg.summaryProvider;
+    if (cfg.summaryModel) out.model = cfg.summaryModel;
+    return out;
+  }
 
   /**
    * 为指定 session 生成/更新摘要
@@ -231,7 +300,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         .join('\n');
 
       // 构建摘要请求
-      const summaryBudget = getSummaryTokenBudget();
+      const summaryBudget = await getSummaryTokenBudget();
       const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
       const summaryMessages: Message[] = [
         { role: 'system', content: summarySystemPrompt + budgetHint },
@@ -258,6 +327,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         messages: summaryMessages,
         temperature: 0.3,
         maxTokens: summaryBudget,
+        ...getSummaryModelOverride(),
       })) {
         if (chunk.contentDelta) {
           summaryText += chunk.contentDelta;
@@ -320,7 +390,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
 
       // 动态计算摘要 token 预算
-      const summaryBudget = getSummaryTokenBudget();
+      const summaryBudget = await getSummaryTokenBudget();
       const summaryTokens = Math.ceil(existing.summary.length / 3);
       let summaryContent = existing.summary;
 
@@ -426,7 +496,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           }
         } catch { /* ignore */ }
 
-        const summaryBudget = getSummaryTokenBudget();
+        const summaryBudget = await getSummaryTokenBudget();
         const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
         const summaryMessages: Message[] = [
           { role: 'system', content: summarySystemPrompt + budgetHint },
@@ -455,6 +525,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           messages: summaryMessages,
           temperature: 0.3,
           maxTokens: summaryBudget,
+          ...getSummaryModelOverride(),
         })) {
           if (chunk.contentDelta) {
             summaryText += chunk.contentDelta;

@@ -74,6 +74,30 @@ export function App() {
 
   const [chatWidth, setChatWidth] = useState(420);
 
+  // 折叠状态：左侧导航栏 / 中间内容区。两者独立控制，持久化在 localStorage。
+  // 折叠后点击对应的浮动展开按钮恢复。
+  // 窄屏（≤900px）首次访问自动折叠：避免抽屉式 overlay 默认遮挡聊天面板。
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('aalis.layout.navCollapsed');
+      if (v !== null) return v === '1';
+      return window.matchMedia('(max-width: 900px)').matches;
+    } catch { return false; }
+  });
+  const [contentCollapsed, setContentCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('aalis.layout.contentCollapsed');
+      if (v !== null) return v === '1';
+      return window.matchMedia('(max-width: 900px)').matches;
+    } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('aalis.layout.navCollapsed', navCollapsed ? '1' : '0'); } catch { /* ignore */ }
+  }, [navCollapsed]);
+  useEffect(() => {
+    try { localStorage.setItem('aalis.layout.contentCollapsed', contentCollapsed ? '1' : '0'); } catch { /* ignore */ }
+  }, [contentCollapsed]);
+
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
 
@@ -600,8 +624,9 @@ export function App() {
   const activeDynamicPage = activePageDef?.content ? activePageDef : undefined;
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${navCollapsed ? 'nav-collapsed' : ''} ${contentCollapsed ? 'content-collapsed' : ''}`}>
       {/* 左侧导航 */}
+      {!navCollapsed && (
       <nav className="nav-rail">
         <div className="nav-rail-top">
           <div className="nav-logo">A</div>
@@ -617,16 +642,40 @@ export function App() {
           ))}
         </div>
         <div className="nav-rail-bottom">
+          <button
+            className="nav-collapse-btn"
+            onClick={() => setNavCollapsed(true)}
+            title="折叠导航栏"
+            aria-label="折叠导航栏"
+          >‹</button>
           <div className={`nav-status ${connected ? 'online' : 'offline'}`} title={connected ? '已连接' : '离线'} />
         </div>
       </nav>
+      )}
+
+      {/* 折叠后的浮动展开按钮（左侧） */}
+      {navCollapsed && (
+        <button
+          className="floating-expand-btn floating-expand-nav"
+          onClick={() => setNavCollapsed(false)}
+          title="展开导航栏"
+          aria-label="展开导航栏"
+        >›</button>
+      )}
 
       {/* 左侧内容区 */}
+      {!contentCollapsed && (
       <main className="content-area">
         <div className="content-header">
           <span className="content-title">
             {tabs.find(t => t.key === activeTab)?.label}
           </span>
+          <button
+            className="content-collapse-btn"
+            onClick={() => setContentCollapsed(true)}
+            title="折叠此面板（仅显示聊天）"
+            aria-label="折叠内容面板"
+          >‹</button>
         </div>
 
         <div className="content-body">
@@ -639,8 +688,20 @@ export function App() {
           </Suspense>
         </div>
       </main>
+      )}
 
-      {/* 拖拽分隔条 */}
+      {/* 折叠后的浮动展开按钮（中间面板） */}
+      {contentCollapsed && (
+        <button
+          className="floating-expand-btn floating-expand-content"
+          onClick={() => setContentCollapsed(false)}
+          title="展开内容面板"
+          aria-label="展开内容面板"
+        >›</button>
+      )}
+
+      {/* 拖拽分隔条（仅在内容区可见时显示） */}
+      {!contentCollapsed && (
       <div
         className="resize-handle"
         onMouseDown={e => {
@@ -649,7 +710,8 @@ export function App() {
           const startW = chatWidth;
           const onMove = (ev: MouseEvent) => {
             const appW = document.querySelector('.app-layout')!.clientWidth;
-            const navW = document.querySelector('.nav-rail')!.clientWidth;
+            const navEl = document.querySelector('.nav-rail');
+            const navW = navEl ? navEl.clientWidth : 0;
             const minContent = 360;
             const minChat = 280;
             const maxChat = appW - navW - minContent;
@@ -668,9 +730,13 @@ export function App() {
           document.addEventListener('mouseup', onUp);
         }}
       />
+      )}
 
-      {/* 右侧固定聊天面板 */}
-      <div className="chat-column" style={{ width: chatWidth, minWidth: chatWidth }}>
+      {/* 右侧固定聊天面板：内容折叠时占满剩余宽度 */}
+      <div
+        className="chat-column"
+        style={contentCollapsed ? { flex: 1, minWidth: 0 } : { width: chatWidth, minWidth: chatWidth }}
+      >
         <ChatPanel
           messages={messages}
           loading={loading}
