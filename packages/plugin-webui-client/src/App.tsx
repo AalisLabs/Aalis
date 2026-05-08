@@ -91,6 +91,23 @@ export function App() {
     try { localStorage.setItem('aalis.layout.leftCollapsed', leftCollapsed ? '1' : '0'); } catch { /* ignore */ }
   }, [leftCollapsed]);
 
+  // 折叠状态切换时短暂启用过渡动画；resize 拖拽时关闭，避免卡顿
+  const [animateLayout, setAnimateLayout] = useState(false);
+  const animateTimerRef = useRef<number | null>(null);
+  const triggerLayoutAnimation = (durationMs = 320) => {
+    setAnimateLayout(true);
+    if (animateTimerRef.current !== null) window.clearTimeout(animateTimerRef.current);
+    animateTimerRef.current = window.setTimeout(() => {
+      setAnimateLayout(false);
+      animateTimerRef.current = null;
+    }, durationMs);
+  };
+  useEffect(() => {
+    triggerLayoutAnimation();
+    // 切换折叠后才触发；初始挂载也触发一次（无副作用）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftCollapsed]);
+
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
 
@@ -617,28 +634,56 @@ export function App() {
   const activeDynamicPage = activePageDef?.content ? activePageDef : undefined;
 
   return (
-    <div className={`app-layout ${leftCollapsed ? 'left-collapsed' : ''}`}>
-      {/* 左侧导航 */}
-      {!leftCollapsed && (
-      <nav className="nav-rail">
-        <div className="nav-rail-top">
-          <div className="nav-logo">A</div>
-          {tabs.map(tab => (
+    <div className={`app-layout ${leftCollapsed ? 'left-collapsed' : ''} ${animateLayout ? 'animating' : ''}`}>
+      {/* 左侧（导航 + 内容）整体折叠的容器：始终保留在 DOM 中，通过 CSS 过渡 max-width / opacity 实现折叠动画 */}
+      <div className="left-panels" aria-hidden={leftCollapsed}>
+        {/* 左侧导航 */}
+        <nav className="nav-rail">
+          <div className="nav-rail-top">
+            <div className="nav-logo">A</div>
+            {tabs.map(tab => (
+              <button
+                key={tab.key}
+                className={`nav-item ${activeTab === tab.key ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab.key)}
+                tabIndex={leftCollapsed ? -1 : 0}
+              >
+                <span className="nav-item-icon">{tab.icon}</span>
+                <span className="nav-item-label">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="nav-rail-bottom">
+            <div className={`nav-status ${connected ? 'online' : 'offline'}`} title={connected ? '已连接' : '离线'} />
+          </div>
+        </nav>
+
+        {/* 左侧内容区 */}
+        <main className="content-area">
+          <div className="content-header">
+            <span className="content-title">
+              {tabs.find(t => t.key === activeTab)?.label}
+            </span>
             <button
-              key={tab.key}
-              className={`nav-item ${activeTab === tab.key ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              <span className="nav-item-icon">{tab.icon}</span>
-              <span className="nav-item-label">{tab.label}</span>
-            </button>
-          ))}
-        </div>
-        <div className="nav-rail-bottom">
-          <div className={`nav-status ${connected ? 'online' : 'offline'}`} title={connected ? '已连接' : '离线'} />
-        </div>
-      </nav>
-      )}
+              className="content-collapse-btn"
+              onClick={() => setLeftCollapsed(true)}
+              title="折叠侧边栏（仅显示聊天）"
+              aria-label="折叠侧边栏"
+              tabIndex={leftCollapsed ? -1 : 0}
+            >‹</button>
+          </div>
+
+          <div className="content-body">
+            <Suspense fallback={<div className="empty-hint" style={{ padding: 24 }}>加载中…</div>}>
+              {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
+              {!activeDynamicPage && activePageDef?.renderer && (
+                renderCustomPage(activePageDef.renderer, activePageDef.plugin) ||
+                <div className="empty-hint" style={{ padding: 24 }}>此客户端不支持渲染器「{activePageDef.renderer}」</div>
+              )}
+            </Suspense>
+          </div>
+        </main>
+      </div>
 
       {/* 折叠后的浮动展开按钮 */}
       {leftCollapsed && (
@@ -648,33 +693,6 @@ export function App() {
           title="展开侧边栏"
           aria-label="展开侧边栏"
         >›</button>
-      )}
-
-      {/* 左侧内容区 */}
-      {!leftCollapsed && (
-      <main className="content-area">
-        <div className="content-header">
-          <span className="content-title">
-            {tabs.find(t => t.key === activeTab)?.label}
-          </span>
-          <button
-            className="content-collapse-btn"
-            onClick={() => setLeftCollapsed(true)}
-            title="折叠侧边栏（仅显示聊天）"
-            aria-label="折叠侧边栏"
-          >‹</button>
-        </div>
-
-        <div className="content-body">
-          <Suspense fallback={<div className="empty-hint" style={{ padding: 24 }}>加载中…</div>}>
-            {activeDynamicPage && <DynamicPage page={activeDynamicPage} />}
-            {!activeDynamicPage && activePageDef?.renderer && (
-              renderCustomPage(activePageDef.renderer, activePageDef.plugin) ||
-              <div className="empty-hint" style={{ padding: 24 }}>此客户端不支持渲染器「{activePageDef.renderer}」</div>
-            )}
-          </Suspense>
-        </div>
-      </main>
       )}
 
       {/* 拖拽分隔条（仅在内容区可见时显示） */}
