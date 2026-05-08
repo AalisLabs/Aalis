@@ -1842,7 +1842,7 @@ body {
   border-radius: 0 var(--radius) 0 var(--radius);
   padding: 0 3px;
   pointer-events: none;
-} */
+}
 
 .message-files {
   display: flex;
