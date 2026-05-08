@@ -162,8 +162,7 @@ export interface WebuiActionsComponent { type: 'actions'; label?: string; items:
 export interface WebuiInfoComponent { type: 'info'; label?: string; source: string }
 export interface WebuiMarkdownComponent { type: 'markdown'; label?: string; source: string }
 export interface WebuiTabsComponent { type: 'tabs'; label?: string; items: Array<{ key: string; label: string; content: WebuiComponent[] }> }
-export interface WebuiIframeComponent { type: 'iframe'; label?: string; source: string; height?: string }
-export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent | WebuiIframeComponent;
+export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent;
 
 export interface WebuiPageDef {
   key: string;
