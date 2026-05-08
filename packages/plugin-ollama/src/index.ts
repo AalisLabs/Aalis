@@ -224,7 +224,7 @@ class OllamaLLMService implements LLMService {
     const custom = this.customModels
       .filter(id => !remoteIds.has(id))
       .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
-    return [...remote, ...custom];
+    return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
