@@ -353,6 +353,64 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
+  // ---- delete_subtask ----
+  ctx.registerTool({
+    groups: ['subtask'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'delete_subtask',
+        description: [
+          '删除指定的子任务会话及其所有子会话（递归删除）。',
+          '只能删除当前会话的直接或间接子任务，不能删除根会话或其他会话的子任务。',
+          '删除后会话的消息历史也会被一并清除。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            subtask_id: {
+              type: 'string',
+              description: '要删除的子任务 ID',
+            },
+          },
+          required: ['subtask_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const sm = ctx.getService<SessionManagerService>('session-manager');
+      if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
+
+      const subtaskId = String(args.subtask_id || '').trim();
+      if (!subtaskId) return JSON.stringify({ error: '缺少子任务 ID' });
+
+      const session = sm.getSession(subtaskId);
+      if (!session) return JSON.stringify({ error: `会话不存在: ${subtaskId}`, notFound: true });
+
+      // 安全检查：只能删除当前会话的子任务
+      if (session.parentId !== callCtx.sessionId) {
+        return JSON.stringify({
+          error: `无权删除该会话。当前会话 (${callCtx.sessionId}) 不是该会话的父会话 (parentId=${session.parentId})。`,
+          denied: true,
+        });
+      }
+
+      try {
+        const name = session.name;
+        await sm.deleteSession(subtaskId);
+        return JSON.stringify({
+          subtaskId,
+          name,
+          deleted: true,
+          message: `子任务 \"${name}\" (${subtaskId}) 已删除`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: `删除失败: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    },
+  });
+
   // ---- wait_subtasks ----
   ctx.registerTool({
     groups: ['subtask'],
