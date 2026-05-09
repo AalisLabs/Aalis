@@ -128,22 +128,6 @@ export class ServiceContainer {
   }
 
   /**
-   * 移除指定服务名下某个 contextId 的提供者（同 contextId 只删除第一条，合并路径不推荐）
-   *
-   * @deprecated 请优先使用 {@link unregisterEntry}。
-   * @returns 是否成功移除
-   */
-  unregister(name: string, contextId: string): boolean {
-    const list = this.entries.get(name);
-    if (!list) return false;
-    const idx = list.findIndex(e => e.contextId === contextId);
-    if (idx < 0) return false;
-    list.splice(idx, 1);
-    if (list.length === 0) this.entries.delete(name);
-    return true;
-  }
-
-  /**
    * 按 contextId 移除所有该上下文注册的服务，返回被移除的服务名列表
    */
   unregisterByContext(contextId: string): string[] {
@@ -239,7 +223,7 @@ export class ServiceContainer {
  * 作用域服务容器 —— ServiceContainer 的子容器
  *
  * - get / has / getEntries / listServices: 先查本地，miss 则 fallback 到父容器
- * - register / unregister: 仅操作本地，不影响父容器
+ * - register / unregisterEntry: 仅操作本地，不影响父容器
  * - 支持多层嵌套: ScopedServiceContainer.createScope() 返回更深层的子容器
  */
 export class ScopedServiceContainer extends ServiceContainer {
