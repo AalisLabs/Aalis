@@ -28,7 +28,7 @@
 
 ## 设计理念
 
-Aalis 受 [internal-framework](https://internal-framework.chat) 的服务提供机制和 [internal-framework](https://internal-framework.ai) 的多平台接入启发，核心设计为：
+Aalis 采用服务提供与依赖注入机制，核心设计为：
 
 | 模式 | 说明 |
 |---|---|
