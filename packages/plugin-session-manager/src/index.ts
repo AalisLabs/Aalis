@@ -845,7 +845,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.on('outbound:message', (msg: { sessionId: string }) => {
     if (!msg.sessionId) return;
     const session = manager.getSession(msg.sessionId);
-    if (session && session.status === 'active') {
+    // 子会话（有 parentId）由 plugin-session-tools 的 agent:turn:after 中间件负责完成并提取 result
+    if (session && session.status === 'active' && !session.parentId) {
       manager.updateSession(msg.sessionId, { status: 'completed' }).catch(() => {});
     }
   });
