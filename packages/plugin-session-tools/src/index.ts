@@ -11,7 +11,7 @@ export const inject = {
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用子任务工具', default: true },
   pollIntervalMs: { type: 'number', label: '等待轮询间隔 (ms)', default: 3000 },
-  maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 120000 },
+  maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
   historyAccess: {
     label: '会话历史读取',
     fields: {
@@ -70,7 +70,7 @@ function resolveConfig(raw: Record<string, unknown>): PluginConfig {
   return {
     enabled: raw.enabled !== false,
     pollIntervalMs: Number(raw.pollIntervalMs) || 3000,
-    maxWaitMs: Number(raw.maxWaitMs) || 120000,
+    maxWaitMs: Number(raw.maxWaitMs) || 300000,
     historyAccess: {
       enabled: historyRaw.enabled !== false,
       maxLimit: Math.max(1, Math.min(100, Number(historyRaw.maxLimit) || 30)),
