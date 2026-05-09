@@ -671,7 +671,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_search',
-        description: '在受控存储中按行搜索匹配文本。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。',
+        description: '在受控存储中按行搜索匹配文本（内容搜索，非文件名搜索）。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。如需按文件名/目录名查找，请使用 file_tree 的 pattern 参数。',
         parameters: {
           type: 'object',
           properties: {
@@ -782,14 +782,14 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_tree',
-        description: '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。',
+        description: '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。配合 pattern 参数可筛选目录名和文件名（支持 glob: *.ts, *scheduler* 等）。注意：pattern 匹配的是文件/目录名，而非文件内容。',
         parameters: {
           type: 'object',
           properties: {
             path: { type: 'string', description: '根目录 storage URI 或相对 workspace 的路径，默认 workspace:/' },
             maxDepth: { type: 'number', description: '最大递归深度（默认 3，最多 10）' },
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
-            pattern: { type: 'string', description: '文件名过滤模式（简单 glob: *.ts, *.py 等）' },
+            pattern: { type: 'string', description: '文件与目录名过滤模式（简单 glob: *.ts, *scheduler* 等）。匹配的是文件/目录名，非文件内容。' },
           },
           required: [],
           additionalProperties: false,
