@@ -50,40 +50,6 @@ body {
   height: 100%;
 }
 
-/* 左侧（导航 + 内容）整体容器：用 max-width / opacity 过渡实现平滑折叠 */
-.left-panels {
-  display: flex;
-  flex-shrink: 0;
-  overflow: hidden;
-  max-width: 1000px;
-  opacity: 1;
-}
-
-/* 仅在折叠切换时启用过渡，避免 resize 拖拽与之冲突 */
-.app-layout.animating .left-panels {
-  transition:
-    max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.2s ease,
-    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.app-layout.animating .chat-column {
-  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.app-layout.left-collapsed .left-panels {
-  max-width: 0;
-  opacity: 0;
-  transform: translateX(-12px);
-  pointer-events: none;
-}
-
-/* 折叠时聊天列占满剩余宽度（覆盖 .chat-column { flex-shrink: 0 }） */
-.app-layout.left-collapsed .chat-column {
-  flex: 1 1 0%;
-  width: auto !important;
-  min-width: 0 !important;
-}
-
 /* ===== 左侧导航栏 ===== */
 
 .nav-rail {
@@ -212,64 +178,7 @@ body {
 .nav-rail-bottom {
   padding: 12px 6px;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-
-/* 折叠按钮（内容头内） */
-.content-collapse-btn {
-  display: flex;
-  align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  transition: all var(--transition);
-}
-
-.content-collapse-btn:hover {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.content-collapse-btn {
-  margin-left: auto;
-}
-
-/* 折叠后浮动展开按钮：贴在屏幕左缘，纵向居中 */
-.floating-expand-btn {
-  position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 22px;
-  height: 56px;
-  padding: 0;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-muted);
-  border-radius: 0 8px 8px 0;
-  cursor: pointer;
-  z-index: 30;
-  font-size: 16px;
-  line-height: 1;
-  transition: all var(--transition);
-}
-
-.floating-expand-btn:hover {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.floating-expand-left {
-  left: 0;
 }
 
 .nav-status {
@@ -1864,7 +1773,7 @@ body {
   border-radius: 0 var(--radius) 0 var(--radius);
   padding: 0 3px;
   pointer-events: none;
-}
+} */
 
 .message-files {
   display: flex;
@@ -4895,88 +4804,4 @@ td.col-actions { text-align: right; }
 @keyframes toastIn {
   from { opacity: 0; transform: translateX(-50%) translateY(10px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-
-/* ============================================================
- * 响应式 / 窄屏适配（≤ 900px）
- * ------------------------------------------------------------
- * MVP 范围：聊天页可用。设计取舍：
- *   1. nav-rail 与 content-area 在窄屏下变成 fixed overlay（抽屉式），
- *      不再占用主轴宽度；chat-column 占满全宽，得到最大聊天区
- *   2. 当 floating-expand-* 浮动按钮在窄屏被点击展开时，
- *      自动以 overlay 覆盖在聊天面板之上；点击 backdrop 或再次点击
- *      折叠按钮关闭
- *   3. 拖拽分隔条在窄屏隐藏（聊天面板宽度由 100% 决定）
- *   4. 输入框、消息气泡、内容标题做窄屏内边距收缩
- * ============================================================ */
-
-@media (max-width: 900px) {
-  /* nav-rail：固定到左侧，作为抽屉显示，不再占用 flex 主轴宽度 */
-  .nav-rail {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 50;
-    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.4);
-    width: var(--nav-expanded);
-    min-width: var(--nav-expanded);
-  }
-  /* hover 不再展开（抽屉本身已是展开宽度） */
-  .nav-rail:hover {
-    width: var(--nav-expanded);
-    min-width: var(--nav-expanded);
-  }
-  .nav-item-label {
-    opacity: 1;
-  }
-
-  /* content-area：作为 overlay 抽屉，宽度受限 */
-  .content-area {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 45;
-    width: min(420px, 90vw);
-    min-width: 0;
-    flex: none;
-    background: var(--bg);
-    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.4);
-  }
-
-  /* chat-column 始终占满 */
-  .chat-column {
-    width: 100% !important;
-    min-width: 0 !important;
-    flex: 1 !important;
-  }
-
-  /* 拖拽条隐藏 */
-  .resize-handle {
-    display: none !important;
-  }
-
-  /* 浮动展开按钮固定在屏幕左缘 */
-  .floating-expand-left {
-    left: 0 !important;
-  }
-
-  /* 内容头收缩内边距 */
-  .content-header {
-    padding: 8px 12px;
-  }
-}
-
-@media (max-width: 600px) {
-  /* 极窄屏：nav-rail 抽屉宽度收缩，避免遮挡过多 */
-  .nav-rail {
-    width: 80vw;
-    min-width: 80vw;
-  }
-  .content-area {
-    width: 95vw;
-  }
-  /* 消息气泡、输入框收紧 */
-  .messages-area,
-  .chat-input-area {
-    padding-left: 10px;
-    padding-right: 10px;
-  }
 }
