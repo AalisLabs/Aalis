@@ -471,7 +471,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
               if (seg.type === 'reasoning_text') {
                 // 合并连续的 reasoning_text（中间允许 tool_call 也归入同一思考块？
                 // 这里只合并连续的 reasoning_text；若中间出现 tool_call，则先关闭一个思考块）
-                const group: typeof msg.segments = [];
+                const group: ContentSegment[] = [];
                 while (i < msg.segments.length && msg.segments[i].type === 'reasoning_text') {
                   group.push(msg.segments[i]);
                   i++;
