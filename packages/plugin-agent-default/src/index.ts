@@ -17,8 +17,6 @@ import type {
   LLMService,
   MessageArchiveService,
   MemoryService,
-  PersonaService,
-  PersonaSessionOptions,
   SessionManagerService,
   SessionConfig,
   GatewayService,
@@ -26,6 +24,7 @@ import type {
   ContentSegment,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
+import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
 import { getSenderLabel, getMessageName, parseModelRef } from '@aalis/core';
 
 /**

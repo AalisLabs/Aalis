@@ -1,4 +1,5 @@
 // ----- 人格服务接口 -----
+// 由 @aalis/plugin-persona 拥有并导出。消费者从本包 import type。
 
 /** 输出格式中单个字段的定义 */
 export interface OutputFormatField {

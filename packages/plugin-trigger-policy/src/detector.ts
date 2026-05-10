@@ -1,4 +1,5 @@
-import type { Context, PersonaService } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { PersonaService } from '@aalis/plugin-persona';
 import type { TriggerPolicyConfig } from './config.js';
 
 /** @ 检测：覆盖 onebot 内联格式（<at>、CQ:at）以及通用 @nickname */
