@@ -20,7 +20,6 @@ export type { MixinEntry } from './mixin-registry.js';
 export { PendingRegistrationBuffer } from './pending-buffer.js';
 export { registerCapabilityProbe, probeCapability } from './types/index.js';
 export { LLMCapabilities } from './types/index.js';
-export { WebSearchCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
 export { StorageCapabilities } from './types/index.js';
 export { PlatformCapabilities } from './types/index.js';
@@ -151,11 +150,4 @@ export type {
   PlatformProfile,
   SessionManagerCapability,
   SessionManagerCapabilityRegistry,
-  // 网络搜索服务
-  WebSearchService,
-  WebSearchRequest,
-  WebSearchResponse,
-  WebSearchResult,
-  WebSearchCapability,
-  WebSearchCapabilityRegistry,
 } from './types/index.js';
