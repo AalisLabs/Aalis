@@ -110,11 +110,41 @@ function parseUri(uri: string): { root: string; relPath: string } {
   return { root, relPath };
 }
 
+// 用最小接口表达对 checkpoint 服务的依赖，避免循环依赖。
+interface CheckpointLike {
+  isActive(): boolean;
+  beforeMutate(
+    uri: string,
+    op: 'write' | 'delete' | 'rename',
+    loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
+  ): Promise<void>;
+}
+
 class LocalStorageService implements StorageService {
   private roots = new Map<string, RootDefinition>();
 
-  constructor(roots: RootDefinition[], private readonly logger: Logger) {
+  constructor(
+    roots: RootDefinition[],
+    private readonly logger: Logger,
+    private readonly ctx?: Context,
+  ) {
     for (const root of roots) this.roots.set(root.name, root);
+  }
+
+  /** 懒解析 checkpoint 服务；仅当回合活跃时调用 beforeMutate */
+  private async snapshot(uri: string, op: 'write' | 'delete' | 'rename', abs: string): Promise<void> {
+    if (!this.ctx) return;
+    const cp = this.ctx.getService<CheckpointLike>('checkpoint');
+    if (!cp || !cp.isActive()) return;
+    await cp.beforeMutate(uri, op, async () => {
+      try {
+        const s = await stat(abs);
+        if (s.isDirectory()) return null;
+        return { data: await readFile(abs), size: s.size };
+      } catch {
+        return null;
+      }
+    });
   }
 
   listRoots(): StorageRootInfo[] {
@@ -195,6 +225,7 @@ class LocalStorageService implements StorageService {
     const rootDef = this.requireRoot(root, 'writable');
     if (!relPath) throw new Error('不能覆盖根目录');
     const abs = await this.resolveForWrite(rootDef, relPath);
+    await this.snapshot(toUri(rootDef.name, relPath), 'write', abs);
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, data);
     this.logger.info(`storage.write ${toUri(rootDef.name, relPath)} size=${Buffer.byteLength(data)}`);
@@ -216,6 +247,7 @@ class LocalStorageService implements StorageService {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
+    await this.snapshot(toUri(rootDef.name, relPath), 'rename', abs);
     await rename(abs, target);
     this.logger.info(`storage.rename ${toUri(rootDef.name, relPath)} -> ${toUri(rootDef.name, newRel)}`);
     return toUri(rootDef.name, newRel);
@@ -226,6 +258,7 @@ class LocalStorageService implements StorageService {
     const rootDef = this.requireRoot(root, 'deletable');
     if (!relPath) throw new Error('不能删除根目录');
     const abs = await this.resolveExisting(rootDef, relPath);
+    await this.snapshot(toUri(rootDef.name, relPath), 'delete', abs);
     await rm(abs, { recursive: true, force: false });
     this.logger.warn(`storage.delete ${toUri(rootDef.name, relPath)}`);
   }
@@ -386,7 +419,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const roots = await buildRoots(config.roots, logger);
   if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
 
-  const storage = new LocalStorageService(roots, logger);
+  const storage = new LocalStorageService(roots, logger, ctx);
   ctx.provide('storage', storage, {
     capabilities: [
       StorageCapabilities.List,
