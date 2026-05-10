@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema, PluginModule, StorageService } from '@aalis/core';
+import type { Context, ConfigSchema, PluginModule, StorageService, MemoryService } from '@aalis/core';
 import { CheckpointServiceImpl, resolveConfig, type CheckpointService } from './service.js';
 import { mkdir } from 'node:fs/promises';
 
@@ -62,6 +62,14 @@ export const webuiHandlers: PluginModule['webuiHandlers'] = {
     if (!sessionId || !turnId) return { ok: false, errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }] };
     return svc.rollback(sessionId, turnId);
   },
+  async rollbackWithChat(ctx, args) {
+    const svc = ctx.getService<CheckpointService>('checkpoint');
+    if (!svc) return { ok: false, errors: [{ uri: '', reason: 'checkpoint 服务未启用' }], deletedMessages: 0, chatDeleted: false };
+    const sessionId = args.sessionId as string;
+    const turnId = args.turnId as string;
+    if (!sessionId || !turnId) return { ok: false, errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }], deletedMessages: 0, chatDeleted: false };
+    return svc.rollbackWithChat(sessionId, turnId);
+  },
 };
 
 // ──────────── 插件入口 ────────────
@@ -89,6 +97,27 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   );
 
+  // 注入 chat 回滚所需依赖：memory + 事件发出器（懒解析 memory，但事件发出器立即可用）
+  const memoryProxy: MemoryService = new Proxy({} as MemoryService, {
+    get(_t, prop) {
+      const m = ctx.getService<MemoryService>('memory');
+      if (!m) return undefined;
+      const v = (m as unknown as Record<string | symbol, unknown>)[prop as string];
+      return typeof v === 'function' ? (v as Function).bind(m) : v;
+    },
+  });
+  service.setChatRollbackDeps({
+    memory: memoryProxy,
+    emitMessagesDeleted: (sessionId, timestamps) => {
+      ctx.emit('memory:messages-deleted', { sessionId, timestamps })
+        .catch(err => logger.debug(`emit memory:messages-deleted 失败: ${(err as Error).message}`));
+    },
+    emitHistoryChanged: (sessionId) => {
+      ctx.emit('history:changed', { sessionId })
+        .catch(err => logger.debug(`emit history:changed 失败: ${(err as Error).message}`));
+    },
+  });
+
   // ──────────── 回合生命周期 ────────────
   // agent:input:before：一次 LLM 回合开始（一个用户消息进来）
   ctx.middleware('agent:input:before', async (data, next) => {
@@ -113,4 +142,4 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   logger.info(`checkpoint 服务就绪 rootDir=${config.rootDir} maxFileSize=${config.maxFileSize}`);
 }
 
-export type { CheckpointService, TurnSummary, TurnManifest, CheckpointFileRecord, RollbackResult } from './service.js';
+export type { CheckpointService, TurnSummary, TurnManifest, CheckpointFileRecord, RollbackResult, RollbackWithChatResult } from './service.js';

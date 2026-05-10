@@ -1,4 +1,4 @@
-import type { Logger } from '@aalis/core';
+import type { Logger, MemoryService } from '@aalis/core';
 import { mkdir, readFile, writeFile, rm, stat, readdir, copyFile, rename } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -34,6 +34,8 @@ export interface CheckpointService {
   getManifest(sessionId: string, turnId: string): Promise<TurnManifest | null>;
   /** 回滚某回合（恢复 / 删除 / 重命名复原）。返回受影响文件计数 */
   rollback(sessionId: string, turnId: string): Promise<RollbackResult>;
+  /** 回滚某回合并同步删除本轮对话消息与向量条目 */
+  rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult>;
 }
 
 export interface CheckpointFileRecord {
@@ -54,6 +56,8 @@ export interface TurnManifest {
   startedAt: number;
   endedAt?: number;
   files: CheckpointFileRecord[];
+  /** 本轮对话内消息的时间戳，用于 rollbackWithChat 精确删除消息与向量条目 */
+  messageTimestamps?: number[];
 }
 
 export interface TurnSummary {
@@ -73,6 +77,13 @@ export interface RollbackResult {
   restored: string[];
   deleted: string[];
   errors: Array<{ uri: string; reason: string }>;
+}
+
+export interface RollbackWithChatResult extends RollbackResult {
+  /** 实际从 memory 中删除的消息条数 */
+  deletedMessages: number;
+  /** chat 删除是否成功；若失败，errors 也会记录原因 */
+  chatDeleted: boolean;
 }
 
 interface ServiceConfig {
@@ -116,8 +127,28 @@ export class CheckpointServiceImpl implements CheckpointService {
   async endTurn(): Promise<void> {
     if (!this.current) return;
     this.current.endedAt = Date.now();
-    // 若整个回合没有任何文件改动，跳过持久化
-    if (this.current.files.length === 0) {
+    // 在持久化前抓取本轮对话的消息时间戳（供 rollbackWithChat 使用）
+    // 即使本轮无文件改动，只要有消息就会持久化 manifest
+    if (this._memory && typeof this._memory.getMessagesBySessionRange === 'function') {
+      try {
+        // 宽松边界 200ms，用于容纳 archiveIncoming/saveMessage 时钟偏差
+        const msgs = await this._memory.getMessagesBySessionRange(
+          this.current.sessionId,
+          this.current.startedAt - 200,
+          this.current.endedAt + 200,
+        );
+        this.current.messageTimestamps = msgs
+          .map(m => m.timestamp)
+          .filter((t): t is number => typeof t === 'number');
+      } catch (err) {
+        this.logger.warn(`抓取本轮消息时间戳失败: ${(err as Error).message}`);
+      }
+    }
+    // 若整个回合没有任何文件改动且没有任何消息时间戳，跳过持久化
+    if (
+      this.current.files.length === 0
+      && (!this.current.messageTimestamps || this.current.messageTimestamps.length === 0)
+    ) {
       this.logger.debug(`checkpoint 回合无改动，跳过 ${this.current.turnId}`);
       this.current = null;
       return;
@@ -276,10 +307,78 @@ export class CheckpointServiceImpl implements CheckpointService {
   // ──────────── 回滚后端注入 ────────────
   private _backendWrite?: (uri: string, data: Buffer) => Promise<void>;
   private _backendDelete?: (uri: string) => Promise<void>;
+  private _memory?: MemoryService;
+  private _emitMessagesDeleted?: (sessionId: string, timestamps: number[]) => void;
+  private _emitHistoryChanged?: (sessionId: string) => void;
 
   setBackend(write: (uri: string, data: Buffer) => Promise<void>, del: (uri: string) => Promise<void>): void {
     this._backendWrite = write;
     this._backendDelete = del;
+  }
+
+  /** 注入聊天回滚所需的依赖：memory 服务 + 事件发出器 */
+  setChatRollbackDeps(deps: {
+    memory: MemoryService;
+    emitMessagesDeleted: (sessionId: string, timestamps: number[]) => void;
+    emitHistoryChanged: (sessionId: string) => void;
+  }): void {
+    this._memory = deps.memory;
+    this._emitMessagesDeleted = deps.emitMessagesDeleted;
+    this._emitHistoryChanged = deps.emitHistoryChanged;
+  }
+
+  async rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult> {
+    const manifest = await this.getManifest(sessionId, turnId);
+    if (!manifest) {
+      return {
+        ok: false,
+        restored: [],
+        deleted: [],
+        errors: [{ uri: '', reason: 'checkpoint 不存在' }],
+        deletedMessages: 0,
+        chatDeleted: false,
+      };
+    }
+    // 先执行文件回滚
+    const fileResult = await this.rollback(sessionId, turnId);
+    const result: RollbackWithChatResult = {
+      ...fileResult,
+      deletedMessages: 0,
+      chatDeleted: false,
+    };
+
+    const timestamps = manifest.messageTimestamps ?? [];
+    if (timestamps.length === 0) {
+      // 无消息可删（例如旧 checkpoint），仅文件回滚生效
+      result.chatDeleted = true;
+      return result;
+    }
+
+    if (!this._memory || typeof this._memory.deleteMessagesByTimestamps !== 'function') {
+      result.errors.push({ uri: '', reason: '当前 memory 后端不支持 deleteMessagesByTimestamps' });
+      result.ok = false;
+      return result;
+    }
+
+    try {
+      result.deletedMessages = await this._memory.deleteMessagesByTimestamps(sessionId, timestamps);
+      result.chatDeleted = true;
+    } catch (err) {
+      result.errors.push({ uri: '', reason: `删除消息失败: ${(err as Error).message}` });
+      result.ok = false;
+      return result;
+    }
+
+    // 通知向量插件清理同时间戳的向量条目
+    try { this._emitMessagesDeleted?.(sessionId, timestamps); } catch (err) {
+      this.logger.warn(`emit memory:messages-deleted 失败: ${(err as Error).message}`);
+    }
+    // 通知前端刷新历史
+    try { this._emitHistoryChanged?.(sessionId); } catch (err) {
+      this.logger.warn(`emit history:changed 失败: ${(err as Error).message}`);
+    }
+
+    return result;
   }
 
   // ──────────── GC ────────────

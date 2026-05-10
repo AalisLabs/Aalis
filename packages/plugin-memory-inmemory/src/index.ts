@@ -117,6 +117,31 @@ class InMemoryFallbackService implements MemoryService {
     }
     return count;
   }
+
+  async deleteMessagesByTimestamps(sessionId: string, timestamps: number[]): Promise<number> {
+    if (timestamps.length === 0) return 0;
+    const tsSet = new Set(timestamps);
+    let removed = 0;
+    const active = this.sessions.get(sessionId);
+    if (active) {
+      const kept = active.filter(m => {
+        if (m.timestamp !== undefined && tsSet.has(m.timestamp)) { removed++; return false; }
+        return true;
+      });
+      if (kept.length > 0) this.sessions.set(sessionId, kept);
+      else this.sessions.delete(sessionId);
+    }
+    const archived = this.archivedSessions.get(sessionId);
+    if (archived) {
+      const kept = archived.filter(m => {
+        if (m.timestamp !== undefined && tsSet.has(m.timestamp)) { removed++; return false; }
+        return true;
+      });
+      if (kept.length > 0) this.archivedSessions.set(sessionId, kept);
+      else this.archivedSessions.delete(sessionId);
+    }
+    return removed;
+  }
 }
 
 // ===== 插件元数据 =====
@@ -134,6 +159,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
       MemoryCapabilities.History,
       MemoryCapabilities.Metadata,
       MemoryCapabilities.ContentUpdate,
+      MemoryCapabilities.MessageDelete,
     ],
     priority: -100,
   });
