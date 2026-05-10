@@ -1602,6 +1602,17 @@ body {
   border-radius: 3px;
 }
 
+/* 已回滚状态（非交互，静态标记） */
+.checkpoint-rolled-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted, #aaa);
+  user-select: none;
+}
+
 /* ===== 工具调用上限提示 ===== */
 
 .tool-limit-bar {
