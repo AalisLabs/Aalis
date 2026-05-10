@@ -65,6 +65,7 @@ export const configSchema: ConfigSchema = {
           { label: '， 中文逗号', value: '，' },
           { label: '、 顿号', value: '、' },
           { label: '. 英文句号', value: '.' },
+          { label: '.  英文句号+空格（句末断句，避免小数点误拆）', value: '. ' },
           { label: '! 英文感叹号', value: '!' },
           { label: '? 英文问号', value: '?' },
           { label: '; 英文分号', value: ';' },
@@ -259,13 +260,22 @@ const CONNECT_TIMEOUT = 15000;
 
 // ===== 消息分条逻辑 =====
 
+interface SplitPatterns {
+  /** 单字符切割点（构建字符类 [...]） */
+  singleChars: Set<string>;
+  /** 多字符序列切割点（原子匹配，不拆散） */
+  multiPatterns: string[];
+}
+
 /**
- * 将「切割符号列表」（允许包含 token：\n / \t / \r / space）
- * 转换为实际字符集合，并去重。
+ * 将「切割符号列表」解析为切割规则。
+ * - 单字符（含 token \n/\t/\r/space）→ singleChars
+ * - 多字符序列（如 ". "）→ multiPatterns（原子匹配，不拆散为单字符）
  */
-function resolvePunctuationChars(items: unknown): Set<string> {
-  const result = new Set<string>();
-  if (!Array.isArray(items)) return result;
+function resolveSplitPatterns(items: unknown): SplitPatterns {
+  const singleChars = new Set<string>();
+  const multiPatterns: string[] = [];
+  if (!Array.isArray(items)) return { singleChars, multiPatterns };
   for (const raw of items) {
     if (typeof raw !== 'string' || raw.length === 0) continue;
     let decoded: string;
@@ -276,16 +286,19 @@ function resolvePunctuationChars(items: unknown): Set<string> {
       case 'space': decoded = ' '; break;
       default: decoded = raw;
     }
-    // 按字符拆，支持用户填入多个符号拼一起的情况
-    for (const ch of decoded) result.add(ch);
+    if (decoded.length === 1) {
+      singleChars.add(decoded);
+    } else {
+      // 多字符序列作为原子切割模式，不拆散
+      if (!multiPatterns.includes(decoded)) multiPatterns.push(decoded);
+    }
   }
-  return result;
+  return { singleChars, multiPatterns };
 }
 
 /** 将字符集合转换为正则字符类（转义特殊字符）。 */
 function charsToRegexClass(chars: Set<string>): string {
   return Array.from(chars).map(ch => {
-    // 正则字符类内需转义的字符
     if (ch === '\\' || ch === ']' || ch === '^' || ch === '-') return '\\' + ch;
     if (ch === '\n') return '\\n';
     if (ch === '\r') return '\\r';
@@ -294,14 +307,20 @@ function charsToRegexClass(chars: Set<string>): string {
   }).join('');
 }
 
+/** 转义正则元字符，用于 lookbehind 中的多字符模式。 */
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * 按标点符号（中英文逗号、句号、问号、叹号、分号、顿号、换行等）
  * 将文本拆分为多条消息。XML 标记（<at>、<image> 等）保持与相邻文本在一起。
  * 只拆分纯文本部分，不在 XML 标记中间切割。
  */
-function splitMessageByPunctuation(content: string, splitChars: Set<string>): string[] {
-  // 如果内容很短或只有 XML 标记，不拆分
-  if (content.length <= 10 || splitChars.size === 0) return [content];
+function splitMessageByPunctuation(content: string, patterns: SplitPatterns): string[] {
+  const { singleChars, multiPatterns } = patterns;
+  // 如果内容很短或没有任何切割规则，不拆分
+  if (content.length <= 10 || (singleChars.size === 0 && multiPatterns.length === 0)) return [content];
 
   // 识别所有 XML 标记的位置，拆分时不切割它们
   const xmlTagRegex = /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
@@ -322,10 +341,20 @@ function splitMessageByPunctuation(content: string, splitChars: Set<string>): st
     tokens.push({ type: 'text', value: content.slice(lastIdx) });
   }
 
-  // 在文本 token 内部按标点拆分
-  const splitClass = charsToRegexClass(splitChars);
-  const splitRegex = new RegExp(`(?<=[${splitClass}])`);
-  const trailingPunctuation = new RegExp(`[${splitClass}\\s]+$`);
+  // 构建拆分正则：单字符走字符类，多字符序列走各自的 lookbehind，用 | 合并
+  const regexParts: string[] = [];
+  if (singleChars.size > 0) {
+    const splitClass = charsToRegexClass(singleChars);
+    regexParts.push(`(?<=[${splitClass}])`);
+  }
+  for (const p of multiPatterns) {
+    regexParts.push(`(?<=${escapeForRegex(p)})`);
+  }
+  const splitRegex = new RegExp(regexParts.join('|'));
+  // 尾部清理：去除单字符标点及空白（多字符模式结尾通常含空白，\s 已覆盖）
+  const trailingPunctuation = singleChars.size > 0
+    ? new RegExp(`[${charsToRegexClass(singleChars)}\\s]+$`)
+    : /\s+$/;
   const pieces: string[] = [];
   let current = '';
 
@@ -378,7 +407,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const splitEnabled = splitCfg.enabled === true;
   const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
   const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
-  const splitChars = resolvePunctuationChars(
+  const splitPatterns = resolveSplitPatterns(
     splitCfg.punctuation ?? ['。', '！', '？', '.', '!', '?', '\\n'],
   );
 
@@ -1079,7 +1108,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 消息分条发送（指令回复等短消息可跳过）
-      const pieces = (splitEnabled && !options?.skipSplit) ? splitMessageByPunctuation(content, splitChars) : [content];
+      const pieces = (splitEnabled && !options?.skipSplit) ? splitMessageByPunctuation(content, splitPatterns) : [content];
 
       for (let i = 0; i < pieces.length; i++) {
         const piece = pieces[i].trim();
