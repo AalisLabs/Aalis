@@ -282,6 +282,85 @@ export class Context {
     return this._services.prefer(name, contextId);
   }
 
+  /**
+   * 当服务就绪时执行回调。若已就绪则立即调用；否则订阅 `service:registered`
+   * 事件并在匹配名称时调用一次。
+   *
+   * 回调可返回清理函数，将在 `ctx.dispose()` 时自动调用。
+   *
+   * 返回的 dispose 函数：调用即移除监听并执行已注册的清理函数（若有）。
+   * 多用于把"对服务的注册"行为缓冲到服务就绪后：
+   *
+   * @example
+   * ctx.whenService<ToolService>('tools', svc => {
+   *   const off = svc.register(myTool, ctx.id);
+   *   return off; // 自动纳入 dispose 链
+   * });
+   */
+  whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
+    let cleanup: (() => void) | void;
+    let invoked = false;
+    let offSubscription: (() => void) | null = null;
+
+    const run = (svc: T): void => {
+      if (invoked) return;
+      invoked = true;
+      offSubscription?.();
+      offSubscription = null;
+      cleanup = cb(svc);
+      if (typeof cleanup === 'function') this._disposables.push(cleanup);
+    };
+
+    const existing = this._services.get<T>(name);
+    if (existing !== undefined) {
+      run(existing);
+    } else {
+      offSubscription = this.on('service:registered', (svcName: string) => {
+        if (svcName !== name) return;
+        const svc = this._services.get<T>(name);
+        if (svc !== undefined) run(svc);
+      });
+    }
+
+    return () => {
+      offSubscription?.();
+      offSubscription = null;
+      if (typeof cleanup === 'function') {
+        try { cleanup(); } catch (err) { this.logger.warn('whenService cleanup 异常:', err); }
+        cleanup = undefined;
+      }
+    };
+  }
+
+  /**
+   * 给 Context.prototype 添加一个方法（进程级共享）。
+   *
+   * 用于插件向使用者暴露便捷方法，例如 plugin-tools-system 注入
+   * `ctx.registerTool()`、plugin-commands 注入 `ctx.command()`。
+   *
+   * **同名方法存在时抛错**，避免静默覆盖。
+   *
+   * @returns 卸载函数：从 prototype 上移除该方法。
+   * @example
+   * Context.extend('registerTool', function(this: Context, tool) {
+   *   return this.whenService<ToolService>('tools', svc => svc.register(tool, this.id));
+   * });
+   */
+  static extend(name: string, impl: (this: Context, ...args: never[]) => unknown): () => void {
+    if (name in Context.prototype) {
+      throw new Error(`Context.extend: 方法 "${name}" 已存在，拒绝覆盖`);
+    }
+    Object.defineProperty(Context.prototype, name, {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: impl,
+    });
+    return () => {
+      delete (Context.prototype as unknown as Record<string, unknown>)[name];
+    };
+  }
+
   // ---- 注册缓冲（服务延迟就绪支持，逻辑已抽到 PendingRegistrationBuffer） ----
 
   // ---- 工具 ----
