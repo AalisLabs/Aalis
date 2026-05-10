@@ -1564,6 +1564,44 @@ body {
   border-color: var(--danger, #e53935);
 }
 
+/* ===== Checkpoint 回滚按钮 ===== */
+
+.checkpoint-rollback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #888);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--text-secondary, #888) 35%, transparent);
+  border-radius: var(--radius);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: all var(--transition);
+  align-self: flex-start;
+}
+
+.checkpoint-rollback-btn:hover {
+  opacity: 1;
+  color: var(--warning, #d97706);
+  border-color: var(--warning, #d97706);
+  background: color-mix(in srgb, var(--warning, #d97706) 8%, transparent);
+}
+
+.checkpoint-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 0.68rem;
+  color: var(--danger, #e53935);
+  background: color-mix(in srgb, var(--danger, #e53935) 12%, transparent);
+  border-radius: 3px;
+}
+
 /* ===== 工具调用上限提示 ===== */
 
 .tool-limit-bar {
