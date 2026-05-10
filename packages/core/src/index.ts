@@ -25,7 +25,6 @@ export { WebSearchCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
 export { StorageCapabilities } from './types/index.js';
 export { PlatformCapabilities } from './types/index.js';
-export { MessageArchiveCapabilities } from './types/index.js';
 export { SessionManagerCapabilities } from './types/index.js';
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
@@ -139,12 +138,7 @@ export type {
   StorageService,
   StorageCapability,
   StorageCapabilityRegistry,
-  // 消息归档服务
-  ArchiveIncomingResult,
-  ArchiveNoticeOptions,
-  MessageArchiveService,
-  MessageArchiveCapability,
-  MessageArchiveCapabilityRegistry,
+  // 消息归档服务已迁出 core（@aalis/plugin-message-archive）
   // Embedding 服务
   EmbeddingService,
   // 向量数据库服务

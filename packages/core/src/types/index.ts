@@ -133,16 +133,6 @@ export type {
 } from './storage.js';
 export { StorageCapabilities } from './storage.js';
 
-// 消息归档服务
-export type {
-  ArchiveIncomingResult,
-  ArchiveNoticeOptions,
-  MessageArchiveService,
-  MessageArchiveCapability,
-  MessageArchiveCapabilityRegistry,
-} from './archive.js';
-export { MessageArchiveCapabilities } from './archive.js';
-
 // Embedding 服务
 export type { EmbeddingService } from './embedding.js';
 

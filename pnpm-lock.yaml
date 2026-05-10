@@ -91,6 +91,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
       ws:
         specifier: ^8.18.0
         version: 8.20.0
@@ -110,6 +113,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
@@ -289,6 +295,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -421,6 +430,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -511,6 +523,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -608,6 +623,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -760,6 +778,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-archive':
+        specifier: workspace:*
+        version: link:../plugin-message-archive
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
