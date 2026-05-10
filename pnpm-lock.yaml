@@ -110,6 +110,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-persona':
+        specifier: workspace:*
+        version: link:../plugin-persona
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -162,6 +165,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-persona':
+        specifier: workspace:*
+        version: link:../plugin-persona
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -583,6 +589,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-persona':
+        specifier: workspace:*
+        version: link:../plugin-persona
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -748,6 +757,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-persona':
+        specifier: workspace:*
+        version: link:../plugin-persona
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -868,6 +880,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-persona':
+        specifier: workspace:*
+        version: link:../plugin-persona
       express:
         specifier: ^5.1.0
         version: 5.2.1
