@@ -6,7 +6,8 @@
 //
 // 第三方若要实现替代方案（如调用专用视觉 API），只需满足本接口即可。
 
-import type { IncomingMessage } from './core.js';
+import type { IncomingMessage } from '@aalis/core';
+import { registerCapabilityProbe } from '@aalis/core';
 
 /** 图像识别处理消息的输入 */
 export interface ImageRecognitionInput {
@@ -137,14 +138,13 @@ export const ImageRecognitionCapabilities = {
   DescriptionCache: 'description-cache',
 } as const satisfies ImageRecognitionCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     'image-recognition': ImageRecognitionCapability;
   }
 }
 
 // 注册能力↔方法探测器
-import { registerCapabilityProbe } from './capabilities.js';
 
 registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.Describe, inst =>
   typeof (inst as { describe?: unknown }).describe === 'function'
