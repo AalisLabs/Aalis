@@ -99,13 +99,13 @@ export const WebSearchCapabilities = {
   RelatedQuestions: 'related-questions',
 } as const satisfies WebSearchCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     'web-search': WebSearchCapability;
   }
 }
 
-import { registerCapabilityProbe } from './capabilities.js';
+import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('web-search', WebSearchCapabilities.Web, inst =>
   typeof (inst as { search?: unknown }).search === 'function'

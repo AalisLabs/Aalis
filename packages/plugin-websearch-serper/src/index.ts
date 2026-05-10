@@ -1,6 +1,10 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { LLMService, WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from '@aalis/core';
-import { WebSearchCapabilities } from '@aalis/core';
+import type { LLMService } from '@aalis/core';
+import type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from './types.js';
+import { WebSearchCapabilities } from './types.js';
+
+export type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchCapability, WebSearchCapabilityRegistry } from './types.js';
+export { WebSearchCapabilities } from './types.js';
 import { parseModelRef } from '@aalis/core';
 
 // ===== 插件元数据 =====
