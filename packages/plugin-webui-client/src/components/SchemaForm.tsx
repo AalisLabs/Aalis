@@ -188,7 +188,8 @@ function SchemaFormField({
 
     const [customInput, setCustomInput] = useState('');
     const addCustom = () => {
-      const trimmed = customInput.trim();
+      // 仅去除首尾换行/制表符，保留内部空格（如 ", " 逗号+空格是有效的多字符切割序列）
+      const trimmed = customInput.replace(/^[\r\n\t]+|[\r\n\t]+$/g, '');
       if (trimmed && !selected.includes(trimmed)) {
         onChange([...selected, trimmed]);
       }
