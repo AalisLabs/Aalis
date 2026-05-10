@@ -1,0 +1,335 @@
+import type { Logger } from '@aalis/core';
+import { mkdir, readFile, writeFile, rm, stat, readdir, copyFile, rename } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+/**
+ * Checkpoint 服务
+ *
+ * 在 LLM 一次回合（assistant turn）期间记录所有受控存储中的写入/删除/重命名操作，
+ * 在改动发生前自动备份原始文件内容，使用户可以从 WebUI 一键回滚整轮操作。
+ *
+ * 协作模型：
+ * - plugin-storage-local 在执行 writeFile/delete/rename 之前，通过
+ *   `ctx.getService<CheckpointService>('checkpoint')?.beforeMutate(...)` 探测本服务。
+ * - 本服务通过 hooks `agent:input:before` / `agent:turn:after` 维护「当前回合」状态。
+ * - exec 工具直接调用系统命令，不在本服务保护范围内（前端 UI 标注「未保护」）。
+ */
+export interface CheckpointService {
+  /** 探测：是否在某个回合内（storage-local 提早判断以避免无谓 stat） */
+  isActive(): boolean;
+  /**
+   * 在 storage 即将修改 uri 时调用。本调用是 op="write"|"delete"|"rename" 之前的一次性快照机会。
+   * 如果同一 uri 在当前回合内已被快照过，则跳过（保留最早的原始内容）。
+   * loadOriginal 是按需读取原始内容的闭包；首次需要快照时才调用。
+   */
+  beforeMutate(
+    uri: string,
+    op: 'write' | 'delete' | 'rename',
+    loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
+  ): Promise<void>;
+  /** 列出某个 session 的所有回合 checkpoint */
+  listTurns(sessionId: string): Promise<TurnSummary[]>;
+  /** 读取某回合 manifest */
+  getManifest(sessionId: string, turnId: string): Promise<TurnManifest | null>;
+  /** 回滚某回合（恢复 / 删除 / 重命名复原）。返回受影响文件计数 */
+  rollback(sessionId: string, turnId: string): Promise<RollbackResult>;
+}
+
+export interface CheckpointFileRecord {
+  uri: string;
+  /** write=覆盖已有, write-new=新创建, delete=删除, rename=重命名 */
+  action: 'write' | 'write-new' | 'delete' | 'rename';
+  /** 原始大小（如果有快照） */
+  originalSize?: number;
+  /** 备份 blob 文件名（相对于 turn 目录） */
+  blob?: string;
+  /** 跳过原因（过大、读取失败等） */
+  skipped?: string;
+}
+
+export interface TurnManifest {
+  turnId: string;
+  sessionId: string;
+  startedAt: number;
+  endedAt?: number;
+  files: CheckpointFileRecord[];
+}
+
+export interface TurnSummary {
+  turnId: string;
+  sessionId: string;
+  startedAt: number;
+  endedAt?: number;
+  fileCount: number;
+  /** 是否在 turn 内调用过 exec 工具（前端用于显示「部分未保护」） */
+  execUsed?: boolean;
+  /** 摘要预览（前 3 个文件 URI） */
+  filesPreview: string[];
+}
+
+export interface RollbackResult {
+  ok: boolean;
+  restored: string[];
+  deleted: string[];
+  errors: Array<{ uri: string; reason: string }>;
+}
+
+interface ServiceConfig {
+  rootDir: string;
+  maxFileSize: number;
+  keepSessions: number;
+}
+
+/**
+ * 实现
+ */
+export class CheckpointServiceImpl implements CheckpointService {
+  private current: TurnManifest | null = null;
+  /** 当前回合内已快照过的 uri 集合（用于去重） */
+  private snapshotted: Set<string> = new Set();
+  /** 文件计数器，用于命名 blob 文件 */
+  private blobIndex = 0;
+
+  constructor(private readonly cfg: ServiceConfig, private readonly logger: Logger) {}
+
+  // ──────────── 生命周期 ────────────
+
+  beginTurn(sessionId: string): string {
+    // 如果上一回合没有正常结束，先把它 commit 掉避免遗失
+    if (this.current) {
+      this.endTurn().catch(err => this.logger.warn(`finalize 旧回合失败: ${(err as Error).message}`));
+    }
+    const turnId = randomUUID();
+    this.current = {
+      turnId,
+      sessionId,
+      startedAt: Date.now(),
+      files: [],
+    };
+    this.snapshotted = new Set();
+    this.blobIndex = 0;
+    this.logger.debug(`checkpoint 回合开始 ${sessionId} turn=${turnId}`);
+    return turnId;
+  }
+
+  async endTurn(): Promise<void> {
+    if (!this.current) return;
+    this.current.endedAt = Date.now();
+    // 若整个回合没有任何文件改动，跳过持久化
+    if (this.current.files.length === 0) {
+      this.logger.debug(`checkpoint 回合无改动，跳过 ${this.current.turnId}`);
+      this.current = null;
+      return;
+    }
+    const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
+    await mkdir(turnDir, { recursive: true });
+    await writeFile(
+      join(turnDir, 'manifest.json'),
+      JSON.stringify(this.current, null, 2),
+      'utf-8',
+    );
+    this.logger.info(
+      `checkpoint 回合提交 turn=${this.current.turnId} 文件数=${this.current.files.length}`,
+    );
+    this.current = null;
+    this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
+  }
+
+  /** 标记当前回合调用过 exec，UI 端会提示「部分未保护」 */
+  markExecUsed(): void {
+    if (!this.current) return;
+    (this.current as TurnManifest & { execUsed?: boolean }).execUsed = true;
+  }
+
+  // ──────────── beforeMutate ────────────
+
+  isActive(): boolean {
+    return this.current !== null;
+  }
+
+  async beforeMutate(
+    uri: string,
+    op: 'write' | 'delete' | 'rename',
+    loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
+  ): Promise<void> {
+    if (!this.current) return; // 回合外，忽略
+    if (this.snapshotted.has(uri)) return; // 同回合已快照过
+    this.snapshotted.add(uri);
+
+    let original: { data: Buffer; size: number } | null = null;
+    try {
+      original = await loadOriginal();
+    } catch (err) {
+      this.logger.warn(`checkpoint 加载原文件失败 ${uri}: ${(err as Error).message}`);
+    }
+
+    // 情况 1：write 且原文件不存在 → 标记为新创建（回滚时需要删除）
+    if (!original && op === 'write') {
+      this.current.files.push({ uri, action: 'write-new' });
+      return;
+    }
+
+    // 情况 2：原文件不存在但是 delete/rename → 不可能，跳过
+    if (!original) return;
+
+    // 情况 3：过大 → 跳过快照但记录为「skipped」
+    if (original.size > this.cfg.maxFileSize) {
+      this.current.files.push({
+        uri,
+        action: op === 'rename' ? 'rename' : op,
+        originalSize: original.size,
+        skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
+      });
+      return;
+    }
+
+    // 情况 4：正常快照
+    const blobName = `${this.blobIndex++}.bin`;
+    const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
+    await mkdir(join(turnDir, 'blobs'), { recursive: true });
+    await writeFile(join(turnDir, 'blobs', blobName), original.data);
+
+    this.current.files.push({
+      uri,
+      action: op === 'rename' ? 'rename' : op,
+      originalSize: original.size,
+      blob: blobName,
+    });
+  }
+
+  // ──────────── 查询 ────────────
+
+  async listTurns(sessionId: string): Promise<TurnSummary[]> {
+    const sessionDir = join(this.cfg.rootDir, encodeSegment(sessionId));
+    let entries: string[];
+    try {
+      entries = await readdir(sessionDir);
+    } catch {
+      return [];
+    }
+    const summaries: TurnSummary[] = [];
+    for (const turnId of entries) {
+      const manifest = await this.getManifest(sessionId, turnId);
+      if (!manifest) continue;
+      summaries.push({
+        turnId: manifest.turnId,
+        sessionId: manifest.sessionId,
+        startedAt: manifest.startedAt,
+        endedAt: manifest.endedAt,
+        fileCount: manifest.files.length,
+        execUsed: (manifest as TurnManifest & { execUsed?: boolean }).execUsed,
+        filesPreview: manifest.files.slice(0, 3).map(f => f.uri),
+      });
+    }
+    summaries.sort((a, b) => b.startedAt - a.startedAt);
+    return summaries;
+  }
+
+  async getManifest(sessionId: string, turnId: string): Promise<TurnManifest | null> {
+    const path = join(this.turnDir(sessionId, turnId), 'manifest.json');
+    try {
+      const raw = await readFile(path, 'utf-8');
+      return JSON.parse(raw) as TurnManifest;
+    } catch {
+      return null;
+    }
+  }
+
+  // ──────────── 回滚 ────────────
+
+  async rollback(sessionId: string, turnId: string): Promise<RollbackResult> {
+    const manifest = await this.getManifest(sessionId, turnId);
+    if (!manifest) {
+      return { ok: false, restored: [], deleted: [], errors: [{ uri: '', reason: 'checkpoint 不存在' }] };
+    }
+    // 通过 storage service 来执行回滚操作，避免直接绕过权限
+    // 此处通过模块外部注入 writeBack/deleteBack 函数
+    const result: RollbackResult = { ok: true, restored: [], deleted: [], errors: [] };
+    if (!this._backendWrite || !this._backendDelete) {
+      return { ok: false, restored: [], deleted: [], errors: [{ uri: '', reason: '回滚后端未注入' }] };
+    }
+    const turnDir = this.turnDir(sessionId, turnId);
+
+    for (const file of manifest.files) {
+      try {
+        if (file.action === 'write-new') {
+          // 新创建的文件 → 删除
+          await this._backendDelete(file.uri);
+          result.deleted.push(file.uri);
+        } else if (file.skipped) {
+          // 跳过快照的，无法恢复
+          result.errors.push({ uri: file.uri, reason: file.skipped });
+        } else if (file.blob) {
+          const data = await readFile(join(turnDir, 'blobs', file.blob));
+          await this._backendWrite(file.uri, data);
+          result.restored.push(file.uri);
+        }
+      } catch (err) {
+        result.errors.push({ uri: file.uri, reason: (err as Error).message });
+      }
+    }
+    if (result.errors.length > 0) result.ok = false;
+    return result;
+  }
+
+  // ──────────── 回滚后端注入 ────────────
+  private _backendWrite?: (uri: string, data: Buffer) => Promise<void>;
+  private _backendDelete?: (uri: string) => Promise<void>;
+
+  setBackend(write: (uri: string, data: Buffer) => Promise<void>, del: (uri: string) => Promise<void>): void {
+    this._backendWrite = write;
+    this._backendDelete = del;
+  }
+
+  // ──────────── GC ────────────
+
+  private async gc(): Promise<void> {
+    if (this.cfg.keepSessions <= 0) return;
+    let sessions: string[];
+    try {
+      sessions = await readdir(this.cfg.rootDir);
+    } catch {
+      return;
+    }
+    if (sessions.length <= this.cfg.keepSessions) return;
+
+    // 按 session 目录的最新 mtime 排序，淘汰最旧的
+    const sessionInfo: Array<{ name: string; mtime: number }> = [];
+    for (const name of sessions) {
+      try {
+        const s = await stat(join(this.cfg.rootDir, name));
+        sessionInfo.push({ name, mtime: s.mtimeMs });
+      } catch { /* skip */ }
+    }
+    sessionInfo.sort((a, b) => b.mtime - a.mtime);
+    const toDelete = sessionInfo.slice(this.cfg.keepSessions);
+    for (const item of toDelete) {
+      try {
+        await rm(join(this.cfg.rootDir, item.name), { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(`GC 删除 ${item.name} 失败: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private turnDir(sessionId: string, turnId: string): string {
+    return join(this.cfg.rootDir, encodeSegment(sessionId), encodeSegment(turnId));
+  }
+}
+
+/** 文件系统路径段：把 ":" "/" "\" 等特殊字符 URL 编码 */
+function encodeSegment(s: string): string {
+  return s.replace(/[^A-Za-z0-9._-]/g, c => `_${c.charCodeAt(0).toString(16)}`);
+}
+
+export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
+  return {
+    rootDir: resolve(process.cwd(), typeof raw.rootDir === 'string' ? raw.rootDir : 'data/checkpoints'),
+    maxFileSize: typeof raw.maxFileSize === 'number' ? Math.max(1024, raw.maxFileSize) : 10 * 1024 * 1024,
+    keepSessions: typeof raw.keepSessions === 'number' ? Math.max(0, Math.floor(raw.keepSessions)) : 20,
+  };
+}
+
+// 让外部不需要重新引入 fs/promises
+export { copyFile, rename };

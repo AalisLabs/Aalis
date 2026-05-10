@@ -1,5 +1,6 @@
-import { useRef, useEffect, useCallback, useState, memo } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle } from 'lucide-react';
+import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
+import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle, History } from 'lucide-react';
+import { pageAction, getSessionId } from '../api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -374,13 +375,26 @@ function TodoBar({ items, onClear, loading }: { items: TodoItem[]; onClear: () =
   );
 }
 
+/** Checkpoint 回合摘要（来自 plugin-checkpoint） */
+interface CheckpointTurnSummary {
+  turnId: string;
+  sessionId: string;
+  startedAt: number;
+  endedAt?: number;
+  fileCount: number;
+  execUsed?: boolean;
+  filesPreview: string[];
+}
+
 /** 单条消息渲染（memoized，避免全量重绘） */
-const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort }: {
+const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, onRollback }: {
   msg: ChatMessage;
   senderName: string;
   isLast: boolean;
   isGenerating: boolean;
   onAbort: () => void;
+  checkpoint?: CheckpointTurnSummary;
+  onRollback?: (turn: CheckpointTurnSummary) => void;
 }) {
   if (msg.role === 'system') {
     return (
@@ -522,6 +536,17 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
           ■ 停止生成
         </button>
       )}
+      {/* Checkpoint 回滚按钮：仅 assistant 消息且本回合有文件改动时显示 */}
+      {msg.role === 'assistant' && checkpoint && checkpoint.fileCount > 0 && !isGenerating && (
+        <button
+          className="checkpoint-rollback-btn"
+          onClick={() => onRollback?.(checkpoint)}
+          title={`回滚本次回合的 ${checkpoint.fileCount} 个文件改动${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
+        >
+          <History size={12} /> 回滚 {checkpoint.fileCount} 处文件改动
+          {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
+        </button>
+      )}
     </div>
   );
 });
@@ -587,6 +612,76 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
+  // ──────── Checkpoint 状态 ────────
+  /** 当前 session 的所有 checkpoint 回合（按 startedAt 倒序） */
+  const [checkpointTurns, setCheckpointTurns] = useState<CheckpointTurnSummary[]>([]);
+  /** 当前 loading 标志的镜像，用于检测「生成结束」边沿来刷新 checkpoints */
+  const prevLoadingRef = useRef(loading);
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchTurns() {
+      try {
+        const sid = getSessionId();
+        if (!sid || sid === '__new_chat__') {
+          if (!cancelled) setCheckpointTurns([]);
+          return;
+        }
+        const res = await pageAction<CheckpointTurnSummary[] | { error: string }>(
+          '@aalis/plugin-checkpoint',
+          'listTurns',
+          { sessionId: sid },
+        );
+        if (!cancelled && Array.isArray(res)) setCheckpointTurns(res);
+      } catch {
+        // plugin-checkpoint 未启用 → 静默忽略
+      }
+    }
+    // 初次加载或刚生成完毕时拉取
+    if (prevLoadingRef.current && !loading) fetchTurns();
+    else if (messages.length === 0) setCheckpointTurns([]);
+    else fetchTurns();
+    prevLoadingRef.current = loading;
+    return () => { cancelled = true; };
+    // sessionTitle 改变作为 session 切换信号
+  }, [loading, sessionTitle, messages.length]);
+
+  /** 给定 assistant 消息 timestamp，匹配它所属的回合（窗口 ±5s 容差） */
+  const turnByTimestamp = useMemo(() => {
+    return (ts: number): CheckpointTurnSummary | undefined => {
+      for (const t of checkpointTurns) {
+        const lo = t.startedAt - 1000;
+        const hi = (t.endedAt ?? t.startedAt + 60_000) + 5000;
+        if (ts >= lo && ts <= hi) return t;
+      }
+      return undefined;
+    };
+  }, [checkpointTurns]);
+
+  const handleRollback = useCallback(async (turn: CheckpointTurnSummary) => {
+    const preview = turn.filesPreview.slice(0, 3).join('\n');
+    const more = turn.fileCount > turn.filesPreview.length ? `\n... 共 ${turn.fileCount} 个文件` : '';
+    const execWarn = turn.execUsed ? '\n\n⚠ 本回合调用过 exec/shell，命令的副作用无法回滚！' : '';
+    const ok = window.confirm(
+      `将回滚此回合的文件改动：\n\n${preview}${more}${execWarn}\n\n确定继续？`,
+    );
+    if (!ok) return;
+    try {
+      const result = await pageAction<{ ok: boolean; restored: string[]; deleted: string[]; errors: Array<{ uri: string; reason: string }> }>(
+        '@aalis/plugin-checkpoint',
+        'rollback',
+        { sessionId: getSessionId(), turnId: turn.turnId },
+      );
+      const msg = `回滚完成：恢复 ${result.restored.length} 个，删除 ${result.deleted.length} 个`;
+      if (result.errors.length > 0) {
+        window.alert(`${msg}\n失败 ${result.errors.length} 个：\n` + result.errors.map(e => `${e.uri}: ${e.reason}`).join('\n'));
+      } else {
+        window.alert(msg);
+      }
+    } catch (err) {
+      window.alert(`回滚失败：${(err as Error).message}`);
+    }
+  }, []);
+
   /** 用户正在主动滚动（防止 auto-scroll 与用户手势冲突） */
   const userScrollingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUserScrolling = useRef(false);
@@ -936,6 +1031,8 @@ export function ChatPanel({
             isLast={i === messages.length - 1}
             isGenerating={isGenerating}
             onAbort={onAbort}
+            checkpoint={msg.role === 'assistant' ? turnByTimestamp(msg.timestamp) : undefined}
+            onRollback={handleRollback}
           />
         ))}
         {/* 仅在没有 assistant 消息时显示 loading 指示器（首次生成等待） */}
