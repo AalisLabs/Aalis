@@ -11,6 +11,7 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-authority": "workspace:*",
     "express": "^5.1.0",
     "ws": "^8.18.0"
   },

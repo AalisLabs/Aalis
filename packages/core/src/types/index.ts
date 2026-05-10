@@ -149,9 +149,6 @@ export type { EmbeddingService } from './embedding.js';
 // 向量数据库服务
 export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
 
-// 权限服务
-export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrantRequest, DangerousGrant } from './authority.js';
-
 // 会话管理
 export type {
   SessionInfo,
