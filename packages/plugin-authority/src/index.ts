@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, WebuiPage, ConfigManager, Logger, App, CommandService, ToolService, ExecutionGuardContext, AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant } from '@aalis/core';
+import type { Context, WebuiPage, ConfigManager, Logger, App, CommandService, ToolService, ExecutionGuardContext } from '@aalis/core';
+import type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant } from './types.js';
+
+export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant, DangerousGrantRequest } from './types.js';
 
 // ===== AuthorityManager 实现 =====
 
