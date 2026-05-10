@@ -387,13 +387,15 @@ interface CheckpointTurnSummary {
 }
 
 /** 单条消息渲染（memoized，避免全量重绘） */
-const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, onRollback }: {
+const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, rolledBack, onRollback }: {
   msg: ChatMessage;
   senderName: string;
   isLast: boolean;
   isGenerating: boolean;
   onAbort: () => void;
   checkpoint?: CheckpointTurnSummary;
+  /** 该回合是否已被回滚过 */
+  rolledBack?: boolean;
   onRollback?: (turn: CheckpointTurnSummary) => void;
 }) {
   if (msg.role === 'system') {
@@ -538,14 +540,20 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
       )}
       {/* Checkpoint 回滚按钮：仅 assistant 消息且本回合有文件改动时显示 */}
       {msg.role === 'assistant' && checkpoint && checkpoint.fileCount > 0 && !isGenerating && (
-        <button
-          className="checkpoint-rollback-btn"
-          onClick={() => onRollback?.(checkpoint)}
-          title={`回滚本次回合的 ${checkpoint.fileCount} 个文件改动${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
-        >
-          <History size={12} /> 回滚 {checkpoint.fileCount} 处文件改动
-          {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
-        </button>
+        rolledBack ? (
+          <span className="checkpoint-rolled-back">
+            <History size={12} /> 此次修改已回滚
+          </span>
+        ) : (
+          <button
+            className="checkpoint-rollback-btn"
+            onClick={() => onRollback?.(checkpoint)}
+            title={`回滚本次回合的 ${checkpoint.fileCount} 个文件改动${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
+          >
+            <History size={12} /> 回滚 {checkpoint.fileCount} 处文件改动
+            {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
+          </button>
+        )
       )}
     </div>
   );
@@ -615,6 +623,8 @@ export function ChatPanel({
   // ──────── Checkpoint 状态 ────────
   /** 当前 session 的所有 checkpoint 回合（按 startedAt 倒序） */
   const [checkpointTurns, setCheckpointTurns] = useState<CheckpointTurnSummary[]>([]);
+  /** 已成功回滚的 turnId 集合（用于将按钮变为「已回滚」状态） */
+  const [rolledBackTurns, setRolledBackTurns] = useState<Set<string>>(new Set());
   /** 当前 loading 标志的镜像，用于检测「生成结束」边沿来刷新 checkpoints */
   const prevLoadingRef = useRef(loading);
   useEffect(() => {
@@ -671,12 +681,14 @@ export function ChatPanel({
         'rollback',
         { sessionId: getSessionId(), turnId: turn.turnId },
       );
-      const msg = `回滚完成：恢复 ${result.restored.length} 个，删除 ${result.deleted.length} 个`;
+      const summary = `回滚完成：恢复 ${result.restored.length} 个，删除 ${result.deleted.length} 个`;
       if (result.errors.length > 0) {
-        window.alert(`${msg}\n失败 ${result.errors.length} 个：\n` + result.errors.map(e => `${e.uri}: ${e.reason}`).join('\n'));
+        window.alert(`${summary}\n失败 ${result.errors.length} 个（如有新建文件在不可删除的根下，需手动删除）：\n` + result.errors.map(e => `${e.uri}: ${e.reason}`).join('\n'));
       } else {
-        window.alert(msg);
+        window.alert(summary);
       }
+      // 无论是否有部分失败，都标记为已回滚（至少执行了部分还原）
+      setRolledBackTurns(prev => new Set([...prev, turn.turnId]));
     } catch (err) {
       window.alert(`回滚失败：${(err as Error).message}`);
     }
@@ -1032,6 +1044,7 @@ export function ChatPanel({
             isGenerating={isGenerating}
             onAbort={onAbort}
             checkpoint={msg.role === 'assistant' ? turnByTimestamp(msg.timestamp) : undefined}
+            rolledBack={msg.role === 'assistant' ? (() => { const t = turnByTimestamp(msg.timestamp); return t ? rolledBackTurns.has(t.turnId) : false; })() : false}
             onRollback={handleRollback}
           />
         ))}
