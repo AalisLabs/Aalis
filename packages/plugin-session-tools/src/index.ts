@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, ToolCallContext, SessionManagerService, IncomingMessage, SessionInfo, MessageArchiveService, MemoryService, Message } from '@aalis/core';
+import type { Context, ConfigSchema, ToolCallContext, SessionManagerService, IncomingMessage, SessionInfo, MemoryService, Message } from '@aalis/core';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 
 // ===== 插件元数据 =====
 

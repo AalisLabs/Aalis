@@ -4,11 +4,14 @@ import type {
   IncomingMessage,
   Message,
   MemoryService,
-  MessageArchiveService,
   ImageRecognitionService,
-  ArchiveNoticeOptions,
 } from '@aalis/core';
-import { prefixSender, getSenderLabel, getMessageName, MessageArchiveCapabilities } from '@aalis/core';
+import type { MessageArchiveService, ArchiveNoticeOptions } from './types.js';
+import { prefixSender, getSenderLabel, getMessageName } from '@aalis/core';
+import { MessageArchiveCapabilities } from './types.js';
+
+export type { MessageArchiveService, ArchiveIncomingResult, ArchiveNoticeOptions, MessageArchiveCapability, MessageArchiveCapabilityRegistry } from './types.js';
+export { MessageArchiveCapabilities } from './types.js';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';
