@@ -93,17 +93,6 @@ export { LLMCapabilities } from './llm.js';
 export type { ServiceCapabilityMap, CapabilityOf, CapabilityList, CapabilityProbe } from './capabilities.js';
 export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 
-// 网络搜索服务
-export type {
-  WebSearchService,
-  WebSearchRequest,
-  WebSearchResponse,
-  WebSearchResult,
-  WebSearchCapability,
-  WebSearchCapabilityRegistry,
-} from './web-search.js';
-export { WebSearchCapabilities } from './web-search.js';
-
 // 记忆服务
 export type { MemoryService, MemoryCapability, MemoryCapabilityRegistry } from './memory.js';
 export { MemoryCapabilities } from './memory.js';
