@@ -42,13 +42,6 @@ function normalizePath(input: string): string {
   return input.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-/** LLM 有时用 filePath 代替 path，两个别名都接受 */
-function getPathArg(args: unknown): string | undefined {
-  if (typeof args !== 'object' || args === null) return undefined;
-  const a = args as Record<string, unknown>;
-  return (a.path ?? a.filePath) as string | undefined;
-}
-
 function getKnownRoots(config: FileConfig) {
   return config.storage?.listRoots() ?? [];
 }
@@ -119,7 +112,7 @@ function ensureRootAllowed(uri: string, config: FileConfig): void {
 }
 
 function storagePermission(args: Record<string, unknown>, config: FileConfig, op: 'read' | 'write' | 'delete'): string[] {
-  const uri = toStorageUri(getPathArg(args), config);
+  const uri = toStorageUri(args.path as string | undefined, config);
   const root = rootOf(uri);
   return [`storage:${op}`, `storage:${root}:${op}`];
 }
@@ -245,7 +238,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         if (info.isDirectory) return JSON.stringify({ error: '路径是一个目录，请使用 file_list' });
@@ -312,7 +305,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const content = args.content as string;
         if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
@@ -353,7 +346,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const oldText = args.oldText as string;
         const newText = args.newText as string;
@@ -419,7 +412,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const appendContent = args.content as string;
         let existing = '';
@@ -465,7 +458,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         await storage.delete(uri);
         return JSON.stringify({ uri, message: '删除成功' });
@@ -502,7 +495,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     },
     permissions: ['tool:file.list', 'storage:read'],
     resolvePermissions: (args) => {
-      const raw = getPathArg(args) ?? '';
+      const raw = (args.path as string | undefined) ?? '';
       // "/" / "*" 走 roots 视图，不需要按根做精细权限
       if (raw.trim() === '/' || raw.trim() === '*') return ['tool:file.list', 'storage:read'];
       return storagePermission(args, config, 'read');
@@ -510,7 +503,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const raw = (getPathArg(args) ?? '').trim();
+        const raw = ((args.path as string | undefined) ?? '').trim();
 
         // 特殊入口："/" 或 "*" 表示"列出所有 storage 根"
         if (raw === '/' || raw === '*') {
@@ -654,7 +647,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         return JSON.stringify({
@@ -700,7 +693,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string, config);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         const pattern = args.pattern as string;
@@ -808,7 +801,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     handler: async (args) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(getPathArg(args), config);
+        const uri = toStorageUri(args.path as string | undefined, config);
         ensureRootAllowed(uri, config);
         const maxDepth = Math.min((args.maxDepth as number) || 3, 10);
         const showHidden = (args.showHidden as boolean) ?? false;

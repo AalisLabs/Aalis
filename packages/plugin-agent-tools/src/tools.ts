@@ -138,6 +138,13 @@ export class ToolRegistry implements ToolService {
     const tool = this.tools.get(toolName);
     if (!tool) return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
 
+    // 参数 schema 校验：检测缺失必填项 / 多余未知键（LLM 写错参数名时给出明确提示）
+    const schemaError = validateToolArgs(toolName, tool.definition, args);
+    if (schemaError) {
+      this.logger.warn(`工具 ${toolName} 参数校验失败: ${schemaError}`);
+      return JSON.stringify({ error: schemaError });
+    }
+
     const authority = tool.authority ?? 1;
     const safety = tool.safety ?? 'safe';
     let permissions: string[];
@@ -212,4 +219,45 @@ export class ToolRegistry implements ToolService {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+/**
+ * 轻量工具参数校验：
+ * - 检测 required 字段是否缺失
+ * - 当 additionalProperties === false 时，检测不在 properties 里的多余键
+ *
+ * 返回错误字符串（有问题时），或 null（通过）。
+ */
+function validateToolArgs(toolName: string, definition: ToolDefinition, args: Record<string, unknown>): string | null {
+  const params = definition.function.parameters;
+  if (!params || typeof params !== 'object') return null;
+
+  const properties = params.properties as Record<string, unknown> | undefined;
+  const required = params.required as string[] | undefined;
+  const noExtra = params.additionalProperties === false;
+
+  const errors: string[] = [];
+
+  // 必填项缺失
+  if (required && properties) {
+    for (const key of required) {
+      if (!(key in args)) {
+        errors.push(`缺少必填参数 "${key}"`);
+      }
+    }
+  }
+
+  // 多余/未知参数（仅在 additionalProperties: false 时）
+  if (noExtra && properties) {
+    const knownKeys = Object.keys(properties);
+    const extraKeys = Object.keys(args).filter(k => !knownKeys.includes(k));
+    if (extraKeys.length > 0) {
+      errors.push(
+        `包含未知参数 ${extraKeys.map(k => `"${k}"`).join(', ')}。` +
+        `工具 ${toolName} 支持的参数: ${knownKeys.map(k => `"${k}"`).join(', ')}`,
+      );
+    }
+  }
+
+  return errors.length > 0 ? errors.join('；') : null;
 }
