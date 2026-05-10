@@ -288,6 +288,25 @@ class SQLiteMemoryService implements MemoryService {
     return count;
   }
 
+  async deleteMessagesByTimestamps(sessionId: string, timestamps: number[]): Promise<number> {
+    if (timestamps.length === 0) return 0;
+    // SQLite 变量限制 999，分批处理
+    const chunkSize = 500;
+    let total = 0;
+    const txn = this.db.transaction((tsChunks: number[][]) => {
+      for (const chunk of tsChunks) {
+        const placeholders = chunk.map(() => '?').join(',');
+        const stmt = this.db.prepare(`DELETE FROM messages WHERE sessionId = ? AND timestamp IN (${placeholders})`);
+        const r = stmt.run(sessionId, ...chunk);
+        total += r.changes;
+      }
+    });
+    const chunks: number[][] = [];
+    for (let i = 0; i < timestamps.length; i += chunkSize) chunks.push(timestamps.slice(i, i + chunkSize));
+    txn(chunks);
+    return total;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -328,6 +347,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         MemoryCapabilities.History,
         MemoryCapabilities.Metadata,
         MemoryCapabilities.ContentUpdate,
+        MemoryCapabilities.MessageDelete,
       ],
     });
 

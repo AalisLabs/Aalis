@@ -387,7 +387,7 @@ interface CheckpointTurnSummary {
 }
 
 /** 单条消息渲染（memoized，避免全量重绘） */
-const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, rolledBack, onRollback }: {
+const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, rolledBack, onRollback, onRollbackWithChat }: {
   msg: ChatMessage;
   senderName: string;
   isLast: boolean;
@@ -397,6 +397,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
   /** 该回合是否已被回滚过 */
   rolledBack?: boolean;
   onRollback?: (turn: CheckpointTurnSummary) => void;
+  onRollbackWithChat?: (turn: CheckpointTurnSummary) => void;
 }) {
   if (msg.role === 'system') {
     return (
@@ -538,21 +539,33 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
           ■ 停止生成
         </button>
       )}
-      {/* Checkpoint 回滚按钮：仅 assistant 消息且本回合有文件改动时显示 */}
-      {msg.role === 'assistant' && checkpoint && checkpoint.fileCount > 0 && !isGenerating && (
+      {/* Checkpoint 回滚按钮：仅 assistant 消息且生成完成后显示 */}
+      {msg.role === 'assistant' && checkpoint && !isGenerating && (
         rolledBack ? (
           <span className="checkpoint-rolled-back">
             <History size={12} /> 此次修改已回滚
           </span>
         ) : (
-          <button
-            className="checkpoint-rollback-btn"
-            onClick={() => onRollback?.(checkpoint)}
-            title={`回滚本次回合的 ${checkpoint.fileCount} 个文件改动${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
-          >
-            <History size={12} /> 回滚 {checkpoint.fileCount} 处文件改动
-            {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
-          </button>
+          <div className="checkpoint-rollback-actions">
+            {checkpoint.fileCount > 0 && (
+              <button
+                className="checkpoint-rollback-btn"
+                onClick={() => onRollback?.(checkpoint)}
+                title={`仅回滚本回合的 ${checkpoint.fileCount} 个文件改动（保留对话）${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
+              >
+                <History size={12} /> 回滚文件改动
+                {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
+              </button>
+            )}
+            <button
+              className="checkpoint-rollback-btn"
+              onClick={() => onRollbackWithChat?.(checkpoint)}
+              title={`回滚本轮对话（含 ${checkpoint.fileCount} 处文件改动）：删除本轮的用户提问、回复和工具调用记录，并恢复文件${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
+            >
+              <History size={12} /> 回滚本轮对话（含文件）
+              {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
+            </button>
+          </div>
         )
       )}
     </div>
@@ -688,6 +701,36 @@ export function ChatPanel({
         window.alert(summary);
       }
       // 无论是否有部分失败，都标记为已回滚（至少执行了部分还原）
+      setRolledBackTurns(prev => new Set([...prev, turn.turnId]));
+    } catch (err) {
+      window.alert(`回滚失败：${(err as Error).message}`);
+    }
+  }, []);
+
+  const handleRollbackWithChat = useCallback(async (turn: CheckpointTurnSummary) => {
+    const preview = turn.filesPreview.slice(0, 3).join('\n');
+    const more = turn.fileCount > turn.filesPreview.length ? `\n... 共 ${turn.fileCount} 个文件` : '';
+    const execWarn = turn.execUsed ? '\n\n⚠ 本回合调用过 exec/shell，命令的副作用无法回滚！' : '';
+    const fileText = turn.fileCount > 0 ? `\n\n同时恢复以下文件：\n${preview}${more}` : '';
+    const ok = window.confirm(
+      `将回滚本轮对话：\n\n· 删除本轮的用户提问、AI 回复和工具调用记录\n· 清除对应的向量记忆条目${fileText}${execWarn}\n\n此操作不可撤销。确定继续？`,
+    );
+    if (!ok) return;
+    try {
+      const result = await pageAction<{ ok: boolean; restored: string[]; deleted: string[]; errors: Array<{ uri: string; reason: string }>; deletedMessages: number; chatDeleted: boolean }>(
+        '@aalis/plugin-checkpoint',
+        'rollbackWithChat',
+        { sessionId: getSessionId(), turnId: turn.turnId },
+      );
+      const parts: string[] = [];
+      if (result.chatDeleted) parts.push(`删除 ${result.deletedMessages} 条消息`);
+      if (turn.fileCount > 0) parts.push(`恢复 ${result.restored.length} 个文件，删除 ${result.deleted.length} 个新建文件`);
+      const summary = parts.length > 0 ? `回滚完成：${parts.join('；')}` : '回滚完成';
+      if (result.errors.length > 0) {
+        window.alert(`${summary}\n失败 ${result.errors.length} 项：\n` + result.errors.map(e => `${e.uri || '(memory)'}: ${e.reason}`).join('\n'));
+      } else {
+        // 成功时不打扰用户，前端会通过 history_changed 自动刷新
+      }
       setRolledBackTurns(prev => new Set([...prev, turn.turnId]));
     } catch (err) {
       window.alert(`回滚失败：${(err as Error).message}`);
@@ -1046,6 +1089,7 @@ export function ChatPanel({
             checkpoint={msg.role === 'assistant' ? turnByTimestamp(msg.timestamp) : undefined}
             rolledBack={msg.role === 'assistant' ? (() => { const t = turnByTimestamp(msg.timestamp); return t ? rolledBackTurns.has(t.turnId) : false; })() : false}
             onRollback={handleRollback}
+            onRollbackWithChat={handleRollbackWithChat}
           />
         ))}
         {/* 仅在没有 assistant 消息时显示 loading 指示器（首次生成等待） */}
