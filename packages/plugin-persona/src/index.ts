@@ -2,8 +2,10 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Context, ConfigSchema, SessionManagerService, PlatformService } from '@aalis/core';
-import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from '@aalis/core';
+import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
+
+export type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
 
 // ===== 插件元数据 =====
 
@@ -522,7 +524,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     await next();
 
     // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
-    let personaOpts: import('@aalis/core').PersonaSessionOptions | undefined;
+    let personaOpts: PersonaSessionOptions | undefined;
     try {
       const sm = ctx.getService<SessionManagerService>('session-manager');
         if (sm && data.sessionId) {

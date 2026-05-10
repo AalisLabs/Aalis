@@ -150,11 +150,6 @@ export type {
   // 向量数据库服务
   VectorSearchResult,
   VectorStoreService,
-  // 人格服务
-  OutputFormatField,
-  OutputFormat,
-  PersonaSessionOptions,
-  PersonaService,
   // 权限服务
   AuthorityService,
   DangerousConfirmRequest,
