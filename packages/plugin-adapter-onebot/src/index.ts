@@ -55,7 +55,7 @@ export const configSchema: ConfigSchema = {
       punctuation: {
         type: 'multiselect',
         label: '切割符号',
-        description: '选中哪些符号作为拆分位置。可手动填入自定义符号（多字符序列如 ", " 也支持）；换行请输入 token \\n，制表符请输入 token \\t，空格直接勾选预置选项即可。',
+        description: '选中哪些符号作为拆分位置。可手动填入自定义符号；多字符序列如 ", " 作为整体匹配，特殊字符 token（\\n、\\t）须单独作为一条目填入，不能嵌套在多字符序列中。空格直接勾选预置选项。',
         allowCustom: true,
         options: [
           { label: '。 中文句号', value: '。' },
