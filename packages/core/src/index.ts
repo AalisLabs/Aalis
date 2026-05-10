@@ -150,13 +150,6 @@ export type {
   // 向量数据库服务
   VectorSearchResult,
   VectorStoreService,
-  // 权限服务
-  AuthorityService,
-  DangerousConfirmRequest,
-  DangerousConfirmHandler,
-  DangerousConfirmResult,
-  DangerousGrantRequest,
-  DangerousGrant,
   // 会话管理
   SessionInfo,
   SessionConfig,

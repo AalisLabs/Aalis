@@ -165,6 +165,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority':
+        specifier: workspace:*
+        version: link:../plugin-authority
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
@@ -880,6 +883,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority':
+        specifier: workspace:*
+        version: link:../plugin-authority
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
