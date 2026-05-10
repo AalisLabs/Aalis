@@ -384,6 +384,16 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     }
   }, [switchSession]);
 
+  /** 处理服务端推送的 history_changed：当前会话历史已变化（如回滚整轮对话），重新拉取消息 */
+  const handleHistoryChanged = useCallback((sessionId: string) => {
+    if (sessionId !== activeIdRef.current) return;
+    const plugin = pluginRef.current;
+    if (!plugin) return;
+    // 失效缓存，强制从服务端拉取
+    messagesCache.current.delete(sessionId);
+    fetchAndSetMessages(sessionId, plugin);
+  }, [fetchAndSetMessages]);
+
   // 初始化：获取服务端当前活跃会话并加载历史消息，同时拉取会话列表
   useEffect(() => {
     if (!pluginName) return;
@@ -417,6 +427,7 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     ensureSession,
     switchSession,
     handleSessionSwitched,
+    handleHistoryChanged,
     loading,
     setLoading,
     streamingRef,

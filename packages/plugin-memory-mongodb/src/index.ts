@@ -210,6 +210,12 @@ class MongoMemoryService implements MemoryService {
     }
     return count;
   }
+
+  async deleteMessagesByTimestamps(sessionId: string, timestamps: number[]): Promise<number> {
+    if (timestamps.length === 0) return 0;
+    const r = await this.collection.deleteMany({ sessionId, timestamp: { $in: timestamps } });
+    return r.deletedCount ?? 0;
+  }
 }
 
 // ===== 插件入口 =====
@@ -245,6 +251,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         MemoryCapabilities.History,
         MemoryCapabilities.Metadata,
         MemoryCapabilities.ContentUpdate,
+        MemoryCapabilities.MessageDelete,
       ],
     });
 
