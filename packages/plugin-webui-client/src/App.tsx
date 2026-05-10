@@ -395,7 +395,7 @@ export function App() {
     }
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing);
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing, session.handleHistoryChanged);
 
   /** 手动触发压缩 */
   const handleCompress = useCallback(() => {

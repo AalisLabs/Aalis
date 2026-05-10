@@ -280,11 +280,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 索引：仅对 user 消息建索引，触发即写（不依赖 assistant 是否回复） ===
 
-  const pendingIndexMessages: IncomingMessage[] = [];
+  /** 待索引项：保留消息及其在 memory 中的时间戳，使向量与消息时间戳对齐，便于精确删除 */
+  const pendingIndexMessages: Array<{ msg: IncomingMessage; timestamp: number }> = [];
   let activeIndexers = 0;
 
-  function enqueueIndexMessage(msg: IncomingMessage): void {
-    pendingIndexMessages.push(msg);
+  function enqueueIndexMessage(item: { msg: IncomingMessage; timestamp: number }): void {
+    pendingIndexMessages.push(item);
     if (cfg.indexing.maxQueueSize > 0 && pendingIndexMessages.length > cfg.indexing.maxQueueSize) {
       const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - cfg.indexing.maxQueueSize).length;
       ctx.logger.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
@@ -298,7 +299,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       activeIndexers++;
       void (async () => {
         try {
-          await indexUserMessage(next);
+          await indexUserMessage(next.msg, next.timestamp);
         } finally {
           activeIndexers--;
           void drainIndexQueue();
@@ -307,7 +308,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  async function indexUserMessage(msg: IncomingMessage): Promise<void> {
+  async function indexUserMessage(msg: IncomingMessage, messageTimestamp: number): Promise<void> {
     // 跳过非真实用户输入：闲聊主动触发等系统级伪 incoming，不应进入向量库
     if (msg.source === 'idle-trigger') return;
     const rawText = msg.content?.trim();
@@ -326,7 +327,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         groupName: msg.groupName ?? '',
         groupId: msg.groupId ?? '',
         sessionType: msg.sessionType ?? '',
-        timestamp: Date.now(),
+        timestamp: messageTimestamp,
         // 兜底内容：存原始纯净文本（供渲染兜底使用，不含发送者前缀）
         content: rawText,
         // @提及到的用户 ID 列表，用于检索时同用户加权
@@ -342,7 +343,33 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
   // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
   ctx.on('inbound:message:archived', (data) => {
-    enqueueIndexMessage(data.incoming);
+    // 使用 archive 写入时的真实时间戳作为向量 metadata.timestamp，
+    // 保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目。
+    const ts = data.archivedMessage.timestamp ?? Date.now();
+    enqueueIndexMessage({ msg: data.incoming, timestamp: ts });
+  });
+
+  // === 按时间戳删除向量（供 plugin-checkpoint 回滚整轮对话使用） ===
+  ctx.on('memory:messages-deleted', async (...args: unknown[]) => {
+    const data = args[0] as { sessionId?: string; timestamps?: number[] } | undefined;
+    if (!data?.sessionId || !Array.isArray(data.timestamps) || data.timestamps.length === 0) return;
+    const currentStore = getStore();
+    if (!currentStore.deleteByFilter) {
+      ctx.logger.warn('当前向量存储不支持按条件删除，跳过 memory:messages-deleted');
+      return;
+    }
+    let total = 0;
+    for (const ts of data.timestamps) {
+      try {
+        total += await currentStore.deleteByFilter({ sessionId: data.sessionId, timestamp: ts });
+      } catch (err) {
+        ctx.logger.warn(`按时间戳删除向量失败 (ts=${ts}): ${formatError(err)}`);
+      }
+    }
+    if (total > 0) {
+      try { await currentStore.save(); } catch (err) { ctx.logger.warn(`向量保存失败: ${formatError(err)}`); }
+      ctx.logger.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
+    }
   });
 
   // === 统一记忆清除 ===

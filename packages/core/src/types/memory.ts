@@ -31,6 +31,9 @@ export interface MemoryService {
 
   /** 在指定会话的最近 N 条消息中，将 content 里的 oldText 替换为 newText，返回受影响的条数 */
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;
+
+  /** 按时间戳批量删除指定会话的消息（用于回滚整轮对话），返回实际删除条数 */
+  deleteMessagesByTimestamps?(sessionId: string, timestamps: number[]): Promise<number>;
 }
 
 // ----- 记忆能力声明（capability 框架）-----
@@ -52,6 +55,8 @@ export interface MemoryCapabilityRegistry {
   Metadata: 'metadata';
   /** 支持消息内容更新（updateMessageContent） */
   ContentUpdate: 'content-update';
+  /** 支持按时间戳批量删除消息（deleteMessagesByTimestamps） */
+  MessageDelete: 'message-delete';
 }
 
 export type MemoryCapability = MemoryCapabilityRegistry[keyof MemoryCapabilityRegistry];
@@ -60,6 +65,7 @@ export const MemoryCapabilities = {
   History: 'history',
   Metadata: 'metadata',
   ContentUpdate: 'content-update',
+  MessageDelete: 'message-delete',
 } as const satisfies MemoryCapabilityRegistry;
 
 declare module './capabilities.js' {
@@ -85,3 +91,8 @@ registerCapabilityProbe('memory', MemoryCapabilities.ContentUpdate, inst =>
   typeof (inst as { updateMessageContent?: unknown }).updateMessageContent === 'function'
     ? true
     : 'MemoryService.updateMessageContent() is required for capability "content-update"');
+
+registerCapabilityProbe('memory', MemoryCapabilities.MessageDelete, inst =>
+  typeof (inst as { deleteMessagesByTimestamps?: unknown }).deleteMessagesByTimestamps === 'function'
+    ? true
+    : 'MemoryService.deleteMessagesByTimestamps() is required for capability "message-delete"');
