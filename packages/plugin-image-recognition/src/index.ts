@@ -4,9 +4,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
-import type { LLMService, MemoryService, ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from '@aalis/core';
-import { ImageRecognitionCapabilities } from '@aalis/core';
+import type { LLMService, MemoryService } from '@aalis/core';
+import type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from './types.js';
+import { ImageRecognitionCapabilities } from './types.js';
 import { parseModelRef } from '@aalis/core';
+
+export type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions, ImageRecognitionCapability, ImageRecognitionCapabilityRegistry } from './types.js';
+export { ImageRecognitionCapabilities } from './types.js';
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

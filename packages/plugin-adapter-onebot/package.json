@@ -11,7 +11,8 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "ws": "^8.18.0",
-    "@aalis/plugin-message-archive": "workspace:*"
+    "@aalis/plugin-message-archive": "workspace:*",
+    "@aalis/plugin-image-recognition": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

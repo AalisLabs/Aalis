@@ -91,6 +91,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-image-recognition':
+        specifier: workspace:*
+        version: link:../plugin-image-recognition
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -459,6 +462,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-image-recognition':
+        specifier: workspace:*
+        version: link:../plugin-image-recognition
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -523,6 +529,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-image-recognition':
+        specifier: workspace:*
+        version: link:../plugin-image-recognition
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive

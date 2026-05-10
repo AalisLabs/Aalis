@@ -93,17 +93,6 @@ export { LLMCapabilities } from './llm.js';
 export type { ServiceCapabilityMap, CapabilityOf, CapabilityList, CapabilityProbe } from './capabilities.js';
 export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 
-// 图像识别服务
-export type {
-  ImageRecognitionService,
-  ImageRecognitionInput,
-  ImageRecognitionContextOptions,
-  ImageRecognitionResult,
-  ImageRecognitionCapability,
-  ImageRecognitionCapabilityRegistry,
-} from './image-recognition.js';
-export { ImageRecognitionCapabilities } from './image-recognition.js';
-
 // 网络搜索服务
 export type {
   WebSearchService,
