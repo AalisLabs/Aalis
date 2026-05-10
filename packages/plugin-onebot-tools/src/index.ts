@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
-import type { Context, ConfigSchema, ImageRecognitionService, MessageArchiveService, PlatformAdapter, PlatformService, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema, ImageRecognitionService, PlatformAdapter, PlatformService, ToolCallContext } from '@aalis/core';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 
 // ===== 插件元数据 =====
 

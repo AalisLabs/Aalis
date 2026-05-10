@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Context, ConfigSchema, PlatformAdapter, PlatformConnection } from '@aalis/core';
-import type { MessageArchiveService, ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
+import type { ImageRecognitionService, LLMService, MemoryService, FlowControlService } from '@aalis/core';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { parseModelRef } from '@aalis/core';
 import type {
   OneBotConnectionConfig,

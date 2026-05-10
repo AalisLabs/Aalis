@@ -3,10 +3,10 @@ import type {
   ConfigSchema,
   FlowControlService,
   IncomingMessage,
-  MessageArchiveService,
   TriggerDecision,
   TriggerPolicyService,
 } from '@aalis/core';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { INBOUND_PHASE } from '@aalis/core';
 import {
   type TriggerPolicyConfig,

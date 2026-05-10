@@ -3,9 +3,9 @@ import type {
   ConfigSchema,
   FlowControlService,
   FlowSessionStateSnapshot,
-  MessageArchiveService,
   OutgoingMessage,
 } from '@aalis/core';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { INBOUND_PHASE } from '@aalis/core';
 import {
   type FlowControlConfig,

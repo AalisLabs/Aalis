@@ -1,4 +1,5 @@
-import type { IncomingMessage, Message } from './core.js';
+import type { IncomingMessage, Message } from '@aalis/core';
+import { registerCapabilityProbe } from '@aalis/core';
 
 export interface ArchiveIncomingResult {
   message: Message;
@@ -58,13 +59,11 @@ export const MessageArchiveCapabilities = {
   Notice: 'notice',
 } as const satisfies MessageArchiveCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     'message-archive': MessageArchiveCapability;
   }
 }
-
-import { registerCapabilityProbe } from './capabilities.js';
 
 registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Incoming, inst =>
   typeof (inst as { archiveIncoming?: unknown }).archiveIncoming === 'function'

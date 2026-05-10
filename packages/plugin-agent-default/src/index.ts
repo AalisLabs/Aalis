@@ -15,7 +15,6 @@ import type {
   ChatRequest,
   ChatResponse,
   LLMService,
-  MessageArchiveService,
   MemoryService,
   SessionManagerService,
   SessionConfig,
@@ -25,6 +24,7 @@ import type {
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { getSenderLabel, getMessageName, parseModelRef } from '@aalis/core';
 
 /**
