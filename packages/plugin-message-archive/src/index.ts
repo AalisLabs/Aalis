@@ -4,8 +4,8 @@ import type {
   IncomingMessage,
   Message,
   MemoryService,
-  ImageRecognitionService,
 } from '@aalis/core';
+import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
 import type { MessageArchiveService, ArchiveNoticeOptions } from './types.js';
 import { prefixSender, getSenderLabel, getMessageName } from '@aalis/core';
 import { MessageArchiveCapabilities } from './types.js';

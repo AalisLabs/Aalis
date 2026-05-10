@@ -20,7 +20,6 @@ export type { MixinEntry } from './mixin-registry.js';
 export { PendingRegistrationBuffer } from './pending-buffer.js';
 export { registerCapabilityProbe, probeCapability } from './types/index.js';
 export { LLMCapabilities } from './types/index.js';
-export { ImageRecognitionCapabilities } from './types/index.js';
 export { WebSearchCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
 export { StorageCapabilities } from './types/index.js';
@@ -152,13 +151,6 @@ export type {
   PlatformProfile,
   SessionManagerCapability,
   SessionManagerCapabilityRegistry,
-  // 图像识别服务
-  ImageRecognitionService,
-  ImageRecognitionInput,
-  ImageRecognitionContextOptions,
-  ImageRecognitionResult,
-  ImageRecognitionCapability,
-  ImageRecognitionCapabilityRegistry,
   // 网络搜索服务
   WebSearchService,
   WebSearchRequest,
