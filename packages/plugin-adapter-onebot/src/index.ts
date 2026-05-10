@@ -52,10 +52,10 @@ export const configSchema: ConfigSchema = {
       enabled: { type: 'boolean', label: '启用', description: '是否启用消息分条发送', default: false },
       delayPerChar: { type: 'number', label: '每字延迟 (ms)', description: '按下一条消息的字数计算延迟，单位毫秒/字', default: 50 },
       maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟上限（毫秒）', default: 3000 },
-      punctuation: {
+      patterns: {
         type: 'multiselect',
-        label: '切割符号',
-        description: '选中哪些符号作为拆分位置。可手动填入自定义符号；多字符序列如 ", " 作为整体匹配，特殊字符 token（\\n、\\t）须单独作为一条目填入，不能嵌套在多字符序列中。空格直接勾选预置选项。',
+        label: '切割模式',
+        description: '在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\\n"）则要整段匹配到才切。支持转义：\\n=换行，\\t=制表符，\\r=回车，\\\\=反斜杠。',
         allowCustom: true,
         options: [
           { label: '。 中文句号', value: '。' },
@@ -65,15 +65,15 @@ export const configSchema: ConfigSchema = {
           { label: '， 中文逗号', value: '，' },
           { label: '、 顿号', value: '、' },
           { label: '. 英文句号', value: '.' },
-          { label: '.  英文句号+空格（句末断句，避免小数点误拆）', value: '. ' },
+          { label: '. ␣ 英文句号+空格（避免小数点误拆）', value: '. ' },
           { label: '! 英文感叹号', value: '!' },
           { label: '? 英文问号', value: '?' },
           { label: '; 英文分号', value: ';' },
           { label: ', 英文逗号', value: ',' },
-          { label: ',  英文逗号+空格（避免 1,000 误拆）', value: ', ' },
-          { label: '\\n 换行', value: '\\n' },
-          { label: '\\t 制表符', value: '\\t' },
-          { label: 'space 空格', value: 'space' },
+          { label: ', ␣ 英文逗号+空格（避免 1,000 误拆）', value: ', ' },
+          { label: '↵ 换行 (\\n)', value: '\\n' },
+          { label: '⇥ 制表符 (\\t)', value: '\\t' },
+          { label: '␣ 空格', value: ' ' },
         ],
         default: ['。', '！', '？', '.', '!', '?', '\\n'],
       },
@@ -107,7 +107,7 @@ export const defaultConfig = {
     enabled: false,
     delayPerChar: 50,
     maxDelay: 3000,
-    punctuation: ['。', '！', '？', '.', '!', '?', '\\n'] as string[],
+    patterns: ['。', '！', '？', '.', '!', '?', '\\n'] as string[],
   },
   forward: {
     enabled: true,
@@ -261,128 +261,93 @@ const CONNECT_TIMEOUT = 15000;
 
 // ===== 消息分条逻辑 =====
 
-interface SplitPatterns {
-  /** 单字符切割点（构建字符类 [...]） */
-  singleChars: Set<string>;
-  /** 多字符序列切割点（原子匹配，不拆散） */
-  multiPatterns: string[];
-}
-
 /**
- * 将「切割符号列表」解析为切割规则。
- * - 单字符（含 token \n/\t/\r/space）→ singleChars
- * - 多字符序列（如 ". "）→ multiPatterns（原子匹配，不拆散为单字符）
+ * 解析「切割模式列表」：每项是一个字符串，按 JS 风格解码转义序列
+ * （\\n→换行、\\t→制表符、\\r→回车、\\\\→反斜杠）。空串与重复项被忽略。
  */
-function resolveSplitPatterns(items: unknown): SplitPatterns {
-  const singleChars = new Set<string>();
-  const multiPatterns: string[] = [];
-  if (!Array.isArray(items)) return { singleChars, multiPatterns };
+function resolveSplitPatterns(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  const out: string[] = [];
   for (const raw of items) {
     if (typeof raw !== 'string' || raw.length === 0) continue;
-    let decoded: string;
-    switch (raw) {
-      case '\\n': decoded = '\n'; break;
-      case '\\t': decoded = '\t'; break;
-      case '\\r': decoded = '\r'; break;
-      case 'space': decoded = ' '; break;
-      default: decoded = raw;
-    }
-    if (decoded.length === 1) {
-      singleChars.add(decoded);
-    } else {
-      // 多字符序列作为原子切割模式，不拆散
-      if (!multiPatterns.includes(decoded)) multiPatterns.push(decoded);
-    }
+    const decoded = raw.replace(/\\([nrt\\])/g, (_, c) =>
+      c === 'n' ? '\n' : c === 't' ? '\t' : c === 'r' ? '\r' : '\\',
+    );
+    if (decoded.length > 0 && !out.includes(decoded)) out.push(decoded);
   }
-  return { singleChars, multiPatterns };
+  return out;
 }
 
-/** 将字符集合转换为正则字符类（转义特殊字符）。 */
-function charsToRegexClass(chars: Set<string>): string {
-  return Array.from(chars).map(ch => {
-    if (ch === '\\' || ch === ']' || ch === '^' || ch === '-') return '\\' + ch;
-    if (ch === '\n') return '\\n';
-    if (ch === '\r') return '\\r';
-    if (ch === '\t') return '\\t';
-    return ch;
-  }).join('');
-}
-
-/** 转义正则元字符，用于 lookbehind 中的多字符模式。 */
+/** 转义正则元字符，用于 lookbehind。 */
 function escapeForRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * 按标点符号（中英文逗号、句号、问号、叹号、分号、顿号、换行等）
- * 将文本拆分为多条消息。XML 标记（<at>、<image> 等）保持与相邻文本在一起。
- * 只拆分纯文本部分，不在 XML 标记中间切割。
+ * 按配置的「切割模式列表」将文本拆分为多条消息。
+ * 每个模式作为一个原子 lookbehind 匹配——文本必须以该模式整体结尾才会切割。
+ * XML 标记（<at>、<image> 等）保持与相邻文本在一起，不在标记内部切割。
  */
-function splitMessageByPunctuation(content: string, patterns: SplitPatterns): string[] {
-  const { singleChars, multiPatterns } = patterns;
-  // 如果内容很短或没有任何切割规则，不拆分
-  if (content.length <= 10 || (singleChars.size === 0 && multiPatterns.length === 0)) return [content];
+function splitMessageByPunctuation(content: string, patterns: string[]): string[] {
+  if (content.length <= 10 || patterns.length === 0) return [content];
 
-  // 识别所有 XML 标记的位置，拆分时不切割它们
+  // 识别 XML 标记位置，拆分时不切割它们
   const xmlTagRegex = /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
 
-  // 将内容拆分为「标记区」和「纯文本区」交替的 token
   interface Token { type: 'text' | 'tag'; value: string }
   const tokens: Token[] = [];
   let lastIdx = 0;
   let m: RegExpExecArray | null;
   while ((m = xmlTagRegex.exec(content)) !== null) {
-    if (m.index > lastIdx) {
-      tokens.push({ type: 'text', value: content.slice(lastIdx, m.index) });
-    }
+    if (m.index > lastIdx) tokens.push({ type: 'text', value: content.slice(lastIdx, m.index) });
     tokens.push({ type: 'tag', value: m[0] });
     lastIdx = m.index + m[0].length;
   }
-  if (lastIdx < content.length) {
-    tokens.push({ type: 'text', value: content.slice(lastIdx) });
-  }
+  if (lastIdx < content.length) tokens.push({ type: 'text', value: content.slice(lastIdx) });
 
-  // 构建拆分正则：单字符走字符类，多字符序列走各自的 lookbehind，用 | 合并
-  const regexParts: string[] = [];
-  if (singleChars.size > 0) {
-    const splitClass = charsToRegexClass(singleChars);
-    regexParts.push(`(?<=[${splitClass}])`);
-  }
-  for (const p of multiPatterns) {
-    regexParts.push(`(?<=${escapeForRegex(p)})`);
-  }
-  const splitRegex = new RegExp(regexParts.join('|'));
-  // 尾部清理：去除单字符标点及空白（多字符模式结尾通常含空白，\s 已覆盖）
-  const trailingPunctuation = singleChars.size > 0
-    ? new RegExp(`[${charsToRegexClass(singleChars)}\\s]+$`)
-    : /\s+$/;
+  // 拆分正则：每个模式独立 lookbehind，用 | 合并
+  const splitRegex = new RegExp(patterns.map(p => `(?<=${escapeForRegex(p)})`).join('|'));
+
   const pieces: string[] = [];
   let current = '';
-
   for (const token of tokens) {
     if (token.type === 'tag') {
       current += token.value;
-    } else {
-      const parts = token.value.split(splitRegex);
-      for (let i = 0; i < parts.length; i++) {
-        current += parts[i];
-        // 在标点后断开，但最后一段不断开（等后续 token 追加）
-        if (i < parts.length - 1 && current.trim()) {
-          pieces.push(current);
-          current = '';
-        }
+      continue;
+    }
+    const parts = token.value.split(splitRegex);
+    for (let i = 0; i < parts.length; i++) {
+      current += parts[i];
+      if (i < parts.length - 1 && current.trim()) {
+        pieces.push(current);
+        current = '';
       }
     }
   }
-  if (current.trim()) {
-    pieces.push(current);
-  }
+  if (current.trim()) pieces.push(current);
 
-  // 去除每段尾部标点，过滤空段，合并过短段落
+  // 尾部清理：去除每段末尾匹配到的切割模式（按长度倒序匹配，优先去掉长模式）
+  const sortedPatterns = [...patterns].sort((a, b) => b.length - a.length);
+  const stripTrailing = (s: string): string => {
+    let cur = s;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const p of sortedPatterns) {
+        if (cur.endsWith(p)) {
+          cur = cur.slice(0, -p.length);
+          changed = true;
+        }
+      }
+      const trimmed = cur.replace(/\s+$/, '');
+      if (trimmed !== cur) { cur = trimmed; changed = true; }
+    }
+    return cur;
+  };
+
   const result: string[] = [];
   for (const piece of pieces) {
-    // 去除尾部标点符号
-    const cleaned = piece.replace(trailingPunctuation, '').trim();
+    const cleaned = stripTrailing(piece).trim();
     if (!cleaned) continue;
     // 纯文本过短则合并到上一条
     const textOnly = cleaned.replace(/<[^>]+>/g, '').trim();
@@ -404,12 +369,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     : [];
 
   // 消息分条配置
-  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; delayPerChar?: number; maxDelay?: number; punctuation?: unknown };
+  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; delayPerChar?: number; maxDelay?: number; patterns?: unknown };
   const splitEnabled = splitCfg.enabled === true;
   const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
   const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
   const splitPatterns = resolveSplitPatterns(
-    splitCfg.punctuation ?? ['。', '！', '？', '.', '!', '?', '\\n'],
+    splitCfg.patterns ?? ['。', '！', '？', '.', '!', '?', '\\n'],
   );
 
   // 聊天流控配置已迁移至 plugin-flow-control / plugin-trigger-policy。
