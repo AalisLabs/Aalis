@@ -59,12 +59,6 @@ export { PlatformCapabilities } from './platform.js';
 // Gateway 服务（消息流编排中枢）
 export type { GatewayService } from './gateway.js';
 
-// 流控服务（每会话计数/冷却/限速/闲置调度）
-export type { FlowControlService, FlowSessionStateSnapshot } from './flow-control.js';
-
-// 触发策略服务（@/名字/间隔/评分 决策）
-export type { TriggerPolicyService, TriggerDecision, TriggerKind } from './trigger-policy.js';
-
 // WebUI 服务与声明式页面组件
 export type {
   WebUIService,
@@ -79,8 +73,7 @@ export type {
   WebuiPage,
 } from './webui.js';
 
-// CLI 服务
-export type { CLIService } from './cli.js';
+// CLI 服务（已迁出至 @aalis/plugin-cli）
 
 // App 服务
 export type { AppService } from './app.js';

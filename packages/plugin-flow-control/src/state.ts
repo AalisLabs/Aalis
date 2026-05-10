@@ -1,6 +1,6 @@
 // ----- FlowSessionState 内部实现 + 衰减/计数算法 -----
 
-import type { FlowSessionStateSnapshot } from '@aalis/core';
+import type { FlowSessionStateSnapshot } from './types.js';
 import type { FlowControlConfig } from './config.js';
 
 export interface MutableFlowSessionState {

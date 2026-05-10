@@ -91,6 +91,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-flow-control':
+        specifier: workspace:*
+        version: link:../plugin-flow-control
       '@aalis/plugin-image-recognition':
         specifier: workspace:*
         version: link:../plugin-image-recognition
@@ -787,6 +790,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-flow-control':
+        specifier: workspace:*
+        version: link:../plugin-flow-control
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive

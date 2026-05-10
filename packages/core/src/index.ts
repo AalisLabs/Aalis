@@ -87,13 +87,6 @@ export type {
   PlatformCapabilityRegistry,
   // Gateway 服务（消息流编排中枢）
   GatewayService,
-  // 流控服务
-  FlowControlService,
-  FlowSessionStateSnapshot,
-  // 触发策略服务
-  TriggerPolicyService,
-  TriggerDecision,
-  TriggerKind,
   PluginGroupInfo,
   // WebUI 服务
   WebUIService,
@@ -106,8 +99,6 @@ export type {
   WebuiTabsComponent,
   WebuiComponent,
   WebuiPage,
-  // CLI 服务
-  CLIService,
   // App 服务
   AppService,
   // LLM 服务

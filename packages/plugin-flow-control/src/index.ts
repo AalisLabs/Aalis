@@ -1,12 +1,13 @@
 import type {
   Context,
   ConfigSchema,
-  FlowControlService,
-  FlowSessionStateSnapshot,
   OutgoingMessage,
 } from '@aalis/core';
+import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { INBOUND_PHASE } from '@aalis/core';
+
+export type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import {
   type FlowControlConfig,
   defaultFlowControlConfig,

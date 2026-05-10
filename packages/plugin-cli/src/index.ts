@@ -3,9 +3,12 @@ import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
 import stringWidth from 'string-width';
 import cliTruncate from 'cli-truncate';
-import type { AppService, CLIService, ConfigSchema, Context, LogEntry, PlatformAdapter, PlatformConnection, StreamChunkMessage } from '@aalis/core';
+import type { AppService, ConfigSchema, Context, LogEntry, PlatformAdapter, PlatformConnection, StreamChunkMessage } from '@aalis/core';
+import type { CLIService } from './types.js';
 import type { PersonaService } from '@aalis/plugin-persona';
 import type { AuthorityService } from '@aalis/plugin-authority';
+
+export type { CLIService } from './types.js';
 import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';
 
 // ===== 插件元数据 =====
