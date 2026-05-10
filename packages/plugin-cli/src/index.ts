@@ -3,7 +3,8 @@ import { stdin as input, stdout as output } from 'node:process';
 import chalk from 'chalk';
 import stringWidth from 'string-width';
 import cliTruncate from 'cli-truncate';
-import type { AppService, AuthorityService, CLIService, ConfigSchema, Context, LogEntry, PersonaService, PlatformAdapter, PlatformConnection, StreamChunkMessage } from '@aalis/core';
+import type { AppService, AuthorityService, CLIService, ConfigSchema, Context, LogEntry, PlatformAdapter, PlatformConnection, StreamChunkMessage } from '@aalis/core';
+import type { PersonaService } from '@aalis/plugin-persona';
 import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';
 
 // ===== 插件元数据 =====
