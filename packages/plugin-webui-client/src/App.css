@@ -1566,6 +1566,18 @@ body {
 
 /* ===== Checkpoint 回滚按钮 ===== */
 
+.checkpoint-rollback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  align-self: flex-start;
+}
+
+.checkpoint-rollback-actions .checkpoint-rollback-btn {
+  margin-top: 0;
+}
+
 .checkpoint-rollback-btn {
   display: inline-flex;
   align-items: center;

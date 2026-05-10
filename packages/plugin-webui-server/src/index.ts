@@ -88,7 +88,7 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'todo_updated' | 'restarting' | 'reload' | 'confirm' | 'token_usage' | 'compressing';
+  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'history_changed' | 'todo_updated' | 'restarting' | 'reload' | 'confirm' | 'token_usage' | 'compressing';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -1375,6 +1375,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('session:updated', broadcastSessionsChanged);
   ctx.on('session:deleted', broadcastSessionsChanged);
   ctx.on('session:completed', broadcastSessionsChanged);
+
+  // 会话历史变更（如 checkpoint 回滚整轮对话）：推送给订阅该会话的客户端，让前端重新拉取历史
+  ctx.on('history:changed', (...args: unknown[]) => {
+    const data = args[0] as { sessionId?: string };
+    const sessionId = data?.sessionId;
+    if (!sessionId) return;
+    const sockets = sessions.get(sessionId);
+    if (!sockets) return;
+    const payload: WSOutgoing = { type: 'history_changed', sessionId };
+    const json = JSON.stringify(payload);
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(json);
+      }
+    }
+  });
 
   // 压缩状态通知：memory-summary 发出 session:compressing 事件，广播给订阅该会话的客户端
   ctx.on('session:compressing', (...args: unknown[]) => {
