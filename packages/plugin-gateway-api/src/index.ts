@@ -12,7 +12,7 @@
 // 完整发行入口可通过 `requiredServices` 声明 gateway 依赖；最小应用可不加载 gateway，
 // 由 core fallback 入站路由直接派发给 agent。
 
-import type { IncomingMessage, OutgoingMessage } from './core.js';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/core';
 
 /**
  * Gateway 服务 —— 消息流编排中枢

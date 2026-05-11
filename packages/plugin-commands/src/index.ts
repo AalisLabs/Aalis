@@ -1,6 +1,7 @@
 import { rm, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Context, ConfigSchema, AppService, GatewayService, CommandContext } from '@aalis/core';
+import type { Context, ConfigSchema, AppService, CommandContext } from '@aalis/core';
+import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { INBOUND_PHASE } from '@aalis/core';
