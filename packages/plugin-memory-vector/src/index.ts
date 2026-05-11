@@ -173,10 +173,11 @@ function extractMentions(text: string): string[] {
   if (!text) return [];
   const ids = new Set<string>();
   const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
+  let m: RegExpExecArray | null = re.exec(text);
+  while (m !== null) {
     const id = m[1];
     if (id && id !== 'all') ids.add(id);
+    m = re.exec(text);
   }
   return [...ids];
 }

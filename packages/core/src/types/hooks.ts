@@ -15,5 +15,4 @@
 //     }
 //   }
 
-// biome-ignore lint/suspicious/noEmptyInterface: extension point for declaration merging
 export interface HookContextMap {}

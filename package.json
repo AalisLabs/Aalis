@@ -12,7 +12,8 @@
     "lint:fix": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "pnpm -r build && pnpm run check:biome && pnpm run test"
+    "ci": "pnpm -r build && pnpm run check:biome && pnpm run test",
+    "ci:local": "pnpm -r build && pnpm run check:biome && pnpm run test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
@@ -20,25 +21,6 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
-  },
-  "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-default": "workspace:*",
-    "@aalis/plugin-cli": "workspace:*",
-    "@aalis/plugin-deepseek": "workspace:*",
-    "@aalis/plugin-embedding-ollama": "workspace:*",
-    "@aalis/plugin-embedding-openai": "workspace:*",
-    "@aalis/plugin-memory-mongodb": "workspace:*",
-    "@aalis/plugin-memory-sqlite": "workspace:*",
-    "@aalis/plugin-memory-vector": "workspace:*",
-    "@aalis/plugin-openai": "workspace:*",
-    "@aalis/plugin-persona": "workspace:*",
-    "@aalis/plugin-tools-system": "workspace:*",
-    "@aalis/plugin-vectorstore-flat": "workspace:*",
-    "@aalis/plugin-vectorstore-lancedb": "workspace:*",
-    "@aalis/plugin-websearch-serper": "workspace:*",
-    "@aalis/plugin-webui-client": "workspace:*",
-    "@aalis/plugin-webui-server": "workspace:*"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

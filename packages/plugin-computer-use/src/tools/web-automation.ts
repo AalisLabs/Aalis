@@ -110,7 +110,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
         }
 
         // 列出 targets
-        let targets;
+        let targets: Awaited<ReturnType<typeof cdpManager.listTargets>>;
         try {
           targets = await cdpManager.listTargets(port);
         } catch (err) {
