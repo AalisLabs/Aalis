@@ -17,15 +17,6 @@ describe('ServiceContainer', () => {
     expect(all).toHaveLength(2);
   });
 
-  it('prefer 把首选项放在 get 前面', () => {
-    const c = new ServiceContainer();
-    c.register('llm', { name: 'openai' }, [], 0, 'plugin-openai');
-    c.register('llm', { name: 'deepseek' }, [], 0, 'plugin-deepseek');
-    c.prefer('llm', 'plugin-deepseek');
-    const svc = c.get<{ name: string }>('llm');
-    expect(svc?.name).toBe('deepseek');
-  });
-
   it('unregisterByContext 按 contextId 整体清理', () => {
     const c = new ServiceContainer();
     c.register('a', { v: 1 }, [], 0, 'plug-x');

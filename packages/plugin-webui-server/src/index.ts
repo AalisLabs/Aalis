@@ -398,17 +398,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    const serviceNames = ctx.listServices();
+    const serviceNames = ctx.getServiceNames();
     const services: Record<
       string,
       {
         providers: Array<{ contextId: string; capabilities: string[]; displayName?: string }>;
-        active: string | undefined;
       }
     > = {};
 
     for (const svcName of serviceNames) {
-      const entries = ctx.getServiceEntries(svcName);
+      const entries = ctx.getAllServices(svcName);
       services[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
@@ -416,7 +415,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           displayName: displayNameMap.get(e.contextId),
           label: e.label,
         })),
-        active: entries.length > 0 ? entries[0].contextId : undefined,
       };
     }
 
@@ -470,48 +468,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return { id, label, plugins, services };
     });
     res.json({ groups });
-  });
-
-  // 切换服务的偏好提供者（同时持久化到配置文件）
-  expressApp.post('/api/services/:name/prefer', (req, res) => {
-    const serviceName = req.params.name;
-    const contextId = req.body?.contextId;
-    if (!contextId || typeof contextId !== 'string') {
-      res.status(400).json({ error: 'contextId 必须是字符串' });
-      return;
-    }
-    const ok = ctx.preferService(serviceName, contextId);
-    if (ok) {
-      // 持久化到配置文件
-      const app = getApp();
-      if (app) {
-        ctx.config.setServicePreference(serviceName, contextId);
-        app.saveConfig();
-      }
-
-      // 切换 webui-client 时，需要通知 webui-server 更新静态目录
-      if (serviceName === 'webui-client') {
-        const newClient = ctx.getService<{ getClientDir(): string }>('webui-client');
-        if (newClient?.getClientDir) {
-          const dir = newClient.getClientDir();
-          clientDist = dir;
-          mountStaticDir(dir);
-          ctx.logger.info(`前端已切换: ${dir}`);
-        }
-        // 通知所有前端刷新页面以加载新客户端（使用 reload 而非 restarting，客户端无需等待重连）
-        const reloadPayload: WSOutgoing = { type: 'reload' };
-        const reloadJson = JSON.stringify(reloadPayload);
-        for (const ws of allClients) {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(reloadJson);
-          }
-        }
-      }
-
-      res.json({ ok: true, message: `${serviceName} 已切换到 ${contextId}` });
-    } else {
-      res.status(404).json({ error: `服务 ${serviceName} 或提供者 ${contextId} 不存在` });
-    }
   });
 
   // 获取所有 LLM 模型（聚合所有 LLM 提供者）
@@ -1201,19 +1157,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         clientDist = dir;
         mountStaticDir(dir);
         ctx.logger.info(`活跃前端(服务): ${dir}`);
-      }
-    }
-
-    // 应用配置中的 webui-client 偏好
-    const clientPref = ctx.config.getServicePreferences()['webui-client'];
-    if (clientPref) {
-      ctx.preferService('webui-client', clientPref);
-      const preferred = ctx.getService<{ getClientDir(): string }>('webui-client');
-      if (preferred?.getClientDir) {
-        const dir = preferred.getClientDir();
-        clientDist = dir;
-        mountStaticDir(dir);
-        ctx.logger.info(`活跃前端(偏好): ${dir}`);
       }
     }
 
