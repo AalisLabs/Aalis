@@ -59,19 +59,8 @@ export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js'
 // Gateway 服务（消息流编排中枢）
 export type { GatewayService } from './gateway.js';
 
-// WebUI 服务与声明式页面组件
-export type {
-  WebUIService,
-  WebuiStatComponent,
-  WebuiTableComponent,
-  WebuiFormComponent,
-  WebuiActionsComponent,
-  WebuiInfoComponent,
-  WebuiMarkdownComponent,
-  WebuiTabsComponent,
-  WebuiComponent,
-  WebuiPage,
-} from './webui.js';
+// WebUI 页面骨架（WebUIService / WebuiComponent / 各 Webui*Component 已迁出至 @aalis/plugin-webui-api）
+export type { WebuiPage } from './webui.js';
 
 // CLI 服务（已迁出至 @aalis/plugin-cli）
 // 会话管理（已迁出至 @aalis/plugin-session-manager）

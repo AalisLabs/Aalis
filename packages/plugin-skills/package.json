@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "yaml": "^2.7.0"
+    "yaml": "^2.7.0",
+    "@aalis/plugin-webui-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
