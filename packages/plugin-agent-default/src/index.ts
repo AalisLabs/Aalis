@@ -1,5 +1,5 @@
 import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Context, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, PluginGroupInfo, App, ContentSegment } from '@aalis/core';
+import type { Context, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, App, ContentSegment } from '@aalis/core';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
@@ -10,6 +10,7 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager';
 import type { PlatformService } from '@aalis/plugin-platform';
 import { getSenderLabel, getMessageName, parseModelRef } from '@aalis/core';
+import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
 
 /**
  * 将时间戳格式化为可读的时间标签。

@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-platform",
+  "name": "@aalis/plugin-authority-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,8 +9,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*"
+    "@aalis/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

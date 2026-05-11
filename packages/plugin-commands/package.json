@@ -13,7 +13,8 @@
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-commands-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-gateway-api": "workspace:*"
+    "@aalis/plugin-gateway-api": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
