@@ -1,4 +1,5 @@
 import type { Context, ConfigSchema, WebuiPage, PluginModule, IncomingMessage } from '@aalis/core';
+import type {} from '@aalis/plugin-webui-api';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 
