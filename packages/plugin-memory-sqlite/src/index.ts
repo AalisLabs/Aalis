@@ -2,8 +2,9 @@ import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import type { Context, Message, ConfigSchema, ContentSegment } from '@aalis/core';
-import type { MemoryService } from '@aalis/core';
-import { MemoryCapabilities } from '@aalis/core';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type {  } from '@aalis/core';
+import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 
 // ===== 插件元数据 =====
 

@@ -12,7 +12,8 @@
     "@aalis/core": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
-    "@aalis/plugin-llm-api": "workspace:*"
+    "@aalis/plugin-llm-api": "workspace:*",
+    "@aalis/plugin-memory-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

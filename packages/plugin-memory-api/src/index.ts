@@ -1,6 +1,6 @@
 // ----- 记忆服务接口 -----
 
-import type { Message } from './core.js';
+import type { Message } from '@aalis/core';
 
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
@@ -68,13 +68,13 @@ export const MemoryCapabilities = {
   MessageDelete: 'message-delete',
 } as const satisfies MemoryCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     memory: MemoryCapability;
   }
 }
 
-import { registerCapabilityProbe } from './capabilities.js';
+import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('memory', MemoryCapabilities.History, inst =>
   typeof (inst as { getHistory?: unknown }).getHistory === 'function'
