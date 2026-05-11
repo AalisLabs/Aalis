@@ -2,7 +2,13 @@
 
 所有核心模块和插件之间共享的类型契约。
 
-**源码**: `packages/core/src/types/*.ts`（已拆分为独立文件，`index.ts` 为 barrel export）
+> ⚠️ **类型归属说明（2025 重构后）**：
+> 自 cleanup-1 ~ cleanup-4 起，**所有业务服务接口**（`LLMService` / `MemoryService` / `StorageService` / `EmbeddingService` / `VectorStoreService` / `ToolService` / `CommandService` / `GatewayService` / `WebUIService` / `AuthorityService` / `AgentService`）以及它们的关联类型（`ChatResponse` / `ChatRequest` / `WebuiPage` / `ExecutionGuard*` / `PluginGroupInfo` 等）**已迁出 core**，分别归属到对应的 `@aalis/plugin-*-api` 包。详见 [api 包架构](../design/api-packages.md)。
+>
+> 本文档保留接口定义文本以供查阅，但**实际源码不再位于 packages/core**。
+> core 仅保留：消息类型 / 配置类型 / 插件元信息 / 服务能力声明框架 / 3 个空扩展点（`ServiceCapabilityMap` / `AalisEvents` / `HookContextMap`）。
+
+**源码**: `packages/core/src/types/*.ts`（已拆分为独立文件，`index.ts` 为 barrel export）；业务服务接口源码请到 `packages/plugin-*-api/src/index.ts` 查阅。
 
 ---
 
