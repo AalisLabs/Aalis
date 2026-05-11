@@ -27,8 +27,8 @@ export { getLogBuffer, isConsoleLogSinkEnabled, Logger, onLogEntry, setConsoleLo
 // ----- 插件系统类型 -----
 export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
-export type { NormalizedDependency, ServiceEntry } from './service.js';
-export { ScopedServiceContainer, ServiceContainer } from './service.js';
+export type { NormalizedDependency, ServiceEntry, ServicePriorityValue } from './service.js';
+export { ScopedServiceContainer, ServiceContainer, ServicePriority } from './service.js';
 // ----- 核心数据契约 + 扩展点 -----
 export type {
   AalisEvents,

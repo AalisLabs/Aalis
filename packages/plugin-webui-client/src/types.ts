@@ -136,10 +136,14 @@ export interface ServiceProviderInfo {
   capabilities: string[];
   displayName?: string;
   label?: string;
+  /** provide() 时声明的 priority 数值；越大越优先 */
+  priority: number;
 }
 
 export interface ServiceInfo {
   providers: ServiceProviderInfo[];
+  /** 当前生效的偏好 contextId（无偏好则为 null）；preferred > priority */
+  preferred: string | null;
 }
 
 export type PageTab = string;

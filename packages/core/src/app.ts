@@ -123,7 +123,22 @@ export class App {
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config', 'market'] });
     this.ctx.provide('plugins', this.plugins, { capabilities: ['plugin-mgmt'] });
 
-    // 5. 监控核心必需服务，卸载时自动恢复
+    // 5. 应用启动时已存在的服务偏好（容器先于此处 register，但偏好可提前于 entry 设置）
+    const initialPrefs = config.getServicePreferences();
+    for (const [svcName, ctxId] of Object.entries(initialPrefs)) {
+      this.ctx.preferService(svcName, ctxId);
+    }
+
+    // 6. 新服务注册时，若配置中已有该服务的偏好则继续保留（resolveEntries 内部按 contextId 匹配，
+    //    新注册不会改变偏好；无需在此处重新调用 preferService，但记录日志便于诊断）
+    this.ctx.on('service:registered', svcName => {
+      const pref = config.getServicePreferences()[svcName];
+      if (pref) {
+        this.logger.debug(`服务 "${svcName}" 注册时存在用户偏好: ${pref}`);
+      }
+    });
+
+    // 7. 监控核心必需服务，卸载时自动恢复
     this.ctx.on('service:unregistered', async name => {
       if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;

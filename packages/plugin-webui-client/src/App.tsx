@@ -583,7 +583,7 @@ export function App() {
   // 自定义渲染器 — 返回稳定的 JSX 元素，避免每次 render 创建新的组件类型
   const renderCustomPage = (renderer: string, pluginName: string): React.ReactNode => {
     switch (renderer) {
-      case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} />;
+      case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} onRefreshServices={refreshServices} />;
       case 'marketplace': return <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />;
       case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={refreshConfig} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
       case 'platforms': return <PlatformPage />;
