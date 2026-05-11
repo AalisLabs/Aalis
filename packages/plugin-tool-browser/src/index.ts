@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import { isPrivateHost } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import '@aalis/plugin-tools-api';
 
@@ -617,34 +618,10 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   if (config.blockPrivate) {
     const host = parsed.hostname.toLowerCase();
     if (config.allowedHosts.includes(host)) return null; // 白名单跳过
-    if (isPrivateOrLoopback(host)) {
+    // 仅字符串级判定（不做 DNS 解析），与 plugin-tools 的 http 工具复用同一套 SSRF 判定。
+    if (isPrivateHost(host)) {
       return `拒绝访问内网/本地地址 "${host}"（blockPrivate=true）`;
     }
   }
   return null;
-}
-
-function isPrivateOrLoopback(host: string): boolean {
-  if (!host) return true;
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === '0.0.0.0') return true;
-
-  // IPv6
-  if (host === '::1' || host === '[::1]') return true;
-  if (host.startsWith('[fe80') || host.startsWith('[fc') || host.startsWith('[fd')) return true;
-  if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
-    if (/^[0-9a-f:]+$/.test(host)) return true;
-  }
-
-  // IPv4
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!m) return false;
-  const [a, b] = [parseInt(m[1], 10), parseInt(m[2], 10)];
-  if (a === 10) return true;
-  if (a === 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 0) return true;
-  return false;
 }
