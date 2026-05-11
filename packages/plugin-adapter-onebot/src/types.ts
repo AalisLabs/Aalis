@@ -373,8 +373,8 @@ export function parseContentToSegments(content: string): ParsedSegment[] {
     /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/g;
 
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(content)) !== null) {
+  let match: RegExpExecArray | null = regex.exec(content);
+  while (match !== null) {
     if (match.index > lastIndex) {
       const text = content.slice(lastIndex, match.index);
       if (text) segments.push({ type: 'text', data: { text } });
@@ -391,6 +391,7 @@ export function parseContentToSegments(content: string): ParsedSegment[] {
       segments.push({ type: 'reply', data: { id: match[5] } });
     }
     lastIndex = match.index + match[0].length;
+    match = regex.exec(content);
   }
 
   if (lastIndex < content.length) {
