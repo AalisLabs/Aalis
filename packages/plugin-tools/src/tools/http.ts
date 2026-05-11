@@ -7,9 +7,9 @@
  */
 
 import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { isPrivateIp, toStorageUri as toStorageUriShared } from '@aalis/plugin-tools-api';
 
 interface HttpConfig {
   defaultTimeout: number;
@@ -188,7 +188,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
           });
         }
 
-        const storageUri = toStorageUri(savePath);
+        const storageUri = toStorageUriShared(savePath, { requireValue: true, errorContext: '保存路径' });
         await config.storage.writeFile(storageUri, buffer);
 
         return JSON.stringify({
@@ -231,6 +231,8 @@ async function validatePublicHttpUrl(rawUrl: string): Promise<URL> {
   return parsed;
 }
 
+// 含 DNS 解析的内网判定（SSRF 防护）：先做字符串级判定，再解析域名验证每个 A/AAAA 记录。
+// 字符串级判定复用 plugin-tools-api 的 isPrivateIp，避免与其他插件重复造轮。
 async function isPrivateHost(hostname: string): Promise<boolean> {
   const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!normalized || normalized === 'localhost') return true;
@@ -243,61 +245,4 @@ async function isPrivateHost(hostname: string): Promise<boolean> {
   } catch {
     return true;
   }
-}
-
-function isPrivateIp(address: string): boolean {
-  const version = isIP(address);
-  if (version === 4) return isPrivateIpv4(address);
-  if (version === 6) return isPrivateIpv6(address);
-  return false;
-}
-
-function isPrivateIpv4(address: string): boolean {
-  const parts = address.split('.').map(part => Number(part));
-  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return true;
-  }
-  const [a, b] = parts;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224
-  );
-}
-
-function isPrivateIpv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === '::' || normalized === '::1') return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
-  if (
-    normalized.startsWith('fe8') ||
-    normalized.startsWith('fe9') ||
-    normalized.startsWith('fea') ||
-    normalized.startsWith('feb')
-  )
-    return true;
-
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isPrivateIpv4(mapped[1]);
-
-  return false;
-}
-
-function toStorageUri(input: string): string {
-  const value = input.trim();
-  if (!value) throw new Error('保存路径不能为空');
-  if (/^[a-zA-Z]:[\\/]/.test(value)) {
-    throw new Error('保存路径必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
-  }
-  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
-  if (value.startsWith('/')) {
-    throw new Error('保存路径必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
-  }
-  return `workspace:/${value.replace(/^\/+/, '')}`;
 }
