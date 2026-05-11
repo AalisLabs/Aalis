@@ -115,7 +115,10 @@ export interface SessionManagerService {
   /** 列出会话（可按 parentId 和 status 过滤） */
   listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
   /** 更新会话属性 */
-  updateSession(id: string, updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>): Promise<SessionInfo>;
+  updateSession(
+    id: string,
+    updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>,
+  ): Promise<SessionInfo>;
   /** 删除会话（同时清理其消息历史） */
   deleteSession(id: string): Promise<void>;
 
@@ -129,7 +132,10 @@ export interface SessionManagerService {
   // ---- 树形操作 ----
 
   /** 创建子会话 */
-  createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>): Promise<SessionInfo>;
+  createChildSession(
+    parentId: string,
+    opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
+  ): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];
   /** 获取会话树（传入 rootId 则只返回该子树，否则返回所有根会话的树） */
@@ -196,7 +202,9 @@ declare module '@aalis/core' {
 
 registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionCrud, inst => {
   const i = inst as { createSession?: unknown; getSession?: unknown; deleteSession?: unknown };
-  return typeof i.createSession === 'function' && typeof i.getSession === 'function' && typeof i.deleteSession === 'function'
+  return typeof i.createSession === 'function' &&
+    typeof i.getSession === 'function' &&
+    typeof i.deleteSession === 'function'
     ? true
     : 'SessionManagerService.createSession()/getSession()/deleteSession() are required for capability "session-crud"';
 });

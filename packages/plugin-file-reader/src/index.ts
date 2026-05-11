@@ -1,7 +1,7 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
+import type { AgentService } from '@aalis/plugin-agent-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
-import type { AgentService } from '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -142,9 +142,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       text = file.data.toString('utf-8');
     } else if (mime === 'application/pdf') {
       text = await extractPdf(file.data);
-    } else if (
-      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ) {
+    } else if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
       text = await extractDocx(file.data);
     } else if (mime === 'application/msword') {
       text = '[不支持旧版 .doc 格式，请转换为 .docx 后重新上传]';
@@ -181,12 +179,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   /** 存储文件并返回 ID */
-  function storeFile(
-    name: string,
-    data: Buffer,
-    mimeType: string,
-    sessionId: string,
-  ): StoredFile {
+  function storeFile(name: string, data: Buffer, mimeType: string, sessionId: string): StoredFile {
     const id = generateId();
     const file: StoredFile = {
       id,
@@ -276,7 +269,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         let text = await extractText(file);
 
         if (maxLength && text.length > maxLength) {
-          text = text.slice(0, maxLength) + `\n\n... [文本已截断，原始长度: ${text.length} 字符]`;
+          text = `${text.slice(0, maxLength)}\n\n... [文本已截断，原始长度: ${text.length} 字符]`;
         }
 
         return `文件: ${file.name}\n类型: ${file.mimeType}\n大小: ${(file.data.length / 1024).toFixed(1)} KB\n\n--- 内容 ---\n${text}`;
@@ -295,8 +288,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'list_uploaded_files',
-        description:
-          '列出当前会话中用户上传的所有文件。返回文件列表（含 ID、文件名、类型、大小）。',
+        description: '列出当前会话中用户上传的所有文件。返回文件列表（含 ID、文件名、类型、大小）。',
         parameters: {
           type: 'object',
           properties: {
@@ -317,8 +309,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return '当前没有已上传的文件。';
       }
 
-      const lines = files.map(f =>
-        `- ${f.name} (ID: ${f.id}, 类型: ${f.mimeType}, 大小: ${(f.data.length / 1024).toFixed(1)} KB)`,
+      const lines = files.map(
+        f => `- ${f.name} (ID: ${f.id}, 类型: ${f.mimeType}, 大小: ${(f.data.length / 1024).toFixed(1)} KB)`,
       );
       return `已上传的文件 (${files.length} 个):\n${lines.join('\n')}`;
     },
@@ -367,7 +359,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
         // 非图片文件：验证大小并存储
         if (buffer.length > maxFileSize) {
-          fileInfos.push(`[文件: ${fileAttachment.name} - 超过大小限制 (${(buffer.length / 1024 / 1024).toFixed(1)}MB > ${(maxFileSize / 1024 / 1024).toFixed(0)}MB)]`);
+          fileInfos.push(
+            `[文件: ${fileAttachment.name} - 超过大小限制 (${(buffer.length / 1024 / 1024).toFixed(1)}MB > ${(maxFileSize / 1024 / 1024).toFixed(0)}MB)]`,
+          );
           continue;
         }
 
@@ -401,9 +395,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } else if (fileInfos.length > 0) {
       // 无排序信息时保持原有行为：直接注入 msg.content
       const fileText = fileInfos.join('\n');
-      msg.content = msg.content
-        ? `${msg.content}\n${fileText}`
-        : fileText;
+      msg.content = msg.content ? `${msg.content}\n${fileText}` : fileText;
     }
 
     // 清除原始文件数据（已存储到 fileStore 或路由到 images）
@@ -427,5 +419,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     available: true,
   });
 
-  ctx.logger.info(`文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, 保留 ${(retentionMs / 60000).toFixed(0)} 分钟)`);
+  ctx.logger.info(
+    `文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, 保留 ${(retentionMs / 60000).toFixed(0)} 分钟)`,
+  );
 }
