@@ -9,7 +9,7 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import '@aalis/plugin-gateway-api';
 
 export type { TriggerDecision, TriggerPolicyService, TriggerKind } from './types.js';
-import { INBOUND_PHASE } from '@aalis/core';
+import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import {
   type TriggerPolicyConfig,
   defaultTriggerPolicyConfig,

@@ -5,7 +5,7 @@ import type {
 } from '@aalis/core';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
-import { INBOUND_PHASE } from '@aalis/core';
+import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import '@aalis/plugin-gateway-api';
 
 export type { FlowControlService, FlowSessionStateSnapshot } from './types.js';

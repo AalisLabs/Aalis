@@ -2,7 +2,7 @@ import { EventBus } from './events.js';
 import { ServiceContainer } from './service.js';
 import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
-import { ConfigManager } from './config.js';
+import { ConfigManager, ScopedConfigManager } from './config.js';
 import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
 import { probeCapability } from './types/capabilities.js';
@@ -84,28 +84,34 @@ export class Context {
   /**
    * 创建隔离作用域的子上下文
    *
-   * 与 fork() 的区别：fork() 共享同一个 ServiceContainer；
-   * createScope() 创建一个 **ScopedServiceContainer**（子容器），
-   * 读取 fallback 到父容器，写入仅影响子容器自身。
+   * 与 fork() 的区别：fork() 共享同一个 ServiceContainer / ConfigManager；
+   * createScope() 同时创建：
+   * - **ScopedServiceContainer**（子容器）：读 fallback、写不影响父级
+   * - **ScopedConfigManager**（cleanup-7 新增）：同样 fallback + overlay 语义
    *
    * 适用于沙盒/会话隔离场景：
    * - 沙盒内 `ctx.provide('agent', sandboxAgent)` 不会污染全局
    * - 沙盒内 `ctx.getService('authority')` 仍能 fallback 到全局服务
+   * - 沙盒内 `ctx.config.set('logLevel', 'debug')` 仅作用于沙盒
+   * - 沙盒内 `ctx.config.setPluginConfig('llm.openai', { ... })` 给当前沙盒一份
+   *   临时 LLM 配置，dispose 后随作用域消失（save() 抛错保证不污染磁盘）
    *
    * @example
    * const sandbox = ctx.createScope('sandbox-group-123');
    * sandbox.provide('agent', myCustomAgent); // 仅此作用域可见
+   * sandbox.config.setPluginConfig('llm.openai', { temperature: 0.1 }); // 临时配置
    * sandbox.getService('authority'); // fallback 到父级全局服务
    */
   createScope(id: string): Context {
     const scopedServices = this._services.createScope();
+    const scopedConfig = new ScopedConfigManager(this.config);
     const child = new Context({
       id,
       events: this._events,
       services: scopedServices,
       hooks: this.hooks,
       logger: this.logger.child(id),
-      config: this.config,
+      config: scopedConfig,
       parent: this,
     });
     this._children.add(child);
@@ -451,11 +457,18 @@ export class Context {
     // 清理该上下文注册的钩子
     this.hooks.unregisterByContext(this.id);
 
-    // 清理该上下文注册的工具（安全访问，服务可能已卸载）
-    (this._services.get('tools') as { unregisterByPlugin?: (id: string) => void } | undefined)?.unregisterByPlugin?.(this.id);
-
-    // 清理该上下文注册的指令（安全访问，服务可能已卸载）
-    (this._services.get('commands') as { unregisterByPlugin?: (id: string) => void } | undefined)?.unregisterByPlugin?.(this.id);
+    // 服务自清理协议：任何服务实例若实现 `unregisterByPlugin(contextId)`，
+    // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools-system 的
+    // ToolService、plugin-commands 的 CommandService）。
+    // core 不再硬编码任何具体服务名。
+    for (const name of this._services.listServices()) {
+      const svc = this._services.get(name) as { unregisterByPlugin?: (id: string) => void } | undefined;
+      try {
+        svc?.unregisterByPlugin?.(this.id);
+      } catch (err) {
+        this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err);
+      }
+    }
 
     // 从父上下文中移除
     if (this._parent) {
