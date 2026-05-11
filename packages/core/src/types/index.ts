@@ -77,19 +77,7 @@ export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 
 // 记忆服务（已迁出至 @aalis/plugin-memory-api）
 
-// 存储服务
-export type {
-  StorageRootKind,
-  StorageRootInfo,
-  StorageEntry,
-  StorageStat,
-  StorageListResult,
-  StorageReadStreamResult,
-  StorageService,
-  StorageCapability,
-  StorageCapabilityRegistry,
-} from './storage.js';
-export { StorageCapabilities } from './storage.js';
+// 存储服务（已迁出至 @aalis/plugin-storage-api）
 
 // Embedding 服务
 export type { EmbeddingService } from './embedding.js';

@@ -191,6 +191,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -824,11 +827,27 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-storage-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-storage-local:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -842,6 +861,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -893,6 +915,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -932,6 +957,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1114,6 +1142,9 @@ importers:
       '@aalis/plugin-session-manager':
         specifier: workspace:*
         version: link:../plugin-session-manager
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api

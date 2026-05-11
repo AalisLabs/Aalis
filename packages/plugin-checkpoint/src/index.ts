@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, PluginModule, StorageService } from '@aalis/core';
+import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { CheckpointServiceImpl, resolveConfig, type CheckpointService } from './service.js';
 import { mkdir } from 'node:fs/promises';
