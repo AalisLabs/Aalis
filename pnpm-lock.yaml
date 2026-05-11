@@ -7,58 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:packages/core
-      '@aalis/plugin-agent-default':
-        specifier: workspace:*
-        version: link:packages/plugin-agent-default
-      '@aalis/plugin-cli':
-        specifier: workspace:*
-        version: link:packages/plugin-cli
-      '@aalis/plugin-deepseek':
-        specifier: workspace:*
-        version: link:packages/plugin-deepseek
-      '@aalis/plugin-embedding-ollama':
-        specifier: workspace:*
-        version: link:packages/plugin-embedding-ollama
-      '@aalis/plugin-embedding-openai':
-        specifier: workspace:*
-        version: link:packages/plugin-embedding-openai
-      '@aalis/plugin-memory-mongodb':
-        specifier: workspace:*
-        version: link:packages/plugin-memory-mongodb
-      '@aalis/plugin-memory-sqlite':
-        specifier: workspace:*
-        version: link:packages/plugin-memory-sqlite
-      '@aalis/plugin-memory-vector':
-        specifier: workspace:*
-        version: link:packages/plugin-memory-vector
-      '@aalis/plugin-openai':
-        specifier: workspace:*
-        version: link:packages/plugin-openai
-      '@aalis/plugin-persona':
-        specifier: workspace:*
-        version: link:packages/plugin-persona
-      '@aalis/plugin-tools-system':
-        specifier: workspace:*
-        version: link:packages/plugin-tools-system
-      '@aalis/plugin-vectorstore-flat':
-        specifier: workspace:*
-        version: link:packages/plugin-vectorstore-flat
-      '@aalis/plugin-vectorstore-lancedb':
-        specifier: workspace:*
-        version: link:packages/plugin-vectorstore-lancedb
-      '@aalis/plugin-websearch-serper':
-        specifier: workspace:*
-        version: link:packages/plugin-websearch-serper
-      '@aalis/plugin-webui-client':
-        specifier: workspace:*
-        version: link:packages/plugin-webui-client
-      '@aalis/plugin-webui-server':
-        specifier: workspace:*
-        version: link:packages/plugin-webui-server
     devDependencies:
       '@biomejs/biome':
         specifier: 2.4.15

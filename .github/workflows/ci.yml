@@ -28,9 +28,11 @@ jobs:
       - name: Build all packages
         run: pnpm -r build
 
-      - name: Biome (lint + format check, informational)
-        continue-on-error: true
+      - name: Biome (lint + format check)
         run: pnpm exec biome check . --max-diagnostics=200
+
+      - name: Run tests
+        run: pnpm run test
 
   biome-changed:
     name: Biome on changed files (HARD for new code)

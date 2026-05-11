@@ -4,7 +4,7 @@ import type { TriggerPolicyConfig } from './config.js';
 
 /** @ 检测：覆盖 onebot 内联格式（<at>、CQ:at）以及通用 @nickname */
 export function checkImmediateMention(content: string): boolean {
-  if (/<at self[\s>][^]*?<\/at>/.test(content)) return true;
+  if (/<at self[\s>][\s\S]*?<\/at>/.test(content)) return true;
   if (/\[CQ:at,qq=\d+\]/.test(content)) return true;
   if (/@\S+/.test(content)) return true;
   return false;
