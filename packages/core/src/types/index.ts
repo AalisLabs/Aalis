@@ -43,11 +43,9 @@ export type {
 // 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
 export type { HookContextMap, InboundPhaseData } from './hooks.js';
 
-// 指令服务接口
-export type { CommandService, CommandNodeInfo } from './commands.js';
+// 指令服务接口（已迁出至 @aalis/plugin-commands-api）
 
-// 工具服务接口
-export type { ToolService } from './tools.js';
+// 工具服务接口（已迁出至 @aalis/plugin-tools-api）
 
 // Agent 服务
 export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js';

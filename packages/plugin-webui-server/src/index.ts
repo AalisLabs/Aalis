@@ -1,3 +1,5 @@
+import type { CommandService } from '@aalis/plugin-commands-api';
+import type { ToolService } from '@aalis/plugin-tools-api';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { resolve, dirname, basename, extname, relative, join, isAbsolute } from 'node:path';
@@ -297,8 +299,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         /** 是否支持文件上传（file-reader 可用） */
         file: hasFileReader,
       },
-      tools: ctx.tools?.getAll().map(t => t.name) ?? [],
-      commands: ctx.commands?.getAll().map(c => ({
+      tools: ctx.getService<ToolService>('tools')?.getAll().map(t => t.name) ?? [],
+      commands: ctx.getService<CommandService>('commands')?.getAll().map(c => ({
         name: c.name,
         description: c.description,
         authority: c.authority,
@@ -660,8 +662,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取已注册的工具分组（含元数据 + 各组工具数量）
   expressApp.get('/api/tool-groups', (_req, res) => {
-    const groups = ctx.tools?.getGroups() ?? [];
-    const allTools = ctx.tools?.getAll() ?? [];
+    const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
+    const allTools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     const result = groups.map(g => {
       const toolCount = allTools.filter(t => t.groups?.includes(g.name)).length;
       return { ...g, toolCount };
@@ -831,7 +833,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
-      const groups = ctx.tools?.getGroups() ?? [];
+      const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
       if (groups.length > 0) {
         res.json({
           models: groups.map(g => g.name).sort(),
@@ -839,7 +841,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
       } else {
         // 回退：从已注册工具中提取分组名称
-        const tools = ctx.tools?.getAll() ?? [];
+        const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
         const groupSet = new Set<string>();
         for (const t of tools) {
           t.groups?.forEach((g: string) => groupSet.add(g));
@@ -908,10 +910,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     input: string,
     sessionId: string,
   ): Promise<string | undefined> {
-    const parsed = ctx.commands?.parseCommand(input);
+    const parsed = ctx.getService<CommandService>('commands')?.parseCommand(input);
     if (!parsed) return undefined;
 
-    return ctx.commands!.execute(parsed.name, {
+    return ctx.getService<CommandService>('commands')!.execute(parsed.name, {
       sessionId,
       platform: 'webui',
       userId: 'console',

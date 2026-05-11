@@ -15,7 +15,8 @@
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
     "string-width": "^8.2.0",
-    "@aalis/plugin-platform": "workspace:*"
+    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-commands-api": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -1,3 +1,4 @@
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type { Context, AgentService, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, PluginGroupInfo, App, GatewayService, ContentSegment } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
@@ -476,7 +477,7 @@ class DefaultAgent implements AgentService {
           enabledGroups = resolved.enabledToolGroups;
         }
         this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`);
-        const tools = this.ctx.tools?.getDefinitions(
+        const tools = this.ctx.getService<ToolService>('tools')?.getDefinitions(
           enabledGroups ? { groups: enabledGroups } : undefined,
         ) ?? [];
         const toolCtx: ToolCallContext = {
@@ -592,7 +593,7 @@ class DefaultAgent implements AgentService {
 
               this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
               const toolT0 = Date.now();
-              let result = await (this.ctx.tools?.execute(
+              let result = await (this.ctx.getService<ToolService>('tools')?.execute(
                 toolBeforeData.name,
                 toolBeforeData.args,
                 toolCtx,
@@ -1583,7 +1584,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const sm = ctx.getService<SessionManagerService>('session-manager');
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
-      const tools = ctx.tools?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
+      const tools = ctx.getService<ToolService>('tools')?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
 
       const llmBeforeData = { messages, tools, sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
       await ctx.hooks.run('agent:llm:before', llmBeforeData);

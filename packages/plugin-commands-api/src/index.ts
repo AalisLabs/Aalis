@@ -9,7 +9,7 @@ import type {
   SafetyLevel,
   CommandArgumentDefinition,
   CommandOptionDefinition,
-} from './core.js';
+} from '@aalis/core';
 
 /**
  * 指令树节点的扁平化视图（用于 WebUI 渲染、help 输出等）。

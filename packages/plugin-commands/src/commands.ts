@@ -1,15 +1,5 @@
-import type {
-  CommandDefinition,
-  RegisteredCommand,
-  CommandContext,
-  CommandService,
-  CommandNodeInfo,
-  SubcommandDefinition,
-  SafetyLevel,
-  ExecutionGuard,
-  CommandArgumentDefinition,
-  CommandOptionDefinition,
-} from '@aalis/core';
+import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, SafetyLevel, ExecutionGuard, CommandArgumentDefinition, CommandOptionDefinition } from '@aalis/core';
+import type { CommandService, CommandNodeInfo } from '@aalis/plugin-commands-api';
 import type { Logger } from '@aalis/core';
 
 /** 内部解析结果：从根指令出发匹配 args 后，得到的最深节点及其链路上下文 */
@@ -40,7 +30,7 @@ interface ParsedCommandArgs {
  * 指令注册表 —— 管理用户可调用的斜杠指令的注册、解析、执行
  *
  * 由 plugin-commands 创建并注册为服务 'commands'，
- * 所有插件通过 ctx.command() 注册指令，通过 ctx.commands 访问。
+ * 所有插件通过 ctx.command() 注册指令，通过 ctx.getService<CommandService>('commands') 访问。
  *
  * 与 plugin-agent-tools/ToolRegistry 同属"中心 Registry 模式"：
  * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
