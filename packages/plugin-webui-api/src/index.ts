@@ -238,7 +238,7 @@ export const DEFAULT_SUBSYSTEM_CATALOG: readonly SubsystemCatalogEntry[] = Objec
     label: '工具',
     order: 80,
     plugins: [
-      '@aalis/plugin-tools-system',
+      '@aalis/plugin-tools',
       '@aalis/plugin-tool-math',
       '@aalis/plugin-tool-search',
       '@aalis/plugin-tool-browser',
