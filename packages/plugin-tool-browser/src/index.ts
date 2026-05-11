@@ -1,5 +1,5 @@
-import type { Context, ConfigSchema, WebuiPage, PluginModule } from '@aalis/core';
-import type {} from '@aalis/plugin-webui-api';
+import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
+import type { WebuiPage } from '@aalis/plugin-webui-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tool-browser — 浏览器自动化工具
