@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-tools-system",
+  "name": "@aalis/plugin-tools",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

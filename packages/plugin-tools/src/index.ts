@@ -24,7 +24,7 @@ if (!('registerTool' in Context.prototype)) {
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-tools-system';
+export const name = '@aalis/plugin-tools';
 export const displayName = '系统工具';
 export const inject = {
   optional: ['commands', 'persona', 'storage'],
