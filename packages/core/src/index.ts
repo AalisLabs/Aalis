@@ -81,16 +81,7 @@ export type {
   // Gateway 服务（消息流编排中枢）
   GatewayService,
   PluginGroupInfo,
-  // WebUI 服务
-  WebUIService,
-  WebuiStatComponent,
-  WebuiTableComponent,
-  WebuiFormComponent,
-  WebuiActionsComponent,
-  WebuiInfoComponent,
-  WebuiMarkdownComponent,
-  WebuiTabsComponent,
-  WebuiComponent,
+  // WebUI 页面骨架（WebUIService / WebuiComponent 等已迁出至 @aalis/plugin-webui-api）
   WebuiPage,
   // App 服务
   AppService,
