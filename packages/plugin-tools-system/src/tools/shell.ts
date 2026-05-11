@@ -12,7 +12,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { platform } from 'node:os';
 import path from 'node:path';
-import type { Context, StorageService } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 interface ShellConfig {
   cwdUri: string;

@@ -5,7 +5,8 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, StorageService, AgentService, WebuiPage } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, AgentService, WebuiPage } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { WebUIService } from '@aalis/plugin-webui-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content

@@ -9,7 +9,8 @@
 
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { Context, StorageService } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 interface FileConfig {
   maxReadSize: number;
