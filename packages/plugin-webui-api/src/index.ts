@@ -179,6 +179,7 @@ export interface SubsystemMetadata {
  * 未命中本表时 WebUI 会回退到「id 原样展示，order=9999」。
  */
 export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.freeze([
+  { id: 'system', label: '系统', order: 0 },
   { id: 'core', label: '核心', order: 10 },
   { id: 'platform', label: '平台', order: 20 },
   { id: 'agent', label: 'Agent', order: 30 },

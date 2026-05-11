@@ -58,9 +58,12 @@ export function ServiceCard({
     <div className="service-slot-card">
       <div className="service-slot-header">
         <span className="service-slot-name">{name}</span>
-        <span className={`badge ${ready ? 'active' : 'error'}`}>
-          {ready ? (multi ? `${providers.length} 个提供者` : '就绪') : '未就绪'}
-        </span>
+        <div className="service-slot-header-badges">
+          {info.preferred && <span className="service-winner-badge preferred">偏好</span>}
+          <span className={`badge ${ready ? 'active' : 'error'}`}>
+            {ready ? (multi ? `${providers.length} 个提供者` : '就绪') : '未就绪'}
+          </span>
+        </div>
       </div>
 
       {!ready ? (
@@ -102,7 +105,6 @@ export function ServiceCard({
               恢复默认
             </button>
           )}
-          {info.preferred && <span className="service-winner-badge preferred">偏好</span>}
         </div>
       ) : (
         <div className="service-slot-single">

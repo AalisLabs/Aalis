@@ -371,6 +371,12 @@ body {
   margin-bottom: 10px;
 }
 
+.service-slot-header-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .service-slot-name {
   font-size: 0.92rem;
   font-weight: 700;
@@ -380,16 +386,19 @@ body {
 .service-slot-select-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .service-slot-label {
   font-size: 0.75rem;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .service-select {
+  flex: 1;
+  min-width: 0;
   padding: 5px 10px;
   font-size: 0.78rem;
   background: var(--bg);
