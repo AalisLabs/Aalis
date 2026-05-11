@@ -153,18 +153,13 @@ export class App {
    * @param config     插件配置（覆盖文件配置）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
    */
-  async plugin(
-    module: PluginModule,
-    config?: Record<string, unknown>,
-    instanceId?: string,
-    meta?: { subsystem?: string },
-  ): Promise<void> {
+  async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<void> {
     const id = instanceId ?? module.name;
     // 合并优先级: 插件默认配置 ← 配置文件 ← 代码传入
     const defaults = module.defaultConfig ?? {};
     const fileConfig = this.ctx.config.getPluginConfig(id);
     const mergedConfig = { ...defaults, ...fileConfig, ...config };
-    await this.plugins.register(module, mergedConfig, id, meta);
+    await this.plugins.register(module, mergedConfig, id);
   }
 
   /**
@@ -202,10 +197,10 @@ export class App {
     }
 
     // Pass 2: 注册并尝试激活所有已加载模块。此时 Context.prototype 上的扩展方法都已就位。
-    for (const { pkg, mod } of modules) {
+    for (const { mod } of modules) {
       loadedModules.set(mod.name, mod);
       try {
-        await this.plugin(mod, undefined, undefined, { subsystem: pkg.subsystem });
+        await this.plugin(mod);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`注册插件 "${mod.name}" 失败: ${message}`);
@@ -357,7 +352,7 @@ export class App {
           this.logger.debug(`跳过非插件模块: ${pkg.name}（缺少 name 或 apply）`);
           continue;
         }
-        await this.plugin(mod, undefined, undefined, { subsystem: pkg.subsystem });
+        await this.plugin(mod);
         loaded.push(pkg.name);
         this.logger.info(`热加载插件: ${pkg.name}`);
       } catch (err) {
@@ -453,9 +448,7 @@ export class App {
   /**
    * 扫描目录，返回可加载的插件列表
    */
-  private async discoverPlugins(
-    dir: string,
-  ): Promise<Array<{ name: string; dir: string; entry: string; subsystem?: string }>> {
+  private async discoverPlugins(dir: string): Promise<Array<{ name: string; dir: string; entry: string }>> {
     this.logger.info(`正在扫描插件目录: ${dir}`);
 
     let entries: string[];
@@ -467,7 +460,7 @@ export class App {
       return [];
     }
 
-    const discovered: Array<{ name: string; dir: string; entry: string; subsystem?: string }> = [];
+    const discovered: Array<{ name: string; dir: string; entry: string }> = [];
 
     for (const entry of entries) {
       const pkgJsonPath = resolve(dir, entry, 'package.json');
@@ -503,7 +496,6 @@ export class App {
         name: pkgJson.name as string,
         dir: resolve(dir, entry),
         entry: resolve(dir, entry, main),
-        subsystem: typeof aalisMeta?.subsystem === 'string' ? (aalisMeta.subsystem as string) : undefined,
       });
     }
 
