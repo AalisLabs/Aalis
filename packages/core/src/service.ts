@@ -150,7 +150,7 @@ export class ServiceContainer {
   /**
    * 列出所有已注册的服务名
    */
-  listServices(): string[] {
+  getServiceNames(): string[] {
     return [...this.entries.keys()];
   }
 
@@ -189,21 +189,6 @@ export class ServiceContainer {
   }
 
   /**
-   * 将指定 contextId 的提供者置为首位（偏好选择）
-   * 仅调整列表顺序，不修改 priority 数值
-   */
-  prefer(name: string, contextId: string): boolean {
-    const list = this.entries.get(name);
-    if (!list) return false;
-    const target = list.find(e => e.contextId === contextId);
-    if (!target) return false;
-    const rest = list.filter(e => e !== target);
-    list.length = 0;
-    list.push(target, ...rest);
-    return true;
-  }
-
-  /**
    * 创建作用域子容器
    *
    * 子容器读取时先查本地，miss 则 fallback 到父容器；
@@ -225,7 +210,7 @@ export class ServiceContainer {
 /**
  * 作用域服务容器 —— ServiceContainer 的子容器
  *
- * - get / has / getEntries / listServices: 先查本地，miss 则 fallback 到父容器
+ * - get / has / getEntries / getServiceNames: 先查本地，miss 则 fallback 到父容器
  * - register / unregisterEntry: 仅操作本地，不影响父容器
  * - 支持多层嵌套: ScopedServiceContainer.createScope() 返回更深层的子容器
  */
@@ -253,8 +238,8 @@ export class ScopedServiceContainer extends ServiceContainer {
     return [...new Set([...local, ...parent])];
   }
 
-  override listServices(): string[] {
-    return [...new Set([...super.listServices(), ...this.parent.listServices()])];
+  override getServiceNames(): string[] {
+    return [...new Set([...super.getServiceNames(), ...this.parent.getServiceNames()])];
   }
 
   override getEntries(name: string): ServiceEntry[] {

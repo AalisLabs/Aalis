@@ -1,10 +1,8 @@
 import type { ServiceInfo } from '../types';
 
-export function ServiceCard({ name, info, busy, onPrefer }: {
+export function ServiceCard({ name, info }: {
   name: string;
   info: ServiceInfo;
-  busy: string | null;
-  onPrefer: (name: string, contextId: string) => void;
 }) {
   return (
     <div className="service-slot-card">
@@ -15,20 +13,21 @@ export function ServiceCard({ name, info, busy, onPrefer }: {
         </span>
       </div>
       {info.providers.length > 1 ? (
-        <div className="service-slot-select-row">
-          <span className="service-slot-label">活跃提供者</span>
-          <select
-            className="service-select"
-            value={info.active ?? ''}
-            disabled={busy === name}
-            onChange={e => onPrefer(name, e.target.value)}
-          >
+        <div className="service-slot-single">
+          <span className="service-slot-label">提供者 ({info.providers.length})</span>
+          <div className="service-slot-providers">
             {info.providers.map(p => {
               const mainName = p.displayName || p.contextId;
-              const text = mainName !== p.contextId ? `${mainName} ${p.contextId}` : p.contextId;
-              return <option key={p.contextId} value={p.contextId}>{text}</option>;
+              return (
+                <span className="service-slot-provider-name" key={p.contextId}>
+                  {mainName}
+                  {p.displayName && (
+                    <span className="service-slot-context-id"> {p.contextId}</span>
+                  )}
+                </span>
+              );
             })}
-          </select>
+          </div>
         </div>
       ) : info.providers.length === 1 ? (
         <div className="service-slot-single">
@@ -47,11 +46,9 @@ export function ServiceCard({ name, info, busy, onPrefer }: {
       )}
       {info.providers.length > 0 && (
         <div className="service-slot-caps">
-          {info.providers
-            .find(p => p.contextId === info.active)
-            ?.capabilities.map(c => (
-              <span className="tool-chip" key={c}>{c}</span>
-            ))}
+          {info.providers[0].capabilities.map(c => (
+            <span className="tool-chip" key={c}>{c}</span>
+          ))}
         </div>
       )}
     </div>

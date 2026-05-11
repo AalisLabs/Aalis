@@ -140,7 +140,6 @@ export interface ServiceProviderInfo {
 
 export interface ServiceInfo {
   providers: ServiceProviderInfo[];
-  active: string | undefined;
 }
 
 export type PageTab = string;
