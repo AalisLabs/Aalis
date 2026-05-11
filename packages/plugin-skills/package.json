@@ -11,7 +11,8 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "yaml": "^2.7.0",
-    "@aalis/plugin-webui-api": "workspace:*"
+    "@aalis/plugin-webui-api": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

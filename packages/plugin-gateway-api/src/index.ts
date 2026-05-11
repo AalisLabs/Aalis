@@ -13,6 +13,39 @@
 // 由 core fallback 入站路由直接派发给 agent。
 
 import type { IncomingMessage, OutgoingMessage } from '@aalis/core';
+import type { AgentService } from '@aalis/plugin-agent-api';
+
+/**
+ * 入站相位共享数据结构
+ *
+ * 同一条消息在 `inbound:command` → `inbound:flow` → `inbound:trigger`
+ * → `inbound:dispatch` 四个相位间被同一对象引用传递。
+ */
+export interface InboundPhaseData {
+  message: IncomingMessage;
+  metadata: Record<string, unknown>;
+  /** 当前可用的 agent 服务；plugin-gateway 在调度前已注入。 */
+  agent: AgentService | undefined;
+}
+
+// ----- Gateway 域钩子声明 -----
+
+declare module '@aalis/core' {
+  interface HookContextMap {
+    'inbound:command': InboundPhaseData;
+    'inbound:flow': InboundPhaseData;
+    'inbound:trigger': InboundPhaseData;
+    'inbound:dispatch': InboundPhaseData;
+    /**
+     * Gateway 出站钩子链（洋葱模型）。
+     * 由 `GatewayService.dispatchOutbound()` 发起。
+     */
+    'outbound:dispatch': {
+      message: OutgoingMessage;
+      metadata: Record<string, unknown>;
+    };
+  }
+}
 
 /**
  * Gateway 服务 —— 消息流编排中枢

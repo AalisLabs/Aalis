@@ -41,14 +41,13 @@ export type {
 } from './core.js';
 
 // 钩子上下文（依赖 agent + llm，单独文件避免循环依赖）
-export type { HookContextMap, InboundPhaseData } from './hooks.js';
+export type { HookContextMap } from './hooks.js';
 
 // 指令服务接口（已迁出至 @aalis/plugin-commands-api）
 
 // 工具服务接口（已迁出至 @aalis/plugin-tools-api）
 
-// Agent 服务
-export type { AgentService, PreprocessorFn, PreprocessorInfo } from './agent.js';
+// Agent 服务（已迁出至 @aalis/plugin-agent-api）
 
 // 平台适配器（已迁出至 @aalis/plugin-platform）
 // export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformService, PlatformCapability, PlatformCapabilityRegistry } from './platform.js';

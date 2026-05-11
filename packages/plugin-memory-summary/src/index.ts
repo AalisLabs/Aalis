@@ -3,6 +3,7 @@ import type {
   Message,
   ConfigSchema,
 } from '@aalis/core';
+import '@aalis/plugin-agent-api';
 import type {  } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { LLMService } from '@aalis/plugin-llm-api';

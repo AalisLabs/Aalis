@@ -1,6 +1,7 @@
 import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
 import { CheckpointServiceImpl, resolveConfig, type CheckpointService } from './service.js';
 import { mkdir } from 'node:fs/promises';
 

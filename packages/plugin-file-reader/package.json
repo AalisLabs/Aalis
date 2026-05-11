@@ -12,7 +12,8 @@
     "@aalis/core": "workspace:*",
     "mammoth": "^1.8.0",
     "pdf-parse": "^1.1.1",
-    "@aalis/plugin-agent-default": "workspace:*"
+    "@aalis/plugin-agent-default": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
