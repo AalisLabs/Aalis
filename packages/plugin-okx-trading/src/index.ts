@@ -1,5 +1,6 @@
 import type { Context, ConfigSchema } from '@aalis/core';
 import { OkxClient } from './client.js';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

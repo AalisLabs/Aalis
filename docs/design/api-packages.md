@@ -172,3 +172,15 @@ declare module '@aalis/core' {
 | `cleanup-3` | WebuiPage 完整迁出至 plugin-webui-api，`PluginModule.webuiPages` 通过 declaration merging 注入 |
 | `cleanup-4` | 新建 plugin-authority-api（ExecutionGuard*/AuthorityService 等）；PluginGroupInfo 迁出至 plugin-agent-api；core 不再持有任何业务/守卫接口 |
 | `build(ci)` | 引入 Biome + GitHub Actions CI + core 净化护栏脚本 |
+| `cleanup-6` | **internal-framework 风格 Context 精简**：`RegisteredTool`/`ToolGroupInfo`/`ToolSummary` 迁出至 plugin-tools-api；`CommandContext`/`CommandDefinition`/`SubcommandDefinition`/`RegisteredCommand` 等迁出至 plugin-commands-api；`ctx.registerTool`/`ctx.registerToolGroup`/`ctx.command` 从 core/context.ts 移除，由 plugin-tools-system / plugin-commands 在模块加载时通过 `Context.extend()` 注入；删除 core/pending-buffer.ts（用 `whenService` 替代）；core/context.ts -73 行 / types/core.ts -201 行 |
+
+## internal-framework 对照
+
+| 维度 | internal-framework (internal-framework) | Aalis (cleanup-6 后) |
+|---|---|---|
+| Context 行数 | 75 | 465 |
+| Context 业务方法 | 0（全部插件注入） | 0（registerTool / command 已迁出，仅保留 provide / getService / middleware / on / mixin / whenService / extend） |
+| 扩展机制 | `Context.prototype` augmentation | 完全一致：`Context.extend()` + `declare module '@aalis/core' { interface Context }` |
+| 服务模型 | `ctx.bots` / `ctx.database` 由插件注入 | `ctx.registerTool` / `ctx.command` 由 plugin-tools-system / plugin-commands 注入 |
+
+Aalis Context 仍比 internal-framework 大，主因是 internal-framework 把 `events`/`hooks`/`registry` 拆为独立类挂在 Context 上；Aalis 直接合并到 Context 内（`hooks` 属性 + 一系列 `on/emit/middleware/provide/getService` 方法）。这是设计取舍而非业务污染。

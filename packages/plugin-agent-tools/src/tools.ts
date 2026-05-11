@@ -1,4 +1,5 @@
-import type { RegisteredTool, ToolDefinition, ToolCallContext, ToolSummary, ToolGroupInfo } from '@aalis/core';
+import type { ToolDefinition, ToolCallContext } from '@aalis/core';
+import type { RegisteredTool, ToolSummary, ToolGroupInfo } from '@aalis/plugin-tools-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { Logger } from '@aalis/core';
 import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';

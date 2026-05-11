@@ -3,6 +3,7 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { SessionManagerService, SessionInfo } from '@aalis/plugin-session-manager';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import '@aalis/plugin-agent-api';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

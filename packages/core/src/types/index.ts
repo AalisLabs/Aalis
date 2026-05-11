@@ -20,11 +20,6 @@ export { probeCapability, registerCapabilityProbe } from './capabilities.js';
 // 核心机制类型
 export type {
   AalisEvents,
-  CommandArgumentDefinition,
-  CommandContext,
-  CommandDefinition,
-  CommandOptionDefinition,
-  CommandValueType,
   ConfigSchema,
   ContentSegment,
   DependencyDeclaration,
@@ -36,8 +31,6 @@ export type {
   MiddlewareNext,
   OutgoingMessage,
   PermissionId,
-  RegisteredCommand,
-  RegisteredTool,
   SafetyLevel,
   SchemaArray,
   SchemaField,
@@ -45,14 +38,11 @@ export type {
   SchemaGroup,
   ServiceDependency,
   StreamChunkMessage,
-  SubcommandDefinition,
   ToolCall,
   ToolCallContext,
   ToolDefinition,
   ToolExecuteMessage,
   ToolFunction,
-  ToolGroupInfo,
-  ToolSummary,
   UserIdentity,
 } from './core.js';
 // 钩子上下文扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入业务键）

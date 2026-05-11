@@ -12,6 +12,7 @@ import { registerInteractTools } from './tools/interact.js';
 import { registerWebAutomationTools } from './tools/web-automation.js';
 import { CdpManager } from './cdp/client.js';
 import * as axNative from './ax-native.js';
+import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-computer-use — 桌面操控工具

@@ -5,6 +5,7 @@ import { registerExcelTools } from './tools/xlsx.js';
 import { registerPptTools } from './tools/pptx.js';
 import { registerPdfTools } from './tools/pdf.js';
 import { resolve } from 'node:path';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import { startBridgeClient } from './bridge-client.js';
 import { GameActivityManager } from './manager.js';
 import { registerStartGameTool } from './start-game-tool.js';
+import '@aalis/plugin-tools-api';
 
 export * from './protocol.js';
 export * from './adapter.js';

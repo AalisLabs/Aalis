@@ -9,6 +9,7 @@ import { registerFinancialTools } from './tools/financial.js';
 import { registerCalculusTools } from './tools/calculus.js';
 import { registerEquationTools } from './tools/equation.js';
 import { registerBaseConvertTools } from './tools/base-convert.js';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

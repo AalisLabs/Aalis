@@ -10,8 +10,9 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "puppeteer": "^24.0.0",
-    "@aalis/plugin-webui-api": "workspace:*"
+    "@aalis/plugin-tools-api": "workspace:*",
+    "@aalis/plugin-webui-api": "workspace:*",
+    "puppeteer": "^24.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
