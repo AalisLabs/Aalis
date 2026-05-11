@@ -463,11 +463,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return entry ? { id, label: entry.label, order: entry.order } : { id, label: '其他', order: 9999 };
       })
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    const groups = sorted.map(({ id, label }) => ({
-      id,
-      label,
-      plugins: groupsMap.get(id)!,
-    }));
+    const groups = sorted.map(({ id, label }) => {
+      const plugins = groupsMap.get(id)!;
+      const services = [...new Set(plugins.flatMap(p => p.provides))];
+      return { id, label, plugins, services };
+    });
     res.json({ groups });
   });
 
