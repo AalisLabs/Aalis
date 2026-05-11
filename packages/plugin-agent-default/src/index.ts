@@ -1302,7 +1302,7 @@ class DefaultAgent implements AgentService {
 
   private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
     const identity = this.ctx
-      .getService<PlatformService>('platform', ['router'])
+      .getService<PlatformService>('platform')
       ?.getSelfIdentity?.(incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
