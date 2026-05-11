@@ -128,6 +128,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
@@ -256,6 +259,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
@@ -396,6 +402,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -437,6 +446,22 @@ importers:
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-gateway-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -796,6 +821,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api

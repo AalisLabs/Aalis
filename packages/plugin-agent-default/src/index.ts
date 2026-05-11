@@ -1,5 +1,6 @@
 import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Context, AgentService, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, PluginGroupInfo, App, GatewayService, ContentSegment } from '@aalis/core';
+import type { Context, AgentService, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, PluginGroupInfo, App, ContentSegment } from '@aalis/core';
+import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
 import type { Logger } from '@aalis/core';
