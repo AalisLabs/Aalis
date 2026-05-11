@@ -193,10 +193,100 @@ async function searchTextStream(
 }
 
 /**
- * 递归收集目录下所有非隐藏的文件 URI（深度优先、字典序稳定）。
- * 用于 file_search 在目录上的批量搜索。失败的子目录会被跳过而不抛出。
+ * 默认排除目录：扫描树时几乎从不需要进入的"噪声目录"。
+ *
+ * 设计动机：file_search/file_tree 走的是字典序深度优先 walk，扫到第一个含
+ * node_modules 的子目录就可能把 maxSearchBytes 预算耗光，导致 `truncated: true`
+ * 而真正想找的源码一行都没扫到。把这些目录默认排除是工业标准（VS Code grep、
+ * ripgrep、ag 等都默认排除）。用户传 `exclude: []` 可关闭全部默认。
  */
-async function collectFiles(storage: StorageService, dirUri: string): Promise<string[]> {
+const DEFAULT_EXCLUDE_PATTERNS: readonly string[] = [
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/out/**',
+  '**/.git/**',
+  '**/.next/**',
+  '**/.nuxt/**',
+  '**/.turbo/**',
+  '**/.cache/**',
+  '**/coverage/**',
+  '**/.venv/**',
+  '**/__pycache__/**',
+];
+
+/**
+ * 把简单 glob 模式（支持 `**` / `*` / `?`）编译为路径级正则。
+ *
+ * - `**\/` → 任意层级前缀（含零层），所以 `**\/node_modules/**` 同时匹配
+ *   `node_modules/x` 和 `a/b/node_modules/x`
+ * - `/**` → 任意层级后缀（含零层）
+ * - `**`  → 任意多段（含 `/`）
+ * - `*`   → 单段内任意字符（不含 `/`）
+ * - `?`   → 单段内一个字符（不含 `/`）
+ *
+ * 匹配的是相对扫描根的"路径"。
+ */
+function compileGlob(pattern: string): RegExp {
+  // 使用控制字符做占位，避免与后续 *, ?, 正则元字符转义冲突
+  const STAR2_SLASH = '\u0001';
+  const SLASH_STAR2 = '\u0002';
+  const STAR2 = '\u0003';
+  let p = pattern;
+  p = p.replace(/\*\*\//g, STAR2_SLASH);
+  p = p.replace(/\/\*\*/g, SLASH_STAR2);
+  p = p.replace(/\*\*/g, STAR2);
+  p = p.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  p = p.replace(/\*/g, '[^/]*');
+  p = p.replace(/\?/g, '[^/]');
+  p = p.split(STAR2_SLASH).join('(?:.*/)?');
+  p = p.split(SLASH_STAR2).join('(?:/.*)?');
+  p = p.split(STAR2).join('.*');
+  return new RegExp(`^${p}$`);
+}
+
+function matchAnyGlob(relPath: string, patterns: readonly RegExp[]): boolean {
+  for (const re of patterns) if (re.test(relPath)) return true;
+  return false;
+}
+
+function resolveExcludePatterns(arg: unknown): RegExp[] {
+  if (arg === undefined || arg === null) return DEFAULT_EXCLUDE_PATTERNS.map(compileGlob);
+  if (!Array.isArray(arg)) return DEFAULT_EXCLUDE_PATTERNS.map(compileGlob);
+  // 显式传空数组 → 关闭全部默认；其它情况只用用户值
+  return (arg as unknown[]).filter((x): x is string => typeof x === 'string').map(compileGlob);
+}
+
+function resolveIncludePatterns(arg: unknown): RegExp[] | undefined {
+  if (!Array.isArray(arg)) return undefined;
+  const list = (arg as unknown[]).filter((x): x is string => typeof x === 'string');
+  return list.length ? list.map(compileGlob) : undefined;
+}
+
+/** 从 storage URI 提取相对扫描根的 path（不含协议头与根名） */
+function relPathFromRoot(rootUri: string, childUri: string): string {
+  // rootUri 形如 "workspace:/packages"，childUri 形如 "workspace:/packages/core/src/foo.ts"
+  if (!childUri.startsWith(rootUri)) return childUri;
+  let rel = childUri.slice(rootUri.length);
+  if (rel.startsWith('/')) rel = rel.slice(1);
+  return rel;
+}
+
+/**
+ * 递归收集目录下所有非隐藏的文件 URI（深度优先、字典序稳定）。
+ *
+ * 用于 file_search 在目录上的批量搜索。失败的子目录会被跳过而不抛出。
+ *
+ * 关键：**目录级 exclude 在 walk 时早停**，命中的目录及其子树根本不进入，
+ * 这才是避免 maxSearchBytes 预算被 node_modules 等噪声目录耗尽的根本手段。
+ * 同时对文件维度也应用 exclude/include 做最终过滤。
+ */
+async function collectFiles(
+  storage: StorageService,
+  rootUri: string,
+  exclude: readonly RegExp[],
+  include: readonly RegExp[] | undefined,
+): Promise<string[]> {
   const out: string[] = [];
   async function walk(uri: string): Promise<void> {
     const result = await storage.list(uri).catch(() => null);
@@ -208,11 +298,18 @@ async function collectFiles(storage: StorageService, dirUri: string): Promise<st
         return a.name.localeCompare(b.name);
       });
     for (const entry of entries) {
-      if (entry.isDirectory) await walk(entry.uri);
-      else out.push(entry.uri);
+      const rel = relPathFromRoot(rootUri, entry.uri);
+      if (entry.isDirectory) {
+        if (matchAnyGlob(rel, exclude)) continue;
+        await walk(entry.uri);
+      } else {
+        if (matchAnyGlob(rel, exclude)) continue;
+        if (include && !matchAnyGlob(rel, include)) continue;
+        out.push(entry.uri);
+      }
     }
   }
-  await walk(dirUri);
+  await walk(rootUri);
   return out;
 }
 
@@ -686,7 +783,9 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       function: {
         name: 'file_search',
         description:
-          '在受控存储中按行搜索匹配文本（内容搜索，非文件名搜索）。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。如需按文件名/目录名查找，请使用 file_tree 的 pattern 参数。',
+          '在受控存储中按行搜索匹配文本（内容搜索，非文件名搜索）。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。' +
+          '目录搜索默认排除 node_modules / dist / build / .git / coverage / __pycache__ 等噪声目录；传 `exclude` 覆盖默认，或传 `exclude: []` 关闭全部默认。' +
+          '如需按文件名/目录名查找，请使用 file_tree 的 pattern 参数。',
         parameters: {
           type: 'object',
           properties: {
@@ -697,6 +796,18 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             startLine: { type: 'number', description: '从第几行开始搜索（默认 1，用于继续上次截断搜索）' },
             maxResults: { type: 'number', description: '最大返回结果数（默认 50，最多 200）' },
             maxSearchBytes: { type: 'number', description: `单次最多扫描字节数（默认/上限 ${config.maxSearchBytes}）` },
+            exclude: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                '路径级 glob 排除模式（支持 ** / * / ?），仅目录搜索生效。例：["**/node_modules/**","**/dist/**"]。' +
+                '不传 → 使用默认排除集；传 [] → 关闭默认全量搜索。',
+            },
+            include: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '路径级 glob 白名单，仅目录搜索生效。例：["**/*.ts","**/*.md"]。',
+            },
           },
           required: ['path', 'pattern'],
           additionalProperties: false,
@@ -723,10 +834,13 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
           ((args.isRegex as boolean) ?? false)
             ? new RegExp(pattern, ignoreCase ? 'i' : '')
             : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
+        const excludeProvided = args.exclude !== undefined;
+        const excludePatterns = resolveExcludePatterns(args.exclude);
+        const includePatterns = resolveIncludePatterns(args.include);
 
         // 目录：递归收集所有文件并逐个搜索，预算（maxResults / maxSearchBytes）跨文件累加。
         if (info.isDirectory) {
-          const files = await collectFiles(storage, uri);
+          const files = await collectFiles(storage, uri, excludePatterns, includePatterns);
           const allMatches: Array<{ uri: string; line: number; content: string }> = [];
           let totalScannedBytes = 0;
           let totalScannedLines = 0;
@@ -757,6 +871,16 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             }
           }
 
+          const advice = truncated
+            ? '搜索因预算（maxResults 或 maxSearchBytes）耗尽而中断。请采取以下任一行动再查：' +
+              '(1) 用更精确的 path 缩小扫描范围；' +
+              '(2) 加 exclude（默认已含 node_modules/dist/.git/build/coverage 等）；' +
+              '(3) 用 include 限定文件类型（如 ["**/*.ts","**/*.md"]）；' +
+              '(4) 提高 maxResults / maxSearchBytes；' +
+              '(5) 用返回的 nextStartFile 作为下次 path 继续。' +
+              '**不要根据本次结果断言"找不到"——它可能只是被预算截断了。**'
+            : undefined;
+
           return JSON.stringify({
             uri,
             pattern,
@@ -768,11 +892,17 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             scannedBytes: totalScannedBytes,
             scannedLines: totalScannedLines,
             truncated,
+            excludeApplied: excludeProvided ? '(user)' : '(default)',
             ...(nextStartFile ? { nextStartFile } : {}),
+            ...(advice ? { advice } : {}),
           });
         }
 
         const result = await searchTextStream(storage, uri, regex, startLine, maxResults, maxSearchBytes);
+        const advice = result.truncated
+          ? '文件搜索因预算耗尽而中断。可提高 maxSearchBytes / maxResults，或用 nextStartLine 继续。' +
+            '**不要据此断言"没有更多匹配"。**'
+          : undefined;
         return JSON.stringify({
           uri,
           pattern,
@@ -785,6 +915,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
           scannedLines: result.scannedLines,
           truncated: result.truncated,
           ...(result.nextStartLine ? { nextStartLine: result.nextStartLine } : {}),
+          ...(advice ? { advice } : {}),
         });
       } catch (err) {
         return jsonError(err);
@@ -799,7 +930,9 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       function: {
         name: 'file_tree',
         description:
-          '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。配合 pattern 参数可筛选目录名和文件名（支持 glob: *.ts, *scheduler* 等）。注意：pattern 匹配的是文件/目录名，而非文件内容。',
+          '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。配合 pattern 参数可筛选目录名和文件名（支持 glob: *.ts, *scheduler* 等）。' +
+          '默认排除 node_modules / dist / build / .git / coverage 等噪声目录；传 `exclude` 覆盖默认，或传 `exclude: []` 关闭全部默认（如需查看 node_modules 时）。' +
+          '注意：pattern 匹配的是文件/目录名，而非文件内容。',
         parameters: {
           type: 'object',
           properties: {
@@ -809,6 +942,13 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             pattern: {
               type: 'string',
               description: '文件与目录名过滤模式（简单 glob: *.ts, *scheduler* 等）。匹配的是文件/目录名，非文件内容。',
+            },
+            exclude: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                '路径级 glob 排除模式（支持 ** / * / ?）。例：["**/node_modules/**"]。' +
+                '不传 → 使用默认排除集；传 [] → 关闭默认。',
             },
           },
           required: [],
@@ -826,9 +966,11 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         const maxDepth = Math.min((args.maxDepth as number) || 3, 10);
         const showHidden = (args.showHidden as boolean) ?? false;
         const pattern = args.pattern as string | undefined;
+        const excludePatterns = resolveExcludePatterns(args.exclude);
         const lines: string[] = [`${basename(uri) || `${rootOf(uri)}:/`}`];
         let totalFiles = 0;
         let totalDirs = 0;
+        let excluded = 0;
 
         async function walk(currentUri: string, prefix: string, depth: number): Promise<void> {
           if (depth > maxDepth) return;
@@ -836,7 +978,18 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
           if (!result) return;
           const entries = result.entries
             .filter(entry => showHidden || !entry.name.startsWith('.'))
-            .filter(entry => entry.isDirectory || !pattern || matchGlob(entry.name, pattern))
+            .filter(entry => {
+              const rel = relPathFromRoot(uri, entry.uri);
+              if (entry.isDirectory) {
+                if (matchAnyGlob(rel, excludePatterns)) {
+                  excluded++;
+                  return false;
+                }
+                return true;
+              }
+              if (matchAnyGlob(rel, excludePatterns)) return false;
+              return !pattern || matchGlob(entry.name, pattern);
+            })
             .sort((a, b) => {
               if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
               return a.name.localeCompare(b.name);
@@ -859,7 +1012,12 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         }
 
         await walk(uri, '', 1);
-        return JSON.stringify({ uri, tree: lines.join('\n'), summary: `${totalDirs} 个目录，${totalFiles} 个文件` });
+        return JSON.stringify({
+          uri,
+          tree: lines.join('\n'),
+          summary: `${totalDirs} 个目录，${totalFiles} 个文件${excluded ? `（已排除 ${excluded} 个噪声目录）` : ''}`,
+          excludedDirs: excluded,
+        });
       } catch (err) {
         return jsonError(err);
       }
