@@ -47,11 +47,6 @@ export interface PluginEntry {
   context?: Context;
   requiredDeps: NormalizedDependency[];
   optionalDeps: NormalizedDependency[];
-  /**
-   * 子系统归属（来自 package.json `aalis.subsystem`）。
-   * 用于 WebUI Dashboard 分组等元数据用途，与 inject 解耦。详见 ADR-0003。
-   */
-  subsystem?: string;
 }
 
 /**
@@ -114,14 +109,8 @@ export class PluginManager {
    * @param module    插件模块
    * @param config    插件配置
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
-   * @param meta      额外元数据（如 subsystem，由 loader 从 package.json 注入）
    */
-  async register(
-    module: PluginModule,
-    config: Record<string, unknown> = {},
-    instanceId?: string,
-    meta?: { subsystem?: string },
-  ): Promise<void> {
+  async register(module: PluginModule, config: Record<string, unknown> = {}, instanceId?: string): Promise<void> {
     const id = instanceId ?? module.name;
 
     // 多实例检查：同一 module 非 reusable 时不允许重复注册
@@ -148,7 +137,6 @@ export class PluginManager {
       state: isDisabled ? 'disabled' : 'pending',
       requiredDeps,
       optionalDeps,
-      subsystem: meta?.subsystem,
     };
 
     this.plugins.set(id, entry);
@@ -240,7 +228,6 @@ export class PluginManager {
     core?: boolean;
     reusable?: boolean;
     extends?: unknown;
-    subsystem?: string;
     config: Record<string, unknown>;
     configSchema?: ConfigSchema;
     defaultConfig?: Record<string, unknown>;
@@ -257,7 +244,6 @@ export class PluginManager {
       core: entry.module.core,
       reusable: entry.module.reusable,
       extends: (entry.module as { extends?: unknown }).extends,
-      subsystem: entry.subsystem,
       config: entry.config,
       configSchema: entry.module.configSchema,
       defaultConfig: entry.module.defaultConfig,
