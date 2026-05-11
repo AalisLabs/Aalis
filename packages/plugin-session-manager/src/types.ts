@@ -173,13 +173,21 @@ export const SessionManagerCapabilities = {
   SessionTree: 'session-tree',
 } as const satisfies SessionManagerCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     'session-manager': SessionManagerCapability;
   }
+  /** 会话生命周期事件（由 plugin-session-manager 增量声明） */
+  interface AalisEvents {
+    'session:created': [session: SessionInfo];
+    'session:updated': [session: SessionInfo];
+    'session:completed': [session: SessionInfo];
+    'session:deleted': [sessionId: string];
+    'session:switched': [sessionId: string];
+  }
 }
 
-import { registerCapabilityProbe } from './capabilities.js';
+import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionCrud, inst => {
   const i = inst as { createSession?: unknown; getSession?: unknown; deleteSession?: unknown };

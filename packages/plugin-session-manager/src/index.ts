@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Context, ConfigSchema, MemoryService, WebuiPage, LLMService, ToolService, Message } from '@aalis/core';
+import type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from './types.js';
 import type { PersonaService } from '@aalis/plugin-persona';
-import type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from '@aalis/core';
-import { SessionManagerCapabilities } from '@aalis/core';
+
+export type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile, SessionManagerCapability, SessionManagerCapabilityRegistry } from './types.js';
+export { SessionManagerCapabilities } from './types.js';
+import { SessionManagerCapabilities } from './types.js';
 
 // ===== 插件元数据 =====
 
