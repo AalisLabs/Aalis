@@ -3,7 +3,8 @@
 // session 范围：每会话一个 setTimeout，触发时合成 system 提示注入 gateway。
 // platform 范围：跨平台一个 tick，挑"最久未联系"的 session 主动开聊。
 
-import type { Context, GatewayService, IncomingMessage } from '@aalis/core';
+import type { Context, IncomingMessage } from '@aalis/core';
+import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { FlowControlConfig } from './config.js';
 import type { MutableFlowSessionState } from './state.js';
 
