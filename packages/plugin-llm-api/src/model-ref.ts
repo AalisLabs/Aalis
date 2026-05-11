@@ -11,6 +11,9 @@
 //   "@aalis/plugin-ollama::qwen2.5:7b"   ← model id 内部出现 ':' 仍然安全（用 '::' 分隔）
 //
 // 只接受 contextId 作为 provider 部分；不接受 label，避免歧义。
+//
+// 由 plugin-llm-api 提供（cleanup-9 从 core 迁出——LLM provider/model 是 LLM 域概念，
+// core 不应知晓）。
 
 const MODEL_REF_SEPARATOR = '::';
 

@@ -6,7 +6,7 @@ import '@aalis/plugin-tools-api';
 
 export type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchCapability, WebSearchCapabilityRegistry } from './types.js';
 export { WebSearchCapabilities } from './types.js';
-import { parseModelRef } from '@aalis/core';
+import { parseModelRef } from '@aalis/plugin-llm-api';
 
 // ===== 插件元数据 =====
 

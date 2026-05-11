@@ -40,7 +40,6 @@ export type {
   ToolCall,
   ToolDefinition,
   ToolFunction,
-  UserIdentity,
 } from './core.js';
 // 钩子上下文扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入业务键）
 export type { HookContextMap } from './hooks.js';

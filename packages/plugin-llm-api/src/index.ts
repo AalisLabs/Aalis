@@ -98,3 +98,7 @@ registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>
     ? true
     : 'LLMService.chatStream() is required for capability "streaming"',
 );
+
+// ----- ModelRef 编解码（cleanup-9 从 core 迁入） -----
+export type { ModelRef } from './model-ref.js';
+export { parseModelRef, formatModelRef } from './model-ref.js';

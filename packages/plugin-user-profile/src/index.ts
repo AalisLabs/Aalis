@@ -2,7 +2,7 @@ import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {  } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
-import { parseModelRef } from '@aalis/core';
+import { parseModelRef } from '@aalis/plugin-llm-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-commands-api';
 

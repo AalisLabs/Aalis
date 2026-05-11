@@ -9,7 +9,7 @@ import type { LLMService } from '@aalis/plugin-llm-api';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
-import { parseModelRef } from '@aalis/core';
+import { parseModelRef } from '@aalis/plugin-llm-api';
 import type {
   OneBotConnectionConfig,
   OneBotProtocol,
