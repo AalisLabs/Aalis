@@ -18,7 +18,8 @@
     "@aalis/plugin-agent-default": "workspace:*",
     "@aalis/plugin-platform": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
-    "@aalis/plugin-llm-api": "workspace:*"
+    "@aalis/plugin-llm-api": "workspace:*",
+    "@aalis/plugin-storage-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

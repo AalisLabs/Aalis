@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, StorageService } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import { registerShellTools } from './tools/shell.js';
 import { registerFileTools } from './tools/file.js';
 import { registerSystemTools } from './tools/system.js';

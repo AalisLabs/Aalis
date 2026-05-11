@@ -1,8 +1,9 @@
 import { createReadStream } from 'node:fs';
 import { mkdir, readdir, realpath, stat, lstat, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve } from 'node:path';
-import type { ConfigSchema, Context, StorageEntry, StorageListResult, StorageReadStreamResult, StorageRootInfo, StorageService, StorageStat } from '@aalis/core';
-import { StorageCapabilities } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
+import type { StorageEntry, StorageListResult, StorageReadStreamResult, StorageRootInfo, StorageService, StorageStat } from '@aalis/plugin-storage-api';
+import { StorageCapabilities } from '@aalis/plugin-storage-api';
 import type { Logger } from '@aalis/core';
 
 export const name = '@aalis/plugin-storage-local';
