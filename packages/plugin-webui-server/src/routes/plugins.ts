@@ -55,7 +55,7 @@ export function registerPluginRoutes(
     res.json(pages);
   });
 
-  // 通用声明式页面操作：调用插件的 webuiHandlers
+  // 通用声明式页面操作：调用插件的 actions
   expressApp.post('/api/page-action/:plugin/:method', async (req, res) => {
     const { plugin: pluginName, method } = req.params;
     const args: Record<string, unknown> = req.body ?? {};
@@ -73,7 +73,7 @@ export function registerPluginRoutes(
       return;
     }
 
-    const handler = entry.module.webuiHandlers?.[method];
+    const handler = entry.module.actions?.[method];
     if (typeof handler !== 'function') {
       res.status(404).json({ error: `处理器 ${method} 不存在` });
       return;

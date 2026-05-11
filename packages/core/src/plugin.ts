@@ -27,10 +27,19 @@ export interface PluginModule {
   configSchema?: ConfigSchema;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
   defaultConfig?: Record<string, unknown>;
+  /**
+   * 通用命名的插件 RPC 动作表 —— 供 host （如 WebUI / CLI / IPC 层）远程调用。
+   *
+   * core 不负责调起，仅存为​​传输插槽；在 listPlugins() 中以 `actionNames`
+   * （售本 key 列表）导出，供 host 路由。调用方使用 host 提供的
+   * `entry.context` 及 args 调用 handler；core 本身不感知 webui/cli 这样的
+   * 具体消费者。
+   */
+  actions?: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
-  // 注：webuiPages / webuiHandlers / subsystem / extends 字段由
+  // 注：webuiPages / subsystem / extends 等纯 WebUI 展示元数据由
   // @aalis/plugin-webui-api 通过 declaration merging 注入；core 不读取它们，
-  // 仅在 listPlugins() 中以 unknown 类型透传给 WebUI。
+  // 仅在 listPlugins() 中以 unknown 类型透传。
 }
 
 // ----- 插件状态 -----
@@ -233,16 +242,16 @@ export class PluginManager {
     configSchema?: ConfigSchema;
     defaultConfig?: Record<string, unknown>;
     webuiPages?: unknown[];
-    webuiHandlerNames?: string[];
+    actionNames?: string[];
     error?: string;
   }> {
     return [...this.plugins.entries()].map(([, entry]) => {
-      // 这些字段由 @aalis/plugin-webui-api 通过 declaration merging 注入，core 不感知其语义，仅透传。
+      // subsystem / extends / webuiPages 由 @aalis/plugin-webui-api 通过 declaration merging
+      // 注入，core 不感知其语义，仅透传。
       const m = entry.module as {
         subsystem?: string;
         extends?: unknown;
         webuiPages?: unknown[];
-        webuiHandlers?: Record<string, unknown>;
       };
       return {
         name: entry.module.name,
@@ -258,7 +267,7 @@ export class PluginManager {
         configSchema: entry.module.configSchema,
         defaultConfig: entry.module.defaultConfig,
         webuiPages: m.webuiPages,
-        webuiHandlerNames: m.webuiHandlers ? Object.keys(m.webuiHandlers) : undefined,
+        actionNames: entry.module.actions ? Object.keys(entry.module.actions) : undefined,
         error: entry.error,
       };
     });
