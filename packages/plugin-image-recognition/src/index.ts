@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { promisify } from 'node:util';
 import type { Context, ConfigSchema, IncomingMessage, Message, AgentService } from '@aalis/core';
+import type {} from '@aalis/plugin-agent-default';
 import type { LLMService, MemoryService } from '@aalis/core';
 import type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from './types.js';
 import { ImageRecognitionCapabilities } from './types.js';
