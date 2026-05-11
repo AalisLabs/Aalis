@@ -1,3 +1,4 @@
+import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
 // ===== 指令服务接口 =====
 
 import type {
@@ -5,11 +6,9 @@ import type {
   RegisteredCommand,
   CommandContext,
   SubcommandDefinition,
-  ExecutionGuard,
   SafetyLevel,
   CommandArgumentDefinition,
-  CommandOptionDefinition,
-} from '@aalis/core';
+  CommandOptionDefinition } from '@aalis/core';
 
 /**
  * 指令树节点的扁平化视图（用于 WebUI 渲染、help 输出等）。

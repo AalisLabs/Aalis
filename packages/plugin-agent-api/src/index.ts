@@ -6,8 +6,21 @@
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
-import type { IncomingMessage, Message, ToolDefinition, ToolCallContext, PluginGroupInfo } from '@aalis/core';
+import type { IncomingMessage, Message, ToolDefinition, ToolCallContext } from '@aalis/core';
 import type { ChatResponse } from '@aalis/plugin-llm-api';
+
+/**
+ * 插件分组信息（按子系统聚合，供 WebUI Dashboard 等使用）
+ *
+ * Agent 服务通过 `getPluginGroups()` 暴露当前活跃插件的分组结构，
+ * 由 dashboard 据此把插件归入对应的子系统面板。
+ */
+export interface PluginGroupInfo {
+  /** 分组显示名称 */
+  label: string;
+  /** 该分组包含的插件 instanceId 列表 */
+  plugins: string[];
+}
 
 /**
  * 消息预处理器函数

@@ -11,7 +11,6 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
-    "@aalis/plugin-authority": "workspace:*",
     "express": "^5.1.0",
     "ws": "^8.18.0",
     "@aalis/plugin-session-manager": "workspace:*",
@@ -22,7 +21,8 @@
     "@aalis/plugin-storage-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/plugin-commands-api": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*"
+    "@aalis/plugin-agent-api": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

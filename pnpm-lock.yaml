@@ -187,6 +187,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -203,6 +206,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
@@ -212,6 +218,19 @@ importers:
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-authority-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -247,9 +266,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-authority':
+      '@aalis/plugin-authority-api':
         specifier: workspace:*
-        version: link:../plugin-authority
+        version: link:../plugin-authority-api
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
@@ -281,6 +300,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
@@ -306,6 +328,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -838,6 +863,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1111,6 +1139,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1322,9 +1353,9 @@ importers:
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
-      '@aalis/plugin-authority':
+      '@aalis/plugin-authority-api':
         specifier: workspace:*
-        version: link:../plugin-authority
+        version: link:../plugin-authority-api
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api

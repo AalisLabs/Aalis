@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, ConfigManager, Logger, App, ExecutionGuardContext } from '@aalis/core';
+import type { Context, ConfigManager, Logger, App } from '@aalis/core';
+import type { ExecutionGuardContext } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api';
