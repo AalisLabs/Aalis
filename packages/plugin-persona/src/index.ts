@@ -527,7 +527,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentPlatform = data.message.platform;
     service.currentSessionType = data.message.sessionType;
     const selfIdentity = ctx
-      .getService<PlatformService>('platform')
+      .getService<PlatformService>('platform', ['router'])
       ?.getSelfIdentity?.(data.message.platform, data.message.sessionId);
     service.currentSelfId = selfIdentity?.selfId;
     service.currentSelfNickname = selfIdentity?.nickname;
