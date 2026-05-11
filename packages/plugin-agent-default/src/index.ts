@@ -68,6 +68,14 @@ class DefaultAgent implements AgentService {
   /** 同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入。 */
   private archiveQueues = new Map<string, Promise<void>>();
 
+  /**
+   * 节流日志状态：记录每个 session 上次 token:usage 日志的"轮次"与 ratio 桶。
+   * - 跨过 0.5/0.7/0.85 三个阈值必输出
+   * - 否则每 10 轮（计数器）输出一次
+   * 与 token:usage 事件共用同一份 breakdown 数据，零额外计算。
+   */
+  private tokenLogState = new Map<string, { count: number; lastRatioBucket: number }>();
+
   /** 已注册的预处理器（name → { priority, dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
@@ -1049,6 +1057,24 @@ class DefaultAgent implements AgentService {
         },
       })
       .catch(() => {});
+
+    // 节流日志：与 WebUI 看到的同一份数据，让 CLI / 文件日志使用者也能看见预算消耗。
+    // 跨过 0.5 / 0.7 / 0.85 阈值必输出，否则每 10 轮一次。
+    const bucket = usageRatio >= 0.85 ? 3 : usageRatio >= 0.7 ? 2 : usageRatio >= 0.5 ? 1 : 0;
+    const st = this.tokenLogState.get(sessionId) ?? { count: 0, lastRatioBucket: -1 };
+    st.count++;
+    const crossedBucket = bucket !== st.lastRatioBucket;
+    if (crossedBucket || st.count % 10 === 1) {
+      const tag = bucket >= 3 ? 'CRITICAL' : bucket >= 2 ? 'WARN' : bucket >= 1 ? 'INFO' : 'OK';
+      this.logger.info(
+        `[token-usage:${tag}] ${sessionId} ${totalUsed}/${contextLength} (${(usageRatio * 100).toFixed(1)}%) ` +
+          `sys=${systemTokens}(persona=${personaTokens} mem=${memorySummaryTokens + memoryVectorTokens} ` +
+          `skills=${skillsTokens} subtask=${subtaskTokens} other=${systemOtherTokens}) ` +
+          `hist=${historyTokens} tools=${toolResultTokens}+${toolDefsTokens}def reserve=${maxTokens}`,
+      );
+    }
+    st.lastRatioBucket = bucket;
+    this.tokenLogState.set(sessionId, st);
   }
 
   /**
