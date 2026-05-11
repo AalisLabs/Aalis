@@ -290,11 +290,27 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-embedding-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-embedding-ollama:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-embedding-api':
+        specifier: workspace:*
+        version: link:../plugin-embedding-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -308,6 +324,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-embedding-api':
+        specifier: workspace:*
+        version: link:../plugin-embedding-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -556,9 +575,15 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-embedding-api':
+        specifier: workspace:*
+        version: link:../plugin-embedding-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-vectorstore-api':
+        specifier: workspace:*
+        version: link:../plugin-vectorstore-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1009,11 +1034,27 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-vectorstore-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-vectorstore-flat:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-vectorstore-api':
+        specifier: workspace:*
+        version: link:../plugin-vectorstore-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1027,6 +1068,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-vectorstore-api':
+        specifier: workspace:*
+        version: link:../plugin-vectorstore-api
       '@lancedb/lancedb':
         specifier: ^0.27.1
         version: 0.27.1(apache-arrow@18.1.0)

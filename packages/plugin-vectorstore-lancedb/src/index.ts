@@ -2,7 +2,7 @@ import { connect, type Connection, type Table as LanceTable } from '@lancedb/lan
 import { resolve } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 import type { Context, ConfigSchema } from '@aalis/core';
-import type { VectorStoreService, VectorSearchResult } from '@aalis/core';
+import type { VectorStoreService, VectorSearchResult } from '@aalis/plugin-vectorstore-api';
 
 // ===== 插件元数据 =====
 
