@@ -13,7 +13,7 @@
 // ============================================================
 
 // App 生命周期接口
-export type { AppService } from './app.js';
+export type { AppService, PluginManagerService, PluginStatusEntry } from './app.js';
 // 服务能力声明框架
 export type { CapabilityList, CapabilityOf, CapabilityProbe, ServiceCapabilityMap } from './capabilities.js';
 export { probeCapability, registerCapabilityProbe } from './capabilities.js';
