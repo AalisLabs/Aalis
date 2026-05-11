@@ -1,5 +1,4 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
-import '@aalis/plugin-webui-api'; // declaration merging: PluginModule['webuiHandlers'] / subsystem
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
@@ -42,9 +41,9 @@ export const defaultConfig = {
   keepSessions: 20,
 };
 
-// ──────────── WebUI Handlers ────────────
+// ──────────── Plugin actions (供 WebUI 调用) ────────────
 
-export const webuiHandlers: PluginModule['webuiHandlers'] = {
+export const actions: PluginModule['actions'] = {
   async listTurns(ctx, args) {
     const svc = ctx.getService<CheckpointService>('checkpoint');
     if (!svc) return [];

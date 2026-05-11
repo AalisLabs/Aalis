@@ -113,9 +113,9 @@ export const webuiPages: WebuiPage[] = [
   },
 ];
 
-// ===== WebuiHandlers =====
+// ===== Actions =====
 
-export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+export const actions: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
   async listSessions(ctx) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) return [];

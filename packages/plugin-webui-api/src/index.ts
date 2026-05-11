@@ -123,11 +123,6 @@ declare module '@aalis/core' {
   interface PluginModule {
     /** 插件声明的 WebUI 页面列表 */
     webuiPages?: WebuiPage[];
-    /** WebUI 页面操作处理器（声明式页面的后端方法） */
-    webuiHandlers?: Record<
-      string,
-      (ctx: import('@aalis/core').Context, args: Record<string, unknown>) => Promise<unknown>
-    >;
     /**
      * 子系统归属，仅用于 WebUI 分组展示。
      *
