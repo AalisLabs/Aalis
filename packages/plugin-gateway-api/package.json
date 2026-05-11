@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-commands",
+  "name": "@aalis/plugin-gateway-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,11 +9,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-commands-api": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-gateway-api": "workspace:*"
+    "@aalis/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
