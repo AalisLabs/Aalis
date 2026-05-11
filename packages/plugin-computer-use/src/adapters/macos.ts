@@ -2,7 +2,7 @@
  * macOS 平台适配器
  *
  * 使用 screencapture CLI 进行截图，
- * 使用 @nut-tree/nut-js 进行鼠标/键盘操控，
+ * 使用 @nut-tree-fork/nut-js 进行鼠标/键盘操控，
  * 使用 AppleScript (osascript) 进行窗口管理和应用控制。
  */
 
@@ -21,7 +21,7 @@ export class MacOSAdapter implements PlatformAdapter {
 
   private async getNutJs() {
     if (!this.nutjs) {
-      this.nutjs = await import('@nut-tree/nut-js');
+      this.nutjs = await import('@nut-tree-fork/nut-js');
     }
     return this.nutjs;
   }

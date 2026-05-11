@@ -6,7 +6,17 @@
 
 Aalis 的核心遵循**忒修斯之船**原则：Core 自身只提供最小化的基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——包括 LLM 调用、消息存储、对话编排、平台接入——全部由可插拔的插件提供。核心的任何行为都可以被插件拦截、修改或完全替换。
 
-**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）**由对应的 `@aalis/plugin-*-api` 包提供**，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。CI 中 `scripts/check-core-purity.mjs` 硬阻断则防止业务代码回流 core。
+**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）**由对应的 `@aalis/plugin-*-api` 包提供**，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
+
+`@aalis/core` 经过持续纯化，目前对外只暴露：
+
+- 运行时基础设施：`App` / `Context` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`
+- 三个扩展点：`ServiceCapabilityMap` / `AalisEvents` / `HookContextMap`（均通过 declaration merging 由 `@aalis/plugin-*-api` 注入业务键）
+- 核心数据契约：`Message` / `ContentSegment` / `ToolCall` / `ToolDefinition` / `ToolFunction`（OpenAI 协议形状，跨载体复用）
+- `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / dangerousPolicy / commandOverrides 等）由对应 plugin-*-api 通过 declaration merging 注入，core 不知晓其语义
+- `ConfigManager.buildSaveObject()` 对所有顶层字段一视同仁（先输出 core 已知字段，再透传其余），不再含任何业务特例
+
+身份/平台/模型相关的工具与类型一律不在 core 中：`UserIdentity` 在 `@aalis/plugin-authority-api`，`ModelRef` / `parseModelRef` / `formatModelRef` 在 `@aalis/plugin-llm-api`，`getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/plugin-message-api`。
 
 ## 系统分层
 
