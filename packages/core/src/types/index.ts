@@ -12,51 +12,48 @@
 // 均由对应 `@aalis/plugin-*-api` 包导出，不再经由 core 中转。
 // ============================================================
 
-// 核心机制类型
-export type {
-  SafetyLevel,
-  PermissionId,
-  UserIdentity,
-  ContentSegment,
-  Message,
-  IncomingMessage,
-  OutgoingMessage,
-  StreamChunkMessage,
-  ToolExecuteMessage,
-  ToolFunction,
-  ToolDefinition,
-  ToolCall,
-  ToolCallContext,
-  RegisteredTool,
-  ToolSummary,
-  ToolGroupInfo,
-  ServiceDependency,
-  DependencyDeclaration,
-  InjectDeclaration,
-  ExtendDeclaration,
-  SchemaFieldType,
-  SchemaField,
-  SchemaGroup,
-  SchemaArray,
-  ConfigSchema,
-  AalisEvents,
-  MiddlewareNext,
-  MiddlewareFn,
-  CommandContext,
-  CommandValueType,
-  CommandArgumentDefinition,
-  CommandOptionDefinition,
-  CommandDefinition,
-  SubcommandDefinition,
-  RegisteredCommand,
-} from './core.js';
-
-// 钩子上下文扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入业务键）
-export type { HookContextMap } from './hooks.js';
-
 // App 生命周期接口
 export type { AppService } from './app.js';
-
 // 服务能力声明框架
-export type { ServiceCapabilityMap, CapabilityOf, CapabilityList, CapabilityProbe } from './capabilities.js';
-export { registerCapabilityProbe, probeCapability } from './capabilities.js';
+export type { CapabilityList, CapabilityOf, CapabilityProbe, ServiceCapabilityMap } from './capabilities.js';
+export { probeCapability, registerCapabilityProbe } from './capabilities.js';
+// 核心机制类型
+export type {
+  AalisEvents,
+  CommandArgumentDefinition,
+  CommandContext,
+  CommandDefinition,
+  CommandOptionDefinition,
+  CommandValueType,
+  ConfigSchema,
+  ContentSegment,
+  DependencyDeclaration,
+  ExtendDeclaration,
+  IncomingMessage,
+  InjectDeclaration,
+  Message,
+  MiddlewareFn,
+  MiddlewareNext,
+  OutgoingMessage,
+  PermissionId,
+  RegisteredCommand,
+  RegisteredTool,
+  SafetyLevel,
+  SchemaArray,
+  SchemaField,
+  SchemaFieldType,
+  SchemaGroup,
+  ServiceDependency,
+  StreamChunkMessage,
+  SubcommandDefinition,
+  ToolCall,
+  ToolCallContext,
+  ToolDefinition,
+  ToolExecuteMessage,
+  ToolFunction,
+  ToolGroupInfo,
+  ToolSummary,
+  UserIdentity,
+} from './core.js';
+// 钩子上下文扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入业务键）
+export type { HookContextMap } from './hooks.js';
