@@ -232,7 +232,7 @@ export const webuiPages: WebuiPage[] = [
 
 // ──────────── WebUI Handlers ────────────
 
-export const webuiHandlers: PluginModule['webuiHandlers'] = {
+export const actions: PluginModule['actions'] = {
   async listJobs(ctx) {
     const svc = ctx.getService<SchedulerService>('scheduler');
     if (!svc) return [];

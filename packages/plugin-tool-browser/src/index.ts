@@ -562,9 +562,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   logger.info(`浏览器工具已启用 (headless=${config.headless}, maxPages=${config.maxPages})`);
 }
 
-// ──────────── webuiHandlers（闭包内需引用 pages，通过插件模块级代理） ────────────
+// ──────────── actions（闭包内需引用 pages，通过插件模块级代理） ────────────
 
-export const webuiHandlers: PluginModule['webuiHandlers'] = {
+export const actions: PluginModule['actions'] = {
   async listPages(_ctx) {
     // 通过事件通知获取运行时数据 — 由 apply 内部设置
     const fns = (apply as any).__webuiHandlerFns;
