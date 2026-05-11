@@ -500,11 +500,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return m ? { id, label: m.label, order: m.order } : { id, label: id, order: 9999 };
       })
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    // First-claim-wins：服务名只归入最先（order 最小）声明它的组，避免同一服务出现在多个分组
+    const servicesClaimed = new Set<string>();
     const groups = sorted.map(({ id, label }) => {
       const plugins = groupsMap.get(id)!;
-      const services = [...new Set(plugins.flatMap(p => p.provides))];
+      const services = [...new Set(plugins.flatMap(p => p.provides))].filter(s => {
+        if (servicesClaimed.has(s)) return false;
+        servicesClaimed.add(s);
+        return true;
+      });
       return { id, label, plugins, services };
     });
+    // 系统内建服务（app、plugins 等由 core 直接 provide，不属于任何插件）
+    const systemServices = ctx.getServiceNames().filter(n => !servicesClaimed.has(n));
+    if (systemServices.length > 0) {
+      const sysLabel = meta.get('system')?.label ?? '系统';
+      groups.unshift({ id: 'system', label: sysLabel, plugins: [], services: systemServices });
+    }
     res.json({ groups });
   });
 
