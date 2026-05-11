@@ -1,19 +1,12 @@
-import type {
-  RegisteredTool,
-  ToolDefinition,
-  ToolCallContext,
-  ToolSummary,
-  ToolGroupInfo,
-  ToolService,
-  ExecutionGuard,
-} from '@aalis/core';
+import type { RegisteredTool, ToolDefinition, ToolCallContext, ToolSummary, ToolGroupInfo, ExecutionGuard } from '@aalis/core';
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type { Logger } from '@aalis/core';
 
 /**
  * 工具注册表 —— 管理 AI 可调用工具的注册、查询、执行
  *
  * 由 plugin-agent-tools 创建并注册为服务 'tools'，
- * 所有插件通过 ctx.registerTool() 注册工具，通过 ctx.tools 访问。
+ * 所有插件通过 ctx.registerTool() 注册工具，通过 ctx.getService<ToolService>('tools') 访问。
  *
  * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
  * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
