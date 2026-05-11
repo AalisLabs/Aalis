@@ -1,14 +1,6 @@
-import type {
-  App,
-  Context,
-  Logger } from '@aalis/core';
-import type {
-  PlatformAdapter,
-  PlatformConnection,
-  PlatformSelfIdentity,
-  PlatformService,
-} from './types.js';
+import type { App, Context, Logger } from '@aalis/core';
 import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
+import type { PlatformAdapter, PlatformConnection, PlatformSelfIdentity, PlatformService } from './types.js';
 
 /** 经 ctx.getAllServices 枚举出的 platform adapter 条目 */
 interface PlatformAdapterEntry {
@@ -43,11 +35,15 @@ export class PlatformRouter implements PlatformService, PlatformAdapter {
   readonly adapterName = 'platform-router';
   readonly platform = '*';
 
-  constructor(private readonly ctx: Context, private readonly logger: Logger) {}
+  constructor(
+    private readonly ctx: Context,
+    private readonly logger: Logger,
+  ) {}
 
   /** 仅枚举真正的 platform adapter，排除 router 自身 */
   private getProviders(): PlatformAdapterEntry[] {
-    return this.ctx.getAllServices<PlatformAdapter>('platform')
+    return this.ctx
+      .getAllServices<PlatformAdapter>('platform')
       .filter(e => (e.instance as unknown) !== this)
       .filter(e => typeof e.instance?.getConnections === 'function');
   }
@@ -146,9 +142,10 @@ export class PlatformRouter implements PlatformService, PlatformAdapter {
   private async tryResolveBySession(sessionId: string): Promise<PlatformAdapter | undefined> {
     for (const { instance, contextId } of this.getProviders()) {
       try {
-        const ok = typeof instance.canHandle === 'function'
-          ? await instance.canHandle(sessionId)
-          : sessionId.startsWith(instance.platform + ':');
+        const ok =
+          typeof instance.canHandle === 'function'
+            ? await instance.canHandle(sessionId)
+            : sessionId.startsWith(`${instance.platform}:`);
         if (ok) return instance;
       } catch (err) {
         this.logger.warn(`canHandle 抛错 [${contextId}]:`, err);

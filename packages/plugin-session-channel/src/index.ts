@@ -1,10 +1,10 @@
-import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { SessionChannelManager } from './manager.js';
 
-export * from './types.js';
 export { SessionChannelManager } from './manager.js';
+export * from './types.js';
 
 export const name = '@aalis/plugin-session-channel';
 export const displayName = '会话频道聚合';
@@ -35,9 +35,12 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   });
 
   // 入站汇聚：仅订阅 archived 锚点，避免归档失败的消息被当成已入历史
-  ctx.on('inbound:message:archived', (data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }) => {
-    manager.handleArchived(data);
-  });
+  ctx.on(
+    'inbound:message:archived',
+    (data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }) => {
+      manager.handleArchived(data);
+    },
+  );
 
   ctx.logger.info('session-channel 已启动');
 }

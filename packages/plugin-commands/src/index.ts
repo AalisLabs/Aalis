@@ -1,8 +1,7 @@
-import { rm, readdir, stat } from 'node:fs/promises';
+import { readdir, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { ConfigSchema, AppService, PermissionId, SafetyLevel } from '@aalis/core';
+import type { AppService, ConfigSchema, PermissionId, SafetyLevel } from '@aalis/core';
 import { Context } from '@aalis/core';
-import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type {
   CommandArgumentDefinition,
   CommandContext,
@@ -12,8 +11,9 @@ import type {
   SubcommandDefinition,
 } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
-import type { ToolService } from '@aalis/plugin-tools-api';
+import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { ToolService } from '@aalis/plugin-tools-api';
 import { CommandRegistry } from './commands.js';
 
 // ===== Context 便捷方法注入（internal-framework 风格） =====
@@ -22,37 +22,40 @@ import { CommandRegistry } from './commands.js';
 // 注入后任何 Context 都可调用 ctx.command(...)；
 // 若 commands 服务尚不可用，调用会通过 whenService 自动延迟到服务就绪后执行。
 if (!('command' in Context.prototype)) {
-  Context.extend('command', function (
-    this: Context,
-    name: string,
-    description: string,
-    action: (ctx: CommandContext) => Promise<string | void>,
-    options?: {
-      authority?: number;
-      safety?: SafetyLevel;
-      permissions?: PermissionId[];
-      arguments?: CommandArgumentDefinition[];
-      options?: CommandOptionDefinition[];
-      usage?: string;
-      examples?: string[];
-      subcommands?: SubcommandDefinition[];
+  Context.extend(
+    'command',
+    function (
+      this: Context,
+      name: string,
+      description: string,
+      action: (ctx: CommandContext) => Promise<string | undefined>,
+      options?: {
+        authority?: number;
+        safety?: SafetyLevel;
+        permissions?: PermissionId[];
+        arguments?: CommandArgumentDefinition[];
+        options?: CommandOptionDefinition[];
+        usage?: string;
+        examples?: string[];
+        subcommands?: SubcommandDefinition[];
+      },
+    ): () => void {
+      const def: CommandDefinition = {
+        name,
+        description,
+        action,
+        authority: options?.authority,
+        safety: options?.safety,
+        permissions: options?.permissions,
+        arguments: options?.arguments,
+        options: options?.options,
+        usage: options?.usage,
+        examples: options?.examples,
+        subcommands: options?.subcommands,
+      };
+      return this.whenService<CommandService>('commands', svc => svc.register(def, this.id));
     },
-  ): () => void {
-    const def: CommandDefinition = {
-      name,
-      description,
-      action,
-      authority: options?.authority,
-      safety: options?.safety,
-      permissions: options?.permissions,
-      arguments: options?.arguments,
-      options: options?.options,
-      usage: options?.usage,
-      examples: options?.examples,
-      subcommands: options?.subcommands,
-    };
-    return this.whenService<CommandService>('commands', (svc) => svc.register(def, this.id));
-  });
+  );
 }
 
 // ===== 插件元数据 =====
@@ -121,7 +124,7 @@ function normalizeClearTypes(raw: unknown): string[] | undefined {
     .map(v => CLEAR_TYPE_ALIASES[v] ?? v);
   if (types.length === 0 || types.includes('all')) return undefined;
   const known = new Set(CLEAR_TYPES.map(t => t.id));
-  const unknown = types.find(t => !known.has(t as typeof CLEAR_TYPES[number]['id']));
+  const unknown = types.find(t => !known.has(t as (typeof CLEAR_TYPES)[number]['id']));
   if (unknown) throw new Error(`未知清理类型: ${unknown}。可用类型: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`);
   return [...new Set(types)];
 }
@@ -201,9 +204,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const lines = ['**可用指令：**', ''];
     for (const n of nodes) {
       const indent = '  '.repeat(n.depth);
-      const display = n.depth === 0
-        ? `\`${commands.prefix}${n.name}\``
-        : `\`${n.name}\``;
+      const display = n.depth === 0 ? `\`${commands.prefix}${n.name}\`` : `\`${n.name}\``;
       const tag = n.hasSubcommands && !n.hasAction ? '（分组）' : '';
       lines.push(`${indent}- ${display} — ${n.description}${tag}`);
     }
@@ -231,22 +232,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return lines.join('\n');
   });
 
-  ctx.command('shutdown', '关闭应用', async () => {
-    const app = ctx.getService<AppService>('app');
-    if (!app) return '无法访问应用服务';
-    setTimeout(async () => {
-      await app.stop();
-      process.exit(0);
-    }, 500);
-    return '正在关闭应用…';
-  }, { authority: 5, safety: 'dangerous' });
+  ctx.command(
+    'shutdown',
+    '关闭应用',
+    async () => {
+      const app = ctx.getService<AppService>('app');
+      if (!app) return '无法访问应用服务';
+      setTimeout(async () => {
+        await app.stop();
+        process.exit(0);
+      }, 500);
+      return '正在关闭应用…';
+    },
+    { authority: 5, safety: 'dangerous' },
+  );
 
-  ctx.command('restart', '重启应用', async () => {
-    const app = ctx.getService<AppService>('app');
-    if (!app) return '无法访问应用服务';
-    app.restart();
-    return '正在重启应用…';
-  }, { authority: 5, safety: 'dangerous' });
+  ctx.command(
+    'restart',
+    '重启应用',
+    async () => {
+      const app = ctx.getService<AppService>('app');
+      if (!app) return '无法访问应用服务';
+      app.restart();
+      return '正在重启应用…';
+    },
+    { authority: 5, safety: 'dangerous' },
+  );
 
   // ===== /clear —— 清空记忆 =====
   // 默认清当前会话；全局清理通过显式危险子指令 /clear all 进入，避免把高危语义藏在普通选项里。
@@ -359,7 +370,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.command(
     'clear',
     '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型',
-    async (cmdCtx) => runClearFromOptions(cmdCtx, 'session'),
+    async cmdCtx => runClearFromOptions(cmdCtx, 'session'),
     {
       options: [
         {
@@ -369,12 +380,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           description: `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`,
         },
       ],
-      examples: [
-        '/clear',
-        '/clear --type context,summary',
-        '/clear -t vector -t image',
-        '/clear all --type all',
-      ],
+      examples: ['/clear', '/clear --type context,summary', '/clear -t vector -t image', '/clear all --type all'],
       subcommands: [
         { name: 'list', description: '列出可清理类型', action: async () => renderClearTypeList() },
         {
@@ -390,7 +396,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               description: `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`,
             },
           ],
-          action: async (c) => runClearFromOptions(c, 'all'),
+          action: async c => runClearFromOptions(c, 'all'),
         },
       ],
     },

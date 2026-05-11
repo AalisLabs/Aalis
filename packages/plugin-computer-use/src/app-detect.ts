@@ -16,8 +16,8 @@ export type AppType = 'electron' | 'chromium' | 'native';
 
 export interface AppDetectResult {
   type: AppType;
-  appPath: string;      // .app 完整路径
-  execPath: string;     // 可执行文件路径
+  appPath: string; // .app 完整路径
+  execPath: string; // 可执行文件路径
   bundleId?: string;
   /** Electron/Chromium 应用的建议调试端口 */
   suggestedPort?: number;
@@ -45,11 +45,13 @@ export async function resolveAppPath(appName: string): Promise<string | null> {
 
   // 用 mdfind 查找 (比遍历 /Applications 更快更全)
   try {
-    const { stdout } = await execFile('mdfind', [
-      `kMDItemKind == "Application" && kMDItemDisplayName == "${appName}"`,
-    ], { timeout: 5000 });
+    const { stdout } = await execFile(
+      'mdfind',
+      [`kMDItemKind == "Application" && kMDItemDisplayName == "${appName}"`],
+      { timeout: 5000 },
+    );
     const firstMatch = stdout.trim().split('\n')[0];
-    if (firstMatch && firstMatch.endsWith('.app')) return firstMatch;
+    if (firstMatch?.endsWith('.app')) return firstMatch;
   } catch {}
 
   // 回退：检查常见路径
@@ -90,7 +92,9 @@ export async function detectAppType(appPath: string): Promise<AppDetectResult> {
   // 获取 bundleId
   let bundleId: string | undefined;
   try {
-    const { stdout } = await execFile('defaults', ['read', join(appPath, 'Contents', 'Info'), 'CFBundleIdentifier'], { timeout: 3000 });
+    const { stdout } = await execFile('defaults', ['read', join(appPath, 'Contents', 'Info'), 'CFBundleIdentifier'], {
+      timeout: 3000,
+    });
     bundleId = stdout.trim();
   } catch {}
 
@@ -201,9 +205,7 @@ async function findChromeResources(appPath: string): Promise<boolean> {
 async function findHelperProcesses(frameworksDir: string): Promise<boolean> {
   try {
     const contents = await readdir(frameworksDir);
-    return contents.some(name =>
-      /Helper.*\(GPU\)|Helper.*\(Renderer\)/i.test(name),
-    );
+    return contents.some(name => /Helper.*\(GPU\)|Helper.*\(Renderer\)/i.test(name));
   } catch {
     return false;
   }

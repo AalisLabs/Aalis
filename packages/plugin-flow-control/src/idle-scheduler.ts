@@ -4,16 +4,17 @@
 // platform 范围：跨平台一个 tick，挑"最久未联系"的 session 主动开聊。
 
 import type { Context } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { FlowControlConfig } from './config.js';
 import type { MutableFlowSessionState } from './state.js';
 
-const DEFAULT_PROMPT = '当前会话已长时间无消息，请根据人设主动开启一个轻松的话题或问候。不要提及"系统提示"或表明你是被触发发言的。';
+const DEFAULT_PROMPT =
+  '当前会话已长时间无消息，请根据人设主动开启一个轻松的话题或问候。不要提及"系统提示"或表明你是被触发发言的。';
 
 function buildIdleMessage(sessionId: string, platform: string, prompt: string): IncomingMessage {
   return {
-    content: prompt && prompt.trim() ? prompt : DEFAULT_PROMPT,
+    content: prompt?.trim() ? prompt : DEFAULT_PROMPT,
     sessionId,
     platform,
     source: 'idle-trigger',
@@ -46,10 +47,7 @@ export function scheduleSessionIdle(
 
   let delayMs: number;
   if (cfg.idleTriggerStyle === 'exponential') {
-    delayMs = Math.min(
-      cfg.idleTriggerMinutes * state.idleBackoff * 60 * 1000,
-      cfg.idleTriggerMaxMinutes * 60 * 1000,
-    );
+    delayMs = Math.min(cfg.idleTriggerMinutes * state.idleBackoff * 60 * 1000, cfg.idleTriggerMaxMinutes * 60 * 1000);
   } else {
     delayMs = cfg.idleTriggerMinutes * 60 * 1000;
   }
@@ -147,7 +145,7 @@ export class PlatformIdleScheduler {
       }
       this.ctx.logger.info(
         `[flow] platform idle tick: 主动开聊 → ${target.sessionId} ` +
-        `(idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
+          `(idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
       );
       await injectIdle(this.ctx, buildIdleMessage(target.sessionId, target.platform, this.cfg.idleTriggerPrompt));
     } catch (err) {

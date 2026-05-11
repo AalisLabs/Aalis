@@ -12,8 +12,8 @@
  */
 
 import type { Context } from '@aalis/core';
-import * as axNative from '../ax-native.js';
 import type { AXElementInfo } from '../ax-native.js';
+import * as axNative from '../ax-native.js';
 
 /** 将 UI 树精简为 AI 友好的摘要格式 */
 function summarizeElement(el: AXElementInfo, indent: number = 0): string {
@@ -24,7 +24,7 @@ function summarizeElement(el: AXElementInfo, indent: number = 0): string {
   if (el.title) line += ` "${el.title}"`;
   if (el.description && el.description !== el.title) line += ` (${el.description})`;
   if (el.value) {
-    const val = el.value.length > 50 ? el.value.slice(0, 50) + '...' : el.value;
+    const val = el.value.length > 50 ? `${el.value.slice(0, 50)}...` : el.value;
     line += ` = "${val}"`;
   }
   if (el.x != null && el.y != null) {
@@ -53,12 +53,15 @@ function summarizeElement(el: AXElementInfo, indent: number = 0): string {
 /** 统计 UI 树中各类元素的数量，评估信息质量 */
 function assessTreeQuality(elements: AXElementInfo[]): {
   total: number;
-  labeled: number;       // 有 title/description/value 的
-  actionable: number;    // 有可执行 action 的
-  opaque: number;        // 无标签的 AXGroup/AXUnknown
+  labeled: number; // 有 title/description/value 的
+  actionable: number; // 有可执行 action 的
+  opaque: number; // 无标签的 AXGroup/AXUnknown
   quality: 'good' | 'partial' | 'poor';
 } {
-  let total = 0, labeled = 0, actionable = 0, opaque = 0;
+  let total = 0,
+    labeled = 0,
+    actionable = 0,
+    opaque = 0;
 
   function walk(el: AXElementInfo) {
     total++;
@@ -74,8 +77,7 @@ function assessTreeQuality(elements: AXElementInfo[]): {
   // 几乎没有有意义信息 → poor
   const labelRatio = total > 0 ? labeled / total : 0;
   const quality: 'good' | 'partial' | 'poor' =
-    actionable >= 3 && labelRatio >= 0.3 ? 'good' :
-    actionable >= 1 || labelRatio >= 0.15 ? 'partial' : 'poor';
+    actionable >= 3 && labelRatio >= 0.3 ? 'good' : actionable >= 1 || labelRatio >= 0.15 ? 'partial' : 'poor';
 
   return { total, labeled, actionable, opaque, quality };
 }
@@ -105,7 +107,6 @@ function buildHint(quality: ReturnType<typeof assessTreeQuality>): string {
 }
 
 export function registerUIAutomationTools(ctx: Context): void {
-
   // ── ui_tree ──
   ctx.registerTool({
     definition: {
@@ -128,7 +129,7 @@ export function registerUIAutomationTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const pid = args.pid as number;
         const maxDepth = (args.max_depth as number) || 3;
@@ -147,7 +148,12 @@ export function registerUIAutomationTools(ctx: Context): void {
           pid,
           windowCount: tree.length,
           treeQuality: quality.quality,
-          stats: { total: quality.total, labeled: quality.labeled, actionable: quality.actionable, opaque: quality.opaque },
+          stats: {
+            total: quality.total,
+            labeled: quality.labeled,
+            actionable: quality.actionable,
+            opaque: quality.opaque,
+          },
           summary,
           hint,
         });
@@ -185,7 +191,7 @@ export function registerUIAutomationTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const pid = args.pid as number;
         const role = args.role as string | undefined;
@@ -253,7 +259,7 @@ export function registerUIAutomationTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const pid = args.pid as number;
         const x = args.x as number;
@@ -265,14 +271,16 @@ export function registerUIAutomationTools(ctx: Context): void {
         }
         return JSON.stringify({
           found: true,
-          x, y,
+          x,
+          y,
           element: {
             path: element.path,
             role: element.role,
             title: element.title,
             value: element.value,
             description: element.description,
-            position: element.x != null ? { x: element.x, y: element.y, width: element.width, height: element.height } : null,
+            position:
+              element.x != null ? { x: element.x, y: element.y, width: element.width, height: element.height } : null,
             actions: element.actions,
           },
         });
@@ -281,5 +289,4 @@ export function registerUIAutomationTools(ctx: Context): void {
       }
     },
   });
-
 }

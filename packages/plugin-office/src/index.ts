@@ -1,10 +1,10 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import { resolve } from 'node:path';
+import type { ConfigSchema, Context } from '@aalis/core';
 import { DocSessionManager } from './session.js';
 import { registerDocxTools } from './tools/docx.js';
-import { registerExcelTools } from './tools/xlsx.js';
-import { registerPptTools } from './tools/pptx.js';
 import { registerPdfTools } from './tools/pdf.js';
-import { resolve } from 'node:path';
+import { registerPptTools } from './tools/pptx.js';
+import { registerExcelTools } from './tools/xlsx.js';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -73,8 +73,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return new Proxy(ctx, {
       get(target, prop) {
         if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) =>
-            target.registerTool({ ...tool, groups });
+          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
         }
         return Reflect.get(target, prop, target);
       },

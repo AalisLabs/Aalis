@@ -6,7 +6,6 @@ import type { Context } from '@aalis/core';
 import type { PlatformAdapter } from '../platform.js';
 
 export function registerKeyboardTools(ctx: Context, adapter: PlatformAdapter): void {
-
   // ── keyboard_press ──
   ctx.registerTool({
     definition: {
@@ -32,7 +31,7 @@ export function registerKeyboardTools(ctx: Context, adapter: PlatformAdapter): v
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const keys = args.keys as string[];
         if (!Array.isArray(keys) || keys.length === 0) {

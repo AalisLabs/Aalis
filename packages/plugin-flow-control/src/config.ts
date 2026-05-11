@@ -64,7 +64,10 @@ export const defaultFlowControlConfig: FlowControlConfig = {
 function parseStringList(val: unknown): string[] {
   if (Array.isArray(val)) return val.filter(Boolean).map(String);
   if (typeof val === 'string' && val.trim()) {
-    return val.split(',').map(s => s.trim()).filter(Boolean);
+    return val
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
   }
   return [];
 }
@@ -84,7 +87,7 @@ export function resolveFlowControlConfig(raw: Record<string, unknown>): FlowCont
     rateLimitMaxReplies: (raw.rateLimitMaxReplies as number) ?? d.rateLimitMaxReplies,
     idleTriggerScope: ((): FlowControlConfig['idleTriggerScope'] => {
       const v = raw.idleTriggerScope;
-      return (v === 'off' || v === 'session' || v === 'platform') ? v : d.idleTriggerScope;
+      return v === 'off' || v === 'session' || v === 'platform' ? v : d.idleTriggerScope;
     })(),
     idleTriggerStrategy: ((): FlowControlConfig['idleTriggerStrategy'] => {
       const v = raw.idleTriggerStrategy;

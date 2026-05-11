@@ -1,14 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Context, Message } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type {
-  BroadcastOptions,
-  ChannelInboundEvent,
-  SessionChannel,
-  SessionChannelService,
-} from './types.js';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { BroadcastOptions, ChannelInboundEvent, SessionChannel, SessionChannelService } from './types.js';
 
 const METADATA_NAMESPACE = 'channels';
 
@@ -29,9 +24,10 @@ export class SessionChannelManager implements SessionChannelService {
     private readonly ctx: Context,
     private readonly memory: MemoryService,
   ) {
-    this.persistAvailable = typeof this.memory.saveMetadata === 'function'
-      && typeof this.memory.listMetadata === 'function'
-      && typeof this.memory.deleteMetadata === 'function';
+    this.persistAvailable =
+      typeof this.memory.saveMetadata === 'function' &&
+      typeof this.memory.listMetadata === 'function' &&
+      typeof this.memory.deleteMetadata === 'function';
   }
 
   // ── 加载/持久化 ──────────────────────────────────────────────────────────
@@ -64,9 +60,8 @@ export class SessionChannelManager implements SessionChannelService {
       boundSessions: bound,
       createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now(),
       updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now(),
-      metadata: typeof data.metadata === 'object' && data.metadata
-        ? data.metadata as Record<string, unknown>
-        : undefined,
+      metadata:
+        typeof data.metadata === 'object' && data.metadata ? (data.metadata as Record<string, unknown>) : undefined,
     };
   }
 

@@ -11,7 +11,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { PlatformAdapter, Point, Region, ScreenInfo, WindowInfo, MouseButton } from '../platform.js';
+import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,9 +48,7 @@ export class LinuxAdapter implements PlatformAdapter {
   private async tryCapture(outPath: string, region?: Region): Promise<boolean> {
     // 1. scrot
     try {
-      const args = region
-        ? ['-a', `${region.x},${region.y},${region.width},${region.height}`, outPath]
-        : [outPath];
+      const args = region ? ['-a', `${region.x},${region.y},${region.width},${region.height}`, outPath] : [outPath];
       await execFileAsync('scrot', args, { timeout: 10000 });
       return true;
     } catch {}
@@ -187,7 +185,9 @@ export class LinuxAdapter implements PlatformAdapter {
         for (const wid of stdout.trim().split('\n')) {
           if (!wid.trim()) continue;
           try {
-            const { stdout: nameOut } = await execFileAsync('xdotool', ['getwindowname', wid.trim()], { timeout: 2000 });
+            const { stdout: nameOut } = await execFileAsync('xdotool', ['getwindowname', wid.trim()], {
+              timeout: 2000,
+            });
             windows.push({ id: wid.trim(), title: nameOut.trim(), app: '' });
           } catch {}
         }
@@ -207,10 +207,16 @@ export class LinuxAdapter implements PlatformAdapter {
 
   async resizeWindow(windowId: string, bounds: Region): Promise<void> {
     try {
-      await execFileAsync('wmctrl', ['-i', '-r', windowId, '-e', `0,${bounds.x},${bounds.y},${bounds.width},${bounds.height}`], { timeout: 5000 });
+      await execFileAsync(
+        'wmctrl',
+        ['-i', '-r', windowId, '-e', `0,${bounds.x},${bounds.y},${bounds.width},${bounds.height}`],
+        { timeout: 5000 },
+      );
     } catch {
       await execFileAsync('xdotool', ['windowmove', windowId, String(bounds.x), String(bounds.y)], { timeout: 5000 });
-      await execFileAsync('xdotool', ['windowsize', windowId, String(bounds.width), String(bounds.height)], { timeout: 5000 });
+      await execFileAsync('xdotool', ['windowsize', windowId, String(bounds.width), String(bounds.height)], {
+        timeout: 5000,
+      });
     }
   }
 
@@ -232,7 +238,7 @@ export class LinuxAdapter implements PlatformAdapter {
       child.stdin.write(text);
       child.stdin.end();
       await new Promise<void>((resolve, reject) => {
-        child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`xclip failed: ${code}`)));
+        child.on('close', code => (code === 0 ? resolve() : reject(new Error(`xclip failed: ${code}`))));
         child.on('error', reject);
       });
     } catch {
@@ -240,7 +246,7 @@ export class LinuxAdapter implements PlatformAdapter {
       child.stdin.write(text);
       child.stdin.end();
       await new Promise<void>((resolve, reject) => {
-        child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`xsel failed: ${code}`)));
+        child.on('close', code => (code === 0 ? resolve() : reject(new Error(`xsel failed: ${code}`))));
         child.on('error', reject);
       });
     }
@@ -262,28 +268,55 @@ export class LinuxAdapter implements PlatformAdapter {
 
   private mapButton(nut: any, button: MouseButton): any {
     switch (button) {
-      case 'right': return nut.Button.RIGHT;
-      case 'middle': return nut.Button.MIDDLE;
-      default: return nut.Button.LEFT;
+      case 'right':
+        return nut.Button.RIGHT;
+      case 'middle':
+        return nut.Button.MIDDLE;
+      default:
+        return nut.Button.LEFT;
     }
   }
 
   private mapKey(nut: any, key: string): any {
     const keyMap: Record<string, string> = {
-      'ctrl': 'LeftControl', 'control': 'LeftControl',
-      'alt': 'LeftAlt', 'option': 'LeftAlt',
-      'shift': 'LeftShift',
-      'meta': 'LeftSuper', 'cmd': 'LeftSuper', 'command': 'LeftSuper', 'super': 'LeftSuper', 'win': 'LeftSuper',
-      'enter': 'Return', 'return': 'Return',
-      'tab': 'Tab', 'space': 'Space',
-      'backspace': 'Backspace', 'delete': 'Delete',
-      'escape': 'Escape', 'esc': 'Escape',
-      'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
-      'home': 'Home', 'end': 'End',
-      'pageup': 'PageUp', 'pagedown': 'PageDown',
-      'f1': 'F1', 'f2': 'F2', 'f3': 'F3', 'f4': 'F4',
-      'f5': 'F5', 'f6': 'F6', 'f7': 'F7', 'f8': 'F8',
-      'f9': 'F9', 'f10': 'F10', 'f11': 'F11', 'f12': 'F12',
+      ctrl: 'LeftControl',
+      control: 'LeftControl',
+      alt: 'LeftAlt',
+      option: 'LeftAlt',
+      shift: 'LeftShift',
+      meta: 'LeftSuper',
+      cmd: 'LeftSuper',
+      command: 'LeftSuper',
+      super: 'LeftSuper',
+      win: 'LeftSuper',
+      enter: 'Return',
+      return: 'Return',
+      tab: 'Tab',
+      space: 'Space',
+      backspace: 'Backspace',
+      delete: 'Delete',
+      escape: 'Escape',
+      esc: 'Escape',
+      up: 'Up',
+      down: 'Down',
+      left: 'Left',
+      right: 'Right',
+      home: 'Home',
+      end: 'End',
+      pageup: 'PageUp',
+      pagedown: 'PageDown',
+      f1: 'F1',
+      f2: 'F2',
+      f3: 'F3',
+      f4: 'F4',
+      f5: 'F5',
+      f6: 'F6',
+      f7: 'F7',
+      f8: 'F8',
+      f9: 'F9',
+      f10: 'F10',
+      f11: 'F11',
+      f12: 'F12',
     };
     const mapped = keyMap[key.toLowerCase()];
     if (mapped && nut.Key[mapped] !== undefined) return nut.Key[mapped];

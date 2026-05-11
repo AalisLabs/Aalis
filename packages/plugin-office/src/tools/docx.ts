@@ -1,14 +1,27 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell,
-  ImageRun, AlignmentType, BorderStyle, WidthType, PageBreak,
-  Header, Footer, TableOfContents,
+  AlignmentType,
+  BorderStyle,
   convertInchesToTwip,
+  Document,
+  Footer,
+  Header,
+  HeadingLevel,
+  ImageRun,
   LevelFormat,
+  Packer,
+  PageBreak,
+  Paragraph,
+  Table,
+  TableCell,
+  TableOfContents,
+  TableRow,
+  TextRun,
+  WidthType,
 } from 'docx';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { DocSessionManager } from '../session.js';
+import type { DocSessionManager } from '../session.js';
 import { loadImage } from '../utils.js';
 
 interface DocState {
@@ -48,7 +61,8 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
       type: 'function',
       function: {
         name: 'doc_create',
-        description: '创建一个新的 Word 文档会话，返回 docId 用于后续操作。该 docId 全局共享，可传递给子任务实现并行协作编辑。',
+        description:
+          '创建一个新的 Word 文档会话，返回 docId 用于后续操作。该 docId 全局共享，可传递给子任务实现并行协作编辑。',
         parameters: {
           type: 'object',
           properties: {
@@ -108,10 +122,12 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
       const para = new Paragraph({
         heading: level,
         alignment: args.alignment ? alignMap[String(args.alignment)] : undefined,
-        children: [new TextRun({
-          text: String(args.text),
-          font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-        })],
+        children: [
+          new TextRun({
+            text: String(args.text),
+            font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+          }),
+        ],
       });
       state.sections.push(para);
       return JSON.stringify({ success: true, message: `标题已添加: "${args.text}"` });
@@ -153,7 +169,10 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
             },
             alignment: { type: 'string', enum: ['left', 'center', 'right', 'justify'] },
             indent: { type: 'number', description: '首行缩进（磅）' },
-            spacing: { type: 'object', properties: { before: { type: 'number' }, after: { type: 'number' }, line: { type: 'number' } } },
+            spacing: {
+              type: 'object',
+              properties: { before: { type: 'number' }, after: { type: 'number' }, line: { type: 'number' } },
+            },
           },
           required: ['docId'],
         },
@@ -165,25 +184,37 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
 
       if (args.runs && Array.isArray(args.runs)) {
         for (const r of args.runs as Array<Record<string, unknown>>) {
-          runs.push(new TextRun({
-            text: String(r.text || ''),
-            bold: r.bold as boolean | undefined,
-            italics: r.italics as boolean | undefined,
-            underline: r.underline ? {} : undefined,
-            color: r.color ? String(r.color) : state.styles.defaultColor,
-            size: r.size ? Number(r.size) * 2 : state.styles.defaultFontSize ? state.styles.defaultFontSize * 2 : undefined,
-            font: r.font ? { name: String(r.font) } : state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-            strike: r.strike as boolean | undefined,
-            superScript: r.superScript as boolean | undefined,
-            subScript: r.subScript as boolean | undefined,
-          }));
+          runs.push(
+            new TextRun({
+              text: String(r.text || ''),
+              bold: r.bold as boolean | undefined,
+              italics: r.italics as boolean | undefined,
+              underline: r.underline ? {} : undefined,
+              color: r.color ? String(r.color) : state.styles.defaultColor,
+              size: r.size
+                ? Number(r.size) * 2
+                : state.styles.defaultFontSize
+                  ? state.styles.defaultFontSize * 2
+                  : undefined,
+              font: r.font
+                ? { name: String(r.font) }
+                : state.styles.defaultFontFamily
+                  ? { name: state.styles.defaultFontFamily }
+                  : undefined,
+              strike: r.strike as boolean | undefined,
+              superScript: r.superScript as boolean | undefined,
+              subScript: r.subScript as boolean | undefined,
+            }),
+          );
         }
       } else if (args.text) {
-        runs.push(new TextRun({
-          text: String(args.text),
-          font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-          size: state.styles.defaultFontSize ? state.styles.defaultFontSize * 2 : undefined,
-        }));
+        runs.push(
+          new TextRun({
+            text: String(args.text),
+            font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+            size: state.styles.defaultFontSize ? state.styles.defaultFontSize * 2 : undefined,
+          }),
+        );
       }
 
       const spacing = args.spacing as Record<string, number> | undefined;
@@ -191,11 +222,13 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
         children: runs,
         alignment: args.alignment ? alignMap[String(args.alignment)] : undefined,
         indent: args.indent ? { firstLine: convertInchesToTwip(Number(args.indent) / 72) } : undefined,
-        spacing: spacing ? {
-          before: spacing.before ? spacing.before * 20 : undefined,
-          after: spacing.after ? spacing.after * 20 : undefined,
-          line: spacing.line ? spacing.line * 240 : undefined,
-        } : undefined,
+        spacing: spacing
+          ? {
+              before: spacing.before ? spacing.before * 20 : undefined,
+              after: spacing.after ? spacing.after * 20 : undefined,
+              line: spacing.line ? spacing.line * 240 : undefined,
+            }
+          : undefined,
       });
       state.sections.push(para);
       return JSON.stringify({ success: true, message: '段落已添加' });
@@ -237,11 +270,22 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
 
       const makeRow = (cells: string[], bold = false) =>
         new TableRow({
-          children: cells.map(text =>
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text, bold, font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined })] })],
-              borders: border,
-            })
+          children: cells.map(
+            text =>
+              new TableCell({
+                children: [
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text,
+                        bold,
+                        font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+                      }),
+                    ],
+                  }),
+                ],
+                borders: border,
+              }),
           ),
         });
 
@@ -249,11 +293,16 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
       if (headers.length > 0) tableRows.push(makeRow(headers, headerBold));
       for (const row of rows) tableRows.push(makeRow(row));
 
-      state.sections.push(new Table({
-        rows: tableRows,
-        width: { size: 100, type: WidthType.PERCENTAGE },
-      }));
-      return JSON.stringify({ success: true, message: `表格已添加 (${headers.length ? headers.length + ' 列' : rows[0]?.length + ' 列'}, ${rows.length} 行)` });
+      state.sections.push(
+        new Table({
+          rows: tableRows,
+          width: { size: 100, type: WidthType.PERCENTAGE },
+        }),
+      );
+      return JSON.stringify({
+        success: true,
+        message: `表格已添加 (${headers.length ? `${headers.length} 列` : `${rows[0]?.length} 列`}, ${rows.length} 行)`,
+      });
     },
   });
 
@@ -286,9 +335,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
 
       const para = new Paragraph({
         alignment: args.alignment ? alignMap[String(args.alignment)] : AlignmentType.CENTER,
-        children: [
-          new ImageRun({ data: buffer, transformation: { width, height }, type: 'png' }),
-        ],
+        children: [new ImageRun({ data: buffer, transformation: { width, height }, type: 'png' })],
       });
       state.sections.push(para);
       return JSON.stringify({ success: true, message: `图片已添加 (${width}×${height})` });
@@ -322,13 +369,17 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
       const reference = ordered ? 'aalis-ordered-list' : 'aalis-unordered-list';
 
       for (const item of items) {
-        state.sections.push(new Paragraph({
-          children: [new TextRun({
-            text: item,
-            font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-          })],
-          numbering: { reference, level },
-        }));
+        state.sections.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: item,
+                font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+              }),
+            ],
+            numbering: { reference, level },
+          }),
+        );
       }
       return JSON.stringify({ success: true, message: `${ordered ? '有序' : '无序'}列表已添加 (${items.length} 项)` });
     },
@@ -378,14 +429,18 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
     async handler(args) {
       const { state } = sessions.require(String(args.docId), 'docx').doc as { state: DocState };
       const title = String(args.title || '目录');
-      state.sections.push(new Paragraph({
-        heading: HeadingLevel.HEADING_1,
-        children: [new TextRun({ text: title })],
-      }));
-      state.sections.push(new TableOfContents('TOC', {
-        hyperlink: true,
-        headingStyleRange: `1-${args.maxLevel || 3}`,
-      }));
+      state.sections.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_1,
+          children: [new TextRun({ text: title })],
+        }),
+      );
+      state.sections.push(
+        new TableOfContents('TOC', {
+          hyperlink: true,
+          headingStyleRange: `1-${args.maxLevel || 3}`,
+        }),
+      );
       return JSON.stringify({ success: true, message: '目录已添加（在 Word 中打开后请更新域以显示页码）' });
     },
   });
@@ -412,7 +467,10 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
       },
     },
     async handler(args) {
-      const internal = sessions.require(String(args.docId), 'docx').doc as { state: DocState; meta: Record<string, unknown> };
+      const internal = sessions.require(String(args.docId), 'docx').doc as {
+        state: DocState;
+        meta: Record<string, unknown>;
+      };
       // 存储 header/footer 信息，在 save 时构建
       internal.meta.headerText = args.header ? String(args.header) : undefined;
       internal.meta.footerText = args.footer ? String(args.footer) : undefined;
@@ -457,7 +515,8 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
       type: 'function',
       function: {
         name: 'doc_save',
-        description: '保存 Word 文档到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
+        description:
+          '保存 Word 文档到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
         parameters: {
           type: 'object',
           properties: {
@@ -477,20 +536,24 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
 
       if (meta.headerText) {
         headers.default = new Header({
-          children: [new Paragraph({
-            alignment: alignMap[String(meta.headerAlignment || 'center')],
-            children: [new TextRun({ text: String(meta.headerText), italics: true, size: 18 })],
-          })],
+          children: [
+            new Paragraph({
+              alignment: alignMap[String(meta.headerAlignment || 'center')],
+              children: [new TextRun({ text: String(meta.headerText), italics: true, size: 18 })],
+            }),
+          ],
         });
       }
       if (meta.footerText || meta.showPageNumber) {
         const footerChildren: TextRun[] = [];
         if (meta.footerText) footerChildren.push(new TextRun({ text: String(meta.footerText), size: 18 }));
         footers.default = new Footer({
-          children: [new Paragraph({
-            alignment: alignMap[String(meta.footerAlignment || 'center')],
-            children: footerChildren,
-          })],
+          children: [
+            new Paragraph({
+              alignment: alignMap[String(meta.footerAlignment || 'center')],
+              children: footerChildren,
+            }),
+          ],
         });
       }
 
@@ -519,11 +582,13 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
             },
           ],
         },
-        sections: [{
-          headers,
-          footers,
-          children: state.sections,
-        }],
+        sections: [
+          {
+            headers,
+            footers,
+            children: state.sections,
+          },
+        ],
       });
 
       const buffer = await Packer.toBuffer(doc);

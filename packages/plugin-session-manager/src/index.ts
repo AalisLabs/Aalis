@@ -1,14 +1,23 @@
 import { randomUUID } from 'node:crypto';
-import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { ToolService } from '@aalis/plugin-tools-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
-import type { WebuiPage } from '@aalis/plugin-webui-api';
-import type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from './types.js';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { PersonaService } from '@aalis/plugin-persona';
+import type { ToolService } from '@aalis/plugin-tools-api';
+import type { WebuiPage } from '@aalis/plugin-webui-api';
+import type { PlatformProfile, SessionConfig, SessionInfo, SessionManagerService, SessionTreeNode } from './types.js';
 
-export type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile, SessionManagerCapability, SessionManagerCapabilityRegistry } from './types.js';
+export type {
+  PlatformProfile,
+  SessionConfig,
+  SessionInfo,
+  SessionManagerCapability,
+  SessionManagerCapabilityRegistry,
+  SessionManagerService,
+  SessionTreeNode,
+} from './types.js';
 export { SessionManagerCapabilities } from './types.js';
+
 import { SessionManagerCapabilities } from './types.js';
 
 // ===== 插件元数据 =====
@@ -91,7 +100,6 @@ type MemoryClearData = {
   rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
 };
 
-
 // ===== WebuiPages（声明式 UI） =====
 
 export const webuiPages: WebuiPage[] = [
@@ -107,7 +115,6 @@ export const webuiPages: WebuiPage[] = [
 // ===== WebuiHandlers =====
 
 export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
-
   async listSessions(ctx) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) return [];
@@ -139,7 +146,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       }
     }
     const session = await sm.createSession({
-      name: (args.name as string) || `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      name:
+        (args.name as string) ||
+        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
       parentId,
       config,
       createdBy: 'user',
@@ -203,7 +212,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       try {
         await sm.updateSession(id, { status: 'archived' });
         count++;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     return { success: true, count };
   },
@@ -219,7 +230,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       try {
         await sm.deleteSession(id);
         count++;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     return { success: true, count };
   },
@@ -240,14 +253,18 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     let models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }> = [];
     try {
       models = await (ctx.getService<LLMService>('llm')?.listModels?.() ?? Promise.resolve([]));
-    } catch { /* llm 服务不可用 */ }
+    } catch {
+      /* llm 服务不可用 */
+    }
 
     // 工具分组列表
     let toolGroups: Array<{ name: string; label: string }> = [];
     try {
       const tools = ctx.getService<ToolService>('tools');
       if (tools) toolGroups = tools.getGroups().map(g => ({ name: g.name, label: g.label }));
-    } catch { /* tools 服务不可用 */ }
+    } catch {
+      /* tools 服务不可用 */
+    }
 
     // 已注册平台列表
     const platforms: string[] = [];
@@ -258,7 +275,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
           platforms.push(p.instance.platform);
         }
       }
-    } catch { /* platform 服务不可用 */ }
+    } catch {
+      /* platform 服务不可用 */
+    }
 
     // 平台 profiles
     const sm = ctx.getService<SessionManagerService>('session-manager');
@@ -437,15 +456,17 @@ class SessionManager implements SessionManagerService {
 
   // ---- CRUD ----
 
-  async createSession(opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>): Promise<SessionInfo> {
-    const id = opts?.parentId
-      ? `${opts.parentId}::${randomUUID().slice(0, 8)}`
-      : `session-${randomUUID().slice(0, 8)}`;
+  async createSession(
+    opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>,
+  ): Promise<SessionInfo> {
+    const id = opts?.parentId ? `${opts.parentId}::${randomUUID().slice(0, 8)}` : `session-${randomUUID().slice(0, 8)}`;
 
     const now = Date.now();
     const session: SessionInfo = {
       id,
-      name: opts?.name || `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      name:
+        opts?.name ||
+        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
       title: opts?.metadata?.title as string | undefined,
       parentId: opts?.parentId,
       children: [],
@@ -496,7 +517,10 @@ class SessionManager implements SessionManagerService {
     return result.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  async updateSession(id: string, updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>): Promise<SessionInfo> {
+  async updateSession(
+    id: string,
+    updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>,
+  ): Promise<SessionInfo> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`会话不存在: ${id}`);
 
@@ -570,7 +594,9 @@ class SessionManager implements SessionManagerService {
 
     const failed = clearData.results.filter(r => !r.success);
     if (failed.length > 0) {
-      this.ctx.logger.warn(`会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`);
+      this.ctx.logger.warn(
+        `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`,
+      );
     }
   }
 
@@ -595,7 +621,10 @@ class SessionManager implements SessionManagerService {
 
   // ---- 树形操作 ----
 
-  async createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>): Promise<SessionInfo> {
+  async createChildSession(
+    parentId: string,
+    opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
+  ): Promise<SessionInfo> {
     const parent = this.sessions.get(parentId);
     if (!parent) throw new Error(`父会话不存在: ${parentId}`);
 
@@ -663,7 +692,7 @@ class SessionManager implements SessionManagerService {
 
     // 优先使用直接传入的用户消息；否则从历史获取
     let contextStr: string;
-    if (userMessage && userMessage.trim()) {
+    if (userMessage?.trim()) {
       contextStr = `user: ${userMessage.slice(0, 400)}`;
     } else {
       const history = await this.memory.getHistory(sessionId, 4);
@@ -680,7 +709,11 @@ class SessionManager implements SessionManagerService {
     try {
       const resp = await llm.chat({
         messages: [
-          { role: 'system', content: '你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的中文标题。\n\n规则：\n- 不超过15字\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括' },
+          {
+            role: 'system',
+            content:
+              '你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的中文标题。\n\n规则：\n- 不超过15字\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括',
+          },
           { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
         maxTokens: 50,
@@ -776,11 +809,14 @@ class SessionManager implements SessionManagerService {
       if (entry.llmProvider) profile.llmProvider = entry.llmProvider;
       if (Array.isArray(entry.enabledToolGroups)) profile.enabledToolGroups = entry.enabledToolGroups;
       if (entry.disableOutputFormat !== undefined) profile.disableOutputFormat = !!entry.disableOutputFormat;
-      if (entry.clientSideJsonRendering !== undefined) profile.clientSideJsonRendering = !!entry.clientSideJsonRendering;
+      if (entry.clientSideJsonRendering !== undefined)
+        profile.clientSideJsonRendering = !!entry.clientSideJsonRendering;
       this.platformProfiles.set(entry.platform, profile);
     }
     if (this.platformProfiles.size > 0) {
-      this.ctx.logger.info(`已加载 ${this.platformProfiles.size} 个平台配置模板: ${[...this.platformProfiles.keys()].join(', ')}`);
+      this.ctx.logger.info(
+        `已加载 ${this.platformProfiles.size} 个平台配置模板: ${[...this.platformProfiles.keys()].join(', ')}`,
+      );
     }
   }
 
@@ -874,7 +910,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (!session || session.title || session.parentId) return;
     titleGenerating.add(sessionId);
     // 异步生成，不阻塞消息处理；直接传入用户消息避免依赖历史
-    manager.generateTitle(sessionId, msg.content)
+    manager
+      .generateTitle(sessionId, msg.content)
       .catch(err => ctx.logger.debug('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });

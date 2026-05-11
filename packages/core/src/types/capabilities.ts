@@ -62,10 +62,9 @@ export interface ServiceCapabilityMap {
  * - 已注册的服务名（在 ServiceCapabilityMap 中）→ 对应 union
  * - 未注册的服务名 → `string`（保持向后兼容，不阻塞动态服务）
  */
-export type CapabilityOf<TName extends string> =
-  TName extends keyof ServiceCapabilityMap
-    ? ServiceCapabilityMap[TName] & string
-    : string;
+export type CapabilityOf<TName extends string> = TName extends keyof ServiceCapabilityMap
+  ? ServiceCapabilityMap[TName] & string
+  : string;
 
 /**
  * `provide()` / `getService()` 的能力参数类型
@@ -102,11 +101,7 @@ const _probes = new Map<string, Map<string, CapabilityProbe>>();
  * 重复注册相同 `(service, capability)` 会覆盖之前的注册，
  * 这使得同一服务的不同实现版本可以通过自己的类型文件被覆盖/扩展。
  */
-export function registerCapabilityProbe(
-  service: string,
-  capability: string,
-  probe: CapabilityProbe,
-): void {
+export function registerCapabilityProbe(service: string, capability: string, probe: CapabilityProbe): void {
   let byCap = _probes.get(service);
   if (!byCap) {
     byCap = new Map();
@@ -123,11 +118,7 @@ export function registerCapabilityProbe(
  * - `string`：探测失败（信息用于报错）
  * - `null`：没有对应探测器（跳过校验）
  */
-export function probeCapability(
-  service: string,
-  capability: string,
-  instance: unknown,
-): true | string | null {
+export function probeCapability(service: string, capability: string, instance: unknown): true | string | null {
   const byCap = _probes.get(service);
   if (!byCap) return null;
   const probe = byCap.get(capability);
@@ -138,4 +129,3 @@ export function probeCapability(
     return `probe threw: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
-

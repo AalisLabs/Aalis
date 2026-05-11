@@ -79,9 +79,12 @@ export type PlatformType = 'macos' | 'linux' | 'windows';
 
 export function detectPlatform(): PlatformType {
   switch (platform()) {
-    case 'darwin': return 'macos';
-    case 'win32': return 'windows';
-    default: return 'linux';
+    case 'darwin':
+      return 'macos';
+    case 'win32':
+      return 'windows';
+    default:
+      return 'linux';
   }
 }
 

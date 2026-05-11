@@ -53,12 +53,14 @@ interface LLMProviderEntry {
  * provider 字段足够覆盖所有路由场景，避免"先到先得"的隐式竞态。
  */
 export class LLMRouter implements LLMService {
-  constructor(private readonly ctx: Context, private readonly logger: Logger) {}
+  constructor(
+    private readonly ctx: Context,
+    private readonly logger: Logger,
+  ) {}
 
   /** 仅枚举真正的 LLM provider，排除 router 自身 */
   private getProviders(): LLMProviderEntry[] {
-    return this.ctx.getAllServices<LLMProviderShape>('llm')
-      .filter(e => (e.instance as unknown) !== this);
+    return this.ctx.getAllServices<LLMProviderShape>('llm').filter(e => (e.instance as unknown) !== this);
   }
 
   // ---- LLMService 实现 ----
@@ -233,9 +235,7 @@ export class LLMRouter implements LLMService {
     if (requiredCapabilities.length === 0) return;
     const missing = requiredCapabilities.filter(c => !provider.capabilities.includes(c as LLMCapability));
     if (missing.length > 0) {
-      throw new Error(
-        `LLM provider ${provider.contextId} 缺少所需能力：[${missing.join(', ')}]`,
-      );
+      throw new Error(`LLM provider ${provider.contextId} 缺少所需能力：[${missing.join(', ')}]`);
     }
   }
 

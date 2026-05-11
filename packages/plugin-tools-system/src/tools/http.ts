@@ -20,7 +20,6 @@ interface HttpConfig {
 const MAX_REDIRECTS = 5;
 
 export function registerHttpTools(ctx: Context, config: HttpConfig): void {
-
   // ==================== http_request ====================
   ctx.registerTool({
     definition: {
@@ -59,7 +58,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const url = args.url as string;
       const method = ((args.method as string) || 'GET').toUpperCase();
       const headers = (args.headers as Record<string, string>) || {};
@@ -108,9 +107,9 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
 
         // 截断过长的响应
         if (Buffer.byteLength(responseBody, 'utf-8') > config.maxResponseSize) {
-          responseBody = Buffer.from(responseBody, 'utf-8')
-            .subarray(0, config.maxResponseSize)
-            .toString('utf-8') + '\n...[响应截断]';
+          responseBody =
+            Buffer.from(responseBody, 'utf-8').subarray(0, config.maxResponseSize).toString('utf-8') +
+            '\n...[响应截断]';
         }
 
         return JSON.stringify({
@@ -142,7 +141,8 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
             },
             savePath: {
               type: 'string',
-              description: '保存路径。支持 storage URI（如 workspace:/downloads/a.txt、tmp:/a.txt）；相对路径会保存到 workspace:/ 下；禁止宿主机绝对路径。',
+              description:
+                '保存路径。支持 storage URI（如 workspace:/downloads/a.txt、tmp:/a.txt）；相对路径会保存到 workspace:/ 下；禁止宿主机绝对路径。',
             },
             timeout: {
               type: 'number',
@@ -154,7 +154,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const url = args.url as string;
       const savePath = args.savePath as string;
       const timeout = (args.timeout as number) || config.defaultTimeout * 3;
@@ -258,22 +258,30 @@ function isPrivateIpv4(address: string): boolean {
     return true;
   }
   const [a, b] = parts;
-  return a === 0
-    || a === 10
-    || a === 127
-    || (a === 100 && b >= 64 && b <= 127)
-    || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168)
-    || (a === 198 && (b === 18 || b === 19))
-    || a >= 224;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
 }
 
 function isPrivateIpv6(address: string): boolean {
   const normalized = address.toLowerCase();
   if (normalized === '::' || normalized === '::1') return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
-  if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
+  if (
+    normalized.startsWith('fe8') ||
+    normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') ||
+    normalized.startsWith('feb')
+  )
+    return true;
 
   const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) return isPrivateIpv4(mapped[1]);

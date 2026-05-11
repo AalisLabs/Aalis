@@ -1,31 +1,28 @@
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { OutgoingMessage } from '@aalis/plugin-message-api';
-import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { ConfigSchema, Context } from '@aalis/core';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
+import type { OutgoingMessage } from '@aalis/plugin-message-api';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import '@aalis/plugin-gateway-api';
 
 export type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
+
 import {
-  type FlowControlConfig,
   defaultFlowControlConfig,
+  type FlowControlConfig,
   isScopeEnabled,
   resolveFlowControlConfig,
 } from './config.js';
+import { clearSessionIdle, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
 import {
-  type MutableFlowSessionState,
   applyScoreDecay,
   calculateScoreIncrement,
   createState,
   getCurrentThreshold,
+  type MutableFlowSessionState,
   rateLimitUsedNow,
   snapshot,
 } from './state.js';
-import {
-  PlatformIdleScheduler,
-  clearSessionIdle,
-  scheduleSessionIdle,
-} from './idle-scheduler.js';
 
 // ----- 元数据 -----
 
@@ -44,19 +41,38 @@ export const configSchema: ConfigSchema = {
     default: defaultFlowControlConfig.scopes,
     dynamicOptions: 'gateway-scopes',
     allowCustom: true,
-    description: '格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
+    description:
+      '格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
   },
   fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）', default: defaultFlowControlConfig.fixedInterval },
   activityScoreLower: { type: 'number', label: '活跃指数下限', default: defaultFlowControlConfig.activityScoreLower },
   activityScoreUpper: { type: 'number', label: '活跃指数上限', default: defaultFlowControlConfig.activityScoreUpper },
-  activityDecayMinutes: { type: 'number', label: '阈值衰减分钟', default: defaultFlowControlConfig.activityDecayMinutes },
-  scoreDecayMinutes: { type: 'number', label: '评分衰减分钟（0=不衰减）', default: defaultFlowControlConfig.scoreDecayMinutes },
+  activityDecayMinutes: {
+    type: 'number',
+    label: '阈值衰减分钟',
+    default: defaultFlowControlConfig.activityDecayMinutes,
+  },
+  scoreDecayMinutes: {
+    type: 'number',
+    label: '评分衰减分钟（0=不衰减）',
+    default: defaultFlowControlConfig.scoreDecayMinutes,
+  },
   cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
   muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）', default: defaultFlowControlConfig.muteTimeSeconds },
-  rateLimitWindow: { type: 'number', label: '限速窗口（秒，0=关闭）', default: defaultFlowControlConfig.rateLimitWindow },
-  rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数', default: defaultFlowControlConfig.rateLimitMaxReplies },
+  rateLimitWindow: {
+    type: 'number',
+    label: '限速窗口（秒，0=关闭）',
+    default: defaultFlowControlConfig.rateLimitWindow,
+  },
+  rateLimitMaxReplies: {
+    type: 'number',
+    label: '窗口内最大回复数',
+    default: defaultFlowControlConfig.rateLimitMaxReplies,
+  },
   idleTriggerScope: {
-    type: 'select', label: '闲置触发范围', default: defaultFlowControlConfig.idleTriggerScope,
+    type: 'select',
+    label: '闲置触发范围',
+    default: defaultFlowControlConfig.idleTriggerScope,
     options: [
       { label: 'off (关闭)', value: 'off' },
       { label: 'session (每会话独立定时)', value: 'session' },
@@ -64,7 +80,9 @@ export const configSchema: ConfigSchema = {
     ],
   },
   idleTriggerStrategy: {
-    type: 'select', label: '闲置触发策略', default: defaultFlowControlConfig.idleTriggerStrategy,
+    type: 'select',
+    label: '闲置触发策略',
+    default: defaultFlowControlConfig.idleTriggerStrategy,
     options: [
       { label: 'all-quiet (所有会话都静默时)', value: 'all-quiet' },
       { label: 'fixed (固定间隔)', value: 'fixed' },
@@ -72,13 +90,19 @@ export const configSchema: ConfigSchema = {
   },
   idleTriggerMinutes: { type: 'number', label: '闲置触发分钟', default: defaultFlowControlConfig.idleTriggerMinutes },
   idleTriggerStyle: {
-    type: 'select', label: '闲置触发风格', default: defaultFlowControlConfig.idleTriggerStyle,
+    type: 'select',
+    label: '闲置触发风格',
+    default: defaultFlowControlConfig.idleTriggerStyle,
     options: [
       { label: 'exponential (指数退避)', value: 'exponential' },
       { label: 'fixed (固定)', value: 'fixed' },
     ],
   },
-  idleTriggerMaxMinutes: { type: 'number', label: '闲置触发上限分钟', default: defaultFlowControlConfig.idleTriggerMaxMinutes },
+  idleTriggerMaxMinutes: {
+    type: 'number',
+    label: '闲置触发上限分钟',
+    default: defaultFlowControlConfig.idleTriggerMaxMinutes,
+  },
   idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动', default: defaultFlowControlConfig.idleTriggerJitter },
   idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示', default: defaultFlowControlConfig.idleTriggerPrompt },
 };
@@ -107,8 +131,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     const threshold = getCurrentThreshold(s, cfg);
     ctx.logger.debug(
       `[flow] ${label} | session=${sessionId} | ` +
-      `计数=${s.messageCount}/${cfg.fixedInterval} | ` +
-      `指数=${s.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)})`,
+        `计数=${s.messageCount}/${cfg.fixedInterval} | ` +
+        `指数=${s.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)})`,
     );
   }
 
@@ -208,8 +232,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   ctx.logger.info(
     `[flow] 已启用 (固定间隔=${cfg.fixedInterval}, 阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, ` +
-    `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
-    `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'})`,
+      `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
+      `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'})`,
   );
 
   // ===== inbound:flow 相位：流控前置闸门 =====

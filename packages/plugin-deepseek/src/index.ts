@@ -1,17 +1,11 @@
-import type {
-  Context,
-  Message,
-  ToolDefinition,
-  ToolCall,
-  ConfigSchema,
-} from '@aalis/core';
+import type { ConfigSchema, Context, Message, ToolCall, ToolDefinition } from '@aalis/core';
 import type {
   ChatRequest,
   ChatResponse,
   ChatStreamChunk,
+  LLMCapability,
   LLMService,
   ModelInfo,
-  LLMCapability,
 } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 
@@ -53,32 +47,71 @@ export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'DeepSeek API 密钥' },
-  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.deepseek.com', description: 'API 端点地址，可替换为兼容的第三方服务' },
-  customModels: { type: 'textarea', label: '自定义模型', default: '', description: '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。' },
-  modelCapabilities: { type: 'textarea', label: '模型能力覆盖', default: '', description: '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming' },
-  timeout: { type: 'number', label: '请求超时 (秒)', default: 120, description: 'LLM 请求超时时间（秒）。思考模式下建议 180-300 秒。0 = 不限制。' },
+  baseUrl: {
+    type: 'string',
+    label: 'API 地址',
+    default: 'https://api.deepseek.com',
+    description: 'API 端点地址，可替换为兼容的第三方服务',
+  },
+  customModels: {
+    type: 'textarea',
+    label: '自定义模型',
+    default: '',
+    description:
+      '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
+  },
+  modelCapabilities: {
+    type: 'textarea',
+    label: '模型能力覆盖',
+    default: '',
+    description:
+      '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming',
+  },
+  timeout: {
+    type: 'number',
+    label: '请求超时 (秒)',
+    default: 120,
+    description: 'LLM 请求超时时间（秒）。思考模式下建议 180-300 秒。0 = 不限制。',
+  },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
-  strictToolCalls: { type: 'boolean', label: 'Strict 工具调用', default: false, description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）' },
-  forceJsonOutput: { type: 'boolean', label: '强制 JSON 输出', default: false, description: '启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。' },
+  strictToolCalls: {
+    type: 'boolean',
+    label: 'Strict 工具调用',
+    default: false,
+    description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）',
+  },
+  forceJsonOutput: {
+    type: 'boolean',
+    label: '强制 JSON 输出',
+    default: false,
+    description:
+      '启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。',
+  },
   thinkingMode: {
-    type: 'select', label: '思考模式', default: 'auto',
+    type: 'select',
+    label: '思考模式',
+    default: 'auto',
     options: [
       { label: '自动（按模型推断）', value: 'auto' },
       { label: '启用', value: 'enabled' },
       { label: '关闭', value: 'disabled' },
     ],
-    description: '控制深度思考。deepseek-v4-flash / deepseek-v4-pro / deepseek-reasoner 默认启用。设置为「关闭」时会显式传递 thinking.type=disabled。',
+    description:
+      '控制深度思考。deepseek-v4-flash / deepseek-v4-pro / deepseek-reasoner 默认启用。设置为「关闭」时会显式传递 thinking.type=disabled。',
   },
   reasoningEffort: {
-    type: 'select', label: '推理强度', default: 'auto',
+    type: 'select',
+    label: '推理强度',
+    default: 'auto',
     options: [
       { label: '自动（由 API 按场景选 high/max）', value: 'auto' },
       { label: '高', value: 'high' },
       { label: '最大', value: 'max' },
     ],
-    description: '思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。',
+    description:
+      '思考模式下的推理强度（v4 模型）。「自动」不发送参数，API 会为普通请求选 high、为 Agent 复杂场景选 max，推荐。',
   },
 };
 
@@ -110,9 +143,7 @@ interface DeepSeekConfig {
 
 // ===== DeepSeek API 消息格式 =====
 
-type APIMessageContent =
-  | string
-  | null;
+type APIMessageContent = string | null;
 
 interface APIMessage {
   role: string;
@@ -205,7 +236,9 @@ class DeepSeekLLMService implements LLMService {
         this.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，建议去重`);
       }
     }
-    this.logger.info(`initialize: 远端=${remote.length} 个 [${[...remoteIds].join(',') || '<空>'}], 自定义=${this.customModels.length} 个 [${this.customModels.join(',') || '<空>'}]`);
+    this.logger.info(
+      `initialize: 远端=${remote.length} 个 [${[...remoteIds].join(',') || '<空>'}], 自定义=${this.customModels.length} 个 [${this.customModels.join(',') || '<空>'}]`,
+    );
 
     this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
     const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
@@ -301,7 +334,9 @@ class DeepSeekLLMService implements LLMService {
       body.response_format = { type: 'json_object' };
     }
 
-    this.logger.debug(`请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(
+      `请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
+    );
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -310,7 +345,7 @@ class DeepSeekLLMService implements LLMService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.any(signals),
@@ -387,7 +422,9 @@ class DeepSeekLLMService implements LLMService {
       body.response_format = { type: 'json_object' };
     }
 
-    this.logger.debug(`流式请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`);
+    this.logger.debug(
+      `流式请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`,
+    );
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -404,7 +441,7 @@ class DeepSeekLLMService implements LLMService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
         signal: AbortSignal.any(signals),
@@ -460,7 +497,7 @@ class DeepSeekLLMService implements LLMService {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          if (!trimmed?.startsWith('data: ')) continue;
           const payload = trimmed.slice(6);
           if (payload === '[DONE]') {
             const toolCalls: ToolCall[] = [];
@@ -523,7 +560,9 @@ class DeepSeekLLMService implements LLMService {
             if (chunk.contentDelta || chunk.reasoningDelta || chunk.usage) {
               yield chunk;
             }
-          } catch { /* skip malformed JSON */ }
+          } catch {
+            /* skip malformed JSON */
+          }
         }
       }
     } finally {
@@ -600,11 +639,11 @@ const { Chat, ToolCalling, Streaming, Thinking } = LLMCapabilities;
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   // 当前 v4 系列（默认启用思考，可通过 thinking.type=disabled 关闭）
   'deepseek-v4-flash': [Chat, ToolCalling, Streaming, Thinking],
-  'deepseek-v4-pro':   [Chat, ToolCalling, Streaming, Thinking],
+  'deepseek-v4-pro': [Chat, ToolCalling, Streaming, Thinking],
   // 独立推理模型
   'deepseek-reasoner': [Chat, ToolCalling, Streaming, Thinking],
   // 兼容旧别名（已下线，仅供老配置识别）
-  'deepseek-chat':     [Chat, ToolCalling, Streaming],
+  'deepseek-chat': [Chat, ToolCalling, Streaming],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
@@ -632,7 +671,10 @@ function resolveCapabilities(model: string, userOverride?: unknown): LLMCapabili
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
 function parseCustomModels(raw: unknown): string[] {
   if (!raw || typeof raw !== 'string') return [];
-  return raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  return raw
+    .split(/[,\n]/)
+    .map(s => s.trim())
+    .filter(Boolean);
 }
 
 /** 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...` */
@@ -645,7 +687,11 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
     const colonIdx = trimmed.indexOf(':');
     if (colonIdx < 0) continue;
     const modelId = trimmed.slice(0, colonIdx).trim();
-    const caps = trimmed.slice(colonIdx + 1).split(',').map(s => s.trim()).filter(Boolean) as LLMCapability[];
+    const caps = trimmed
+      .slice(colonIdx + 1)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean) as LLMCapability[];
     if (modelId && caps.length > 0) out.set(modelId, caps);
   }
   return out;
@@ -694,7 +740,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.provide('llm', service, { capabilities, label });
 
   if (defaultModel) {
-    ctx.logger.info(`DeepSeek 已连接: ${deepseekConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]${enableThinking ? ` 思考模式(effort=${deepseekConfig.reasoningEffort})` : ''}`);
+    ctx.logger.info(
+      `DeepSeek 已连接: ${deepseekConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]${enableThinking ? ` 思考模式(effort=${deepseekConfig.reasoningEffort})` : ''}`,
+    );
   } else {
     ctx.logger.warn(`DeepSeek 已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型`);
   }

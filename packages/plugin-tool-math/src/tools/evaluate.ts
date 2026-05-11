@@ -1,5 +1,5 @@
 import type { Context } from '@aalis/core';
-import { safeEval, listFunctions } from '../lib/expression.js';
+import { listFunctions, safeEval } from '../lib/expression.js';
 
 export function registerEvaluateTools(ctx: Context): void {
   const funcs = listFunctions();
@@ -28,14 +28,16 @@ export function registerEvaluateTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const expr = String(args.expression ?? '');
       try {
         const result = safeEval(expr);
         return JSON.stringify({
           expression: expr,
           result,
-          resultStr: Number.isInteger(result) ? String(result) : result.toPrecision(15).replace(/0+$/, '').replace(/\.$/, ''),
+          resultStr: Number.isInteger(result)
+            ? String(result)
+            : result.toPrecision(15).replace(/0+$/, '').replace(/\.$/, ''),
         });
       } catch (err: unknown) {
         return JSON.stringify({ error: (err as Error).message, expression: expr });

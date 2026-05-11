@@ -1,14 +1,14 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
+import { registerBaseConvertTools } from './tools/base-convert.js';
+import { registerCalculusTools } from './tools/calculus.js';
+import { registerConversionTools } from './tools/conversion.js';
+import { registerEquationTools } from './tools/equation.js';
 import { registerEvaluateTools } from './tools/evaluate.js';
-import { registerStatisticsTools } from './tools/statistics.js';
+import { registerFinancialTools } from './tools/financial.js';
+import { registerGeometryTools } from './tools/geometry.js';
 import { registerMatrixTools } from './tools/matrix.js';
 import { registerNumberTheoryTools } from './tools/number-theory.js';
-import { registerGeometryTools } from './tools/geometry.js';
-import { registerConversionTools } from './tools/conversion.js';
-import { registerFinancialTools } from './tools/financial.js';
-import { registerCalculusTools } from './tools/calculus.js';
-import { registerEquationTools } from './tools/equation.js';
-import { registerBaseConvertTools } from './tools/base-convert.js';
+import { registerStatisticsTools } from './tools/statistics.js';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -104,8 +104,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return new Proxy(ctx, {
       get(target, prop) {
         if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) =>
-            target.registerTool({ ...tool, groups });
+          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
         }
         return Reflect.get(target, prop, target);
       },
