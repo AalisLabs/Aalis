@@ -374,12 +374,7 @@ export interface AalisEvents {
   'app:starting': [];
   /** 应用正在停止（stop() 开头，在 dispose 之前） */
   'app:stopping': [];
-  // ----- 会话管理事件 -----
-  'session:created': [session: import('./session.js').SessionInfo];
-  'session:updated': [session: import('./session.js').SessionInfo];
-  'session:completed': [session: import('./session.js').SessionInfo];
-  'session:deleted': [sessionId: string];
-  'session:switched': [sessionId: string];
+  // 会话管理事件由 plugin-session-manager 通过 declaration merging 注入
   /**
    * Gateway 某个入站相位执行完毕（无论是否被 swallow）。
    *

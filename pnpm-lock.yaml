@@ -125,6 +125,9 @@ importers:
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
+      '@aalis/plugin-session-manager':
+        specifier: workspace:*
+        version: link:../plugin-session-manager
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -564,6 +567,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-session-manager':
+        specifier: workspace:*
+        version: link:../plugin-session-manager
       yaml:
         specifier: ^2.7.0
         version: 2.8.3
@@ -638,6 +644,9 @@ importers:
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
+      '@aalis/plugin-session-manager':
+        specifier: workspace:*
+        version: link:../plugin-session-manager
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -709,6 +718,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-session-manager':
+        specifier: workspace:*
+        version: link:../plugin-session-manager
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -925,6 +937,9 @@ importers:
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
+      '@aalis/plugin-session-manager':
+        specifier: workspace:*
+        version: link:../plugin-session-manager
       express:
         specifier: ^5.1.0
         version: 5.2.1
