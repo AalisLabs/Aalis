@@ -57,7 +57,7 @@ export type { HookContextMap } from './hooks.js';
 // Gateway 服务（已迁出至 @aalis/plugin-gateway-api）
 
 // WebUI 页面骨架（WebUIService / WebuiComponent / 各 Webui*Component 已迁出至 @aalis/plugin-webui-api）
-export type { WebuiPage } from './webui.js';
+// WebUI 页面类型（已迁出至 @aalis/plugin-webui-api）
 
 // CLI 服务（已迁出至 @aalis/plugin-cli）
 // 会话管理（已迁出至 @aalis/plugin-session-manager）
