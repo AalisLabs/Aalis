@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, IncomingMessage, MemoryService, Message } from '@aalis/core';
+import type { Context, ConfigSchema, IncomingMessage, Message } from '@aalis/core';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 import { SessionChannelManager } from './manager.js';
 
 export * from './types.js';

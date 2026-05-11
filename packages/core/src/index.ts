@@ -19,7 +19,7 @@ export { MixinRegistry } from './mixin-registry.js';
 export type { MixinEntry } from './mixin-registry.js';
 export { PendingRegistrationBuffer } from './pending-buffer.js';
 export { registerCapabilityProbe, probeCapability } from './types/index.js';
-export { MemoryCapabilities } from './types/index.js';
+// MemoryCapabilities 已迁出至 @aalis/plugin-memory-api
 export { StorageCapabilities } from './types/index.js';
 // PlatformCapabilities 已迁出至 @aalis/plugin-platform
 // LLMCapabilities 已迁出至 @aalis/plugin-llm-api
@@ -91,10 +91,7 @@ export type {
   ServiceCapabilityMap,
   CapabilityOf,
   CapabilityList,
-  // 记忆服务
-  MemoryService,
-  MemoryCapability,
-  MemoryCapabilityRegistry,
+  // 记忆服务（已迁出至 @aalis/plugin-memory-api）
   // 存储服务
   StorageRootKind,
   StorageRootInfo,
