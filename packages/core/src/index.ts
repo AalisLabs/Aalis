@@ -21,14 +21,11 @@ export { Context } from './context.js';
 export { DisposableChain } from './disposable-chain.js';
 export { EventBus } from './events.js';
 export { HookRegistry } from './hooks.js';
-export { getMessageName, getSenderLabel, prefixSender } from './identity.js';
 // ----- 运行时基础类型 -----
 export type { LogEntry, LogLevel } from './logger.js';
 export { getLogBuffer, isConsoleLogSinkEnabled, Logger, onLogEntry, setConsoleLogSinkEnabled } from './logger.js';
 export type { MixinEntry } from './mixin-registry.js';
 export { MixinRegistry } from './mixin-registry.js';
-export type { ModelRef } from './model-ref.js';
-export { formatModelRef, parseModelRef } from './model-ref.js';
 // ----- 插件系统类型 -----
 export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
@@ -61,7 +58,6 @@ export type {
   ToolCall,
   ToolDefinition,
   ToolFunction,
-  UserIdentity,
 } from './types/index.js';
 // ----- 服务能力声明框架 -----
 export { probeCapability, registerCapabilityProbe } from './types/index.js';

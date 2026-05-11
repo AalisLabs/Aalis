@@ -3,7 +3,7 @@ import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
-import { prefixSender } from '@aalis/core';
+import { prefixSender } from '@aalis/plugin-message-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
