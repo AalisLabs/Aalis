@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { Context, ConfigSchema, WebuiPage, Message } from '@aalis/core';
+import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
-import type {} from '@aalis/plugin-webui-api';
+import type { WebuiPage } from '@aalis/plugin-webui-api';
 import type { SessionInfo, SessionConfig, SessionTreeNode, SessionManagerService, PlatformProfile } from './types.js';
 import type { PersonaService } from '@aalis/plugin-persona';
 
