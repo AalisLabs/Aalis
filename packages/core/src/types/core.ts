@@ -28,7 +28,14 @@ export interface UserIdentity {
 export type ContentSegment =
   | { type: 'text'; content: string }
   | { type: 'reasoning_text'; content: string }
-  | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
+  | {
+      type: 'tool_call';
+      name: string;
+      args: Record<string, unknown>;
+      result?: string;
+      startTime?: number;
+      endTime?: number;
+    };
 
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -191,7 +198,10 @@ export interface RegisteredTool {
   /** 静态权限标识，用于透明展示与策略匹配 */
   permissions?: PermissionId[];
   /** 根据工具参数解析动态权限，如 storage:workspace:write */
-  resolvePermissions?: (args: Record<string, unknown>, ctx: ToolCallContext) => PermissionId[] | Promise<PermissionId[]>;
+  resolvePermissions?: (
+    args: Record<string, unknown>,
+    ctx: ToolCallContext,
+  ) => PermissionId[] | Promise<PermissionId[]>;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
 }
@@ -328,11 +338,11 @@ export interface AalisEvents {
   'plugin:loaded': [name: string];
   'plugin:unloaded': [name: string];
   'plugins:changed': [];
-  'ready': [];
+  ready: [];
   /** 应用已启动完成，适合 CLI / TUI 等用户交互入口接管终端 */
   'app:started': [];
-  'dispose': [];
-  'restarting': [];
+  dispose: [];
+  restarting: [];
   /** 应用正在启动（start() 开头，在服务检查和消息路由注册之前） */
   'app:starting': [];
   /** 应用正在停止（stop() 开头，在 dispose 之前） */
@@ -348,14 +358,16 @@ export interface AalisEvents {
    *
    * 对主流程零侵入：observer 的异常不会影响入站处理。
    */
-  'gateway:phase:done': [data: {
-    phase: string;
-    /** true = 链走到底（未被 swallow）；false = 某 handler 未调用 next() 终止了链 */
-    reachedEnd: boolean;
-    durationMs: number;
-    sessionId: string;
-    platform: string;
-  }];
+  'gateway:phase:done': [
+    data: {
+      phase: string;
+      /** true = 链走到底（未被 swallow）；false = 某 handler 未调用 next() 终止了链 */
+      reachedEnd: boolean;
+      durationMs: number;
+      sessionId: string;
+      platform: string;
+    },
+  ];
   // 允许任意字符串 key 兜底（运行时事件总线开放，但鼓励第三方插件通过 declaration merging 显式声明事件签名以获得类型安全）
   [key: string]: unknown[];
 }
@@ -461,7 +473,7 @@ export interface CommandDefinition {
    * - 任意一层未命中则停在当前节点，调用其 action
    *
    * 权限/安全等级继承：子节点未声明时，继承自其有效父节点（含 override）。
-    * Override 键为冒号拼接的完整路径，如 `clear:all`、`db:migrate:up`。
+   * Override 键为冒号拼接的完整路径，如 `clear:all`、`db:migrate:up`。
    */
   subcommands?: SubcommandDefinition[];
 }

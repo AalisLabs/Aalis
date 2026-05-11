@@ -6,7 +6,7 @@
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
-import type { IncomingMessage, Message, ToolDefinition, ToolCallContext } from '@aalis/core';
+import type { IncomingMessage, Message, ToolCallContext, ToolDefinition } from '@aalis/core';
 import type { ChatResponse } from '@aalis/plugin-llm-api';
 
 /**
@@ -29,10 +29,7 @@ export interface PluginGroupInfo {
  * 遵循洋葱模型：调用 `next()` 将控制权传递给下一个预处理器，
  * 不调用则中断整个流程（LLM 不会被调用）。
  */
-export type PreprocessorFn = (
-  message: IncomingMessage,
-  next: () => Promise<void>,
-) => Promise<void>;
+export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => Promise<void>;
 
 /** 已注册预处理器的元信息 */
 export interface PreprocessorInfo {
@@ -92,8 +89,22 @@ declare module '@aalis/core' {
     };
     'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
     'agent:tool:after': { name: string; result: string; toolCallContext: ToolCallContext };
-    'agent:reply:before': { content: string; archiveContent?: string; sessionId: string; platform?: string; userId?: string; triggerType?: IncomingMessage['triggerType'] };
-    'agent:llm:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string; triggerType?: IncomingMessage['triggerType'] };
+    'agent:reply:before': {
+      content: string;
+      archiveContent?: string;
+      sessionId: string;
+      platform?: string;
+      userId?: string;
+      triggerType?: IncomingMessage['triggerType'];
+    };
+    'agent:llm:before': {
+      messages: Message[];
+      tools: ToolDefinition[];
+      sessionId?: string;
+      userId?: string;
+      platform?: string;
+      triggerType?: IncomingMessage['triggerType'];
+    };
     'agent:llm:after': { response: ChatResponse; messages: Message[] };
   }
 }
