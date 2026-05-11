@@ -6,6 +6,7 @@ import type {
   GatewayService,
   InboundPhaseData,
 } from '@aalis/core';
+import type {} from '@aalis/plugin-agent-default';
 import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/core';
 
 // ----- 元数据 -----
