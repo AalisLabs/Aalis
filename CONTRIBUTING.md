@@ -1,0 +1,159 @@
+# 参与 Aalis 开发
+
+欢迎贡献！本文档约定开发环境、构建/校验流程、提交规范与分支策略。
+
+## 1. 环境
+
+| 工具 | 版本 |
+|---|---|
+| Node.js | ≥ 22.0（CI 跑 22 LTS） |
+| pnpm | ≥ 10.0 |
+| TypeScript | 5.7+ |
+
+```sh
+corepack enable                # 启用 pnpm 版本管理
+pnpm install --frozen-lockfile  # 安装依赖
+pnpm -r build                   # 全仓构建
+pnpm dev                        # 运行 tsx src/index.ts
+```
+
+## 2. 校验三件套
+
+提交前请确保通过：
+
+```sh
+pnpm ci             # = pnpm -r build && pnpm check:biome
+pnpm check:biome    # 单跑 Biome
+pnpm -r test        # 单元测试（vitest）
+```
+
+CI（`.github/workflows/ci.yml`）执行 `pnpm ci`，任何 Biome **error** 都会阻断合并。
+warnings 不阻断但会审阅。
+
+## 3. 代码风格
+
+- 由 [Biome](https://biomejs.dev) 自动管理：`pnpm format` 写格式，`pnpm lint:fix` 自动修复可修项。
+- 命名遵循驼峰 + PascalCase 类；接口与类型不加 `I` 前缀。
+- 不写废注释；只保留**讲清"为什么"**的注释。
+- 公共 API 必须导出类型。优先用 `*-api` 包持有类型而非实现包。
+
+## 4. 包结构
+
+```
+packages/
+  core/                         # IoC + 生命周期，不依赖任何插件
+  plugin-<name>-api/            # 仅类型 + Capability 声明合并，零运行时代码
+  plugin-<name>/                # 实现，import 自己 + 别人的 *-api
+```
+
+类型包必须在 `package.json` 标注：
+
+```json
+{
+  "aalis": { "types": true }
+}
+```
+
+实现包必须声明 subsystem：
+
+```json
+{
+  "aalis": { "subsystem": "agent" }
+}
+```
+
+详见 [docs/decisions/0002-api-types-split.md](docs/decisions/0002-api-types-split.md) 与
+[docs/decisions/0003-subsystem-manifest.md](docs/decisions/0003-subsystem-manifest.md)。
+
+## 5. 提交规范（Conventional Commits）
+
+```
+<type>(<scope>): <subject>
+
+[body]
+
+[footer]
+```
+
+`type` 取值：
+
+| 类型 | 含义 |
+|---|---|
+| `feat` | 新功能 |
+| `fix` | 缺陷修复 |
+| `refactor` | 不改语义的重构 |
+| `perf` | 性能 |
+| `docs` | 文档 |
+| `test` | 测试 |
+| `chore` | 构建/工具链 |
+| `style` | 仅样式 |
+| `revert` | 回退 |
+
+`scope` 一般是包名去前缀：`core`、`agent-default`、`webui-server`、`tools-system` 等。
+
+**示例**：
+
+```
+fix(webui-server): /api/service-groups 把 'app' 放入「核心」
+refactor(agent-default): 拆出 messageProcessor / contextBuilder / replyDispatcher
+test(core): Context.extend / Service / Plugin lifecycle 契约
+```
+
+破坏性变更在 footer 加：
+
+```
+BREAKING CHANGE: ServiceCapabilityMap 现在要求 declare module 合并
+```
+
+## 6. 分支策略
+
+| 分支 | 用途 |
+|---|---|
+| `master` / `main` | 稳定 |
+| `dev` | 日常集成 |
+| `feat/<topic>` | 功能分支，长期可 rebase |
+| `fix/<topic>` | 缺陷分支，短周期 |
+
+PR 默认目标分支：`dev`。`master` 由 `dev` 通过 release PR 合并。
+
+## 7. 编写插件
+
+新插件 = 一个 `@aalis/plugin-<name>` 包，至少包含：
+
+```ts
+// src/index.ts
+import type { App, Context, Plugin } from '@aalis/core';
+
+export const name = 'my-plugin';
+export const dependencies = ['llm'];          // inject.required
+export const optionalDependencies = ['memory']; // inject.optional
+
+export function apply(ctx: Context, config: MyConfig) {
+  ctx.logger.info('my-plugin 已加载');
+  ctx.provide('my-service', new MyService(ctx, config), {
+    capabilities: ['feature-a', 'feature-b'],
+  });
+}
+```
+
+- 任何在 `ctx` 上注册的副作用（`on`/`provide`/`middleware`/`whenService`）都会
+  在该 `ctx` dispose 时自动清理，无需手动维护清理列表。
+- 不要把状态挂在 `globalThis`、模块级单例或不可清理的 `setInterval`，
+  请用 `ctx.disposables`（通过 `whenService` / `on` 返回值自动入链）。
+
+详见 [docs/architecture.md](docs/architecture.md) 与 [docs/plugins/](docs/plugins/)。
+
+## 8. 添加 ADR
+
+任何引入新概念、改变包间契约、修改 manifest schema、调整加载顺序的改动，
+都应在 [docs/decisions/](docs/decisions/) 写一份 ADR。
+
+模板见 [docs/decisions/template.md](docs/decisions/template.md)。
+
+## 9. 反馈
+
+- Bug：GitHub Issues
+- 设计讨论：GitHub Discussions / Issues with `discussion` label
+- 安全问题：私下邮件维护者（不要开公开 Issue）
+
+谢谢！
