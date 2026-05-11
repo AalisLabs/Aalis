@@ -29,9 +29,9 @@ describe('Context.extend', () => {
   });
 
   it('重名注入抛错，避免静默覆盖', () => {
-    const dispose = Context.extend('__testDup', function () {});
+    const dispose = Context.extend('__testDup', () => {});
     try {
-      expect(() => Context.extend('__testDup', function () {})).toThrow(/已存在/);
+      expect(() => Context.extend('__testDup', () => {})).toThrow(/已存在/);
     } finally {
       dispose();
     }

@@ -179,7 +179,12 @@ export const DEFAULT_SUBSYSTEM_CATALOG: readonly SubsystemCatalogEntry[] = Objec
     id: 'core',
     label: '核心',
     order: 10,
-    plugins: ['@aalis/plugin-gateway', '@aalis/plugin-flow-control', '@aalis/plugin-platform', '@aalis/plugin-commands'],
+    plugins: [
+      '@aalis/plugin-gateway',
+      '@aalis/plugin-flow-control',
+      '@aalis/plugin-platform',
+      '@aalis/plugin-commands',
+    ],
   },
   {
     id: 'platform',
@@ -275,7 +280,12 @@ export const DEFAULT_SUBSYSTEM_CATALOG: readonly SubsystemCatalogEntry[] = Objec
   },
   { id: 'authority', label: '权限', order: 130, plugins: ['@aalis/plugin-authority'] },
   { id: 'user', label: '用户', order: 140, plugins: ['@aalis/plugin-user-profile', '@aalis/plugin-game-activity'] },
-  { id: 'storage', label: '存储', order: 150, plugins: ['@aalis/plugin-storage-local', '@aalis/plugin-storage-router'] },
+  {
+    id: 'storage',
+    label: '存储',
+    order: 150,
+    plugins: ['@aalis/plugin-storage-local', '@aalis/plugin-storage-router'],
+  },
   {
     id: 'external',
     label: '外部',

@@ -107,7 +107,8 @@ interface WebUIConfig {
 
 // 入站消息类型 + 校验 schema 见 ./protocol.ts（zod 强校验）
 import { type WSIncoming, WSIncomingSchema } from './protocol.js';
-export { WSIncomingSchema, type WSIncoming } from './protocol.js';
+
+export { type WSIncoming, WSIncomingSchema } from './protocol.js';
 
 interface WSOutgoing {
   type:
