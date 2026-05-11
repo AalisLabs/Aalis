@@ -1,3 +1,4 @@
+import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
 // ===== 工具服务接口 =====
 
 import type {
@@ -6,9 +7,7 @@ import type {
   ToolCallContext,
   ToolSummary,
   ToolGroupInfo,
-  SafetyLevel,
-  ExecutionGuard,
-} from '@aalis/core';
+  SafetyLevel } from '@aalis/core';
 
 /**
  * 工具服务接口

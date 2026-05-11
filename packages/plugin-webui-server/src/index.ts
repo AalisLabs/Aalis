@@ -17,7 +17,7 @@ import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aali
 import type {} from '@aalis/plugin-session-manager';
 import type {} from '@aalis/plugin-agent-default';
 import type { PersonaService } from '@aalis/plugin-persona';
-import type { AuthorityService } from '@aalis/plugin-authority';
+import type { AuthorityService } from '@aalis/plugin-authority-api';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
 import { createAuthSystem, openBrowser } from './auth.js';
 

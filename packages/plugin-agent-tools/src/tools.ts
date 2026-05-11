@@ -1,6 +1,7 @@
-import type { RegisteredTool, ToolDefinition, ToolCallContext, ToolSummary, ToolGroupInfo, ExecutionGuard } from '@aalis/core';
+import type { RegisteredTool, ToolDefinition, ToolCallContext, ToolSummary, ToolGroupInfo } from '@aalis/core';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { Logger } from '@aalis/core';
+import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
 
 /**
  * 工具注册表 —— 管理 AI 可调用工具的注册、查询、执行
