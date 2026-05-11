@@ -1,7 +1,7 @@
 import { platform } from 'node:os';
-import path from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { toStorageUri } from '@aalis/plugin-tools-api';
 import { type RunnerConfig, runCode } from './runner.js';
 import '@aalis/plugin-tools-api';
 
@@ -104,15 +104,8 @@ function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
   };
 }
 
-function toStorageUri(input: string | undefined, fallback: string): string {
-  const value = (input || fallback).trim();
-  if (!value) return 'workspace:/';
-  if (/^[a-zA-Z]:[\\/]/.test(value))
-    throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
-  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
-  if (path.isAbsolute(value))
-    throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
-  return `workspace:/${value.replace(/^\/+/, '')}`;
+function toRunnerCwdUri(input: string | undefined): string {
+  return toStorageUri(input, { errorContext: '代码执行器工作目录' });
 }
 
 function safeEnv(): NodeJS.ProcessEnv {
@@ -127,7 +120,7 @@ function safeEnv(): NodeJS.ProcessEnv {
 async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<RunnerConfig> {
   const storage = ctx.getService<StorageService>('storage');
   if (!storage?.resolveLocalPath) throw new Error('代码执行器需要 storage 服务（且支持 local-path）');
-  const cwdUri = toStorageUri(cfg.workingDirectory, 'workspace:/');
+  const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
   return {
     defaultTimeout: cfg.defaultTimeout,
     maxTimeout: cfg.maxTimeout,
@@ -142,7 +135,7 @@ async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
-  const cwdUri = toStorageUri(cfg.workingDirectory, 'workspace:/');
+  const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
 
   // 创建带分组标记的注册代理
   function ctxWithGroups(groups: string[]): Context {
