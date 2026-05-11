@@ -4,6 +4,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-agent-tools';
 export const displayName = '工具注册表';
+export const subsystem = 'agent';
 export const provides = ['tools'];
 
 export function apply(ctx: Context): void {

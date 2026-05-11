@@ -8,6 +8,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-todo-list';
 export const displayName = '任务计划';
+export const subsystem = 'scheduler';
 export const inject = {};
 
 export const configSchema: ConfigSchema = {

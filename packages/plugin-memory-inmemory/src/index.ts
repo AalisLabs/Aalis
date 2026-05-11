@@ -161,6 +161,7 @@ class InMemoryFallbackService implements MemoryService {
 
 export const name = '@aalis/plugin-memory-inmemory';
 export const displayName = '内存记忆';
+export const subsystem = 'memory';
 export const provides = ['memory'];
 
 // ===== 插件入口 =====

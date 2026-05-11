@@ -6,6 +6,7 @@ import '@aalis/plugin-agent-api';
 
 export const name = '@aalis/plugin-tool-search';
 export const displayName = '搜索工具';
+export const subsystem = 'tools';
 // tools 服务由核心提供，无需声明依赖
 
 export const configSchema: ConfigSchema = {

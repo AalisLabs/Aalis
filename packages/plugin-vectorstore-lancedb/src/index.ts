@@ -8,6 +8,7 @@ import { type Connection, connect, type Table as LanceTable } from '@lancedb/lan
 
 export const name = '@aalis/plugin-vectorstore-lancedb';
 export const displayName = 'LanceDB 向量库';
+export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {

@@ -62,6 +62,7 @@ if (!('command' in Context.prototype)) {
 
 export const name = '@aalis/plugin-commands';
 export const displayName = '内置指令';
+export const subsystem = 'core';
 export const provides = ['commands'];
 export const inject = {
   required: ['gateway'],

@@ -9,6 +9,7 @@ import Database from 'better-sqlite3';
 
 export const name = '@aalis/plugin-memory-sqlite';
 export const displayName = 'SQLite 记忆';
+export const subsystem = 'memory';
 export const provides = ['memory'];
 export const reusable = true;
 

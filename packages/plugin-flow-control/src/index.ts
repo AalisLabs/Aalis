@@ -28,6 +28,7 @@ import {
 
 export const name = '@aalis/plugin-flow-control';
 export const displayName = '消息流控';
+export const subsystem = 'core';
 export const provides = ['flow-control'];
 export const inject = {
   required: ['gateway'],

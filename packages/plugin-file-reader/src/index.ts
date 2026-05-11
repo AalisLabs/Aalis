@@ -8,6 +8,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-file-reader';
 export const displayName = '文件读取';
+export const subsystem = 'tools';
 export const provides = ['file-reader'];
 export const inject = {
   optional: ['agent'],

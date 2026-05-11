@@ -123,6 +123,7 @@ export interface SchedulerService {
 
 export const name = '@aalis/plugin-scheduler';
 export const displayName = '定时任务';
+export const subsystem = 'scheduler';
 
 export const provides = ['scheduler'];
 

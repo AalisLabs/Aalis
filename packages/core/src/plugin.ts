@@ -9,6 +9,14 @@ export interface PluginModule {
   name: string;
   /** 插件的显示名称，用于前端展示 */
   displayName?: string;
+  /**
+   * 子系统归属，仅用于 WebUI 分组展示。
+   *
+   * core 不读取此字段，仅原样透传给 WebUI；未声明的插件落入「其他」分组。
+   * 可用 id 与中文 label 由 `@aalis/plugin-webui-api` 的 `DEFAULT_SUBSYSTEM_METADATA` 提供，
+   * 但允许使用任意自定义字符串（未匹配 metadata 时直接以 id 作为 label 显示）。
+   */
+  subsystem?: string;
   inject?: InjectDeclaration;
   provides?: string[];
   /** 标记为 core 的插件不能被用户禁用 */
@@ -223,6 +231,7 @@ export class PluginManager {
     name: string;
     instanceId: string;
     displayName?: string;
+    subsystem?: string;
     state: PluginState;
     provides?: string[];
     core?: boolean;
@@ -239,6 +248,7 @@ export class PluginManager {
       name: entry.module.name,
       instanceId: entry.instanceId,
       displayName: entry.module.displayName,
+      subsystem: entry.module.subsystem,
       state: entry.state,
       provides: entry.module.provides,
       core: entry.module.core,
