@@ -21,7 +21,14 @@ import type { PlatformService } from '@aalis/plugin-platform';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
-import { estimateMsgTokens, estimateTextTokens, estimateTokens, formatTimeLabel, INPUT_CONVENTIONS, isSameMessage } from './helpers.js';
+import {
+  estimateMsgTokens,
+  estimateTextTokens,
+  estimateTokens,
+  formatTimeLabel,
+  INPUT_CONVENTIONS,
+  isSameMessage,
+} from './helpers.js';
 
 /**
  * 默认 Agent 实现 —— 对话编排器
