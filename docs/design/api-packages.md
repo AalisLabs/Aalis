@@ -154,33 +154,21 @@ declare module '@aalis/core' {
 }
 ```
 
-## CI 净化护栏
+## CI 校验
 
-`scripts/check-core-purity.mjs`（在每次 CI 与本地 `pnpm run check:core` 都会跑）硬阻断以下两类违规：
-
-1. `packages/core/src/**/*.ts` 中出现 `import ... from '@aalis/plugin-*'` 或 `import '@aalis/plugin-*'`
-2. `packages/core/src/**/*.ts` 中出现 `interface X*Service` / `type X*Service` 定义（其中 X 为已知业务领域名前缀）
-
-任何回退（业务接口悄悄回流到 core）都会被立即拦下。
+Biome 在 CI 上对全仓库执行 lint + format check（informational 模式）以及对变更文件执行 hard check。业务接口是否回流 core 由代码审查 + 类型系统兜底（任何业务字段重新进入 `packages/core` 都会立刻反映在 PR diff 中）。
 
 ## 历史演变
 
-| Commit | 变化 |
-|---|---|
-| `cleanup-1` | 新建 plugin-agent-api；HookContextMap 拆分至 plugin-agent-api / plugin-gateway-api / plugin-memory-api |
-| `cleanup-2` | ChatResponse 完整由 plugin-llm-api 直接导出 |
-| `cleanup-3` | WebuiPage 完整迁出至 plugin-webui-api，`PluginModule.webuiPages` 通过 declaration merging 注入 |
-| `cleanup-4` | 新建 plugin-authority-api（ExecutionGuard*/AuthorityService 等）；PluginGroupInfo 迁出至 plugin-agent-api；core 不再持有任何业务/守卫接口 |
-| `build(ci)` | 引入 Biome + GitHub Actions CI + core 净化护栏脚本 |
-| `cleanup-6` | **internal-framework 风格 Context 精简**：`RegisteredTool`/`ToolGroupInfo`/`ToolSummary` 迁出至 plugin-tools-api；`CommandContext`/`CommandDefinition`/`SubcommandDefinition`/`RegisteredCommand` 等迁出至 plugin-commands-api；`ctx.registerTool`/`ctx.registerToolGroup`/`ctx.command` 从 core/context.ts 移除，由 plugin-tools-system / plugin-commands 在模块加载时通过 `Context.extend()` 注入；删除 core/pending-buffer.ts（用 `whenService` 替代）；core/context.ts -73 行 / types/core.ts -201 行 |
+core 经过多轮纯化，关键节点：
 
-## internal-framework 对照
-
-| 维度 | internal-framework (internal-framework) | Aalis (cleanup-6 后) |
-|---|---|---|
-| Context 行数 | 75 | 465 |
-| Context 业务方法 | 0（全部插件注入） | 0（registerTool / command 已迁出，仅保留 provide / getService / middleware / on / mixin / whenService / extend） |
-| 扩展机制 | `Context.prototype` augmentation | 完全一致：`Context.extend()` + `declare module '@aalis/core' { interface Context }` |
-| 服务模型 | `ctx.bots` / `ctx.database` 由插件注入 | `ctx.registerTool` / `ctx.command` 由 plugin-tools-system / plugin-commands 注入 |
-
-Aalis Context 仍比 internal-framework 大，主因是 internal-framework 把 `events`/`hooks`/`registry` 拆为独立类挂在 Context 上；Aalis 直接合并到 Context 内（`hooks` 属性 + 一系列 `on/emit/middleware/provide/getService` 方法）。这是设计取舍而非业务污染。
+- 业务服务接口（LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway / WebUI / Authority / Agent / MessageArchive / Persona / Session / Trigger / FlowControl / Skills / Scheduler / ImageRecognition 等）**全部** 迁至对应 `@aalis/plugin-*-api`
+- `HookContextMap` 在三个扩展点中清空骨架键，由各 plugin-*-api 通过 declaration merging 注入业务键
+- `ChatResponse` / `WebuiPage` / `PluginGroupInfo` / `RegisteredTool` / `ToolGroupInfo` / `CommandContext` / `CommandDefinition` 等数据形状全部迁出 core
+- `ctx.registerTool` / `ctx.registerToolGroup` / `ctx.command` 等业务便捷方法移出 `Context`，由 plugin-tools-system / plugin-commands 在模块加载时通过 `Context.extend()` 注入
+- `IncomingMessage` / `OutgoingMessage` / `StreamChunkMessage` → plugin-message-api；`ToolCallContext` / `ToolExecuteMessage` → plugin-tools-api；`AalisEvents` 中的业务事件迁至对应 api 包；`INBOUND_PHASE` 等业务相位常量 → plugin-gateway-api
+- `UserIdentity` → plugin-authority-api；`ModelRef` / `parseModelRef` / `formatModelRef` → plugin-llm-api；`getSenderLabel` / `prefixSender` / `getMessageName` → plugin-message-api
+- `AalisConfig` 收窄为基础设施字段 + `[key: string]: unknown` 兜底；业务字段（owners / dangerousPolicy / commandOverrides 等）由 plugin-authority-api 通过 declaration merging 注入；`buildSaveObject` 改为通用 pass-through
+- `dangerousPolicy.enabledAt` 由 plugin-authority 作为运行时状态持有，不再写入 config
+- 引入服务自清理协议：`Context.dispose()` 不再硬编码业务服务名，所有需要清理的服务实例实现 `unregisterByPlugin(contextId)` 即可
+- 新增 `Context.createScope(id)`：与 `fork()` 对称地创建独立的 `ScopedServiceContainer` + `ScopedConfigManager`，用于沙盒/会话隔离

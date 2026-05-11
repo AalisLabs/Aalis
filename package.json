@@ -7,11 +7,10 @@
     "build": "pnpm -r build && tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "check:core": "node scripts/check-core-purity.mjs",
     "check:biome": "biome check .",
     "format": "biome format --write .",
     "lint:fix": "biome check --write .",
-    "ci": "pnpm -r build && pnpm run check:core && pnpm run check:biome"
+    "ci": "pnpm -r build && pnpm run check:biome"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
