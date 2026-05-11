@@ -6,6 +6,7 @@ import cliTruncate from 'cli-truncate';
 import type { AppService, ConfigSchema, Context, LogEntry, StreamChunkMessage } from '@aalis/core';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
 import type { CLIService } from './types.js';
+import type { CommandService } from '@aalis/plugin-commands-api';
 import type { PersonaService } from '@aalis/plugin-persona';
 import type { AuthorityService } from '@aalis/plugin-authority';
 
@@ -468,9 +469,9 @@ class CliTui {
     }
     this.trimChat();
 
-    const parsed = this.ctx.commands?.parseCommand(text);
+    const parsed = this.ctx.getService<CommandService>('commands')?.parseCommand(text);
     if (parsed) {
-      const result = await this.ctx.commands!.execute(parsed.name, {
+      const result = await this.ctx.getService<CommandService>('commands')!.execute(parsed.name, {
         sessionId: this.sessionId,
         platform: 'cli',
         userId: 'console',

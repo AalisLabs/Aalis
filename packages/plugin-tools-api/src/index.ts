@@ -6,7 +6,9 @@ import type {
   ToolCallContext,
   ToolSummary,
   ToolGroupInfo,
-} from './core.js';
+  SafetyLevel,
+  ExecutionGuard,
+} from '@aalis/core';
 
 /**
  * 工具服务接口
@@ -34,7 +36,7 @@ export interface ToolService {
     description: string;
     pluginName: string;
     authority?: number;
-    safety?: import('./core.js').SafetyLevel;
+    safety?: SafetyLevel;
     permissions?: string[];
     groups?: string[];
   }>;
@@ -46,7 +48,7 @@ export interface ToolService {
   ): Promise<string>;
 
   /** 注入执行守卫，用于权限等级与 dangerous 二次确认 */
-  setExecutionGuard(guard: import('./core.js').ExecutionGuard): void;
+  setExecutionGuard(guard: ExecutionGuard): void;
 
   unregisterByPlugin(pluginName: string): void;
 
