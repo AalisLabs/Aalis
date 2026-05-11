@@ -5,10 +5,14 @@ let installed = false;
 export function restoreTerminalState(): void {
   try {
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   try {
     process.stdout.write(TERMINAL_RESTORE_SEQUENCE);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function installTerminalStateRestorer(): void {

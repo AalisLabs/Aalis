@@ -1,10 +1,16 @@
 import { createReadStream } from 'node:fs';
-import { mkdir, readdir, realpath, stat, lstat, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve } from 'node:path';
-import type { ConfigSchema, Context } from '@aalis/core';
-import type { StorageEntry, StorageListResult, StorageReadStreamResult, StorageRootInfo, StorageService, StorageStat } from '@aalis/plugin-storage-api';
+import type { ConfigSchema, Context, Logger } from '@aalis/core';
+import type {
+  StorageEntry,
+  StorageListResult,
+  StorageReadStreamResult,
+  StorageRootInfo,
+  StorageService,
+  StorageStat,
+} from '@aalis/plugin-storage-api';
 import { StorageCapabilities } from '@aalis/plugin-storage-api';
-import type { Logger } from '@aalis/core';
 
 export const name = '@aalis/plugin-storage-local';
 export const displayName = '本地存储根（命名 + 路径解析）';
@@ -43,34 +49,142 @@ export const configSchema: ConfigSchema = {
       'browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，' +
       '其它根仅作为工具/agent 寻址使用）。',
     default: [
-      { name: 'workspace', path: 'workspace', label: 'Workspace', kind: 'workspace', browsable: true,  readable: true, writable: true,  deletable: true  },
-      { name: 'data',      path: 'data',      label: 'Data',      kind: 'data',      browsable: false, readable: true, writable: true,  deletable: false },
-      { name: 'tmp',       path: 'workspace/.tmp', label: '临时文件', kind: 'tmp',  browsable: false, readable: true, writable: true,  deletable: true  },
-      { name: 'pluginData',path: 'data/plugins',   label: '插件数据', kind: 'pluginData', browsable: false, readable: true, writable: true, deletable: false },
-      { name: 'logs',      path: 'data',      label: '日志',      kind: 'logs',      browsable: false, readable: true, writable: false, deletable: false },
+      {
+        name: 'workspace',
+        path: 'workspace',
+        label: 'Workspace',
+        kind: 'workspace',
+        browsable: true,
+        readable: true,
+        writable: true,
+        deletable: true,
+      },
+      {
+        name: 'data',
+        path: 'data',
+        label: 'Data',
+        kind: 'data',
+        browsable: false,
+        readable: true,
+        writable: true,
+        deletable: false,
+      },
+      {
+        name: 'tmp',
+        path: 'workspace/.tmp',
+        label: '临时文件',
+        kind: 'tmp',
+        browsable: false,
+        readable: true,
+        writable: true,
+        deletable: true,
+      },
+      {
+        name: 'pluginData',
+        path: 'data/plugins',
+        label: '插件数据',
+        kind: 'pluginData',
+        browsable: false,
+        readable: true,
+        writable: true,
+        deletable: false,
+      },
+      {
+        name: 'logs',
+        path: 'data',
+        label: '日志',
+        kind: 'logs',
+        browsable: false,
+        readable: true,
+        writable: false,
+        deletable: false,
+      },
       // 高危直通：取消注释或改 enabled 字段无意义——存在即注册。如需 host:/ 直通根，把下行加进 roots：
       // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
     ],
     items: {
-      name:      { type: 'string',  label: '根名 (URI scheme)', description: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share' },
-      path:      { type: 'string',  label: '本机路径',          description: '可绝对，亦可相对项目根；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。' },
-      label:     { type: 'string',  label: '展示名称',          default: '' },
-      kind:      { type: 'string',  label: '类型标签',          default: 'custom', description: '语义提示：workspace / data / tmp / pluginData / logs / custom / external / shared / host' },
-      browsable: { type: 'boolean', label: 'WebUI 浏览器可见 (hint)', default: false, description: 'hint：当前实现下仅当 webui-server.fileRoot 指向本根时此开关才生效' },
-      readable:  { type: 'boolean', label: '允许读',            default: true },
-      writable:  { type: 'boolean', label: '允许写',            default: false },
-      deletable: { type: 'boolean', label: '允许删除',          default: false },
+      name: {
+        type: 'string',
+        label: '根名 (URI scheme)',
+        description: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share',
+      },
+      path: {
+        type: 'string',
+        label: '本机路径',
+        description: '可绝对，亦可相对项目根；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
+      },
+      label: { type: 'string', label: '展示名称', default: '' },
+      kind: {
+        type: 'string',
+        label: '类型标签',
+        default: 'custom',
+        description: '语义提示：workspace / data / tmp / pluginData / logs / custom / external / shared / host',
+      },
+      browsable: {
+        type: 'boolean',
+        label: 'WebUI 浏览器可见 (hint)',
+        default: false,
+        description: 'hint：当前实现下仅当 webui-server.fileRoot 指向本根时此开关才生效',
+      },
+      readable: { type: 'boolean', label: '允许读', default: true },
+      writable: { type: 'boolean', label: '允许写', default: false },
+      deletable: { type: 'boolean', label: '允许删除', default: false },
     },
   },
 };
 
 export const defaultConfig = {
   roots: [
-    { name: 'workspace',  path: 'workspace',      label: 'Workspace', kind: 'workspace',  browsable: true,  readable: true, writable: true,  deletable: true  },
-    { name: 'data',       path: 'data',           label: 'Data',      kind: 'data',       browsable: false, readable: true, writable: true,  deletable: false },
-    { name: 'tmp',        path: 'workspace/.tmp', label: '临时文件',  kind: 'tmp',        browsable: false, readable: true, writable: true,  deletable: true  },
-    { name: 'pluginData', path: 'data/plugins',   label: '插件数据',  kind: 'pluginData', browsable: false, readable: true, writable: true,  deletable: false },
-    { name: 'logs',       path: 'data',           label: '日志',      kind: 'logs',       browsable: false, readable: true, writable: false, deletable: false },
+    {
+      name: 'workspace',
+      path: 'workspace',
+      label: 'Workspace',
+      kind: 'workspace',
+      browsable: true,
+      readable: true,
+      writable: true,
+      deletable: true,
+    },
+    {
+      name: 'data',
+      path: 'data',
+      label: 'Data',
+      kind: 'data',
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: false,
+    },
+    {
+      name: 'tmp',
+      path: 'workspace/.tmp',
+      label: '临时文件',
+      kind: 'tmp',
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: true,
+    },
+    {
+      name: 'pluginData',
+      path: 'data/plugins',
+      label: '插件数据',
+      kind: 'pluginData',
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: false,
+    },
+    {
+      name: 'logs',
+      path: 'data',
+      label: '日志',
+      kind: 'logs',
+      browsable: false,
+      readable: true,
+      writable: false,
+      deletable: false,
+    },
   ] as RootEntryConfig[],
 };
 
@@ -136,7 +250,7 @@ class LocalStorageService implements StorageService {
   private async snapshot(uri: string, op: 'write' | 'delete' | 'rename', abs: string): Promise<void> {
     if (!this.ctx) return;
     const cp = this.ctx.getService<CheckpointLike>('checkpoint');
-    if (!cp || !cp.isActive()) return;
+    if (!cp?.isActive()) return;
     await cp.beforeMutate(uri, op, async () => {
       try {
         const s = await stat(abs);
@@ -268,9 +382,8 @@ class LocalStorageService implements StorageService {
     const { root, relPath } = parseUri(uri);
     const permission = access === 'delete' ? 'deletable' : access === 'write' ? 'writable' : 'readable';
     const rootDef = this.requireRoot(root, permission);
-    const abs = access === 'write'
-      ? await this.resolveForWrite(rootDef, relPath)
-      : await this.resolveExisting(rootDef, relPath);
+    const abs =
+      access === 'write' ? await this.resolveForWrite(rootDef, relPath) : await this.resolveExisting(rootDef, relPath);
     this.logger.debug(`storage.resolveLocalPath ${toUri(rootDef.name, relPath)} access=${access}`);
     return abs;
   }
@@ -343,7 +456,13 @@ class LocalStorageService implements StorageService {
   }
 }
 
-async function createRoot(name: string, label: string, kind: string, rootPath: string, options: Omit<StorageRootInfo, 'name' | 'label' | 'kind'>): Promise<RootDefinition> {
+async function createRoot(
+  name: string,
+  label: string,
+  kind: string,
+  rootPath: string,
+  options: Omit<StorageRootInfo, 'name' | 'label' | 'kind'>,
+): Promise<RootDefinition> {
   const abs = resolve(process.cwd(), rootPath);
   // path 已是文件系统根（'/'）等存在的目录时不需要创建；其它情况 mkdir -p
   if (rootPath !== '/' && rootPath !== '') {
@@ -388,18 +507,12 @@ async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefini
     }
     seen.add(name);
     try {
-      const root = await createRoot(
-        name,
-        item.label || name,
-        item.kind || 'custom',
-        path,
-        {
-          browsable: item.browsable === true,
-          readable: item.readable !== false,
-          writable: item.writable === true,
-          deletable: item.deletable === true,
-        },
-      );
+      const root = await createRoot(name, item.label || name, item.kind || 'custom', path, {
+        browsable: item.browsable === true,
+        readable: item.readable !== false,
+        writable: item.writable === true,
+        deletable: item.deletable === true,
+      });
       const isHostScope = root.realPath === '/' || root.realPath.length <= 3;
       const log = isHostScope ? logger.warn.bind(logger) : logger.info.bind(logger);
       log(

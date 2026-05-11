@@ -4,9 +4,9 @@ import { GameActivityManager } from './manager.js';
 import { registerStartGameTool } from './start-game-tool.js';
 import '@aalis/plugin-tools-api';
 
-export * from './protocol.js';
 export * from './adapter.js';
 export { GameActivityManager } from './manager.js';
+export * from './protocol.js';
 export { GameActivitySession } from './session.js';
 
 export const name = '@aalis/plugin-game-activity';
@@ -114,25 +114,37 @@ interface PluginConfig {
 
 function resolveConfig(config: Record<string, unknown>): PluginConfig {
   return {
-    bridgeHost: typeof config.bridgeHost === 'string' && config.bridgeHost.trim()
-      ? config.bridgeHost.trim() : defaultConfig.bridgeHost,
-    bridgePort: Math.max(1, Math.min(65535,
-      Math.floor(Number(config.bridgePort ?? defaultConfig.bridgePort)))),
-    bridgePath: typeof config.bridgePath === 'string' && config.bridgePath.trim()
-      ? config.bridgePath.trim() : defaultConfig.bridgePath,
+    bridgeHost:
+      typeof config.bridgeHost === 'string' && config.bridgeHost.trim()
+        ? config.bridgeHost.trim()
+        : defaultConfig.bridgeHost,
+    bridgePort: Math.max(1, Math.min(65535, Math.floor(Number(config.bridgePort ?? defaultConfig.bridgePort)))),
+    bridgePath:
+      typeof config.bridgePath === 'string' && config.bridgePath.trim()
+        ? config.bridgePath.trim()
+        : defaultConfig.bridgePath,
     decisionModel: typeof config.decisionModel === 'string' ? config.decisionModel.trim() : '',
-    decisionTimeoutMs: Math.max(1000,
-      Math.floor(Number(config.decisionTimeoutMs ?? defaultConfig.decisionTimeoutMs))),
+    decisionTimeoutMs: Math.max(1000, Math.floor(Number(config.decisionTimeoutMs ?? defaultConfig.decisionTimeoutMs))),
     decisionThinkingMode: parseDecisionThinkingMode(config.decisionThinkingMode),
-    decisionHistoryLimit: Math.max(10, Math.min(300,
-      Math.floor(Number(config.decisionHistoryLimit ?? defaultConfig.decisionHistoryLimit)))),
-    decisionHistoryKeepRecent: Math.max(4, Math.min(200,
-      Math.floor(Number(config.decisionHistoryKeepRecent ?? defaultConfig.decisionHistoryKeepRecent)))),
-    decisionHistoryCompression: typeof config.decisionHistoryCompression === 'boolean'
-      ? config.decisionHistoryCompression
-      : defaultConfig.decisionHistoryCompression,
-    decisionHistorySummaryMaxTokens: Math.max(200, Math.min(2000,
-      Math.floor(Number(config.decisionHistorySummaryMaxTokens ?? defaultConfig.decisionHistorySummaryMaxTokens)))),
+    decisionHistoryLimit: Math.max(
+      10,
+      Math.min(300, Math.floor(Number(config.decisionHistoryLimit ?? defaultConfig.decisionHistoryLimit))),
+    ),
+    decisionHistoryKeepRecent: Math.max(
+      4,
+      Math.min(200, Math.floor(Number(config.decisionHistoryKeepRecent ?? defaultConfig.decisionHistoryKeepRecent))),
+    ),
+    decisionHistoryCompression:
+      typeof config.decisionHistoryCompression === 'boolean'
+        ? config.decisionHistoryCompression
+        : defaultConfig.decisionHistoryCompression,
+    decisionHistorySummaryMaxTokens: Math.max(
+      200,
+      Math.min(
+        2000,
+        Math.floor(Number(config.decisionHistorySummaryMaxTokens ?? defaultConfig.decisionHistorySummaryMaxTokens)),
+      ),
+    ),
   };
 }
 
@@ -146,9 +158,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const manager = new GameActivityManager();
   manager.setDecisionModel(cfg.decisionModel);
   manager.setDecisionTimeout(cfg.decisionTimeoutMs);
-  manager.setDecisionThink(cfg.decisionThinkingMode === 'provider_default'
-    ? undefined
-    : cfg.decisionThinkingMode === 'enabled');
+  manager.setDecisionThink(
+    cfg.decisionThinkingMode === 'provider_default' ? undefined : cfg.decisionThinkingMode === 'enabled',
+  );
   manager.setDecisionHistoryOptions({
     historyLimit: cfg.decisionHistoryLimit,
     keepRecent: Math.min(cfg.decisionHistoryKeepRecent, Math.max(4, cfg.decisionHistoryLimit - 2)),
@@ -171,13 +183,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       url,
       ctx,
       handlers: {
-        onConnect: (conn) => manager.onConnect(ctx, conn),
-        onMessage: (conn, msg) => { manager.onMessage(ctx, conn, msg).catch(err => {
-          ctx.logger.warn(`game-activity 处理事件失败: ${err instanceof Error ? err.message : String(err)}`);
-        }); },
-        onClose: (conn) => manager.onClose(ctx, conn),
+        onConnect: conn => manager.onConnect(ctx, conn),
+        onMessage: (conn, msg) => {
+          manager.onMessage(ctx, conn, msg).catch(err => {
+            ctx.logger.warn(`game-activity 处理事件失败: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        },
+        onClose: conn => manager.onClose(ctx, conn),
         onError: (_conn, err) => ctx.logger.debug(`bridge 异常: ${err instanceof Error ? err.message : String(err)}`),
-        onStateChange: (state) => ctx.logger.debug(`bridge 连接状态: ${state}`),
+        onStateChange: state => ctx.logger.debug(`bridge 连接状态: ${state}`),
       },
     });
     ctx.logger.info(`game-activity bridge 客户端启动，目标 ${url}`);
@@ -192,7 +206,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   registerStartGameTool(ctx, manager, () => handle);
 
-  const offStarted = ctx.eventBus.on('app:started', () => { startBridge(); });
+  const offStarted = ctx.eventBus.on('app:started', () => {
+    startBridge();
+  });
 
   const dispose = ctx.eventBus.on('plugin:unloaded', (pluginName: string) => {
     if (pluginName !== ctx.id) return;

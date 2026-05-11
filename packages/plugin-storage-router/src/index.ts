@@ -14,10 +14,10 @@ export function apply(ctx: Context): void {
   const router = new StorageRouter(ctx, ctx.logger.child('storage-router'));
 
   // 服务注册/注销时自动失效根名映射缓存
-  ctx.on('service:registered', (svcName) => {
+  ctx.on('service:registered', svcName => {
     if (svcName === 'storage') router.invalidate();
   });
-  ctx.on('service:unregistered', (svcName) => {
+  ctx.on('service:unregistered', svcName => {
     if (svcName === 'storage') router.invalidate();
   });
 
@@ -26,5 +26,5 @@ export function apply(ctx: Context): void {
   ctx.provide('storage', router, { capabilities: ['router'] });
 }
 
-export { StorageRouter } from './router.js';
 export type { AggregatedStorageRoot, StorageRootConflict } from './router.js';
+export { StorageRouter } from './router.js';

@@ -1,12 +1,18 @@
-import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
-import type { MessageArchiveService, ArchiveNoticeOptions } from './types.js';
-import { prefixSender, getSenderLabel, getMessageName } from '@aalis/plugin-message-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
+import { getMessageName, getSenderLabel, prefixSender } from '@aalis/plugin-message-api';
+import type { ArchiveNoticeOptions, MessageArchiveService } from './types.js';
 import { MessageArchiveCapabilities } from './types.js';
 
-export type { MessageArchiveService, ArchiveIncomingResult, ArchiveNoticeOptions, MessageArchiveCapability, MessageArchiveCapabilityRegistry } from './types.js';
+export type {
+  ArchiveIncomingResult,
+  ArchiveNoticeOptions,
+  MessageArchiveCapability,
+  MessageArchiveCapabilityRegistry,
+  MessageArchiveService,
+} from './types.js';
 export { MessageArchiveCapabilities } from './types.js';
 
 export const name = '@aalis/plugin-message-archive';
@@ -52,9 +58,7 @@ const SINGLE_USER_PLATFORMS = new Set(['webui', 'cli']);
 
 function buildIncomingContent(incoming: IncomingMessage): string {
   const useSenderPrefix = !SINGLE_USER_PLATFORMS.has(incoming.platform);
-  let content = useSenderPrefix
-    ? prefixSender(incoming.content, incoming.nickname, incoming.userId)
-    : incoming.content;
+  let content = useSenderPrefix ? prefixSender(incoming.content, incoming.nickname, incoming.userId) : incoming.content;
 
   // 引用回复：把被引用消息的标签 + 内容拼到末尾，作为不可分割的上下文
   // 与图片描述、forward 摘要相同处理逻辑——把"非当前指令"的素材烘焙进归档文本，
@@ -114,12 +118,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         images: incoming.images ? [...incoming.images] : incoming.images,
         files: incoming.files ? [...incoming.files] : incoming.files,
         attachmentOrder: incoming.attachmentOrder ? [...incoming.attachmentOrder] : incoming.attachmentOrder,
-        _imageDescriptions: incoming._imageDescriptions ? [...incoming._imageDescriptions] : incoming._imageDescriptions,
+        _imageDescriptions: incoming._imageDescriptions
+          ? [...incoming._imageDescriptions]
+          : incoming._imageDescriptions,
         _fileDescriptions: incoming._fileDescriptions ? [...incoming._fileDescriptions] : incoming._fileDescriptions,
-        _imageRecognitionInfo: incoming._imageRecognitionInfo ? {
-          ...incoming._imageRecognitionInfo,
-          descriptions: [...incoming._imageRecognitionInfo.descriptions],
-        } : incoming._imageRecognitionInfo,
+        _imageRecognitionInfo: incoming._imageRecognitionInfo
+          ? {
+              ...incoming._imageRecognitionInfo,
+              descriptions: [...incoming._imageRecognitionInfo.descriptions],
+            }
+          : incoming._imageRecognitionInfo,
       };
 
       if (working.images && working.images.length > 0 && !working._imageRecognitionInfo) {
@@ -178,11 +186,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 通知监听者：入站消息已落库（用于触发用户档案事实提取等后台任务）
       // 与 agent 是否回复无关，所有走 archiveIncoming 的消息都会发出
-      ctx.emit('inbound:message:archived', {
-        sessionId: working.sessionId,
-        incoming: working,
-        archivedMessage: message,
-      }).catch(err => ctx.logger.debug(`inbound:message:archived 事件分发失败: ${err}`));
+      ctx
+        .emit('inbound:message:archived', {
+          sessionId: working.sessionId,
+          incoming: working,
+          archivedMessage: message,
+        })
+        .catch(err => ctx.logger.debug(`inbound:message:archived 事件分发失败: ${err}`));
 
       return {
         message,
@@ -218,7 +228,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       if (cfg.debugLogs) {
         ctx.logger.debug(
-          `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? '/' + opts.subType : ''} | ${text.slice(0, 200)}`,
+          `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? `/${opts.subType}` : ''} | ${text.slice(0, 200)}`,
         );
       }
 

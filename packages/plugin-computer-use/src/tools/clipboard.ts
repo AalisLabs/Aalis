@@ -6,7 +6,6 @@ import type { Context } from '@aalis/core';
 import type { PlatformAdapter } from '../platform.js';
 
 export function registerClipboardTools(ctx: Context, adapter: PlatformAdapter): void {
-
   // ── clipboard_read ──
   ctx.registerTool({
     definition: {
@@ -47,7 +46,7 @@ export function registerClipboardTools(ctx: Context, adapter: PlatformAdapter): 
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         await adapter.clipboardWrite(args.text as string);
         return JSON.stringify({ ok: true, length: (args.text as string).length });

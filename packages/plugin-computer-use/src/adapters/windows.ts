@@ -10,16 +10,18 @@ import { execFile, spawn } from 'node:child_process';
 import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PlatformAdapter, Point, Region, ScreenInfo, WindowInfo, MouseButton } from '../platform.js';
+import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform.js';
 
 function runPowerShell(script: string, timeout = 10000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', script],
+    execFile(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
       { timeout, maxBuffer: 10 * 1024 * 1024 },
       (err, stdout, _stderr) => {
         if (err) reject(err);
         else resolve(stdout.trim());
-      }
+      },
     );
   });
 }
@@ -163,10 +165,13 @@ export class WindowsAdapter implements PlatformAdapter {
         }
       `;
       const result = await runPowerShell(script, 10000);
-      return result.split('\n').filter(l => l.trim()).map(line => {
-        const [pid, proc, title] = line.split('|||');
-        return { id: pid || '', title: title || '', app: proc || '' };
-      });
+      return result
+        .split('\n')
+        .filter(l => l.trim())
+        .map(line => {
+          const [pid, proc, title] = line.split('|||');
+          return { id: pid || '', title: title || '', app: proc || '' };
+        });
     } catch {
       return [];
     }
@@ -238,28 +243,55 @@ export class WindowsAdapter implements PlatformAdapter {
 
   private mapButton(nut: any, button: MouseButton): any {
     switch (button) {
-      case 'right': return nut.Button.RIGHT;
-      case 'middle': return nut.Button.MIDDLE;
-      default: return nut.Button.LEFT;
+      case 'right':
+        return nut.Button.RIGHT;
+      case 'middle':
+        return nut.Button.MIDDLE;
+      default:
+        return nut.Button.LEFT;
     }
   }
 
   private mapKey(nut: any, key: string): any {
     const keyMap: Record<string, string> = {
-      'ctrl': 'LeftControl', 'control': 'LeftControl',
-      'alt': 'LeftAlt', 'option': 'LeftAlt',
-      'shift': 'LeftShift',
-      'meta': 'LeftSuper', 'cmd': 'LeftSuper', 'command': 'LeftSuper', 'super': 'LeftSuper', 'win': 'LeftSuper',
-      'enter': 'Return', 'return': 'Return',
-      'tab': 'Tab', 'space': 'Space',
-      'backspace': 'Backspace', 'delete': 'Delete',
-      'escape': 'Escape', 'esc': 'Escape',
-      'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
-      'home': 'Home', 'end': 'End',
-      'pageup': 'PageUp', 'pagedown': 'PageDown',
-      'f1': 'F1', 'f2': 'F2', 'f3': 'F3', 'f4': 'F4',
-      'f5': 'F5', 'f6': 'F6', 'f7': 'F7', 'f8': 'F8',
-      'f9': 'F9', 'f10': 'F10', 'f11': 'F11', 'f12': 'F12',
+      ctrl: 'LeftControl',
+      control: 'LeftControl',
+      alt: 'LeftAlt',
+      option: 'LeftAlt',
+      shift: 'LeftShift',
+      meta: 'LeftSuper',
+      cmd: 'LeftSuper',
+      command: 'LeftSuper',
+      super: 'LeftSuper',
+      win: 'LeftSuper',
+      enter: 'Return',
+      return: 'Return',
+      tab: 'Tab',
+      space: 'Space',
+      backspace: 'Backspace',
+      delete: 'Delete',
+      escape: 'Escape',
+      esc: 'Escape',
+      up: 'Up',
+      down: 'Down',
+      left: 'Left',
+      right: 'Right',
+      home: 'Home',
+      end: 'End',
+      pageup: 'PageUp',
+      pagedown: 'PageDown',
+      f1: 'F1',
+      f2: 'F2',
+      f3: 'F3',
+      f4: 'F4',
+      f5: 'F5',
+      f6: 'F6',
+      f7: 'F7',
+      f8: 'F8',
+      f9: 'F9',
+      f10: 'F10',
+      f11: 'F11',
+      f12: 'F12',
     };
     const mapped = keyMap[key.toLowerCase()];
     if (mapped && nut.Key[mapped] !== undefined) return nut.Key[mapped];

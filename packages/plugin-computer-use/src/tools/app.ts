@@ -5,19 +5,17 @@
  * 返回的提示引导 agent 使用正确的工具（CDP vs AX API）。
  */
 
-import { spawn } from 'node:child_process';
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Context } from '@aalis/core';
+import { type AppDetectResult, detectAppType, resolveAppPath } from '../app-detect.js';
+import type { CdpManager } from '../cdp/client.js';
 import type { PlatformAdapter } from '../platform.js';
 import { detectPlatform } from '../platform.js';
-import { resolveAppPath, detectAppType, type AppDetectResult } from '../app-detect.js';
-import type { CdpManager } from '../cdp/client.js';
 
 const execFile = promisify(execFileCb);
 
 export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpManager?: CdpManager): void {
-
   // ── app_launch ──
   ctx.registerTool({
     definition: {
@@ -53,7 +51,7 @@ export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpMana
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const appName = args.appName as string;
         const extraArgs = (args.args as string[]) || [];
@@ -108,7 +106,7 @@ export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpMana
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         await adapter.closeApp(args.appName as string);
         return JSON.stringify({ ok: true, appName: args.appName });

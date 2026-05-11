@@ -1,12 +1,8 @@
 import type { Context, Message } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
-import type { GameActivityAdapter, DecisionRuntime, AdapterActionChoice } from './adapter.js';
-import type {
-  BridgeHelloEvent,
-  BridgePromptEvent,
-  BridgeStateEvent,
-} from './protocol.js';
+import type { AdapterActionChoice, DecisionRuntime, GameActivityAdapter } from './adapter.js';
+import type { BridgeHelloEvent, BridgePromptEvent, BridgeStateEvent } from './protocol.js';
 
 export interface GameActivityHistoryOptions {
   /** Maximum hot decision-thread messages kept before compacting. Includes the system prompt. */
@@ -70,7 +66,9 @@ export class GameActivitySession {
     prompt: BridgePromptEvent,
     extraVibes: string | undefined,
   ): Promise<AdapterActionChoice | null> {
-    ctx.logger.debug(`game-activity 决策开始: request=${prompt.requestId} phase=${prompt.phase} intent=${prompt.intent ?? 'choose_action'} choices=${prompt.choices?.length ?? 0}`);
+    ctx.logger.debug(
+      `game-activity 决策开始: request=${prompt.requestId} phase=${prompt.phase} intent=${prompt.intent ?? 'choose_action'} choices=${prompt.choices?.length ?? 0}`,
+    );
     const userMsg = this.adapter.buildDecisionRequest({
       ctx,
       prompt,
@@ -90,13 +88,15 @@ export class GameActivitySession {
     }
 
     this.history.push({ role: 'assistant', content: llmRaw });
-  await this.compactIfNeeded(ctx, runtime);
+    await this.compactIfNeeded(ctx, runtime);
 
     const choice = this.adapter.parseDecisionReply({ ctx, llmRaw, prompt });
     if (!choice) {
       ctx.logger.warn(`game-activity 决策解析失败: request=${prompt.requestId} raw=${llmRaw.slice(0, 240)}`);
     } else {
-      ctx.logger.info(`game-activity 决策完成: request=${prompt.requestId} action=${JSON.stringify(choice.action)}${choice.reason ? ` reason=${choice.reason}` : ''}`);
+      ctx.logger.info(
+        `game-activity 决策完成: request=${prompt.requestId} action=${JSON.stringify(choice.action)}${choice.reason ? ` reason=${choice.reason}` : ''}`,
+      );
     }
     return choice;
   }
@@ -154,10 +154,7 @@ export class GameActivitySession {
       return;
     }
 
-    const keepRecent = Math.min(
-      this.historyOptions.keepRecent,
-      Math.max(1, this.historyOptions.historyLimit - 2),
-    );
+    const keepRecent = Math.min(this.historyOptions.keepRecent, Math.max(1, this.historyOptions.historyLimit - 2));
     const nonSystem = this.history.slice(1);
     const oldMessages = nonSystem.slice(0, Math.max(0, nonSystem.length - keepRecent));
     const tail = nonSystem.slice(-keepRecent);
@@ -170,29 +167,28 @@ export class GameActivitySession {
       const summary = await this.summarizeOldMessages(ctx, runtime, oldMessages);
       if (summary) this.compressedSummary = summary;
       this.history = [this.history[0], ...tail];
-      ctx.logger.info(`game-activity 决策历史已压缩: ${oldMessages.length} 条旧消息 -> 摘要，保留最近 ${tail.length} 条`);
+      ctx.logger.info(
+        `game-activity 决策历史已压缩: ${oldMessages.length} 条旧消息 -> 摘要，保留最近 ${tail.length} 条`,
+      );
     } catch (err) {
-      ctx.logger.warn(`game-activity 决策历史压缩失败，改为保留最近消息: ${err instanceof Error ? err.message : String(err)}`);
+      ctx.logger.warn(
+        `game-activity 决策历史压缩失败，改为保留最近消息: ${err instanceof Error ? err.message : String(err)}`,
+      );
       this.history = [this.history[0], ...tail];
     }
   }
 
-  private async summarizeOldMessages(
-    _ctx: Context,
-    runtime: DecisionRuntime,
-    oldMessages: Message[],
-  ): Promise<string> {
+  private async summarizeOldMessages(_ctx: Context, runtime: DecisionRuntime, oldMessages: Message[]): Promise<string> {
     const formattedMessages = oldMessages
-      .map((message) => `${formatRole(message.role)}: ${truncateMessageContent(message.content ?? '', 1600)}`)
+      .map(message => `${formatRole(message.role)}: ${truncateMessageContent(message.content ?? '', 1600)}`)
       .join('\n');
 
-    const previousSummary = this.compressedSummary
-      ? `已有摘要：\n${this.compressedSummary}\n\n`
-      : '';
+    const previousSummary = this.compressedSummary ? `已有摘要：\n${this.compressedSummary}\n\n` : '';
     const messages: Message[] = [
       {
         role: 'system',
-        content: '你是游戏会话摘要器。请把 Aalis 打游戏时较早的决策历史压缩成高密度摘要，保留：当前构筑方向、关键奖励/路线/事件选择、观众建议与 Aalis 是否采纳、长期目标、需要避免重复犯的错误。不要写无关寒暄。',
+        content:
+          '你是游戏会话摘要器。请把 Aalis 打游戏时较早的决策历史压缩成高密度摘要，保留：当前构筑方向、关键奖励/路线/事件选择、观众建议与 Aalis 是否采纳、长期目标、需要避免重复犯的错误。不要写无关寒暄。',
       },
       {
         role: 'user',
@@ -222,12 +218,22 @@ export class GameActivitySession {
 
 function normalizeHistoryOptions(options: Partial<GameActivityHistoryOptions>): GameActivityHistoryOptions {
   const historyLimit = clampInteger(options.historyLimit, defaultGameActivityHistoryOptions.historyLimit, 10, 300);
-  const keepRecent = clampInteger(options.keepRecent, defaultGameActivityHistoryOptions.keepRecent, 4, historyLimit - 2);
+  const keepRecent = clampInteger(
+    options.keepRecent,
+    defaultGameActivityHistoryOptions.keepRecent,
+    4,
+    historyLimit - 2,
+  );
   return {
     historyLimit,
     keepRecent,
     compressionEnabled: options.compressionEnabled ?? defaultGameActivityHistoryOptions.compressionEnabled,
-    summaryMaxTokens: clampInteger(options.summaryMaxTokens, defaultGameActivityHistoryOptions.summaryMaxTokens, 200, 2000),
+    summaryMaxTokens: clampInteger(
+      options.summaryMaxTokens,
+      defaultGameActivityHistoryOptions.summaryMaxTokens,
+      200,
+      2000,
+    ),
   };
 }
 
@@ -239,10 +245,14 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 
 function formatRole(role: Message['role']): string {
   switch (role) {
-    case 'user': return '决策请求/游戏事件';
-    case 'assistant': return 'Aalis决策';
-    case 'system': return '系统事件';
-    case 'tool': return '工具';
+    case 'user':
+      return '决策请求/游戏事件';
+    case 'assistant':
+      return 'Aalis决策';
+    case 'system':
+      return '系统事件';
+    case 'tool':
+      return '工具';
   }
 }
 

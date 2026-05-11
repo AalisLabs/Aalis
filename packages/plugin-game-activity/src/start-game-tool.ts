@@ -1,6 +1,6 @@
 import type { Context } from '@aalis/core';
-import type { GameActivityManager } from './manager.js';
 import type { BridgeClientHandle } from './bridge-client.js';
+import type { GameActivityManager } from './manager.js';
 
 interface ChannelService {
   create(opts: { label: string; sessions?: string[]; metadata?: Record<string, unknown> }): Promise<string>;
@@ -68,13 +68,9 @@ export function registerStartGameTool(
       }
 
       const extras = Array.isArray(args.extra_sessions)
-        ? (args.extra_sessions as unknown[])
-            .map(v => String(v).trim())
-            .filter(v => v && v !== callerSession)
+        ? (args.extra_sessions as unknown[]).map(v => String(v).trim()).filter(v => v && v !== callerSession)
         : [];
-      const label = typeof args.label === 'string' && args.label.trim()
-        ? args.label.trim()
-        : `game:${game}`;
+      const label = typeof args.label === 'string' && args.label.trim() ? args.label.trim() : `game:${game}`;
 
       let channelId: string;
       const existing = manager.getBoundChannel();
@@ -82,7 +78,11 @@ export function registerStartGameTool(
         // 复用已有 channel，把新成员加进去
         channelId = existing;
         for (const sid of [callerSession, ...extras]) {
-          try { await channels.join(channelId, sid); } catch { /* noop */ }
+          try {
+            await channels.join(channelId, sid);
+          } catch {
+            /* noop */
+          }
         }
       } else {
         channelId = await channels.create({
@@ -95,11 +95,7 @@ export function registerStartGameTool(
 
       const bridgeState = getBridge()?.getState() ?? 'disconnected';
       const ready = bridgeState === 'connected' && manager.hasActiveSession();
-      const status = ready
-        ? 'ready'
-        : bridgeState === 'connected'
-          ? 'connected_no_hello'
-          : 'waiting_for_game';
+      const status = ready ? 'ready' : bridgeState === 'connected' ? 'connected_no_hello' : 'waiting_for_game';
 
       return JSON.stringify({
         ok: true,

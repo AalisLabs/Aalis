@@ -66,11 +66,7 @@ export class CdpManager {
     if (targetId) cdpOptions.target = targetId;
 
     const client: CDP.Client = await CDP(cdpOptions);
-    await Promise.all([
-      client.DOM.enable(),
-      client.Runtime.enable(),
-      client.Page.enable(),
-    ]);
+    await Promise.all([client.DOM.enable(), client.Runtime.enable(), client.Page.enable()]);
 
     const { targetInfo } = await client.Target.getTargetInfo();
 
@@ -229,7 +225,7 @@ export class CdpManager {
           id: attrs.id,
           className: attrs.class,
           text,
-          path: `${tag}${attrs.id ? '#' + attrs.id : ''}${attrs.class ? '.' + attrs.class.split(' ')[0] : ''}`,
+          path: `${tag}${attrs.id ? `#${attrs.id}` : ''}${attrs.class ? `.${attrs.class.split(' ')[0]}` : ''}`,
           rect,
         });
       } catch {
@@ -247,8 +243,20 @@ export class CdpManager {
     const { client } = session;
 
     const center = await this.getElementCenter(client, selector);
-    await client.Input.dispatchMouseEvent({ type: 'mousePressed', x: center.x, y: center.y, button: 'left', clickCount: 1 });
-    await client.Input.dispatchMouseEvent({ type: 'mouseReleased', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+    await client.Input.dispatchMouseEvent({
+      type: 'mousePressed',
+      x: center.x,
+      y: center.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await client.Input.dispatchMouseEvent({
+      type: 'mouseReleased',
+      x: center.x,
+      y: center.y,
+      button: 'left',
+      clickCount: 1,
+    });
     return center;
   }
 
@@ -334,12 +342,18 @@ export class CdpManager {
     return null;
   }
 
-  private async convertNode(client: CDP.Client, node: any, parentPath: string, currentDepth: number, maxDepth: number): Promise<DomNode> {
+  private async convertNode(
+    client: CDP.Client,
+    node: any,
+    parentPath: string,
+    currentDepth: number,
+    maxDepth: number,
+  ): Promise<DomNode> {
     const tag = (node.localName || node.nodeName || '').toLowerCase();
     const attrs = this.parseAttributes(node.attributes || []);
 
     // 构建路径
-    const pathPart = `${tag}${attrs.id ? '#' + attrs.id : ''}`;
+    const pathPart = `${tag}${attrs.id ? `#${attrs.id}` : ''}`;
     const path = parentPath ? `${parentPath} > ${pathPart}` : pathPart;
 
     // 获取文本内容（仅文本节点）
@@ -379,7 +393,7 @@ export class CdpManager {
       tag,
       id: attrs.id,
       className: attrs.class,
-      text: text ? (text.length > 100 ? text.slice(0, 100) + '…' : text) : undefined,
+      text: text ? (text.length > 100 ? `${text.slice(0, 100)}…` : text) : undefined,
       attributes: attrs,
       rect,
       children,

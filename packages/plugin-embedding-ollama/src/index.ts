@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 
 // ===== 插件元数据 =====
@@ -9,8 +9,19 @@ export const provides = ['embedding'];
 export const reusable = true;
 
 export const configSchema: ConfigSchema = {
-  baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
-  model: { type: 'select', label: 'Embedding 模型', default: 'nomic-embed-text', dynamicOptions: 'embedding', description: '用于生成文本向量的模型' },
+  baseUrl: {
+    type: 'string',
+    label: 'Ollama 地址',
+    default: 'http://localhost:11434',
+    description: '本地 Ollama 服务的 HTTP 地址',
+  },
+  model: {
+    type: 'select',
+    label: 'Embedding 模型',
+    default: 'nomic-embed-text',
+    dynamicOptions: 'embedding',
+    description: '用于生成文本向量的模型',
+  },
   timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 30000, description: '单次 embedding 请求超时时间' },
   retries: { type: 'number', label: '失败重试次数', default: 1, description: 'fetch 失败或 5xx 时的重试次数' },
 };

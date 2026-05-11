@@ -18,7 +18,6 @@ interface SystemConfig {
 }
 
 export function registerSystemTools(ctx: Context, config: SystemConfig): void {
-
   // ==================== system_info ====================
   ctx.registerTool({
     definition: {
@@ -26,8 +25,7 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
       function: {
         name: 'system_info',
         description:
-          '获取当前系统的详细信息，包括操作系统、CPU、内存、Node.js 版本等。' +
-          '用于了解运行环境以做出合适的决策。',
+          '获取当前系统的详细信息，包括操作系统、CPU、内存、Node.js 版本等。' + '用于了解运行环境以做出合适的决策。',
         parameters: {
           type: 'object',
           properties: {},
@@ -80,8 +78,7 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
       type: 'function',
       function: {
         name: 'env_get',
-        description:
-          '读取一个或多个环境变量的值。不会返回敏感的密钥类变量。',
+        description: '读取一个或多个环境变量的值。不会返回敏感的密钥类变量。',
         parameters: {
           type: 'object',
           properties: {
@@ -103,13 +100,20 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
     authority: 5,
     safety: 'dangerous',
     permissions: ['tool:env.get', 'system:env.read'],
-    handler: async (args) => {
+    handler: async args => {
       const names = args.names as string[] | undefined;
       const pattern = args.pattern as string | undefined;
 
       const sensitivePatterns = [
-        /key/i, /secret/i, /password/i, /token/i, /credential/i, /auth/i,
-        /private/i, /apikey/i, /api_key/i,
+        /key/i,
+        /secret/i,
+        /password/i,
+        /token/i,
+        /credential/i,
+        /auth/i,
+        /private/i,
+        /apikey/i,
+        /api_key/i,
       ];
 
       function isSensitive(name: string): boolean {
@@ -141,36 +145,39 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
   });
 
   // ==================== system_time ====================
-  if (!config.skipTimeTool) ctx.registerTool({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'system_time',
-        description: '获取当前系统时间、时区和 Unix 时间戳。',
-        parameters: {
-          type: 'object',
-          properties: {},
-          required: [],
-          additionalProperties: false,
+  if (!config.skipTimeTool)
+    ctx.registerTool({
+      definition: {
+        type: 'function',
+        function: {
+          name: 'system_time',
+          description: '获取当前系统时间、时区和 Unix 时间戳。',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: [],
+            additionalProperties: false,
+          },
         },
       },
-    },
-    handler: async () => {
-      const now = new Date();
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const offsetParts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
-        .formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? '';
-      return JSON.stringify({
-        iso: now.toISOString(),
-        local: now.toLocaleString('en-CA', { hour12: false }).replace(',', ''),
-        timezone: tz,
-        offset: offsetParts,
-        utcOffsetHours: -now.getTimezoneOffset() / 60,
-        unix: Math.floor(now.getTime() / 1000),
-        unixMs: now.getTime(),
-      });
-    },
-  });
+      handler: async () => {
+        const now = new Date();
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const offsetParts =
+          new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+            .formatToParts(now)
+            .find(p => p.type === 'timeZoneName')?.value ?? '';
+        return JSON.stringify({
+          iso: now.toISOString(),
+          local: now.toLocaleString('en-CA', { hour12: false }).replace(',', ''),
+          timezone: tz,
+          offset: offsetParts,
+          utcOffsetHours: -now.getTimezoneOffset() / 60,
+          unix: Math.floor(now.getTime() / 1000),
+          unixMs: now.getTime(),
+        });
+      },
+    });
   // ==================== cwd ====================
   ctx.registerTool({
     definition: {
