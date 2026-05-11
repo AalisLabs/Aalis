@@ -2,7 +2,7 @@
  * Linux 平台适配器
  *
  * 使用 scrot/gnome-screenshot/import (ImageMagick) 进行截图，
- * 使用 @nut-tree/nut-js 进行鼠标/键盘操控，
+ * 使用 @nut-tree-fork/nut-js 进行鼠标/键盘操控，
  * 使用 xdotool/wmctrl 进行窗口管理。
  */
 
@@ -21,7 +21,7 @@ export class LinuxAdapter implements PlatformAdapter {
 
   private async getNutJs() {
     if (!this.nutjs) {
-      this.nutjs = await import('@nut-tree/nut-js');
+      this.nutjs = await import('@nut-tree-fork/nut-js');
     }
     return this.nutjs;
   }
