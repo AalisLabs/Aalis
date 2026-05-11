@@ -155,3 +155,15 @@ declare module '@aalis/core' {
     'tool:execute': [info: ToolExecuteMessage];
   }
 }
+
+export type { ToStorageUriOptions } from './utils.js';
+// ===== 可复用 runtime 工具函数 =====
+// 见 utils.ts —— 用于工具实现侧共享 storage URI 规范化与 SSRF 判定，
+// 避免在多个工具插件里重复实现。
+export {
+  isPrivateHost,
+  isPrivateIp,
+  isPrivateIpv4,
+  isPrivateIpv6,
+  toStorageUri,
+} from './utils.js';

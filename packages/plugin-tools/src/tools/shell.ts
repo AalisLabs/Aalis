@@ -11,9 +11,9 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { platform } from 'node:os';
-import path from 'node:path';
 import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { toStorageUri } from '@aalis/plugin-tools-api';
 
 interface ShellConfig {
   cwdUri: string;
@@ -68,22 +68,14 @@ function truncateOutput(output: string, maxSize: number): string {
   return `${truncated}\n...[输出截断，超过 ${maxSize} 字节]`;
 }
 
-function toStorageUri(input: string | undefined, fallback: string): string {
-  const value = (input || fallback).trim();
-  if (!value) return 'workspace:/';
-  if (/^[a-zA-Z]:[\\/]/.test(value))
-    throw new Error('cwd 必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
-  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
-  if (path.isAbsolute(value))
-    throw new Error('cwd 必须使用 storage URI（如 workspace:/project）或相对 workspace 的路径，不能使用宿主机绝对路径');
-  return `workspace:/${value.replace(/^\/+/, '')}`;
-}
-
 async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: string; localPath: string }> {
   if (!config.storage?.resolveLocalPath) {
     throw new Error('Shell 工具需要支持 local-path 能力的 storage 服务');
   }
-  const uri = toStorageUri(typeof cwdArg === 'string' ? cwdArg : undefined, config.cwdUri);
+  const uri = toStorageUri(typeof cwdArg === 'string' ? cwdArg : undefined, {
+    fallback: config.cwdUri,
+    errorContext: 'cwd',
+  });
   return { uri, localPath: await config.storage.resolveLocalPath(uri, 'read') };
 }
 
