@@ -29,7 +29,7 @@ export function apply(ctx: Context): void {
   // PlatformRouter 同时实现 PlatformService（聚合视图）和 PlatformAdapter（按 sessionId 路由），
   // 直接以同名 facade 注册。consumer 按需以两种接口之一获取。
   const router = new PlatformRouter(ctx, ctx.logger.child('platform-router'));
-  ctx.provide('platform', router, { capabilities: [PlatformCapabilities.Router] });
+  ctx.provide('platform', router, { capabilities: [PlatformCapabilities.Router], priority: 100 });
 }
 
 export { PlatformRouter } from './router.js';
