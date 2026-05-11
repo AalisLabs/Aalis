@@ -1,6 +1,5 @@
 import type { Context, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type {  } from '@aalis/core';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 
 // ===== InMemoryFallbackService 实现 =====

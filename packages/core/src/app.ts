@@ -132,7 +132,7 @@ export class App {
       }
     });
 
-    // 8. 监控核心必需服务，卸载时自动恢复
+    // 6. 监控核心必需服务，卸载时自动恢复
     this.ctx.on('service:unregistered', async (name) => {
       if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;
@@ -170,12 +170,9 @@ export class App {
    * 规则:
    * - 跳过 package.json 中标记 `"aalis": { "core": true }` 的包
    * - 其余包全部视为插件，通过 dynamic import() 加载
-    * - commands、tools 等业务服务由插件提供；Context 会缓冲相关注册直到服务就绪
+   * - commands、tools 等业务服务由插件提供；Context 会缓冲相关注册直到服务就绪
    */
   async autoLoadPlugins(packagesDir?: string): Promise<void> {
-    // 0. 加载内置插件（必须在外部插件之前）
-    await this.loadBuiltinPlugins();
-
     const dir = packagesDir ?? this.packagesDir;
     const discovered = await this.discoverPlugins(dir);
     this.logger.info(`发现 ${discovered.length} 个插件`);
@@ -218,14 +215,6 @@ export class App {
 
     // 将插件默认配置中缺失的字段同步到配置文件（内部已按需保存）
     this.syncPluginDefaults();
-  }
-
-  /**
-   * 内置插件加载点（保留用于未来可能的核心内置逻辑）。
-   * 所有业务插件（commands、authority、tools 等）均通过 packages/ 目录自动加载。
-   */
-  private async loadBuiltinPlugins(): Promise<void> {
-    // 当前无内置插件，所有功能由外部插件提供
   }
 
   /**
