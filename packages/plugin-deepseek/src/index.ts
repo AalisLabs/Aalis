@@ -42,6 +42,7 @@ function parseApiError(provider: string, status: number, body: string): string {
 
 export const name = '@aalis/plugin-deepseek';
 export const displayName = 'DeepSeek';
+export const subsystem = 'llm';
 export const provides = ['llm'];
 export const reusable = true;
 

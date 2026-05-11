@@ -24,6 +24,7 @@ import { OneBotV12 } from './v12.js';
 
 export const name = '@aalis/plugin-adapter-onebot';
 export const displayName = 'OneBot 适配器';
+export const subsystem = 'platform';
 export const inject = {
   optional: ['llm', 'commands', 'message-archive', 'persona', 'flow-control'],
 };

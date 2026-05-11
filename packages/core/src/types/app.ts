@@ -30,6 +30,8 @@ export interface PluginStatusEntry {
   name: string;
   instanceId: string;
   displayName?: string;
+  /** 子系统归属（manifest 声明），用于 WebUI 分组展示 */
+  subsystem?: string;
   state: PluginState;
   provides?: string[];
   core?: boolean;

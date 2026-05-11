@@ -5,6 +5,7 @@ import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 
 export const name = '@aalis/plugin-embedding-openai';
 export const displayName = 'OpenAI Embedding';
+export const subsystem = 'embedding';
 export const provides = ['embedding'];
 export const reusable = true;
 

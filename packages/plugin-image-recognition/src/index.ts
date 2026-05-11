@@ -52,6 +52,7 @@ function findImageDescriptionTokens(messages: Message[], imageRef: string): stri
 
 export const name = '@aalis/plugin-image-recognition';
 export const displayName = '图像识别';
+export const subsystem = 'message';
 export const provides = ['image-recognition'];
 export const inject = {
   optional: ['llm', 'agent', 'memory'],

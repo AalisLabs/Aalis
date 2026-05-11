@@ -11,6 +11,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-office';
 export const displayName = 'Office 文档工具';
+export const subsystem = 'tools';
 
 export const configSchema: ConfigSchema = {
   outputDir: {

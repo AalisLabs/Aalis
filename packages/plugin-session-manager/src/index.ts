@@ -24,6 +24,7 @@ import { SessionManagerCapabilities } from './types.js';
 
 export const name = '@aalis/plugin-session-manager';
 export const displayName = '会话管理';
+export const subsystem = 'session';
 export const inject = {
   required: ['memory'] as const,
   optional: ['agent', 'platform', 'persona', 'llm'] as const,

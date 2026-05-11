@@ -9,6 +9,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-tool-code-runner';
 export const displayName = '代码执行器';
+export const subsystem = 'tools';
 export const inject = {
   required: [{ service: 'storage', capabilities: ['local-path'] }],
 };

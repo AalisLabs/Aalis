@@ -35,6 +35,7 @@ interface PageSlot {
 
 export const name = '@aalis/plugin-tool-browser';
 export const displayName = '浏览器工具';
+export const subsystem = 'tools';
 
 // tools 服务由核心提供，无需声明依赖
 

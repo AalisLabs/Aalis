@@ -17,6 +17,7 @@ export { PlatformCapabilities } from './types.js';
 
 export const name = '@aalis/plugin-platform';
 export const displayName = '平台管理';
+export const subsystem = 'core';
 // 同名 facade：以 'platform' 服务名注册聚合层，capability='router'
 export const provides = ['platform'];
 

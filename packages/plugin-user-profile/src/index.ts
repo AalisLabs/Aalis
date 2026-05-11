@@ -21,6 +21,7 @@ import '@aalis/plugin-commands-api';
 
 export const name = '@aalis/plugin-user-profile';
 export const displayName = '用户事实档案';
+export const subsystem = 'memory';
 export const inject = {
   required: ['memory', 'llm'],
 };

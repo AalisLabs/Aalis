@@ -8,6 +8,7 @@ import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api
 
 export const name = '@aalis/plugin-gateway';
 export const displayName = '消息流网关';
+export const subsystem = 'core';
 export const provides = ['gateway'];
 
 // gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。

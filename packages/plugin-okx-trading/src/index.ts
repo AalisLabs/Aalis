@@ -13,6 +13,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-okx-trading';
 export const displayName = 'OKX 交易';
+export const subsystem = 'external';
 export const inject = { optional: ['tools'] };
 
 export const configSchema: ConfigSchema = {

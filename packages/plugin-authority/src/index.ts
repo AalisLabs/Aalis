@@ -273,6 +273,7 @@ class AuthorityManager implements AuthorityService {
 
 export const name = '@aalis/plugin-authority';
 export const displayName = '权限管理';
+export const subsystem = 'authority';
 export const provides = ['authority'];
 export const inject = {
   optional: ['commands', 'tools'],

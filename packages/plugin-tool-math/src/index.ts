@@ -15,6 +15,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-tool-math';
 export const displayName = '数学工具';
+export const subsystem = 'tools';
 
 export const configSchema: ConfigSchema = {
   evaluate: {
