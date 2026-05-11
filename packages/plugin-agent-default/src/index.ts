@@ -8,8 +8,6 @@ import type {
   ToolCall,
   ToolDefinition,
   ConfigSchema,
-  PreprocessorFn,
-  PreprocessorInfo,
   PluginGroupInfo,
   App,
   ChatRequest,
@@ -21,6 +19,8 @@ import type {
   ContentSegment,
 } from '@aalis/core';
 import type { Logger } from '@aalis/core';
+import type { PreprocessorFn, PreprocessorInfo } from './types.js';
+import './types.js'; // 触发 declare module 合并 AgentService 接口
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager';
