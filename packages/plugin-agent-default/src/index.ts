@@ -11,7 +11,8 @@ import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-person
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager';
 import type { PlatformService } from '@aalis/plugin-platform';
-import { getSenderLabel, getMessageName, parseModelRef } from '@aalis/core';
+import { getSenderLabel, getMessageName } from '@aalis/plugin-message-api';
+import { parseModelRef } from '@aalis/plugin-llm-api';
 import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
 import '@aalis/plugin-commands-api';
 

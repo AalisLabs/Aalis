@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import type { Context, ConfigManager, Logger, App } from '@aalis/core';
-import type { ExecutionGuardContext } from '@aalis/plugin-authority-api';
+import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api';
@@ -21,6 +21,11 @@ class AuthorityManager implements AuthorityService {
   private confirmHandlers = new Map<string, DangerousConfirmHandler>();
   private dangerousGrants = new Map<string, DangerousGrant>();
   private grantSeq = 0;
+  /**
+   * dangerous 策略的开启时间（运行时状态，不序列化到 config）。
+   * 进程重启后重置为 null，对限时策略而言等同于「重启即失效」。
+   */
+  private dangerousEnabledAt: number | null = null;
 
   constructor(config: ConfigManager, logger: Logger) {
     this.config = config;
@@ -35,7 +40,7 @@ class AuthorityManager implements AuthorityService {
       return this.config.get('ownerAuthority') ?? 5;
     }
     const owners = this.config.get('owners') ?? [];
-    if (owners.some((o: { platform: string; userId: string }) => o.platform === platform && o.userId === userId)) {
+    if (owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId)) {
       return this.config.get('ownerAuthority') ?? 5;
     }
     const key = `${platform}:${userId}`;
@@ -53,16 +58,26 @@ class AuthorityManager implements AuthorityService {
   isDangerousAllowed(name: string, permissions: string[] = []): boolean {
     const policy = this.config.get('dangerousPolicy');
     if (!policy?.allow || policy.allow.length === 0) return false;
-    // 有限时策略时检查过期；缺少 enabledAt 视为已过期（重启后自动失效）
+    // 有限时策略时检查过期；未记录 enabledAt 视为未启用（重启后自动失效）
     if (policy.duration && policy.duration > 0) {
-      if (!policy.enabledAt) return false;
-      const elapsed = (Date.now() - policy.enabledAt) / 1000;
+      if (!this.dangerousEnabledAt) return false;
+      const elapsed = (Date.now() - this.dangerousEnabledAt) / 1000;
       if (elapsed > policy.duration) {
         this.logger.info('dangerous 白名单已过期');
         return false;
       }
     }
     return this.matchAny(policy.allow, [name, ...permissions]);
+  }
+
+  /** 刷新 dangerous 策略启动时间戳（运行时状态） */
+  markDangerousEnabled(): void {
+    this.dangerousEnabledAt = Date.now();
+  }
+
+  /** 清除 dangerous 策略启动时间戳 */
+  clearDangerousEnabled(): void {
+    this.dangerousEnabledAt = null;
   }
 
   setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void {
@@ -192,7 +207,7 @@ class AuthorityManager implements AuthorityService {
     if (!userId) return false;
     if ((platform === 'webui' || platform === 'cli') && userId === 'console') return true;
     const owners = this.config.get('owners') ?? [];
-    return owners.some((o: { platform: string; userId: string }) => o.platform === platform && o.userId === userId);
+    return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
   }
 
   listUsers(): Array<{ platform: string; userId: string; authority: number }> {
@@ -454,12 +469,13 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
     const app = ctx.getService<App>('app');
     if (!app) throw new Error('App 不可用');
-    // 设置激活时间戳，使 duration 限时机制生效
-    if (Array.isArray(policy.allow) && policy.allow.length > 0) {
-      policy.enabledAt = Date.now();
-    }
     ctx.config.set('dangerousPolicy', policy);
     app.saveConfig();
+    // 启用限时策略时，标记运行时启动时间戳（不写入 config）
+    if (Array.isArray(policy.allow) && policy.allow.length > 0) {
+      const auth = ctx.getService<AuthorityService>('authority');
+      (auth as unknown as { markDangerousEnabled?: () => void } | undefined)?.markDangerousEnabled?.();
+    }
     return { message: '高危策略已更新' };
   },
 
