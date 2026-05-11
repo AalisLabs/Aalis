@@ -1,20 +1,62 @@
-import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
-// ===== 工具服务接口 =====
+// ===== 工具服务接口与契约类型 =====
+//
+// 本包提供工具系统的全部"非实现"契约：
+// - 工具/分组数据结构（RegisteredTool / ToolGroupInfo / ToolSummary）
+// - 服务接口（ToolService）
+// - Context 便捷方法的类型增强（ctx.registerTool / ctx.registerToolGroup）
+//
+// 实现见 @aalis/plugin-tools-system。
 
-import type {
-  RegisteredTool,
-  SafetyLevel,
-  ToolCallContext,
-  ToolDefinition,
-  ToolGroupInfo,
-  ToolSummary,
-} from '@aalis/core';
+import type { Context, PermissionId, SafetyLevel, ToolCallContext, ToolDefinition } from '@aalis/core';
+import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+
+/**
+ * 已注册的工具：函数声明 + 处理器 + 权限/安全/分组元信息。
+ */
+export interface RegisteredTool {
+  definition: ToolDefinition;
+  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+  pluginName: string;
+  /** 最低权限等级 (默认 1) */
+  authority?: number;
+  /** 安全级别 (默认 'safe') */
+  safety?: SafetyLevel;
+  /** 静态权限标识，用于透明展示与策略匹配 */
+  permissions?: PermissionId[];
+  /** 根据工具参数解析动态权限，如 storage:workspace:write */
+  resolvePermissions?: (
+    args: Record<string, unknown>,
+    ctx: ToolCallContext,
+  ) => PermissionId[] | Promise<PermissionId[]>;
+  /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
+  groups?: string[];
+}
+
+/** 工具摘要（不含 handler，用于搜索展示） */
+export interface ToolSummary {
+  name: string;
+  description: string;
+  groups?: string[];
+  permissions?: PermissionId[];
+}
+
+/** 工具分组信息 */
+export interface ToolGroupInfo {
+  /** 分组标识（如 'system'、'onebot'、'search'） */
+  name: string;
+  /** 显示名称（如 '系统工具'、'OneBot 工具'） */
+  label: string;
+  /** 分组描述 */
+  description?: string;
+  /** 注册该分组的插件 */
+  pluginName: string;
+}
 
 /**
  * 工具服务接口
  *
  * 管理 AI 可调用的工具的注册、查询、执行。
- * 由 plugin-agent-tools 创建 ToolRegistry 并注册为服务。
+ * 由 plugin-tools-system 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
@@ -50,3 +92,31 @@ export interface ToolService {
   /** 获取所有已注册的工具分组 */
   getGroups(): ToolGroupInfo[];
 }
+
+// ===== Context 便捷方法增强 =====
+//
+// 实现由 @aalis/plugin-tools-system 在激活时通过 `Context.extend(...)` 注入到
+// `Context.prototype`，本声明合并提供编译期类型签名。
+declare module '@aalis/core' {
+  interface Context {
+    /**
+     * 注册 AI 工具的便捷方法。
+     *
+     * 若 tools 服务尚不可用，会通过 `whenService` 自动延迟到服务就绪后注册。
+     * 返回的 dispose 函数：未刷入前调用即取消缓冲；已刷入则从服务取消注册。
+     *
+     * @requires plugin-tools-system 已加载（提供该方法的运行时实现）
+     */
+    registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
+
+    /**
+     * 注册工具分组的便捷方法。
+     * 行为同 `registerTool`：服务未就绪时自动延迟。
+     *
+     * @requires plugin-tools-system 已加载
+     */
+    registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
+  }
+}
+// 抑制"未使用"警告：Context 在 declare module 块中被引用
+export type _ContextExtended = Context;

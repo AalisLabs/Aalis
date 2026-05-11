@@ -4,6 +4,7 @@ import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 import { prefixSender } from '@aalis/core';
 import '@aalis/plugin-agent-api';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

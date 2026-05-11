@@ -10,9 +10,10 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "yaml": "^2.7.0",
+    "@aalis/plugin-agent-api": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*"
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

@@ -2,6 +2,7 @@ import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from './types.js';
 import { WebSearchCapabilities } from './types.js';
+import '@aalis/plugin-tools-api';
 
 export type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchCapability, WebSearchCapabilityRegistry } from './types.js';
 export { WebSearchCapabilities } from './types.js';

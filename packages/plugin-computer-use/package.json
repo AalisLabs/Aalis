@@ -16,6 +16,7 @@
   ],
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*",
     "@nut-tree/nut-js": "^4.2.0",
     "chrome-remote-interface": "^0.34.0",
     "clipboardy": "^4.0.0"

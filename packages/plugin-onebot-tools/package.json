@@ -10,9 +10,10 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-message-archive": "workspace:*",
     "@aalis/plugin-image-recognition": "workspace:*",
-    "@aalis/plugin-platform": "workspace:*"
+    "@aalis/plugin-message-archive": "workspace:*",
+    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
