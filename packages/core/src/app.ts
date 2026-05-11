@@ -123,15 +123,7 @@ export class App {
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config', 'market'] });
     this.ctx.provide('plugins', this.plugins, { capabilities: ['plugin-mgmt'] });
 
-    // 5. 新服务注册时自动应用配置文件中的服务偏好
-    this.ctx.on('service:registered', svcName => {
-      const pref = config.getServicePreferences()[svcName];
-      if (pref) {
-        this.ctx.preferService(svcName, pref);
-      }
-    });
-
-    // 6. 监控核心必需服务，卸载时自动恢复
+    // 5. 监控核心必需服务，卸载时自动恢复
     this.ctx.on('service:unregistered', async name => {
       if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;
@@ -561,12 +553,6 @@ export class App {
   async start(): Promise<void> {
     this.logger.info('正在启动...');
     await this.ctx.emit('app:starting');
-
-    // 应用配置文件中的服务偏好
-    const prefs = this.ctx.config.getServicePreferences();
-    for (const [service, contextId] of Object.entries(prefs)) {
-      this.ctx.preferService(service, contextId);
-    }
 
     // 检查核心必需服务，缺失时自动寻找并启动提供者
     await this.ensureRequiredServices();
