@@ -1,6 +1,6 @@
 import { Context } from './context.js';
 import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, ConfigSchema, ExtendDeclaration } from './types/index.js';
+import type { InjectDeclaration, ConfigSchema } from './types/index.js';
 import type { Logger } from './logger.js';
 
 // ----- 插件定义格式 -----
@@ -23,8 +23,6 @@ export interface PluginModule {
    * 适合多实例的插件：LLM adapters、embedding adapters、platform adapters、memory backends。
    */
   reusable?: boolean;
-  /** 声明该插件对 core 的扩展（新增事件、钩子、mixin 方法） */
-  extends?: ExtendDeclaration;
   /** 配置 Schema，用于前端自动生成配置表单 */
   configSchema?: ConfigSchema;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
@@ -225,7 +223,7 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; instanceId: string; displayName?: string; state: PluginState; provides?: string[]; core?: boolean; reusable?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: unknown[]; webuiHandlerNames?: string[]; error?: string }> {
+  getStatus(): Array<{ name: string; instanceId: string; displayName?: string; state: PluginState; provides?: string[]; core?: boolean; reusable?: boolean; extends?: unknown; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: unknown[]; webuiHandlerNames?: string[]; error?: string }> {
     return [...this.plugins.entries()].map(([, entry]) => ({
       name: entry.module.name,
       instanceId: entry.instanceId,
@@ -234,7 +232,7 @@ export class PluginManager {
       provides: entry.module.provides,
       core: entry.module.core,
       reusable: entry.module.reusable,
-      extends: entry.module.extends,
+      extends: (entry.module as { extends?: unknown }).extends,
       config: entry.config,
       configSchema: entry.module.configSchema,
       defaultConfig: entry.module.defaultConfig,

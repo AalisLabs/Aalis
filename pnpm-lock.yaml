@@ -183,9 +183,9 @@ importers:
       '@aalis/plugin-platform':
         specifier: workspace:*
         version: link:../plugin-platform
-      '@aalis/plugin-session-manager':
+      '@aalis/plugin-session-manager-api':
         specifier: workspace:*
-        version: link:../plugin-session-manager
+        version: link:../plugin-session-manager-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -945,9 +945,6 @@ importers:
       '@aalis/plugin-platform':
         specifier: workspace:*
         version: link:../plugin-platform
-      '@aalis/plugin-session-manager':
-        specifier: workspace:*
-        version: link:../plugin-session-manager
       yaml:
         specifier: ^2.7.0
         version: 2.8.3
@@ -1033,12 +1030,28 @@ importers:
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
+      '@aalis/plugin-session-manager-api':
+        specifier: workspace:*
+        version: link:../plugin-session-manager-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-session-manager-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1064,9 +1077,9 @@ importers:
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
-      '@aalis/plugin-session-manager':
+      '@aalis/plugin-session-manager-api':
         specifier: workspace:*
-        version: link:../plugin-session-manager
+        version: link:../plugin-session-manager-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1172,9 +1185,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
-      '@aalis/plugin-session-manager':
+      '@aalis/plugin-session-manager-api':
         specifier: workspace:*
-        version: link:../plugin-session-manager
+        version: link:../plugin-session-manager-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1514,9 +1527,9 @@ importers:
       '@aalis/plugin-platform':
         specifier: workspace:*
         version: link:../plugin-platform
-      '@aalis/plugin-session-manager':
+      '@aalis/plugin-session-manager-api':
         specifier: workspace:*
-        version: link:../plugin-session-manager
+        version: link:../plugin-session-manager-api
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api

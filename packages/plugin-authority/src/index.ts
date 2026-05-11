@@ -4,7 +4,6 @@ import type { Context, ConfigManager, Logger, App } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
-import type {} from '@aalis/plugin-webui-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant } from './types.js';
 
