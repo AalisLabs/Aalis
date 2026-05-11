@@ -1,15 +1,15 @@
-import { EventBus } from './events.js';
-import { ServiceContainer } from './service.js';
-import { HookRegistry } from './hooks.js';
-import { Context } from './context.js';
-import { ConfigManager } from './config.js';
-import { PluginManager, parseInstanceId, type PluginModule } from './plugin.js';
-import { Logger, type LogLevel } from './logger.js';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFileSync, existsSync } from 'node:fs';
-import { execFile, spawn } from 'node:child_process';
+import { ConfigManager } from './config.js';
+import { Context } from './context.js';
+import { EventBus } from './events.js';
+import { HookRegistry } from './hooks.js';
+import { Logger, type LogLevel } from './logger.js';
+import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
+import { ServiceContainer } from './service.js';
 
 // ----- 应用配置选项 -----
 
@@ -94,9 +94,7 @@ export class App {
 
   constructor(options?: AppOptions | string) {
     // 兼容旧签名: new App('path/to/config.yaml')
-    const opts: AppOptions = typeof options === 'string'
-      ? { configPath: options }
-      : options ?? {};
+    const opts: AppOptions = typeof options === 'string' ? { configPath: options } : (options ?? {});
 
     // 1. 核心基础设施（允许外部注入，未提供则自动创建）
     const config = opts.config ?? new ConfigManager(opts.configPath);
@@ -125,7 +123,7 @@ export class App {
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
 
     // 5. 新服务注册时自动应用配置文件中的服务偏好
-    this.ctx.on('service:registered', (svcName) => {
+    this.ctx.on('service:registered', svcName => {
       const pref = config.getServicePreferences()[svcName];
       if (pref) {
         this.ctx.preferService(svcName, pref);
@@ -133,7 +131,7 @@ export class App {
     });
 
     // 6. 监控核心必需服务，卸载时自动恢复
-    this.ctx.on('service:unregistered', async (name) => {
+    this.ctx.on('service:unregistered', async name => {
       if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;
       this.logger.warn(`必需服务 "${name}" 被卸载，尝试自动恢复...`);
@@ -182,7 +180,7 @@ export class App {
 
     for (const pkg of discovered) {
       try {
-        const mod = await import(pathToFileURL(pkg.entry).href) as PluginModule;
+        const mod = (await import(pathToFileURL(pkg.entry).href)) as PluginModule;
         loadedModules.set(mod.name, mod);
         await this.plugin(mod);
       } catch (err) {
@@ -255,10 +253,7 @@ export class App {
    * 根据 configSchema 移除多余字段
    * SchemaGroup (含 fields) 对应嵌套对象，SchemaArray (type=array) 直接保留，SchemaField 对应普通字段
    */
-  private removeExtraFields(
-    config: Record<string, unknown>,
-    schema: Record<string, unknown>,
-  ): Record<string, unknown> {
+  private removeExtraFields(config: Record<string, unknown>, schema: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(config)) {
       if (!(key in schema)) continue; // 多余字段，丢弃
@@ -266,9 +261,14 @@ export class App {
       // SchemaArray: type === 'array'，数组内容由用户管理，直接保留
       if (schemaDef.type === 'array') {
         result[key] = value;
-      // SchemaGroup: 有 fields 子对象，递归清理
-      } else if (schemaDef.fields && typeof schemaDef.fields === 'object'
-        && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        // SchemaGroup: 有 fields 子对象，递归清理
+      } else if (
+        schemaDef.fields &&
+        typeof schemaDef.fields === 'object' &&
+        value !== null &&
+        typeof value === 'object' &&
+        !Array.isArray(value)
+      ) {
         result[key] = this.removeExtraFields(
           value as Record<string, unknown>,
           schemaDef.fields as Record<string, unknown>,
@@ -325,9 +325,11 @@ export class App {
         // 用入口文件 mtime 做缓存键：未修改则走 ESM 缓存，改了的才重载
         let cacheKey = '';
         try {
-          cacheKey = '?t=' + (await stat(pkg.entry)).mtimeMs;
-        } catch { /* stat 失败时用空 key，让 import 自己报错 */ }
-        const mod = await import(pathToFileURL(pkg.entry).href + cacheKey) as PluginModule;
+          cacheKey = `?t=${(await stat(pkg.entry)).mtimeMs}`;
+        } catch {
+          /* stat 失败时用空 key，让 import 自己报错 */
+        }
+        const mod = (await import(pathToFileURL(pkg.entry).href + cacheKey)) as PluginModule;
         await this.plugin(mod);
         loaded.push(pkg.name);
         this.logger.info(`热加载插件: ${pkg.name}`);
@@ -362,9 +364,7 @@ export class App {
       // npm pack 产出的文件名格式: scope-name-version.tgz
       // 找到 tgz 文件
       const dirents = await readdir(this.packagesDir);
-      const tgzFile = dirents.find(f =>
-        f.endsWith('.tgz') && f.includes(dirName),
-      );
+      const tgzFile = dirents.find(f => f.endsWith('.tgz') && f.includes(dirName));
       if (!tgzFile) {
         return { ok: false, message: '下载包失败: 未找到 tgz 文件' };
       }
@@ -432,9 +432,7 @@ export class App {
     let entries: string[];
     try {
       const dirents = await readdir(dir, { withFileTypes: true });
-      entries = dirents
-        .filter(d => d.isDirectory() || d.isSymbolicLink())
-        .map(d => d.name);
+      entries = dirents.filter(d => d.isDirectory() || d.isSymbolicLink()).map(d => d.name);
     } catch {
       this.logger.warn(`无法读取 packages 目录: ${dir}`);
       return [];
@@ -453,21 +451,21 @@ export class App {
       }
 
       // 跳过标记为 core 的包
-      const aalisMeta = pkgJson['aalis'] as Record<string, unknown> | undefined;
+      const aalisMeta = pkgJson.aalis as Record<string, unknown> | undefined;
       if (aalisMeta?.core) {
-        this.logger.debug(`跳过核心包: ${pkgJson['name']}`);
+        this.logger.debug(`跳过核心包: ${pkgJson.name}`);
         continue;
       }
 
       // 跳过标记为 client 的前端包（非 Node.js 插件）
       if (aalisMeta?.client) {
-        this.logger.debug(`跳过前端包: ${pkgJson['name']}`);
+        this.logger.debug(`跳过前端包: ${pkgJson.name}`);
         continue;
       }
 
-      const main = (pkgJson['main'] as string) || 'dist/index.js';
+      const main = (pkgJson.main as string) || 'dist/index.js';
       discovered.push({
-        name: pkgJson['name'] as string,
+        name: pkgJson.name as string,
         dir: resolve(dir, entry),
         entry: resolve(dir, entry, main),
       });
@@ -478,14 +476,19 @@ export class App {
 
   private exec(cmd: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile(cmd, args, {
-        cwd: cwd ?? this.packagesDir,
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
-      }, (err, stdout, stderr) => {
-        if (err) reject(new Error(stderr || err.message));
-        else resolve(stdout);
-      });
+      execFile(
+        cmd,
+        args,
+        {
+          cwd: cwd ?? this.packagesDir,
+          timeout: 120_000,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+        (err, stdout, stderr) => {
+          if (err) reject(new Error(stderr || err.message));
+          else resolve(stdout);
+        },
+      );
     });
   }
 
@@ -559,29 +562,32 @@ export class App {
    * 延迟 500ms 执行，以便调用方能先返回响应
    */
   restart(): void {
-    this.ctx.emit('restarting').then(() => {
-      setTimeout(async () => {
-        await this.stop();
-        const scriptFile = process.argv[1];
-        let exec: string;
-        let args: string[];
-        if (scriptFile?.endsWith('.ts')) {
-          const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
-          exec = existsSync(tsxBin) ? tsxBin : 'tsx';
-          args = process.argv.slice(1);
-        } else {
-          [exec, ...args] = process.argv;
-        }
-        const child = spawn(exec, args, {
-          cwd: process.cwd(),
-          stdio: 'inherit',
-          detached: true,
-          env: process.env,
-        });
-        child.unref();
-        process.exit(0);
-      }, 500);
-    }).catch(() => {});
+    this.ctx
+      .emit('restarting')
+      .then(() => {
+        setTimeout(async () => {
+          await this.stop();
+          const scriptFile = process.argv[1];
+          let exec: string;
+          let args: string[];
+          if (scriptFile?.endsWith('.ts')) {
+            const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
+            exec = existsSync(tsxBin) ? tsxBin : 'tsx';
+            args = process.argv.slice(1);
+          } else {
+            [exec, ...args] = process.argv;
+          }
+          const child = spawn(exec, args, {
+            cwd: process.cwd(),
+            stdio: 'inherit',
+            detached: true,
+            env: process.env,
+          });
+          child.unref();
+          process.exit(0);
+        }, 500);
+      })
+      .catch(() => {});
   }
 
   /**
@@ -615,5 +621,4 @@ export class App {
       }
     }
   }
-
 }

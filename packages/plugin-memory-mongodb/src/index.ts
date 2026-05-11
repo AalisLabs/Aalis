@@ -1,7 +1,7 @@
-import { MongoClient, type Collection, type Db } from 'mongodb';
-import type { Context, Message, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
+import { type Collection, type Db, MongoClient } from 'mongodb';
 
 // ===== 插件元数据 =====
 
@@ -11,8 +11,20 @@ export const provides = ['memory'];
 export const reusable = true;
 
 export const configSchema: ConfigSchema = {
-  uri: { type: 'string', label: 'MongoDB URI', required: true, default: 'mongodb://localhost:27017', description: 'MongoDB 连接字符串' },
-  database: { type: 'string', label: '数据库名', required: true, default: 'aalis', description: '存储消息历史的数据库' },
+  uri: {
+    type: 'string',
+    label: 'MongoDB URI',
+    required: true,
+    default: 'mongodb://localhost:27017',
+    description: 'MongoDB 连接字符串',
+  },
+  database: {
+    type: 'string',
+    label: '数据库名',
+    required: true,
+    default: 'aalis',
+    description: '存储消息历史的数据库',
+  },
   collection: { type: 'string', label: '集合名', default: 'messages', description: '消息集合名称' },
 };
 
@@ -98,17 +110,13 @@ class MongoMemoryService implements MemoryService {
       name: doc.name,
       timestamp: doc.timestamp,
       reasoningContent: doc.reasoningContent ?? undefined,
-      segments: doc.segments as Message["segments"],
+      segments: doc.segments as Message['segments'],
       metadata: doc.metadata,
     }));
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
-    const docs = await this.collection
-      .find({ sessionId })
-      .sort({ timestamp: -1 })
-      .limit(limit)
-      .toArray();
+    const docs = await this.collection.find({ sessionId }).sort({ timestamp: -1 }).limit(limit).toArray();
     docs.reverse();
 
     return docs.map(doc => ({
@@ -119,7 +127,7 @@ class MongoMemoryService implements MemoryService {
       name: doc.name,
       timestamp: doc.timestamp,
       reasoningContent: doc.reasoningContent ?? undefined,
-      segments: doc.segments as Message["segments"],
+      segments: doc.segments as Message['segments'],
       metadata: doc.metadata,
     }));
   }
@@ -128,7 +136,12 @@ class MongoMemoryService implements MemoryService {
     await this.collection.deleteMany({ sessionId });
   }
 
-  async getMessagesBySessionRange(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]> {
+  async getMessagesBySessionRange(
+    sessionId: string,
+    fromTs: number,
+    toTs: number,
+    roles?: Array<Message['role']>,
+  ): Promise<Message[]> {
     const filter: Record<string, unknown> = { sessionId, timestamp: { $gte: fromTs, $lte: toTs } };
     if (roles && roles.length > 0) filter.role = { $in: roles };
     const docs = await this.collection.find(filter).sort({ timestamp: 1 }).limit(500).toArray();
@@ -140,7 +153,7 @@ class MongoMemoryService implements MemoryService {
       name: d.name,
       timestamp: d.timestamp,
       reasoningContent: d.reasoningContent ?? undefined,
-      segments: d.segments as Message["segments"],
+      segments: d.segments as Message['segments'],
       metadata: d.metadata,
     }));
   }
@@ -170,11 +183,7 @@ class MongoMemoryService implements MemoryService {
   // ----- 结构化元数据存储 -----
 
   async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
-    await this.meta.updateOne(
-      { namespace, key },
-      { $set: { data, updatedAt: new Date() } },
-      { upsert: true },
-    );
+    await this.meta.updateOne({ namespace, key }, { $set: { data, updatedAt: new Date() } }, { upsert: true });
   }
 
   async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
@@ -202,7 +211,7 @@ class MongoMemoryService implements MemoryService {
 
     let count = 0;
     for (const doc of docs) {
-      if (doc.content && doc.content.includes(oldText)) {
+      if (doc.content?.includes(oldText)) {
         const updated = doc.content.replace(oldText, newText);
         await this.collection.updateOne({ _id: doc._id }, { $set: { content: updated } });
         count++;

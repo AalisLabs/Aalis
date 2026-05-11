@@ -1,9 +1,9 @@
-import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { SessionManagerService, SessionInfo } from '@aalis/plugin-session-manager-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { SessionInfo, SessionManagerService } from '@aalis/plugin-session-manager-api';
+import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
@@ -67,7 +67,10 @@ interface SessionHistoryResult {
 }
 
 interface SessionHistoryService {
-  getHistory(options: SessionHistoryOptions, callCtx: ToolCallContext): Promise<SessionHistoryResult | { error: string }>;
+  getHistory(
+    options: SessionHistoryOptions,
+    callCtx: ToolCallContext,
+  ): Promise<SessionHistoryResult | { error: string }>;
 }
 
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
@@ -92,11 +95,12 @@ function parsePlatform(sessionId: string): string {
 }
 
 function formatHistoryMessage(message: Message, index: number): Record<string, unknown> {
-  const text = typeof message.content === 'string'
-    ? message.content
-    : message.content == null
-      ? ''
-      : JSON.stringify(message.content);
+  const text =
+    typeof message.content === 'string'
+      ? message.content
+      : message.content == null
+        ? ''
+        : JSON.stringify(message.content);
   return {
     index,
     role: message.role,
@@ -120,7 +124,10 @@ function canReadSessionHistory(
   const current = currentPlatform || parsePlatform(currentSessionId);
   const target = parsePlatform(targetSessionId);
   if (current && target && current === target) return { ok: true };
-  return { ok: false, reason: `当前配置仅允许读取同平台会话历史（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）` };
+  return {
+    ok: false,
+    reason: `当前配置仅允许读取同平台会话历史（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`,
+  };
 }
 
 // ===== 插件入口 =====
@@ -194,7 +201,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return JSON.stringify({ error: '子任务中不能再创建子任务。请直接完成当前任务，由父会话负责任务拆分和协调。' });
       }
 
-      const taskName = args.name ? String(args.name) : `子任务 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+      const taskName = args.name
+        ? String(args.name)
+        : `子任务 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
 
       try {
         // 子会话复制父会话的 resolved config
@@ -210,15 +219,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
 
         // 异步派发任务消息，触发 agent 处理（不等待完成）
-        ctx.emit('inbound:message', {
-          content: task,
-          sessionId: child.id,
-          platform: callCtx.platform || 'internal',
-          userId: `parent:${parentId}`,
-          nickname: undefined,
-        } satisfies IncomingMessage).catch(err => {
-          ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
-        });
+        ctx
+          .emit('inbound:message', {
+            content: task,
+            sessionId: child.id,
+            platform: callCtx.platform || 'internal',
+            userId: `parent:${parentId}`,
+            nickname: undefined,
+          } satisfies IncomingMessage)
+          .catch(err => {
+            ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
+          });
 
         return JSON.stringify({
           subtaskId: child.id,
@@ -258,7 +269,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const sm = ctx.getService<SessionManagerService>('session-manager');
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
@@ -271,10 +282,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const results = ids.map(id => {
         const session = sm.getSession(id);
         if (!session) return { id, error: '会话不存在' };
-        const statusLabel = session.status === 'active' ? '进行中'
-          : session.status === 'completed' ? '已完成'
-          : session.status === 'error' ? '出错'
-          : session.status;
+        const statusLabel =
+          session.status === 'active'
+            ? '进行中'
+            : session.status === 'completed'
+              ? '已完成'
+              : session.status === 'error'
+                ? '出错'
+                : session.status;
         return {
           id,
           name: session.name,
@@ -342,15 +357,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 派发消息
-      ctx.emit('inbound:message', {
-        content: message,
-        sessionId: subtaskId,
-        platform: callCtx.platform || 'internal',
-        userId: `parent:${callCtx.sessionId}`,
-        nickname: undefined,
-      } satisfies IncomingMessage).catch(err => {
-        ctx.logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
-      });
+      ctx
+        .emit('inbound:message', {
+          content: message,
+          sessionId: subtaskId,
+          platform: callCtx.platform || 'internal',
+          userId: `parent:${callCtx.sessionId}`,
+          nickname: undefined,
+        } satisfies IncomingMessage)
+        .catch(err => {
+          ctx.logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
+        });
 
       return JSON.stringify({
         subtaskId,
@@ -410,7 +427,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           subtaskId,
           name,
           deleted: true,
-          message: `子任务 \"${name}\" (${subtaskId}) 已删除`,
+          message: `子任务 "${name}" (${subtaskId}) 已删除`,
         });
       } catch (err) {
         return JSON.stringify({ error: `删除失败: ${err instanceof Error ? err.message : String(err)}` });
@@ -458,10 +475,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       const ids = (args.subtask_ids as string[]) || [];
       if (ids.length === 0) {
-        return JSON.stringify({ error: '缺少 subtask_ids 参数。正确用法: { "subtask_ids": ["<子任务ID1>", "<子任务ID2>"] }' });
+        return JSON.stringify({
+          error: '缺少 subtask_ids 参数。正确用法: { "subtask_ids": ["<子任务ID1>", "<子任务ID2>"] }',
+        });
       }
 
-      const timeoutSec = Number(args.timeout_seconds) || (cfg.maxWaitMs / 1000);
+      const timeoutSec = Number(args.timeout_seconds) || cfg.maxWaitMs / 1000;
       const timeoutMs = Math.min(timeoutSec * 1000, cfg.maxWaitMs);
 
       // 先检查是否已经全部完成（避免不必要的等待）
@@ -474,7 +493,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // 使用事件驱动 + 超时，替代轮询
         await new Promise<void>(resolve => {
           const pending = new Set(ids.filter(id => !isTerminal(id)));
-          if (pending.size === 0) { resolve(); return; }
+          if (pending.size === 0) {
+            resolve();
+            return;
+          }
 
           const cleanup = () => {
             clearTimeout(timer);
@@ -485,19 +507,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           // 监听 session:completed 事件
           const disposeCompleted = ctx.on('session:completed', (session: SessionInfo) => {
             pending.delete(session.id);
-            if (pending.size === 0) { cleanup(); resolve(); }
+            if (pending.size === 0) {
+              cleanup();
+              resolve();
+            }
           });
 
           // 兜底：也监听 session:updated 以防状态通过 updateSession 变更
           const disposeUpdated = ctx.on('session:updated', (session: SessionInfo) => {
             if ((session.status === 'completed' || session.status === 'error') && pending.has(session.id)) {
               pending.delete(session.id);
-              if (pending.size === 0) { cleanup(); resolve(); }
+              if (pending.size === 0) {
+                cleanup();
+                resolve();
+              }
             }
           });
 
           // 超时保护
-          const timer = setTimeout(() => { cleanup(); resolve(); }, timeoutMs);
+          const timer = setTimeout(() => {
+            cleanup();
+            resolve();
+          }, timeoutMs);
         });
       }
 
@@ -533,18 +564,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.middleware('agent:llm:before', async (data, next) => {
     const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) { await next(); return; }
+    if (!sm) {
+      await next();
+      return;
+    }
 
     const sessionId = data.sessionId;
-    if (!sessionId) { await next(); return; }
+    if (!sessionId) {
+      await next();
+      return;
+    }
 
     const session = sm.getSession(sessionId);
     const messages = data.messages;
-    if (!messages || messages.length === 0) { await next(); return; }
+    if (!messages || messages.length === 0) {
+      await next();
+      return;
+    }
 
     // 找到第一个 system 消息
     const sysMsg = messages.find(m => m.role === 'system');
-    if (!sysMsg || typeof sysMsg.content !== 'string') { await next(); return; }
+    if (!sysMsg || typeof sysMsg.content !== 'string') {
+      await next();
+      return;
+    }
 
     // ---- 子任务侧：注入子任务上下文 ----
     if (session?.parentId) {
@@ -567,7 +610,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           '- 完成后请在回复中汇报你做了什么（如添加了哪些幻灯片、内容摘要等），方便父会话整合',
           '- 不要调用 save 操作——由父会话统一保存',
           '--- 子任务上下文结束 ---',
-        ].filter(Boolean).join('\n');
+        ]
+          .filter(Boolean)
+          .join('\n');
 
         (sysMsg as { content: string }).content += subtaskContext;
         const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
@@ -610,7 +655,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           if (markerStart !== -1) {
             const markerEnd = content.indexOf('--- 活跃子任务提醒结束 ---', markerStart);
             if (markerEnd !== -1) {
-              (sysMsg as { content: string }).content = content.slice(0, markerStart) + content.slice(markerEnd + '--- 活跃子任务提醒结束 ---'.length);
+              (sysMsg as { content: string }).content =
+                content.slice(0, markerStart) + content.slice(markerEnd + '--- 活跃子任务提醒结束 ---'.length);
             }
           }
 
@@ -627,7 +673,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             lines.push(`❌ 以下子任务执行出错：`);
             lines.push(...errorChildren);
             lines.push('');
-            lines.push('可使用 send_to_subtask 向出错的子任务发送修正指令让其重试，或使用 check_subtask 查看详细状态。');
+            lines.push(
+              '可使用 send_to_subtask 向出错的子任务发送修正指令让其重试，或使用 check_subtask 查看详细状态。',
+            );
           }
 
           if (completedChildren.length > 0) {
@@ -641,7 +689,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
           (sysMsg as { metadata?: Record<string, unknown> }).metadata = {
             ...sysMsg.metadata,
-            _tokenContributions: { ...prevContributions, subtask: (prevContributions.subtask ?? 0) + parentContext.length },
+            _tokenContributions: {
+              ...prevContributions,
+              subtask: (prevContributions.subtask ?? 0) + parentContext.length,
+            },
           };
         }
       }
@@ -678,14 +729,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         await archive.saveMessage(data.sessionId, {
           role: 'assistant',
           content: null,
-          toolCalls: [{
-            id: syntheticToolCallId,
-            type: 'function',
-            function: {
-              name: 'report_to_parent',
-              arguments: JSON.stringify({ result: result.trim() }),
+          toolCalls: [
+            {
+              id: syntheticToolCallId,
+              type: 'function',
+              function: {
+                name: 'report_to_parent',
+                arguments: JSON.stringify({ result: result.trim() }),
+              },
             },
-          }],
+          ],
           timestamp: Date.now(),
         });
         // 合成 tool 结果消息
@@ -720,14 +773,14 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig['historyAcc
       if (!verdict.ok) return { error: verdict.reason };
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(options.limit) || 20)));
-      const includeArchived = typeof options.includeArchived === 'boolean'
-        ? options.includeArchived
-        : cfg.includeArchivedDefault;
+      const includeArchived =
+        typeof options.includeArchived === 'boolean' ? options.includeArchived : cfg.includeArchivedDefault;
 
       try {
-        const history = includeArchived && memory.getFullHistory
-          ? await memory.getFullHistory(targetSessionId, limit)
-          : await memory.getHistory(targetSessionId, limit);
+        const history =
+          includeArchived && memory.getFullHistory
+            ? await memory.getFullHistory(targetSessionId, limit)
+            : await memory.getHistory(targetSessionId, limit);
         return {
           ok: true,
           sessionId: targetSessionId,
@@ -745,7 +798,11 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig['historyAcc
   };
 }
 
-function registerSessionHistoryTools(ctx: Context, historyService: SessionHistoryService, cfg: PluginConfig['historyAccess']): void {
+function registerSessionHistoryTools(
+  ctx: Context,
+  historyService: SessionHistoryService,
+  cfg: PluginConfig['historyAccess'],
+): void {
   ctx.registerToolGroup({
     name: 'session-history',
     label: '会话历史读取',
@@ -778,11 +835,14 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
     handler: async (args, callCtx) => {
       const targetSessionId = String(args.session_id ?? '').trim();
       if (!targetSessionId) return JSON.stringify({ error: 'session_id 不能为空' });
-      const result = await historyService.getHistory({
-        sessionId: targetSessionId,
-        limit: Number(args.limit) || undefined,
-        includeArchived: typeof args.include_archived === 'boolean' ? args.include_archived : undefined,
-      }, callCtx);
+      const result = await historyService.getHistory(
+        {
+          sessionId: targetSessionId,
+          limit: Number(args.limit) || undefined,
+          includeArchived: typeof args.include_archived === 'boolean' ? args.include_archived : undefined,
+        },
+        callCtx,
+      );
       return JSON.stringify(result);
     },
   });

@@ -1,7 +1,7 @@
-import { Context } from './context.js';
-import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, ConfigSchema } from './types/index.js';
+import type { Context } from './context.js';
 import type { Logger } from './logger.js';
+import { type NormalizedDependency, normalizeDependency } from './service.js';
+import type { ConfigSchema, InjectDeclaration } from './types/index.js';
 
 // ----- 插件定义格式 -----
 
@@ -98,7 +98,7 @@ export class PluginManager {
     rootCtx.on('service:registered', () => {
       if (!this.reloading) this.checkPendingPlugins();
     });
-    rootCtx.on('service:unregistered', (name) => {
+    rootCtx.on('service:unregistered', name => {
       if (!this.reloading) this.checkActivePlugins(name);
     });
   }
@@ -110,11 +110,7 @@ export class PluginManager {
    * @param config    插件配置
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
    */
-  async register(
-    module: PluginModule,
-    config: Record<string, unknown> = {},
-    instanceId?: string,
-  ): Promise<void> {
+  async register(module: PluginModule, config: Record<string, unknown> = {}, instanceId?: string): Promise<void> {
     const id = instanceId ?? module.name;
 
     // 多实例检查：同一 module 非 reusable 时不允许重复注册
@@ -223,7 +219,22 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; instanceId: string; displayName?: string; state: PluginState; provides?: string[]; core?: boolean; reusable?: boolean; extends?: unknown; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: unknown[]; webuiHandlerNames?: string[]; error?: string }> {
+  getStatus(): Array<{
+    name: string;
+    instanceId: string;
+    displayName?: string;
+    state: PluginState;
+    provides?: string[];
+    core?: boolean;
+    reusable?: boolean;
+    extends?: unknown;
+    config: Record<string, unknown>;
+    configSchema?: ConfigSchema;
+    defaultConfig?: Record<string, unknown>;
+    webuiPages?: unknown[];
+    webuiHandlerNames?: string[];
+    error?: string;
+  }> {
     return [...this.plugins.entries()].map(([, entry]) => ({
       name: entry.module.name,
       instanceId: entry.instanceId,
@@ -284,7 +295,11 @@ export class PluginManager {
    * @param config     新实例的配置
    * @returns 新实例的 instanceId，失败返回 undefined
    */
-  async createInstance(moduleName: string, suffix: string, config: Record<string, unknown> = {}): Promise<string | undefined> {
+  async createInstance(
+    moduleName: string,
+    suffix: string,
+    config: Record<string, unknown> = {},
+  ): Promise<string | undefined> {
     // 从已注册的插件中查找同 module 的 entry
     let sourceModule: PluginModule | undefined;
     for (const entry of this.plugins.values()) {
@@ -448,9 +463,7 @@ export class PluginManager {
           name => !this.rootCtx.serviceContainer.hasByContext(name, entry.instanceId),
         );
         if (missing.length > 0) {
-          throw new Error(
-            `声明 provides [${missing.join(', ')}] 但未实际注册这些服务`,
-          );
+          throw new Error(`声明 provides [${missing.join(', ')}] 但未实际注册这些服务`);
         }
       }
 
@@ -486,9 +499,7 @@ export class PluginManager {
     for (const entry of this.plugins.values()) {
       if (entry.state !== 'active') continue;
 
-      const dependsOnRemoved = entry.requiredDeps.some(
-        dep => dep.service === removedService,
-      );
+      const dependsOnRemoved = entry.requiredDeps.some(dep => dep.service === removedService);
       if (!dependsOnRemoved) continue;
 
       // 检查服务是否真的不可用了（可能还有其他提供者）
@@ -518,10 +529,7 @@ export class PluginManager {
    *
    * @returns 成功激活的插件名，或 undefined
    */
-  async ensureServiceProvider(
-    serviceName: string,
-    _resolving?: Set<string>,
-  ): Promise<string | undefined> {
+  async ensureServiceProvider(serviceName: string, _resolving?: Set<string>): Promise<string | undefined> {
     // 先检查是否已经有提供者在运行
     if (this.rootCtx.hasService(serviceName)) {
       return undefined; // 已存在，无需处理
@@ -591,5 +599,3 @@ export class PluginManager {
 }
 
 // ----- 辅助 -----
-
-

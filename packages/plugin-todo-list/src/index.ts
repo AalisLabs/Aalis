@@ -1,7 +1,7 @@
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {} from '@aalis/plugin-session-manager-api';
+import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -163,7 +163,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return String(obj.title ?? '').length > MAX_TODO_TITLE_LENGTH;
       });
       if (longTitleIndex >= 0) {
-        return JSON.stringify({ error: `第 ${longTitleIndex + 1} 项 todo 标题最多允许 ${MAX_TODO_TITLE_LENGTH} 个字符` });
+        return JSON.stringify({
+          error: `第 ${longTitleIndex + 1} 项 todo 标题最多允许 ${MAX_TODO_TITLE_LENGTH} 个字符`,
+        });
       }
 
       const items: TodoItem[] = rawList.map((item: unknown) => {
@@ -172,9 +174,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return {
           id: Number(obj.id),
           title,
-          status: (['not-started', 'in-progress', 'completed'].includes(obj.status as string)
-            ? obj.status as TodoItem['status']
-            : 'not-started'),
+          status: ['not-started', 'in-progress', 'completed'].includes(obj.status as string)
+            ? (obj.status as TodoItem['status'])
+            : 'not-started',
         };
       });
 
