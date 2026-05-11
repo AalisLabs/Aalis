@@ -197,4 +197,3 @@ export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.f
   { id: 'user', label: '用户', order: 140 },
   { id: 'external', label: '外部', order: 160 },
 ]);
-
