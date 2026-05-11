@@ -1,10 +1,10 @@
 import type {
-  App,
   ConfigSchema,
   ContentSegment,
   Context,
   Logger,
   Message,
+  PluginManagerService,
   ToolCall,
   ToolDefinition,
 } from '@aalis/core';
@@ -189,14 +189,14 @@ class DefaultAgent implements AgentService {
    * （平台属于独立子系统，由 PlatformService.getPluginGroups 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
-    const app = this.ctx.getService<App>('app');
-    if (!app) return [];
+    const pm = this.ctx.getService<PluginManagerService>('plugins');
+    if (!pm) return [];
 
     // 子系统归属：Agent 域的服务（不含 platform——平台是独立子系统）
     const targetServices = new Set(['llm', 'memory', 'persona', 'message-archive']);
     const grouped: string[] = [];
 
-    for (const p of app.plugins.getStatus()) {
+    for (const p of pm.getStatus()) {
       if (p.provides?.some(s => targetServices.has(s))) {
         grouped.push(p.instanceId);
       }

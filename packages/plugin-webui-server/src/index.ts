@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { App, ConfigSchema, Context, LogEntry } from '@aalis/core';
+import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
 import { getLogBuffer, onLogEntry } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
@@ -306,8 +306,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
   const tokenUsageCache = new Map<string, WSOutgoing>();
 
-  // 获取 App 实例（通过服务注册获取）
-  const getApp = (): App | undefined => ctx.getService<App>('app');
+  // 获取核心服务（通过服务注册获取）
+  const getApp = (): AppService | undefined => ctx.getService<AppService>('app');
+  const getPluginMgr = (): PluginManagerService | undefined => ctx.getService<PluginManagerService>('plugins');
 
   // 前端静态文件托管（由 webui-client 插件通过 setClientDir 挂载）
   // server 注册服务名 'webui-server'，client 通过 capabilities 匹配版本
@@ -378,7 +379,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---------- 插件管理 + 全局配置 ----------
-  registerPluginRoutes(expressApp, ctx, getApp);
+  registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr);
 
   // 获取历史日志
   expressApp.get('/api/logs', (_req, res) => {
@@ -387,8 +388,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取服务列表（含提供者信息）
   expressApp.get('/api/services', async (_req, res) => {
-    const app = getApp();
-    const pluginStatus = app ? app.plugins.getStatus() : [];
+    const pluginMgr = getPluginMgr();
+    const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     const displayNameMap = new Map<string, string>();
     for (const p of pluginStatus) {
       if (p.displayName) {
@@ -441,8 +442,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取服务分组（中央目录消费，见 ADR-0003）
   expressApp.get('/api/service-groups', (_req, res) => {
-    const app = getApp();
-    const pluginStatus = app ? app.plugins.getStatus() : [];
+    const pluginMgr = getPluginMgr();
+    const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     // 反向索引：plugin name → subsystem id（来自 DEFAULT_SUBSYSTEM_CATALOG）
     const pluginToSubsystem = new Map<string, string>();
     for (const entry of DEFAULT_SUBSYSTEM_CATALOG) {
