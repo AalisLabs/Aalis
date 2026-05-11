@@ -258,6 +258,53 @@ export class Context {
   }
 
   /**
+   * 设置某服务的偏好 provider（按 contextId）
+   *
+   * 语义：「偏好 > 优先级 > 注册顺序」。偏好者总是 `getService(name)` 的第一返回值，
+   * 即使其 priority 数值低于 router 等其他 entry。
+   *
+   * 注：偏好可以提前于 entry 注册前设置——一旦目标 contextId 注册即刻生效。
+   * @returns 始终返回 true（偏好已记录）
+   */
+  preferService(name: string, contextId: string): boolean {
+    const ok = this._services.prefer(name, contextId);
+    if (ok) this.logger.debug(`服务偏好已设置: ${name} -> ${contextId}`);
+    return ok;
+  }
+
+  /**
+   * 清除某服务的偏好（恢复 priority + 注册顺序解析）
+   */
+  unpreferService(name: string): boolean {
+    const ok = this._services.unprefer(name);
+    if (ok) this.logger.debug(`服务偏好已清除: ${name}`);
+    return ok;
+  }
+
+  /**
+   * 读取某服务当前的偏好 contextId（无偏好返回 undefined）
+   */
+  getPreferredService(name: string): string | undefined {
+    return this._services.getPreferred(name);
+  }
+
+  /**
+   * 获取某服务的全部 entry（含 priority），按「偏好 > 优先级 > 注册顺序」排序。
+   *
+   * 主要给管控类消费者（如 WebUI / CLI status 视图）枚举展示用。
+   * 业务消费者应优先使用 `getService` / `getAllServices`。
+   */
+  getServiceEntries(name: string): ReadonlyArray<{
+    instance: unknown;
+    contextId: string;
+    capabilities: ReadonlySet<string>;
+    priority: number;
+    label?: string;
+  }> {
+    return this._services.getEntries(name);
+  }
+
+  /**
    * 当服务就绪时执行回调。若已就绪则立即调用；否则订阅 `service:registered`
    * 事件并在匹配名称时调用一次。
    *
