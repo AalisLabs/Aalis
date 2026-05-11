@@ -1,8 +1,8 @@
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { runCode, type RunnerConfig } from './runner.js';
 import { platform } from 'node:os';
 import path from 'node:path';
+import type { ConfigSchema, Context } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
+import { type RunnerConfig, runCode } from './runner.js';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -106,9 +106,11 @@ function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
 function toStorageUri(input: string | undefined, fallback: string): string {
   const value = (input || fallback).trim();
   if (!value) return 'workspace:/';
-  if (/^[a-zA-Z]:[\\/]/.test(value)) throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  if (/^[a-zA-Z]:[\\/]/.test(value))
+    throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
   if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
-  if (path.isAbsolute(value)) throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  if (path.isAbsolute(value))
+    throw new Error('代码执行器工作目录必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
   return `workspace:/${value.replace(/^\/+/, '')}`;
 }
 
@@ -146,8 +148,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return new Proxy(ctx, {
       get(target, prop) {
         if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) =>
-            target.registerTool({ ...tool, groups });
+          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
         }
         return Reflect.get(target, prop, target);
       },
@@ -208,18 +209,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       authority: 5,
       safety: 'dangerous',
       permissions: ['tool:code.python', 'system:process.exec', 'runtime:python'],
-      handler: async (args) => {
+      handler: async args => {
         const code = args.code as string;
         const timeout = args.timeout as number | undefined;
         ctx.logger.debug(`run_python: ${code.length} 字符`);
         const runnerConfig = await createRunnerConfig(ctx, cfg);
-        const result = await runCode(
-          cfg.python.interpreter,
-          code,
-          '.py',
-          runnerConfig,
-          timeout,
-        );
+        const result = await runCode(cfg.python.interpreter, code, '.py', runnerConfig, timeout);
         return JSON.stringify(result);
       },
     });
@@ -267,18 +262,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       authority: 5,
       safety: 'dangerous',
       permissions: ['tool:code.javascript', 'system:process.exec', 'runtime:javascript'],
-      handler: async (args) => {
+      handler: async args => {
         const code = args.code as string;
         const timeout = args.timeout as number | undefined;
         ctx.logger.debug(`run_javascript: ${code.length} 字符`);
         const runnerConfig = await createRunnerConfig(ctx, cfg);
-        const result = await runCode(
-          cfg.javascript.interpreter,
-          code,
-          '.mjs',
-          runnerConfig,
-          timeout,
-        );
+        const result = await runCode(cfg.javascript.interpreter, code, '.mjs', runnerConfig, timeout);
         return JSON.stringify(result);
       },
     });

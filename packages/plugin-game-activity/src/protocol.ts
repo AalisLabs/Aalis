@@ -100,11 +100,7 @@ export interface BridgeByeEvent {
 }
 
 // ── Aalis → Bridge ──────────────────────────────────────────────────────────
-export type BridgeCommand =
-  | BridgeAckCommand
-  | BridgeActionCommand
-  | BridgeChatCommand
-  | BridgeQueryCommand;
+export type BridgeCommand = BridgeAckCommand | BridgeActionCommand | BridgeChatCommand | BridgeQueryCommand;
 
 export interface BridgeAckCommand {
   type: 'ack';

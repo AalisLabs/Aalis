@@ -12,8 +12,8 @@
 // 完整发行入口可通过 `requiredServices` 声明 gateway 依赖；最小应用可不加载 gateway，
 // 由 core fallback 入站路由直接派发给 agent。
 
-import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 
 /**
  * 入站相位共享数据结构
@@ -131,5 +131,4 @@ export const INBOUND_PHASE_ORDER = [
   INBOUND_PHASE.DISPATCH,
 ] as const;
 
-export type InboundPhase = typeof INBOUND_PHASE_ORDER[number];
-
+export type InboundPhase = (typeof INBOUND_PHASE_ORDER)[number];

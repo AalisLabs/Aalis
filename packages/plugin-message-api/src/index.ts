@@ -129,4 +129,4 @@ declare module '@aalis/core' {
 export type _MessageRef = Message;
 
 // ----- 身份标识工具（cleanup-9 从 core 迁入） -----
-export { getSenderLabel, prefixSender, getMessageName } from './identity.js';
+export { getMessageName, getSenderLabel, prefixSender } from './identity.js';

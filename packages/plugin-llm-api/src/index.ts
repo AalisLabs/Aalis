@@ -101,4 +101,4 @@ registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>
 
 // ----- ModelRef 编解码（cleanup-9 从 core 迁入） -----
 export type { ModelRef } from './model-ref.js';
-export { parseModelRef, formatModelRef } from './model-ref.js';
+export { formatModelRef, parseModelRef } from './model-ref.js';

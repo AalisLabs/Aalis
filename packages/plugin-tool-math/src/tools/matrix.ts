@@ -6,14 +6,29 @@ export function registerMatrixTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_matrix',
-        description: '矩阵和线性代数运算。矩阵以二维数组表示，如 [[1,2],[3,4]]。支持: add(加)、subtract(减)、multiply(乘)、scalar_multiply(数乘)、transpose(转置)、determinant(行列式)、inverse(逆矩阵)、trace(迹)、rank(秩)、identity(单位矩阵)、dot_product(向量点积)、cross_product(向量叉积)、norm(向量范数)',
+        description:
+          '矩阵和线性代数运算。矩阵以二维数组表示，如 [[1,2],[3,4]]。支持: add(加)、subtract(减)、multiply(乘)、scalar_multiply(数乘)、transpose(转置)、determinant(行列式)、inverse(逆矩阵)、trace(迹)、rank(秩)、identity(单位矩阵)、dot_product(向量点积)、cross_product(向量叉积)、norm(向量范数)',
         parameters: {
           type: 'object',
           properties: {
             operation: {
               type: 'string',
               description: '矩阵操作类型',
-              enum: ['add', 'subtract', 'multiply', 'scalar_multiply', 'transpose', 'determinant', 'inverse', 'trace', 'rank', 'identity', 'dot_product', 'cross_product', 'norm'],
+              enum: [
+                'add',
+                'subtract',
+                'multiply',
+                'scalar_multiply',
+                'transpose',
+                'determinant',
+                'inverse',
+                'trace',
+                'rank',
+                'identity',
+                'dot_product',
+                'cross_product',
+                'norm',
+              ],
             },
             matrix: {
               type: 'array',
@@ -46,7 +61,7 @@ export function registerMatrixTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
         const m = args.matrix as number[][] | undefined;
@@ -56,20 +71,22 @@ export function registerMatrixTools(ctx: Context): void {
           case 'add':
           case 'subtract': {
             if (!m || !m2) return JSON.stringify({ error: '需要 matrix 和 matrix2' });
-            assertMatrix(m); assertMatrix(m2);
+            assertMatrix(m);
+            assertMatrix(m2);
             if (m.length !== m2.length || m[0].length !== m2[0].length) {
               return JSON.stringify({ error: '矩阵维度不匹配' });
             }
-            const result = m.map((row, i) =>
-              row.map((v, j) => op === 'add' ? v + m2[i][j] : v - m2[i][j])
-            );
+            const result = m.map((row, i) => row.map((v, j) => (op === 'add' ? v + m2[i][j] : v - m2[i][j])));
             return JSON.stringify({ result });
           }
           case 'multiply': {
             if (!m || !m2) return JSON.stringify({ error: '需要 matrix 和 matrix2' });
-            assertMatrix(m); assertMatrix(m2);
+            assertMatrix(m);
+            assertMatrix(m2);
             if (m[0].length !== m2.length) {
-              return JSON.stringify({ error: `矩阵维度不兼容: ${m.length}×${m[0].length} × ${m2.length}×${m2[0].length}` });
+              return JSON.stringify({
+                error: `矩阵维度不兼容: ${m.length}×${m[0].length} × ${m2.length}×${m2[0].length}`,
+              });
             }
             return JSON.stringify({ result: matmul(m, m2) });
           }
@@ -110,9 +127,7 @@ export function registerMatrixTools(ctx: Context): void {
           case 'identity': {
             const n = Number(args.size ?? 3);
             if (n < 1 || n > 100) return JSON.stringify({ error: '大小应在 1-100 之间' });
-            const id = Array.from({ length: n }, (_, i) =>
-              Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
-            );
+            const id = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
             return JSON.stringify({ result: id });
           }
           case 'dot_product': {
@@ -176,7 +191,9 @@ function transpose(m: number[][]): number[][] {
 }
 
 function matmul(a: number[][], b: number[][]): number[][] {
-  const rows = a.length, cols = b[0].length, inner = b.length;
+  const rows = a.length,
+    cols = b[0].length,
+    inner = b.length;
   const result: number[][] = Array.from({ length: rows }, () => new Array(cols).fill(0));
   for (let i = 0; i < rows; i++) {
     for (let k = 0; k < inner; k++) {
@@ -248,7 +265,8 @@ function inverse(m: number[][]): number[][] | null {
 
 function rank(m: number[][]): number {
   const a = m.map(row => [...row]);
-  const rows = a.length, cols = a[0].length;
+  const rows = a.length,
+    cols = a[0].length;
   let r = 0;
   for (let col = 0; col < cols && r < rows; col++) {
     let maxRow = r;

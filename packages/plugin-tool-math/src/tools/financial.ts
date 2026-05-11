@@ -6,7 +6,8 @@ export function registerFinancialTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_financial',
-        description: '金融数学工具。支持: compound_interest(复利计算)、simple_interest(单利)、loan_payment(贷款月供-等额本息)、loan_payment_principal(等额本金)、present_value(现值)、future_value(终值)、npv(净现值)、irr(内部收益率)、roi(投资回报率)、cagr(年均复合增长率)、break_even(盈亏平衡点)、depreciation(折旧-直线法/双倍余额法)',
+        description:
+          '金融数学工具。支持: compound_interest(复利计算)、simple_interest(单利)、loan_payment(贷款月供-等额本息)、loan_payment_principal(等额本金)、present_value(现值)、future_value(终值)、npv(净现值)、irr(内部收益率)、roi(投资回报率)、cagr(年均复合增长率)、break_even(盈亏平衡点)、depreciation(折旧-直线法/双倍余额法)',
         parameters: {
           type: 'object',
           properties: {
@@ -31,7 +32,7 @@ export function registerFinancialTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
 
@@ -41,10 +42,14 @@ export function registerFinancialTools(ctx: Context): void {
             const r = Number(args.rate ?? 0);
             const t = Number(args.periods ?? 0);
             const n = Number(args.periodsPerYear ?? 12);
-            const A = P * Math.pow(1 + r / n, n * t);
+            const A = P * (1 + r / n) ** (n * t);
             return JSON.stringify({
-              principal: P, rate: r, periods: t, periodsPerYear: n,
-              futureValue: A, interestEarned: A - P,
+              principal: P,
+              rate: r,
+              periods: t,
+              periodsPerYear: n,
+              futureValue: A,
+              interestEarned: A - P,
             });
           }
 
@@ -54,8 +59,11 @@ export function registerFinancialTools(ctx: Context): void {
             const t = Number(args.periods ?? 0);
             const interest = P * r * t;
             return JSON.stringify({
-              principal: P, rate: r, periods: t,
-              interest, total: P + interest,
+              principal: P,
+              rate: r,
+              periods: t,
+              interest,
+              total: P + interest,
             });
           }
 
@@ -69,10 +77,12 @@ export function registerFinancialTools(ctx: Context): void {
               const monthly = P / months;
               return JSON.stringify({ monthlyPayment: monthly, totalPayment: P, totalInterest: 0 });
             }
-            const monthly = P * r * Math.pow(1 + r, months) / (Math.pow(1 + r, months) - 1);
+            const monthly = (P * r * (1 + r) ** months) / ((1 + r) ** months - 1);
             const total = monthly * months;
             return JSON.stringify({
-              monthlyPayment: monthly, totalPayment: total, totalInterest: total - P,
+              monthlyPayment: monthly,
+              totalPayment: total,
+              totalInterest: total - P,
             });
           }
 
@@ -84,12 +94,19 @@ export function registerFinancialTools(ctx: Context): void {
             const r = annualRate / 12;
             const principalPart = P / months;
             let totalInterest = 0;
-            const schedule: { month: number; payment: number; principal: number; interest: number; remaining: number }[] = [];
+            const schedule: {
+              month: number;
+              payment: number;
+              principal: number;
+              interest: number;
+              remaining: number;
+            }[] = [];
             for (let i = 1; i <= months; i++) {
               const remaining = P - principalPart * (i - 1);
               const interest = remaining * r;
               totalInterest += interest;
-              if (i <= 12 || i === months) { // 只输出前12个月和最后一个月
+              if (i <= 12 || i === months) {
+                // 只输出前12个月和最后一个月
                 schedule.push({
                   month: i,
                   payment: principalPart + interest,
@@ -112,7 +129,7 @@ export function registerFinancialTools(ctx: Context): void {
             const FV = Number(args.finalValue ?? args.payment ?? 0);
             const r = Number(args.rate ?? 0);
             const t = Number(args.periods ?? 0);
-            const PV = FV / Math.pow(1 + r, t);
+            const PV = FV / (1 + r) ** t;
             return JSON.stringify({ futureValue: FV, rate: r, periods: t, presentValue: PV });
           }
 
@@ -120,7 +137,7 @@ export function registerFinancialTools(ctx: Context): void {
             const PV = Number(args.principal ?? 0);
             const r = Number(args.rate ?? 0);
             const t = Number(args.periods ?? 0);
-            const FV = PV * Math.pow(1 + r, t);
+            const FV = PV * (1 + r) ** t;
             return JSON.stringify({ presentValue: PV, rate: r, periods: t, futureValue: FV });
           }
 
@@ -132,7 +149,7 @@ export function registerFinancialTools(ctx: Context): void {
             }
             let npv = 0;
             for (let i = 0; i < cashflows.length; i++) {
-              npv += cashflows[i] / Math.pow(1 + r, i);
+              npv += cashflows[i] / (1 + r) ** i;
             }
             return JSON.stringify({ rate: r, npv, cashflows: cashflows.length });
           }
@@ -153,8 +170,10 @@ export function registerFinancialTools(ctx: Context): void {
             if (initial === 0) return JSON.stringify({ error: '初始投资不能为 0' });
             const roi = (final_ - initial) / initial;
             return JSON.stringify({
-              initialInvestment: initial, finalValue: final_,
-              roi, roiPercent: `${(roi * 100).toFixed(4)}%`,
+              initialInvestment: initial,
+              finalValue: final_,
+              roi,
+              roiPercent: `${(roi * 100).toFixed(4)}%`,
             });
           }
 
@@ -163,10 +182,13 @@ export function registerFinancialTools(ctx: Context): void {
             const end = Number(args.finalValue ?? 0);
             const t = Number(args.periods ?? 0);
             if (begin <= 0 || t <= 0) return JSON.stringify({ error: '初始值和期数必须为正数' });
-            const cagr = Math.pow(end / begin, 1 / t) - 1;
+            const cagr = (end / begin) ** (1 / t) - 1;
             return JSON.stringify({
-              beginValue: begin, endValue: end, periods: t,
-              cagr, cagrPercent: `${(cagr * 100).toFixed(4)}%`,
+              beginValue: begin,
+              endValue: end,
+              periods: t,
+              cagr,
+              cagrPercent: `${(cagr * 100).toFixed(4)}%`,
             });
           }
 
@@ -229,11 +251,12 @@ export function registerFinancialTools(ctx: Context): void {
 function computeIRR(cashflows: number[]): number | null {
   let rate = 0.1;
   for (let iter = 0; iter < 1000; iter++) {
-    let npv = 0, dnpv = 0;
+    let npv = 0,
+      dnpv = 0;
     for (let i = 0; i < cashflows.length; i++) {
-      const pow = Math.pow(1 + rate, i);
+      const pow = (1 + rate) ** i;
       npv += cashflows[i] / pow;
-      dnpv -= i * cashflows[i] / (pow * (1 + rate));
+      dnpv -= (i * cashflows[i]) / (pow * (1 + rate));
     }
     if (Math.abs(dnpv) < 1e-15) return null;
     const newRate = rate - npv / dnpv;

@@ -54,7 +54,9 @@ function getRootConflicts(storage: StorageService): StorageRootConflictView[] {
 
 function getAllowedRoots(config: FileConfig): string[] {
   if (config.allowedRoots.includes(ALL_ROOTS)) {
-    return getKnownRoots(config).filter(r => r.readable).map(r => r.name);
+    return getKnownRoots(config)
+      .filter(r => r.readable)
+      .map(r => r.name);
   }
   return config.allowedRoots;
 }
@@ -112,7 +114,11 @@ function ensureRootAllowed(uri: string, config: FileConfig): void {
   }
 }
 
-function storagePermission(args: Record<string, unknown>, config: FileConfig, op: 'read' | 'write' | 'delete'): string[] {
+function storagePermission(
+  args: Record<string, unknown>,
+  config: FileConfig,
+  op: 'read' | 'write' | 'delete',
+): string[] {
   const uri = toStorageUri(args.path as string | undefined, config);
   const root = rootOf(uri);
   return [`storage:${op}`, `storage:${root}:${op}`];
@@ -211,7 +217,6 @@ async function collectFiles(storage: StorageService, dirUri: string): Promise<st
 }
 
 export function registerFileTools(ctx: Context, config: FileConfig): void {
-
   // ==================== file_read ====================
   ctx.registerTool({
     definition: {
@@ -235,8 +240,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     permissions: ['tool:file.read', 'storage:read'],
-    resolvePermissions: (args) => storagePermission(args, config, 'read'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'read'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -264,7 +269,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         const endLine = (args.endLine as number) || totalLines;
         const start = Math.max(1, startLine) - 1;
         const end = Math.min(totalLines, endLine);
-        const selectedLines = lines.slice(start, end)
+        const selectedLines = lines
+          .slice(start, end)
           .map((line, i) => `${start + i + 1}\t${line}`)
           .join('\n');
 
@@ -302,8 +308,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.write', 'storage:write'],
-    resolvePermissions: (args) => storagePermission(args, config, 'write'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'write'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -343,8 +349,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.edit', 'storage:write'],
-    resolvePermissions: (args) => storagePermission(args, config, 'write'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'write'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -409,8 +415,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.append', 'storage:write'],
-    resolvePermissions: (args) => storagePermission(args, config, 'write'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'write'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -455,8 +461,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.delete', 'storage:delete'],
-    resolvePermissions: (args) => storagePermission(args, config, 'delete'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'delete'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -482,7 +488,10 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: '目录 storage URI 或相对 workspace 的路径，默认 workspace:/。设为 "/" 列出所有根。' },
+            path: {
+              type: 'string',
+              description: '目录 storage URI 或相对 workspace 的路径，默认 workspace:/。设为 "/" 列出所有根。',
+            },
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
             keyword: { type: 'string', description: '按名称子串模糊匹配（不区分大小写）' },
             type: { type: 'string', enum: ['file', 'directory'], description: '只返回指定类型' },
@@ -495,13 +504,13 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     permissions: ['tool:file.list', 'storage:read'],
-    resolvePermissions: (args) => {
+    resolvePermissions: args => {
       const raw = (args.path as string | undefined) ?? '';
       // "/" / "*" 走 roots 视图，不需要按根做精细权限
       if (raw.trim() === '/' || raw.trim() === '*') return ['tool:file.list', 'storage:read'];
       return storagePermission(args, config, 'read');
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const raw = ((args.path as string | undefined) ?? '').trim();
@@ -529,20 +538,20 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
               allowedByThisTool: allowedSet.has(r.name),
               ...(conflict
                 ? {
-                  conflict: {
-                    selectedProviderId: conflict.selected.providerId,
-                    selectedProvider: conflict.selected.provider,
-                    shadowedProviders: conflict.shadowed.map(root => ({
-                      providerId: root.providerId,
-                      provider: root.provider,
-                      label: root.label,
-                      kind: root.kind,
-                      readable: root.readable,
-                      writable: root.writable,
-                      deletable: root.deletable,
-                    })),
-                  },
-                }
+                    conflict: {
+                      selectedProviderId: conflict.selected.providerId,
+                      selectedProvider: conflict.selected.provider,
+                      shadowedProviders: conflict.shadowed.map(root => ({
+                        providerId: root.providerId,
+                        provider: root.provider,
+                        label: root.label,
+                        kind: root.kind,
+                        readable: root.readable,
+                        writable: root.writable,
+                        deletable: root.deletable,
+                      })),
+                    },
+                  }
                 : {}),
             };
           });
@@ -551,9 +560,13 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
             note:
               '这是 storage 根的清单（不是宿主机文件系统目录）。' +
               `本工具当前允许根为 [${allowedRootsText(config)}]` +
-              (config.allowedRoots.includes(ALL_ROOTS) ? '（file.allowedRoots: ["*"]，自动包含全部可读根）' : `（file.allowedRoots: [${config.allowedRoots.join(', ')}]）`) +
+              (config.allowedRoots.includes(ALL_ROOTS)
+                ? '（file.allowedRoots: ["*"]，自动包含全部可读根）'
+                : `（file.allowedRoots: [${config.allowedRoots.join(', ')}]）`) +
               '。要访问具体根的内容，请用 path: "<根名>:/"。' +
-              (conflicts.length ? `检测到 ${conflicts.length} 个同名根冲突；冲突根会按 provider 优先级选择一个，其余列在 conflicts/shadowedProviders 中。` : ''),
+              (conflicts.length
+                ? `检测到 ${conflicts.length} 个同名根冲突；冲突根会按 provider 优先级选择一个，其余列在 conflicts/shadowedProviders 中。`
+                : ''),
             roots: entries,
             conflicts: conflicts.map(conflict => ({
               name: conflict.name,
@@ -644,8 +657,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     permissions: ['tool:file.info', 'storage:read'],
-    resolvePermissions: (args) => storagePermission(args, config, 'read'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'read'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -672,7 +685,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_search',
-        description: '在受控存储中按行搜索匹配文本（内容搜索，非文件名搜索）。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。如需按文件名/目录名查找，请使用 file_tree 的 pattern 参数。',
+        description:
+          '在受控存储中按行搜索匹配文本（内容搜索，非文件名搜索）。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。如需按文件名/目录名查找，请使用 file_tree 的 pattern 参数。',
         parameters: {
           type: 'object',
           properties: {
@@ -690,8 +704,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     permissions: ['tool:file.search', 'storage:read'],
-    resolvePermissions: (args) => storagePermission(args, config, 'read'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'read'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config);
@@ -705,9 +719,10 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
           Math.max(1024, Math.floor(Number(args.maxSearchBytes) || config.maxSearchBytes)),
           config.maxSearchBytes,
         );
-        const regex = (args.isRegex as boolean) ?? false
-          ? new RegExp(pattern, ignoreCase ? 'i' : '')
-          : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
+        const regex =
+          ((args.isRegex as boolean) ?? false)
+            ? new RegExp(pattern, ignoreCase ? 'i' : '')
+            : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
 
         // 目录：递归收集所有文件并逐个搜索，预算（maxResults / maxSearchBytes）跨文件累加。
         if (info.isDirectory) {
@@ -728,9 +743,9 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
               nextStartFile = fileUri;
               break;
             }
-            const r = await searchTextStream(
-              storage, fileUri, regex, 1, remainingResults, remainingBytes,
-            ).catch(() => null);
+            const r = await searchTextStream(storage, fileUri, regex, 1, remainingResults, remainingBytes).catch(
+              () => null,
+            );
             if (!r) continue;
             for (const m of r.matches) allMatches.push({ uri: fileUri, ...m });
             totalScannedBytes += r.scannedBytes;
@@ -783,14 +798,18 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       type: 'function',
       function: {
         name: 'file_tree',
-        description: '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。配合 pattern 参数可筛选目录名和文件名（支持 glob: *.ts, *scheduler* 等）。注意：pattern 匹配的是文件/目录名，而非文件内容。',
+        description:
+          '递归显示受控存储目录树。用于快速了解 workspace/tmp 等安全根的布局。配合 pattern 参数可筛选目录名和文件名（支持 glob: *.ts, *scheduler* 等）。注意：pattern 匹配的是文件/目录名，而非文件内容。',
         parameters: {
           type: 'object',
           properties: {
             path: { type: 'string', description: '根目录 storage URI 或相对 workspace 的路径，默认 workspace:/' },
             maxDepth: { type: 'number', description: '最大递归深度（默认 3，最多 10）' },
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
-            pattern: { type: 'string', description: '文件与目录名过滤模式（简单 glob: *.ts, *scheduler* 等）。匹配的是文件/目录名，非文件内容。' },
+            pattern: {
+              type: 'string',
+              description: '文件与目录名过滤模式（简单 glob: *.ts, *scheduler* 等）。匹配的是文件/目录名，非文件内容。',
+            },
           },
           required: [],
           additionalProperties: false,
@@ -798,8 +817,8 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
       },
     },
     permissions: ['tool:file.tree', 'storage:read'],
-    resolvePermissions: (args) => storagePermission(args, config, 'read'),
-    handler: async (args) => {
+    resolvePermissions: args => storagePermission(args, config, 'read'),
+    handler: async args => {
       try {
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string | undefined, config);
@@ -807,7 +826,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
         const maxDepth = Math.min((args.maxDepth as number) || 3, 10);
         const showHidden = (args.showHidden as boolean) ?? false;
         const pattern = args.pattern as string | undefined;
-        const lines: string[] = [`${basename(uri) || rootOf(uri) + ':/'}`];
+        const lines: string[] = [`${basename(uri) || `${rootOf(uri)}:/`}`];
         let totalFiles = 0;
         let totalDirs = 0;
 
@@ -849,8 +868,6 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
 }
 
 function matchGlob(name: string, pattern: string): boolean {
-  const regexStr = escapeRegExp(pattern)
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
+  const regexStr = escapeRegExp(pattern).replace(/\*/g, '.*').replace(/\?/g, '.');
   return new RegExp(`^${regexStr}$`, 'i').test(name);
 }

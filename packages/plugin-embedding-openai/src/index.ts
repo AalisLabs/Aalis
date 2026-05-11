@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 
 // ===== 插件元数据 =====
@@ -11,7 +11,13 @@ export const reusable = true;
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'OpenAI API 密钥' },
   baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.openai.com', description: 'API 端点地址' },
-  model: { type: 'select', label: 'Embedding 模型', default: 'text-embedding-3-small', dynamicOptions: 'embedding', description: '用于生成文本向量的模型' },
+  model: {
+    type: 'select',
+    label: 'Embedding 模型',
+    default: 'text-embedding-3-small',
+    dynamicOptions: 'embedding',
+    description: '用于生成文本向量的模型',
+  },
 };
 
 export const defaultConfig = {

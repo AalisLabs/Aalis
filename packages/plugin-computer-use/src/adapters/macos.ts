@@ -11,7 +11,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { PlatformAdapter, Point, Region, ScreenInfo, WindowInfo, MouseButton } from '../platform.js';
+import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -81,7 +81,9 @@ export class MacOSAdapter implements PlatformAdapter {
       const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 5000 });
       const [w, h] = stdout.trim().split(',').map(Number);
       // 获取 Retina 缩放因子
-      const { stdout: sysInfo } = await execFileAsync('system_profiler', ['SPDisplaysDataType', '-json'], { timeout: 10000 });
+      const { stdout: sysInfo } = await execFileAsync('system_profiler', ['SPDisplaysDataType', '-json'], {
+        timeout: 10000,
+      });
       let scaleFactor = 2; // macOS 默认 Retina
       try {
         const data = JSON.parse(sysInfo);
@@ -198,7 +200,7 @@ export class MacOSAdapter implements PlatformAdapter {
           id: `${app}::${title}`,
           title: title || '',
           app: app || '',
-          bounds: !isNaN(bx) ? { x: bx, y: by, width: bw, height: bh } : undefined,
+          bounds: !Number.isNaN(bx) ? { x: bx, y: by, width: bw, height: bh } : undefined,
         });
       }
       return windows;
@@ -252,7 +254,7 @@ export class MacOSAdapter implements PlatformAdapter {
     child.stdin.write(text);
     child.stdin.end();
     await new Promise<void>((resolve, reject) => {
-      child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`pbcopy failed: ${code}`)));
+      child.on('close', code => (code === 0 ? resolve() : reject(new Error(`pbcopy failed: ${code}`))));
       child.on('error', reject);
     });
   }
@@ -286,32 +288,58 @@ export class MacOSAdapter implements PlatformAdapter {
 
   private mapButton(nut: any, button: MouseButton): any {
     switch (button) {
-      case 'right': return nut.Button.RIGHT;
-      case 'middle': return nut.Button.MIDDLE;
-      default: return nut.Button.LEFT;
+      case 'right':
+        return nut.Button.RIGHT;
+      case 'middle':
+        return nut.Button.MIDDLE;
+      default:
+        return nut.Button.LEFT;
     }
   }
 
   private mapKey(nut: any, key: string): any {
     const keyMap: Record<string, string> = {
       // 修饰键
-      'ctrl': 'LeftControl', 'control': 'LeftControl',
-      'alt': 'LeftAlt', 'option': 'LeftAlt',
-      'shift': 'LeftShift',
-      'meta': 'LeftSuper', 'cmd': 'LeftSuper', 'command': 'LeftSuper', 'super': 'LeftSuper', 'win': 'LeftSuper',
+      ctrl: 'LeftControl',
+      control: 'LeftControl',
+      alt: 'LeftAlt',
+      option: 'LeftAlt',
+      shift: 'LeftShift',
+      meta: 'LeftSuper',
+      cmd: 'LeftSuper',
+      command: 'LeftSuper',
+      super: 'LeftSuper',
+      win: 'LeftSuper',
       // 功能键
-      'enter': 'Return', 'return': 'Return',
-      'tab': 'Tab',
-      'space': 'Space',
-      'backspace': 'Backspace', 'delete': 'Delete',
-      'escape': 'Escape', 'esc': 'Escape',
-      'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
-      'home': 'Home', 'end': 'End',
-      'pageup': 'PageUp', 'pagedown': 'PageDown',
+      enter: 'Return',
+      return: 'Return',
+      tab: 'Tab',
+      space: 'Space',
+      backspace: 'Backspace',
+      delete: 'Delete',
+      escape: 'Escape',
+      esc: 'Escape',
+      up: 'Up',
+      down: 'Down',
+      left: 'Left',
+      right: 'Right',
+      home: 'Home',
+      end: 'End',
+      pageup: 'PageUp',
+      pagedown: 'PageDown',
       // F 键
-      'f1': 'F1', 'f2': 'F2', 'f3': 'F3', 'f4': 'F4',
-      'f5': 'F5', 'f6': 'F6', 'f7': 'F7', 'f8': 'F8',
-      'f9': 'F9', 'f10': 'F10', 'f11': 'F11', 'f12': 'F12',
+      f1: 'F1',
+      f2: 'F2',
+      f3: 'F3',
+      f4: 'F4',
+      f5: 'F5',
+      f6: 'F6',
+      f7: 'F7',
+      f8: 'F8',
+      f9: 'F9',
+      f10: 'F10',
+      f11: 'F11',
+      f12: 'F12',
     };
     const mapped = keyMap[key.toLowerCase()];
     if (mapped && nut.Key[mapped] !== undefined) return nut.Key[mapped];

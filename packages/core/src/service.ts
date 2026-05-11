@@ -166,7 +166,10 @@ export class ServiceContainer {
    *
    * 可选 requiredCapabilities 过滤：只返回满足所有所需能力的提供者。
    */
-  getAll<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
+  getAll<T>(
+    name: string,
+    requiredCapabilities?: string[],
+  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     const list = this.entries.get(name);
     if (!list) return [];
     const result: Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> = [];
@@ -261,7 +264,10 @@ export class ScopedServiceContainer extends ServiceContainer {
     return [...local, ...parent];
   }
 
-  override getAll<T>(name: string, requiredCapabilities?: string[]): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
+  override getAll<T>(
+    name: string,
+    requiredCapabilities?: string[],
+  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     const local = super.getAll<T>(name, requiredCapabilities);
     const parent = this.parent.getAll<T>(name, requiredCapabilities);
     return [...local, ...parent];

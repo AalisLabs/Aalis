@@ -90,7 +90,7 @@ export interface CommandDefinition {
    * 当存在 subcommands 时，未匹配到任何子指令名的情况下回退到此 action（args 保持原样）。
    * 若希望"必须指定子指令"，可在此返回 usage 提示。
    */
-  action: (ctx: CommandContext) => Promise<string | void>;
+  action: (ctx: CommandContext) => Promise<string | undefined>;
   /**
    * 子指令树（递归）。匹配规则：
    * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层并消耗一个 arg
@@ -130,7 +130,7 @@ export interface SubcommandDefinition {
   /** 示例 */
   examples?: string[];
   /** 执行函数；省略时该节点仅作为分组，调用回退为 usage 提示 */
-  action?: (ctx: CommandContext) => Promise<string | void>;
+  action?: (ctx: CommandContext) => Promise<string | undefined>;
   /** 进一步的孙级子指令 */
   subcommands?: SubcommandDefinition[];
 }
@@ -247,7 +247,7 @@ declare module '@aalis/core' {
     command(
       name: string,
       description: string,
-      action: (ctx: CommandContext) => Promise<string | void>,
+      action: (ctx: CommandContext) => Promise<string | undefined>,
       options?: {
         authority?: number;
         safety?: SafetyLevel;

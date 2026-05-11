@@ -6,11 +6,16 @@ export function registerEquationTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_equation',
-        description: '方程求解工具。支持: linear(一元一次 ax+b=0)、quadratic(一元二次 ax²+bx+c=0)、cubic(一元三次)、system_linear(线性方程组-高斯消元)、proportion(比例 a:b=c:x)',
+        description:
+          '方程求解工具。支持: linear(一元一次 ax+b=0)、quadratic(一元二次 ax²+bx+c=0)、cubic(一元三次)、system_linear(线性方程组-高斯消元)、proportion(比例 a:b=c:x)',
         parameters: {
           type: 'object',
           properties: {
-            operation: { type: 'string', description: '操作类型', enum: ['linear', 'quadratic', 'cubic', 'system_linear', 'proportion'] },
+            operation: {
+              type: 'string',
+              description: '操作类型',
+              enum: ['linear', 'quadratic', 'cubic', 'system_linear', 'proportion'],
+            },
             // 多项式系数
             a: { type: 'number', description: '系数 a' },
             b: { type: 'number', description: '系数 b' },
@@ -26,24 +31,29 @@ export function registerEquationTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
 
         switch (op) {
           case 'linear': {
-            const a = Number(args.a ?? 0), b = Number(args.b ?? 0);
+            const a = Number(args.a ?? 0),
+              b = Number(args.b ?? 0);
             if (a === 0) {
-              return JSON.stringify(b === 0
-                ? { equation: '0 = 0', solutions: 'infinite', hint: '恒成立' }
-                : { equation: `${b} = 0`, solutions: 'none', hint: '无解' });
+              return JSON.stringify(
+                b === 0
+                  ? { equation: '0 = 0', solutions: 'infinite', hint: '恒成立' }
+                  : { equation: `${b} = 0`, solutions: 'none', hint: '无解' },
+              );
             }
             const x = -b / a;
             return JSON.stringify({ equation: `${a}x + ${b} = 0`, x });
           }
 
           case 'quadratic': {
-            const a = Number(args.a ?? 0), b = Number(args.b ?? 0), c = Number(args.c ?? 0);
+            const a = Number(args.a ?? 0),
+              b = Number(args.b ?? 0),
+              c = Number(args.c ?? 0);
             if (a === 0) {
               // 退化为一次
               if (b === 0) return JSON.stringify({ error: '不是方程（a=0, b=0）' });
@@ -54,7 +64,8 @@ export function registerEquationTools(ctx: Context): void {
             if (disc > 0) {
               const sqrtD = Math.sqrt(disc);
               return JSON.stringify({
-                equation, discriminant: disc,
+                equation,
+                discriminant: disc,
                 x1: (-b + sqrtD) / (2 * a),
                 x2: (-b - sqrtD) / (2 * a),
                 type: '两个不等实根',
@@ -62,7 +73,8 @@ export function registerEquationTools(ctx: Context): void {
             }
             if (disc === 0) {
               return JSON.stringify({
-                equation, discriminant: 0,
+                equation,
+                discriminant: 0,
                 x: -b / (2 * a),
                 type: '两个相等实根',
               });
@@ -71,7 +83,8 @@ export function registerEquationTools(ctx: Context): void {
             const real = -b / (2 * a);
             const imag = Math.sqrt(-disc) / (2 * a);
             return JSON.stringify({
-              equation, discriminant: disc,
+              equation,
+              discriminant: disc,
               x1: `${real} + ${imag}i`,
               x2: `${real} - ${imag}i`,
               type: '两个共轭复根',
@@ -79,8 +92,10 @@ export function registerEquationTools(ctx: Context): void {
           }
 
           case 'cubic': {
-            const a = Number(args.a ?? 1), b = Number(args.b ?? 0);
-            const c = Number(args.c ?? 0), d = Number(args.d ?? 0);
+            const a = Number(args.a ?? 1),
+              b = Number(args.b ?? 0);
+            const c = Number(args.c ?? 0),
+              d = Number(args.d ?? 0);
             if (a === 0) return JSON.stringify({ error: '三次项系数 a 不能为 0' });
             const roots = solveCubic(a, b, c, d);
             return JSON.stringify({
@@ -99,7 +114,9 @@ export function registerEquationTools(ctx: Context): void {
           }
 
           case 'proportion': {
-            const a = Number(args.a ?? 0), b = Number(args.b ?? 0), c = Number(args.c ?? 0);
+            const a = Number(args.a ?? 0),
+              b = Number(args.b ?? 0),
+              c = Number(args.c ?? 0);
             if (a === 0) return JSON.stringify({ error: 'a 不能为 0（a:b = c:x）' });
             const x = (b * c) / a;
             return JSON.stringify({ proportion: `${a}:${b} = ${c}:${x}`, x });
@@ -118,7 +135,9 @@ export function registerEquationTools(ctx: Context): void {
 // ===== 三次方程 (卡尔丹公式 + 数值修正) =====
 function solveCubic(a: number, b: number, c: number, d: number): { real: number; imag?: number }[] {
   // 转为 depressed cubic: t³ + pt + q = 0
-  const p1 = b / a, p2 = c / a, p3 = d / a;
+  const p1 = b / a,
+    p2 = c / a,
+    p3 = d / a;
   const Q = (3 * p2 - p1 * p1) / 9;
   const R = (9 * p1 * p2 - 27 * p3 - 2 * p1 * p1 * p1) / 54;
   const D = Q * Q * Q + R * R;
@@ -139,7 +158,7 @@ function solveCubic(a: number, b: number, c: number, d: number): { real: number;
     } else {
       // 复数根
       const realPart = -(S + T) / 2 - p1 / 3;
-      const imagPart = Math.sqrt(3) / 2 * (S - T);
+      const imagPart = (Math.sqrt(3) / 2) * (S - T);
       roots.push({ real: realPart, imag: imagPart });
       roots.push({ real: realPart, imag: -imagPart });
     }

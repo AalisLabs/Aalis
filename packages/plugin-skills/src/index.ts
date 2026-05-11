@@ -1,7 +1,7 @@
-import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
-import { resolve, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
@@ -194,7 +194,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 缓存 ──
 
-  let skillsCache: SkillDefinition[] = loadAllSkills();
+  const skillsCache: SkillDefinition[] = loadAllSkills();
 
   // ── 核心服务实现 ──
 
@@ -248,7 +248,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       const idx = skillsCache.findIndex(s => s.name === skillName);
       if (idx < 0) return false;
       const filePath = join(skillsDir, `${sanitizeFilename(skillName)}.yaml`);
-      try { unlinkSync(filePath); } catch {}
+      try {
+        unlinkSync(filePath);
+      } catch {}
       skillsCache.splice(idx, 1);
       logger.info(`技能已删除: ${skillName}`);
       return true;
@@ -274,7 +276,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'skill_create',
-        description: '创建一个新的可复用技能。技能是保存的提示词模板，可以包含 {{参数名}} 占位符。用于将经验总结为可复用的能力。',
+        description:
+          '创建一个新的可复用技能。技能是保存的提示词模板，可以包含 {{参数名}} 占位符。用于将经验总结为可复用的能力。',
         parameters: {
           type: 'object',
           properties: {
@@ -295,7 +298,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         service.createSkill({
           name: args.name as string,
@@ -318,7 +321,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'skill_list',
-        description: '列出已保存的技能，支持按关键词 / 标签筛选与分页。技能仓库大时务必使用 keyword 或 tag 过滤，避免一次拉全量。',
+        description:
+          '列出已保存的技能，支持按关键词 / 标签筛选与分页。技能仓库大时务必使用 keyword 或 tag 过滤，避免一次拉全量。',
         parameters: {
           type: 'object',
           properties: {
@@ -330,7 +334,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const all = service.listSkills().map(s => ({
         name: s.name,
         description: s.description,
@@ -375,7 +379,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'skill_execute',
-        description: '执行一个已保存的技能。将模板中的参数替换后，返回展开后的提示词内容。你应该根据这个内容来执行相应的操作。',
+        description:
+          '执行一个已保存的技能。将模板中的参数替换后，返回展开后的提示词内容。你应该根据这个内容来执行相应的操作。',
         parameters: {
           type: 'object',
           properties: {
@@ -390,7 +395,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const skill = service.getSkill(args.name as string);
       if (!skill) return JSON.stringify({ error: `技能 "${args.name}" 不存在` });
 
@@ -447,12 +452,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const updates: Partial<SkillDefinition> = {};
         if (args.description) updates.description = args.description as string;
         if (args.prompt) updates.prompt = args.prompt as string;
-        if (args.parameters) updates.parameters = args.parameters as Record<string, { description: string; default?: string }>;
+        if (args.parameters)
+          updates.parameters = args.parameters as Record<string, { description: string; default?: string }>;
         if (args.tags) updates.tags = args.tags as string[];
 
         const ok = service.updateSkill(args.name as string, updates);
@@ -480,7 +486,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const ok = service.deleteSkill(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已删除' : '技能不存在' });
     },
@@ -491,15 +497,18 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   ctx.middleware('agent:llm:before', async (data, next) => {
     const skills = service.listSkills();
     if (skills.length > 0) {
-      const skillSummary = skills.map(s =>
-        `- ${s.name}: ${s.description}${s.parameters ? ` (参数: ${Object.keys(s.parameters).join(', ')})` : ''}`
-      ).join('\n');
+      const skillSummary = skills
+        .map(
+          s => `- ${s.name}: ${s.description}${s.parameters ? ` (参数: ${Object.keys(s.parameters).join(', ')})` : ''}`,
+        )
+        .join('\n');
 
       // 在 system 消息后追加技能提示
       const systemIdx = data.messages.findIndex(m => m.role === 'system');
       if (systemIdx >= 0 && data.messages[systemIdx].content) {
         const appendText = `\n\n你拥有以下可复用技能，可以通过 skill_execute 工具调用它们：\n${skillSummary}`;
-        const prevContributions = (data.messages[systemIdx].metadata?._tokenContributions as Record<string, number>) ?? {};
+        const prevContributions =
+          (data.messages[systemIdx].metadata?._tokenContributions as Record<string, number>) ?? {};
         data.messages[systemIdx] = {
           ...data.messages[systemIdx],
           content: data.messages[systemIdx].content + appendText,

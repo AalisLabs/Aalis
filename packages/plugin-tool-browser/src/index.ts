@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import '@aalis/plugin-tools-api';
 
@@ -111,17 +111,13 @@ export const webuiPages: WebuiPage[] = [
           { key: 'url', label: 'URL' },
           { key: 'lastAccessText', label: '最后访问' },
         ],
-        actions: [
-          { label: '关闭', method: 'closePage', confirm: '确定关闭该页面？' },
-        ],
+        actions: [{ label: '关闭', method: 'closePage', confirm: '确定关闭该页面？' }],
         refresh: 15,
       },
       {
         type: 'actions',
         label: '操作',
-        items: [
-          { label: '关闭所有页面', method: 'closeAll', confirm: '确定关闭所有页面？', danger: true },
-        ],
+        items: [{ label: '关闭所有页面', method: 'closeAll', confirm: '确定关闭所有页面？', danger: true }],
       },
     ],
   },
@@ -140,17 +136,15 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 动态加载 puppeteer ──
 
   async function ensureChrome(): Promise<void> {
-    const fs = await import('fs');
-    const path = await import('path');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
     const puppeteer = await import('puppeteer');
     const execPath = puppeteer.executablePath?.() ?? puppeteer.default?.executablePath?.();
     if (execPath && fs.existsSync(execPath)) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
     // 通过 puppeteer 包路径找到其内置 CLI
-    const puppeteerPkg = path.dirname(
-      (await import('url')).fileURLToPath(import.meta.resolve('puppeteer'))
-    );
+    const puppeteerPkg = path.dirname((await import('node:url')).fileURLToPath(import.meta.resolve('puppeteer')));
     // 向上找到 puppeteer 包根目录（含 package.json）
     let pkgRoot = puppeteerPkg;
     while (!fs.existsSync(path.join(pkgRoot, 'package.json'))) {
@@ -159,7 +153,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       pkgRoot = parent;
     }
     const cliPath = path.join(pkgRoot, 'lib', 'cjs', 'puppeteer', 'node', 'cli.js');
-    const { execFileSync } = await import('child_process');
+    const { execFileSync } = await import('node:child_process');
     execFileSync(process.execPath, [cliPath, 'browsers', 'install', 'chrome'], {
       stdio: 'inherit',
       timeout: 300_000,
@@ -210,7 +204,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         }
       }
       if (oldest) {
-        try { await pages.get(oldest)!.page.close(); } catch {}
+        try {
+          await pages.get(oldest)!.page.close();
+        } catch {}
         pages.delete(oldest);
       }
     }
@@ -228,7 +224,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   function truncate(text: string): string {
     if (text.length <= config.maxContentLength) return text;
-    return text.slice(0, config.maxContentLength) + `\n... [内容已截断，共 ${text.length} 字符]`;
+    return `${text.slice(0, config.maxContentLength)}\n... [内容已截断，共 ${text.length} 字符]`;
   }
 
   // ── 注册工具分组 ──
@@ -260,7 +256,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const targetUrl = args.url as string;
         const urlError = validateUrl(targetUrl, config);
@@ -303,19 +299,16 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         let text: string;
         if (args.selector) {
-          text = await slot.page.evaluate(
-            (sel: string) => {
-              const el = document.querySelector(sel) as HTMLElement | null;
-              return el?.innerText ?? `未找到元素: ${sel}`;
-            },
-            args.selector as string,
-          );
+          text = await slot.page.evaluate((sel: string) => {
+            const el = document.querySelector(sel) as HTMLElement | null;
+            return el?.innerText ?? `未找到元素: ${sel}`;
+          }, args.selector as string);
         } else {
           text = await slot.page.evaluate(() => document.body?.innerText ?? '');
         }
@@ -345,7 +338,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
@@ -382,7 +375,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
@@ -422,7 +415,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
@@ -467,7 +460,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
@@ -504,11 +497,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const id = args.pageId as string;
       const slot = pages.get(id);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
-      try { await slot.page.close(); } catch {}
+      try {
+        await slot.page.close();
+      } catch {}
       pages.delete(id);
       return JSON.stringify({ ok: true });
     },
@@ -529,13 +524,17 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       const id = args.id as string;
       const slot = pages.get(id);
       if (!slot) return { error: '页面不存在' };
-      try { await slot.page.close(); } catch {}
+      try {
+        await slot.page.close();
+      } catch {}
       pages.delete(id);
       return { ok: true };
     },
     async closeAll() {
       for (const [id, slot] of pages) {
-        try { await slot.page.close(); } catch {}
+        try {
+          await slot.page.close();
+        } catch {}
         pages.delete(id);
       }
       return { ok: true };
@@ -546,11 +545,15 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   ctx.on('dispose', async () => {
     for (const [, slot] of pages) {
-      try { await slot.page.close(); } catch {}
+      try {
+        await slot.page.close();
+      } catch {}
     }
     pages.clear();
     if (browser) {
-      try { await browser.close(); } catch {}
+      try {
+        await browser.close();
+      } catch {}
       browser = null;
     }
   });
@@ -587,9 +590,9 @@ function resolveConfig(raw: Record<string, unknown>): BrowserConfig {
     maxPages: (raw.maxPages as number) ?? 5,
     executablePath: (raw.executablePath as string) ?? '',
     maxContentLength: (raw.maxContentLength as number) ?? 50000,
-    allowedProtocols: Array.isArray(raw.allowedProtocols) ? raw.allowedProtocols as string[] : ['http', 'https'],
+    allowedProtocols: Array.isArray(raw.allowedProtocols) ? (raw.allowedProtocols as string[]) : ['http', 'https'],
     blockPrivate: (raw.blockPrivate as boolean | undefined) ?? true,
-    allowedHosts: Array.isArray(raw.allowedHosts) ? raw.allowedHosts as string[] : [],
+    allowedHosts: Array.isArray(raw.allowedHosts) ? (raw.allowedHosts as string[]) : [],
   };
 }
 
@@ -599,7 +602,11 @@ function resolveConfig(raw: Record<string, unknown>): BrowserConfig {
  */
 function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   let parsed: URL;
-  try { parsed = new URL(rawUrl); } catch { return `URL 格式不合法: ${rawUrl}`; }
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return `URL 格式不合法: ${rawUrl}`;
+  }
 
   const protocol = parsed.protocol.replace(/:$/, '').toLowerCase();
   if (!config.allowedProtocols.includes(protocol)) {

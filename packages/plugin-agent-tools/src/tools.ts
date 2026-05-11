@@ -1,9 +1,6 @@
-import type { ToolDefinition } from '@aalis/core';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
-import type { RegisteredTool, ToolSummary, ToolGroupInfo } from '@aalis/plugin-tools-api';
-import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Logger } from '@aalis/core';
-import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
+import type { Logger, ToolDefinition } from '@aalis/core';
+import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+import type { RegisteredTool, ToolCallContext, ToolGroupInfo, ToolService, ToolSummary } from '@aalis/plugin-tools-api';
 
 /**
  * 工具注册表 —— 管理 AI 可调用工具的注册、查询、执行
@@ -58,9 +55,7 @@ export class ToolRegistry implements ToolService {
         .map(t => t.definition);
     }
     // 未指定分组时，只返回无分组（通用）工具；有分组的工具需要显式启用
-    return tools
-      .filter(t => !t.groups || t.groups.length === 0)
-      .map(t => t.definition);
+    return tools.filter(t => !t.groups || t.groups.length === 0).map(t => t.definition);
   }
 
   getSummaries(filter?: { groups?: string[] }): ToolSummary[] {
@@ -126,11 +121,7 @@ export class ToolRegistry implements ToolService {
     this._guard = guard;
   }
 
-  async execute(
-    toolName: string,
-    args: Record<string, unknown>,
-    callCtx: ToolCallContext,
-  ): Promise<string> {
+  async execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> {
     const tool = this.tools.get(toolName);
     if (!tool) return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
 
@@ -171,7 +162,9 @@ export class ToolRegistry implements ToolService {
 
     try {
       if (safety === 'dangerous') {
-        this.logger.info(`危险工具执行: ${toolName} session=${callCtx.sessionId} platform=${callCtx.platform ?? 'unknown'} args=${JSON.stringify(args)}`);
+        this.logger.info(
+          `危险工具执行: ${toolName} session=${callCtx.sessionId} platform=${callCtx.platform ?? 'unknown'} args=${JSON.stringify(args)}`,
+        );
       }
       const result = await tool.handler(args, callCtx);
       this.logger.debug(`工具 ${toolName} 执行成功`);
@@ -250,7 +243,7 @@ function validateToolArgs(toolName: string, definition: ToolDefinition, args: Re
     if (extraKeys.length > 0) {
       errors.push(
         `包含未知参数 ${extraKeys.map(k => `"${k}"`).join(', ')}。` +
-        `工具 ${toolName} 支持的参数: ${knownKeys.map(k => `"${k}"`).join(', ')}`,
+          `工具 ${toolName} 支持的参数: ${knownKeys.map(k => `"${k}"`).join(', ')}`,
       );
     }
   }

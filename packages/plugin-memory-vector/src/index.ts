@@ -1,9 +1,9 @@
-import type { Context, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
+import type { ConfigSchema, Context, Message, MiddlewareNext } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { prefixSender } from '@aalis/plugin-message-api';
+import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
@@ -22,23 +22,33 @@ export const configSchema: ConfigSchema = {
     label: '搜索设置',
     fields: {
       topK: {
-        type: 'number', label: '最大返回数', default: 5,
+        type: 'number',
+        label: '最大返回数',
+        default: 5,
         description: '语义搜索返回的命中条数（每条会再带上下文窗口）',
       },
       timeWeight: {
-        type: 'number', label: '时间权重', default: 0.3,
+        type: 'number',
+        label: '时间权重',
+        default: 0.3,
         description: '0=纯语义，1=纯时间近因',
       },
       userPriorityBoost: {
-        type: 'number', label: '同用户加权系数', default: 2.0,
+        type: 'number',
+        label: '同用户加权系数',
+        default: 2.0,
         description: '在 user 模式下对同一用户消息的命中分数乘以该系数（>1 表示优先）',
       },
       perItemMaxChars: {
-        type: 'number', label: '单条截断字数', default: 200,
+        type: 'number',
+        label: '单条截断字数',
+        default: 200,
         description: '每条消息呈现给 LLM 时的字符上限，超出截断',
       },
       minScore: {
-        type: 'number', label: '最低相似度阈值', default: 0,
+        type: 'number',
+        label: '最低相似度阈值',
+        default: 0,
         description: '0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤',
       },
     },
@@ -48,11 +58,15 @@ export const configSchema: ConfigSchema = {
     description: '命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/system/tool）还原情景。0 = 关闭。',
     fields: {
       window: {
-        type: 'number', label: '扩展窗口（前后各 N 条消息）', default: 2,
+        type: 'number',
+        label: '扩展窗口（前后各 N 条消息）',
+        default: 2,
         description: '0 = 仅命中本身。建议 2~5。负数会报错',
       },
       crossSession: {
-        type: 'boolean', label: '跨会话也扩展', default: true,
+        type: 'boolean',
+        label: '跨会话也扩展',
+        default: true,
         description: '若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文',
       },
     },
@@ -62,11 +76,16 @@ export const configSchema: ConfigSchema = {
     description: '控制后台向量索引的削峰与并发。搜索路径不受该队列影响。',
     fields: {
       concurrency: {
-        type: 'number', label: '最大并发索引数', default: 10,
-        description: '同时进行的后台 embedding + 向量写入任务数。0 或负数表示不限制；建议 2~10，过高可能压垮本地 embedding 服务。',
+        type: 'number',
+        label: '最大并发索引数',
+        default: 10,
+        description:
+          '同时进行的后台 embedding + 向量写入任务数。0 或负数表示不限制；建议 2~10，过高可能压垮本地 embedding 服务。',
       },
       maxQueueSize: {
-        type: 'number', label: '最大索引队列长度', default: 500,
+        type: 'number',
+        label: '最大索引队列长度',
+        default: 500,
         description: '待索引消息队列上限。0 或负数表示不限制；超出后丢弃最旧待索引消息，避免内存无限增长。',
       },
     },
@@ -137,7 +156,7 @@ function recencyScore(timestampMs: number, nowMs: number): number {
 function truncate(text: string | undefined | null, max: number): string {
   const s = text ?? '';
   if (max <= 0 || s.length <= max) return s;
-  return s.slice(0, max) + '…';
+  return `${s.slice(0, max)}…`;
 }
 
 function formatError(err: unknown): string {
@@ -241,7 +260,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const windowRaw = expandRaw.window;
   const windowNum = typeof windowRaw === 'number' ? windowRaw : Number(windowRaw ?? 2);
   if (Number.isNaN(windowNum) || !Number.isFinite(windowNum)) {
-    throw new Error('memory-vector 配置错误: contextExpand.window 必须为非负整数（0 表示仅命中本身，N>0 表示前后各 N 条）');
+    throw new Error(
+      'memory-vector 配置错误: contextExpand.window 必须为非负整数（0 表示仅命中本身，N>0 表示前后各 N 条）',
+    );
   }
   if (windowNum < 0) {
     throw new Error(`memory-vector 配置错误: contextExpand.window=${windowNum} 不能为负数`);
@@ -271,10 +292,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.logger.info(
     `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery ? '可用' : '不可用'}, ` +
-    `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
-    `单条截断=${cfg.search.perItemMaxChars}字, minScore=${cfg.search.minScore}, ` +
-    `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
-    `indexQueue=${cfg.indexing.maxQueueSize <= 0 ? 'unlimited' : cfg.indexing.maxQueueSize}`,
+      `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
+      `单条截断=${cfg.search.perItemMaxChars}字, minScore=${cfg.search.minScore}, ` +
+      `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
+      `indexQueue=${cfg.indexing.maxQueueSize <= 0 ? 'unlimited' : cfg.indexing.maxQueueSize}`,
   );
 
   if (!hasRangeQuery && cfg.contextExpand.window > 0) {
@@ -299,7 +320,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   async function drainIndexQueue(): Promise<void> {
-    while ((cfg.indexing.concurrency <= 0 || activeIndexers < cfg.indexing.concurrency) && pendingIndexMessages.length > 0) {
+    while (
+      (cfg.indexing.concurrency <= 0 || activeIndexers < cfg.indexing.concurrency) &&
+      pendingIndexMessages.length > 0
+    ) {
       const next = pendingIndexMessages.shift()!;
       activeIndexers++;
       void (async () => {
@@ -347,7 +371,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
   // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
-  ctx.on('inbound:message:archived', (data) => {
+  ctx.on('inbound:message:archived', data => {
     // 使用 archive 写入时的真实时间戳作为向量 metadata.timestamp，
     // 保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目。
     const ts = data.archivedMessage.timestamp ?? Date.now();
@@ -372,248 +396,257 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
     }
     if (total > 0) {
-      try { await currentStore.save(); } catch (err) { ctx.logger.warn(`向量保存失败: ${formatError(err)}`); }
+      try {
+        await currentStore.save();
+      } catch (err) {
+        ctx.logger.warn(`向量保存失败: ${formatError(err)}`);
+      }
       ctx.logger.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
     }
   });
 
   // === 统一记忆清除 ===
 
-  ctx.middleware('memory:clear', async (data: {
-    scope: 'session' | 'all';
-    types?: string[];
-    sessionId?: string;
-    results: Array<{ source: string; success: boolean; message: string }>;
-    rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
-  }, next) => {
-    if (data.types && !data.types.includes('vector')) {
-      await next();
-      return;
-    }
-
-    try {
-      if (data.scope === 'all') {
-        await getStore().clear();
-        await getStore().save();
-        data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
-        ctx.logger.info('向量记忆已全部清空');
-      } else if (data.sessionId) {
-        let deleted = 0;
-        const currentStore = getStore();
-        if (currentStore.deleteByFilter) {
-          deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
-          await currentStore.save();
-        } else {
-          ctx.logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
-        }
-        data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
-        ctx.logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+        rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+      },
+      next,
+    ) => {
+      if (data.types && !data.types.includes('vector')) {
+        await next();
+        return;
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
-      ctx.logger.warn(`向量清空失败: ${formatError(err)}`);
-    }
 
-    await next();
-  });
+      try {
+        if (data.scope === 'all') {
+          await getStore().clear();
+          await getStore().save();
+          data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
+          ctx.logger.info('向量记忆已全部清空');
+        } else if (data.sessionId) {
+          let deleted = 0;
+          const currentStore = getStore();
+          if (currentStore.deleteByFilter) {
+            deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
+            await currentStore.save();
+          } else {
+            ctx.logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
+          }
+          data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
+          ctx.logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
+        ctx.logger.warn(`向量清空失败: ${formatError(err)}`);
+      }
+
+      await next();
+    },
+  );
 
   // === 检索并注入上下文 ===
 
-  ctx.middleware('agent:llm:before', async (
-    data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
-    next: MiddlewareNext,
-  ) => {
-    if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-vector')) {
-      await next();
-      return;
-    }
-
-    const userMessages = data.messages.filter(m => m.role === 'user');
-    const lastUserMsg = userMessages[userMessages.length - 1];
-    if (!lastUserMsg?.content) {
-      await next();
-      return;
-    }
-
-    try {
-      const mode = cfg.crossSessionMode;
-      const curSessionId = data.sessionId;
-      const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
-      const curUserId = data.userId ?? '';
-
-      const candidateCount = Math.min(cfg.search.topK * 4, await getStore().size());
-      if (candidateCount === 0) {
+  ctx.middleware(
+    'agent:llm:before',
+    async (
+      data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
+      next: MiddlewareNext,
+    ) => {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-vector')) {
         await next();
         return;
       }
 
-      const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
-      const candidates = await getStore().search(queryVec, candidateCount);
+      const userMessages = data.messages.filter(m => m.role === 'user');
+      const lastUserMsg = userMessages[userMessages.length - 1];
+      if (!lastUserMsg?.content) {
+        await next();
+        return;
+      }
 
-      // 1. 阈值过滤
-      const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
+      try {
+        const mode = cfg.crossSessionMode;
+        const curSessionId = data.sessionId;
+        const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
+        const curUserId = data.userId ?? '';
 
-      // 2. 跨会话模式过滤
-      const filtered = passThreshold.filter(c => {
-        switch (mode) {
-          case 'isolated':
-            return c.metadata.sessionId === curSessionId;
-          case 'platform':
-            return (c.metadata.platform as string) === curPlatform
-              || parsePlatform(c.metadata.sessionId as string) === curPlatform;
-          case 'user':
-          case 'all':
-          default:
-            return true;
+        const candidateCount = Math.min(cfg.search.topK * 4, await getStore().size());
+        if (candidateCount === 0) {
+          await next();
+          return;
         }
-      });
 
-      // 3. 时间加权 + 同用户加权（作者匹配 或 当前用户被 @提及，均享 boost）
-      const now = Date.now();
-      const ranked = filtered.map(c => {
-        let score =
-          (1 - cfg.search.timeWeight) * c.score +
-          cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
-        if (mode === 'user' && curUserId) {
-          const isAuthor = (c.metadata.userId as string) === curUserId;
-          const mentions = c.metadata.mentions as string[] | undefined;
-          const isMentioned = Array.isArray(mentions) && mentions.includes(curUserId);
-          if (isAuthor || isMentioned) {
-            score *= cfg.search.userPriorityBoost;
+        const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
+        const candidates = await getStore().search(queryVec, candidateCount);
+
+        // 1. 阈值过滤
+        const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
+
+        // 2. 跨会话模式过滤
+        const filtered = passThreshold.filter(c => {
+          switch (mode) {
+            case 'isolated':
+              return c.metadata.sessionId === curSessionId;
+            case 'platform':
+              return (
+                (c.metadata.platform as string) === curPlatform ||
+                parsePlatform(c.metadata.sessionId as string) === curPlatform
+              );
+            default:
+              return true;
           }
-        }
-        return { ...c, finalScore: score };
-      });
-      ranked.sort((a, b) => b.finalScore - a.finalScore);
+        });
 
-      const topResults = ranked.slice(0, cfg.search.topK);
-      if (topResults.length === 0) {
-        await next();
-        return;
-      }
-
-      // 4. 命中点 + 上下文窗口扩展（合并区间，去重）
-      const W = cfg.contextExpand.window;
-      const collected = new Map<string, { sessionId: string; msg: Message }>();
-
-      // 当前对话已有的内容用于去重（只比较纯文本）
-      const currentContents = new Set(
-        data.messages.map(m => (m.content ?? '').trim()).filter(Boolean),
-      );
-
-      // 按 sessionId 聚合命中点的时间戳，决定每个会话需要拉取的时间窗口
-      const sessionPivots = new Map<string, number[]>();
-      for (const r of topResults) {
-        const sid = r.metadata.sessionId as string | undefined;
-        const ts = r.metadata.timestamp as number | undefined;
-        if (!sid || ts === undefined) continue;
-        if (!cfg.contextExpand.crossSession && sid !== curSessionId) {
-          // 不允许跨会话扩展时，对非当前会话只放入命中点本身（走兜底分支）
-          continue;
-        }
-        const arr = sessionPivots.get(sid) ?? [];
-        arr.push(ts);
-        sessionPivots.set(sid, arr);
-      }
-
-      // 拉取每个会话的扩展消息
-      if (W > 0 && hasRangeQuery) {
-        for (const [sid, pivots] of sessionPivots) {
-          // 用宽时间窗一次拉，再按 pivot 切片合并（避免多次小查询）
-          const minTs = Math.min(...pivots);
-          const maxTs = Math.max(...pivots);
-          // 4 小时缓冲，足以覆盖 N=数十条邻居的常见场景
-          const bufferMs = 4 * 60 * 60 * 1000;
-          try {
-            const all = await memory!.getMessagesBySessionRange!(sid, minTs - bufferMs, maxTs + bufferMs);
-            const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-
-            // 对每个 pivot 在 sorted 中定位并取 ±W 条
-            for (const pivotTs of pivots) {
-              const pivotIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
-              const idx = pivotIdx >= 0 ? pivotIdx : sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs);
-              if (idx < 0) {
-                // pivot 在 messages 表里找不到（消息表已老化清理），从向量 metadata 兜底插入
-                const cand = topResults.find(r => r.metadata.sessionId === sid && r.metadata.timestamp === pivotTs);
-                if (cand) {
-                  const fakeMsg: Message = {
-                    role: 'user',
-                    content: (cand.metadata.content as string) ?? '',
-                    timestamp: pivotTs,
-                    name: cand.metadata.userId as string | undefined,
-                    metadata: cand.metadata,
-                  };
-                  const key = messageKey(sid, fakeMsg);
-                  if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
-                }
-                continue;
-              }
-              const start = Math.max(0, idx - W);
-              const end = Math.min(sorted.length, idx + W + 1);
-              for (let i = start; i < end; i++) {
-                const m = sorted[i];
-                if (!m.content) continue;
-                if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
-                if (currentContents.has((m.content ?? '').trim())) continue;
-                const key = messageKey(sid, m);
-                if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: m });
-              }
+        // 3. 时间加权 + 同用户加权（作者匹配 或 当前用户被 @提及，均享 boost）
+        const now = Date.now();
+        const ranked = filtered.map(c => {
+          let score =
+            (1 - cfg.search.timeWeight) * c.score +
+            cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
+          if (mode === 'user' && curUserId) {
+            const isAuthor = (c.metadata.userId as string) === curUserId;
+            const mentions = c.metadata.mentions as string[] | undefined;
+            const isMentioned = Array.isArray(mentions) && mentions.includes(curUserId);
+            if (isAuthor || isMentioned) {
+              score *= cfg.search.userPriorityBoost;
             }
-          } catch (err) {
-            ctx.logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
+          }
+          return { ...c, finalScore: score };
+        });
+        ranked.sort((a, b) => b.finalScore - a.finalScore);
+
+        const topResults = ranked.slice(0, cfg.search.topK);
+        if (topResults.length === 0) {
+          await next();
+          return;
+        }
+
+        // 4. 命中点 + 上下文窗口扩展（合并区间，去重）
+        const W = cfg.contextExpand.window;
+        const collected = new Map<string, { sessionId: string; msg: Message }>();
+
+        // 当前对话已有的内容用于去重（只比较纯文本）
+        const currentContents = new Set(data.messages.map(m => (m.content ?? '').trim()).filter(Boolean));
+
+        // 按 sessionId 聚合命中点的时间戳，决定每个会话需要拉取的时间窗口
+        const sessionPivots = new Map<string, number[]>();
+        for (const r of topResults) {
+          const sid = r.metadata.sessionId as string | undefined;
+          const ts = r.metadata.timestamp as number | undefined;
+          if (!sid || ts === undefined) continue;
+          if (!cfg.contextExpand.crossSession && sid !== curSessionId) {
+            // 不允许跨会话扩展时，对非当前会话只放入命中点本身（走兜底分支）
+            continue;
+          }
+          const arr = sessionPivots.get(sid) ?? [];
+          arr.push(ts);
+          sessionPivots.set(sid, arr);
+        }
+
+        // 拉取每个会话的扩展消息
+        if (W > 0 && hasRangeQuery) {
+          for (const [sid, pivots] of sessionPivots) {
+            // 用宽时间窗一次拉，再按 pivot 切片合并（避免多次小查询）
+            const minTs = Math.min(...pivots);
+            const maxTs = Math.max(...pivots);
+            // 4 小时缓冲，足以覆盖 N=数十条邻居的常见场景
+            const bufferMs = 4 * 60 * 60 * 1000;
+            try {
+              const all = await memory!.getMessagesBySessionRange!(sid, minTs - bufferMs, maxTs + bufferMs);
+              const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
+              // 对每个 pivot 在 sorted 中定位并取 ±W 条
+              for (const pivotTs of pivots) {
+                const pivotIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
+                const idx = pivotIdx >= 0 ? pivotIdx : sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs);
+                if (idx < 0) {
+                  // pivot 在 messages 表里找不到（消息表已老化清理），从向量 metadata 兜底插入
+                  const cand = topResults.find(r => r.metadata.sessionId === sid && r.metadata.timestamp === pivotTs);
+                  if (cand) {
+                    const fakeMsg: Message = {
+                      role: 'user',
+                      content: (cand.metadata.content as string) ?? '',
+                      timestamp: pivotTs,
+                      name: cand.metadata.userId as string | undefined,
+                      metadata: cand.metadata,
+                    };
+                    const key = messageKey(sid, fakeMsg);
+                    if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
+                  }
+                  continue;
+                }
+                const start = Math.max(0, idx - W);
+                const end = Math.min(sorted.length, idx + W + 1);
+                for (let i = start; i < end; i++) {
+                  const m = sorted[i];
+                  if (!m.content) continue;
+                  if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
+                  if (currentContents.has((m.content ?? '').trim())) continue;
+                  const key = messageKey(sid, m);
+                  if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: m });
+                }
+              }
+            } catch (err) {
+              ctx.logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
         }
+
+        // 兜底：把所有未被扩展覆盖的命中（如跨会话扩展关闭、或无 range query）放入 collected
+        for (const r of topResults) {
+          const sid = r.metadata.sessionId as string | undefined;
+          const ts = r.metadata.timestamp as number | undefined;
+          if (!sid || ts === undefined) continue;
+          if (r.metadata.content === '对话已压缩') continue;
+          const fakeMsg: Message = {
+            role: 'user',
+            content: (r.metadata.content as string) ?? '',
+            timestamp: ts,
+            name: r.metadata.userId as string | undefined,
+            metadata: r.metadata,
+          };
+          if (!fakeMsg.content) continue;
+          if (currentContents.has(fakeMsg.content.trim())) continue;
+          const key = messageKey(sid, fakeMsg);
+          if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
+        }
+
+        if (collected.size === 0) {
+          await next();
+          return;
+        }
+
+        // 5. 按时间排序混排
+        const sortedAll = [...collected.values()].sort((a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0));
+
+        const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
+
+        const contextBlock =
+          '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n' +
+          lines.join('\n');
+
+        const insertAt = data.messages.findIndex(m => m.role !== 'system');
+        const insertIdx = insertAt === -1 ? data.messages.length : insertAt;
+        data.messages.splice(insertIdx, 0, {
+          role: 'system',
+          content: contextBlock,
+          metadata: { source: 'memory-vector' },
+        });
+      } catch (err) {
+        ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
       }
 
-      // 兜底：把所有未被扩展覆盖的命中（如跨会话扩展关闭、或无 range query）放入 collected
-      for (const r of topResults) {
-        const sid = r.metadata.sessionId as string | undefined;
-        const ts = r.metadata.timestamp as number | undefined;
-        if (!sid || ts === undefined) continue;
-        if (r.metadata.content === '对话已压缩') continue;
-        const fakeMsg: Message = {
-          role: 'user',
-          content: (r.metadata.content as string) ?? '',
-          timestamp: ts,
-          name: r.metadata.userId as string | undefined,
-          metadata: r.metadata,
-        };
-        if (!fakeMsg.content) continue;
-        if (currentContents.has(fakeMsg.content.trim())) continue;
-        const key = messageKey(sid, fakeMsg);
-        if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
-      }
-
-      if (collected.size === 0) {
-        await next();
-        return;
-      }
-
-      // 5. 按时间排序混排
-      const sortedAll = [...collected.values()].sort(
-        (a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0),
-      );
-
-      const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
-
-      const contextBlock =
-        '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n'
-        + lines.join('\n');
-
-      const insertAt = data.messages.findIndex(m => m.role !== 'system');
-      const insertIdx = insertAt === -1 ? data.messages.length : insertAt;
-      data.messages.splice(insertIdx, 0, {
-        role: 'system',
-        content: contextBlock,
-        metadata: { source: 'memory-vector' },
-      });
-    } catch (err) {
-      ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
-    }
-
-    await next();
-  });
+      await next();
+    },
+  );
 
   // === 工具：主动语义召回 ===
   // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
@@ -691,8 +724,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const filtered = passThreshold.filter(c => {
           if (effectiveScope === 'session') return c.metadata.sessionId === curSessionId;
           if (effectiveScope === 'platform') {
-            return (c.metadata.platform as string) === curPlatform
-              || parsePlatform(c.metadata.sessionId as string) === curPlatform;
+            return (
+              (c.metadata.platform as string) === curPlatform ||
+              parsePlatform(c.metadata.sessionId as string) === curPlatform
+            );
           }
           return true;
         });

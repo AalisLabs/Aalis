@@ -1,11 +1,19 @@
-import type { Context, ConfigSchema, Message } from '@aalis/core';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
-import type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from './types.js';
+import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
 import { WebSearchCapabilities } from './types.js';
 import '@aalis/plugin-tools-api';
 
-export type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchCapability, WebSearchCapabilityRegistry } from './types.js';
+export type {
+  WebSearchCapability,
+  WebSearchCapabilityRegistry,
+  WebSearchRequest,
+  WebSearchResponse,
+  WebSearchResult,
+  WebSearchService,
+} from './types.js';
 export { WebSearchCapabilities } from './types.js';
+
 import { parseModelRef } from '@aalis/plugin-llm-api';
 
 // ===== 插件元数据 =====
@@ -159,11 +167,7 @@ interface SerperResponse {
   };
 }
 
-async function serperSearch(
-  query: string,
-  apiKey: string,
-  numResults: number,
-): Promise<SerperResponse> {
+async function serperSearch(query: string, apiKey: string, numResults: number): Promise<SerperResponse> {
   const response = await fetch('https://google.serper.dev/search', {
     method: 'POST',
     headers: {
@@ -251,9 +255,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!targetLLM) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
-    const prompt = promptTemplate
-      .replace('{query}', query)
-      .replace('{results}', rawResults);
+    const prompt = promptTemplate.replace('{query}', query).replace('{results}', rawResults);
 
     const messages: Message[] = [{ role: 'user', content: prompt }];
 
@@ -275,9 +277,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.logger.info(
     `网络搜索已启用 (provider: serper, ` +
-    `限制: ${cfg.maxPerMinute}/min, ${cfg.maxPerDay}/day, ` +
-    `并发: ${cfg.maxConcurrent}` +
-    `${cfg.enableCompression ? ', 压缩: 已启用' : ''})`,
+      `限制: ${cfg.maxPerMinute}/min, ${cfg.maxPerDay}/day, ` +
+      `并发: ${cfg.maxConcurrent}` +
+      `${cfg.enableCompression ? ', 压缩: 已启用' : ''})`,
   );
 
   // 注册为 web-search 服务，供其他插件消费
@@ -338,7 +340,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const query = args.query as string;
       const numResults = Math.min(10, Math.max(1, (args.numResults as number) ?? cfg.defaultNumResults));
 

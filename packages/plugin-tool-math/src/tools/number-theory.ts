@@ -6,7 +6,8 @@ export function registerNumberTheoryTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_number_theory',
-        description: '数论与组合数学工具。支持: gcd(最大公约数)、lcm(最小公倍数)、is_prime(素数判断)、prime_factors(质因数分解)、nth_prime(第n个素数)、primes_in_range(范围内素数)、fibonacci(斐波那契数)、factorial(阶乘)、combination(组合数C(n,k))、permutation(排列数P(n,k))、mod_pow(模幂运算)、mod_inverse(模逆元)、euler_totient(欧拉函数)、is_perfect(完全数判断)、divisors(因数列表)、digital_root(数字根)',
+        description:
+          '数论与组合数学工具。支持: gcd(最大公约数)、lcm(最小公倍数)、is_prime(素数判断)、prime_factors(质因数分解)、nth_prime(第n个素数)、primes_in_range(范围内素数)、fibonacci(斐波那契数)、factorial(阶乘)、combination(组合数C(n,k))、permutation(排列数P(n,k))、mod_pow(模幂运算)、mod_inverse(模逆元)、euler_totient(欧拉函数)、is_perfect(完全数判断)、divisors(因数列表)、digital_root(数字根)',
         parameters: {
           type: 'object',
           properties: {
@@ -29,7 +30,7 @@ export function registerNumberTheoryTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
         const n = Number(args.n ?? 0);
@@ -85,7 +86,12 @@ export function registerNumberTheoryTools(ctx: Context): void {
             return JSON.stringify({ n, k, result: perm(Math.round(n), Math.round(k)) });
           case 'mod_pow': {
             if (m <= 0) return JSON.stringify({ error: '模数 m 必须为正整数' });
-            return JSON.stringify({ base: n, exponent: k, modulus: m, result: modPow(BigInt(Math.round(n)), BigInt(Math.round(k)), BigInt(Math.round(m))).toString() });
+            return JSON.stringify({
+              base: n,
+              exponent: k,
+              modulus: m,
+              result: modPow(BigInt(Math.round(n)), BigInt(Math.round(k)), BigInt(Math.round(m))).toString(),
+            });
           }
           case 'mod_inverse': {
             if (m <= 0) return JSON.stringify({ error: '模数 m 必须为正整数' });
@@ -114,12 +120,14 @@ export function registerNumberTheoryTools(ctx: Context): void {
 // ===== 数论辅助函数 =====
 
 function gcd(a: number, b: number): number {
-  while (b) { [a, b] = [b, a % b]; }
+  while (b) {
+    [a, b] = [b, a % b];
+  }
   return a;
 }
 
 function lcm(a: number, b: number): number {
-  return a === 0 || b === 0 ? 0 : Math.abs(a / gcd(a, b) * b);
+  return a === 0 || b === 0 ? 0 : Math.abs((a / gcd(a, b)) * b);
 }
 
 function isPrime(n: number): boolean {
@@ -139,7 +147,10 @@ function primeFactors(n: number): { factor: number; count: number }[] {
   for (let d = 2; d * d <= n; d++) {
     if (n % d === 0) {
       let count = 0;
-      while (n % d === 0) { n /= d; count++; }
+      while (n % d === 0) {
+        n /= d;
+        count++;
+      }
       factors.push({ factor: d, count });
     }
   }
@@ -149,7 +160,8 @@ function primeFactors(n: number): { factor: number; count: number }[] {
 
 function nthPrime(n: number): number {
   if (n === 1) return 2;
-  let count = 1, candidate = 3;
+  let count = 1,
+    candidate = 3;
   while (count < n) {
     if (isPrime(candidate)) count++;
     if (count < n) candidate += 2;
@@ -170,7 +182,8 @@ function sieve(start: number, end: number): number[] {
 
 function fibonacci(n: number): string {
   if (n <= 1) return String(n);
-  let a = BigInt(0), b = BigInt(1);
+  let a = BigInt(0),
+    b = BigInt(1);
   for (let i = 2; i <= n; i++) {
     [a, b] = [b, a + b];
   }
@@ -189,7 +202,7 @@ function comb(n: number, k: number): number {
   if (k > n - k) k = n - k;
   let result = 1;
   for (let i = 0; i < k; i++) {
-    result = result * (n - i) / (i + 1);
+    result = (result * (n - i)) / (i + 1);
   }
   return Math.round(result);
 }
@@ -197,7 +210,7 @@ function comb(n: number, k: number): number {
 function perm(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
   let result = 1;
-  for (let i = 0; i < k; i++) result *= (n - i);
+  for (let i = 0; i < k; i++) result *= n - i;
   return result;
 }
 

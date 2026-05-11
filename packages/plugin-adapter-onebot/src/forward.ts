@@ -58,33 +58,36 @@ export interface ForwardExpandOptions {
 }
 
 /** 渲染一个节点 content（消息段数组或 CQ 字符串）为纯文本，并把图片换成识别后描述。 */
-async function renderNodeContent(
-  content: unknown,
-  opts: ForwardExpandOptions,
-): Promise<string> {
+async function renderNodeContent(content: unknown, opts: ForwardExpandOptions): Promise<string> {
   if (typeof content === 'string') {
     // CQ 码字符串：用正则替换 image / face / at / reply
     let out = content;
     if (opts.imageRecognitionEnabled && opts.recognizeImage) {
       // [CQ:image,file=...,url=...]
       const matches = [...out.matchAll(/\[CQ:image,([^\]]+)\]/g)];
-      const replacements = await Promise.all(matches.map(async (m) => {
-        const params: Record<string, string> = {};
-        for (const part of m[1].split(',')) {
-          const eq = part.indexOf('=');
-          if (eq <= 0) continue;
-          params[part.slice(0, eq)] = part.slice(eq + 1)
-            .replace(/&amp;/g, '&').replace(/&#91;/g, '[').replace(/&#93;/g, ']').replace(/&#44;/g, ',');
-        }
-        const src = params.url || params.file;
-        if (!src) return { raw: m[0], rendered: '[图片]' };
-        try {
-          const desc = await opts.recognizeImage!(src);
-          return { raw: m[0], rendered: desc ? `[图片: ${desc}]` : '[图片]' };
-        } catch {
-          return { raw: m[0], rendered: '[图片]' };
-        }
-      }));
+      const replacements = await Promise.all(
+        matches.map(async m => {
+          const params: Record<string, string> = {};
+          for (const part of m[1].split(',')) {
+            const eq = part.indexOf('=');
+            if (eq <= 0) continue;
+            params[part.slice(0, eq)] = part
+              .slice(eq + 1)
+              .replace(/&amp;/g, '&')
+              .replace(/&#91;/g, '[')
+              .replace(/&#93;/g, ']')
+              .replace(/&#44;/g, ',');
+          }
+          const src = params.url || params.file;
+          if (!src) return { raw: m[0], rendered: '[图片]' };
+          try {
+            const desc = await opts.recognizeImage!(src);
+            return { raw: m[0], rendered: desc ? `[图片: ${desc}]` : '[图片]' };
+          } catch {
+            return { raw: m[0], rendered: '[图片]' };
+          }
+        }),
+      );
       for (const r of replacements) out = out.replace(r.raw, r.rendered);
     } else {
       out = out.replace(/\[CQ:image[^\]]*\]/g, '[图片]');
@@ -108,7 +111,9 @@ async function renderNodeContent(
         parts.push(String(data.text ?? ''));
         break;
       case 'at':
-        parts.push(data.qq === 'all' ? '<at>all</at>' : `<at id="${String(data.qq ?? '')}">${String(data.qq ?? '')}</at>`);
+        parts.push(
+          data.qq === 'all' ? '<at>all</at>' : `<at id="${String(data.qq ?? '')}">${String(data.qq ?? '')}</at>`,
+        );
         break;
       case 'face':
         parts.push(`[表情:${String(data.id ?? '')}]`);
@@ -171,22 +176,16 @@ interface NodeMeta {
 }
 
 function extractNodeMeta(item: unknown): NodeMeta {
-  const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
-  const data = (node.type === 'node' && node.data && typeof node.data === 'object'
-    ? node.data
-    : node) as Record<string, unknown>;
-  const sender = (node.sender && typeof node.sender === 'object'
-    ? node.sender
-    : undefined) as Record<string, unknown> | undefined;
+  const node = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+  const data = (node.type === 'node' && node.data && typeof node.data === 'object' ? node.data : node) as Record<
+    string,
+    unknown
+  >;
+  const sender = (node.sender && typeof node.sender === 'object' ? node.sender : undefined) as
+    | Record<string, unknown>
+    | undefined;
 
-  const nickname = String(
-    data.nickname
-    ?? sender?.nickname
-    ?? data.name
-    ?? data.user_id
-    ?? sender?.user_id
-    ?? '匿名',
-  );
+  const nickname = String(data.nickname ?? sender?.nickname ?? data.name ?? data.user_id ?? sender?.user_id ?? '匿名');
   const userIdRaw = data.user_id ?? data.uin ?? sender?.user_id;
   const userId = userIdRaw != null ? String(userIdRaw) : undefined;
   const content = data.content ?? node.content ?? data.message ?? node.message;
@@ -289,7 +288,7 @@ export async function expandForward(
 
   // 拼接 fullText
   const indent = (d: number) => '  '.repeat(Math.max(0, d - 1));
-  const fullLines = lines.map((ln) => {
+  const fullLines = lines.map(ln => {
     const prefix = ln.userId ? `${ln.nickname}(${ln.userId})` : ln.nickname;
     const text = ln.text.replace(/<<<NESTED_FORWARD:[^>]+>>>/g, '[展开见下]').trim() || '[空消息]';
     return `${indent(ln.depth)}${ln.index}. ${prefix}: ${text}`;
@@ -319,20 +318,17 @@ export interface SummarizeOptions {
 }
 
 /** 把展开结果包装成最终注入到 event.text 的"信封文本"。 */
-export function buildEnvelope(
-  expanded: ExpandedForward,
-  summary: string | null,
-  truncatedFallbackChars = 600,
-): string {
+export function buildEnvelope(expanded: ExpandedForward, summary: string | null, truncatedFallbackChars = 600): string {
   const meta = `count=${expanded.count} participants="${expanded.participants.join(', ')}"${expanded.truncatedDepth ? ' truncatedDepth' : ''}${expanded.truncatedNodes ? ' truncatedNodes' : ''}`;
 
-  if (summary && summary.trim()) {
+  if (summary?.trim()) {
     return `<forward id="${expanded.id}" ${meta}>\n摘要：${summary.trim()}\n</forward>`;
   }
 
   // 摘要不可用：信封内退化到截断的原文
-  const text = expanded.fullText.length > truncatedFallbackChars
-    ? expanded.fullText.slice(0, truncatedFallbackChars) + '\n…（已截断，原文保留在缓存中）'
-    : expanded.fullText;
+  const text =
+    expanded.fullText.length > truncatedFallbackChars
+      ? `${expanded.fullText.slice(0, truncatedFallbackChars)}\n…（已截断，原文保留在缓存中）`
+      : expanded.fullText;
   return `<forward id="${expanded.id}" ${meta}>\n${text}\n</forward>`;
 }

@@ -1,17 +1,17 @@
 import { resolve } from 'node:path';
-import type { Context, ConfigSchema } from '@aalis/core';
-import { createAdapter, detectPlatform, type PlatformAdapter } from './platform.js';
-import { registerScreenshotTools } from './tools/screenshot.js';
-import { registerMouseTools } from './tools/mouse.js';
-import { registerKeyboardTools } from './tools/keyboard.js';
-import { registerWindowTools } from './tools/window.js';
-import { registerClipboardTools } from './tools/clipboard.js';
-import { registerAppTools } from './tools/app.js';
-import { registerUIAutomationTools } from './tools/ui-automation.js';
-import { registerInteractTools } from './tools/interact.js';
-import { registerWebAutomationTools } from './tools/web-automation.js';
-import { CdpManager } from './cdp/client.js';
+import type { ConfigSchema, Context } from '@aalis/core';
 import * as axNative from './ax-native.js';
+import { CdpManager } from './cdp/client.js';
+import { createAdapter, detectPlatform, type PlatformAdapter } from './platform.js';
+import { registerAppTools } from './tools/app.js';
+import { registerClipboardTools } from './tools/clipboard.js';
+import { registerInteractTools } from './tools/interact.js';
+import { registerKeyboardTools } from './tools/keyboard.js';
+import { registerMouseTools } from './tools/mouse.js';
+import { registerScreenshotTools } from './tools/screenshot.js';
+import { registerUIAutomationTools } from './tools/ui-automation.js';
+import { registerWebAutomationTools } from './tools/web-automation.js';
+import { registerWindowTools } from './tools/window.js';
 import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
@@ -105,7 +105,8 @@ export const configSchema: ConfigSchema = {
     type: 'boolean',
     label: 'Web 自动化',
     default: true,
-    description: '启用 Electron/CEF/Chrome 应用的 Web 自动化工具 (web_connect, web_inspect, web_action, web_eval)。基于 Chrome DevTools Protocol。',
+    description:
+      '启用 Electron/CEF/Chrome 应用的 Web 自动化工具 (web_connect, web_inspect, web_action, web_eval)。基于 Chrome DevTools Protocol。',
   },
   maxImageWidth: {
     type: 'number',
@@ -157,13 +158,13 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       if (!perms.accessibility) {
         logger.warn(
           '⚠️ 未获得辅助功能权限！鼠标/键盘操控将无法工作。\n' +
-          '   请前往: 系统设置 → 隐私与安全性 → 辅助功能 → 允许当前终端/Node.js 程序'
+            '   请前往: 系统设置 → 隐私与安全性 → 辅助功能 → 允许当前终端/Node.js 程序',
         );
       }
       if (!perms.screenRecording) {
         logger.warn(
           '⚠️ 未获得屏幕录制权限！截图功能将无法工作。\n' +
-          '   请前往: 系统设置 → 隐私与安全性 → 屏幕录制 → 允许当前终端/Node.js 程序'
+            '   请前往: 系统设置 → 隐私与安全性 → 屏幕录制 → 允许当前终端/Node.js 程序',
         );
       }
       if (perms.accessibility && perms.screenRecording) {
@@ -255,13 +256,18 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   }
 
   const enabledCount = [
-    config.screenshot, config.interact, config.mouse, config.keyboard,
-    config.window, config.clipboard, config.app, config.uiAutomation, config.webAutomation,
+    config.screenshot,
+    config.interact,
+    config.mouse,
+    config.keyboard,
+    config.window,
+    config.clipboard,
+    config.app,
+    config.uiAutomation,
+    config.webAutomation,
   ].filter(Boolean).length;
 
-  logger.info(
-    `桌面操控插件已启动 (平台: ${platformType}, 已启用 ${enabledCount} 组工具)`
-  );
+  logger.info(`桌面操控插件已启动 (平台: ${platformType}, 已启用 ${enabledCount} 组工具)`);
 }
 
 // ──────────── 辅助函数 ────────────

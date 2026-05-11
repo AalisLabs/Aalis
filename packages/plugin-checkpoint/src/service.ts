@@ -1,8 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import type { Logger } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import { mkdir, readFile, writeFile, rm, stat, readdir, copyFile, rename } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 /**
  * Checkpoint 服务
@@ -103,7 +103,10 @@ export class CheckpointServiceImpl implements CheckpointService {
   /** 文件计数器，用于命名 blob 文件 */
   private blobIndex = 0;
 
-  constructor(private readonly cfg: ServiceConfig, private readonly logger: Logger) {}
+  constructor(
+    private readonly cfg: ServiceConfig,
+    private readonly logger: Logger,
+  ) {}
 
   // ──────────── 生命周期 ────────────
 
@@ -138,17 +141,15 @@ export class CheckpointServiceImpl implements CheckpointService {
           this.current.startedAt - 200,
           this.current.endedAt + 200,
         );
-        this.current.messageTimestamps = msgs
-          .map(m => m.timestamp)
-          .filter((t): t is number => typeof t === 'number');
+        this.current.messageTimestamps = msgs.map(m => m.timestamp).filter((t): t is number => typeof t === 'number');
       } catch (err) {
         this.logger.warn(`抓取本轮消息时间戳失败: ${(err as Error).message}`);
       }
     }
     // 若整个回合没有任何文件改动且没有任何消息时间戳，跳过持久化
     if (
-      this.current.files.length === 0
-      && (!this.current.messageTimestamps || this.current.messageTimestamps.length === 0)
+      this.current.files.length === 0 &&
+      (!this.current.messageTimestamps || this.current.messageTimestamps.length === 0)
     ) {
       this.logger.debug(`checkpoint 回合无改动，跳过 ${this.current.turnId}`);
       this.current = null;
@@ -156,14 +157,8 @@ export class CheckpointServiceImpl implements CheckpointService {
     }
     const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
     await mkdir(turnDir, { recursive: true });
-    await writeFile(
-      join(turnDir, 'manifest.json'),
-      JSON.stringify(this.current, null, 2),
-      'utf-8',
-    );
-    this.logger.info(
-      `checkpoint 回合提交 turn=${this.current.turnId} 文件数=${this.current.files.length}`,
-    );
+    await writeFile(join(turnDir, 'manifest.json'), JSON.stringify(this.current, null, 2), 'utf-8');
+    this.logger.info(`checkpoint 回合提交 turn=${this.current.turnId} 文件数=${this.current.files.length}`);
     this.current = null;
     this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
   }
@@ -371,11 +366,15 @@ export class CheckpointServiceImpl implements CheckpointService {
     }
 
     // 通知向量插件清理同时间戳的向量条目
-    try { this._emitMessagesDeleted?.(sessionId, timestamps); } catch (err) {
+    try {
+      this._emitMessagesDeleted?.(sessionId, timestamps);
+    } catch (err) {
       this.logger.warn(`emit memory:messages-deleted 失败: ${(err as Error).message}`);
     }
     // 通知前端刷新历史
-    try { this._emitHistoryChanged?.(sessionId); } catch (err) {
+    try {
+      this._emitHistoryChanged?.(sessionId);
+    } catch (err) {
       this.logger.warn(`emit history:changed 失败: ${(err as Error).message}`);
     }
 
@@ -400,7 +399,9 @@ export class CheckpointServiceImpl implements CheckpointService {
       try {
         const s = await stat(join(this.cfg.rootDir, name));
         sessionInfo.push({ name, mtime: s.mtimeMs });
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     sessionInfo.sort((a, b) => b.mtime - a.mtime);
     const toDelete = sessionInfo.slice(this.cfg.keepSessions);

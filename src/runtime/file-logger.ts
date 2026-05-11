@@ -1,6 +1,6 @@
-import { getLogBuffer, onLogEntry, type LogEntry } from '@aalis/core';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { getLogBuffer, type LogEntry, onLogEntry } from '@aalis/core';
 
 const DEFAULT_LOG_FILE = 'data/latest.log';
 const RUNTIME_SCOPE = 'aalis:runtime';
@@ -21,12 +21,15 @@ function formatUnknownError(err: unknown): string {
 
 export async function appendCrashLog(label: string, err: unknown, logFile = DEFAULT_LOG_FILE): Promise<void> {
   await mkdir(dirname(logFile), { recursive: true });
-  await appendFile(logFile, formatEntry({
-    timestamp: new Date().toISOString().slice(11, 23),
-    level: 'error',
-    scope: RUNTIME_SCOPE,
-    message: `${label}: ${formatUnknownError(err)}`,
-  }));
+  await appendFile(
+    logFile,
+    formatEntry({
+      timestamp: new Date().toISOString().slice(11, 23),
+      level: 'error',
+      scope: RUNTIME_SCOPE,
+      message: `${label}: ${formatUnknownError(err)}`,
+    }),
+  );
 }
 
 export async function setupFileLogger(logFile = DEFAULT_LOG_FILE): Promise<FileLoggerHandle> {
@@ -36,7 +39,7 @@ export async function setupFileLogger(logFile = DEFAULT_LOG_FILE): Promise<FileL
   const initial = getLogBuffer().map(formatEntry).join('');
   await writeFile(logFile, initial);
 
-  onLogEntry((entry) => {
+  onLogEntry(entry => {
     queue = queue.then(() => appendFile(logFile, formatEntry(entry))).catch(() => {});
   });
 

@@ -1,6 +1,6 @@
 import type { Message } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { registerCapabilityProbe } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 
 export interface ArchiveIncomingResult {
   message: Message;
@@ -69,14 +69,17 @@ declare module '@aalis/core' {
 registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Incoming, inst =>
   typeof (inst as { archiveIncoming?: unknown }).archiveIncoming === 'function'
     ? true
-    : 'MessageArchiveService.archiveIncoming() is required for capability "incoming"');
+    : 'MessageArchiveService.archiveIncoming() is required for capability "incoming"',
+);
 
 registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Generic, inst =>
   typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
     ? true
-    : 'MessageArchiveService.saveMessage() is required for capability "generic"');
+    : 'MessageArchiveService.saveMessage() is required for capability "generic"',
+);
 
 registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Notice, inst =>
   typeof (inst as { archiveNotice?: unknown }).archiveNotice === 'function'
     ? true
-    : 'MessageArchiveService.archiveNotice() is required for capability "notice"');
+    : 'MessageArchiveService.archiveNotice() is required for capability "notice"',
+);

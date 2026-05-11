@@ -12,8 +12,8 @@
  */
 
 import type { Context } from '@aalis/core';
-import type { PlatformAdapter, MouseButton } from '../platform.js';
 import * as axNative from '../ax-native.js';
+import type { MouseButton, PlatformAdapter } from '../platform.js';
 
 export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): void {
   const axAvailable = axNative.isAvailable();
@@ -59,7 +59,7 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const pid = args.pid as number | undefined;
         const elementPath = args.element_path as string | undefined;
@@ -116,7 +116,7 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const text = args.text as string;
         const pid = args.pid as number | undefined;
@@ -165,7 +165,7 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const windowId = args.windowId as string | undefined;
         const pid = args.pid as number | undefined;

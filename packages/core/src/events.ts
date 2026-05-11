@@ -15,10 +15,7 @@ export class EventBus {
   /**
    * 监听事件，返回 dispose 函数
    */
-  on<E extends string & keyof AalisEvents>(
-    event: E,
-    handler: EventHandler<AalisEvents[E]>,
-  ): () => void {
+  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     let set = this.handlers.get(event);
     if (!set) {
       set = new Set();
@@ -35,10 +32,7 @@ export class EventBus {
   /**
    * 监听事件一次
    */
-  once<E extends string & keyof AalisEvents>(
-    event: E,
-    handler: EventHandler<AalisEvents[E]>,
-  ): () => void {
+  once<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     const wrapper: EventHandler<AalisEvents[E]> = (...args) => {
       dispose();
       return handler(...args);
@@ -50,10 +44,7 @@ export class EventBus {
   /**
    * 触发事件，按注册顺序依次调用，支持异步 handler
    */
-  async emit<E extends string & keyof AalisEvents>(
-    event: E,
-    ...args: AalisEvents[E]
-  ): Promise<void> {
+  async emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
     const set = this.handlers.get(event);
     if (!set) return;
     for (const handler of set) {

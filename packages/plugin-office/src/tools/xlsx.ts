@@ -1,8 +1,8 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import ExcelJS from 'exceljs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { DocSessionManager } from '../session.js';
+import type { DocSessionManager } from '../session.js';
 
 /** 列字母转数字 A→1, B→2, ..., Z→26, AA→27 */
 function colToNum(col: string): number {
@@ -27,7 +27,8 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       type: 'function',
       function: {
         name: 'excel_create',
-        description: '创建一个新的 Excel 工作簿会话，返回 docId。默认创建一个空 Sheet。该 docId 全局共享，可传递给子任务实现并行协作编辑。',
+        description:
+          '创建一个新的 Excel 工作簿会话，返回 docId。默认创建一个空 Sheet。该 docId 全局共享，可传递给子任务实现并行协作编辑。',
         parameters: {
           type: 'object',
           properties: {
@@ -118,7 +119,9 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
 
       if (headers) {
         const headerRow = ws.getRow(row);
-        headers.forEach((h, i) => { headerRow.getCell(startCol + i).value = h; });
+        headers.forEach((h, i) => {
+          headerRow.getCell(startCol + i).value = h;
+        });
         headerRow.font = { bold: true };
         row++;
       }
@@ -210,8 +213,11 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
               type: 'object',
               description: '字体设置',
               properties: {
-                name: { type: 'string' }, size: { type: 'number' }, bold: { type: 'boolean' },
-                italic: { type: 'boolean' }, color: { type: 'string', description: 'ARGB 颜色' },
+                name: { type: 'string' },
+                size: { type: 'number' },
+                bold: { type: 'boolean' },
+                italic: { type: 'boolean' },
+                color: { type: 'string', description: 'ARGB 颜色' },
               },
             },
             fill: {
@@ -295,7 +301,10 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
         if (args.border && args.border !== 'none') {
           const style = String(args.border) as 'thin' | 'medium' | 'thick';
           cell.border = {
-            top: { style }, bottom: { style }, left: { style }, right: { style },
+            top: { style },
+            bottom: { style },
+            left: { style },
+            right: { style },
           };
         }
         if (args.numberFormat) {
@@ -322,7 +331,8 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       type: 'function',
       function: {
         name: 'excel_add_chart',
-        description: '提示：ExcelJS 不原生支持图表嵌入。此工具会在指定位置创建图表数据描述，建议在 Excel 中手动创建图表或使用 PPT 图表功能。',
+        description:
+          '提示：ExcelJS 不原生支持图表嵌入。此工具会在指定位置创建图表数据描述，建议在 Excel 中手动创建图表或使用 PPT 图表功能。',
         parameters: {
           type: 'object',
           properties: {
@@ -450,23 +460,27 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       const style = args.style as Record<string, unknown> | undefined;
       ws.addConditionalFormatting({
         ref: String(args.range),
-        rules: [{
-          priority: 1,
-          type: 'cellIs',
-          operator: String(args.rule) as any,
-          formulae: (args.values as unknown[]).map(v => String(v)),
-          style: {
-            font: {
-              bold: style?.bold as boolean | undefined,
-              color: style?.fontColor ? { argb: String(style.fontColor) } : undefined,
+        rules: [
+          {
+            priority: 1,
+            type: 'cellIs',
+            operator: String(args.rule) as any,
+            formulae: (args.values as unknown[]).map(v => String(v)),
+            style: {
+              font: {
+                bold: style?.bold as boolean | undefined,
+                color: style?.fontColor ? { argb: String(style.fontColor) } : undefined,
+              },
+              fill: style?.bgColor
+                ? {
+                    type: 'pattern',
+                    pattern: 'solid',
+                    bgColor: { argb: String(style.bgColor) },
+                  }
+                : undefined,
             },
-            fill: style?.bgColor ? {
-              type: 'pattern',
-              pattern: 'solid',
-              bgColor: { argb: String(style.bgColor) },
-            } : undefined,
           },
-        }],
+        ],
       });
 
       return JSON.stringify({ success: true, message: `条件格式已设置: ${args.range}` });
@@ -479,7 +493,8 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       type: 'function',
       function: {
         name: 'excel_save',
-        description: '保存 Excel 工作簿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
+        description:
+          '保存 Excel 工作簿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
         parameters: {
           type: 'object',
           properties: {
@@ -497,7 +512,12 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
       const buffer = await wb.xlsx.writeBuffer();
       writeFileSync(filePath, Buffer.from(buffer));
       sessions.remove(session.id);
-      return JSON.stringify({ success: true, path: filePath, size: buffer.byteLength, message: `Excel 已保存: ${filePath}` });
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        size: buffer.byteLength,
+        message: `Excel 已保存: ${filePath}`,
+      });
     },
   });
 }

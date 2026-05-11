@@ -1,17 +1,11 @@
-import type {
-  Context,
-  Message,
-  ToolDefinition,
-  ToolCall,
-  ConfigSchema,
-} from '@aalis/core';
+import type { ConfigSchema, Context, Message, ToolCall, ToolDefinition } from '@aalis/core';
 import type {
   ChatRequest,
   ChatResponse,
   ChatStreamChunk,
+  LLMCapability,
   LLMService,
   ModelInfo,
-  LLMCapability,
 } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 
@@ -42,10 +36,32 @@ export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', secret: true, description: 'OpenAI API 密钥（本地服务可留空）' },
-  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.openai.com', description: 'API 端点地址，可替换为兼容的第三方服务' },
-  customModels: { type: 'textarea', label: '自定义模型', default: '', description: '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。' },
-  modelCapabilities: { type: 'textarea', label: '模型能力覆盖', default: '', description: '按行指定某个模型的能力集（**覆盖**插件自动推断结果，不叠加）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming\n可用能力：chat / tool_calling / vision / streaming / thinking / json_mode 等。' },
-  timeout: { type: 'number', label: '请求超时 (秒)', default: 120, description: 'LLM 请求超时时间（秒）。思考模式或长文本建议适当调大。0 = 不限制。' },
+  baseUrl: {
+    type: 'string',
+    label: 'API 地址',
+    default: 'https://api.openai.com',
+    description: 'API 端点地址，可替换为兼容的第三方服务',
+  },
+  customModels: {
+    type: 'textarea',
+    label: '自定义模型',
+    default: '',
+    description:
+      '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
+  },
+  modelCapabilities: {
+    type: 'textarea',
+    label: '模型能力覆盖',
+    default: '',
+    description:
+      '按行指定某个模型的能力集（**覆盖**插件自动推断结果，不叠加）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming\n可用能力：chat / tool_calling / vision / streaming / thinking / json_mode 等。',
+  },
+  timeout: {
+    type: 'number',
+    label: '请求超时 (秒)',
+    default: 120,
+    description: 'LLM 请求超时时间（秒）。思考模式或长文本建议适当调大。0 = 不限制。',
+  },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
@@ -156,7 +172,7 @@ class OpenAILLMService implements LLMService {
   /** 构造请求头（无 apiKey 时不发 Authorization） */
   private get headers(): Record<string, string> {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.apiKey) h['Authorization'] = `Bearer ${this.apiKey}`;
+    if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
     return h;
   }
 
@@ -178,9 +194,7 @@ class OpenAILLMService implements LLMService {
     // 默认模型：优先自动发现列表的第一个，其次自定义列表的第一个
     this.defaultModel = discovered[0]?.id ?? this.customModels[0] ?? null;
 
-    const capabilities = this.defaultModel
-      ? this.resolveModelCapabilities(this.defaultModel)
-      : DEFAULT_CAPABILITIES;
+    const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
 
     return { defaultModel: this.defaultModel, capabilities };
   }
@@ -386,7 +400,7 @@ class OpenAILLMService implements LLMService {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          if (!trimmed?.startsWith('data: ')) continue;
           const payload = trimmed.slice(6);
           if (payload === '[DONE]') {
             // 组装工具调用
@@ -432,7 +446,9 @@ class OpenAILLMService implements LLMService {
             if (chunk.contentDelta || chunk.usage) {
               yield chunk;
             }
-          } catch { /* skip malformed JSON */ }
+          } catch {
+            /* skip malformed JSON */
+          }
         }
       }
     } finally {
@@ -506,17 +522,17 @@ class OpenAILLMService implements LLMService {
 const { Chat, ToolCalling, Streaming, Vision, Thinking } = LLMCapabilities;
 
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
-  'gpt-4o':            [Chat, ToolCalling, Streaming, Vision],
-  'gpt-4o-mini':       [Chat, ToolCalling, Streaming, Vision],
-  'gpt-4-turbo':       [Chat, ToolCalling, Streaming],
-  'gpt-4':             [Chat, ToolCalling, Streaming],
-  'gpt-3.5-turbo':     [Chat, ToolCalling, Streaming],
-  'o1':                [Chat, Thinking],
-  'o1-mini':           [Chat, Thinking],
-  'o1-preview':        [Chat, Thinking],
-  'o3':                [Chat, ToolCalling, Streaming, Thinking],
-  'o3-mini':           [Chat, ToolCalling, Streaming, Thinking],
-  'o4-mini':           [Chat, ToolCalling, Streaming, Thinking],
+  'gpt-4o': [Chat, ToolCalling, Streaming, Vision],
+  'gpt-4o-mini': [Chat, ToolCalling, Streaming, Vision],
+  'gpt-4-turbo': [Chat, ToolCalling, Streaming],
+  'gpt-4': [Chat, ToolCalling, Streaming],
+  'gpt-3.5-turbo': [Chat, ToolCalling, Streaming],
+  o1: [Chat, Thinking],
+  'o1-mini': [Chat, Thinking],
+  'o1-preview': [Chat, Thinking],
+  o3: [Chat, ToolCalling, Streaming, Thinking],
+  'o3-mini': [Chat, ToolCalling, Streaming, Thinking],
+  'o4-mini': [Chat, ToolCalling, Streaming, Thinking],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
@@ -541,7 +557,10 @@ function resolveCapabilities(model: string, userOverride?: unknown): LLMCapabili
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
 function parseCustomModels(raw: unknown): string[] {
   if (!raw || typeof raw !== 'string') return [];
-  return raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  return raw
+    .split(/[,\n]/)
+    .map(s => s.trim())
+    .filter(Boolean);
 }
 
 /**
@@ -557,7 +576,11 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
     const colonIdx = trimmed.indexOf(':');
     if (colonIdx < 0) continue;
     const modelId = trimmed.slice(0, colonIdx).trim();
-    const caps = trimmed.slice(colonIdx + 1).split(',').map(s => s.trim()).filter(Boolean) as LLMCapability[];
+    const caps = trimmed
+      .slice(colonIdx + 1)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean) as LLMCapability[];
     if (modelId && caps.length > 0) out.set(modelId, caps);
   }
   return out;

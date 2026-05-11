@@ -110,6 +110,7 @@ import { registerCapabilityProbe } from '@aalis/core';
 registerCapabilityProbe('web-search', WebSearchCapabilities.Web, inst =>
   typeof (inst as { search?: unknown }).search === 'function'
     ? true
-    : 'WebSearchService.search() is required for capability "web"');
+    : 'WebSearchService.search() is required for capability "web"',
+);
 
 // News / Images / Compression / RelatedQuestions 均由请求参数/实现内决定，不做方法探测。

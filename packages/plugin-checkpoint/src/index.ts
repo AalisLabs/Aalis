@@ -1,9 +1,9 @@
-import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
-import { CheckpointServiceImpl, resolveConfig, type CheckpointService } from './service.js';
 import { mkdir } from 'node:fs/promises';
+import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-checkpoint — 文件操作快照与回滚
@@ -67,10 +67,22 @@ export const webuiHandlers: PluginModule['webuiHandlers'] = {
   },
   async rollbackWithChat(ctx, args) {
     const svc = ctx.getService<CheckpointService>('checkpoint');
-    if (!svc) return { ok: false, errors: [{ uri: '', reason: 'checkpoint 服务未启用' }], deletedMessages: 0, chatDeleted: false };
+    if (!svc)
+      return {
+        ok: false,
+        errors: [{ uri: '', reason: 'checkpoint 服务未启用' }],
+        deletedMessages: 0,
+        chatDeleted: false,
+      };
     const sessionId = args.sessionId as string;
     const turnId = args.turnId as string;
-    if (!sessionId || !turnId) return { ok: false, errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }], deletedMessages: 0, chatDeleted: false };
+    if (!sessionId || !turnId)
+      return {
+        ok: false,
+        errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }],
+        deletedMessages: 0,
+        chatDeleted: false,
+      };
     return svc.rollbackWithChat(sessionId, turnId);
   },
 };
@@ -93,7 +105,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       if (!storage) throw new Error('storage 服务不可用');
       await storage.writeFile(uri, data);
     },
-    async (uri) => {
+    async uri => {
       const storage = ctx.getService<StorageService>('storage');
       if (!storage) throw new Error('storage 服务不可用');
       await storage.delete(uri);
@@ -112,11 +124,13 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   service.setChatRollbackDeps({
     memory: memoryProxy,
     emitMessagesDeleted: (sessionId, timestamps) => {
-      ctx.emit('memory:messages-deleted', { sessionId, timestamps })
+      ctx
+        .emit('memory:messages-deleted', { sessionId, timestamps })
         .catch(err => logger.debug(`emit memory:messages-deleted 失败: ${(err as Error).message}`));
     },
-    emitHistoryChanged: (sessionId) => {
-      ctx.emit('history:changed', { sessionId })
+    emitHistoryChanged: sessionId => {
+      ctx
+        .emit('history:changed', { sessionId })
         .catch(err => logger.debug(`emit history:changed 失败: ${(err as Error).message}`));
     },
   });
@@ -145,4 +159,11 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   logger.info(`checkpoint 服务就绪 rootDir=${config.rootDir} maxFileSize=${config.maxFileSize}`);
 }
 
-export type { CheckpointService, TurnSummary, TurnManifest, CheckpointFileRecord, RollbackResult, RollbackWithChatResult } from './service.js';
+export type {
+  CheckpointFileRecord,
+  CheckpointService,
+  RollbackResult,
+  RollbackWithChatResult,
+  TurnManifest,
+  TurnSummary,
+} from './service.js';

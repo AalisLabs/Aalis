@@ -1,13 +1,13 @@
 import type {
-  OneBotProtocol,
-  OneBotRawEvent,
   NormalizedMessageEvent,
   NormalizedMetaEvent,
   NormalizedNoticeEvent,
   NormalizedRequestEvent,
+  OneBotProtocol,
+  OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { segmentsToText, parseContentToSegments, toV12Segments } from './types.js';
+import { parseContentToSegments, segmentsToText, toV12Segments } from './types.js';
 
 /**
  * OneBot v12 协议处理器
@@ -57,22 +57,30 @@ export class OneBotV12 implements OneBotProtocol {
 
   parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other' {
     switch (raw.type) {
-      case 'message': return 'message';
-      case 'meta': return 'meta';
-      case 'notice': return 'notice';
-      case 'request': return 'request';
-      default: return 'other';
+      case 'message':
+        return 'message';
+      case 'meta':
+        return 'meta';
+      case 'notice':
+        return 'notice';
+      case 'request':
+        return 'request';
+      default:
+        return 'other';
     }
   }
 
-  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null {
+  parseMessageEvent(
+    raw: OneBotRawEvent,
+    fallbackSelfId: string,
+    nicknameMap?: Map<string, string>,
+  ): NormalizedMessageEvent | null {
     const selfId = raw.self?.user_id ? String(raw.self.user_id) : fallbackSelfId;
     const detailType = (raw.detail_type ?? 'private') as string;
     const message = Array.isArray(raw.message) ? raw.message : [];
     // 优先使用消息段生成富文本，回退到 alt_message
-    const text = message.length > 0
-      ? segmentsToText(message, selfId, nicknameMap)
-      : ((raw.alt_message as string) ?? '');
+    const text =
+      message.length > 0 ? segmentsToText(message, selfId, nicknameMap) : ((raw.alt_message as string) ?? '');
 
     if (!text.trim()) return null;
 
@@ -96,7 +104,8 @@ export class OneBotV12 implements OneBotProtocol {
 
     // 提取发送者昵称
     const sender = raw.sender as Record<string, unknown> | undefined;
-    const nickname = (sender?.card as string) || (sender?.nickname as string) || (sender?.user_name as string) || undefined;
+    const nickname =
+      (sender?.card as string) || (sender?.nickname as string) || (sender?.user_name as string) || undefined;
 
     return {
       selfId,
@@ -123,11 +132,13 @@ export class OneBotV12 implements OneBotProtocol {
     return {
       subType,
       selfId,
-      version: version ? {
-        impl: version.impl as string | undefined,
-        version: version.version as string | undefined,
-        onebot_version: version.onebot_version as string | undefined,
-      } : undefined,
+      version: version
+        ? {
+            impl: version.impl as string | undefined,
+            version: version.version as string | undefined,
+            onebot_version: version.onebot_version as string | undefined,
+          }
+        : undefined,
       interval: raw.interval as number | undefined,
     };
   }

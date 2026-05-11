@@ -7,9 +7,9 @@
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
 import type { Message, ToolDefinition } from '@aalis/core';
+import type { ChatResponse } from '@aalis/plugin-llm-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
-import type { ChatResponse } from '@aalis/plugin-llm-api';
 
 /**
  * 插件分组信息（按子系统聚合，供 WebUI Dashboard 等使用）
