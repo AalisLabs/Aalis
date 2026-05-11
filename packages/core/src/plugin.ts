@@ -9,14 +9,6 @@ export interface PluginModule {
   name: string;
   /** 插件的显示名称，用于前端展示 */
   displayName?: string;
-  /**
-   * 子系统归属，仅用于 WebUI 分组展示。
-   *
-   * core 不读取此字段，仅原样透传给 WebUI；未声明的插件落入「其他」分组。
-   * 可用 id 与中文 label 由 `@aalis/plugin-webui-api` 的 `DEFAULT_SUBSYSTEM_METADATA` 提供，
-   * 但允许使用任意自定义字符串（未匹配 metadata 时直接以 id 作为 label 显示）。
-   */
-  subsystem?: string;
   inject?: InjectDeclaration;
   provides?: string[];
   /** 标记为 core 的插件不能被用户禁用 */
@@ -35,10 +27,10 @@ export interface PluginModule {
   configSchema?: ConfigSchema;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
   defaultConfig?: Record<string, unknown>;
-  /** WebUI 页面操作处理器（声明式页面的后端方法） */
-  webuiHandlers?: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
-  // 注：webuiPages 字段由 @aalis/plugin-webui-api 通过 declaration merging 注入。
+  // 注：webuiPages / webuiHandlers / subsystem / extends 字段由
+  // @aalis/plugin-webui-api 通过 declaration merging 注入；core 不读取它们，
+  // 仅在 listPlugins() 中以 unknown 类型透传给 WebUI。
 }
 
 // ----- 插件状态 -----
@@ -244,23 +236,32 @@ export class PluginManager {
     webuiHandlerNames?: string[];
     error?: string;
   }> {
-    return [...this.plugins.entries()].map(([, entry]) => ({
-      name: entry.module.name,
-      instanceId: entry.instanceId,
-      displayName: entry.module.displayName,
-      subsystem: entry.module.subsystem,
-      state: entry.state,
-      provides: entry.module.provides,
-      core: entry.module.core,
-      reusable: entry.module.reusable,
-      extends: (entry.module as { extends?: unknown }).extends,
-      config: entry.config,
-      configSchema: entry.module.configSchema,
-      defaultConfig: entry.module.defaultConfig,
-      webuiPages: (entry.module as { webuiPages?: unknown[] }).webuiPages,
-      webuiHandlerNames: entry.module.webuiHandlers ? Object.keys(entry.module.webuiHandlers) : undefined,
-      error: entry.error,
-    }));
+    return [...this.plugins.entries()].map(([, entry]) => {
+      // 这些字段由 @aalis/plugin-webui-api 通过 declaration merging 注入，core 不感知其语义，仅透传。
+      const m = entry.module as {
+        subsystem?: string;
+        extends?: unknown;
+        webuiPages?: unknown[];
+        webuiHandlers?: Record<string, unknown>;
+      };
+      return {
+        name: entry.module.name,
+        instanceId: entry.instanceId,
+        displayName: entry.module.displayName,
+        subsystem: m.subsystem,
+        state: entry.state,
+        provides: entry.module.provides,
+        core: entry.module.core,
+        reusable: entry.module.reusable,
+        extends: m.extends,
+        config: entry.config,
+        configSchema: entry.module.configSchema,
+        defaultConfig: entry.module.defaultConfig,
+        webuiPages: m.webuiPages,
+        webuiHandlerNames: m.webuiHandlers ? Object.keys(m.webuiHandlers) : undefined,
+        error: entry.error,
+      };
+    });
   }
 
   /**
