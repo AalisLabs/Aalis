@@ -28,7 +28,7 @@ import { registerPluginRoutes } from './routes/plugins.js';
 export const name = '@aalis/plugin-webui-server';
 export const displayName = 'WebUI 服务端';
 export const subsystem = 'platform';
-export const provides = ['webui-server', 'platform'];
+export const provides = ['webui-server'];
 export const inject = {
   optional: ['authority', 'commands', 'storage', 'platform'],
 };
