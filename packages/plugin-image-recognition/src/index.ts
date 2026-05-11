@@ -12,7 +12,7 @@ import type {  } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from './types.js';
 import { ImageRecognitionCapabilities } from './types.js';
-import { parseModelRef } from '@aalis/core';
+import { parseModelRef } from '@aalis/plugin-llm-api';
 import '@aalis/plugin-tools-api';
 
 export type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions, ImageRecognitionCapability, ImageRecognitionCapabilityRegistry } from './types.js';

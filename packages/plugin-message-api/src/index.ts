@@ -127,3 +127,6 @@ declare module '@aalis/core' {
 
 // 防止 "未使用导入" 警告（Message 在 declaration merging 中引用）
 export type _MessageRef = Message;
+
+// ----- 身份标识工具（cleanup-9 从 core 迁入） -----
+export { getSenderLabel, prefixSender, getMessageName } from './identity.js';

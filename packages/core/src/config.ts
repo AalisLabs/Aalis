@@ -2,42 +2,36 @@ import { readFileSync, writeFileSync, existsSync, watch as fsWatch } from 'node:
 import type { FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { UserIdentity, ConfigSchema } from './types/index.js';
+import type { ConfigSchema } from './types/index.js';
+
+/**
+ * Aalis 应用配置（基础设施字段）
+ *
+ * 仅声明 core 自身管理的字段。业务字段（owners / agent / dangerousPolicy 等）
+ * 由对应 plugin 通过 declaration merging 注入：
+ *
+ * ```ts
+ * declare module '@aalis/core' {
+ *   interface AalisConfig {
+ *     owners?: Array<{ platform: string; userId: string }>;
+ *     defaultAuthority?: number;
+ *   }
+ * }
+ * ```
+ *
+ * `[key: string]: unknown` 兜底允许第三方插件即便不做 declaration merging
+ * 也能通过 `ctx.config.get('myField')` 读到 unknown，避免 core 知晓任何业务字段。
+ */
 export interface AalisConfig {
   name: string;
   logLevel: string;
-  agent?: {
-    maxToolIterations?: number;
-    temperature?: number;
-    maxTokens?: number;
-  };
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件名列表 */
   disabledPlugins?: string[];
   /** 服务偏好：服务名 → 偏好的提供者 contextId */
   servicePreferences?: Record<string, string>;
-  /** owner 列表 */
-  owners?: UserIdentity[];
-  /** 新用户默认权限等级 (默认 1) */
-  defaultAuthority?: number;
-  /** owner 的权限等级 (默认 5) */
-  ownerAuthority?: number;
-  /** dangerous 操作白名单策略 */
-  dangerousPolicy?: {
-    /** 允许的 dangerous 工具/指令名列表，['*'] 表示全部放行 */
-    allow?: string[];
-    /** 白名单有效时长(秒)，0 = 永久 */
-    duration?: number;
-    /** 白名单启用时间戳 (ms)，运行时自动设置 */
-    enabledAt?: number;
-  };
-  /** 细粒度权限策略：deny 优先；allow 为空表示默认放行 */
-  permissionPolicy?: {
-    allow?: string[];
-    deny?: string[];
-  };
-  /** 管理员对单条指令的权限/安全等级覆盖 */
-  commandOverrides?: Record<string, { authority?: number; safety?: string }>;
+  // 第三方业务字段兜底：plugin 可通过 declaration merging 提供具体类型
+  [key: string]: unknown;
 }
 
 const DEFAULT_CONFIG: AalisConfig = {
@@ -46,10 +40,16 @@ const DEFAULT_CONFIG: AalisConfig = {
   plugins: {},
   disabledPlugins: [],
   servicePreferences: {},
-  owners: [],
-  defaultAuthority: 1,
-  ownerAuthority: 5,
 };
+
+/** core 自身管理的顶层字段（buildSaveObject 时按固定顺序输出；其余字段透传） */
+const CORE_TOP_LEVEL_KEYS = new Set<string>([
+  'name',
+  'logLevel',
+  'plugins',
+  'disabledPlugins',
+  'servicePreferences',
+]);
 
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
@@ -252,17 +252,19 @@ export class ConfigManager {
 
   /**
    * 构建保存对象：把当前 config 转换为 YAML 安全格式，
-   * 恢复环境变量占位符
+   * 恢复环境变量占位符。
+   *
+   * 顺序约定：先按固定顺序输出 core 已知字段（name/logLevel/plugins/...），
+   * 再透传其余顶层字段（来自插件的业务字段，core 不知晓其语义）。
+   *
+   * 业务字段中如有「运行时不应持久化」的子字段（如 dangerousPolicy.enabledAt），
+   * 由对应插件自行避免写入 config，core 不做特例处理。
    */
   private buildSaveObject(): Record<string, unknown> {
     const obj: Record<string, unknown> = {
       name: this.config.name,
       logLevel: this.config.logLevel,
     };
-
-    if (this.config.agent && Object.keys(this.config.agent).length > 0) {
-      obj.agent = this.config.agent;
-    }
 
     // 恢复插件配置中的环境变量占位符
     if (this.rawYaml) {
@@ -284,24 +286,18 @@ export class ConfigManager {
       obj.servicePreferences = this.config.servicePreferences;
     }
 
-    obj.owners = this.config.owners ?? [];
-    obj.defaultAuthority = this.config.defaultAuthority ?? DEFAULT_CONFIG.defaultAuthority;
-    obj.ownerAuthority = this.config.ownerAuthority ?? DEFAULT_CONFIG.ownerAuthority;
-
-    if (this.config.dangerousPolicy) {
-      // 保存时不序列化 enabledAt (运行时字段)
-      const { enabledAt, ...rest } = this.config.dangerousPolicy;
-      if (Object.keys(rest).length > 0) {
-        obj.dangerousPolicy = rest;
+    // 透传其余顶层字段（插件业务字段；core 不解释也不变换）
+    for (const [key, value] of Object.entries(this.config)) {
+      if (CORE_TOP_LEVEL_KEYS.has(key)) continue;
+      if (value === undefined) continue;
+      // 空对象 / 空数组的字段不输出，与原有清理逻辑保持一致
+      if (Array.isArray(value)) {
+        if (value.length > 0) obj[key] = value;
+      } else if (value && typeof value === 'object') {
+        if (Object.keys(value as Record<string, unknown>).length > 0) obj[key] = value;
+      } else {
+        obj[key] = value;
       }
-    }
-
-    if (this.config.permissionPolicy && Object.keys(this.config.permissionPolicy).length > 0) {
-      obj.permissionPolicy = this.config.permissionPolicy;
-    }
-
-    if (this.config.commandOverrides && Object.keys(this.config.commandOverrides).length > 0) {
-      obj.commandOverrides = this.config.commandOverrides;
     }
 
     return obj;
@@ -348,24 +344,26 @@ export class ConfigManager {
     });
   }
 
+  /**
+   * 合并配置：core 已知字段填默认值，其余顶层字段透传（插件业务字段）。
+   *
+   * 透传时保留原始类型（对象/数组/标量），不做任何 schema 校验——
+   * 业务字段的合法性由消费它的 plugin 自己负责。
+   */
   private mergeDefaults(parsed: Record<string, unknown>): AalisConfig {
-    return {
+    const merged: AalisConfig = {
       name: (parsed['name'] as string) ?? DEFAULT_CONFIG.name,
       logLevel: (parsed['logLevel'] as string) ?? DEFAULT_CONFIG.logLevel,
-      agent: {
-        ...DEFAULT_CONFIG.agent,
-        ...((parsed['agent'] as Record<string, unknown>) ?? {}),
-      },
       plugins: (parsed['plugins'] as Record<string, Record<string, unknown>>) ?? {},
       disabledPlugins: (parsed['disabledPlugins'] as string[]) ?? [],
       servicePreferences: (parsed['servicePreferences'] as Record<string, string>) ?? {},
-      owners: (parsed['owners'] as UserIdentity[]) ?? [],
-      defaultAuthority: (parsed['defaultAuthority'] as number) ?? DEFAULT_CONFIG.defaultAuthority,
-      ownerAuthority: (parsed['ownerAuthority'] as number) ?? DEFAULT_CONFIG.ownerAuthority,
-      dangerousPolicy: (parsed['dangerousPolicy'] as AalisConfig['dangerousPolicy']) ?? undefined,
-      permissionPolicy: (parsed['permissionPolicy'] as AalisConfig['permissionPolicy']) ?? undefined,
-      commandOverrides: (parsed['commandOverrides'] as AalisConfig['commandOverrides']) ?? undefined,
     };
+    // 透传其余顶层字段
+    for (const [key, value] of Object.entries(parsed)) {
+      if (CORE_TOP_LEVEL_KEYS.has(key)) continue;
+      merged[key] = value;
+    }
+    return merged;
   }
 }
 

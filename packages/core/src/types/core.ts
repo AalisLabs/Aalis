@@ -8,12 +8,6 @@ export type SafetyLevel = 'safe' | 'dangerous';
 /** 细粒度权限标识，如 tool:file.write、storage:workspace:read */
 export type PermissionId = string;
 
-/** 用户身份标识 */
-export interface UserIdentity {
-  platform: string;
-  userId: string;
-}
-
 // ----- 消息 -----
 
 /**
