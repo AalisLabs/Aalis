@@ -28,6 +28,11 @@ export interface AalisConfig {
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件名列表 */
   disabledPlugins?: string[];
+  /**
+   * 服务偏好：serviceName → preferred contextId。
+   * 详见 ServiceContainer.prefer / Context.preferService。语义：偏好 > 优先级 > 注册顺序。
+   */
+  servicePreferences?: Record<string, string>;
   // 第三方业务字段兜底：plugin 可通过 declaration merging 提供具体类型
   [key: string]: unknown;
 }
@@ -40,7 +45,7 @@ const DEFAULT_CONFIG: AalisConfig = {
 };
 
 /** core 自身管理的顶层字段（buildSaveObject 时按固定顺序输出；其余字段透传） */
-const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins']);
+const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
 
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
@@ -168,6 +173,29 @@ export class ConfigManager {
   }
 
   /**
+   * 读取服务偏好映射（service name → preferred contextId）
+   */
+  getServicePreferences(): Record<string, string> {
+    return (this.config.servicePreferences ?? {}) as Record<string, string>;
+  }
+
+  /**
+   * 设置某服务的偏好 contextId（运行时；调用方需自行 save() 持久化）
+   */
+  setServicePreference(name: string, contextId: string): void {
+    if (!this.config.servicePreferences) this.config.servicePreferences = {};
+    (this.config.servicePreferences as Record<string, string>)[name] = contextId;
+  }
+
+  /**
+   * 清除某服务的偏好（运行时；调用方需自行 save() 持久化）
+   */
+  removeServicePreference(name: string): void {
+    if (!this.config.servicePreferences) return;
+    delete (this.config.servicePreferences as Record<string, string>)[name];
+  }
+
+  /**
    * 保存当前配置到磁盘（YAML 格式）
    * 注意：环境变量引用会被保护，不会展开为实际值
    */
@@ -261,6 +289,10 @@ export class ConfigManager {
     }
 
     obj.disabledPlugins = this.config.disabledPlugins ?? [];
+    const prefs = this.config.servicePreferences ?? {};
+    if (Object.keys(prefs).length > 0) {
+      obj.servicePreferences = prefs;
+    }
 
     // 透传其余顶层字段（插件业务字段；core 不解释也不变换）
     for (const [key, value] of Object.entries(this.config)) {
