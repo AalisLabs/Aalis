@@ -458,8 +458,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const claimed = new Set<string>();
     const groups: Array<{ label: string; services: string[] }> = [];
 
-    // 1. 核心服务（基础设施）
-    const coreServices = ['commands', 'authority', 'tools'];
+    // 1. 核心服务（基础设施 + 应用生命周期）
+    const coreServices = ['app', 'commands', 'authority', 'tools'];
     groups.push({ label: '核心', services: coreServices });
     coreServices.forEach(s => {
       claimed.add(s);
@@ -517,7 +517,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 4. 其他服务
     const allServiceNames = ctx.listServices();
-    const other = allServiceNames.filter(s => !claimed.has(s) && s !== 'app');
+    const other = allServiceNames.filter(s => !claimed.has(s));
     if (other.length > 0) {
       groups.push({ label: '其他', services: other });
     }
