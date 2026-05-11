@@ -21,11 +21,13 @@ export function DashboardPage({
   connected,
   plugins,
   servicesData,
+  onRefreshServices,
 }: {
   status: SystemStatus | null;
   connected: boolean;
   plugins: PluginInfo[];
   servicesData: Record<string, ServiceInfo> | null;
+  onRefreshServices?: () => void;
 }) {
   const activeCount = plugins.filter(p => p.state === 'active').length;
   const errorCount = plugins.filter(p => p.state === 'error').length;
@@ -141,7 +143,7 @@ export function DashboardPage({
               <div className="section-label">{section.label}</div>
               <div className="services-grid">
                 {section.entries.map(([name, info]) => (
-                  <ServiceCard key={name} name={name} info={info} />
+                  <ServiceCard key={name} name={name} info={info} onPreferChanged={onRefreshServices} />
                 ))}
               </div>
             </div>
@@ -151,7 +153,7 @@ export function DashboardPage({
               <div className="section-label">其他</div>
               <div className="services-grid">
                 {unclaimed.map(([name, info]) => (
-                  <ServiceCard key={name} name={name} info={info} />
+                  <ServiceCard key={name} name={name} info={info} onPreferChanged={onRefreshServices} />
                 ))}
               </div>
             </div>
@@ -165,7 +167,7 @@ export function DashboardPage({
               <div className="empty-hint">加载中...</div>
             )}
             {serviceEntries.map(([name, info]) => (
-              <ServiceCard key={name} name={name} info={info} />
+              <ServiceCard key={name} name={name} info={info} onPreferChanged={onRefreshServices} />
             ))}
           </div>
         </>

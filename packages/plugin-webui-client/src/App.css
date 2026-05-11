@@ -429,6 +429,107 @@ body {
   margin-top: 8px;
 }
 
+/* ---- 多 provider 折叠展示 ---- */
+.service-provider-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.service-provider-row:first-child,
+.service-provider-row.winner {
+  border-top: none;
+}
+.service-provider-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.service-provider-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.service-provider-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 2px;
+}
+.service-priority {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.service-router-badge {
+  font-size: 0.68rem;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.service-winner-badge {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.service-winner-badge.preferred {
+  background: rgba(234, 179, 8, 0.15);
+  color: #ca8a04;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+}
+.service-winner-badge.default {
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.service-prefer-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+}
+.service-prefer-btn:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text);
+}
+.service-prefer-btn.preferred {
+  color: #ca8a04;
+}
+.service-prefer-btn:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+.service-slot-toggle {
+  margin-top: 8px;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.service-slot-toggle:hover {
+  color: var(--text);
+}
+.service-slot-rest {
+  margin-top: 6px;
+}
+
 /* 工具 */
 
 .tools-grid {

@@ -402,23 +402,65 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const services: Record<
       string,
       {
-        providers: Array<{ contextId: string; capabilities: string[]; displayName?: string }>;
+        providers: Array<{
+          contextId: string;
+          capabilities: string[];
+          displayName?: string;
+          label?: string;
+          priority: number;
+        }>;
+        preferred: string | null;
       }
     > = {};
 
     for (const svcName of serviceNames) {
-      const entries = ctx.getAllServices(svcName);
+      // getServiceEntries 已经按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
+      const entries = ctx.getServiceEntries(svcName);
       services[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
           capabilities: [...e.capabilities],
           displayName: displayNameMap.get(e.contextId),
           label: e.label,
+          priority: e.priority,
         })),
+        preferred: ctx.getPreferredService(svcName) ?? null,
       };
     }
 
     res.json({ services });
+  });
+
+  /**
+   * 设置服务偏好。body: { contextId: string }
+   * 偏好语义：`preferred > priority > 注册顺序`。持久化到 aalis.config.yaml 的 servicePreferences。
+   */
+  expressApp.post('/api/services/:name/prefer', async (req, res) => {
+    const svcName = String(req.params.name);
+    const contextId = String((req.body as { contextId?: string })?.contextId ?? '').trim();
+    if (!contextId) {
+      res.status(400).json({ ok: false, error: 'contextId required' });
+      return;
+    }
+    // 校验 entry 存在
+    const entries = ctx.getServiceEntries(svcName);
+    if (!entries.some(e => e.contextId === contextId)) {
+      res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
+      return;
+    }
+    ctx.preferService(svcName, contextId);
+    ctx.config.setServicePreference(svcName, contextId);
+    ctx.config.save();
+    res.json({ ok: true });
+  });
+
+  /** 清除服务偏好 */
+  expressApp.delete('/api/services/:name/prefer', async (req, res) => {
+    const svcName = String(req.params.name);
+    ctx.unpreferService(svcName);
+    ctx.config.removeServicePreference(svcName);
+    ctx.config.save();
+    res.json({ ok: true });
   });
 
   // 获取所有平台适配器及其连接状态
