@@ -100,6 +100,9 @@ importers:
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
+      '@aalis/plugin-platform':
+        specifier: workspace:*
+        version: link:../plugin-platform
       ws:
         specifier: ^8.18.0
         version: 8.20.0
@@ -125,6 +128,9 @@ importers:
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
+      '@aalis/plugin-platform':
+        specifier: workspace:*
+        version: link:../plugin-platform
       '@aalis/plugin-session-manager':
         specifier: workspace:*
         version: link:../plugin-session-manager
@@ -186,6 +192,9 @@ importers:
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
+      '@aalis/plugin-platform':
+        specifier: workspace:*
+        version: link:../plugin-platform
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -550,6 +559,9 @@ importers:
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
+      '@aalis/plugin-platform':
+        specifier: workspace:*
+        version: link:../plugin-platform
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -576,6 +588,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-platform':
+        specifier: workspace:*
+        version: link:../plugin-platform
       '@aalis/plugin-session-manager':
         specifier: workspace:*
         version: link:../plugin-session-manager
@@ -949,6 +964,9 @@ importers:
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
+      '@aalis/plugin-platform':
+        specifier: workspace:*
+        version: link:../plugin-platform
       '@aalis/plugin-session-manager':
         specifier: workspace:*
         version: link:../plugin-session-manager
