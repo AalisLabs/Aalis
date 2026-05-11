@@ -1,5 +1,5 @@
 import type { Context, ConfigSchema } from '@aalis/core';
-import type { EmbeddingService } from '@aalis/core';
+import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 
 // ===== 插件元数据 =====
 

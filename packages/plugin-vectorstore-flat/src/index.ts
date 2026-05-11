@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Context, ConfigSchema } from '@aalis/core';
-import type { VectorStoreService, VectorSearchResult } from '@aalis/core';
+import type { VectorStoreService, VectorSearchResult } from '@aalis/plugin-vectorstore-api';
 
 // ===== 插件元数据 =====
 

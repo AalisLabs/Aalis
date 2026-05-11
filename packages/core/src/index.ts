@@ -93,10 +93,7 @@ export type {
   CapabilityList,
   // 记忆服务（已迁出至 @aalis/plugin-memory-api）
   // 存储服务（已迁出至 @aalis/plugin-storage-api）
+  // Embedding 服务（已迁出至 @aalis/plugin-embedding-api）
+  // 向量数据库服务（已迁出至 @aalis/plugin-vectorstore-api）
   // 消息归档服务已迁出 core（@aalis/plugin-message-archive）
-  // Embedding 服务
-  EmbeddingService,
-  // 向量数据库服务
-  VectorSearchResult,
-  VectorStoreService,
 } from './types/index.js';

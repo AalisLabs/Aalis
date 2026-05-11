@@ -79,10 +79,8 @@ export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 
 // 存储服务（已迁出至 @aalis/plugin-storage-api）
 
-// Embedding 服务
-export type { EmbeddingService } from './embedding.js';
+// Embedding 服务（已迁出至 @aalis/plugin-embedding-api）
 
-// 向量数据库服务
-export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
+// 向量数据库服务（已迁出至 @aalis/plugin-vectorstore-api）
 
 // 会话管理已迁移至 @aalis/plugin-session-manager
