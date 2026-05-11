@@ -1,5 +1,6 @@
 import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Context, ConfigSchema, PluginModule, IncomingMessage } from '@aalis/core';
+import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

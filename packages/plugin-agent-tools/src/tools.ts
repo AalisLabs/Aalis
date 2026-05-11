@@ -1,4 +1,5 @@
-import type { ToolDefinition, ToolCallContext } from '@aalis/core';
+import type { ToolDefinition } from '@aalis/core';
+import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import type { RegisteredTool, ToolSummary, ToolGroupInfo } from '@aalis/plugin-tools-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { Logger } from '@aalis/core';

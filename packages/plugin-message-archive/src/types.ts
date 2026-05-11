@@ -1,4 +1,5 @@
-import type { IncomingMessage, Message } from '@aalis/core';
+import type { Message } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { registerCapabilityProbe } from '@aalis/core';
 
 export interface ArchiveIncomingResult {

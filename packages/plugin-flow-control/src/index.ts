@@ -1,8 +1,5 @@
-import type {
-  Context,
-  ConfigSchema,
-  OutgoingMessage,
-} from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { OutgoingMessage } from '@aalis/plugin-message-api';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
@@ -116,7 +113,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   }
 
   /** 把"被流控吞掉"的入站消息归档到 message-archive，下次触发时作为上下文 */
-  async function shadowArchive(message: import('@aalis/core').IncomingMessage): Promise<void> {
+  async function shadowArchive(message: import('@aalis/plugin-message-api').IncomingMessage): Promise<void> {
     const archive = ctx.getService<MessageArchiveService>('message-archive');
     if (!archive) return;
     try {
