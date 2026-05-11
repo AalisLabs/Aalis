@@ -3,7 +3,7 @@ import { extname, isAbsolute, resolve } from 'node:path';
 import type { Context, ConfigSchema } from '@aalis/core';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import type { PlatformAdapter, PlatformService } from '@aalis/plugin-platform';
-import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
+import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import '@aalis/plugin-tools-api';
 

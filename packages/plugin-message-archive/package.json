@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-image-recognition": "workspace:*",
+    "@aalis/plugin-image-recognition-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*"
   },
