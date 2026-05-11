@@ -28,8 +28,6 @@ export interface AalisConfig {
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件名列表 */
   disabledPlugins?: string[];
-  /** 服务偏好：服务名 → 偏好的提供者 contextId */
-  servicePreferences?: Record<string, string>;
   // 第三方业务字段兜底：plugin 可通过 declaration merging 提供具体类型
   [key: string]: unknown;
 }
@@ -39,11 +37,10 @@ const DEFAULT_CONFIG: AalisConfig = {
   logLevel: 'info',
   plugins: {},
   disabledPlugins: [],
-  servicePreferences: {},
 };
 
 /** core 自身管理的顶层字段（buildSaveObject 时按固定顺序输出；其余字段透传） */
-const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
+const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins']);
 
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
@@ -171,23 +168,6 @@ export class ConfigManager {
   }
 
   /**
-   * 设置服务偏好提供者
-   */
-  setServicePreference(serviceName: string, contextId: string): void {
-    if (!this.config.servicePreferences) {
-      this.config.servicePreferences = {};
-    }
-    this.config.servicePreferences[serviceName] = contextId;
-  }
-
-  /**
-   * 获取服务偏好
-   */
-  getServicePreferences(): Record<string, string> {
-    return this.config.servicePreferences ?? {};
-  }
-
-  /**
    * 保存当前配置到磁盘（YAML 格式）
    * 注意：环境变量引用会被保护，不会展开为实际值
    */
@@ -282,10 +262,6 @@ export class ConfigManager {
 
     obj.disabledPlugins = this.config.disabledPlugins ?? [];
 
-    if (this.config.servicePreferences && Object.keys(this.config.servicePreferences).length > 0) {
-      obj.servicePreferences = this.config.servicePreferences;
-    }
-
     // 透传其余顶层字段（插件业务字段；core 不解释也不变换）
     for (const [key, value] of Object.entries(this.config)) {
       if (CORE_TOP_LEVEL_KEYS.has(key)) continue;
@@ -356,7 +332,6 @@ export class ConfigManager {
       logLevel: (parsed.logLevel as string) ?? DEFAULT_CONFIG.logLevel,
       plugins: (parsed.plugins as Record<string, Record<string, unknown>>) ?? {},
       disabledPlugins: (parsed.disabledPlugins as string[]) ?? [],
-      servicePreferences: (parsed.servicePreferences as Record<string, string>) ?? {},
     };
     // 透传其余顶层字段
     for (const [key, value] of Object.entries(parsed)) {
@@ -426,13 +401,6 @@ export class ScopedConfigManager extends ConfigManager {
       return this.overlay.disabledPlugins.includes(pluginName);
     }
     return this.parentConfig.isPluginDisabled(pluginName);
-  }
-
-  override getServicePreferences(): Record<string, string> {
-    return {
-      ...this.parentConfig.getServicePreferences(),
-      ...(this.overlay.servicePreferences ?? {}),
-    };
   }
 
   override getAll(): Readonly<AalisConfig> {

@@ -234,15 +234,8 @@ export class Context {
   /**
    * 列出所有已注册的服务名
    */
-  listServices(): string[] {
-    return this._services.listServices();
-  }
-
-  /**
-   * 获取某个服务的所有 entry
-   */
-  getServiceEntries(name: string) {
-    return this._services.getEntries(name);
+  getServiceNames(): string[] {
+    return this._services.getServiceNames();
   }
 
   /**
@@ -262,13 +255,6 @@ export class Context {
     requiredCapabilities?: CapabilityList<TName>,
   ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     return this._services.getAll<T>(name, requiredCapabilities as readonly string[] as string[] | undefined);
-  }
-
-  /**
-   * 切换服务的偏好提供者
-   */
-  preferService(name: string, contextId: string): boolean {
-    return this._services.prefer(name, contextId);
   }
 
   /**
@@ -428,7 +414,7 @@ export class Context {
     // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools-system 的
     // ToolService、plugin-commands 的 CommandService）。
     // core 不再硬编码任何具体服务名。
-    for (const name of this._services.listServices()) {
+    for (const name of this._services.getServiceNames()) {
       const svc = this._services.get(name) as { unregisterByPlugin?: (id: string) => void } | undefined;
       try {
         svc?.unregisterByPlugin?.(this.id);
