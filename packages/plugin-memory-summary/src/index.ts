@@ -1,11 +1,7 @@
-import type {
-  Context,
-  Message,
-  ConfigSchema,
-} from '@aalis/core';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import '@aalis/plugin-agent-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 
 // ===== 插件元数据 =====
@@ -34,13 +30,15 @@ export const configSchema: ConfigSchema = {
     type: 'number',
     label: '摘要 Token 占比',
     default: 0.05,
-    description: '摘要占模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。 实际 token 上限 = contextLength × 比例，自动适配不同模型',
+    description:
+      '摘要占模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。 实际 token 上限 = contextLength × 比例，自动适配不同模型',
   },
   autoCompressThreshold: {
     type: 'number',
     label: 'Token 预压缩阈值',
     default: 0.7,
-    description: '监听 agent 发出的 token:usage 事件，当使用率超过此比例 (0~1) 时启动后台压缩。默认 0.7 实现“临界前预压缩”，让本轮调用仍然能用原始上下文完成，压缩后的成果下一轮生效。设为 0 则禁用 token 触发。',
+    description:
+      '监听 agent 发出的 token:usage 事件，当使用率超过此比例 (0~1) 时启动后台压缩。默认 0.7 实现“临界前预压缩”，让本轮调用仍然能用原始上下文完成，压缩后的成果下一轮生效。设为 0 则禁用 token 触发。',
   },
   summaryPrompt: {
     type: 'string',
@@ -55,7 +53,8 @@ export const configSchema: ConfigSchema = {
       { label: '沿用全局默认 LLM', value: 'global' },
       { label: '自定义 provider/model', value: 'custom' },
     ],
-    description: 'global=沿用全局默认 LLM；custom=使用下方 summaryProvider/summaryModel 指定的模型。session（沿用会话当轮模型）暂未实现。',
+    description:
+      'global=沿用全局默认 LLM；custom=使用下方 summaryProvider/summaryModel 指定的模型。session（沿用会话当轮模型）暂未实现。',
   },
   summaryProvider: {
     type: 'string',
@@ -142,9 +141,7 @@ interface SummaryRecord {
 class SummaryStore {
   constructor(private readonly memory: MemoryService) {
     if (!memory.saveMetadata || !memory.getMetadata) {
-      throw new Error(
-        '[memory-summary] 当前 memory 实现缺少 metadata 能力（saveMetadata/getMetadata），无法存储摘要',
-      );
+      throw new Error('[memory-summary] 当前 memory 实现缺少 metadata 能力（saveMetadata/getMetadata），无法存储摘要');
     }
   }
 
@@ -158,12 +155,7 @@ class SummaryStore {
     };
   }
 
-  async upsertSummary(
-    sessionId: string,
-    summary: string,
-    coveredUpTo: number,
-    messageCount: number,
-  ): Promise<void> {
+  async upsertSummary(sessionId: string, summary: string, coveredUpTo: number, messageCount: number): Promise<void> {
     await this.memory.saveMetadata!(SUMMARY_NAMESPACE, sessionId, {
       summary,
       coveredUpTo,
@@ -196,7 +188,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     summaryTokenRatio: (config.summaryTokenRatio as number) ?? 0.05,
     autoCompressThreshold: (config.autoCompressThreshold as number) ?? 0.7,
     summaryPrompt: (config.summaryPrompt as string) ?? '',
-    summaryModelMode: ((config.summaryModelMode as string) === 'custom' ? 'custom' : 'global'),
+    summaryModelMode: (config.summaryModelMode as string) === 'custom' ? 'custom' : 'global',
     summaryProvider: (config.summaryProvider as string) ?? '',
     summaryModel: (config.summaryModel as string) ?? '',
   };
@@ -305,9 +297,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 构建摘要请求
       const summaryBudget = await getSummaryTokenBudget();
       const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
-      const summaryMessages: Message[] = [
-        { role: 'system', content: summarySystemPrompt + budgetHint },
-      ];
+      const summaryMessages: Message[] = [{ role: 'system', content: summarySystemPrompt + budgetHint }];
 
       // 如果已有旧摘要，在提示中包含它
       if (existing?.summary) {
@@ -322,7 +312,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       }
 
-      ctx.logger.debug(`正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`);
+      ctx.logger.debug(
+        `正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`,
+      );
 
       // 调用 LLM 生成摘要
       let summaryText = '';
@@ -362,12 +354,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         // 保存系统事件消息，供前端持久化显示压缩分隔线
         const archive = ctx.getService<MessageArchiveService>('message-archive');
-        if (archive) await archive.saveMessage(sessionId, {
-          role: 'system',
-          content: '对话已压缩',
-          name: 'system-event',
-          timestamp: summaryTs,
-        });
+        if (archive)
+          await archive.saveMessage(sessionId, {
+            role: 'system',
+            content: '对话已压缩',
+            name: 'system-event',
+            timestamp: summaryTs,
+          });
       }
     } catch (err) {
       ctx.logger.warn('生成会话摘要失败:', err);
@@ -400,7 +393,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 如果超出预算，截断
       if (summaryTokens > summaryBudget) {
         const maxChars = summaryBudget * 3;
-        summaryContent = summaryContent.slice(0, maxChars) + '\n... [摘要已截断]';
+        summaryContent = `${summaryContent.slice(0, maxChars)}\n... [摘要已截断]`;
       }
 
       const summaryMsg: Message = {
@@ -438,8 +431,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (cfg.autoCompressThreshold <= 0) return;
     if (data.usageRatio < cfg.autoCompressThreshold) return;
     if (summarizing.has(data.sessionId)) return;
-    ctx.logger.info(`Token 使用率 ${(data.usageRatio * 100).toFixed(1)}% 超过阈值 ${(cfg.autoCompressThreshold * 100).toFixed(0)}%，触发后台压缩`);
-    ctx.emit('session:compress', { sessionId: data.sessionId, reason: 'auto', usageRatio: data.usageRatio }).catch(() => {});
+    ctx.logger.info(
+      `Token 使用率 ${(data.usageRatio * 100).toFixed(1)}% 超过阈值 ${(cfg.autoCompressThreshold * 100).toFixed(0)}%，触发后台压缩`,
+    );
+    ctx
+      .emit('session:compress', { sessionId: data.sessionId, reason: 'auto', usageRatio: data.usageRatio })
+      .catch(() => {});
   });
 
   // === 监听手动/自动压缩事件 ===
@@ -487,27 +484,32 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         let todoContext = '';
         try {
           const recentMessages = allHistory.slice(-cfg.keepRecent);
-          const todoMsgs = recentMessages.filter(m =>
-            m.role === 'assistant' && m.toolCalls?.some(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage')
+          const todoMsgs = recentMessages.filter(
+            m =>
+              m.role === 'assistant' &&
+              m.toolCalls?.some(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage'),
           );
           if (todoMsgs.length > 0) {
             const lastTodo = todoMsgs[todoMsgs.length - 1];
-            const tc = lastTodo.toolCalls?.find(tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage');
+            const tc = lastTodo.toolCalls?.find(
+              tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage',
+            );
             if (tc?.function.arguments) {
               todoContext = `\\n\\n当前任务列表状态：\\n${tc.function.arguments}`;
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         const summaryBudget = await getSummaryTokenBudget();
         const budgetHint = `\n\n重要：你的摘要输出上限为 ${summaryBudget} tokens（约 ${summaryBudget * 4} 个英文字符，或约 ${Math.floor(summaryBudget / 1.5)} 个中文字符）。请合理分配篇幅，确保“【进行中的任务】”等关键结构能完整输出。`;
-        const summaryMessages: Message[] = [
-          { role: 'system', content: summarySystemPrompt + budgetHint },
-        ];
+        const summaryMessages: Message[] = [{ role: 'system', content: summarySystemPrompt + budgetHint }];
 
-        const taskHint = data.reason === 'auto'
-          ? '\\n\\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
-          : '';
+        const taskHint =
+          data.reason === 'auto'
+            ? '\\n\\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
+            : '';
 
         if (existing?.summary) {
           summaryMessages.push({
@@ -557,12 +559,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
           // 保存系统事件消息，供前端持久化显示压缩分隔线
           const archive = ctx.getService<MessageArchiveService>('message-archive');
-          if (archive) await archive.saveMessage(data.sessionId, {
-            role: 'system',
-            content: '对话已压缩',
-            name: 'system-event',
-            timestamp: summaryTs,
-          });
+          if (archive)
+            await archive.saveMessage(data.sessionId, {
+              role: 'system',
+              content: '对话已压缩',
+              name: 'system-event',
+              timestamp: summaryTs,
+            });
 
           // 通知前端：压缩完成
           ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
@@ -581,37 +584,43 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 统一记忆清除：通过 memory:clear hook 参与编排
-  ctx.middleware('memory:clear', async (data: {
-    scope: 'session' | 'all';
-    types?: string[];
-    sessionId?: string;
-    results: Array<{ source: string; success: boolean; message: string }>;
-    rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
-  }, next) => {
-    // 类型过滤：如果指定了 types 且不包含 summary，跳过
-    if (data.types && !data.types.includes('summary')) {
-      await next();
-      return;
-    }
-
-    try {
-      if (data.scope === 'all') {
-        await store.clearAll();
-        data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
-        ctx.logger.info('所有会话摘要已清空');
-      } else if (data.sessionId) {
-        await store.clearSession(data.sessionId);
-        data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
-        ctx.logger.info(`会话摘要已清空: session=${data.sessionId}`);
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+        rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+      },
+      next,
+    ) => {
+      // 类型过滤：如果指定了 types 且不包含 summary，跳过
+      if (data.types && !data.types.includes('summary')) {
+        await next();
+        return;
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'summary', success: false, message: `摘要清空失败: ${msg}` });
-      ctx.logger.warn('摘要清空失败:', err);
-    }
 
-    await next();
-  });
+      try {
+        if (data.scope === 'all') {
+          await store.clearAll();
+          data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
+          ctx.logger.info('所有会话摘要已清空');
+        } else if (data.sessionId) {
+          await store.clearSession(data.sessionId);
+          data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
+          ctx.logger.info(`会话摘要已清空: session=${data.sessionId}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'summary', success: false, message: `摘要清空失败: ${msg}` });
+        ctx.logger.warn('摘要清空失败:', err);
+      }
+
+      await next();
+    },
+  );
 
   // 清理
   ctx.on('dispose', () => {

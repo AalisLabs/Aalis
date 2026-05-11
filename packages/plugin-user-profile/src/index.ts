@@ -1,7 +1,7 @@
-import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-commands-api';
 
@@ -31,7 +31,8 @@ export const configSchema: ConfigSchema = {
   extractEveryNMessages: {
     type: 'number',
     label: '每 N 条消息提取一次',
-    description: '同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案）',
+    description:
+      '同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案）',
     default: 5,
   },
   historyForExtraction: {
@@ -67,7 +68,8 @@ export const configSchema: ConfigSchema = {
   temporaryFactMaxAgeDays: {
     type: 'number',
     label: '临时事实保留天数',
-    description: 'temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出',
+    description:
+      'temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出',
     default: 90,
   },
   relationScoreDecayPerDay: {
@@ -97,14 +99,16 @@ export const configSchema: ConfigSchema = {
   extractModel: {
     type: 'select',
     label: '提取用模型',
-    description: '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐选择廉价/快速模型（如 deepseek-chat）以降低成本',
+    description:
+      '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐选择廉价/快速模型（如 deepseek-chat）以降低成本',
     default: '',
     dynamicOptions: 'llm',
   },
   allowGlobalBackfill: {
     type: 'boolean',
     label: '允许跨会话补齐副档案',
-    description: '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
+    description:
+      '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
     default: false,
   },
 };
@@ -126,8 +130,27 @@ export const defaultConfig = {
 };
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
-type FactCategory = '兴趣爱好' | '职业身份' | '人际关系' | '近期处境' | '价值观' | '性格特征' | '偏好' | '忌讳' | '其他';
-const KNOWN_CATEGORIES: FactCategory[] = ['兴趣爱好', '职业身份', '人际关系', '近期处境', '价值观', '性格特征', '偏好', '忌讳', '其他'];
+type FactCategory =
+  | '兴趣爱好'
+  | '职业身份'
+  | '人际关系'
+  | '近期处境'
+  | '价值观'
+  | '性格特征'
+  | '偏好'
+  | '忌讳'
+  | '其他';
+const KNOWN_CATEGORIES: FactCategory[] = [
+  '兴趣爱好',
+  '职业身份',
+  '人际关系',
+  '近期处境',
+  '价值观',
+  '性格特征',
+  '偏好',
+  '忌讳',
+  '其他',
+];
 type FactTemporality = 'permanent' | 'temporary';
 
 interface Fact {
@@ -179,11 +202,11 @@ interface UserProfileConfig {
 /** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
 function genFactId(existing: Set<string>): string {
   for (let i = 0; i < 8; i++) {
-    const id = 'f' + Math.random().toString(36).slice(2, 7);
+    const id = `f${Math.random().toString(36).slice(2, 7)}`;
     if (!existing.has(id)) return id;
   }
   // 极端兜底：加时间戳后缀
-  return 'f' + Date.now().toString(36).slice(-5);
+  return `f${Date.now().toString(36).slice(-5)}`;
 }
 
 /** 从形如 ```json ... ``` 的文本里抠出 JSON 子串 */
@@ -234,7 +257,7 @@ function normalizeForQuoteMatch(s: string): string {
   return s
     .toLowerCase()
     .replace(/[\s\u3000]+/g, '')
-    .replace(/[。，、；：？！“”‘’（）《》【】.,;:?!"'()\[\]<>\-_~`*]/g, '');
+    .replace(/[。，、；：？！“”‘’（）《》【】.,;:?!"'()[\]<>\-_~`*]/g, '');
 }
 
 /**
@@ -262,7 +285,7 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
       const msgUserId = getMessageUserId(m) ?? '';
       const msgPlatform = metadataString(m, 'platform');
       const isTarget = msgUserId === userId && (!msgPlatform || !platform || msgPlatform === platform);
-      const label = nickname ? `${nickname}(${msgUserId || '?'})` : (msgUserId || '?');
+      const label = nickname ? `${nickname}(${msgUserId || '?'})` : msgUserId || '?';
       const tag = isTarget ? '目标用户' : '其他用户';
       const content = (m.content ?? '').trim();
       return content ? `[${time}] [${tag} ${label}]: ${content}` : '';
@@ -292,12 +315,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const userMessageCount = new Map<string, number>();
   /** 防止同一用户的提取并发触发 */
   const inflightExtractions = new Set<string>();
-  const relationScorePrecision = Math.min(6, Math.max(
-    decimalPlaces(cfg.relationScoreDecayPerDay),
-    decimalPlaces(cfg.relationIncrementDirect),
-    decimalPlaces(cfg.relationIncrementImmediate),
-    decimalPlaces(cfg.relationIncrementInterval),
-  ));
+  const relationScorePrecision = Math.min(
+    6,
+    Math.max(
+      decimalPlaces(cfg.relationScoreDecayPerDay),
+      decimalPlaces(cfg.relationIncrementDirect),
+      decimalPlaces(cfg.relationIncrementImmediate),
+      decimalPlaces(cfg.relationIncrementInterval),
+    ),
+  );
 
   function userKeyOf(platform: string | undefined, userId: string): string {
     return `${platform ?? ''}:${userId}`;
@@ -342,11 +368,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           // 去重 id
           while (usedIds.has(id)) id = genFactId(usedIds);
           usedIds.add(id);
-          const cat = typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
-            ? (obj.category as FactCategory)
-            : undefined;
+          const cat =
+            typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
+              ? (obj.category as FactCategory)
+              : undefined;
           const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
-          const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : (updatedAt || undefined);
+          const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : updatedAt || undefined;
           facts.push({
             id,
             text,
@@ -384,9 +411,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
-  interface ExtractAddItem { text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string; sourceQuote?: string }
-  interface ExtractUpdateItem { id: string; text: string; category?: FactCategory; temporality?: FactTemporality; timeHint?: string; sourceQuote?: string }
-  interface ExtractResult { add: ExtractAddItem[]; update: ExtractUpdateItem[]; remove: string[] }
+  interface ExtractAddItem {
+    text: string;
+    category?: FactCategory;
+    temporality?: FactTemporality;
+    timeHint?: string;
+    sourceQuote?: string;
+  }
+  interface ExtractUpdateItem {
+    id: string;
+    text: string;
+    category?: FactCategory;
+    temporality?: FactTemporality;
+    timeHint?: string;
+    sourceQuote?: string;
+  }
+  interface ExtractResult {
+    add: ExtractAddItem[];
+    update: ExtractUpdateItem[];
+    remove: string[];
+  }
 
   function normalizeCategory(v: unknown): FactCategory | undefined {
     if (typeof v !== 'string') return undefined;
@@ -405,29 +449,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const empty: ExtractResult = { add: [], update: [], remove: [] };
     if (!llm?.chat) return empty;
 
-    const sys = '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：'
-      + '`[目标用户 X(uid)]` 或 `[其他用户 Y(uid)]`。上下文仅供消歧，'
-      + '**只允许根据「目标用户」自己的发言写入事实**，不能根据其他用户、Aalis 的猜测或提问写入事实。'
-      + '\n\n你可以执行三种操作（在一次输出里组合）：'
-      + '\n- add: 添加新事实，需指定 text、category、sourceQuote'
-      + '\n- update: 用 id 精确替换某条已知事实，同样需 sourceQuote（优先使用 update 而非 add 来避免重复）'
-      + '\n- remove: 用 id 删除已被推翻、过时的事实（不需 sourceQuote）'
-      + '\n\n规则：'
-      + '\n1. 仅记录与「目标用户」本人相关、值得长期记住的事实。如果某条事实的原始依据来自「其他用户」的发言，即使该信息是关于目标用户的，也**不允许**写入（他人可能说错、说反话、记错）'
-      + '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写'
-      + '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条'
-      + '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除'
-      + `\n5. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实`
-      + '\n6. 如果没有任何更新，三个数组都返回空'
-      + `\n7. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}`
-      + '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary'
-      + '\n9. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串'
-      + '\n\n输出严格的 JSON（不要其他文本）：'
-      + '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]}';
+    const sys =
+      '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：' +
+      '`[目标用户 X(uid)]` 或 `[其他用户 Y(uid)]`。上下文仅供消歧，' +
+      '**只允许根据「目标用户」自己的发言写入事实**，不能根据其他用户、Aalis 的猜测或提问写入事实。' +
+      '\n\n你可以执行三种操作（在一次输出里组合）：' +
+      '\n- add: 添加新事实，需指定 text、category、sourceQuote' +
+      '\n- update: 用 id 精确替换某条已知事实，同样需 sourceQuote（优先使用 update 而非 add 来避免重复）' +
+      '\n- remove: 用 id 删除已被推翻、过时的事实（不需 sourceQuote）' +
+      '\n\n规则：' +
+      '\n1. 仅记录与「目标用户」本人相关、值得长期记住的事实。如果某条事实的原始依据来自「其他用户」的发言，即使该信息是关于目标用户的，也**不允许**写入（他人可能说错、说反话、记错）' +
+      '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写' +
+      '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条' +
+      '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除' +
+      `\n5. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实` +
+      '\n6. 如果没有任何更新，三个数组都返回空' +
+      `\n7. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}` +
+      '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary' +
+      '\n9. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串' +
+      '\n\n输出严格的 JSON（不要其他文本）：' +
+      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]}';
 
-    const factListText = existingFacts.length > 0
-      ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
-      : '（暂无）';
+    const factListText =
+      existingFacts.length > 0
+        ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
+        : '（暂无）';
     const who = nickname ? `${nickname}（${userId}）` : userId;
     const renderedHistory = renderHistoryForExtract(history, userId, platform);
     const user = `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
@@ -460,13 +506,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             if (!t) return [];
             const category = normalizeCategory(o.category);
             const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
-            return [{
-              text: t,
-              category,
-              temporality: normalizeTemporality(o.temporality, category),
-              timeHint: normalizeTextField(o.timeHint),
-              sourceQuote,
-            }];
+            return [
+              {
+                text: t,
+                category,
+                temporality: normalizeTemporality(o.temporality, category),
+                timeHint: normalizeTextField(o.timeHint),
+                sourceQuote,
+              },
+            ];
           })
         : [];
       const update: ExtractUpdateItem[] = Array.isArray(parsed.update)
@@ -478,18 +526,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             if (!id || !t) return [];
             const category = normalizeCategory(o.category);
             const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
-            return [{
-              id,
-              text: t,
-              category,
-              temporality: normalizeTemporality(o.temporality, category),
-              timeHint: normalizeTextField(o.timeHint),
-              sourceQuote,
-            }];
+            return [
+              {
+                id,
+                text: t,
+                category,
+                temporality: normalizeTemporality(o.temporality, category),
+                timeHint: normalizeTextField(o.timeHint),
+                sourceQuote,
+              },
+            ];
           })
         : [];
       const remove: string[] = Array.isArray(parsed.remove)
-        ? (parsed.remove as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(s => s.trim())
+        ? (parsed.remove as unknown[])
+            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map(s => s.trim())
         : [];
 
       // sourceQuote 校验：每条 add/update 的 sourceQuote 必须能在「目标用户」语料中找到。
@@ -529,9 +581,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   function clipText(s: string): string {
-    return s.length > cfg.maxFactCharsPerItem
-      ? s.slice(0, cfg.maxFactCharsPerItem) + '…'
-      : s;
+    return s.length > cfg.maxFactCharsPerItem ? `${s.slice(0, cfg.maxFactCharsPerItem)}…` : s;
   }
 
   function clampRelationScore(score: number): number {
@@ -546,7 +596,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return cfg.relationIncrementDirect;
   }
 
-  function applyRelationUpdate(profile: UserProfile, triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined): UserProfile {
+  function applyRelationUpdate(
+    profile: UserProfile,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined,
+  ): UserProfile {
     const now = Date.now();
     const last = profile.lastInteractionAt;
     const daysSinceLast = last ? Math.max(0, (now - last) / 86_400_000) : 0;
@@ -650,7 +703,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const history = await memory.getHistory(sessionId, cfg.historyForExtraction);
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
-      const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
+      const profile = (await loadProfile(userKey)) ?? {
+        facts: [],
+        relationScore: 0,
+        interactionCount: 0,
+        updatedAt: 0,
+      };
       const ops = await llmExtractFacts(history, profile.facts, nickname, userId, platform);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
       const newFacts = mergeFacts(profile.facts, ops);
@@ -678,21 +736,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ─── 关系分数：在 agent 触发回复路径上更新 ───
   // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
   // 关系强度与"是否触发回复"绑定，因此仍走 agent:input:before 中间件。
-  ctx.middleware('agent:input:before', async (
-    data: { message: { sessionId: string; userId?: string; platform?: string; nickname?: string; triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' } },
-    next,
-  ) => {
-    const { userId, platform, triggerType } = data.message;
-    if (userId) {
-      const userKey = userKeyOf(platform, userId);
-      try {
-        await updateRelationForUser(userKey, triggerType);
-      } catch (err) {
-        ctx.logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+  ctx.middleware(
+    'agent:input:before',
+    async (
+      data: {
+        message: {
+          sessionId: string;
+          userId?: string;
+          platform?: string;
+          nickname?: string;
+          triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+        };
+      },
+      next,
+    ) => {
+      const { userId, platform, triggerType } = data.message;
+      if (userId) {
+        const userKey = userKeyOf(platform, userId);
+        try {
+          await updateRelationForUser(userKey, triggerType);
+        } catch (err) {
+          ctx.logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
-    }
-    await next();
-  });
+      await next();
+    },
+  );
 
   // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
   // 监听 message-archive 在 archiveIncoming 落库成功后发出的 inbound:message:archived 事件，
@@ -708,10 +777,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     userMessageCount.set(countKey, count);
     if (cfg.extractEveryNMessages <= 0 || count % cfg.extractEveryNMessages !== 0) return;
 
-    void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch(
-      (err: unknown) => ctx.logger.debug(
-        `事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`,
-      ),
+    void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
+      ctx.logger.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
     );
   });
 
@@ -748,16 +815,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     if (compact) {
       // compact 模式：平铺，不加分组标题
-      return `### ${label}\n` + subset.map(f => renderFactLine(f, false)).join('\n');
+      return `### ${label}\n${subset.map(f => renderFactLine(f, false)).join('\n')}`;
     }
     const sections: string[] = [];
     for (const cat of KNOWN_CATEGORIES) {
       const items = groups.get(cat);
-      if (items && items.length > 0) sections.push(`## ${cat}\n` + items.join('\n'));
+      if (items && items.length > 0) sections.push(`## ${cat}\n${items.join('\n')}`);
     }
     for (const [cat, items] of groups) {
       if (!(KNOWN_CATEGORIES as string[]).includes(cat) && items.length > 0) {
-        sections.push(`## ${cat}\n` + items.join('\n'));
+        sections.push(`## ${cat}\n${items.join('\n')}`);
       }
     }
     return sections.join('\n\n');
@@ -774,163 +841,181 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   //   direct/immediate/undefined → data.userId 是主发言者，注入完整档案 + 其他参与者摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
-  ctx.middleware('agent:llm:before', async (
-    data: {
-      messages: Message[];
-      tools: unknown[];
-      sessionId?: string;
-      userId?: string;
-      platform?: string;
-      triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
-    },
-    next,
-  ) => {
-    if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'user-profile')) {
-      await next();
-      return;
-    }
-
-    const blocksToInsert: string[] = [];
-    const trigger = data.triggerType ?? 'direct';
-    const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
-
-    // 1. 主发言者完整档案：仅在确实有人在「和 Aalis 对话」时注入
-    if (hasPrimarySpeaker && data.userId) {
-      const userKey = userKeyOf(data.platform, data.userId);
-      const profile = await loadProfile(userKey);
-      if (profile && profile.facts.some(isFactActive)) {
-        const body = renderProfileBlock(profile.facts, data.userId, false);
-        const relationLine = renderRelationLine(profile);
-        const block = `# 关于当前对话者（${data.userId}）的已知事实\n`
-          + '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。'
-          + '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n'
-          + (relationLine ? `${relationLine}\n\n` : '')
-          + body;
-        blocksToInsert.push(block);
-      }
-    }
-
-    // 2. 群聊其他参与者：按最近互动优先加载档案
-    //    - 先从当前 LLM 上下文的 messages 中倒序收集最近发言者
-    //    - 再从跨会话 user:profile metadata 中按 lastInteractionAt 倒序补齐
-    //    - hasPrimarySpeaker 为 true 时排除主发言者
-    //    - hasPrimarySpeaker 为 false 时（interval/idle）所有人平等显示
-    if (cfg.maxOtherParticipants > 0) {
-      const primaryKey = hasPrimarySpeaker && data.userId ? userKeyOf(data.platform, data.userId) : undefined;
-      const others = new Map<string, { userId: string; nickname?: string; platform?: string }>();
-      const candidateLimit = Math.max(cfg.maxOtherParticipants * 5, cfg.maxOtherParticipants + 10);
-
-      function addOther(userId: string, platform?: string, nickname?: string): boolean {
-        const uid = userId.trim();
-        if (!uid) return false;
-        const userKey = userKeyOf(platform, uid);
-        if (primaryKey && userKey === primaryKey) return false;
-        if (others.has(userKey)) return false;
-        others.set(userKey, { userId: uid, nickname, platform });
-        return others.size >= candidateLimit;
+  ctx.middleware(
+    'agent:llm:before',
+    async (
+      data: {
+        messages: Message[];
+        tools: unknown[];
+        sessionId?: string;
+        userId?: string;
+        platform?: string;
+        triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+      },
+      next,
+    ) => {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'user-profile')) {
+        await next();
+        return;
       }
 
-      for (let i = data.messages.length - 1; i >= 0; i--) {
-        const msg = data.messages[i];
-        if (msg.role !== 'user') continue;
-        const meta = (msg.metadata ?? {}) as Record<string, unknown>;
-        const uid = typeof meta.userId === 'string' ? meta.userId.trim() : undefined;
-        if (!uid) continue;
-        const plat = typeof meta.platform === 'string' ? meta.platform : data.platform ?? '';
-        const nick = typeof meta.nickname === 'string' ? meta.nickname : undefined;
-        if (addOther(uid, plat, nick)) break;
-      }
+      const blocksToInsert: string[] = [];
+      const trigger = data.triggerType ?? 'direct';
+      const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
 
-      if (cfg.allowGlobalBackfill && others.size < candidateLimit) {
-        const memory = ctx.getService<MemoryService>('memory');
-        if (memory?.listMetadata) {
-          try {
-            const globalRecent = await memory.listMetadata(PROFILE_NS);
-            globalRecent.sort((a, b) => {
-              const at = typeof a.data.lastInteractionAt === 'number' ? a.data.lastInteractionAt : 0;
-              const bt = typeof b.data.lastInteractionAt === 'number' ? b.data.lastInteractionAt : 0;
-              return bt - at;
-            });
-            for (const item of globalRecent) {
-              if (others.size >= candidateLimit) break;
-              const sep = item.key.indexOf(':');
-              if (sep < 0) continue;
-              const platform = item.key.slice(0, sep);
-              const uid = item.key.slice(sep + 1);
-              addOther(uid, platform);
-            }
-          } catch (err) {
-            ctx.logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-      }
-      if (others.size > 0) {
-        const snippets: string[] = [];
-        for (const [key, info] of others) {
-          let profile: UserProfile | undefined;
-          try { profile = await loadProfile(key); } catch { /* 静默跳过 */ }
-          if (!profile || !profile.facts.some(isFactActive)) continue;
-          const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
+      // 1. 主发言者完整档案：仅在确实有人在「和 Aalis 对话」时注入
+      if (hasPrimarySpeaker && data.userId) {
+        const userKey = userKeyOf(data.platform, data.userId);
+        const profile = await loadProfile(userKey);
+        if (profile?.facts.some(isFactActive)) {
+          const body = renderProfileBlock(profile.facts, data.userId, false);
           const relationLine = renderRelationLine(profile);
-          snippets.push(renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : ''));
-          if (snippets.length >= cfg.maxOtherParticipants) break;
-        }
-        if (snippets.length > 0) {
-          // 标题根据语义切换：有主发言者 → 「其他参与者」；无主发言者 → 「在场参与者」
-          const title = hasPrimarySpeaker ? '群聊其他参与者背景摘要' : '在场参与者背景摘要';
-          const intro = hasPrimarySpeaker
-            ? '以下是同一会话中其他参与者的基本档案，供你在群聊语境中参考，了解他们是谁。'
-            : '当前没有人直接呼叫你，以下是会话中近期出现过的参与者档案，供你判断要不要插话以及和谁互动。';
-          const block = `# ${title}\n${intro}不要主动透露这些信息，只在自然相关时使用：\n\n` + snippets.join('\n\n');
+          const block =
+            `# 关于当前对话者（${data.userId}）的已知事实\n` +
+            '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。' +
+            '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n' +
+            (relationLine ? `${relationLine}\n\n` : '') +
+            body;
           blocksToInsert.push(block);
         }
       }
-    }
 
-    if (blocksToInsert.length > 0) {
-      const idx = data.messages.findIndex(m => m.role === 'system');
-      const insertAt = idx >= 0 ? idx + 1 : 0;
-      data.messages.splice(insertAt, 0, ...blocksToInsert.map(content => ({
-        role: 'system' as const,
-        content,
-        metadata: { source: 'user-profile' },
-      })));
-    }
+      // 2. 群聊其他参与者：按最近互动优先加载档案
+      //    - 先从当前 LLM 上下文的 messages 中倒序收集最近发言者
+      //    - 再从跨会话 user:profile metadata 中按 lastInteractionAt 倒序补齐
+      //    - hasPrimarySpeaker 为 true 时排除主发言者
+      //    - hasPrimarySpeaker 为 false 时（interval/idle）所有人平等显示
+      if (cfg.maxOtherParticipants > 0) {
+        const primaryKey = hasPrimarySpeaker && data.userId ? userKeyOf(data.platform, data.userId) : undefined;
+        const others = new Map<string, { userId: string; nickname?: string; platform?: string }>();
+        const candidateLimit = Math.max(cfg.maxOtherParticipants * 5, cfg.maxOtherParticipants + 10);
 
-    await next();
-  });
+        function addOther(userId: string, platform?: string, nickname?: string): boolean {
+          const uid = userId.trim();
+          if (!uid) return false;
+          const userKey = userKeyOf(platform, uid);
+          if (primaryKey && userKey === primaryKey) return false;
+          if (others.has(userKey)) return false;
+          others.set(userKey, { userId: uid, nickname, platform });
+          return others.size >= candidateLimit;
+        }
+
+        for (let i = data.messages.length - 1; i >= 0; i--) {
+          const msg = data.messages[i];
+          if (msg.role !== 'user') continue;
+          const meta = (msg.metadata ?? {}) as Record<string, unknown>;
+          const uid = typeof meta.userId === 'string' ? meta.userId.trim() : undefined;
+          if (!uid) continue;
+          const plat = typeof meta.platform === 'string' ? meta.platform : (data.platform ?? '');
+          const nick = typeof meta.nickname === 'string' ? meta.nickname : undefined;
+          if (addOther(uid, plat, nick)) break;
+        }
+
+        if (cfg.allowGlobalBackfill && others.size < candidateLimit) {
+          const memory = ctx.getService<MemoryService>('memory');
+          if (memory?.listMetadata) {
+            try {
+              const globalRecent = await memory.listMetadata(PROFILE_NS);
+              globalRecent.sort((a, b) => {
+                const at = typeof a.data.lastInteractionAt === 'number' ? a.data.lastInteractionAt : 0;
+                const bt = typeof b.data.lastInteractionAt === 'number' ? b.data.lastInteractionAt : 0;
+                return bt - at;
+              });
+              for (const item of globalRecent) {
+                if (others.size >= candidateLimit) break;
+                const sep = item.key.indexOf(':');
+                if (sep < 0) continue;
+                const platform = item.key.slice(0, sep);
+                const uid = item.key.slice(sep + 1);
+                addOther(uid, platform);
+              }
+            } catch (err) {
+              ctx.logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+        if (others.size > 0) {
+          const snippets: string[] = [];
+          for (const [key, info] of others) {
+            let profile: UserProfile | undefined;
+            try {
+              profile = await loadProfile(key);
+            } catch {
+              /* 静默跳过 */
+            }
+            if (!profile?.facts.some(isFactActive)) continue;
+            const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
+            const relationLine = renderRelationLine(profile);
+            snippets.push(renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : ''));
+            if (snippets.length >= cfg.maxOtherParticipants) break;
+          }
+          if (snippets.length > 0) {
+            // 标题根据语义切换：有主发言者 → 「其他参与者」；无主发言者 → 「在场参与者」
+            const title = hasPrimarySpeaker ? '群聊其他参与者背景摘要' : '在场参与者背景摘要';
+            const intro = hasPrimarySpeaker
+              ? '以下是同一会话中其他参与者的基本档案，供你在群聊语境中参考，了解他们是谁。'
+              : '当前没有人直接呼叫你，以下是会话中近期出现过的参与者档案，供你判断要不要插话以及和谁互动。';
+            const block = `# ${title}\n${intro}不要主动透露这些信息，只在自然相关时使用：\n\n${snippets.join('\n\n')}`;
+            blocksToInsert.push(block);
+          }
+        }
+      }
+
+      if (blocksToInsert.length > 0) {
+        const idx = data.messages.findIndex(m => m.role === 'system');
+        const insertAt = idx >= 0 ? idx + 1 : 0;
+        data.messages.splice(
+          insertAt,
+          0,
+          ...blocksToInsert.map(content => ({
+            role: 'system' as const,
+            content,
+            metadata: { source: 'user-profile' },
+          })),
+        );
+      }
+
+      await next();
+    },
+  );
 
   // ─── 参与统一的 memory:clear ───
-  ctx.middleware('memory:clear', async (data: {
-    scope: 'session' | 'all';
-    types?: string[];
-    sessionId?: string;
-    results: Array<{ source: string; success: boolean; message: string }>;
-  }, next) => {
-    if (data.types && !data.types.includes('user-profile')) {
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+      },
+      next,
+    ) => {
+      if (data.types && !data.types.includes('user-profile')) {
+        await next();
+        return;
+      }
+      if (data.scope !== 'all') {
+        // 用户档案是跨会话的，会话级清除不动它
+        await next();
+        return;
+      }
+      const memory = ctx.getService<MemoryService>('memory');
+      if (!memory?.listMetadata || !memory?.deleteMetadata) {
+        await next();
+        return;
+      }
+      try {
+        const items = await memory.listMetadata(PROFILE_NS);
+        for (const it of items) await memory.deleteMetadata(PROFILE_NS, it.key);
+        data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'user-profile', success: false, message: `用户档案清空失败: ${m}` });
+      }
       await next();
-      return;
-    }
-    if (data.scope !== 'all') {
-      // 用户档案是跨会话的，会话级清除不动它
-      await next();
-      return;
-    }
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.listMetadata || !memory?.deleteMetadata) {
-      await next();
-      return;
-    }
-    try {
-      const items = await memory.listMetadata(PROFILE_NS);
-      for (const it of items) await memory.deleteMetadata(PROFILE_NS, it.key);
-      data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'user-profile', success: false, message: `用户档案清空失败: ${m}` });
-    }
-    await next();
-  });
+    },
+  );
 
   // ─── /profile 指令族 ───
   // /profile              查看自己的档案
@@ -939,7 +1024,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.command(
     'profile',
     '查看你在 Aalis 中的事实档案',
-    async (cmdCtx) => {
+    async cmdCtx => {
       if (!cmdCtx.userId) return '当前会话未识别用户身份，无法查看档案。';
       const userKey = userKeyOf(cmdCtx.platform, cmdCtx.userId);
       const profile = await loadProfile(userKey);
@@ -956,7 +1041,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           name: 'clear',
           description: '清除你自己的事实档案',
           authority: 2,
-          action: async (cmdCtx) => {
+          action: async cmdCtx => {
             if (!cmdCtx.userId) return '当前会话未识别用户身份，无法清除档案。';
             const userKey = userKeyOf(cmdCtx.platform, cmdCtx.userId);
             const memory = ctx.getService<MemoryService>('memory');
@@ -999,7 +1084,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   );
 
   ctx.logger.info(
-    `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : cfg.extractEveryNMessages + 'msgs'}, history=${cfg.historyForExtraction}, `
-    + `maxFacts=${cfg.maxFactsPerUser}, namespace=${PROFILE_NS})`,
+    `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
+      `maxFacts=${cfg.maxFactsPerUser}, namespace=${PROFILE_NS})`,
   );
 }
