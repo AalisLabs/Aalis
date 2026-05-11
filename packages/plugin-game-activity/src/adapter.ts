@@ -1,4 +1,5 @@
-import type { Context, LLMService } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { LLMService } from '@aalis/plugin-llm-api';
 import type { BridgePromptEvent, BridgeStateEvent } from './protocol.js';
 
 /**

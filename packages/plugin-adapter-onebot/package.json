@@ -14,7 +14,8 @@
     "@aalis/plugin-message-archive": "workspace:*",
     "@aalis/plugin-image-recognition": "workspace:*",
     "@aalis/plugin-flow-control": "workspace:*",
-    "@aalis/plugin-platform": "workspace:*"
+    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-llm-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

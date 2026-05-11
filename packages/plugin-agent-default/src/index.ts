@@ -10,13 +10,11 @@ import type {
   ConfigSchema,
   PluginGroupInfo,
   App,
-  ChatRequest,
-  ChatResponse,
-  LLMService,
   MemoryService,
   GatewayService,
   ContentSegment,
 } from '@aalis/core';
+import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
 import type { Logger } from '@aalis/core';
 import type { PreprocessorFn, PreprocessorInfo } from './types.js';
 import './types.js'; // 触发 declare module 合并 AgentService 接口

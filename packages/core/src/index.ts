@@ -19,10 +19,10 @@ export { MixinRegistry } from './mixin-registry.js';
 export type { MixinEntry } from './mixin-registry.js';
 export { PendingRegistrationBuffer } from './pending-buffer.js';
 export { registerCapabilityProbe, probeCapability } from './types/index.js';
-export { LLMCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
 export { StorageCapabilities } from './types/index.js';
 // PlatformCapabilities 已迁出至 @aalis/plugin-platform
+// LLMCapabilities 已迁出至 @aalis/plugin-llm-api
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
 export type { LogLevel, LogEntry } from './logger.js';
@@ -85,14 +85,8 @@ export type {
   WebuiPage,
   // App 服务
   AppService,
-  // LLM 服务
-  ChatRequest,
+  // LLM 服务骨架（ChatRequest/ChatStreamChunk/ModelInfo/LLMService 等已迁出至 @aalis/plugin-llm-api）
   ChatResponse,
-  ChatStreamChunk,
-  ModelInfo,
-  LLMService,
-  LLMCapability,
-  LLMCapabilityRegistry,
   // 服务能力声明框架
   ServiceCapabilityMap,
   CapabilityOf,

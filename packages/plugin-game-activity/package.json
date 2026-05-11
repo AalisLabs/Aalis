@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@aalis/plugin-llm-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
