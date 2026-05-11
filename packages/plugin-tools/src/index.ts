@@ -26,6 +26,7 @@ if (!('registerTool' in Context.prototype)) {
 
 export const name = '@aalis/plugin-tools';
 export const displayName = '系统工具';
+export const subsystem = 'tools';
 export const inject = {
   optional: ['commands', 'persona', 'storage'],
 };

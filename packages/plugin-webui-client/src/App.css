@@ -406,6 +406,27 @@ body {
   border-color: var(--primary);
 }
 
+.service-clear-prefer {
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.service-clear-prefer:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-secondary);
+}
+
+.service-clear-prefer:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .service-slot-single {
   display: flex;
   align-items: center;

@@ -51,6 +51,7 @@ interface ComputerUseConfig {
 
 export const name = '@aalis/plugin-computer-use';
 export const displayName = '桌面操控';
+export const subsystem = 'tools';
 
 export const configSchema: ConfigSchema = {
   screenshot: {

@@ -19,6 +19,7 @@ import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core'
 
 export const name = '@aalis/plugin-cli';
 export const displayName = 'CLI 终端';
+export const subsystem = 'platform';
 export const inject = {
   optional: ['llm', 'authority', 'commands'],
 };

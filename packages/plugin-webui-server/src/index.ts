@@ -16,7 +16,7 @@ import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
-import { DEFAULT_SUBSYSTEM_CATALOG } from '@aalis/plugin-webui-api';
+import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
@@ -27,6 +27,7 @@ import { registerPluginRoutes } from './routes/plugins.js';
 
 export const name = '@aalis/plugin-webui-server';
 export const displayName = 'WebUI 服务端';
+export const subsystem = 'platform';
 export const provides = ['webui-server', 'platform'];
 export const inject = {
   optional: ['authority', 'commands', 'storage', 'platform'],
@@ -480,28 +481,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ groups: result });
   });
 
-  // 获取服务分组（中央目录消费，见 ADR-0003）
+  // 获取服务分组（manifest 驱动：每个插件自己声明 subsystem，本路由仅聚合）
   expressApp.get('/api/service-groups', (_req, res) => {
     const pluginMgr = getPluginMgr();
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
-    // 反向索引：plugin name → subsystem id（来自 DEFAULT_SUBSYSTEM_CATALOG）
-    const pluginToSubsystem = new Map<string, string>();
-    for (const entry of DEFAULT_SUBSYSTEM_CATALOG) {
-      for (const pluginName of entry.plugins) pluginToSubsystem.set(pluginName, entry.id);
-    }
-    // 按 subsystem 归组（未命中目录 → 'unknown'）
+    // 按 plugin.subsystem 归组（未声明 → 'external'）
     const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
-      const sub = pluginToSubsystem.get(p.name) ?? 'unknown';
+      const sub = p.subsystem ?? 'external';
       if (!groupsMap.has(sub)) groupsMap.set(sub, []);
       groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
     }
-    // 排序：目录 order 优先，未命中条目 order=9999
-    const catalog = new Map(DEFAULT_SUBSYSTEM_CATALOG.map(e => [e.id, e]));
+    // 排序：DEFAULT_SUBSYSTEM_METADATA 已知 id 优先按 order 排，未知 id 以 id 作为 label，order=9999
+    const meta = new Map(DEFAULT_SUBSYSTEM_METADATA.map(e => [e.id, e]));
     const sorted = [...groupsMap.keys()]
       .map(id => {
-        const entry = catalog.get(id);
-        return entry ? { id, label: entry.label, order: entry.order } : { id, label: '其他', order: 9999 };
+        const m = meta.get(id);
+        return m ? { id, label: m.label, order: m.order } : { id, label: id, order: 9999 };
       })
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
     const groups = sorted.map(({ id, label }) => {

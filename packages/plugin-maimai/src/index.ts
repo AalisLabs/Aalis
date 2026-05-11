@@ -7,6 +7,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-maimai';
 export const displayName = '舞萌 DX 查分';
+export const subsystem = 'skills';
 export const description = '基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口';
 export const inject = {};
 
