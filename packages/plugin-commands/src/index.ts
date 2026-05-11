@@ -1,7 +1,8 @@
 import { rm, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ConfigSchema, AppService, PermissionId, SafetyLevel } from '@aalis/core';
-import { Context, INBOUND_PHASE } from '@aalis/core';
+import { Context } from '@aalis/core';
+import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type {
   CommandArgumentDefinition,
   CommandContext,
