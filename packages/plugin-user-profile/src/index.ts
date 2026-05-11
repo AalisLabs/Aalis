@@ -1,5 +1,6 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { MemoryService, LLMService } from '@aalis/core';
+import type { MemoryService } from '@aalis/core';
+import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════

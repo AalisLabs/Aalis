@@ -1,4 +1,5 @@
-import type { Context, LLMService, Message } from '@aalis/core';
+import type { Context, Message } from '@aalis/core';
+import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/core';
 import type { GameActivityAdapter, DecisionRuntime, AdapterActionChoice } from './adapter.js';
 import type {

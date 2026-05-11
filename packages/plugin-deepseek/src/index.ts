@@ -4,14 +4,16 @@ import type {
   ToolDefinition,
   ToolCall,
   ConfigSchema,
+} from '@aalis/core';
+import type {
   ChatRequest,
   ChatResponse,
   ChatStreamChunk,
   LLMService,
   ModelInfo,
   LLMCapability,
-} from '@aalis/core';
-import { LLMCapabilities } from '@aalis/core';
+} from '@aalis/plugin-llm-api';
+import { LLMCapabilities } from '@aalis/plugin-llm-api';
 
 // ===== 插件元数据 =====
 

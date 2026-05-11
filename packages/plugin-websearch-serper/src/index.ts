@@ -1,5 +1,5 @@
 import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { LLMService } from '@aalis/core';
+import type { LLMService } from '@aalis/plugin-llm-api';
 import type { WebSearchService, WebSearchRequest, WebSearchResponse, WebSearchResult } from './types.js';
 import { WebSearchCapabilities } from './types.js';
 

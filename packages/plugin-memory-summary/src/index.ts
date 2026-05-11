@@ -3,7 +3,8 @@ import type {
   Message,
   ConfigSchema,
 } from '@aalis/core';
-import type { LLMService, MemoryService } from '@aalis/core';
+import type { MemoryService } from '@aalis/core';
+import type { LLMService } from '@aalis/plugin-llm-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 
 // ===== 插件元数据 =====
