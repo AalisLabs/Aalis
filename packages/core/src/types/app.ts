@@ -41,7 +41,7 @@ export interface PluginStatusEntry {
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;
   webuiPages?: unknown[];
-  webuiHandlerNames?: string[];
+  actionNames?: string[];
   error?: string;
 }
 

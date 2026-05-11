@@ -396,7 +396,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
 
 // ===== WebUI 操作处理器 =====
 
-export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+export const actions: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
   /** 获取权限概览 */
   async getOverview(ctx) {
     const auth = ctx.getService<AuthorityService>('authority');

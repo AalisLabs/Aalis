@@ -131,7 +131,7 @@ export const webuiPages: WebuiPage[] = [
 
 // ──────────── WebUI Handlers ────────────
 
-export const webuiHandlers: PluginModule['webuiHandlers'] = {
+export const actions: PluginModule['actions'] = {
   async listSkills(ctx) {
     const svc = ctx.getService<SkillsService>('skills');
     if (!svc) return [];
