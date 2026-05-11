@@ -7,7 +7,7 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
-import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
+import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import { parseModelRef } from '@aalis/plugin-llm-api';
 import type {
