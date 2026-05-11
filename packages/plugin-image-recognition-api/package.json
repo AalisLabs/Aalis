@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-onebot-tools",
+  "name": "@aalis/plugin-image-recognition-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -10,10 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-image-recognition-api": "workspace:*",
-    "@aalis/plugin-message-archive": "workspace:*",
-    "@aalis/plugin-platform": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*"
+    "@aalis/plugin-message-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

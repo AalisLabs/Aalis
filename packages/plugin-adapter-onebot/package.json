@@ -12,7 +12,7 @@
     "@aalis/core": "workspace:*",
     "ws": "^8.18.0",
     "@aalis/plugin-message-archive": "workspace:*",
-    "@aalis/plugin-image-recognition": "workspace:*",
+    "@aalis/plugin-image-recognition-api": "workspace:*",
     "@aalis/plugin-flow-control": "workspace:*",
     "@aalis/plugin-platform": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",

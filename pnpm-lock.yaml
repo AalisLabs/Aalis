@@ -100,9 +100,9 @@ importers:
       '@aalis/plugin-flow-control':
         specifier: workspace:*
         version: link:../plugin-flow-control
-      '@aalis/plugin-image-recognition':
+      '@aalis/plugin-image-recognition-api':
         specifier: workspace:*
-        version: link:../plugin-image-recognition
+        version: link:../plugin-image-recognition-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
@@ -579,6 +579,9 @@ importers:
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
+      '@aalis/plugin-image-recognition-api':
+        specifier: workspace:*
+        version: link:../plugin-image-recognition-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
@@ -591,6 +594,22 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-image-recognition-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -794,9 +813,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-image-recognition':
+      '@aalis/plugin-image-recognition-api':
         specifier: workspace:*
-        version: link:../plugin-image-recognition
+        version: link:../plugin-image-recognition-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
@@ -876,9 +895,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-image-recognition':
+      '@aalis/plugin-image-recognition-api':
         specifier: workspace:*
-        version: link:../plugin-image-recognition
+        version: link:../plugin-image-recognition-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
