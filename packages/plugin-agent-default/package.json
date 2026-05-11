@@ -15,6 +15,7 @@
     "@aalis/plugin-gateway-api": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-message-archive": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-platform": "workspace:*",

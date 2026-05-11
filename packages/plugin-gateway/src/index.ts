@@ -1,4 +1,5 @@
-import type { Context, IncomingMessage, OutgoingMessage } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { InboundPhaseData } from '@aalis/plugin-gateway-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';

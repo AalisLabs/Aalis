@@ -57,99 +57,8 @@ export interface Message {
   metadata?: Record<string, unknown>;
 }
 
-export interface IncomingMessage {
-  content: string;
-  sessionId: string;
-  platform: string;
-  userId?: string;
-  /** 用户昵称 */
-  nickname?: string;
-  images?: string[]; // base64 or URL
-  /** 附件文件列表（用户上传的文档等） */
-  files?: Array<{
-    /** 文件名 */
-    name: string;
-    /** 文件内容（base64 data URL） */
-    data: string;
-    /** MIME 类型 */
-    mimeType?: string;
-  }>;
-  /** 附件上传顺序（images 与 files 的交错顺序） */
-  attachmentOrder?: Array<'image' | 'file'>;
-  /** 预处理器生成的图片描述（按 images 原始下标对齐） */
-  _imageDescriptions?: string[];
-  /** 图片识别后的调试信息，供统一日志与持久化链路复用 */
-  _imageRecognitionInfo?: {
-    imageCount: number;
-    successCount: number;
-    descriptions: string[];
-    transformedContent: string;
-  };
-  /** 预处理器生成的文件描述（按 files 原始下标对齐） */
-  _fileDescriptions?: string[];
-  /** 会话类型：群聊、私聊、频道等 */
-  sessionType?: 'group' | 'private' | 'channel';
-  /** 消息来源标识（用于并发隔离：同一 session 不同来源互不打断） */
-  source?: string;
-  /** 群名称（仅群聊时可用） */
-  groupName?: string;
-  /** 群组 ID（直接字段，无需从 sessionId 解析） */
-  groupId?: string;
-  /** 引用回复的原消息 */
-  replyTo?: {
-    messageId: string;
-    content?: string;
-    userId?: string;
-    nickname?: string;
-  };
-  /** 通知子类型（如 poke、group_upload 等非消息事件） */
-  noticeType?: string;
-  /**
-   * 触发类型（适配器侧设置，下游插件可据此区分主发言者语义）：
-   * - 'direct'    私聊或单一用户直连（默认语义：userId 是主发言者）
-   * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）
-   * - 'interval'  群聊中因消息频率/活跃度被动触发（无明确主发言者，userId 仅为最后一条消息发送者）
-   * - 'idle'      空闲自动触发（无 userId / 无主发言者）
-   * 未设置时下游插件按 'direct' 兼容处理。
-   */
-  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
-}
-
-export interface OutgoingMessage {
-  content: string;
-  sessionId: string;
-  platform?: string;
-  reasoningContent?: string;
-  /** 助手输出的有序时间线（与 Message.segments 含义一致），存在时为 webui 等消费者顺序渲染的依据 */
-  segments?: ContentSegment[];
-  /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
-  source?: 'agent' | 'system' | 'command';
-}
-
-/** 流式消息片段 */
-export interface StreamChunkMessage {
-  sessionId: string;
-  platform?: string;
-  contentDelta?: string;
-  reasoningDelta?: string;
-  done?: boolean;
-  /** 当工具调用次数达到上限时为 true，前端可据此提示用户继续 */
-  toolLimitReached?: boolean;
-}
-
-/** 工具调用状态通知 */
-export interface ToolExecuteMessage {
-  sessionId: string;
-  platform?: string;
-  /** 工具名称 */
-  toolName: string;
-  /** 传入工具的参数 */
-  args: Record<string, unknown>;
-  /** 'start' = 开始调用, 'end' = 调用完成 */
-  phase: 'start' | 'end';
-  /** 工具返回结果（仅在 phase='end' 时存在） */
-  result?: string;
-}
+// 注：IncomingMessage / OutgoingMessage / StreamChunkMessage 已迁出到 @aalis/plugin-message-api（cleanup-8）
+// 注：ToolCallContext / ToolExecuteMessage 已迁出到 @aalis/plugin-tools-api（cleanup-8）
 
 // ----- 工具调用 (DeepSeek/OpenAI format) -----
 
@@ -179,14 +88,7 @@ export interface ToolCall {
   };
 }
 
-export interface ToolCallContext {
-  sessionId: string;
-  userId?: string;
-  platform?: string;
-  /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
-  enabledGroups?: string[];
-}
-
+// 注：ToolCallContext 已迁出到 @aalis/plugin-tools-api（cleanup-8，平台语义而非 OpenAI 协议）
 // 注：RegisteredTool / ToolSummary / ToolGroupInfo 已迁出到 @aalis/plugin-tools-api（cleanup-6）
 // 注：CommandContext / CommandDefinition / SubcommandDefinition / RegisteredCommand 等已迁出到 @aalis/plugin-commands-api（cleanup-6）
 
@@ -283,21 +185,10 @@ export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArra
  * ```
  */
 export interface AalisEvents {
-  'inbound:message': [message: IncomingMessage];
-  /**
-   * 入站消息已落库（来自 message-archive.archiveIncoming）。无论是否触发 agent 回复都会发出。
-   *
-   * 这是所有「派生持久数据」（向量索引、用户画像事实抽取、消息计数等）应当统一挂载的锚点：
-   * 既保证只对真正进入历史的消息生效，又不依赖 agent 是否回复。
-   *
-   * payload 字段：
-   * - `incoming`：原始入参（含 platform/userId/nickname/groupName/triggerType 等会话上下文，未必持久化）
-   * - `archivedMessage`：实际写入 memory 的 `Message`（经过预处理器变换后的最终内容，可能与 `incoming.content` 不同）
-   */
-  'inbound:message:archived': [data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }];
-  'outbound:message': [message: OutgoingMessage];
-  'outbound:stream': [chunk: StreamChunkMessage];
-  'tool:execute': [info: ToolExecuteMessage];
+  // 业务消息事件（inbound:message / inbound:message:archived / outbound:message / outbound:stream）
+  // 已通过 declaration merging 由 @aalis/plugin-message-api 注入（cleanup-8）。
+  // 业务工具事件（tool:execute）已通过 declaration merging 由 @aalis/plugin-tools-api 注入（cleanup-8）。
+  // gateway:phase:done 由 @aalis/plugin-gateway-api 注入（cleanup-7）。
   'service:registered': [name: string, capabilities: string[]];
   'service:unregistered': [name: string];
   'plugin:loaded': [name: string];
@@ -312,27 +203,6 @@ export interface AalisEvents {
   'app:starting': [];
   /** 应用正在停止（stop() 开头，在 dispose 之前） */
   'app:stopping': [];
-  // 会话管理事件由 plugin-session-manager 通过 declaration merging 注入
-  /**
-   * Gateway 某个入站相位执行完毕（无论是否被 swallow）。
-   *
-   * 遥测插件可订阅此事件以：
-   *   - 记录每个相位耗时
-   *   - 统计 swallow 率
-   *   - 追踪消息在管道中的流转路径
-   *
-   * 对主流程零侵入：observer 的异常不会影响入站处理。
-   */
-  'gateway:phase:done': [
-    data: {
-      phase: string;
-      /** true = 链走到底（未被 swallow）；false = 某 handler 未调用 next() 终止了链 */
-      reachedEnd: boolean;
-      durationMs: number;
-      sessionId: string;
-      platform: string;
-    },
-  ];
   // 允许任意字符串 key 兜底（运行时事件总线开放，但鼓励第三方插件通过 declaration merging 显式声明事件签名以获得类型安全）
   [key: string]: unknown[];
 }

@@ -7,7 +7,9 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema } from '@aalis/core';
+import type { Context, LogEntry, App, ConfigSchema } from '@aalis/core';
+import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
+import type { ToolExecuteMessage } from '@aalis/plugin-tools-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
