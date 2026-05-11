@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Context } from '@aalis/core';
+import type { GameActivityAdapter } from './adapter.js';
+import type { BridgeConnection } from './bridge-client.js';
 import type {
   BridgeActionCommand,
   BridgeEvent,
@@ -8,10 +10,8 @@ import type {
   BridgeStateEvent,
 } from './protocol.js';
 import { BRIDGE_PROTOCOL_VERSION } from './protocol.js';
-import type { BridgeConnection } from './bridge-client.js';
-import type { GameActivityAdapter } from './adapter.js';
-import { GameActivitySession, defaultGameActivityHistoryOptions, resolveDecisionRuntime } from './session.js';
 import type { GameActivityHistoryOptions } from './session.js';
+import { defaultGameActivityHistoryOptions, GameActivitySession, resolveDecisionRuntime } from './session.js';
 
 /**
  * 最小的 channel 服务接口（duck-typed，避免硬依赖 plugin-session-channel 的类型）。
@@ -19,7 +19,10 @@ import type { GameActivityHistoryOptions } from './session.js';
  */
 interface ChannelLike {
   broadcast(channelId: string, content: string, opts?: { source?: 'agent' | 'system' | 'command' }): Promise<void>;
-  getAggregatedHistory(channelId: string, limit?: number): Promise<Array<{ role: string; content: string | null; metadata?: Record<string, unknown> }>>;
+  getAggregatedHistory(
+    channelId: string,
+    limit?: number,
+  ): Promise<Array<{ role: string; content: string | null; metadata?: Record<string, unknown> }>>;
 }
 
 /**
@@ -52,21 +55,41 @@ export class GameActivityManager {
     };
   }
 
-  setDecisionModel(model: string): void { this.decisionModel = model.trim(); }
-  setDecisionTimeout(ms: number): void { this.decisionTimeoutMs = Math.max(1000, ms); }
-  setDecisionThink(value: boolean | undefined): void { this.decisionThink = value; }
-  setDecisionHistoryOptions(options: GameActivityHistoryOptions): void { this.decisionHistoryOptions = options; }
-  setPersonaPrompt(prompt: string | undefined): void { this.personaPrompt = prompt; }
+  setDecisionModel(model: string): void {
+    this.decisionModel = model.trim();
+  }
+  setDecisionTimeout(ms: number): void {
+    this.decisionTimeoutMs = Math.max(1000, ms);
+  }
+  setDecisionThink(value: boolean | undefined): void {
+    this.decisionThink = value;
+  }
+  setDecisionHistoryOptions(options: GameActivityHistoryOptions): void {
+    this.decisionHistoryOptions = options;
+  }
+  setPersonaPrompt(prompt: string | undefined): void {
+    this.personaPrompt = prompt;
+  }
 
   /** 绑定一个虚拟频道：决策时拉 vibes，决策结果的 chat 广播过去。 */
-  setBoundChannel(channelId: string | undefined): void { this.boundChannelId = channelId; }
-  getBoundChannel(): string | undefined { return this.boundChannelId; }
+  setBoundChannel(channelId: string | undefined): void {
+    this.boundChannelId = channelId;
+  }
+  getBoundChannel(): string | undefined {
+    return this.boundChannelId;
+  }
 
-  hasActiveSession(): boolean { return this.session !== undefined; }
-  getActiveSession(): GameActivitySession | undefined { return this.session; }
+  hasActiveSession(): boolean {
+    return this.session !== undefined;
+  }
+  getActiveSession(): GameActivitySession | undefined {
+    return this.session;
+  }
 
   // ── connection lifecycle ─────────────────────────────────────────────────
-  onConnect(_ctx: Context, _conn: BridgeConnection): void { /* 等 hello */ }
+  onConnect(_ctx: Context, _conn: BridgeConnection): void {
+    /* 等 hello */
+  }
 
   onClose(ctx: Context, conn: BridgeConnection): void {
     if (this.sessionConnId !== conn.id) return;
@@ -93,7 +116,9 @@ export class GameActivityManager {
         return;
       }
       case 'action_result': {
-        ctx.logger.info(`game-activity 动作结果: request=${msg.requestId} ok=${msg.ok}${msg.error ? ` error=${msg.error}` : ''}`);
+        ctx.logger.info(
+          `game-activity 动作结果: request=${msg.requestId} ok=${msg.ok}${msg.error ? ` error=${msg.error}` : ''}`,
+        );
         return;
       }
       case 'bye':
@@ -131,7 +156,9 @@ export class GameActivityManager {
       ctx.logger.warn('收到 prompt 但 session 未建立');
       return;
     }
-    ctx.logger.info(`game-activity 收到决策请求: request=${msg.requestId} phase=${msg.phase} intent=${msg.intent ?? 'choose_action'} choices=${msg.choices?.length ?? 0}`);
+    ctx.logger.info(
+      `game-activity 收到决策请求: request=${msg.requestId} phase=${msg.phase} intent=${msg.intent ?? 'choose_action'} choices=${msg.choices?.length ?? 0}`,
+    );
     const sess = this.session;
 
     const runtime = await resolveDecisionRuntime(ctx, this.decisionModel, this.decisionTimeoutMs, this.decisionThink);
@@ -145,12 +172,13 @@ export class GameActivityManager {
     const choice = await sess.decide(ctx, runtime, msg, vibes);
     if (!choice) {
       this.noChoiceStreak += 1;
-      const fallbackChoice = sess.adapter.resolveFallbackAction?.({
-        ctx,
-        prompt: msg,
-        latestState: sess.latestState,
-        noChoiceStreak: this.noChoiceStreak,
-      }) ?? null;
+      const fallbackChoice =
+        sess.adapter.resolveFallbackAction?.({
+          ctx,
+          prompt: msg,
+          latestState: sess.latestState,
+          noChoiceStreak: this.noChoiceStreak,
+        }) ?? null;
       if (fallbackChoice) {
         const fallbackCmd: BridgeActionCommand = {
           type: 'action',
@@ -161,7 +189,9 @@ export class GameActivityManager {
         };
         this.noChoiceStreak = 0;
         conn.send(fallbackCmd);
-        ctx.logger.warn(`game-activity 使用适配器保底动作: request=${fallbackCmd.requestId} inResponseTo=${msg.requestId} action=${JSON.stringify(fallbackChoice.action)}`);
+        ctx.logger.warn(
+          `game-activity 使用适配器保底动作: request=${fallbackCmd.requestId} inResponseTo=${msg.requestId} action=${JSON.stringify(fallbackChoice.action)}`,
+        );
         return;
       }
       ctx.logger.warn(`game-activity 没有可发送的动作，ack prompt: ${msg.requestId}`);
@@ -178,7 +208,9 @@ export class GameActivityManager {
       reason: choice.reason,
     };
     conn.send(cmd);
-    ctx.logger.info(`game-activity 已发送动作: request=${cmd.requestId} inResponseTo=${msg.requestId} action=${JSON.stringify(choice.action)}`);
+    ctx.logger.info(
+      `game-activity 已发送动作: request=${cmd.requestId} inResponseTo=${msg.requestId} action=${JSON.stringify(choice.action)}`,
+    );
 
     // chat 字段不再发回游戏（游戏内没玩家可见聊天框），改广播到 channel
     if (choice.chat && this.boundChannelId) {
@@ -214,7 +246,6 @@ export class GameActivityManager {
       return undefined;
     }
   }
-
 }
 
 function normalizeSuggestionText(content: string | null): string {

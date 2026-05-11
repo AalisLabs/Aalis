@@ -20,19 +20,16 @@ const repairSteps: RepairStep[] = [
     // 模型偶尔会在 message 里写 <face id="14"/> 之类的 XML 标签，
     // 但属性引号没转义，导致 JSON 解析在字符串中提前断开。
     name: 'XML 属性引号转义',
-    apply: (s) => s.replace(
-      /<(\w+)\s+(\w+)="([^"]*?)"\s*\/>/g,
-      '<$1 $2=\\"$3\\" />',
-    ),
+    apply: s => s.replace(/<(\w+)\s+(\w+)="([^"]*?)"\s*\/>/g, '<$1 $2=\\"$3\\" />'),
   },
   {
     name: '移除尾部多余逗号',
-    apply: (s) => s.replace(/,\s*([\]}])/g, '$1'),
+    apply: s => s.replace(/,\s*([\]}])/g, '$1'),
   },
   {
     // 模型截断（max_tokens 触发、推理块被中途切断等）常常少一个或多个 '}'。
     name: "补全缺失的 '}' 与 ']'",
-    apply: (s) => {
+    apply: s => {
       const trimmed = s.trimEnd();
       const missingObj = countOutsideStrings(trimmed, '{') - countOutsideStrings(trimmed, '}');
       const missingArr = countOutsideStrings(trimmed, '[') - countOutsideStrings(trimmed, ']');
@@ -53,9 +50,18 @@ function countOutsideStrings(s: string, ch: string): number {
   let escape = false;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    if (escape) { escape = false; continue; }
-    if (c === '\\') { escape = true; continue; }
-    if (c === '"') { inString = !inString; continue; }
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (c === '\\') {
+      escape = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
     if (!inString && c === ch) count++;
   }
   return count;
@@ -136,7 +142,10 @@ function findBalancedJsonObjectEnd(s: string, start: number): number {
   for (let i = start; i < s.length; i++) {
     const c = s[i];
 
-    if (escape) { escape = false; continue; }
+    if (escape) {
+      escape = false;
+      continue;
+    }
     if (c === '\\') {
       if (inString) escape = true;
       continue;
@@ -169,7 +178,10 @@ export function extractJsonCandidate(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
 
-  const unfenced = trimmed.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .trim();
   const firstBrace = unfenced.indexOf('{');
   if (firstBrace < 0) return unfenced;
 
@@ -192,9 +204,7 @@ export function tryParseJsonObject(jsonStr: string): RepairResult {
   const tryParse = (s: string): Record<string, unknown> | null => {
     try {
       const obj = JSON.parse(s);
-      return obj && typeof obj === 'object' && !Array.isArray(obj)
-        ? obj as Record<string, unknown>
-        : null;
+      return obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : null;
     } catch {
       return null;
     }

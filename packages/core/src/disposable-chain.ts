@@ -20,7 +20,11 @@ export class DisposableChain {
   /** 追加一个清理函数。dispose 后追加会立刻执行。 */
   push(fn: () => void): void {
     if (this._disposed) {
-      try { fn(); } catch { /* swallow */ }
+      try {
+        fn();
+      } catch {
+        /* swallow */
+      }
       return;
     }
     this._items.push(fn);

@@ -5,8 +5,8 @@
  * 不再返回 base64 内联数据（因为全屏截图 base64 可达数 MB，文本模型无法处理）。
  */
 
-import { writeFile, mkdir } from 'node:fs/promises';
-import { resolve, relative } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { PlatformAdapter } from '../platform.js';
 
@@ -16,7 +16,6 @@ interface ScreenshotConfig {
 }
 
 export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, config: ScreenshotConfig): void {
-
   // 确保截图目录存在
   let dirReady: Promise<void> | null = null;
   function ensureDir(): Promise<void> {
@@ -27,13 +26,17 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
   }
 
   // 截图辅助：截取 → 可选缩放 → 保存文件 → 返回路径和元信息
-  async function captureAndSave(
-    region?: { x: number; y: number; width: number; height: number },
-  ): Promise<{ filePath: string; width: number; height: number; size: number }> {
+  async function captureAndSave(region?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): Promise<{ filePath: string; width: number; height: number; size: number }> {
     const buffer = await adapter.captureScreen(region);
 
     let finalBuffer = buffer;
-    let width = 0, height = 0;
+    let width = 0,
+      height = 0;
 
     // 从 PNG 头部读取尺寸 (IHDR chunk: offset 16=width, 20=height)
     if (buffer.length > 24 && buffer[0] === 0x89 && buffer[1] === 0x50) {
@@ -43,7 +46,7 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
 
     if (config.maxImageWidth > 0 && width > config.maxImageWidth) {
       try {
-        // @ts-ignore — sharp 是可选依赖，运行时动态加载
+        // @ts-expect-error — sharp 是可选依赖，运行时动态加载
         const sharp = await import('sharp');
         const sharpFn = sharp.default || sharp;
         const resized = await (sharpFn as any)(buffer)
@@ -92,16 +95,18 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
-        const hasRegion = args.x !== undefined && args.y !== undefined &&
-                          args.width !== undefined && args.height !== undefined;
-        const region = hasRegion ? {
-          x: args.x as number,
-          y: args.y as number,
-          width: args.width as number,
-          height: args.height as number,
-        } : undefined;
+        const hasRegion =
+          args.x !== undefined && args.y !== undefined && args.width !== undefined && args.height !== undefined;
+        const region = hasRegion
+          ? {
+              x: args.x as number,
+              y: args.y as number,
+              width: args.width as number,
+              height: args.height as number,
+            }
+          : undefined;
 
         const { filePath, width, height, size } = await captureAndSave(region);
         // 返回相对于 cwd 的路径（更简洁）
@@ -120,5 +125,4 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
       }
     },
   });
-
 }

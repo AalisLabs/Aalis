@@ -138,7 +138,11 @@ export interface OneBotProtocol {
   parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other';
 
   /** 解析消息事件为标准化格式 */
-  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null;
+  parseMessageEvent(
+    raw: OneBotRawEvent,
+    fallbackSelfId: string,
+    nicknameMap?: Map<string, string>,
+  ): NormalizedMessageEvent | null;
 
   /** 解析元事件为标准化格式 */
   parseMetaEvent(raw: OneBotRawEvent): NormalizedMetaEvent;
@@ -164,52 +168,58 @@ export function extractText(segments: OneBotMessageSegment[]): string {
  * @param selfId 机器人自身 ID，用于标记 <at self>
  * @param nicknameMap 可选的 userId→昵称 映射，用于丰富 <at> 标签
  */
-export function segmentsToText(segments: OneBotMessageSegment[], selfId?: string, nicknameMap?: Map<string, string>): string {
-  return segments.map(seg => {
-    switch (seg.type) {
-      case 'text':
-        return String(seg.data.text ?? '');
-      case 'at': {
-        const qq = String(seg.data.qq ?? '');
-        if (qq === 'all') return '<at>all</at>';
-        const nick = nicknameMap?.get(qq) ?? qq;
-        const selfAttr = (selfId && qq === selfId) ? ' self' : '';
-        return `<at${selfAttr} id="${qq}">${nick}</at>`;
+export function segmentsToText(
+  segments: OneBotMessageSegment[],
+  selfId?: string,
+  nicknameMap?: Map<string, string>,
+): string {
+  return segments
+    .map(seg => {
+      switch (seg.type) {
+        case 'text':
+          return String(seg.data.text ?? '');
+        case 'at': {
+          const qq = String(seg.data.qq ?? '');
+          if (qq === 'all') return '<at>all</at>';
+          const nick = nicknameMap?.get(qq) ?? qq;
+          const selfAttr = selfId && qq === selfId ? ' self' : '';
+          return `<at${selfAttr} id="${qq}">${nick}</at>`;
+        }
+        case 'mention': {
+          const uid = String(seg.data.user_id ?? '');
+          const nick = nicknameMap?.get(uid) ?? uid;
+          const selfAttr = selfId && uid === selfId ? ' self' : '';
+          return `<at${selfAttr} id="${uid}">${nick}</at>`;
+        }
+        case 'mention_all':
+          return '<at>all</at>';
+        case 'face':
+          return `[表情:${seg.data.id ?? ''}]`;
+        case 'image':
+          return '[图片]';
+        case 'reply':
+          return ''; // 回复引用是元数据，不作为内联内容
+        case 'forward': {
+          const id = seg.data.id != null ? String(seg.data.id) : '';
+          return id ? `<forward id="${id}">[合并转发消息]</forward>` : '[合并转发消息]';
+        }
+        case 'record':
+          return '[语音]';
+        case 'video':
+          return '[视频]';
+        case 'share':
+          return `[分享: ${seg.data.title ?? ''}]`;
+        case 'json':
+          return '[JSON卡片]';
+        case 'xml':
+          return '[XML卡片]';
+        case 'poke':
+          return '[戳一戳]';
+        default:
+          return '';
       }
-      case 'mention': {
-        const uid = String(seg.data.user_id ?? '');
-        const nick = nicknameMap?.get(uid) ?? uid;
-        const selfAttr = (selfId && uid === selfId) ? ' self' : '';
-        return `<at${selfAttr} id="${uid}">${nick}</at>`;
-      }
-      case 'mention_all':
-        return '<at>all</at>';
-      case 'face':
-        return `[表情:${seg.data.id ?? ''}]`;
-      case 'image':
-        return '[图片]';
-      case 'reply':
-        return ''; // 回复引用是元数据，不作为内联内容
-      case 'forward': {
-        const id = seg.data.id != null ? String(seg.data.id) : '';
-        return id ? `<forward id="${id}">[合并转发消息]</forward>` : '[合并转发消息]';
-      }
-      case 'record':
-        return '[语音]';
-      case 'video':
-        return '[视频]';
-      case 'share':
-        return `[分享: ${seg.data.title ?? ''}]`;
-      case 'json':
-        return '[JSON卡片]';
-      case 'xml':
-        return '[XML卡片]';
-      case 'poke':
-        return '[戳一戳]';
-      default:
-        return '';
-    }
-  }).join('');
+    })
+    .join('');
 }
 
 /** 抽象消息段（协议无关） */
@@ -244,7 +254,7 @@ function getForwardNodeData(item: unknown): Record<string, unknown> {
 }
 
 function getForwardNodeContent(item: unknown): unknown {
-  const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+  const node = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
   const nodeData = getForwardNodeData(item);
   return nodeData.content ?? node.content ?? nodeData.message ?? node.message;
 }
@@ -262,26 +272,39 @@ function renderForwardNodeContent(content: unknown): string {
       .replace(/\[CQ:[a-z]+[^\]]*\]/g, '');
   }
   if (!Array.isArray(content)) return '';
-  return content.map(seg => {
-    if (!seg || typeof seg !== 'object') return '';
-    const s = seg as { type?: string; data?: Record<string, unknown> };
-    const data = s.data ?? {};
-    switch (s.type) {
-      case 'text': return String(data.text ?? '');
-      case 'at': return data.qq === 'all' ? '<at>all</at>' : `<at id="${String(data.qq ?? '')}">${String(data.qq ?? '')}</at>`;
-      case 'face': return `[表情:${String(data.id ?? '')}]`;
-      case 'image': return '[图片]';
-      case 'reply': return '';
-      case 'forward':
-        return data.id ? `<forward id="${String(data.id)}">[合并转发消息]</forward>` : '[合并转发消息]';
-      case 'record': return '[语音]';
-      case 'video': return '[视频]';
-      case 'share': return `[分享:${String(data.title ?? '')}]`;
-      case 'json': return '[JSON卡片]';
-      case 'xml': return '[XML卡片]';
-      default: return s.type ? `[${s.type}]` : '';
-    }
-  }).join('');
+  return content
+    .map(seg => {
+      if (!seg || typeof seg !== 'object') return '';
+      const s = seg as { type?: string; data?: Record<string, unknown> };
+      const data = s.data ?? {};
+      switch (s.type) {
+        case 'text':
+          return String(data.text ?? '');
+        case 'at':
+          return data.qq === 'all' ? '<at>all</at>' : `<at id="${String(data.qq ?? '')}">${String(data.qq ?? '')}</at>`;
+        case 'face':
+          return `[表情:${String(data.id ?? '')}]`;
+        case 'image':
+          return '[图片]';
+        case 'reply':
+          return '';
+        case 'forward':
+          return data.id ? `<forward id="${String(data.id)}">[合并转发消息]</forward>` : '[合并转发消息]';
+        case 'record':
+          return '[语音]';
+        case 'video':
+          return '[视频]';
+        case 'share':
+          return `[分享:${String(data.title ?? '')}]`;
+        case 'json':
+          return '[JSON卡片]';
+        case 'xml':
+          return '[XML卡片]';
+        default:
+          return s.type ? `[${s.type}]` : '';
+      }
+    })
+    .join('');
 }
 
 /**
@@ -296,16 +319,16 @@ export function formatForwardInline(forwardId: string, data: unknown, limit = 30
   const shown = nodes.slice(0, limit);
   const lines = shown.map((item, i) => {
     const nodeData = getForwardNodeData(item);
-    const senderObj = (item && typeof item === 'object'
-      ? (item as Record<string, unknown>).sender
-      : undefined) as Record<string, unknown> | undefined;
+    const senderObj = (item && typeof item === 'object' ? (item as Record<string, unknown>).sender : undefined) as
+      | Record<string, unknown>
+      | undefined;
     const name = String(
-      nodeData.nickname
-      ?? senderObj?.nickname
-      ?? nodeData.name
-      ?? nodeData.user_id
-      ?? senderObj?.user_id
-      ?? `节点${i + 1}`,
+      nodeData.nickname ??
+        senderObj?.nickname ??
+        nodeData.name ??
+        nodeData.user_id ??
+        senderObj?.user_id ??
+        `节点${i + 1}`,
     );
     const userId = nodeData.user_id ?? nodeData.uin ?? senderObj?.user_id;
     const prefix = userId != null ? `${name}(${String(userId)})` : name;
@@ -333,7 +356,6 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
   return out;
 }
 
-
 /**
  * 解析内容字符串中的 XML 标记，拆分为抽象消息段列表。
  *
@@ -347,7 +369,8 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
 export function parseContentToSegments(content: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   // 匹配新旧两种 at 格式 + face/image/reply
-  const regex = /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/g;
+  const regex =
+    /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -387,7 +410,7 @@ export function toV11Segments(segments: ParsedSegment[]): OneBotMessageSegment[]
         result.push({ type: 'text', data: { text: seg.data.text } });
         break;
       case 'at':
-        result.push({ type: 'at', data: { qq: seg.data.id === 'all' ? 'all' : (Number(seg.data.id) || seg.data.id) } });
+        result.push({ type: 'at', data: { qq: seg.data.id === 'all' ? 'all' : Number(seg.data.id) || seg.data.id } });
         break;
       case 'face':
         result.push({ type: 'face', data: { id: Number(seg.data.id) || 0 } });

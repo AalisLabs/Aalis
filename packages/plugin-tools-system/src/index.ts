@@ -1,11 +1,11 @@
 import type { ConfigSchema } from '@aalis/core';
 import { Context } from '@aalis/core';
-import type { RegisteredTool, ToolGroupInfo, ToolService } from '@aalis/plugin-tools-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { registerShellTools } from './tools/shell.js';
+import type { RegisteredTool, ToolGroupInfo, ToolService } from '@aalis/plugin-tools-api';
 import { registerFileTools } from './tools/file.js';
-import { registerSystemTools } from './tools/system.js';
 import { registerHttpTools } from './tools/http.js';
+import { registerShellTools } from './tools/shell.js';
+import { registerSystemTools } from './tools/system.js';
 import '@aalis/plugin-commands-api';
 
 // ===== Context 便捷方法注入（internal-framework 风格） =====
@@ -15,13 +15,10 @@ import '@aalis/plugin-commands-api';
 // 若 tools 服务尚不可用，调用会通过 whenService 自动延迟到服务就绪后执行。
 if (!('registerTool' in Context.prototype)) {
   Context.extend('registerTool', function (this: Context, tool: Omit<RegisteredTool, 'pluginName'>): () => void {
-    return this.whenService<ToolService>('tools', (svc) => svc.register(tool, this.id));
+    return this.whenService<ToolService>('tools', svc => svc.register(tool, this.id));
   });
-  Context.extend('registerToolGroup', function (
-    this: Context,
-    group: Omit<ToolGroupInfo, 'pluginName'>,
-  ): () => void {
-    return this.whenService<ToolService>('tools', (svc) => svc.registerGroup(group, this.id));
+  Context.extend('registerToolGroup', function (this: Context, group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
+    return this.whenService<ToolService>('tools', svc => svc.registerGroup(group, this.id));
   });
 }
 
@@ -38,7 +35,8 @@ export const configSchema: ConfigSchema = {
     type: 'string',
     label: '工作目录',
     default: 'workspace:/',
-    description: 'Shell 等执行工具的默认逻辑目录。使用 storage URI，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
+    description:
+      'Shell 等执行工具的默认逻辑目录。使用 storage URI，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
   },
   shell: {
     label: 'Shell 工具',
@@ -56,12 +54,18 @@ export const configSchema: ConfigSchema = {
       maxReadSize: { type: 'number', label: '最大读取字节', default: 1048576 },
       maxSearchBytes: { type: 'number', label: '单次搜索最大扫描字节', default: 1048576 },
       maxWriteSize: { type: 'number', label: '最大写入字节', default: 10485760 },
-      defaultRoot: { type: 'string', label: '默认存储根', default: 'workspace', description: '普通相对路径会被解释到这个 storage 根' },
+      defaultRoot: {
+        type: 'string',
+        label: '默认存储根',
+        default: 'workspace',
+        description: '普通相对路径会被解释到这个 storage 根',
+      },
       allowedRoots: {
         type: 'multiselect',
         label: '允许访问的存储根',
         default: ['*'],
-        description: '设为 * 时允许访问 storage 中全部 readable 根；也可以显式列出根名。写入/删除仍受各根自身权限限制。',
+        description:
+          '设为 * 时允许访问 storage 中全部 readable 根；也可以显式列出根名。写入/删除仍受各根自身权限限制。',
         options: [
           { label: '全部可读根', value: '*' },
           { label: 'Workspace', value: 'workspace' },
@@ -93,7 +97,14 @@ export const configSchema: ConfigSchema = {
 export const defaultConfig = {
   workingDirectory: 'workspace:/',
   shell: { enabled: true, defaultTimeout: 30000, maxTimeout: 300000, maxOutputSize: 65536 },
-  file: { enabled: true, maxReadSize: 1048576, maxSearchBytes: 1048576, maxWriteSize: 10485760, defaultRoot: 'workspace', allowedRoots: ['*'] },
+  file: {
+    enabled: true,
+    maxReadSize: 1048576,
+    maxSearchBytes: 1048576,
+    maxWriteSize: 10485760,
+    defaultRoot: 'workspace',
+    allowedRoots: ['*'],
+  },
   system: { enabled: true },
   http: { enabled: true, defaultTimeout: 30000, maxResponseSize: 1048576 },
 };
@@ -103,7 +114,14 @@ export const defaultConfig = {
 export interface ToolsBasicConfig {
   workingDirectory: string;
   shell: { enabled: boolean; defaultTimeout: number; maxTimeout: number; maxOutputSize: number };
-  file: { enabled: boolean; maxReadSize: number; maxSearchBytes: number; maxWriteSize: number; defaultRoot: string; allowedRoots: string[] };
+  file: {
+    enabled: boolean;
+    maxReadSize: number;
+    maxSearchBytes: number;
+    maxWriteSize: number;
+    defaultRoot: string;
+    allowedRoots: string[];
+  };
   system: { enabled: boolean };
   http: { enabled: boolean; defaultTimeout: number; maxResponseSize: number };
 }
@@ -119,8 +137,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return new Proxy(ctx, {
       get(target, prop) {
         if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) =>
-            target.registerTool({ ...tool, groups });
+          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
         }
         return Reflect.get(target, prop, target);
       },
@@ -159,7 +176,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const persona = ctx.getService<{ isTimeInjectionEnabled?(): boolean }>('persona');
     const skipTimeTool = !!persona?.isTimeInjectionEnabled?.();
     registerSystemTools(ctxWithGroups(['system']), { cwd: cwdUri, skipTimeTool });
-    ctx.logger.info('系统工具已启用' + (skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''));
+    ctx.logger.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
   }
 
   if (cfg.http.enabled) {
@@ -170,12 +187,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册 /tools 指令以查看可用工具
   ctx.command('tools', '列出所有已注册的机器交互工具', async () => {
-    const groups = ['shell', 'file', 'system', 'http']
-      .filter(g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false);
-    const lines = [
-      '📦 机器交互工具:',
-      ...groups.map(g => `  ✅ ${g}`),
-    ];
+    const groups = ['shell', 'file', 'system', 'http'].filter(
+      g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false,
+    );
+    const lines = ['📦 机器交互工具:', ...groups.map(g => `  ✅ ${g}`)];
     return lines.join('\n');
   });
 

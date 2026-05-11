@@ -6,14 +6,27 @@ export function registerStatisticsTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_statistics',
-        description: '对数值数组执行统计分析。支持的操作: summary(综合统计)、mean(均值)、median(中位数)、mode(众数)、variance(方差)、stdev(标准差)、percentile(百分位数)、correlation(皮尔逊相关系数)、linear_regression(线性回归)、zscore(Z分数标准化)、describe(描述性统计)',
+        description:
+          '对数值数组执行统计分析。支持的操作: summary(综合统计)、mean(均值)、median(中位数)、mode(众数)、variance(方差)、stdev(标准差)、percentile(百分位数)、correlation(皮尔逊相关系数)、linear_regression(线性回归)、zscore(Z分数标准化)、describe(描述性统计)',
         parameters: {
           type: 'object',
           properties: {
             operation: {
               type: 'string',
               description: '统计操作类型',
-              enum: ['summary', 'mean', 'median', 'mode', 'variance', 'stdev', 'percentile', 'correlation', 'linear_regression', 'zscore', 'describe'],
+              enum: [
+                'summary',
+                'mean',
+                'median',
+                'mode',
+                'variance',
+                'stdev',
+                'percentile',
+                'correlation',
+                'linear_regression',
+                'zscore',
+                'describe',
+              ],
             },
             data: {
               type: 'array',
@@ -34,7 +47,7 @@ export function registerStatisticsTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
         const data = args.data as number[];
@@ -43,7 +56,7 @@ export function registerStatisticsTools(ctx: Context): void {
         }
         // 验证所有元素都是数字
         for (let i = 0; i < data.length; i++) {
-          if (typeof data[i] !== 'number' || isNaN(data[i])) {
+          if (typeof data[i] !== 'number' || Number.isNaN(data[i])) {
             return JSON.stringify({ error: `data[${i}] 不是有效数字` });
           }
         }
@@ -142,10 +155,14 @@ function percentile(data: number[], p: number): number {
 
 function pearsonCorrelation(x: number[], y: number[]): number {
   const n = x.length;
-  const mx = mean(x), my = mean(y);
-  let num = 0, dx = 0, dy = 0;
+  const mx = mean(x),
+    my = mean(y);
+  let num = 0,
+    dx = 0,
+    dy = 0;
   for (let i = 0; i < n; i++) {
-    const a = x[i] - mx, b = y[i] - my;
+    const a = x[i] - mx,
+      b = y[i] - my;
     num += a * b;
     dx += a * a;
     dy += b * b;
@@ -154,12 +171,19 @@ function pearsonCorrelation(x: number[], y: number[]): number {
   return denom === 0 ? 0 : num / denom;
 }
 
-function linearRegression(x: number[], y: number[]): { slope: number; intercept: number; rSquared: number; equation: string } {
+function linearRegression(
+  x: number[],
+  y: number[],
+): { slope: number; intercept: number; rSquared: number; equation: string } {
   const n = x.length;
-  const mx = mean(x), my = mean(y);
-  let ssxy = 0, ssxx = 0, ssyy = 0;
+  const mx = mean(x),
+    my = mean(y);
+  let ssxy = 0,
+    ssxx = 0,
+    ssyy = 0;
   for (let i = 0; i < n; i++) {
-    const dx = x[i] - mx, dy = y[i] - my;
+    const dx = x[i] - mx,
+      dy = y[i] - my;
     ssxy += dx * dy;
     ssxx += dx * dx;
     ssyy += dy * dy;
@@ -205,7 +229,8 @@ function describeSummary(data: number[]) {
 function skewness(data: number[]): number {
   const n = data.length;
   if (n < 3) return 0;
-  const m = mean(data), s = sampleStdev(data);
+  const m = mean(data),
+    s = sampleStdev(data);
   if (s === 0) return 0;
   const sum = data.reduce((acc, x) => acc + ((x - m) / s) ** 3, 0);
   return (n / ((n - 1) * (n - 2))) * sum;
@@ -214,10 +239,10 @@ function skewness(data: number[]): number {
 function kurtosis(data: number[]): number {
   const n = data.length;
   if (n < 4) return 0;
-  const m = mean(data), s = sampleStdev(data);
+  const m = mean(data),
+    s = sampleStdev(data);
   if (s === 0) return 0;
   const sum = data.reduce((acc, x) => acc + ((x - m) / s) ** 4, 0);
-  const excess = ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum
-    - (3 * (n - 1) ** 2) / ((n - 2) * (n - 3));
+  const excess = ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum - (3 * (n - 1) ** 2) / ((n - 2) * (n - 3));
   return excess;
 }

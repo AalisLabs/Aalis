@@ -9,7 +9,7 @@
  * - process_kill: 终止后台进程
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { platform } from 'node:os';
 import path from 'node:path';
 import type { Context } from '@aalis/core';
@@ -65,15 +65,17 @@ function pruneDoneProcesses(processes: Map<string, ManagedProcess>): void {
 function truncateOutput(output: string, maxSize: number): string {
   if (Buffer.byteLength(output, 'utf-8') <= maxSize) return output;
   const truncated = Buffer.from(output, 'utf-8').subarray(0, maxSize).toString('utf-8');
-  return truncated + `\n...[输出截断，超过 ${maxSize} 字节]`;
+  return `${truncated}\n...[输出截断，超过 ${maxSize} 字节]`;
 }
 
 function toStorageUri(input: string | undefined, fallback: string): string {
   const value = (input || fallback).trim();
   if (!value) return 'workspace:/';
-  if (/^[a-zA-Z]:[\\/]/.test(value)) throw new Error('cwd 必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
+  if (/^[a-zA-Z]:[\\/]/.test(value))
+    throw new Error('cwd 必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径');
   if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(value)) return value;
-  if (path.isAbsolute(value)) throw new Error('cwd 必须使用 storage URI（如 workspace:/project）或相对 workspace 的路径，不能使用宿主机绝对路径');
+  if (path.isAbsolute(value))
+    throw new Error('cwd 必须使用 storage URI（如 workspace:/project）或相对 workspace 的路径，不能使用宿主机绝对路径');
   return `workspace:/${value.replace(/^\/+/, '')}`;
 }
 
@@ -125,7 +127,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
             },
             cwd: {
               type: 'string',
-              description: '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
+              description:
+                '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
             },
             timeout: {
               type: 'number',
@@ -143,14 +146,11 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     handler: async (args, _callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);
-      const timeout = Math.min(
-        Math.max(1000, (args.timeout as number) || config.defaultTimeout),
-        config.maxTimeout,
-      );
+      const timeout = Math.min(Math.max(1000, (args.timeout as number) || config.defaultTimeout), config.maxTimeout);
 
       ctx.logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
 
-      return new Promise<string>((resolve) => {
+      return new Promise<string>(resolve => {
         let stdout = '';
         let stderr = '';
         let killed = false;
@@ -177,7 +177,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
           }, 3000);
         }, timeout);
 
-        child.on('close', (code) => {
+        child.on('close', code => {
           clearTimeout(timer);
           const result = {
             exitCode: code ?? -1,
@@ -188,14 +188,16 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
           resolve(JSON.stringify(result));
         });
 
-        child.on('error', (err) => {
+        child.on('error', err => {
           clearTimeout(timer);
-          resolve(JSON.stringify({
-            error: err.message,
-            exitCode: -1,
-            stdout: truncateOutput(stdout, config.maxOutputSize),
-            stderr: truncateOutput(stderr, config.maxOutputSize),
-          }));
+          resolve(
+            JSON.stringify({
+              error: err.message,
+              exitCode: -1,
+              stdout: truncateOutput(stdout, config.maxOutputSize),
+              stderr: truncateOutput(stderr, config.maxOutputSize),
+            }),
+          );
         });
       });
     },
@@ -219,7 +221,8 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
             },
             cwd: {
               type: 'string',
-              description: '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
+              description:
+                '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
             },
           },
           required: ['command'],
@@ -269,12 +272,12 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
         }
       });
 
-      child.on('close', (code) => {
+      child.on('close', code => {
         managed.exitCode = code;
         managed.done = true;
       });
 
-      child.on('error', (err) => {
+      child.on('error', err => {
         managed.stderr += `\n[进程错误] ${err.message}`;
         managed.done = true;
         managed.exitCode = -1;
@@ -444,7 +447,9 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     for (const [, processes] of backgroundProcesses) {
       for (const [, managed] of processes) {
         if (!managed.done) {
-          try { managed.process.kill('SIGTERM'); } catch {}
+          try {
+            managed.process.kill('SIGTERM');
+          } catch {}
         }
       }
     }

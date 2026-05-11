@@ -1,17 +1,18 @@
-import * as readline from 'node:readline';
 import { stdin as input, stdout as output } from 'node:process';
-import chalk from 'chalk';
-import stringWidth from 'string-width';
-import cliTruncate from 'cli-truncate';
+import * as readline from 'node:readline';
 import type { AppService, ConfigSchema, Context, LogEntry } from '@aalis/core';
-import type { StreamChunkMessage } from '@aalis/plugin-message-api';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
-import type { CLIService } from './types.js';
-import type { CommandService } from '@aalis/plugin-commands-api';
-import type { PersonaService } from '@aalis/plugin-persona';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
+import type { CommandService } from '@aalis/plugin-commands-api';
+import type { StreamChunkMessage } from '@aalis/plugin-message-api';
+import type { PersonaService } from '@aalis/plugin-persona';
+import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
+import chalk from 'chalk';
+import cliTruncate from 'cli-truncate';
+import stringWidth from 'string-width';
+import type { CLIService } from './types.js';
 
 export type { CLIService } from './types.js';
+
 import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -37,7 +38,12 @@ export const configSchema: ConfigSchema = {
       { label: '状态', value: 'status' },
     ],
   },
-  logLines: { type: 'number', label: '日志行数', default: 200, description: 'CLI 日志视图保留的最近日志条数。0 = 不限（仅受 core 环形缓冲 500 条限制）' },
+  logLines: {
+    type: 'number',
+    label: '日志行数',
+    default: 200,
+    description: 'CLI 日志视图保留的最近日志条数。0 = 不限（仅受 core 环形缓冲 500 条限制）',
+  },
 };
 
 export const defaultConfig = {
@@ -100,13 +106,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
   ctx.provide('cli', cliService);
 
-  ctx.on('outbound:message', (msg) => {
+  ctx.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
     if (tui?.consumeStreamedSend()) return; // 同一轮已流式输出，跳过重复
     adapter.sendMessage(msg.sessionId, msg.content);
   });
 
-  ctx.on('outbound:stream', (chunk) => {
+  ctx.on('outbound:stream', chunk => {
     if (chunk.sessionId !== sessionId) return;
     tui?.applyStreamChunk(chunk);
   });
@@ -186,7 +192,7 @@ class CliTui {
     input.on('data', this.handleData);
     process.once('exit', this.restoreOnExit);
 
-    this.removeLogListener = onLogEntry((entry) => {
+    this.removeLogListener = onLogEntry(entry => {
       this.logLines.push(entry);
       if (this.logLines.length > this.config.logLines) this.logLines.shift();
       if (this.view === 'logs') this.queueRender();
@@ -194,9 +200,11 @@ class CliTui {
 
     const persona = this.ctx.getService<PersonaService>('persona');
     const assistantName = persona?.getPersonaName() ?? 'Aalis';
-    this.chatLines.push(chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`));
+    this.chatLines.push(
+      chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
+    );
 
-    this.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async (request) => {
+    this.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async request => {
       return this.askConfirm(`/${request.name} 是高危指令，按 y 确认，其他键取消`);
     });
 
@@ -275,10 +283,10 @@ class CliTui {
   private labelCol(): number {
     const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'Aalis';
     return Math.max(
-      visibleLen('✦ ' + persona),  // assistant
-      visibleLen('❯ ' + this.config.prompt), // user
-      visibleLen('◆ System'),     // system
-      visibleLen('∘'),            // welcome
+      visibleLen(`✦ ${persona}`), // assistant
+      visibleLen(`❯ ${this.config.prompt}`), // user
+      visibleLen('◆ System'), // system
+      visibleLen('∘'), // welcome
     );
   }
 
@@ -286,17 +294,17 @@ class CliTui {
   private formatHead(label: string): string {
     const col = this.labelCol();
     const pad = Math.max(0, col - visibleLen(label));
-    return label + ' '.repeat(pad) + ' ' + chalk.gray('│') + ' ';
+    return `${label + ' '.repeat(pad)} ${chalk.gray('│')} `;
   }
 
   private formatCont(): string {
     const col = this.labelCol();
-    return ' '.repeat(col) + ' ' + chalk.gray('│') + ' ';
+    return `${' '.repeat(col)} ${chalk.gray('│')} `;
   }
 
   private formatAssistantBlock(content: string): string[] {
     const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'Aalis';
-    const firstHead = this.formatHead(chalk.green('✦ ' + persona));
+    const firstHead = this.formatHead(chalk.green(`✦ ${persona}`));
     const contHead = this.formatCont();
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
@@ -347,7 +355,7 @@ class CliTui {
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
     if (!this.running) return;
     // 鼠标 SGR 序列状态机：从 \x1b[< 到 M/m 之间的所有 keypress 都吞掉
-    if (key.sequence?.startsWith('\x1b[<') || (chunk && chunk.startsWith('\x1b[<'))) {
+    if (key.sequence?.startsWith('\x1b[<') || chunk?.startsWith('\x1b[<')) {
       this.inMouseSeq = true;
       return;
     }
@@ -373,15 +381,39 @@ class CliTui {
       process.kill(process.pid, 'SIGINT');
       return;
     }
-    if (key.ctrl && key.name === 'l') { this.switchView('logs'); return; }
-    if (key.ctrl && key.name === 't') { this.switchView('chat'); return; }
-    if (key.ctrl && key.name === 's') { this.switchView('status'); return; }
-    if (key.ctrl && key.name === 'g') { this.switchView('help'); return; }
-    if (key.name === 'escape') { this.switchView(this.previousView); return; }
+    if (key.ctrl && key.name === 'l') {
+      this.switchView('logs');
+      return;
+    }
+    if (key.ctrl && key.name === 't') {
+      this.switchView('chat');
+      return;
+    }
+    if (key.ctrl && key.name === 's') {
+      this.switchView('status');
+      return;
+    }
+    if (key.ctrl && key.name === 'g') {
+      this.switchView('help');
+      return;
+    }
+    if (key.name === 'escape') {
+      this.switchView(this.previousView);
+      return;
+    }
 
-    if (this.view === 'logs') { this.handleLogsKey(key); return; }
-    if (this.view === 'status') { this.handleScrollKey(key, 'statusScroll'); return; }
-    if (this.view === 'help') { this.handleScrollKey(key, 'helpScroll'); return; }
+    if (this.view === 'logs') {
+      this.handleLogsKey(key);
+      return;
+    }
+    if (this.view === 'status') {
+      this.handleScrollKey(key, 'statusScroll');
+      return;
+    }
+    if (this.view === 'help') {
+      this.handleScrollKey(key, 'helpScroll');
+      return;
+    }
     if (this.view !== 'chat') return;
 
     // 换行快捷：Ctrl+J / Shift+Enter / Alt+Enter / 原始 \n 输入
@@ -391,13 +423,16 @@ class CliTui {
       (key.meta && (key.name === 'return' || key.name === 'enter')) ||
       (!key.ctrl && !key.meta && chunk === '\n' && key.name !== 'return');
     if (isNewline) {
-      this.inputLine = this.inputLine.slice(0, this.cursor) + '\n' + this.inputLine.slice(this.cursor);
+      this.inputLine = `${this.inputLine.slice(0, this.cursor)}\n${this.inputLine.slice(this.cursor)}`;
       this.cursor++;
       this.queueRender();
       return;
     }
 
-    if (key.name === 'return') { await this.submitLine(); return; }
+    if (key.name === 'return') {
+      await this.submitLine();
+      return;
+    }
     if (key.name === 'backspace') {
       if (this.cursor > 0) {
         this.inputLine = this.inputLine.slice(0, this.cursor - 1) + this.inputLine.slice(this.cursor);
@@ -413,12 +448,34 @@ class CliTui {
       }
       return;
     }
-    if (key.name === 'left') { this.cursor = Math.max(0, this.cursor - 1); this.queueRender(); return; }
-    if (key.name === 'right') { this.cursor = Math.min(this.inputLine.length, this.cursor + 1); this.queueRender(); return; }
-    if (key.name === 'home') { this.cursor = 0; this.queueRender(); return; }
-    if (key.name === 'end') { this.cursor = this.inputLine.length; this.queueRender(); return; }
-    if (key.name === 'up') { this.recallHistory(-1); return; }
-    if (key.name === 'down') { this.recallHistory(1); return; }
+    if (key.name === 'left') {
+      this.cursor = Math.max(0, this.cursor - 1);
+      this.queueRender();
+      return;
+    }
+    if (key.name === 'right') {
+      this.cursor = Math.min(this.inputLine.length, this.cursor + 1);
+      this.queueRender();
+      return;
+    }
+    if (key.name === 'home') {
+      this.cursor = 0;
+      this.queueRender();
+      return;
+    }
+    if (key.name === 'end') {
+      this.cursor = this.inputLine.length;
+      this.queueRender();
+      return;
+    }
+    if (key.name === 'up') {
+      this.recallHistory(-1);
+      return;
+    }
+    if (key.name === 'down') {
+      this.recallHistory(1);
+      return;
+    }
 
     if (!key.ctrl && !key.meta && chunk && chunk >= ' ') {
       this.inputLine = this.inputLine.slice(0, this.cursor) + chunk + this.inputLine.slice(this.cursor);
@@ -463,7 +520,7 @@ class CliTui {
 
     this.history.push(text);
     if (this.history.length > 100) this.history.shift();
-    const firstHead = this.formatHead(chalk.cyan('❯ ' + this.config.prompt));
+    const firstHead = this.formatHead(chalk.cyan(`❯ ${this.config.prompt}`));
     const contHead = this.formatCont();
     for (const [i, line] of text.split('\n').entries()) {
       this.chatLines.push((i === 0 ? firstHead : contHead) + line);
@@ -513,7 +570,9 @@ class CliTui {
   private askConfirm(text: string): Promise<boolean> {
     this.confirmText = text;
     this.queueRender();
-    return new Promise(resolve => { this.confirmResolver = resolve; });
+    return new Promise(resolve => {
+      this.confirmResolver = resolve;
+    });
   }
 
   private switchView(view: CLIView): void {
@@ -579,13 +638,13 @@ class CliTui {
   private renderHeader(width: number): string {
     const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'default';
     const left = ` ${chalk.bold.magenta('●')} ${chalk.bold('Aalis')} ${chalk.gray('·')} ${chalk.cyan(persona)} `;
-    const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[]).map(v => {
-      const label = v.toUpperCase();
-      return v === this.view ? chalk.bold.cyan(`[${label}]`) : chalk.gray(` ${label} `);
-    }).join(' ');
-    const status = this.confirmResolver
-      ? chalk.yellow('● confirm')
-      : chalk.green('● online');
+    const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[])
+      .map(v => {
+        const label = v.toUpperCase();
+        return v === this.view ? chalk.bold.cyan(`[${label}]`) : chalk.gray(` ${label} `);
+      })
+      .join(' ');
+    const status = this.confirmResolver ? chalk.yellow('● confirm') : chalk.green('● online');
     const right = ` ${tabs}  ${status} `;
     const pad = Math.max(1, width - visibleLen(left) - visibleLen(right));
     return left + ' '.repeat(pad) + right;
@@ -626,7 +685,7 @@ class CliTui {
     const inner = width - 2; // 缩进 2 列
     for (const raw of this.chatLines) {
       // 宽度感知截断为单行；超长内容直接尾部省略。
-      lines.push('  ' + clipAnsi(raw, inner));
+      lines.push(`  ${clipAnsi(raw, inner)}`);
     }
     return lines;
   }
@@ -636,24 +695,27 @@ class CliTui {
     // 与 console 输出格式保持一致：ts LEVEL scope message
     const lines: string[] = [];
     for (const entry of this.logLines) {
-      const ts    = chalk.gray(entry.timestamp);
+      const ts = chalk.gray(entry.timestamp);
       const level = LEVEL_TAG[entry.level];
       const scope = chalk.magenta(entry.scope);
-      const head  = `${ts} ${level} ${scope} `;
+      const head = `${ts} ${level} ${scope} `;
       const headW = visibleLen(head);
-      const msgW  = Math.max(1, inner - headW);
+      const msgW = Math.max(1, inner - headW);
 
       if (!this.logWrap) {
         // 默认：压成单行展示（避免 alternate screen 中跨行覆盖）
         const flat = sanitizeForSingleLine(entry.message);
-        const msg  = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
+        const msg = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
         lines.push(`  ${head}${msg}`);
         continue;
       }
 
       // 换行模式：保留真实换行 + 按宽度软折行；每个续行用 contHead 缩进对齐到消息列
       const contHead = ' '.repeat(headW);
-      const rawLines = entry.message.replace(/\r\n|\r/g, '\n').replace(/\t/g, '    ').split('\n');
+      const rawLines = entry.message
+        .replace(/\r\n|\r/g, '\n')
+        .replace(/\t/g, '    ')
+        .split('\n');
       let isFirst = true;
       for (const raw of rawLines) {
         // 按可见宽度软折行
@@ -687,11 +749,13 @@ class CliTui {
     out.push('');
     out.push(sec(`平台连接 (${connections.length})`));
     if (connections.length === 0) out.push(`    ${chalk.gray('— 无')}`);
-    else for (const c of connections) {
-      const dot = c.status === 'online' ? chalk.green('●') : c.status === 'connecting' ? chalk.yellow('●') : chalk.red('●');
-      out.push(`    ${dot} ${chalk.cyan(c.platform)}:${c.id} ${chalk.gray(c.status)}`);
-    }
-    return out.map(l => l.length === 0 ? '' : ` ${l}`);
+    else
+      for (const c of connections) {
+        const dot =
+          c.status === 'online' ? chalk.green('●') : c.status === 'connecting' ? chalk.yellow('●') : chalk.red('●');
+        out.push(`    ${dot} ${chalk.cyan(c.platform)}:${c.id} ${chalk.gray(c.status)}`);
+      }
+    return out.map(l => (l.length === 0 ? '' : ` ${l}`));
   }
 
   private getHelpViewLines(): string[] {
@@ -703,20 +767,20 @@ class CliTui {
     out.push(row('Ctrl+L', 'Logs   ·  实时日志'));
     out.push(row('Ctrl+S', 'Status ·  服务与平台状态'));
     out.push(row('Ctrl+G', 'Help   ·  当前页'));
-    out.push(row('Esc',    '返回上一个视图'));
+    out.push(row('Esc', '返回上一个视图'));
     out.push(row('Ctrl+C', '退出'));
     out.push('');
     out.push(sec('滚动 (Logs / Status / Help)'));
-    out.push(row('↑ / ↓',   '逐行滚动'));
+    out.push(row('↑ / ↓', '逐行滚动'));
     out.push(row('PgUp/Dn', '翻页'));
-    out.push(row('Home',    '回到顶部'));
-    out.push(row('Ctrl+W',  '日志页：切换换行模式（多行完整展示）'));
+    out.push(row('Home', '回到顶部'));
+    out.push(row('Ctrl+W', '日志页：切换换行模式（多行完整展示）'));
     out.push('');
     out.push(sec('编辑'));
-    out.push(row('Enter',     '提交输入'));
-    out.push(row('Ctrl+J',    '插入换行（macOS Ctrl+Enter）'));
+    out.push(row('Enter', '提交输入'));
+    out.push(row('Ctrl+J', '插入换行（macOS Ctrl+Enter）'));
     out.push(row('Shift+Ent', '插入换行（如终端支持）'));
-    out.push(row('↑ / ↓',     '历史记录回溯（chat 视图）'));
+    out.push(row('↑ / ↓', '历史记录回溯（chat 视图）'));
     out.push('');
     out.push(sec('提示'));
     out.push(`    ${chalk.gray('• 完整日志写入 data/latest.log（每次启动覆盖）；可用 tail -f 查看。')}`);
@@ -724,7 +788,7 @@ class CliTui {
     out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
     out.push(`    ${chalk.gray('• 鼠标滚轮可滚动 Logs / Status / Help。')}`);
     out.push(`    ${chalk.gray(`• 选择 / 复制文本：${selectionHint()}`)}`);
-    return out.map(l => l.length === 0 ? '' : ` ${l}`);
+    return out.map(l => (l.length === 0 ? '' : ` ${l}`));
   }
 
   /** 计算输入框的多行内容（不含边框、不含 padding） */
@@ -732,12 +796,14 @@ class CliTui {
     const inner = width - 2;
     if (this.confirmText) return [`${chalk.yellow('?')} ${this.confirmText}`];
     if (this.view !== 'chat') {
-      const total = this.view === 'logs' ? this.logLines.length
-        : this.view === 'status' ? this.getStatusViewLines().length
-        : this.getHelpViewLines().length;
-      const scroll = this.view === 'logs' ? this.logScroll
-        : this.view === 'status' ? this.statusScroll
-        : this.helpScroll;
+      const total =
+        this.view === 'logs'
+          ? this.logLines.length
+          : this.view === 'status'
+            ? this.getStatusViewLines().length
+            : this.getHelpViewLines().length;
+      const scroll =
+        this.view === 'logs' ? this.logScroll : this.view === 'status' ? this.statusScroll : this.helpScroll;
       return [chalk.gray(`${this.view} · ${total} 行 · scroll ${scroll}  ·  按 Ctrl+T 回到聊天`)];
     }
     const inputLines = this.inputLine.split('\n');
@@ -805,12 +871,12 @@ const BOX_TL = '╭';
 const BOX_TR = '╮';
 const BOX_BL = '╰';
 const BOX_BR = '╯';
-const BOX_V  = '│';
+const BOX_V = '│';
 
 const LEVEL_TAG: Record<LogEntry['level'], string> = {
   debug: chalk.gray('DEBUG'),
-  info:  chalk.cyan('INFO '),
-  warn:  chalk.yellow('WARN '),
+  info: chalk.cyan('INFO '),
+  warn: chalk.yellow('WARN '),
   error: chalk.red('ERROR'),
 };
 
@@ -821,10 +887,14 @@ const LEVEL_TAG: Record<LogEntry['level'], string> = {
 function restoreTerminalState(): void {
   try {
     if (input.isTTY) input.setRawMode(false);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   try {
     output.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** 终端可见宽度（处理 ANSI / CJK / emoji / 零宽字符） */
@@ -862,7 +932,11 @@ function wrapByVisibleWidth(s: string, width: number): string[] {
       break;
     }
     // cli-truncate 在 width 处截断，得到第一段
-    const head = cliTruncate(remaining, width, { position: 'end', preferTruncationOnSpace: false, truncationCharacter: '' });
+    const head = cliTruncate(remaining, width, {
+      position: 'end',
+      preferTruncationOnSpace: false,
+      truncationCharacter: '',
+    });
     if (!head) break;
     segs.push(head);
     // 计算消耗的字符数：以可见宽度对齐，逐字符切到与 head 同等宽度
@@ -887,7 +961,7 @@ function padAnsi(s: string, width: number): string {
 
 /** 行尾补宽 + \x1b[K 清残影 */
 function clearLine(s: string, width: number): string {
-  return padAnsi(s, width) + '\x1b[K';
+  return `${padAnsi(s, width)}\x1b[K`;
 }
 
 /**
@@ -897,11 +971,13 @@ function clearLine(s: string, width: number): string {
  * - 其它 C0 控制字符（\x00-\x1F 除 \x1b 颜色序列）剔除
  */
 function sanitizeForSingleLine(s: string): string {
-  return s
-    .replace(/\r\n|\r|\n/g, ' \u21b5 ')
-    .replace(/\t/g, '    ')
-    // 保留 ESC（颜色），剔除其它 C0 控制字符
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '');
+  return (
+    s
+      .replace(/\r\n|\r|\n/g, ' \u21b5 ')
+      .replace(/\t/g, '    ')
+      // 保留 ESC（颜色），剔除其它 C0 控制字符
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '')
+  );
 }
 
 /** 不同平台终端绕过鼠标上报、回到原生选择/复制的指引 */

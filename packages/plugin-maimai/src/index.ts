@@ -1,4 +1,4 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { CommandContext } from '@aalis/plugin-commands-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import '@aalis/plugin-tools-api';
@@ -122,7 +122,11 @@ function bindKey(platform: string | undefined, userId: string | undefined): stri
   return `${platform}:${userId}`;
 }
 
-async function getBoundFriendCode(ctx: Context, platform: string | undefined, userId: string | undefined): Promise<number | null> {
+async function getBoundFriendCode(
+  ctx: Context,
+  platform: string | undefined,
+  userId: string | undefined,
+): Promise<number | null> {
   const key = bindKey(platform, userId);
   if (!key) return null;
   const memory = ctx.getService<MemoryService>('memory');
@@ -132,7 +136,12 @@ async function getBoundFriendCode(ctx: Context, platform: string | undefined, us
   return typeof code === 'number' ? code : null;
 }
 
-async function setBoundFriendCode(ctx: Context, platform: string | undefined, userId: string | undefined, friendCode: number): Promise<boolean> {
+async function setBoundFriendCode(
+  ctx: Context,
+  platform: string | undefined,
+  userId: string | undefined,
+  friendCode: number,
+): Promise<boolean> {
   const key = bindKey(platform, userId);
   if (!key) return false;
   const memory = ctx.getService<MemoryService>('memory');
@@ -141,7 +150,11 @@ async function setBoundFriendCode(ctx: Context, platform: string | undefined, us
   return true;
 }
 
-async function clearBoundFriendCode(ctx: Context, platform: string | undefined, userId: string | undefined): Promise<boolean> {
+async function clearBoundFriendCode(
+  ctx: Context,
+  platform: string | undefined,
+  userId: string | undefined,
+): Promise<boolean> {
   const key = bindKey(platform, userId);
   if (!key) return false;
   const memory = ctx.getService<MemoryService>('memory');
@@ -153,7 +166,10 @@ async function clearBoundFriendCode(ctx: Context, platform: string | undefined, 
 // ===== HTTP 客户端 =====
 
 class MaimaiClient {
-  constructor(private cfg: MaimaiConfig, private logger: { warn: (m: string) => void; error: (m: string) => void; debug?: (m: string) => void }) {}
+  constructor(
+    private cfg: MaimaiConfig,
+    private logger: { warn: (m: string) => void; error: (m: string) => void; debug?: (m: string) => void },
+  ) {}
 
   private async request<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T> {
     if (!this.cfg.developerToken) {
@@ -166,14 +182,18 @@ class MaimaiClient {
       }
     }
     const headers: Record<string, string> = {
-      'Authorization': this.cfg.developerToken,
-      'Accept': 'application/json',
+      Authorization: this.cfg.developerToken,
+      Accept: 'application/json',
     };
     this.logger.debug?.(`[maimai] GET ${url.toString()}`);
     const resp = await fetch(url.toString(), { method: 'GET', headers });
     const text = await resp.text();
     let body: { success?: boolean; code?: number; message?: string; data?: T } | undefined;
-    try { body = JSON.parse(text); } catch { /* 非 JSON */ }
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* 非 JSON */
+    }
     if (!resp.ok || (body && body.success === false)) {
       const msg = body?.message || `HTTP ${resp.status}`;
       throw new Error(`maimai API 调用失败: ${msg}`);
@@ -243,12 +263,25 @@ async function resolveTarget(
   if (bound) return { friend_code: bound, source: 'bound' };
 
   // OneBot 私聊场景下尝试用调用者 QQ 查
-  if (cfg.defaultBindOnPrivateChat && callCtx.platform === 'onebot' && callCtx.userId && callCtx.sessionId.includes(':private:')) {
+  if (
+    cfg.defaultBindOnPrivateChat &&
+    callCtx.platform === 'onebot' &&
+    callCtx.userId &&
+    callCtx.sessionId.includes(':private:')
+  ) {
     const userQq = parseIntStrict(callCtx.userId);
-    if (userQq) return { qq: userQq, source: 'private-self', hint: '使用你的 QQ 号查询查分器（如失败请先 /maimai bind <好友码>）' };
+    if (userQq)
+      return {
+        qq: userQq,
+        source: 'private-self',
+        hint: '使用你的 QQ 号查询查分器（如失败请先 /maimai bind <好友码>）',
+      };
   }
 
-  return { source: 'none', hint: '未找到查询目标。请提供 friend_code/qq 参数，或先用 /maimai bind <好友码> 绑定自己。' };
+  return {
+    source: 'none',
+    hint: '未找到查询目标。请提供 friend_code/qq 参数，或先用 /maimai bind <好友码> 绑定自己。',
+  };
 }
 
 function parseIntStrict(v: unknown): number | undefined {
@@ -269,10 +302,7 @@ async function fetchPlayer(client: MaimaiClient, target: ResolveResult): Promise
 // ===== 输出格式化 =====
 
 function formatPlayer(p: MaiPlayer): string {
-  const lines = [
-    `👤 ${p.name}  (DX Rating: ${p.rating})`,
-    `🆔 好友码: ${p.friend_code}`,
-  ];
+  const lines = [`👤 ${p.name}  (DX Rating: ${p.rating})`, `🆔 好友码: ${p.friend_code}`];
   if (p.trophy?.name) lines.push(`🏆 称号: ${p.trophy.name}${p.trophy.color ? ` [${p.trophy.color}]` : ''}`);
   if (typeof p.star === 'number') lines.push(`⭐ 搭档觉醒: ${p.star}`);
   if (p.upload_time) lines.push(`🕒 同步时间: ${p.upload_time}`);
@@ -355,7 +385,8 @@ function formatSongMatch(song: MaiSong, idx: SongIndex): string {
     `#${song.id} 《${song.title}》  by ${song.artist}`,
     `  分类: ${song.genre} | BPM: ${song.bpm} | 版本: ${song.version}`,
   ];
-  if (aliases.length) lines.push(`  别名: ${aliases.slice(0, 6).join(' / ')}${aliases.length > 6 ? ` ...(+${aliases.length - 6})` : ''}`);
+  if (aliases.length)
+    lines.push(`  别名: ${aliases.slice(0, 6).join(' / ')}${aliases.length > 6 ? ` ...(+${aliases.length - 6})` : ''}`);
   return lines.join('\n');
 }
 
@@ -376,9 +407,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   }
 
   const client = new MaimaiClient(cfg, {
-    warn: (m) => ctx.logger.warn(m),
-    error: (m) => ctx.logger.error(m),
-    debug: (m) => ctx.logger.debug?.(m),
+    warn: m => ctx.logger.warn(m),
+    error: m => ctx.logger.error(m),
+    debug: m => ctx.logger.debug?.(m),
   });
   const songCache: { ref: SongIndex | null } = { ref: null };
 
@@ -397,7 +428,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'maimai_get_player_info',
-          description: '查询舞萌 DX 玩家基本信息（昵称、DX Rating、好友码、称号等）。可指定 friend_code 或 qq；都不传时使用调用者已绑定的好友码。',
+          description:
+            '查询舞萌 DX 玩家基本信息（昵称、DX Rating、好友码、称号等）。可指定 friend_code 或 qq；都不传时使用调用者已绑定的好友码。',
           parameters: {
             type: 'object',
             properties: {
@@ -418,7 +450,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'maimai_get_b50',
-          description: '查询舞萌 DX 玩家的 Best 50（B35 旧版 + B15 现版）。可指定 friend_code 或 qq；都不传时使用调用者已绑定的好友码。',
+          description:
+            '查询舞萌 DX 玩家的 Best 50（B35 旧版 + B15 现版）。可指定 friend_code 或 qq；都不传时使用调用者已绑定的好友码。',
           parameters: {
             type: 'object',
             properties: {
@@ -441,7 +474,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'maimai_get_recents',
-          description: '查询舞萌 DX 玩家最近的游玩记录（按游玩时间降序）。可指定 friend_code 或 qq；都不传时使用调用者已绑定的好友码。',
+          description:
+            '查询舞萌 DX 玩家最近的游玩记录（按游玩时间降序）。可指定 friend_code 或 qq；都不传时使用调用者已绑定的好友码。',
           parameters: {
             type: 'object',
             properties: {
@@ -463,7 +497,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'maimai_search_song',
-          description: '在舞萌 DX 曲库中按曲名/艺术家/别名/曲目 ID 搜索曲目，返回匹配项的基本信息（曲目 ID、艺术家、版本、别名等）。',
+          description:
+            '在舞萌 DX 曲库中按曲名/艺术家/别名/曲目 ID 搜索曲目，返回匹配项的基本信息（曲目 ID、艺术家、版本、别名等）。',
           parameters: {
             type: 'object',
             properties: {
@@ -474,7 +509,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           },
         },
       },
-      handler: async (args) => handleSearchSong(client, songCache, args),
+      handler: async args => handleSearchSong(client, songCache, args),
     });
 
     // 绑定好友码
@@ -520,72 +555,69 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   //
   // 设计：Agent 端走结构化原生工具；用户端走指令。两者共用 handle* 函数。
   if (cfg.enableCommands) {
-    ctx.command(
-      'maimai',
-      '舞萌 DX 查分。子指令：info/b50/recent/song/bind/unbind',
-      async () => formatHelp(),
-      {
-        subcommands: [
-          {
-            name: 'info',
-            description: '查询玩家基本信息：/maimai info [friend_code|qq:<qq>]',
-            action: async (c) => {
-              const args = parseSubArgs(c);
-              const out = await handleGetPlayer(ctx, cfg, client, args, c);
-              return out;
-            },
+    ctx.command('maimai', '舞萌 DX 查分。子指令：info/b50/recent/song/bind/unbind', async () => formatHelp(), {
+      subcommands: [
+        {
+          name: 'info',
+          description: '查询玩家基本信息：/maimai info [friend_code|qq:<qq>]',
+          action: async c => {
+            const args = parseSubArgs(c);
+            const out = await handleGetPlayer(ctx, cfg, client, args, c);
+            return out;
           },
-          {
-            name: 'b50',
-            description: '查询 Best 50：/maimai b50 [friend_code|qq:<qq>] [--ap]',
-            action: async (c) => {
-              const args = parseSubArgs(c);
-              if (c.args.includes('--ap')) args.ap_only = true;
-              return handleGetBests(ctx, cfg, client, args, c);
-            },
+        },
+        {
+          name: 'b50',
+          description: '查询 Best 50：/maimai b50 [friend_code|qq:<qq>] [--ap]',
+          action: async c => {
+            const args = parseSubArgs(c);
+            if (c.args.includes('--ap')) args.ap_only = true;
+            return handleGetBests(ctx, cfg, client, args, c);
           },
-          {
-            name: 'recent',
-            description: '最近游玩：/maimai recent [friend_code|qq:<qq>] [N]',
-            action: async (c) => {
-              const args = parseSubArgs(c);
-              const n = c.args.find(a => /^\d+$/.test(a) && !a.startsWith('qq:'));
-              // 第一个数字若已被识别成 friend_code，剩下的数字才是 limit
-              const numArgs = c.args.filter(a => /^\d+$/.test(a));
-              if (numArgs.length >= 2) args.limit = parseInt(numArgs[1], 10);
-              else if (n && !args.friend_code) { /* 已设为 friend_code */ }
-              return handleGetRecents(ctx, cfg, client, args, c);
-            },
+        },
+        {
+          name: 'recent',
+          description: '最近游玩：/maimai recent [friend_code|qq:<qq>] [N]',
+          action: async c => {
+            const args = parseSubArgs(c);
+            const n = c.args.find(a => /^\d+$/.test(a) && !a.startsWith('qq:'));
+            // 第一个数字若已被识别成 friend_code，剩下的数字才是 limit
+            const numArgs = c.args.filter(a => /^\d+$/.test(a));
+            if (numArgs.length >= 2) args.limit = parseInt(numArgs[1], 10);
+            else if (n && !args.friend_code) {
+              /* 已设为 friend_code */
+            }
+            return handleGetRecents(ctx, cfg, client, args, c);
           },
-          {
-            name: 'song',
-            description: '搜索曲目：/maimai song <关键词>',
-            action: async (c) => {
-              const keyword = c.args.join(' ').trim();
-              if (!keyword) return '用法: /maimai song <关键词>';
-              return handleSearchSong(client, songCache, { keyword, limit: 5 });
-            },
+        },
+        {
+          name: 'song',
+          description: '搜索曲目：/maimai song <关键词>',
+          action: async c => {
+            const keyword = c.args.join(' ').trim();
+            if (!keyword) return '用法: /maimai song <关键词>';
+            return handleSearchSong(client, songCache, { keyword, limit: 5 });
           },
-          {
-            name: 'bind',
-            description: '绑定自己的好友码：/maimai bind <friend_code>',
-            action: async (c) => {
-              const fc = parseIntStrict(c.args[0]);
-              if (!fc) return '用法: /maimai bind <好友码>';
-              return handleBind(ctx, { friend_code: String(fc) }, c);
-            },
+        },
+        {
+          name: 'bind',
+          description: '绑定自己的好友码：/maimai bind <friend_code>',
+          action: async c => {
+            const fc = parseIntStrict(c.args[0]);
+            if (!fc) return '用法: /maimai bind <好友码>';
+            return handleBind(ctx, { friend_code: String(fc) }, c);
           },
-          {
-            name: 'unbind',
-            description: '解绑自己',
-            action: async (c) => {
-              const ok = await clearBoundFriendCode(ctx, c.platform, c.userId);
-              return ok ? '已解绑' : '解绑失败';
-            },
+        },
+        {
+          name: 'unbind',
+          description: '解绑自己',
+          action: async c => {
+            const ok = await clearBoundFriendCode(ctx, c.platform, c.userId);
+            return ok ? '已解绑' : '解绑失败';
           },
-        ],
-      },
-    );
+        },
+      ],
+    });
 
     ctx.logger.info('[maimai] 斜杠指令已注册');
   }

@@ -6,11 +6,16 @@ export function registerCalculusTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_calculus',
-        description: '数值微积分工具。支持: derivative(数值导数)、integral(数值定积分-Simpson法)、find_root(方程求根-牛顿法/二分法)、limit_sequence(数列极限近似)。表达式中用 x 表示自变量，支持与 math_eval 相同的函数和运算符。',
+        description:
+          '数值微积分工具。支持: derivative(数值导数)、integral(数值定积分-Simpson法)、find_root(方程求根-牛顿法/二分法)、limit_sequence(数列极限近似)。表达式中用 x 表示自变量，支持与 math_eval 相同的函数和运算符。',
         parameters: {
           type: 'object',
           properties: {
-            operation: { type: 'string', description: '操作类型', enum: ['derivative', 'integral', 'find_root', 'limit_sequence'] },
+            operation: {
+              type: 'string',
+              description: '操作类型',
+              enum: ['derivative', 'integral', 'find_root', 'limit_sequence'],
+            },
             expression: { type: 'string', description: '表达式（用 x 作为自变量），如 "x^2 + sin(x)"' },
             x: { type: 'number', description: '求导数 / 求根初始猜测点' },
             a: { type: 'number', description: '积分下限 / 二分法左端点' },
@@ -23,7 +28,7 @@ export function registerCalculusTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
         const expr = String(args.expression);
@@ -36,7 +41,8 @@ export function registerCalculusTools(ctx: Context): void {
             if (order === 1) {
               const h = 1e-7;
               // 五点差分公式 (更精确)
-              const d = (-evalFn(xVal + 2 * h) + 8 * evalFn(xVal + h) - 8 * evalFn(xVal - h) + evalFn(xVal - 2 * h)) / (12 * h);
+              const d =
+                (-evalFn(xVal + 2 * h) + 8 * evalFn(xVal + h) - 8 * evalFn(xVal - h) + evalFn(xVal - 2 * h)) / (12 * h);
               return JSON.stringify({ expression: expr, x: xVal, derivative: d, order: 1 });
             }
             if (order === 2) {
@@ -90,7 +96,7 @@ export function registerCalculusTools(ctx: Context): void {
               }
               x = x - fx / dfx;
             }
-            return JSON.stringify({ error: '牛顿法未收敛（1000 次迭代），当前 x = ' + x });
+            return JSON.stringify({ error: `牛顿法未收敛（1000 次迭代），当前 x = ${x}` });
           }
 
           case 'limit_sequence': {
@@ -118,14 +124,20 @@ export function registerCalculusTools(ctx: Context): void {
 
 // 二分法求根
 function bisection(f: (x: number) => number, a: number, b: number): number | null {
-  let fa = f(a), fb = f(b);
+  let fa = f(a),
+    fb = f(b);
   if (fa * fb > 0) return null;
   for (let i = 0; i < 100; i++) {
     const mid = (a + b) / 2;
     const fm = f(mid);
     if (Math.abs(fm) < 1e-12 || (b - a) / 2 < 1e-12) return mid;
-    if (fa * fm < 0) { b = mid; fb = fm; }
-    else { a = mid; fa = fm; }
+    if (fa * fm < 0) {
+      b = mid;
+      fb = fm;
+    } else {
+      a = mid;
+      fa = fm;
+    }
   }
   return (a + b) / 2;
 }
@@ -146,34 +158,68 @@ function buildEvalFunction(expr: string): (x: number) => number {
 // ===== 自包含的简化表达式求值器（与 lib/expression.ts 算法一致） =====
 
 const MATH_CONSTANTS: Record<string, number> = {
-  pi: Math.PI, PI: Math.PI, e: Math.E, E: Math.E,
-  tau: 2 * Math.PI, phi: (1 + Math.sqrt(5)) / 2, inf: Infinity,
+  pi: Math.PI,
+  PI: Math.PI,
+  e: Math.E,
+  E: Math.E,
+  tau: 2 * Math.PI,
+  phi: (1 + Math.sqrt(5)) / 2,
+  inf: Infinity,
 };
 
 const FN1: Record<string, (x: number) => number> = {
-  abs: Math.abs, ceil: Math.ceil, floor: Math.floor, round: Math.round,
-  trunc: Math.trunc, sign: Math.sign, sqrt: Math.sqrt, cbrt: Math.cbrt,
-  exp: Math.exp, log: Math.log, ln: Math.log, log2: Math.log2, log10: Math.log10,
-  sin: Math.sin, cos: Math.cos, tan: Math.tan,
-  asin: Math.asin, acos: Math.acos, atan: Math.atan,
-  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
-  asinh: Math.asinh, acosh: Math.acosh, atanh: Math.atanh,
+  abs: Math.abs,
+  ceil: Math.ceil,
+  floor: Math.floor,
+  round: Math.round,
+  trunc: Math.trunc,
+  sign: Math.sign,
+  sqrt: Math.sqrt,
+  cbrt: Math.cbrt,
+  exp: Math.exp,
+  log: Math.log,
+  ln: Math.log,
+  log2: Math.log2,
+  log10: Math.log10,
+  sin: Math.sin,
+  cos: Math.cos,
+  tan: Math.tan,
+  asin: Math.asin,
+  acos: Math.acos,
+  atan: Math.atan,
+  sinh: Math.sinh,
+  cosh: Math.cosh,
+  tanh: Math.tanh,
+  asinh: Math.asinh,
+  acosh: Math.acosh,
+  atanh: Math.atanh,
 };
 
 const FN2: Record<string, (a: number, b: number) => number> = {
-  pow: Math.pow, max: Math.max, min: Math.min, atan2: Math.atan2,
-  hypot: Math.hypot, mod: (a, b) => ((a % b) + b) % b,
+  pow: Math.pow,
+  max: Math.max,
+  min: Math.min,
+  atan2: Math.atan2,
+  hypot: Math.hypot,
+  mod: (a, b) => ((a % b) + b) % b,
   log_base: (x, base) => Math.log(x) / Math.log(base),
 };
 
 type TT = 'num' | 'id' | 'op' | '(' | ')' | ',' | 'eof';
-interface Tok { t: TT; v: string; n?: number; }
+interface Tok {
+  t: TT;
+  v: string;
+  n?: number;
+}
 
 function lex(s: string): Tok[] {
   const r: Tok[] = [];
   let i = 0;
   while (i < s.length) {
-    if (/\s/.test(s[i])) { i++; continue; }
+    if (/\s/.test(s[i])) {
+      i++;
+      continue;
+    }
     if (/[0-9.]/.test(s[i])) {
       let n = '';
       while (i < s.length && /[0-9.]/.test(s[i])) n += s[i++];
@@ -191,10 +237,25 @@ function lex(s: string): Tok[] {
       r.push({ t: 'id', v: id });
       continue;
     }
-    if ('+-*/%^'.includes(s[i])) { r.push({ t: 'op', v: s[i++] }); continue; }
-    if (s[i] === '(') { r.push({ t: '(', v: '(' }); i++; continue; }
-    if (s[i] === ')') { r.push({ t: ')', v: ')' }); i++; continue; }
-    if (s[i] === ',') { r.push({ t: ',', v: ',' }); i++; continue; }
+    if ('+-*/%^'.includes(s[i])) {
+      r.push({ t: 'op', v: s[i++] });
+      continue;
+    }
+    if (s[i] === '(') {
+      r.push({ t: '(', v: '(' });
+      i++;
+      continue;
+    }
+    if (s[i] === ')') {
+      r.push({ t: ')', v: ')' });
+      i++;
+      continue;
+    }
+    if (s[i] === ',') {
+      r.push({ t: ',', v: ',' });
+      i++;
+      continue;
+    }
     throw new Error(`未知字符: '${s[i]}'`);
   }
   r.push({ t: 'eof', v: '' });
@@ -210,7 +271,8 @@ function safeEvalSimple(expression: string): number {
   function parseE(): number {
     let r = parseT();
     while (pk().t === 'op' && '+-'.includes(pk().v)) {
-      const o = nx().v; const right = parseT();
+      const o = nx().v;
+      const right = parseT();
       r = o === '+' ? r + right : r - right;
     }
     return r;
@@ -219,30 +281,43 @@ function safeEvalSimple(expression: string): number {
   function parseT(): number {
     let r = parseP();
     while (pk().t === 'op' && '*/%'.includes(pk().v)) {
-      const o = nx().v; const right = parseP();
+      const o = nx().v;
+      const right = parseP();
       if (o === '*') r *= right;
-      else if (o === '/') { if (right === 0) throw new Error('除以零'); r /= right; }
-      else { if (right === 0) throw new Error('模零'); r %= right; }
+      else if (o === '/') {
+        if (right === 0) throw new Error('除以零');
+        r /= right;
+      } else {
+        if (right === 0) throw new Error('模零');
+        r %= right;
+      }
     }
     return r;
   }
 
   function parseP(): number {
     let base = parseU();
-    if (pk().t === 'op' && pk().v === '^') { nx(); base = Math.pow(base, parseP()); }
+    if (pk().t === 'op' && pk().v === '^') {
+      nx();
+      base = base ** parseP();
+    }
     return base;
   }
 
   function parseU(): number {
     if (pk().t === 'op' && '+-'.includes(pk().v)) {
-      const o = nx().v; return o === '-' ? -parseU() : parseU();
+      const o = nx().v;
+      return o === '-' ? -parseU() : parseU();
     }
     return parseA();
   }
 
   function parseA(): number {
     const tok = pk();
-    if (tok.t === 'num') { nx(); return tok.n!; }
+    if (tok.t === 'num') {
+      nx();
+      return tok.n!;
+    }
     if (tok.t === 'id') {
       nx();
       if (pk().t === '(') {
@@ -250,7 +325,10 @@ function safeEvalSimple(expression: string): number {
         const args: number[] = [];
         if (pk().t !== ')') {
           args.push(parseE());
-          while (pk().t === ',') { nx(); args.push(parseE()); }
+          while (pk().t === ',') {
+            nx();
+            args.push(parseE());
+          }
         }
         if (pk().t !== ')') throw new Error('缺少右括号');
         nx();
@@ -261,7 +339,13 @@ function safeEvalSimple(expression: string): number {
       if (tok.v in MATH_CONSTANTS) return MATH_CONSTANTS[tok.v];
       throw new Error(`未知标识符: ${tok.v}`);
     }
-    if (tok.t === '(') { nx(); const v = parseE(); if (pk().t !== ')') throw new Error('缺少右括号'); nx(); return v; }
+    if (tok.t === '(') {
+      nx();
+      const v = parseE();
+      if (pk().t !== ')') throw new Error('缺少右括号');
+      nx();
+      return v;
+    }
     throw new Error(`意外 token: ${tok.v}`);
   }
 

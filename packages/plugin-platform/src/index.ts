@@ -1,8 +1,15 @@
 import type { Context } from '@aalis/core';
-import { PlatformCapabilities } from './types.js';
 import { PlatformRouter } from './router.js';
+import { PlatformCapabilities } from './types.js';
 
-export type { PlatformConnection, PlatformSelfIdentity, PlatformAdapter, PlatformService, PlatformCapability, PlatformCapabilityRegistry } from './types.js';
+export type {
+  PlatformAdapter,
+  PlatformCapability,
+  PlatformCapabilityRegistry,
+  PlatformConnection,
+  PlatformSelfIdentity,
+  PlatformService,
+} from './types.js';
 export { PlatformCapabilities } from './types.js';
 
 // ----- 元数据 -----

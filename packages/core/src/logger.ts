@@ -35,7 +35,9 @@ export function getLogBuffer(): LogEntry[] {
 
 export function onLogEntry(listener: (entry: LogEntry) => void): () => void {
   logListeners.add(listener);
-  return () => { logListeners.delete(listener); };
+  return () => {
+    logListeners.delete(listener);
+  };
 }
 
 export function setConsoleLogSinkEnabled(enabled: boolean): void {

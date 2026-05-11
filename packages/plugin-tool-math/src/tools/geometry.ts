@@ -6,7 +6,8 @@ export function registerGeometryTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'math_geometry',
-        description: '几何计算工具。支持: distance(两点距离)、midpoint(中点)、triangle_area(三角形面积)、circle(圆的面积/周长)、rectangle(矩形面积/周长)、sphere(球体积/表面积)、cylinder(圆柱体积/表面积)、cone(圆锥体积/表面积)、polygon_area(多边形面积-Shoelace公式)、angle_between_vectors(向量夹角)、line_intersection(两直线交点)、point_to_line_distance(点到直线距离)',
+        description:
+          '几何计算工具。支持: distance(两点距离)、midpoint(中点)、triangle_area(三角形面积)、circle(圆的面积/周长)、rectangle(矩形面积/周长)、sphere(球体积/表面积)、cylinder(圆柱体积/表面积)、cone(圆锥体积/表面积)、polygon_area(多边形面积-Shoelace公式)、angle_between_vectors(向量夹角)、line_intersection(两直线交点)、point_to_line_distance(点到直线距离)',
         parameters: {
           type: 'object',
           properties: {
@@ -38,7 +39,7 @@ export function registerGeometryTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const op = String(args.operation);
 
@@ -70,7 +71,9 @@ export function registerGeometryTools(ctx: Context): void {
             if (p1 && p2 && p3) {
               if (p1.length === 2) {
                 // 2D Shoelace
-                const area = Math.abs((p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1])) / 2);
+                const area = Math.abs(
+                  (p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1])) / 2,
+                );
                 return JSON.stringify({ area });
               }
               // 3D cross product
@@ -81,7 +84,9 @@ export function registerGeometryTools(ctx: Context): void {
               return JSON.stringify({ area });
             }
             // 方式2: 三边长 (海伦公式)
-            const a = Number(args.a ?? 0), b = Number(args.b ?? 0), c = Number(args.c ?? 0);
+            const a = Number(args.a ?? 0),
+              b = Number(args.b ?? 0),
+              c = Number(args.c ?? 0);
             if (a > 0 && b > 0 && c > 0) {
               const s = (a + b + c) / 2;
               const area = Math.sqrt(s * (s - a) * (s - b) * (s - c));
@@ -102,7 +107,8 @@ export function registerGeometryTools(ctx: Context): void {
           }
 
           case 'rectangle': {
-            const w = Number(args.width ?? 0), h = Number(args.height ?? 0);
+            const w = Number(args.width ?? 0),
+              h = Number(args.height ?? 0);
             if (w <= 0 || h <= 0) return JSON.stringify({ error: '宽度和高度必须为正数' });
             return JSON.stringify({
               area: w * h,
@@ -121,7 +127,8 @@ export function registerGeometryTools(ctx: Context): void {
           }
 
           case 'cylinder': {
-            const r = Number(args.radius ?? 0), h = Number(args.height ?? 0);
+            const r = Number(args.radius ?? 0),
+              h = Number(args.height ?? 0);
             if (r <= 0 || h <= 0) return JSON.stringify({ error: '半径和高度必须为正数' });
             return JSON.stringify({
               volume: Math.PI * r * r * h,
@@ -131,7 +138,8 @@ export function registerGeometryTools(ctx: Context): void {
           }
 
           case 'cone': {
-            const r = Number(args.radius ?? 0), h = Number(args.height ?? 0);
+            const r = Number(args.radius ?? 0),
+              h = Number(args.height ?? 0);
             if (r <= 0 || h <= 0) return JSON.stringify({ error: '半径和高度必须为正数' });
             const slant = Number(args.slantHeight) || Math.sqrt(r * r + h * h);
             return JSON.stringify({
@@ -177,7 +185,7 @@ export function registerGeometryTools(ctx: Context): void {
             const radians = Math.acos(cosA);
             return JSON.stringify({
               radians,
-              degrees: radians * 180 / Math.PI,
+              degrees: (radians * 180) / Math.PI,
               cosine: cosA,
             });
           }

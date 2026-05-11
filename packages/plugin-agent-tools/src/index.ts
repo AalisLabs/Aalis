@@ -10,4 +10,3 @@ export function apply(ctx: Context): void {
   const tools = new ToolRegistry(ctx.logger);
   ctx.provide('tools', tools);
 }
-

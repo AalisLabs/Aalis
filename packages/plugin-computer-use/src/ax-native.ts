@@ -5,11 +5,11 @@
  * 仅在 macOS 上可用。
  */
 
-import { platform, arch } from 'node:os';
-import { createRequire } from 'node:module';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { arch, platform } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ──────────── 类型定义 ────────────
 
