@@ -1,3 +1,4 @@
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type {
   Context,
   ConfigSchema,
@@ -206,13 +207,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
-      const summaries = ctx.tools!.getSummaries(filter);
+      const summaries = ctx.getService<ToolService>('tools')!.getSummaries(filter);
       const allResults = searchTools(summaries, query);
       const paged = allResults.slice(offset, offset + effectiveLimit);
       // 搜索结果直接包含完整参数定义（parameters schema），配合 getDefinitions 提供
 
       // 获取完整工具定义（含 parameters schema），构建查找表
-      const defs = ctx.tools!.getDefinitions(filter);
+      const defs = ctx.getService<ToolService>('tools')!.getDefinitions(filter);
       const defMap = new Map(defs.map(d => [d.function.name, d]));
 
       const toolDetails = paged.map(t => {
