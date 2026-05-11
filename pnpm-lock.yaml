@@ -97,6 +97,9 @@ importers:
       '@aalis/plugin-image-recognition':
         specifier: workspace:*
         version: link:../plugin-image-recognition
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -122,6 +125,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -258,6 +264,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -335,6 +344,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       ws:
         specifier: ^8.18.0
         version: 8.20.0
@@ -373,6 +385,22 @@ importers:
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-llm-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -386,6 +414,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -460,6 +491,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -543,6 +577,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -578,6 +615,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -655,6 +695,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
@@ -863,6 +906,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -908,6 +954,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -989,6 +1038,9 @@ importers:
       '@aalis/plugin-authority':
         specifier: workspace:*
         version: link:../plugin-authority
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
