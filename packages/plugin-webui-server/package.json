@@ -23,12 +23,13 @@
     "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
     "express": "^5.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0",
     "@types/express": "^5.0.0",
-    "@types/ws": "^8.5.0"
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.7.0"
   }
 }

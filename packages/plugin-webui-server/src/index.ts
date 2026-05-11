@@ -105,17 +105,9 @@ interface WebUIConfig {
 
 // ===== WebSocket 消息协议 =====
 
-interface WSIncoming {
-  type: 'message' | 'subscribe_logs' | 'subscribe_session' | 'unsubscribe_session' | 'abort' | 'compress';
-  content?: string;
-  sessionId?: string;
-  /** base64 data URL 或 HTTP URL 列表 */
-  images?: string[];
-  /** 上传的文件列表 */
-  files?: Array<{ name: string; data: string; mimeType?: string }>;
-  /** 附件上传顺序 */
-  attachmentOrder?: Array<'image' | 'file'>;
-}
+// 入站消息类型 + 校验 schema 见 ./protocol.ts（zod 强校验）
+import { type WSIncoming, WSIncomingSchema } from './protocol.js';
+export { WSIncomingSchema, type WSIncoming } from './protocol.js';
 
 interface WSOutgoing {
   type:
@@ -735,7 +727,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ws.on('message', async data => {
       try {
-        const msg = JSON.parse(data.toString()) as WSIncoming;
+        const parseResult = WSIncomingSchema.safeParse(JSON.parse(data.toString()));
+        if (!parseResult.success) {
+          ctx.logger.warn(
+            `WebUI 收到协议违规消息: ${parseResult.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+          );
+          return;
+        }
+        const msg: WSIncoming = parseResult.data;
 
         if (msg.type === 'subscribe_logs') {
           logSubscribers.add(ws);
