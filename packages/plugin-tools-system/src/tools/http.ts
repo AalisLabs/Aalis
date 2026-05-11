@@ -9,7 +9,7 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { Context } from '@aalis/core';
-import type { StorageService } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 interface HttpConfig {
   defaultTimeout: number;
