@@ -15,7 +15,8 @@
     "express": "^5.1.0",
     "ws": "^8.18.0",
     "@aalis/plugin-session-manager": "workspace:*",
-    "@aalis/plugin-agent-default": "workspace:*"
+    "@aalis/plugin-agent-default": "workspace:*",
+    "@aalis/plugin-platform": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

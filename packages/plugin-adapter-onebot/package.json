@@ -13,7 +13,8 @@
     "ws": "^8.18.0",
     "@aalis/plugin-message-archive": "workspace:*",
     "@aalis/plugin-image-recognition": "workspace:*",
-    "@aalis/plugin-flow-control": "workspace:*"
+    "@aalis/plugin-flow-control": "workspace:*",
+    "@aalis/plugin-platform": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

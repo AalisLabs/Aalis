@@ -2,12 +2,14 @@ import type {
   App,
   Context,
   Logger,
+  PluginGroupInfo,
+} from '@aalis/core';
+import type {
   PlatformAdapter,
   PlatformConnection,
   PlatformSelfIdentity,
   PlatformService,
-  PluginGroupInfo,
-} from '@aalis/core';
+} from './types.js';
 
 /** 经 ctx.getAllServices 枚举出的 platform adapter 条目 */
 interface PlatformAdapterEntry {

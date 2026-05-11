@@ -7,7 +7,7 @@ import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
 import { PendingRegistrationBuffer } from './pending-buffer.js';
 import { probeCapability } from './types/capabilities.js';
-import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, PlatformAdapter, PlatformConnection, ToolService, CommandService, CapabilityList } from './types/index.js';
+import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, ToolService, CommandService, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
