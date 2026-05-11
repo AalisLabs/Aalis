@@ -116,29 +116,34 @@ declare module '@aalis/core' {
 import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('storage', StorageCapabilities.List, inst =>
-  typeof (inst as { list?: unknown }).list === 'function'
-    && typeof (inst as { listRoots?: unknown }).listRoots === 'function'
+  typeof (inst as { list?: unknown }).list === 'function' &&
+  typeof (inst as { listRoots?: unknown }).listRoots === 'function'
     ? true
-    : 'StorageService.listRoots()/list() are required for capability "list"');
+    : 'StorageService.listRoots()/list() are required for capability "list"',
+);
 
 registerCapabilityProbe('storage', StorageCapabilities.Read, inst =>
-  typeof (inst as { readFile?: unknown }).readFile === 'function'
-    && typeof (inst as { createReadStream?: unknown }).createReadStream === 'function'
+  typeof (inst as { readFile?: unknown }).readFile === 'function' &&
+  typeof (inst as { createReadStream?: unknown }).createReadStream === 'function'
     ? true
-    : 'StorageService.readFile()/createReadStream() are required for capability "read"');
+    : 'StorageService.readFile()/createReadStream() are required for capability "read"',
+);
 
 registerCapabilityProbe('storage', StorageCapabilities.Write, inst =>
-  typeof (inst as { writeFile?: unknown }).writeFile === 'function'
-    && typeof (inst as { rename?: unknown }).rename === 'function'
+  typeof (inst as { writeFile?: unknown }).writeFile === 'function' &&
+  typeof (inst as { rename?: unknown }).rename === 'function'
     ? true
-    : 'StorageService.writeFile()/rename() are required for capability "write"');
+    : 'StorageService.writeFile()/rename() are required for capability "write"',
+);
 
 registerCapabilityProbe('storage', StorageCapabilities.Delete, inst =>
   typeof (inst as { delete?: unknown }).delete === 'function'
     ? true
-    : 'StorageService.delete() is required for capability "delete"');
+    : 'StorageService.delete() is required for capability "delete"',
+);
 
 registerCapabilityProbe('storage', StorageCapabilities.LocalPath, inst =>
   typeof (inst as { resolveLocalPath?: unknown }).resolveLocalPath === 'function'
     ? true
-    : 'StorageService.resolveLocalPath() is required for capability "local-path"');
+    : 'StorageService.resolveLocalPath() is required for capability "local-path"',
+);

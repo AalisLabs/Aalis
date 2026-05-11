@@ -125,5 +125,3 @@ declare module '@aalis/core' {
     webuiPages?: WebuiPage[];
   }
 }
-
-export {};

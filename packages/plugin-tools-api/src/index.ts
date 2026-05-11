@@ -3,11 +3,12 @@ import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-author
 
 import type {
   RegisteredTool,
-  ToolDefinition,
+  SafetyLevel,
   ToolCallContext,
-  ToolSummary,
+  ToolDefinition,
   ToolGroupInfo,
-  SafetyLevel } from '@aalis/core';
+  ToolSummary,
+} from '@aalis/core';
 
 /**
  * 工具服务接口
@@ -16,10 +17,7 @@ import type {
  * 由 plugin-agent-tools 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
-  register(
-    tool: Omit<RegisteredTool, 'pluginName'>,
-    pluginName: string,
-  ): () => void;
+  register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
 
   /**
    * 获取工具定义列表
@@ -40,11 +38,7 @@ export interface ToolService {
     groups?: string[];
   }>;
 
-  execute(
-    toolName: string,
-    args: Record<string, unknown>,
-    callCtx: ToolCallContext,
-  ): Promise<string>;
+  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
 
   /** 注入执行守卫，用于权限等级与 dangerous 二次确认 */
   setExecutionGuard(guard: ExecutionGuard): void;

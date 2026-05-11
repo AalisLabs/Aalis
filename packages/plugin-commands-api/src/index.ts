@@ -2,13 +2,14 @@ import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-author
 // ===== 指令服务接口 =====
 
 import type {
-  CommandDefinition,
-  RegisteredCommand,
-  CommandContext,
-  SubcommandDefinition,
-  SafetyLevel,
   CommandArgumentDefinition,
-  CommandOptionDefinition } from '@aalis/core';
+  CommandContext,
+  CommandDefinition,
+  CommandOptionDefinition,
+  RegisteredCommand,
+  SafetyLevel,
+  SubcommandDefinition,
+} from '@aalis/core';
 
 /**
  * 指令树节点的扁平化视图（用于 WebUI 渲染、help 输出等）。
@@ -84,7 +85,7 @@ export interface CommandService {
   getAllNodes(): CommandNodeInfo[];
   /**
    * 根据路径解析具体节点，返回扁平视图。未命中返回 undefined。
-    * 路径示例：'clear' 或 'clear:all' 或 ['clear','all']。
+   * 路径示例：'clear' 或 'clear:all' 或 ['clear','all']。
    */
   getNode(path: string | string[]): CommandNodeInfo | undefined;
 

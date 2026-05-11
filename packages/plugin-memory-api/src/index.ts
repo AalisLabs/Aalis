@@ -16,7 +16,12 @@ export interface MemoryService {
   // ----- 范围查询（供向量检索的上下文窗口扩展使用） -----
 
   /** 范围查询：取指定会话内 [fromTs, toTs] 区间的消息（按时间升序，可按 role 过滤） */
-  getMessagesBySessionRange?(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]>;
+  getMessagesBySessionRange?(
+    sessionId: string,
+    fromTs: number,
+    toTs: number,
+    roles?: Array<Message['role']>,
+  ): Promise<Message[]>;
 
   // ----- 结构化元数据存储（供会话管理等场景使用） -----
 
@@ -92,22 +97,26 @@ declare module '@aalis/core' {
 import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('memory', MemoryCapabilities.History, inst =>
-  typeof (inst as { getHistory?: unknown }).getHistory === 'function'
-    && typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
+  typeof (inst as { getHistory?: unknown }).getHistory === 'function' &&
+  typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
     ? true
-    : 'MemoryService.saveMessage()/getHistory() are required for capability "history"');
+    : 'MemoryService.saveMessage()/getHistory() are required for capability "history"',
+);
 
 registerCapabilityProbe('memory', MemoryCapabilities.Metadata, inst =>
   typeof (inst as { saveMetadata?: unknown }).saveMetadata === 'function'
     ? true
-    : 'MemoryService.saveMetadata() is required for capability "metadata"');
+    : 'MemoryService.saveMetadata() is required for capability "metadata"',
+);
 
 registerCapabilityProbe('memory', MemoryCapabilities.ContentUpdate, inst =>
   typeof (inst as { updateMessageContent?: unknown }).updateMessageContent === 'function'
     ? true
-    : 'MemoryService.updateMessageContent() is required for capability "content-update"');
+    : 'MemoryService.updateMessageContent() is required for capability "content-update"',
+);
 
 registerCapabilityProbe('memory', MemoryCapabilities.MessageDelete, inst =>
   typeof (inst as { deleteMessagesByTimestamps?: unknown }).deleteMessagesByTimestamps === 'function'
     ? true
-    : 'MemoryService.deleteMessagesByTimestamps() is required for capability "message-delete"');
+    : 'MemoryService.deleteMessagesByTimestamps() is required for capability "message-delete"',
+);

@@ -6,9 +6,15 @@
   "scripts": {
     "build": "pnpm -r build && tsc",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "check:core": "node scripts/check-core-purity.mjs",
+    "check:biome": "biome check .",
+    "format": "biome format --write .",
+    "lint:fix": "biome check --write .",
+    "ci": "pnpm -r build && pnpm run check:core && pnpm run check:biome"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.15",
     "@types/node": "^22.19.15",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
@@ -25,12 +31,12 @@
     "@aalis/plugin-memory-vector": "workspace:*",
     "@aalis/plugin-openai": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-tools-system": "workspace:*",
     "@aalis/plugin-vectorstore-flat": "workspace:*",
     "@aalis/plugin-vectorstore-lancedb": "workspace:*",
-    "@aalis/plugin-tools-system": "workspace:*",
     "@aalis/plugin-websearch-serper": "workspace:*",
-    "@aalis/plugin-webui-server": "workspace:*",
-    "@aalis/plugin-webui-client": "workspace:*"
+    "@aalis/plugin-webui-client": "workspace:*",
+    "@aalis/plugin-webui-server": "workspace:*"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
