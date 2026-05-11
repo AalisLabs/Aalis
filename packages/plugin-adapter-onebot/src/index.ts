@@ -5,7 +5,6 @@ import { resolve } from 'node:path';
 import type { Context, ConfigSchema } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
-import type {  } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
@@ -18,6 +17,7 @@ import type {
   OneBotActionResponse,
   NormalizedRequestEvent,
 } from './types.js';
+import '@aalis/plugin-agent-api';
 import { collectForwardSegments, segmentsToText } from './types.js';
 import { expandForward, buildEnvelope } from './forward.js';
 import { OneBotV11 } from './v11.js';

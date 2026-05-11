@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-image-recognition",
+  "name": "@aalis/plugin-agent-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -10,10 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-default": "workspace:*",
-    "@aalis/plugin-llm-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*"
+    "@aalis/plugin-llm-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

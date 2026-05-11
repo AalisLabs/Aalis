@@ -12,7 +12,8 @@
     "@aalis/core": "workspace:*",
     "@aalis/plugin-message-archive": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*"
+    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
