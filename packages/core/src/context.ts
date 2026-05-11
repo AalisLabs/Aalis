@@ -18,7 +18,17 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  * 每个插件获得一个子 Context。所有通过子 Context 注册的副作用
  * (事件监听、服务注册、工具注册) 在 dispose 时自动清理。
  *
- * 设计参考 internal-framework 的 Context 模型，但增加了能力声明的支持。
+ * 采用 fork / inject / provide / middleware 等术语，
+ * 但 Aalis 在此之上引入若干差异化机制：
+ * - **能力声明框架**：`provide` 时声明 `capabilities`，编译期类型字面量收敛 +
+ *   dev 期 `probeCapability` 运行时校验声明与实现是否一致
+ * - **多提供者 + 能力匹配**：`getService` / `getAllServices` 支持按能力过滤，
+ *   服务可以并存多个实现
+ * - **`ScopedServiceContainer` + `ScopedConfigManager`**：`createScope()` 创建
+ *   读取 fallback、写入隔离的子作用域，用于会话/沙盒
+ * - **`whenService(name, cb)`**：服务就绪即触发的延迟订阅，回调可返回 cleanup
+ *   纳入 dispose 链
+ * - **`Context.extend(name, impl)`**：进程级方法注入，重名抛错避免静默覆盖
  */
 export class Context {
   readonly id: string;
