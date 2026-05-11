@@ -75,8 +75,7 @@ export type {
   PreprocessorFn,
   PreprocessorInfo,
   // 平台适配器（已迁出至 @aalis/plugin-platform）
-  // Gateway 服务（消息流编排中枢）
-  GatewayService,
+  // Gateway 服务（已迁出至 @aalis/plugin-gateway-api）
   PluginGroupInfo,
   // WebUI 页面骨架（WebUIService / WebuiComponent 等已迁出至 @aalis/plugin-webui-api）
   WebuiPage,

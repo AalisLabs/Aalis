@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Context, GatewayService, Message, IncomingMessage } from '@aalis/core';
+import type { Context, Message, IncomingMessage } from '@aalis/core';
+import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {
   BroadcastOptions,

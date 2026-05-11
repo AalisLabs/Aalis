@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*"
+    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-gateway-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
