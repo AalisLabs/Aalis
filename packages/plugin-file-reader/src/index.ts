@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, IncomingMessage, ToolCallContext, AgentService } from '@aalis/core';
+import type { Context, ConfigSchema, IncomingMessage, ToolCallContext } from '@aalis/core';
+import type { AgentService } from '@aalis/plugin-agent-api';
 import type {} from '@aalis/plugin-agent-default';
 
 // ===== 插件元数据 =====

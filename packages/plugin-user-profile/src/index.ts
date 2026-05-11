@@ -3,6 +3,7 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {  } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/core';
+import '@aalis/plugin-agent-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案

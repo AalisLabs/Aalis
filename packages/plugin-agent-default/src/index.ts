@@ -1,11 +1,10 @@
 import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Context, AgentService, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, PluginGroupInfo, App, ContentSegment } from '@aalis/core';
+import type { Context, IncomingMessage, OutgoingMessage, Message, ToolCallContext, ToolCall, ToolDefinition, ConfigSchema, PluginGroupInfo, App, ContentSegment } from '@aalis/core';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
 import type { Logger } from '@aalis/core';
-import type { PreprocessorFn, PreprocessorInfo } from './types.js';
-import './types.js'; // 触发 declare module 合并 AgentService 接口
+import type { AgentService, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager';

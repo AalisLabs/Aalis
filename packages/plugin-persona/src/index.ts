@@ -6,6 +6,8 @@ import type { PlatformService } from '@aalis/plugin-platform';
 import type { SessionManagerService } from '@aalis/plugin-session-manager';
 import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
+import '@aalis/plugin-agent-api';
+import '@aalis/plugin-memory-api';
 
 export type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
 

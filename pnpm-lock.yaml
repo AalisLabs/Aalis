@@ -91,6 +91,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-flow-control':
         specifier: workspace:*
         version: link:../plugin-flow-control
@@ -123,11 +126,30 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-agent-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-agent-default:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:*
         version: link:../plugin-gateway-api
@@ -203,6 +225,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
@@ -380,6 +405,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
@@ -443,6 +471,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
@@ -462,6 +493,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -475,6 +509,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default
@@ -612,6 +649,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
@@ -634,6 +674,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-embedding-api':
         specifier: workspace:*
         version: link:../plugin-embedding-api
@@ -767,6 +810,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
+      '@aalis/plugin-memory-api':
+        specifier: workspace:*
+        version: link:../plugin-memory-api
       '@aalis/plugin-platform':
         specifier: workspace:*
         version: link:../plugin-platform
@@ -868,6 +917,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
@@ -890,6 +942,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api
@@ -1037,6 +1092,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1085,6 +1143,9 @@ importers:
       '@aalis/plugin-flow-control':
         specifier: workspace:*
         version: link:../plugin-flow-control
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -1104,6 +1165,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
@@ -1252,6 +1316,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-agent-default':
         specifier: workspace:*
         version: link:../plugin-agent-default

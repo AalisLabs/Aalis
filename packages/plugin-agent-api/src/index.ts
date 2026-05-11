@@ -1,0 +1,86 @@
+// ----- Agent 服务接口（完整定义）-----
+//
+// 提供 AgentService 完整契约 + agent:* 钩子声明。
+// 默认实现由 @aalis/plugin-agent-default 提供。
+//
+// 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
+// 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
+
+import type { IncomingMessage, Message, ToolDefinition, ToolCallContext, PluginGroupInfo } from '@aalis/core';
+import type { ChatResponse } from '@aalis/plugin-llm-api';
+
+/**
+ * 消息预处理器函数
+ *
+ * 在消息到达 LLM 之前对 IncomingMessage 进行变换。
+ * 遵循洋葱模型：调用 `next()` 将控制权传递给下一个预处理器，
+ * 不调用则中断整个流程（LLM 不会被调用）。
+ */
+export type PreprocessorFn = (
+  message: IncomingMessage,
+  next: () => Promise<void>,
+) => Promise<void>;
+
+/** 已注册预处理器的元信息 */
+export interface PreprocessorInfo {
+  /** 预处理器名称 */
+  name: string;
+}
+
+/**
+ * Agent 服务 —— 对话编排引擎
+ *
+ * 负责接收用户消息并编排完整的对话流程：
+ * 组装系统提示、加载历史、调用 LLM、执行工具调用循环、发出回复。
+ *
+ * 默认由 plugin-agent-default 提供。
+ * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。
+ */
+export interface AgentService {
+  /** 处理一条传入消息，完成完整的对话循环 */
+  handleMessage(message: IncomingMessage): Promise<void>;
+  /** 中止指定会话的当前生成（可选实现） */
+  abort?(sessionId: string): void;
+
+  /**
+   * 注册消息预处理器
+   *
+   * 预处理器在 `agent:input:before` 阶段运行，可以修改 IncomingMessage（如将图片转文字、解析文件）。
+   * 底层通过中间件系统实现，priority 越大越先执行。
+   */
+  registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
+
+  /** 获取当前所有已注册预处理器的元信息 */
+  getPreprocessors?(): PreprocessorInfo[];
+
+  /**
+   * 获取 Agent 子系统的插件分组
+   *
+   * 基于 Agent 的 inject 声明，自动找出所有为 Agent 提供服务的插件，
+   * 返回分组信息供 Dashboard 使用。
+   */
+  getPluginGroups?(): PluginGroupInfo[];
+}
+
+// ----- Agent 域钩子声明（通过 declaration merging 注入 core 的 HookContextMap）-----
+
+declare module '@aalis/core' {
+  interface HookContextMap {
+    'agent:input:before': { message: IncomingMessage; metadata: Record<string, unknown> };
+    /**
+     * 一轮 agent 处理结束时触发（仿 Fastify `onResponse` 相位）。
+     */
+    'agent:turn:after': {
+      message: IncomingMessage;
+      reply: string;
+      outcome: 'replied' | 'silent' | 'aborted';
+      sessionId: string;
+      metadata: Record<string, unknown>;
+    };
+    'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
+    'agent:tool:after': { name: string; result: string; toolCallContext: ToolCallContext };
+    'agent:reply:before': { content: string; archiveContent?: string; sessionId: string; platform?: string; userId?: string; triggerType?: IncomingMessage['triggerType'] };
+    'agent:llm:before': { messages: Message[]; tools: ToolDefinition[]; sessionId?: string; userId?: string; platform?: string; triggerType?: IncomingMessage['triggerType'] };
+    'agent:llm:after': { response: ChatResponse; messages: Message[] };
+  }
+}
