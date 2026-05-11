@@ -120,7 +120,8 @@ export class App {
     this.packagesDir = resolve(process.cwd(), 'packages');
 
     // 4. 注册核心服务
-    this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
+    this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config', 'market'] });
+    this.ctx.provide('plugins', this.plugins, { capabilities: ['plugin-mgmt'] });
 
     // 5. 新服务注册时自动应用配置文件中的服务偏好
     this.ctx.on('service:registered', svcName => {
