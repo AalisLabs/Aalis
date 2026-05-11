@@ -1,4 +1,4 @@
-import { LLMCapabilities } from '@aalis/core';
+import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Context } from '@aalis/core';
 import { LLMRouter } from './router.js';
 

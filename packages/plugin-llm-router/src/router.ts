@@ -1,13 +1,12 @@
+import type { Context, Logger } from '@aalis/core';
 import type {
   ChatRequest,
   ChatResponse,
   ChatStreamChunk,
-  Context,
   LLMCapability,
   LLMService,
-  Logger,
   ModelInfo,
-} from '@aalis/core';
+} from '@aalis/plugin-llm-api';
 
 /** Provider 端额外可选方法（不强制写入 LLMService 主接口） */
 interface LLMProviderShape extends Partial<LLMService> {

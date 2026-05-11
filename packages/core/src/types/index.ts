@@ -68,9 +68,8 @@ export type { WebuiPage } from './webui.js';
 // App 服务
 export type { AppService } from './app.js';
 
-// LLM 服务
-export type { ChatRequest, ChatResponse, ChatStreamChunk, ModelInfo, LLMService, LLMCapability, LLMCapabilityRegistry } from './llm.js';
-export { LLMCapabilities } from './llm.js';
+// LLM 骨架（ChatRequest/ChatStreamChunk/ModelInfo/LLMService/LLMCapability 等已迁出至 @aalis/plugin-llm-api）
+export type { ChatResponse } from './llm.js';
 
 // 服务能力声明框架
 export type { ServiceCapabilityMap, CapabilityOf, CapabilityList, CapabilityProbe } from './capabilities.js';
