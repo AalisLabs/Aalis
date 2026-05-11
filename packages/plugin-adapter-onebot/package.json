@@ -16,7 +16,8 @@
     "@aalis/plugin-flow-control": "workspace:*",
     "@aalis/plugin-platform": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*"
+    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

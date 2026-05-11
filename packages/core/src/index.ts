@@ -56,7 +56,6 @@ export type {
   ConfigSchema,
   AalisEvents,
   HookContextMap,
-  InboundPhaseData,
   MiddlewareFn,
   MiddlewareNext,
   CommandContext,
@@ -70,10 +69,7 @@ export type {
   ExecutionGuardContext,
   ExecutionGuard,
   // 指令/工具服务（已迁出至 @aalis/plugin-commands-api / @aalis/plugin-tools-api）
-  // Agent 服务
-  AgentService,
-  PreprocessorFn,
-  PreprocessorInfo,
+  // Agent 服务（已迁出至 @aalis/plugin-agent-api）
   // 平台适配器（已迁出至 @aalis/plugin-platform）
   // Gateway 服务（已迁出至 @aalis/plugin-gateway-api）
   PluginGroupInfo,

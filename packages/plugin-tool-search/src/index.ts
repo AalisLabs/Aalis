@@ -6,6 +6,7 @@ import type {
   ToolCallContext,
   ToolSummary,
 } from '@aalis/core';
+import '@aalis/plugin-agent-api';
 
 // ===== 插件元数据 =====
 

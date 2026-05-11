@@ -11,7 +11,8 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-agent-default": "workspace:*",
-    "@aalis/plugin-gateway-api": "workspace:*"
+    "@aalis/plugin-gateway-api": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
