@@ -75,9 +75,7 @@ export type { ChatResponse } from './llm.js';
 export type { ServiceCapabilityMap, CapabilityOf, CapabilityList, CapabilityProbe } from './capabilities.js';
 export { registerCapabilityProbe, probeCapability } from './capabilities.js';
 
-// 记忆服务
-export type { MemoryService, MemoryCapability, MemoryCapabilityRegistry } from './memory.js';
-export { MemoryCapabilities } from './memory.js';
+// 记忆服务（已迁出至 @aalis/plugin-memory-api）
 
 // 存储服务
 export type {

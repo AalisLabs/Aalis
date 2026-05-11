@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "mongodb": "^6.12.0"
+    "mongodb": "^6.12.0",
+    "@aalis/plugin-memory-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

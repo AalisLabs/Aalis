@@ -1,4 +1,5 @@
-import type { Logger, MemoryService } from '@aalis/core';
+import type { Logger } from '@aalis/core';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 import { mkdir, readFile, writeFile, rm, stat, readdir, copyFile, rename } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
