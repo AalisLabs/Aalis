@@ -7,7 +7,6 @@ import type { Context, ConfigSchema, Message } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type {} from '@aalis/plugin-agent-default';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from './types.js';
 import { ImageRecognitionCapabilities } from './types.js';

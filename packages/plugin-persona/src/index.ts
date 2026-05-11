@@ -3,13 +3,26 @@ import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Context, ConfigSchema } from '@aalis/core';
 import type { PlatformService } from '@aalis/plugin-platform';
-import type { SessionManagerService } from '@aalis/plugin-session-manager';
 import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-memory-api';
 
 export type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
+
+/**
+ * 读取 session-manager 服务时使用的最小结构化切片
+ * —— 避免 import 全量 `SessionManagerService` 类型带来的包循环。
+ * `ctx.getService<T>(name)` 的 T 按设计是消费侧结构化窄化，
+ * 消费侧只需声明“我要用的那一部分”。
+ */
+interface SessionConfigResolver {
+  resolveConfig(sessionId: string, platform?: string): {
+    persona?: string;
+    disableOutputFormat?: boolean;
+    clientSideJsonRendering?: boolean;
+  };
+}
 
 // ===== 插件元数据 =====
 
@@ -530,7 +543,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
     let personaOpts: PersonaSessionOptions | undefined;
     try {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = ctx.getService<SessionConfigResolver>('session-manager');
         if (sm && data.sessionId) {
           const resolved = sm.resolveConfig(data.sessionId, data.platform);
           personaOpts = {

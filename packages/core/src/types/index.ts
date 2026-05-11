@@ -25,7 +25,6 @@ export type {
   ConfigSchema,
   ContentSegment,
   DependencyDeclaration,
-  ExtendDeclaration,
   InjectDeclaration,
   Message,
   MiddlewareFn,

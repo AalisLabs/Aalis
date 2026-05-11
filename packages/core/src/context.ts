@@ -4,7 +4,6 @@ import { HookRegistry } from './hooks.js';
 import { Logger } from './logger.js';
 import { ConfigManager, ScopedConfigManager } from './config.js';
 import { DisposableChain } from './disposable-chain.js';
-import { MixinRegistry } from './mixin-registry.js';
 import { probeCapability } from './types/capabilities.js';
 import type { AalisEvents, HookContextMap, MiddlewareFn, CapabilityList } from './types/index.js';
 
@@ -367,40 +366,6 @@ export class Context {
   // ctx.command —— 见 @aalis/plugin-commands-api + @aalis/plugin-commands
   //
   // core 不再直接知晓 tools / commands 概念。
-
-  // ---- Mixin ----
-
-  /**
-   * 将服务的方法代理到 Context 上
-   *
-   * 调用后，所有 Context 实例都可以直接调用这些方法，
-   * 实际执行时会通过 getService 获取当前活跃的服务实例。
-   *
-   * @example
-   * // 插件注册一个 scheduler 服务并 mixin 到 context
-   * ctx.provide('scheduler', schedulerImpl);
-   * ctx.mixin('scheduler', ['schedule', 'cron', 'interval']);
-   *
-   * // 其他插件可以直接使用:
-   * (ctx as any).schedule('daily', callback);
-   *
-   * // 配合 declare module 获得类型支持:
-   * // declare module '@aalis/core' {
-   * //   interface Context { schedule(name: string, cb: () => void): void; }
-   * // }
-   */
-  mixin(serviceName: string, methods: string[]): () => void {
-    const dispose = MixinRegistry.register(Context.prototype, serviceName, methods, this.id, this.logger);
-    this._disposables.push(dispose);
-    return dispose;
-  }
-
-  /**
-   * 获取当前所有 mixin 注册信息
-   */
-  static getMixins(): Array<{ service: string; methods: string[]; contextId: string }> {
-    return MixinRegistry.list();
-  }
 
   // ---- 中间件/钩子 ----
 
