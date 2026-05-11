@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import '@aalis/plugin-webui-api'; // declaration merging: PluginModule['webuiHandlers'] / subsystem
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
