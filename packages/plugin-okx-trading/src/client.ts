@@ -36,7 +36,11 @@ export class OkxClient {
   }
 
   /** 发送已签名的 API 请求 */
-  async request<T = unknown>(method: 'GET' | 'POST', path: string, params?: Record<string, unknown>): Promise<OkxApiResponse<T>> {
+  async request<T = unknown>(
+    method: 'GET' | 'POST',
+    path: string,
+    params?: Record<string, unknown>,
+  ): Promise<OkxApiResponse<T>> {
     const { credentials, baseUrl, demo, timeoutMs } = this.opts;
     let requestPath = path;
     let body = '';
@@ -140,17 +144,31 @@ export class OkxClient {
 
   /** 查询账户账单流水（近 7 天） */
   async getBills(instType?: string, ccy?: string, type?: string, limit?: number) {
-    return this.request('GET', '/api/v5/account/bills', { instType, ccy, type, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/account/bills', {
+      instType,
+      ccy,
+      type,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 查询账户账单流水（近 3 月） */
   async getBillsArchive(instType?: string, ccy?: string, type?: string, limit?: number) {
-    return this.request('GET', '/api/v5/account/bills-archive', { instType, ccy, type, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/account/bills-archive', {
+      instType,
+      ccy,
+      type,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 查询利息累计数据 */
   async getInterestAccrued(instId?: string, ccy?: string, limit?: number) {
-    return this.request('GET', '/api/v5/account/interest-accrued', { instId, ccy, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/account/interest-accrued', {
+      instId,
+      ccy,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 查询手续费费率 */
@@ -160,7 +178,11 @@ export class OkxClient {
 
   /** 查询持仓历史 */
   async getPositionsHistory(instType?: string, instId?: string, limit?: number) {
-    return this.request('GET', '/api/v5/account/positions-history', { instType, instId, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/account/positions-history', {
+      instType,
+      instId,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   // ========== 交易 ==========
@@ -181,17 +203,19 @@ export class OkxClient {
   }
 
   /** 批量下单（最多 20 笔） */
-  async batchPlaceOrders(orders: Array<{
-    instId: string;
-    tdMode: string;
-    side: string;
-    ordType: string;
-    sz: string;
-    px?: string;
-    posSide?: string;
-    tgtCcy?: string;
-    clOrdId?: string;
-  }>) {
+  async batchPlaceOrders(
+    orders: Array<{
+      instId: string;
+      tdMode: string;
+      side: string;
+      ordType: string;
+      sz: string;
+      px?: string;
+      posSide?: string;
+      tgtCcy?: string;
+      clOrdId?: string;
+    }>,
+  ) {
     return this.request('POST', '/api/v5/trade/batch-orders', orders as unknown as Record<string, unknown>);
   }
 
@@ -227,7 +251,11 @@ export class OkxClient {
 
   /** 查询历史订单（近 7 天） */
   async getOrderHistory(instType: string, instId?: string, limit?: number) {
-    return this.request('GET', '/api/v5/trade/orders-history', { instType, instId, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/trade/orders-history', {
+      instType,
+      instId,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 查询成交明细（近 3 天） */
@@ -237,7 +265,11 @@ export class OkxClient {
 
   /** 查询成交明细（近 3 月） */
   async getFillsArchive(instType: string, instId?: string, limit?: number) {
-    return this.request('GET', '/api/v5/trade/fills-archive', { instType, instId, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/trade/fills-archive', {
+      instType,
+      instId,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   // ========== 策略委托 ==========
@@ -272,7 +304,12 @@ export class OkxClient {
 
   /** 查询历史策略委托 */
   async getAlgoOrderHistory(ordType: string, instType?: string, instId?: string, limit?: number) {
-    return this.request('GET', '/api/v5/trade/orders-algo-history', { ordType, instType, instId, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/trade/orders-algo-history', {
+      ordType,
+      instType,
+      instId,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   // ========== 行情 ==========
@@ -294,7 +331,12 @@ export class OkxClient {
 
   /** 获取历史 K 线数据（更久远） */
   async getHistoryCandles(instId: string, bar?: string, limit?: number, after?: string) {
-    return this.request('GET', '/api/v5/market/history-candles', { instId, bar, limit: limit ? String(limit) : undefined, after });
+    return this.request('GET', '/api/v5/market/history-candles', {
+      instId,
+      bar,
+      limit: limit ? String(limit) : undefined,
+      after,
+    });
   }
 
   /** 获取深度数据 */
@@ -314,12 +356,20 @@ export class OkxClient {
 
   /** 获取指数 K 线 */
   async getIndexCandles(instId: string, bar?: string, limit?: number) {
-    return this.request('GET', '/api/v5/market/index-candles', { instId, bar, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/market/index-candles', {
+      instId,
+      bar,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 获取标记价格 K 线 */
   async getMarkPriceCandles(instId: string, bar?: string, limit?: number) {
-    return this.request('GET', '/api/v5/market/mark-price-candles', { instId, bar, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/market/mark-price-candles', {
+      instId,
+      bar,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 获取 24 小时总成交量 */
@@ -346,7 +396,10 @@ export class OkxClient {
 
   /** 获取历史资金费率 */
   async getFundingRateHistory(instId: string, limit?: number) {
-    return this.request('GET', '/api/v5/public/funding-rate-history', { instId, limit: limit ? String(limit) : undefined });
+    return this.request('GET', '/api/v5/public/funding-rate-history', {
+      instId,
+      limit: limit ? String(limit) : undefined,
+    });
   }
 
   /** 获取限价 */
@@ -435,7 +488,11 @@ export class OkxClient {
 
   /** 精英交易员多空比 */
   async getTopTraderLongShortRatio(ccy: string, period?: string, instType?: string) {
-    return this.request('GET', '/api/v5/rubik/stat/contracts/long-short-account-ratio-contract-top-trader', { ccy, period, instType });
+    return this.request('GET', '/api/v5/rubik/stat/contracts/long-short-account-ratio-contract-top-trader', {
+      ccy,
+      period,
+      instType,
+    });
   }
 
   /** Taker 主动买卖量 */

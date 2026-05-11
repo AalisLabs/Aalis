@@ -1,7 +1,7 @@
-import type { RequestHandler } from 'express';
-import type { IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
+import type { IncomingMessage } from 'node:http';
 import type { Logger } from '@aalis/core';
+import type { RequestHandler } from 'express';
 
 const COOKIE_NAME = 'aalis_webui_token';
 
@@ -12,7 +12,11 @@ function parseCookieValue(header: string | undefined, name: string): string | un
     if (eq < 0) continue;
     const k = pair.slice(0, eq).trim();
     if (k === name) {
-      try { return decodeURIComponent(pair.slice(eq + 1).trim()); } catch { return undefined; }
+      try {
+        return decodeURIComponent(pair.slice(eq + 1).trim());
+      } catch {
+        return undefined;
+      }
     }
   }
   return undefined;
@@ -68,7 +72,7 @@ f.addEventListener('submit',async ev=>{
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 export interface AuthSystem {
@@ -91,7 +95,7 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
 
   const middleware: RequestHandler = (req, res, next) => {
     const url = req.path;
-    const qToken = typeof req.query?.token === 'string' ? req.query.token as string : undefined;
+    const qToken = typeof req.query?.token === 'string' ? (req.query.token as string) : undefined;
 
     // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径
     if (req.method === 'GET' && qToken) {
@@ -134,7 +138,10 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
     }
 
     // 5. 已认证 → 放行
-    if (authed) { next(); return; }
+    if (authed) {
+      next();
+      return;
+    }
 
     // 6. 未认证：API 一律 401
     if (url.startsWith('/api/')) {
@@ -172,5 +179,7 @@ export function openBrowser(url: string): void {
     } else {
       spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
