@@ -1,9 +1,29 @@
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/core';
+import { Context } from '@aalis/core';
+import type { RegisteredTool, ToolGroupInfo, ToolService } from '@aalis/plugin-tools-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { registerShellTools } from './tools/shell.js';
 import { registerFileTools } from './tools/file.js';
 import { registerSystemTools } from './tools/system.js';
 import { registerHttpTools } from './tools/http.js';
+import '@aalis/plugin-commands-api';
+
+// ===== Context 便捷方法注入（internal-framework 风格） =====
+//
+// 模块加载即生效，幂等：重新导入本插件不会重复注入。
+// 注入后任何 Context 都可调用 ctx.registerTool / ctx.registerToolGroup；
+// 若 tools 服务尚不可用，调用会通过 whenService 自动延迟到服务就绪后执行。
+if (!('registerTool' in Context.prototype)) {
+  Context.extend('registerTool', function (this: Context, tool: Omit<RegisteredTool, 'pluginName'>): () => void {
+    return this.whenService<ToolService>('tools', (svc) => svc.register(tool, this.id));
+  });
+  Context.extend('registerToolGroup', function (
+    this: Context,
+    group: Omit<ToolGroupInfo, 'pluginName'>,
+  ): () => void {
+    return this.whenService<ToolService>('tools', (svc) => svc.registerGroup(group, this.id));
+  });
+}
 
 // ===== 插件元数据 =====
 

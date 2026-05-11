@@ -5,9 +5,8 @@ import { Logger } from './logger.js';
 import { ConfigManager } from './config.js';
 import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
-import { PendingRegistrationBuffer } from './pending-buffer.js';
 import { probeCapability } from './types/capabilities.js';
-import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, CapabilityList } from './types/index.js';
+import type { AalisEvents, HookContextMap, MiddlewareFn, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
@@ -34,9 +33,6 @@ export class Context {
   private _parent?: Context;
   private _disposed = false;
 
-  /** 注册缓冲：服务尚不可用时暂存，待服务就绪后自动刷入 */
-  private _pending: PendingRegistrationBuffer;
-
   constructor(options: {
     id: string;
     events: EventBus;
@@ -54,13 +50,6 @@ export class Context {
     this.config = options.config;
     this._parent = options.parent;
     this._disposables = new DisposableChain(this.logger);
-    this._pending = new PendingRegistrationBuffer(
-      this.id,
-      this._services,
-      this.logger,
-      this._disposables,
-      (event, handler) => this.on(event, handler),
-    );
   }
 
   // ---- 子系统访问（供高级插件检查/包装用） ----
@@ -355,74 +344,13 @@ export class Context {
     };
   }
 
-  // ---- 注册缓冲（服务延迟就绪支持，逻辑已抽到 PendingRegistrationBuffer） ----
-
-  // ---- 工具 ----
-
-  /**
-   * 注册 AI 工具（便捷方法）
-   * 若 tools 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
-   */
-  registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void {
-    return this._pending.registerTool(tool);
-  }
-
-  /**
-   * 注册工具分组（便捷方法）
-   * 若 tools 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
-   */
-  registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
-    return this._pending.registerToolGroup(group);
-  }
-
-  // ---- 指令 ----
-
-  /**
-   * 注册斜杠指令（便捷方法）
-   * 若 commands 服务尚不可用，注册将被缓冲并在服务就绪后自动刷入。
-   *
-   * @example
-   * ctx.command('ping', '测试连通性', async () => 'pong!');
-   *
-   * ctx.command('echo', '回显消息', async (cmdCtx) => {
-   *   return cmdCtx.args.join(' ') || '(空)';
-   * });
-   */
-  command(
-    name: string,
-    description: string,
-    action: (ctx: CommandContext) => Promise<string | void>,
-    options?: {
-      authority?: number;
-      safety?: SafetyLevel;
-      permissions?: string[];
-      /** 位置参数声明 */
-      arguments?: CommandDefinition['arguments'];
-      /** 选项声明 */
-      options?: CommandDefinition['options'];
-      /** 自定义用法文本 */
-      usage?: string;
-      /** 示例 */
-      examples?: string[];
-      /** 子指令树（递归）。详见 CommandDefinition.subcommands */
-      subcommands?: SubcommandDefinition[];
-    },
-  ): () => void {
-    const def: CommandDefinition = {
-      name,
-      description,
-      action,
-      authority: options?.authority,
-      safety: options?.safety,
-      permissions: options?.permissions,
-      arguments: options?.arguments,
-      options: options?.options,
-      usage: options?.usage,
-      examples: options?.examples,
-      subcommands: options?.subcommands,
-    };
-    return this._pending.registerCommand(def);
-  }
+  // ---- 业务便捷方法已迁出 ----
+  //
+  // ctx.registerTool / registerToolGroup —— 见 @aalis/plugin-tools-api +
+  //   @aalis/plugin-tools-system（通过 Context.extend 注入到 prototype）
+  // ctx.command —— 见 @aalis/plugin-commands-api + @aalis/plugin-commands
+  //
+  // core 不再直接知晓 tools / commands 概念。
 
   // ---- Mixin ----
 
@@ -514,7 +442,6 @@ export class Context {
 
     // 逆序执行清理（unregisterByContext 已整体移除服务，provide 的 dispose 会安全跳过）
     this._disposables.dispose();
-    this._pending.clear();
 
     // 发射服务注销事件，让 App 的自动恢复监听器能响应
     for (const svc of removedServices) {

@@ -4,6 +4,7 @@ import type { Context, ConfigSchema, ToolCallContext } from '@aalis/core';
 import type { PlatformAdapter, PlatformService } from '@aalis/plugin-platform';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

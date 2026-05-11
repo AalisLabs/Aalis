@@ -1,15 +1,145 @@
-import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
-// ===== 指令服务接口 =====
+// ===== 指令服务接口与契约类型 =====
+//
+// 本包提供斜杠指令系统的全部"非实现"契约：
+// - 指令数据结构（CommandDefinition / SubcommandDefinition / RegisteredCommand 等）
+// - 指令执行上下文（CommandContext）
+// - 服务接口（CommandService）
+// - Context 便捷方法的类型增强（ctx.command）
+//
+// 实现见 @aalis/plugin-commands。
 
-import type {
-  CommandArgumentDefinition,
-  CommandContext,
-  CommandDefinition,
-  CommandOptionDefinition,
-  RegisteredCommand,
-  SafetyLevel,
-  SubcommandDefinition,
-} from '@aalis/core';
+import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
+import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+
+/** 指令执行上下文 */
+export interface CommandContext {
+  /** 会话 ID */
+  sessionId: string;
+  /** 平台标识 */
+  platform: string;
+  /** 用户 ID */
+  userId?: string;
+  /** 指令参数 (命令名之后的部分，按空格分割) */
+  args: string[];
+  /** 按指令声明解析出的具名位置参数 */
+  operands?: Record<string, unknown>;
+  /** 按指令声明解析出的选项参数 */
+  options?: Record<string, unknown>;
+  /** 原始输入文本 */
+  raw: string;
+  /** 跳过安全等级检查（用于工具桥接等已在上层完成检查的场景） */
+  skipSafetyCheck?: boolean;
+}
+
+export type CommandValueType = 'string' | 'number' | 'boolean' | 'enum' | 'string[]';
+
+export interface CommandArgumentDefinition {
+  /** 位置参数名称 */
+  name: string;
+  /** 参数类型。text 会消费剩余所有参数并拼回文本 */
+  type: 'string' | 'number' | 'boolean' | 'text';
+  /** 参数描述 */
+  description?: string;
+  /** 是否必填 */
+  required?: boolean;
+  /** 是否消费剩余所有参数 */
+  variadic?: boolean;
+}
+
+export interface CommandOptionDefinition {
+  /** 长选项名，如 type 对应 --type */
+  name: string;
+  /** 短别名或额外长别名，如 t 对应 -t */
+  alias?: string | string[];
+  /** 选项类型 */
+  type: CommandValueType;
+  /** 选项描述 */
+  description?: string;
+  /** enum 可选值 */
+  choices?: string[];
+  /** 默认值 */
+  default?: unknown;
+  /** 是否必填 */
+  required?: boolean;
+}
+
+/** 指令定义 */
+export interface CommandDefinition {
+  /** 指令名称 (不含前缀斜杠) */
+  name: string;
+  /** 指令描述 */
+  description: string;
+  /** 最低权限等级 (默认 1) */
+  authority?: number;
+  /** 安全级别 (默认 'safe') */
+  safety?: SafetyLevel;
+  /** 静态权限标识，用于透明展示与策略匹配 */
+  permissions?: PermissionId[];
+  /** 位置参数声明 */
+  arguments?: CommandArgumentDefinition[];
+  /** 选项声明 */
+  options?: CommandOptionDefinition[];
+  /** 自定义用法文本 */
+  usage?: string;
+  /** 示例 */
+  examples?: string[];
+  /**
+   * 执行函数
+   * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
+   *
+   * 当存在 subcommands 时，未匹配到任何子指令名的情况下回退到此 action（args 保持原样）。
+   * 若希望"必须指定子指令"，可在此返回 usage 提示。
+   */
+  action: (ctx: CommandContext) => Promise<string | void>;
+  /**
+   * 子指令树（递归）。匹配规则：
+   * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层并消耗一个 arg
+   * - 命中后调用对应节点的 action（args 为剩余部分）
+   * - 任意一层未命中则停在当前节点，调用其 action
+   *
+   * 权限/安全等级继承：子节点未声明时，继承自其有效父节点（含 override）。
+   * Override 键为冒号拼接的完整路径，如 `clear:all`、`db:migrate:up`。
+   */
+  subcommands?: SubcommandDefinition[];
+}
+
+/**
+ * 子指令定义（递归）
+ *
+ * 与 CommandDefinition 类似，但：
+ * - action 可选：仅作为分组节点（仅含 subcommands）时省略，调用即返回 usage 提示
+ * - 子指令的 pluginName 隐式继承自根指令
+ */
+export interface SubcommandDefinition {
+  /** 子指令名称（不含前缀） */
+  name: string;
+  /** 子指令描述 */
+  description: string;
+  /** 最低权限等级；未声明则继承父节点的有效值 */
+  authority?: number;
+  /** 安全级别；未声明则继承父节点的有效值 */
+  safety?: SafetyLevel;
+  /** 静态权限标识；会与父节点权限共同生效 */
+  permissions?: PermissionId[];
+  /** 位置参数声明 */
+  arguments?: CommandArgumentDefinition[];
+  /** 选项声明 */
+  options?: CommandOptionDefinition[];
+  /** 自定义用法文本 */
+  usage?: string;
+  /** 示例 */
+  examples?: string[];
+  /** 执行函数；省略时该节点仅作为分组，调用回退为 usage 提示 */
+  action?: (ctx: CommandContext) => Promise<string | void>;
+  /** 进一步的孙级子指令 */
+  subcommands?: SubcommandDefinition[];
+}
+
+/** 已注册的指令 */
+export interface RegisteredCommand extends CommandDefinition {
+  /** 注册此指令的插件名 */
+  pluginName: string;
+}
 
 /**
  * 指令树节点的扁平化视图（用于 WebUI 渲染、help 输出等）。
@@ -98,5 +228,43 @@ export interface CommandService {
   setExecutionGuard(guard: ExecutionGuard): void;
 }
 
-// 重新导出便于消费方一处引入
-export type { SubcommandDefinition };
+// ===== Context 便捷方法增强 =====
+//
+// 实现由 @aalis/plugin-commands 在激活时通过 `Context.extend(...)` 注入到
+// `Context.prototype`，本声明合并提供编译期类型签名。
+declare module '@aalis/core' {
+  interface Context {
+    /**
+     * 注册斜杠指令的便捷方法。
+     *
+     * 若 commands 服务尚不可用，会通过 `whenService` 自动延迟到服务就绪后注册。
+     *
+     * @example
+     * ctx.command('ping', '测试连通性', async () => 'pong!');
+     *
+     * @requires plugin-commands 已加载（提供该方法的运行时实现）
+     */
+    command(
+      name: string,
+      description: string,
+      action: (ctx: CommandContext) => Promise<string | void>,
+      options?: {
+        authority?: number;
+        safety?: SafetyLevel;
+        permissions?: PermissionId[];
+        /** 位置参数声明 */
+        arguments?: CommandArgumentDefinition[];
+        /** 选项声明 */
+        options?: CommandOptionDefinition[];
+        /** 自定义用法文本 */
+        usage?: string;
+        /** 示例 */
+        examples?: string[];
+        /** 子指令树（递归）。详见 CommandDefinition.subcommands */
+        subcommands?: SubcommandDefinition[];
+      },
+    ): () => void;
+  }
+}
+// 抑制"未使用"警告：Context 在 declare module 块中被引用
+export type _ContextExtended = Context;

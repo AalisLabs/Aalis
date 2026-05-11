@@ -1,4 +1,5 @@
-import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, SafetyLevel, CommandArgumentDefinition, CommandOptionDefinition } from '@aalis/core';
+import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, CommandArgumentDefinition, CommandOptionDefinition } from '@aalis/plugin-commands-api';
+import type { SafetyLevel } from '@aalis/core';
 import type { CommandService, CommandNodeInfo } from '@aalis/plugin-commands-api';
 import type { Logger } from '@aalis/core';
 import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
