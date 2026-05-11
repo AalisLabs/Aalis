@@ -1,8 +1,15 @@
-import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, CommandArgumentDefinition, CommandOptionDefinition } from '@aalis/plugin-commands-api';
-import type { SafetyLevel } from '@aalis/core';
-import type { CommandService, CommandNodeInfo } from '@aalis/plugin-commands-api';
-import type { Logger } from '@aalis/core';
-import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
+import type { Logger, SafetyLevel } from '@aalis/core';
+import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+import type {
+  CommandArgumentDefinition,
+  CommandContext,
+  CommandDefinition,
+  CommandNodeInfo,
+  CommandOptionDefinition,
+  CommandService,
+  RegisteredCommand,
+  SubcommandDefinition,
+} from '@aalis/plugin-commands-api';
 
 /** 内部解析结果：从根指令出发匹配 args 后，得到的最深节点及其链路上下文 */
 interface ResolvedCommand {
@@ -68,7 +75,9 @@ export class CommandRegistry implements CommandService {
     this.overrides.set(name, override);
   }
 
-  removeOverride(name: string): void { this.overrides.delete(name); }
+  removeOverride(name: string): void {
+    this.overrides.delete(name);
+  }
 
   getOverrides(): Record<string, { authority?: number; safety?: string }> {
     const result: Record<string, { authority?: number; safety?: string }> = {};
@@ -78,7 +87,9 @@ export class CommandRegistry implements CommandService {
 
   // ---- 执行守卫 ----
 
-  setExecutionGuard(guard: ExecutionGuard): void { this._guard = guard; }
+  setExecutionGuard(guard: ExecutionGuard): void {
+    this._guard = guard;
+  }
 
   // ---- 解析 / 注册 / 查询 ----
 
@@ -116,12 +127,18 @@ export class CommandRegistry implements CommandService {
     };
   }
 
-  has(name: string): boolean { return this.commands.has(name); }
+  has(name: string): boolean {
+    return this.commands.has(name);
+  }
 
-  get(name: string): RegisteredCommand | undefined { return this.commands.get(name); }
+  get(name: string): RegisteredCommand | undefined {
+    return this.commands.get(name);
+  }
 
   /** 仅返回根指令，保持向后兼容（Dashboard 概览等旧调用方） */
-  getAll(): RegisteredCommand[] { return [...this.commands.values()]; }
+  getAll(): RegisteredCommand[] {
+    return [...this.commands.values()];
+  }
 
   /**
    * 沿 args 逐层匹配子指令，返回最深命中的节点及链路信息。
@@ -223,7 +240,17 @@ export class CommandRegistry implements CommandService {
     });
     if (node.subcommands) {
       for (const sub of node.subcommands) {
-        this.walkNode(sub, [...path, sub.name], effAuthority, effSafety, permissions, depth + 1, pluginName, false, out);
+        this.walkNode(
+          sub,
+          [...path, sub.name],
+          effAuthority,
+          effSafety,
+          permissions,
+          depth + 1,
+          pluginName,
+          false,
+          out,
+        );
       }
     }
   }
@@ -278,10 +305,12 @@ export class CommandRegistry implements CommandService {
   private formatUsage(node: CommandDefinition | SubcommandDefinition, path: string[]): string {
     const head = `${this.prefix}${path.join(' ')}`;
     if (node.usage) return node.usage;
-    const argText = node.arguments?.map(arg => {
-      const body = arg.variadic ? `...${arg.name}` : arg.name;
-      return arg.required ? `<${body}>` : `[${body}]`;
-    }).join(' ');
+    const argText = node.arguments
+      ?.map(arg => {
+        const body = arg.variadic ? `...${arg.name}` : arg.name;
+        return arg.required ? `<${body}>` : `[${body}]`;
+      })
+      .join(' ');
     const optionText = node.options && node.options.length > 0 ? ' [options]' : '';
     const subText = node.subcommands && node.subcommands.length > 0 && !node.action ? ' <subcommand>' : '';
     const lines = [`用法: ${head}${subText}${argText ? ` ${argText}` : ''}${optionText}`, ''];
@@ -289,13 +318,17 @@ export class CommandRegistry implements CommandService {
     if (node.arguments && node.arguments.length > 0) {
       lines.push('', '参数：');
       for (const arg of node.arguments) {
-        lines.push(`  ${arg.required ? '<' : '['}${arg.name}${arg.required ? '>' : ']'} — ${arg.description ?? arg.type}`);
+        lines.push(
+          `  ${arg.required ? '<' : '['}${arg.name}${arg.required ? '>' : ']'} — ${arg.description ?? arg.type}`,
+        );
       }
     }
     if (node.options && node.options.length > 0) {
       lines.push('', '选项：');
       for (const opt of node.options) {
-        const aliases = toAliases(opt).map(a => a.length === 1 ? `-${a}` : `--${a}`).join(', ');
+        const aliases = toAliases(opt)
+          .map(a => (a.length === 1 ? `-${a}` : `--${a}`))
+          .join(', ');
         const choices = opt.choices && opt.choices.length > 0 ? ` (${opt.choices.join('|')})` : '';
         lines.push(`  --${opt.name}${aliases ? `, ${aliases}` : ''} — ${opt.description ?? opt.type}${choices}`);
       }
@@ -313,7 +346,11 @@ export class CommandRegistry implements CommandService {
     return lines.join('\n');
   }
 
-  private parseArgsForNode(node: CommandDefinition | SubcommandDefinition, path: string[], rawArgs: string[]): ParsedCommandArgs | string {
+  private parseArgsForNode(
+    node: CommandDefinition | SubcommandDefinition,
+    path: string[],
+    rawArgs: string[],
+  ): ParsedCommandArgs | string {
     const optionDefs = node.options ?? [];
     const argumentDefs = node.arguments ?? [];
     const options = this.defaultOptions(optionDefs);
@@ -369,7 +406,8 @@ export class CommandRegistry implements CommandService {
     const operands: Record<string, unknown> = {};
     let cursor = 0;
     for (const def of argumentDefs) {
-      const values = def.variadic || def.type === 'text' ? positionals.slice(cursor) : positionals.slice(cursor, cursor + 1);
+      const values =
+        def.variadic || def.type === 'text' ? positionals.slice(cursor) : positionals.slice(cursor, cursor + 1);
       if (values.length === 0) {
         if (def.required) return `缺少必填参数: ${def.name}`;
         continue;
@@ -466,8 +504,14 @@ function parseOptionValue(def: CommandOptionDefinition, rawValue: string, previo
     return rawValue;
   }
   if (def.type === 'string[]') {
-    const current = Array.isArray(previous) ? previous as string[] : [];
-    return [...current, ...rawValue.split(',').map(s => s.trim()).filter(Boolean)];
+    const current = Array.isArray(previous) ? (previous as string[]) : [];
+    return [
+      ...current,
+      ...rawValue
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean),
+    ];
   }
   return rawValue;
 }

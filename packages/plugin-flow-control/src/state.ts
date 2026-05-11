@@ -1,7 +1,7 @@
 // ----- FlowSessionState 内部实现 + 衰减/计数算法 -----
 
-import type { FlowSessionStateSnapshot } from './types.js';
 import type { FlowControlConfig } from './config.js';
+import type { FlowSessionStateSnapshot } from './types.js';
 
 export interface MutableFlowSessionState {
   messageCount: number;
@@ -55,7 +55,11 @@ export function applyScoreDecay(state: MutableFlowSessionState, cfg: FlowControl
 }
 
 /** 计算单条入站对评分的增量（受用户交互权重影响） */
-export function calculateScoreIncrement(state: MutableFlowSessionState, cfg: FlowControlConfig, userId?: string): number {
+export function calculateScoreIncrement(
+  state: MutableFlowSessionState,
+  cfg: FlowControlConfig,
+  userId?: string,
+): number {
   const base = 1.0 / Math.max(1, cfg.fixedInterval);
   let userWeight = 1.0;
   if (userId) {

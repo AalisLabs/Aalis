@@ -69,10 +69,10 @@ const FUNCTIONS_2: Record<string, (a: number, b: number) => number> = {
 
 // ===== 可变参数函数 =====
 const FUNCTIONS_VAR: Record<string, (args: number[]) => number> = {
-  sum: (args) => args.reduce((a, b) => a + b, 0),
-  avg: (args) => args.reduce((a, b) => a + b, 0) / args.length,
-  mean: (args) => args.reduce((a, b) => a + b, 0) / args.length,
-  product: (args) => args.reduce((a, b) => a * b, 1),
+  sum: args => args.reduce((a, b) => a + b, 0),
+  avg: args => args.reduce((a, b) => a + b, 0) / args.length,
+  mean: args => args.reduce((a, b) => a + b, 0) / args.length,
+  product: args => args.reduce((a, b) => a * b, 1),
 };
 
 // ===== 辅助数学函数 =====
@@ -88,7 +88,9 @@ function factorial(n: number): number {
 function gcd(a: number, b: number): number {
   a = Math.abs(Math.round(a));
   b = Math.abs(Math.round(b));
-  while (b) { [a, b] = [b, a % b]; }
+  while (b) {
+    [a, b] = [b, a % b];
+  }
   return a;
 }
 
@@ -99,22 +101,24 @@ function lcm(a: number, b: number): number {
 }
 
 function comb(n: number, k: number): number {
-  n = Math.round(n); k = Math.round(k);
+  n = Math.round(n);
+  k = Math.round(k);
   if (k < 0 || k > n) return 0;
   if (k === 0 || k === n) return 1;
   if (k > n - k) k = n - k;
   let result = 1;
   for (let i = 0; i < k; i++) {
-    result = result * (n - i) / (i + 1);
+    result = (result * (n - i)) / (i + 1);
   }
   return Math.round(result);
 }
 
 function perm(n: number, k: number): number {
-  n = Math.round(n); k = Math.round(k);
+  n = Math.round(n);
+  k = Math.round(k);
   if (k < 0 || k > n) return 0;
   let result = 1;
-  for (let i = 0; i < k; i++) result *= (n - i);
+  for (let i = 0; i < k; i++) result *= n - i;
   return result;
 }
 
@@ -137,12 +141,17 @@ function tokenize(expr: string): Token[] {
     const ch = expr[i];
 
     // 空白
-    if (/\s/.test(ch)) { i++; continue; }
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
 
     // 数字（含小数、科学记号）
     if (/[0-9.]/.test(ch)) {
       let num = '';
-      while (i < len && /[0-9.]/.test(expr[i])) { num += expr[i++]; }
+      while (i < len && /[0-9.]/.test(expr[i])) {
+        num += expr[i++];
+      }
       // 科学记号 e/E
       if (i < len && /[eE]/.test(expr[i])) {
         num += expr[i++];
@@ -150,7 +159,7 @@ function tokenize(expr: string): Token[] {
         while (i < len && /[0-9]/.test(expr[i])) num += expr[i++];
       }
       const val = parseFloat(num);
-      if (isNaN(val)) throw new Error(`无效数字: ${num}`);
+      if (Number.isNaN(val)) throw new Error(`无效数字: ${num}`);
       tokens.push({ type: 'number', value: num, num: val });
       continue;
     }
@@ -177,9 +186,21 @@ function tokenize(expr: string): Token[] {
       continue;
     }
 
-    if (ch === '(') { tokens.push({ type: 'lparen', value: '(' }); i++; continue; }
-    if (ch === ')') { tokens.push({ type: 'rparen', value: ')' }); i++; continue; }
-    if (ch === ',') { tokens.push({ type: 'comma', value: ',' }); i++; continue; }
+    if (ch === '(') {
+      tokens.push({ type: 'lparen', value: '(' });
+      i++;
+      continue;
+    }
+    if (ch === ')') {
+      tokens.push({ type: 'rparen', value: ')' });
+      i++;
+      continue;
+    }
+    if (ch === ',') {
+      tokens.push({ type: 'comma', value: ',' });
+      i++;
+      continue;
+    }
 
     throw new Error(`未知字符: '${ch}' (位置 ${i})`);
   }
@@ -198,6 +219,11 @@ class Parser {
   }
 
   private peek(): Token {
+    return this.tokens[this.pos];
+  }
+
+  /** 返回当前未消费的 token（用于外部检查表达式是否已完全解析） */
+  current(): Token {
     return this.tokens[this.pos];
   }
 
@@ -227,7 +253,7 @@ class Parser {
   // term = power (('*' | '/' | '%') power)*
   private parseTerm(): number {
     let result = this.parsePower();
-    while (this.peek().type === 'op' && ('*/%'.includes(this.peek().value))) {
+    while (this.peek().type === 'op' && '*/%'.includes(this.peek().value)) {
       const op = this.consume().value;
       const right = this.parsePower();
       if (op === '*') result *= right;
@@ -248,7 +274,7 @@ class Parser {
     if (this.peek().type === 'op' && this.peek().value === '^') {
       this.consume();
       const exp = this.parsePower(); // 右结合递归
-      base = Math.pow(base, exp);
+      base = base ** exp;
     }
     return base;
   }
@@ -333,7 +359,7 @@ class Parser {
 // ===== 公共 API =====
 
 export function safeEval(expression: string): number {
-  if (!expression || !expression.trim()) throw new Error('表达式为空');
+  if (!expression?.trim()) throw new Error('表达式为空');
   if (expression.length > 1000) throw new Error('表达式过长（最大 1000 字符）');
 
   const tokens = tokenize(expression);
@@ -341,7 +367,7 @@ export function safeEval(expression: string): number {
   const result = parser.parseExpr();
 
   // 确保整个表达式已消费
-  const remaining = tokens[parser['pos']];
+  const remaining = parser.current();
   if (remaining && remaining.type !== 'eof') {
     throw new Error(`表达式末尾有多余内容: '${remaining.value}'`);
   }
@@ -350,7 +376,12 @@ export function safeEval(expression: string): number {
 }
 
 /** 获取所有支持的函数/常量列表 */
-export function listFunctions(): { constants: string[]; functions1: string[]; functions2: string[]; functionsVar: string[] } {
+export function listFunctions(): {
+  constants: string[];
+  functions1: string[];
+  functions2: string[];
+  functionsVar: string[];
+} {
   return {
     constants: Object.keys(CONSTANTS),
     functions1: Object.keys(FUNCTIONS_1),

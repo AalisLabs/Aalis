@@ -3,10 +3,9 @@
  */
 
 import type { Context } from '@aalis/core';
-import type { PlatformAdapter, MouseButton } from '../platform.js';
+import type { MouseButton, PlatformAdapter } from '../platform.js';
 
 export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void {
-
   // ── mouse_drag ──
   ctx.registerTool({
     definition: {
@@ -31,12 +30,15 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const button = (args.button as MouseButton) || 'left';
         await adapter.mouseDrag(
-          args.fromX as number, args.fromY as number,
-          args.toX as number, args.toY as number, button
+          args.fromX as number,
+          args.fromY as number,
+          args.toX as number,
+          args.toY as number,
+          button,
         );
         return JSON.stringify({
           ok: true,
@@ -55,8 +57,7 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
       type: 'function',
       function: {
         name: 'mouse_scroll',
-        description:
-          '在指定位置滚动鼠标滚轮。deltaY 正值向下滚动，负值向上滚动。deltaX 正值向右，负值向左。',
+        description: '在指定位置滚动鼠标滚轮。deltaY 正值向下滚动，负值向上滚动。deltaX 正值向右，负值向左。',
         parameters: {
           type: 'object',
           properties: {
@@ -69,7 +70,7 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const deltaX = (args.deltaX as number) || 0;
         const deltaY = (args.deltaY as number) || 0;
@@ -80,5 +81,4 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
       }
     },
   });
-
 }

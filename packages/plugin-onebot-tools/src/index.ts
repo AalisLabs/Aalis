@@ -1,10 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
-import type { PlatformAdapter, PlatformService } from '@aalis/plugin-platform';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { PlatformAdapter, PlatformService } from '@aalis/plugin-platform';
+import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -19,7 +19,12 @@ export const configSchema: ConfigSchema = {
   groupManagement: {
     label: '群管理工具',
     fields: {
-      enabled: { type: 'boolean', label: '启用群管理工具', default: true, description: '禁言、踢人、设置群名片、撤回消息等' },
+      enabled: {
+        type: 'boolean',
+        label: '启用群管理工具',
+        default: true,
+        description: '禁言、踢人、设置群名片、撤回消息等',
+      },
     },
   },
   groupInfo: {
@@ -43,14 +48,29 @@ export const configSchema: ConfigSchema = {
   messaging: {
     label: '主动发送消息',
     fields: {
-      enabled: { type: 'boolean', label: '启用主动发送', default: true, description: '允许 agent 向任意私聊 / 群聊主动发送消息（用于代为转达、跨会话通知等场景）' },
-      allowCrossSession: { type: 'boolean', label: '允许跨会话发送', default: true, description: '关闭后只能向当前会话发送（等价于普通回复，几乎没有意义，仅作降权开关）' },
+      enabled: {
+        type: 'boolean',
+        label: '启用主动发送',
+        default: true,
+        description: '允许 agent 向任意私聊 / 群聊主动发送消息（用于代为转达、跨会话通知等场景）',
+      },
+      allowCrossSession: {
+        type: 'boolean',
+        label: '允许跨会话发送',
+        default: true,
+        description: '关闭后只能向当前会话发送（等价于普通回复，几乎没有意义，仅作降权开关）',
+      },
     },
   },
   sessionHistory: {
     label: '会话历史读取',
     fields: {
-      enabled: { type: 'boolean', label: '启用 OneBot 会话历史读取', default: true, description: '允许按群号/QQ 号读取对应 OneBot 会话的近期历史' },
+      enabled: {
+        type: 'boolean',
+        label: '启用 OneBot 会话历史读取',
+        default: true,
+        description: '允许按群号/QQ 号读取对应 OneBot 会话的近期历史',
+      },
       maxLimit: { type: 'number', label: '单次最多读取条数', default: 30 },
       allowGroupReadPrivate: { type: 'boolean', label: '允许群聊读取私聊历史', default: false },
       allowCrossSelf: { type: 'boolean', label: '允许跨机器人账号读取', default: false },
@@ -65,7 +85,13 @@ export const defaultConfig = {
   account: { enabled: true },
   interaction: { enabled: true },
   messaging: { enabled: true, allowCrossSession: true },
-  sessionHistory: { enabled: true, maxLimit: 30, allowGroupReadPrivate: false, allowCrossSelf: false, includeArchivedDefault: false },
+  sessionHistory: {
+    enabled: true,
+    maxLimit: 30,
+    allowGroupReadPrivate: false,
+    allowCrossSelf: false,
+    includeArchivedDefault: false,
+  },
 };
 
 // ===== 辅助函数 =====
@@ -84,9 +110,7 @@ function parseOneBotSession(sessionId: string): { selfId: string; detailType: st
 /** 从上下文中找到支持 callAction 的 OneBot 平台适配器 */
 function findOneBotAdapter(ctx: Context): PlatformAdapter | undefined {
   const pm = ctx.getService<PlatformService>('platform');
-  return pm?.getAdapters().find(
-    a => a.platform === 'onebot' && typeof a.callAction === 'function',
-  );
+  return pm?.getAdapters().find(a => a.platform === 'onebot' && typeof a.callAction === 'function');
 }
 
 /** 检查工具调用是否来自 OneBot 群聊 */
@@ -173,7 +197,8 @@ function extractCqImageRefs(content: string): ForwardImageRef[] {
     for (const part of match[1].split(',')) {
       const eq = part.indexOf('=');
       if (eq <= 0) continue;
-      params[part.slice(0, eq)] = part.slice(eq + 1)
+      params[part.slice(0, eq)] = part
+        .slice(eq + 1)
         .replace(/&amp;/g, '&')
         .replace(/&#91;/g, '[')
         .replace(/&#93;/g, ']')
@@ -214,7 +239,7 @@ function getForwardMessages(data: unknown): unknown[] {
 }
 
 function getForwardNodeData(item: unknown): Record<string, unknown> {
-  const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+  const node = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
   if (node.type === 'node' && node.data && typeof node.data === 'object') {
     return node.data as Record<string, unknown>;
   }
@@ -222,7 +247,7 @@ function getForwardNodeData(item: unknown): Record<string, unknown> {
 }
 
 function getForwardNodeContent(item: unknown): unknown {
-  const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+  const node = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
   const nodeData = getForwardNodeData(item);
   return nodeData.content ?? node.content ?? nodeData.message ?? node.message;
 }
@@ -233,11 +258,15 @@ function collectForwardImageRefs(data: unknown, limit: number): ForwardImageRef[
     .flatMap(item => extractImageRefsFromContent(getForwardNodeContent(item)));
 }
 
-async function resolveForwardImageSource(ctx: Context, callCtx: ToolCallContext, ref: ForwardImageRef): Promise<string> {
+async function resolveForwardImageSource(
+  ctx: Context,
+  callCtx: ToolCallContext,
+  ref: ForwardImageRef,
+): Promise<string> {
   if (/^(https?:|data:)/i.test(ref.source)) return ref.source;
 
   try {
-    const imageData = await callAction(ctx, callCtx, 'get_image', { file: ref.source }) as Record<string, unknown>;
+    const imageData = (await callAction(ctx, callCtx, 'get_image', { file: ref.source })) as Record<string, unknown>;
     const resolvedSource = imageData.url ?? imageData.file ?? ref.source;
     if (typeof resolvedSource === 'string') {
       if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
@@ -253,7 +282,12 @@ async function resolveForwardImageSource(ctx: Context, callCtx: ToolCallContext,
   return dataUri ?? ref.source;
 }
 
-async function recognizeForwardImages(ctx: Context, callCtx: ToolCallContext, data: unknown, limit: number): Promise<ForwardFormatContext> {
+async function recognizeForwardImages(
+  ctx: Context,
+  callCtx: ToolCallContext,
+  data: unknown,
+  limit: number,
+): Promise<ForwardFormatContext> {
   const refs = collectForwardImageRefs(data, limit);
   const imageDescriptions = new Map<string, string>();
   if (refs.length === 0) return { imageDescriptions };
@@ -285,34 +319,49 @@ function formatMessageContent(content: unknown, context?: ForwardFormatContext):
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
 
-  return content.map(seg => {
-    if (!seg || typeof seg !== 'object') return String(seg ?? '');
-    const segment = seg as { type?: string; data?: Record<string, unknown> };
-    const data = segment.data ?? {};
-    switch (segment.type) {
-      case 'text': return String(data.text ?? '');
-      case 'at': return data.qq === 'all' ? '@全体成员' : `@${String(data.qq ?? '')}`;
-      case 'image': {
-        const source = imageSourceFromSegment(data);
-        const desc = source ? context?.imageDescriptions.get(imageRefKey({ source, label: '[图片]', segment: data })) : undefined;
-        return desc ? `[图片: ${desc}]` : '[图片]';
+  return content
+    .map(seg => {
+      if (!seg || typeof seg !== 'object') return String(seg ?? '');
+      const segment = seg as { type?: string; data?: Record<string, unknown> };
+      const data = segment.data ?? {};
+      switch (segment.type) {
+        case 'text':
+          return String(data.text ?? '');
+        case 'at':
+          return data.qq === 'all' ? '@全体成员' : `@${String(data.qq ?? '')}`;
+        case 'image': {
+          const source = imageSourceFromSegment(data);
+          const desc = source
+            ? context?.imageDescriptions.get(imageRefKey({ source, label: '[图片]', segment: data }))
+            : undefined;
+          return desc ? `[图片: ${desc}]` : '[图片]';
+        }
+        case 'face':
+          return `[表情:${String(data.id ?? '')}]`;
+        case 'reply':
+          return '';
+        case 'forward':
+          return data.id ? `[合并转发:${String(data.id)}]` : '[合并转发]';
+        case 'record':
+          return '[语音]';
+        case 'video':
+          return '[视频]';
+        case 'share':
+          return `[分享:${String(data.title ?? '')}]`;
+        case 'json':
+          return '[JSON卡片]';
+        case 'xml':
+          return '[XML卡片]';
+        default:
+          return segment.type ? `[${segment.type}]` : '';
       }
-      case 'face': return `[表情:${String(data.id ?? '')}]`;
-      case 'reply': return '';
-      case 'forward': return data.id ? `[合并转发:${String(data.id)}]` : '[合并转发]';
-      case 'record': return '[语音]';
-      case 'video': return '[视频]';
-      case 'share': return `[分享:${String(data.title ?? '')}]`;
-      case 'json': return '[JSON卡片]';
-      case 'xml': return '[XML卡片]';
-      default: return segment.type ? `[${segment.type}]` : '';
-    }
-  }).join('');
+    })
+    .join('');
 }
 
 function formatCqMessageContent(content: string, context?: ForwardFormatContext): string {
   let imageIndex = 0;
-  return content.replace(/\[CQ:image,([^\]]+)\]/g, (raw) => {
+  return content.replace(/\[CQ:image,([^\]]+)\]/g, raw => {
     const refs = extractCqImageRefs(raw);
     const ref = refs[0];
     if (!ref) return '[图片]';
@@ -327,18 +376,25 @@ function formatForwardMessage(data: unknown, limit: number, context?: ForwardFor
 
   const messages = rawMessages.slice(0, limit);
   const lines = messages.map((item, index) => {
-    const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    const node = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
     const nodeData = getForwardNodeData(item);
-    const sender = node.sender && typeof node.sender === 'object'
-      ? node.sender as Record<string, unknown>
-      : undefined;
-    const name = String(nodeData.nickname ?? sender?.nickname ?? nodeData.name ?? nodeData.user_id ?? sender?.user_id ?? `节点${index + 1}`);
+    const sender =
+      node.sender && typeof node.sender === 'object' ? (node.sender as Record<string, unknown>) : undefined;
+    const name = String(
+      nodeData.nickname ??
+        sender?.nickname ??
+        nodeData.name ??
+        nodeData.user_id ??
+        sender?.user_id ??
+        `节点${index + 1}`,
+    );
     const userId = nodeData.user_id ?? nodeData.uin ?? sender?.user_id;
     const prefix = userId != null ? `${name}(${String(userId)})` : name;
     const rawContent = getForwardNodeContent(item);
-    const content = typeof rawContent === 'string'
-      ? formatCqMessageContent(rawContent, context)
-      : formatMessageContent(rawContent, context);
+    const content =
+      typeof rawContent === 'string'
+        ? formatCqMessageContent(rawContent, context)
+        : formatMessageContent(rawContent, context);
     return `${index + 1}. ${prefix}: ${content || '[空消息]'}`;
   });
 
@@ -362,11 +418,11 @@ async function getGroupMemberInfo(
   userId: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    return await callAction(ctx, callCtx, 'get_group_member_info', {
+    return (await callAction(ctx, callCtx, 'get_group_member_info', {
       group_id: Number(groupId),
       user_id: Number(userId),
       no_cache: true,
-    }) as Record<string, unknown>;
+    })) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -415,8 +471,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const groupedCtx = new Proxy(ctx, {
     get(target, prop) {
       if (prop === 'registerTool') {
-        return (tool: Parameters<Context['registerTool']>[0]) =>
-          target.registerTool({ ...tool, groups: ['onebot'] });
+        return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups: ['onebot'] });
       }
       return Reflect.get(target, prop, target);
     },
@@ -440,18 +495,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
     const cfg = {
-      groupManagement: { enabled: true, ...(config.groupManagement as Record<string, unknown> ?? {}) },
-      groupInfo: { enabled: true, ...(config.groupInfo as Record<string, unknown> ?? {}) },
-      account: { enabled: true, ...(config.account as Record<string, unknown> ?? {}) },
-      interaction: { enabled: true, ...(config.interaction as Record<string, unknown> ?? {}) },
-      messaging: { enabled: true, allowCrossSession: true, ...(config.messaging as Record<string, unknown> ?? {}) },
+      groupManagement: { enabled: true, ...((config.groupManagement as Record<string, unknown>) ?? {}) },
+      groupInfo: { enabled: true, ...((config.groupInfo as Record<string, unknown>) ?? {}) },
+      account: { enabled: true, ...((config.account as Record<string, unknown>) ?? {}) },
+      interaction: { enabled: true, ...((config.interaction as Record<string, unknown>) ?? {}) },
+      messaging: { enabled: true, allowCrossSession: true, ...((config.messaging as Record<string, unknown>) ?? {}) },
       sessionHistory: {
         enabled: true,
         maxLimit: 30,
         allowGroupReadPrivate: false,
         allowCrossSelf: false,
         includeArchivedDefault: false,
-        ...(config.sessionHistory as Record<string, unknown> ?? {}),
+        ...((config.sessionHistory as Record<string, unknown>) ?? {}),
       },
     };
 
@@ -460,12 +515,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (cfg.account.enabled) registerAccountTools(groupedCtx);
     if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
     if (cfg.messaging.enabled) registerMessagingTools(groupedCtx, !!cfg.messaging.allowCrossSession);
-    if (cfg.sessionHistory.enabled) registerSessionHistoryTools(groupedCtx, {
-      maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 30)),
-      allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
-      allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
-      includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
-    });
+    if (cfg.sessionHistory.enabled)
+      registerSessionHistoryTools(groupedCtx, {
+        maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 30)),
+        allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
+        allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
+        includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
+      });
     registerRequestTools(groupedCtx);
   });
 }
@@ -473,7 +529,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 // ===== 群管理工具 =====
 
 function registerGroupManagementTools(ctx: Context): void {
-
   // ---- 群禁言（单人）----
   ctx.registerTool({
     definition: {
@@ -510,9 +565,7 @@ function registerGroupManagementTools(ctx: Context): void {
         const shutUp = Number(info.shut_up_timestamp);
         const now = Math.floor(Date.now() / 1000);
         if (duration === 0) {
-          return shutUp <= now
-            ? `已解除 ${args.user_id} 的禁言`
-            : `解除禁言指令已发送，但用户仍在禁言中`;
+          return shutUp <= now ? `已解除 ${args.user_id} 的禁言` : `解除禁言指令已发送，但用户仍在禁言中`;
         } else {
           return shutUp > now
             ? `已禁言 ${args.user_id}，时长 ${duration} 秒`
@@ -606,7 +659,7 @@ function registerGroupManagementTools(ctx: Context): void {
     },
     handler: async (args, callCtx) => {
       const session = requireOneBotSession(callCtx);
-      const groupId = args.group_id ? String(args.group_id) : (session.detailType === 'group' ? session.targetId : '');
+      const groupId = args.group_id ? String(args.group_id) : session.detailType === 'group' ? session.targetId : '';
       if (!groupId) return '请提供 group_id，或在要退出的群聊中调用此工具';
 
       await callAction(ctx, callCtx, 'set_group_leave', {
@@ -740,9 +793,7 @@ function registerGroupManagementTools(ctx: Context): void {
         user_id: Number(args.user_id),
         enable: !!args.enable,
       });
-      return args.enable
-        ? `已将 ${args.user_id} 设为管理员`
-        : `已取消 ${args.user_id} 的管理员`;
+      return args.enable ? `已将 ${args.user_id} 设为管理员` : `已取消 ${args.user_id} 的管理员`;
     },
   });
 
@@ -752,7 +803,8 @@ function registerGroupManagementTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_delete_msg',
-        description: '撤回一条消息（群聊或私聊均可）。需要 message_id（来自历史消息或事件）。机器人对他人消息的撤回需要管理员权限。',
+        description:
+          '撤回一条消息（群聊或私聊均可）。需要 message_id（来自历史消息或事件）。机器人对他人消息的撤回需要管理员权限。',
         parameters: {
           type: 'object',
           properties: {
@@ -779,18 +831,21 @@ function registerGroupManagementTools(ctx: Context): void {
 // ===== 群信息查询工具 =====
 
 function registerGroupInfoTools(ctx: Context): void {
-
   // ---- 查看合并转发 ----
   ctx.registerTool({
     definition: {
       type: 'function',
       function: {
         name: 'onebot_get_forward_msg',
-        description: '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，必须把尖括号里的 id 字符串作为参数 id 传入；不要使用 message_id、forward_id、res_id 或 m_resid。',
+        description:
+          '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，必须把尖括号里的 id 字符串作为参数 id 传入；不要使用 message_id、forward_id、res_id 或 m_resid。',
         parameters: {
           type: 'object',
           properties: {
-            id: { type: 'string', description: '合并转发 ID（forward 消息段的 data.id），与 OneBot v11 标准参数名一致' },
+            id: {
+              type: 'string',
+              description: '合并转发 ID（forward 消息段的 data.id），与 OneBot v11 标准参数名一致',
+            },
             limit: { type: 'number', description: '最多返回多少条节点，默认 30' },
           },
           required: ['id'],
@@ -799,7 +854,8 @@ function registerGroupInfoTools(ctx: Context): void {
     },
     handler: async (args, callCtx) => {
       requireOneBotSession(callCtx);
-      if (!args.id) return '参数错误：缺少 id（合并转发 ID）。请使用 <forward id="..."> 中的 id 字符串，不要使用 message_id。';
+      if (!args.id)
+        return '参数错误：缺少 id（合并转发 ID）。请使用 <forward id="..."> 中的 id 字符串，不要使用 message_id。';
       const forwardId = String(args.id);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
@@ -883,7 +939,8 @@ function registerGroupInfoTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_group_member_list',
-        description: '查询当前群的成员列表，支持按昵称/群名片/QQ号关键词搜索、按角色筛选、分页返回。大群（数百上千人）务必使用 keyword 或 role 过滤，避免一次拉取过多数据。',
+        description:
+          '查询当前群的成员列表，支持按昵称/群名片/QQ号关键词搜索、按角色筛选、分页返回。大群（数百上千人）务必使用 keyword 或 role 过滤，避免一次拉取过多数据。',
         parameters: {
           type: 'object',
           properties: {
@@ -956,7 +1013,10 @@ function registerGroupInfoTools(ctx: Context): void {
         parameters: {
           type: 'object',
           properties: {
-            group_id: { type: 'string', description: '可选。指定群号。缺省时查当前会话所在群（私聊时缺省会报错，请显式传入）。' },
+            group_id: {
+              type: 'string',
+              description: '可选。指定群号。缺省时查当前会话所在群（私聊时缺省会报错，请显式传入）。',
+            },
           },
           required: [],
         },
@@ -979,13 +1039,16 @@ function registerGroupInfoTools(ctx: Context): void {
       if (!adapter?.callAction) return JSON.stringify({ available: false, reason: 'OneBot 适配器不可用' });
       let info: Record<string, unknown> | null = null;
       try {
-        info = await adapter.callAction(probeSessionId, 'get_group_member_info', {
+        info = (await adapter.callAction(probeSessionId, 'get_group_member_info', {
           group_id: Number(groupId),
           user_id: Number(selfId),
           no_cache: true,
-        }) as Record<string, unknown>;
+        })) as Record<string, unknown>;
       } catch (err) {
-        return JSON.stringify({ available: false, reason: `查询失败: ${err instanceof Error ? err.message : String(err)}` });
+        return JSON.stringify({
+          available: false,
+          reason: `查询失败: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
       if (!info) return JSON.stringify({ available: false, reason: '无法获取群成员信息' });
       const ts = Number(info.shut_up_timestamp ?? 0);
@@ -1017,9 +1080,11 @@ function registerGroupInfoTools(ctx: Context): void {
       },
     },
     handler: async () => {
-      const adapter = findOneBotAdapter(ctx) as (PlatformAdapter & {
-        getSelfMutes?: () => Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
-      }) | undefined;
+      const adapter = findOneBotAdapter(ctx) as
+        | (PlatformAdapter & {
+            getSelfMutes?: () => Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
+          })
+        | undefined;
       if (!adapter?.getSelfMutes) {
         return JSON.stringify({ supported: false, reason: '当前 OneBot 适配器版本不支持 getSelfMutes' });
       }
@@ -1043,7 +1108,8 @@ function registerGroupInfoTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_msg',
-        description: '按 message_id 获取单条消息的完整内容（包括发送者、消息段等）。可用于回溯查看历史中的某条消息，或在收到撤回通知后查看被撤回的内容。不限定会话类型，群聊和私聊消息均可查询。',
+        description:
+          '按 message_id 获取单条消息的完整内容（包括发送者、消息段等）。可用于回溯查看历史中的某条消息，或在收到撤回通知后查看被撤回的内容。不限定会话类型，群聊和私聊消息均可查询。',
         parameters: {
           type: 'object',
           properties: {
@@ -1073,14 +1139,16 @@ function registerGroupInfoTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_group_honor_info',
-        description: '获取当前群的荣誉信息（龙王、群聊之火、群聊炽焰、冒尖小春笋、快乐之源）。可用于感知群内活跃成员、话题引导等。',
+        description:
+          '获取当前群的荣誉信息（龙王、群聊之火、群聊炽焰、冒尖小春笋、快乐之源）。可用于感知群内活跃成员、话题引导等。',
         parameters: {
           type: 'object',
           properties: {
             type: {
               type: 'string',
               enum: ['talkative', 'performer', 'legend', 'strong_newbie', 'emotion', 'all'],
-              description: '荣誉类型：talkative=龙王, performer=群聊之火, legend=群聊炽焰, strong_newbie=冒尖小春笋, emotion=快乐之源, all=全部。默认 all。',
+              description:
+                '荣誉类型：talkative=龙王, performer=群聊之火, legend=群聊炽焰, strong_newbie=冒尖小春笋, emotion=快乐之源, all=全部。默认 all。',
             },
           },
           required: [],
@@ -1104,7 +1172,6 @@ function registerGroupInfoTools(ctx: Context): void {
 // ===== 账号 / 好友 / 群列表查询工具 =====
 
 function registerAccountTools(ctx: Context): void {
-
   // ---- 群列表 ----
   ctx.registerTool({
     definition: {
@@ -1128,7 +1195,7 @@ function registerAccountTools(ctx: Context): void {
     },
     handler: async (args, callCtx) => {
       const data = await callAction(ctx, callCtx, 'get_group_list', {});
-      const list = Array.isArray(data) ? data as Array<Record<string, unknown>> : [];
+      const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const page = Math.max(1, Math.floor(Number(args.page) || 1));
@@ -1140,9 +1207,7 @@ function registerAccountTools(ctx: Context): void {
         member_count: g.member_count,
         max_member_count: g.max_member_count,
       }));
-      const filtered = keyword
-        ? all.filter(g => `${g.group_id} ${g.group_name}`.toLowerCase().includes(keyword))
-        : all;
+      const filtered = keyword ? all.filter(g => `${g.group_id} ${g.group_name}`.toLowerCase().includes(keyword)) : all;
 
       const total = filtered.length;
       const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -1170,8 +1235,7 @@ function registerAccountTools(ctx: Context): void {
       function: {
         name: 'onebot_get_friend_list',
         description:
-          '获取机器人的好友列表（OneBot v11: get_friend_list）。' +
-          '支持按昵称/备注/QQ号关键词搜索、分页返回。',
+          '获取机器人的好友列表（OneBot v11: get_friend_list）。' + '支持按昵称/备注/QQ号关键词搜索、分页返回。',
         parameters: {
           type: 'object',
           properties: {
@@ -1185,7 +1249,7 @@ function registerAccountTools(ctx: Context): void {
     },
     handler: async (args, callCtx) => {
       const data = await callAction(ctx, callCtx, 'get_friend_list', {});
-      const list = Array.isArray(data) ? data as Array<Record<string, unknown>> : [];
+      const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const page = Math.max(1, Math.floor(Number(args.page) || 1));
@@ -1253,7 +1317,8 @@ function registerAccountTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_get_login_info',
-        description: '显式查询当前 OneBot 连接的登录账号信息（QQ 号、昵称）。仅在用户要求核实账号、诊断连接或需要最新平台返回值时使用。',
+        description:
+          '显式查询当前 OneBot 连接的登录账号信息（QQ 号、昵称）。仅在用户要求核实账号、诊断连接或需要最新平台返回值时使用。',
         parameters: { type: 'object', properties: {}, required: [] },
       },
     },
@@ -1269,7 +1334,8 @@ function registerAccountTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_delete_friend',
-        description: '删除指定 QQ 好友。适用于私聊持续骚扰、辱骂、垃圾消息等不希望继续保持好友关系的场景。该接口是 go-cqhttp/NapCat 等 OneBot v11 实现的常见扩展。',
+        description:
+          '删除指定 QQ 好友。适用于私聊持续骚扰、辱骂、垃圾消息等不希望继续保持好友关系的场景。该接口是 go-cqhttp/NapCat 等 OneBot v11 实现的常见扩展。',
         parameters: {
           type: 'object',
           properties: {
@@ -1281,7 +1347,7 @@ function registerAccountTools(ctx: Context): void {
     },
     handler: async (args, callCtx) => {
       const session = requireOneBotSession(callCtx);
-      const userId = args.user_id ? String(args.user_id) : (session.detailType === 'private' ? session.targetId : '');
+      const userId = args.user_id ? String(args.user_id) : session.detailType === 'private' ? session.targetId : '';
       if (!userId) return '请提供 user_id，或在要删除的好友私聊中调用此工具';
 
       await callAction(ctx, callCtx, 'delete_friend', {
@@ -1297,7 +1363,6 @@ function registerAccountTools(ctx: Context): void {
 // ===== 特殊交互工具 =====
 
 function registerInteractionTools(ctx: Context): void {
-
   // ---- 戳一戳 ----
   ctx.registerTool({
     definition: {
@@ -1339,7 +1404,8 @@ function registerInteractionTools(ctx: Context): void {
       type: 'function',
       function: {
         name: 'onebot_send_like',
-        description: '给指定 QQ 用户发送好友赞（每个好友每天最多 10 次）。低成本的社交互动，适用于表达友好、打招呼等场景。',
+        description:
+          '给指定 QQ 用户发送好友赞（每个好友每天最多 10 次）。低成本的社交互动，适用于表达友好、打招呼等场景。',
         parameters: {
           type: 'object',
           properties: {
@@ -1402,7 +1468,6 @@ interface OneBotProactiveRateGate {
 }
 
 function registerMessagingTools(ctx: Context, allowCrossSession: boolean): void {
-
   // ---- 主动发送消息（任意私聊 / 群聊）----
   ctx.registerTool({
     definition: {
@@ -1503,7 +1568,9 @@ function registerMessagingTools(ctx: Context, allowCrossSession: boolean): void 
       }
 
       const targetLabel = targetType === 'private' ? `用户 ${targetId}` : `群 ${targetId}`;
-      ctx.logger.info(`[主动发送] selfId=${current.selfId} -> ${targetLabel}: ${content.slice(0, 60)}${content.length > 60 ? '...' : ''}`);
+      ctx.logger.info(
+        `[主动发送] selfId=${current.selfId} -> ${targetLabel}: ${content.slice(0, 60)}${content.length > 60 ? '...' : ''}`,
+      );
       return `已向${targetLabel}发送消息`;
     },
   });
@@ -1552,7 +1619,11 @@ function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConf
       const selfId = args.self_id ? String(args.self_id).trim() : current.selfId;
       if (!selfId) return JSON.stringify({ error: '无法确定 self_id' });
       if (!cfg.allowCrossSelf && selfId !== current.selfId) {
-        return JSON.stringify({ error: '当前配置不允许跨机器人账号解析会话', currentSelfId: current.selfId, requestedSelfId: selfId });
+        return JSON.stringify({
+          error: '当前配置不允许跨机器人账号解析会话',
+          currentSelfId: current.selfId,
+          requestedSelfId: selfId,
+        });
       }
       return JSON.stringify({
         ok: true,
@@ -1604,19 +1675,25 @@ function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConf
       const selfId = args.self_id ? String(args.self_id).trim() : current.selfId;
       if (!selfId) return JSON.stringify({ error: '无法确定 self_id' });
       if (!cfg.allowCrossSelf && selfId !== current.selfId) {
-        return JSON.stringify({ error: '当前配置不允许跨机器人账号读取会话历史', currentSelfId: current.selfId, requestedSelfId: selfId });
+        return JSON.stringify({
+          error: '当前配置不允许跨机器人账号读取会话历史',
+          currentSelfId: current.selfId,
+          requestedSelfId: selfId,
+        });
       }
       if (current.detailType === 'group' && targetType === 'private' && !cfg.allowGroupReadPrivate) {
         return JSON.stringify({ error: '当前配置不允许从群聊读取私聊历史' });
       }
 
       const history = ctx.getService<SessionHistoryService>('session-history');
-      if (!history) return JSON.stringify({ error: 'session-history 服务不可用，请启用 @aalis/plugin-session-tools 的 historyAccess' });
+      if (!history)
+        return JSON.stringify({
+          error: 'session-history 服务不可用，请启用 @aalis/plugin-session-tools 的 historyAccess',
+        });
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || 20)));
-      const includeArchived = typeof args.include_archived === 'boolean'
-        ? args.include_archived
-        : cfg.includeArchivedDefault;
+      const includeArchived =
+        typeof args.include_archived === 'boolean' ? args.include_archived : cfg.includeArchivedDefault;
       const sessionId = buildOneBotSessionId(selfId, targetType, targetId);
 
       try {
@@ -1643,13 +1720,20 @@ function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConf
 
 function registerRequestTools(ctx: Context): void {
   /** 找到支持 handleFriendRequest 的 OneBot 适配器 */
-  function findRequestAdapter(ctx: Context): PlatformAdapter & {
-    handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
-    handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
-  } | undefined {
-    const adapter = ctx.getService<PlatformService>('platform')?.getAdapters().find(
-      a => a.platform === 'onebot' && typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
-    );
+  function findRequestAdapter(ctx: Context):
+    | (PlatformAdapter & {
+        handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
+        handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+      })
+    | undefined {
+    const adapter = ctx
+      .getService<PlatformService>('platform')
+      ?.getAdapters()
+      .find(
+        a =>
+          a.platform === 'onebot' &&
+          typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
+      );
     return adapter as typeof adapter & {
       handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
       handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
@@ -1673,7 +1757,7 @@ function registerRequestTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const adapter = findRequestAdapter(ctx);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleFriendRequest(
@@ -1702,7 +1786,7 @@ function registerRequestTools(ctx: Context): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       const adapter = findRequestAdapter(ctx);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleGroupRequest(

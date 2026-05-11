@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { writeFile, unlink, rmdir, mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface RunnerConfig {
@@ -29,7 +29,7 @@ export interface RunResult {
 function truncateOutput(output: string, maxSize: number): string {
   if (Buffer.byteLength(output, 'utf-8') <= maxSize) return output;
   const truncated = Buffer.from(output, 'utf-8').subarray(0, maxSize).toString('utf-8');
-  return truncated + `\n...[输出截断，超过 ${maxSize} 字节]`;
+  return `${truncated}\n...[输出截断，超过 ${maxSize} 字节]`;
 }
 
 /**
@@ -49,10 +49,7 @@ export async function runCode(
   timeout?: number,
   extraArgs: string[] = [],
 ): Promise<RunResult> {
-  const effectiveTimeout = Math.min(
-    Math.max(1000, timeout ?? config.defaultTimeout),
-    config.maxTimeout,
-  );
+  const effectiveTimeout = Math.min(Math.max(1000, timeout ?? config.defaultTimeout), config.maxTimeout);
 
   // 创建临时目录 + 文件（调用方保证 tmpDir 来自 storage 的受控本地路径）
   const baseDir = config.tmpDir;
@@ -62,7 +59,7 @@ export async function runCode(
   await writeFile(tmpFile, code, 'utf-8');
 
   try {
-    return await new Promise<RunResult>((resolve) => {
+    return await new Promise<RunResult>(resolve => {
       let stdout = '';
       let stderr = '';
       let killed = false;
@@ -88,7 +85,7 @@ export async function runCode(
         }, 3000);
       }, effectiveTimeout);
 
-      child.on('close', (exitCode) => {
+      child.on('close', exitCode => {
         clearTimeout(timer);
         resolve({
           exitCode: exitCode ?? -1,
@@ -98,7 +95,7 @@ export async function runCode(
         });
       });
 
-      child.on('error', (err) => {
+      child.on('error', err => {
         clearTimeout(timer);
         resolve({
           error: err.message,

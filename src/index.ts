@@ -1,5 +1,5 @@
 import { App } from '@aalis/core';
-import { appendCrashLog, setupFileLogger, type FileLoggerHandle } from './runtime/file-logger.js';
+import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
@@ -15,15 +15,17 @@ async function exitWithFatalLog(label: string, err: unknown): Promise<never> {
   try {
     await fileLogger?.flush();
     await appendCrashLog(label, err);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 }
 
-process.on('uncaughtException', (err) => {
+process.on('uncaughtException', err => {
   void exitWithFatalLog('未捕获异常', err);
 });
 
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', reason => {
   void exitWithFatalLog('未处理 Promise 拒绝', reason);
 });
 
@@ -60,4 +62,4 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((err) => void exitWithFatalLog('启动失败', err));
+main().catch(err => void exitWithFatalLog('启动失败', err));

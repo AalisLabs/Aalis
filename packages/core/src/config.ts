@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, watch as fsWatch } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync, watch as fsWatch, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { ConfigSchema } from './types/index.js';
 
@@ -43,19 +43,16 @@ const DEFAULT_CONFIG: AalisConfig = {
 };
 
 /** core 自身管理的顶层字段（buildSaveObject 时按固定顺序输出；其余字段透传） */
-const CORE_TOP_LEVEL_KEYS = new Set<string>([
-  'name',
-  'logLevel',
-  'plugins',
-  'disabledPlugins',
-  'servicePreferences',
-]);
+const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
 
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: { type: 'string', label: '应用名称', description: '应用显示名称，用于日志和界面展示', default: 'Aalis' },
   logLevel: {
-    type: 'select', label: '日志等级', description: '日志输出等级', default: 'info',
+    type: 'select',
+    label: '日志等级',
+    description: '日志输出等级',
+    default: 'info',
     options: [
       { label: 'debug', value: 'debug' },
       { label: 'info', value: 'info' },
@@ -89,9 +86,7 @@ export class ConfigManager {
   private onChangeCallback: (() => void) | null = null;
 
   constructor(configPath?: string) {
-    this.configPath = configPath
-      ? resolve(configPath)
-      : resolve(process.cwd(), 'aalis.config.yaml');
+    this.configPath = configPath ? resolve(configPath) : resolve(process.cwd(), 'aalis.config.yaml');
 
     this.configDir = dirname(this.configPath);
     this.loadFromDisk();
@@ -116,9 +111,7 @@ export class ConfigManager {
     return this.config[key];
   }
 
-  getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(
-    pluginName: string,
-  ): T {
+  getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(pluginName: string): T {
     return (this.config.plugins[pluginName] ?? {}) as T;
   }
 
@@ -234,17 +227,24 @@ export class ConfigManager {
             this.lastWrittenYaml = null;
             this.loadFromDisk();
             this.onChangeCallback?.();
-          } catch { /* 文件可能被部分写入，忽略 */ }
+          } catch {
+            /* 文件可能被部分写入，忽略 */
+          }
         }, 300);
       });
-    } catch { /* 平台不支持 watch */ }
+    } catch {
+      /* 平台不支持 watch */
+    }
   }
 
   /**
    * 停止监听配置文件
    */
   unwatch(): void {
-    if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null; }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
     this.watcher?.close();
     this.watcher = null;
     this.onChangeCallback = null;
@@ -307,10 +307,7 @@ export class ConfigManager {
    * 恢复环境变量占位符：对比原始值与当前值，
    * 如果当前值与环境变量展开后的值一致，保留原始占位符
    */
-  private restoreEnvVars(
-    current: Record<string, unknown>,
-    raw: Record<string, unknown>,
-  ): Record<string, unknown> {
+  private restoreEnvVars(current: Record<string, unknown>, raw: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(current)) {
       const rawVal = raw[key];
@@ -322,12 +319,15 @@ export class ConfigManager {
           continue;
         }
       }
-      if (value && typeof value === 'object' && !Array.isArray(value) &&
-          rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
-        result[key] = this.restoreEnvVars(
-          value as Record<string, unknown>,
-          rawVal as Record<string, unknown>,
-        );
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        rawVal &&
+        typeof rawVal === 'object' &&
+        !Array.isArray(rawVal)
+      ) {
+        result[key] = this.restoreEnvVars(value as Record<string, unknown>, rawVal as Record<string, unknown>);
       } else {
         result[key] = value;
       }
@@ -352,11 +352,11 @@ export class ConfigManager {
    */
   private mergeDefaults(parsed: Record<string, unknown>): AalisConfig {
     const merged: AalisConfig = {
-      name: (parsed['name'] as string) ?? DEFAULT_CONFIG.name,
-      logLevel: (parsed['logLevel'] as string) ?? DEFAULT_CONFIG.logLevel,
-      plugins: (parsed['plugins'] as Record<string, Record<string, unknown>>) ?? {},
-      disabledPlugins: (parsed['disabledPlugins'] as string[]) ?? [],
-      servicePreferences: (parsed['servicePreferences'] as Record<string, string>) ?? {},
+      name: (parsed.name as string) ?? DEFAULT_CONFIG.name,
+      logLevel: (parsed.logLevel as string) ?? DEFAULT_CONFIG.logLevel,
+      plugins: (parsed.plugins as Record<string, Record<string, unknown>>) ?? {},
+      disabledPlugins: (parsed.disabledPlugins as string[]) ?? [],
+      servicePreferences: (parsed.servicePreferences as Record<string, string>) ?? {},
     };
     // 透传其余顶层字段
     for (const [key, value] of Object.entries(parsed)) {
@@ -404,9 +404,7 @@ export class ScopedConfigManager extends ConfigManager {
     this.overlay[key] = value;
   }
 
-  override getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(
-    pluginName: string,
-  ): T {
+  override getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(pluginName: string): T {
     const parentConf = this.parentConfig.getPluginConfig<T>(pluginName);
     const ownConf = (this.overlay.plugins?.[pluginName] ?? {}) as Partial<T>;
     // 浅合并：scope 的覆盖只影响顶层 key；嵌套对象由调用方自行 deep-merge
@@ -453,8 +451,12 @@ export class ScopedConfigManager extends ConfigManager {
     };
   }
 
-  override getConfigDir(): string { return this.parentConfig.getConfigDir(); }
-  override getConfigPath(): string { return this.parentConfig.getConfigPath(); }
+  override getConfigDir(): string {
+    return this.parentConfig.getConfigDir();
+  }
+  override getConfigPath(): string {
+    return this.parentConfig.getConfigPath();
+  }
 
   /** 沙盒不接触磁盘 —— save() 直接抛错暴露误用 */
   override save(): void {
@@ -467,7 +469,10 @@ export class ScopedConfigManager extends ConfigManager {
   }
 
   /** scope 不监听磁盘文件 */
-  override watch(): void { /* no-op */ }
-  override unwatch(): void { /* no-op */ }
+  override watch(): void {
+    /* no-op */
+  }
+  override unwatch(): void {
+    /* no-op */
+  }
 }
-

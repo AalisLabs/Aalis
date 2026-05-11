@@ -6,8 +6,8 @@
 //
 // 第三方若要实现替代方案（如调用专用视觉 API），只需满足本接口即可。
 
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { registerCapabilityProbe } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 
 /** 图像识别处理消息的输入 */
 export interface ImageRecognitionInput {
@@ -149,21 +149,25 @@ declare module '@aalis/core' {
 registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.Describe, inst =>
   typeof (inst as { describe?: unknown }).describe === 'function'
     ? true
-    : 'ImageRecognitionService.describe() is required for capability "describe"');
+    : 'ImageRecognitionService.describe() is required for capability "describe"',
+);
 
 registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.ProcessMessage, inst =>
   typeof (inst as { processMessage?: unknown }).processMessage === 'function'
     ? true
-    : 'ImageRecognitionService.processMessage() is required for capability "process-message"');
+    : 'ImageRecognitionService.processMessage() is required for capability "process-message"',
+);
 
 registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.BuildContext, inst =>
   typeof (inst as { buildContext?: unknown }).buildContext === 'function'
     ? true
-    : 'ImageRecognitionService.buildContext() is required for capability "build-context"');
+    : 'ImageRecognitionService.buildContext() is required for capability "build-context"',
+);
 
 registerCapabilityProbe('image-recognition', ImageRecognitionCapabilities.DescriptionCache, inst =>
   typeof (inst as { lookupDescription?: unknown }).lookupDescription === 'function'
     ? true
-    : 'ImageRecognitionService.lookupDescription() is required for capability "description-cache"');
+    : 'ImageRecognitionService.lookupDescription() is required for capability "description-cache"',
+);
 
 // Animated 为配置/运行时开关，无固定方法签名，不做探测。

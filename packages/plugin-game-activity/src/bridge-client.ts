@@ -1,6 +1,6 @@
-import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import type { Context } from '@aalis/core';
+import WebSocket from 'ws';
 import type { BridgeCommand, BridgeEvent } from './protocol.js';
 
 /**
@@ -136,14 +136,18 @@ export function startBridgeClient(opts: BridgeClientOptions): BridgeClientHandle
 
     socket.on('close', (_code: number, reason: Buffer) => {
       const reasonText = reason?.length ? reason.toString('utf8') : undefined;
-      try { handlers.onClose(conn, reasonText); } catch { /* noop */ }
+      try {
+        handlers.onClose(conn, reasonText);
+      } catch {
+        /* noop */
+      }
       ws = undefined;
       currentConn = undefined;
       setState('disconnected');
       scheduleReconnect();
     });
 
-    socket.on('error', (err) => {
+    socket.on('error', err => {
       // ECONNREFUSED 等常态错误降级为 debug，避免日志刷屏
       const msg = err instanceof Error ? err.message : String(err);
       if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/.test(msg)) {
@@ -167,7 +171,11 @@ export function startBridgeClient(opts: BridgeClientOptions): BridgeClientHandle
         reconnectTimer = undefined;
       }
       if (ws) {
-        try { ws.close(); } catch { /* noop */ }
+        try {
+          ws.close();
+        } catch {
+          /* noop */
+        }
         ws = undefined;
       }
       currentConn = undefined;

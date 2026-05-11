@@ -12,13 +12,13 @@
       "**/*.tsx",
       "**/*.js",
       "**/*.json",
-      "!**/dist/**",
-      "!**/node_modules/**",
-      "!**/data/**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/data",
       "!**/*.lock",
-      "!packages/plugin-webui-client/**",
-      "!packages/plugin-slay-spire-agent/**",
-      "!workspace/**"
+      "!packages/plugin-webui-client",
+      "!packages/plugin-slay-spire-agent",
+      "!workspace"
     ]
   },
   "formatter": {

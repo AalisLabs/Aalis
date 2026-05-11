@@ -1,8 +1,8 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import PptxGenJS from 'pptxgenjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { DocSessionManager } from '../session.js';
+import type { DocSessionManager } from '../session.js';
 import { loadImage } from '../utils.js';
 
 interface PptState {
@@ -17,15 +17,17 @@ interface PptState {
 /** 各 layout 对应的尺寸（英寸） */
 const LAYOUT_DIMS: Record<string, [number, number]> = {
   LAYOUT_16x9: [10, 5.63],
-  LAYOUT_4x3:  [10, 7.5],
+  LAYOUT_4x3: [10, 7.5],
   LAYOUT_WIDE: [13.33, 7.5],
 };
 
 /** 将元素位置/尺寸钳制在幻灯片可见区域内 */
 function clampBounds(
   state: PptState,
-  x?: number | null, y?: number | null,
-  w?: number | null, h?: number | null,
+  x?: number | null,
+  y?: number | null,
+  w?: number | null,
+  h?: number | null,
   defaults?: { x: number; y: number; w: number; h: number },
 ) {
   const d = defaults || { x: 0.5, y: 0.5, w: 9, h: 1 };
@@ -91,8 +93,27 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
       background: { color: c.primary },
       objects: [
         { rect: { x: 0, y: 4.4, w: 10, h: 1.23, fill: { color: c.secondary } } },
-        { text: { text: '', options: { x: 0.6, y: 1.2, w: 8.8, h: 1.5, color: c.background, fontSize: 36, bold: true, placeholder: 'title' } } },
-        { text: { text: '', options: { x: 0.6, y: 2.9, w: 8.8, h: 0.8, color: c.subtitle, fontSize: 18, placeholder: 'subtitle' } } },
+        {
+          text: {
+            text: '',
+            options: {
+              x: 0.6,
+              y: 1.2,
+              w: 8.8,
+              h: 1.5,
+              color: c.background,
+              fontSize: 36,
+              bold: true,
+              placeholder: 'title',
+            },
+          },
+        },
+        {
+          text: {
+            text: '',
+            options: { x: 0.6, y: 2.9, w: 8.8, h: 0.8, color: c.subtitle, fontSize: 18, placeholder: 'subtitle' },
+          },
+        },
       ],
     },
     // 内容页
@@ -101,7 +122,21 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
       background: { color: c.background },
       objects: [
         { rect: { x: 0, y: 0, w: 10, h: 0.8, fill: { color: c.primary } } },
-        { text: { text: '', options: { x: 0.6, y: 0.1, w: 8.8, h: 0.6, color: c.background, fontSize: 20, bold: true, placeholder: 'title' } } },
+        {
+          text: {
+            text: '',
+            options: {
+              x: 0.6,
+              y: 0.1,
+              w: 8.8,
+              h: 0.6,
+              color: c.background,
+              fontSize: 20,
+              bold: true,
+              placeholder: 'title',
+            },
+          },
+        },
       ],
     },
     // 分节页（章节过渡）
@@ -110,7 +145,21 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
       background: { color: c.secondary },
       objects: [
         { rect: { x: 0.5, y: 2.0, w: 2, h: 0.06, fill: { color: c.background } } },
-        { text: { text: '', options: { x: 0.5, y: 2.2, w: 9, h: 1.2, color: c.background, fontSize: 32, bold: true, placeholder: 'title' } } },
+        {
+          text: {
+            text: '',
+            options: {
+              x: 0.5,
+              y: 2.2,
+              w: 9,
+              h: 1.2,
+              color: c.background,
+              fontSize: 32,
+              bold: true,
+              placeholder: 'title',
+            },
+          },
+        },
       ],
     },
     // 结束页
@@ -118,8 +167,27 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
       title: 'end',
       background: { color: c.primary },
       objects: [
-        { text: { text: 'Thank You', options: { x: 0, y: 1.8, w: 10, h: 1.5, color: c.background, fontSize: 40, bold: true, align: 'center' } } },
-        { text: { text: '', options: { x: 0, y: 3.5, w: 10, h: 0.8, color: c.subtitle, fontSize: 16, align: 'center', placeholder: 'subtitle' } } },
+        {
+          text: {
+            text: 'Thank You',
+            options: { x: 0, y: 1.8, w: 10, h: 1.5, color: c.background, fontSize: 40, bold: true, align: 'center' },
+          },
+        },
+        {
+          text: {
+            text: '',
+            options: {
+              x: 0,
+              y: 3.5,
+              w: 10,
+              h: 0.8,
+              color: c.subtitle,
+              fontSize: 16,
+              align: 'center',
+              placeholder: 'subtitle',
+            },
+          },
+        },
       ],
     },
   ];
@@ -129,38 +197,122 @@ const PRESET_TEMPLATES: Record<string, PresetTemplate> = {
   clean: {
     name: 'clean',
     description: '简洁白色主题。白底配蓝色标题栏，适合商务汇报、技术分享、日常演示等通用场景。',
-    colors: { primary: '2B579A', secondary: '1A3A6B', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'D0D8E8' },
-    masters: buildTemplateMasters({ primary: '2B579A', secondary: '1A3A6B', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'D0D8E8' }),
+    colors: {
+      primary: '2B579A',
+      secondary: '1A3A6B',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'D0D8E8',
+    },
+    masters: buildTemplateMasters({
+      primary: '2B579A',
+      secondary: '1A3A6B',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'D0D8E8',
+    }),
   },
   dark: {
     name: 'dark',
     description: '深色科技主题。深蓝黑背景配亮色文字，适合科技产品发布、AI/数据、技术演讲等现代感场景。',
-    colors: { primary: '0D1117', secondary: '161B22', text: 'E6EDF3', background: '0D1117', title: 'FFFFFF', subtitle: '8B949E' },
-    masters: buildTemplateMasters({ primary: '0D1117', secondary: '161B22', text: 'E6EDF3', background: '0D1117', title: 'FFFFFF', subtitle: '8B949E' }),
+    colors: {
+      primary: '0D1117',
+      secondary: '161B22',
+      text: 'E6EDF3',
+      background: '0D1117',
+      title: 'FFFFFF',
+      subtitle: '8B949E',
+    },
+    masters: buildTemplateMasters({
+      primary: '0D1117',
+      secondary: '161B22',
+      text: 'E6EDF3',
+      background: '0D1117',
+      title: 'FFFFFF',
+      subtitle: '8B949E',
+    }),
   },
   corporate: {
     name: 'corporate',
     description: '企业蓝色主题。经典蓝色调，沉稳专业，适合企业年报、战略规划、投资路演、正式汇报等商务场景。',
-    colors: { primary: '1F4E79', secondary: '2E75B6', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'BDD7EE' },
-    masters: buildTemplateMasters({ primary: '1F4E79', secondary: '2E75B6', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'BDD7EE' }),
+    colors: {
+      primary: '1F4E79',
+      secondary: '2E75B6',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'BDD7EE',
+    },
+    masters: buildTemplateMasters({
+      primary: '1F4E79',
+      secondary: '2E75B6',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'BDD7EE',
+    }),
   },
   minimal: {
     name: 'minimal',
     description: '极简主题。纯白背景，黑色文字，几乎无装饰。适合学术报告、论文答辩、内容密集型演示。',
-    colors: { primary: '222222', secondary: '444444', text: '222222', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'AAAAAA' },
-    masters: buildTemplateMasters({ primary: '222222', secondary: '444444', text: '222222', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'AAAAAA' }),
+    colors: {
+      primary: '222222',
+      secondary: '444444',
+      text: '222222',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'AAAAAA',
+    },
+    masters: buildTemplateMasters({
+      primary: '222222',
+      secondary: '444444',
+      text: '222222',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'AAAAAA',
+    }),
   },
   nature: {
     name: 'nature',
     description: '自然绿色主题。绿色调，清新自然，适合环保、农业、健康、教育等主题的演示。',
-    colors: { primary: '2D6A4F', secondary: '40916C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'B7E4C7' },
-    masters: buildTemplateMasters({ primary: '2D6A4F', secondary: '40916C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'B7E4C7' }),
+    colors: {
+      primary: '2D6A4F',
+      secondary: '40916C',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'B7E4C7',
+    },
+    masters: buildTemplateMasters({
+      primary: '2D6A4F',
+      secondary: '40916C',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'B7E4C7',
+    }),
   },
   warm: {
     name: 'warm',
     description: '暖色橙红主题。温暖活泼，适合创意展示、市场营销、品牌推广、活动策划等需要活力感的场景。',
-    colors: { primary: 'C0392B', secondary: 'E74C3C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'FADBD8' },
-    masters: buildTemplateMasters({ primary: 'C0392B', secondary: 'E74C3C', text: '333333', background: 'FFFFFF', title: 'FFFFFF', subtitle: 'FADBD8' }),
+    colors: {
+      primary: 'C0392B',
+      secondary: 'E74C3C',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'FADBD8',
+    },
+    masters: buildTemplateMasters({
+      primary: 'C0392B',
+      secondary: 'E74C3C',
+      text: '333333',
+      background: 'FFFFFF',
+      title: 'FFFFFF',
+      subtitle: 'FADBD8',
+    }),
   },
 };
 
@@ -195,7 +347,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_list_templates',
-        description: '列出所有可用的 PPT 预设模板及其描述。创建 PPT 前调用此工具了解可选模板，帮助选择最适合演示主题的模板。',
+        description:
+          '列出所有可用的 PPT 预设模板及其描述。创建 PPT 前调用此工具了解可选模板，帮助选择最适合演示主题的模板。',
         parameters: { type: 'object', properties: {}, required: [] },
       },
     },
@@ -208,7 +361,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       }));
       return JSON.stringify({
         templates: list,
-        message: '创建 PPT 时通过 template 参数指定模板名称。模板会自动注册母版（title / content / section / end），添加幻灯片时通过 masterName 参数引用。',
+        message:
+          '创建 PPT 时通过 template 参数指定模板名称。模板会自动注册母版（title / content / section / end），添加幻灯片时通过 masterName 参数引用。',
       });
     },
   });
@@ -231,8 +385,16 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
             filename: { type: 'string', description: '文件名（如 report.pptx）' },
             title: { type: 'string', description: '演示文稿标题' },
             author: { type: 'string', description: '作者' },
-            layout: { type: 'string', enum: ['LAYOUT_16x9', 'LAYOUT_4x3', 'LAYOUT_WIDE'], description: '幻灯片比例，默认 LAYOUT_16x9' },
-            template: { type: 'string', enum: ['clean', 'dark', 'corporate', 'minimal', 'nature', 'warm'], description: '预设模板名称。选择后自动注册 title/content/section/end 四种母版页' },
+            layout: {
+              type: 'string',
+              enum: ['LAYOUT_16x9', 'LAYOUT_4x3', 'LAYOUT_WIDE'],
+              description: '幻灯片比例，默认 LAYOUT_16x9',
+            },
+            template: {
+              type: 'string',
+              enum: ['clean', 'dark', 'corporate', 'minimal', 'nature', 'warm'],
+              description: '预设模板名称。选择后自动注册 title/content/section/end 四种母版页',
+            },
           },
           required: ['filename'],
         },
@@ -337,7 +499,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_text',
-        description: '在 PPT 幻灯片上添加文本框。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。16:9 页面为 10×5.63 英寸。建议标题 y=0.3~0.5，正文 y=1.5~2，留 0.3~0.5 英寸页边距。',
+        description:
+          '在 PPT 幻灯片上添加文本框。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。16:9 页面为 10×5.63 英寸。建议标题 y=0.3~0.5，正文 y=1.5~2，留 0.3~0.5 英寸页边距。',
         parameters: {
           type: 'object',
           properties: {
@@ -379,7 +542,12 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const state = requireState(String(args.docId));
       const slide = getSlide(state, args.slideNumber as number | undefined);
 
-      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 0.5, y: 0.5, w: 9, h: 1 });
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, {
+        x: 0.5,
+        y: 0.5,
+        w: 9,
+        h: 1,
+      });
 
       const opts: PptxGenJS.TextPropsOptions = {
         ...bounds,
@@ -409,7 +577,10 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
         slide.addText(String(args.text || ''), opts);
       }
 
-      return JSON.stringify({ success: true, message: `文本已添加到幻灯片 ${args.slideNumber || state.slides.length}` });
+      return JSON.stringify({
+        success: true,
+        message: `文本已添加到幻灯片 ${args.slideNumber || state.slides.length}`,
+      });
     },
   });
 
@@ -419,7 +590,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_add_image',
-        description: '在 PPT 幻灯片上添加图片。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。建议图片宽度不超过 9 英寸（16:9 留边距），高度不超过 4 英寸。',
+        description:
+          '在 PPT 幻灯片上添加图片。坐标/尺寸以英寸为单位，会自动钳制到幻灯片范围内。建议图片宽度不超过 9 英寸（16:9 留边距），高度不超过 4 英寸。',
         parameters: {
           type: 'object',
           properties: {
@@ -442,7 +614,12 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const base64 = buffer.toString('base64');
       const ext = mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'jpeg';
 
-      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 0.5, y: 0.5, w: 5, h: 3.75 });
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, {
+        x: 0.5,
+        y: 0.5,
+        w: 5,
+        h: 3.75,
+      });
 
       slide.addImage({
         data: `image/${ext};base64,${base64}`,
@@ -465,8 +642,15 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
             slideNumber: { type: 'number', description: '幻灯片编号' },
-            shape: { type: 'string', enum: ['rect', 'ellipse', 'roundRect', 'triangle', 'diamond', 'line', 'arrow'], description: '形状类型' },
-            x: { type: 'number', description: 'X 位置（英寸），默认 1' }, y: { type: 'number', description: 'Y 位置（英寸），默认 1' }, w: { type: 'number', description: '宽度（英寸），默认 2' }, h: { type: 'number', description: '高度（英寸），默认 2' },
+            shape: {
+              type: 'string',
+              enum: ['rect', 'ellipse', 'roundRect', 'triangle', 'diamond', 'line', 'arrow'],
+              description: '形状类型',
+            },
+            x: { type: 'number', description: 'X 位置（英寸），默认 1' },
+            y: { type: 'number', description: 'Y 位置（英寸），默认 1' },
+            w: { type: 'number', description: '宽度（英寸），默认 2' },
+            h: { type: 'number', description: '高度（英寸），默认 2' },
             fill: { type: 'string', description: '填充色（十六进制）' },
             line: { type: 'object', properties: { color: { type: 'string' }, width: { type: 'number' } } },
             text: { type: 'string', description: '形状内的文字' },
@@ -492,12 +676,22 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const shapeType = shapeMap[String(args.shape)] || state.pptx.ShapeType.rect;
       const lineArg = args.line as Record<string, unknown> | undefined;
 
-      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 1, y: 1, w: 2, h: 2 });
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, {
+        x: 1,
+        y: 1,
+        w: 2,
+        h: 2,
+      });
 
       const opts: PptxGenJS.ShapeProps = {
         ...bounds,
         fill: args.fill ? { color: String(args.fill) } : undefined,
-        line: lineArg ? { color: lineArg.color ? String(lineArg.color) : undefined, width: lineArg.width ? Number(lineArg.width) : undefined } : undefined,
+        line: lineArg
+          ? {
+              color: lineArg.color ? String(lineArg.color) : undefined,
+              width: lineArg.width ? Number(lineArg.width) : undefined,
+            }
+          : undefined,
       };
 
       slide.addShape(shapeType, opts);
@@ -505,7 +699,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       if (args.text) {
         slide.addText(String(args.text), {
           ...bounds,
-          align: 'center', valign: 'middle',
+          align: 'center',
+          valign: 'middle',
         });
       }
 
@@ -525,7 +720,11 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
             slideNumber: { type: 'number', description: '幻灯片编号' },
-            chartType: { type: 'string', enum: ['bar', 'bar3d', 'line', 'pie', 'doughnut', 'area', 'scatter'], description: '图表类型' },
+            chartType: {
+              type: 'string',
+              enum: ['bar', 'bar3d', 'line', 'pie', 'doughnut', 'area', 'scatter'],
+              description: '图表类型',
+            },
             title: { type: 'string', description: '图表标题' },
             data: {
               type: 'array',
@@ -539,7 +738,10 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
                 },
               },
             },
-            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' }, y: { type: 'number', description: 'Y 位置（英寸），默认 1' }, w: { type: 'number', description: '宽度（英寸），默认 9' }, h: { type: 'number', description: '高度（英寸），默认 5' },
+            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' },
+            y: { type: 'number', description: 'Y 位置（英寸），默认 1' },
+            w: { type: 'number', description: '宽度（英寸），默认 9' },
+            h: { type: 'number', description: '高度（英寸），默认 5' },
             showLegend: { type: 'boolean', description: '显示图例' },
             showValue: { type: 'boolean', description: '显示数值标签' },
           },
@@ -564,7 +766,12 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const type = chartTypeMap[String(args.chartType)] || state.pptx.ChartType.bar;
       const data = args.data as Array<{ name: string; labels: string[]; values: number[] }>;
 
-      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, { x: 0.5, y: 1, w: 9, h: 5 });
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, {
+        x: 0.5,
+        y: 1,
+        w: 9,
+        h: 5,
+      });
 
       slide.addChart(type, data, {
         ...bounds,
@@ -592,7 +799,9 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
             slideNumber: { type: 'number', description: '幻灯片编号' },
             headers: { type: 'array', items: { type: 'string' }, description: '表头' },
             rows: { type: 'array', items: { type: 'array', items: {} }, description: '数据行' },
-            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' }, y: { type: 'number', description: 'Y 位置（英寸），默认 1' }, w: { type: 'number', description: '宽度（英寸），默认 9' },
+            x: { type: 'number', description: 'X 位置（英寸），默认 0.5' },
+            y: { type: 'number', description: 'Y 位置（英寸），默认 1' },
+            w: { type: 'number', description: '宽度（英寸），默认 9' },
             headerColor: { type: 'string', description: '表头背景色' },
             headerFontColor: { type: 'string', description: '表头文字颜色，默认白色' },
             fontSize: { type: 'number', description: '字号' },
@@ -610,21 +819,28 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const tableRows: PptxGenJS.TableRow[] = [];
 
       if (headers) {
-        tableRows.push(headers.map(h => ({
-          text: String(h),
-          options: {
-            bold: true,
-            fill: { color: args.headerColor ? String(args.headerColor) : '4472C4' },
-            color: args.headerFontColor ? String(args.headerFontColor) : 'FFFFFF',
-          },
-        })));
+        tableRows.push(
+          headers.map(h => ({
+            text: String(h),
+            options: {
+              bold: true,
+              fill: { color: args.headerColor ? String(args.headerColor) : '4472C4' },
+              color: args.headerFontColor ? String(args.headerFontColor) : 'FFFFFF',
+            },
+          })),
+        );
       }
 
       for (const row of rows) {
         tableRows.push(row.map(cell => ({ text: cell == null ? '' : String(cell) })));
       }
 
-      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, undefined, { x: 0.5, y: 1, w: 9, h: 5 });
+      const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, undefined, {
+        x: 0.5,
+        y: 1,
+        w: 9,
+        h: 5,
+      });
 
       slide.addTable(tableRows, {
         x: bounds.x,
@@ -634,7 +850,11 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
         border: { type: 'solid', pt: 0.5, color: 'CCCCCC' },
       });
 
-      return JSON.stringify({ success: true, message: `表格已添加`, position: { x: bounds.x, y: bounds.y, w: bounds.w } });
+      return JSON.stringify({
+        success: true,
+        message: `表格已添加`,
+        position: { x: bounds.x, y: bounds.y, w: bounds.w },
+      });
     },
   });
 
@@ -663,7 +883,6 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
         success: false,
         message: `pptxgenjs 的类型定义不支持设置幻灯片切换效果。建议在 PowerPoint 中手动设置 "${args.type}" 切换。`,
       });
-
     },
   });
 
@@ -673,7 +892,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_set_animation',
-        description: '提示：pptxgenjs 不完全支持单个元素动画。如需动画效果，建议在 PPT 编辑器中手动设置。此工具仅作占位。',
+        description:
+          '提示：pptxgenjs 不完全支持单个元素动画。如需动画效果，建议在 PPT 编辑器中手动设置。此工具仅作占位。',
         parameters: {
           type: 'object',
           properties: {
@@ -699,7 +919,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_set_master',
-        description: '定义一个幻灯片母版/模板，之后可在添加幻灯片时引用。支持设置背景、固定元素等。元素坐标会自动钳制到幻灯片范围内。',
+        description:
+          '定义一个幻灯片母版/模板，之后可在添加幻灯片时引用。支持设置背景、固定元素等。元素坐标会自动钳制到幻灯片范围内。',
         parameters: {
           type: 'object',
           properties: {
@@ -714,8 +935,13 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
                 properties: {
                   type: { type: 'string', enum: ['text', 'rect'] },
                   text: { type: 'string' },
-                  x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
-                  color: { type: 'string' }, fontSize: { type: 'number' }, bold: { type: 'boolean' },
+                  x: { type: 'number' },
+                  y: { type: 'number' },
+                  w: { type: 'number' },
+                  h: { type: 'number' },
+                  color: { type: 'string' },
+                  fontSize: { type: 'number' },
+                  bold: { type: 'boolean' },
                   fill: { type: 'string' },
                 },
               },
@@ -733,7 +959,12 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const masterObjects: PptxGenJS.SlideMasterProps['objects'] = [];
       if (objects) {
         for (const obj of objects) {
-          const b = clampBounds(state, obj.x as number, obj.y as number, obj.w as number, obj.h as number, { x: 0, y: 0, w: state.slideW, h: 0.5 });
+          const b = clampBounds(state, obj.x as number, obj.y as number, obj.w as number, obj.h as number, {
+            x: 0,
+            y: 0,
+            w: state.slideW,
+            h: 0.5,
+          });
           if (obj.type === 'text') {
             masterObjects.push({
               text: {
@@ -763,7 +994,10 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
         objects: masterObjects.length > 0 ? masterObjects : undefined,
       });
 
-      return JSON.stringify({ success: true, message: `母版 "${args.name}" 已定义。添加幻灯片时可通过 masterName 参数引用。` });
+      return JSON.stringify({
+        success: true,
+        message: `母版 "${args.name}" 已定义。添加幻灯片时可通过 masterName 参数引用。`,
+      });
     },
   });
 
@@ -773,7 +1007,8 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       type: 'function',
       function: {
         name: 'ppt_save',
-        description: '保存 PPT 演示文稿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
+        description:
+          '保存 PPT 演示文稿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
         parameters: {
           type: 'object',
           properties: {
@@ -788,11 +1023,17 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
       const state = session.doc as PptState;
       const filePath = resolve(outputDir, session.filename);
       mkdirSync(dirname(filePath), { recursive: true });
-      const buffer = await state.pptx.write({ outputType: 'nodebuffer' }) as Buffer;
+      const buffer = (await state.pptx.write({ outputType: 'nodebuffer' })) as Buffer;
       writeFileSync(filePath, buffer);
       const slideCount = state.slides.length;
       sessions.remove(session.id);
-      return JSON.stringify({ success: true, path: filePath, slides: slideCount, size: buffer.length, message: `PPT 已保存: ${filePath}` });
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        slides: slideCount,
+        size: buffer.length,
+        message: `PPT 已保存: ${filePath}`,
+      });
     },
   });
 }

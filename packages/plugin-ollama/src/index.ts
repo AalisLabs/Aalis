@@ -1,18 +1,12 @@
-import type {
-  Context,
-  Message,
-  ToolDefinition,
-  ConfigSchema,
-} from '@aalis/core';
+import type { ConfigSchema, Context, Logger, Message, ToolDefinition } from '@aalis/core';
 import type {
   ChatRequest,
   ChatResponse,
   ChatStreamChunk,
+  LLMCapability,
   LLMService,
   ModelInfo,
-  LLMCapability,
 } from '@aalis/plugin-llm-api';
-import type { Logger } from '@aalis/core';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 
 // ===== 插件元数据 =====
@@ -23,15 +17,52 @@ export const provides = ['llm'];
 export const reusable = true;
 
 export const configSchema: ConfigSchema = {
-  baseUrl: { type: 'string', label: 'Ollama 地址', default: 'http://localhost:11434', description: '本地 Ollama 服务的 HTTP 地址' },
-  customModels: { type: 'textarea', label: '自定义模型', default: '', description: '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。' },
-  modelCapabilities: { type: 'textarea', label: '模型能力覆盖', default: '', description: '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：qwen2.5:7b: chat,tool_calling,streaming' },
-  timeout: { type: 'number', label: '请求超时 (秒)', default: 120, description: 'LLM 请求超时时间（秒）。大模型或长上下文建议适当调大。0 = 不限制。' },
+  baseUrl: {
+    type: 'string',
+    label: 'Ollama 地址',
+    default: 'http://localhost:11434',
+    description: '本地 Ollama 服务的 HTTP 地址',
+  },
+  customModels: {
+    type: 'textarea',
+    label: '自定义模型',
+    default: '',
+    description:
+      '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
+  },
+  modelCapabilities: {
+    type: 'textarea',
+    label: '模型能力覆盖',
+    default: '',
+    description:
+      '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：qwen2.5:7b: chat,tool_calling,streaming',
+  },
+  timeout: {
+    type: 'number',
+    label: '请求超时 (秒)',
+    default: 120,
+    description: 'LLM 请求超时时间（秒）。大模型或长上下文建议适当调大。0 = 不限制。',
+  },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
-  maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数（num_predict）' },
+  maxTokens: {
+    type: 'number',
+    label: '最大 Token',
+    default: 4096,
+    description: '单次回复最大生成 token 数（num_predict）',
+  },
   contextLength: { type: 'number', label: '上下文长度', default: 8192, description: '模型上下文窗口大小（num_ctx）' },
-  keepAlive: { type: 'string', label: '模型保活时间', default: '5m', description: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）' },
-  thinking: { type: 'boolean', label: '启用思考', default: true, description: '为支持思考的模型启用扩展思考（think 参数）' },
+  keepAlive: {
+    type: 'string',
+    label: '模型保活时间',
+    default: '5m',
+    description: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）',
+  },
+  thinking: {
+    type: 'boolean',
+    label: '启用思考',
+    default: true,
+    description: '为支持思考的模型启用扩展思考（think 参数）',
+  },
 };
 
 export const defaultConfig = {
@@ -216,9 +247,15 @@ class OllamaLLMService implements LLMService {
     }
   }
 
-  getTemperature(): number { return this.temperature; }
-  getMaxTokens(): number { return this.maxTokens; }
-  getContextLength(): number { return this.contextLength; }
+  getTemperature(): number {
+    return this.temperature;
+  }
+  getMaxTokens(): number {
+    return this.maxTokens;
+  }
+  getContextLength(): number {
+    return this.contextLength;
+  }
 
   async listModels(): Promise<ModelInfo[]> {
     const remote = await this.fetchRemoteModels();
@@ -256,7 +293,9 @@ class OllamaLLMService implements LLMService {
     const shouldThink = request.think !== undefined ? request.think : this.thinking;
     body.think = shouldThink;
 
-    this.logger.debug(`请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
+    this.logger.debug(
+      `请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
+    );
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
@@ -378,8 +417,8 @@ class OllamaLLMService implements LLMService {
     const toolCallBuffers: OllamaToolCall[] = [];
 
     // <think> 标签流式解析状态
-    let inThink = false;         // 当前是否在 <think> 块内
-    let tagBuffer = '';          // 未确定的部分标签缓冲（如 "<", "<th", "</thi" 等）
+    let inThink = false; // 当前是否在 <think> 块内
+    let tagBuffer = ''; // 未确定的部分标签缓冲（如 "<", "<th", "</thi" 等）
     let firstChunkLogged = false;
     const streamStart = Date.now();
     const streamStallTimer = setTimeout(() => {
@@ -506,7 +545,9 @@ class OllamaLLMService implements LLMService {
                 }
               }
             }
-          } catch { /* skip malformed JSON */ }
+          } catch {
+            /* skip malformed JSON */
+          }
         }
       }
     } finally {
@@ -620,21 +661,21 @@ function safeParseJSON(str: string): Record<string, unknown> {
 const { Chat, ToolCalling, Streaming, Vision } = LLMCapabilities;
 
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
-  'llama3.1':       [Chat, ToolCalling, Streaming],
-  'llama3.2':       [Chat, ToolCalling, Streaming],
-  'llama3.3':       [Chat, ToolCalling, Streaming],
-  'llava':          [Chat, Streaming, Vision],
-  'llava-llama3':   [Chat, Streaming, Vision],
-  'gemma2':         [Chat, Streaming],
-  'gemma3':         [Chat, ToolCalling, Streaming, Vision],
-  'gemma4':         [Chat, ToolCalling, Streaming, Vision],
-  'qwen2.5':        [Chat, ToolCalling, Streaming],
-  'qwen2.5-coder':  [Chat, ToolCalling, Streaming],
-  'qwen3':          [Chat, ToolCalling, Streaming],
-  'mistral':        [Chat, ToolCalling, Streaming],
-  'deepseek-r1':    [Chat, Streaming],
-  'phi4':           [Chat, Streaming],
-  'command-r':      [Chat, ToolCalling, Streaming],
+  'llama3.1': [Chat, ToolCalling, Streaming],
+  'llama3.2': [Chat, ToolCalling, Streaming],
+  'llama3.3': [Chat, ToolCalling, Streaming],
+  llava: [Chat, Streaming, Vision],
+  'llava-llama3': [Chat, Streaming, Vision],
+  gemma2: [Chat, Streaming],
+  gemma3: [Chat, ToolCalling, Streaming, Vision],
+  gemma4: [Chat, ToolCalling, Streaming, Vision],
+  'qwen2.5': [Chat, ToolCalling, Streaming],
+  'qwen2.5-coder': [Chat, ToolCalling, Streaming],
+  qwen3: [Chat, ToolCalling, Streaming],
+  mistral: [Chat, ToolCalling, Streaming],
+  'deepseek-r1': [Chat, Streaming],
+  phi4: [Chat, Streaming],
+  'command-r': [Chat, ToolCalling, Streaming],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
@@ -662,7 +703,10 @@ function resolveCapabilities(model: string, userOverride?: unknown): LLMCapabili
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
 function parseCustomModels(raw: unknown): string[] {
   if (!raw || typeof raw !== 'string') return [];
-  return raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  return raw
+    .split(/[,\n]/)
+    .map(s => s.trim())
+    .filter(Boolean);
 }
 
 /** 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...` */
@@ -675,7 +719,11 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
     const colonIdx = trimmed.indexOf(':');
     if (colonIdx < 0) continue;
     const modelId = trimmed.slice(0, colonIdx).trim();
-    const caps = trimmed.slice(colonIdx + 1).split(',').map(s => s.trim()).filter(Boolean) as LLMCapability[];
+    const caps = trimmed
+      .slice(colonIdx + 1)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean) as LLMCapability[];
     if (modelId && caps.length > 0) out.set(modelId, caps);
   }
   return out;

@@ -1,6 +1,5 @@
-import type { ToolService, ToolSummary } from '@aalis/plugin-tools-api';
-import type { Context, ConfigSchema, ToolDefinition } from '@aalis/core';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import type { ConfigSchema, Context, ToolDefinition } from '@aalis/core';
+import type { ToolCallContext, ToolService, ToolSummary } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 
 // ===== 插件元数据 =====
@@ -72,9 +71,7 @@ function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
     '\n能直接回答的简单问题无需调用工具；需要工具时，先搜索再直接调用即可。';
 
   if (toolNames && toolNames.length > 0) {
-    description +=
-      '\n\n当前可用工具列表:\n' +
-      toolNames.map(n => `- ${n}`).join('\n');
+    description += `\n\n当前可用工具列表:\n${toolNames.map(n => `- ${n}`).join('\n')}`;
   }
 
   return {
@@ -107,10 +104,7 @@ function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
 /**
  * 在工具摘要列表中按关键词搜索
  */
-function searchTools(
-  summaries: ToolSummary[],
-  query: string,
-): ToolSummary[] {
+function searchTools(summaries: ToolSummary[], query: string): ToolSummary[] {
   // 排除 search_tools 自身
   const pool = summaries.filter(s => s.name !== SEARCH_TOOL_NAME);
 
@@ -130,7 +124,12 @@ function searchTools(
  * 解析出已被发现的工具名。
  */
 function extractDiscoveredTools(
-  messages: { role: string; content?: string | null; toolCalls?: { id: string; function: { name: string } }[]; toolCallId?: string }[],
+  messages: {
+    role: string;
+    content?: string | null;
+    toolCalls?: { id: string; function: { name: string } }[];
+    toolCallId?: string;
+  }[],
 ): Set<string> {
   const discovered = new Set<string>();
 
@@ -168,10 +167,12 @@ function extractDiscoveredTools(
 
 function normalizeToolNames(value: unknown): Set<string> {
   if (!Array.isArray(value)) return new Set();
-  return new Set(value
-    .filter((item): item is string => typeof item === 'string')
-    .map(item => item.trim())
-    .filter(Boolean));
+  return new Set(
+    value
+      .filter((item): item is string => typeof item === 'string')
+      .map(item => item.trim())
+      .filter(Boolean),
+  );
 }
 
 // ===== 插件入口 =====
@@ -197,9 +198,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const query = String(args.query ?? '');
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
       // limit: 优先用模型传入值，否则用配置的 maxSearchResults
-      const effectiveLimit = (typeof args.limit === 'number' && args.limit > 0)
-        ? Math.floor(args.limit)
-        : (maxSearchResults > 0 ? maxSearchResults : Infinity);
+      const effectiveLimit =
+        typeof args.limit === 'number' && args.limit > 0
+          ? Math.floor(args.limit)
+          : maxSearchResults > 0
+            ? maxSearchResults
+            : Infinity;
 
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
@@ -236,26 +240,33 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const totalAvailable = summaries.filter(s => s.name !== SEARCH_TOOL_NAME).length;
       const hasMore = offset + paged.length < allResults.length;
 
-      logger.debug(`搜索工具 "${query}" → ${paged.length}/${totalAvailable} 条结果 (offset=${offset}, total=${allResults.length})`);
+      logger.debug(
+        `搜索工具 "${query}" → ${paged.length}/${totalAvailable} 条结果 (offset=${offset}, total=${allResults.length})`,
+      );
 
       return JSON.stringify({
         found: `${paged.length}/${totalAvailable}`,
-        ...(allResults.length > paged.length ? {
-          pagination: {
-            total: allResults.length,
-            offset,
-            returned: paged.length,
-            ...(hasMore ? { nextOffset: offset + paged.length } : {}),
-          },
-        } : {}),
+        ...(allResults.length > paged.length
+          ? {
+              pagination: {
+                total: allResults.length,
+                offset,
+                returned: paged.length,
+                ...(hasMore ? { nextOffset: offset + paged.length } : {}),
+              },
+            }
+          : {}),
         tools: toolDetails,
-        ...(relatedNames.size > 0 ? {
-          related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先用 search_tools 激活。`,
-        } : {}),
-        hint: paged.length > 0
-          ? '以上工具已激活。搜索结果已包含完整参数定义（parameters），你现在可以直接调用，无需再次搜索。'
-            + (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
-          : '未找到匹配的工具，请尝试其他关键词。',
+        ...(relatedNames.size > 0
+          ? {
+              related: `同组相关工具: ${[...relatedNames].join(', ')}。如需使用，请先用 search_tools 激活。`,
+            }
+          : {}),
+        hint:
+          paged.length > 0
+            ? '以上工具已激活。搜索结果已包含完整参数定义（parameters），你现在可以直接调用，无需再次搜索。' +
+              (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
+            : '未找到匹配的工具，请尝试其他关键词。',
       });
     },
   });
@@ -274,9 +285,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const discovered = extractDiscoveredTools(data.messages);
 
     // 构建 search_tools 定义（showToolNames 时附带工具名列表）
-    const otherToolNames = allDefs
-      .map(d => d.function.name)
-      .filter(n => n !== SEARCH_TOOL_NAME);
+    const otherToolNames = allDefs.map(d => d.function.name).filter(n => n !== SEARCH_TOOL_NAME);
     const searchDef = buildSearchToolDef(showToolNames ? otherToolNames : undefined);
 
     // 构建筛选后的工具列表：search_tools + 直出工具 + 已发现工具完整定义
@@ -305,10 +314,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     data.tools = filtered;
     logger.debug(
       `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个` +
-      ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
+        ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
     );
 
     await next();
   });
-
 }

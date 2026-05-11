@@ -1,7 +1,7 @@
-import { resolve } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { VectorStoreService, VectorSearchResult } from '@aalis/plugin-vectorstore-api';
+import { resolve } from 'node:path';
+import type { ConfigSchema, Context } from '@aalis/core';
+import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 
 // ===== 插件元数据 =====
 
@@ -52,7 +52,10 @@ class FlatVectorStore implements VectorStoreService {
   private readonly dataPath: string;
   private dirty = false;
 
-  constructor(storagePath: string, private readonly logger?: { warn: (msg: string, ...args: unknown[]) => void }) {
+  constructor(
+    storagePath: string,
+    private readonly logger?: { warn: (msg: string, ...args: unknown[]) => void },
+  ) {
     this.dataPath = resolve(storagePath, 'vectors.json');
 
     try {

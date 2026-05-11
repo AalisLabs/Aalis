@@ -1,5 +1,11 @@
 import type { Context, Logger } from '@aalis/core';
-import type { StorageListResult, StorageReadStreamResult, StorageRootInfo, StorageService, StorageStat } from '@aalis/plugin-storage-api';
+import type {
+  StorageListResult,
+  StorageReadStreamResult,
+  StorageRootInfo,
+  StorageService,
+  StorageStat,
+} from '@aalis/plugin-storage-api';
 
 /** 单条根的聚合视图（带提供者来源） */
 export interface AggregatedStorageRoot extends StorageRootInfo {
@@ -45,7 +51,10 @@ export class StorageRouter implements StorageService {
   private _rootMap: Map<string, string> | null = null;
   private _conflictsLogged = new Set<string>();
 
-  constructor(private readonly ctx: Context, private readonly logger: Logger) {}
+  constructor(
+    private readonly ctx: Context,
+    private readonly logger: Logger,
+  ) {}
 
   invalidate(): void {
     this._rootMap = null;
@@ -54,8 +63,7 @@ export class StorageRouter implements StorageService {
 
   /** 仅枚举真正的 provider，排除 router 自身 */
   private getProviders(): Array<{ instance: StorageService; contextId: string; label?: string }> {
-    return this.ctx.getAllServices<StorageService>('storage')
-      .filter(e => e.instance !== this);
+    return this.ctx.getAllServices<StorageService>('storage').filter(e => e.instance !== this);
   }
 
   hasAny(): boolean {
@@ -164,9 +172,7 @@ export class StorageRouter implements StorageService {
       }
     }
     const known = [...this.ensureRootMap().keys()];
-    throw new Error(
-      `未知存储根: ${root}（已注册根: ${known.join(', ') || '(无)'}）`,
-    );
+    throw new Error(`未知存储根: ${root}（已注册根: ${known.join(', ') || '(无)'}）`);
   }
 
   private ensureRootMap(): Map<string, string> {

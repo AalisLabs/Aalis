@@ -1,13 +1,13 @@
 import type {
-  OneBotProtocol,
-  OneBotRawEvent,
   NormalizedMessageEvent,
   NormalizedMetaEvent,
   NormalizedNoticeEvent,
   NormalizedRequestEvent,
+  OneBotProtocol,
+  OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { segmentsToText, parseContentToSegments, toV11Segments } from './types.js';
+import { parseContentToSegments, segmentsToText, toV11Segments } from './types.js';
 
 /**
  * OneBot v11 协议处理器
@@ -46,8 +46,8 @@ export class OneBotV11 implements OneBotProtocol {
       params: {
         ...actionParams,
         message_type: params.detailType,
-        user_id: params.detailType === 'private' ? (Number(params.targetId) || params.targetId) : undefined,
-        group_id: params.detailType === 'group' ? (Number(params.targetId) || params.targetId) : undefined,
+        user_id: params.detailType === 'private' ? Number(params.targetId) || params.targetId : undefined,
+        group_id: params.detailType === 'group' ? Number(params.targetId) || params.targetId : undefined,
       },
     };
   }
@@ -66,22 +66,30 @@ export class OneBotV11 implements OneBotProtocol {
 
   parseEventType(raw: OneBotRawEvent): 'message' | 'meta' | 'notice' | 'request' | 'other' {
     switch (raw.post_type) {
-      case 'message': return 'message';
-      case 'meta_event': return 'meta';
-      case 'notice': return 'notice';
-      case 'request': return 'request';
-      default: return 'other';
+      case 'message':
+        return 'message';
+      case 'meta_event':
+        return 'meta';
+      case 'notice':
+        return 'notice';
+      case 'request':
+        return 'request';
+      default:
+        return 'other';
     }
   }
 
-  parseMessageEvent(raw: OneBotRawEvent, fallbackSelfId: string, nicknameMap?: Map<string, string>): NormalizedMessageEvent | null {
+  parseMessageEvent(
+    raw: OneBotRawEvent,
+    fallbackSelfId: string,
+    nicknameMap?: Map<string, string>,
+  ): NormalizedMessageEvent | null {
     const selfId = raw.self_id != null ? String(raw.self_id) : fallbackSelfId;
     const detailType = (raw.message_type ?? 'private') as string;
     const message = Array.isArray(raw.message) ? raw.message : [];
     // 优先使用消息段生成富文本（含 <at> 等标记），回退到 raw_message
-    const text = message.length > 0
-      ? segmentsToText(message, selfId, nicknameMap)
-      : ((raw.raw_message as string) ?? '');
+    const text =
+      message.length > 0 ? segmentsToText(message, selfId, nicknameMap) : ((raw.raw_message as string) ?? '');
 
     if (!text.trim()) return null;
 
@@ -156,12 +164,14 @@ export class OneBotV11 implements OneBotProtocol {
         noticeType: 'group_upload',
         userId: raw.user_id != null ? String(raw.user_id) : undefined,
         groupId: raw.group_id != null ? String(raw.group_id) : undefined,
-        data: file ? {
-          fileId: file.id,
-          fileName: file.name,
-          fileSize: file.size,
-          busid: file.busid,
-        } : undefined,
+        data: file
+          ? {
+              fileId: file.id,
+              fileName: file.name,
+              fileSize: file.size,
+              busid: file.busid,
+            }
+          : undefined,
       };
     }
 

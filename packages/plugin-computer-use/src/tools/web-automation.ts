@@ -11,7 +11,7 @@
  */
 
 import type { Context } from '@aalis/core';
-import { CdpManager, type DomNode } from '../cdp/client.js';
+import type { CdpManager, DomNode } from '../cdp/client.js';
 
 /** 将 DomNode 树格式化为 AI 友好的文本 */
 function formatDomTree(node: DomNode, indent: number = 0): string {
@@ -27,8 +27,10 @@ function formatDomTree(node: DomNode, indent: number = 0): string {
   const skipAttrs = new Set(['id', 'class', 'style']);
   for (const [k, v] of Object.entries(node.attributes)) {
     if (skipAttrs.has(k)) continue;
-    if (['role', 'aria-label', 'placeholder', 'type', 'name', 'href', 'src', 'data-testid', 'title', 'alt'].includes(k)) {
-      const display = v.length > 60 ? v.slice(0, 60) + '…' : v;
+    if (
+      ['role', 'aria-label', 'placeholder', 'type', 'name', 'href', 'src', 'data-testid', 'title', 'alt'].includes(k)
+    ) {
+      const display = v.length > 60 ? `${v.slice(0, 60)}…` : v;
       line += ` ${k}="${display}"`;
     }
   }
@@ -49,7 +51,6 @@ function formatDomTree(node: DomNode, indent: number = 0): string {
 }
 
 export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager): void {
-
   // ── web_connect ──
   ctx.registerTool({
     definition: {
@@ -82,7 +83,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const port = (args.port as number) || 9222;
         const targetId = args.target_id as string | undefined;
@@ -93,11 +94,10 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
         if (appPath) {
           try {
             // 后台启动，不等待退出
-            const child = require('node:child_process').spawn(
-              appPath,
-              [`--remote-debugging-port=${port}`],
-              { detached: true, stdio: 'ignore' },
-            );
+            const child = require('node:child_process').spawn(appPath, [`--remote-debugging-port=${port}`], {
+              detached: true,
+              stdio: 'ignore',
+            });
             child.unref();
             // 等待应用启动并开放端口
             await waitForPort(port, 8000);
@@ -127,7 +127,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
               id: t.id,
               type: t.type,
               title: t.title,
-              url: t.url.length > 100 ? t.url.slice(0, 100) + '…' : t.url,
+              url: t.url.length > 100 ? `${t.url.slice(0, 100)}…` : t.url,
             })),
           });
         }
@@ -187,7 +187,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const port = args.port as number | undefined;
         const selector = (args.selector as string) || 'body';
@@ -200,7 +200,10 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
             selector,
             matchCount: elements.length,
             elements: elements.slice(0, 50), // 限制返回数量
-            hint: elements.length > 50 ? `共 ${elements.length} 个匹配，仅显示前 50 个。请用更精确的选择器缩小范围。` : undefined,
+            hint:
+              elements.length > 50
+                ? `共 ${elements.length} 个匹配，仅显示前 50 个。请用更精确的选择器缩小范围。`
+                : undefined,
           });
         }
 
@@ -252,7 +255,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const port = args.port as number | undefined;
         const selector = args.selector as string;
@@ -318,7 +321,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const port = args.port as number | undefined;
         const code = args.code as string;

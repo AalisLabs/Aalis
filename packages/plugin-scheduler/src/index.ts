@@ -1,9 +1,9 @@
-import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Context, ConfigSchema, PluginModule } from '@aalis/core';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
 
 // ════════════════════════════════════════════════════════════
 // plugin-scheduler — 让 AI 从"被动"变"主动"
@@ -55,7 +55,7 @@ function parseCronField(field: string, min: number, max: number): Set<number> {
       for (let i = a; i <= b; i++) result.add(i);
     } else {
       const n = parseInt(trimmed, 10);
-      if (!isNaN(n)) result.add(n);
+      if (!Number.isNaN(n)) result.add(n);
     }
   }
   return result;
@@ -241,10 +241,7 @@ export const webuiHandlers: PluginModule['webuiHandlers'] = {
         ...j,
         nextRun: ready ? j.nextRun : 0,
         schedule: j.cron ?? `每 ${j.interval}s`,
-        status: !j.enabled ? '❌ 禁用'
-          : j.paused ? '⏸ 暂停'
-          : j.running ? '⏳ 执行中'
-          : '✅ 就绪',
+        status: !j.enabled ? '❌ 禁用' : j.paused ? '⏸ 暂停' : j.running ? '⏳ 执行中' : '✅ 就绪',
         lastRunText: j.lastRun ? new Date(j.lastRun).toLocaleString('zh-CN') : '从未',
       };
     });
@@ -408,7 +405,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     }
 
     runtimes.set(jobCfg.name, rt);
-    logger.info(`任务已注册: ${jobCfg.name} ${jobCfg.cron ? `(cron: ${jobCfg.cron})` : `(interval: ${jobCfg.interval}s)`}`);
+    logger.info(
+      `任务已注册: ${jobCfg.name} ${jobCfg.cron ? `(cron: ${jobCfg.cron})` : `(interval: ${jobCfg.interval}s)`}`,
+    );
   }
 
   for (const job of config.jobs) {
@@ -540,12 +539,16 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'scheduler_create_job',
-          description: '创建一个新的定时/周期性自主行动计划。可以用来安排自己将来要做的事情。不传 sessionId 和 platform 时，默认使用当前会话。',
+          description:
+            '创建一个新的定时/周期性自主行动计划。可以用来安排自己将来要做的事情。不传 sessionId 和 platform 时，默认使用当前会话。',
           parameters: {
             type: 'object',
             properties: {
               name: { type: 'string', description: '任务名称（唯一标识）' },
-              cron: { type: 'string', description: 'Cron 表达式 (分 时 日 月 周)，如 "0 9 * * *" 表示每天9点。与 interval 二选一。' },
+              cron: {
+                type: 'string',
+                description: 'Cron 表达式 (分 时 日 月 周)，如 "0 9 * * *" 表示每天9点。与 interval 二选一。',
+              },
               interval: { type: 'number', description: '固定间隔秒数。与 cron 二选一。' },
               sessionId: { type: 'string', description: '任务消息发往的会话 ID。不传则默认使用当前会话。' },
               platform: { type: 'string', description: '目标平台标识。不传则默认使用当前平台。' },
@@ -568,7 +571,10 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         if (!job.cron && !job.interval) return JSON.stringify({ error: '必须指定 cron 或 interval' });
         if (runtimes.has(job.name)) return JSON.stringify({ error: `任务 "${job.name}" 已存在` });
         service.addJob(job);
-        return JSON.stringify({ ok: true, message: `任务 "${job.name}" 已创建，目标会话: ${job.sessionId} (${job.platform})` });
+        return JSON.stringify({
+          ok: true,
+          message: `任务 "${job.name}" 已创建，目标会话: ${job.sessionId} (${job.platform})`,
+        });
       },
     });
 
@@ -578,7 +584,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         type: 'function',
         function: {
           name: 'scheduler_list_jobs',
-          description: '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或分页避免返回过多数据。',
+          description:
+            '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或分页避免返回过多数据。',
           parameters: {
             type: 'object',
             properties: {
@@ -594,7 +601,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           },
         },
       },
-      handler: async (args) => {
+      handler: async args => {
         const all = service.getJobs().map(j => ({
           name: j.name,
           schedule: j.cron ?? `每 ${j.interval}s`,
@@ -651,7 +658,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           },
         },
       },
-      handler: async (args) => {
+      handler: async args => {
         const ok = service.removeJob(args.name as string);
         return JSON.stringify({ ok, message: ok ? '已删除' : '任务不存在' });
       },
@@ -673,7 +680,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           },
         },
       },
-      handler: async (args) => {
+      handler: async args => {
         const ok = service.pauseJob(args.name as string);
         return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在' });
       },
@@ -695,7 +702,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           },
         },
       },
-      handler: async (args) => {
+      handler: async args => {
         const ok = service.resumeJob(args.name as string);
         return JSON.stringify({ ok, message: ok ? '已恢复' : '任务不存在' });
       },

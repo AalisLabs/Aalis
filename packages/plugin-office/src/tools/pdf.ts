@@ -1,9 +1,9 @@
-import type { Context } from '@aalis/core';
-import { PDFDocument, StandardFonts, rgb, PageSizes } from 'pdf-lib';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { DocSessionManager } from '../session.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import type { Context } from '@aalis/core';
+import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import type { DocSessionManager } from '../session.js';
 
 // pdf-lib 仅支持 ASCII 标准字体，中文等需要嵌入字体。
 // 这里提供基础 PDF 生成，复杂排版建议先生成 docx/pptx/xlsx 后通过 pdf_convert 转换。
@@ -190,7 +190,13 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
       const pdfBytes = await state.pdfDoc.save();
       writeFileSync(filePath, pdfBytes);
       sessions.remove(session.id);
-      return JSON.stringify({ success: true, path: filePath, pages: state.pdfDoc.getPageCount(), size: pdfBytes.length, message: `PDF 已保存: ${filePath}` });
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        pages: state.pdfDoc.getPageCount(),
+        size: pdfBytes.length,
+        message: `PDF 已保存: ${filePath}`,
+      });
     },
   });
 
@@ -217,14 +223,14 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
       mkdirSync(outDir, { recursive: true });
 
       try {
-        execFileSync('soffice', [
-          '--headless',
-          '--convert-to', 'pdf',
-          '--outdir', outDir,
-          inputPath,
-        ], { timeout: 60000 });
+        execFileSync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDir, inputPath], {
+          timeout: 60000,
+        });
 
-        const baseName = inputPath.replace(/\.[^.]+$/, '.pdf').split('/').pop();
+        const baseName = inputPath
+          .replace(/\.[^.]+$/, '.pdf')
+          .split('/')
+          .pop();
         const pdfPath = resolve(outDir, baseName || 'output.pdf');
 
         return JSON.stringify({ success: true, path: pdfPath, message: `已转换为 PDF: ${pdfPath}` });

@@ -30,7 +30,10 @@ export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
 function parseStringList(val: unknown): string[] {
   if (Array.isArray(val)) return val.filter(Boolean).map(String);
   if (typeof val === 'string' && val.trim()) {
-    return val.split(',').map(s => s.trim()).filter(Boolean);
+    return val
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
   }
   return [];
 }
@@ -46,9 +49,10 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
     triggerOnAt: (raw.triggerOnAt as boolean) ?? d.triggerOnAt,
     triggerNames: parseStringList(raw.triggerNames),
     muteKeywords: parseStringList(raw.muteKeywords),
-    muteTimeSeconds: typeof raw.muteTimeSeconds === 'number' && raw.muteTimeSeconds > 0
-      ? Math.floor(raw.muteTimeSeconds)
-      : d.muteTimeSeconds,
+    muteTimeSeconds:
+      typeof raw.muteTimeSeconds === 'number' && raw.muteTimeSeconds > 0
+        ? Math.floor(raw.muteTimeSeconds)
+        : d.muteTimeSeconds,
   };
 }
 

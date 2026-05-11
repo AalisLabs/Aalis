@@ -1,8 +1,8 @@
-import { connect, type Connection, type Table as LanceTable } from '@lancedb/lancedb';
+import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { mkdirSync, existsSync } from 'node:fs';
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { VectorStoreService, VectorSearchResult } from '@aalis/plugin-vectorstore-api';
+import type { ConfigSchema, Context } from '@aalis/core';
+import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
+import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';
 
 // ===== 插件元数据 =====
 
@@ -80,10 +80,7 @@ class LanceDBVectorStore implements VectorStoreService {
     const count = await this.table.countRows();
     if (count === 0) return [];
 
-    const results = await this.table
-      .search(queryVector)
-      .limit(topK)
-      .toArray();
+    const results = await this.table.search(queryVector).limit(topK).toArray();
 
     return results.map(row => ({
       score: 1 - (row._distance ?? 0), // LanceDB 返回 L2 距离，转换为相似度

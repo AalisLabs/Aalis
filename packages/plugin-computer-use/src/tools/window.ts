@@ -7,10 +7,10 @@
  */
 
 import type { Context } from '@aalis/core';
+import { detectRunningAppType } from '../app-detect.js';
+import * as axNative from '../ax-native.js';
 import type { PlatformAdapter } from '../platform.js';
 import { detectPlatform } from '../platform.js';
-import * as axNative from '../ax-native.js';
-import { detectRunningAppType } from '../app-detect.js';
 
 export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): void {
   const axAvailable = axNative.isAvailable();
@@ -51,13 +51,16 @@ export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): voi
         }
 
         // 合并：以进程为维度，关联其窗口
-        const processMap = new Map<string, {
-          name: string;
-          pid?: number;
-          bundleId?: string;
-          appType?: string;
-          windows: typeof windows;
-        }>();
+        const processMap = new Map<
+          string,
+          {
+            name: string;
+            pid?: number;
+            bundleId?: string;
+            appType?: string;
+            windows: typeof windows;
+          }
+        >();
 
         // 先用 AX 进程建索引
         for (const proc of processes) {
@@ -83,7 +86,7 @@ export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): voi
         // macOS: 异步检测应用类型
         if (detectPlatform() === 'macos') {
           const entries = Array.from(processMap.values()).filter(e => e.pid);
-          const detectPromises = entries.map(async (entry) => {
+          const detectPromises = entries.map(async entry => {
             try {
               entry.appType = await detectRunningAppType(entry.pid!);
             } catch {
@@ -122,7 +125,7 @@ export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): voi
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         await adapter.resizeWindow(args.windowId as string, {
           x: args.x as number,
