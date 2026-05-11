@@ -1,3 +1,4 @@
+import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
 // ----- 平台适配器接口 -----
 
 /** 单个平台连接的状态 */
@@ -85,7 +86,7 @@ export interface PlatformAdapter {
 
 // ----- 平台聚合服务接口（同名 facade） -----
 
-import type { PluginGroupInfo } from '@aalis/core';
+import type { } from '@aalis/core';
 
 /**
  * 平台聚合服务 —— 同名 facade，对外暴露为 `'platform'`

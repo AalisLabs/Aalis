@@ -1,6 +1,7 @@
-import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, SafetyLevel, ExecutionGuard, CommandArgumentDefinition, CommandOptionDefinition } from '@aalis/core';
+import type { CommandDefinition, RegisteredCommand, CommandContext, SubcommandDefinition, SafetyLevel, CommandArgumentDefinition, CommandOptionDefinition } from '@aalis/core';
 import type { CommandService, CommandNodeInfo } from '@aalis/plugin-commands-api';
 import type { Logger } from '@aalis/core';
+import type { ExecutionGuard, ExecutionGuardContext } from '@aalis/plugin-authority-api';
 
 /** 内部解析结果：从根指令出发匹配 args 后，得到的最深节点及其链路上下文 */
 interface ResolvedCommand {

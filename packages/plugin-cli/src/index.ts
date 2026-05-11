@@ -8,7 +8,7 @@ import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform
 import type { CLIService } from './types.js';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { PersonaService } from '@aalis/plugin-persona';
-import type { AuthorityService } from '@aalis/plugin-authority';
+import type { AuthorityService } from '@aalis/plugin-authority-api';
 
 export type { CLIService } from './types.js';
 import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';

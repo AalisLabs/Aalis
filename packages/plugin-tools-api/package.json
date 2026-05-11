@@ -9,7 +9,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*"
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
