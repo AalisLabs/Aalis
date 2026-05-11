@@ -10,10 +10,11 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*",
     "docx": "^9.5.0",
     "exceljs": "^4.4.0",
-    "pptxgenjs": "^3.12.0",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pptxgenjs": "^3.12.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

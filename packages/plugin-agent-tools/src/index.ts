@@ -1,5 +1,6 @@
 import type { Context } from '@aalis/core';
 import { ToolRegistry } from './tools.js';
+import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-agent-tools';
 export const displayName = '工具注册表';

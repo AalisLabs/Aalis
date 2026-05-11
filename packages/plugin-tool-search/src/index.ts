@@ -1,10 +1,9 @@
-import type { ToolService } from '@aalis/plugin-tools-api';
+import type { ToolService, ToolSummary } from '@aalis/plugin-tools-api';
 import type {
   Context,
   ConfigSchema,
   ToolDefinition,
   ToolCallContext,
-  ToolSummary,
 } from '@aalis/core';
 import '@aalis/plugin-agent-api';
 

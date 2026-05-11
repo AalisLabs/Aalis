@@ -1,11 +1,58 @@
 import { rm, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Context, ConfigSchema, AppService, CommandContext } from '@aalis/core';
+import type { ConfigSchema, AppService, PermissionId, SafetyLevel } from '@aalis/core';
+import { Context, INBOUND_PHASE } from '@aalis/core';
+import type {
+  CommandArgumentDefinition,
+  CommandContext,
+  CommandDefinition,
+  CommandOptionDefinition,
+  CommandService,
+  SubcommandDefinition,
+} from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import { INBOUND_PHASE } from '@aalis/core';
 import { CommandRegistry } from './commands.js';
+
+// ===== Context 便捷方法注入（internal-framework 风格） =====
+//
+// 模块加载即生效，幂等：重新导入本插件不会重复注入。
+// 注入后任何 Context 都可调用 ctx.command(...)；
+// 若 commands 服务尚不可用，调用会通过 whenService 自动延迟到服务就绪后执行。
+if (!('command' in Context.prototype)) {
+  Context.extend('command', function (
+    this: Context,
+    name: string,
+    description: string,
+    action: (ctx: CommandContext) => Promise<string | void>,
+    options?: {
+      authority?: number;
+      safety?: SafetyLevel;
+      permissions?: PermissionId[];
+      arguments?: CommandArgumentDefinition[];
+      options?: CommandOptionDefinition[];
+      usage?: string;
+      examples?: string[];
+      subcommands?: SubcommandDefinition[];
+    },
+  ): () => void {
+    const def: CommandDefinition = {
+      name,
+      description,
+      action,
+      authority: options?.authority,
+      safety: options?.safety,
+      permissions: options?.permissions,
+      arguments: options?.arguments,
+      options: options?.options,
+      usage: options?.usage,
+      examples: options?.examples,
+      subcommands: options?.subcommands,
+    };
+    return this.whenService<CommandService>('commands', (svc) => svc.register(def, this.id));
+  });
+}
 
 // ===== 插件元数据 =====
 
