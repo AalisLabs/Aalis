@@ -74,6 +74,7 @@ export type {
 } from './webui.js';
 
 // CLI 服务（已迁出至 @aalis/plugin-cli）
+// 会话管理（已迁出至 @aalis/plugin-session-manager）
 
 // App 服务
 export type { AppService } from './app.js';
@@ -110,14 +111,4 @@ export type { EmbeddingService } from './embedding.js';
 // 向量数据库服务
 export type { VectorSearchResult, VectorStoreService } from './vectorstore.js';
 
-// 会话管理
-export type {
-  SessionInfo,
-  SessionConfig,
-  SessionTreeNode,
-  SessionManagerService,
-  PlatformProfile,
-  SessionManagerCapability,
-  SessionManagerCapabilityRegistry,
-} from './session.js';
-export { SessionManagerCapabilities } from './session.js';
+// 会话管理已迁移至 @aalis/plugin-session-manager

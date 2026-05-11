@@ -1,4 +1,5 @@
 import type { Context, ConfigSchema, ToolCallContext, MemoryService } from '@aalis/core';
+import type {} from '@aalis/plugin-session-manager';
 
 // ===== 插件元数据 =====
 

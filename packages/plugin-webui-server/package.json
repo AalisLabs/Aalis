@@ -13,7 +13,8 @@
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-authority": "workspace:*",
     "express": "^5.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@aalis/plugin-session-manager": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

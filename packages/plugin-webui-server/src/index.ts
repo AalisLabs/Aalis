@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformService, WebuiPage, LLMService } from '@aalis/core';
+import type {} from '@aalis/plugin-session-manager';
 import type { PersonaService } from '@aalis/plugin-persona';
 import type { AuthorityService } from '@aalis/plugin-authority';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';

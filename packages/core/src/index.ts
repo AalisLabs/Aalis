@@ -23,7 +23,6 @@ export { LLMCapabilities } from './types/index.js';
 export { MemoryCapabilities } from './types/index.js';
 export { StorageCapabilities } from './types/index.js';
 export { PlatformCapabilities } from './types/index.js';
-export { SessionManagerCapabilities } from './types/index.js';
 export type { PluginModule } from './plugin.js';
 export type { PluginState, PluginEntry } from './plugin.js';
 export type { LogLevel, LogEntry } from './logger.js';
@@ -133,12 +132,4 @@ export type {
   // 向量数据库服务
   VectorSearchResult,
   VectorStoreService,
-  // 会话管理
-  SessionInfo,
-  SessionConfig,
-  SessionTreeNode,
-  SessionManagerService,
-  PlatformProfile,
-  SessionManagerCapability,
-  SessionManagerCapabilityRegistry,
 } from './types/index.js';
