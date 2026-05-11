@@ -107,13 +107,13 @@ export const StorageCapabilities = {
   Router: 'router',
 } as const satisfies StorageCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     storage: StorageCapability;
   }
 }
 
-import { registerCapabilityProbe } from './capabilities.js';
+import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('storage', StorageCapabilities.List, inst =>
   typeof (inst as { list?: unknown }).list === 'function'

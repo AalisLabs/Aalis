@@ -1,11 +1,5 @@
 import type { Context, Logger } from '@aalis/core';
-import type {
-  StorageListResult,
-  StorageReadStreamResult,
-  StorageRootInfo,
-  StorageService,
-  StorageStat,
-} from '@aalis/core';
+import type { StorageListResult, StorageReadStreamResult, StorageRootInfo, StorageService, StorageStat } from '@aalis/plugin-storage-api';
 
 /** 单条根的聚合视图（带提供者来源） */
 export interface AggregatedStorageRoot extends StorageRootInfo {
