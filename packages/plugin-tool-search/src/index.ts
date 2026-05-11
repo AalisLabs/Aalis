@@ -1,10 +1,6 @@
 import type { ToolService, ToolSummary } from '@aalis/plugin-tools-api';
-import type {
-  Context,
-  ConfigSchema,
-  ToolDefinition,
-  ToolCallContext,
-} from '@aalis/core';
+import type { Context, ConfigSchema, ToolDefinition } from '@aalis/core';
+import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 
 // ===== 插件元数据 =====

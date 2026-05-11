@@ -3,7 +3,7 @@
 // TriggerPolicyService 决定一条入站消息是否应当触发 agent。
 // 决策只读：实际状态变更（计数器重置、冷却记录）由 FlowControlService 完成。
 
-import type { IncomingMessage } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 
 export type TriggerKind = 'immediate' | 'interval' | 'swallow' | 'direct';
 

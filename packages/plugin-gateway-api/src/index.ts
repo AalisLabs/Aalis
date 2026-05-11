@@ -12,7 +12,7 @@
 // 完整发行入口可通过 `requiredServices` 声明 gateway 依赖；最小应用可不加载 gateway，
 // 由 core fallback 入站路由直接派发给 agent。
 
-import type { IncomingMessage, OutgoingMessage } from '@aalis/core';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
 
 /**
@@ -44,6 +44,28 @@ declare module '@aalis/core' {
       message: OutgoingMessage;
       metadata: Record<string, unknown>;
     };
+  }
+  interface AalisEvents {
+    /**
+     * Gateway 某个入站相位执行完毕（无论是否被 swallow）。
+     *
+     * 遥测插件可订阅此事件以：
+     *   - 记录每个相位耗时
+     *   - 统计 swallow 率
+     *   - 追踪消息在管道中的流转路径
+     *
+     * 对主流程零侵入：observer 的异常不会影响入站处理。
+     */
+    'gateway:phase:done': [
+      data: {
+        phase: string;
+        /** true = 链走到底（未被 swallow）；false = 某 handler 未调用 next() 终止了链 */
+        reachedEnd: boolean;
+        durationMs: number;
+        sessionId: string;
+        platform: string;
+      },
+    ];
   }
 }
 
