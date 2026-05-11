@@ -1,6 +1,7 @@
 import type { Context, IncomingMessage, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { VectorStoreService, EmbeddingService } from '@aalis/core';
+import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
+import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 import { prefixSender } from '@aalis/core';
 
 // ===== 插件元数据 =====
