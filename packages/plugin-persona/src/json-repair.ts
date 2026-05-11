@@ -47,15 +47,15 @@ const repairSteps: RepairStep[] = [
 function countOutsideStrings(s: string, ch: string): number {
   let count = 0;
   let inString = false;
-  let escape = false;
+  let escaped = false;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    if (escape) {
-      escape = false;
+    if (escaped) {
+      escaped = false;
       continue;
     }
     if (c === '\\') {
-      escape = true;
+      escaped = true;
       continue;
     }
     if (c === '"') {
@@ -92,21 +92,21 @@ function isLikelyClosingQuote(s: string, quoteIndex: number): boolean {
 function escapeBareQuotesInStrings(s: string): string {
   let out = '';
   let inString = false;
-  let escape = false;
+  let escaped = false;
   let changed = false;
 
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
 
-    if (escape) {
+    if (escaped) {
       out += c;
-      escape = false;
+      escaped = false;
       continue;
     }
 
     if (c === '\\') {
       out += c;
-      if (inString) escape = true;
+      if (inString) escaped = true;
       continue;
     }
 
@@ -137,17 +137,17 @@ function escapeBareQuotesInStrings(s: string): string {
 function findBalancedJsonObjectEnd(s: string, start: number): number {
   let depth = 0;
   let inString = false;
-  let escape = false;
+  let escaped = false;
 
   for (let i = start; i < s.length; i++) {
     const c = s[i];
 
-    if (escape) {
-      escape = false;
+    if (escaped) {
+      escaped = false;
       continue;
     }
     if (c === '\\') {
-      if (inString) escape = true;
+      if (inString) escaped = true;
       continue;
     }
     if (c === '"') {
