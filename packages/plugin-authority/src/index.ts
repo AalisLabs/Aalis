@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { App, ConfigManager, Context, Logger } from '@aalis/core';
+import type { AppService, ConfigManager, Context, Logger } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
@@ -479,7 +479,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
   async setOwners(ctx, args) {
     const owners = args.owners;
     if (!Array.isArray(owners)) throw new Error('owners 必须是数组');
-    const app = ctx.getService<App>('app');
+    const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.config.set('owners', owners);
     app.saveConfig();
@@ -490,7 +490,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
   async setDangerousPolicy(ctx, args) {
     const policy = args.policy as Record<string, unknown>;
     if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
-    const app = ctx.getService<App>('app');
+    const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.config.set('dangerousPolicy', policy);
     app.saveConfig();
@@ -515,7 +515,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
   /** 更新全局权限配置（defaultAuthority, ownerAuthority） */
   async setConfig(ctx, args) {
     const { defaultAuthority, ownerAuthority } = args;
-    const app = ctx.getService<App>('app');
+    const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     if (typeof defaultAuthority === 'number') ctx.config.set('defaultAuthority', defaultAuthority);
     if (typeof ownerAuthority === 'number') ctx.config.set('ownerAuthority', ownerAuthority);
@@ -527,7 +527,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
   async setCommandOverride(ctx, args) {
     const { name, authority, safety } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
-    const app = ctx.getService<App>('app');
+    const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     const override: { authority?: number; safety?: string } = {};
     if (typeof authority === 'number') override.authority = authority;
@@ -546,7 +546,7 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
   async resetCommandOverride(ctx, args) {
     const { name } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
-    const app = ctx.getService<App>('app');
+    const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.getService<CommandService>('commands')?.removeOverride(name);
     ctx.config.set('commandOverrides', ctx.getService<CommandService>('commands')?.getOverrides() ?? {});

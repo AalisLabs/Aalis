@@ -45,6 +45,8 @@ export type {
   MiddlewareFn,
   MiddlewareNext,
   PermissionId,
+  PluginManagerService,
+  PluginStatusEntry,
   SafetyLevel,
   SchemaArray,
   SchemaField,

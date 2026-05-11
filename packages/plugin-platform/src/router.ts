@@ -1,4 +1,4 @@
-import type { App, Context, Logger } from '@aalis/core';
+import type { Context, Logger, PluginManagerService } from '@aalis/core';
 import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
 import type { PlatformAdapter, PlatformConnection, PlatformSelfIdentity, PlatformService } from './types.js';
 
@@ -81,11 +81,11 @@ export class PlatformRouter implements PlatformService, PlatformAdapter {
   // ---- PlatformService 聚合视图：introspection 用 ----
 
   getPluginGroups(): PluginGroupInfo[] {
-    const app = this.ctx.getService<App>('app');
-    if (!app) return [];
+    const pm = this.ctx.getService<PluginManagerService>('plugins');
+    if (!pm) return [];
     const targetServices = new Set(['platform']);
     const grouped: string[] = [];
-    for (const p of app.plugins.getStatus()) {
+    for (const p of pm.getStatus()) {
       if (p.provides?.some(s => targetServices.has(s))) grouped.push(p.instanceId);
     }
     return [{ label: '平台接入', plugins: grouped }];
