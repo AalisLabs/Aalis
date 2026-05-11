@@ -2,7 +2,6 @@ import type { Context, ConfigSchema } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type {} from '@aalis/plugin-agent-default';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====

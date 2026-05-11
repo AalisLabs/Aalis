@@ -9,7 +9,7 @@ import type { Logger } from '@aalis/core';
 import type { AgentService, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
-import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager';
+import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager-api';
 import type { PlatformService } from '@aalis/plugin-platform';
 import { getSenderLabel, getMessageName } from '@aalis/plugin-message-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';

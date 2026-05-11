@@ -16,8 +16,7 @@ import type { LLMService } from '@aalis/plugin-llm-api';
 import type { WebUIService } from '@aalis/plugin-webui-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
 import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform';
-import type {} from '@aalis/plugin-session-manager';
-import type {} from '@aalis/plugin-agent-default';
+import type {} from '@aalis/plugin-session-manager-api';
 import type { PersonaService } from '@aalis/plugin-persona';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';

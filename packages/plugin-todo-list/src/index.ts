@@ -1,7 +1,7 @@
 import type { Context, ConfigSchema } from '@aalis/core';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type {} from '@aalis/plugin-session-manager';
+import type {} from '@aalis/plugin-session-manager-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====

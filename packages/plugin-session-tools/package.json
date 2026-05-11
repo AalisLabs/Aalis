@@ -14,7 +14,7 @@
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-message-archive": "workspace:*",
-    "@aalis/plugin-session-manager": "workspace:*",
+    "@aalis/plugin-session-manager-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {

@@ -123,5 +123,25 @@ declare module '@aalis/core' {
   interface PluginModule {
     /** 插件声明的 WebUI 页面列表 */
     webuiPages?: WebuiPage[];
+    /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
+    extends?: ExtendDeclaration;
   }
+}
+
+/**
+ * 插件可以声明它对 core 做了哪些扩展，用于前端展示和文档生成。
+ *
+ * 仅是元数据描述，core 不会读取也不会校验，仅透传给 WebUI 展示。
+ *
+ * @example
+ * export const extends_: ExtendDeclaration = {
+ *   events: ['scheduler:tick', 'scheduler:error'],
+ *   hooks: ['schedule:before'],
+ * };
+ */
+export interface ExtendDeclaration {
+  /** 该插件新增的自定义事件名 */
+  events?: string[];
+  /** 该插件新增的自定义钩子名 */
+  hooks?: string[];
 }
