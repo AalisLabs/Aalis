@@ -314,7 +314,7 @@ export class Context {
   /**
    * 给 Context.prototype 添加一个方法（进程级共享）。
    *
-   * 用于插件向使用者暴露便捷方法，例如 plugin-tools-system 注入
+   * 用于插件向使用者暴露便捷方法，例如 plugin-tools 注入
    * `ctx.registerTool()`、plugin-commands 注入 `ctx.command()`。
    *
    * **同名方法存在时抛错**，避免静默覆盖。
@@ -343,7 +343,7 @@ export class Context {
   // ---- 业务便捷方法已迁出 ----
   //
   // ctx.registerTool / registerToolGroup —— 见 @aalis/plugin-tools-api +
-  //   @aalis/plugin-tools-system（通过 Context.extend 注入到 prototype）
+  //   @aalis/plugin-tools（通过 Context.extend 注入到 prototype）
   // ctx.command —— 见 @aalis/plugin-commands-api + @aalis/plugin-commands
   //
   // core 不再直接知晓 tools / commands 概念。
@@ -411,7 +411,7 @@ export class Context {
     this.hooks.unregisterByContext(this.id);
 
     // 服务自清理协议：任何服务实例若实现 `unregisterByPlugin(contextId)`，
-    // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools-system 的
+    // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools 的
     // ToolService、plugin-commands 的 CommandService）。
     // core 不再硬编码任何具体服务名。
     for (const name of this._services.getServiceNames()) {

@@ -96,7 +96,7 @@ aalis/
 │   ├── plugin-vectorstore-flat/     # 平面 JSON 向量存储
 │   ├── plugin-vectorstore-lancedb/  # LanceDB 向量存储
 │   │
-│   ├── plugin-tools-system/         # 系统工具集（Shell / 文件 / 系统 / HTTP）
+│   ├── plugin-tools/         # 系统工具集（Shell / 文件 / 系统 / HTTP）
 │   ├── plugin-tool-search/          # 工具搜索层
 │   ├── plugin-tool-browser/         # Puppeteer 浏览器自动化
 │   ├── plugin-tool-code-runner/     # Python / JS 代码执行
@@ -136,7 +136,7 @@ aalis/
 | `persona` | 角色人格管理 | plugin-persona |
 | `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui-server |
 | `websearch` | 联网搜索 | plugin-websearch-serper |
-| `tools` | AI 工具注册表 | plugin-agent-tools, plugin-tools-system |
+| `tools` | AI 工具注册表 | plugin-agent-tools, plugin-tools |
 | `semantic-memory` | 语义长期记忆 | plugin-memory-vector |
 | `session-manager` | 会话生命周期、平台配置、会话树 | plugin-session-manager |
 | `scheduler` | 定时任务调度 | plugin-scheduler |
@@ -351,7 +351,7 @@ outputFormat:
 | [向量记忆](docs/plugins/plugin-memory-vector.md) | 语义检索与时间衰减 |
 | [角色人格](docs/plugins/plugin-persona.md) | YAML 角色卡与结构化输出 |
 | [工具搜索层](docs/plugins/plugin-tool-search.md) | 工具数量阈值与搜索机制 |
-| [系统工具集](docs/plugins/plugin-tools-system.md) | Shell / 文件 / 系统 / HTTP 工具 |
+| [系统工具集](docs/plugins/plugin-tools.md) | Shell / 文件 / 系统 / HTTP 工具 |
 | [平面向量存储](docs/plugins/plugin-vectorstore-flat.md) | JSON 存储、余弦相似度 |
 | [LanceDB 向量存储](docs/plugins/plugin-vectorstore-lancedb.md) | 原生向量检索 |
 | [Serper 搜索](docs/plugins/plugin-websearch-serper.md) | Serper API 联网搜索 |

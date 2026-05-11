@@ -8,7 +8,7 @@
 // - Context 便捷方法的类型增强（ctx.registerTool / ctx.registerToolGroup）
 // - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
 //
-// 实现见 @aalis/plugin-tools-system。
+// 实现见 @aalis/plugin-tools。
 
 import type { Context, PermissionId, SafetyLevel, ToolDefinition } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
@@ -83,7 +83,7 @@ export interface ToolGroupInfo {
  * 工具服务接口
  *
  * 管理 AI 可调用的工具的注册、查询、执行。
- * 由 plugin-tools-system 创建 ToolRegistry 并注册为服务。
+ * 由 plugin-tools 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
@@ -122,7 +122,7 @@ export interface ToolService {
 
 // ===== Context 便捷方法增强 =====
 //
-// 实现由 @aalis/plugin-tools-system 在激活时通过 `Context.extend(...)` 注入到
+// 实现由 @aalis/plugin-tools 在激活时通过 `Context.extend(...)` 注入到
 // `Context.prototype`，本声明合并提供编译期类型签名。
 declare module '@aalis/core' {
   interface Context {
@@ -132,7 +132,7 @@ declare module '@aalis/core' {
      * 若 tools 服务尚不可用，会通过 `whenService` 自动延迟到服务就绪后注册。
      * 返回的 dispose 函数：未刷入前调用即取消缓冲；已刷入则从服务取消注册。
      *
-     * @requires plugin-tools-system 已加载（提供该方法的运行时实现）
+     * @requires plugin-tools 已加载（提供该方法的运行时实现）
      */
     registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
 
@@ -140,7 +140,7 @@ declare module '@aalis/core' {
      * 注册工具分组的便捷方法。
      * 行为同 `registerTool`：服务未就绪时自动延迟。
      *
-     * @requires plugin-tools-system 已加载
+     * @requires plugin-tools 已加载
      */
     registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
   }

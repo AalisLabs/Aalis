@@ -1,6 +1,6 @@
 // ----- 权限服务接口 + 执行守卫契约 -----
 //
-// 任何需要"在指令/工具执行前进行权限校验"的服务实现（plugin-tools-system、plugin-commands 等）
+// 任何需要"在指令/工具执行前进行权限校验"的服务实现（plugin-tools、plugin-commands 等）
 // 都应从本包导入 `ExecutionGuard` / `ExecutionGuardContext`，
 // 任何需要消费权限服务的插件应导入 `AuthorityService` 等接口。
 
