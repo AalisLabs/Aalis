@@ -1,6 +1,6 @@
 import { Context } from './context.js';
 import { normalizeDependency, type NormalizedDependency } from './service.js';
-import type { InjectDeclaration, ConfigSchema, ExtendDeclaration, WebuiPage } from './types/index.js';
+import type { InjectDeclaration, ConfigSchema, ExtendDeclaration } from './types/index.js';
 import type { Logger } from './logger.js';
 
 // ----- 插件定义格式 -----
@@ -29,11 +29,10 @@ export interface PluginModule {
   configSchema?: ConfigSchema;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
   defaultConfig?: Record<string, unknown>;
-  /** 该插件提供的 WebUI 页面声明 */
-  webuiPages?: WebuiPage[];
   /** WebUI 页面操作处理器（声明式页面的后端方法） */
   webuiHandlers?: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
+  // 注：webuiPages 字段由 @aalis/plugin-webui-api 通过 declaration merging 注入。
 }
 
 // ----- 插件状态 -----
@@ -226,7 +225,7 @@ export class PluginManager {
   /**
    * 获取所有已注册插件的状态
    */
-  getStatus(): Array<{ name: string; instanceId: string; displayName?: string; state: PluginState; provides?: string[]; core?: boolean; reusable?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: WebuiPage[]; webuiHandlerNames?: string[]; error?: string }> {
+  getStatus(): Array<{ name: string; instanceId: string; displayName?: string; state: PluginState; provides?: string[]; core?: boolean; reusable?: boolean; extends?: ExtendDeclaration; config: Record<string, unknown>; configSchema?: ConfigSchema; defaultConfig?: Record<string, unknown>; webuiPages?: unknown[]; webuiHandlerNames?: string[]; error?: string }> {
     return [...this.plugins.entries()].map(([, entry]) => ({
       name: entry.module.name,
       instanceId: entry.instanceId,
@@ -239,7 +238,7 @@ export class PluginManager {
       config: entry.config,
       configSchema: entry.module.configSchema,
       defaultConfig: entry.module.defaultConfig,
-      webuiPages: entry.module.webuiPages,
+      webuiPages: (entry.module as { webuiPages?: unknown[] }).webuiPages,
       webuiHandlerNames: entry.module.webuiHandlers ? Object.keys(entry.module.webuiHandlers) : undefined,
       error: entry.error,
     }));

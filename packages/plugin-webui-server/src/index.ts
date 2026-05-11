@@ -7,12 +7,12 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, WebuiPage } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { WebUIService } from '@aalis/plugin-webui-api';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
+import type { WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
 import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform';
 import type {} from '@aalis/plugin-session-manager';
 import type {} from '@aalis/plugin-agent-default';
@@ -341,7 +341,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
     for (const plugin of app.plugins.getStatus()) {
       if (plugin.state === 'active' && plugin.webuiPages) {
-        for (const page of plugin.webuiPages) {
+        for (const page of plugin.webuiPages as WebuiPage[]) {
           pages.push({ ...page, plugin: plugin.name, pluginDisplayName: plugin.displayName });
         }
       }

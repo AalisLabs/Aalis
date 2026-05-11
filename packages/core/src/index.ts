@@ -74,7 +74,7 @@ export type {
   // Gateway 服务（已迁出至 @aalis/plugin-gateway-api）
   PluginGroupInfo,
   // WebUI 页面骨架（WebUIService / WebuiComponent 等已迁出至 @aalis/plugin-webui-api）
-  WebuiPage,
+  // WebUI 页面类型（已迁出至 @aalis/plugin-webui-api）
   // App 服务
   AppService,
   // LLM 服务（已迁出至 @aalis/plugin-llm-api）

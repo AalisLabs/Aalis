@@ -95,15 +95,34 @@ export type WebuiComponent =
   | WebuiTabsComponent;
 
 /**
- * 扩展 core 中 WebuiPage 骨架接口，注入完整字段。
+ * 插件可声明的 WebUI 页面 —— 完整定义。
  *
- * 注意：core 中 `WebuiPage` 仅保留 `key`/`label`/`icon`/`order`/`renderer` 五个字段，
- * 这里通过 declaration merging 把 `content` 字段补全为强类型 `WebuiComponent[]`。
+ * 由本包直接导出（core 不再持有 WebuiPage 骨架）。
+ */
+export interface WebuiPage {
+  /** 页面唯一标识（对应前端路由/标签 key） */
+  key: string;
+  /** 页面显示名称 */
+  label: string;
+  /** 图标标识（命名标识或内联 SVG） */
+  icon?: string;
+  /** 排序权重（越小越靠前，默认 99） */
+  order?: number;
+  /** 自定义渲染器标识（非声明式 content 场景） */
+  renderer?: string;
+  /** 声明式页面内容（不提供则使用客户端内置页面） */
+  content?: WebuiComponent[];
+}
+
+/**
+ * 通过 declaration merging 向 core 的 PluginModule 注入 webuiPages 字段。
+ *
+ * 这样 core 不需要知道 WebuiPage 的存在，但任何 import 本包的插件都能在 PluginModule 上看到该字段。
  */
 declare module '@aalis/core' {
-  interface WebuiPage {
-    /** 声明式页面内容（不提供则使用客户端内置页面） */
-    content?: WebuiComponent[];
+  interface PluginModule {
+    /** 插件声明的 WebUI 页面列表 */
+    webuiPages?: WebuiPage[];
   }
 }
 
