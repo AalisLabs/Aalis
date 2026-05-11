@@ -13,7 +13,8 @@
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-message-archive": "workspace:*",
     "@aalis/plugin-session-manager": "workspace:*",
-    "@aalis/plugin-platform": "workspace:*"
+    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-llm-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
