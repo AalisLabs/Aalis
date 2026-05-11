@@ -178,14 +178,32 @@ export class App {
     // 按模块名索引已加载的模块（用于多实例查找）
     const loadedModules = new Map<string, PluginModule>();
 
+    // Pass 1: 先 import 所有模块，触发其顶层副作用（如 Context.extend 注入便捷方法）。
+    // 这样可以避免按字母序激活时，依赖 Context.extend 注入方法的插件先于
+    // 注入者（如 plugin-tools-system / plugin-commands）执行而激活失败。
+    const modules: Array<{ pkg: (typeof discovered)[number]; mod: PluginModule }> = [];
     for (const pkg of discovered) {
       try {
         const mod = (await import(pathToFileURL(pkg.entry).href)) as PluginModule;
-        loadedModules.set(mod.name, mod);
-        await this.plugin(mod);
+        if (typeof mod.apply !== 'function' || !mod.name) {
+          this.logger.debug(`跳过非插件模块: ${pkg.name}（缺少 name 或 apply）`);
+          continue;
+        }
+        modules.push({ pkg, mod });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`加载插件 "${pkg.name}" 失败: ${message}`);
+      }
+    }
+
+    // Pass 2: 注册并尝试激活所有已加载模块。此时 Context.prototype 上的扩展方法都已就位。
+    for (const { mod } of modules) {
+      loadedModules.set(mod.name, mod);
+      try {
+        await this.plugin(mod);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`注册插件 "${mod.name}" 失败: ${message}`);
       }
     }
 
@@ -330,6 +348,10 @@ export class App {
           /* stat 失败时用空 key，让 import 自己报错 */
         }
         const mod = (await import(pathToFileURL(pkg.entry).href + cacheKey)) as PluginModule;
+        if (typeof mod.apply !== 'function' || !mod.name) {
+          this.logger.debug(`跳过非插件模块: ${pkg.name}（缺少 name 或 apply）`);
+          continue;
+        }
         await this.plugin(mod);
         loaded.push(pkg.name);
         this.logger.info(`热加载插件: ${pkg.name}`);
@@ -460,6 +482,12 @@ export class App {
       // 跳过标记为 client 的前端包（非 Node.js 插件）
       if (aalisMeta?.client) {
         this.logger.debug(`跳过前端包: ${pkgJson.name}`);
+        continue;
+      }
+
+      // 跳过标记为 types-only 的 API 包（仅提供类型声明合并，无 apply 实现）
+      if (aalisMeta?.types) {
+        this.logger.debug(`跳过类型包: ${pkgJson.name}`);
         continue;
       }
 
