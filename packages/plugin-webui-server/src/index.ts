@@ -445,83 +445,51 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ groups: result });
   });
 
-  // 获取服务分组（自动分层 Dashboard 用）
+  // 获取服务分组（manifest 驱动，见 ADR-0004）
   expressApp.get('/api/service-groups', (_req, res) => {
     const app = getApp();
     const pluginStatus = app ? app.plugins.getStatus() : [];
-    // 构建 instanceId → provides 映射
-    const providesMap = new Map<string, string[]>();
+    // subsystem → plugins
+    const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
-      if (p.provides) providesMap.set(p.instanceId, p.provides);
+      const sub = p.subsystem || 'external';
+      if (!groupsMap.has(sub)) groupsMap.set(sub, []);
+      groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
     }
-
-    const claimed = new Set<string>();
-    const groups: Array<{ label: string; services: string[] }> = [];
-
-    // 1. 核心服务（基础设施 + 应用生命周期）
-    const coreServices = ['app', 'commands', 'authority', 'tools'];
-    groups.push({ label: '核心', services: coreServices });
-    coreServices.forEach(s => {
-      claimed.add(s);
-    });
-
-    // 2. Agent 子系统
-    const agent = ctx.getService<AgentService>('agent');
-    if (agent?.getPluginGroups) {
-      const agentGroups = agent.getPluginGroups();
-      const agentServices = new Set<string>();
-      agentServices.add('agent'); // Agent 自身
-      for (const g of agentGroups) {
-        for (const pid of g.plugins) {
-          const svcs = providesMap.get(pid);
-          if (svcs)
-            svcs.forEach(s => {
-              agentServices.add(s);
-            });
-        }
-      }
-      const agentList = [...agentServices].filter(s => !claimed.has(s));
-      if (agentList.length > 0) {
-        groups.push({ label: 'Agent', services: agentList });
-        agentList.forEach(s => {
-          claimed.add(s);
-        });
+    // 固定分组顺序
+    const order: Array<{ id: string; label: string }> = [
+      { id: 'core', label: '核心' },
+      { id: 'platform', label: '平台' },
+      { id: 'agent', label: 'Agent' },
+      { id: 'llm', label: 'LLM' },
+      { id: 'memory', label: '记忆' },
+      { id: 'embedding', label: 'Embedding' },
+      { id: 'persona', label: '人格' },
+      { id: 'tools', label: '工具' },
+      { id: 'message', label: '消息' },
+      { id: 'session', label: '会话' },
+      { id: 'skills', label: '技能' },
+      { id: 'scheduler', label: '调度' },
+      { id: 'authority', label: '权限' },
+      { id: 'user', label: '用户' },
+      { id: 'storage', label: '存储' },
+      { id: 'web', label: 'Web' },
+      { id: 'external', label: '外部' },
+      { id: 'webui', label: 'WebUI' },
+      { id: 'types', label: '类型' },
+    ];
+    const groups: Array<{ id: string; label: string; plugins: Array<{ name: string; provides: string[] }> }> = [];
+    for (const { id, label } of order) {
+      if (groupsMap.has(id)) {
+        groups.push({ id, label, plugins: groupsMap.get(id)! });
       }
     }
-
-    // 3. 平台子系统
-    const platformMgr = ctx.getService<PlatformService>('platform');
-    if (platformMgr?.getPluginGroups) {
-      const platGroups = platformMgr.getPluginGroups();
-      const platServices = new Set<string>();
-      platServices.add('platform');
-      // webui-client 属于平台子系统
-      if (ctx.hasService('webui-client')) platServices.add('webui-client');
-      for (const g of platGroups) {
-        for (const pid of g.plugins) {
-          const svcs = providesMap.get(pid);
-          if (svcs)
-            svcs.forEach(s => {
-              platServices.add(s);
-            });
-        }
-      }
-      const platList = [...platServices].filter(s => !claimed.has(s));
-      if (platList.length > 0) {
-        groups.push({ label: '平台', services: platList });
-        platList.forEach(s => {
-          claimed.add(s);
-        });
+    // 兜底：未列出的分组
+    for (const [id, plugins] of groupsMap.entries()) {
+      if (!order.some(o => o.id === id)) {
+        groups.push({ id, label: id, plugins });
       }
     }
-
-    // 4. 其他服务
-    const allServiceNames = ctx.listServices();
-    const other = allServiceNames.filter(s => !claimed.has(s));
-    if (other.length > 0) {
-      groups.push({ label: '其他', services: other });
-    }
-
     res.json({ groups });
   });
 
