@@ -109,7 +109,7 @@ function parseOneBotSession(sessionId: string): { selfId: string; detailType: st
 
 /** 从上下文中找到支持 callAction 的 OneBot 平台适配器 */
 function findOneBotAdapter(ctx: Context): PlatformAdapter | undefined {
-  const pm = ctx.getService<PlatformService>('platform', ['router']);
+  const pm = ctx.getService<PlatformService>('platform');
   return pm?.getAdapters().find(a => a.platform === 'onebot' && typeof a.callAction === 'function');
 }
 
@@ -481,7 +481,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 仅当 OneBot 平台可用时才注册工具
   // 使用 ready 事件确保平台已加载
   ctx.on('ready', () => {
-    if (!ctx.getService<PlatformService>('platform', ['router'])?.getPlatformNames().includes('onebot')) {
+    if (!ctx.getService<PlatformService>('platform')?.getPlatformNames().includes('onebot')) {
       ctx.logger.info('未检测到 OneBot 平台，跳过 OneBot 工具注册');
       return;
     }
@@ -1728,7 +1728,7 @@ function registerRequestTools(ctx: Context): void {
       })
     | undefined {
     const adapter = ctx
-      .getService<PlatformService>('platform', ['router'])
+      .getService<PlatformService>('platform')
       ?.getAdapters()
       .find(
         a =>
