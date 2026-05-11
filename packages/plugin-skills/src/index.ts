@@ -3,6 +3,7 @@ import type {} from '@aalis/plugin-webui-api';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import '@aalis/plugin-agent-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-skills — AI 自生成技能系统

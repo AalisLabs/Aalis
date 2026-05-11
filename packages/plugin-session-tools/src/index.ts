@@ -2,6 +2,7 @@ import type { Context, ConfigSchema, ToolCallContext, IncomingMessage, Message }
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { SessionManagerService, SessionInfo } from '@aalis/plugin-session-manager';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import '@aalis/plugin-agent-api';
 
 // ===== 插件元数据 =====
 

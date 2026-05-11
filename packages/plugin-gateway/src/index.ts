@@ -1,4 +1,6 @@
-import type { Context, IncomingMessage, OutgoingMessage, AgentService, InboundPhaseData } from '@aalis/core';
+import type { Context, IncomingMessage, OutgoingMessage } from '@aalis/core';
+import type { AgentService } from '@aalis/plugin-agent-api';
+import type { InboundPhaseData } from '@aalis/plugin-gateway-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type {} from '@aalis/plugin-agent-default';
 import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/core';
