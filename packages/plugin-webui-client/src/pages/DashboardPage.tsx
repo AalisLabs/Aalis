@@ -21,18 +21,15 @@ export function DashboardPage({
   connected,
   plugins,
   servicesData,
-  onRefreshServices,
 }: {
   status: SystemStatus | null;
   connected: boolean;
   plugins: PluginInfo[];
   servicesData: Record<string, ServiceInfo> | null;
-  onRefreshServices: () => void;
 }) {
   const activeCount = plugins.filter(p => p.state === 'active').length;
   const errorCount = plugins.filter(p => p.state === 'error').length;
   const totalCount = plugins.length;
-  const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [toolGroups, setToolGroups] = useState<ToolGroupDetail[]>([]);
   const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
@@ -59,21 +56,6 @@ export function DashboardPage({
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
-  };
-
-  const handlePrefer = async (serviceName: string, contextId: string) => {
-    setBusy(serviceName);
-    const res = await api<{ ok?: boolean; error?: string }>(
-      `/api/services/${encodeURIComponent(serviceName)}/prefer`,
-      { method: 'POST', body: JSON.stringify({ contextId }) },
-    );
-    if (res.ok) {
-      showToast(`${serviceName} 已切换到 ${contextId}`);
-      onRefreshServices();
-    } else {
-      showToast(res.error ?? '未知错误');
-    }
-    setBusy(null);
   };
 
   const serviceEntries = servicesData
@@ -159,7 +141,7 @@ export function DashboardPage({
               <div className="section-label">{section.label}</div>
               <div className="services-grid">
                 {section.entries.map(([name, info]) => (
-                  <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
+                  <ServiceCard key={name} name={name} info={info} />
                 ))}
               </div>
             </div>
@@ -169,7 +151,7 @@ export function DashboardPage({
               <div className="section-label">其他</div>
               <div className="services-grid">
                 {unclaimed.map(([name, info]) => (
-                  <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
+                  <ServiceCard key={name} name={name} info={info} />
                 ))}
               </div>
             </div>
@@ -183,7 +165,7 @@ export function DashboardPage({
               <div className="empty-hint">加载中...</div>
             )}
             {serviceEntries.map(([name, info]) => (
-              <ServiceCard key={name} name={name} info={info} busy={busy} onPrefer={handlePrefer} />
+              <ServiceCard key={name} name={name} info={info} />
             ))}
           </div>
         </>

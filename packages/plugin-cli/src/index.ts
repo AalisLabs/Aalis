@@ -735,7 +735,7 @@ class CliTui {
   }
 
   private getStatusViewLines(): string[] {
-    const services = this.ctx.listServices();
+    const services = this.ctx.getServiceNames();
     const platform = this.ctx.getService<PlatformAdapter>('platform', ['cli']);
     const connections = platform?.getConnections?.() ?? [];
     const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? '-';
