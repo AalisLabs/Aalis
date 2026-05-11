@@ -31,6 +31,7 @@ function parseApiError(provider: string, status: number, body: string): string {
 
 export const name = '@aalis/plugin-openai';
 export const displayName = 'OpenAI';
+export const subsystem = 'llm';
 export const provides = ['llm'];
 export const reusable = true;
 

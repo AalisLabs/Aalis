@@ -20,6 +20,7 @@ import { checkImmediateTrigger, checkMuteKeyword, getBotNames } from './detector
 
 export const name = '@aalis/plugin-trigger-policy';
 export const displayName = '触发策略';
+export const subsystem = 'scheduler';
 export const provides = ['trigger-policy'];
 export const inject = {
   required: ['gateway'],

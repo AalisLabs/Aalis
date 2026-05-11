@@ -17,6 +17,7 @@ export { MessageArchiveCapabilities } from './types.js';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';
+export const subsystem = 'message';
 export const inject = {
   required: ['memory'],
   optional: ['image-recognition'],

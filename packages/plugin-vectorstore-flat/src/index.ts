@@ -7,6 +7,7 @@ import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vecto
 
 export const name = '@aalis/plugin-vectorstore-flat';
 export const displayName = 'Flat 向量库';
+export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {

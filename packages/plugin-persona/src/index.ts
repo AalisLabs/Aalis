@@ -31,6 +31,7 @@ interface SessionConfigResolver {
 
 export const name = '@aalis/plugin-persona';
 export const displayName = '人设系统';
+export const subsystem = 'persona';
 export const provides = ['persona'];
 export const inject = {
   optional: ['platform'],

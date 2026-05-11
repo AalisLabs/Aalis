@@ -11,6 +11,7 @@ import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './
 
 export const name = '@aalis/plugin-checkpoint';
 export const displayName = '回滚检查点';
+export const subsystem = 'scheduler';
 export const provides = ['checkpoint'];
 
 export const configSchema: ConfigSchema = {

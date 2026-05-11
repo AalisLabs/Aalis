@@ -20,6 +20,7 @@ import { parseModelRef } from '@aalis/plugin-llm-api';
 
 export const name = '@aalis/plugin-websearch-serper';
 export const displayName = 'Serper 网络搜索';
+export const subsystem = 'tools';
 export const provides = ['web-search'];
 export const inject = {
   optional: ['llm'],
