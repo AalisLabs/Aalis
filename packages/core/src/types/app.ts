@@ -1,11 +1,13 @@
 // ----- App 服务接口 -----
 
+import type { PluginEntry, PluginState } from '../plugin.js';
+import type { ConfigSchema } from './core.js';
+
 /**
- * App 生命周期接口
+ * App 生命周期 + 配置 + 市场 接口
  *
  * 插件通过 `ctx.getService<AppService>('app')` 获取，
- * 用于触发应用级操作（停止、重启、保存配置等），
- * 无需直接导入 App 类。
+ * 用于触发应用级操作，无需直接导入 App 类。
  */
 export interface AppService {
   /** 停止应用 */
@@ -14,4 +16,59 @@ export interface AppService {
   restart(): void;
   /** 保存配置到磁盘 */
   saveConfig(): void;
+
+  /** 重新扫描 packages/ 目录，返回新发现并加载的插件名列表 */
+  rescanPlugins(): Promise<string[]>;
+  /** 从 npm 安装插件到 marketplace cache（不自动 enable） */
+  installPlugin(npmPkg: string): Promise<{ ok: boolean; message: string }>;
+  /** 卸载插件（含 marketplace cache 清理） */
+  uninstallPlugin(pluginName: string): Promise<{ ok: boolean; message: string }>;
+}
+
+/** PluginManager 暴露给插件消费的接口 */
+export interface PluginStatusEntry {
+  name: string;
+  instanceId: string;
+  displayName?: string;
+  state: PluginState;
+  provides?: string[];
+  core?: boolean;
+  reusable?: boolean;
+  extends?: unknown;
+  config: Record<string, unknown>;
+  configSchema?: ConfigSchema;
+  defaultConfig?: Record<string, unknown>;
+  webuiPages?: unknown[];
+  webuiHandlerNames?: string[];
+  error?: string;
+}
+
+/**
+ * 插件管理服务接口
+ *
+ * 通过 `ctx.getService<PluginManagerService>('plugins')` 获取。
+ * 内部由 core 的 PluginManager 提供。消费方不应直接 import App 类。
+ */
+export interface PluginManagerService {
+  /** 获取所有已注册插件的状态 */
+  getStatus(): PluginStatusEntry[];
+  /** 获取单个插件条目 */
+  getPlugin(name: string): PluginEntry | undefined;
+  /** 更新插件配置（自动触发软重载） */
+  updatePluginConfig(name: string, config: Record<string, unknown>): Promise<boolean>;
+  /** 启用插件 */
+  enablePlugin(name: string): Promise<boolean>;
+  /** 禁用插件 */
+  disablePlugin(name: string): Promise<boolean>;
+  /** 基于 reusable 插件创建新实例，返回 instanceId */
+  createInstance(moduleName: string, suffix: string, config?: Record<string, unknown>): Promise<string | undefined>;
+  /** 删除实例 */
+  removeInstance(instanceId: string): Promise<boolean>;
+}
+
+declare module './capabilities.js' {
+  interface ServiceCapabilityMap {
+    app: 'lifecycle' | 'config' | 'market';
+    plugins: 'plugin-mgmt';
+  }
 }

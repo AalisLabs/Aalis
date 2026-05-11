@@ -1,18 +1,24 @@
-import type { App, Context } from '@aalis/core';
+import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA } from '@aalis/core';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import type express from 'express';
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
-export function registerPluginRoutes(expressApp: express.Express, ctx: Context, getApp: () => App | undefined): void {
+export function registerPluginRoutes(
+  expressApp: express.Express,
+  ctx: Context,
+  getApp: () => AppService | undefined,
+  getPluginMgr: () => PluginManagerService | undefined,
+): void {
   // 获取插件列表及状态
   expressApp.get('/api/plugins', (_req, res) => {
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.json({ plugins: [] });
       return;
     }
-    const plugins = app.plugins.getStatus().map(p => ({
+    const plugins = pm.getStatus().map(p => ({
       name: p.name,
       instanceId: p.instanceId,
       displayName: p.displayName,
@@ -31,13 +37,14 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   // 获取可用的 WebUI 页面（由活跃插件的 webuiPages 声明汇总，包含声明式内容）
   expressApp.get('/api/pages', (_req, res) => {
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.json([]);
       return;
     }
 
     const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
-    for (const plugin of app.plugins.getStatus()) {
+    for (const plugin of pm.getStatus()) {
       if (plugin.state === 'active' && plugin.webuiPages) {
         for (const page of plugin.webuiPages as WebuiPage[]) {
           pages.push({ ...page, plugin: plugin.name, pluginDisplayName: plugin.displayName });
@@ -54,12 +61,13 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
     const args: Record<string, unknown> = req.body ?? {};
 
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
 
-    const entry = app.plugins.getPlugin(pluginName);
+    const entry = pm.getPlugin(pluginName);
     if (!entry || entry.state !== 'active') {
       res.status(404).json({ error: `插件 ${pluginName} 不存在或未激活` });
       return;
@@ -100,7 +108,8 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
     }
 
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
@@ -147,12 +156,13 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
     }
 
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
 
-    const success = await app.plugins.updatePluginConfig(pluginName, newConfig as Record<string, unknown>);
+    const success = await pm.updatePluginConfig(pluginName, newConfig as Record<string, unknown>);
     if (success) {
       app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
@@ -165,11 +175,12 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   expressApp.post('/api/plugins/:name/enable', async (req, res) => {
     const pluginName = req.params.name;
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const success = await app.plugins.enablePlugin(pluginName);
+    const success = await pm.enablePlugin(pluginName);
     if (success) {
       app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
@@ -182,11 +193,12 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   expressApp.post('/api/plugins/:name/disable', async (req, res) => {
     const pluginName = req.params.name;
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const success = await app.plugins.disablePlugin(pluginName);
+    const success = await pm.disablePlugin(pluginName);
     if (success) {
       app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
@@ -198,7 +210,8 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   // 重新扫描 packages/ 并加载新插件
   expressApp.post('/api/plugins/scan', async (_req, res) => {
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
@@ -214,7 +227,8 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   // 安装插件（从 npm 下载到 packages/ 并加载）
   expressApp.post('/api/plugins/install', async (req, res) => {
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
@@ -239,7 +253,8 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   // 卸载插件
   expressApp.post('/api/plugins/:name/uninstall', async (req, res) => {
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
@@ -267,11 +282,12 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
       return;
     }
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const instanceId = await app.plugins.createInstance(moduleName, suffix, config as Record<string, unknown>);
+    const instanceId = await pm.createInstance(moduleName, suffix, config as Record<string, unknown>);
     if (instanceId) {
       app.saveConfig();
       res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
@@ -284,11 +300,12 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   expressApp.delete('/api/plugins/:instanceId/instance', async (req, res) => {
     const instanceId = req.params.instanceId;
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const ok = await app.plugins.removeInstance(instanceId);
+    const ok = await pm.removeInstance(instanceId);
     if (ok) {
       app.saveConfig();
       res.json({ ok: true, message: `已删除实例 ${instanceId}` });
@@ -300,7 +317,8 @@ export function registerPluginRoutes(expressApp: express.Express, ctx: Context, 
   // 保存配置到磁盘
   expressApp.post('/api/config/save', (_req, res) => {
     const app = getApp();
-    if (!app) {
+    const pm = getPluginMgr();
+    if (!app || !pm) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
