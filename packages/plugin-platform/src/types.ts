@@ -85,7 +85,7 @@ export interface PlatformAdapter {
 
 // ----- 平台聚合服务接口（同名 facade） -----
 
-import type { PluginGroupInfo } from './core.js';
+import type { PluginGroupInfo } from '@aalis/core';
 
 /**
  * 平台聚合服务 —— 同名 facade，对外暴露为 `'platform'`
@@ -130,7 +130,7 @@ export const PlatformCapabilities = {
   Router: 'router',
 } as const satisfies PlatformCapabilityRegistry;
 
-declare module './capabilities.js' {
+declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     platform: PlatformCapability | string;
   }
