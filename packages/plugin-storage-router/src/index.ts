@@ -1,4 +1,5 @@
 import type { Context } from '@aalis/core';
+import { ServicePriority } from '@aalis/core';
 import { StorageRouter } from './router.js';
 
 export const name = '@aalis/plugin-storage-router';
@@ -21,9 +22,11 @@ export function apply(ctx: Context): void {
     if (svcName === 'storage') router.invalidate();
   });
 
-  // 用 'router' capability 标记：消费者可通过 capability 过滤获得 router；
-  // 不指定 capability 时按服务偏好/优先级解析（默认即可拿到 router）。
-  ctx.provide('storage', router, { capabilities: ['router'] });
+  // priority: Router（100）保证 getService('storage') 默认返回 router 而非任意后端。
+  ctx.provide('storage', router, {
+    capabilities: ['router'],
+    priority: ServicePriority.Router,
+  });
 }
 
 export type { AggregatedStorageRoot, StorageRootConflict } from './router.js';
