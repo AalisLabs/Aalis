@@ -368,3 +368,108 @@ export class ConfigManager {
     };
   }
 }
+
+/**
+ * 隔离作用域配置管理器（cleanup-7 新增）
+ *
+ * 与 {@link ScopedServiceContainer} 对称：fallback-read + override-write。
+ *   - `get(key)` 优先返回 overlay 内的值，否则回退到父配置
+ *   - `set(key, value)` 仅写入 overlay，不影响父配置
+ *   - `getPluginConfig(name)` 返回 `{ ...parent, ...overlay }`（浅合并）
+ *   - `setPluginConfig(name, conf)` 完整替换 overlay 中该插件条目
+ *   - 不接触磁盘：`save()` 抛错，`reload()` / `watch()` 为 no-op
+ *
+ * 用法：通过 `ctx.createScope()` 自动创建，沙盒插件可以 `scope.config.set(...)`
+ * 给自己一份临时配置而不污染全局，且 dispose 后随作用域一起消失。
+ */
+export class ScopedConfigManager extends ConfigManager {
+  private overlay: Partial<AalisConfig> = {};
+  private parentConfig: ConfigManager;
+
+  constructor(parent: ConfigManager) {
+    // 不传 path，父类 loadFromDisk 在文件不存在时会 fallback 到 DEFAULT_CONFIG，
+    // 该内存配置对 scope 不重要——我们通过 override 所有读写来代理到 parent + overlay。
+    // 实际使用一个不存在的虚拟路径避免任何意外的 watch/save 副作用。
+    super(`/__scoped_config_${Date.now()}_${Math.random().toString(36).slice(2)}.yaml`);
+    this.parentConfig = parent;
+  }
+
+  override get<K extends keyof AalisConfig>(key: K): AalisConfig[K] {
+    if (this.overlay && key in this.overlay) {
+      return this.overlay[key] as AalisConfig[K];
+    }
+    return this.parentConfig.get(key);
+  }
+
+  override set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void {
+    if (!this.overlay) this.overlay = {};
+    this.overlay[key] = value;
+  }
+
+  override getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(
+    pluginName: string,
+  ): T {
+    const parentConf = this.parentConfig.getPluginConfig<T>(pluginName);
+    const ownConf = (this.overlay.plugins?.[pluginName] ?? {}) as Partial<T>;
+    // 浅合并：scope 的覆盖只影响顶层 key；嵌套对象由调用方自行 deep-merge
+    return { ...parentConf, ...ownConf } as T;
+  }
+
+  override setPluginConfig(pluginName: string, config: Record<string, unknown>): void {
+    if (!this.overlay.plugins) this.overlay.plugins = {};
+    this.overlay.plugins[pluginName] = config;
+  }
+
+  override removePluginConfig(pluginName: string): void {
+    if (this.overlay.plugins) delete this.overlay.plugins[pluginName];
+  }
+
+  override isPluginDisabled(pluginName: string): boolean {
+    // overlay 中的 disabledPlugins 完全覆盖父级（语义清晰）
+    if (this.overlay.disabledPlugins !== undefined) {
+      return this.overlay.disabledPlugins.includes(pluginName);
+    }
+    return this.parentConfig.isPluginDisabled(pluginName);
+  }
+
+  override getServicePreferences(): Record<string, string> {
+    return {
+      ...this.parentConfig.getServicePreferences(),
+      ...(this.overlay.servicePreferences ?? {}),
+    };
+  }
+
+  override getAll(): Readonly<AalisConfig> {
+    // 浅合并父级与 overlay 的完整快照（plugins 需要逐项合并）
+    const parentAll = this.parentConfig.getAll();
+    const mergedPlugins: Record<string, Record<string, unknown>> = { ...parentAll.plugins };
+    if (this.overlay.plugins) {
+      for (const [name, conf] of Object.entries(this.overlay.plugins)) {
+        mergedPlugins[name] = { ...(parentAll.plugins[name] ?? {}), ...conf };
+      }
+    }
+    return {
+      ...parentAll,
+      ...this.overlay,
+      plugins: mergedPlugins,
+    };
+  }
+
+  override getConfigDir(): string { return this.parentConfig.getConfigDir(); }
+  override getConfigPath(): string { return this.parentConfig.getConfigPath(); }
+
+  /** 沙盒不接触磁盘 —— save() 直接抛错暴露误用 */
+  override save(): void {
+    throw new Error('ScopedConfigManager.save() 不可用：scope 配置仅在内存中存在。如需持久化请改用根 ConfigManager。');
+  }
+
+  /** 不重新加载磁盘配置；返回当前合并视图 */
+  override reload(): AalisConfig {
+    return this.getAll() as AalisConfig;
+  }
+
+  /** scope 不监听磁盘文件 */
+  override watch(): void { /* no-op */ }
+  override unwatch(): void { /* no-op */ }
+}
+

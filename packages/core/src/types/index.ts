@@ -14,6 +14,8 @@
 
 // App 生命周期接口
 export type { AppService } from './app.js';
+// 服务自清理协议
+export type { DisposableService } from './disposable-service.js';
 // 服务能力声明框架
 export type { CapabilityList, CapabilityOf, CapabilityProbe, ServiceCapabilityMap } from './capabilities.js';
 export { probeCapability, registerCapabilityProbe } from './capabilities.js';

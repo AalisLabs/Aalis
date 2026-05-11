@@ -16,9 +16,7 @@ export type { AppOptions } from './app.js';
 // ----- 运行时基础设施 -----
 export { App, createApp } from './app.js';
 export type { AalisConfig } from './config.js';
-export { CORE_CONFIG_SCHEMA, ConfigManager } from './config.js';
-export type { InboundPhase } from './constants.js';
-export { INBOUND_PHASE, INBOUND_PHASE_ORDER } from './constants.js';
+export { CORE_CONFIG_SCHEMA, ConfigManager, ScopedConfigManager } from './config.js';
 export { Context } from './context.js';
 export { DisposableChain } from './disposable-chain.js';
 export { EventBus } from './events.js';
@@ -45,6 +43,7 @@ export type {
   ConfigSchema,
   ContentSegment,
   DependencyDeclaration,
+  DisposableService,
   ExtendDeclaration,
   HookContextMap,
   IncomingMessage,
