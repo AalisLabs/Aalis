@@ -1,19 +1,31 @@
-import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve, extname } from 'node:path';
+import { extname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import type { Context, ConfigSchema, Message } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
-import type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions } from './types.js';
-import { ImageRecognitionCapabilities } from './types.js';
 import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type {
+  ImageRecognitionContextOptions,
+  ImageRecognitionInput,
+  ImageRecognitionResult,
+  ImageRecognitionService,
+} from './types.js';
+import { ImageRecognitionCapabilities } from './types.js';
 import '@aalis/plugin-tools-api';
 
-export type { ImageRecognitionService, ImageRecognitionInput, ImageRecognitionResult, ImageRecognitionContextOptions, ImageRecognitionCapability, ImageRecognitionCapabilityRegistry } from './types.js';
+export type {
+  ImageRecognitionCapability,
+  ImageRecognitionCapabilityRegistry,
+  ImageRecognitionContextOptions,
+  ImageRecognitionInput,
+  ImageRecognitionResult,
+  ImageRecognitionService,
+} from './types.js';
 export { ImageRecognitionCapabilities } from './types.js';
 
 function escapeRegExp(input: string): string {
@@ -57,7 +69,8 @@ export const configSchema: ConfigSchema = {
   enabled: {
     type: 'boolean',
     label: '启用额外模型识别',
-    description: '启用后，始终由本插件使用上方指定的模型将图片转为文字描述后交给 Agent。关闭时图片将直接传递给 Agent 的对话模型处理（需要对话模型支持多模态）。',
+    description:
+      '启用后，始终由本插件使用上方指定的模型将图片转为文字描述后交给 Agent。关闭时图片将直接传递给 Agent 的对话模型处理（需要对话模型支持多模态）。',
     default: true,
   },
   maxTokens: {
@@ -118,9 +131,11 @@ interface ImageRecognitionConfig {
 
 interface ImageProcessResult extends ImageRecognitionResult {}
 
-const DEFAULT_PROMPT = '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如果有）、表情包含义等。用中文回答，控制在100字以内。';
+const DEFAULT_PROMPT =
+  '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如果有）、表情包含义等。用中文回答，控制在100字以内。';
 
-const DEFAULT_ANIMATED_PROMPT = '以下是一个动图/视频的多帧截图（按时间顺序排列）。请综合所有帧描述这个动图/视频的内容，包括动态变化、主要元素和表情包含义等。用中文回答，控制在150字以内。';
+const DEFAULT_ANIMATED_PROMPT =
+  '以下是一个动图/视频的多帧截图（按时间顺序排列）。请综合所有帧描述这个动图/视频的内容，包括动态变化、主要元素和表情包含义等。用中文回答，控制在150字以内。';
 
 function compactText(input: string | null | undefined, maxLength = 500): string {
   const value = (input ?? '').replace(/\s+/g, ' ').trim();
@@ -160,10 +175,12 @@ async function checkFfmpeg(): Promise<boolean> {
 }
 
 /** 按需加载 sharp，避免将其作为硬依赖。未安装时返回 null。 */
+// biome-ignore lint/suspicious/noExplicitAny: sharp 通过动态 import 加载，运行期无类型可解析
 async function loadSharp(): Promise<any | null> {
   try {
     const importer = new Function('specifier', 'return import(specifier);') as (
       specifier: string,
+      // biome-ignore lint/suspicious/noExplicitAny: 同上
     ) => Promise<{ default?: any }>;
     const mod = await importer('sharp');
     return mod.default ?? mod;
@@ -198,16 +215,24 @@ function selectFrameIndices(totalFrames: number, maxFrames: number): number[] {
  */
 async function getFrameCount(filePath: string): Promise<number> {
   try {
-    const { stdout } = await execFileAsync('ffprobe', [
-      '-v', 'error',
-      '-count_frames',
-      '-select_streams', 'v:0',
-      '-show_entries', 'stream=nb_read_frames',
-      '-of', 'csv=p=0',
-      filePath,
-    ], { timeout: 30000 });
+    const { stdout } = await execFileAsync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-count_frames',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=nb_read_frames',
+        '-of',
+        'csv=p=0',
+        filePath,
+      ],
+      { timeout: 30000 },
+    );
     const n = parseInt(stdout.trim(), 10);
-    return isNaN(n) ? 0 : n;
+    return Number.isNaN(n) ? 0 : n;
   } catch {
     return 0;
   }
@@ -218,22 +243,27 @@ async function getFrameCount(filePath: string): Promise<number> {
  * 框架：先导出所有帧到临时目录，再挑选目标帧。
  * 优化：对于少量帧使用 select filter 精确提取。
  */
-async function extractFramesWithFfmpeg(
-  filePath: string,
-  frameIndices: number[],
-): Promise<string[]> {
+async function extractFramesWithFfmpeg(filePath: string, frameIndices: number[]): Promise<string[]> {
   const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-frames-'));
   try {
     // 构建 select filter：只提取需要的帧
     const selectExpr = frameIndices.map(i => `eq(n\\,${i})`).join('+');
-    await execFileAsync('ffmpeg', [
-      '-i', filePath,
-      '-vf', `select='${selectExpr}'`,
-      '-vsync', 'vfr',
-      '-f', 'image2',
-      '-y',
-      join(tmpDir, 'frame_%04d.png'),
-    ], { timeout: 60000 });
+    await execFileAsync(
+      'ffmpeg',
+      [
+        '-i',
+        filePath,
+        '-vf',
+        `select='${selectExpr}'`,
+        '-vsync',
+        'vfr',
+        '-f',
+        'image2',
+        '-y',
+        join(tmpDir, 'frame_%04d.png'),
+      ],
+      { timeout: 60000 },
+    );
 
     // 按顺序读取提取出的帧
     const results: string[] = [];
@@ -256,10 +286,7 @@ async function extractFramesWithFfmpeg(
  * 使用 sharp 提取 GIF 帧（ffmpeg 不可用时的 fallback）。
  * 返回 data URI 数组。如果 sharp 不可用则返回 null。
  */
-async function extractFramesWithSharp(
-  filePath: string,
-  frameIndices: number[],
-): Promise<string[] | null> {
+async function extractFramesWithSharp(filePath: string, frameIndices: number[]): Promise<string[] | null> {
   try {
     const sharp = await loadSharp();
     if (!sharp) return null;
@@ -284,11 +311,7 @@ async function extractFramesWithSharp(
  * 从本地文件提取帧。优先 ffmpeg，GIF 可 fallback 到 sharp。
  * 返回 data URI 数组。空数组表示无法提取或非动图。
  */
-async function extractFrames(
-  filePath: string,
-  maxFrames: number,
-  logger: Context['logger'],
-): Promise<string[]> {
+async function extractFrames(filePath: string, maxFrames: number, logger: Context['logger']): Promise<string[]> {
   const hasFfmpeg = await checkFfmpeg();
   const ext = extname(filePath).toLowerCase();
 
@@ -348,7 +371,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== 描述缓存（按 URL 键值，TTL 24h） =====
   // 用于「同一张图被多次引用」场景：主消息流首次识别后写缓存，
   // 后续 fetchReplyMessage 等路径直接复用，免一次视觉 LLM 调用。
-  interface CachedDescription { desc: string; expiresAt: number }
+  interface CachedDescription {
+    desc: string;
+    expiresAt: number;
+  }
   const descriptionCache = new Map<string, CachedDescription>();
   const DESCRIPTION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const DESCRIPTION_CACHE_MAX = 1000;
@@ -410,11 +436,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
    * 识别动图/视频：从本地文件提取帧后发给 LLM。
    * 如果帧提取失败，回退到取第一帧识别。
    */
-  async function describeAnimated(
-    visionLLM: LLMService,
-    localPath: string,
-    context?: string,
-  ): Promise<string> {
+  async function describeAnimated(visionLLM: LLMService, localPath: string, context?: string): Promise<string> {
     const absPath = resolve(process.cwd(), localPath);
     const frames = await extractFrames(absPath, cfg.gifMaxFrames, ctx.logger);
 
@@ -475,9 +497,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-frame-'));
     try {
       const outPath = join(tmpDir, 'frame.png');
-      await execFileAsync('ffmpeg', [
-        '-i', filePath, '-vframes', '1', '-f', 'image2', '-y', outPath,
-      ], { timeout: 30000 });
+      await execFileAsync('ffmpeg', ['-i', filePath, '-vframes', '1', '-f', 'image2', '-y', outPath], {
+        timeout: 30000,
+      });
       const buf = await readFile(outPath);
       return `data:image/png;base64,${buf.toString('base64')}`;
     } catch {
@@ -537,14 +559,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   function extractRefPaths(content: string): string[] {
     const refPaths: string[] = [];
     const refRegex = /\[图片 \| ref:([^\]]+)\]/g;
-    let refMatch: RegExpExecArray | null;
-    while ((refMatch = refRegex.exec(content)) !== null) {
+    let refMatch = refRegex.exec(content);
+    while (refMatch !== null) {
       refPaths.push(refMatch[1]);
+      refMatch = refRegex.exec(content);
     }
     return refPaths;
   }
 
-  async function buildIncomingImageContext(msg: IncomingMessage, options?: ImageRecognitionContextOptions): Promise<string> {
+  async function buildIncomingImageContext(
+    msg: IncomingMessage,
+    options?: ImageRecognitionContextOptions,
+  ): Promise<string> {
     const parts: string[] = [];
     const current = compactText(msg.content, 500);
     if (current) parts.push(`当前消息: ${current}`);
@@ -599,7 +625,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         content = content ? `${content}\n${remaining.join('\n')}` : remaining.join('\n');
       }
     } else {
-      const descTexts = descriptions.map((desc, i) => `[图片${input.images.length > 1 ? (i + 1) : ''}: ${desc || '无描述'}]`);
+      const descTexts = descriptions.map(
+        (desc, i) => `[图片${input.images.length > 1 ? i + 1 : ''}: ${desc || '无描述'}]`,
+      );
       imageDescriptions = descTexts;
 
       if (!input.attachmentOrder) {
@@ -732,10 +760,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   async function fileToDataUri(filePath: string): Promise<string> {
     const buf = await readFile(filePath);
     const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-      : ext === 'gif' ? 'image/gif'
-      : ext === 'webp' ? 'image/webp'
-      : 'image/png';
+    const mime =
+      ext === 'jpg' || ext === 'jpeg'
+        ? 'image/jpeg'
+        : ext === 'gif'
+          ? 'image/gif'
+          : ext === 'webp'
+            ? 'image/webp'
+            : 'image/png';
     return `data:${mime};base64,${buf.toString('base64')}`;
   }
 
@@ -762,7 +794,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             },
             prompt: {
               type: 'string',
-              description: '分析提示词（可选）。不指定则使用默认描述提示。例如：「提取所有可见文字」「描述界面布局和按钮位置」',
+              description:
+                '分析提示词（可选）。不指定则使用默认描述提示。例如：「提取所有可见文字」「描述界面布局和按钮位置」',
             },
             task: {
               type: 'string',
@@ -777,7 +810,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         },
       },
     },
-    handler: async (args) => {
+    handler: async args => {
       try {
         const imageInput = args.image as string;
         const customPrompt = args.prompt as string | undefined;
@@ -866,9 +899,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     handler: async (args, callCtx) => {
       const imageRef = normalizeImageRef(String(args.image_ref));
       const desc = String(args.description);
-      const sessionId = typeof args.session_id === 'string' && args.session_id.trim()
-        ? args.session_id.trim()
-        : callCtx.sessionId;
+      const sessionId =
+        typeof args.session_id === 'string' && args.session_id.trim() ? args.session_id.trim() : callCtx.sessionId;
 
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.updateMessageContent) {
@@ -895,5 +927,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
-  ctx.logger.info(`图像识别中间件已加载 (${cfg.enabled ? '启用' : '直通模式'})，analyze_image / update_image_description 工具已注册`);
+  ctx.logger.info(
+    `图像识别中间件已加载 (${cfg.enabled ? '启用' : '直通模式'})，analyze_image / update_image_description 工具已注册`,
+  );
 }

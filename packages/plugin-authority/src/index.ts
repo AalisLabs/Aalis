@@ -1,13 +1,26 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import type { Context, ConfigManager, Logger, App } from '@aalis/core';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import type { App, ConfigManager, Context, Logger } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
-import type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant } from './types.js';
+import type {
+  AuthorityService,
+  DangerousConfirmHandler,
+  DangerousConfirmRequest,
+  DangerousConfirmResult,
+  DangerousGrant,
+} from './types.js';
 
-export type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant, DangerousGrantRequest } from './types.js';
+export type {
+  AuthorityService,
+  DangerousConfirmHandler,
+  DangerousConfirmRequest,
+  DangerousConfirmResult,
+  DangerousGrant,
+  DangerousGrantRequest,
+} from './types.js';
 
 // ===== AuthorityManager 实现 =====
 
@@ -87,7 +100,9 @@ class AuthorityManager implements AuthorityService {
     if (this.isDangerousAllowed(request.name, request.permissions)) return true;
     const grant = this.consumeDangerousGrant(request);
     if (grant) {
-      this.logger.info(`命中高危会话授权: ${request.type}:${request.name} session=${request.sessionId} grant=${grant.id} used=${grant.used}${grant.maxUses ? `/${grant.maxUses}` : ''}`);
+      this.logger.info(
+        `命中高危会话授权: ${request.type}:${request.name} session=${request.sessionId} grant=${grant.id} used=${grant.used}${grant.maxUses ? `/${grant.maxUses}` : ''}`,
+      );
       return true;
     }
     const handler = this.confirmHandlers.get(request.platform);
@@ -182,7 +197,9 @@ class AuthorityManager implements AuthorityService {
       createdAt: Date.now(),
     };
     this.dangerousGrants.set(grant.id, grant);
-    this.logger.info(`创建高危会话授权: ${request.type}:${request.name} session=${request.sessionId} duration=${durationSeconds}s maxUses=${grant.maxUses ?? 'unlimited'} grant=${grant.id}`);
+    this.logger.info(
+      `创建高危会话授权: ${request.type}:${request.name} session=${request.sessionId} duration=${durationSeconds}s maxUses=${grant.maxUses ?? 'unlimited'} grant=${grant.id}`,
+    );
   }
 
   private pruneDangerousGrants(): void {
@@ -278,7 +295,9 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
     if (userAuth < guardCtx.authority) {
       return `权限不足: 指令 "${guardCtx.name}" 需要权限等级 ${guardCtx.authority}，当前用户等级 ${userAuth}`;
     }
-    const permissionDenied = authority.checkPermissionPolicy(guardCtx.permissions ?? [`${guardCtx.type}:${guardCtx.name}`]);
+    const permissionDenied = authority.checkPermissionPolicy(
+      guardCtx.permissions ?? [`${guardCtx.type}:${guardCtx.name}`],
+    );
     if (permissionDenied) return permissionDenied;
     if (guardCtx.safety === 'dangerous' && !guardCtx.skipSafetyCheck) {
       const confirmed = await authority.confirmDangerous({
@@ -322,38 +341,45 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   ctx.on('service:registered', (name: string) => injectGuard(name));
 
   // ===== 应用停止时保存 =====
-  ctx.on('app:stopping', () => { authority.save(); });
+  ctx.on('app:stopping', () => {
+    authority.save();
+  });
 
   // ===== 权限指令 =====
 
   // /grant — 设置用户权限等级
-  ctx.command('grant', '设置用户权限 (用法: grant <platform:userId> <level>)', async (cmdCtx) => {
-    if (cmdCtx.args.length < 2) {
-      const prefix = ctx.getService<CommandService>('commands')!.prefix;
-      return `用法: ${prefix}grant <platform:userId> <level>`;
-    }
-    const [target, levelStr] = cmdCtx.args;
-    const level = parseInt(levelStr, 10);
-    if (isNaN(level) || level < 0) {
-      return '权限等级必须是非负整数。';
-    }
-    const callerAuth = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
-    if (level >= callerAuth) {
-      return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
-    }
-    const sep = target.indexOf(':');
-    if (sep < 1) {
-      return '目标格式: <platform:userId>，例如 onebot:12345';
-    }
-    const platform = target.slice(0, sep);
-    const userId = target.slice(sep + 1);
-    authority.setAuthority(platform, userId, level);
-    authority.save();
-    return `已将 ${target} 的权限等级设置为 ${level}。`;
-  }, { authority: 2 });
+  ctx.command(
+    'grant',
+    '设置用户权限 (用法: grant <platform:userId> <level>)',
+    async cmdCtx => {
+      if (cmdCtx.args.length < 2) {
+        const prefix = ctx.getService<CommandService>('commands')!.prefix;
+        return `用法: ${prefix}grant <platform:userId> <level>`;
+      }
+      const [target, levelStr] = cmdCtx.args;
+      const level = parseInt(levelStr, 10);
+      if (Number.isNaN(level) || level < 0) {
+        return '权限等级必须是非负整数。';
+      }
+      const callerAuth = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
+      if (level >= callerAuth) {
+        return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
+      }
+      const sep = target.indexOf(':');
+      if (sep < 1) {
+        return '目标格式: <platform:userId>，例如 onebot:12345';
+      }
+      const platform = target.slice(0, sep);
+      const userId = target.slice(sep + 1);
+      authority.setAuthority(platform, userId, level);
+      authority.save();
+      return `已将 ${target} 的权限等级设置为 ${level}。`;
+    },
+    { authority: 2 },
+  );
 
   // /authority — 查看当前用户权限等级
-  ctx.command('authority', '查看自己或指定用户的权限等级', async (cmdCtx) => {
+  ctx.command('authority', '查看自己或指定用户的权限等级', async cmdCtx => {
     if (cmdCtx.args.length > 0) {
       const target = cmdCtx.args[0];
       const sep = target.indexOf(':');
@@ -384,11 +410,9 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     const platformsFromServices = platformEntries.map(e => e.contextId);
     const platformsFromUsers = users.map(u => u.platform);
     const platformsFromOwners = owners.map(o => o.platform);
-    const platforms = Array.from(new Set([
-      ...platformsFromServices,
-      ...platformsFromUsers,
-      ...platformsFromOwners,
-    ])).filter(Boolean);
+    const platforms = Array.from(
+      new Set([...platformsFromServices, ...platformsFromUsers, ...platformsFromOwners]),
+    ).filter(Boolean);
     return {
       users,
       owners,
@@ -529,5 +553,4 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     app.saveConfig();
     return { message: `指令 ${name} 覆盖已重置` };
   },
-
 };

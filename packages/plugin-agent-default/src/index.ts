@@ -1,19 +1,25 @@
-import type { ToolService } from '@aalis/plugin-tools-api';
-import type { Context, Message, ToolCall, ToolDefinition, ConfigSchema, App, ContentSegment } from '@aalis/core';
-import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import type {
+  App,
+  ConfigSchema,
+  ContentSegment,
+  Context,
+  Logger,
+  Message,
+  ToolCall,
+  ToolDefinition,
+} from '@aalis/core';
+import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
-import type { Logger } from '@aalis/core';
-import type { AgentService, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
-import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
-import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session-manager-api';
-import type { PlatformService } from '@aalis/plugin-platform';
-import { getSenderLabel, getMessageName } from '@aalis/plugin-message-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
-import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
+import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
+import type { PlatformService } from '@aalis/plugin-platform';
+import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
+import type { ToolCallContext, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
 
 /**
@@ -28,11 +34,7 @@ function formatTimeLabel(ts: number, now: number): string {
   const hhmm = `${hours}:${mins}`;
 
   // 同一天：今天 HH:mm
-  if (
-    d.getFullYear() === today.getFullYear() &&
-    d.getMonth() === today.getMonth() &&
-    d.getDate() === today.getDate()
-  ) {
+  if (d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate()) {
     return `今天 ${hhmm}`;
   }
   // 跨年：加上年/月/日
@@ -129,7 +131,10 @@ class DefaultAgent implements AgentService {
    * model 字段可以是复合 ref `"<contextId>::<modelId>"`，由 parseModelRef 拆分。
    * llmProvider 字段为充足优先级（允许在不指定模型的情况下锁定 provider 走其默认 model）。
    */
-  private async resolveLLM(platform?: string, sessionId?: string): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined> {
+  private async resolveLLM(
+    platform?: string,
+    sessionId?: string,
+  ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined> {
     let rawModel: string | undefined;
     let providerOverride: string | undefined;
 
@@ -313,15 +318,15 @@ class DefaultAgent implements AgentService {
     let parsedFormat: Record<string, unknown> | null = null;
     if (response.content) {
       const raw = response.content.trim();
-      const jsonStr = raw.startsWith('{')
-        ? raw
-        : raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
+      const jsonStr = raw.startsWith('{') ? raw : raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
       try {
         const obj = JSON.parse(jsonStr);
         if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
           parsedFormat = obj;
         }
-      } catch { /* 非 JSON，正常文本 */ }
+      } catch {
+        /* 非 JSON，正常文本 */
+      }
     }
 
     if (parsedFormat) {
@@ -336,7 +341,9 @@ class DefaultAgent implements AgentService {
             lines.push(`    ${pLine}`);
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       lines.push('');
       lines.push('  结构化输出:');
       for (const [key, value] of Object.entries(parsedFormat)) {
@@ -436,7 +443,6 @@ class DefaultAgent implements AgentService {
 
       const archivedIncoming = await this.archiveIncomingMessageInOrder(lane, incoming);
 
-
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         this.logger.warn('LLM 服务不可用，无法处理消息');
@@ -462,9 +468,10 @@ class DefaultAgent implements AgentService {
       try {
         // 统一解析 session 配置（一次解析，多处复用）
         const sessionMgr = this.ctx.getService<SessionManagerService>('session-manager');
-        const resolved = (sessionMgr && incoming.sessionId)
-          ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
-          : undefined;
+        const resolved =
+          sessionMgr && incoming.sessionId
+            ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
+            : undefined;
 
         // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
         const personaOpts: PersonaSessionOptions | undefined = resolved
@@ -481,10 +488,13 @@ class DefaultAgent implements AgentService {
         if (resolved?.enabledToolGroups && resolved.enabledToolGroups.length > 0) {
           enabledGroups = resolved.enabledToolGroups;
         }
-        this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`);
-        const tools = this.ctx.getService<ToolService>('tools')?.getDefinitions(
-          enabledGroups ? { groups: enabledGroups } : undefined,
-        ) ?? [];
+        this.logger.debug(
+          `工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`,
+        );
+        const tools =
+          this.ctx
+            .getService<ToolService>('tools')
+            ?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           userId: incoming.userId,
@@ -496,31 +506,52 @@ class DefaultAgent implements AgentService {
         const originalTools = [...tools];
 
         // Hook: agent:llm:before — 插件可以修改消息或工具列表
-        const llmBeforeData = { messages, tools, sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform, triggerType: incoming.triggerType };
+        const llmBeforeData = {
+          messages,
+          tools,
+          sessionId: incoming.sessionId,
+          userId: incoming.userId,
+          platform: incoming.platform,
+          triggerType: incoming.triggerType,
+        };
         await this.ctx.hooks.run('agent:llm:before', llmBeforeData);
 
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
 
         // 推送 token 使用量统计
-        this.emitTokenUsage(incoming.sessionId, incoming.platform, llmBeforeData.messages, llmBeforeData.tools, contextLength, maxTokens, tokenBudget);
+        this.emitTokenUsage(
+          incoming.sessionId,
+          incoming.platform,
+          llmBeforeData.messages,
+          llmBeforeData.tools,
+          contextLength,
+          maxTokens,
+          tokenBudget,
+        );
 
         this.logger.debug(
           `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
-          `${llmBeforeData.tools.length} 个工具, ` +
-          `temperature=${temperature}, maxTokens=${maxTokens}`,
+            `${llmBeforeData.tools.length} 个工具, ` +
+            `temperature=${temperature}, maxTokens=${maxTokens}`,
         );
 
         const t0 = Date.now();
-        const firstResult = await this.consumeStream(llm, {
-          messages: llmBeforeData.messages,
-          tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
-          temperature,
-          maxTokens,
-          model: modelOverride,
-          provider: providerOverride,
+        const firstResult = await this.consumeStream(
+          llm,
+          {
+            messages: llmBeforeData.messages,
+            tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
+            temperature,
+            maxTokens,
+            model: modelOverride,
+            provider: providerOverride,
+            signal,
+          },
+          incoming.sessionId,
+          incoming.platform,
           signal,
-        }, incoming.sessionId, incoming.platform, signal);
+        );
 
         // 维护本轮（一次完整对话回合）的统一时间线 segments：
         // 多次 LLM 调用 + 工具执行的输出按到达顺序拼接，保留模型原本的"思考/回答/工具/思考/回答"交错。
@@ -575,7 +606,7 @@ class DefaultAgent implements AgentService {
           const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
 
           const parallelResults = await Promise.all(
-            response.toolCalls.map(async (toolCall) => {
+            response.toolCalls.map(async toolCall => {
               let args: Record<string, unknown>;
               try {
                 args = JSON.parse(toolCall.function.arguments);
@@ -598,11 +629,10 @@ class DefaultAgent implements AgentService {
 
               this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
               const toolT0 = Date.now();
-              let result = await (this.ctx.getService<ToolService>('tools')?.execute(
-                toolBeforeData.name,
-                toolBeforeData.args,
-                toolCtx,
-              ) ?? Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
+              let result = await (this.ctx
+                .getService<ToolService>('tools')
+                ?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
+                Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
 
               // Hook: agent:tool:after — 插件可以处理工具执行结果
               const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
@@ -611,8 +641,10 @@ class DefaultAgent implements AgentService {
 
               // 工具结果截断：按上下文窗口比例限制单条工具结果长度
               if (result.length > toolResultMaxChars) {
-                this.logger.info(`工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`);
-                result = result.slice(0, toolResultMaxChars) + `\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
+                this.logger.info(
+                  `工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`,
+                );
+                result = `${result.slice(0, toolResultMaxChars)}\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
               }
               const toolEndTime = Date.now();
 
@@ -628,13 +660,20 @@ class DefaultAgent implements AgentService {
                 result,
               });
 
-              return { toolCall, result, toolName: toolBeforeData.name, toolArgs: toolBeforeData.args, startTime: toolT0, endTime: toolEndTime };
+              return {
+                toolCall,
+                result,
+                toolName: toolBeforeData.name,
+                toolArgs: toolBeforeData.args,
+                startTime: toolT0,
+                endTime: toolEndTime,
+              };
             }),
           );
 
           // 按原始 toolCalls 顺序将结果推入消息列表 + 时间线
           for (const { toolCall, result, toolName, toolArgs, startTime, endTime } of parallelResults) {
-            const resultPreview = result.length > 200 ? result.slice(0, 200) + '...' : result;
+            const resultPreview = result.length > 200 ? `${result.slice(0, 200)}...` : result;
             toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
 
             const toolMessage: Message = {
@@ -659,25 +698,46 @@ class DefaultAgent implements AgentService {
           await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages);
 
           // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
-          const nextLlmData = { messages: llmBeforeData.messages, tools: [...originalTools], sessionId: incoming.sessionId, userId: incoming.userId, platform: incoming.platform, triggerType: incoming.triggerType };
+          const nextLlmData = {
+            messages: llmBeforeData.messages,
+            tools: [...originalTools],
+            sessionId: incoming.sessionId,
+            userId: incoming.userId,
+            platform: incoming.platform,
+            triggerType: incoming.triggerType,
+          };
           await this.ctx.hooks.run('agent:llm:before', nextLlmData);
 
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
 
           // 推送 token 使用量统计
-          this.emitTokenUsage(incoming.sessionId, incoming.platform, nextLlmData.messages, nextLlmData.tools, contextLength, maxTokens, tokenBudget);
+          this.emitTokenUsage(
+            incoming.sessionId,
+            incoming.platform,
+            nextLlmData.messages,
+            nextLlmData.tools,
+            contextLength,
+            maxTokens,
+            tokenBudget,
+          );
 
           const tN = Date.now();
-          const nextResult = await this.consumeStream(llm, {
-            messages: nextLlmData.messages,
-            tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
-            temperature,
-            maxTokens,
-            model: modelOverride,
-            provider: providerOverride,
+          const nextResult = await this.consumeStream(
+            llm,
+            {
+              messages: nextLlmData.messages,
+              tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
+              temperature,
+              maxTokens,
+              model: modelOverride,
+              provider: providerOverride,
+              signal,
+            },
+            incoming.sessionId,
+            incoming.platform,
             signal,
-          }, incoming.sessionId, incoming.platform, signal);
+          );
           turnSegments.push(...nextResult.segments);
           response = nextResult;
 
@@ -693,9 +753,8 @@ class DefaultAgent implements AgentService {
         }
 
         // 检测是否因工具调用次数达到上限而退出循环
-        const toolLimitReached = iterations >= maxToolIterations
-          && response.toolCalls != null
-          && response.toolCalls.length > 0;
+        const toolLimitReached =
+          iterations >= maxToolIterations && response.toolCalls != null && response.toolCalls.length > 0;
         if (toolLimitReached) {
           this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
         }
@@ -743,9 +802,7 @@ class DefaultAgent implements AgentService {
         if (replyContent.trim().length === 0) {
           this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
         } else {
-          const combinedReasoning = allReasoning.length > 0
-            ? allReasoning.join('\n\n---\n\n')
-            : undefined;
+          const combinedReasoning = allReasoning.length > 0 ? allReasoning.join('\n\n---\n\n') : undefined;
 
           // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
           // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
@@ -778,8 +835,6 @@ class DefaultAgent implements AgentService {
           sessionId: incoming.sessionId,
           metadata: msgHookData.metadata,
         });
-
-
       } catch (err) {
         // 中止错误 — 静默退出，已生成的流内容保留在前端
         if (err instanceof DOMException && err.name === 'AbortError') {
@@ -817,7 +872,11 @@ class DefaultAgent implements AgentService {
   /**
    * 构建发送给 LLM 的消息列表
    */
-  private async buildMessages(incoming: IncomingMessage, personaOpts?: PersonaSessionOptions, archivedIncoming?: Message): Promise<Message[]> {
+  private async buildMessages(
+    incoming: IncomingMessage,
+    personaOpts?: PersonaSessionOptions,
+    archivedIncoming?: Message,
+  ): Promise<Message[]> {
     const messages: Message[] = [];
 
     // 1. 系统提示
@@ -858,19 +917,18 @@ class DefaultAgent implements AgentService {
     const senderLabel = getSenderLabel(incoming.nickname, incoming.userId);
     const nowLabel = formatTimeLabel(Date.now(), Date.now());
     const archivedBody = archivedIncoming?.content;
-    const fallbackBody = senderLabel
-      ? `[${senderLabel}]: ${incoming.content}`
-      : incoming.content;
-    let currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
+    const fallbackBody = senderLabel ? `[${senderLabel}]: ${incoming.content}` : incoming.content;
+    const currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
 
     // 检测预处理附件内容——引导 LLM 综合分析而非逐项转述
     const hasPreprocessed = /\[图片\d*[:：]|\[文件[:：]|--- 文件内容 ---/.test(currentContent);
     if (hasPreprocessed) {
       messages.push({
         role: 'system',
-        content: '用户消息中包含系统预处理的附件描述（图片识别结果和/或文件内容提取）。'
-          + '请将这些信息作为参考上下文，结合用户的文字，给出一个自然、连贯的统一回复。'
-          + '不要将分析结果逐项列出或分成单独的字段，直接在回复中融合所有信息。',
+        content:
+          '用户消息中包含系统预处理的附件描述（图片识别结果和/或文件内容提取）。' +
+          '请将这些信息作为参考上下文，结合用户的文字，给出一个自然、连贯的统一回复。' +
+          '不要将分析结果逐项列出或分成单独的字段，直接在回复中融合所有信息。',
         metadata: { source: 'system-other' },
       });
     }
@@ -898,9 +956,9 @@ class DefaultAgent implements AgentService {
   private buildSystemPrompt(personaOpts?: PersonaSessionOptions): string {
     const persona = this.ctx.getService<PersonaService>('persona');
     const base = persona
-      ? (this.systemPrompt
-          ? `${persona.getSystemPrompt(personaOpts)}\n\n${this.systemPrompt}`
-          : persona.getSystemPrompt(personaOpts))
+      ? this.systemPrompt
+        ? `${persona.getSystemPrompt(personaOpts)}\n\n${this.systemPrompt}`
+        : persona.getSystemPrompt(personaOpts)
       : this.systemPrompt;
     return base ? `${base}\n\n${INPUT_CONVENTIONS}` : INPUT_CONVENTIONS;
   }
@@ -937,7 +995,10 @@ class DefaultAgent implements AgentService {
       } else {
         // ASCII 序列：~1 token / 3.5 字符
         let asciiLen = 0;
-        while (i < text.length && !cjkRegex.test(text[i])) { asciiLen++; i++; }
+        while (i < text.length && !cjkRegex.test(text[i])) {
+          asciiLen++;
+          i++;
+        }
         tokens += Math.ceil(asciiLen / 3.5);
       }
     }
@@ -1020,38 +1081,44 @@ class DefaultAgent implements AgentService {
     }
 
     // 工具定义的 token 估算
-    const toolDefsTokens = tools.length > 0
-      ? this.estimateTextTokens(JSON.stringify(tools))
-      : 0;
+    const toolDefsTokens = tools.length > 0 ? this.estimateTextTokens(JSON.stringify(tools)) : 0;
 
-    const systemTokens = personaTokens + memorySummaryTokens + memoryVectorTokens
-      + skillsTokens + platformTokens + subtaskTokens + systemOtherTokens;
+    const systemTokens =
+      personaTokens +
+      memorySummaryTokens +
+      memoryVectorTokens +
+      skillsTokens +
+      platformTokens +
+      subtaskTokens +
+      systemOtherTokens;
     const totalUsed = systemTokens + historyTokens + toolResultTokens + toolDefsTokens;
     const usageRatio = contextLength > 0 ? totalUsed / contextLength : 0;
 
-    this.ctx.emit('token:usage', {
-      sessionId,
-      platform,
-      contextWindow: contextLength,
-      maxTokens,
-      tokenBudget,
-      used: totalUsed,
-      usageRatio,
-      breakdown: {
-        system: systemTokens,
-        persona: personaTokens,
-        memorySummary: memorySummaryTokens,
-        memoryVector: memoryVectorTokens,
-        skills: skillsTokens,
-        platform: platformTokens,
-        subtask: subtaskTokens,
-        systemOther: systemOtherTokens,
-        history: historyTokens,
-        toolResults: toolResultTokens,
-        toolDefs: toolDefsTokens,
-        reservedForReply: maxTokens,
-      },
-    }).catch(() => {});
+    this.ctx
+      .emit('token:usage', {
+        sessionId,
+        platform,
+        contextWindow: contextLength,
+        maxTokens,
+        tokenBudget,
+        used: totalUsed,
+        usageRatio,
+        breakdown: {
+          system: systemTokens,
+          persona: personaTokens,
+          memorySummary: memorySummaryTokens,
+          memoryVector: memoryVectorTokens,
+          skills: skillsTokens,
+          platform: platformTokens,
+          subtask: subtaskTokens,
+          systemOther: systemOtherTokens,
+          history: historyTokens,
+          toolResults: toolResultTokens,
+          toolDefs: toolDefsTokens,
+          reservedForReply: maxTokens,
+        },
+      })
+      .catch(() => {});
   }
 
   /**
@@ -1082,7 +1149,7 @@ class DefaultAgent implements AgentService {
     // === Phase 1: 缩减超出预留额度的 system 消息 ===
     {
       const sysIdx = findSystemIndices();
-      let sysTokens = sysIdx.reduce((s, i) => s + this.estimateMsgTokens(result[i]), 0);
+      const sysTokens = sysIdx.reduce((s, i) => s + this.estimateMsgTokens(result[i]), 0);
       if (sysTokens > this.memoryTokenBudget && sysIdx.length > 0) {
         const ratio = this.memoryTokenBudget / sysTokens;
         for (const idx of sysIdx) {
@@ -1090,8 +1157,8 @@ class DefaultAgent implements AgentService {
           if (msg.content && msg.content.length > 200) {
             const oldTokens = this.estimateMsgTokens(msg);
             const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
-            msg.content = msg.content.slice(0, targetLen) + '\n... [记忆内容已缩减]';
-            estimated -= (oldTokens - this.estimateMsgTokens(msg));
+            msg.content = `${msg.content.slice(0, targetLen)}\n... [记忆内容已缩减]`;
+            estimated -= oldTokens - this.estimateMsgTokens(msg);
           }
         }
       }
@@ -1103,8 +1170,8 @@ class DefaultAgent implements AgentService {
       if (estimated <= budget) break;
       if (result[i].role === 'tool' && result[i].content && result[i].content!.length > 1500) {
         const oldTokens = this.estimateMsgTokens(result[i]);
-        result[i].content = result[i].content!.slice(0, 500) + '\n... [工具输出已截断]';
-        estimated -= (oldTokens - this.estimateMsgTokens(result[i]));
+        result[i].content = `${result[i].content!.slice(0, 500)}\n... [工具输出已截断]`;
+        estimated -= oldTokens - this.estimateMsgTokens(result[i]);
       }
     }
     if (estimated <= budget) return result;
@@ -1129,8 +1196,8 @@ class DefaultAgent implements AgentService {
         const oldTokens = this.estimateMsgTokens(msg);
         // 所有条目统一保留头部 200 字符（最新条保留稍多以保持上下文连贯性）
         const keepLen = k < rcIndices.length - 1 ? 200 : 400;
-        msg.reasoningContent = msg.reasoningContent!.slice(0, keepLen) + '\n... [推理内容已缩减]';
-        estimated -= (oldTokens - this.estimateMsgTokens(msg));
+        msg.reasoningContent = `${msg.reasoningContent!.slice(0, keepLen)}\n... [推理内容已缩减]`;
+        estimated -= oldTokens - this.estimateMsgTokens(msg);
       }
     }
     if (estimated <= budget) return result;
@@ -1162,7 +1229,7 @@ class DefaultAgent implements AgentService {
           groupTokens += this.estimateMsgTokens(result[j]);
           if (result[j].role === 'tool') {
             const c = result[j].content ?? '';
-            toolPreviews.push(c.length > 100 ? c.slice(0, 100) + '...' : c);
+            toolPreviews.push(c.length > 100 ? `${c.slice(0, 100)}...` : c);
           }
         }
 
@@ -1179,7 +1246,7 @@ class DefaultAgent implements AgentService {
         // 仅在确实能节省 token 时压缩
         if (summaryTokens < groupTokens) {
           result.splice(start, groupLen, summaryMsg);
-          estimated -= (groupTokens - summaryTokens);
+          estimated -= groupTokens - summaryTokens;
           offset += groupLen - 1;
         }
       }
@@ -1210,7 +1277,10 @@ class DefaultAgent implements AgentService {
       // 保护最新的 user 消息（用户发起任务的请求，删掉会导致模型丢失任务上下文）
       let lastUserIdx = -1;
       for (let j = result.length - 1; j >= 1; j--) {
-        if (result[j].role === 'user') { lastUserIdx = j; break; }
+        if (result[j].role === 'user') {
+          lastUserIdx = j;
+          break;
+        }
       }
 
       const adjustAfterSplice = (splicedAt: number): void => {
@@ -1223,7 +1293,10 @@ class DefaultAgent implements AgentService {
 
       let i = 1;
       while (estimated > budget && i < result.length - 1) {
-        if (result[i].role === 'system' || lastGroupIndices.has(i) || i === lastUserIdx) { i++; continue; }
+        if (result[i].role === 'system' || lastGroupIndices.has(i) || i === lastUserIdx) {
+          i++;
+          continue;
+        }
         // assistant(含toolCalls) + 紧跟的 tool 消息成组删除
         if (result[i].role === 'assistant' && result[i].toolCalls?.length) {
           estimated -= this.estimateMsgTokens(result[i]);
@@ -1261,13 +1334,17 @@ class DefaultAgent implements AgentService {
     if (messages.length - result.length >= 6) {
       const hint: Message = {
         role: 'system',
-        content: '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。如果你之前有正在执行的多步骤任务或计划，请查看对话摘要和 todo-list 工具确认当前进度，然后继续未完成的步骤。',
+        content:
+          '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。如果你之前有正在执行的多步骤任务或计划，请查看对话摘要和 todo-list 工具确认当前进度，然后继续未完成的步骤。',
         metadata: { source: 'system-other' },
       };
       // 插入到最后一条 user 消息之后（如果有），否则插到末尾前
       let insertIdx = result.length - 1;
       for (let j = result.length - 1; j >= 1; j--) {
-        if (result[j].role === 'user') { insertIdx = j + 1; break; }
+        if (result[j].role === 'user') {
+          insertIdx = j + 1;
+          break;
+        }
       }
       result.splice(insertIdx, 0, hint);
       estimated += this.estimateMsgTokens(hint);
@@ -1278,8 +1355,6 @@ class DefaultAgent implements AgentService {
     }
     return result;
   }
-
-
 
   /**
    * 保存消息到记忆服务
@@ -1296,7 +1371,9 @@ class DefaultAgent implements AgentService {
   }
 
   private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
-    const identity = this.ctx.getService<PlatformService>('platform')?.getSelfIdentity?.(incoming.platform, incoming.sessionId);
+    const identity = this.ctx
+      .getService<PlatformService>('platform')
+      ?.getSelfIdentity?.(incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
       senderType: 'assistant',
@@ -1309,7 +1386,11 @@ class DefaultAgent implements AgentService {
     return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 
-  private async saveToolCallGroup(sessionId: string, assistantMessage: Message, toolMessages: Message[]): Promise<void> {
+  private async saveToolCallGroup(
+    sessionId: string,
+    assistantMessage: Message,
+    toolMessages: Message[],
+  ): Promise<void> {
     const timestamp = Date.now();
     await this.saveToMemory(sessionId, { ...assistantMessage, timestamp });
     for (let i = 0; i < toolMessages.length; i++) {
@@ -1363,18 +1444,21 @@ class DefaultAgent implements AgentService {
   }
 
   private isSameMessage(a: Message, b: Message): boolean {
-    return a.role === b.role
-      && (a.timestamp ?? 0) === (b.timestamp ?? 0)
-      && (a.name ?? '') === (b.name ?? '')
-      && (a.content ?? '') === (b.content ?? '');
+    return (
+      a.role === b.role &&
+      (a.timestamp ?? 0) === (b.timestamp ?? 0) &&
+      (a.name ?? '') === (b.name ?? '') &&
+      (a.content ?? '') === (b.content ?? '')
+    );
   }
 
   private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMessage): Promise<Message | undefined> {
     const previous = this.archiveQueues.get(lane) ?? Promise.resolve();
-    const current = previous
-      .catch(() => undefined)
-      .then(() => this.archiveIncomingMessage(incoming));
-    const tail = current.then(() => undefined, () => undefined);
+    const current = previous.catch(() => undefined).then(() => this.archiveIncomingMessage(incoming));
+    const tail = current.then(
+      () => undefined,
+      () => undefined,
+    );
     this.archiveQueues.set(lane, tail);
 
     try {
@@ -1401,8 +1485,8 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-  * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
-  * 完整发行入口通常会要求 gateway；最小应用/测试场景仍可不加载 gateway。
+   * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
+   * 完整发行入口通常会要求 gateway；最小应用/测试场景仍可不加载 gateway。
    */
   private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const gateway = this.ctx.getService<GatewayService>('gateway');
@@ -1468,7 +1552,8 @@ export const configSchema: ConfigSchema = {
     type: 'number',
     label: '裁剪触发比例',
     default: 1.0,
-    description: '估算输入 token 占上下文长度的比例上限 (0~1)。本次调用超过该比例才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示占满物理上限才裁剪；如需提前护航可调低。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
+    description:
+      '估算输入 token 占上下文长度的比例上限 (0~1)。本次调用超过该比例才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示占满物理上限才裁剪；如需提前护航可调低。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
   },
 };
 
@@ -1482,18 +1567,40 @@ export const defaultConfig = {
   trimThresholdRatio: 1.0,
 };
 
+// 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口
+// （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
+type InternalAgent = {
+  preferredModel: string;
+  historyLimit: number;
+  resolveLLM(
+    platform?: string,
+    sessionId?: string,
+  ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined>;
+  buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
+  emitTokenUsage(
+    sessionId: string,
+    platform: string,
+    messages: Message[],
+    tools: ToolDefinition[],
+    contextLength: number,
+    maxTokens: number,
+    tokenBudget: number,
+  ): void;
+};
+
 export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const agent = new DefaultAgent(ctx, config);
-  ctx.provide('agent', agent);
+  const agentImpl = new DefaultAgent(ctx, config);
+  ctx.provide('agent', agentImpl);
+  const agent = agentImpl as unknown as InternalAgent;
 
   // ===== /model 指令 =====
-  ctx.command('model', '查看或切换当前会话的对话模型', async (cmdCtx) => {
+  ctx.command('model', '查看或切换当前会话的对话模型', async cmdCtx => {
     const target = cmdCtx.args[0];
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
 
     // 无参数 或 /model info：显示当前模型和来源
     if (!target || target === 'info') {
-      const globalModel = agent['preferredModel'];
+      const globalModel = agent.preferredModel;
       // 从 session-manager resolveConfig 获取最终生效模型（已包含会话级覆盖）
       const resolvedModel = smSvc ? smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model : undefined;
       // 检查是否为会话级覆盖（区分来源）
@@ -1511,17 +1618,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (llm && typeof llm.listModels === 'function') {
           try {
             models = (await llm.listModels()).map(m => m.id);
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
         if (models.length === 0) {
-          const allProviders = ctx.getAllServices<LLMService>('llm')
-            .filter(p => !p.capabilities.includes('router'));
+          const allProviders = ctx.getAllServices<LLMService>('llm').filter(p => !p.capabilities.includes('router'));
           for (const p of allProviders) {
             if (typeof p.instance.listModels === 'function') {
               try {
                 const list = await p.instance.listModels();
                 for (const m of list) models.push(m.id);
-              } catch { /* ignore */ }
+              } catch {
+                /* ignore */
+              }
             }
           }
         }
@@ -1541,7 +1651,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const { model: _, ...rest } = session.config;
         await smSvc.updateSession(cmdCtx.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
       }
-      const fallback = agent['preferredModel'] || '(默认)';
+      const fallback = agent.preferredModel || '(默认)';
       return `已清除会话模型覆盖，回退到: ${fallback}`;
     }
 
@@ -1563,7 +1673,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!data?.sessionId) return;
 
     try {
-      const resolved = await agent['resolveLLM'](data.platform, data.sessionId);
+      const resolved = await agent.resolveLLM(data.platform, data.sessionId);
       if (!resolved) return;
       const { llm } = resolved;
 
@@ -1576,12 +1686,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const messages: Message[] = [];
 
       // 系统提示
-      const systemPrompt = agent['buildSystemPrompt']();
+      const systemPrompt = agent.buildSystemPrompt();
       messages.push({ role: 'system', content: systemPrompt, metadata: { source: 'persona' } });
 
       // 历史消息
       if (memory) {
-        const history = await memory.getHistory(data.sessionId, agent['historyLimit']);
+        const history = await memory.getHistory(data.sessionId, agent.historyLimit);
         messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
       }
 
@@ -1589,12 +1699,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const sm = ctx.getService<SessionManagerService>('session-manager');
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
-      const tools = ctx.getService<ToolService>('tools')?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
+      const tools =
+        ctx.getService<ToolService>('tools')?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ??
+        [];
 
       const llmBeforeData = { messages, tools, sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
       await ctx.hooks.run('agent:llm:before', llmBeforeData);
 
-      agent['emitTokenUsage'](data.sessionId, data.platform ?? '', llmBeforeData.messages, llmBeforeData.tools, contextLength, maxTokens, tokenBudget);
+      agent.emitTokenUsage(
+        data.sessionId,
+        data.platform ?? '',
+        llmBeforeData.messages,
+        llmBeforeData.tools,
+        contextLength,
+        maxTokens,
+        tokenBudget,
+      );
     } catch (err) {
       ctx.logger.debug('token:request 处理失败:', err);
     }

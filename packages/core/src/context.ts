@@ -1,13 +1,11 @@
-import { EventBus } from './events.js';
-import { ServiceContainer } from './service.js';
-import { HookRegistry } from './hooks.js';
-import { Logger } from './logger.js';
-import { ConfigManager, ScopedConfigManager } from './config.js';
+import { type ConfigManager, ScopedConfigManager } from './config.js';
 import { DisposableChain } from './disposable-chain.js';
+import type { EventBus } from './events.js';
+import type { HookRegistry } from './hooks.js';
+import type { Logger } from './logger.js';
+import type { ServiceContainer } from './service.js';
 import { probeCapability } from './types/capabilities.js';
-import type { AalisEvents, HookContextMap, MiddlewareFn, CapabilityList } from './types/index.js';
-
-type Maybe<T> = T | undefined;
+import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -64,10 +62,14 @@ export class Context {
   // ---- 子系统访问（供高级插件检查/包装用） ----
 
   /** 底层事件总线实例 */
-  get eventBus(): EventBus { return this._events; }
+  get eventBus(): EventBus {
+    return this._events;
+  }
 
   /** 底层服务容器实例 */
-  get serviceContainer(): ServiceContainer { return this._services; }
+  get serviceContainer(): ServiceContainer {
+    return this._services;
+  }
 
   // ---- 内置服务 getter 已移除 ----
   // 请使用 ctx.getService<ToolService>('tools') / ctx.getService<CommandService>('commands')，
@@ -129,28 +131,19 @@ export class Context {
 
   // ---- 事件 ----
 
-  on<E extends string & keyof AalisEvents>(
-    event: E,
-    handler: EventHandler<AalisEvents[E]>,
-  ): () => void {
+  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     const dispose = this._events.on(event, handler);
     this._disposables.push(dispose);
     return dispose;
   }
 
-  once<E extends string & keyof AalisEvents>(
-    event: E,
-    handler: EventHandler<AalisEvents[E]>,
-  ): () => void {
+  once<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     const dispose = this._events.once(event, handler);
     this._disposables.push(dispose);
     return dispose;
   }
 
-  emit<E extends string & keyof AalisEvents>(
-    event: E,
-    ...args: AalisEvents[E]
-  ): Promise<void> {
+  emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
     return this._events.emit(event, ...args);
   }
 
@@ -183,9 +176,7 @@ export class Context {
         if (typeof result === 'string') failures.push(`  - [${cap}] ${result}`);
       }
       if (failures.length > 0) {
-        throw new Error(
-          `服务 "${name}" 声明的能力与实例实现不符（provide 拒绝注册）:\n${failures.join('\n')}`,
-        );
+        throw new Error(`服务 "${name}" 声明的能力与实例实现不符（provide 拒绝注册）:\n${failures.join('\n')}`);
       }
     }
 
@@ -229,10 +220,7 @@ export class Context {
   /**
    * 检查服务是否可用
    */
-  hasService<TName extends string>(
-    name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
-  ): boolean {
+  hasService<TName extends string>(name: TName, requiredCapabilities?: CapabilityList<TName>): boolean {
     return this._services.has(name, requiredCapabilities as readonly string[] as string[] | undefined);
   }
 
@@ -269,7 +257,10 @@ export class Context {
    * // 获取所有 LLM 并聚合模型列表
    * const allLLMs = ctx.getAllServices<LLMService>('llm');
    */
-  getAllServices<T, TName extends string = string>(name: TName, requiredCapabilities?: CapabilityList<TName>): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
+  getAllServices<T, TName extends string = string>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     return this._services.getAll<T>(name, requiredCapabilities as readonly string[] as string[] | undefined);
   }
 
@@ -295,8 +286,8 @@ export class Context {
    *   return off; // 自动纳入 dispose 链
    * });
    */
-  whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
-    let cleanup: (() => void) | void;
+  whenService<T>(name: string, cb: (svc: T) => undefined | (() => void)): () => void {
+    let cleanup: (() => void) | undefined;
     let invoked = false;
     let offSubscription: (() => void) | null = null;
 
@@ -324,7 +315,11 @@ export class Context {
       offSubscription?.();
       offSubscription = null;
       if (typeof cleanup === 'function') {
-        try { cleanup(); } catch (err) { this.logger.warn('whenService cleanup 异常:', err); }
+        try {
+          cleanup();
+        } catch (err) {
+          this.logger.warn('whenService cleanup 异常:', err);
+        }
         cleanup = undefined;
       }
     };
@@ -389,10 +384,7 @@ export class Context {
    *   await next();
    * });
    */
-  middleware<K extends string & keyof HookContextMap>(
-    hook: K,
-    fn: MiddlewareFn<HookContextMap[K]>,
-  ): () => void {
+  middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void {
     const dispose = this.hooks.register(hook, fn, this.id);
     this._disposables.push(dispose);
     return dispose;
