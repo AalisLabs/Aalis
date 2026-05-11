@@ -93,7 +93,8 @@ export function apply(ctx: Context): void {
         });
       }
       const ageMs = Date.now() - u.observedAt;
-      const tag = u.usageRatio >= 0.85 ? 'CRITICAL' : u.usageRatio >= 0.7 ? 'WARN' : u.usageRatio >= 0.5 ? 'INFO' : 'OK';
+      const tag =
+        u.usageRatio >= 0.85 ? 'CRITICAL' : u.usageRatio >= 0.7 ? 'WARN' : u.usageRatio >= 0.5 ? 'INFO' : 'OK';
       // top3 提示哪几个桶最大
       const buckets = Object.entries(u.breakdown).sort((a, b) => b[1] - a[1]);
       const top3 = buckets.slice(0, 3).map(([k, v]) => ({ name: k, tokens: v }));
