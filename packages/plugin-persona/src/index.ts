@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { Context, ConfigSchema, PlatformService } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { PlatformService } from '@aalis/plugin-platform';
 import type { SessionManagerService } from '@aalis/plugin-session-manager';
 import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';

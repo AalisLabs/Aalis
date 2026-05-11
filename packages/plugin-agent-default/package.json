@@ -12,7 +12,8 @@
     "@aalis/core": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-message-archive": "workspace:*",
-    "@aalis/plugin-session-manager": "workspace:*"
+    "@aalis/plugin-session-manager": "workspace:*",
+    "@aalis/plugin-platform": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

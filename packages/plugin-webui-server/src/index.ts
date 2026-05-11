@@ -5,7 +5,8 @@ import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, crea
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, PlatformAdapter, PlatformConnection, StorageService, WebUIService, AgentService, PlatformService, WebuiPage, LLMService } from '@aalis/core';
+import type { Context, OutgoingMessage, StreamChunkMessage, ToolExecuteMessage, LogEntry, App, ConfigSchema, StorageService, WebUIService, AgentService, WebuiPage, LLMService } from '@aalis/core';
+import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform';
 import type {} from '@aalis/plugin-session-manager';
 import type {} from '@aalis/plugin-agent-default';
 import type { PersonaService } from '@aalis/plugin-persona';

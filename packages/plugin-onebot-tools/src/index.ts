@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
-import type { Context, ConfigSchema, PlatformAdapter, PlatformService, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema, ToolCallContext } from '@aalis/core';
+import type { PlatformAdapter, PlatformService } from '@aalis/plugin-platform';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 
