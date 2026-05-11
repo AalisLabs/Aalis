@@ -247,7 +247,9 @@ export class PluginManager {
   }> {
     return [...this.plugins.entries()].map(([, entry]) => {
       // subsystem / extends / webuiPages 由 @aalis/plugin-webui-api 通过 declaration merging
-      // 注入，core 不感知其语义，仅透传。
+      // 注入，core 不感知其语义，仅透传给 listPlugins() 调用方。
+      // 实际消费者：plugin-webui-server（按 subsystem 将插件归组渲染到 dashboard，
+      // 见 packages/plugin-webui-server/src/index.ts）。"core 不消费 ≠ 系统未消费"。
       const m = entry.module as {
         subsystem?: string;
         extends?: unknown;
