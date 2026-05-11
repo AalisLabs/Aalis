@@ -69,10 +69,7 @@ export type {
   // 执行守卫
   ExecutionGuardContext,
   ExecutionGuard,
-  // 服务接口（抽象契约，具体实现由插件提供）
-  CommandService,
-  CommandNodeInfo,
-  ToolService,
+  // 指令/工具服务（已迁出至 @aalis/plugin-commands-api / @aalis/plugin-tools-api）
   // Agent 服务
   AgentService,
   PreprocessorFn,

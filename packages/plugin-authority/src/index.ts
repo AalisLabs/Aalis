@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import type { Context, WebuiPage, ConfigManager, Logger, App, CommandService, ToolService, ExecutionGuardContext } from '@aalis/core';
+import type { Context, WebuiPage, ConfigManager, Logger, App, ExecutionGuardContext } from '@aalis/core';
+import type { CommandService } from '@aalis/plugin-commands-api';
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api';
 import type { AuthorityService, DangerousConfirmRequest, DangerousConfirmHandler, DangerousConfirmResult, DangerousGrant } from './types.js';
 
@@ -311,7 +313,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   // /grant — 设置用户权限等级
   ctx.command('grant', '设置用户权限 (用法: grant <platform:userId> <level>)', async (cmdCtx) => {
     if (cmdCtx.args.length < 2) {
-      const prefix = ctx.commands!.prefix;
+      const prefix = ctx.getService<CommandService>('commands')!.prefix;
       return `用法: ${prefix}grant <platform:userId> <level>`;
     }
     const [target, levelStr] = cmdCtx.args;
@@ -357,10 +359,10 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     const auth = ctx.getService<AuthorityService>('authority');
     const users = auth?.listUsers() ?? [];
     const owners: Array<{ platform: string; userId: string }> = ctx.config.get('owners') ?? [];
-    const overrides = ctx.commands?.getOverrides() ?? {};
+    const overrides = ctx.getService<CommandService>('commands')?.getOverrides() ?? {};
     // 扁平化所有指令节点（含递归子指令），按深度优先顺序，便于 UI 表格渲染
-    const cmdNodes = ctx.commands?.getAllNodes() ?? [];
-    const tools = ctx.tools?.getAll() ?? [];
+    const cmdNodes = ctx.getService<CommandService>('commands')?.getAllNodes() ?? [];
+    const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     // 当前已注册的平台 contextId 列表（用于 WebUI 下拉选择，避免手写）
     const platformEntries = ctx.serviceContainer?.getEntries?.('platform') ?? [];
     const platformsFromServices = platformEntries.map(e => e.contextId);
@@ -380,14 +382,14 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
       permissionPolicy: ctx.config.get('permissionPolicy') ?? {},
       dangerousGrants: auth?.listDangerousGrants() ?? [],
-      commandPrefix: ctx.commands?.prefix ?? '/',
+      commandPrefix: ctx.getService<CommandService>('commands')?.prefix ?? '/',
       commands: cmdNodes.map(n => ({
         // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'clear:all'
         key: n.key,
         // 兼容字段：旧前端使用 c.name 做 React key —— 这里给完整 key
         name: n.key,
         // 用于显示，如 '/clear nuke'
-        displayName: `${ctx.commands?.prefix ?? '/'}${n.path.join(' ')}`,
+        displayName: `${ctx.getService<CommandService>('commands')?.prefix ?? '/'}${n.path.join(' ')}`,
         // 路径段名（'nuke'）用于子行紧凑显示
         leafName: n.name,
         path: n.path,
@@ -490,11 +492,11 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     if (typeof authority === 'number') override.authority = authority;
     if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
     if (Object.keys(override).length === 0) {
-      ctx.commands?.removeOverride(name);
+      ctx.getService<CommandService>('commands')?.removeOverride(name);
     } else {
-      ctx.commands?.setOverride(name, override);
+      ctx.getService<CommandService>('commands')?.setOverride(name, override);
     }
-    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
+    ctx.config.set('commandOverrides', ctx.getService<CommandService>('commands')?.getOverrides() ?? {});
     app.saveConfig();
     return { message: `指令 ${name} 权限已更新` };
   },
@@ -505,8 +507,8 @@ export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, u
     if (!name || typeof name !== 'string') throw new Error('name 必填');
     const app = ctx.getService<App>('app');
     if (!app) throw new Error('App 不可用');
-    ctx.commands?.removeOverride(name);
-    ctx.config.set('commandOverrides', ctx.commands?.getOverrides() ?? {});
+    ctx.getService<CommandService>('commands')?.removeOverride(name);
+    ctx.config.set('commandOverrides', ctx.getService<CommandService>('commands')?.getOverrides() ?? {});
     app.saveConfig();
     return { message: `指令 ${name} 覆盖已重置` };
   },

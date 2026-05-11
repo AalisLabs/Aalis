@@ -1,7 +1,17 @@
 import type { DisposableChain } from './disposable-chain.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
-import type { RegisteredTool, ToolGroupInfo, CommandDefinition, ToolService, CommandService, AalisEvents } from './types/index.js';
+import type { RegisteredTool, ToolGroupInfo, CommandDefinition, AalisEvents } from './types/index.js';
+
+// 核心不依赖具体服务包，用局部结构型描述 tools/commands 服务。
+// 完整接口定义见 @aalis/plugin-tools-api / @aalis/plugin-commands-api。
+interface ToolServiceShape {
+  register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
+}
+interface CommandServiceShape {
+  register(command: CommandDefinition, pluginName: string): () => void;
+}
 
 /**
  * 工具/指令注册缓冲
@@ -38,7 +48,7 @@ export class PendingRegistrationBuffer {
 
   /** 注册 AI 工具。服务可用则直接注册，否则缓冲到 tools 服务就绪。 */
   registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void {
-    const tools = this.services.get<ToolService>('tools');
+    const tools = this.services.get<ToolServiceShape>('tools');
     if (tools) {
       const dispose = tools.register(tool, this.contextId);
       this.disposables.push(dispose);
@@ -55,7 +65,7 @@ export class PendingRegistrationBuffer {
 
   /** 注册工具分组。行为同 registerTool。 */
   registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
-    const tools = this.services.get<ToolService>('tools');
+    const tools = this.services.get<ToolServiceShape>('tools');
     if (tools) {
       const dispose = tools.registerGroup(group, this.contextId);
       this.disposables.push(dispose);
@@ -72,7 +82,7 @@ export class PendingRegistrationBuffer {
 
   /** 注册斜杠指令。服务可用则直接注册，否则缓冲到 commands 服务就绪。 */
   registerCommand(def: CommandDefinition): () => void {
-    const commands = this.services.get<CommandService>('commands');
+    const commands = this.services.get<CommandServiceShape>('commands');
     if (commands) {
       const dispose = commands.register(def, this.contextId);
       this.disposables.push(dispose);
@@ -107,7 +117,7 @@ export class PendingRegistrationBuffer {
   }
 
   private _flushTools(): void {
-    const tools = this.services.get<ToolService>('tools');
+    const tools = this.services.get<ToolServiceShape>('tools');
     if (!tools) return;
     for (const tool of this._tools) {
       const dispose = tools.register(tool, this.contextId);
@@ -122,7 +132,7 @@ export class PendingRegistrationBuffer {
   }
 
   private _flushCommands(): void {
-    const commands = this.services.get<CommandService>('commands');
+    const commands = this.services.get<CommandServiceShape>('commands');
     if (!commands) return;
     for (const { def, ctxId } of this._commands) {
       const dispose = commands.register(def, ctxId);

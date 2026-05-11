@@ -1,3 +1,4 @@
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type { Context, ConfigSchema, WebuiPage, PluginModule, IncomingMessage } from '@aalis/core';
 import type {} from '@aalis/plugin-webui-api';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -525,7 +526,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
 
-  if (ctx.tools) {
+  if (ctx.getService<ToolService>('tools')) {
     ctx.registerToolGroup({
       name: 'scheduler',
       label: '定时任务',

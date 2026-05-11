@@ -7,7 +7,7 @@ import { DisposableChain } from './disposable-chain.js';
 import { MixinRegistry } from './mixin-registry.js';
 import { PendingRegistrationBuffer } from './pending-buffer.js';
 import { probeCapability } from './types/capabilities.js';
-import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, ToolService, CommandService, CapabilityList } from './types/index.js';
+import type { AalisEvents, RegisteredTool, ToolGroupInfo, HookContextMap, MiddlewareFn, CommandContext, CommandDefinition, SubcommandDefinition, SafetyLevel, CapabilityList } from './types/index.js';
 
 type Maybe<T> = T | undefined;
 
@@ -71,15 +71,9 @@ export class Context {
   /** 底层服务容器实例 */
   get serviceContainer(): ServiceContainer { return this._services; }
 
-  // ---- 内置服务 getter（由 builtin 插件注册，通过服务容器延迟查找） ----
-
-  get tools(): Maybe<ToolService> {
-    return this._services.get<ToolService>('tools');
-  }
-
-  get commands(): Maybe<CommandService> {
-    return this._services.get<CommandService>('commands');
-  }
+  // ---- 内置服务 getter 已移除 ----
+  // 请使用 ctx.getService<ToolService>('tools') / ctx.getService<CommandService>('commands')，
+  // 类型分别来自 @aalis/plugin-tools-api / @aalis/plugin-commands-api。
 
   /**
    * 创建子上下文（通常为每个插件创建一个）
@@ -531,10 +525,10 @@ export class Context {
     this.hooks.unregisterByContext(this.id);
 
     // 清理该上下文注册的工具（安全访问，服务可能已卸载）
-    this._services.get<ToolService>('tools')?.unregisterByPlugin(this.id);
+    (this._services.get('tools') as { unregisterByPlugin?: (id: string) => void } | undefined)?.unregisterByPlugin?.(this.id);
 
     // 清理该上下文注册的指令（安全访问，服务可能已卸载）
-    this._services.get<CommandService>('commands')?.unregisterByPlugin(this.id);
+    (this._services.get('commands') as { unregisterByPlugin?: (id: string) => void } | undefined)?.unregisterByPlugin?.(this.id);
 
     // 从父上下文中移除
     if (this._parent) {
