@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, ToolCallContext } from '@aalis/core';
+import type { Context, ConfigSchema } from '@aalis/core';
+import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {} from '@aalis/plugin-session-manager';
 import '@aalis/plugin-tools-api';

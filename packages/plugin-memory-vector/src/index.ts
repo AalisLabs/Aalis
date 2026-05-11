@@ -1,4 +1,5 @@
-import type { Context, IncomingMessage, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
+import type { Context, Message, MiddlewareNext, ConfigSchema } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';

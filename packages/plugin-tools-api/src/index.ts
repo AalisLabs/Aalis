@@ -2,13 +2,40 @@
 //
 // 本包提供工具系统的全部"非实现"契约：
 // - 工具/分组数据结构（RegisteredTool / ToolGroupInfo / ToolSummary）
+// - 工具调用上下文（ToolCallContext）—— 平台/会话语义，非 OpenAI 协议
+// - 工具执行通知（ToolExecuteMessage）
 // - 服务接口（ToolService）
 // - Context 便捷方法的类型增强（ctx.registerTool / ctx.registerToolGroup）
+// - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
 //
 // 实现见 @aalis/plugin-tools-system。
 
-import type { Context, PermissionId, SafetyLevel, ToolCallContext, ToolDefinition } from '@aalis/core';
+import type { Context, PermissionId, SafetyLevel, ToolDefinition } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+
+// ----- 工具调用上下文（平台语义；core 仅提供 OpenAI 协议层的 ToolCall/ToolDefinition） -----
+
+export interface ToolCallContext {
+  sessionId: string;
+  userId?: string;
+  platform?: string;
+  /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
+  enabledGroups?: string[];
+}
+
+/** 工具调用状态通知（WebUI 等前端订阅展示用） */
+export interface ToolExecuteMessage {
+  sessionId: string;
+  platform?: string;
+  /** 工具名称 */
+  toolName: string;
+  /** 传入工具的参数 */
+  args: Record<string, unknown>;
+  /** 'start' = 开始调用, 'end' = 调用完成 */
+  phase: 'start' | 'end';
+  /** 工具返回结果（仅在 phase='end' 时存在） */
+  result?: string;
+}
 
 /**
  * 已注册的工具：函数声明 + 处理器 + 权限/安全/分组元信息。
@@ -120,3 +147,11 @@ declare module '@aalis/core' {
 }
 // 抑制"未使用"警告：Context 在 declare module 块中被引用
 export type _ContextExtended = Context;
+
+// ===== AalisEvents 扩展（declaration merging） =====
+
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'tool:execute': [info: ToolExecuteMessage];
+  }
+}

@@ -6,7 +6,7 @@
 //
 // 第三方若要实现替代方案（如调用专用视觉 API），只需满足本接口即可。
 
-import type { IncomingMessage } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { registerCapabilityProbe } from '@aalis/core';
 
 /** 图像识别处理消息的输入 */

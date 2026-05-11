@@ -14,6 +14,7 @@
     "@aalis/plugin-agent-default": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {

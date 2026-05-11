@@ -1,4 +1,5 @@
-import type { IncomingMessage, Message, OutgoingMessage } from '@aalis/core';
+import type { Message } from '@aalis/core';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 
 /**
  * 虚拟频道 —— 把多个真实 sessionId（群聊/私聊/WebUI 等）聚合成一个逻辑订阅单元。
