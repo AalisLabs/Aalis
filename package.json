@@ -10,13 +10,16 @@
     "check:biome": "biome check .",
     "format": "biome format --write .",
     "lint:fix": "biome check --write .",
-    "ci": "pnpm -r build && pnpm run check:biome"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "ci": "pnpm -r build && pnpm run check:biome && pnpm run test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
     "@types/node": "^22.19.15",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
