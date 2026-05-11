@@ -145,3 +145,51 @@ export interface ExtendDeclaration {
   /** 该插件新增的自定义钩子名 */
   hooks?: string[];
 }
+
+// ----- 子系统展示目录 -----
+
+/**
+ * 子系统展示目录条目（id 来自 `package.json` 的 `aalis.subsystem`，详见 ADR-0003）。
+ *
+ * **职责边界**：
+ * - core 仅持有 subsystem **字符串**，不知道任何显示语义；
+ * - webui-server 仅 **消费** 此目录，不持有 id/label 映射；
+ * - 本目录是 WebUI 展示层契约：增加 subsystem 等于在此追加一项。
+ *
+ * 未列入此目录的 subsystem 字符串仍能展示——`/api/service-groups` 会把 id 直接当作 label
+ * 放到列表末尾。新加的 subsystem 应当尽快补到这里以获得本地化标签与有意稳定的排序。
+ */
+export interface SubsystemCatalogEntry {
+  /** subsystem id，对应 `package.json` `aalis.subsystem` 字段 */
+  id: string;
+  /** 显示名（i18n 由前端按 id 二次覆盖） */
+  label: string;
+  /** 排序权重，越小越靠前 */
+  order: number;
+}
+
+/**
+ * 默认子系统目录。新加 subsystem 时**在此追加一行**，
+ * 不要去改 webui-server 路由源码。
+ */
+export const DEFAULT_SUBSYSTEM_CATALOG: readonly SubsystemCatalogEntry[] = Object.freeze([
+  { id: 'core', label: '核心', order: 10 },
+  { id: 'platform', label: '平台', order: 20 },
+  { id: 'agent', label: 'Agent', order: 30 },
+  { id: 'llm', label: 'LLM', order: 40 },
+  { id: 'memory', label: '记忆', order: 50 },
+  { id: 'embedding', label: 'Embedding', order: 60 },
+  { id: 'persona', label: '人格', order: 70 },
+  { id: 'tools', label: '工具', order: 80 },
+  { id: 'message', label: '消息', order: 90 },
+  { id: 'session', label: '会话', order: 100 },
+  { id: 'skills', label: '技能', order: 110 },
+  { id: 'scheduler', label: '调度', order: 120 },
+  { id: 'authority', label: '权限', order: 130 },
+  { id: 'user', label: '用户', order: 140 },
+  { id: 'storage', label: '存储', order: 150 },
+  { id: 'web', label: 'Web', order: 160 },
+  { id: 'webui', label: 'WebUI', order: 170 },
+  { id: 'external', label: '外部', order: 180 },
+  { id: 'types', label: '类型', order: 999 },
+]);

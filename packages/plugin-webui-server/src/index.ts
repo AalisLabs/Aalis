@@ -16,6 +16,7 @@ import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
+import { DEFAULT_SUBSYSTEM_CATALOG } from '@aalis/plugin-webui-api';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
@@ -445,51 +446,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ groups: result });
   });
 
-  // 获取服务分组（manifest 驱动，见 ADR-0004）
+  // 获取服务分组（manifest 驱动 + 展示目录消费，见 ADR-0003 / ADR-0004）
   expressApp.get('/api/service-groups', (_req, res) => {
     const app = getApp();
     const pluginStatus = app ? app.plugins.getStatus() : [];
-    // subsystem → plugins
+    // subsystem id → plugins
     const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
       const sub = p.subsystem || 'external';
       if (!groupsMap.has(sub)) groupsMap.set(sub, []);
       groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
     }
-    // 固定分组顺序
-    const order: Array<{ id: string; label: string }> = [
-      { id: 'core', label: '核心' },
-      { id: 'platform', label: '平台' },
-      { id: 'agent', label: 'Agent' },
-      { id: 'llm', label: 'LLM' },
-      { id: 'memory', label: '记忆' },
-      { id: 'embedding', label: 'Embedding' },
-      { id: 'persona', label: '人格' },
-      { id: 'tools', label: '工具' },
-      { id: 'message', label: '消息' },
-      { id: 'session', label: '会话' },
-      { id: 'skills', label: '技能' },
-      { id: 'scheduler', label: '调度' },
-      { id: 'authority', label: '权限' },
-      { id: 'user', label: '用户' },
-      { id: 'storage', label: '存储' },
-      { id: 'web', label: 'Web' },
-      { id: 'external', label: '外部' },
-      { id: 'webui', label: 'WebUI' },
-      { id: 'types', label: '类型' },
-    ];
-    const groups: Array<{ id: string; label: string; plugins: Array<{ name: string; provides: string[] }> }> = [];
-    for (const { id, label } of order) {
-      if (groupsMap.has(id)) {
-        groups.push({ id, label, plugins: groupsMap.get(id)! });
-      }
-    }
-    // 兜底：未列出的分组
-    for (const [id, plugins] of groupsMap.entries()) {
-      if (!order.some(o => o.id === id)) {
-        groups.push({ id, label: id, plugins });
-      }
-    }
+    // 用展示目录确定 label + 顺序；目录里没列的 subsystem 仍然展示，
+    // id 直接当 label，order 后置到 1000+，避免插入"乱序"。
+    const catalog = new Map(DEFAULT_SUBSYSTEM_CATALOG.map(e => [e.id, e]));
+    const unknownOrderBase = 1000;
+    const sorted = [...groupsMap.keys()]
+      .map(id => {
+        const entry = catalog.get(id);
+        return entry ? { id, label: entry.label, order: entry.order } : { id, label: id, order: unknownOrderBase };
+      })
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    const groups = sorted.map(({ id, label }) => ({
+      id,
+      label,
+      plugins: groupsMap.get(id)!,
+    }));
     res.json({ groups });
   });
 
