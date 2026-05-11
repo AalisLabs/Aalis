@@ -191,8 +191,8 @@ function imageSourceFromSegment(data: Record<string, unknown>): string {
 function extractCqImageRefs(content: string): ForwardImageRef[] {
   const refs: ForwardImageRef[] = [];
   const re = /\[CQ:image,([^\]]+)\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(content)) !== null) {
+  let match: RegExpExecArray | null = re.exec(content);
+  while (match !== null) {
     const params: Record<string, unknown> = {};
     for (const part of match[1].split(',')) {
       const eq = part.indexOf('=');
@@ -206,6 +206,7 @@ function extractCqImageRefs(content: string): ForwardImageRef[] {
     }
     const source = imageSourceFromSegment(params);
     if (source) refs.push({ source, label: '[图片]', segment: params });
+    match = re.exec(content);
   }
   return refs;
 }

@@ -118,7 +118,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       const m = ctx.getService<MemoryService>('memory');
       if (!m) return undefined;
       const v = (m as unknown as Record<string | symbol, unknown>)[prop as string];
-      return typeof v === 'function' ? (v as Function).bind(m) : v;
+      return typeof v === 'function' ? (v as (...args: unknown[]) => unknown).bind(m) : v;
     },
   });
   service.setChatRollbackDeps({

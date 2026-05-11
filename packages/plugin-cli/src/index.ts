@@ -323,16 +323,19 @@ class CliTui {
     if (!this.running) return;
     const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
     if (!s.includes('\x1b[<')) return;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: 解析 SGR 鼠标协议需要按字面匹配 ESC
     const re = /\x1b\[<(\d+);\d+;\d+([Mm])/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(s)) !== null) {
-      if (m[2] !== 'M') continue; // 滚轮只发 'M'，无 release
-      const button = parseInt(m[1], 10);
-      const base = button & ~28; // 去掉 Shift(4)/Alt(8)/Ctrl(16)
-      const big = (button & 4) !== 0; // Shift+滚轮 = 翻页
-      if (base === 64) this.scrollCurrentView(+1, big);
-      else if (base === 65) this.scrollCurrentView(-1, big);
-      // base === 0/1/2 (左/中/右) 直接忽略：让用户在终端层做选择/复制
+    let m: RegExpExecArray | null = re.exec(s);
+    while (m !== null) {
+      if (m[2] === 'M') {
+        const button = parseInt(m[1], 10);
+        const base = button & ~28; // 去掉 Shift(4)/Alt(8)/Ctrl(16)
+        const big = (button & 4) !== 0; // Shift+滚轮 = 翻页
+        if (base === 64) this.scrollCurrentView(+1, big);
+        else if (base === 65) this.scrollCurrentView(-1, big);
+        // base === 0/1/2 (左/中/右) 直接忽略：让用户在终端层做选择/复制
+      }
+      m = re.exec(s);
     }
   };
 
@@ -976,6 +979,7 @@ function sanitizeForSingleLine(s: string): string {
       .replace(/\r\n|\r|\n/g, ' \u21b5 ')
       .replace(/\t/g, '    ')
       // 保留 ESC（颜色），剔除其它 C0 控制字符
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: 需要按字面匹配 C0 控制字符以清洗终端输入
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '')
   );
 }

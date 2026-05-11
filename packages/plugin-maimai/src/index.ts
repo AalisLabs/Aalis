@@ -326,10 +326,14 @@ function formatBests(b: MaiBests, opts: { topN?: number } = {}): string {
   lines.push(`📊 B50 总分: ${total}  (B35 旧版 ${b.standard_total} + B15 现版 ${b.dx_total})`);
   lines.push('');
   lines.push('— 旧版 B35 —');
-  b.standard.slice(0, topN).forEach((s, i) => lines.push(formatScoreLine(s, i + 1)));
+  b.standard.slice(0, topN).forEach((s, i) => {
+    lines.push(formatScoreLine(s, i + 1));
+  });
   lines.push('');
   lines.push('— 现版 B15 —');
-  b.dx.slice(0, topN).forEach((s, i) => lines.push(formatScoreLine(s, i + 1)));
+  b.dx.slice(0, topN).forEach((s, i) => {
+    lines.push(formatScoreLine(s, i + 1));
+  });
   return lines.join('\n');
 }
 
