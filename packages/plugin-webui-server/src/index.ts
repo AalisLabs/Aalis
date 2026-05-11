@@ -423,7 +423,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取所有平台适配器及其连接状态
   expressApp.get('/api/platforms', (_req, res) => {
-    const pm = ctx.getService<PlatformService>('platform', ['router']);
+    const pm = ctx.getService<PlatformService>('platform');
     res.json({ platforms: pm?.getDetails() ?? [] });
   });
 
@@ -486,7 +486,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 特殊处理 platform：通过 core 的 getPlatformNames() 获取已注册的平台名称
     if (serviceName === 'platform') {
-      const pm = ctx.getService<PlatformService>('platform', ['router']);
+      const pm = ctx.getService<PlatformService>('platform');
       res.json({ models: pm?.getPlatformNames() ?? [] });
       return;
     }
@@ -494,7 +494,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 特殊处理 gateway-scopes：基于已注册 adapter.sessionTypes 真实声明生成
     // platform×sessionType 的笛卡尔积。无声明的 adapter 视为单会话（不展开 sessionType）。
     if (serviceName === 'gateway-scopes') {
-      const adapters = ctx.getService<PlatformService>('platform', ['router'])?.getAdapters() ?? [];
+      const adapters = ctx.getService<PlatformService>('platform')?.getAdapters() ?? [];
       const platformTypes = new Map<string, readonly string[]>();
       const allTypes = new Set<string>();
       for (const a of adapters) {
