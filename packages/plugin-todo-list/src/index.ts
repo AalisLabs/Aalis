@@ -62,9 +62,9 @@ declare module '@aalis/core' {
   }
 }
 
-// ===== WebuiHandlers =====
+// ===== Actions =====
 
-export const webuiHandlers: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+export const actions: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
   async getTodos(ctx, args) {
     const sessionId = args.sessionId as string;
     if (!sessionId) return [];
