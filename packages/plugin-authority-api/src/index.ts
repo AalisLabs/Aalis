@@ -114,3 +114,48 @@ export interface AuthorityService {
   setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void;
   listUsers(): Array<{ platform: string; userId: string; authority: number }>;
 }
+
+// ============================================================
+// 用户身份（cleanup-9 从 core 迁入）
+// ============================================================
+
+/** 跨平台用户身份标识 */
+export interface UserIdentity {
+  platform: string;
+  userId: string;
+}
+
+// ============================================================
+// AalisConfig declaration merging —— authority 域业务字段（cleanup-9）
+// ============================================================
+//
+// core 的 AalisConfig 只声明基础设施字段（name / logLevel / plugins / ...），
+// authority 域的业务字段通过 declaration merging 注入，避免 core 知晓任何
+// 权限/危险操作的语义。
+//
+// 注意：dangerousPolicy.enabledAt 不在此声明 —— 它是 plugin-authority 的运行时
+// 状态，不应被持久化到 config 文件。
+declare module '@aalis/core' {
+  interface AalisConfig {
+    /** owner 列表 */
+    owners?: UserIdentity[];
+    /** 新用户默认权限等级（默认 1） */
+    defaultAuthority?: number;
+    /** owner 的权限等级（默认 5） */
+    ownerAuthority?: number;
+    /** dangerous 操作白名单策略 */
+    dangerousPolicy?: {
+      /** 允许的 dangerous 工具/指令名列表，['*'] 表示全部放行 */
+      allow?: string[];
+      /** 白名单有效时长（秒），0 = 永久 */
+      duration?: number;
+    };
+    /** 细粒度权限策略：deny 优先；allow 为空表示默认放行 */
+    permissionPolicy?: {
+      allow?: string[];
+      deny?: string[];
+    };
+    /** 管理员对单条指令的权限/安全等级覆盖 */
+    commandOverrides?: Record<string, { authority?: number; safety?: string }>;
+  }
+}
