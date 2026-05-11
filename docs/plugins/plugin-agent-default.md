@@ -73,3 +73,41 @@ meta.inject = { optional: ['llm', 'memory', 'persona'] }
 ## 扩展点
 
 其他插件可通过中间件钩子扩展 Agent 的每个阶段，无需修改 Agent 代码。详见 [events.md](../core/events.md)。
+
+## Token 预算追踪与日志
+
+每次 LLM 调用前，Agent 会**就地**估算 prompt 消耗并把 12 桶 breakdown emit 为 `token:usage` 事件：
+
+```ts
+'token:usage': [{
+  sessionId, platform, contextWindow, maxTokens, tokenBudget,
+  used, usageRatio,
+  breakdown: {
+    system, persona, memorySummary, memoryVector, skills, platform,
+    subtask, systemOther, history, toolResults, toolDefs, reservedForReply
+  }
+}]
+```
+
+消费者：
+
+- [plugin-webui-server](./plugin-webui-server.md) → WebSocket `'token_usage'` 推给前端面板
+- [plugin-memory-summary](./plugin-memory-summary.md) → 超阈值触发自动压缩
+- [plugin-prompt-budget](./plugin-prompt-budget.md) → AI 自查工具 `prompt_budget_info`
+
+Agent 自身额外维护一个**节流日志记录器**：
+
+- 状态：`sessionId → { count, lastRatioBucket }`
+- 触发条件（满足任一即打印）：
+  - `usageRatio` 越过 0.5 / 0.7 / 0.85 阈值
+  - 每 10 轮强制打印一次
+- 标签：`OK / INFO / WARN / CRITICAL`，与 `prompt_budget_info` 工具阈值对齐
+
+日志样例：
+
+```
+[token:usage] WARN session=xxx ratio=72% used=23104/32000 top3: history=8901 toolResults=5400 system=2300
+```
+
+便于排查"上下文是怎么涨起来的"，无需开 WebUI。
+
