@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-persona": "workspace:*"
+    "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-webui-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
