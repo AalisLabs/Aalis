@@ -446,25 +446,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ groups: result });
   });
 
-  // 获取服务分组（manifest 驱动 + 展示目录消费，见 ADR-0003 / ADR-0004）
+  // 获取服务分组（中央目录消费，见 ADR-0003）
   expressApp.get('/api/service-groups', (_req, res) => {
     const app = getApp();
     const pluginStatus = app ? app.plugins.getStatus() : [];
-    // subsystem id → plugins
+    // 反向索引：plugin name → subsystem id（来自 DEFAULT_SUBSYSTEM_CATALOG）
+    const pluginToSubsystem = new Map<string, string>();
+    for (const entry of DEFAULT_SUBSYSTEM_CATALOG) {
+      for (const pluginName of entry.plugins) pluginToSubsystem.set(pluginName, entry.id);
+    }
+    // 按 subsystem 归组（未命中目录 → 'unknown'）
     const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
-      const sub = p.subsystem || 'external';
+      const sub = pluginToSubsystem.get(p.name) ?? 'unknown';
       if (!groupsMap.has(sub)) groupsMap.set(sub, []);
       groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
     }
-    // 用展示目录确定 label + 顺序；目录里没列的 subsystem 仍然展示，
-    // id 直接当 label，order 后置到 1000+，避免插入"乱序"。
+    // 排序：目录 order 优先，未命中条目 order=9999
     const catalog = new Map(DEFAULT_SUBSYSTEM_CATALOG.map(e => [e.id, e]));
-    const unknownOrderBase = 1000;
     const sorted = [...groupsMap.keys()]
       .map(id => {
         const entry = catalog.get(id);
-        return entry ? { id, label: entry.label, order: entry.order } : { id, label: id, order: unknownOrderBase };
+        return entry ? { id, label: entry.label, order: entry.order } : { id, label: '其他', order: 9999 };
       })
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
     const groups = sorted.map(({ id, label }) => ({
