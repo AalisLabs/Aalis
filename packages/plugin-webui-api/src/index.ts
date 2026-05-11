@@ -123,6 +123,18 @@ declare module '@aalis/core' {
   interface PluginModule {
     /** 插件声明的 WebUI 页面列表 */
     webuiPages?: WebuiPage[];
+    /** WebUI 页面操作处理器（声明式页面的后端方法） */
+    webuiHandlers?: Record<
+      string,
+      (ctx: import('@aalis/core').Context, args: Record<string, unknown>) => Promise<unknown>
+    >;
+    /**
+     * 子系统归属，仅用于 WebUI 分组展示。
+     *
+     * 可用 id 与中文 label 由本包的 `DEFAULT_SUBSYSTEM_METADATA` 提供，
+     * 但允许使用任意自定义字符串（未匹配 metadata 时直接以 id 作为 label 显示）。
+     */
+    subsystem?: string;
     /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
     extends?: ExtendDeclaration;
   }
