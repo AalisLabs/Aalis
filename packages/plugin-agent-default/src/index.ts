@@ -221,13 +221,15 @@ class DefaultAgent implements AgentService {
   /**
    * 获取 Agent 子系统的插件分组
    *
-   * 找出所有 provides 与 Agent inject.optional 有交集的插件。
+   * 仅纳入 Agent 直接依赖的能力提供者；不包含 `platform`
+   * （平台属于独立子系统，由 PlatformService.getPluginGroups 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
     const app = this.ctx.getService<App>('app');
     if (!app) return [];
 
-    const targetServices = new Set(inject.optional ?? []);
+    // 子系统归属：Agent 域的服务（不含 platform——平台是独立子系统）
+    const targetServices = new Set(['llm', 'memory', 'persona', 'message-archive']);
     const grouped: string[] = [];
 
     for (const p of app.plugins.getStatus()) {
