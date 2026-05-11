@@ -1,25 +1,22 @@
-import WebSocket from 'ws';
 import { createHash } from 'node:crypto';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Context, ConfigSchema } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
-import type { LLMService } from '@aalis/plugin-llm-api';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
-import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
+import WebSocket from 'ws';
 import type {
+  NormalizedRequestEvent,
+  OneBotActionResponse,
   OneBotConnectionConfig,
   OneBotProtocol,
   OneBotRawEvent,
-  OneBotActionResponse,
-  NormalizedRequestEvent,
 } from './types.js';
 import '@aalis/plugin-agent-api';
-import { collectForwardSegments, segmentsToText } from './types.js';
-import { expandForward, buildEnvelope } from './forward.js';
+import { createForwardExpander } from './forward-expand.js';
+import { segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';
 import { OneBotV12 } from './v12.js';
 
@@ -56,12 +53,23 @@ export const configSchema: ConfigSchema = {
     description: '启用后，文本将按选中的符号自动拆分为多条消息发送，模拟真人发送习惯',
     fields: {
       enabled: { type: 'boolean', label: '启用', description: '是否启用消息分条发送', default: false },
-      delayPerChar: { type: 'number', label: '每字延迟 (ms)', description: '按下一条消息的字数计算延迟，单位毫秒/字', default: 50 },
-      maxDelay: { type: 'number', label: '最大延迟 (ms)', description: '分条消息之间的最大延迟上限（毫秒）', default: 3000 },
+      delayPerChar: {
+        type: 'number',
+        label: '每字延迟 (ms)',
+        description: '按下一条消息的字数计算延迟，单位毫秒/字',
+        default: 50,
+      },
+      maxDelay: {
+        type: 'number',
+        label: '最大延迟 (ms)',
+        description: '分条消息之间的最大延迟上限（毫秒）',
+        default: 3000,
+      },
       patterns: {
         type: 'multiselect',
         label: '切割模式',
-        description: '在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\\n"）则要整段匹配到才切。支持转义：\\n=换行，\\t=制表符，\\r=回车，\\\\=反斜杠。',
+        description:
+          '在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\\n"）则要整段匹配到才切。支持转义：\\n=换行，\\t=制表符，\\r=回车，\\\\=反斜杠。',
         allowCustom: true,
         options: [
           { label: '。 中文句号', value: '。' },
@@ -89,20 +97,61 @@ export const configSchema: ConfigSchema = {
     label: '合并转发处理',
     description: '收到 <forward> 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要',
     fields: {
-      enabled: { type: 'boolean', label: '启用自动展开', default: true, description: '关闭后保留原始占位符，由 LLM 自行决定是否调工具读取。' },
-      maxDepth: { type: 'number', label: '嵌套深度上限', default: 3, description: '递归展开嵌套合并转发的最大层数（顶层=1）。' },
-      maxNodesPerLevel: { type: 'number', label: '单层节点上限', default: 30, description: '每层最多展开多少条节点。超过部分会被截断。' },
-      imageRecognition: { type: 'boolean', label: '识别内部图片', default: true, description: '把转发内的图片送入 image-recognition 服务转写为文字描述。需要该服务可用。' },
-      summarize: { type: 'boolean', label: '生成摘要', default: true, description: '展开后调用 LLM 生成一段摘要，作为消息正文进入对话/记忆/向量库；原文保留在缓存。' },
-      summaryModel: { type: 'select', label: '摘要模型', default: '', dynamicOptions: 'llm', description: '留空使用默认 LLM 服务的默认模型；选定后通过 LLMRouter 路由到对应 provider。建议挑便宜/快的模型。' },
-      summaryMaxChars: { type: 'number', label: '摘要最大字数', default: 400, description: '提示给摘要模型的目标长度上限。' },
+      enabled: {
+        type: 'boolean',
+        label: '启用自动展开',
+        default: true,
+        description: '关闭后保留原始占位符，由 LLM 自行决定是否调工具读取。',
+      },
+      maxDepth: {
+        type: 'number',
+        label: '嵌套深度上限',
+        default: 3,
+        description: '递归展开嵌套合并转发的最大层数（顶层=1）。',
+      },
+      maxNodesPerLevel: {
+        type: 'number',
+        label: '单层节点上限',
+        default: 30,
+        description: '每层最多展开多少条节点。超过部分会被截断。',
+      },
+      imageRecognition: {
+        type: 'boolean',
+        label: '识别内部图片',
+        default: true,
+        description: '把转发内的图片送入 image-recognition 服务转写为文字描述。需要该服务可用。',
+      },
+      summarize: {
+        type: 'boolean',
+        label: '生成摘要',
+        default: true,
+        description: '展开后调用 LLM 生成一段摘要，作为消息正文进入对话/记忆/向量库；原文保留在缓存。',
+      },
+      summaryModel: {
+        type: 'select',
+        label: '摘要模型',
+        default: '',
+        dynamicOptions: 'llm',
+        description: '留空使用默认 LLM 服务的默认模型；选定后通过 LLMRouter 路由到对应 provider。建议挑便宜/快的模型。',
+      },
+      summaryMaxChars: {
+        type: 'number',
+        label: '摘要最大字数',
+        default: 400,
+        description: '提示给摘要模型的目标长度上限。',
+      },
     },
   },
   reply: {
     label: '引用消息处理',
     description: '收到引用回复时如何展开被引用消息链',
     fields: {
-      maxDepth: { type: 'number', label: '引用链深度上限', default: 5, description: '递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。' },
+      maxDepth: {
+        type: 'number',
+        label: '引用链深度上限',
+        default: 5,
+        description: '递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。',
+      },
     },
   },
 };
@@ -142,11 +191,14 @@ interface ConnectionState {
   reconnectTimer?: ReturnType<typeof setTimeout>;
   heartbeatTimer?: ReturnType<typeof setInterval>;
   lastPong: number;
-  pendingActions: Map<string, {
-    resolve: (data: unknown) => void;
-    reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }>;
+  pendingActions: Map<
+    string,
+    {
+      resolve: (data: unknown) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >;
 }
 
 // ===== 聊天流控类型（已迁移）=====
@@ -162,7 +214,14 @@ interface ConnectionState {
 // ===== 工具函数 =====
 
 /** 生成 sessionId: onebot:{selfId}:{detailType}:{targetId} */
-function makeSessionId(selfId: string, detailType: string, userId?: string, groupId?: string, guildId?: string, channelId?: string): string {
+function makeSessionId(
+  selfId: string,
+  detailType: string,
+  userId?: string,
+  groupId?: string,
+  guildId?: string,
+  channelId?: string,
+): string {
   let targetId: string;
   if (detailType === 'private') {
     targetId = userId ?? 'unknown';
@@ -237,9 +296,7 @@ async function cacheImagesAndRewriteText(
   images: string[],
   sessionId: string,
 ): Promise<{ text: string; localPaths: (string | null)[] }> {
-  const localPaths = await Promise.all(
-    images.map(url => downloadAndCacheImage(url, sessionId)),
-  );
+  const localPaths = await Promise.all(images.map(url => downloadAndCacheImage(url, sessionId)));
 
   let idx = 0;
   let rewritten = text.replace(/\[图片\]/g, () => {
@@ -247,7 +304,7 @@ async function cacheImagesAndRewriteText(
     return path ? `[图片 | ref:${path}]` : '[图片]';
   });
 
-  const remaining = localPaths.slice(idx).map(path => path ? `[图片 | ref:${path}]` : '[图片]');
+  const remaining = localPaths.slice(idx).map(path => (path ? `[图片 | ref:${path}]` : '[图片]'));
   if (remaining.length > 0) rewritten += remaining.join('');
 
   return { text: rewritten, localPaths };
@@ -298,16 +355,21 @@ function splitMessageByPunctuation(content: string, patterns: string[]): string[
   if (content.length <= 10 || patterns.length === 0) return [content];
 
   // 识别 XML 标记位置，拆分时不切割它们
-  const xmlTagRegex = /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
+  const xmlTagRegex =
+    /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
 
-  interface Token { type: 'text' | 'tag'; value: string }
+  interface Token {
+    type: 'text' | 'tag';
+    value: string;
+  }
   const tokens: Token[] = [];
   let lastIdx = 0;
-  let m: RegExpExecArray | null;
-  while ((m = xmlTagRegex.exec(content)) !== null) {
+  let m: RegExpExecArray | null = xmlTagRegex.exec(content);
+  while (m !== null) {
     if (m.index > lastIdx) tokens.push({ type: 'text', value: content.slice(lastIdx, m.index) });
     tokens.push({ type: 'tag', value: m[0] });
     lastIdx = m.index + m[0].length;
+    m = xmlTagRegex.exec(content);
   }
   if (lastIdx < content.length) tokens.push({ type: 'text', value: content.slice(lastIdx) });
 
@@ -346,7 +408,10 @@ function splitMessageByPunctuation(content: string, patterns: string[]): string[
         }
       }
       const trimmed = cur.replace(/\s+$/, '');
-      if (trimmed !== cur) { cur = trimmed; changed = true; }
+      if (trimmed !== cur) {
+        cur = trimmed;
+        changed = true;
+      }
     }
     return cur;
   };
@@ -371,17 +436,20 @@ function splitMessageByPunctuation(content: string, patterns: string[]): string[
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
-    ? config.connections as OneBotConnectionConfig[]
+    ? (config.connections as OneBotConnectionConfig[])
     : [];
 
   // 消息分条配置
-  const splitCfg = (config.splitMessage ?? {}) as { enabled?: boolean; delayPerChar?: number; maxDelay?: number; patterns?: unknown };
+  const splitCfg = (config.splitMessage ?? {}) as {
+    enabled?: boolean;
+    delayPerChar?: number;
+    maxDelay?: number;
+    patterns?: unknown;
+  };
   const splitEnabled = splitCfg.enabled === true;
   const splitDelayPerChar = Math.max(0, splitCfg.delayPerChar ?? 50);
   const splitMaxDelay = Math.max(0, splitCfg.maxDelay ?? 3000);
-  const splitPatterns = resolveSplitPatterns(
-    splitCfg.patterns ?? ['。', '！', '？', '.', '!', '?', '\\n'],
-  );
+  const splitPatterns = resolveSplitPatterns(splitCfg.patterns ?? ['。', '！', '？', '.', '!', '?', '\\n']);
 
   // 聊天流控配置已迁移至 plugin-flow-control / plugin-trigger-policy。
 
@@ -390,11 +458,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const forwardCfg = {
     enabled: fwdRaw.enabled !== false,
     maxDepth: typeof fwdRaw.maxDepth === 'number' ? Math.max(1, Math.floor(fwdRaw.maxDepth)) : 3,
-    maxNodesPerLevel: typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
+    maxNodesPerLevel:
+      typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
     imageRecognition: fwdRaw.imageRecognition !== false,
     summarize: fwdRaw.summarize !== false,
     summaryModel: typeof fwdRaw.summaryModel === 'string' ? fwdRaw.summaryModel.trim() : '',
-    summaryMaxChars: typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
+    summaryMaxChars:
+      typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
   };
 
   // 引用消息处理配置
@@ -430,7 +500,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     );
   }
 
-  function shouldSuppressInviteCardMessage(event: { selfId: string; detailType: string; userId?: string; text: string }): boolean {
+  function shouldSuppressInviteCardMessage(event: {
+    selfId: string;
+    detailType: string;
+    userId?: string;
+    text: string;
+  }): boolean {
     if (event.detailType !== 'private' || !event.userId || event.text.trim() !== '[JSON卡片]') return false;
 
     const key = inviteCardSuppressionKey(event.selfId, event.userId);
@@ -456,7 +531,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   /** 会话级元数据（仅用于 listSessionCandidates 时给 advisor 提供 hint） */
   const sessionMeta = new Map<string, { sessionType: string; groupName?: string; partnerNickname?: string }>();
 
-  function noteSessionMeta(sessionId: string, sessionType: string, opts?: { groupName?: string; partnerNickname?: string }): void {
+  function noteSessionMeta(
+    sessionId: string,
+    sessionType: string,
+    opts?: { groupName?: string; partnerNickname?: string },
+  ): void {
     const prev = sessionMeta.get(sessionId);
     sessionMeta.set(sessionId, {
       sessionType,
@@ -543,11 +622,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const state = findStateBySelfId(selfId);
     if (!state || state.status !== 'online') return;
     try {
-      const data = await sendAction(state, 'get_group_member_info', {
+      const data = (await sendAction(state, 'get_group_member_info', {
         group_id: Number(groupId) || groupId,
         user_id: Number(selfId) || selfId,
         no_cache: true,
-      }) as Record<string, unknown>;
+      })) as Record<string, unknown>;
       const ts = Number(data.shut_up_timestamp ?? 0);
       const nowSec = Math.floor(Date.now() / 1000);
       if (ts > nowSec) {
@@ -568,7 +647,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     } catch (err) {
       // 静默失败：可能是协议端不支持或群已退出
-      ctx.logger.debug(`[禁言恢复] session=${sessionId} shut_up_timestamp 查询失败: ${err instanceof Error ? err.message : String(err)}`);
+      ctx.logger.debug(
+        `[禁言恢复] session=${sessionId} shut_up_timestamp 查询失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -588,9 +669,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (cached && Date.now() - cached.fetchedAt < GROUP_CACHE_TTL) return cached;
 
     try {
-      const data = await sendAction(state, 'get_group_info', {
+      const data = (await sendAction(state, 'get_group_info', {
         group_id: Number(groupId) || groupId,
-      }) as Record<string, unknown>;
+      })) as Record<string, unknown>;
       const info: GroupInfo = {
         name: String(data.group_name ?? ''),
         memberCount: data.member_count != null ? Number(data.member_count) : undefined,
@@ -604,19 +685,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   /** 获取用户昵称（群聊优先取群名片，私聊取陌生人昵称） */
-  async function resolveNickname(state: ConnectionState, userId?: string, groupId?: string): Promise<string | undefined> {
+  async function resolveNickname(
+    state: ConnectionState,
+    userId?: string,
+    groupId?: string,
+  ): Promise<string | undefined> {
     if (!userId) return undefined;
     try {
       if (groupId) {
-        const data = await sendAction(state, 'get_group_member_info', {
+        const data = (await sendAction(state, 'get_group_member_info', {
           group_id: Number(groupId) || groupId,
           user_id: Number(userId) || userId,
-        }) as Record<string, unknown>;
+        })) as Record<string, unknown>;
         return (data.card as string) || (data.nickname as string) || undefined;
       }
-      const data = await sendAction(state, 'get_stranger_info', {
+      const data = (await sendAction(state, 'get_stranger_info', {
         user_id: Number(userId) || userId,
-      }) as Record<string, unknown>;
+      })) as Record<string, unknown>;
       return (data.nickname as string) || undefined;
     } catch {
       return undefined;
@@ -642,25 +727,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return undefined;
   }
 
-  async function fetchReplyMessage(state: ConnectionState, messageId: string, depth = 0, seen = new Set<string>()): Promise<{
-    content?: string; userId?: string; nickname?: string;
+  async function fetchReplyMessage(
+    state: ConnectionState,
+    messageId: string,
+    depth = 0,
+    seen = new Set<string>(),
+  ): Promise<{
+    content?: string;
+    userId?: string;
+    nickname?: string;
   } | null> {
     if (depth >= replyCfg.maxDepth || seen.has(messageId)) return null;
     seen.add(messageId);
     try {
-      const data = await sendAction(state, 'get_msg', {
+      const data = (await sendAction(state, 'get_msg', {
         message_id: Number(messageId) || messageId,
-      }) as Record<string, unknown>;
-      const segments = Array.isArray(data.message)
-        ? (data.message as import('./types.js').OneBotMessageSegment[])
-        : [];
+      })) as Record<string, unknown>;
+      const segments = Array.isArray(data.message) ? (data.message as import('./types.js').OneBotMessageSegment[]) : [];
       const sender = data.sender as Record<string, unknown> | undefined;
       const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
 
       // 1. 用与主流程同款渲染器把所有段转成可读文本
-      let content = segments.length > 0
-        ? segmentsToText(segments, state.selfId)
-        : ((data.raw_message as string) ?? '');
+      let content = segments.length > 0 ? segmentsToText(segments, state.selfId) : ((data.raw_message as string) ?? '');
 
       const nestedReplyId = findReplySegmentId(segments);
       if (nestedReplyId) {
@@ -714,266 +802,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
-  // ===== 合并转发自动展开 =====
-
-  /**
-   * 合并转发原文缓存：id → 完整原文 / 摘要 / 元信息。
-   *
-   * 收到一条带 forward 段的消息时，立即递归拉取原文、做图像识别、生成摘要，
-   * 并把完整原文写入此缓存（也会同步到 MemoryService.saveMetadata 做持久化），
-   * 这样：
-   *   1) LLM 在对话上下文里看到的是"信封 + 摘要"，不被超长原文淹没；
-   *   2) 想看细节时调 onebot_get_forward_msg 工具直接命中缓存/持久化层；
-   *   3) 摘要会随 inbound:message 进入历史归档与向量库，被语义召回。
-   *
-   * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
-   */
-  interface ForwardEntry {
-    fullText: string;
-    summary: string | null;
-    count: number;
-    participants: string[];
-    expandedAt: number;
-  }
-  const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
-  const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
-  const FORWARD_METADATA_NS = 'onebot:forward';
-
-  function getCachedForward(id: string): ForwardEntry | undefined {
-    const c = forwardCache.get(id);
-    if (!c) return undefined;
-    if (c.expiresAt < Date.now()) {
-      forwardCache.delete(id);
-      return undefined;
-    }
-    return c.entry;
-  }
-
-  function setCachedForward(id: string, entry: ForwardEntry): void {
-    forwardCache.set(id, { entry, expiresAt: Date.now() + FORWARD_CACHE_TTL_MS });
-    // 同步持久化（best-effort，不阻塞主流程）
-    const memory = ctx.getService<MemoryService>('memory');
-    if (memory?.saveMetadata) {
-      memory.saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
-        .catch((err: unknown) => ctx.logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
-    }
-  }
-
-  /** 从持久化层加载（缓存未命中时尝试） */
-  async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getMetadata) return undefined;
-    try {
-      const data = await memory.getMetadata(FORWARD_METADATA_NS, id);
-      if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {
-        return data as unknown as ForwardEntry;
-      }
-    } catch (err) {
-      ctx.logger.debug(`forward metadata 读取失败 id=${id}: ${err}`);
-    }
-    return undefined;
-  }
-
-  /**
-   * 拉取一条合并转发的内容，依次尝试多种参数键。
-   * 不同 OneBot 实现接受的字段不同：标准为 id，NapCat/Lagrange 部分版本接受
-   * message_id / res_id / m_resid。
-   */
-  async function fetchForwardOnce(state: ConnectionState, id: string): Promise<unknown | null> {
-    const attempts: Array<Record<string, unknown>> = [
-      { id },
-      { message_id: id },
-      { res_id: id },
-      { m_resid: id },
-    ];
-    let lastErr: unknown;
-    for (const params of attempts) {
-      try {
-        return await sendAction(state, 'get_forward_msg', params);
-      } catch (err) {
-        lastErr = err;
-        continue;
-      }
-    }
-    ctx.logger.debug(`get_forward_msg 全部参数尝试失败 id=${id}: ${lastErr}`);
-    return null;
-  }
-
-  /** 用 LLM 给一段 forward 原文生成摘要；失败/未配置则返回 null。 */
-  async function summarizeForward(
-    text: string,
-    hint: { count: number; participants: string[] },
-  ): Promise<string | null> {
-    if (!forwardCfg.summarize) return null;
-
-    // 走默认 'llm' 服务（router）；summaryModel 可以是复合 ref `<contextId>::<modelId>`
-    const llm = ctx.getService<LLMService>('llm');
-    const summaryRef = parseModelRef(forwardCfg.summaryModel || undefined);
-    if (!llm || typeof llm.chat !== 'function') {
-      ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
-      return null;
-    }
-
-    // 控制输入长度，避免触发 context 上限
-    const inputLimit = 8000;
-    const trimmedInput = text.length > inputLimit
-      ? text.slice(0, inputLimit) + '\n…（原文已截断）'
-      : text;
-
-    const sys = '你是消息摘要助手。给定一段聊天合并转发的原始内容，用简体中文输出一段不超过指定字数的摘要：\n'
-      + '- 概括话题主线、关键事实、参与人态度；\n'
-      + '- 如果原文包含请求、指令、待执行事项、希望机器人代发/转告/评价的内容，必须保留具体任务、目标对象/群聊、要表达的观点和可引用原话；\n'
-      + '- 涉及图片识别结果时，把视觉信息也写进来；\n'
-      + '- 不要逐条复述、不要使用列表、不要寒暄、不要解释自己；\n'
-      + '- 控制在目标字数以内，重要细节保留，无关寒暄略去。';
-    const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 字。\n\n原文：\n${trimmedInput}`;
-
-    try {
-      const resp = await llm.chat({
-        messages: [
-          { role: 'system', content: sys },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.3,
-        // 摘要为纯抽取任务，关闭 reasoning 避免 thinking tokens 吞噬输出预算。
-        think: false,
-        // 中文按 1 字 ≈ 1 token 估算，再留 50% 余量；并设 800 token 下限兜底。
-        maxTokens: Math.max(800, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
-        ...(summaryRef.provider ? { provider: summaryRef.provider } : {}),
-        ...(summaryRef.model ? { model: summaryRef.model } : {}),
-      });
-      const out = (resp.content ?? '').trim();
-      if (!out) {
-        ctx.logger.debug(`forward 摘要返回空内容: model=${forwardCfg.summaryModel || 'default'}, chars=${forwardCfg.summaryMaxChars}`);
-        return null;
-      }
-      return out;
-    } catch (err) {
-      ctx.logger.warn(`forward 摘要生成失败: ${err}`);
-      return null;
-    }
-  }
-
-  /**
-   * 把 event.text 中所有 <forward id="X">[合并转发消息]</forward> 占位符
-   * 替换为"信封文本"（含摘要）；完整原文写入 forwardCache + memory metadata。
-   *
-   * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
-   * 这种情况下顶层无需走网络。
-   */
-  async function expandForwardsInText(
-    state: ConnectionState,
-    text: string,
-    rawSegments: import('./types.js').OneBotMessageSegment[] | undefined,
-  ): Promise<string> {
-    if (!forwardCfg.enabled) return text;
-    if (!text.includes('<forward id=')) return text;
-
-    // 收集 message 段中已自带 inline content 的 forward
-    const inlineMap = new Map<string, unknown[]>();
-    if (rawSegments && Array.isArray(rawSegments)) {
-      for (const f of collectForwardSegments(rawSegments)) {
-        if (f.inlineNodes && f.inlineNodes.length > 0) inlineMap.set(f.id, f.inlineNodes);
-      }
-    }
-
-    const idRe = /<forward id="([^"]+)">\[合并转发消息\]<\/forward>/g;
-    const ids = new Set<string>();
-    let m: RegExpExecArray | null;
-    while ((m = idRe.exec(text)) !== null) ids.add(m[1]);
-    if (ids.size === 0) return text;
-
-    const irService = forwardCfg.imageRecognition
-      ? ctx.getService<ImageRecognitionService>('image-recognition')
-      : undefined;
-    const recognizeImage = irService?.available && irService.describe
-      ? (src: string) => irService.describe!(src)
-      : undefined;
-
-    const envelopeMap = new Map<string, string>();
-    for (const id of ids) {
-      // 1) 命中内存缓存
-      let entry = getCachedForward(id);
-      // 2) 命中持久化（重启后场景）
-      if (!entry) {
-        const persisted = await loadPersistedForward(id);
-        if (persisted) {
-          setCachedForward(id, persisted);
-          entry = persisted;
-        }
-      }
-      if (entry) {
-        envelopeMap.set(id, buildEnvelope(
-          { id, count: entry.count, participants: entry.participants, fullText: entry.fullText, truncatedDepth: false, truncatedNodes: false },
-          entry.summary,
-        ));
-        continue;
-      }
-
-      // 3) 递归展开
-      try {
-        const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
-          fetchForward: (childId: string) => fetchForwardOnce(state, childId),
-          recognizeImage,
-          maxDepth: forwardCfg.maxDepth,
-          maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
-          imageRecognitionEnabled: forwardCfg.imageRecognition,
-        });
-
-        if (!expanded.fullText.trim()) {
-          envelopeMap.set(
-            id,
-            `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
-          );
-          continue;
-        }
-
-        // 4) 摘要（best-effort）
-        const summary = await summarizeForward(expanded.fullText, {
-          count: expanded.count,
-          participants: expanded.participants,
-        });
-
-        // 5) 入缓存 + 持久化
-        const stored: ForwardEntry = {
-          fullText: expanded.fullText,
-          summary,
-          count: expanded.count,
-          participants: expanded.participants,
-          expandedAt: Date.now(),
-        };
-        setCachedForward(id, stored);
-
-        // 成功路径可观测：摘要预览 + 节点数 / 参与人 / 是否截断 / 摘要长度
-        const previewSrc = summary ?? expanded.fullText;
-        const preview = previewSrc.length > 80 ? previewSrc.slice(0, 80) + '…' : previewSrc;
-        const truncFlag = (expanded.truncatedDepth || expanded.truncatedNodes) ? ' [truncated]' : '';
-        ctx.logger.debug(
-          `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]`
-          + ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} preview="${preview.replace(/\n/g, ' ')}"`,
-        );
-
-        envelopeMap.set(id, buildEnvelope(expanded, summary));
-      } catch (err) {
-        ctx.logger.warn(`forward 展开失败 id=${id}: ${err}`);
-        envelopeMap.set(
-          id,
-          `<forward id="${id}">[合并转发消息：展开过程出错]</forward>`,
-        );
-      }
-    }
-
-    return text.replace(idRe, (raw, id: string) => envelopeMap.get(id) ?? raw);
-  }
-
+  // ===== 合并转发自动展开（详见 ./forward-expand.ts）=====
+  const forwardExpander = createForwardExpander({ ctx, forwardCfg, sendAction });
+  const { getCachedForward, setCachedForward, loadPersistedForward, fetchForwardOnce, expandForwardsInText } =
+    forwardExpander;
 
   // ----- Action 发送 -----
 
-  function sendAction(
-    state: ConnectionState,
-    action: string,
-    params: Record<string, unknown>,
-  ): Promise<unknown> {
+  function sendAction(state: ConnectionState, action: string, params: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket 未连接'));
@@ -1003,7 +839,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const data = await sendAction(state, 'get_version_info', {});
       const info = data as Record<string, unknown>;
       const protoVer = String(info?.protocol_version ?? '');
-      ctx.logger.info(`OneBot 版本检测: get_version_info 成功 (protocol_version=${protoVer}, app=${info?.app_name ?? 'unknown'})`);
+      ctx.logger.info(
+        `OneBot 版本检测: get_version_info 成功 (protocol_version=${protoVer}, app=${info?.app_name ?? 'unknown'})`,
+      );
       // 有些实现可能报 v12 但走的 v11 接口，以接口可用性为准
       return protocolV11;
     } catch {
@@ -1013,7 +851,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const data = await sendAction(state, 'get_version', {});
       const info = data as Record<string, unknown>;
-      ctx.logger.info(`OneBot 版本检测: get_version 成功 (impl=${info?.impl ?? 'unknown'}, onebot_version=${info?.onebot_version ?? '?'})`);
+      ctx.logger.info(
+        `OneBot 版本检测: get_version 成功 (impl=${info?.impl ?? 'unknown'}, onebot_version=${info?.onebot_version ?? '?'})`,
+      );
       return protocolV12;
     } catch {
       // 也不可用
@@ -1074,13 +914,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const knownIds = states.map(s => `${s.selfId ?? '?'}(${s.status})`).join(', ') || '无';
         const reason = !state
           ? `未找到对应连接（已知: ${knownIds}）`
-          : state.status !== 'online' ? `状态=${state.status}` : !state.ws ? 'ws 为空' : '协议未初始化';
+          : state.status !== 'online'
+            ? `状态=${state.status}`
+            : !state.ws
+              ? 'ws 为空'
+              : '协议未初始化';
         ctx.logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
         return;
       }
 
       // 消息分条发送（指令回复等短消息可跳过）
-      const pieces = (splitEnabled && !options?.skipSplit) ? splitMessageByPunctuation(content, splitPatterns) : [content];
+      const pieces =
+        splitEnabled && !options?.skipSplit ? splitMessageByPunctuation(content, splitPatterns) : [content];
 
       for (let i = 0; i < pieces.length; i++) {
         const piece = pieces[i].trim();
@@ -1271,7 +1116,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const headers: Record<string, string> = {};
     if (state.config.accessToken) {
-      headers['Authorization'] = `Bearer ${state.config.accessToken}`;
+      headers.Authorization = `Bearer ${state.config.accessToken}`;
     }
 
     const ws = new WebSocket(state.config.url, { headers });
@@ -1281,19 +1126,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ws.on('unexpected-response', (_req, res) => {
       ctx.logger.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
       let body = '';
-      res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      res.on('end', () => { ctx.logger.warn(`OneBot unexpected-response body: ${body.slice(0, 500)}`); });
+      res.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      res.on('end', () => {
+        ctx.logger.warn(`OneBot unexpected-response body: ${body.slice(0, 500)}`);
+      });
     });
 
     // 连接超时：如果 WS 握手在 CONNECT_TIMEOUT 内未完成，主动关闭并触发重连
     const connectTimer = setTimeout(() => {
       if (ws.readyState === WebSocket.CONNECTING) {
-        ctx.logger.warn(`OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`);
+        ctx.logger.warn(
+          `OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`,
+        );
         ws.terminate();
       }
     }, CONNECT_TIMEOUT);
 
-    ws.on('upgrade', (res) => {
+    ws.on('upgrade', res => {
       ctx.logger.debug(`OneBot WS upgrade: status=${res.statusCode}`);
     });
 
@@ -1305,7 +1156,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 客户端心跳：定期 ping，检测待机后的死连接
       stopHeartbeat(state);
-      ws.on('pong', () => { state.lastPong = Date.now(); });
+      ws.on('pong', () => {
+        state.lastPong = Date.now();
+      });
       state.heartbeatTimer = setInterval(() => {
         if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
         if (Date.now() - state.lastPong > HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT) {
@@ -1319,7 +1172,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       onConnected(state);
     });
 
-    ws.on('message', (raw) => {
+    ws.on('message', raw => {
       // 收到任何消息即说明链路存活，重置心跳计时器
       state.lastPong = Date.now();
       try {
@@ -1376,9 +1229,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       scheduleReconnect(state);
     });
 
-    ws.on('error', (err) => {
+    ws.on('error', err => {
       clearTimeout(connectTimer);
-      ctx.logger.warn(`OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`);
+      ctx.logger.warn(
+        `OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`,
+      );
     });
   }
 
@@ -1460,19 +1315,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const sessionId = makeSessionId(
-      event.selfId, event.detailType,
-      event.userId, event.groupId, event.guildId, event.channelId,
+      event.selfId,
+      event.detailType,
+      event.userId,
+      event.groupId,
+      event.guildId,
+      event.channelId,
     );
 
-    ctx.logger.debug(`OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`);
+    ctx.logger.debug(
+      `OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`,
+    );
 
     // 注：指令解析已迁移到 plugin-commands 的 inbound:command 相位；
     // 适配器只负责将原始消息送入 inbound:message 总线，由 gateway 链路统一拦截。
 
-    const sessionType = event.detailType === 'group' ? 'group'
-      : event.detailType === 'private' ? 'private'
-      : event.detailType === 'channel' ? 'channel'
-      : undefined;
+    const sessionType =
+      event.detailType === 'group'
+        ? 'group'
+        : event.detailType === 'private'
+          ? 'private'
+          : event.detailType === 'channel'
+            ? 'channel'
+            : undefined;
 
     // 异步获取群信息、引用消息，并执行流控判定
     (async () => {
@@ -1481,9 +1346,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 下载并缓存图片，替换文本中的 [图片] 为 [图片 | ref:path]
       if (event.images && event.images.length > 0) {
-        const { text: rewritten } = await cacheImagesAndRewriteText(
-          event.text, event.images, sessionId,
-        );
+        const { text: rewritten } = await cacheImagesAndRewriteText(event.text, event.images, sessionId);
         event.text = rewritten;
         // images 保持原始 URL，供中间件/多模态模型使用（当前请求内仍有效）
       }
@@ -1560,7 +1423,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const requestLabel = req.requestType === 'group' ? `${req.requestType}/${req.subType}` : req.requestType;
     const requestGroupId = req.requestType === 'group' ? req.groupId : '-';
-    ctx.logger.info(`OneBot[${state.protocol.version}] 请求事件: ${requestLabel}, userId=${req.userId}, groupId=${requestGroupId}`);
+    ctx.logger.info(
+      `OneBot[${state.protocol.version}] 请求事件: ${requestLabel}, userId=${req.userId}, groupId=${requestGroupId}`,
+    );
 
     if (req.requestType === 'friend') {
       // 存储待处理的好友请求 flag
@@ -1571,14 +1436,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
       const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
 
-      ctx.emit('inbound:message', {
-        content,
-        sessionId,
-        platform: 'onebot',
-        userId: req.userId,
-        sessionType: 'private',
-      }).catch((err: unknown) => ctx.logger.warn(`请求事件处理失败: ${err}`));
-
+      ctx
+        .emit('inbound:message', {
+          content,
+          sessionId,
+          platform: 'onebot',
+          userId: req.userId,
+          sessionType: 'private',
+        })
+        .catch((err: unknown) => ctx.logger.warn(`请求事件处理失败: ${err}`));
     } else if (req.requestType === 'group') {
       const key = `${req.userId}:${req.groupId}`;
       pendingGroupRequests.set(key, { flag: req.flag, subType: req.subType, selfId: req.selfId });
@@ -1596,24 +1462,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // sub_type === 'add': 有人申请加入 bot 管理的群（bot 是管理员）
         const gsId = makeSessionId(req.selfId, 'group', undefined, req.groupId);
         content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_handle_group_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
-        ctx.emit('inbound:message', {
-          content,
-          sessionId: gsId,
-          platform: 'onebot',
-          userId: req.userId,
-          sessionType: 'group',
-          groupId: req.groupId,
-        }).catch((err: unknown) => ctx.logger.warn(`群申请事件处理失败: ${err}`));
+        ctx
+          .emit('inbound:message', {
+            content,
+            sessionId: gsId,
+            platform: 'onebot',
+            userId: req.userId,
+            sessionType: 'group',
+            groupId: req.groupId,
+          })
+          .catch((err: unknown) => ctx.logger.warn(`群申请事件处理失败: ${err}`));
         return;
       }
 
-      ctx.emit('inbound:message', {
-        content,
-        sessionId,
-        platform: 'onebot',
-        userId: req.userId,
-        sessionType: 'private',
-      }).catch((err: unknown) => ctx.logger.warn(`邀请事件处理失败: ${err}`));
+      ctx
+        .emit('inbound:message', {
+          content,
+          sessionId,
+          platform: 'onebot',
+          userId: req.userId,
+          sessionType: 'private',
+        })
+        .catch((err: unknown) => ctx.logger.warn(`邀请事件处理失败: ${err}`));
     }
   }
 
@@ -1627,7 +1497,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 过滤高频无用通知（输入状态等）
     if (notice.noticeType === 'notify' && notice.subType === 'input_status') return;
 
-    ctx.logger.debug(`OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`);
+    ctx.logger.debug(
+      `OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`,
+    );
 
     // 戳一戳 → 仅在目标是 bot 时触发 agent 回复
     if (notice.noticeType === 'poke') {
@@ -1685,8 +1557,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       notice.noticeType === 'group_member_unban'
     ) {
       if (notice.groupId) {
-        const isLift =
-          notice.noticeType === 'group_member_unban' || notice.subType === 'lift_ban';
+        const isLift = notice.noticeType === 'group_member_unban' || notice.subType === 'lift_ban';
         const isSelf = notice.userId != null && notice.userId === notice.selfId;
         const sessionId = makeSessionId(notice.selfId, 'group', undefined, notice.groupId);
         const duration = Number(notice.data?.duration ?? 0);
@@ -1703,7 +1574,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             setSelfMute(sessionId, dur);
             ctx.logger.info(
               `[被禁言] session=${sessionId} 时长=${dur}s 操作者=${operatorId ?? 'unknown'}，` +
-              `已通知 flow-control 暂停该群触发`,
+                `已通知 flow-control 暂停该群触发`,
             );
           }
         }
@@ -1713,9 +1584,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const opNick = await resolveNickname(state, operatorId, notice.groupId);
           const targetNick = isSelf ? '我' : await resolveNickname(state, notice.userId, notice.groupId);
           const opLabel = opNick ? `${opNick}(${operatorId})` : (operatorId ?? '管理员');
-          const targetLabel = isSelf ? '我' : (targetNick ? `${targetNick}(${notice.userId})` : (notice.userId ?? '某人'));
-          const verb = isLift ? '解除了禁言' : `禁言了 ${duration > 0 ? duration + ' 秒' : '若干时间'}`;
-          const untilTs = isLift ? 0 : (duration > 0 ? Date.now() + duration * 1000 : 0);
+          const targetLabel = isSelf
+            ? '我'
+            : targetNick
+              ? `${targetNick}(${notice.userId})`
+              : (notice.userId ?? '某人');
+          const verb = isLift ? '解除了禁言' : `禁言了 ${duration > 0 ? `${duration} 秒` : '若干时间'}`;
+          const untilTs = isLift ? 0 : duration > 0 ? Date.now() + duration * 1000 : 0;
           const untilLabel = untilTs > 0 ? `（解禁于 ${new Date(untilTs).toISOString()}）` : '';
           const content = `[notice/group_ban${isLift ? '/lift' : ''}] ${opLabel} 把 ${targetLabel} ${verb}${untilLabel}`;
           await archivePlatformNotice({
@@ -1770,8 +1645,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // 群成员增减
-    if (notice.noticeType === 'group_increase' || notice.noticeType === 'group_decrease' ||
-        notice.noticeType === 'group_member_increase' || notice.noticeType === 'group_member_decrease') {
+    if (
+      notice.noticeType === 'group_increase' ||
+      notice.noticeType === 'group_decrease' ||
+      notice.noticeType === 'group_member_increase' ||
+      notice.noticeType === 'group_member_decrease'
+    ) {
       if (!notice.groupId) return;
       const isJoin = notice.noticeType === 'group_increase' || notice.noticeType === 'group_member_increase';
       const sessionId = makeSessionId(notice.selfId, 'group', undefined, notice.groupId);
@@ -1780,7 +1659,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       (async () => {
         const userNick = await resolveNickname(state, notice.userId, notice.groupId);
         const opNick = await resolveNickname(state, operatorId, notice.groupId);
-        const userLabel = isSelf ? '我' : (userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人'));
+        const userLabel = isSelf ? '我' : userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
         const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
         let action: string;
         if (isJoin) {
@@ -1790,7 +1669,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           else if (notice.subType === 'kick_me') action = `被 ${opLabel ?? '管理员'} 移出群聊`;
           else action = '退出了群聊';
         }
-        const content = `[notice/${notice.noticeType}${notice.subType ? '/' + notice.subType : ''}] ${userLabel} ${action}`;
+        const content = `[notice/${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}] ${userLabel} ${action}`;
         await archivePlatformNotice({
           sessionId,
           noticeType: notice.noticeType,
@@ -1810,12 +1689,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!notice.groupId) return;
       const sessionId = makeSessionId(notice.selfId, 'group', undefined, notice.groupId);
       const isSelf = notice.userId != null && notice.userId === notice.selfId;
-      const isSet = notice.subType === 'set' || notice.subType === 'unban' /* spurious */ ;
+      const isSet = notice.subType === 'set' || notice.subType === 'unban' /* spurious */;
       (async () => {
         const userNick = await resolveNickname(state, notice.userId, notice.groupId);
-        const userLabel = isSelf ? '我' : (userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人'));
-        const action = notice.subType === 'set' ? '被设置为管理员'
-                      : notice.subType === 'unset' ? '被取消管理员' : '管理员状态变化';
+        const userLabel = isSelf ? '我' : userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
+        const action =
+          notice.subType === 'set' ? '被设置为管理员' : notice.subType === 'unset' ? '被取消管理员' : '管理员状态变化';
         const content = `[notice/group_admin/${notice.subType ?? 'change'}] ${userLabel} ${action}`;
         await archivePlatformNotice({
           sessionId,
@@ -1880,7 +1759,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ctx.logger.info(`OneBot self_id (via meta): ${state.selfId}`);
       }
       if (meta.version) {
-        ctx.logger.info(`OneBot 实现: ${meta.version.impl ?? 'unknown'} v${meta.version.version ?? '?'} (onebot ${meta.version.onebot_version ?? '?'})`);
+        ctx.logger.info(
+          `OneBot 实现: ${meta.version.impl ?? 'unknown'} v${meta.version.version ?? '?'} (onebot ${meta.version.onebot_version ?? '?'})`,
+        );
       }
     } else if (meta.subType === 'heartbeat') {
       // 心跳事件不输出日志
@@ -1893,7 +1774,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 群聊中多人消息平铺在历史中，注入提示帮助模型关注时间线
   // 特殊事件（如戳一戳、文件上传）触发时注入说明，让模型知道触发原因
   const noticePatterns: Array<{ pattern: RegExp; hint: string }> = [
-    { pattern: /^\[戳一戳:/, hint: '这条消息不是用户手动输入的文字，而是一个「戳一戳」互动事件——有人戳了你。请根据戳一戳的情境做出自然、俏皮的反应，而不是直接回复消息内容。' },
+    {
+      pattern: /^\[戳一戳:/,
+      hint: '这条消息不是用户手动输入的文字，而是一个「戳一戳」互动事件——有人戳了你。请根据戳一戳的情境做出自然、俏皮的反应，而不是直接回复消息内容。',
+    },
     { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
   ];
 
@@ -1902,13 +1786,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 在最后一条用户消息前插入时间感知提示
       let lastUserIdx = -1;
       for (let i = data.messages.length - 1; i >= 0; i--) {
-        if (data.messages[i].role === 'user') { lastUserIdx = i; break; }
+        if (data.messages[i].role === 'user') {
+          lastUserIdx = i;
+          break;
+        }
       }
       if (lastUserIdx > 0) {
         data.messages.splice(lastUserIdx, 0, {
           role: 'system',
-          content: '注意：以上是群聊的历史消息记录，包含多位群友的发言。'
-            + '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
+          content:
+            '注意：以上是群聊的历史消息记录，包含多位群友的发言。' +
+            '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
           metadata: { source: 'platform' },
         });
       }
@@ -1939,13 +1827,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ----- 监听消息回复事件 -----
 
-  ctx.on('outbound:message', (msg) => {
+  ctx.on('outbound:message', msg => {
     if (!msg.sessionId.startsWith('onebot:')) return;
     if (!msg.content?.trim()) {
       ctx.logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
       return;
     }
-    ctx.logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
+    ctx.logger.debug(
+      `OneBot 发送消息 [${msg.sessionId}]: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '...' : ''}`,
+    );
 
     // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
 
