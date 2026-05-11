@@ -100,8 +100,12 @@ const _probes = new Map<string, Map<string, CapabilityProbe>>();
  *
  * 重复注册相同 `(service, capability)` 会覆盖之前的注册，
  * 这使得同一服务的不同实现版本可以通过自己的类型文件被覆盖/扩展。
+ *
+ * 仅在 dev 期（`NODE_ENV !== 'production'`）实际生效；
+ * 生产构建中直接 no-op，避免 probe 函数闭包驻留内存。
  */
 export function registerCapabilityProbe(service: string, capability: string, probe: CapabilityProbe): void {
+  if (process.env.NODE_ENV === 'production') return;
   let byCap = _probes.get(service);
   if (!byCap) {
     byCap = new Map();
