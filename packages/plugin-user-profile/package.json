@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-llm-api": "workspace:*"
+    "@aalis/plugin-llm-api": "workspace:*",
+    "@aalis/plugin-memory-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

@@ -1,9 +1,5 @@
-import type {
-  Context,
-  ConfigSchema,
-  CommandContext,
-  MemoryService,
-} from '@aalis/core';
+import type { Context, ConfigSchema, CommandContext } from '@aalis/core';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 
 // ===== 插件元数据 =====
 

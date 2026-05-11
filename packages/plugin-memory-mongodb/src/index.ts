@@ -1,7 +1,8 @@
 import { MongoClient, type Collection, type Db } from 'mongodb';
 import type { Context, Message, ConfigSchema } from '@aalis/core';
-import type { MemoryService } from '@aalis/core';
-import { MemoryCapabilities } from '@aalis/core';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type {  } from '@aalis/core';
+import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 
 // ===== 插件元数据 =====
 

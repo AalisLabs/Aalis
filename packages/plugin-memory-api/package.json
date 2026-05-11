@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-message-archive",
+  "name": "@aalis/plugin-memory-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,9 +9,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-image-recognition": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*"
+    "@aalis/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
