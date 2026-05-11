@@ -3,13 +3,13 @@
 //
 // core 仅提供：
 //   - 运行时基础设施（App / Context / EventBus / ServiceContainer / HookRegistry / ConfigManager / Logger / PluginManager 等）
-//   - 核心数据契约（Message / Tool* / Command* / Schema / AalisEvents 等）
+//   - 核心数据契约（Message / ToolDefinition / ToolCall / Schema / AalisEvents 等）
 //   - 三个扩展点（ServiceCapabilityMap / AalisEvents / HookContextMap）+ Context.extend / PluginModule augmentation
 //   - 服务能力声明框架（ServiceCapabilityMap + Probe）
 //
 // 所有业务服务接口（LLM / Memory / Storage / Embedding / VectorStore /
-// Tools / Commands / Gateway / WebUI / Authority / Agent / Platform 等）
-// 由对应 `@aalis/plugin-*-api` 包导出。
+// Tools / Commands / Gateway / WebUI / Authority / Agent / Platform 等）以及它们的关联业务类型
+//（RegisteredTool / ToolGroupInfo / CommandDefinition / CommandContext 等）由对应 `@aalis/plugin-*-api` 包导出。
 // ============================================================
 
 export type { AppOptions } from './app.js';
@@ -31,7 +31,6 @@ export type { MixinEntry } from './mixin-registry.js';
 export { MixinRegistry } from './mixin-registry.js';
 export type { ModelRef } from './model-ref.js';
 export { formatModelRef, parseModelRef } from './model-ref.js';
-export { PendingRegistrationBuffer } from './pending-buffer.js';
 // ----- 插件系统类型 -----
 export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
@@ -43,11 +42,6 @@ export type {
   AppService,
   CapabilityList,
   CapabilityOf,
-  CommandArgumentDefinition,
-  CommandContext,
-  CommandDefinition,
-  CommandOptionDefinition,
-  CommandValueType,
   ConfigSchema,
   ContentSegment,
   DependencyDeclaration,
@@ -60,8 +54,6 @@ export type {
   MiddlewareNext,
   OutgoingMessage,
   PermissionId,
-  RegisteredCommand,
-  RegisteredTool,
   SafetyLevel,
   SchemaArray,
   SchemaField,
@@ -70,14 +62,11 @@ export type {
   ServiceCapabilityMap,
   ServiceDependency,
   StreamChunkMessage,
-  SubcommandDefinition,
   ToolCall,
   ToolCallContext,
   ToolDefinition,
   ToolExecuteMessage,
   ToolFunction,
-  ToolGroupInfo,
-  ToolSummary,
   UserIdentity,
 } from './types/index.js';
 // ----- 服务能力声明框架 -----

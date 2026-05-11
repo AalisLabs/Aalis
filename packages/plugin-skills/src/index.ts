@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlink
 import { resolve, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import '@aalis/plugin-agent-api';
+import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-skills — AI 自生成技能系统

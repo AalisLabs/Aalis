@@ -3,6 +3,7 @@ import type { StorageService } from '@aalis/plugin-storage-api';
 import { runCode, type RunnerConfig } from './runner.js';
 import { platform } from 'node:os';
 import path from 'node:path';
+import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

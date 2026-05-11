@@ -11,6 +11,7 @@ import type { SessionManagerService, SessionConfig } from '@aalis/plugin-session
 import type { PlatformService } from '@aalis/plugin-platform';
 import { getSenderLabel, getMessageName, parseModelRef } from '@aalis/core';
 import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
+import '@aalis/plugin-commands-api';
 
 /**
  * 将时间戳格式化为可读的时间标签。

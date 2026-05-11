@@ -10,15 +10,16 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-persona": "workspace:*",
-    "@aalis/plugin-message-archive": "workspace:*",
-    "@aalis/plugin-session-manager": "workspace:*",
-    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*",
+    "@aalis/plugin-commands-api": "workspace:*",
+    "@aalis/plugin-gateway-api": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-gateway-api": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*"
+    "@aalis/plugin-message-archive": "workspace:*",
+    "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-session-manager": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
