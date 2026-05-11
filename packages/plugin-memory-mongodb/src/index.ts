@@ -7,6 +7,7 @@ import { type Collection, type Db, MongoClient } from 'mongodb';
 
 export const name = '@aalis/plugin-memory-mongodb';
 export const displayName = 'MongoDB 记忆';
+export const subsystem = 'memory';
 export const provides = ['memory'];
 export const reusable = true;
 

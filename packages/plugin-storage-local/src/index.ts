@@ -14,6 +14,7 @@ import { StorageCapabilities } from '@aalis/plugin-storage-api';
 
 export const name = '@aalis/plugin-storage-local';
 export const displayName = '本地存储根（命名 + 路径解析）';
+export const subsystem = 'storage';
 export const provides = ['storage'];
 
 /**

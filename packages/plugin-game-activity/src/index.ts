@@ -11,6 +11,7 @@ export { GameActivitySession } from './session.js';
 
 export const name = '@aalis/plugin-game-activity';
 export const displayName = '游戏陪玩活动框架';
+export const subsystem = 'skills';
 export const inject = {
   optional: ['session-channel'],
 };

@@ -153,143 +153,47 @@ export interface ExtendDeclaration {
  *
  * **职责边界**：
  * - 这是 **WebUI 展示层契约**，唯一消费者是 webui-server 的 `/api/service-groups` 路由。
- * - `core` 完全不知道 subsystem 概念（没有 `aalis.subsystem` 字段，没有
- *   PluginEntry.subsystem，零业务知识）。
- * - 改归属 / 加子系统 / 调顺序 / 改 label，全部只改本文件。
+ * - `core` 完全不知道 subsystem 概念，仅在 PluginModule 上保留一个透传字段
+ *   `subsystem?: string`（不读不解释，纯粹搬运给 WebUI）。
+ * - 本表只描述 **展示元数据**（中文 label / 排序 / icon），**不再写死插件归属**。
+ *   归属由每个插件自己在 index.ts 中声明：`export const subsystem = 'llm';`
  *
- * 命中规则：插件名（即 `package.json` 的 `name`）在 `plugins` 数组里出现 → 归入该子系统。
- * 未命中任何条目的插件 → 落到自动生成的「其他」分组，order=999。
+ * 解耦收益：
+ *   - 新增插件不需要改 webui-api（只改插件自身）
+ *   - 新增子系统：只在本表加一行元数据即可（id 未匹配时回退为 id 直接展示）
+ *   - webui-api 不再反向耦合具体插件 npm 名
  */
-export interface SubsystemCatalogEntry {
-  /** subsystem id（前端可据此做 i18n / 图标二次映射） */
+export interface SubsystemMetadata {
+  /** subsystem id（与 PluginModule.subsystem 对应） */
   id: string;
-  /** 显示名 */
+  /** 显示名（中文 label） */
   label: string;
   /** 排序权重，越小越靠前 */
   order: number;
-  /** 隶属此子系统的插件 npm 名列表 */
-  plugins: readonly string[];
 }
 
 /**
- * 默认子系统目录。加新插件 / 加新子系统时只改这里。
+ * 默认子系统元数据。
+ *
+ * 仅提供常用 id 的中文 label 与排序；插件可任意自定义 subsystem id，
+ * 未命中本表时 WebUI 会回退到「id 原样展示，order=9999」。
  */
-export const DEFAULT_SUBSYSTEM_CATALOG: readonly SubsystemCatalogEntry[] = Object.freeze([
-  {
-    id: 'core',
-    label: '核心',
-    order: 10,
-    plugins: [
-      '@aalis/plugin-gateway',
-      '@aalis/plugin-flow-control',
-      '@aalis/plugin-platform',
-      '@aalis/plugin-commands',
-    ],
-  },
-  {
-    id: 'platform',
-    label: '平台',
-    order: 20,
-    plugins: [
-      '@aalis/plugin-cli',
-      '@aalis/plugin-webui-server',
-      '@aalis/plugin-webui-client',
-      '@aalis/plugin-adapter-onebot',
-    ],
-  },
-  {
-    id: 'agent',
-    label: 'Agent',
-    order: 30,
-    plugins: ['@aalis/plugin-agent-default', '@aalis/plugin-agent-tools'],
-  },
-  {
-    id: 'llm',
-    label: 'LLM',
-    order: 40,
-    plugins: ['@aalis/plugin-openai', '@aalis/plugin-deepseek', '@aalis/plugin-ollama', '@aalis/plugin-llm-router'],
-  },
-  {
-    id: 'embedding',
-    label: 'Embedding',
-    order: 50,
-    plugins: [
-      '@aalis/plugin-embedding-openai',
-      '@aalis/plugin-embedding-ollama',
-      '@aalis/plugin-vectorstore-flat',
-      '@aalis/plugin-vectorstore-lancedb',
-    ],
-  },
-  {
-    id: 'memory',
-    label: '记忆',
-    order: 60,
-    plugins: [
-      '@aalis/plugin-memory-sqlite',
-      '@aalis/plugin-memory-mongodb',
-      '@aalis/plugin-memory-inmemory',
-      '@aalis/plugin-memory-vector',
-      '@aalis/plugin-memory-summary',
-    ],
-  },
-  { id: 'persona', label: '人格', order: 70, plugins: ['@aalis/plugin-persona'] },
-  {
-    id: 'tools',
-    label: '工具',
-    order: 80,
-    plugins: [
-      '@aalis/plugin-tools',
-      '@aalis/plugin-tool-math',
-      '@aalis/plugin-tool-search',
-      '@aalis/plugin-tool-browser',
-      '@aalis/plugin-tool-code-runner',
-      '@aalis/plugin-file-reader',
-      '@aalis/plugin-office',
-      '@aalis/plugin-onebot-tools',
-      '@aalis/plugin-websearch-serper',
-    ],
-  },
-  {
-    id: 'message',
-    label: '消息',
-    order: 90,
-    plugins: ['@aalis/plugin-message-archive', '@aalis/plugin-image-recognition'],
-  },
-  {
-    id: 'session',
-    label: '会话',
-    order: 100,
-    plugins: ['@aalis/plugin-session-manager', '@aalis/plugin-session-channel', '@aalis/plugin-session-tools'],
-  },
-  {
-    id: 'skills',
-    label: '技能',
-    order: 110,
-    plugins: ['@aalis/plugin-skills', '@aalis/plugin-slay-spire-agent', '@aalis/plugin-maimai'],
-  },
-  {
-    id: 'scheduler',
-    label: '调度',
-    order: 120,
-    plugins: [
-      '@aalis/plugin-scheduler',
-      '@aalis/plugin-trigger-policy',
-      '@aalis/plugin-todo-list',
-      '@aalis/plugin-checkpoint',
-    ],
-  },
-  { id: 'authority', label: '权限', order: 130, plugins: ['@aalis/plugin-authority'] },
-  { id: 'user', label: '用户', order: 140, plugins: ['@aalis/plugin-user-profile', '@aalis/plugin-game-activity'] },
-  {
-    id: 'storage',
-    label: '存储',
-    order: 150,
-    plugins: ['@aalis/plugin-storage-local', '@aalis/plugin-storage-router'],
-  },
-  {
-    id: 'external',
-    label: '外部',
-    order: 160,
-    plugins: ['@aalis/plugin-okx-trading', '@aalis/plugin-computer-use'],
-  },
+export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.freeze([
+  { id: 'core', label: '核心', order: 10 },
+  { id: 'platform', label: '平台', order: 20 },
+  { id: 'agent', label: 'Agent', order: 30 },
+  { id: 'llm', label: 'LLM', order: 40 },
+  { id: 'embedding', label: 'Embedding', order: 50 },
+  { id: 'memory', label: '记忆', order: 60 },
+  { id: 'persona', label: '人格', order: 70 },
+  { id: 'tools', label: '工具', order: 80 },
+  { id: 'storage', label: '存储', order: 85 },
+  { id: 'message', label: '消息', order: 90 },
+  { id: 'session', label: '会话', order: 100 },
+  { id: 'skills', label: '技能', order: 110 },
+  { id: 'scheduler', label: '调度', order: 120 },
+  { id: 'authority', label: '权限', order: 130 },
+  { id: 'user', label: '用户', order: 140 },
+  { id: 'external', label: '外部', order: 160 },
 ]);
+

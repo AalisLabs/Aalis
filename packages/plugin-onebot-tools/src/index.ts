@@ -11,6 +11,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-onebot-tools';
 export const displayName = 'OneBot 工具';
+export const subsystem = 'tools';
 export const inject = {
   optional: ['platform', 'session-history'],
 };

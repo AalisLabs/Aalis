@@ -8,6 +8,7 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 
 export const name = '@aalis/plugin-memory-summary';
 export const displayName = '记忆摘要';
+export const subsystem = 'memory';
 export const inject = {
   required: ['memory', 'llm'],
   optional: ['message-archive'],

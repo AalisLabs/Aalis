@@ -58,6 +58,7 @@ export interface SkillsService {
 
 export const name = '@aalis/plugin-skills';
 export const displayName = '技能系统';
+export const subsystem = 'skills';
 
 export const provides = ['skills'];
 

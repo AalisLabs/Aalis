@@ -8,6 +8,7 @@ export * from './types.js';
 
 export const name = '@aalis/plugin-session-channel';
 export const displayName = '会话频道聚合';
+export const subsystem = 'session';
 export const inject = {
   required: ['memory'] as const,
 };

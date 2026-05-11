@@ -4,6 +4,7 @@ import { StorageRouter } from './router.js';
 
 export const name = '@aalis/plugin-storage-router';
 export const displayName = '存储路由器';
+export const subsystem = 'storage';
 export const provides = ['storage'];
 
 // router 不强依赖任何 provider —— 没有 provider 时仍能正常存在（listRoots 返回空）

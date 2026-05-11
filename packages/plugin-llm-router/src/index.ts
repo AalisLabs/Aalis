@@ -5,6 +5,7 @@ import { LLMRouter } from './router.js';
 
 export const name = '@aalis/plugin-llm-router';
 export const displayName = 'LLM 路由器';
+export const subsystem = 'llm';
 export const provides = ['llm'];
 
 export const inject = {

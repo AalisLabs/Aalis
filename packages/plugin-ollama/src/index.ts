@@ -13,6 +13,7 @@ import { LLMCapabilities } from '@aalis/plugin-llm-api';
 
 export const name = '@aalis/plugin-ollama';
 export const displayName = 'Ollama';
+export const subsystem = 'llm';
 export const provides = ['llm'];
 export const reusable = true;
 

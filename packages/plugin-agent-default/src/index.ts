@@ -1428,6 +1428,7 @@ class DefaultAgent implements AgentService {
 
 export const name = '@aalis/plugin-agent-default';
 export const displayName = '默认 Agent';
+export const subsystem = 'agent';
 
 export const provides = ['agent'];
 

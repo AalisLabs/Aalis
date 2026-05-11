@@ -11,6 +11,7 @@ import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-memory-vector';
 export const displayName = '向量记忆';
+export const subsystem = 'memory';
 export const provides = ['semantic-memory'];
 export const inject = {
   required: ['vectorstore', 'embedding'],
