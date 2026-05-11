@@ -1,4 +1,5 @@
-import type { Context, ConfigSchema, IncomingMessage, Message } from '@aalis/core';
+import type { Context, ConfigSchema, Message } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition';
 import type { MessageArchiveService, ArchiveNoticeOptions } from './types.js';

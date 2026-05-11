@@ -10,13 +10,14 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*",
+    "@aalis/plugin-commands-api": "workspace:*",
+    "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-platform": "workspace:*",
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
-    "string-width": "^8.2.0",
-    "@aalis/plugin-platform": "workspace:*",
-    "@aalis/plugin-commands-api": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*"
+    "string-width": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
