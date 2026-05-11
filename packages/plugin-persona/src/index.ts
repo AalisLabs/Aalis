@@ -1,14 +1,14 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parse as parseYaml } from 'yaml';
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { PlatformService } from '@aalis/plugin-platform';
-import type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
+import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
+import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from './types.js';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-memory-api';
 
-export type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatField } from './types.js';
+export type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from './types.js';
 
 /**
  * 读取 session-manager 服务时使用的最小结构化切片
@@ -17,7 +17,10 @@ export type { PersonaService, PersonaSessionOptions, OutputFormat, OutputFormatF
  * 消费侧只需声明“我要用的那一部分”。
  */
 interface SessionConfigResolver {
-  resolveConfig(sessionId: string, platform?: string): {
+  resolveConfig(
+    sessionId: string,
+    platform?: string,
+  ): {
     persona?: string;
     disableOutputFormat?: boolean;
     clientSideJsonRendering?: boolean;
@@ -154,7 +157,10 @@ class PersonaServiceImpl implements PersonaService {
     const fields: Record<string, OutputFormatField> = {};
     let replyField: string | undefined;
     for (const [key, def] of Object.entries(raw)) {
-      const type = (['string', 'number', 'boolean'].includes(def.type ?? '') ? def.type : 'string') as 'string' | 'number' | 'boolean';
+      const type = (['string', 'number', 'boolean'].includes(def.type ?? '') ? def.type : 'string') as
+        | 'string'
+        | 'number'
+        | 'boolean';
       fields[key] = { description: def.description, type, reply: def.reply };
       if (def.reply) replyField = key;
     }
@@ -209,7 +215,9 @@ class PersonaServiceImpl implements PersonaService {
             };
             this.cardCache.set(name, card);
             return card;
-          } catch { /* continue searching */ }
+          } catch {
+            /* continue searching */
+          }
         }
       }
     }
@@ -222,9 +230,7 @@ class PersonaServiceImpl implements PersonaService {
     if (card === this.card) return this._outputFormat;
     const key = card.name || '??';
     if (this.formatCache.has(key)) return this.formatCache.get(key) ?? undefined;
-    const fmt = card.outputFormat
-      ? PersonaServiceImpl.parseRawOutputFormat(card.outputFormat)
-      : undefined;
+    const fmt = card.outputFormat ? PersonaServiceImpl.parseRawOutputFormat(card.outputFormat) : undefined;
     this.formatCache.set(key, fmt ?? null);
     return fmt;
   }
@@ -245,16 +251,23 @@ class PersonaServiceImpl implements PersonaService {
         tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       }
       // 计算 UTC 偏移（如 +08:00 / -05:00）用于消除歧义
-      const offsetParts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
-        .formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? '';
+      const offsetParts =
+        new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+          .formatToParts(now)
+          .find(p => p.type === 'timeZoneName')?.value ?? '';
       const timeStr = now.toLocaleString('zh-CN', {
         timeZone: tz,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
         weekday: 'short',
         hour12: false,
       });
-      prompt += '以下时间由系统实时注入，是你回答时间或日期相关问题时应直接使用的权威当前时间。不要质疑它，也不要调用工具再次获取时间。\n';
+      prompt +=
+        '以下时间由系统实时注入，是你回答时间或日期相关问题时应直接使用的权威当前时间。不要质疑它，也不要调用工具再次获取时间。\n';
       prompt += `当前时间：${timeStr}（${tz}${offsetParts ? ` ${offsetParts}` : ''}）\n\n`;
     }
 
@@ -299,7 +312,8 @@ class PersonaServiceImpl implements PersonaService {
       if (this.currentNickname) {
         prompt += `当前消息发送者昵称：${this.currentNickname}\n`;
       }
-      prompt += '短期历史范围：上下文中的历史消息均来自当前会话，即上述群聊/私聊/频道；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
+      prompt +=
+        '短期历史范围：上下文中的历史消息均来自当前会话，即上述群聊/私聊/频道；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
     }
 
     // 状态持久化注入
@@ -315,19 +329,18 @@ class PersonaServiceImpl implements PersonaService {
     }
 
     // 追加结构化输出指令 — 尊重调用方传入的 disableOutputFormat
-    const effectiveFormat = options?.disableOutputFormat
-      ? undefined
-      : this.getCardOutputFormat(effectiveCard);
+    const effectiveFormat = options?.disableOutputFormat ? undefined : this.getCardOutputFormat(effectiveCard);
     if (effectiveFormat) {
       // 角色卡若提供 outputFormatPrompt，则用其替换默认 header/footer；
       // schema 块仍由插件根据 fields 自动生成，避免与字段定义脱节。
       const customPrompt = effectiveCard.outputFormatPrompt?.trim();
       prompt += '\n\n';
       if (customPrompt) {
-        prompt += customPrompt + '\n';
+        prompt += `${customPrompt}\n`;
       } else {
         prompt += '# 输出格式（必须严格遵守）\n';
-        prompt += '你的每一条文字回复都必须且只能是一个合法 JSON 对象。不得在 JSON 前后输出任何其他内容，不得使用 markdown 代码块包裹。\n\n';
+        prompt +=
+          '你的每一条文字回复都必须且只能是一个合法 JSON 对象。不得在 JSON 前后输出任何其他内容，不得使用 markdown 代码块包裹。\n\n';
       }
       prompt += '{\n';
       const entries = Object.entries(effectiveFormat.fields);
@@ -390,7 +403,11 @@ class PersonaServiceImpl implements PersonaService {
     for (const dir of this.searchDirs) {
       if (!existsSync(dir)) continue;
       let files: string[];
-      try { files = readdirSync(dir); } catch { continue; }
+      try {
+        files = readdirSync(dir);
+      } catch {
+        continue;
+      }
       for (const file of files) {
         if (!/\.ya?ml$/i.test(file)) continue;
         names.add(file.replace(/\.ya?ml$/i, ''));
@@ -411,10 +428,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const configDir = ctx.config.getConfigDir();
 
   // 收集所有候选目录
-  const searchDirs = [
-    resolve(process.cwd(), personasDir),
-    resolve(configDir, 'personas'),
-  ];
+  const searchDirs = [resolve(process.cwd(), personasDir), resolve(configDir, 'personas')];
 
   /** 在目录中按文件名精确匹配 .yaml/.yml 文件 */
   function findCard(): { card: PersonaCard; path: string } | undefined {
@@ -474,39 +488,47 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('persona', service);
 
   // 参与 memory:clear 清除当前会话的 persona 状态
-  ctx.middleware('memory:clear', async (data: {
-    scope: 'session' | 'all';
-    types?: string[];
-    sessionId?: string;
-    results: Array<{ source: string; success: boolean; message: string }>;
-  }, next) => {
-    // 类型过滤：仅在清除 context/persona/全部 时参与
-    if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {
-      await next();
-      return;
-    }
-
-    try {
-      if (data.scope === 'all') {
-        service.clearAllStates();
-        data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
-      } else if (data.sessionId) {
-        service.clearSessionState(data.sessionId);
-        data.results.push({ source: 'persona', success: true, message: '当前会话角色状态已清空' });
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+      },
+      next,
+    ) => {
+      // 类型过滤：仅在清除 context/persona/全部 时参与
+      if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {
+        await next();
+        return;
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
-    }
-    await next();
-  });
+
+      try {
+        if (data.scope === 'all') {
+          service.clearAllStates();
+          data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
+        } else if (data.sessionId) {
+          service.clearSessionState(data.sessionId);
+          data.results.push({ source: 'persona', success: true, message: '当前会话角色状态已清空' });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
+      }
+      await next();
+    },
+  );
 
   // 跟踪当前会话信息（始终启用，用于 session 上下文注入和状态持久化）
   ctx.middleware('agent:input:before', async (data, next) => {
     service.currentSessionId = data.message.sessionId;
     service.currentPlatform = data.message.platform;
     service.currentSessionType = data.message.sessionType;
-    const selfIdentity = ctx.getService<PlatformService>('platform')?.getSelfIdentity?.(data.message.platform, data.message.sessionId);
+    const selfIdentity = ctx
+      .getService<PlatformService>('platform')
+      ?.getSelfIdentity?.(data.message.platform, data.message.sessionId);
     service.currentSelfId = selfIdentity?.selfId;
     service.currentSelfNickname = selfIdentity?.nickname;
     service.currentUserId = data.message.userId;
@@ -544,124 +566,128 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     let personaOpts: PersonaSessionOptions | undefined;
     try {
       const sm = ctx.getService<SessionConfigResolver>('session-manager');
-        if (sm && data.sessionId) {
-          const resolved = sm.resolveConfig(data.sessionId, data.platform);
-          personaOpts = {
-            persona: resolved.persona,
-            disableOutputFormat: resolved.disableOutputFormat,
-            clientSideJsonRendering: resolved.clientSideJsonRendering,
-          };
+      if (sm && data.sessionId) {
+        const resolved = sm.resolveConfig(data.sessionId, data.platform);
+        personaOpts = {
+          persona: resolved.persona,
+          disableOutputFormat: resolved.disableOutputFormat,
+          clientSideJsonRendering: resolved.clientSideJsonRendering,
+        };
+      }
+    } catch {
+      /* session-manager 不可用，使用全局默认 */
+    }
+
+    const outputFormat = service.getOutputFormat(personaOpts);
+
+    // ===== 无 outputFormat：回退 JSON 提取 =====
+    // 当角色卡未定义 outputFormat 时，模型偶尔仍会用 JSON 包裹回复
+    // 此处自动解包，提取回复字段
+    if (!outputFormat) {
+      const trimmed = data.content.trim();
+      if (!trimmed.startsWith('{')) return;
+      const { parsed: obj } = tryParseJsonObject(trimmed);
+      if (!obj) return;
+      const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
+      for (const key of replyKeys) {
+        if (typeof obj[key] === 'string') {
+          data.content = obj[key] as string;
+          ctx.logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
+          return;
         }
-      } catch { /* session-manager 不可用，使用全局默认 */ }
+      }
+      return;
+    }
 
-      const outputFormat = service.getOutputFormat(personaOpts);
+    // ===== 有 outputFormat：结构化解析 =====
 
-      // ===== 无 outputFormat：回退 JSON 提取 =====
-      // 当角色卡未定义 outputFormat 时，模型偶尔仍会用 JSON 包裹回复
-      // 此处自动解包，提取回复字段
-      if (!outputFormat) {
-        const trimmed = data.content.trim();
-        if (!trimmed.startsWith('{')) return;
-        const { parsed: obj } = tryParseJsonObject(trimmed);
-        if (!obj) return;
-        const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
-        for (const key of replyKeys) {
-          if (typeof obj[key] === 'string') {
-            data.content = obj[key] as string;
-            ctx.logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
-            return;
+    const clientRendered = service.isClientSideJsonRendering(personaOpts);
+
+    const jsonStr = extractJsonCandidate(data.content);
+    const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
+    if (parsed && repairsApplied.length > 0) {
+      ctx.logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
+    }
+    try {
+      if (!parsed) throw new Error('JSON 解析失败');
+      let reply = parsed[outputFormat.replyField];
+
+      // 回退：模型可能使用了错误的字段名（如 response 代替 message）
+      if (typeof reply !== 'string') {
+        const aliases = ['response', 'reply', 'content', 'answer', 'text', 'msg'];
+        for (const alias of aliases) {
+          if (alias !== outputFormat.replyField && typeof parsed[alias] === 'string') {
+            reply = parsed[alias];
+            ctx.logger.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
+            break;
           }
         }
-        return;
       }
 
-      // ===== 有 outputFormat：结构化解析 =====
-
-      const clientRendered = service.isClientSideJsonRendering(personaOpts);
-
-      const jsonStr = extractJsonCandidate(data.content);
-      const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
-      if (parsed && repairsApplied.length > 0) {
-        ctx.logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
+      // 仍未找到：若 JSON 中只有一个字符串字段，使用它
+      if (typeof reply !== 'string') {
+        const stringEntries = Object.entries(parsed).filter(([, v]) => typeof v === 'string');
+        if (stringEntries.length === 1) {
+          reply = stringEntries[0][1] as string;
+          ctx.logger.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
+        }
       }
-      try {
-        if (!parsed) throw new Error('JSON 解析失败');
-        let reply = parsed[outputFormat.replyField];
 
-        // 回退：模型可能使用了错误的字段名（如 response 代替 message）
-        if (typeof reply !== 'string') {
-          const aliases = ['response', 'reply', 'content', 'answer', 'text', 'msg'];
-          for (const alias of aliases) {
-            if (alias !== outputFormat.replyField && typeof parsed[alias] === 'string') {
-              reply = parsed[alias];
-              ctx.logger.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
-              break;
-            }
-          }
+      if (typeof reply === 'string') {
+        if (parsed[outputFormat.replyField] !== reply) {
+          parsed[outputFormat.replyField] = reply;
         }
+        data.archiveContent = JSON.stringify(parsed);
 
-        // 仍未找到：若 JSON 中只有一个字符串字段，使用它
-        if (typeof reply !== 'string') {
-          const stringEntries = Object.entries(parsed).filter(([, v]) => typeof v === 'string');
-          if (stringEntries.length === 1) {
-            reply = stringEntries[0][1] as string;
-            ctx.logger.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
-          }
+        // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
+        if (!clientRendered) {
+          data.content = reply;
         }
-
-        if (typeof reply === 'string') {
-          if (parsed[outputFormat.replyField] !== reply) {
-            parsed[outputFormat.replyField] = reply;
-          }
-          data.archiveContent = JSON.stringify(parsed);
-
-          // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
-          if (!clientRendered) {
-            data.content = reply;
-          }
-          // 输出所有字段概要
-          const fieldSummary = Object.entries(parsed)
-            .filter(([k]) => k !== outputFormat.replyField)
-            .map(([k, v]) => {
-              const s = typeof v === 'string' ? v : JSON.stringify(v);
-              return `${k}=${s.length > 60 ? s.slice(0, 60) + '...' : s}`;
-            })
-            .join(', ');
-          if (reply.length > 0) {
-            ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`);
-          } else {
-            ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
-          }
-          // 状态持久化：保存非回复字段（按 field type 强制类型）
-          if (statePersistence) {
-            const state: Record<string, unknown> = {};
-            for (const key of Object.keys(outputFormat.fields)) {
-              if (key !== outputFormat.replyField && parsed[key] !== undefined) {
-                const fieldType = outputFormat.fields[key].type ?? 'string';
-                let val = parsed[key];
-                if (fieldType === 'number') {
-                  const n = Number(val);
-                  val = isNaN(n) ? val : n;
-                } else if (fieldType === 'boolean') {
-                  if (typeof val === 'string') val = val === 'true';
-                  else val = Boolean(val);
-                } else {
-                  if (typeof val !== 'string') val = String(val);
-                }
-                state[key] = val;
+        // 输出所有字段概要
+        const fieldSummary = Object.entries(parsed)
+          .filter(([k]) => k !== outputFormat.replyField)
+          .map(([k, v]) => {
+            const s = typeof v === 'string' ? v : JSON.stringify(v);
+            return `${k}=${s.length > 60 ? `${s.slice(0, 60)}...` : s}`;
+          })
+          .join(', ');
+        if (reply.length > 0) {
+          ctx.logger.debug(
+            `outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`,
+          );
+        } else {
+          ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
+        }
+        // 状态持久化：保存非回复字段（按 field type 强制类型）
+        if (statePersistence) {
+          const state: Record<string, unknown> = {};
+          for (const key of Object.keys(outputFormat.fields)) {
+            if (key !== outputFormat.replyField && parsed[key] !== undefined) {
+              const fieldType = outputFormat.fields[key].type ?? 'string';
+              let val = parsed[key];
+              if (fieldType === 'number') {
+                const n = Number(val);
+                val = Number.isNaN(n) ? val : n;
+              } else if (fieldType === 'boolean') {
+                if (typeof val === 'string') val = val === 'true';
+                else val = Boolean(val);
+              } else {
+                if (typeof val !== 'string') val = String(val);
               }
-            }
-            if (Object.keys(state).length > 0) {
-              service.saveSessionState(data.sessionId, state);
-              ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
+              state[key] = val;
             }
           }
+          if (Object.keys(state).length > 0) {
+            service.saveSessionState(data.sessionId, state);
+            ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
+          }
         }
-      } catch (err) {
-        // 解析失败时保留原始内容，不影响正常流程；带上原因方便定位下一条修复规则。
-        const message = err instanceof Error ? err.message : String(err);
-        const preview = jsonStr.length > 300 ? jsonStr.slice(0, 300) + '...' : jsonStr;
-        ctx.logger.debug(`outputFormat 解码失败，保留原始回复：${message}; json=${preview}`);
       }
-    });
+    } catch (err) {
+      // 解析失败时保留原始内容，不影响正常流程；带上原因方便定位下一条修复规则。
+      const message = err instanceof Error ? err.message : String(err);
+      const preview = jsonStr.length > 300 ? `${jsonStr.slice(0, 300)}...` : jsonStr;
+      ctx.logger.debug(`outputFormat 解码失败，保留原始回复：${message}; json=${preview}`);
+    }
+  });
 }

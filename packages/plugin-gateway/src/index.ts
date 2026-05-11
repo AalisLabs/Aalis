@@ -1,9 +1,8 @@
 import type { Context } from '@aalis/core';
-import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { InboundPhaseData } from '@aalis/plugin-gateway-api';
-import type { GatewayService } from '@aalis/plugin-gateway-api';
+import type { GatewayService, InboundPhaseData } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/plugin-gateway-api';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
 
 // ----- 元数据 -----
 
@@ -20,9 +19,7 @@ export const inject = {
 
 export function apply(ctx: Context): void {
   const logger = ctx.logger.child('gateway');
-  logger.info(
-    `消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`,
-  );
+  logger.info(`消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`);
 
   /** 调用 agent 处理消息；agent 不可用时给出兜底回复（沿用旧 core 行为）。 */
   async function defaultDispatch(message: IncomingMessage, agent: AgentService | undefined): Promise<void> {
@@ -59,7 +56,13 @@ export function apply(ctx: Context): void {
       for (const phase of [INBOUND_PHASE.COMMAND, INBOUND_PHASE.FLOW, INBOUND_PHASE.TRIGGER] as const) {
         const t0 = performance.now();
         const reachedEnd = await ctx.hooks.run(phase, data);
-        ctx.emit('gateway:phase:done', { phase, reachedEnd, durationMs: performance.now() - t0, sessionId: message.sessionId, platform: message.platform });
+        ctx.emit('gateway:phase:done', {
+          phase,
+          reachedEnd,
+          durationMs: performance.now() - t0,
+          sessionId: message.sessionId,
+          platform: message.platform,
+        });
         if (!reachedEnd) {
           logger.debug(
             `[${phase}] 消息被 swallow，未触达 agent: session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
@@ -73,7 +76,13 @@ export function apply(ctx: Context): void {
       const reachedEnd = await ctx.hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
       });
-      ctx.emit('gateway:phase:done', { phase: INBOUND_PHASE.DISPATCH, reachedEnd, durationMs: performance.now() - t0, sessionId: message.sessionId, platform: message.platform });
+      ctx.emit('gateway:phase:done', {
+        phase: INBOUND_PHASE.DISPATCH,
+        reachedEnd,
+        durationMs: performance.now() - t0,
+        sessionId: message.sessionId,
+        platform: message.platform,
+      });
     } catch (err) {
       logger.warn(`入站处理异常: ${err}`);
     }
@@ -93,7 +102,7 @@ export function apply(ctx: Context): void {
 
   // 监听 inbound:message —— 替代 core/app.ts 中已被移除的默认路由。
   // ctx.on 返回的 dispose 已自动挂到子上下文的 disposables，插件卸载时会清理。
-  ctx.on('inbound:message', (msg) => {
+  ctx.on('inbound:message', msg => {
     void processInbound(msg);
   });
 

@@ -1,9 +1,9 @@
-import Database from 'better-sqlite3';
-import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { Context, Message, ConfigSchema, ContentSegment } from '@aalis/core';
+import { resolve } from 'node:path';
+import type { ConfigSchema, ContentSegment, Context, Message } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
+import Database from 'better-sqlite3';
 
 // ===== 插件元数据 =====
 
@@ -13,7 +13,12 @@ export const provides = ['memory'];
 export const reusable = true;
 
 export const configSchema: ConfigSchema = {
-  path: { type: 'string', label: '数据库路径', default: 'data/aalis.db', description: 'SQLite 数据库文件路径，相对于项目根目录' },
+  path: {
+    type: 'string',
+    label: '数据库路径',
+    default: 'data/aalis.db',
+    description: 'SQLite 数据库文件路径，相对于项目根目录',
+  },
 };
 
 export const defaultConfig = {
@@ -79,20 +84,25 @@ class SQLiteMemoryService implements MemoryService {
     if (!columns.some(c => c.name === 'segments')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN segments TEXT');
     }
-
   }
 
   private static parseMetadata(raw: string | null): Record<string, unknown> | undefined {
     if (!raw) return undefined;
-    try { return JSON.parse(raw) as Record<string, unknown>; } catch { return undefined; }
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
   }
 
   private static parseSegments(raw: string | null): ContentSegment[] | undefined {
     if (!raw) return undefined;
     try {
       const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr as ContentSegment[] : undefined;
-    } catch { return undefined; }
+      return Array.isArray(arr) ? (arr as ContentSegment[]) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -155,7 +165,12 @@ class SQLiteMemoryService implements MemoryService {
     stmt.run(sessionId);
   }
 
-  async getMessagesBySessionRange(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]> {
+  async getMessagesBySessionRange(
+    sessionId: string,
+    fromTs: number,
+    toTs: number,
+    roles?: Array<Message['role']>,
+  ): Promise<Message[]> {
     let sql = `SELECT role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
                FROM messages
                WHERE sessionId = ? AND timestamp BETWEEN ? AND ?`;
@@ -167,8 +182,15 @@ class SQLiteMemoryService implements MemoryService {
     sql += ' ORDER BY timestamp ASC LIMIT 500';
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as Array<{
-      role: string; content: string | null; toolCalls: string | null; toolCallId: string | null;
-      name: string | null; timestamp: number; reasoningContent: string | null; metadata: string | null; segments: string | null;
+      role: string;
+      content: string | null;
+      toolCalls: string | null;
+      toolCallId: string | null;
+      name: string | null;
+      timestamp: number;
+      reasoningContent: string | null;
+      metadata: string | null;
+      segments: string | null;
     }>;
     return rows.map(row => ({
       role: row.role as Message['role'],

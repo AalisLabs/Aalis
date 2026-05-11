@@ -1,25 +1,35 @@
-import type { CommandService } from '@aalis/plugin-commands-api';
-import type { ToolService } from '@aalis/plugin-tools-api';
-import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { resolve, dirname, basename, extname, relative, join, isAbsolute } from 'node:path';
-import { existsSync, statSync, readdirSync, renameSync, unlinkSync, rmSync, createReadStream, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import {
+  chmodSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { createServer } from 'node:http';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import express from 'express';
-import { WebSocketServer, WebSocket } from 'ws';
-import type { Context, LogEntry, App, ConfigSchema } from '@aalis/core';
-import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
-import type { ToolExecuteMessage } from '@aalis/plugin-tools-api';
+import type { App, ConfigSchema, Context, LogEntry } from '@aalis/core';
+import { CORE_CONFIG_SCHEMA, getLogBuffer, onLogEntry } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import type { AuthorityService } from '@aalis/plugin-authority-api';
+import type { CommandService } from '@aalis/plugin-commands-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
-import type { WebUIService } from '@aalis/plugin-webui-api';
-import type { WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
+import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
+import type { PersonaService } from '@aalis/plugin-persona';
 import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform';
 import type {} from '@aalis/plugin-session-manager-api';
-import type { PersonaService } from '@aalis/plugin-persona';
-import type { AuthorityService } from '@aalis/plugin-authority-api';
-import { getLogBuffer, onLogEntry, CORE_CONFIG_SCHEMA } from '@aalis/core';
+import type { StorageService } from '@aalis/plugin-storage-api';
+import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
+import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
+import express from 'express';
+import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
 
 // ===== 插件元数据 =====
@@ -43,9 +53,24 @@ export const webuiPages: WebuiPage[] = [
 export const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
   host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
-  fileRoot: { type: 'string', label: '文件浏览根', default: 'workspace', description: '文件管理页面使用的 storage 根 ID，默认 workspace' },
-  workspaceRoot: { type: 'string', label: '兼容文件根目录', default: 'workspace', description: '缺少 storage 服务时的兼容文件根目录' },
-  autoOpen: { type: 'boolean', label: '启动时自动打开浏览器', default: true, description: '启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭' },
+  fileRoot: {
+    type: 'string',
+    label: '文件浏览根',
+    default: 'workspace',
+    description: '文件管理页面使用的 storage 根 ID，默认 workspace',
+  },
+  workspaceRoot: {
+    type: 'string',
+    label: '兼容文件根目录',
+    default: 'workspace',
+    description: '缺少 storage 服务时的兼容文件根目录',
+  },
+  autoOpen: {
+    type: 'boolean',
+    label: '启动时自动打开浏览器',
+    default: true,
+    description: '启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭',
+  },
   tokenMode: {
     type: 'select',
     label: 'Token 策略',
@@ -55,7 +80,8 @@ export const configSchema: ConfigSchema = {
       { label: '首次生成后持久化（重启不掉登录）', value: 'persist' },
       { label: '使用下方固定 token', value: 'fixed' },
     ],
-    description: 'ephemeral=旧行为；persist=token 写入 data/.webui-token，读取复用；fixed=使用 fixedToken 字段。所有模式下都会同时写出便利文件 data/webui-access.txt 包含访问 URL。',
+    description:
+      'ephemeral=旧行为；persist=token 写入 data/.webui-token，读取复用；fixed=使用 fixedToken 字段。所有模式下都会同时写出便利文件 data/webui-access.txt 包含访问 URL。',
   },
   fixedToken: {
     type: 'string',
@@ -101,7 +127,22 @@ interface WSIncoming {
 }
 
 interface WSOutgoing {
-  type: 'message' | 'stream' | 'stream_resume' | 'status' | 'log' | 'tool_call' | 'state_changed' | 'sessions_changed' | 'history_changed' | 'todo_updated' | 'restarting' | 'reload' | 'confirm' | 'token_usage' | 'compressing';
+  type:
+    | 'message'
+    | 'stream'
+    | 'stream_resume'
+    | 'status'
+    | 'log'
+    | 'tool_call'
+    | 'state_changed'
+    | 'sessions_changed'
+    | 'history_changed'
+    | 'todo_updated'
+    | 'restarting'
+    | 'reload'
+    | 'confirm'
+    | 'token_usage'
+    | 'compressing';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -118,7 +159,14 @@ interface WSOutgoing {
   segments?: Array<
     | { type: 'text'; content: string }
     | { type: 'reasoning_text'; content: string }
-    | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number }
+    | {
+        type: 'tool_call';
+        name: string;
+        args: Record<string, unknown>;
+        result?: string;
+        startTime?: number;
+        endTime?: number;
+      }
   >;
   todoItems?: unknown[];
   // token_usage 字段
@@ -153,7 +201,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     host: (config.host as string) ?? '127.0.0.1',
     fileRoot: (config.fileRoot as string) || 'workspace',
     autoOpen: (config.autoOpen as boolean | undefined) ?? true,
-    tokenMode: ((config.tokenMode as string) === 'ephemeral' || (config.tokenMode as string) === 'fixed') ? (config.tokenMode as 'ephemeral' | 'fixed') : 'persist',
+    tokenMode:
+      (config.tokenMode as string) === 'ephemeral' || (config.tokenMode as string) === 'fixed'
+        ? (config.tokenMode as 'ephemeral' | 'fixed')
+        : 'persist',
     fixedToken: (config.fixedToken as string) ?? '',
   };
 
@@ -167,7 +218,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const accessFile = join(dataDir, 'webui-access.txt');
 
   function ensureDataDir(): void {
-    try { if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true }); } catch { /* ignore */ }
+    try {
+      if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   function resolveAuthToken(): string {
@@ -181,11 +236,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const existing = readFileSync(tokenFile, 'utf-8').trim();
           if (existing) return existing;
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       const fresh = randomBytes(24).toString('hex');
       try {
         writeFileSync(tokenFile, fresh, { encoding: 'utf-8' });
-        try { chmodSync(tokenFile, 0o600); } catch { /* ignore */ }
+        try {
+          chmodSync(tokenFile, 0o600);
+        } catch {
+          /* ignore */
+        }
       } catch (err) {
         ctx.logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
       }
@@ -209,8 +270,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       '# 提示：将该一键登录链接粘贴到浏览器即可自动设置 cookie',
     ];
     try {
-      writeFileSync(accessFile, lines.join('\n') + '\n', { encoding: 'utf-8' });
-      try { chmodSync(accessFile, 0o600); } catch { /* ignore */ }
+      writeFileSync(accessFile, `${lines.join('\n')}\n`, { encoding: 'utf-8' });
+      try {
+        chmodSync(accessFile, 0o600);
+      } catch {
+        /* ignore */
+      }
     } catch (err) {
       ctx.logger.warn(`写入访问文件失败: ${(err as Error).message}`);
     }
@@ -241,8 +306,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   type BufferSegment =
     | { type: 'text'; content: string }
     | { type: 'reasoning_text'; content: string }
-    | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; startTime?: number; endTime?: number };
-  const streamBuffers = new Map<string, { content: string; reasoningContent: string; segments: BufferSegment[]; generating: boolean }>();
+    | {
+        type: 'tool_call';
+        name: string;
+        args: Record<string, unknown>;
+        result?: string;
+        startTime?: number;
+        endTime?: number;
+      };
+  const streamBuffers = new Map<
+    string,
+    { content: string; reasoningContent: string; segments: BufferSegment[]; generating: boolean }
+  >();
 
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
   const tokenUsageCache = new Map<string, WSOutgoing>();
@@ -301,13 +376,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         /** 是否支持文件上传（file-reader 可用） */
         file: hasFileReader,
       },
-      tools: ctx.getService<ToolService>('tools')?.getAll().map(t => t.name) ?? [],
-      commands: ctx.getService<CommandService>('commands')?.getAll().map(c => ({
-        name: c.name,
-        description: c.description,
-        authority: c.authority,
-        safety: c.safety,
-      })),
+      tools:
+        ctx
+          .getService<ToolService>('tools')
+          ?.getAll()
+          .map(t => t.name) ?? [],
+      commands: ctx
+        .getService<CommandService>('commands')
+        ?.getAll()
+        .map(c => ({
+          name: c.name,
+          description: c.description,
+          authority: c.authority,
+          safety: c.safety,
+        })),
     });
   });
 
@@ -337,7 +419,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 获取可用的 WebUI 页面（由活跃插件的 webuiPages 声明汇总，包含声明式内容）
   expressApp.get('/api/pages', (_req, res) => {
     const app = getApp();
-    if (!app) { res.json([]); return; }
+    if (!app) {
+      res.json([]);
+      return;
+    }
 
     const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
     for (const plugin of app.plugins.getStatus()) {
@@ -635,10 +720,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const serviceNames = ctx.listServices();
-    const services: Record<string, {
-      providers: Array<{ contextId: string; capabilities: string[]; displayName?: string }>;
-      active: string | undefined;
-    }> = {};
+    const services: Record<
+      string,
+      {
+        providers: Array<{ contextId: string; capabilities: string[]; displayName?: string }>;
+        active: string | undefined;
+      }
+    > = {};
 
     for (const svcName of serviceNames) {
       const entries = ctx.getServiceEntries(svcName);
@@ -689,7 +777,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 1. 核心服务（基础设施）
     const coreServices = ['commands', 'authority', 'tools'];
     groups.push({ label: '核心', services: coreServices });
-    coreServices.forEach(s => claimed.add(s));
+    coreServices.forEach(s => {
+      claimed.add(s);
+    });
 
     // 2. Agent 子系统
     const agent = ctx.getService<AgentService>('agent');
@@ -700,13 +790,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       for (const g of agentGroups) {
         for (const pid of g.plugins) {
           const svcs = providesMap.get(pid);
-          if (svcs) svcs.forEach(s => agentServices.add(s));
+          if (svcs)
+            svcs.forEach(s => {
+              agentServices.add(s);
+            });
         }
       }
       const agentList = [...agentServices].filter(s => !claimed.has(s));
       if (agentList.length > 0) {
         groups.push({ label: 'Agent', services: agentList });
-        agentList.forEach(s => claimed.add(s));
+        agentList.forEach(s => {
+          claimed.add(s);
+        });
       }
     }
 
@@ -721,13 +816,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       for (const g of platGroups) {
         for (const pid of g.plugins) {
           const svcs = providesMap.get(pid);
-          if (svcs) svcs.forEach(s => platServices.add(s));
+          if (svcs)
+            svcs.forEach(s => {
+              platServices.add(s);
+            });
         }
       }
       const platList = [...platServices].filter(s => !claimed.has(s));
       if (platList.length > 0) {
         groups.push({ label: '平台', services: platList });
-        platList.forEach(s => claimed.add(s));
+        platList.forEach(s => {
+          claimed.add(s);
+        });
       }
     }
 
@@ -839,14 +939,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (groups.length > 0) {
         res.json({
           models: groups.map(g => g.name).sort(),
-          details: groups.map(g => ({ value: g.name, label: g.label, description: g.description, pluginName: g.pluginName })),
+          details: groups.map(g => ({
+            value: g.name,
+            label: g.label,
+            description: g.description,
+            pluginName: g.pluginName,
+          })),
         });
       } else {
         // 回退：从已注册工具中提取分组名称
         const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
         const groupSet = new Set<string>();
         for (const t of tools) {
-          t.groups?.forEach((g: string) => groupSet.add(g));
+          t.groups?.forEach((g: string) => {
+            groupSet.add(g);
+          });
         }
         res.json({ models: [...groupSet].sort() });
       }
@@ -882,8 +989,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           for (const m of models) {
             // LLM listModels() returns ModelInfo[]，embedding 等返回 string[]
             const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
-            const modelId = isModelInfo ? (m as Record<string, unknown>).id as string : String(m);
-            const modelCaps = isModelInfo ? (m as Record<string, unknown>).capabilities as string[] : provider.capabilities;
+            const modelId = isModelInfo ? ((m as Record<string, unknown>).id as string) : String(m);
+            const modelCaps = isModelInfo
+              ? ((m as Record<string, unknown>).capabilities as string[])
+              : provider.capabilities;
             const value = isLLM ? `${provider.contextId}::${modelId}` : modelId;
             aggregated.push({
               value,
@@ -907,11 +1016,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ---------- 斜杠命令处理 (通过指令注册表) ----------
 
-  async function handleCommand(
-    ctx: Context,
-    input: string,
-    sessionId: string,
-  ): Promise<string | undefined> {
+  async function handleCommand(ctx: Context, input: string, sessionId: string): Promise<string | undefined> {
     const parsed = ctx.getService<CommandService>('commands')?.parseCommand(input);
     if (!parsed) return undefined;
 
@@ -928,10 +1033,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
   /** 每个 session 最多一个待确认请求 */
-  type PendingConfirmResult = boolean | { allowed: boolean; grant?: { scope: 'once' | 'session'; durationSeconds?: number; maxUses?: number } };
-  const pendingSessionConfirms = new Map<string, { resolve: (v: PendingConfirmResult) => void; timer: ReturnType<typeof setTimeout> }>();
+  type PendingConfirmResult =
+    | boolean
+    | { allowed: boolean; grant?: { scope: 'once' | 'session'; durationSeconds?: number; maxUses?: number } };
+  const pendingSessionConfirms = new Map<
+    string,
+    { resolve: (v: PendingConfirmResult) => void; timer: ReturnType<typeof setTimeout> }
+  >();
 
-  ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', async (request) => {
+  ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', async request => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
     const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 允许本会话 10 分钟；其他任意输入取消。`;
@@ -945,7 +1055,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const json = JSON.stringify(payload);
 
     const sockets = sessions.get(request.sessionId);
-    const targets = (sockets && sockets.size > 0) ? sockets : allClients;
+    const targets = sockets && sockets.size > 0 ? sockets : allClients;
     let sent = false;
     for (const ws of targets) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -955,7 +1065,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     if (!sent) return false;
 
-    return new Promise<PendingConfirmResult>((resolve) => {
+    return new Promise<PendingConfirmResult>(resolve => {
       const timer = setTimeout(() => {
         pendingSessionConfirms.delete(request.sessionId);
         // 超时后向会话发送提示
@@ -997,10 +1107,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function sendStorageError(res: express.Response, err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes('路径不合法') || message.includes('不允许') ? 403
-      : message.includes('不存在') || message.includes('ENOENT') ? 404
-        : message.includes('不是目录') || message.includes('不能') || message.includes('不合法') ? 400
-          : 500;
+    const status =
+      message.includes('路径不合法') || message.includes('不允许')
+        ? 403
+        : message.includes('不存在') || message.includes('ENOENT')
+          ? 404
+          : message.includes('不是目录') || message.includes('不能') || message.includes('不合法')
+            ? 400
+            : 500;
     res.status(status).json({ error: message });
   }
 
@@ -1021,9 +1135,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 列出目录内容
   expressApp.get('/api/files', async (req, res) => {
     const dir = String(req.query.path || '');
-    if (!storage) { sendStorageUnavailable(res); return; }
+    if (!storage) {
+      sendStorageUnavailable(res);
+      return;
+    }
     if (storage) {
-      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      if (!storageRootBrowsable()) {
+        res.status(403).json({ error: '文件根不可浏览' });
+        return;
+      }
       try {
         const result = await storage.list(storageUri(dir));
         res.json({ path: result.path, entries: result.entries });
@@ -1034,45 +1154,64 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const abs = safeResolvePath(dir);
-    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
-    if (!existsSync(abs)) { res.status(404).json({ error: '目录不存在' }); return; }
+    if (!abs) {
+      res.status(403).json({ error: '路径不合法' });
+      return;
+    }
+    if (!existsSync(abs)) {
+      res.status(404).json({ error: '目录不存在' });
+      return;
+    }
     const stat = statSync(abs);
-    if (!stat.isDirectory()) { res.status(400).json({ error: '不是目录' }); return; }
+    if (!stat.isDirectory()) {
+      res.status(400).json({ error: '不是目录' });
+      return;
+    }
     try {
-      const entries = readdirSync(abs).map(name => {
-        const fullPath = join(abs, name);
-        try {
-          const s = statSync(fullPath);
-          return {
-            name,
-            path: relative(workspaceRoot, fullPath).replace(/\\/g, '/'),
-            isDirectory: s.isDirectory(),
-            size: s.isDirectory() ? 0 : s.size,
-            mtime: s.mtime.toISOString(),
-            ext: s.isDirectory() ? '' : extname(name).toLowerCase(),
-          };
-        } catch {
-          return null;
-        }
-      }).filter(Boolean);
+      const entries = readdirSync(abs)
+        .map(name => {
+          const fullPath = join(abs, name);
+          try {
+            const s = statSync(fullPath);
+            return {
+              name,
+              path: relative(workspaceRoot, fullPath).replace(/\\/g, '/'),
+              isDirectory: s.isDirectory(),
+              size: s.isDirectory() ? 0 : s.size,
+              mtime: s.mtime.toISOString(),
+              ext: s.isDirectory() ? '' : extname(name).toLowerCase(),
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
       // 目录优先，同类型按名称排序
-      entries.sort((a: any, b: any) => {
-        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-        return a.name.localeCompare(b.name);
+      entries.sort((a, b) => {
+        const ad = a as { isDirectory: boolean; name: string };
+        const bd = b as { isDirectory: boolean; name: string };
+        if (ad.isDirectory !== bd.isDirectory) return ad.isDirectory ? -1 : 1;
+        return ad.name.localeCompare(bd.name);
       });
       const currentPath = relative(workspaceRoot, abs).replace(/\\/g, '/');
       res.json({ path: currentPath, entries });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
   });
 
   // 获取文件/目录详情
   expressApp.get('/api/files/info', async (req, res) => {
     const filePath = String(req.query.path || '');
-    if (!storage) { sendStorageUnavailable(res); return; }
+    if (!storage) {
+      sendStorageUnavailable(res);
+      return;
+    }
     if (storage) {
-      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      if (!storageRootBrowsable()) {
+        res.status(403).json({ error: '文件根不可浏览' });
+        return;
+      }
       try {
         const info = await storage.stat(storageUri(filePath));
         res.json(info);
@@ -1083,8 +1222,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const abs = safeResolvePath(filePath);
-    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
-    if (!existsSync(abs)) { res.status(404).json({ error: '不存在' }); return; }
+    if (!abs) {
+      res.status(403).json({ error: '路径不合法' });
+      return;
+    }
+    if (!existsSync(abs)) {
+      res.status(404).json({ error: '不存在' });
+      return;
+    }
     const s = statSync(abs);
     res.json({
       name: basename(abs),
@@ -1100,9 +1245,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 下载文件
   expressApp.get('/api/files/download', async (req, res) => {
     const filePath = String(req.query.path || '');
-    if (!storage) { sendStorageUnavailable(res); return; }
+    if (!storage) {
+      sendStorageUnavailable(res);
+      return;
+    }
     if (storage) {
-      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      if (!storageRootBrowsable()) {
+        res.status(403).json({ error: '文件根不可浏览' });
+        return;
+      }
       try {
         const result = await storage.createReadStream(storageUri(filePath));
         const fileName = basename(result.stat.name);
@@ -1116,10 +1267,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const abs = safeResolvePath(filePath);
-    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
-    if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
+    if (!abs) {
+      res.status(403).json({ error: '路径不合法' });
+      return;
+    }
+    if (!existsSync(abs)) {
+      res.status(404).json({ error: '文件不存在' });
+      return;
+    }
     const s = statSync(abs);
-    if (s.isDirectory()) { res.status(400).json({ error: '不能下载目录' }); return; }
+    if (s.isDirectory()) {
+      res.status(400).json({ error: '不能下载目录' });
+      return;
+    }
     const fileName = basename(abs);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.setHeader('Content-Length', s.size);
@@ -1129,13 +1289,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 重命名
   expressApp.post('/api/files/rename', async (req, res) => {
     const { path: filePath, newName } = req.body ?? {};
-    if (!filePath || !newName) { res.status(400).json({ error: '缺少参数' }); return; }
-    if (typeof newName !== 'string' || newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
-      res.status(400).json({ error: '文件名不合法' }); return;
+    if (!filePath || !newName) {
+      res.status(400).json({ error: '缺少参数' });
+      return;
     }
-    if (!storage) { sendStorageUnavailable(res); return; }
+    if (
+      typeof newName !== 'string' ||
+      newName.includes('/') ||
+      newName.includes('\\') ||
+      newName === '.' ||
+      newName === '..'
+    ) {
+      res.status(400).json({ error: '文件名不合法' });
+      return;
+    }
+    if (!storage) {
+      sendStorageUnavailable(res);
+      return;
+    }
     if (storage) {
-      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      if (!storageRootBrowsable()) {
+        res.status(403).json({ error: '文件根不可浏览' });
+        return;
+      }
       try {
         const newUri = await storage.rename(storageUri(String(filePath)), String(newName));
         res.json({ ok: true, newPath: pathFromStorageUri(newUri) });
@@ -1146,27 +1322,48 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const abs = safeResolvePath(String(filePath));
-    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
-    if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
+    if (!abs) {
+      res.status(403).json({ error: '路径不合法' });
+      return;
+    }
+    if (!existsSync(abs)) {
+      res.status(404).json({ error: '文件不存在' });
+      return;
+    }
     const newPath = resolve(dirname(abs), String(newName));
     const newRel = relative(workspaceRoot, newPath);
-    if (newRel.startsWith('..') || isAbsolute(newRel)) { res.status(403).json({ error: '目标路径不合法' }); return; }
-    if (existsSync(newPath)) { res.status(409).json({ error: '目标名称已存在' }); return; }
+    if (newRel.startsWith('..') || isAbsolute(newRel)) {
+      res.status(403).json({ error: '目标路径不合法' });
+      return;
+    }
+    if (existsSync(newPath)) {
+      res.status(409).json({ error: '目标名称已存在' });
+      return;
+    }
     try {
       renameSync(abs, newPath);
       res.json({ ok: true, newPath: relative(workspaceRoot, newPath).replace(/\\/g, '/') });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
   });
 
   // 删除
   expressApp.post('/api/files/delete', async (req, res) => {
     const { path: filePath } = req.body ?? {};
-    if (!filePath) { res.status(400).json({ error: '缺少参数' }); return; }
-    if (!storage) { sendStorageUnavailable(res); return; }
+    if (!filePath) {
+      res.status(400).json({ error: '缺少参数' });
+      return;
+    }
+    if (!storage) {
+      sendStorageUnavailable(res);
+      return;
+    }
     if (storage) {
-      if (!storageRootBrowsable()) { res.status(403).json({ error: '文件根不可浏览' }); return; }
+      if (!storageRootBrowsable()) {
+        res.status(403).json({ error: '文件根不可浏览' });
+        return;
+      }
       try {
         await storage.delete(storageUri(String(filePath)));
         res.json({ ok: true });
@@ -1177,10 +1374,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     const abs = safeResolvePath(String(filePath));
-    if (!abs) { res.status(403).json({ error: '路径不合法' }); return; }
-    if (!existsSync(abs)) { res.status(404).json({ error: '文件不存在' }); return; }
+    if (!abs) {
+      res.status(403).json({ error: '路径不合法' });
+      return;
+    }
+    if (!existsSync(abs)) {
+      res.status(404).json({ error: '文件不存在' });
+      return;
+    }
     // 禁止删除 workspace 根目录本身
-    if (abs === workspaceRoot) { res.status(403).json({ error: '不能删除根目录' }); return; }
+    if (abs === workspaceRoot) {
+      res.status(403).json({ error: '不能删除根目录' });
+      return;
+    }
     try {
       const s = statSync(abs);
       if (s.isDirectory()) {
@@ -1189,18 +1395,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         unlinkSync(abs);
       }
       res.json({ ok: true });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
     }
   });
 
   // ---------- WebSocket ----------
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', ws => {
     ctx.logger.debug('WebUI 客户端已连接');
     allClients.add(ws);
 
-    ws.on('message', async (data) => {
+    ws.on('message', async data => {
       try {
         const msg = JSON.parse(data.toString()) as WSIncoming;
 
@@ -1257,10 +1463,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const sessionId = msg.sessionId || 'webui-default';
           ctx.logger.info(`收到手动压缩请求: session=${sessionId}`);
           // 触发压缩事件（memory-summary 监听此事件，并发出 session:compressing 通知）
-          ctx.emit('session:compress', { sessionId, reason: 'manual' }).then(() => {
-            // 压缩完成后重新计算 token 用量并推送给客户端
-            ctx.emit('token:request', { sessionId }).catch(() => {});
-          }).catch(() => {});
+          ctx
+            .emit('session:compress', { sessionId, reason: 'manual' })
+            .then(() => {
+              // 压缩完成后重新计算 token 用量并推送给客户端
+              ctx.emit('token:request', { sessionId }).catch(() => {});
+            })
+            .catch(() => {});
           return;
         }
 
@@ -1618,8 +1827,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 自动发现同级 webui-client 包并注册为 webui-client 服务提供者
     const __dirname = dirname(fileURLToPath(import.meta.url));
     const clientCandidates: Array<{ id: string; label: string; dir: string }> = [
-      { id: '@aalis/plugin-webui-client', label: 'Aalis 默认前端', dir: resolve(__dirname, '../../plugin-webui-client/dist') },
-      { id: '@aalis/plugin-webui-client-napcat', label: 'NapCat 前端', dir: resolve(__dirname, '../../plugin-webui-client-napcat/dist') },
+      {
+        id: '@aalis/plugin-webui-client',
+        label: 'Aalis 默认前端',
+        dir: resolve(__dirname, '../../plugin-webui-client/dist'),
+      },
+      {
+        id: '@aalis/plugin-webui-client-napcat',
+        label: 'NapCat 前端',
+        dir: resolve(__dirname, '../../plugin-webui-client-napcat/dist'),
+      },
     ];
 
     // 如果已有外部插件注册了 webui-client 服务，则跳过自动发现
@@ -1629,9 +1846,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       for (const candidate of clientCandidates) {
         if (existsSync(candidate.dir) && existsSync(resolve(candidate.dir, 'index.html'))) {
           const childCtx = ctx.fork(candidate.id);
-          childCtx.provide('webui-client', {
-            getClientDir: () => candidate.dir,
-          }, { label: candidate.label });
+          childCtx.provide(
+            'webui-client',
+            {
+              getClientDir: () => candidate.dir,
+            },
+            { label: candidate.label },
+          );
           ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
 
           if (isFirst) {
@@ -1673,11 +1894,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const accessUrl = `${url}?token=${authToken}`;
       writeAccessFile(url, authToken);
       ctx.logger.info(`WebUI 已启动: ${url}`);
-      const tokenHint = uiConfig.tokenMode === 'ephemeral'
-        ? 'token 仅本次启动有效，重启轮换'
-        : uiConfig.tokenMode === 'fixed'
-          ? 'token 来自配置 fixedToken，固定不变'
-          : 'token 已持久化到 data/.webui-token，重启沿用';
+      const tokenHint =
+        uiConfig.tokenMode === 'ephemeral'
+          ? 'token 仅本次启动有效，重启轮换'
+          : uiConfig.tokenMode === 'fixed'
+            ? 'token 来自配置 fixedToken，固定不变'
+            : 'token 已持久化到 data/.webui-token，重启沿用';
       ctx.logger.info(`首次访问请使用以下 URL（${tokenHint}）: ${accessUrl}`);
       ctx.logger.info(`访问凭据已写入: ${accessFile}`);
       if (uiConfig.autoOpen) openBrowser(accessUrl);
@@ -1699,12 +1921,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 统计所有活跃 WebSocket 客户端
       const activeCount = [...allClients].filter(ws => ws.readyState === WebSocket.OPEN).length;
       if (activeCount === 0) return [];
-      return [{
-        id: 'webui',
-        platform: 'webui',
-        status: 'online',
-        detail: { clients: activeCount },
-      }];
+      return [
+        {
+          id: 'webui',
+          platform: 'webui',
+          status: 'online',
+          detail: { clients: activeCount },
+        },
+      ];
     },
     async sendMessage(sessionId: string, content: string): Promise<void> {
       const sockets = sessions.get(sessionId);

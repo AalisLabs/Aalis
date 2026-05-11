@@ -86,7 +86,6 @@ export interface PlatformAdapter {
 
 // ----- 平台聚合服务接口（同名 facade） -----
 
-
 /**
  * 平台聚合服务 —— 同名 facade，对外暴露为 `'platform'`
  *
