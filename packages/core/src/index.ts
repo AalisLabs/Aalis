@@ -77,8 +77,7 @@ export type {
   WebuiPage,
   // App 服务
   AppService,
-  // LLM 服务骨架（ChatRequest/ChatStreamChunk/ModelInfo/LLMService 等已迁出至 @aalis/plugin-llm-api）
-  ChatResponse,
+  // LLM 服务（已迁出至 @aalis/plugin-llm-api）
   // 服务能力声明框架
   ServiceCapabilityMap,
   CapabilityOf,
