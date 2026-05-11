@@ -173,7 +173,7 @@ export class App {
 
     // Pass 1: 先 import 所有模块，触发其顶层副作用（如 Context.extend 注入便捷方法）。
     // 这样可以避免按字母序激活时，依赖 Context.extend 注入方法的插件先于
-    // 注入者（如 plugin-tools-system / plugin-commands）执行而激活失败。
+    // 注入者（如 plugin-tools / plugin-commands）执行而激活失败。
     const modules: Array<{ pkg: (typeof discovered)[number]; mod: PluginModule }> = [];
     for (const pkg of discovered) {
       try {

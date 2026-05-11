@@ -1,7 +1,7 @@
-# plugin-tools-system — 系统工具集
+# plugin-tools — 系统工具集
 
-**包名**: `@aalis/plugin-tools-system`  
-**源码**: `packages/plugin-tools-system/src/index.ts`
+**包名**: `@aalis/plugin-tools`  
+**源码**: `packages/plugin-tools/src/index.ts`
 
 ## 概述
 
@@ -10,7 +10,7 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-tools-system'
+meta.name = '@aalis/plugin-tools'
 meta.inject = { required: ['tools'] }
 ```
 
