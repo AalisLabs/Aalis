@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { App, LogHub } from '../../packages/core/src/index.js';
+import { App } from '../../packages/core/src/index.js';
 
 /**
  * 异常恢复测试：插件出错不应炸掉宿主或泄漏资源
@@ -12,7 +12,6 @@ function tempApp() {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-rec-'));
   const path = join(dir, 'aalis.config.yaml');
   writeFileSync(path, 'name: ER\nlogLevel: error\nplugins: {}\n');
-  LogHub.default.setConsoleSinkEnabled(false);
   const app = new App({ configPath: path });
   return {
     app,
@@ -23,7 +22,6 @@ function tempApp() {
         /* ignore */
       }
       rmSync(dir, { recursive: true, force: true });
-      LogHub.default.setConsoleSinkEnabled(true);
     },
   };
 }

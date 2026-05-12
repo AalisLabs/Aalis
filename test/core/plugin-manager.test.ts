@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { App, LogHub, type PluginModule } from '../../packages/core/src/index.js';
+import { App, type PluginModule } from '../../packages/core/src/index.js';
 
 interface ScratchState {
   applied: string[];
@@ -13,8 +13,6 @@ function makeApp(): { app: App; state: ScratchState; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-app-'));
   const path = join(dir, 'aalis.config.yaml');
   writeFileSync(path, 'name: TestApp\nlogLevel: error\nplugins: {}\n');
-  // 抑制测试期 ERROR 级日志输出污染终端（业务断言不依赖 console.log）
-  LogHub.default.setConsoleSinkEnabled(false);
   const app = new App({ configPath: path });
   const state: ScratchState = { applied: [], disposed: [] };
   return {
