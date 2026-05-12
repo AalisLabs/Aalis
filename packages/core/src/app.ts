@@ -1,14 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { spawn } from 'node:child_process';
-import { ConfigManager } from './config.js';
+import { type AalisConfig, ConfigManager } from './config.js';
 import { Context } from './context.js';
 import { EventBus } from './events.js';
 import { HookRegistry } from './hooks.js';
 import { Logger, type LogLevel } from './logger.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
+import type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 import { ServiceContainer } from './service.js';
 
 // ----- 应用配置选项 -----
@@ -16,91 +12,99 @@ import { ServiceContainer } from './service.js';
 /**
  * App 构造选项
  *
- * 所有字段均可选：未提供的子系统由 App 自动创建。
- * 传入自定义实例即可实现隔离/沙盒/测试等场景。
+ * core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——这些通过 provider 注入：
+ * - `config`：当前配置快照（必填；由宿主从任意来源加载好传进来）
+ * - `configProvider`：可选，提供 save() / watch() 能力；省略则配置只读
+ * - `pluginLoader`：可选，提供插件发现+导入；省略则 `autoLoadPlugins()` 为 no-op
+ * - `restartStrategy`：可选，提供重启实现；省略则 `restart()` 抛错
+ *
+ * 所有内核子系统（events / services / hooks / config）均可注入自定义实例，
+ * 用于沙盒/测试/多实例场景。
  */
 export interface AppOptions {
-  /** 配置文件路径 */
-  configPath?: string;
-  /** 注入自定义事件总线（默认新建） */
-  events?: EventBus;
-  /** 注入自定义服务容器（默认新建） */
-  services?: ServiceContainer;
-  /** 注入自定义钩子注册表（默认新建） */
-  hooks?: HookRegistry;
-  /** 注入自定义配置管理器（默认新建） */
-  config?: ConfigManager;
   /**
-   * 自定义必需服务列表。
+   * 配置快照——必填。
+   * 测试可直接传字面量 `{ name: 'X', logLevel: 'error', plugins: {} }`；
+   * 生产入口由宿主从文件/URL/远端加载后传入。
    *
-   * 例如 `['webui-server', 'cli']` 表示这些服务必须至少有一个提供者在运行。
-   * 默认 `[]`——core 不假设任何具体服务存在，由应用入口显式传入。
+   * 也接受已构造好的 `ConfigManager`（沙盒共享、scope 等场景）。
+   */
+  config: AalisConfig | ConfigManager;
+  /** 配置持久化与外部变更监听；缺省=只读内存模式 */
+  configProvider?: ConfigProvider;
+  /** 业务数据目录（plugin 用作相对路径基准） */
+  dataDir?: string;
+  /** 插件加载器；缺省=不自动加载任何插件（必须通过 `app.plugin(mod)` 手动注册） */
+  pluginLoader?: PluginLoader;
+  /** 重启策略；缺省=`restart()` 抛错 */
+  restartStrategy?: RestartStrategy;
+  /** 注入自定义事件总线 */
+  events?: EventBus;
+  /** 注入自定义服务容器 */
+  services?: ServiceContainer;
+  /** 注入自定义钩子注册表 */
+  hooks?: HookRegistry;
+  /**
+   * 必需服务列表——这些服务必须至少有一个提供者在运行。
+   * 默认 `[]`，core 不假设任何具体服务存在。
    */
   requiredServices?: string[];
 }
 
 /**
- * 创建 App 实例的工厂函数
- *
- * 推荐用此函数而非直接 `new App()` — 语义更清晰，
- * 未来可在不改调用方的前提下加入缓存、校验等逻辑。
+ * 创建 App 实例的工厂函数。
  *
  * @example
- * // 默认用法
- * const app = createApp();
- *
- * // 沙盒隔离: 完全独立的子系统
- * const sandbox = createApp({
- *   config: new ConfigManager('sandbox.config.yaml'),
- *   events: new EventBus(),
- *   services: new ServiceContainer(),
- *   hooks: new HookRegistry(),
- *   requiredServices: [], // 沙盒不需要任何预设服务
+ * // 浏览器/嵌入式：内存配置 + 内存插件加载
+ * const app = createApp({
+ *   config: { name: 'embedded', logLevel: 'info', plugins: {} },
+ *   pluginLoader: bundledLoader([memoryPlugin, agentPlugin]),
  * });
+ *
+ * // Node 宿主由 src/runtime 提供 fs/yaml/spawn 实现
  */
-export function createApp(options?: AppOptions): App {
+export function createApp(options: AppOptions): App {
   return new App(options);
 }
 
 /**
  * Aalis 应用主容器
  *
- * 职责:
- * - 初始化所有核心子系统 (事件总线, 服务容器, 钩子注册表, 配置)
- * - 创建根 Context
- * - 管理插件生命周期
- * - 启动 Agent 消息路由
- *
- * 所有子系统均可通过 AppOptions 注入，使得：
- * - 测试时可 mock 任意子系统
- * - 沙盒插件可创建完全隔离的 App 实例
- * - 多实例部署无需修改 core
+ * core 的"内核"——只持有内存中的抽象（events / services / hooks / config / plugins），
+ * 不接触任何外部 I/O。所有 I/O 通过 `AppOptions` 注入的 provider 完成。
  */
 export class App {
   readonly ctx: Context;
   readonly plugins: PluginManager;
   readonly logger: Logger;
-  readonly packagesDir: string;
 
-  /** 事件总线（可被沙盒插件获取以实现事件桥接） */
   readonly events: EventBus;
-  /** 服务容器 */
   readonly services: ServiceContainer;
-  /** 钩子注册表 */
   readonly hooks: HookRegistry;
 
-  /** 可配置的必需服务列表 */
   readonly requiredServices: readonly string[];
 
-  constructor(options?: AppOptions) {
-    const opts: AppOptions = options ?? {};
+  private readonly pluginLoader?: PluginLoader;
+  private readonly restartStrategy?: RestartStrategy;
+  /** 已发现插件的描述符索引（按模块名）。用于热重载时拿到 source/metadata。 */
+  private readonly discoveredCache: Map<string, PluginDescriptor> = new Map();
 
-    // 1. 核心基础设施（允许外部注入，未提供则自动创建）
-    const config = opts.config ?? new ConfigManager(opts.configPath);
-    this.events = opts.events ?? new EventBus();
-    this.services = opts.services ?? new ServiceContainer();
-    this.hooks = opts.hooks ?? new HookRegistry();
+  constructor(options: AppOptions) {
+    // 1. 配置：接受快照或已构造的 ConfigManager
+    const config =
+      options.config instanceof ConfigManager
+        ? options.config
+        : new ConfigManager(options.config, {
+            provider: options.configProvider,
+            dataDir: options.dataDir,
+          });
+
+    this.events = options.events ?? new EventBus();
+    this.services = options.services ?? new ServiceContainer();
+    this.hooks = options.hooks ?? new HookRegistry();
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
+    this.pluginLoader = options.pluginLoader;
+    this.restartStrategy = options.restartStrategy;
 
     // 2. 根上下文
     this.ctx = new Context({
@@ -114,22 +118,20 @@ export class App {
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.ctx, this.logger);
-    this.requiredServices = opts.requiredServices ?? [];
+    this.requiredServices = options.requiredServices ?? [];
     this.plugins.requiredServices = this.requiredServices;
-    this.packagesDir = resolve(process.cwd(), 'packages');
 
     // 4. 注册核心服务
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
     this.ctx.provide('plugins', this.plugins, { capabilities: ['plugin-mgmt'] });
 
-    // 5. 应用启动时已存在的服务偏好（容器先于此处 register，但偏好可提前于 entry 设置）
+    // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();
     for (const [svcName, ctxId] of Object.entries(initialPrefs)) {
       this.ctx.preferService(svcName, ctxId);
     }
 
-    // 6. 新服务注册时，若配置中已有该服务的偏好则继续保留（resolveEntries 内部按 contextId 匹配，
-    //    新注册不会改变偏好；无需在此处重新调用 preferService，但记录日志便于诊断）
+    // 6. 服务偏好诊断日志
     this.ctx.on('service:registered', svcName => {
       const pref = config.getServicePreferences()[svcName];
       if (pref) {
@@ -137,7 +139,7 @@ export class App {
       }
     });
 
-    // 7. 监控核心必需服务，卸载时自动恢复
+    // 7. 必需服务掉线自动恢复
     this.ctx.on('service:unregistered', async name => {
       if (!this.requiredServices.includes(name)) return;
       if (this.ctx.hasService(name)) return;
@@ -170,40 +172,41 @@ export class App {
   }
 
   /**
-   * 自动扫描 packages/ 目录，动态加载所有插件
-   *
-   * 规则:
-   * - 跳过 package.json 中标记 `"aalis": { "core": true }` 的包
-   * - 其余包全部视为插件，通过 dynamic import() 加载
-   * - commands、tools 等业务服务由插件提供；Context 会缓冲相关注册直到服务就绪
+   * 通过 `pluginLoader` 自动加载所有发现的插件。
+   * 未注入 loader 时为 no-op，调用方需自行 `app.plugin(mod)` 手动注册。
    */
-  async autoLoadPlugins(packagesDir?: string): Promise<void> {
-    const dir = packagesDir ?? this.packagesDir;
-    const discovered = await this.discoverPlugins(dir);
+  async autoLoadPlugins(): Promise<void> {
+    if (!this.pluginLoader) {
+      this.logger.debug('未注入 pluginLoader，跳过自动加载');
+      return;
+    }
+
+    const discovered = await this.pluginLoader.discover();
     this.logger.info(`发现 ${discovered.length} 个插件`);
 
-    // 按模块名索引已加载的模块（用于多实例查找）
+    // 按模块名索引（用于多实例查找）
     const loadedModules = new Map<string, PluginModule>();
 
     // Pass 1: 先 import 所有模块，触发其顶层副作用（如 Context.extend 注入便捷方法）。
     // 这样可以避免按字母序激活时，依赖 Context.extend 注入方法的插件先于
     // 注入者（如 plugin-tools / plugin-commands）执行而激活失败。
-    const modules: Array<{ pkg: (typeof discovered)[number]; mod: PluginModule }> = [];
-    for (const pkg of discovered) {
+    const modules: Array<{ desc: PluginDescriptor; mod: PluginModule }> = [];
+    for (const desc of discovered) {
+      this.discoveredCache.set(desc.name, desc);
       try {
-        const mod = (await import(pathToFileURL(pkg.entry).href)) as PluginModule;
-        if (typeof mod.apply !== 'function' || !mod.name) {
-          this.logger.debug(`跳过非插件模块: ${pkg.name}（缺少 name 或 apply）`);
+        const mod = await this.pluginLoader.load(desc);
+        if (!mod || typeof mod.apply !== 'function' || !mod.name) {
+          this.logger.debug(`跳过非插件模块: ${desc.name}（缺少 name 或 apply）`);
           continue;
         }
-        modules.push({ pkg, mod });
+        modules.push({ desc, mod });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`加载插件 "${pkg.name}" 失败: ${message}`);
+        this.logger.error(`加载插件 "${desc.name}" 失败: ${message}`);
       }
     }
 
-    // Pass 2: 注册并尝试激活所有已加载模块。此时 Context.prototype 上的扩展方法都已就位。
+    // Pass 2: 注册并尝试激活所有已加载模块。
     for (const { mod } of modules) {
       loadedModules.set(mod.name, mod);
       try {
@@ -214,11 +217,11 @@ export class App {
       }
     }
 
-    // 扫描配置文件中的多实例条目（name:suffix 格式）
+    // 扫描配置中的多实例条目（name:suffix 格式）
     const pluginConfigs = this.ctx.config.get('plugins') ?? {};
     for (const configKey of Object.keys(pluginConfigs)) {
       const { moduleName, suffix } = parseInstanceId(configKey);
-      if (!suffix) continue; // 非多实例条目，已在上面加载
+      if (!suffix) continue;
       const mod = loadedModules.get(moduleName);
       if (!mod) {
         this.logger.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
@@ -236,110 +239,51 @@ export class App {
       }
     }
 
-    // 将插件默认配置中缺失的字段同步到配置文件（内部已按需保存）
+    // 同步插件 defaultConfig
     const changed = this.ctx.config.syncPluginDefaults(this.plugins.getStatus());
     for (const id of changed) this.logger.debug(`同步插件配置: ${id}`);
     if (changed.length > 0) this.logger.info('已将插件配置同步到配置文件');
   }
 
   /**
-   * 重新扫描 packages/ 目录，加载新发现的插件（已注册的跳过）
-   * 返回新加载的插件名列表
+   * 重新扫描插件源，加载新发现的插件（已注册的跳过）。
+   * 返回新加载的插件名列表。
+   *
+   * 优先调用 `pluginLoader.reload(desc)` 实现热重载（loader 可做缓存失效）；
+   * 未实现 reload 时退化到普通 `load(desc)`。
    */
   async rescanPlugins(): Promise<string[]> {
-    const discovered = await this.discoverPlugins(this.packagesDir);
+    if (!this.pluginLoader) return [];
+    const discovered = await this.pluginLoader.discover();
     const loaded: string[] = [];
 
-    for (const pkg of discovered) {
+    for (const desc of discovered) {
+      this.discoveredCache.set(desc.name, desc);
       // 跳过已注册的
-      if (this.plugins.getPlugin(pkg.name)) continue;
+      if (this.plugins.getPlugin(desc.name)) continue;
 
       try {
-        // 用入口文件 mtime 做缓存键：未修改则走 ESM 缓存，改了的才重载
-        let cacheKey = '';
-        try {
-          cacheKey = `?t=${(await stat(pkg.entry)).mtimeMs}`;
-        } catch {
-          /* stat 失败时用空 key，让 import 自己报错 */
-        }
-        const mod = (await import(pathToFileURL(pkg.entry).href + cacheKey)) as PluginModule;
-        if (typeof mod.apply !== 'function' || !mod.name) {
-          this.logger.debug(`跳过非插件模块: ${pkg.name}（缺少 name 或 apply）`);
+        const mod = this.pluginLoader.reload
+          ? await this.pluginLoader.reload(desc)
+          : await this.pluginLoader.load(desc);
+        if (!mod || typeof mod.apply !== 'function' || !mod.name) {
+          this.logger.debug(`跳过非插件模块: ${desc.name}`);
           continue;
         }
         await this.plugin(mod);
-        loaded.push(pkg.name);
-        this.logger.info(`热加载插件: ${pkg.name}`);
+        loaded.push(desc.name);
+        this.logger.info(`热加载插件: ${desc.name}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`热加载插件 "${pkg.name}" 失败: ${message}`);
+        this.logger.error(`热加载插件 "${desc.name}" 失败: ${message}`);
       }
     }
 
     return loaded;
   }
 
-  // ---- 内部方法 ----
-
   /**
-   * 扫描目录，返回可加载的插件列表
-   */
-  private async discoverPlugins(dir: string): Promise<Array<{ name: string; dir: string; entry: string }>> {
-    this.logger.info(`正在扫描插件目录: ${dir}`);
-
-    let entries: string[];
-    try {
-      const dirents = await readdir(dir, { withFileTypes: true });
-      entries = dirents.filter(d => d.isDirectory() || d.isSymbolicLink()).map(d => d.name);
-    } catch {
-      this.logger.warn(`无法读取 packages 目录: ${dir}`);
-      return [];
-    }
-
-    const discovered: Array<{ name: string; dir: string; entry: string }> = [];
-
-    for (const entry of entries) {
-      const pkgJsonPath = resolve(dir, entry, 'package.json');
-      let pkgJson: Record<string, unknown>;
-      try {
-        pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
-      } catch {
-        this.logger.debug(`跳过 ${entry}: 无法读取 package.json`);
-        continue;
-      }
-
-      // 跳过标记为 core 的包
-      const aalisMeta = pkgJson.aalis as Record<string, unknown> | undefined;
-      if (aalisMeta?.core) {
-        this.logger.debug(`跳过核心包: ${pkgJson.name}`);
-        continue;
-      }
-
-      // 跳过标记为 client 的前端包（非 Node.js 插件）
-      if (aalisMeta?.client) {
-        this.logger.debug(`跳过前端包: ${pkgJson.name}`);
-        continue;
-      }
-
-      // 跳过标记为 types-only 的 API 包（仅提供类型声明合并，无 apply 实现）
-      if (aalisMeta?.types) {
-        this.logger.debug(`跳过类型包: ${pkgJson.name}`);
-        continue;
-      }
-
-      const main = (pkgJson.main as string) || 'dist/index.js';
-      discovered.push({
-        name: pkgJson.name as string,
-        dir: resolve(dir, entry),
-        entry: resolve(dir, entry, main),
-      });
-    }
-
-    return discovered;
-  }
-
-  /**
-   * 保存当前配置到磁盘
+   * 保存当前配置（委托给 configProvider；无 provider 时静默忽略）。
    */
   saveConfig(): void {
     this.ctx.config.save();
@@ -347,10 +291,10 @@ export class App {
   }
 
   /**
-   * 配置文件外部变更时的处理：重新加载各插件配置并重新激活
+   * 配置外部变更时的处理：重新计算各插件配置并热重载差异。
    */
   private async handleConfigFileChanged(): Promise<void> {
-    this.logger.info('检测到配置文件变更，正在热重载...');
+    this.logger.info('检测到配置变更，正在热重载...');
     try {
       let changed = false;
       for (const p of this.plugins.getStatus()) {
@@ -379,18 +323,12 @@ export class App {
     this.logger.info('正在启动...');
     await this.ctx.emit('app:starting');
 
-    // 检查核心必需服务，缺失时自动寻找并启动提供者
     await this.ensureRequiredServices();
 
-    // 注：消息路由（inbound 多相位编排、outbound 钩子链）完全由
-    // @aalis/plugin-gateway 承担。core 不内置任何消息派发兜底——若 gateway
-    // 缺席，依赖它的插件会因为 inject.required 不满足而不激活，这正是
-    // 反应式生命周期想要的"清晰失败"，而不是悄无声息地绕过 flow / trigger 等策略。
-
-    // 发出 ready 事件
+    // 注：消息路由由 @aalis/plugin-gateway 承担。
     await this.ctx.emit('ready');
 
-    // 监听配置文件变更，热重载插件配置
+    // 监听配置外部变更（provider 不支持 watch 时为 no-op）
     this.ctx.config.watch(() => this.handleConfigFileChanged());
 
     this.logger.info('启动完成');
@@ -398,34 +336,20 @@ export class App {
   }
 
   /**
-   * 重启应用（先停止再 spawn 新进程）
-   * 延迟 500ms 执行，以便调用方能先返回响应
+   * 重启应用——委托给 `restartStrategy`。
+   * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
    */
   restart(): void {
+    if (!this.restartStrategy) {
+      throw new Error('App.restart() 不可用：未注入 restartStrategy。');
+    }
     this.ctx
       .emit('restarting')
-      .then(() => {
-        setTimeout(async () => {
-          await this.stop();
-          const scriptFile = process.argv[1];
-          let exec: string;
-          let args: string[];
-          if (scriptFile?.endsWith('.ts')) {
-            const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
-            exec = existsSync(tsxBin) ? tsxBin : 'tsx';
-            args = process.argv.slice(1);
-          } else {
-            [exec, ...args] = process.argv;
-          }
-          const child = spawn(exec, args, {
-            cwd: process.cwd(),
-            stdio: 'inherit',
-            detached: true,
-            env: process.env,
-          });
-          child.unref();
-          process.exit(0);
-        }, 500);
+      .then(async () => {
+        // 给调用方一个机会先返回响应
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await this.stop();
+        await this.restartStrategy!.restart();
       })
       .catch(() => {});
   }

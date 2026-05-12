@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App, Context } from '../../packages/core/src/index.js';
 import * as agentDefaultModule from '../../packages/plugin-agent-default/src/index.js';
@@ -27,11 +24,8 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
  */
 
 function setupApp() {
-  const dir = mkdtempSync(join(tmpdir(), 'aalis-e2e-'));
-  const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, 'name: E2E\nlogLevel: error\nplugins: {}\n');
-  const app = new App({ configPath: path });
-  return { app, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  return { app, cleanup: () => {} };
 }
 
 async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatRequest[] }) {
