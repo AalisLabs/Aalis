@@ -1437,7 +1437,16 @@ class DefaultAgent implements AgentService {
 
   /**
    * 派发出站消息：优先经过 gateway 中间件链；gateway 缺失时回退到事件总线。
-   * 完整发行入口通常会要求 gateway；最小应用/测试场景仍可不加载 gateway。
+   *
+   * ⚠️ 仅用于"无 gateway"的最小应用 / 测试场景。完整应用应当加载 plugin-gateway，
+   * 此时该 fallback 永远不命中——出站消息总是经过 outbound:dispatch 钩子链
+   * （审计 / 脱敏 / 限速 / authority 等中间件）。
+   *
+   * 由于 plugin-agent-default 未在 inject.required 中声明 'gateway'，
+   * 即使 gateway 未加载本插件仍会激活，因此保留该 fallback 以便：
+   *   - 集成测试不必启动 gateway
+   *   - 嵌入式 / 单 agent 部署场景
+   * 生产部署务必确保 plugin-gateway 已加载，否则中间件链会被跳过。
    */
   private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const gateway = this.ctx.getService<GatewayService>('gateway');
@@ -1445,7 +1454,7 @@ class DefaultAgent implements AgentService {
       await gateway.dispatchOutbound(message);
       return;
     }
-    this.logger.warn('Gateway 服务不可用，回退至 ctx.emit(outbound:message)');
+    this.logger.warn('Gateway 服务不可用，回退至 ctx.emit(outbound:message)（中间件链被跳过）');
     await this.ctx.emit('outbound:message', message);
   }
 }
