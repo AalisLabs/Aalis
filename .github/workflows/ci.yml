@@ -53,6 +53,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build (produce dist for runtime imports)
+        run: pnpm -r build
+
       - name: Run unit tests
         run: pnpm exec vitest run test/core test/plugins test/runtime
 
@@ -75,6 +78,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build (produce dist for runtime imports)
+        run: pnpm -r build
+
       - name: Run integration tests
         run: pnpm exec vitest run test/integration
 
@@ -96,6 +102,9 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: Build (produce dist for runtime imports)
+        run: pnpm -r build
 
       - name: Run tests with coverage
         run: pnpm run test --coverage
