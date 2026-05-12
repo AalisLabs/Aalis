@@ -35,12 +35,21 @@ export function useWebSocket(
   onSessionSwitched?: (sessionId: string) => void,
   onSessionsChanged?: () => void,
   onTodoUpdated?: (items: unknown[]) => void,
-  onStreamResume?: (content: string, reasoningContent: string, segments: ContentSegment[], done: boolean, toolCallProgress?: { index: number; name: string; charsAccumulated: number; startedAt?: number }) => void,
+  onStreamResume?: (
+    content: string,
+    reasoningContent: string,
+    segments: ContentSegment[],
+    done: boolean,
+    toolCallsProgress?: Array<{ index: number; name: string; charsAccumulated: number; startedAt: number }>,
+  ) => void,
   onConfirm?: (content: string) => void,
   onTokenUsage?: (usage: TokenUsageData) => void,
   onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void,
   onHistoryChanged?: (sessionId: string) => void,
-  onToolCallProgress?: (progress: { index: number; name: string; charsAccumulated: number } | null) => void,
+  /** 单条增量更新；done=true 时调用 onToolCallProgressClear */
+  onToolCallProgress?: (progress: { index: number; name: string; charsAccumulated: number }) => void,
+  /** 清空所有生成中进度（stream done / 各类重置） */
+  onToolCallProgressClear?: () => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -77,12 +86,11 @@ export function useWebSocket(
           const data = JSON.parse(event.data);
           if (data.type === 'stream') {
             onStream(data.contentDelta, data.reasoningDelta, data.done, data.toolLimitReached);
-            // 工具调用进度（在文本/reasoning delta 到来时由订阅方自行清空）
             if (data.toolCallProgress) {
               onToolCallProgress?.(data.toolCallProgress);
             }
             if (data.done) {
-              onToolCallProgress?.(null);
+              onToolCallProgressClear?.();
             }
           } else if (data.type === 'message' && data.content) {
             onMessage(data.content, data.reasoningContent, data.segments);
@@ -105,7 +113,7 @@ export function useWebSocket(
           } else if (data.type === 'todo_updated' && data.todoItems) {
             onTodoUpdated?.(data.todoItems);
           } else if (data.type === 'stream_resume') {
-            onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', data.segments ?? [], !!data.done, data.toolCallProgress);
+            onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', data.segments ?? [], !!data.done, data.toolCallsProgress);
           } else if (data.type === 'confirm' && data.content) {
             onConfirm?.(data.content);
           } else if (data.type === 'token_usage' && data.tokenUsage) {
@@ -125,7 +133,7 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated, onStreamResume, onConfirm, onTokenUsage, onCompressing, onHistoryChanged, onToolCallProgress]);
+  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated, onStreamResume, onConfirm, onTokenUsage, onCompressing, onHistoryChanged, onToolCallProgress, onToolCallProgressClear]);
 
   // 监听 sessionId 变化，动态切换 WS 订阅
   useEffect(() => {
