@@ -28,7 +28,7 @@ import { registerPluginRoutes } from './routes/plugins.js';
 export const name = '@aalis/plugin-webui-server';
 export const displayName = 'WebUI 服务端';
 export const subsystem = 'platform';
-export const provides = ['webui-server', 'webui-client'];
+export const provides = ['webui-server'];
 export const inject = {
   optional: ['authority', 'commands', 'storage', 'platform'],
 };
@@ -135,14 +135,20 @@ interface WSOutgoing {
   reasoningDelta?: string;
   done?: boolean;
   toolLimitReached?: boolean;
-  /** 流式生成期间：工具调用增量进度（OpenAI/DeepSeek 在 tool_call 阶段不发文本，需要让 UI 显示「正在生成」） */
+  /** 流式生成期间：本次增量更新的单个工具调用进度（OpenAI/DeepSeek 在 tool_call 阶段不发文本，UI 显示「正在生成」）。
+   *  多工具并发场景下，每个 chunk 只携带其中一个 index 的更新；客户端按 index 维护自己的 Map。 */
   toolCallProgress?: {
     index: number;
     name: string;
     charsAccumulated: number;
-    /** 仅 stream_resume 携带：服务端首次观察到该 tool_call 的时间戳（ms） */
-    startedAt?: number;
   };
+  /** 仅 stream_resume 携带：重连时所有仍在生成中的工具调用快照（按 index 升序） */
+  toolCallsProgress?: Array<{
+    index: number;
+    name: string;
+    charsAccumulated: number;
+    startedAt: number;
+  }>;
   status?: Record<string, unknown>;
   log?: LogEntry;
   toolName?: string;
@@ -314,8 +320,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       reasoningContent: string;
       segments: BufferSegment[];
       generating: boolean;
-      /** 当前正在生成的 tool_call 进度（done 后清空） */
-      toolCallProgress?: { index: number; name: string; charsAccumulated: number; startedAt: number };
+      /** 当前正在生成的所有 tool_call 进度（按 index 索引，done 或首个 phase='start' 后清空） */
+      toolCallsProgress: Map<number, { name: string; charsAccumulated: number; startedAt: number }>;
     }
   >();
 
@@ -773,20 +779,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessions.get(sid)!.add(ws);
           // 如果该会话正在生成中，发送已累积的内容供客户端恢复
           const buf = streamBuffers.get(sid);
-          if (buf && (buf.content || buf.reasoningContent || buf.segments.length > 0 || buf.toolCallProgress)) {
+          if (buf && (buf.content || buf.reasoningContent || buf.segments.length > 0 || buf.toolCallsProgress.size > 0)) {
             const resume: WSOutgoing = {
               type: 'stream_resume',
               sessionId: sid,
               content: buf.content,
               reasoningContent: buf.reasoningContent,
               segments: buf.segments.length > 0 ? buf.segments : undefined,
-              toolCallProgress: buf.toolCallProgress
-                ? {
-                    index: buf.toolCallProgress.index,
-                    name: buf.toolCallProgress.name,
-                    charsAccumulated: buf.toolCallProgress.charsAccumulated,
-                    startedAt: buf.toolCallProgress.startedAt,
-                  }
+              toolCallsProgress: buf.toolCallsProgress.size > 0
+                ? [...buf.toolCallsProgress.entries()]
+                    .sort((a, b) => a[0] - b[0])
+                    .map(([index, v]) => ({
+                      index,
+                      name: v.name,
+                      charsAccumulated: v.charsAccumulated,
+                      startedAt: v.startedAt,
+                    }))
                 : undefined,
               done: !buf.generating,
             };
@@ -1032,12 +1040,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!chunk.done) {
       let buf = streamBuffers.get(chunk.sessionId);
       if (!buf) {
-        buf = { content: '', reasoningContent: '', segments: [], generating: true };
+        buf = { content: '', reasoningContent: '', segments: [], generating: true, toolCallsProgress: new Map() };
         streamBuffers.set(chunk.sessionId, buf);
       }
       if (chunk.contentDelta) {
-        // 进入文本生成阶段：清空 tool 进度
-        buf.toolCallProgress = undefined;
+        // 进入文本生成阶段：清空所有 tool 进度
+        buf.toolCallsProgress.clear();
         buf.content += chunk.contentDelta;
         // 追加到 segments：合并连续 text
         const last = buf.segments[buf.segments.length - 1];
@@ -1048,7 +1056,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
       if (chunk.reasoningDelta) {
-        buf.toolCallProgress = undefined;
+        buf.toolCallsProgress.clear();
         buf.reasoningContent += chunk.reasoningDelta;
         // 同样追加到统一时间线：合并连续 reasoning_text
         const last = buf.segments[buf.segments.length - 1];
@@ -1059,15 +1067,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
       if (chunk.toolCallProgress) {
-        const prev = buf.toolCallProgress;
-        // 仅当 index 变化时刷新 startedAt（同一个 tool_call 持续累积时保持开始时间）
-        const startedAt = prev && prev.index === chunk.toolCallProgress.index ? prev.startedAt : Date.now();
-        buf.toolCallProgress = { ...chunk.toolCallProgress, startedAt };
+        const { index, name, charsAccumulated } = chunk.toolCallProgress;
+        const prev = buf.toolCallsProgress.get(index);
+        buf.toolCallsProgress.set(index, {
+          name,
+          charsAccumulated,
+          startedAt: prev?.startedAt ?? Date.now(),
+        });
       }
     } else {
-      // done：清空 tool 进度
+      // done：清空所有 tool 进度
       const buf = streamBuffers.get(chunk.sessionId);
-      if (buf) buf.toolCallProgress = undefined;
+      if (buf) buf.toolCallsProgress.clear();
     }
     const sockets = sessions.get(chunk.sessionId);
     if (!sockets) return;
@@ -1095,10 +1106,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 缓存工具调用到 segments
     let buf = streamBuffers.get(info.sessionId);
     if (!buf) {
-      buf = { content: '', reasoningContent: '', segments: [], generating: true };
+      buf = { content: '', reasoningContent: '', segments: [], generating: true, toolCallsProgress: new Map() };
       streamBuffers.set(info.sessionId, buf);
     }
     if (info.phase === 'start') {
+      // 工具进入实际执行阶段：清掉生成中进度（占位卡 → ToolCallBlock 切换）
+      buf.toolCallsProgress.clear();
       buf.segments.push({ type: 'tool_call', name: info.toolName, args: info.args ?? {}, startTime: Date.now() });
     } else if (info.phase === 'end') {
       // 找到最后一个同名且无结果的 tool_call segment，填充结果
