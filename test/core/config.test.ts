@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ConfigManager, ScopedConfigManager } from '../../packages/core/src/index.js';
 import { type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 

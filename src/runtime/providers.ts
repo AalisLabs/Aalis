@@ -103,7 +103,7 @@ function buildSaveYaml(config: AalisConfig, rawYaml: string | null): string {
   return stringifyYaml(obj, { lineWidth: 0 });
 }
 
-export interface FsYamlConfigProviderResult {
+interface FsYamlConfigProviderResult {
   /** 当前快照（用于 `new App({ config })`） */
   config: AalisConfig;
   /** Provider 实例（用于 `new App({ configProvider })`） */

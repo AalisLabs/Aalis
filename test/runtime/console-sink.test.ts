@@ -47,13 +47,13 @@ describe('LogHub 纯 pub-sub', () => {
     expect(hub.getBuffer().map(e => e.level)).toEqual(['warn', 'error']);
   });
 
-  it('缓冲容量上限（默认 500 条 FIFO）', () => {
+  it('缓冲容量上限（默认 2000 条 FIFO）', () => {
     const hub = new LogHub();
     const logger = new Logger('cap', 'debug', hub);
-    for (let i = 0; i < 600; i++) logger.info(`m${i}`);
+    for (let i = 0; i < 2100; i++) logger.info(`m${i}`);
     const buf = hub.getBuffer();
-    expect(buf.length).toBe(500);
+    expect(buf.length).toBe(2000);
     expect(buf[0].message).toBe('m100');
-    expect(buf.at(-1)?.message).toBe('m599');
+    expect(buf.at(-1)?.message).toBe('m2099');
   });
 });
