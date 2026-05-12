@@ -170,4 +170,6 @@ jobs:
             exit 0
           fi
           echo "Checking: $changed"
-          pnpm exec biome check $changed
+          # --no-errors-on-unmatched：当所有改动文件恰好全部位于 biome.json 的 ignore
+          # 范围（如 packages/plugin-webui-client）时，不报错退出。
+          pnpm exec biome check --no-errors-on-unmatched $changed
