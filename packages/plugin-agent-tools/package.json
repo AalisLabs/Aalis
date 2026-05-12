@@ -16,11 +16,5 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
-  },
-  "exports": {
-    ".": {
-      "source": "./src/index.ts",
-      "default": "dist/index.js"
-    }
   }
 }

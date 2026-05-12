@@ -17,11 +17,5 @@
   },
   "aalis": {
     "types": true
-  },
-  "exports": {
-    ".": {
-      "source": "./src/index.ts",
-      "default": "dist/index.js"
-    }
   }
 }
