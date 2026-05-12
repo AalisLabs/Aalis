@@ -90,7 +90,11 @@ export interface PluginLoader {
  * - Node 进程宿主：spawn 一个新进程然后退出
  * - 浏览器宿主：`location.reload()`
  * - 嵌入式宿主：可能就是 noop，或者通知外层重新创建 App
+ *
+ * `restart(opts.stop)` 由 App 传入"先停掉当前实例"的回调；
+ * **时序由 strategy 决定**——例如 HTTP 宿主可能想先延迟几百毫秒让响应返回客户端再 stop，
+ * CLI/嵌入式宿主可能直接 `await stop()` 后立刻重启，core 不再硬编码时延。
  */
 export interface RestartStrategy {
-  restart(): void | Promise<void>;
+  restart(opts: { stop: () => Promise<void> }): void | Promise<void>;
 }

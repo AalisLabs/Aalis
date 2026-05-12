@@ -263,11 +263,18 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
 /**
  * Node 进程重启策略：spawn 一个 detached 子进程沿用当前 argv，然后 `process.exit(0)`。
  *
+ * 时序：
+ * 1. 等 500ms 让正在飞行的 HTTP/WS 响应有机会先返回客户端
+ * 2. 调 `stop()` 优雅停掉当前 App（关闭网关、断开适配器等）
+ * 3. spawn 新进程 + `process.exit(0)`
+ *
  * 对 .ts 入口（开发模式）会优先使用本地 `tsx` 二进制。
  */
 export function createProcessRespawnStrategy(): RestartStrategy {
   return {
-    restart() {
+    async restart({ stop }) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await stop();
       const scriptFile = process.argv[1];
       let exec: string;
       let args: string[];

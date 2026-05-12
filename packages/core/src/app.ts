@@ -49,6 +49,12 @@ export interface AppOptions {
    * 默认 `[]`，core 不假设任何具体服务存在。
    */
   requiredServices?: string[];
+  /**
+   * 开发模式开关——传递给根 Context，决定 `provide` 是否跑能力探测。
+   * 默认 `true`（dev-safe）；生产宿主应显式传入 `false` 跳过热路径开销。
+   * core 不读 `process.env`，完全以宿主传入为准。
+   */
+  devMode?: boolean;
 }
 
 /**
@@ -114,6 +120,7 @@ export class App {
       hooks: this.hooks,
       logger: this.logger,
       config,
+      devMode: options.devMode ?? true,
     });
 
     // 3. 插件管理器
@@ -337,20 +344,20 @@ export class App {
 
   /**
    * 重启应用——委托给 `restartStrategy`。
+   *
+   * core 只负责发出 `restarting` 事件并把 `stop` 回调交给策略；
+   * **任何"等响应返回"的延迟、stop 与 restart 的顺序都由策略决定**。
+   *
    * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
    */
   restart(): void {
     if (!this.restartStrategy) {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
+    const strategy = this.restartStrategy;
     this.ctx
       .emit('restarting')
-      .then(async () => {
-        // 给调用方一个机会先返回响应
-        await new Promise(resolve => setTimeout(resolve, 500));
-        await this.stop();
-        await this.restartStrategy!.restart();
-      })
+      .then(() => strategy.restart({ stop: () => this.stop() }))
       .catch(() => {});
   }
 
