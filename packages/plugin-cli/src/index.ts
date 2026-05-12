@@ -175,10 +175,14 @@ class CliTui {
     return this.running;
   }
 
+  /** start() 前 consoleSink 的状态，stop() 时恢复（避免与外部 installConsoleSink 冲突）。 */
+  private previousConsoleSinkEnabled = false;
+
   start(): void {
     if (this.running) return;
     this.running = true;
 
+    this.previousConsoleSinkEnabled = LogHub.default.isConsoleSinkEnabled();
     LogHub.default.setConsoleSinkEnabled(false);
     // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll（兜底，部分终端不支持）
     // 1000h+1006h: SGR 鼠标上报，覆盖滚轮事件以便所有终端都能滚动
@@ -227,7 +231,7 @@ class CliTui {
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
-    LogHub.default.setConsoleSinkEnabled(true);
+    LogHub.default.setConsoleSinkEnabled(this.previousConsoleSinkEnabled);
   }
 
   pushAssistant(content: string): void {
