@@ -175,25 +175,13 @@ class CliTui {
     return this.running;
   }
 
-  /** start() 前 consoleSink 的状态，stop() 时恢复（避免与外部 installConsoleSink 冲突）。 */
-  private previousConsoleSinkEnabled = false;
-  /**
-   * 外部 console sink（由应用入口注册为 `console-sink` 服务）的暂停/恢复句柄。
-   *
-   * 必须暂停的原因：core 内置 console sink 关闭后，stdout 写入实际由应用入口的
-   * runtime sink 通过 `LogHub.onEntry` 订阅完成；如果不暂停它，进入备用屏后
-   * 后续插件日志仍会被写到备用屏，污染界面（需要按任意键 re-render 才能盖掉）。
-   */
-  private consoleSinkHandle: { pause(): void; resume(): void } | undefined;
-
   start(): void {
     if (this.running) return;
     this.running = true;
 
-    this.previousConsoleSinkEnabled = LogHub.default.isConsoleSinkEnabled();
-    LogHub.default.setConsoleSinkEnabled(false);
-    this.consoleSinkHandle = this.ctx.getService<{ pause(): void; resume(): void }>('console-sink');
-    this.consoleSinkHandle?.pause();
+    // 宣告"我接管终端"——任何写 stdout 的订阅者（runtime/console-sink 等）
+    // 自行响应该事件停止写入，CLI 不直接干预日志系统。
+    this.ctx.emit('terminal:claimed', 'cli').catch(() => {});
     // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll（兜底，部分终端不支持）
     // 1000h+1006h: SGR 鼠标上报，覆盖滚轮事件以便所有终端都能滚动
     // 注意：开启 1000h 后终端会把左/右键也发给程序，导致原生选择被吞。
@@ -241,9 +229,8 @@ class CliTui {
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
-    LogHub.default.setConsoleSinkEnabled(this.previousConsoleSinkEnabled);
-    this.consoleSinkHandle?.resume();
-    this.consoleSinkHandle = undefined;
+    // 归还终端——sink 等订阅者可自行恢复
+    this.ctx.emit('terminal:released', 'cli').catch(() => {});
   }
 
   pushAssistant(content: string): void {
