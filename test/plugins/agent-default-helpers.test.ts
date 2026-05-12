@@ -1,5 +1,5 @@
-import type { Message } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import type { Message } from '../../packages/core/src/index.js';
 import {
   estimateMsgTokens,
   estimateTextTokens,
@@ -7,7 +7,7 @@ import {
   formatTimeLabel,
   INPUT_CONVENTIONS,
   isSameMessage,
-} from '../src/helpers.js';
+} from '../../packages/plugin-agent-default/src/helpers.js';
 
 describe('formatTimeLabel', () => {
   it('同一天显示「今天 HH:mm」', () => {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigManager, Context, EventBus, HookRegistry, Logger, ServiceContainer } from '../src/index.js';
+import {
+  ConfigManager,
+  Context,
+  EventBus,
+  HookRegistry,
+  Logger,
+  ServiceContainer,
+} from '../../packages/core/src/index.js';
 
 function makeContext(id = 'root'): Context {
   const events = new EventBus();

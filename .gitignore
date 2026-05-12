@@ -17,8 +17,8 @@ workspace/
 *.node
 *.tsbuildinfo
 **/native/target/
-/test/
-/tests/
+coverage/
+.vitest-cache/
 .DS_Store
 .tmp/
 .temp/

@@ -643,8 +643,6 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'deepseek-v4-pro': [Chat, ToolCalling, Streaming, Thinking],
   // 独立推理模型
   'deepseek-reasoner': [Chat, ToolCalling, Streaming, Thinking],
-  // 兼容旧别名（已下线，仅供老配置识别）
-  'deepseek-chat': [Chat, ToolCalling, Streaming],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];

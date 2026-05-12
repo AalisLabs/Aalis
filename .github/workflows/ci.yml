@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-check:
-    name: build + lint + core-purity
+    name: build + lint + tests + coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -28,11 +28,44 @@ jobs:
       - name: Build all packages
         run: pnpm -r build
 
+      - name: tsc --noEmit (root project)
+        run: pnpm exec tsc --noEmit
+
       - name: Biome (lint + format check)
         run: pnpm exec biome check . --max-diagnostics=200
 
-      - name: Run tests
-        run: pnpm run test
+      - name: Run tests with coverage
+        run: pnpm run test --coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  knip-dead-code:
+    name: knip (dead code / unused deps) — informational
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: knip
+        run: pnpm exec knip --no-progress || true
 
   biome-changed:
     name: Biome on changed files (HARD for new code)
