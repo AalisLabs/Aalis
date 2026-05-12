@@ -54,8 +54,6 @@ class DefaultAgent implements AgentService {
   private toolResultMaxRatio: number;
   /** 内存裁剪触发比例 (0~1)：估算输入 token 占 contextLength 的比例上限，超过则触发本次调用的内存裁剪 */
   private trimThresholdRatio: number;
-  /** 用户指定的对话模型（空字符串 = 使用默认提供者的默认模型） */
-  private preferredModel: string;
 
   /**
    * 活跃 AbortController 表
@@ -88,17 +86,17 @@ class DefaultAgent implements AgentService {
     this.maxToolIterations = (config.maxToolIterations as number) ?? 30;
     this.toolResultMaxRatio = (config.toolResultMaxRatio as number) ?? 0.15;
     this.trimThresholdRatio = (config.trimThresholdRatio as number) ?? 1.0;
-    this.preferredModel = (config.preferredModel as string) || '';
     this.logger.info('默认对话代理已初始化');
   }
 
   /**
    * 根据优先级链获取 LLM 服务与 (provider, model) 覆盖
    *
-   * 优先级（从高到低）：
-   * 1. session-manager resolveConfig (= 会话 config > 父 sessionDefaults > 平台 profile)
-   * 2. 全局 preferredModel
-   * 3. 默认 LLM 提供者的默认模型
+   * 全部交给 session-manager.resolveConfig。优先级（从高到低）：
+   * 1. 会话 config
+   * 2. 父会话 sessionDefaults
+   * 3. 平台 profile
+   * 4. session-manager.defaults（全局 fallback）
    *
    * model 字段可以是复合 ref `"<contextId>::<modelId>"`，由 parseModelRef 拆分。
    * llmProvider 字段为充足优先级（允许在不指定模型的情况下锁定 provider 走其默认 model）。
@@ -110,17 +108,12 @@ class DefaultAgent implements AgentService {
     let rawModel: string | undefined;
     let providerOverride: string | undefined;
 
-    // 1. session-manager resolveConfig: 会话 > 父 sessionDefaults > 平台 profile
+    // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile > 全局 defaults
     const sm = this.ctx.getService<SessionManagerService>('session-manager');
     if (sm && sessionId) {
       const resolved = sm.resolveConfig(sessionId, platform);
       if (resolved.model) rawModel = resolved.model;
       if (resolved.llmProvider) providerOverride = resolved.llmProvider;
-    }
-
-    // 2. 全局 preferredModel
-    if (!rawModel) {
-      rawModel = this.preferredModel || undefined;
     }
 
     // 拆解复合 ref；model 字段内隐含的 provider 优先低于显式 llmProvider 字段
@@ -1526,7 +1519,6 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  preferredModel: '',
   systemPrompt: '',
   memoryTokenBudget: 4096,
   historyLimit: 50,
@@ -1538,7 +1530,6 @@ export const defaultConfig = {
 // 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
-  preferredModel: string;
   historyLimit: number;
   resolveLLM(
     platform?: string,
@@ -1566,18 +1557,39 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const target = cmdCtx.args[0];
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
 
-    // 无参数 或 /model info：显示当前模型和来源
-    if (!target || target === 'info') {
-      const globalModel = agent.preferredModel;
-      // 从 session-manager resolveConfig 获取最终生效模型（已包含会话级覆盖）
-      const resolvedModel = smSvc ? smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model : undefined;
-      // 检查是否为会话级覆盖（区分来源）
+    // 无参数 / info / status：显示当前模型与来源（解析链）
+    if (!target || target === 'info' || target === 'status') {
       const sessionModel = smSvc?.getSession(cmdCtx.sessionId)?.config?.model;
-      const current = resolvedModel || globalModel || '(默认)';
-      const lines = [`**当前模型**: ${current}`];
-      if (sessionModel) lines.push(`  _(会话覆盖, /model reset 可清除)_`);
-      else if (resolvedModel) lines.push(`  _(平台/继承配置)_`);
-      else if (globalModel) lines.push(`  _(全局配置)_`);
+      const parent = smSvc?.getSession(cmdCtx.sessionId)?.parentId
+        ? smSvc?.getSession(smSvc.getSession(cmdCtx.sessionId)!.parentId!)
+        : undefined;
+      const parentDefaultsModel = parent?.config?.sessionDefaults?.model;
+      const profileModel = smSvc?.getPlatformProfiles()?.[cmdCtx.platform || 'webui']?.model;
+      const globalDefaultsModel = smSvc?.getDefaults()?.model;
+      const resolvedModel = smSvc ? smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model : undefined;
+
+      // 推断来源
+      let source = '(无)';
+      if (sessionModel) source = '会话覆盖';
+      else if (parentDefaultsModel) source = '父会话 sessionDefaults';
+      else if (profileModel) source = `平台 profile (${cmdCtx.platform})`;
+      else if (globalDefaultsModel) source = '全局 defaults';
+
+      const lines = [
+        `**当前模型**: ${resolvedModel || '(默认)'}`,
+        `**来源**: ${source}`,
+      ];
+      // 解析链明细
+      const chain: string[] = [];
+      if (sessionModel) chain.push(`会话: ${sessionModel}`);
+      if (parentDefaultsModel) chain.push(`父 sessionDefaults: ${parentDefaultsModel}`);
+      if (profileModel) chain.push(`平台 profile: ${profileModel}`);
+      if (globalDefaultsModel) chain.push(`全局 defaults: ${globalDefaultsModel}`);
+      if (chain.length > 0) {
+        lines.push('', '**解析链**（高优先级在前）:');
+        for (const c of chain) lines.push(`- ${c}`);
+      }
+      if (sessionModel) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
 
       // 仅 /model（无参数）时列出可用模型
       if (!target) {
@@ -1619,7 +1631,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const { model: _, ...rest } = session.config;
         await smSvc.updateSession(cmdCtx.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
       }
-      const fallback = agent.preferredModel || '(默认)';
+      // 清除后回退到解析链下一层
+      const fallback = smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model || '(默认)';
       return `已清除会话模型覆盖，回退到: ${fallback}`;
     }
 
@@ -1632,7 +1645,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return `当前会话模型已切换为: ${modelName}（已持久化）`;
     }
 
-    return `未知子命令: ${target}。可用: info / set <模型名> / reset`;
+    return `未知子命令: ${target}。可用: status / info / set <模型名> / reset`;
   });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量

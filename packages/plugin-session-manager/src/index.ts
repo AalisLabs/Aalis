@@ -38,6 +38,31 @@ export const inject = {
 export const provides = ['session-manager'];
 
 export const configSchema: ConfigSchema = {
+  defaults: {
+    label: '全局默认配置',
+    description: '所有平台共享的最低层默认配置（platform profile 之下的 fallback）。当 session、父 sessionDefaults、platform profile 都未指定时回落到这里。',
+    fields: {
+      model: {
+        type: 'select',
+        label: '默认模型',
+        dynamicOptions: 'llm',
+        allowCustom: true,
+        description: '所有平台未单独指定时使用的默认模型（如 "@aalis/plugin-deepseek::deepseek-v4-flash"）',
+      },
+      llmProvider: {
+        type: 'string',
+        label: '默认 LLM 提供者 contextId',
+        description: '不指定模型时锁定的 provider 实例',
+      },
+      persona: {
+        type: 'select',
+        label: '默认人设',
+        dynamicOptions: 'persona',
+        allowCustom: true,
+        description: '所有平台未单独指定时使用的默认人设',
+      },
+    },
+  },
   platformProfiles: {
     type: 'array',
     label: '平台默认配置',
@@ -92,6 +117,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
+  defaults: {},
   platformProfiles: [],
 };
 
@@ -303,6 +329,19 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     return sm.resolveConfig(sessionId, platform);
   },
 
+  /**
+   * 获取「继承默认」——不含 session 自身 config，只算 platform profile + 父 sessionDefaults。
+   * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
+   */
+  async getInheritedDefaults(ctx, args) {
+    const sm = ctx.getService<SessionManagerService>('session-manager');
+    if (!sm) throw new Error('session-manager 服务不可用');
+    const sessionId = args.sessionId as string;
+    if (!sessionId) throw new Error('缺少 sessionId');
+    const platform = args.platform as string | undefined;
+    return sm.resolveInheritedDefaults(sessionId, platform);
+  },
+
   /** 更新平台 profile */
   async updatePlatformProfile(ctx, args) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
@@ -387,6 +426,8 @@ class SessionManager implements SessionManagerService {
   private dirty = false;
   /** 平台 → 默认 SessionConfig 模板 */
   private platformProfiles = new Map<string, PlatformProfile>();
+  /** 全局默认配置（platform profile 之下的最低层 fallback） */
+  private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
 
   constructor(ctx: Context, memory: MemoryService) {
     this.ctx = ctx;
@@ -760,14 +801,17 @@ class SessionManager implements SessionManagerService {
    * 1. 会话自身 config
    * 2. 父会话的 sessionDefaults
    * 3. 平台 profile
-   * 4. 未设置的字段留 undefined（由消费方回退到全局默认）
+   * 4. 全局 defaults（最低）
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
     const session = this.sessions.get(sessionId);
 
     const result: Omit<SessionConfig, 'sessionDefaults'> = {};
 
-    // 3. 平台 profile（最低优先级）—— 无论 session 是否存在都应用
+    // 4. 全局 defaults（最低优先级）
+    Object.assign(result, stripUndefined(this.defaults));
+
+    // 3. 平台 profile —— 无论 session 是否存在都应用
     if (platform) {
       const profile = this.platformProfiles.get(platform);
       if (profile) Object.assign(result, stripDefaults(profile));
@@ -790,6 +834,54 @@ class SessionManager implements SessionManagerService {
     delete (result as Record<string, unknown>).sessionDefaults;
 
     return result;
+  }
+
+  /**
+   * 解析「继承默认」：不含 session 自身 config，只算 defaults + platform profile + 父 sessionDefaults。
+   *
+   * WebUI 「继承 (xxx)」提示应该用这个值，否则会显示用户自己的覆盖值。
+   */
+  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
+    const result: Omit<SessionConfig, 'sessionDefaults'> = {};
+
+    // 3. 全局 defaults（最低）
+    Object.assign(result, stripUndefined(this.defaults));
+
+    // 2. 平台 profile
+    if (platform) {
+      const profile = this.platformProfiles.get(platform);
+      if (profile) Object.assign(result, stripDefaults(profile));
+    }
+
+    // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
+    const session = this.sessions.get(sessionId);
+    if (session?.parentId) {
+      const parent = this.sessions.get(session.parentId);
+      if (parent?.config?.sessionDefaults) {
+        Object.assign(result, stripUndefined(parent.config.sessionDefaults));
+      }
+    }
+
+    delete (result as Record<string, unknown>).sessionDefaults;
+    return result;
+  }
+
+  getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
+    return { ...this.defaults };
+  }
+
+  /** 从配置加载全局 defaults */
+  loadDefaults(raw: unknown): void {
+    if (!raw || typeof raw !== 'object') return;
+    const r = raw as Record<string, unknown>;
+    const next: Omit<SessionConfig, 'sessionDefaults'> = {};
+    if (typeof r.model === 'string' && r.model) next.model = r.model;
+    if (typeof r.llmProvider === 'string' && r.llmProvider) next.llmProvider = r.llmProvider;
+    if (typeof r.persona === 'string' && r.persona) next.persona = r.persona;
+    this.defaults = next;
+    if (Object.keys(next).length > 0) {
+      this.ctx.logger.info(`已加载全局 defaults: ${Object.keys(next).join(', ')}`);
+    }
   }
 
   getPlatformProfiles(): Record<string, PlatformProfile> {
@@ -870,6 +962,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 加载平台 profiles
   manager.loadPlatformProfiles(config.platformProfiles);
+  // 加载全局 defaults
+  manager.loadDefaults(config.defaults);
 
   // 注册服务
   ctx.provide('session-manager', manager, {
