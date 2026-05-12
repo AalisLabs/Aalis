@@ -1,7 +1,4 @@
-import type { FSWatcher } from 'node:fs';
-import { existsSync, watch as fsWatch, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import type { ConfigProvider } from './providers.js';
 import type { ConfigSchema } from './types/index.js';
 
 /**
@@ -44,9 +41,6 @@ const DEFAULT_CONFIG: AalisConfig = {
   disabledPlugins: [],
 };
 
-/** core 自身管理的顶层字段（buildSaveObject 时按固定顺序输出；其余字段透传） */
-const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
-
 /** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: { type: 'string', label: '应用名称', description: '应用显示名称，用于日志和界面展示', default: 'Aalis' },
@@ -64,49 +58,43 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   },
 };
 
+export interface ConfigManagerOptions {
+  /** 持久化与外部变更监听由 provider 提供；省略则进入纯内存模式（save() 静默） */
+  provider?: ConfigProvider;
+  /**
+   * 业务数据目录（plugin 用于解析相对路径，如 sqlite db、persona 文件等）。
+   * core 自己不读写它；语义由宿主与插件约定。默认 `'.'`。
+   */
+  dataDir?: string;
+}
+
 /**
- * 配置管理器
- * - 从 YAML 文件加载配置
- * - 支持环境变量插值 ${VAR_NAME}
- * - 提供默认值
- * - 支持保存配置回磁盘
- * - 支持运行时重新加载
+ * 配置管理器：纯内存的配置中枢。
+ *
+ * 职责：
+ * - 持有当前配置快照（`AalisConfig`）
+ * - 提供 get/set/getPluginConfig 等访问器
+ * - 处理插件默认配置合并、schema 裁剪、服务偏好
+ *
+ * **不**做的事：
+ * - 不读写文件，不解析 yaml/json，不 watch 文件系统
+ *   ——这些由 `ConfigProvider`（宿主注入）负责
+ *
+ * 这样 core 可以在浏览器、嵌入式宿主、单元测试里直接使用：
+ * 测试代码可以 `new App({ config: { name: 'X', logLevel: 'error', plugins: {} } })`
+ * 而无需创建临时目录写 yaml 文件。
  */
 export class ConfigManager {
-  private config!: AalisConfig;
-  private configDir: string;
-  private configPath: string;
-  /** 原始 YAML 文本（保存时基于此还原环境变量占位符） */
-  private rawYaml: string | null = null;
-  /** 文件监听器 */
-  private watcher: FSWatcher | null = null;
-  /** save() 写入的最后内容，用于 watch 去重 */
-  private lastWrittenYaml: string | null = null;
-  /** debounce 定时器 */
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 外部变更回调 */
+  private config: AalisConfig;
+  private readonly provider?: ConfigProvider;
+  private readonly dataDir: string;
+  private unwatchFn: (() => void) | null = null;
   private onChangeCallback: (() => void) | null = null;
 
-  constructor(configPath?: string) {
-    this.configPath = configPath ? resolve(configPath) : resolve(process.cwd(), 'aalis.config.yaml');
-
-    this.configDir = dirname(this.configPath);
-    this.loadFromDisk();
-  }
-
-  /**
-   * 从磁盘读取配置
-   */
-  private loadFromDisk(): void {
-    if (existsSync(this.configPath)) {
-      this.rawYaml = readFileSync(this.configPath, 'utf-8');
-      const interpolated = this.interpolateEnvVars(this.rawYaml);
-      const parsed = parseYaml(interpolated) ?? {};
-      this.config = this.mergeDefaults(parsed);
-    } else {
-      this.rawYaml = null;
-      this.config = { ...DEFAULT_CONFIG };
-    }
+  constructor(initial: AalisConfig, options?: ConfigManagerOptions) {
+    this.config = mergeDefaultsConfig(initial);
+    this.provider = options?.provider;
+    this.dataDir = options?.dataDir ?? '.';
   }
 
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K] {
@@ -117,47 +105,35 @@ export class ConfigManager {
     return (this.config.plugins[pluginName] ?? {}) as T;
   }
 
+  /**
+   * 业务数据目录——plugin 用于解析相对路径。
+   * 命名沿用历史接口（`getConfigDir`），语义上是"宿主指定的数据根目录"。
+   */
   getConfigDir(): string {
-    return this.configDir;
-  }
-
-  getConfigPath(): string {
-    return this.configPath;
+    return this.dataDir;
   }
 
   getAll(): Readonly<AalisConfig> {
     return this.config;
   }
 
-  /**
-   * 设置配置值（运行时）
-   */
   set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void {
     this.config[key] = value;
   }
 
-  /**
-   * 更新插件配置（运行时）
-   */
   setPluginConfig(pluginName: string, config: Record<string, unknown>): void {
     this.config.plugins[pluginName] = config;
   }
 
-  /**
-   * 移除插件配置（用于删除多实例条目）
-   */
   removePluginConfig(pluginName: string): void {
     delete this.config.plugins[pluginName];
   }
 
   /**
-   * 将插件 defaultConfig 中缺失的字段合并到磁盘配置；同时按 configSchema
+   * 将插件 defaultConfig 中缺失的字段合并到配置；同时按 configSchema
    * 移除多余字段。返回发生变更的插件 instanceId 列表（调用方可决定要不要 log）。
    *
    * 副作用：内部对每个发生变化的条目调用 setPluginConfig；若有变化最终调用 save()。
-   *
-   * 设计动机：这些合并/裁剪逻辑只操作配置树，本就属于 ConfigManager 的职责。
-   * App 仅作为"协调者"传入插件元数据列表。
    */
   syncPluginDefaults(
     plugins: ReadonlyArray<{
@@ -186,16 +162,10 @@ export class ConfigManager {
     return changed;
   }
 
-  /**
-   * 检查插件是否被禁用
-   */
   isPluginDisabled(pluginName: string): boolean {
     return (this.config.disabledPlugins ?? []).includes(pluginName);
   }
 
-  /**
-   * 设置插件启用/禁用状态
-   */
   setPluginEnabled(pluginName: string, enabled: boolean): void {
     if (!this.config.disabledPlugins) {
       this.config.disabledPlugins = [];
@@ -208,205 +178,62 @@ export class ConfigManager {
     }
   }
 
-  /**
-   * 读取服务偏好映射（service name → preferred contextId）
-   */
   getServicePreferences(): Record<string, string> {
     return (this.config.servicePreferences ?? {}) as Record<string, string>;
   }
 
-  /**
-   * 设置某服务的偏好 contextId（运行时；调用方需自行 save() 持久化）
-   */
   setServicePreference(name: string, contextId: string): void {
     if (!this.config.servicePreferences) this.config.servicePreferences = {};
     (this.config.servicePreferences as Record<string, string>)[name] = contextId;
   }
 
-  /**
-   * 清除某服务的偏好（运行时；调用方需自行 save() 持久化）
-   */
   removeServicePreference(name: string): void {
     if (!this.config.servicePreferences) return;
     delete (this.config.servicePreferences as Record<string, string>)[name];
   }
 
   /**
-   * 保存当前配置到磁盘（YAML 格式）
-   * 注意：环境变量引用会被保护，不会展开为实际值
+   * 持久化当前配置。委托给 provider，无 provider 时静默忽略（内存模式）。
+   * 同步语义：若 provider 异步保存，调用方不会等待完成——这与原 fs sync 行为一致。
    */
   save(): void {
-    // 构建要保存的配置对象，保护环境变量
-    const toSave = this.buildSaveObject();
-    const yaml = stringifyYaml(toSave, { lineWidth: 0 });
-    this.lastWrittenYaml = yaml;
-    writeFileSync(this.configPath, yaml, 'utf-8');
+    if (!this.provider?.save) return;
+    const result = this.provider.save(this.config);
+    if (result instanceof Promise) {
+      result.catch(() => {
+        /* provider 自身负责报错；core 不做处理 */
+      });
+    }
   }
 
   /**
-   * 重新从磁盘加载配置
+   * 重新加载配置——把外部传入的快照写回内部状态。
+   *
+   * 历史上这是"从磁盘 re-read"的入口；现在交由 provider 决定何时
+   * 通过 `watch(onChange)` 把新快照推过来；本方法仅供 watch 回调使用。
    */
-  reload(): AalisConfig {
-    this.loadFromDisk();
+  reloadFrom(next: AalisConfig): AalisConfig {
+    this.config = mergeDefaultsConfig(next);
     return this.config;
   }
 
   /**
-   * 监听配置文件变更，外部修改时自动重新加载并触发回调
+   * 订阅配置外部变更。委托给 provider；无 provider 时为 no-op。
    */
   watch(onChange: () => void): void {
     this.onChangeCallback = onChange;
-    if (this.watcher) return;
-    if (!existsSync(this.configPath)) return;
-    try {
-      this.watcher = fsWatch(this.configPath, () => {
-        // debounce: 编辑器可能触发多次 change 事件
-        if (this.debounceTimer) clearTimeout(this.debounceTimer);
-        this.debounceTimer = setTimeout(() => {
-          this.debounceTimer = null;
-          try {
-            // 读取当前文件内容，与上次自己写入的比较，相同则跳过
-            const current = readFileSync(this.configPath, 'utf-8');
-            if (this.lastWrittenYaml !== null && current === this.lastWrittenYaml) return;
-            this.lastWrittenYaml = null;
-            this.loadFromDisk();
-            this.onChangeCallback?.();
-          } catch {
-            /* 文件可能被部分写入，忽略 */
-          }
-        }, 300);
-      });
-    } catch {
-      /* 平台不支持 watch */
-    }
-  }
-
-  /**
-   * 停止监听配置文件
-   */
-  unwatch(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
-    this.watcher?.close();
-    this.watcher = null;
-    this.onChangeCallback = null;
-  }
-
-  /**
-   * 构建保存对象：把当前 config 转换为 YAML 安全格式，
-   * 恢复环境变量占位符。
-   *
-   * 顺序约定：先按固定顺序输出 core 已知字段（name/logLevel/plugins/...），
-   * 再透传其余顶层字段（来自插件的业务字段，core 不知晓其语义）。
-   *
-   * 业务字段中如有「运行时不应持久化」的子字段（如 dangerousPolicy.enabledAt），
-   * 由对应插件自行避免写入 config，core 不做特例处理。
-   */
-  private buildSaveObject(): Record<string, unknown> {
-    const obj: Record<string, unknown> = {
-      name: this.config.name,
-      logLevel: this.config.logLevel,
-    };
-
-    // 恢复插件配置中的环境变量占位符
-    if (this.rawYaml) {
-      const rawParsed = parseYaml(this.rawYaml) as Record<string, unknown> | null;
-      const rawPlugins = (rawParsed?.plugins ?? {}) as Record<string, Record<string, unknown>>;
-      const plugins: Record<string, Record<string, unknown>> = {};
-
-      for (const [name, conf] of Object.entries(this.config.plugins)) {
-        plugins[name] = this.restoreEnvVars(conf, rawPlugins[name] ?? {});
-      }
-      obj.plugins = plugins;
-    } else {
-      obj.plugins = this.config.plugins;
-    }
-
-    obj.disabledPlugins = this.config.disabledPlugins ?? [];
-    const prefs = this.config.servicePreferences ?? {};
-    if (Object.keys(prefs).length > 0) {
-      obj.servicePreferences = prefs;
-    }
-
-    // 透传其余顶层字段（插件业务字段；core 不解释也不变换）
-    for (const [key, value] of Object.entries(this.config)) {
-      if (CORE_TOP_LEVEL_KEYS.has(key)) continue;
-      if (value === undefined) continue;
-      // 空对象 / 空数组的字段不输出，与原有清理逻辑保持一致
-      if (Array.isArray(value)) {
-        if (value.length > 0) obj[key] = value;
-      } else if (value && typeof value === 'object') {
-        if (Object.keys(value as Record<string, unknown>).length > 0) obj[key] = value;
-      } else {
-        obj[key] = value;
-      }
-    }
-
-    return obj;
-  }
-
-  /**
-   * 恢复环境变量占位符：对比原始值与当前值，
-   * 如果当前值与环境变量展开后的值一致，保留原始占位符
-   */
-  private restoreEnvVars(current: Record<string, unknown>, raw: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(current)) {
-      const rawVal = raw[key];
-      if (typeof rawVal === 'string' && /\$\{[^}]+}/.test(rawVal)) {
-        // 原始值含环境变量占位符 — 保留占位符
-        const expanded = this.interpolateEnvVars(rawVal);
-        if (expanded === value) {
-          result[key] = rawVal;
-          continue;
-        }
-      }
-      if (
-        value &&
-        typeof value === 'object' &&
-        !Array.isArray(value) &&
-        rawVal &&
-        typeof rawVal === 'object' &&
-        !Array.isArray(rawVal)
-      ) {
-        result[key] = this.restoreEnvVars(value as Record<string, unknown>, rawVal as Record<string, unknown>);
-      } else {
-        result[key] = value;
-      }
-    }
-    return result;
-  }
-
-  /**
-   * 替换 ${ENV_VAR} 为环境变量值
-   */
-  private interpolateEnvVars(text: string): string {
-    return text.replace(/\$\{([^}]+)}/g, (_, varName: string) => {
-      return process.env[varName.trim()] ?? '';
+    if (!this.provider?.watch) return;
+    if (this.unwatchFn) return;
+    this.unwatchFn = this.provider.watch(next => {
+      this.config = mergeDefaultsConfig(next);
+      this.onChangeCallback?.();
     });
   }
 
-  /**
-   * 合并配置：core 已知字段填默认值，其余顶层字段透传（插件业务字段）。
-   *
-   * 透传时保留原始类型（对象/数组/标量），不做任何 schema 校验——
-   * 业务字段的合法性由消费它的 plugin 自己负责。
-   */
-  private mergeDefaults(parsed: Record<string, unknown>): AalisConfig {
-    const merged: AalisConfig = {
-      name: (parsed.name as string) ?? DEFAULT_CONFIG.name,
-      logLevel: (parsed.logLevel as string) ?? DEFAULT_CONFIG.logLevel,
-      plugins: (parsed.plugins as Record<string, Record<string, unknown>>) ?? {},
-      disabledPlugins: (parsed.disabledPlugins as string[]) ?? [],
-    };
-    // 透传其余顶层字段
-    for (const [key, value] of Object.entries(parsed)) {
-      if (CORE_TOP_LEVEL_KEYS.has(key)) continue;
-      merged[key] = value;
-    }
-    return merged;
+  unwatch(): void {
+    this.unwatchFn?.();
+    this.unwatchFn = null;
+    this.onChangeCallback = null;
   }
 }
 
@@ -418,20 +245,16 @@ export class ConfigManager {
  *   - `set(key, value)` 仅写入 overlay，不影响父配置
  *   - `getPluginConfig(name)` 返回 `{ ...parent, ...overlay }`（浅合并）
  *   - `setPluginConfig(name, conf)` 完整替换 overlay 中该插件条目
- *   - 不接触磁盘：`save()` 抛错，`reload()` / `watch()` 为 no-op
- *
- * 用法：通过 `ctx.createScope()` 自动创建，沙盒插件可以 `scope.config.set(...)`
- * 给自己一份临时配置而不污染全局，且 dispose 后随作用域一起消失。
+ *   - 不接触任何 provider：`save()` 抛错，`watch()` 为 no-op
  */
 export class ScopedConfigManager extends ConfigManager {
   private overlay: Partial<AalisConfig> = {};
   private parentConfig: ConfigManager;
 
   constructor(parent: ConfigManager) {
-    // 不传 path，父类 loadFromDisk 在文件不存在时会 fallback 到 DEFAULT_CONFIG，
-    // 该内存配置对 scope 不重要——我们通过 override 所有读写来代理到 parent + overlay。
-    // 实际使用一个不存在的虚拟路径避免任何意外的 watch/save 副作用。
-    super(`/__scoped_config_${Date.now()}_${Math.random().toString(36).slice(2)}.yaml`);
+    // 父类需要一个 initial 快照——传父配置当前快照（仅用于初始化内部字段；
+    // 所有读写都被下面的 override 接管，父类的内部 state 不会被使用）。
+    super(parent.getAll() as AalisConfig, { dataDir: parent.getConfigDir() });
     this.parentConfig = parent;
   }
 
@@ -464,7 +287,6 @@ export class ScopedConfigManager extends ConfigManager {
   }
 
   override isPluginDisabled(pluginName: string): boolean {
-    // overlay 中的 disabledPlugins 完全覆盖父级（语义清晰）
     if (this.overlay.disabledPlugins !== undefined) {
       return this.overlay.disabledPlugins.includes(pluginName);
     }
@@ -472,7 +294,6 @@ export class ScopedConfigManager extends ConfigManager {
   }
 
   override getAll(): Readonly<AalisConfig> {
-    // 浅合并父级与 overlay 的完整快照（plugins 需要逐项合并）
     const parentAll = this.parentConfig.getAll();
     const mergedPlugins: Record<string, Record<string, unknown>> = { ...parentAll.plugins };
     if (this.overlay.plugins) {
@@ -490,30 +311,36 @@ export class ScopedConfigManager extends ConfigManager {
   override getConfigDir(): string {
     return this.parentConfig.getConfigDir();
   }
-  override getConfigPath(): string {
-    return this.parentConfig.getConfigPath();
-  }
 
-  /** 沙盒不接触磁盘 —— save() 直接抛错暴露误用 */
+  /** 沙盒不持久化 —— save() 直接抛错暴露误用 */
   override save(): void {
-    throw new Error('ScopedConfigManager.save() 不可用：scope 配置仅在内存中存在。如需持久化请改用根 ConfigManager。');
+    throw new Error('ScopedConfigManager.save() 不可用：scope 配置仅在内存中存在。');
   }
 
-  /** 不重新加载磁盘配置；返回当前合并视图 */
-  override reload(): AalisConfig {
-    return this.getAll() as AalisConfig;
-  }
-
-  /** scope 不监听磁盘文件 */
   override watch(): void {
-    /* no-op */
+    /* scope 不订阅 provider */
   }
+
   override unwatch(): void {
     /* no-op */
   }
 }
 
-// ---- 配置合并/裁剪 helpers（被 syncPluginDefaults 使用） ----
+// ---- helpers ----
+
+function mergeDefaultsConfig(input: AalisConfig | Partial<AalisConfig>): AalisConfig {
+  const merged: AalisConfig = {
+    name: (input.name as string) ?? DEFAULT_CONFIG.name,
+    logLevel: (input.logLevel as string) ?? DEFAULT_CONFIG.logLevel,
+    plugins: (input.plugins as Record<string, Record<string, unknown>>) ?? {},
+    disabledPlugins: (input.disabledPlugins as string[]) ?? [],
+  };
+  for (const [key, value] of Object.entries(input)) {
+    if (key === 'name' || key === 'logLevel' || key === 'plugins' || key === 'disabledPlugins') continue;
+    merged[key] = value;
+  }
+  return merged;
+}
 
 /**
  * 深度合并默认值：只填充缺失的键，不覆盖已有值。

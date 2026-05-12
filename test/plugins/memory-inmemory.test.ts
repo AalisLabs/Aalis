@@ -1,17 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App, type Message } from '../../packages/core/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 
 function makeApp() {
-  const dir = mkdtempSync(join(tmpdir(), 'aalis-mem-'));
-  const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, 'name: T\nlogLevel: error\nplugins: {}\n');
-  const app = new App({ configPath: path });
-  return { app, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  return { app, cleanup: () => {} };
 }
 
 const msg = (role: Message['role'], content: string, ts?: number): Message => ({

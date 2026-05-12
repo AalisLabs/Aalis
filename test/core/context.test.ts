@@ -13,7 +13,7 @@ function makeContext(id = 'root'): Context {
   const services = new ServiceContainer();
   const hooks = new HookRegistry();
   const logger = new Logger('test');
-  const config = new ConfigManager();
+  const config = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
   return new Context({ id, events, services, hooks, logger, config });
 }
 

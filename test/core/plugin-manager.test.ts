@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App, type PluginModule } from '../../packages/core/src/index.js';
 
@@ -10,15 +7,12 @@ interface ScratchState {
 }
 
 function makeApp(): { app: App; state: ScratchState; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), 'aalis-app-'));
-  const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, 'name: TestApp\nlogLevel: error\nplugins: {}\n');
-  const app = new App({ configPath: path });
+  const app = new App({ config: { name: 'TestApp', logLevel: 'error', plugins: {} } });
   const state: ScratchState = { applied: [], disposed: [] };
   return {
     app,
     state,
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => {},
   };
 }
 
