@@ -263,6 +263,13 @@ class DefaultAgent implements AgentService {
           reasoningDelta: chunk.reasoningDelta,
         });
       }
+      if (chunk.toolCallProgress) {
+        await this.ctx.emit('outbound:stream', {
+          sessionId,
+          platform,
+          toolCallProgress: chunk.toolCallProgress,
+        });
+      }
       if (chunk.done) {
         toolCalls = chunk.toolCalls;
       }

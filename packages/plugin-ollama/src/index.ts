@@ -452,6 +452,18 @@ class OllamaLLMService implements LLMService {
             // 累积工具调用
             if (data.message?.tool_calls) {
               toolCallBuffers.push(...data.message.tool_calls);
+              // Ollama 是非增量地一次性返回 tool_calls，但我们仍 emit 一次 progress
+              // 让上层 UI 知道「已检测到工具调用」（与 OpenAI/DeepSeek 行为对齐）
+              for (let i = 0; i < data.message.tool_calls.length; i++) {
+                const tc = data.message.tool_calls[i];
+                yield {
+                  toolCallProgress: {
+                    index: toolCallBuffers.length - data.message.tool_calls.length + i,
+                    name: tc.function.name,
+                    charsAccumulated: JSON.stringify(tc.function.arguments).length,
+                  },
+                };
+              }
             }
 
             if (data.done) {
