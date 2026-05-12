@@ -17,7 +17,13 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 const LOG_BUFFER_MAX = 500;
 
 /**
- * 日志中枢：封装 buffer / listener / consoleSink 开关。
+ * 日志中枢：纯 pub-sub 通道。
+ *
+ * 设计原则：
+ * - **零 I/O 知识**：LogHub 不感知 stdout / 文件 / TTY / 染色等任何渲染细节
+ * - **写一次，多处订阅**：通过 `onEntry` 把 LogEntry 广播给所有订阅者
+ *   （runtime/host 注入文件 sink 与 stdout sink；CLI/WebUI 注入自己的视图）
+ * - **buffer**：保留最近 N 条供后接管的订阅者回放（如 CLI 启动时回填日志视图）
  *
  * 每个 `App` 拥有自己的 LogHub（沙盒、集成测试可独立通道）；
  * `LogHub.default` 是进程级共享中枢，供未注入自定义 hub 的 Logger 使用。
@@ -28,7 +34,6 @@ export class LogHub {
 
   private buffer: LogEntry[] = [];
   private listeners: Set<(entry: LogEntry) => void> = new Set();
-  private consoleSink = true;
 
   getBuffer(): LogEntry[] {
     return this.buffer;
@@ -41,24 +46,8 @@ export class LogHub {
     };
   }
 
-  setConsoleSinkEnabled(enabled: boolean): void {
-    this.consoleSink = enabled;
-  }
-
-  isConsoleSinkEnabled(): boolean {
-    return this.consoleSink;
-  }
-
   /** 接收一条日志（Logger 内部调用） */
-  push(entry: LogEntry, args: unknown[]): void {
-    if (this.consoleSink) {
-      const prefix = `${entry.timestamp} ${entry.level.toUpperCase().padEnd(5)} ${entry.scope}`;
-      if (args.length > 0) {
-        console.log(`${prefix} ${entry.message}`, ...args);
-      } else {
-        console.log(`${prefix} ${entry.message}`);
-      }
-    }
+  push(entry: LogEntry, _args: unknown[]): void {
     this.buffer.push(entry);
     if (this.buffer.length > LOG_BUFFER_MAX) this.buffer.shift();
     for (const fn of this.listeners) fn(entry);

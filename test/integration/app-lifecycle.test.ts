@@ -16,12 +16,6 @@ function tempConfig(yaml: string) {
 }
 
 describe('App 生命周期', () => {
-  beforeEach(() => {
-    LogHub.default.setConsoleSinkEnabled(false);
-  });
-  afterEach(() => {
-    LogHub.default.setConsoleSinkEnabled(true);
-  });
 
   it('createApp 仅靠最小配置可构造', () => {
     const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');

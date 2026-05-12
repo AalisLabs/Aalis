@@ -41,8 +41,9 @@ async function main() {
     requiredServices: [],
   });
 
-  // 把运行时 console sink 暴露为服务，供 CLI 等终端 UI 在接管 stdout 时暂停日志写入
-  app.ctx.provide('console-sink', consoleSink, { capabilities: ['pause-resume'] });
+  // App 构造完成后再让 sink 监听终端归属事件——
+  // 此前没有 ctx 可订阅，sink 一直处于"写 stdout"默认状态以打印早期启动日志。
+  consoleSink.bindEvents(app.ctx);
 
   // 自动扫描 packages/ 并加载所有插件
   await app.autoLoadPlugins();
