@@ -40,7 +40,8 @@ export const provides = ['session-manager'];
 export const configSchema: ConfigSchema = {
   defaults: {
     label: '全局默认配置',
-    description: '所有平台共享的最低层默认配置（platform profile 之下的 fallback）。当 session、父 sessionDefaults、platform profile 都未指定时回落到这里。',
+    description:
+      '所有平台共享的最低层默认配置（platform profile 之下的 fallback）。当 session、父 sessionDefaults、platform profile 都未指定时回落到这里。',
     fields: {
       model: {
         type: 'select',

@@ -10,12 +10,7 @@
       "project": ["src/**/*.{ts,tsx}"]
     }
   },
-  "ignoreDependencies": [
-    "chalk",
-    "clipboardy",
-    "@aalis/core",
-    "@aalis/plugin-agent-default"
-  ],
+  "ignoreDependencies": ["chalk", "clipboardy", "@aalis/core", "@aalis/plugin-agent-default"],
   "ignore": ["**/dist/**", "**/node_modules/**"],
   "ignoreIssues": {
     "packages/plugin-adapter-onebot/src/types.ts": ["exports", "types"],

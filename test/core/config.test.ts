@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConfigManager, ScopedConfigManager } from '../../packages/core/src/index.js';
-import { tempConfig, type TempConfigHandle } from '../fixtures/app.js';
+import { type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 
 describe('ConfigManager (内存快照模式)', () => {
   it('未传入字段时使用默认值', () => {
@@ -44,10 +44,7 @@ describe('ConfigManager (内存快照模式)', () => {
   });
 
   it('getConfigDir 返回 host 注入的 dataDir', () => {
-    const cfg = new ConfigManager(
-      { name: 'T', logLevel: 'error', plugins: {} },
-      { dataDir: '/tmp/foo' },
-    );
+    const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }, { dataDir: '/tmp/foo' });
     expect(cfg.getConfigDir()).toBe('/tmp/foo');
   });
 
@@ -64,9 +61,7 @@ describe('FsYamlConfigProvider (集成)', () => {
 
   it('从 YAML 加载并支持环境变量插值', () => {
     process.env.TEST_KEY_X = 'value-from-env';
-    cfg = tempConfig(
-      'name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: ${TEST_KEY_X}\n',
-    );
+    cfg = tempConfig('name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: ${TEST_KEY_X}\n');
     const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
     expect(mgr.get('name')).toBe('MyApp');
     expect(mgr.getPluginConfig('myplug').apikey).toBe('value-from-env');
@@ -75,9 +70,7 @@ describe('FsYamlConfigProvider (集成)', () => {
 
   it('save() 写入 YAML 并恢复环境变量占位符', () => {
     process.env.TEST_KEY_Y = 'secret';
-    cfg = tempConfig(
-      'name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: ${TEST_KEY_Y}\n',
-    );
+    cfg = tempConfig('name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: ${TEST_KEY_Y}\n');
     const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
     mgr.set('name', 'Y');
     mgr.save();
