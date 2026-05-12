@@ -55,29 +55,49 @@ function formatEntry(entry: LogEntry): string {
 
 export interface ConsoleSinkHandle {
   dispose(): void;
+  /** 暂停：日志仍累积进 LogHub buffer，但不再写 stdout。用于 CLI 接管终端时避免污染备用屏 */
+  pause(): void;
+  /** 恢复 stdout 输出。pause 期间累积的日志**不**回放——它们留在 buffer 里，订阅者（如 CLI 日志视图）自行展示 */
+  resume(): void;
+  /** 当前是否在写 stdout */
+  readonly paused: boolean;
   /** 当前是否染色输出（供调试 / 状态视图使用） */
   readonly colorized: boolean;
 }
 
 /**
- * 安装 console sink：注入彩色格式化器到 LogHub，并冲洗启动前缓冲。
+ * 安装 console sink：先冲洗启动前缓冲的日志，然后订阅后续 LogEntry。
+ * 默认在调用前会关闭 core 内置 console sink，避免重复输出。
  *
- * 通过 `setConsoleFormatter` 注入而非 `onEntry` 监听，让 LogHub 内置的
- * `setConsoleSinkEnabled(false)` 成为 console 输出的唯一 gate——CLI 进入
- * alt-screen 时一行代码能彻底静默 console，不会有"残留监听器"继续刷屏。
+ * 返回的 handle 支持 pause/resume，供"接管终端"的 UI（CLI 备用屏）在启动时暂停 stdout 写入，
+ * 否则插件后续日志会污染备用屏内容。
  */
 export function installConsoleSink(): ConsoleSinkHandle {
   const hub = LogHub.default;
-  // 注入彩色格式化器（取代默认 raw 格式），保持 consoleSink=true 让 push() 走 console.log
-  hub.setConsoleFormatter(formatEntry);
+  hub.setConsoleSinkEnabled(false);
 
-  // 冲洗启动前缓冲（缓冲里的条目在 setConsoleFormatter 之前已经 push 过，未输出过 console）
+  // 冲洗启动前缓冲
   for (const entry of hub.getBuffer()) {
     console.log(formatEntry(entry));
   }
 
+  let paused = false;
+  const off = hub.onEntry(entry => {
+    if (paused) return;
+    console.log(formatEntry(entry));
+  });
+
   return {
-    dispose: () => hub.setConsoleFormatter(null),
+    dispose: off,
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+    },
+    get paused() {
+      return paused;
+    },
     colorized: COLORIZE,
   };
 }
