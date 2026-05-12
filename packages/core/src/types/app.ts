@@ -10,6 +10,8 @@ import type { ConfigSchema } from './core.js';
  * 用于触发应用级操作，无需直接导入 App 类。
  */
 export interface AppService {
+  /** packages 扫描目录的绝对路径（供包管理类插件使用） */
+  readonly packagesDir: string;
   /** 停止应用 */
   stop(): Promise<void>;
   /** 重启应用（延迟 spawn 新进程后退出当前进程） */
@@ -19,10 +21,6 @@ export interface AppService {
 
   /** 重新扫描 packages/ 目录，返回新发现并加载的插件名列表 */
   rescanPlugins(): Promise<string[]>;
-  /** 从 npm 安装插件到 marketplace cache（不自动 enable） */
-  installPlugin(npmPkg: string): Promise<{ ok: boolean; message: string }>;
-  /** 卸载插件（含 marketplace cache 清理） */
-  uninstallPlugin(pluginName: string): Promise<{ ok: boolean; message: string }>;
 }
 
 /** PluginManager 暴露给插件消费的接口 */
@@ -70,7 +68,7 @@ export interface PluginManagerService {
 
 declare module './capabilities.js' {
   interface ServiceCapabilityMap {
-    app: 'lifecycle' | 'config' | 'market';
+    app: 'lifecycle' | 'config';
     plugins: 'plugin-mgmt';
   }
 }
