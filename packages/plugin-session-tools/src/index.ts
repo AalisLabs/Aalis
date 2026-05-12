@@ -12,6 +12,7 @@ import '@aalis/plugin-tools-api';
 export const name = '@aalis/plugin-session-tools';
 export const displayName = '会话工具';
 export const subsystem = 'session';
+export const provides = ['session-history'];
 export const inject = {
   optional: ['session-manager', 'message-archive', 'memory'],
 };
