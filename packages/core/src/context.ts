@@ -20,11 +20,7 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  * 至少有一个匹配 entry 才返回句柄，所以正常路径下不会触发这个抛错；
  * 仅在调用方持有句柄期间所有 provider 都被注销才会遇到。
  */
-function makeServiceHandle<T>(
-  container: ServiceContainer,
-  name: string,
-  caps: string[] | undefined,
-): T {
+function makeServiceHandle<T>(container: ServiceContainer, name: string, caps: string[] | undefined): T {
   const resolve = (): unknown => {
     const inst = container.get<unknown>(name, caps);
     if (inst === undefined) {

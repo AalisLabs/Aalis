@@ -1575,10 +1575,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       else if (profileModel) source = `平台 profile (${cmdCtx.platform})`;
       else if (globalDefaultsModel) source = '全局 defaults';
 
-      const lines = [
-        `**当前模型**: ${resolvedModel || '(默认)'}`,
-        `**来源**: ${source}`,
-      ];
+      const lines = [`**当前模型**: ${resolvedModel || '(默认)'}`, `**来源**: ${source}`];
       // 解析链明细
       const chain: string[] = [];
       if (sessionModel) chain.push(`会话: ${sessionModel}`);

@@ -779,23 +779,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessions.get(sid)!.add(ws);
           // 如果该会话正在生成中，发送已累积的内容供客户端恢复
           const buf = streamBuffers.get(sid);
-          if (buf && (buf.content || buf.reasoningContent || buf.segments.length > 0 || buf.toolCallsProgress.size > 0)) {
+          if (
+            buf &&
+            (buf.content || buf.reasoningContent || buf.segments.length > 0 || buf.toolCallsProgress.size > 0)
+          ) {
             const resume: WSOutgoing = {
               type: 'stream_resume',
               sessionId: sid,
               content: buf.content,
               reasoningContent: buf.reasoningContent,
               segments: buf.segments.length > 0 ? buf.segments : undefined,
-              toolCallsProgress: buf.toolCallsProgress.size > 0
-                ? [...buf.toolCallsProgress.entries()]
-                    .sort((a, b) => a[0] - b[0])
-                    .map(([index, v]) => ({
-                      index,
-                      name: v.name,
-                      charsAccumulated: v.charsAccumulated,
-                      startedAt: v.startedAt,
-                    }))
-                : undefined,
+              toolCallsProgress:
+                buf.toolCallsProgress.size > 0
+                  ? [...buf.toolCallsProgress.entries()]
+                      .sort((a, b) => a[0] - b[0])
+                      .map(([index, v]) => ({
+                        index,
+                        name: v.name,
+                        charsAccumulated: v.charsAccumulated,
+                        startedAt: v.startedAt,
+                      }))
+                  : undefined,
               done: !buf.generating,
             };
             ws.send(JSON.stringify(resume));

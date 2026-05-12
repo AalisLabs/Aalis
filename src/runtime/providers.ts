@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, type FSWatcher, readFileSync, watch as fsWatch, writeFileSync } from 'node:fs';
+import { existsSync, type FSWatcher, watch as fsWatch, readFileSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -33,10 +33,7 @@ const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'dis
 /**
  * 恢复 ${ENV} 占位符：对比当前值与原始 raw 值，若相等则保留 raw。
  */
-function restoreEnvVars(
-  current: Record<string, unknown>,
-  raw: Record<string, unknown>,
-): Record<string, unknown> {
+function restoreEnvVars(current: Record<string, unknown>, raw: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(current)) {
     const rawVal = raw[key];
