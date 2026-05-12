@@ -46,7 +46,7 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
 
     if (config.maxImageWidth > 0 && width > config.maxImageWidth) {
       try {
-        // @ts-expect-error — sharp 是可选依赖，运行时动态加载
+        // sharp 是可选依赖，运行时动态加载
         const sharp = await import('sharp');
         const sharpFn = sharp.default || sharp;
         const resized = await (sharpFn as any)(buffer)
