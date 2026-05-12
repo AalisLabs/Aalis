@@ -151,6 +151,42 @@ export class ConfigManager {
   }
 
   /**
+   * 将插件 defaultConfig 中缺失的字段合并到磁盘配置；同时按 configSchema
+   * 移除多余字段。返回发生变更的插件 instanceId 列表（调用方可决定要不要 log）。
+   *
+   * 副作用：内部对每个发生变化的条目调用 setPluginConfig；若有变化最终调用 save()。
+   *
+   * 设计动机：这些合并/裁剪逻辑只操作配置树，本就属于 ConfigManager 的职责。
+   * App 仅作为"协调者"传入插件元数据列表。
+   */
+  syncPluginDefaults(
+    plugins: ReadonlyArray<{
+      instanceId: string;
+      defaultConfig?: Record<string, unknown>;
+      configSchema?: Record<string, unknown>;
+    }>,
+  ): string[] {
+    const changed: string[] = [];
+    for (const plugin of plugins) {
+      const defaults = plugin.defaultConfig ?? {};
+      const schema = plugin.configSchema;
+      const fileConfig = this.getPluginConfig(plugin.instanceId);
+
+      let merged = deepMergeDefaults(defaults, fileConfig);
+      if (schema && Object.keys(schema).length > 0) {
+        merged = removeExtraFields(merged, schema);
+      }
+
+      if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
+        this.setPluginConfig(plugin.instanceId, merged);
+        changed.push(plugin.instanceId);
+      }
+    }
+    if (changed.length > 0) this.save();
+    return changed;
+  }
+
+  /**
    * 检查插件是否被禁用
    */
   isPluginDisabled(pluginName: string): boolean {
@@ -475,4 +511,69 @@ export class ScopedConfigManager extends ConfigManager {
   override unwatch(): void {
     /* no-op */
   }
+}
+
+// ---- 配置合并/裁剪 helpers（被 syncPluginDefaults 使用） ----
+
+/**
+ * 深度合并默认值：只填充缺失的键，不覆盖已有值。
+ * 嵌套对象会递归合并；数组与基础类型按"已存在则保留"处理。
+ */
+function deepMergeDefaults(
+  defaults: Record<string, unknown>,
+  current: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...current };
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (!(key in result)) {
+      result[key] = defaultValue;
+    } else if (
+      defaultValue !== null &&
+      typeof defaultValue === 'object' &&
+      !Array.isArray(defaultValue) &&
+      result[key] !== null &&
+      typeof result[key] === 'object' &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = deepMergeDefaults(
+        defaultValue as Record<string, unknown>,
+        result[key] as Record<string, unknown>,
+      );
+    }
+  }
+  return result;
+}
+
+/**
+ * 根据 configSchema 移除多余字段。
+ * SchemaGroup（含 fields）对应嵌套对象，递归清理；
+ * SchemaArray（type=array）直接保留；
+ * SchemaField 对应普通字段。
+ */
+function removeExtraFields(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (!(key in schema)) continue;
+    const schemaDef = schema[key] as Record<string, unknown>;
+    if (schemaDef.type === 'array') {
+      result[key] = value;
+    } else if (
+      schemaDef.fields &&
+      typeof schemaDef.fields === 'object' &&
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      result[key] = removeExtraFields(
+        value as Record<string, unknown>,
+        schemaDef.fields as Record<string, unknown>,
+      );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
