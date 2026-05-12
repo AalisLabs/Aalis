@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Logger, LogHub } from '@aalis/core';
+import { Logger } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installConsoleSink } from '../../src/runtime/console-sink.js';
 import { appendCrashLog, setupFileLogger } from '../../src/runtime/file-logger.js';
@@ -14,7 +14,6 @@ describe('runtime console-sink', () => {
   let originalLog: typeof console.log;
   let captured: string[];
   beforeEach(() => {
-    LogHub.default.setConsoleSinkEnabled(false);
     captured = [];
     originalLog = console.log;
     console.log = (...args: unknown[]) => {
@@ -23,7 +22,6 @@ describe('runtime console-sink', () => {
   });
   afterEach(() => {
     console.log = originalLog;
-    LogHub.default.setConsoleSinkEnabled(true);
   });
 
   it('installConsoleSink 接管输出后 Logger.info 走 console.log', () => {
@@ -61,12 +59,10 @@ describe('runtime file-logger', () => {
   let dir: string;
   let logFile: string;
   beforeEach(() => {
-    LogHub.default.setConsoleSinkEnabled(false);
     dir = mkdtempSync(join(tmpdir(), 'aalis-flog-'));
     logFile = join(dir, 'latest.log');
   });
   afterEach(() => {
-    LogHub.default.setConsoleSinkEnabled(true);
     rmSync(dir, { recursive: true, force: true });
   });
 

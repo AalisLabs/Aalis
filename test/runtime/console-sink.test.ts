@@ -1,89 +1,54 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Logger, LogHub } from '../../packages/core/src/index.js';
+import { Logger, LogHub } from '@aalis/core';
+import { describe, expect, it } from 'vitest';
 
 /**
- * console sink 与 LogHub 行为：
- * - sink 关闭时不输出 console，但缓冲与监听器仍生效
- * - 多 hub 隔离（应用自己的 hub 不影响 LogHub.default）
+ * LogHub 行为：纯 pub-sub 通道，无 stdout 知识。
+ *
+ * stdout 输出由 runtime/console-sink.ts 通过订阅 onEntry 实现，
+ * 这里只验证 LogHub 自身的语义。
  */
 
-describe('LogHub / console sink', () => {
-  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-  beforeEach(() => {
-    LogHub.default.setConsoleSinkEnabled(true);
-    logSpy.mockClear();
-  });
-  afterEach(() => {
-    LogHub.default.setConsoleSinkEnabled(true);
-  });
-
-  it('启用时 Logger.info → console.log 被调用', () => {
-    const logger = new Logger('t', 'debug');
+describe('LogHub 纯 pub-sub', () => {
+  it('Logger.info 不再触发 console.log（core 完全去 stdout 化）', () => {
+    const hub = new LogHub();
+    const logger = new Logger('t', 'debug', hub);
+    const before = hub.getBuffer().length;
     logger.info('hello');
-    expect(logSpy).toHaveBeenCalled();
-    const call = logSpy.mock.calls.at(-1)?.[0] as string;
-    expect(call).toContain('hello');
-    expect(call).toContain('INFO');
+    expect(hub.getBuffer().length).toBe(before + 1);
+    expect(hub.getBuffer().at(-1)?.message).toBe('hello');
   });
 
-  it('disable 后 console 静默，但缓冲与监听器仍工作', () => {
-    LogHub.default.setConsoleSinkEnabled(false);
-    logSpy.mockClear();
+  it('onEntry 订阅者收到全部 LogEntry', () => {
+    const hub = new LogHub();
     const captured: string[] = [];
-    const off = LogHub.default.onEntry(e => captured.push(e.message));
-
-    const logger = new Logger('quiet', 'debug');
+    const off = hub.onEntry(e => captured.push(e.message));
+    const logger = new Logger('sub', 'debug', hub);
     logger.info('m1');
     logger.warn('m2');
-
-    expect(logSpy).not.toHaveBeenCalled();
     expect(captured).toEqual(['m1', 'm2']);
-    const buf = LogHub.default.getBuffer();
-    expect(buf.some(e => e.message === 'm1')).toBe(true);
     off();
   });
 
-  it('isConsoleSinkEnabled 反映 toggle', () => {
-    expect(LogHub.default.isConsoleSinkEnabled()).toBe(true);
-    LogHub.default.setConsoleSinkEnabled(false);
-    expect(LogHub.default.isConsoleSinkEnabled()).toBe(false);
-  });
-
-  it('Logger 携带额外 args 时透传给 console.log', () => {
-    const logger = new Logger('args', 'debug');
-    logger.info('with-args', { a: 1 }, 42);
-    const lastCall = logSpy.mock.calls.at(-1);
-    expect(lastCall?.slice(1)).toEqual([{ a: 1 }, 42]);
-  });
-
-  it('多 hub 隔离：自定义 hub 关闭 sink 不影响 default', () => {
-    const sandboxHub = new LogHub();
-    sandboxHub.setConsoleSinkEnabled(false);
-    expect(sandboxHub.isConsoleSinkEnabled()).toBe(false);
-    expect(LogHub.default.isConsoleSinkEnabled()).toBe(true);
-
-    logSpy.mockClear();
-    new Logger('sandbox', 'debug', sandboxHub).info('only-sandbox');
-    expect(logSpy).not.toHaveBeenCalled();
-    expect(sandboxHub.getBuffer().some(e => e.message === 'only-sandbox')).toBe(true);
+  it('多 hub 隔离', () => {
+    const hubA = new LogHub();
+    const hubB = new LogHub();
+    new Logger('a', 'debug', hubA).info('only-a');
+    expect(hubA.getBuffer().some(e => e.message === 'only-a')).toBe(true);
+    expect(hubB.getBuffer().some(e => e.message === 'only-a')).toBe(false);
   });
 
   it('低于 minLevel 不入缓冲', () => {
     const hub = new LogHub();
-    hub.setConsoleSinkEnabled(false);
     const logger = new Logger('lvl', 'warn', hub);
     logger.debug('d');
     logger.info('i');
     logger.warn('w');
     logger.error('e');
-    const buf = hub.getBuffer();
-    expect(buf.map(e => e.level)).toEqual(['warn', 'error']);
+    expect(hub.getBuffer().map(e => e.level)).toEqual(['warn', 'error']);
   });
 
   it('缓冲容量上限（默认 500 条 FIFO）', () => {
     const hub = new LogHub();
-    hub.setConsoleSinkEnabled(false);
     const logger = new Logger('cap', 'debug', hub);
     for (let i = 0; i < 600; i++) logger.info(`m${i}`);
     const buf = hub.getBuffer();

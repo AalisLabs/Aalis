@@ -1,5 +1,20 @@
+import type { Context } from '@aalis/core';
 import { type LogEntry, LogHub, type LogLevel } from '@aalis/core';
 import chalk from 'chalk';
+
+/**
+ * 运行时层注入的事件——`@aalis/core` 不感知"终端归属"这件事，
+ * 仅靠 EventBus 的字符串事件名传递。
+ *
+ * - `terminal:claimed`：某 UI（CLI/TUI）开始独占 stdout（alt-screen/raw-mode）
+ * - `terminal:released`：归还 stdout
+ */
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'terminal:claimed': [owner: string];
+    'terminal:released': [owner: string];
+  }
+}
 
 /**
  * Console sink —— 运行时层的 stdout 输出（按需染色）。
@@ -55,26 +70,26 @@ function formatEntry(entry: LogEntry): string {
 
 export interface ConsoleSinkHandle {
   dispose(): void;
-  /** 暂停：日志仍累积进 LogHub buffer，但不再写 stdout。用于 CLI 接管终端时避免污染备用屏 */
-  pause(): void;
-  /** 恢复 stdout 输出。pause 期间累积的日志**不**回放——它们留在 buffer 里，订阅者（如 CLI 日志视图）自行展示 */
-  resume(): void;
-  /** 当前是否在写 stdout */
-  readonly paused: boolean;
+  /**
+   * 在 App 构造完成后绑定其事件总线：sink 开始监听 `terminal:claimed/released`，
+   * 当任何 UI 接管终端时自动停止写 stdout。
+   *
+   * 必须显式调用——`installConsoleSink()` 在 App 之前运行（需要捕获最早期日志），
+   * 此时没有 ctx 可订阅。
+   */
+  bindEvents(ctx: Context): void;
   /** 当前是否染色输出（供调试 / 状态视图使用） */
   readonly colorized: boolean;
 }
 
 /**
  * 安装 console sink：先冲洗启动前缓冲的日志，然后订阅后续 LogEntry。
- * 默认在调用前会关闭 core 内置 console sink，避免重复输出。
  *
- * 返回的 handle 支持 pause/resume，供"接管终端"的 UI（CLI 备用屏）在启动时暂停 stdout 写入，
- * 否则插件后续日志会污染备用屏内容。
+ * 与 CLI/TUI 等"独占终端 UI"的协调通过事件 `terminal:claimed/released` 完成，
+ * sink 自己根据事件决定是否写 stdout——UI 不直接干预 sink。
  */
 export function installConsoleSink(): ConsoleSinkHandle {
   const hub = LogHub.default;
-  hub.setConsoleSinkEnabled(false);
 
   // 冲洗启动前缓冲
   for (const entry of hub.getBuffer()) {
@@ -87,16 +102,30 @@ export function installConsoleSink(): ConsoleSinkHandle {
     console.log(formatEntry(entry));
   });
 
+  let unbind: (() => void) | undefined;
+
   return {
-    dispose: off,
-    pause() {
-      paused = true;
+    dispose() {
+      off();
+      unbind?.();
     },
-    resume() {
-      paused = false;
-    },
-    get paused() {
-      return paused;
+    bindEvents(ctx: Context) {
+      // 多终端 owner（理论上不会同时）用计数器避免一个 release 提前解锁
+      let owners = 0;
+      const onClaim = (): void => {
+        owners += 1;
+        paused = true;
+      };
+      const onRelease = (): void => {
+        if (owners > 0) owners -= 1;
+        if (owners === 0) paused = false;
+      };
+      const offClaim = ctx.on('terminal:claimed', onClaim);
+      const offRelease = ctx.on('terminal:released', onRelease);
+      unbind = () => {
+        offClaim();
+        offRelease();
+      };
     },
     colorized: COLORIZE,
   };
