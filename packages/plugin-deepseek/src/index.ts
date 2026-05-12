@@ -546,6 +546,11 @@ class DeepSeekLLMService implements LLMService {
                 if (entry) {
                   if (tc.function?.name) entry.name = tc.function.name;
                   if (tc.function?.arguments) entry.args += tc.function.arguments;
+                  chunk.toolCallProgress = {
+                    index: idx,
+                    name: entry.name,
+                    charsAccumulated: entry.args.length,
+                  };
                 }
               }
             }
@@ -558,7 +563,7 @@ class DeepSeekLLMService implements LLMService {
               };
             }
 
-            if (chunk.contentDelta || chunk.reasoningDelta || chunk.usage) {
+            if (chunk.contentDelta || chunk.reasoningDelta || chunk.usage || chunk.toolCallProgress) {
               yield chunk;
             }
           } catch {
