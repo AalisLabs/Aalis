@@ -211,10 +211,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     startBridge();
   });
 
-  const dispose = ctx.eventBus.on('plugin:unloaded', (pluginName: string) => {
-    if (pluginName !== ctx.id) return;
+  ctx.onDispose(() => {
     handle?.close();
     offStarted();
-    dispose();
   });
 }
