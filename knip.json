@@ -2,16 +2,14 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["src/index.ts"],
       "project": ["src/**/*.ts"]
     },
     "packages/plugin-webui-client": {
-      "entry": ["src/main.tsx", "vite.config.ts", "index.html"],
+      "entry": ["index.html"],
       "project": ["src/**/*.{ts,tsx}"]
     }
   },
-  "ignoreDependencies": ["chalk", "clipboardy", "@aalis/core", "@aalis/plugin-agent-default"],
-  "ignore": ["**/dist/**", "**/node_modules/**"],
+  "ignoreDependencies": ["clipboardy", "@aalis/core", "@aalis/plugin-agent-default"],
   "ignoreIssues": {
     "packages/plugin-adapter-onebot/src/types.ts": ["exports", "types"],
     "packages/plugin-adapter-onebot/src/forward.ts": ["exports", "types"],
