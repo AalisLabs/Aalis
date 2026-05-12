@@ -34,13 +34,37 @@ describe('LogHub', () => {
     expect(seen).toEqual(['warn', 'error']);
   });
 
-  it('buffer 上限 500 条，循环覆盖', () => {
+  it('buffer 默认上限 2000 条，循环覆盖', () => {
     const hub = new LogHub();
     const log = new Logger('t', 'debug', hub);
-    for (let i = 0; i < 600; i++) log.info(`msg-${i}`);
-    expect(hub.getBuffer().length).toBe(500);
+    for (let i = 0; i < 2100; i++) log.info(`msg-${i}`);
+    expect(hub.getBuffer().length).toBe(2000);
     expect(hub.getBuffer()[0].message).toBe('msg-100');
-    expect(hub.getBuffer()[499].message).toBe('msg-599');
+    expect(hub.getBuffer()[1999].message).toBe('msg-2099');
+  });
+
+  it('bufferMax 可构造指定 + setBufferMax 动态调整', () => {
+    const hub = new LogHub(10);
+    const log = new Logger('t', 'debug', hub);
+    for (let i = 0; i < 15; i++) log.info(`m-${i}`);
+    expect(hub.getBuffer().length).toBe(10);
+    expect(hub.getBuffer()[0].message).toBe('m-5');
+    // 缩小后立刻丢弃多余旧条目
+    hub.setBufferMax(3);
+    expect(hub.getBuffer().length).toBe(3);
+    expect(hub.getBuffer()[0].message).toBe('m-12');
+  });
+
+  it('getBuffer() 返回副本，外部修改不污染内部环形 buffer', () => {
+    const hub = new LogHub();
+    new Logger('t', 'debug', hub).info('a');
+    const snap = hub.getBuffer();
+    snap.length = 0;
+    snap.push({ timestamp: 'x', level: 'info', scope: 'fake', message: 'evil' });
+    // 内部 buffer 不受外部 splice/push 影响
+    const fresh = hub.getBuffer();
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].message).toBe('a');
   });
 
   it('onEntry 返回 dispose 函数解除订阅', () => {

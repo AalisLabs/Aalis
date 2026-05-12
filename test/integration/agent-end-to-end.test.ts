@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { App, Context } from '../../packages/core/src/index.js';
 import * as agentDefaultModule from '../../packages/plugin-agent-default/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';

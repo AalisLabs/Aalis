@@ -30,6 +30,11 @@ export interface AalisConfig {
    * 详见 ServiceContainer.prefer / Context.preferService。语义：偏好 > 优先级 > 注册顺序。
    */
   servicePreferences?: Record<string, string>;
+  /**
+   * 日志环形 buffer 大小（条）。webui 日志面板与 CLI 启动回放共用此 buffer。
+   * 缺省 2000 条（约 300 KB）。webui 长时间挂载、需要看更久的历史日志时可调大。
+   */
+  logBufferSize?: number;
   // 第三方业务字段兜底：plugin 可通过 declaration merging 提供具体类型
   [key: string]: unknown;
 }
@@ -55,6 +60,12 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
       { label: 'warn', value: 'warn' },
       { label: 'error', value: 'error' },
     ],
+  },
+  logBufferSize: {
+    type: 'number',
+    label: '日志缓冲条数',
+    description: 'webui 日志面板与 CLI 启动回放共用的环形 buffer 容量。默认 2000 条 ≈ 300 KB。',
+    default: 2000,
   },
 };
 
