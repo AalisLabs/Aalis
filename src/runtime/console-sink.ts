@@ -60,24 +60,24 @@ export interface ConsoleSinkHandle {
 }
 
 /**
- * 安装 console sink：先冲洗启动前缓冲的日志，然后订阅后续 LogEntry。
- * 默认在调用前会关闭 core 内置 console sink，避免重复输出。
+ * 安装 console sink：注入彩色格式化器到 LogHub，并冲洗启动前缓冲。
+ *
+ * 通过 `setConsoleFormatter` 注入而非 `onEntry` 监听，让 LogHub 内置的
+ * `setConsoleSinkEnabled(false)` 成为 console 输出的唯一 gate——CLI 进入
+ * alt-screen 时一行代码能彻底静默 console，不会有"残留监听器"继续刷屏。
  */
 export function installConsoleSink(): ConsoleSinkHandle {
   const hub = LogHub.default;
-  hub.setConsoleSinkEnabled(false);
+  // 注入彩色格式化器（取代默认 raw 格式），保持 consoleSink=true 让 push() 走 console.log
+  hub.setConsoleFormatter(formatEntry);
 
-  // 冲洗启动前缓冲
+  // 冲洗启动前缓冲（缓冲里的条目在 setConsoleFormatter 之前已经 push 过，未输出过 console）
   for (const entry of hub.getBuffer()) {
     console.log(formatEntry(entry));
   }
 
-  const off = hub.onEntry(entry => {
-    console.log(formatEntry(entry));
-  });
-
   return {
-    dispose: off,
+    dispose: () => hub.setConsoleFormatter(null),
     colorized: COLORIZE,
   };
 }

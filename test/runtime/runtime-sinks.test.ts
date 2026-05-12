@@ -14,7 +14,9 @@ describe('runtime console-sink', () => {
   let originalLog: typeof console.log;
   let captured: string[];
   beforeEach(() => {
-    LogHub.default.setConsoleSinkEnabled(false);
+    // installConsoleSink 现在通过 setConsoleFormatter 注入格式化器，
+    // 并依赖 consoleSinkEnabled=true 走默认 console.log 路径。
+    LogHub.default.setConsoleSinkEnabled(true);
     captured = [];
     originalLog = console.log;
     console.log = (...args: unknown[]) => {
@@ -23,6 +25,7 @@ describe('runtime console-sink', () => {
   });
   afterEach(() => {
     console.log = originalLog;
+    LogHub.default.setConsoleFormatter(null);
     LogHub.default.setConsoleSinkEnabled(true);
   });
 
@@ -38,12 +41,17 @@ describe('runtime console-sink', () => {
     }
   });
 
-  it('dispose 后不再转发新日志', () => {
+  it('dispose 后不再应用彩色格式化器（回退到默认 raw 格式）', () => {
     const handle = installConsoleSink();
+    new Logger('before-dispose').info('pre-msg');
     handle.dispose();
     captured.length = 0;
-    new Logger('after-dispose').info('should-not-appear');
-    expect(captured.some(line => line.includes('should-not-appear'))).toBe(false);
+    new Logger('after-dispose').info('plain-msg');
+    // dispose 后仍写 console（consoleSink 默认开），但是 raw 格式（不带 ANSI 转义/彩色）
+    expect(captured.some(line => line.includes('plain-msg'))).toBe(true);
+    // 默认 raw 格式不带 ANSI 转义序列
+    const afterLine = captured.find(line => line.includes('plain-msg'))!;
+    expect(afterLine).not.toMatch(/\x1b\[/);
   });
 
   it('启动前缓冲会被冲洗', () => {
