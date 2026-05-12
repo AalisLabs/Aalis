@@ -156,11 +156,30 @@ export interface SessionManagerService {
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
 
+  /**
+   * 解析「继承默认」——即如果当前会话不设置任何字段，会从父/平台 profile 拿到什么。
+   *
+   * 与 resolveConfig 的区别：**不包含** session 自身 config，只合并：
+   * 1. 平台 profile（最低）
+   * 2. 父会话 sessionDefaults（最高）
+   *
+   * 适用场景：WebUI 显示「继承 (xxx)」提示时，应该展示"未覆盖前的默认值"而非当前生效值，
+   * 否则用户一旦覆盖了某字段，"继承"提示就会变成他自己刚刚设置的值，产生迷惑。
+   */
+  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+
   /** 获取已配置的平台 profile 列表 */
   getPlatformProfiles(): Record<string, PlatformProfile>;
 
   /** 设置指定平台的 profile */
   setPlatformProfile(platform: string, profile: PlatformProfile): void;
+
+  /**
+   * 获取全局默认配置（platform profile 之下的最低层 fallback）。
+   * 当 session 自身、父会话 sessionDefaults、platform profile 都未指定某字段时，
+   * resolveConfig 会回落到这里。配置位置：`@aalis/plugin-session-manager.defaults`。
+   */
+  getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
 
   // ---- 标题管理 ----
 
