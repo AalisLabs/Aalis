@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
 
@@ -9,10 +6,7 @@ import { App } from '../../packages/core/src/index.js';
  */
 
 function tempApp() {
-  const dir = mkdtempSync(join(tmpdir(), 'aalis-rec-'));
-  const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, 'name: ER\nlogLevel: error\nplugins: {}\n');
-  const app = new App({ configPath: path });
+  const app = new App({ config: { name: 'ER', logLevel: 'error', plugins: {} } });
   return {
     app,
     cleanup: async () => {
@@ -21,7 +15,6 @@ function tempApp() {
       } catch {
         /* ignore */
       }
-      rmSync(dir, { recursive: true, force: true });
     },
   };
 }

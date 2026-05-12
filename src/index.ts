@@ -1,6 +1,11 @@
 import { App } from '@aalis/core';
 import { type ConsoleSinkHandle, installConsoleSink } from './runtime/console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
+import {
+  createFsPluginLoader,
+  createFsYamlConfigProvider,
+  createProcessRespawnStrategy,
+} from './runtime/providers.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
@@ -35,7 +40,15 @@ async function main() {
   const activeFileLogger = await setupFileLogger();
   fileLogger = activeFileLogger;
 
+  // 宿主层组装：从 YAML 加载配置、扫描 packages/ 加载插件、用 spawn 重启
+  const { config, provider: configProvider, dataDir } = createFsYamlConfigProvider();
+
   const app = new App({
+    config,
+    configProvider,
+    dataDir,
+    pluginLoader: createFsPluginLoader(),
+    restartStrategy: createProcessRespawnStrategy(),
     // 应用层声明：核心功能依赖以下服务至少各有一个提供者运行
     // （core 自身不假设这些服务存在，必须由应用入口显式声明）
     requiredServices: [],
