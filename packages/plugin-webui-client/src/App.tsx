@@ -77,6 +77,12 @@ export function App() {
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
 
+  // 工具调用生成进度（LLM 在 tool_call 阶段无文本输出，避免「卡死感」）
+  const [toolCallProgress, setToolCallProgress] = useState<
+    | { name: string; charsAccumulated: number; startedAt: number }
+    | null
+  >(null);
+
   // 重启中状态
   const [restarting, setRestarting] = useState(false);
   // 重启过程中 WS 已断开过（用于区分：收到 restarting 后需要先断开再重连才刷新）
@@ -215,7 +221,13 @@ export function App() {
       flushStreamBuffer();
       setLoading(false);
       setToolLimitReached(!!toolLimitReached);
+      setToolCallProgress(null);
       return;
+    }
+
+    // LLM 进入文本/推理生成阶段：清空工具调用进度提示
+    if (contentDelta || reasoningDelta) {
+      setToolCallProgress(null);
     }
 
     // 单个 chunk 通常只带 content 或 reasoning 之一（OpenAI 兼容 SSE 行为）；
@@ -237,6 +249,10 @@ export function App() {
   const handleToolCall = useCallback((toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => {
     // 先把挂起的文本 delta 刷入，确保 tool_call 按真实到达顺序插入
     flushStreamBuffer();
+    // 进入工具执行阶段：清空「生成中」提示
+    if (toolPhase === 'start') {
+      setToolCallProgress(null);
+    }
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (toolPhase === 'start') {
@@ -325,7 +341,7 @@ export function App() {
   }, []);
 
   /** 刷新后恢复正在生成的流式内容（统一时间线，服务端为权威） */
-  const handleStreamResume = useCallback((content: string, reasoningContent: string, serverSegments: ContentSegment[], done: boolean) => {
+  const handleStreamResume = useCallback((content: string, reasoningContent: string, serverSegments: ContentSegment[], done: boolean, resumeProgress?: { index: number; name: string; charsAccumulated: number; startedAt?: number }) => {
     setMessages(prev => {
       // 服务端 segments 已是按到达顺序的统一时间线（含 text / reasoning_text / tool_call）；
       // 直接采用，无需再按 reasoning 是否存在做分桶。
@@ -359,7 +375,35 @@ export function App() {
       streamingRef.current = true;
       setLoading(true);
     }
+    // 恢复工具调用进度（重连/刷新后立即显示「正在生成工具调用」）
+    if (resumeProgress) {
+      setToolCallProgress({
+        name: resumeProgress.name,
+        charsAccumulated: resumeProgress.charsAccumulated,
+        startedAt: resumeProgress.startedAt ?? Date.now(),
+      });
+    } else {
+      setToolCallProgress(null);
+    }
   }, []);
+
+  /** 工具调用生成进度（实时） */
+  const handleToolCallProgress = useCallback(
+    (progress: { index: number; name: string; charsAccumulated: number } | null) => {
+      if (!progress) {
+        setToolCallProgress(null);
+        return;
+      }
+      setToolCallProgress(prev => {
+        // 同一个 tool_call 持续累积：保留 startedAt；不同 index 则重置
+        if (prev && prev.name === progress.name) {
+          return { name: progress.name, charsAccumulated: progress.charsAccumulated, startedAt: prev.startedAt };
+        }
+        return { name: progress.name, charsAccumulated: progress.charsAccumulated, startedAt: Date.now() };
+      });
+    },
+    [],
+  );
 
   /** 高危操作确认提示：插入消息但不影响 loading/streaming 状态 */
   const handleConfirm = useCallback((content: string) => {
@@ -395,7 +439,7 @@ export function App() {
     }
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing, session.handleHistoryChanged);
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing, session.handleHistoryChanged, handleToolCallProgress);
 
   /** 手动触发压缩 */
   const handleCompress = useCallback(() => {
@@ -692,6 +736,7 @@ export function App() {
           onClearTodos={handleClearTodos}
           toolLimitReached={toolLimitReached}
           onContinueTools={handleContinueTools}
+          toolCallProgress={toolCallProgress}
           tokenUsage={tokenUsage}
           compressingStatus={compressingStatus}
           onCompress={handleCompress}

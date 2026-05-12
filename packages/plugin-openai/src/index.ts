@@ -432,6 +432,12 @@ class OpenAILLMService implements LLMService {
                 if (entry) {
                   if (tc.function?.name) entry.name = tc.function.name;
                   if (tc.function?.arguments) entry.args += tc.function.arguments;
+                  // 每次 delta 都 yield 进度（不影响最终 done chunk）
+                  chunk.toolCallProgress = {
+                    index: idx,
+                    name: entry.name,
+                    charsAccumulated: entry.args.length,
+                  };
                 }
               }
             }
@@ -444,7 +450,7 @@ class OpenAILLMService implements LLMService {
               };
             }
 
-            if (chunk.contentDelta || chunk.usage) {
+            if (chunk.contentDelta || chunk.usage || chunk.toolCallProgress) {
               yield chunk;
             }
           } catch {

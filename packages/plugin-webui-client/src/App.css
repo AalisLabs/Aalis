@@ -1802,6 +1802,47 @@ body {
   color: var(--text-secondary, #888);
 }
 
+/* ===== 工具调用生成进度横幅 ===== */
+
+.tool-call-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px 10px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #888);
+  background: color-mix(in srgb, var(--primary, #2196f3) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary, #2196f3) 18%, transparent);
+  border-radius: var(--radius);
+}
+
+.tool-call-progress-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--primary, #2196f3);
+  animation: tool-call-progress-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes tool-call-progress-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+.tool-call-progress-text code {
+  padding: 0 4px;
+  font-size: 0.78rem;
+  color: var(--text, #ddd);
+  background: color-mix(in srgb, var(--primary, #2196f3) 14%, transparent);
+  border-radius: 3px;
+}
+
+.tool-call-progress-meta {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #aaa);
+}
+
 /* ===== 图片上传按钮 ===== */
 
 .upload-btn {
