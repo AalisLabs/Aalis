@@ -362,10 +362,7 @@ function deepMergeDefaults(
       typeof result[key] === 'object' &&
       !Array.isArray(result[key])
     ) {
-      result[key] = deepMergeDefaults(
-        defaultValue as Record<string, unknown>,
-        result[key] as Record<string, unknown>,
-      );
+      result[key] = deepMergeDefaults(defaultValue as Record<string, unknown>, result[key] as Record<string, unknown>);
     }
   }
   return result;
@@ -377,10 +374,7 @@ function deepMergeDefaults(
  * SchemaArray（type=array）直接保留；
  * SchemaField 对应普通字段。
  */
-function removeExtraFields(
-  config: Record<string, unknown>,
-  schema: Record<string, unknown>,
-): Record<string, unknown> {
+function removeExtraFields(config: Record<string, unknown>, schema: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
     if (!(key in schema)) continue;
@@ -394,10 +388,7 @@ function removeExtraFields(
       typeof value === 'object' &&
       !Array.isArray(value)
     ) {
-      result[key] = removeExtraFields(
-        value as Record<string, unknown>,
-        schemaDef.fields as Record<string, unknown>,
-      );
+      result[key] = removeExtraFields(value as Record<string, unknown>, schemaDef.fields as Record<string, unknown>);
     } else {
       result[key] = value;
     }

@@ -37,15 +37,10 @@ declare module '@aalis/core' {
 
 function execProc(cmd: string, args: string[], cwd: string): Promise<string> {
   return new Promise((res, rej) => {
-    execFile(
-      cmd,
-      args,
-      { cwd, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) rej(new Error(stderr || err.message));
-        else res(stdout);
-      },
-    );
+    execFile(cmd, args, { cwd, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) rej(new Error(stderr || err.message));
+      else res(stdout);
+    });
   });
 }
 

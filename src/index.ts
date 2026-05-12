@@ -1,11 +1,7 @@
 import { App } from '@aalis/core';
 import { type ConsoleSinkHandle, installConsoleSink } from './runtime/console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
-import {
-  createFsPluginLoader,
-  createFsYamlConfigProvider,
-  createProcessRespawnStrategy,
-} from './runtime/providers.js';
+import { createFsPluginLoader, createFsYamlConfigProvider, createProcessRespawnStrategy } from './runtime/providers.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
