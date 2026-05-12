@@ -1803,50 +1803,59 @@ body {
 }
 
 /* ===== 工具调用「生成中」占位卡 =====
-   与 .tool-call-block 同框，外加 pending 视觉提示（脉动 + 蓝色边）。
+   与 .tool-call-block 视觉对齐（同 padding / font-size / 圆角 / 蓝色调），
+   只用 pulsing 边框作为「正在生成」的差异化提示。
    生成完成后被 ToolCallBlock 接管 —— 同位置原地渐变，不跳动。 */
 
 .tool-call-progress-bubble {
+  /* 容器自身无视觉，仅作为 ToolCallProgressCard 的承载；负 margin 让它贴近上方主气泡，
+     使「正在生成」卡片像 .tool-call-block 一样自然续接在 assistant 内容下方。 */
   padding: 0;
   background: transparent;
   border: none;
   box-shadow: none;
+  margin-top: -2px;
 }
 
 .tool-call-block-pending {
+  /* 完全对齐 .tool-call-block 的外观 */
   display: block;
-  margin: 6px 0;
-  padding: 6px 10px;
-  font-size: 0.85rem;
-  border-radius: var(--radius);
-  border: 1px solid color-mix(in srgb, var(--primary, #2196f3) 28%, transparent);
-  background: color-mix(in srgb, var(--primary, #2196f3) 6%, var(--surface));
+  margin: 8px 0;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  overflow: hidden;
+  /* 仅边框颜色脉动，提示「生成中」 */
   animation: tool-call-pending-pulse 1.4s ease-in-out infinite;
 }
 
 .tool-call-block-pending .tool-call-summary {
+  /* 与 .tool-call-block 的 summary 同尺寸 */
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text, #ddd);
 }
 
 .tool-call-progress-icon {
   display: inline-flex;
   align-items: center;
-  color: var(--primary, #2196f3);
+  color: rgba(59, 130, 246, 0.85);
 }
 
 .tool-call-progress-meta {
   margin-left: auto;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted, #aaa);
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.35));
 }
 
 @keyframes tool-call-pending-pulse {
-  0%, 100% { border-color: color-mix(in srgb, var(--primary, #2196f3) 28%, transparent); }
-  50%      { border-color: color-mix(in srgb, var(--primary, #2196f3) 60%, transparent); }
+  0%, 100% { border-color: rgba(59, 130, 246, 0.15); }
+  50%      { border-color: rgba(59, 130, 246, 0.55); }
 }
 
 /* ===== 图片上传按钮 ===== */
