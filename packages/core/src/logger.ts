@@ -19,10 +19,13 @@ const LOG_BUFFER_MAX = 500;
 /**
  * 日志中枢：封装 buffer / listener / consoleSink 开关。
  *
- * 替代以往的模块级单例，让多 App 实例（沙盒、集成测试）可以拥有
- * 独立的日志通道。默认导出 `defaultLogHub` 用于向后兼容旧 module 级 API。
+ * 每个 `App` 拥有自己的 LogHub（沙盒、集成测试可独立通道）；
+ * `LogHub.default` 是进程级共享中枢，供未注入自定义 hub 的 Logger 使用。
  */
 export class LogHub {
+  /** 进程级默认中枢——所有未显式传 hub 的 Logger 都用它 */
+  static readonly default: LogHub = new LogHub();
+
   private buffer: LogEntry[] = [];
   private listeners: Set<(entry: LogEntry) => void> = new Set();
   private consoleSink = true;
@@ -62,27 +65,6 @@ export class LogHub {
   }
 }
 
-/** 默认全局日志中枢，供向后兼容的 module 级 API 使用 */
-export const defaultLogHub = new LogHub();
-
-// ----- 兼容旧 module 级 API（默认走 defaultLogHub） -----
-
-export function getLogBuffer(): LogEntry[] {
-  return defaultLogHub.getBuffer();
-}
-
-export function onLogEntry(listener: (entry: LogEntry) => void): () => void {
-  return defaultLogHub.onEntry(listener);
-}
-
-export function setConsoleLogSinkEnabled(enabled: boolean): void {
-  defaultLogHub.setConsoleSinkEnabled(enabled);
-}
-
-export function isConsoleLogSinkEnabled(): boolean {
-  return defaultLogHub.isConsoleSinkEnabled();
-}
-
 export class Logger {
   private minLevel: LogLevel;
   private readonly hub: LogHub;
@@ -90,13 +72,13 @@ export class Logger {
   /**
    * @param scope    日志作用域（构造前缀）
    * @param minLevel 最低输出级别
-   * @param hub      日志中枢；缺省使用 `defaultLogHub`。
+   * @param hub      日志中枢；缺省使用 `LogHub.default`。
    *                 多 App / 沙盒场景可注入独立 `new LogHub()` 实现隔离。
    */
   constructor(
     private scope: string,
     minLevel: LogLevel = 'info',
-    hub: LogHub = defaultLogHub,
+    hub: LogHub = LogHub.default,
   ) {
     this.minLevel = minLevel;
     this.hub = hub;

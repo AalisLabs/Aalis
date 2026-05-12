@@ -445,6 +445,55 @@ export class Context {
   }
 
   /**
+   * 在当前 Context 内动态加载一个插件 module 作为"沙盒插件"。
+   *
+   * 与 `App.plugin(...)` / `PluginManager.register(...)` 的区别：
+   * - 不进入全局 `PluginManager`（不参与依赖追踪、softReload）
+   * - 创建一个 fork/createScope 子上下文，调用 `module.apply(child, config)`
+   * - 返回 dispose：调用即销毁该子上下文，对应子上下文里所有副作用一并清理
+   * - 父 ctx dispose 时也会级联销毁
+   *
+   * 典型场景：
+   * - 会话级动态工具/中间件
+   * - 沙盒（`createScope`）内挂载临时 mini 插件
+   * - 单元测试里组装最小可运行单元
+   *
+   * @param module 任意符合 `{ name, apply(ctx, config) }` 的对象
+   * @param config 传给 apply 的配置（默认 `{}`）
+   * @param options.scoped 是否使用 `createScope`（服务/配置隔离），默认 false 用 `fork`
+   * @returns dispose 函数；返回的 Promise 在 apply 完成后 resolve
+   *
+   * @example
+   * const off = await ctx.useModule({
+   *   name: 'temp-tool',
+   *   apply(c) { c.registerTool(myTool); }
+   * });
+   * // ...
+   * off(); // 卸载临时工具
+   */
+  async useModule(
+    module: {
+      name: string;
+      apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
+    },
+    config: Record<string, unknown> = {},
+    options?: { scoped?: boolean },
+  ): Promise<() => void> {
+    if (this._disposed) {
+      throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
+    }
+    const childId = `${this.id}#${module.name}`;
+    const child = options?.scoped ? this.createScope(childId) : this.fork(childId);
+    try {
+      await module.apply(child, config);
+    } catch (err) {
+      child.dispose();
+      throw err;
+    }
+    return () => child.dispose();
+  }
+
+  /**
    * 注册一个在本 Context dispose 时执行的清理回调。
    *
    * 这是替代「监听 `plugin:unloaded` 事件以清理外部资源」的首选 API：

@@ -42,7 +42,7 @@ export interface AppOptions {
 /**
  * 创建 App 实例的工厂函数
  *
- * 推荐用此函数而非直接 `new App()` — 语义更clear，
+ * 推荐用此函数而非直接 `new App()` — 语义更清晰，
  * 未来可在不改调用方的前提下加入缓存、校验等逻辑。
  *
  * @example
@@ -58,7 +58,7 @@ export interface AppOptions {
  *   requiredServices: [], // 沙盒不需要任何预设服务
  * });
  */
-export function createApp(options?: AppOptions | string): App {
+export function createApp(options?: AppOptions): App {
   return new App(options);
 }
 
@@ -92,9 +92,8 @@ export class App {
   /** 可配置的必需服务列表 */
   readonly requiredServices: readonly string[];
 
-  constructor(options?: AppOptions | string) {
-    // 兼容旧签名: new App('path/to/config.yaml')
-    const opts: AppOptions = typeof options === 'string' ? { configPath: options } : (options ?? {});
+  constructor(options?: AppOptions) {
+    const opts: AppOptions = options ?? {};
 
     // 1. 核心基础设施（允许外部注入，未提供则自动创建）
     const config = opts.config ?? new ConfigManager(opts.configPath);

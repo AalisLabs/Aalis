@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ServiceContainer } from '../src/index.js';
+import { ServiceContainer } from '../../packages/core/src/index.js';
 
 describe('ServiceContainer', () => {
   it('注册并查询单个服务', () => {

@@ -3,9 +3,15 @@ import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { PersonaService } from '@aalis/plugin-persona';
+import type {
+  PlatformProfile,
+  SessionConfig,
+  SessionInfo,
+  SessionManagerService,
+  SessionTreeNode,
+} from '@aalis/plugin-session-manager-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
-import type { PlatformProfile, SessionConfig, SessionInfo, SessionManagerService, SessionTreeNode } from './types.js';
 
 export type {
   PlatformProfile,
@@ -15,10 +21,10 @@ export type {
   SessionManagerCapabilityRegistry,
   SessionManagerService,
   SessionTreeNode,
-} from './types.js';
-export { SessionManagerCapabilities } from './types.js';
+} from '@aalis/plugin-session-manager-api';
+export { SessionManagerCapabilities } from '@aalis/plugin-session-manager-api';
 
-import { SessionManagerCapabilities } from './types.js';
+import { SessionManagerCapabilities } from '@aalis/plugin-session-manager-api';
 
 // ===== 插件元数据 =====
 
