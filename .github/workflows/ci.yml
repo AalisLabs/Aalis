@@ -117,10 +117,9 @@ jobs:
           path: coverage/
           retention-days: 7
 
-  knip-dead-code:
-    name: knip (dead code / unused deps) — informational
+  knip:
+    name: knip (dead code / unused deps)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
@@ -137,7 +136,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: knip
-        run: pnpm exec knip --no-progress || true
+        run: pnpm exec knip --no-progress
 
   biome-changed:
     name: Biome on changed files (HARD for new code)

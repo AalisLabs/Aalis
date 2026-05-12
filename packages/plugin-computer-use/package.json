@@ -21,6 +21,9 @@
     "chrome-remote-interface": "^0.34.0",
     "clipboardy": "^4.0.0"
   },
+  "optionalDependencies": {
+    "sharp": "^0.33.0"
+  },
   "devDependencies": {
     "@types/chrome-remote-interface": "^0.33.0",
     "@types/node": "^22.0.0",
