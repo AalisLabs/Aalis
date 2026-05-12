@@ -1,10 +1,10 @@
 import { App } from '@aalis/core';
-import { installConsoleSink } from './runtime/console-sink.js';
+import { type ConsoleSinkHandle, installConsoleSink } from './runtime/console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
-installConsoleSink();
+const consoleSink: ConsoleSinkHandle = installConsoleSink();
 
 let fileLogger: FileLoggerHandle | undefined;
 let handlingFatal = false;
@@ -40,6 +40,9 @@ async function main() {
     // （core 自身不假设这些服务存在，必须由应用入口显式声明）
     requiredServices: [],
   });
+
+  // 把运行时 console sink 暴露为服务，供 CLI 等终端 UI 在接管 stdout 时暂停日志写入
+  app.ctx.provide('console-sink', consoleSink, { capabilities: ['pause-resume'] });
 
   // 自动扫描 packages/ 并加载所有插件
   await app.autoLoadPlugins();
