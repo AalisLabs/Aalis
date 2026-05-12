@@ -1,8 +1,10 @@
 import { App } from '@aalis/core';
+import { installConsoleSink } from './runtime/console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
+installConsoleSink();
 
 let fileLogger: FileLoggerHandle | undefined;
 let handlingFatal = false;

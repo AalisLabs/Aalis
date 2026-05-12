@@ -1,5 +1,3 @@
-import chalk from 'chalk';
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
@@ -14,13 +12,6 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   info: 1,
   warn: 2,
   error: 3,
-};
-
-const LEVEL_COLORS: Record<LogLevel, (s: string) => string> = {
-  debug: chalk.gray,
-  info: chalk.cyan,
-  warn: chalk.yellow,
-  error: chalk.red,
 };
 
 // 全局日志缓冲区（所有 Logger 实例共享）
@@ -86,10 +77,9 @@ export class Logger {
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
 
     const timestamp = new Date().toISOString().slice(11, 23);
-    const colorFn = LEVEL_COLORS[level];
-    const prefix = `${chalk.gray(timestamp)} ${colorFn(level.toUpperCase().padEnd(5))} ${chalk.magenta(this.scope)}`;
 
     if (consoleSinkEnabled) {
+      const prefix = `${timestamp} ${level.toUpperCase().padEnd(5)} ${this.scope}`;
       if (args.length > 0) {
         console.log(`${prefix} ${message}`, ...args);
       } else {
