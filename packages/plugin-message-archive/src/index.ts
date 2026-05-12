@@ -101,19 +101,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     debugLogs: config.debugLogs !== false,
   };
 
-  // 通过 getter 而非闭包变量获取 memory：避免 user 在 WebUI 切换 memory 偏好后，
-  // 这里仍持有旧 provider 实例导致消息写入旧后端。
-  const getMemory = (): MemoryService => {
-    const m = ctx.getService<MemoryService>('memory');
-    if (!m) throw new Error('message-archive 需要 memory 服务');
-    return m;
-  };
-  // 启动时做一次显式校验，行为与旧实现保持一致
-  getMemory();
+  // memory 句柄会自动跟随 ctx.getService 的动态解析（用户切换 memory 偏好后下次调用即生效）
+  const memory = ctx.getService<MemoryService>('memory');
+  if (!memory) {
+    throw new Error('message-archive 需要 memory 服务');
+  }
 
   const service: MessageArchiveService = {
     async saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
-      await getMemory().saveMessage(sessionId, message);
+      await memory.saveMessage(sessionId, message);
       if (cfg.debugLogs && options?.debugLabel) {
         ctx.logger.debug(options.debugLabel);
       }
@@ -183,7 +179,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         );
       }
 
-      await getMemory().saveMessage(working.sessionId, message);
+      await memory.saveMessage(working.sessionId, message);
 
       if (cfg.debugLogs && working._imageRecognitionInfo) {
         ctx.logger.debug(
@@ -231,7 +227,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         metadata,
       };
 
-      await getMemory().saveMessage(opts.sessionId, message);
+      await memory.saveMessage(opts.sessionId, message);
 
       if (cfg.debugLogs) {
         ctx.logger.debug(
