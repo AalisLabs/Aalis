@@ -98,17 +98,20 @@ function collectIds(nodes: TreeNode[]): string[] {
 
 // ===== 配置编辑组件 =====
 
-function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel }: {
+function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options, onSave, onCancel }: {
   config: SessionConfigData;
   resolvedConfig?: SessionConfigData | null;
+  inheritedConfig?: SessionConfigData | null;
   options: ConfigOptions | null;
   onSave: (config: SessionConfigData) => void;
   onCancel: () => void;
 }) {
   // draft 始终基于会话自身 config（非 resolved），保证保存时只写覆盖值
   const [draft, setDraft] = useState<SessionConfigData>({ ...config });
-  // resolved 用于判断"继承生效"状态
+  // resolved 用于 checkbox 默认勾选（当前生效值，含 session 自身覆盖）
   const resolved = resolvedConfig || {};
+  // inherited = platform profile + 父 sessionDefaults（不含 session 自身），用于「继承 (xxx)」提示
+  const inherited = inheritedConfig || {};
 
   const update = <K extends keyof SessionConfigData>(key: K, value: SessionConfigData[K]) => {
     setDraft(prev => ({ ...prev, [key]: value }));
@@ -117,19 +120,19 @@ function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel
   /** 工具分组有三态：会话显式启用 / 继承启用 / 未启用 */
   const isToolGroupActive = (name: string) => {
     if (draft.enabledToolGroups?.includes(name)) return 'explicit';
-    if (resolved.enabledToolGroups?.includes(name) && !draft.enabledToolGroups) return 'inherited';
+    if (inherited.enabledToolGroups?.includes(name) && !draft.enabledToolGroups) return 'inherited';
     return 'off';
   };
 
   const toggleToolGroup = (name: string) => {
     const state = isToolGroupActive(name);
     if (state === 'inherited') {
-      // 继承状态 → 点击后改为显式设置（复制 resolved 列表，移除该项）
-      const base = [...(resolved.enabledToolGroups || [])];
+      // 继承状态 → 点击后改为显式设置（复制 inherited 列表，移除该项）
+      const base = [...(inherited.enabledToolGroups || [])];
       update('enabledToolGroups', base.filter(g => g !== name));
     } else {
       // explicit 或 off → 正常 toggle
-      const current = draft.enabledToolGroups || resolved.enabledToolGroups || [];
+      const current = draft.enabledToolGroups || inherited.enabledToolGroups || [];
       const next = current.includes(name)
         ? current.filter(g => g !== name)
         : [...current, name];
@@ -146,8 +149,8 @@ function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel
     return <div className="session-config-editor"><span className="session-config-loading">加载配置选项…</span></div>;
   }
 
-  const inheritLabel = (field: keyof SessionConfigData, resolvedVal: unknown) =>
-    !draft[field] && resolvedVal ? ` (继承: ${resolvedVal})` : '';
+  const inheritLabel = (field: keyof SessionConfigData, inheritedVal: unknown) =>
+    !draft[field] && inheritedVal ? ` (继承: ${inheritedVal})` : '';
 
   /** 查找模型的 provider 前缀显示名 */
   const modelDisplayName = (modelId: string | undefined) => {
@@ -159,16 +162,16 @@ function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel
   return (
     <div className="session-config-editor" onClick={e => e.stopPropagation()}>
       <label className="session-config-field">
-        <span>模型{inheritLabel('model', resolved.model)}</span>
+        <span>模型{inheritLabel('model', inherited.model)}</span>
         <select value={draft.model || ''} onChange={e => update('model', e.target.value || undefined)}>
-          <option value="">{resolved.model ? `继承 (${modelDisplayName(resolved.model)})` : '继承默认'}</option>
+          <option value="">{inherited.model ? `继承 (${modelDisplayName(inherited.model)})` : '继承默认'}</option>
           {options.models.map(m => <option key={`${m.contextId ?? ''}:${m.id}`} value={m.id}>{m.provider ? `${m.provider} / ${m.id}` : m.id}</option>)}
         </select>
       </label>
       <label className="session-config-field">
-        <span>人设{inheritLabel('persona', resolved.persona)}</span>
+        <span>人设{inheritLabel('persona', inherited.persona)}</span>
         <select value={draft.persona || ''} onChange={e => update('persona', e.target.value || undefined)}>
-          <option value="">{resolved.persona ? `继承 (${resolved.persona})` : '继承默认'}</option>
+          <option value="">{inherited.persona ? `继承 (${inherited.persona})` : '继承默认'}</option>
           {options.personas.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
       </label>
@@ -210,7 +213,7 @@ function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel
           max={50}
           value={draft.maxToolIterations ?? ''}
           onChange={e => update('maxToolIterations', e.target.value ? Number(e.target.value) : undefined)}
-          placeholder={resolved.maxToolIterations ? `继承 (${resolved.maxToolIterations})` : '默认'}
+          placeholder={inherited.maxToolIterations ? `继承 (${inherited.maxToolIterations})` : '默认'}
         />
       </label>
       <div className="session-config-toggles">
@@ -219,14 +222,14 @@ function SessionConfigEditor({ config, resolvedConfig, options, onSave, onCancel
             checked={draft.disableOutputFormat ?? resolved.disableOutputFormat ?? false}
             onChange={e => update('disableOutputFormat', e.target.checked || undefined)}
           />
-          <span>禁用结构化输出{draft.disableOutputFormat === undefined && resolved.disableOutputFormat ? ' (继承)' : ''}</span>
+          <span>禁用结构化输出{draft.disableOutputFormat === undefined && inherited.disableOutputFormat ? ' (继承)' : ''}</span>
         </label>
         <label>
           <input type="checkbox"
             checked={draft.clientSideJsonRendering ?? resolved.clientSideJsonRendering ?? false}
             onChange={e => update('clientSideJsonRendering', e.target.checked || undefined)}
           />
-          <span>客户端 JSON 渲染{draft.clientSideJsonRendering === undefined && resolved.clientSideJsonRendering ? ' (继承)' : ''}</span>
+          <span>客户端 JSON 渲染{draft.clientSideJsonRendering === undefined && inherited.clientSideJsonRendering ? ' (继承)' : ''}</span>
         </label>
       </div>
       <div className="session-config-actions">
@@ -258,6 +261,9 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   const [configEditingId, setConfigEditingId] = useState<string | null>(null);
   const [configOptions, setConfigOptions] = useState<ConfigOptions | null>(null);
   const [resolvedConfig, setResolvedConfig] = useState<SessionConfigData | null>(null);
+  // 「继承默认」包 - 不含 session 自身 config，仅 platform profile + 父 sessionDefaults。
+  // 用于 UI 「继承 (xxx)」提示，避免显示用户自己的覆盖值。
+  const [inheritedConfig, setInheritedConfig] = useState<SessionConfigData | null>(null);
 
   const fetchTree = useCallback(() => {
     pageAction<TreeNode[]>(pluginName, 'getSessionTree')
@@ -275,10 +281,13 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   useEffect(() => {
     if (!refreshSignal) return; // 跳过初始值 0
     fetchTree();
-    // 如果配置编辑器打开中，重新拉取 resolvedConfig
+    // 如果配置编辑器打开中，重新拉取 resolved + inherited
     if (configEditingId) {
-      pageAction<SessionConfigData>(pluginName, 'getResolvedConfig', { sessionId: configEditingId, platform: 'webui' })
-        .then(r => { if (r) setResolvedConfig(r); })
+      Promise.all([
+        pageAction<SessionConfigData>(pluginName, 'getResolvedConfig', { sessionId: configEditingId, platform: 'webui' }),
+        pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: configEditingId, platform: 'webui' }),
+      ])
+        .then(([r, inh]) => { if (r) setResolvedConfig(r); if (inh) setInheritedConfig(inh); })
         .catch(() => {});
     }
   }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -337,16 +346,19 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   };
 
   const handleOpenConfig = async (id: string) => {
-    if (configEditingId === id) { setConfigEditingId(null); setResolvedConfig(null); return; }
+    if (configEditingId === id) { setConfigEditingId(null); setResolvedConfig(null); setInheritedConfig(null); return; }
     setConfigEditingId(id);
     setResolvedConfig(null);
+    setInheritedConfig(null);
     try {
-      const [opts, resolved] = await Promise.all([
+      const [opts, resolved, inherited] = await Promise.all([
         configOptions ? Promise.resolve(configOptions) : pageAction<ConfigOptions>(pluginName, 'getConfigOptions'),
         pageAction<SessionConfigData>(pluginName, 'getResolvedConfig', { sessionId: id, platform: 'webui' }),
+        pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: id, platform: 'webui' }),
       ]);
       if (opts && !configOptions) setConfigOptions(opts);
       if (resolved) setResolvedConfig(resolved);
+      if (inherited) setInheritedConfig(inherited);
     } catch { /* ignore */ }
   };
 
@@ -456,6 +468,7 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
                 configEditingId={configEditingId}
                 configOptions={configOptions}
                 resolvedConfig={resolvedConfig}
+                inheritedConfig={inheritedConfig}
                 onSaveConfig={handleSaveConfig}
                 onCancelConfig={() => setConfigEditingId(null)}
               />
@@ -517,6 +530,7 @@ function TreeNodeView({
   configEditingId,
   configOptions,
   resolvedConfig,
+  inheritedConfig,
   onSaveConfig,
   onCancelConfig,
 }: {
@@ -541,6 +555,7 @@ function TreeNodeView({
   configEditingId: string | null;
   configOptions: ConfigOptions | null;
   resolvedConfig: SessionConfigData | null;
+  inheritedConfig: SessionConfigData | null;
   onSaveConfig: (id: string, config: SessionConfigData) => void;
   onCancelConfig: () => void;
 }) {
@@ -629,6 +644,7 @@ function TreeNodeView({
           <SessionConfigEditor
             config={s.config || {}}
             resolvedConfig={resolvedConfig}
+            inheritedConfig={inheritedConfig}
             options={configOptions}
             onSave={(config) => onSaveConfig(s.id, config)}
             onCancel={onCancelConfig}
@@ -669,6 +685,7 @@ function TreeNodeView({
                 configEditingId={configEditingId}
                 configOptions={configOptions}
                 resolvedConfig={resolvedConfig}
+                inheritedConfig={inheritedConfig}
                 onSaveConfig={onSaveConfig}
                 onCancelConfig={onCancelConfig}
               />
