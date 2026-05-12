@@ -215,6 +215,27 @@ disabled ←─(手动禁用)─ active
 
 `ensureServiceProvider(serviceName)` 会搜索所有 pending 插件中能 `provides` 该服务的插件，并尝试递归激活其依赖链。
 
+### 沙盒与隔离作用域
+
+Aalis 提供两种隔离粒度：
+
+- **`ctx.fork(id)`** — 复用全部根子系统，仅独立 `_disposables`。适合"同 App 内一个独立插件实例"。
+- **`ctx.createScope(id)`** — 创建 `ScopedServiceContainer` + `ScopedConfigManager`（fallback 读、写不影响父），但仍**共享** `EventBus` 与 `HookRegistry`。
+  - 沙盒内 `ctx.provide(...)` / `ctx.config.set(...)` 隔离 ✓
+  - 沙盒内 `ctx.on(event, ...)` / `ctx.middleware(hook, ...)` 仍**全局生效**，dispose 时由 `contextId` 反查清理
+  - ⚠️ 沙盒应避免注册"产生跨作用域副作用"的全局事件（如 `service:registered`），可能干扰主进程逻辑
+- **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp({ events, services, hooks, ... })` 创建新的 `App` 实例。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
+
+#### Context dispose 推荐 API
+
+| 场景 | API |
+|---|---|
+| 监听事件 | `ctx.on(event, fn)` — dispose 时自动注销 |
+| 注册中间件 | `ctx.middleware(hook, fn)` — dispose 时自动注销 |
+| 注册服务 | `ctx.provide(name, impl, { capabilities })` — dispose 时自动注销 |
+| 清理外部资源（连接、定时器、子进程） | `ctx.onDispose(() => cleanup())` |
+| ⚠️ 绕过自动清理（需手动管理） | `ctx.eventBus.on(...)` / `ctx.serviceContainer.register(...)` — 仅供桥接/诊断 |
+
 ## 中间件钩子管道
 
 钩子（Hook）是命名的中间件管道，插件可拦截核心流程的各阶段。
