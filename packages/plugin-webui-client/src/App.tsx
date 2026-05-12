@@ -77,11 +77,10 @@ export function App() {
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
 
-  // 工具调用生成进度（LLM 在 tool_call 阶段无文本输出，避免「卡死感」）
-  const [toolCallProgress, setToolCallProgress] = useState<
-    | { name: string; charsAccumulated: number; startedAt: number }
-    | null
-  >(null);
+  // 工具调用生成进度（LLM 在 tool_call 阶段无文本输出）：按 index 维护多个并发工具
+  const [toolCallsProgress, setToolCallsProgress] = useState<
+    Map<number, { name: string; charsAccumulated: number; startedAt: number }>
+  >(new Map());
 
   // 重启中状态
   const [restarting, setRestarting] = useState(false);
@@ -221,13 +220,13 @@ export function App() {
       flushStreamBuffer();
       setLoading(false);
       setToolLimitReached(!!toolLimitReached);
-      setToolCallProgress(null);
+      setToolCallsProgress(new Map());
       return;
     }
 
-    // LLM 进入文本/推理生成阶段：清空工具调用进度提示
+    // LLM 进入文本/推理生成阶段：清空全部工具调用进度提示
     if (contentDelta || reasoningDelta) {
-      setToolCallProgress(null);
+      setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
     }
 
     // 单个 chunk 通常只带 content 或 reasoning 之一（OpenAI 兼容 SSE 行为）；
@@ -249,9 +248,9 @@ export function App() {
   const handleToolCall = useCallback((toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => {
     // 先把挂起的文本 delta 刷入，确保 tool_call 按真实到达顺序插入
     flushStreamBuffer();
-    // 进入工具执行阶段：清空「生成中」提示
+    // 进入工具执行阶段：清空「生成中」提示（占位卡 → ToolCallBlock）
     if (toolPhase === 'start') {
-      setToolCallProgress(null);
+      setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
     }
     setMessages(prev => {
       const last = prev[prev.length - 1];
@@ -341,7 +340,13 @@ export function App() {
   }, []);
 
   /** 刷新后恢复正在生成的流式内容（统一时间线，服务端为权威） */
-  const handleStreamResume = useCallback((content: string, reasoningContent: string, serverSegments: ContentSegment[], done: boolean, resumeProgress?: { index: number; name: string; charsAccumulated: number; startedAt?: number }) => {
+  const handleStreamResume = useCallback((
+    content: string,
+    reasoningContent: string,
+    serverSegments: ContentSegment[],
+    done: boolean,
+    resumeProgress?: Array<{ index: number; name: string; charsAccumulated: number; startedAt: number }>,
+  ) => {
     setMessages(prev => {
       // 服务端 segments 已是按到达顺序的统一时间线（含 text / reasoning_text / tool_call）；
       // 直接采用，无需再按 reasoning 是否存在做分桶。
@@ -375,35 +380,39 @@ export function App() {
       streamingRef.current = true;
       setLoading(true);
     }
-    // 恢复工具调用进度（重连/刷新后立即显示「正在生成工具调用」）
-    if (resumeProgress) {
-      setToolCallProgress({
-        name: resumeProgress.name,
-        charsAccumulated: resumeProgress.charsAccumulated,
-        startedAt: resumeProgress.startedAt ?? Date.now(),
-      });
+    // 恢复多个并发工具调用进度（重连/刷新后立即重现）
+    if (resumeProgress && resumeProgress.length > 0) {
+      setToolCallsProgress(new Map(resumeProgress.map(p => [
+        p.index,
+        { name: p.name, charsAccumulated: p.charsAccumulated, startedAt: p.startedAt },
+      ])));
     } else {
-      setToolCallProgress(null);
+      setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
     }
   }, []);
 
-  /** 工具调用生成进度（实时） */
+  /** 单个工具调用进度增量更新 */
   const handleToolCallProgress = useCallback(
-    (progress: { index: number; name: string; charsAccumulated: number } | null) => {
-      if (!progress) {
-        setToolCallProgress(null);
-        return;
-      }
-      setToolCallProgress(prev => {
-        // 同一个 tool_call 持续累积：保留 startedAt；不同 index 则重置
-        if (prev && prev.name === progress.name) {
-          return { name: progress.name, charsAccumulated: progress.charsAccumulated, startedAt: prev.startedAt };
-        }
-        return { name: progress.name, charsAccumulated: progress.charsAccumulated, startedAt: Date.now() };
+    (progress: { index: number; name: string; charsAccumulated: number }) => {
+      setToolCallsProgress(prev => {
+        const next = new Map(prev);
+        const existing = next.get(progress.index);
+        next.set(progress.index, {
+          name: progress.name,
+          charsAccumulated: progress.charsAccumulated,
+          // 同 index 持续累积时保留 startedAt；新 index 则重置
+          startedAt: existing?.startedAt ?? Date.now(),
+        });
+        return next;
       });
     },
     [],
   );
+
+  /** 清空所有工具调用进度（stream done 等各类重置场景） */
+  const handleToolCallProgressClear = useCallback(() => {
+    setToolCallsProgress(prev => (prev.size === 0 ? prev : new Map()));
+  }, []);
 
   /** 高危操作确认提示：插入消息但不影响 loading/streaming 状态 */
   const handleConfirm = useCallback((content: string) => {
@@ -439,7 +448,7 @@ export function App() {
     }
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing, session.handleHistoryChanged, handleToolCallProgress);
+  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing, session.handleHistoryChanged, handleToolCallProgress, handleToolCallProgressClear);
 
   /** 手动触发压缩 */
   const handleCompress = useCallback(() => {
@@ -736,7 +745,7 @@ export function App() {
           onClearTodos={handleClearTodos}
           toolLimitReached={toolLimitReached}
           onContinueTools={handleContinueTools}
-          toolCallProgress={toolCallProgress}
+          toolCallsProgress={toolCallsProgress}
           tokenUsage={tokenUsage}
           compressingStatus={compressingStatus}
           onCompress={handleCompress}
