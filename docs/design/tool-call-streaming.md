@@ -58,31 +58,34 @@ Agent 端无需新增状态——只要把 `chunk.toolCallProgress` 透传到事
 
 ### WebUI 服务端（`@aalis/plugin-webui-server`）
 
-- WebSocket 消息：在已有 `stream` 帧上增加 `toolCallProgress` 字段。
-- `streamBuffers[sessionId]` 维护 `toolCallProgress: { index, name, charsAccumulated, startedAt }`：
-  - 第一次出现某个 index 时记录 `startedAt = Date.now()`；
-  - 后续同 index 的 delta 只刷新 `charsAccumulated`；
-  - 收到任意 `contentDelta`/`reasoningDelta` 立刻清空（进入文本阶段）；
-  - 收到 `done: true` 时清空。
-- `stream_resume` 帧同时携带 `toolCallProgress`（含 `startedAt`），方便刷新页面后客户端继续显示「已用 Xs」。
+- WebSocket 消息：在已有 `stream` 帧上增加 `toolCallProgress` 字段（**单条增量**：每个 chunk 只带当前更新的那一个 index）。
+- `streamBuffers[sessionId]` 维护 `toolCallsProgress: Map<number, { name, charsAccumulated, startedAt }>`：
+  - 同 index 复用 `startedAt`（首次记录时间）；新 index 各自记录；
+  - 收到任意 `contentDelta`/`reasoningDelta` 立刻 `clear()`（进入文本阶段）；
+  - 收到 `done: true` 时 `clear()`；
+  - 收到 `tool:execute` `phase='start'` 时 `clear()`（实际执行开始，占位卡让位给 ToolCallBlock）。
+- `stream_resume` 帧携带 `toolCallsProgress: Array<{ index, name, charsAccumulated, startedAt }>`（按 index 升序），刷新页面后**所有并发生成中的工具**立刻恢复显示。
 
 ### WebUI 客户端（`@aalis/plugin-webui-client`）
 
-- `useWebSocket` 增加 `onToolCallProgress` 回调；
-- `App` 维护 `toolCallProgress: { name, charsAccumulated, startedAt } | null`；
-- `ChatPanel` 渲染 `<ToolCallProgressBanner>`：
-  - 文案：`正在生成工具调用：<name>  已用 3.2s · 142 字符`
-  - 使用 `setInterval(100)` 本地刷新 `已用 Xs`，避免依赖服务端心跳；
-  - 由 `App` 在以下时机置空 banner：
+- `useWebSocket` 增加：
+  - `onToolCallProgress(progress)`：单条增量；
+  - `onToolCallProgressClear()`：stream done 等场景统一清空；
+- `App` 维护 `toolCallsProgress: Map<number, { name, charsAccumulated, startedAt }>`；
+- `ChatPanel`：**不再使用横幅**，而是**内联到 assistant 气泡末尾**，每个并发工具一张 `<ToolCallProgressCard>`：
+  - 视觉与 `ToolCallBlock` 同框（共用 `.tool-call-block` 类，附加 `.tool-call-block-pending` 修饰），生成 → 执行 → 完成是同一区域**原地渐变**；
+  - 文案：`<icon> <name>  142 字符 · 3.2s`；
+  - 由 `App` 在以下时机清空 Map：
     - LLM 发出 `contentDelta` 或 `reasoningDelta`（回到文本阶段）；
-    - `tool:execute` start（实际执行开始，会有专用 segment 展示）；
+    - `tool:execute` `phase='start'`（实际执行开始，由 `<ToolCallBlock>` 接管）；
     - stream `done: true`。
+- 首轮等待（尚无 assistant 气泡）场景下，直接在 typing-indicator 占位的同一气泡里渲染占位卡。
 
 ## 测试要点
 
 - **回归点**：原有 `chunk.contentDelta || chunk.usage` 决定是否 yield 的条件已扩展为 `|| chunk.toolCallProgress`，需保证不会因为单纯 progress chunk 干扰 token 计数与 segment 合并。
-- **多 tool 并发**：单条助手消息含多个 `tool_calls[i]` 时，UI 仅显示「最后一个 index」的进度（够用，避免横幅闪烁）。
-- **刷新恢复**：在 tool_call 生成中段刷新页面，需立即看到 `已用 Xs` 横幅，时间从服务端记录的 `startedAt` 继续计算。
+- **多 tool 并发**：单条助手消息含多个 `tool_calls[i]` 时，UI 按 index 升序渲染 N 张占位卡，**互不覆盖**；阶段切换为执行时整批让位给真正的 `<ToolCallBlock>`。
+- **刷新恢复**：在 tool_call 生成中段刷新页面，`stream_resume` 会带回**所有 in-progress** 工具的快照，`已用 Xs` 从服务端 `startedAt` 继续计算。
 
 ## 不在本规约中的内容
 

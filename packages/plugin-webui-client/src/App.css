@@ -1802,45 +1802,51 @@ body {
   color: var(--text-secondary, #888);
 }
 
-/* ===== 工具调用生成进度横幅 ===== */
+/* ===== 工具调用「生成中」占位卡 =====
+   与 .tool-call-block 同框，外加 pending 视觉提示（脉动 + 蓝色边）。
+   生成完成后被 ToolCallBlock 接管 —— 同位置原地渐变，不跳动。 */
 
-.tool-call-progress {
+.tool-call-progress-bubble {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.tool-call-block-pending {
+  display: block;
+  margin: 6px 0;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--primary, #2196f3) 28%, transparent);
+  background: color-mix(in srgb, var(--primary, #2196f3) 6%, var(--surface));
+  animation: tool-call-pending-pulse 1.4s ease-in-out infinite;
+}
+
+.tool-call-block-pending .tool-call-summary {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 6px 12px 10px;
-  padding: 6px 12px;
-  font-size: 0.78rem;
-  color: var(--text-secondary, #888);
-  background: color-mix(in srgb, var(--primary, #2196f3) 6%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--primary, #2196f3) 18%, transparent);
-  border-radius: var(--radius);
+  gap: 6px;
+  color: var(--text, #ddd);
 }
 
 .tool-call-progress-icon {
   display: inline-flex;
   align-items: center;
   color: var(--primary, #2196f3);
-  animation: tool-call-progress-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes tool-call-progress-pulse {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 1; }
-}
-
-.tool-call-progress-text code {
-  padding: 0 4px;
-  font-size: 0.78rem;
-  color: var(--text, #ddd);
-  background: color-mix(in srgb, var(--primary, #2196f3) 14%, transparent);
-  border-radius: 3px;
 }
 
 .tool-call-progress-meta {
   margin-left: auto;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted, #aaa);
+}
+
+@keyframes tool-call-pending-pulse {
+  0%, 100% { border-color: color-mix(in srgb, var(--primary, #2196f3) 28%, transparent); }
+  50%      { border-color: color-mix(in srgb, var(--primary, #2196f3) 60%, transparent); }
 }
 
 /* ===== 图片上传按钮 ===== */

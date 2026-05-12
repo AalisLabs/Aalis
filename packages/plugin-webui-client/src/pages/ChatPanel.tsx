@@ -387,7 +387,7 @@ interface CheckpointTurnSummary {
 }
 
 /** 单条消息渲染（memoized，避免全量重绘） */
-const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, rolledBack, onRollback, onRollbackWithChat }: {
+const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, rolledBack, onRollback, onRollbackWithChat, toolCallsProgress }: {
   msg: ChatMessage;
   senderName: string;
   isLast: boolean;
@@ -398,6 +398,8 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
   rolledBack?: boolean;
   onRollback?: (turn: CheckpointTurnSummary) => void;
   onRollbackWithChat?: (turn: CheckpointTurnSummary) => void;
+  /** 仅最后一条 assistant 且 isGenerating 时传入：当前正在生成的工具调用进度（按 index 索引） */
+  toolCallsProgress?: Map<number, { name: string; charsAccumulated: number; startedAt: number }>;
 }) {
   if (msg.role === 'system') {
     return (
@@ -533,6 +535,22 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
           )}
         </div>
       )}
+      {/* 工具调用「生成中」占位卡：与 ToolCallBlock 同样的 .tool-call-block 外框，
+          phase='start' 后清空，转由真正的 ToolCallBlock 接管，视觉上原地渐变。 */}
+      {msg.role === 'assistant' && toolCallsProgress && toolCallsProgress.size > 0 && (
+        <div className="message-bubble tool-call-progress-bubble">
+          {[...toolCallsProgress.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([index, p]) => (
+              <ToolCallProgressCard
+                key={`pending-${index}`}
+                name={p.name}
+                charsAccumulated={p.charsAccumulated}
+                startedAt={p.startedAt}
+              />
+            ))}
+        </div>
+      )}
       {/* 停止生成按钮：放在正在生成的气泡下方 */}
       {isLast && isGenerating && msg.role === 'assistant' && (
         <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
@@ -573,14 +591,16 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
 });
 
 /**
- * 工具调用生成进度横幅。
+ * 工具调用「生成中」占位卡。
  *
- * 上下文：OpenAI/DeepSeek 在生成 `tool_calls` 期间不会发送 `delta.content`，
- * 客户端的 typing indicator 也只在「无 assistant 气泡时」显示——所以
- * 第二轮 tool_call（已经有 assistant 气泡的情况）就完全没有视觉反馈，
- * 用户会以为卡死。本组件提供「正在生成工具调用 (已用 3.2s · 142 字符)」的提示。
+ * 视觉上和 `ToolCallBlock` 保持同一外框（`tool-call-block` + `tool-call-progress` 修饰类），
+ * 这样从「生成中 → 执行中 → 完成」是同一块原地渐变，不会跳动。
+ *
+ * 上下文：OpenAI/DeepSeek/Ollama 在生成 `tool_calls` 期间不会发送 `delta.content`，
+ * 用户会以为卡死。本组件提供"正在生成 xxx · 142 字符 · 3.2s"的提示，并支持
+ * 同一回合中**多工具并发生成**（按 index 分别一张）。
  */
-function ToolCallProgressBanner({
+function ToolCallProgressCard({
   name,
   charsAccumulated,
   startedAt,
@@ -596,14 +616,12 @@ function ToolCallProgressBanner({
   }, [startedAt]);
   const seconds = (elapsedMs / 1000).toFixed(1);
   return (
-    <div className="tool-call-progress">
-      <span className="tool-call-progress-icon"><Wrench size={14} /></span>
-      <span className="tool-call-progress-text">
-        正在生成工具调用：<code>{name || '…'}</code>
-      </span>
-      <span className="tool-call-progress-meta">
-        已用 {seconds}s · {charsAccumulated} 字符
-      </span>
+    <div className="tool-call-block tool-call-block-pending" aria-live="polite">
+      <div className="tool-call-summary">
+        <span className="tool-call-progress-icon"><Wrench size={14} /></span>
+        <span>{name || '正在生成…'}</span>
+        <span className="tool-call-progress-meta">{charsAccumulated} 字符 · {seconds}s</span>
+      </div>
     </div>
   );
 }
@@ -629,7 +647,7 @@ export function ChatPanel({
   onClearTodos,
   toolLimitReached,
   onContinueTools,
-  toolCallProgress,
+  toolCallsProgress,
   tokenUsage,
   compressingStatus,
   onCompress,
@@ -660,8 +678,9 @@ export function ChatPanel({
   toolLimitReached?: boolean;
   /** 用户确认继续工具调用 */
   onContinueTools?: () => void;
-  /** LLM 正在生成工具调用（在 tool_call 阶段不发文本，需要 UI 显示「生成中」避免「卡死感」） */
-  toolCallProgress?: { name: string; charsAccumulated: number; startedAt: number } | null;
+  /** LLM 正在生成工具调用（在 tool_call 阶段不发文本，需要 UI 显示「生成中」避免「卡死感」）
+   *  多工具并发场景：按 index 维护多个 entry，渲染为多张占位卡 */
+  toolCallsProgress?: Map<number, { name: string; charsAccumulated: number; startedAt: number }>;
   /** Token 使用量统计 */
   tokenUsage?: TokenUsageData | null;
   /** 压缩状态 */
@@ -1117,41 +1136,51 @@ export function ChatPanel({
             开始和 {status?.name ?? 'Aalis'} 对话吧
           </div>
         )}
-        {messages.map((msg, i) => (
-          <MessageItem
-            key={i}
-            msg={msg}
-            senderName={status?.name ?? 'Aalis'}
-            isLast={i === messages.length - 1}
-            isGenerating={isGenerating}
-            onAbort={onAbort}
-            checkpoint={msg.role === 'assistant' ? turnByTimestamp(msg.timestamp) : undefined}
-            rolledBack={msg.role === 'assistant' ? (() => { const t = turnByTimestamp(msg.timestamp); return t ? rolledBackTurns.has(t.turnId) : false; })() : false}
-            onRollback={handleRollback}
-            onRollbackWithChat={handleRollbackWithChat}
-          />
-        ))}
+        {messages.map((msg, i) => {
+          const isLast = i === messages.length - 1;
+          return (
+            <MessageItem
+              key={i}
+              msg={msg}
+              senderName={status?.name ?? 'Aalis'}
+              isLast={isLast}
+              isGenerating={isGenerating}
+              onAbort={onAbort}
+              checkpoint={msg.role === 'assistant' ? turnByTimestamp(msg.timestamp) : undefined}
+              rolledBack={msg.role === 'assistant' ? (() => { const t = turnByTimestamp(msg.timestamp); return t ? rolledBackTurns.has(t.turnId) : false; })() : false}
+              onRollback={handleRollback}
+              onRollbackWithChat={handleRollbackWithChat}
+              toolCallsProgress={isLast && msg.role === 'assistant' && isGenerating ? toolCallsProgress : undefined}
+            />
+          );
+        })}
         {/* 仅在没有 assistant 消息时显示 loading 指示器（首次生成等待） */}
         {loading && (!lastMsg || lastMsg.role !== 'assistant') && (
           <div className="message-group assistant">
             <div className="message-sender">{status?.name ?? 'Aalis'}</div>
             <div className="message-bubble">
-              <div className="typing-indicator">
-                <span /><span /><span />
-              </div>
+              {toolCallsProgress && toolCallsProgress.size > 0 ? (
+                // LLM 直接进入 tool_call 生成（无文本/无 reasoning）：渲染占位卡
+                [...toolCallsProgress.entries()]
+                  .sort((a, b) => a[0] - b[0])
+                  .map(([index, p]) => (
+                    <ToolCallProgressCard
+                      key={`pending-${index}`}
+                      name={p.name}
+                      charsAccumulated={p.charsAccumulated}
+                      startedAt={p.startedAt}
+                    />
+                  ))
+              ) : (
+                <div className="typing-indicator">
+                  <span /><span /><span />
+                </div>
+              )}
             </div>
             <button className="stop-generate-btn" onClick={onAbort} title="停止生成">
               ■ 停止生成
             </button>
           </div>
-        )}
-        {/* 工具调用生成进度提示（OpenAI/DeepSeek 在 tool_call 阶段不发文本） */}
-        {toolCallProgress && (
-          <ToolCallProgressBanner
-            name={toolCallProgress.name}
-            charsAccumulated={toolCallProgress.charsAccumulated}
-            startedAt={toolCallProgress.startedAt}
-          />
         )}
         {/* 工具调用达到上限提示 */}
         {toolLimitReached && !loading && (
