@@ -90,6 +90,15 @@ export class Context {
   readonly logger: Logger;
   readonly config: ConfigManager;
   readonly hooks: HookRegistry;
+  /**
+   * 开发模式开关——由 App 注入，子 Context 通过 fork/createScope 继承。
+   *
+   * - `true`（默认）：`provide` 时按声明的能力跑探测器，暴露"声明与实现不符"
+   * - `false`（生产）：跳过探测，节省热路径开销
+   *
+   * core 不读 `process.env`——是否 dev 由宿主决定。
+   */
+  readonly devMode: boolean;
 
   private _events: EventBus;
   private _services: ServiceContainer;
@@ -106,6 +115,7 @@ export class Context {
     logger: Logger;
     config: ConfigManager;
     parent?: Context;
+    devMode?: boolean;
   }) {
     this.id = options.id;
     this._events = options.events;
@@ -114,6 +124,7 @@ export class Context {
     this.logger = options.logger;
     this.config = options.config;
     this._parent = options.parent;
+    this.devMode = options.devMode ?? options.parent?.devMode ?? true;
     this._disposables = new DisposableChain(this.logger);
   }
 
@@ -160,6 +171,7 @@ export class Context {
       logger: this.logger.child(id),
       config: this.config,
       parent: this,
+      devMode: this.devMode,
     });
     this._children.add(child);
     return child;
@@ -197,6 +209,7 @@ export class Context {
       logger: this.logger.child(id),
       config: scopedConfig,
       parent: this,
+      devMode: this.devMode,
     });
     this._children.add(child);
     return child;
@@ -242,7 +255,7 @@ export class Context {
     const caps = options?.capabilities ?? [];
 
     // dev 模式下按声明的能力探测实例方法，暴露「声明与实现不符」
-    if (process.env.NODE_ENV !== 'production') {
+    if (this.devMode) {
       const failures: string[] = [];
       for (const cap of caps) {
         const result = probeCapability(name, cap as string, instance);
