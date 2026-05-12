@@ -535,10 +535,11 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
           )}
         </div>
       )}
-      {/* 工具调用「生成中」占位卡：与 ToolCallBlock 同样的 .tool-call-block 外框，
-          phase='start' 后清空，转由真正的 ToolCallBlock 接管，视觉上原地渐变。 */}
+      {/* 工具调用「生成中」占位卡：与 ToolCallBlock 视觉对齐（同 .tool-call-block 外框），
+          phase='start' 后被真正的 ToolCallBlock 接管，原地渐变。
+          注意：容器不带 .message-bubble 类，避免被当作独立气泡漏出在主气泡外。 */}
       {msg.role === 'assistant' && toolCallsProgress && toolCallsProgress.size > 0 && (
-        <div className="message-bubble tool-call-progress-bubble">
+        <div className="tool-call-progress-bubble">
           {[...toolCallsProgress.entries()]
             .sort((a, b) => a[0] - b[0])
             .map(([index, p]) => (
