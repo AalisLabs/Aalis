@@ -117,8 +117,14 @@ describe('App 生命周期', () => {
     const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
     try {
       const app = new App({ configPath: cfg.path });
-      expect(app.ctx.getService('app')).toBe(app);
-      expect(app.ctx.getService('plugins')).toBe(app.plugins);
+      // getService 返回的是动态句柄（Proxy），不能用 toBe(实例) 做 identity 比较；
+      // 用行为/属性等价验证它指向真实实例。
+      const appSvc = app.ctx.getService<App>('app');
+      const pluginsSvc = app.ctx.getService('plugins');
+      expect(appSvc).toBeDefined();
+      expect(pluginsSvc).toBeDefined();
+      expect(appSvc?.requiredServices).toEqual(app.requiredServices);
+      expect(pluginsSvc).toEqual(app.plugins);
     } finally {
       cfg.cleanup();
     }

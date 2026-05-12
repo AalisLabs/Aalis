@@ -381,6 +381,7 @@ class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
   private activeSessionId: string = '';
   private ctx: Context;
+  /** memory 是 ctx.getService 返回的动态句柄——provider 切换时自动跟随，无需重新解析 */
   private memory: MemoryService;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;

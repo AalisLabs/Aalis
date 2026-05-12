@@ -10,6 +10,64 @@ import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from '
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
 /**
+ * 创建一个"动态服务句柄"——Proxy，每次属性访问都重新从容器解析当前最佳 provider。
+ *
+ * 目的：让调用方写 `const memory = ctx.getService('memory')` 后长期持有也安全，
+ * 不再因 provider 切换/重载而持有过期实例。
+ *
+ * 解析策略和 `container.get()` 完全一致（偏好 > 优先级 > 注册顺序，能力过滤）。
+ * 若调用时刻没有 provider，访问任意属性会抛错——但 `getService` 入口已先校验
+ * 至少有一个匹配 entry 才返回句柄，所以正常路径下不会触发这个抛错；
+ * 仅在调用方持有句柄期间所有 provider 都被注销才会遇到。
+ */
+function makeServiceHandle<T>(
+  container: ServiceContainer,
+  name: string,
+  caps: string[] | undefined,
+): T {
+  const resolve = (): unknown => {
+    const inst = container.get<unknown>(name, caps);
+    if (inst === undefined) {
+      throw new Error(`服务 "${name}" 已不再可用（持有句柄期间 provider 全部注销）`);
+    }
+    return inst;
+  };
+  // 用空对象做 target，所有 trap 都委托到当前解析结果——保证 typeof / 属性访问 / 调用 / new 等都跟随最新 provider
+  return new Proxy(
+    {},
+    {
+      get(_t, prop, receiver) {
+        const target = resolve() as object;
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+      has(_t, prop) {
+        return Reflect.has(resolve() as object, prop);
+      },
+      ownKeys() {
+        return Reflect.ownKeys(resolve() as object);
+      },
+      getOwnPropertyDescriptor(_t, prop) {
+        return Reflect.getOwnPropertyDescriptor(resolve() as object, prop);
+      },
+      getPrototypeOf() {
+        return Reflect.getPrototypeOf(resolve() as object);
+      },
+      apply(_t, thisArg, args) {
+        const fn = resolve();
+        if (typeof fn !== 'function') throw new TypeError(`服务 "${name}" 不是函数`);
+        return Reflect.apply(fn, thisArg, args);
+      },
+      construct(_t, args, newTarget) {
+        const fn = resolve();
+        if (typeof fn !== 'function') throw new TypeError(`服务 "${name}" 不可构造`);
+        return Reflect.construct(fn as new (...a: unknown[]) => object, args, newTarget);
+      },
+    },
+  ) as T;
+}
+
+/**
  * 上下文 (Context)
  *
  * 每个插件获得一个子 Context。所有通过子 Context 注册的副作用
@@ -224,12 +282,29 @@ export class Context {
    * 获取服务 (支持能力匹配)
    *
    * `requiredCapabilities` 按服务名获得强类型约束（同 `provide()`）。
+   *
+   * **返回的是动态句柄（Proxy），而非裸实例**：
+   * - 调用时若没有任何 provider 匹配 → 返回 `undefined`（保持向后兼容的 null-check 语义）。
+   * - 一旦有匹配 → 返回一个 Proxy，**每次属性访问都重新解析容器**，
+   *   自动跟随用户偏好切换、provider 卸载/重载、router 路由调整。
+   *
+   * 这避免了"在 `apply()` 时把 service 抓进闭包/类字段，
+   * 之后用户切换偏好却仍写入旧 provider"的常见 bug——
+   * 任何插件都可以放心写 `const memory = ctx.getService('memory')` 后长期持有。
+   *
+   * **注意**：Proxy 不等于 provider 实例本身：
+   * - `instanceof` 检查不会按 provider 类工作（应通过能力声明判断）
+   * - 不要把 Proxy 与具体实例做 `===` 比较
+   * - 性能：每次属性访问多一次 Map 查询，热路径密集访问可临时解引用为局部变量
    */
   getService<T, TName extends string = string>(
     name: TName,
     requiredCapabilities?: CapabilityList<TName>,
   ): T | undefined {
-    return this._services.get<T>(name, requiredCapabilities as readonly string[] as string[] | undefined);
+    const caps = requiredCapabilities as readonly string[] as string[] | undefined;
+    // 调用时若完全没有匹配 entry，返回 undefined 以保留 null-check 语义
+    if (!this._services.has(name, caps)) return undefined;
+    return makeServiceHandle<T>(this._services, name, caps);
   }
 
   /**
