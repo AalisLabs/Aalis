@@ -50,6 +50,7 @@ const PLUGIN_DIRS = [
   'plugin-ollama',
   'plugin-onebot-tools',
   'plugin-openai',
+  'plugin-package-manager',
   'plugin-persona',
   'plugin-platform',
   'plugin-prompt-budget',

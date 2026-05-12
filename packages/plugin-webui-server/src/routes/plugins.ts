@@ -1,5 +1,6 @@
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA } from '@aalis/core';
+import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import type express from 'express';
 
@@ -242,7 +243,12 @@ export function registerPluginRoutes(
       return;
     }
     try {
-      const result = await app.installPlugin(npmPkg);
+      const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+      if (!pkgMgr) {
+        res.status(503).json({ error: 'package-manager 服务未启用，无法安装插件' });
+        return;
+      }
+      const result = await pkgMgr.install(npmPkg);
       res.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -260,7 +266,12 @@ export function registerPluginRoutes(
     }
     const pluginName = req.params.name;
     try {
-      const result = await app.uninstallPlugin(pluginName);
+      const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+      if (!pkgMgr) {
+        res.status(503).json({ error: 'package-manager 服务未启用，无法卸载插件' });
+        return;
+      }
+      const result = await pkgMgr.uninstall(pluginName);
       res.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

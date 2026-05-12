@@ -16,6 +16,7 @@
     "@aalis/plugin-commands-api": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
+    "@aalis/plugin-package-manager": "workspace:*",
     "@aalis/plugin-persona": "workspace:*",
     "@aalis/plugin-platform": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
