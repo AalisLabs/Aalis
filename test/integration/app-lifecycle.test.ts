@@ -1,91 +1,63 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { App, LogHub } from '../../packages/core/src/index.js';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { App } from '../../packages/core/src/index.js';
+import { tempConfig } from '../fixtures/app.js';
 
 /**
  * App 生命周期与配置集成测试
  */
 
-function tempConfig(yaml: string) {
-  const dir = mkdtempSync(join(tmpdir(), 'aalis-app-'));
-  const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, yaml);
-  return { dir, path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
-}
-
 describe('App 生命周期', () => {
-
   it('createApp 仅靠最小配置可构造', () => {
-    const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
-    try {
-      const app = new App({ configPath: cfg.path });
-      expect(app.ctx).toBeDefined();
-      expect(app.plugins).toBeDefined();
-      expect(app.ctx.config).toBeDefined();
-      expect(app.events).toBeDefined();
-      expect(app.services).toBeDefined();
-      expect(app.hooks).toBeDefined();
-    } finally {
-      cfg.cleanup();
-    }
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    expect(app.ctx).toBeDefined();
+    expect(app.plugins).toBeDefined();
+    expect(app.ctx.config).toBeDefined();
+    expect(app.events).toBeDefined();
+    expect(app.services).toBeDefined();
+    expect(app.hooks).toBeDefined();
   });
 
   it('config get 读取顶层字段', () => {
-    const cfg = tempConfig('name: MyApp\nlogLevel: warn\nplugins: {}\n');
-    try {
-      const app = new App({ configPath: cfg.path });
-      expect(app.ctx.config.get('name')).toBe('MyApp');
-      expect(app.ctx.config.get('logLevel')).toBe('warn');
-    } finally {
-      cfg.cleanup();
-    }
+    const app = new App({ config: { name: 'MyApp', logLevel: 'warn', plugins: {} } });
+    expect(app.ctx.config.get('name')).toBe('MyApp');
+    expect(app.ctx.config.get('logLevel')).toBe('warn');
   });
 
   it('app.stop 触发 dispose 事件并清理 ctx', async () => {
-    const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
-    try {
-      const app = new App({ configPath: cfg.path });
-      const ctx = app.ctx;
-      const events: string[] = [];
-      ctx.on('app:stopping', () => {
-        events.push('stopping');
-      });
-      ctx.on('dispose', () => {
-        events.push('dispose');
-      });
-      await app.stop();
-      expect(events).toEqual(['stopping', 'dispose']);
-      expect(ctx.disposed).toBe(true);
-    } finally {
-      cfg.cleanup();
-    }
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const ctx = app.ctx;
+    const events: string[] = [];
+    ctx.on('app:stopping', () => {
+      events.push('stopping');
+    });
+    ctx.on('dispose', () => {
+      events.push('dispose');
+    });
+    await app.stop();
+    expect(events).toEqual(['stopping', 'dispose']);
+    expect(ctx.disposed).toBe(true);
   });
 
   it('两个并存 App 实例互不干扰（service 隔离）', () => {
-    const a = tempConfig('name: A\nlogLevel: error\nplugins: {}\n');
-    const b = tempConfig('name: B\nlogLevel: error\nplugins: {}\n');
-    try {
-      const appA = new App({ configPath: a.path });
-      const appB = new App({ configPath: b.path });
-      expect(appA.services).not.toBe(appB.services);
-      appA.ctx.provide('shared', { v: 1 });
-      expect(appA.ctx.getService('shared')).toBeDefined();
-      expect(appB.ctx.getService('shared')).toBeUndefined();
-      // 配置也独立
-      expect(appA.ctx.config.get('name')).toBe('A');
-      expect(appB.ctx.config.get('name')).toBe('B');
-    } finally {
-      a.cleanup();
-      b.cleanup();
-    }
+    const appA = new App({ config: { name: 'A', logLevel: 'error', plugins: {} } });
+    const appB = new App({ config: { name: 'B', logLevel: 'error', plugins: {} } });
+    expect(appA.services).not.toBe(appB.services);
+    appA.ctx.provide('shared', { v: 1 });
+    expect(appA.ctx.getService('shared')).toBeDefined();
+    expect(appB.ctx.getService('shared')).toBeUndefined();
+    expect(appA.ctx.config.get('name')).toBe('A');
+    expect(appB.ctx.config.get('name')).toBe('B');
   });
 
   it('config.setPluginConfig + save 把更改写回 yaml', () => {
     const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
     try {
-      const app = new App({ configPath: cfg.path });
+      const app = new App({
+        config: cfg.config,
+        configProvider: cfg.provider,
+        dataDir: cfg.dataDir,
+      });
       app.ctx.config.setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
       app.ctx.config.save();
       const yaml = readFileSync(cfg.path, 'utf-8');
@@ -98,29 +70,17 @@ describe('App 生命周期', () => {
   });
 
   it('AppOptions.requiredServices 默认空', () => {
-    const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
-    try {
-      const app = new App({ configPath: cfg.path });
-      expect(app.requiredServices).toEqual([]);
-    } finally {
-      cfg.cleanup();
-    }
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    expect(app.requiredServices).toEqual([]);
   });
 
   it('内置 app / plugins 服务在 ctx 中可见', () => {
-    const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
-    try {
-      const app = new App({ configPath: cfg.path });
-      // getService 返回的是动态句柄（Proxy），不能用 toBe(实例) 做 identity 比较；
-      // 用行为/属性等价验证它指向真实实例。
-      const appSvc = app.ctx.getService<App>('app');
-      const pluginsSvc = app.ctx.getService('plugins');
-      expect(appSvc).toBeDefined();
-      expect(pluginsSvc).toBeDefined();
-      expect(appSvc?.requiredServices).toEqual(app.requiredServices);
-      expect(pluginsSvc).toEqual(app.plugins);
-    } finally {
-      cfg.cleanup();
-    }
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const appSvc = app.ctx.getService<App>('app');
+    const pluginsSvc = app.ctx.getService('plugins');
+    expect(appSvc).toBeDefined();
+    expect(pluginsSvc).toBeDefined();
+    expect(appSvc?.requiredServices).toEqual(app.requiredServices);
+    expect(pluginsSvc).toEqual(app.plugins);
   });
 });

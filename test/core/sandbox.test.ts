@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App, type Context, type PluginModule } from '../../packages/core/src/index.js';
 
@@ -16,11 +13,8 @@ import { App, type Context, type PluginModule } from '../../packages/core/src/in
  */
 
 function makeApp() {
-  const dir = mkdtempSync(join(tmpdir(), 'aalis-sb-'));
-  const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, 'name: T\nlogLevel: error\nplugins: {}\n');
-  const app = new App({ configPath: path });
-  return { app, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  return { app, cleanup: () => {} };
 }
 
 describe('Context.useModule 沙盒插件加载', () => {
@@ -131,28 +125,19 @@ describe('Context.useModule 沙盒插件加载', () => {
 
 describe('createApp 完全隔离沙盒', () => {
   it('两个独立 App 各自的服务/事件互不影响', async () => {
-    const dir1 = mkdtempSync(join(tmpdir(), 'aalis-iso1-'));
-    const dir2 = mkdtempSync(join(tmpdir(), 'aalis-iso2-'));
-    writeFileSync(join(dir1, 'aalis.config.yaml'), 'name: A\nlogLevel: error\nplugins: {}\n');
-    writeFileSync(join(dir2, 'aalis.config.yaml'), 'name: B\nlogLevel: error\nplugins: {}\n');
-    try {
-      const app1 = new App({ configPath: join(dir1, 'aalis.config.yaml') });
-      const app2 = new App({ configPath: join(dir2, 'aalis.config.yaml') });
+    const app1 = new App({ config: { name: 'A', logLevel: 'error', plugins: {} } });
+    const app2 = new App({ config: { name: 'B', logLevel: 'error', plugins: {} } });
 
-      await app1.plugin({
-        name: 'p',
-        apply(ctx) {
-          ctx.provide('only-in-1', { v: 1 });
-        },
-      });
+    await app1.plugin({
+      name: 'p',
+      apply(ctx) {
+        ctx.provide('only-in-1', { v: 1 });
+      },
+    });
 
-      expect(app1.ctx.getService('only-in-1')).toBeDefined();
-      expect(app2.ctx.getService('only-in-1')).toBeUndefined();
-      expect(app1.ctx.config.get('name')).toBe('A');
-      expect(app2.ctx.config.get('name')).toBe('B');
-    } finally {
-      rmSync(dir1, { recursive: true, force: true });
-      rmSync(dir2, { recursive: true, force: true });
-    }
+    expect(app1.ctx.getService('only-in-1')).toBeDefined();
+    expect(app2.ctx.getService('only-in-1')).toBeUndefined();
+    expect(app1.ctx.config.get('name')).toBe('A');
+    expect(app2.ctx.config.get('name')).toBe('B');
   });
 });
