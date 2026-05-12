@@ -29,6 +29,14 @@ export class LogHub {
   private buffer: LogEntry[] = [];
   private listeners: Set<(entry: LogEntry) => void> = new Set();
   private consoleSink = true;
+  /**
+   * 可选的"console 输出格式化器"。若设置，则 push() 用它生成 console 行；
+   * 未设置时回退到默认的 raw 格式。这让"彩色 console 输出"由 runtime 注入，
+   * 而 LogHub 内部仍是 console 输出的唯一 gate——setConsoleSinkEnabled(false)
+   * 能彻底静默全部 console 输出（CLI 进入 alt-screen 时需要这个保证，否则
+   * 外挂的 console 监听器会继续刷屏，把 TUI 画面冲乱）。
+   */
+  private consoleFormatter: ((entry: LogEntry) => string) | null = null;
 
   getBuffer(): LogEntry[] {
     return this.buffer;
@@ -49,14 +57,24 @@ export class LogHub {
     return this.consoleSink;
   }
 
+  /**
+   * 设置 console 输出格式化器（runtime 注入彩色版本时使用）。
+   * 传 null 恢复默认 raw 格式。
+   */
+  setConsoleFormatter(formatter: ((entry: LogEntry) => string) | null): void {
+    this.consoleFormatter = formatter;
+  }
+
   /** 接收一条日志（Logger 内部调用） */
   push(entry: LogEntry, args: unknown[]): void {
     if (this.consoleSink) {
-      const prefix = `${entry.timestamp} ${entry.level.toUpperCase().padEnd(5)} ${entry.scope}`;
+      const line = this.consoleFormatter
+        ? this.consoleFormatter(entry)
+        : `${entry.timestamp} ${entry.level.toUpperCase().padEnd(5)} ${entry.scope} ${entry.message}`;
       if (args.length > 0) {
-        console.log(`${prefix} ${entry.message}`, ...args);
+        console.log(line, ...args);
       } else {
-        console.log(`${prefix} ${entry.message}`);
+        console.log(line);
       }
     }
     this.buffer.push(entry);
