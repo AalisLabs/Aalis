@@ -1,8 +1,8 @@
-import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
 import { ConfigManager } from './config.js';
 import { Context } from './context.js';
 import { EventBus } from './events.js';
@@ -119,7 +119,7 @@ export class App {
     this.packagesDir = resolve(process.cwd(), 'packages');
 
     // 4. 注册核心服务
-    this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config', 'market'] });
+    this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
     this.ctx.provide('plugins', this.plugins, { capabilities: ['plugin-mgmt'] });
 
     // 5. 应用启动时已存在的服务偏好（容器先于此处 register，但偏好可提前于 entry 设置）
@@ -371,85 +371,6 @@ export class App {
     return loaded;
   }
 
-  /**
-   * 从 npm 安装插件到 packages/ 目录并加载
-   * @param npmPkg npm 包名，如 "@aalis/plugin-example"
-   * @returns 安装结果
-   */
-  async installPlugin(npmPkg: string): Promise<{ ok: boolean; message: string }> {
-    // 从包名推导目录名: @aalis/plugin-xxx → plugin-xxx
-    const dirName = npmPkg.replace(/^@[^/]+\//, '');
-    const targetDir = resolve(this.packagesDir, dirName);
-
-    if (existsSync(targetDir)) {
-      return { ok: false, message: `目录 ${dirName} 已存在` };
-    }
-
-    this.logger.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
-
-    try {
-      await this.exec('npm', ['pack', npmPkg, '--pack-destination', this.packagesDir]);
-
-      // npm pack 产出的文件名格式: scope-name-version.tgz
-      // 找到 tgz 文件
-      const dirents = await readdir(this.packagesDir);
-      const tgzFile = dirents.find(f => f.endsWith('.tgz') && f.includes(dirName));
-      if (!tgzFile) {
-        return { ok: false, message: '下载包失败: 未找到 tgz 文件' };
-      }
-
-      const tgzPath = resolve(this.packagesDir, tgzFile);
-
-      // 创建目录并解压
-      await this.exec('mkdir', ['-p', targetDir]);
-      await this.exec('tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1']);
-
-      // 清理 tgz
-      await this.exec('rm', ['-f', tgzPath]);
-
-      // 安装依赖
-      await this.exec('pnpm', ['install', '--filter', npmPkg], process.cwd());
-
-      // 加载插件
-      const newPlugins = await this.rescanPlugins();
-
-      if (newPlugins.length > 0) {
-        return { ok: true, message: `已安装并加载: ${newPlugins.join(', ')}` };
-      } else {
-        return { ok: true, message: `已安装到 packages/${dirName}，但未发现新插件` };
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`安装插件 "${npmPkg}" 失败: ${message}`);
-      return { ok: false, message };
-    }
-  }
-
-  /**
-   * 卸载插件：停用并删除 packages/ 下的目录
-   */
-  async uninstallPlugin(pluginName: string): Promise<{ ok: boolean; message: string }> {
-    // 先卸载
-    await this.plugins.unload(pluginName);
-
-    // 从包名推导目录名
-    const dirName = pluginName.replace(/^@[^/]+\//, '');
-    const targetDir = resolve(this.packagesDir, dirName);
-
-    if (!existsSync(targetDir)) {
-      return { ok: true, message: `插件 ${pluginName} 已卸载（目录不存在）` };
-    }
-
-    try {
-      await this.exec('rm', ['-rf', targetDir]);
-      this.logger.info(`已删除插件目录: packages/${dirName}`);
-      return { ok: true, message: `插件 ${pluginName} 已卸载并删除` };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, message };
-    }
-  }
-
   // ---- 内部方法 ----
 
   /**
@@ -507,24 +428,6 @@ export class App {
     }
 
     return discovered;
-  }
-
-  private exec(cmd: string, args: string[], cwd?: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      execFile(
-        cmd,
-        args,
-        {
-          cwd: cwd ?? this.packagesDir,
-          timeout: 120_000,
-          maxBuffer: 10 * 1024 * 1024,
-        },
-        (err, stdout, stderr) => {
-          if (err) reject(new Error(stderr || err.message));
-          else resolve(stdout);
-        },
-      );
-    });
   }
 
   /**
