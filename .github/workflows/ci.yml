@@ -7,8 +7,8 @@ on:
     branches: [main, master]
 
 jobs:
-  build-and-check:
-    name: build + lint + tests + coverage
+  build:
+    name: build + typecheck + lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -33,6 +33,69 @@ jobs:
 
       - name: Biome (lint + format check)
         run: pnpm exec biome check . --max-diagnostics=200
+
+  unit-tests:
+    name: unit tests (core + plugins)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        run: pnpm exec vitest run test/core test/plugins test/runtime
+
+  integration-tests:
+    name: integration tests (end-to-end + lifecycle + recovery)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run integration tests
+        run: pnpm exec vitest run test/integration
+
+  coverage:
+    name: full coverage report
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests with coverage
         run: pnpm run test --coverage
