@@ -23,7 +23,8 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*"
+    "@aalis/core": "workspace:*",
+    "chalk": "^5.4.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
