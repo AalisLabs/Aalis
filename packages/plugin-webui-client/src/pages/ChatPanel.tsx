@@ -572,6 +572,42 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
   );
 });
 
+/**
+ * 工具调用生成进度横幅。
+ *
+ * 上下文：OpenAI/DeepSeek 在生成 `tool_calls` 期间不会发送 `delta.content`，
+ * 客户端的 typing indicator 也只在「无 assistant 气泡时」显示——所以
+ * 第二轮 tool_call（已经有 assistant 气泡的情况）就完全没有视觉反馈，
+ * 用户会以为卡死。本组件提供「正在生成工具调用 (已用 3.2s · 142 字符)」的提示。
+ */
+function ToolCallProgressBanner({
+  name,
+  charsAccumulated,
+  startedAt,
+}: {
+  name: string;
+  charsAccumulated: number;
+  startedAt: number;
+}) {
+  const [elapsedMs, setElapsedMs] = useState(Date.now() - startedAt);
+  useEffect(() => {
+    const id = window.setInterval(() => setElapsedMs(Date.now() - startedAt), 100);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+  const seconds = (elapsedMs / 1000).toFixed(1);
+  return (
+    <div className="tool-call-progress">
+      <span className="tool-call-progress-icon"><Wrench size={14} /></span>
+      <span className="tool-call-progress-text">
+        正在生成工具调用：<code>{name || '…'}</code>
+      </span>
+      <span className="tool-call-progress-meta">
+        已用 {seconds}s · {charsAccumulated} 字符
+      </span>
+    </div>
+  );
+}
+
 export function ChatPanel({
   messages,
   loading,
@@ -593,6 +629,7 @@ export function ChatPanel({
   onClearTodos,
   toolLimitReached,
   onContinueTools,
+  toolCallProgress,
   tokenUsage,
   compressingStatus,
   onCompress,
@@ -623,6 +660,8 @@ export function ChatPanel({
   toolLimitReached?: boolean;
   /** 用户确认继续工具调用 */
   onContinueTools?: () => void;
+  /** LLM 正在生成工具调用（在 tool_call 阶段不发文本，需要 UI 显示「生成中」避免「卡死感」） */
+  toolCallProgress?: { name: string; charsAccumulated: number; startedAt: number } | null;
   /** Token 使用量统计 */
   tokenUsage?: TokenUsageData | null;
   /** 压缩状态 */
@@ -1105,6 +1144,14 @@ export function ChatPanel({
               ■ 停止生成
             </button>
           </div>
+        )}
+        {/* 工具调用生成进度提示（OpenAI/DeepSeek 在 tool_call 阶段不发文本） */}
+        {toolCallProgress && (
+          <ToolCallProgressBanner
+            name={toolCallProgress.name}
+            charsAccumulated={toolCallProgress.charsAccumulated}
+            startedAt={toolCallProgress.startedAt}
+          />
         )}
         {/* 工具调用达到上限提示 */}
         {toolLimitReached && !loading && (

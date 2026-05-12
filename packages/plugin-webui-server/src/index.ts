@@ -135,6 +135,14 @@ interface WSOutgoing {
   reasoningDelta?: string;
   done?: boolean;
   toolLimitReached?: boolean;
+  /** 流式生成期间：工具调用增量进度（OpenAI/DeepSeek 在 tool_call 阶段不发文本，需要让 UI 显示「正在生成」） */
+  toolCallProgress?: {
+    index: number;
+    name: string;
+    charsAccumulated: number;
+    /** 仅 stream_resume 携带：服务端首次观察到该 tool_call 的时间戳（ms） */
+    startedAt?: number;
+  };
   status?: Record<string, unknown>;
   log?: LogEntry;
   toolName?: string;
@@ -301,7 +309,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       };
   const streamBuffers = new Map<
     string,
-    { content: string; reasoningContent: string; segments: BufferSegment[]; generating: boolean }
+    {
+      content: string;
+      reasoningContent: string;
+      segments: BufferSegment[];
+      generating: boolean;
+      /** 当前正在生成的 tool_call 进度（done 后清空） */
+      toolCallProgress?: { index: number; name: string; charsAccumulated: number; startedAt: number };
+    }
   >();
 
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
@@ -758,13 +773,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           sessions.get(sid)!.add(ws);
           // 如果该会话正在生成中，发送已累积的内容供客户端恢复
           const buf = streamBuffers.get(sid);
-          if (buf && (buf.content || buf.reasoningContent || buf.segments.length > 0)) {
+          if (buf && (buf.content || buf.reasoningContent || buf.segments.length > 0 || buf.toolCallProgress)) {
             const resume: WSOutgoing = {
               type: 'stream_resume',
               sessionId: sid,
               content: buf.content,
               reasoningContent: buf.reasoningContent,
               segments: buf.segments.length > 0 ? buf.segments : undefined,
+              toolCallProgress: buf.toolCallProgress
+                ? {
+                    index: buf.toolCallProgress.index,
+                    name: buf.toolCallProgress.name,
+                    charsAccumulated: buf.toolCallProgress.charsAccumulated,
+                    startedAt: buf.toolCallProgress.startedAt,
+                  }
+                : undefined,
               done: !buf.generating,
             };
             ws.send(JSON.stringify(resume));
@@ -1013,6 +1036,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         streamBuffers.set(chunk.sessionId, buf);
       }
       if (chunk.contentDelta) {
+        // 进入文本生成阶段：清空 tool 进度
+        buf.toolCallProgress = undefined;
         buf.content += chunk.contentDelta;
         // 追加到 segments：合并连续 text
         const last = buf.segments[buf.segments.length - 1];
@@ -1023,6 +1048,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
       if (chunk.reasoningDelta) {
+        buf.toolCallProgress = undefined;
         buf.reasoningContent += chunk.reasoningDelta;
         // 同样追加到统一时间线：合并连续 reasoning_text
         const last = buf.segments[buf.segments.length - 1];
@@ -1032,6 +1058,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           buf.segments.push({ type: 'reasoning_text', content: chunk.reasoningDelta });
         }
       }
+      if (chunk.toolCallProgress) {
+        const prev = buf.toolCallProgress;
+        // 仅当 index 变化时刷新 startedAt（同一个 tool_call 持续累积时保持开始时间）
+        const startedAt = prev && prev.index === chunk.toolCallProgress.index ? prev.startedAt : Date.now();
+        buf.toolCallProgress = { ...chunk.toolCallProgress, startedAt };
+      }
+    } else {
+      // done：清空 tool 进度
+      const buf = streamBuffers.get(chunk.sessionId);
+      if (buf) buf.toolCallProgress = undefined;
     }
     const sockets = sessions.get(chunk.sessionId);
     if (!sockets) return;
@@ -1041,6 +1077,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       sessionId: chunk.sessionId,
       contentDelta: chunk.contentDelta,
       reasoningDelta: chunk.reasoningDelta,
+      toolCallProgress: chunk.toolCallProgress,
       done: chunk.done,
       toolLimitReached: chunk.toolLimitReached,
     };
