@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
-import { getLogBuffer, onLogEntry } from '@aalis/core';
+import { LogHub } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
@@ -384,7 +384,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取历史日志
   expressApp.get('/api/logs', (_req, res) => {
-    res.json(getLogBuffer());
+    res.json(LogHub.default.getBuffer());
   });
 
   // 获取服务列表（含提供者信息）
@@ -870,7 +870,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 实时推送日志给订阅者
-  const removeLogListener = onLogEntry((entry: LogEntry) => {
+  const removeLogListener = LogHub.default.onEntry((entry: LogEntry) => {
     const payload: WSOutgoing = { type: 'log', log: entry };
     const json = JSON.stringify(payload);
     for (const ws of logSubscribers) {

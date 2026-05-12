@@ -18,6 +18,8 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
     "@types/node": "^22.19.15",
+    "@vitest/coverage-v8": "^2.1.9",
+    "knip": "^5.88.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"

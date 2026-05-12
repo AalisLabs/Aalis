@@ -1,4 +1,4 @@
-import { getLogBuffer, type LogEntry, type LogLevel, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';
+import { type LogEntry, LogHub, type LogLevel } from '@aalis/core';
 import chalk from 'chalk';
 
 /**
@@ -64,14 +64,15 @@ export interface ConsoleSinkHandle {
  * 默认在调用前会关闭 core 内置 console sink，避免重复输出。
  */
 export function installConsoleSink(): ConsoleSinkHandle {
-  setConsoleLogSinkEnabled(false);
+  const hub = LogHub.default;
+  hub.setConsoleSinkEnabled(false);
 
   // 冲洗启动前缓冲
-  for (const entry of getLogBuffer()) {
+  for (const entry of hub.getBuffer()) {
     console.log(formatEntry(entry));
   }
 
-  const off = onLogEntry(entry => {
+  const off = hub.onEntry(entry => {
     console.log(formatEntry(entry));
   });
 

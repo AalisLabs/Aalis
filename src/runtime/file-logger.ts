@@ -1,6 +1,6 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { getLogBuffer, type LogEntry, onLogEntry } from '@aalis/core';
+import { type LogEntry, LogHub } from '@aalis/core';
 
 const DEFAULT_LOG_FILE = 'data/latest.log';
 const RUNTIME_SCOPE = 'aalis:runtime';
@@ -36,10 +36,11 @@ export async function setupFileLogger(logFile = DEFAULT_LOG_FILE): Promise<FileL
   let queue: Promise<void> = Promise.resolve();
 
   await mkdir(dirname(logFile), { recursive: true });
-  const initial = getLogBuffer().map(formatEntry).join('');
+  const hub = LogHub.default;
+  const initial = hub.getBuffer().map(formatEntry).join('');
   await writeFile(logFile, initial);
 
-  onLogEntry(entry => {
+  hub.onEntry(entry => {
     queue = queue.then(() => appendFile(logFile, formatEntry(entry))).catch(() => {});
   });
 
