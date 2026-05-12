@@ -5,17 +5,17 @@ import { extname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { ConfigSchema, Context, Message } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { LLMService } from '@aalis/plugin-llm-api';
-import { parseModelRef } from '@aalis/plugin-llm-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type {
   ImageRecognitionContextOptions,
   ImageRecognitionInput,
   ImageRecognitionResult,
   ImageRecognitionService,
-} from './types.js';
-import { ImageRecognitionCapabilities } from './types.js';
+} from '@aalis/plugin-image-recognition-api';
+import { ImageRecognitionCapabilities } from '@aalis/plugin-image-recognition-api';
+import type { LLMService } from '@aalis/plugin-llm-api';
+import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import '@aalis/plugin-tools-api';
 
 export type {
@@ -25,8 +25,8 @@ export type {
   ImageRecognitionInput,
   ImageRecognitionResult,
   ImageRecognitionService,
-} from './types.js';
-export { ImageRecognitionCapabilities } from './types.js';
+} from '@aalis/plugin-image-recognition-api';
+export { ImageRecognitionCapabilities } from '@aalis/plugin-image-recognition-api';
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
