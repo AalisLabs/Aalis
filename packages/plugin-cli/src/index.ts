@@ -13,7 +13,7 @@ import type { CLIService } from './types.js';
 
 export type { CLIService } from './types.js';
 
-import { getLogBuffer, onLogEntry, setConsoleLogSinkEnabled } from '@aalis/core';
+import { LogHub } from '@aalis/core';
 
 // ===== 插件元数据 =====
 
@@ -168,7 +168,7 @@ class CliTui {
     private sessionId: string,
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    this.logLines = getLogBuffer().slice(-config.logLines);
+    this.logLines = LogHub.default.getBuffer().slice(-config.logLines);
   }
 
   isRunning(): boolean {
@@ -179,7 +179,7 @@ class CliTui {
     if (this.running) return;
     this.running = true;
 
-    setConsoleLogSinkEnabled(false);
+    LogHub.default.setConsoleSinkEnabled(false);
     // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll（兜底，部分终端不支持）
     // 1000h+1006h: SGR 鼠标上报，覆盖滚轮事件以便所有终端都能滚动
     // 注意：开启 1000h 后终端会把左/右键也发给程序，导致原生选择被吞。
@@ -193,7 +193,7 @@ class CliTui {
     input.on('data', this.handleData);
     process.once('exit', this.restoreOnExit);
 
-    this.removeLogListener = onLogEntry(entry => {
+    this.removeLogListener = LogHub.default.onEntry(entry => {
       this.logLines.push(entry);
       if (this.logLines.length > this.config.logLines) this.logLines.shift();
       if (this.view === 'logs') this.queueRender();
@@ -227,7 +227,7 @@ class CliTui {
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
-    setConsoleLogSinkEnabled(true);
+    LogHub.default.setConsoleSinkEnabled(true);
   }
 
   pushAssistant(content: string): void {

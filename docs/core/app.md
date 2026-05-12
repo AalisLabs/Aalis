@@ -7,10 +7,25 @@
 ## 构造函数
 
 ```typescript
-const app = new App(configPath?: string);
+const app = new App(options?: AppOptions);
+// 推荐：
+const app = createApp(options?: AppOptions);
 ```
 
-- 加载 YAML 配置文件（默认 `aalis.config.yaml`）
+`AppOptions` 全部字段可选，未提供则自动创建默认实例：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `configPath` | `string` | YAML 配置文件路径（默认 `aalis.config.yaml`） |
+| `events` | `EventBus` | 自定义事件总线 |
+| `services` | `ServiceContainer` | 自定义服务容器 |
+| `hooks` | `HookRegistry` | 自定义钩子注册表 |
+| `config` | `ConfigManager` | 自定义配置管理器 |
+| `requiredServices` | `string[]` | 必需服务列表（缺失时尝试自动恢复） |
+
+构造时：
+
+- 加载 YAML 配置文件（缺省 `aalis.config.yaml`）
 - 初始化根 Context + 所有核心子系统
 - 提供 `app` 服务并管理插件加载
 

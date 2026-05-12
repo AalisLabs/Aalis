@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DisposableChain, Logger } from '../src/index.js';
+import { DisposableChain, Logger } from '../../packages/core/src/index.js';
 
 describe('DisposableChain', () => {
   it('逆序执行清理函数', () => {
