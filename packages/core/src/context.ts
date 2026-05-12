@@ -61,12 +61,27 @@ export class Context {
 
   // ---- 子系统访问（供高级插件检查/包装用） ----
 
-  /** 底层事件总线实例 */
+  /**
+   * 底层事件总线实例。
+   *
+   * ⚠️ **@internal** —— 仅供需要自定义生命周期的高级插件使用（如桥接外部资源、
+   * 在 dispose 后还需监听的场景）。普通插件请使用 `ctx.on()`，监听器会自动
+   * 在本 Context dispose 时清理。
+   *
+   * 直接调用 `ctx.eventBus.on(...)` **不会**进入 `_disposables` 链；
+   * 若需要"dispose 时清理外部资源"，请改用 `ctx.onDispose(cb)`。
+   */
   get eventBus(): EventBus {
     return this._events;
   }
 
-  /** 底层服务容器实例 */
+  /**
+   * 底层服务容器实例。
+   *
+   * ⚠️ **@internal** —— 仅供高级巡视/诊断使用（如 plugin-authority 枚举所有
+   * provider）。普通插件请使用 `ctx.provide()` / `ctx.getService()`，副作用
+   * 会自动登记到 `_disposables` 链。
+   */
   get serviceContainer(): ServiceContainer {
     return this._services;
   }
@@ -427,6 +442,37 @@ export class Context {
 
   get disposed(): boolean {
     return this._disposed;
+  }
+
+  /**
+   * 注册一个在本 Context dispose 时执行的清理回调。
+   *
+   * 这是替代「监听 `plugin:unloaded` 事件以清理外部资源」的首选 API：
+   * - 直接挂在 `_disposables` 链上，保证逆序执行
+   * - 调用方无需关心自己 ctx 的 id 与事件比较
+   * - 沙盒 / fork 子上下文同样适用
+   *
+   * @example
+   * const conn = await connectExternal();
+   * ctx.onDispose(() => conn.close());
+   *
+   * @returns 取消该清理回调的函数（在 dispose 前调用可阻止执行）
+   */
+  onDispose(fn: () => void | Promise<void>): () => void {
+    const wrapped = () => {
+      try {
+        const ret = fn();
+        if (ret && typeof (ret as Promise<void>).then === 'function') {
+          (ret as Promise<void>).catch(err => {
+            this.logger.debug('onDispose 异步清理抛错（已忽略）:', err);
+          });
+        }
+      } catch (err) {
+        this.logger.debug('onDispose 清理抛错（已忽略）:', err);
+      }
+    };
+    this._disposables.push(wrapped);
+    return () => this._disposables.remove(wrapped);
   }
 
   /**
