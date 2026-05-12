@@ -28,10 +28,26 @@ export interface ChatResponse {
   };
 }
 
+/**
+ * 工具调用增量进度（非完整 ToolCall，仅用于 UI 提示「正在生成」）。
+ * Provider 在每收到 tool_call 的 SSE delta 时 yield 一个 chunk，
+ * 让上层可以渲染进度条而不必等整段 tool_calls 累积完。
+ */
+export interface ToolCallProgress {
+  /** 工具调用在本轮中的索引（OpenAI 协议里的 tool_calls[i].index） */
+  index: number;
+  /** 当前已确定的函数名（首个 delta 之后即可获得） */
+  name: string;
+  /** 已累积的 arguments JSON 字符数（不含 name），用于显示进度 */
+  charsAccumulated: number;
+}
+
 export interface ChatStreamChunk {
   contentDelta?: string;
   reasoningDelta?: string;
   toolCalls?: ToolCall[];
+  /** 工具调用生成进度（与 toolCalls 互斥：前者是增量提示，后者是最终结果） */
+  toolCallProgress?: ToolCallProgress;
   done?: boolean;
   usage?: {
     promptTokens: number;
