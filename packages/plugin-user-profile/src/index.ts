@@ -1024,12 +1024,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // /profile              查看自己的档案
   // /profile clear        清除自己的档案（authority=2，自己删自己的）
   // /profile clear nuke   清空所有用户档案（authority=3，dangerous）
-  useCommandService(ctx).command(
-    'profile',
-    '查看你在 Aalis 中的事实档案',
-    async cmdCtx => {
-      if (!cmdCtx.userId) return '当前会话未识别用户身份，无法查看档案。';
-      const userKey = userKeyOf(cmdCtx.platform, cmdCtx.userId);
+  useCommandService(ctx)
+    .command('profile', '查看你在 Aalis 中的事实档案')
+    .action(async argv => {
+      const userId = argv.session.userId;
+      if (!userId) return '当前会话未识别用户身份，无法查看档案。';
+      const userKey = userKeyOf(argv.session.platform, userId);
       const profile = await loadProfile(userKey);
       if (!profile || profile.facts.length === 0) {
         return `📭 暂无档案数据 (${userKey})`;
@@ -1037,54 +1037,43 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const block = renderProfileBlock(profile.facts, userKey, false);
       const meta = `关系强度：${(profile.relationScore ?? 0).toFixed(relationScorePrecision)}/100，互动次数：${profile.interactionCount ?? 0}`;
       return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
-    },
-    {
-      subcommands: [
-        {
-          name: 'clear',
-          description: '清除你自己的事实档案',
-          authority: 2,
-          action: async cmdCtx => {
-            if (!cmdCtx.userId) return '当前会话未识别用户身份，无法清除档案。';
-            const userKey = userKeyOf(cmdCtx.platform, cmdCtx.userId);
-            const memory = ctx.getService<MemoryService>('memory');
-            if (!memory?.deleteMetadata || !memory.getMetadata) return '记忆服务不支持档案删除。';
-            try {
-              const existed = await memory.getMetadata(PROFILE_NS, userKey);
-              if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
-              await memory.deleteMetadata(PROFILE_NS, userKey);
-              return `✅ 已清除你的档案 (${userKey})`;
-            } catch (err) {
-              const m = err instanceof Error ? err.message : String(err);
-              return `❌ 清除失败：${m}`;
-            }
-          },
-          subcommands: [
-            {
-              name: 'nuke',
-              description: '【危险】清空所有用户档案',
-              authority: 3,
-              safety: 'dangerous',
-              action: async () => {
-                const memory = ctx.getService<MemoryService>('memory');
-                if (!memory?.listMetadata || !memory?.deleteMetadata) {
-                  return '记忆服务不支持档案批量删除。';
-                }
-                try {
-                  const items = await memory.listMetadata(PROFILE_NS);
-                  for (const it of items) await memory.deleteMetadata(PROFILE_NS, it.key);
-                  return `✅ 已清空全部用户档案（${items.length} 条）`;
-                } catch (err) {
-                  const m = err instanceof Error ? err.message : String(err);
-                  return `❌ 清空失败：${m}`;
-                }
-              },
-            },
-          ],
-        },
-      ],
-    },
-  );
+    });
+
+  useCommandService(ctx)
+    .command('profile.clear', '清除你自己的事实档案', { authority: 2 })
+    .action(async argv => {
+      const userId = argv.session.userId;
+      if (!userId) return '当前会话未识别用户身份，无法清除档案。';
+      const userKey = userKeyOf(argv.session.platform, userId);
+      const memory = ctx.getService<MemoryService>('memory');
+      if (!memory?.deleteMetadata || !memory.getMetadata) return '记忆服务不支持档案删除。';
+      try {
+        const existed = await memory.getMetadata(PROFILE_NS, userKey);
+        if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
+        await memory.deleteMetadata(PROFILE_NS, userKey);
+        return `✅ 已清除你的档案 (${userKey})`;
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        return `❌ 清除失败：${m}`;
+      }
+    });
+
+  useCommandService(ctx)
+    .command('profile.clear.nuke', '【危险】清空所有用户档案', { authority: 3, safety: 'dangerous' })
+    .action(async () => {
+      const memory = ctx.getService<MemoryService>('memory');
+      if (!memory?.listMetadata || !memory?.deleteMetadata) {
+        return '记忆服务不支持档案批量删除。';
+      }
+      try {
+        const items = await memory.listMetadata(PROFILE_NS);
+        for (const it of items) await memory.deleteMetadata(PROFILE_NS, it.key);
+        return `✅ 已清空全部用户档案（${items.length} 条）`;
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        return `❌ 清空失败：${m}`;
+      }
+    });
 
   ctx.logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
