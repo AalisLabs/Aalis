@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-doctor-api": "workspace:*",
     "@aalis/plugin-storage-api": "workspace:*"
   },
   "devDependencies": {

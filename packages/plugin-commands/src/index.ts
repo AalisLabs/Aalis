@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import type { AppService, ConfigSchema, Context, SafetyLevel } from '@aalis/core';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import { useDoctorService } from '@aalis/plugin-doctor-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -17,6 +18,7 @@ export const subsystem = 'core';
 export const provides = ['commands'];
 export const inject = {
   required: ['gateway'],
+  optional: ['doctor'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -334,4 +336,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     })
     .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
     .action(async argv => runClearFromOptions(argv, 'all'));
+
+  // 诊断检查项：检测 commandOverrides 配置中是否存在已不存在的指令名（孤立键）。
+  // 历史上由 plugin-doctor 内置；现迁回 commands 自身——commands 才知道自己注册了哪些指令，
+  // 也最有资格判定 override 是否「孤立」。
+  useDoctorService(ctx).registerCheck({
+    id: 'commands.overrides',
+    category: 'config',
+    pluginName: name,
+    run() {
+      const overrides = commands.getOverrides();
+      const known = new Set(commands.getAll().map(c => c.name));
+      const orphan = Object.keys(overrides).filter(k => !known.has(k));
+      return {
+        id: 'commands.overrides',
+        category: 'config',
+        level: orphan.length === 0 ? 'ok' : 'warn',
+        message:
+          orphan.length === 0
+            ? `已注册指令 ${known.size} 个；覆盖配置 ${Object.keys(overrides).length} 条全部命中`
+            : `commandOverrides 含 ${orphan.length} 条孤立键（无对应指令）`,
+        detail: orphan.length > 0 ? orphan.join(', ') : undefined,
+      };
+    },
+  });
 }
