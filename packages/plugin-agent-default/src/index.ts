@@ -3,7 +3,7 @@ import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } 
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
-import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
@@ -88,10 +88,7 @@ class DefaultAgent implements AgentService {
    * 1. 会话 config
    * 2. 父会话 sessionDefaults
    * 3. 平台 profile
-   * 4. session-manager.defaults（全局 fallback）
-   *
-   * model 字段可以是复合 ref `"<contextId>::<modelId>"`，由 parseModelRef 拆分。
-   * llmProvider 字段为充足优先级（允许在不指定模型的情况下锁定 provider 走其默认 model）。
+   * 4. ServicePreference（由 agent 启动时锁定的全局默认 entry，未传 ref 时生效）
    *
    * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
@@ -99,22 +96,16 @@ class DefaultAgent implements AgentService {
     platform?: string,
     sessionId?: string,
   ): Promise<LLMModelEntry | undefined> {
-    let rawModel: string | undefined;
-    let providerOverride: string | undefined;
+    let ref: { provider?: string; model?: string } | undefined;
 
-    // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile > 全局 defaults
+    // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile
     const sm = this.ctx.getService<SessionManagerService>('session-manager');
     if (sm && sessionId) {
       const resolved = sm.resolveConfig(sessionId, platform);
-      if (resolved.model) rawModel = resolved.model;
-      if (resolved.llmProvider) providerOverride = resolved.llmProvider;
+      if (resolved.llm?.provider && resolved.llm?.model) ref = resolved.llm;
     }
 
-    // 拆解复合 ref；显式 llmProvider 字段优先于 model 内嵌的 provider 部分
-    const ref = parseModelRef(rawModel);
-    if (providerOverride) ref.provider = providerOverride;
-
-    // 解析为具体 LLMModel entry（要求至少 chat 能力）
+    // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
     return resolveLLMModel(this.ctx, ref, ['chat']);
   }
 
@@ -1485,13 +1476,10 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
-  preferredModel: {
-    type: 'select',
-    label: '对话模型',
-    description: '选择用于对话的模型。留空则使用默认（首个）LLM 提供者的默认模型。',
-    default: '',
-    options: [{ label: '默认', value: '' }],
-    dynamicOptions: 'llm',
+  defaultLLM: {
+    type: 'llm-ref',
+    label: '默认对话模型',
+    description: '全局默认 LLM。apply() 时调用 ctx.preferService("llm", `provider/model`) 锁定 ServiceContainer 偏好。会话 / 平台 profile 未覆盖时生效。',
   },
   systemPrompt: {
     type: 'textarea',
@@ -1565,51 +1553,57 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('agent', agentImpl);
   const agent = agentImpl as unknown as InternalAgent;
 
+  // 全局默认 LLM：通过 ServicePreference 锁定 ctx.getService<'llm'>() 的首选 entry。
+  // 偏好持久化由 core 配置层负责（servicePreferences 字段）；这里只是开机时按 agent
+  // 自己的 cfg.defaultLLM 覆写一次，便于纯文件配置流（无 webui 干预）也能生效。
+  const defaultLLM = config.defaultLLM as { provider?: string; model?: string } | undefined;
+  if (defaultLLM?.provider && defaultLLM?.model) {
+    ctx.preferService('llm', `${defaultLLM.provider}/${defaultLLM.model}`);
+  }
+
   // ===== /model 指令组（split 为 dot-path 子命令）=====
   // info / status / reset / set <name>
   async function modelInfo(sessionId: string, platform: string, listAvailable: boolean): Promise<string> {
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
-    const sessionModel = smSvc?.getSession(sessionId)?.config?.model;
+    const sessionLLM = smSvc?.getSession(sessionId)?.config?.llm;
     const parent = smSvc?.getSession(sessionId)?.parentId
       ? smSvc?.getSession(smSvc.getSession(sessionId)!.parentId!)
       : undefined;
-    const parentDefaultsModel = parent?.config?.sessionDefaults?.model;
-    const profileModel = smSvc?.getPlatformProfiles()?.[platform || 'webui']?.model;
-    const globalDefaultsModel = smSvc?.getDefaults()?.model;
-    const resolvedModel = smSvc ? smSvc.resolveConfig(sessionId, platform).model : undefined;
+    const parentDefaultsLLM = parent?.config?.sessionDefaults?.llm;
+    const profileLLM = smSvc?.getPlatformProfiles()?.[platform || 'webui']?.llm;
+    const resolvedLLM = smSvc ? smSvc.resolveConfig(sessionId, platform).llm : undefined;
 
-    let source = '(无)';
-    if (sessionModel) source = '会话覆盖';
-    else if (parentDefaultsModel) source = '父会话 sessionDefaults';
-    else if (profileModel) source = `平台 profile (${platform})`;
-    else if (globalDefaultsModel) source = '全局 defaults';
+    const fmt = (r?: { provider: string; model: string }) => (r ? `${r.provider}/${r.model}` : undefined);
 
-    const lines = [`**当前模型**: ${resolvedModel || '(默认)'}`, `**来源**: ${source}`];
+    let source = '(无 / 走 ServicePreference)';
+    if (sessionLLM) source = '会话覆盖';
+    else if (parentDefaultsLLM) source = '父会话 sessionDefaults';
+    else if (profileLLM) source = `平台 profile (${platform})`;
+
+    const lines = [`**当前模型**: ${fmt(resolvedLLM) || '(默认)'}`, `**来源**: ${source}`];
     const chain: string[] = [];
-    if (sessionModel) chain.push(`会话: ${sessionModel}`);
-    if (parentDefaultsModel) chain.push(`父 sessionDefaults: ${parentDefaultsModel}`);
-    if (profileModel) chain.push(`平台 profile: ${profileModel}`);
-    if (globalDefaultsModel) chain.push(`全局 defaults: ${globalDefaultsModel}`);
+    if (sessionLLM) chain.push(`会话: ${fmt(sessionLLM)}`);
+    if (parentDefaultsLLM) chain.push(`父 sessionDefaults: ${fmt(parentDefaultsLLM)}`);
+    if (profileLLM) chain.push(`平台 profile: ${fmt(profileLLM)}`);
     if (chain.length > 0) {
       lines.push('', '**解析链**（高优先级在前）:');
       for (const c of chain) lines.push(`- ${c}`);
     }
-    if (sessionModel) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
+    if (sessionLLM) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
 
     if (listAvailable) {
-      // 直接枚举所有 chat-capable LLMModel entry（不再依赖 router.listModels）
+      // 直接枚举所有 chat-capable LLMModel entry
       const entries = ctx.getAllServices<LLMModel>('llm', ['chat']);
       const seen = new Set<string>();
       const items: string[] = [];
       for (const e of entries) {
-        const display = e.label ? `${e.instance.id}  _(${e.label})_` : e.instance.id;
-        const key = `${e.contextId}#${e.instance.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const display = e.label ? `${e.contextId}  _(${e.label})_` : e.contextId;
+        if (seen.has(e.contextId)) continue;
+        seen.add(e.contextId);
         items.push(display);
       }
       if (items.length > 0) {
-        lines.push('', '**可用模型**:');
+        lines.push('', '**可用模型**（contextId 形式 `provider/model`）:');
         for (const m of items) lines.push(`- ${m}`);
       }
     }
@@ -1634,23 +1628,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
       const session = smSvc.getSession(argv.session.sessionId);
-      if (session?.config?.model) {
-        const { model: _, ...rest } = session.config;
-        await smSvc.updateSession(argv.session.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
+      if (session?.config?.llm) {
+        const { llm: _, ...rest } = session.config;
+        await smSvc.updateSession(argv.session.sessionId, { config: { ...rest, llm: undefined } as SessionConfig });
       }
-      const fallback = smSvc.resolveConfig(argv.session.sessionId, argv.session.platform).model || '(默认)';
-      return `已清除会话模型覆盖，回退到: ${fallback}`;
+      const fallback = smSvc.resolveConfig(argv.session.sessionId, argv.session.platform).llm;
+      return `已清除会话模型覆盖，回退到: ${fallback ? `${fallback.provider}/${fallback.model}` : '(默认)'}`;
     });
 
   useCommandService(ctx)
-    .command('model.set <name:string>', '设置会话级模型覆盖')
-    .action(async (argv, name) => {
-      const modelName = name as string;
-      if (!modelName) return '用法: /model set <模型名称>';
+    .command('model.set <ref:string>', '设置会话级模型覆盖；ref 形如 `provider/model`（即 LLM entry 的 contextId）')
+    .action(async (argv, ref) => {
+      const refStr = String(ref || '').trim();
+      if (!refStr) return '用法: /model set <provider/model>，例如 /model set @aalis/plugin-openai:main/gpt-4o';
+      // 用最后一个 '/' 切分，因为 provider id 内含有 '/'（如 `@aalis/plugin-openai:main`）。
+      const lastSlash = refStr.lastIndexOf('/');
+      if (lastSlash <= 0 || lastSlash === refStr.length - 1) {
+        return '格式错误。请使用 `provider/model`，例如 `@aalis/plugin-openai:main/gpt-4o`';
+      }
+      const provider = refStr.slice(0, lastSlash);
+      const model = refStr.slice(lastSlash + 1);
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
-      await smSvc.updateSession(argv.session.sessionId, { config: { model: modelName } as SessionConfig });
-      return `当前会话模型已切换为: ${modelName}（已持久化）`;
+      await smSvc.updateSession(argv.session.sessionId, { config: { llm: { provider, model } } as SessionConfig });
+      return `当前会话模型已切换为: ${provider}/${model}（已持久化）`;
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量

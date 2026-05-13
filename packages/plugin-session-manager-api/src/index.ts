@@ -20,10 +20,13 @@ import { registerCapabilityProbe } from '@aalis/core';
  * 4. 全局默认（各插件的 defaultConfig）
  */
 export interface SessionConfig {
-  /** LLM 提供者 contextId（指定使用哪个 LLM 插件实例） */
-  llmProvider?: string;
-  /** 模型 ID（如 'gpt-4o', 'deepseek-chat'） */
-  model?: string;
+  /**
+   * 会话使用的 LLM 模型引用：`{ provider, model }` 二元组。
+   * provider 为 LLM 插件实例 contextId（如 `@aalis/plugin-openai:main`），
+   * model 为该 provider 注册的 model id（如 `gpt-4o`）。
+   * 由 ConfigSchema type='llm-ref' 字段统一编辑。
+   */
+  llm?: { provider: string; model: string };
   /** 启用的工具分组列表（为空时使用全局默认） */
   enabledToolGroups?: string[];
   /** 人格文件名（不含后缀，如 'aalis', 'aalis-webui', 'default'） */

@@ -1,6 +1,6 @@
 import type { Context } from '@aalis/core';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
-import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { buildEnvelope, expandForward } from './forward.js';
 import type { OneBotMessageSegment } from './types.js';
@@ -23,7 +23,7 @@ export interface ForwardConfig {
   maxNodesPerLevel: number;
   imageRecognition: boolean;
   summarize: boolean;
-  summaryModel: string;
+  summaryLLM?: { provider: string; model: string };
   summaryMaxChars: number;
 }
 
@@ -122,8 +122,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
-    const summaryRef = parseModelRef(forwardCfg.summaryModel || undefined);
-    const entry = resolveLLMModel(ctx, summaryRef, ['chat']);
+    const entry = resolveLLMModel(ctx, forwardCfg.summaryLLM, ['chat']);
     if (!entry) {
       ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
       return null;
@@ -155,7 +154,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       const out = (resp.content ?? '').trim();
       if (!out) {
         ctx.logger.debug(
-          `forward 摘要返回空内容: model=${forwardCfg.summaryModel || 'default'}, chars=${forwardCfg.summaryMaxChars}`,
+          `forward 摘要返回空内容: model=${forwardCfg.summaryLLM ? `${forwardCfg.summaryLLM.provider}/${forwardCfg.summaryLLM.model}` : 'default'}, chars=${forwardCfg.summaryMaxChars}`,
         );
         return null;
       }

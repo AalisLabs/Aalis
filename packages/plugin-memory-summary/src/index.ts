@@ -57,19 +57,12 @@ export const configSchema: ConfigSchema = {
       { label: '自定义 provider/model', value: 'custom' },
     ],
     description:
-      'global=沿用全局默认 LLM；custom=使用下方 summaryProvider/summaryModel 指定的模型。session（沿用会话当轮模型）暂未实现。',
+      'global=沿用全局默认 LLM；custom=使用下方 summaryLLM 指定的模型。session（沿用会话当轮模型）暂未实现。',
   },
-  summaryProvider: {
-    type: 'string',
-    label: '摘要 Provider（contextId）',
-    default: '',
-    description: '仅当 summaryModelMode=custom 时生效。例如 @aalis/plugin-openai。留空时由 router 按 model 自动定位。',
-  },
-  summaryModel: {
-    type: 'string',
-    label: '摘要 Model',
-    default: '',
-    description: '仅当 summaryModelMode=custom 时生效。例如 gpt-4o-mini、deepseek-chat。',
+  summaryLLM: {
+    type: 'llm-ref',
+    label: '摘要模型',
+    description: '仅当 summaryModelMode=custom 时生效；provider 为 LLM 插件实例 contextId，model 为实例内某个模型名。',
   },
 };
 
@@ -80,8 +73,6 @@ export const defaultConfig = {
   autoCompressThreshold: 0.7,
   summaryPrompt: '',
   summaryModelMode: 'global',
-  summaryProvider: '',
-  summaryModel: '',
 };
 
 // ===== 配置 =====
@@ -99,10 +90,8 @@ interface SummaryConfig {
   summaryPrompt: string;
   /** 摘要模型来源：global=全局默认 LLM；custom=指定 provider+model */
   summaryModelMode: 'global' | 'custom';
-  /** custom 模式下的 provider contextId */
-  summaryProvider: string;
-  /** custom 模式下的 model id */
-  summaryModel: string;
+  /** custom 模式下的 LLM ref */
+  summaryLLM?: { provider: string; model: string };
 }
 
 // ===== 默认摘要生成提示词 =====
@@ -192,8 +181,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     autoCompressThreshold: (config.autoCompressThreshold as number) ?? 0.7,
     summaryPrompt: (config.summaryPrompt as string) ?? '',
     summaryModelMode: (config.summaryModelMode as string) === 'custom' ? 'custom' : 'global',
-    summaryProvider: (config.summaryProvider as string) ?? '',
-    summaryModel: (config.summaryModel as string) ?? '',
+    summaryLLM: (config.summaryLLM && typeof config.summaryLLM === 'object'
+      && (config.summaryLLM as { provider?: unknown }).provider
+      && (config.summaryLLM as { model?: unknown }).model)
+      ? config.summaryLLM as { provider: string; model: string }
+      : undefined,
   };
 
   const memory = ctx.getService<MemoryService>('memory');
@@ -211,13 +203,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   /**
    * 根据 summaryModelMode 解析出用于生成摘要的 LLMModel entry。
    * - global：按默认优先级/preference 选首个 chat-capable entry
-   * - custom：按 cfg.summaryProvider/summaryModel 精确匹配
+   * - custom：按 cfg.summaryLLM 精确匹配
    */
   function resolveSummaryModel(): LLMModel | undefined {
-    const ref =
-      cfg.summaryModelMode === 'custom'
-        ? { provider: cfg.summaryProvider || undefined, model: cfg.summaryModel || undefined }
-        : undefined;
+    const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
     return resolveLLMModel(ctx, ref, ['chat'])?.instance;
   }
 
