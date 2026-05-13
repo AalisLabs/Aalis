@@ -11,7 +11,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform.js';
+import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform-types.js';
 
 const execFileAsync = promisify(execFile);
 
