@@ -10,7 +10,7 @@ import { execFile, spawn } from 'node:child_process';
 import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform.js';
+import type { MouseButton, PlatformAdapter, Point, Region, ScreenInfo, WindowInfo } from '../platform-types.js';
 
 function runPowerShell(script: string, timeout = 10000): Promise<string> {
   return new Promise((resolve, reject) => {
