@@ -3,8 +3,9 @@
 // 提供完整的 LLM 抽象 + 能力声明框架。
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
-import type { Message, ToolCall, ToolDefinition } from '@aalis/core';
 import { registerCapabilityProbe } from '@aalis/core';
+import type { Message } from '@aalis/plugin-message-api';
+import type { ToolCall, ToolDefinition } from '@aalis/plugin-tools-api';
 
 export interface ChatRequest {
   messages: Message[];
