@@ -1,7 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
 import '@aalis/plugin-gateway-api';
 

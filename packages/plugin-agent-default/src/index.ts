@@ -7,7 +7,7 @@ import { parseModelRef } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
 import type { PlatformService } from '@aalis/plugin-platform';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
