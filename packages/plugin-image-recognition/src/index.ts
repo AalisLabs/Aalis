@@ -14,7 +14,7 @@ import type {
 } from '@aalis/plugin-image-recognition-api';
 import { ImageRecognitionCapabilities } from '@aalis/plugin-image-recognition-api';
 import type { LLMModel } from '@aalis/plugin-llm-api';
-import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
@@ -61,13 +61,10 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
-  preferredModel: {
-    type: 'select',
+  preferredLLM: {
+    type: 'llm-ref',
     label: '图像识别模型',
     description: '选择用于图像识别的模型。留空则自动选择第一个有 vision 能力的提供者的默认模型。',
-    default: '',
-    options: [{ label: '自动选择', value: '' }],
-    dynamicOptions: 'llm',
   },
   enabled: {
     type: 'boolean',
@@ -123,7 +120,7 @@ export const defaultConfig = {
 // ===== 配置接口 =====
 
 interface ImageRecognitionConfig {
-  preferredModel: string;
+  preferredLLM?: { provider: string; model: string };
   enabled: boolean;
   maxTokens: number;
   prompt: string;
@@ -362,7 +359,11 @@ async function extractFrames(filePath: string, maxFrames: number, logger: Contex
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg: ImageRecognitionConfig = {
-    preferredModel: (config.preferredModel as string) || '',
+    preferredLLM: (config.preferredLLM && typeof config.preferredLLM === 'object'
+      && (config.preferredLLM as { provider?: unknown }).provider
+      && (config.preferredLLM as { model?: unknown }).model)
+      ? config.preferredLLM as { provider: string; model: string }
+      : undefined,
     enabled: (config.enabled as boolean) ?? true,
     maxTokens: (config.maxTokens as number) ?? 300,
     prompt: (config.prompt as string) || '',
@@ -675,7 +676,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 按 preferredModel 解析出 vision-capable LLMModel entry。
+    // 按 preferredLLM 解析出 vision-capable LLMModel entry。
     const visionLLM = await getVisionLLM();
     if (!visionLLM) {
       ctx.logger.warn('没有可用的 vision LLM 提供者，图片将被忽略');
@@ -684,7 +685,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     ctx.logger.debug(
-      `图像识别中间件：识别 ${msg.images.length} 张图片${cfg.preferredModel ? `（model=${cfg.preferredModel}）` : ''}`,
+      `图像识别中间件：识别 ${msg.images.length} 张图片${cfg.preferredLLM ? `（model=${cfg.preferredLLM.provider}/${cfg.preferredLLM.model}）` : ''}`,
     );
 
     const result = await processImageMessage(visionLLM, {
@@ -768,10 +769,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return `data:${mime};base64,${buf.toString('base64')}`;
   }
 
-  /** 获取 vision LLM：优先 cfg.preferredModel 的 ref；未设则取首个具备 vision 能力的 entry */
+  /** 获取 vision LLM：优先 cfg.preferredLLM 的 ref；未设则取首个具备 vision 能力的 entry */
   async function getVisionLLM(): Promise<LLMModel | null> {
-    const ref = parseModelRef(cfg.preferredModel || undefined);
-    return resolveLLMModel(ctx, ref, ['vision'])?.instance ?? null;
+    return resolveLLMModel(ctx, cfg.preferredLLM, ['vision'])?.instance ?? null;
   }
 
   useToolService(ctx).register({
@@ -847,12 +847,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const prompt = buildVisionPrompt(customPrompt || cfg.prompt || DEFAULT_PROMPT, context);
         const messages: Message[] = [{ role: 'user', content: prompt, images: [imageUrl] }];
 
-        const ref = parseModelRef(cfg.preferredModel || undefined);
         const response = await visionLLM.chat({
           messages,
           maxTokens: cfg.maxTokens,
-          ...(ref.provider ? { provider: ref.provider } : {}),
-          ...(ref.model ? { model: ref.model } : {}),
           think: false,
         });
 
