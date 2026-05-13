@@ -118,7 +118,14 @@ async function connectServer(ctx: Context, spec: ServerSpec): Promise<void> {
     }
   });
 
-  // 拉取工具列表
+  await bridgeClientToTools(ctx, client, spec);
+}
+
+/**
+ * 把一个已连接的 MCP Client 上暴露的所有工具桥接进 Aalis ToolService。
+ * 导出以便集成测试直接传入 InMemoryTransport 配对的 client。
+ */
+export async function bridgeClientToTools(ctx: Context, client: Client, spec: ServerSpec): Promise<void> {
   const { tools: mcpTools } = (await client.listTools()) as { tools: ToolMeta[] };
   ctx.logger.info(`  发现 ${mcpTools.length} 个工具`);
 

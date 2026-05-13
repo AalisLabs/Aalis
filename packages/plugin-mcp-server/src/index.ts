@@ -146,7 +146,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   });
 }
 
-function buildMcpServer(_ctx: Context, tools: ToolService, config: Config): McpServer {
+/**
+ * 构造一个 MCP server 实例并装好 ListTools / CallTool 路由。
+ * 不绑定 transport；调用方负责 `server.connect(transport)`。
+ * 导出以便集成测试通过 InMemoryTransport 直连，避开 HTTP/SSE 层。
+ */
+export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config): McpServer {
   const server = new McpServer({ name: 'aalis-mcp-server', version: '0.1.0' }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
