@@ -47,6 +47,22 @@ export interface PluginModule {
 
 export type PluginState = 'pending' | 'activating' | 'active' | 'disabled' | 'disposed' | 'error';
 
+/**
+ * recompute() 的触发原因。所有导致插件库状态需重新计算的事件
+ * 都收拢到这个判别联合上，让 PluginManager 只有一条状态转移路径。
+ *
+ * - service-up：某服务刚被 provide —— 可能让 pending 插件能激活
+ * - service-down：某服务刚被 unregister —— required 依赖其的要停用，
+ *   optional 依赖其的要 bounce（重新 apply 以对接可能的新实例）
+ * - plugin-state-changed：插件被显式禁用/启用/重载/改配置后调用
+ * - shutdown：App.stop() 调用，按拓扑逆序 dispose 所有插件
+ */
+type RecomputeReason =
+  | { type: 'service-up'; service: string }
+  | { type: 'service-down'; service: string }
+  | { type: 'plugin-state-changed' }
+  | { type: 'shutdown' };
+
 export interface PluginEntry {
   module: PluginModule;
   /** 实例 ID：单实例时与 module.name 相同，多实例时为 `name:suffix` */
@@ -116,12 +132,18 @@ export class PluginManager {
     this.rootCtx = rootCtx;
     this.logger = logger.child('plugin');
 
-    // 监听服务注册/注销，自动激活/停用插件（softReload 期间跳过，避免重入）
-    rootCtx.on('service:registered', () => {
-      if (!this.reloading && !this.shuttingDown) this.checkPendingPlugins();
+    // 监听服务注册/注销，路由到统一 recompute()。reloading 期间与关机后一律跳过。
+    rootCtx.on('service:registered', name => {
+      if (this.reloading || this.shuttingDown) return;
+      this.recompute({ type: 'service-up', service: name }).catch(err => {
+        this.logger.error(`recompute(service-up:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`);
+      });
     });
     rootCtx.on('service:unregistered', name => {
-      if (!this.reloading && !this.shuttingDown) this.checkActivePlugins(name);
+      if (this.reloading || this.shuttingDown) return;
+      this.recompute({ type: 'service-down', service: name }).catch(err => {
+        this.logger.error(`recompute(service-down:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`);
+      });
     });
   }
 
@@ -167,8 +189,8 @@ export class PluginManager {
       this.logger.info(`插件已注册(禁用): ${id}`);
     } else {
       this.logger.info(`插件已注册: ${id}`);
-      // 尝试立即激活
-      await this.tryActivate(entry);
+      // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending
+      await this.recompute({ type: 'plugin-state-changed' });
     }
   }
 
@@ -304,6 +326,10 @@ export class PluginManager {
 
     // 若插件在运行中，dispose 旧上下文后转为 pending 重新激活
     if (entry.state === 'active' && entry.context) {
+      // 先把所有依赖该插件 provided 服务的 active 下游消费者也一并 pending：
+      // 服务实例即将被 dispose+重新 provide，下游持有的引用即失效。
+      // 反应式 listener 走异步 recompute，错过 dispose 同步窗口；这里显式标记。
+      this.evictDownstreamConsumers(entry);
       entry.context.dispose();
       entry.context = undefined;
       entry.state = 'pending';
@@ -337,6 +363,7 @@ export class PluginManager {
     }
 
     if (entry.state === 'active' && entry.context) {
+      this.evictDownstreamConsumers(entry);
       entry.context.dispose();
       entry.context = undefined;
       this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
@@ -346,6 +373,38 @@ export class PluginManager {
     entry.error = undefined;
     await this.softReload();
     return true;
+  }
+
+  /**
+   * 把所有依赖 `provider` 所提供服务的 active 下游消费者降级为 pending。
+   *
+   * 用于 updatePluginConfig / bouncePlugin：当某 provider 即将被 dispose+重启
+   * 时，optional 依赖该 provider 服务的下游插件持有的服务引用会失效，必须 bounce
+   * 以重新 apply 拿到新实例。required 依赖则更明显：服务消失 = 必须停。
+   *
+   * 同步执行（不 await），因为 caller 紧接着会 await softReload 完成全部重激活。
+   */
+  private evictDownstreamConsumers(provider: PluginEntry): void {
+    const provided = provider.module.provides ?? [];
+    if (provided.length === 0) return;
+    const providedSet = new Set(provided);
+    for (const other of this.plugins.values()) {
+      if (other === provider || other.state !== 'active') continue;
+      const allDeps = [...other.requiredDeps, ...other.optionalDeps];
+      if (!allDeps.some(d => providedSet.has(d.service))) continue;
+      if (other.context) {
+        try {
+          other.context.dispose();
+        } catch (err) {
+          this.logger.error(
+            `下游消费者 "${other.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        other.context = undefined;
+      }
+      other.state = 'pending';
+      this.rootCtx.emit('plugin:unloaded', other.instanceId).catch(() => {});
+    }
   }
 
   /**
@@ -437,137 +496,130 @@ export class PluginManager {
    * 因此本方法是**关机时唯一**的 dispose 编排者，不与级联机制竞争。
    */
   async stopAll(): Promise<void> {
-    this.shuttingDown = true;
-
-    // 收集 active 插件 + 服务名→提供者 instanceId 反查表
-    const active: PluginEntry[] = [];
-    const providerOf = new Map<string, string>(); // service name → instanceId
-    for (const entry of this.plugins.values()) {
-      if (entry.state !== 'active') continue;
-      active.push(entry);
-      for (const svc of entry.module.provides ?? []) {
-        providerOf.set(svc, entry.instanceId);
-      }
-    }
-
-    // 构图：providersOf.get(consumer) = 该 consumer 依赖的 provider 集合
-    // dependentCount.get(provider) = 仍未被关掉的 consumer 数量
-    // 拓扑顶（dependentCount==0）= 没人再依赖它 = 可以安全 dispose
-    const providersOf = new Map<string, Set<string>>();
-    const dependentCount = new Map<string, number>();
-    for (const entry of active) {
-      dependentCount.set(entry.instanceId, 0);
-    }
-    for (const entry of active) {
-      const deps = [...entry.requiredDeps, ...entry.optionalDeps];
-      const providers = new Set<string>();
-      for (const dep of deps) {
-        const providerId = providerOf.get(dep.service);
-        if (!providerId || providerId === entry.instanceId) continue;
-        if (!providers.has(providerId)) {
-          providers.add(providerId);
-          dependentCount.set(providerId, (dependentCount.get(providerId) ?? 0) + 1);
-        }
-      }
-      providersOf.set(entry.instanceId, providers);
-    }
-
-    // Kahn：反复挑 dependentCount==0 的（没人再依赖它们 = 可安全先关）
-    const remaining = new Set(active.map(e => e.instanceId));
-    while (remaining.size > 0) {
-      const ready: string[] = [];
-      for (const id of remaining) {
-        if ((dependentCount.get(id) ?? 0) === 0) ready.push(id);
-      }
-      if (ready.length === 0) {
-        // 残留环，剩余按声明顺序兜底 dispose（应不发生）
-        this.logger.warn(`stopAll: 检测到依赖环或残留 ${remaining.size} 个插件，按声明顺序 dispose 兜底`);
-        for (const id of remaining) ready.push(id);
-      }
-
-      for (const id of ready) {
-        const entry = this.plugins.get(id);
-        if (entry?.state === 'active' && entry.context) {
-          try {
-            entry.context.dispose();
-          } catch (err) {
-            this.logger.error(`插件 "${id}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          entry.context = undefined;
-        }
-        if (entry) entry.state = 'disposed';
-        remaining.delete(id);
-
-        // 更新被它依赖的所有 provider 的 dependentCount
-        const providers = providersOf.get(id);
-        if (providers) {
-          for (const providerId of providers) {
-            dependentCount.set(providerId, Math.max(0, (dependentCount.get(providerId) ?? 0) - 1));
-          }
-        }
-      }
-    }
+    await this.recompute({ type: 'shutdown' });
   }
 
-  // ---- 内部逻辑 ----
-
   /**
-   * 软重载：最小范围级联
+   * 软重载（薄壳）：把"插件状态需要重算"统一委托给 recompute()。
    *
-   * 反复执行直到稳定（fixed-point）：
-   * 1. 停用所有 required 依赖不满足的 active 插件 → 变为 pending
-   * 2. 尝试激活所有 pending 插件
-   * 3. 如果本轮有任何变动，重复；否则结束
-   * 4. 发出 plugins:changed 事件通知前端
+   * 历史上 softReload / stopAll / checkActivePlugins / checkPendingPlugins 是四
+   * 条独立路径，每条都自己判断"哪些插件该跑、按什么顺序"。逻辑漂移导致 stopAll
+   * 之外的三条路径在"同一轮多个插件同时变状态"时无法保证消费者先于提供者关闭，
+   * 瞬态会出现 dispose hook 访问已失效服务的情况。现在四条路径共用 recompute()。
    */
   async softReload(): Promise<void> {
+    await this.recompute({ type: 'plugin-state-changed' });
+  }
+
+  // ---- 单一状态转移入口 ----
+
+  /**
+   * 重算所有插件的目标态并按依赖拓扑序应用转移。
+   *
+   * 这是 PluginManager 唯一的状态变更入口（除 ensureServiceProvider 这种显式
+   * 启用 disabled 提供者的恢复策略之外）。
+   *
+   * 算法：
+   * 1. 反应式 reason 决定"是否走完整 fixed-point + 是否触发 optional bounce"；
+   *    shutdown 走单向 down 路径，其它走 fixed-point。
+   * 2. 每轮先按依赖正序（提供者→消费者）做拓扑排序。
+   * 3. Phase A：反向遍历，把"目标不再 active"的 entry 一并 dispose
+   *    （消费者先关、提供者后关，dispose hook 访问依赖服务安全）。
+   * 4. Phase B（非 shutdown）：正向遍历，激活"目标 active 且依赖满足"的 pending entry
+   *    （提供者先起、消费者后起）。
+   * 5. 若本轮有变动则继续下一轮，直到稳定或达到 maxRounds。
+   * 6. 非 shutdown 时检查必需服务并发出 plugins:changed。
+   *
+   * Aalis 直接用"服务在不在 + capabilities 命中"
+   * 做判断 —— 表达力等价、复杂度更低。
+   */
+  async recompute(reason: RecomputeReason): Promise<void> {
+    if (this.shuttingDown && reason.type !== 'shutdown') return;
+    if (reason.type === 'shutdown') this.shuttingDown = true;
+
+    // 重入保护：上层 reactive 监听器在 reloading=true 时已 skip；这里再加一道兜底。
+    if (this.reloading) return;
     this.reloading = true;
+
     try {
+      let currentReason = reason;
       let changed = true;
       let rounds = 0;
-      const maxRounds = 20; // 防止无限循环
+      const maxRounds = 20;
 
       while (changed && rounds < maxRounds) {
         changed = false;
         rounds++;
 
-        // Phase 1: 停用依赖不满足的 active 插件
-        for (const entry of this.plugins.values()) {
+        const entries = [...this.plugins.values()];
+        const order = this.topoSortByDeps(entries);
+
+        // Phase A: 反向遍历，关掉目标不是 active 的 active entry
+        for (const entry of [...order].reverse()) {
           if (entry.state !== 'active') continue;
+          const target = this.computeTargetState(entry, currentReason);
+          if (target === 'active') continue;
 
-          const unmet = entry.requiredDeps.find(
-            dep => !this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined),
-          );
-          if (!unmet) continue;
+          // 日志：区分 shutdown / required 不满 / optional bounce
+          if (currentReason.type === 'shutdown') {
+            // 静默
+          } else {
+            const unmet = entry.requiredDeps.find(
+              d => !this.rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
+            );
+            if (unmet) {
+              this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
+            } else if (currentReason.type === 'service-down') {
+              this.logger.info(`服务 "${currentReason.service}" 已替换/撤销，bounce 插件: ${entry.instanceId}`);
+            }
+          }
 
-          this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
           if (entry.context) {
-            entry.context.dispose();
+            try {
+              entry.context.dispose();
+            } catch (err) {
+              this.logger.error(
+                `插件 "${entry.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
             entry.context = undefined;
           }
-          entry.state = 'pending';
-          this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(() => {});
+          entry.state = currentReason.type === 'shutdown' ? 'disposed' : 'pending';
+          if (currentReason.type !== 'shutdown') {
+            this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(() => {});
+          }
           changed = true;
         }
 
-        // Phase 2: 尝试激活 pending 插件（不重试 error 态——error 仅由 updatePluginConfig 触发的显式重置驱动，
-        // 避免依赖每次抖动都把同一个错误重新打印一遍）
-        for (const entry of this.plugins.values()) {
+        // 关机不需要再激活
+        if (currentReason.type === 'shutdown') break;
+
+        // Phase B: 正向遍历，激活目标 active 的 pending entry
+        for (const entry of order) {
           if (entry.state !== 'pending') continue;
-          const prevState = entry.state;
+          const target = this.computeTargetState(entry, currentReason);
+          if (target !== 'active') continue;
           await this.tryActivate(entry);
-          if (entry.state !== prevState) changed = true;
+          if ((entry.state as PluginState) === 'active') changed = true;
+        }
+
+        // service-up / service-down 的"特殊语义"只在第一轮生效（避免无限 bounce）；
+        // 第二轮起退化为普通的 plugin-state-changed 重算。
+        if (currentReason.type === 'service-up' || currentReason.type === 'service-down') {
+          currentReason = { type: 'plugin-state-changed' };
         }
       }
 
       if (rounds >= maxRounds) {
-        this.logger.warn('softReload 达到最大迭代次数，可能存在循环依赖');
+        this.logger.warn('recompute 达到最大迭代次数，可能存在循环依赖');
       }
     } finally {
       this.reloading = false;
     }
 
-    // Phase 3: 检查必需服务，缺失则自动恢复
+    if (reason.type === 'shutdown') return;
+
+    // 必需服务自动恢复
     for (const service of this.requiredServices) {
       if (!this.rootCtx.hasService(service)) {
         this.logger.warn(`必需服务 "${service}" 缺失，尝试自动恢复...`);
@@ -580,8 +632,94 @@ export class PluginManager {
       }
     }
 
-    // 通知前端刷新状态
     this.rootCtx.emit('plugins:changed').catch(() => {});
+  }
+
+  /**
+   * 计算单个 entry 的目标状态。
+   *
+   * - disabled / disposed / error 是显式态，recompute 不动它们
+   * - required 依赖不满足 → pending
+   * - service-down 命中 optional 依赖且服务确实没了 → pending（强制 bounce 重新 apply）
+   * - 其余 active / pending / activating → active
+   */
+  private computeTargetState(entry: PluginEntry, reason: RecomputeReason): PluginState {
+    if (entry.state === 'disabled' || entry.state === 'disposed' || entry.state === 'error') {
+      return entry.state;
+    }
+    // 关机：所有 active/pending/activating 都目标 disposed
+    if (reason.type === 'shutdown') return 'disposed';
+    const reqUnmet = entry.requiredDeps.some(
+      d => !this.rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
+    );
+    if (reqUnmet) return 'pending';
+    if (reason.type === 'service-down') {
+      const optHit = entry.optionalDeps.find(d => d.service === reason.service);
+      if (
+        optHit &&
+        !this.rootCtx.hasService(optHit.service, optHit.capabilities.length > 0 ? optHit.capabilities : undefined)
+      ) {
+        return 'pending';
+      }
+    }
+    return 'active';
+  }
+
+  /**
+   * 按"提供者 → 消费者"方向的拓扑排序（Kahn）。
+   *
+   * 关闭顺序 = 此结果反向；激活顺序 = 此结果正序。
+   * 服务名 → 提供者映射只取首个 provides 该服务名的 entry，足以表达依赖图。
+   * 残留环按声明序兜底追加。
+   */
+  private topoSortByDeps(entries: PluginEntry[]): PluginEntry[] {
+    const providerOf = new Map<string, string>();
+    for (const e of entries) {
+      for (const svc of e.module.provides ?? []) {
+        if (!providerOf.has(svc)) providerOf.set(svc, e.instanceId);
+      }
+    }
+    const inDegree = new Map<string, number>();
+    const dependents = new Map<string, Set<string>>();
+    const entryById = new Map(entries.map(e => [e.instanceId, e]));
+    for (const e of entries) {
+      inDegree.set(e.instanceId, 0);
+      dependents.set(e.instanceId, new Set());
+    }
+    for (const e of entries) {
+      const deps = [...e.requiredDeps, ...e.optionalDeps];
+      const seenProviders = new Set<string>();
+      for (const dep of deps) {
+        const providerId = providerOf.get(dep.service);
+        if (!providerId || providerId === e.instanceId) continue;
+        if (!entryById.has(providerId)) continue;
+        if (seenProviders.has(providerId)) continue;
+        seenProviders.add(providerId);
+        dependents.get(providerId)!.add(e.instanceId);
+        inDegree.set(e.instanceId, (inDegree.get(e.instanceId) ?? 0) + 1);
+      }
+    }
+    const result: PluginEntry[] = [];
+    const queue: string[] = [];
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) queue.push(id);
+    }
+    while (queue.length) {
+      const id = queue.shift()!;
+      result.push(entryById.get(id)!);
+      for (const dep of dependents.get(id) ?? []) {
+        inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
+        if (inDegree.get(dep) === 0) queue.push(dep);
+      }
+    }
+    if (result.length < entries.length) {
+      const seen = new Set(result.map(e => e.instanceId));
+      for (const e of entries) {
+        if (!seen.has(e.instanceId)) result.push(e);
+      }
+      this.logger.warn(`topoSortByDeps: 检测到依赖环，残留 ${entries.length - seen.size} 个按声明序追加`);
+    }
+    return result;
   }
 
   private async tryActivate(entry: PluginEntry): Promise<void> {
@@ -628,55 +766,6 @@ export class PluginManager {
       entry.context = undefined;
       entry.state = 'error';
       entry.error = message;
-    }
-  }
-
-  /**
-   * 检查是否有待激活的插件现在可以加载
-   */
-  private async checkPendingPlugins(): Promise<void> {
-    for (const entry of this.plugins.values()) {
-      if (entry.state === 'pending') {
-        await this.tryActivate(entry);
-      }
-    }
-  }
-
-  /**
-   * 当某个服务被移除时，bounce 依赖该服务的插件（required + optional 一视同仁）。
-   *
-   * - required 依赖：插件本来就无法在缺该服务时存活，转 pending 等待恢复（旧行为）。
-   * - optional 依赖：服务实例发生替换（dispose + 重新 provide）时，下游插件持有
-   *   的服务引用已失效（例如它们用 `useXxxService(ctx).register(...)` 注册过的
-   *   东西在旧实例上）。bounce 让它们的 apply 重新跑一遍，对接新实例。
-   *
-   * 典型场景：plugin-commands 因 commandPrefix 改动而 reload → `commands` 服务
-   * dispose 再重新 provide → plugin-doctor / plugin-agent-default / plugin-user-profile
-   * 等以 optional 方式依赖 `commands` 的插件需要重新注册自己的命令，
-   * 否则 `/help` 列表会丢失大半。
-   */
-  private checkActivePlugins(removedService: string): void {
-    for (const entry of this.plugins.values()) {
-      if (entry.state !== 'active') continue;
-
-      const requiredDep = entry.requiredDeps.find(d => d.service === removedService);
-      const optionalDep = entry.optionalDeps.find(d => d.service === removedService);
-      if (!requiredDep && !optionalDep) continue;
-
-      // 检查服务是否真的不可用了（可能还有其他提供者）
-      const dep = (requiredDep ?? optionalDep)!;
-      if (this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
-        continue; // 还有其他提供者
-      }
-
-      // 转 pending：softReload / 后续 service:registered 会重新激活
-      this.logger.info(`服务 "${removedService}" 不可用，${requiredDep ? '停用' : 'bounce'} 插件: ${entry.instanceId}`);
-      if (entry.context) {
-        entry.context.dispose();
-        entry.context = undefined;
-      }
-      entry.state = 'pending';
-      this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(() => {});
     }
   }
 
