@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import type { AppService, Context } from '@aalis/core';
 
 // ===== 插件元数据 =====
@@ -44,7 +44,7 @@ function execProc(cmd: string, args: string[], cwd: string): Promise<string> {
   });
 }
 
-function createService(ctx: Context): PackageManagerService {
+function createService(ctx: Context, config: Record<string, unknown>): PackageManagerService {
   const log = ctx.logger;
 
   function getApp(): AppService {
@@ -53,8 +53,17 @@ function createService(ctx: Context): PackageManagerService {
     return app;
   }
 
+  /**
+   * 解析 packages/ 目录。与 core 的 createFsPluginLoader 默认一致：`<cwd>/packages`。
+   * 可通过插件配置 `packagesDir` 字段覆盖（相对路径以 cwd 为基点）。
+   */
   function getPackagesDir(): string {
-    return getApp().packagesDir;
+    const override = (config as { packagesDir?: unknown }).packagesDir;
+    const cwd = process.cwd();
+    if (typeof override === 'string' && override.length > 0) {
+      return isAbsolute(override) ? override : resolve(cwd, override);
+    }
+    return resolve(cwd, 'packages');
   }
 
   return {
@@ -113,8 +122,8 @@ function createService(ctx: Context): PackageManagerService {
   };
 }
 
-export function apply(ctx: Context): void {
-  ctx.provide('package-manager', createService(ctx), {
+export function apply(ctx: Context, config: Record<string, unknown>): void {
+  ctx.provide('package-manager', createService(ctx, config), {
     capabilities: ['install', 'uninstall'],
     label: 'package-manager',
   });

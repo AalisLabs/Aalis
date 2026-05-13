@@ -10,8 +10,6 @@ import type { ConfigSchema } from './core.js';
  * 用于触发应用级操作，无需直接导入 App 类。
  */
 export interface AppService {
-  /** packages 扫描目录的绝对路径（供包管理类插件使用） */
-  readonly packagesDir: string;
   /** 停止应用 */
   stop(): Promise<void>;
   /** 重启应用（延迟 spawn 新进程后退出当前进程） */
@@ -21,15 +19,6 @@ export interface AppService {
 
   /** 重新扫描 packages/ 目录，返回新发现并加载的插件名列表 */
   rescanPlugins(): Promise<string[]>;
-
-  /**
-   * 增量重载单个插件：dispose 旧 ctx，从磁盘重新 import（loader 支持时），
-   * 再次 apply。下游依赖该插件 provided 服务的插件会通过 service:* 事件
-   * 链短暂 bounce 后自动重新激活。
-   *
-   * @returns 是否成功；未找到 / 已被禁用 / 重新 import 失败均返回 false。
-   */
-  reloadPlugin(name: string): Promise<boolean>;
 }
 
 /** PluginManager 暴露给插件消费的接口 */
