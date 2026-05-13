@@ -1,11 +1,10 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type {
-  ChatRequest,
+  ChatModelRequest,
   ChatResponse,
   ChatStreamChunk,
   LLMCapability,
-  LLMService,
-  ModelInfo,
+  LLMModel,
 } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
@@ -104,12 +103,12 @@ export const configSchema: ConfigSchema = {
     label: '思考模式',
     default: 'auto',
     options: [
-      { label: '自动（按模型推断）', value: 'auto' },
-      { label: '启用', value: 'enabled' },
-      { label: '关闭', value: 'disabled' },
+      { label: '自动（按模型推断，仅 thinking-capable 模型启用）', value: 'auto' },
+      { label: '强制启用所有模型', value: 'enabled' },
+      { label: '强制关闭所有模型', value: 'disabled' },
     ],
     description:
-      '控制深度思考。deepseek-v4-flash / deepseek-v4-pro / deepseek-reasoner 默认启用。设置为「关闭」时会显式传递 thinking.type=disabled。',
+      '控制深度思考。auto 模式下，仅 thinking-capable 模型（v4 / reasoner 等）默认启用思考。enabled/disabled 会覆盖所有模型。',
   },
   reasoningEffort: {
     type: 'select',
@@ -203,73 +202,34 @@ interface APIChatResponse {
   };
 }
 
-// ===== LLM 服务实现 =====
+// ===== DeepSeek 客户端（共享底层 fetch 封装，多个 ModelHandle 复用） =====
 
-class DeepSeekLLMService implements LLMService {
+class DeepSeekClient {
   private apiKey: string;
-  private baseUrl: string;
-  private customModels: string[];
-  private modelCapabilities: Map<string, LLMCapability[]>;
-  private providerCapabilities: LLMCapability[];
-  private defaultModel: string | null = null;
+  readonly baseUrl: string;
   private timeout: number;
-  private temperature: number;
-  private maxTokens: number;
-  private contextLength: number;
-  private enableThinking: boolean;
+  readonly temperature: number;
+  readonly maxTokens: number;
   private reasoningEffort: 'auto' | 'high' | 'max';
   private strictToolCalls: boolean;
   private forceJsonOutput: boolean;
   private logger;
 
-  constructor(ctx: Context, config: DeepSeekConfig, enableThinking: boolean) {
+  constructor(config: DeepSeekConfig, logger: Context['logger']) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.customModels = config.customModels;
-    this.modelCapabilities = config.modelCapabilities;
-    this.providerCapabilities = config.providerCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
-    this.contextLength = config.contextLength;
-    this.enableThinking = enableThinking;
     this.reasoningEffort = config.reasoningEffort;
     this.strictToolCalls = config.strictToolCalls;
-    this.forceJsonOutput = config.forceJsonOutput ?? false;
-    this.logger = ctx.logger;
+    this.forceJsonOutput = config.forceJsonOutput;
+    this.logger = logger;
   }
 
-  /** 启动时调用：发现远端模型、检查重复、确定默认模型 */
-  async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
-    const remote = await this.fetchRemoteModels();
-    const remoteIds = new Set(remote.map(m => m.id));
-
-    for (const cm of this.customModels) {
-      if (remoteIds.has(cm)) {
-        this.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，建议去重`);
-      }
-    }
-    this.logger.info(
-      `initialize: 远端=${remote.length} 个 [${[...remoteIds].join(',') || '<空>'}], 自定义=${this.customModels.length} 个 [${this.customModels.join(',') || '<空>'}]`,
-    );
-
-    this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
-    const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
-    return { defaultModel: this.defaultModel, capabilities };
-  }
-
-  /** 返回某模型的能力集：providerCapabilities ∪ (用户单模型覆盖 或 启发式推断)。 */
-  private resolveModelCapabilities(modelId: string): LLMCapability[] {
-    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId), this.providerCapabilities);
-  }
-
-  private getDefaultModel(): string {
-    if (!this.defaultModel) throw new Error('无可用模型：远端模型列表为空且未配置 customModels');
-    return this.defaultModel;
-  }
-
-  private async fetchRemoteModels(): Promise<ModelInfo[]> {
+  /** 发现远端模型 id 列表 */
+  async fetchRemoteModelIds(): Promise<string[]> {
     const url = `${this.baseUrl}/models`;
     try {
       const res = await fetch(url, {
@@ -277,57 +237,28 @@ class DeepSeekLLMService implements LLMService {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        this.logger.warn(`fetchRemoteModels 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body.slice(0, 200)}`);
+        this.logger.warn(`fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body.slice(0, 200)}`);
         return [];
       }
       const data = (await res.json()) as { data: { id: string }[] };
-      return data.data.map(m => ({
-        id: m.id,
-        capabilities: this.resolveModelCapabilities(m.id),
-      }));
+      return data.data.map(m => m.id);
     } catch (err) {
-      this.logger.warn(`fetchRemoteModels 异常 ${url}: ${(err as Error).message}`);
+      this.logger.warn(`fetchRemoteModelIds 异常 ${url}: ${(err as Error).message}`);
       return [];
     }
   }
 
-  async listModels(): Promise<ModelInfo[]> {
-    const remote = await this.fetchRemoteModels();
-    const remoteIds = new Set(remote.map(m => m.id));
-    const custom = this.customModels
-      .filter(id => !remoteIds.has(id))
-      .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
-    // contextLength 为 provider 全局配置；附到每个 ModelInfo 上以便 router.getContextLengthFor 查询
-    return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
-  }
-
-  setEnableThinking(value: boolean): void {
-    this.enableThinking = value;
-  }
-
-  getTemperature(): number {
-    return this.temperature;
-  }
-
-  getMaxTokens(): number {
-    return this.maxTokens;
-  }
-
-  getContextLength(): number {
-    return this.contextLength;
-  }
-
-  async chat(request: ChatRequest): Promise<ChatResponse> {
+  async chat(model: string, request: ChatModelRequest, enableThinking: boolean): Promise<ChatResponse> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.getDefaultModel(),
+      model,
       messages,
-      max_tokens: request.maxTokens ?? 8192,
+      max_tokens: request.maxTokens ?? this.maxTokens,
     };
 
-    const shouldThink = request.think !== undefined ? request.think : this.enableThinking;
+    const shouldThink = request.think !== undefined ? request.think : enableThinking;
 
     if (shouldThink) {
       body.thinking = { type: 'enabled' };
@@ -404,20 +335,22 @@ class DeepSeekLLMService implements LLMService {
     return result;
   }
 
-  async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
+  async *chatStream(
+    model: string,
+    request: ChatModelRequest,
+    enableThinking: boolean,
+  ): AsyncIterable<ChatStreamChunk> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
-
-    // ===== 统一流式路径 =====
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.getDefaultModel(),
+      model,
       messages,
-      max_tokens: request.maxTokens ?? 8192,
+      max_tokens: request.maxTokens ?? this.maxTokens,
       stream: true,
     };
 
-    const shouldThink = request.think !== undefined ? request.think : this.enableThinking;
+    const shouldThink = request.think !== undefined ? request.think : enableThinking;
 
     if (shouldThink) {
       body.thinking = { type: 'enabled' };
@@ -736,6 +669,27 @@ function parseProviderCapabilities(raw: unknown): LLMCapability[] {
     .filter(Boolean) as LLMCapability[];
 }
 
+// ===== Per-model handle：每个 model 独立的 LLMModel entry =====
+
+class DeepSeekModelHandle implements LLMModel {
+  constructor(
+    private client: DeepSeekClient,
+    readonly id: string,
+    readonly providerId: string,
+    readonly contextLength: number,
+    readonly maxOutputTokens: number,
+    private enableThinking: boolean,
+  ) {}
+
+  chat(request: ChatModelRequest): Promise<ChatResponse> {
+    return this.client.chat(this.id, request, this.enableThinking);
+  }
+
+  chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    return this.client.chatStream(this.id, request, this.enableThinking);
+  }
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const deepseekConfig: DeepSeekConfig = {
     apiKey: (config.apiKey as string) ?? '',
@@ -759,31 +713,52 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     throw new Error('未配置 apiKey，DeepSeek 插件无法启动');
   }
 
-  // 解析思考模式：auto 根据默认模型推断，enabled/disabled 强制覆盖
   const thinkingMode = (config.thinkingMode as string) ?? 'auto';
+  const client = new DeepSeekClient(deepseekConfig, ctx.logger);
 
-  const service = new DeepSeekLLMService(ctx, deepseekConfig, false); // enableThinking 稍后确定
-  const { defaultModel, capabilities } = await service.initialize();
-
-  // 根据 thinkingMode 和默认模型确定思考开关
-  let enableThinking: boolean;
-  if (thinkingMode === 'enabled') {
-    enableThinking = true;
-  } else if (thinkingMode === 'disabled') {
-    enableThinking = false;
-  } else {
-    enableThinking = defaultModel ? resolveCapabilities(defaultModel).includes('thinking') : false;
+  // 探测远端 + 合并自定义模型
+  const remoteIds = await client.fetchRemoteModelIds();
+  const remoteSet = new Set(remoteIds);
+  for (const cm of deepseekConfig.customModels) {
+    if (remoteSet.has(cm)) {
+      ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+    }
   }
-  service.setEnableThinking(enableThinking);
+  const allModelIds = [...remoteIds, ...deepseekConfig.customModels.filter(id => !remoteSet.has(id))];
 
-  const label = `DeepSeek (${deepseekConfig.baseUrl.replace(/^https?:\/\//, '')})`;
-  ctx.provide('llm', service, { capabilities, label });
+  if (allModelIds.length === 0) {
+    ctx.logger.warn(`已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    return;
+  }
 
-  if (defaultModel) {
-    ctx.logger.info(
-      `DeepSeek 已连接: ${deepseekConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]${enableThinking ? ` 思考模式(effort=${deepseekConfig.reasoningEffort})` : ''}`,
+  const baseLabel = `DeepSeek (${deepseekConfig.baseUrl.replace(/^https?:\/\//, '')})`;
+
+  // 为每个 model 注册独立的 LLMModel entry
+  for (const modelId of allModelIds) {
+    const capabilities = resolveCapabilities(
+      modelId,
+      deepseekConfig.modelCapabilities.get(modelId),
+      deepseekConfig.providerCapabilities,
     );
-  } else {
-    ctx.logger.warn(`DeepSeek 已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型`);
+    // 思考开关：auto → 由模型 capability 决定；enabled/disabled → 强制覆盖
+    let enableThinking: boolean;
+    if (thinkingMode === 'enabled') {
+      enableThinking = true;
+    } else if (thinkingMode === 'disabled') {
+      enableThinking = false;
+    } else {
+      enableThinking = capabilities.includes(Thinking);
+    }
+
+    const handle = new DeepSeekModelHandle(client, modelId, ctx.id, deepseekConfig.contextLength, deepseekConfig.maxTokens, enableThinking);
+    ctx.provide('llm', handle, {
+      capabilities,
+      label: `${baseLabel} / ${modelId}${enableThinking ? ' (thinking)' : ''}`,
+      entryId: `${ctx.id}/${modelId}`,
+    });
   }
+
+  ctx.logger.info(
+    `已连接: ${deepseekConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`,
+  );
 }

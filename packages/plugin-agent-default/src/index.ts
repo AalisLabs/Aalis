@@ -2,8 +2,8 @@ import type { ConfigSchema, Context, Logger, PluginManagerService } from '@aalis
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
-import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
-import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
+import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
@@ -82,7 +82,7 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 根据优先级链获取 LLM 服务与 (provider, model) 覆盖
+   * 根据优先级链解析当前会话该用哪个 LLMModel entry。
    *
    * 全部交给 session-manager.resolveConfig。优先级（从高到低）：
    * 1. 会话 config
@@ -92,11 +92,13 @@ class DefaultAgent implements AgentService {
    *
    * model 字段可以是复合 ref `"<contextId>::<modelId>"`，由 parseModelRef 拆分。
    * llmProvider 字段为充足优先级（允许在不指定模型的情况下锁定 provider 走其默认 model）。
+   *
+   * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
   private async resolveLLM(
     platform?: string,
     sessionId?: string,
-  ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined> {
+  ): Promise<LLMModelEntry | undefined> {
     let rawModel: string | undefined;
     let providerOverride: string | undefined;
 
@@ -108,45 +110,15 @@ class DefaultAgent implements AgentService {
       if (resolved.llmProvider) providerOverride = resolved.llmProvider;
     }
 
-    // 拆解复合 ref；model 字段内隐含的 provider 优先低于显式 llmProvider 字段
+    // 拆解复合 ref；显式 llmProvider 字段优先于 model 内嵌的 provider 部分
     const ref = parseModelRef(rawModel);
-    if (!providerOverride && ref.provider) providerOverride = ref.provider;
-    const modelOverride = ref.model;
+    if (providerOverride) ref.provider = providerOverride;
 
-    // 总是走 'llm' router；provider/model 都交给 ChatRequest 让 router 精确分发。
-    const llm = this.ctx.getService<LLMService>('llm');
-    if (!llm) return undefined;
-    return { llm, providerOverride, modelOverride };
+    // 解析为具体 LLMModel entry（要求至少 chat 能力）
+    return resolveLLMModel(this.ctx, ref, ['chat']);
   }
 
-  /**
-   * Bug F：按本会话实际使用的 (provider, model) 解析 contextLength。
-   *
-   * 直接调 `llm.getContextLength()` 走的是 router 默认 provider 的全局窗口，与会话切到
-   * 不同 model 后的真实窗口不一致——会触发 token 预算偏差，最坏情况下让请求实际超出
-   * 模型上下文导致截断/报错。
-   *
-   * router 实现了 `getContextLengthFor(model, provider)`（见 plugin-llm-router）；此处
-   * 通过 duck typing 调用，没有该方法的 LLMService 实现退化到 `getContextLength()`。
-   * 设为 public 以便 `token:request` 事件处理器（顶层 closure）也能复用同一逻辑。
-   */
-  async resolveContextLength(llm: LLMService, model?: string, provider?: string): Promise<number> {
-    if (!model && !provider) return llm.getContextLength();
-    const router = llm as LLMService & {
-      getContextLengthFor?(model?: string, provider?: string): Promise<number>;
-    };
-    if (typeof router.getContextLengthFor === 'function') {
-      try {
-        return await router.getContextLengthFor(model, provider);
-      } catch (err) {
-        this.logger.warn('getContextLengthFor 失败，回退到 getContextLength()：', err);
-      }
-    }
-    return llm.getContextLength();
-  }
-
-  /** 生成 lane key：同 session + 同 source 共用一个 lane */
-  private laneKey(sessionId: string, source?: string): string {
+  /** 生成 lane key：同 session + 同 source 共用一个 lane */  private laneKey(sessionId: string, source?: string): string {
     return `${sessionId}::${source ?? 'user'}`;
   }
 
@@ -231,8 +203,8 @@ class DefaultAgent implements AgentService {
    * 相邻同类合并）——用于上层将多轮调用 + 工具执行交错拼接成统一时间线。
    */
   private async consumeStream(
-    llm: LLMService,
-    request: ChatRequest,
+    llm: LLMModel,
+    request: ChatModelRequest,
     sessionId: string,
     platform: string,
     signal?: AbortSignal,
@@ -251,7 +223,7 @@ class DefaultAgent implements AgentService {
       }
     };
 
-    for await (const chunk of llm.chatStream(request)) {
+    for await (const chunk of llm.chatStream!(request)) {
       // 检查中止信号
       if (signal?.aborted) {
         throw new DOMException('Generation aborted', 'AbortError');
@@ -446,15 +418,14 @@ class DefaultAgent implements AgentService {
         });
         return;
       }
-      const { llm, modelOverride, providerOverride } = resolved;
+      const llm = resolved.instance;
 
-      // 从 LLM 服务读取参数。contextLength 必须按本会话实际使用的 (provider, model) 查询，
-      // 否则 router 默认走「首个 provider 的全局 contextLength」，与会话 model.set 后的真实窗口不一致，
-      // 会触发严重的 token 预算偏差（Bug F）。
-      const temperature = llm.getTemperature();
-      const maxTokens = llm.getMaxTokens();
+      // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
+      // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
+      // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
+      const maxTokens = llm.maxOutputTokens ?? 4096;
       const maxToolIterations = this.maxToolIterations;
-      const contextLength = await this.resolveContextLength(llm, modelOverride, providerOverride);
+      const contextLength = llm.contextLength;
       // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
       // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 占满物理上限才裁剪
       const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
@@ -532,7 +503,7 @@ class DefaultAgent implements AgentService {
         this.logger.debug(
           `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
             `${llmBeforeData.tools.length} 个工具, ` +
-            `temperature=${temperature}, maxTokens=${maxTokens}`,
+            `maxTokens=${maxTokens}`,
         );
 
         const t0 = Date.now();
@@ -541,10 +512,7 @@ class DefaultAgent implements AgentService {
           {
             messages: llmBeforeData.messages,
             tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
-            temperature,
             maxTokens,
-            model: modelOverride,
-            provider: providerOverride,
             signal,
           },
           incoming.sessionId,
@@ -727,10 +695,7 @@ class DefaultAgent implements AgentService {
             {
               messages: nextLlmData.messages,
               tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
-              temperature,
               maxTokens,
-              model: modelOverride,
-              provider: providerOverride,
               signal,
             },
             incoming.sessionId,
@@ -1582,8 +1547,7 @@ type InternalAgent = {
   resolveLLM(
     platform?: string,
     sessionId?: string,
-  ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined>;
-  resolveContextLength(llm: LLMService, model?: string, provider?: string): Promise<number>;
+  ): Promise<LLMModelEntry | undefined>;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   emitTokenUsage(
     sessionId: string,
@@ -1633,31 +1597,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (sessionModel) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
 
     if (listAvailable) {
-      let models: string[] = [];
-      const llm = ctx.getService<LLMService>('llm');
-      if (llm && typeof llm.listModels === 'function') {
-        try {
-          models = (await llm.listModels()).map(m => m.id);
-        } catch {
-          /* ignore */
-        }
+      // 直接枚举所有 chat-capable LLMModel entry（不再依赖 router.listModels）
+      const entries = ctx.getAllServices<LLMModel>('llm', ['chat']);
+      const seen = new Set<string>();
+      const items: string[] = [];
+      for (const e of entries) {
+        const display = e.label ? `${e.instance.id}  _(${e.label})_` : e.instance.id;
+        const key = `${e.contextId}#${e.instance.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(display);
       }
-      if (models.length === 0) {
-        const allProviders = ctx.getAllServices<LLMService>('llm').filter(p => !p.capabilities.includes('router'));
-        for (const p of allProviders) {
-          if (typeof p.instance.listModels === 'function') {
-            try {
-              const list = await p.instance.listModels();
-              for (const m of list) models.push(m.id);
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      }
-      if (models.length > 0) {
+      if (items.length > 0) {
         lines.push('', '**可用模型**:');
-        for (const m of models) lines.push(`- ${m}`);
+        for (const m of items) lines.push(`- ${m}`);
       }
     }
     return lines.join('\n');
@@ -1708,10 +1661,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const resolved = await agent.resolveLLM(data.platform, data.sessionId);
       if (!resolved) return;
-      const { llm, modelOverride, providerOverride } = resolved;
+      const llm = resolved.instance;
 
-      const contextLength = await agent.resolveContextLength(llm, modelOverride, providerOverride);
-      const maxTokens = llm.getMaxTokens();
+      const contextLength = llm.contextLength;
+      const maxTokens = llm.maxOutputTokens ?? 4096;
       const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
       // 获取历史消息并构建基础消息列表
