@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { LLMService } from '@aalis/plugin-llm-api';
+import type { LLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
@@ -285,10 +286,16 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     const persona = ctx.getService<PersonaService>('persona');
     const personas = persona?.listModels ? await persona.listModels() : [];
 
-    // 可用 LLM 模型列表（聚合所有提供者）
+    // 可用 LLM 模型列表（枚举所有 chat-capable entry）
     let models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }> = [];
     try {
-      models = await (ctx.getService<LLMService>('llm')?.listModels?.() ?? Promise.resolve([]));
+      const entries = ctx.getAllServices<LLMModel>('llm', ['chat']);
+      models = entries.map(e => ({
+        id: e.instance.id,
+        capabilities: e.capabilities,
+        provider: e.instance.providerId,
+        contextId: e.contextId,
+      }));
     } catch {
       /* llm 服务不可用 */
     }
@@ -736,11 +743,12 @@ class SessionManager implements SessionManagerService {
     // 已有标题则跳过
     if (session.title) return session.title;
 
-    const llm = this.ctx.getService<LLMService>('llm');
-    if (!llm) {
+    const entry = resolveLLMModel(this.ctx, undefined, ['chat']);
+    if (!entry) {
       this.ctx.logger.debug('无可用 LLM，无法生成标题');
       return undefined;
     }
+    const llm = entry.instance;
 
     // 优先使用直接传入的用户消息；否则从历史获取
     let contextStr: string;
