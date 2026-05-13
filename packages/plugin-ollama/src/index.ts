@@ -1,4 +1,4 @@
-import type { ConfigSchema, Context, Logger, Message, ToolDefinition } from '@aalis/core';
+import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type {
   ChatRequest,
   ChatResponse,
@@ -8,6 +8,8 @@ import type {
   ModelInfo,
 } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
+import type { Message } from '@aalis/plugin-message-api';
+import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

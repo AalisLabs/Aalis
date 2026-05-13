@@ -360,6 +360,12 @@ importers:
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -474,6 +480,9 @@ importers:
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -590,6 +599,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -679,6 +694,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -695,6 +713,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -711,6 +732,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       mongodb:
         specifier: ^6.12.0
         version: 6.21.0(socks@2.8.7)
@@ -730,6 +754,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       better-sqlite3:
         specifier: ^11.8.0
         version: 11.10.0
@@ -758,6 +785,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       '@aalis/plugin-message-archive':
         specifier: workspace:*
         version: link:../plugin-message-archive
@@ -805,6 +835,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -887,6 +920,12 @@ importers:
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -928,6 +967,12 @@ importers:
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1061,6 +1106,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
@@ -1392,6 +1440,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1459,6 +1510,9 @@ importers:
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api

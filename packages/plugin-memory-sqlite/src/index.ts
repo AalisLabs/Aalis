@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ConfigSchema, ContentSegment, Context, Message } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
+import type { ContentSegment, Message } from '@aalis/plugin-message-api';
 import Database from 'better-sqlite3';
 
 // ===== 插件元数据 =====

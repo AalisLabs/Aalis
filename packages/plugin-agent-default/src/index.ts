@@ -1,25 +1,16 @@
-import type {
-  ConfigSchema,
-  ContentSegment,
-  Context,
-  Logger,
-  Message,
-  PluginManagerService,
-  ToolCall,
-  ToolDefinition,
-} from '@aalis/core';
+import type { ConfigSchema, Context, Logger, PluginManagerService } from '@aalis/core';
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
+import type { ContentSegment, IncomingMessage, Message, OutgoingMessage } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
 import type { PlatformService } from '@aalis/plugin-platform';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
-import type { ToolCallContext, ToolService } from '@aalis/plugin-tools-api';
+import type { ToolCall, ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
 import {
   estimateMsgTokens,

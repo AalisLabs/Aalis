@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { Context, Message } from '@aalis/core';
+import type { Context } from '@aalis/core';
+
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import type { BroadcastOptions, ChannelInboundEvent, SessionChannel, SessionChannelService } from './types.js';
 
 const METADATA_NAMESPACE = 'channels';

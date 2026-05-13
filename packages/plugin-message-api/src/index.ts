@@ -1,14 +1,16 @@
 // ============================================================
-// @aalis/plugin-message-api — 平台消息层契约
+// @aalis/plugin-message-api — 消息层契约
 //
-// 本包定义 Aalis 平台适配层的消息数据契约：
+// 本包持有 Aalis 全部"消息载体"类型，分两层：
+//
+// 1. LLM 协议层（OpenAI/DeepSeek format，原驻 @aalis/core，cleanup-N 迁入）：
+//   - Message：LLM 对话上下文消息（role / content / toolCalls / segments ...）
+//   - ContentSegment：助手输出的有序时间线分段（text / reasoning_text / tool_call）
+//
+// 2. 平台适配层（Aalis 边界消息形态）：
 //   - IncomingMessage：从平台适配器（OneBot / WebUI / CLI 等）流入的原始消息
 //   - OutgoingMessage：发往平台的回复消息
 //   - StreamChunkMessage：流式回复片段（用于 WebUI 等支持流式的前端）
-//
-// 这些类型描述的是「平台↔Aalis」边界的消息形态，与 OpenAI 风格的
-// `Message`（在 core，描述 LLM 上下文）不同——后者是协议层数据载体，
-// 前者是平台层语义数据。
 //
 // 同时通过 declaration merging 将下列事件注入 `AalisEvents`：
 //   - 'inbound:message'
@@ -16,10 +18,53 @@
 //   - 'outbound:message'
 //   - 'outbound:stream'
 //
-// 依赖：core（仅依赖协议层 `Message` / `ContentSegment`）。
+// 依赖：core / plugin-tools-api（ToolCall 协议类型）。
 // ============================================================
 
-import type { ContentSegment, Message } from '@aalis/core';
+import type { ToolCall } from '@aalis/plugin-tools-api';
+
+// ----- LLM 协议层消息类型 -----
+
+/**
+ * 内容时间线分段（按到达顺序记录助手输出的真实结构）。
+ * - text：正常对话文本
+ * - reasoning_text：思考/推理文本（部分模型如 DeepSeek-R1、Ollama thinking 会产出）
+ * - tool_call：工具调用片段（startTime/endTime 用于时长展示）
+ *
+ * 该数组若存在则为渲染顺序的真相；同时 message.content / reasoningContent
+ * 仍保留为派生镜像，供 LLM API 与历史压缩等纯文本消费者使用。
+ */
+export type ContentSegment =
+  | { type: 'text'; content: string }
+  | { type: 'reasoning_text'; content: string }
+  | {
+      type: 'tool_call';
+      name: string;
+      args: Record<string, unknown>;
+      result?: string;
+      startTime?: number;
+      endTime?: number;
+    };
+
+export interface Message {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  name?: string;
+  timestamp?: number;
+  reasoningContent?: string | null;
+  /**
+   * 助手输出的有序时间线（含 text / reasoning_text / tool_call）。
+   * 仅 assistant 消息可能携带；存在时为 UI 渲染的权威来源，
+   * content 与 reasoningContent 应与之保持一致（由生产方在累积时同步写）。
+   */
+  segments?: ContentSegment[];
+  /** 图片列表（base64 data URL 或 HTTP URL），用于多模态 LLM */
+  images?: string[];
+  /** 元数据：用于标记消息来源等信息（不会发送给 LLM） */
+  metadata?: Record<string, unknown>;
+}
 
 // ----- 入站消息 -----
 
