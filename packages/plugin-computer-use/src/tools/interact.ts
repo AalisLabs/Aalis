@@ -11,15 +11,15 @@
  * - window_focus + ui_action(AXRaise) → focus_app
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import * as axNative from '../ax-native.js';
 import type { MouseButton, PlatformAdapter } from '../platform.js';
 
-export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): void {
+export function registerInteractTools(tools: ScopedToolService, adapter: PlatformAdapter): void {
   const axAvailable = axNative.isAvailable();
 
   // ── click ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -92,7 +92,7 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
   });
 
   // ── type_text ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -138,7 +138,7 @@ export function registerInteractTools(ctx: Context, adapter: PlatformAdapter): v
   });
 
   // ── focus_app ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

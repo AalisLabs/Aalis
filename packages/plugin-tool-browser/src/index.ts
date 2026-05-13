@@ -1,5 +1,5 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
-import { isPrivateHost } from '@aalis/plugin-tools-api';
+import { isPrivateHost, useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import '@aalis/plugin-tools-api';
 
@@ -231,7 +231,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 注册工具分组 ──
 
-  ctx.registerToolGroup({
+  useToolService(ctx).registerGroup({
     name: 'browser',
     label: '浏览器',
     description: '使用 Puppeteer 无头浏览器进行网页导航、内容提取、截图等操作',
@@ -240,7 +240,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 注册工具 ──
 
   // 1. 导航 (navigate)
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -284,7 +284,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 2. 获取页面文本
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -323,7 +323,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 3. 点击元素
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -357,7 +357,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 4. 输入文本
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -399,7 +399,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 5. 截图
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -445,7 +445,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 6. 获取页面链接列表
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -483,7 +483,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 7. 关闭页面
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['browser'],
     definition: {
       type: 'function',

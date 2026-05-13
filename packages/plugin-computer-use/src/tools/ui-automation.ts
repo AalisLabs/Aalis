@@ -11,7 +11,7 @@
  *     进程列表已合并到 window.ts 的 list_apps。
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { AXElementInfo } from '../ax-native.js';
 import * as axNative from '../ax-native.js';
 
@@ -106,9 +106,9 @@ function buildHint(quality: ReturnType<typeof assessTreeQuality>): string {
   );
 }
 
-export function registerUIAutomationTools(ctx: Context): void {
+export function registerUIAutomationTools(tools: ScopedToolService): void {
   // ── ui_tree ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -164,7 +164,7 @@ export function registerUIAutomationTools(ctx: Context): void {
   });
 
   // ── ui_find ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -239,7 +239,7 @@ export function registerUIAutomationTools(ctx: Context): void {
   });
 
   // ── ui_element_at ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

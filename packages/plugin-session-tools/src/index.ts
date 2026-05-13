@@ -1,10 +1,10 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { SessionInfo, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
@@ -147,14 +147,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (!cfg.enabled) return;
 
   // 注册工具分组
-  ctx.registerToolGroup({
+  useToolService(ctx).registerGroup({
     name: 'subtask',
     label: '子任务管理',
     description: '创建、管理和协调子任务会话，支持并行执行',
   });
 
   // ---- create_subtask ----
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -247,7 +247,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- check_subtask ----
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -315,7 +315,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- send_to_subtask ----
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -381,7 +381,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- delete_subtask ----
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -439,7 +439,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- wait_subtasks ----
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -806,13 +806,13 @@ function registerSessionHistoryTools(
   historyService: SessionHistoryService,
   cfg: PluginConfig['historyAccess'],
 ): void {
-  ctx.registerToolGroup({
+  useToolService(ctx).registerGroup({
     name: 'session-history',
     label: '会话历史读取',
     description: '按 Aalis sessionId 读取近期会话历史，用于核实跨会话上下文',
   });
 
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['session-history'],
     definition: {
       type: 'function',

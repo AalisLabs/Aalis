@@ -1,4 +1,4 @@
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 // ===== 单位转换映射 =====
 
@@ -182,13 +182,13 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
 };
 
-export function registerConversionTools(ctx: Context): void {
+export function registerConversionTools(tools: ScopedToolService): void {
   // 构建分类列表供 description
   const categoryList = Object.entries(CATEGORIES)
     .map(([key, cat]) => `${key}(${cat.label}): ${Object.keys(cat.units).join(', ')}`)
     .join('\n');
 
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

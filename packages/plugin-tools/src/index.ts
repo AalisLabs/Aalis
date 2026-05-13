@@ -1,26 +1,11 @@
-import type { ConfigSchema } from '@aalis/core';
-import { Context } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
+import { useCommandService } from '@aalis/plugin-commands-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import type { RegisteredTool, ToolGroupInfo, ToolService } from '@aalis/plugin-tools-api';
+import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import { registerFileTools } from './tools/file.js';
 import { registerHttpTools } from './tools/http.js';
 import { registerShellTools } from './tools/shell.js';
 import { registerSystemTools } from './tools/system.js';
-import '@aalis/plugin-commands-api';
-
-// ===== Context 便捷方法注入（internal-framework 风格） =====
-//
-// 模块加载即生效，幂等：重新导入本插件不会重复注入。
-// 注入后任何 Context 都可调用 ctx.registerTool / ctx.registerToolGroup；
-// 若 tools 服务尚不可用，调用会通过 whenService 自动延迟到服务就绪后执行。
-if (!('registerTool' in Context.prototype)) {
-  Context.extend('registerTool', function (this: Context, tool: Omit<RegisteredTool, 'pluginName'>): () => void {
-    return this.whenService<ToolService>('tools', svc => svc.register(tool, this.id));
-  });
-  Context.extend('registerToolGroup', function (this: Context, group: Omit<ToolGroupInfo, 'pluginName'>): () => void {
-    return this.whenService<ToolService>('tools', svc => svc.registerGroup(group, this.id));
-  });
-}
 
 // ===== 插件元数据 =====
 
@@ -133,20 +118,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
   const cwdUri = cfg.workingDirectory || 'workspace:/';
 
-  /** 创建带分组标记的工具注册代理 */
-  function ctxWithGroups(groups: string[]): Context {
-    return new Proxy(ctx, {
-      get(target, prop) {
-        if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
-        }
-        return Reflect.get(target, prop, target);
-      },
-    }) as Context;
-  }
+  const tools = useToolService(ctx);
+  const systemTools = toolsWithGroups(tools, ['system']);
 
   // 注册工具分组
-  ctx.registerToolGroup({
+  tools.registerGroup({
     name: 'system',
     label: '系统工具',
     description: 'Shell 命令执行、文件操作、系统信息查询、HTTP 请求等系统级工具',
@@ -156,7 +132,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (cfg.shell.enabled) {
     const storage = ctx.getService<StorageService>('storage');
     if (storage) {
-      registerShellTools(ctxWithGroups(['system']), { cwdUri, storage, ...cfg.shell });
+      registerShellTools(systemTools, { ctx, cwdUri, storage, ...cfg.shell });
       ctx.logger.info('Shell 工具已启用');
     } else {
       ctx.logger.warn('Shell 工具需要 storage 服务，已跳过注册');
@@ -166,7 +142,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (cfg.file.enabled) {
     const storage = ctx.getService<StorageService>('storage');
     if (storage) {
-      registerFileTools(ctxWithGroups(['system']), { ...cfg.file, storage });
+      registerFileTools(systemTools, { ...cfg.file, storage });
       ctx.logger.info('文件工具已启用');
     } else {
       ctx.logger.warn('文件工具需要 storage 服务，已跳过注册');
@@ -176,18 +152,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (cfg.system.enabled) {
     const persona = ctx.getService<{ isTimeInjectionEnabled?(): boolean }>('persona');
     const skipTimeTool = !!persona?.isTimeInjectionEnabled?.();
-    registerSystemTools(ctxWithGroups(['system']), { cwd: cwdUri, skipTimeTool });
+    registerSystemTools(systemTools, { cwd: cwdUri, skipTimeTool });
     ctx.logger.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
   }
 
   if (cfg.http.enabled) {
     const storage = ctx.getService<StorageService>('storage') ?? undefined;
-    registerHttpTools(ctxWithGroups(['system']), { ...cfg.http, storage });
+    registerHttpTools(systemTools, { ...cfg.http, storage });
     ctx.logger.info('HTTP 工具已启用');
   }
 
   // 注册 /tools 指令以查看可用工具
-  ctx.command('tools', '列出所有已注册的机器交互工具', async () => {
+  useCommandService(ctx).command('tools', '列出所有已注册的机器交互工具', async () => {
     const groups = ['shell', 'file', 'system', 'http'].filter(
       g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false,
     );

@@ -7,8 +7,8 @@
  */
 
 import { lookup } from 'node:dns/promises';
-import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { isPrivateIp, toStorageUri as toStorageUriShared } from '@aalis/plugin-tools-api';
 
 interface HttpConfig {
@@ -19,9 +19,9 @@ interface HttpConfig {
 
 const MAX_REDIRECTS = 5;
 
-export function registerHttpTools(ctx: Context, config: HttpConfig): void {
+export function registerHttpTools(tools: ScopedToolService, config: HttpConfig): void {
   // ==================== http_request ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -126,7 +126,7 @@ export function registerHttpTools(ctx: Context, config: HttpConfig): void {
   });
 
   // ==================== http_download ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

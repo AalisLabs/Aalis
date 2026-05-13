@@ -17,34 +17,6 @@ function makeContext(id = 'root'): Context {
   return new Context({ id, events, services, hooks, logger, config });
 }
 
-describe('Context.extend', () => {
-  it('在 prototype 上注入方法，所有实例可调用', () => {
-    const dispose = Context.extend('__testGreet', function (this: Context) {
-      return `hi-${this.id}`;
-    });
-    try {
-      const ctx = makeContext('a');
-      // biome-ignore lint/suspicious/noExplicitAny: extension method
-      expect((ctx as any).__testGreet()).toBe('hi-a');
-    } finally {
-      dispose();
-    }
-    // dispose 后方法被移除
-    const ctx2 = makeContext('b');
-    // biome-ignore lint/suspicious/noExplicitAny: extension method
-    expect((ctx2 as any).__testGreet).toBeUndefined();
-  });
-
-  it('重名注入抛错，避免静默覆盖', () => {
-    const dispose = Context.extend('__testDup', () => {});
-    try {
-      expect(() => Context.extend('__testDup', () => {})).toThrow(/已存在/);
-    } finally {
-      dispose();
-    }
-  });
-});
-
 describe('Context.provide / getService', () => {
   it('注册并取出服务', () => {
     const ctx = makeContext();

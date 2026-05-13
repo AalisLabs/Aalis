@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import '@aalis/plugin-agent-api';
@@ -262,7 +263,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 注册工具分组 ──
 
-  ctx.registerToolGroup({
+  useToolService(ctx).registerGroup({
     name: 'skills',
     label: '技能管理',
     description: '创建、查看、执行和管理可复用的提示词技能模板',
@@ -271,7 +272,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 注册 AI 工具 ──
 
   // 1. 创建技能
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -316,7 +317,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 2. 列出技能
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -374,7 +375,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 3. 执行技能（展开模板 → 发送给自己作为新对话输入）
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -433,7 +434,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 4. 更新技能
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -471,7 +472,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 5. 删除技能
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['skills'],
     definition: {
       type: 'function',

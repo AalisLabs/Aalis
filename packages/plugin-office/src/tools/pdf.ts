@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { DocSessionManager } from '../session.js';
 
@@ -18,7 +18,7 @@ interface PdfState {
   pageHeight: number;
 }
 
-export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outputDir: string) {
+export function registerPdfTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
   // 辅助：获取或新建页面
   function ensurePage(state: PdfState): ReturnType<PDFDocument['addPage']> {
     const pages = state.pdfDoc.getPages();
@@ -31,7 +31,7 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
   }
 
   // ---- pdf_create ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -83,7 +83,7 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- pdf_add_text ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -142,7 +142,7 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- pdf_add_page ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -167,7 +167,7 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- pdf_save ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -201,7 +201,7 @@ export function registerPdfTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- pdf_convert ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

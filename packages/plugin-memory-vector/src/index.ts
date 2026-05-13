@@ -1,9 +1,9 @@
 import type { ConfigSchema, Context, MiddlewareNext } from '@aalis/core';
-
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { prefixSender } from '@aalis/plugin-message-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
@@ -653,7 +653,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 工具：主动语义召回 ===
   // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
-  ctx.registerTool({
+  useToolService(ctx).register({
     definition: {
       type: 'function',
       function: {

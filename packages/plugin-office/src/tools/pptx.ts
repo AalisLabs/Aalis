@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import PptxGenJS from 'pptxgenjs';
 import type { DocSessionManager } from '../session.js';
 import { loadImage } from '../utils.js';
@@ -330,7 +330,7 @@ function applyTemplate(pptx: PptxGenJS, templateName: string): PresetTemplate | 
   return tpl;
 }
 
-export function registerPptTools(ctx: Context, sessions: DocSessionManager, outputDir: string) {
+export function registerPptTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
   function requireState(docId: string): PptState {
     return sessions.require(docId, 'pptx').doc as PptState;
   }
@@ -342,7 +342,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   }
 
   // ---- ppt_list_templates ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -368,7 +368,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_create ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -434,7 +434,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_add_slide ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -494,7 +494,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_add_text ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -585,7 +585,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_add_image ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -631,7 +631,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_add_shape ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -709,7 +709,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_add_chart ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -786,7 +786,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_add_table ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -859,7 +859,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_set_transition ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -887,7 +887,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_set_animation ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -914,7 +914,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_set_master ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1002,7 +1002,7 @@ export function registerPptTools(ctx: Context, sessions: DocSessionManager, outp
   });
 
   // ---- ppt_save ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

@@ -149,12 +149,14 @@ apply(ctx) {
 
 | 想做的事 | 用什么 |
 |----------|--------|
-| 注册 AI 可调用的工具 | `ctx.registerTool(...)`（需 `@aalis/plugin-tools` 已加载） |
-| 注册斜杠命令 | `ctx.command(...)`（需 `@aalis/plugin-commands` 已加载） |
+| 注册 AI 可调用的工具 | `useToolService(ctx).register(...)`（来自 `@aalis/plugin-tools-api`） |
+| 注册斜杠命令 | `useCommandService(ctx).command(...)`（来自 `@aalis/plugin-commands-api`） |
 | 自定义 WebUI 页面 | 在 `PluginModule` 里导出 `webuiPages` |
 | 监听核心事件 | `ctx.on('service:registered', …)` 等 |
 
-ADR-0001 的「two-pass plugin loader」保证：扩展点注入者（plugin-tools / plugin-commands）必然在使用者之前激活。
+helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段调用 `register` /
+`command`，若对应服务尚未 provide，注册操作会被自动延迟到服务就绪。无需关心
+插件加载顺序（ADR-0005 取消了 ADR-0001 的两阶段加载器）。
 
 ## 5.1 类型从哪里 import
 
@@ -177,10 +179,10 @@ ADR-0001 的「two-pass plugin loader」保证：扩展点注入者（plugin-too
 | `VectorStoreService` | `@aalis/plugin-vectorstore-api` | 是 |
 | `IncomingMessage`/`OutgoingMessage` 事件 / `tool:execute` 事件 | 同对应 *-api（包须出现在 `dependencies` 里 TS 才能看到 `declare module` 注入） | 是 |
 
-> **常见错误**：以为 `ctx.registerTool` 来自 core，结果 import 写在
-> `@aalis/core` 里编译报错。`ctx.registerTool` 的**类型扩展**由
-> `@aalis/plugin-tools-api` 通过 `declare module '@aalis/core'` 注入；
-> **必须**把 `@aalis/plugin-tools-api` 放进自己的 `dependencies`（或 `peerDependencies`），TS 才会看到该 augmentation。
+> **常见错误**：以为工具/命令注册 API 来自 core。它们由
+> `@aalis/plugin-tools-api` / `@aalis/plugin-commands-api` 导出
+> （`useToolService` / `useCommandService`），**必须**把这些契约包放进自己的
+> `dependencies`（或 `peerDependencies`），TS 才能正确解析类型。
 
 全部扩展点（事件 / 钩子 / 能力 / 配置字段 / Context Mixin）的归属表见
 [docs/extensions/index.md](../extensions/index.md)。

@@ -2,12 +2,12 @@
  * 剪贴板工具
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { PlatformAdapter } from '../platform.js';
 
-export function registerClipboardTools(ctx: Context, adapter: PlatformAdapter): void {
+export function registerClipboardTools(tools: ScopedToolService, adapter: PlatformAdapter): void {
   // ── clipboard_read ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -31,7 +31,7 @@ export function registerClipboardTools(ctx: Context, adapter: PlatformAdapter): 
   });
 
   // ── clipboard_write ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

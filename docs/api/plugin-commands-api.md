@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义斜杠指令系统：指令定义、子指令递归结构、Context 便捷方法 `ctx.command()`、CommandService 接口。所有插件注册的指令最终汇聚到 `CommandService`，由 `plugin-commands` 解析并派发。
+定义斜杠指令系统：指令定义、子指令递归结构、领域 helper `useCommandService(ctx)`、CommandService 接口。所有插件注册的指令最终汇聚到 `CommandService`，由 `plugin-commands` 解析并派发。
 
 ## 关键类型
 
@@ -36,13 +36,14 @@ interface CommandDefinition {
 
 每一层未命中 → 调用当前层级的 `action`，若该层无 `action` 则返回 usage 提示。Authority/Safety 沿树继承，可在 `commandOverrides[path-key]` 单独覆盖（key 形如 `clear:all`）。
 
-## Context 扩展
+## 领域 Helper
 
 ```ts
-ctx.command(definition: CommandDefinition): () => void;
+const commands = useCommandService(ctx);
+commands.command(definition: CommandDefinition): () => void;
 ```
 
-实现包 `plugin-commands` 在 apply 时通过 `Context.extend(...)` 注入该方法；本 api 包仅声明类型。
+helper 内部使用 `ctx.getService('commands')`；服务未 provide 时 `command()` 调用会被 `whenService` 自动延迟到服务就绪。
 
 ## 服务接口（节选）
 
@@ -60,7 +61,8 @@ interface CommandService {
 ## 典型用法
 
 ```ts
-ctx.command({
+const commands = useCommandService(ctx);
+commands.command({
   name: 'persona',
   description: '查看/切换人格',
   authority: 3,

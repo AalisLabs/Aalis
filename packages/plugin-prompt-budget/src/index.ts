@@ -11,6 +11,7 @@
  */
 
 import type { Context } from '@aalis/core';
+import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-prompt-budget';
@@ -46,6 +47,7 @@ interface TokenUsage {
 }
 
 export function apply(ctx: Context): void {
+  const tools = useToolService(ctx);
   /** sessionId → 最新一次的 token:usage 快照（仅保留最近一次即可） */
   const cache = new Map<string, TokenUsage>();
 
@@ -55,7 +57,7 @@ export function apply(ctx: Context): void {
     cache.set(u.sessionId, { ...u, observedAt: Date.now() });
   });
 
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

@@ -10,7 +10,7 @@
  * 适合 AX API 无法有效识别内部 UI 的现代 Web 技术应用（QQ、VS Code、Discord 等）。
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { CdpManager, DomNode } from '../cdp/client.js';
 
 /** 将 DomNode 树格式化为 AI 友好的文本 */
@@ -50,9 +50,9 @@ function formatDomTree(node: DomNode, indent: number = 0): string {
   return parts.join('\n');
 }
 
-export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager): void {
+export function registerWebAutomationTools(tools: ScopedToolService, cdpManager: CdpManager): void {
   // ── web_connect ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -157,7 +157,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
   });
 
   // ── web_inspect ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -223,7 +223,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
   });
 
   // ── web_action ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -298,7 +298,7 @@ export function registerWebAutomationTools(ctx: Context, cdpManager: CdpManager)
   });
 
   // ── web_eval ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

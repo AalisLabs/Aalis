@@ -4,7 +4,7 @@
 // core 仅提供：
 //   - 运行时基础设施（App / Context / EventBus / ServiceContainer / HookRegistry / ConfigManager / Logger / PluginManager 等）
 //   - 通用 IoC 数据契约（Schema / AalisEvents / Middleware / Dependency 声明 等）
-//   - 三个扩展点（ServiceCapabilityMap / AalisEvents / HookContextMap）+ Context.extend / PluginModule augmentation
+//   - 三个扩展点（ServiceCapabilityMap / AalisEvents / HookContextMap）+ PluginModule augmentation
 //   - 服务能力声明框架（ServiceCapabilityMap + Probe）
 //
 // 所有业务/领域类型均由各 @aalis/plugin-*-api 包导出：
