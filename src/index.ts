@@ -59,32 +59,20 @@ async function main() {
   // 自动扫描 packages/ 并加载所有插件
   await app.autoLoadPlugins();
 
-  // ── 子命令分发 ─────────────────────────────────────────
-  // `aalis doctor` 走诊断流程：不 start gateway/adapters，直接调用
-  // doctor 服务跑检查、打印报告，然后干净退出。
-  const subcommand = process.argv[2];
-  if (subcommand === 'doctor') {
-    const doctor = app.ctx.getService<{ runChecks: () => Promise<unknown> }>('doctor');
-    if (!doctor) {
-      console.error('未找到 doctor 服务，请确认 @aalis/plugin-doctor 已启用。');
+  // ── 子命令分发（通用）─────────────────────────────────
+  // `aalis <name> [args...]` 等价于在聊天里发送 `/<name> args...`：
+  // 查询 commands 服务，命中则执行返回字符串并干净退出；不命中则按
+  // 正常守护进程模式继续启动。
+  // 该分发**与具体命令解耦** —— doctor / migrate / etc. 各自注册命令即可。
+  const subArgv = process.argv.slice(2);
+  if (subArgv.length > 0) {
+    const exitCode = await tryDispatchSubcommand(app, subArgv);
+    if (exitCode !== null) {
       await app.stop();
+      await new Promise<void>(r => setImmediate(r));
       await activeFileLogger.flush();
-      process.exit(2);
+      process.exit(exitCode);
     }
-    const report = (await doctor.runChecks()) as {
-      summary: { ok: number; warn: number; error: number };
-      checks: Array<{ level: string; category: string; id: string; message: string; detail?: string }>;
-    };
-    for (const c of report.checks) {
-      const tag = c.level === 'ok' ? '✓' : c.level === 'warn' ? '!' : '✗';
-      console.log(`[${tag}] ${c.category}/${c.id} — ${c.message}`);
-      if (c.detail) console.log(`    ${c.detail}`);
-    }
-    console.log(`\n汇总: ok=${report.summary.ok} warn=${report.summary.warn} error=${report.summary.error}`);
-    await app.stop();
-    await new Promise<void>(r => setImmediate(r));
-    await activeFileLogger.flush();
-    process.exit(report.summary.error > 0 ? 1 : 0);
   }
 
   // 启动
@@ -108,3 +96,41 @@ async function main() {
 }
 
 main().catch(err => void exitWithFatalLog('启动失败', err));
+
+/**
+ * 尝试把 argv 当作命令调用：`aalis <name> [args...]` ↔ chat 中的 `/<name> args`。
+ *
+ * - 返回 number 时表示命中并需要按该 exit code 结束进程；
+ * - 返回 null 表示未命中（commands 服务不存在或命令名未注册），调用方应继续走守护进程模式。
+ *
+ * 不直接绑定任何具体命令，所有命令由各自插件向 commands 服务注册。
+ */
+async function tryDispatchSubcommand(app: App, argv: string[]): Promise<number | null> {
+  const commands = app.ctx.getService<{
+    has(name: string): boolean;
+    execute(
+      name: string,
+      ctx: {
+        sessionId: string;
+        platform: string;
+        userId?: string;
+        args: string[];
+        raw: string;
+        skipSafetyCheck?: boolean;
+      },
+    ): Promise<string | undefined>;
+  }>('commands');
+  if (!commands) return null;
+  const [cmdName, ...rest] = argv;
+  if (!cmdName || !commands.has(cmdName)) return null;
+  const result = await commands.execute(cmdName, {
+    sessionId: 'cli',
+    platform: 'cli',
+    userId: 'cli',
+    args: rest,
+    raw: `/${cmdName}${rest.length ? ` ${rest.join(' ')}` : ''}`,
+    skipSafetyCheck: true,
+  });
+  if (result) console.log(result);
+  return 0;
+}
