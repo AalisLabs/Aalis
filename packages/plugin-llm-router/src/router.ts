@@ -156,7 +156,17 @@ export class LLMRouter implements LLMService {
 
   // ---- 内部 ----
 
-  /** 按 ChatRequest 三层判定解析归属 provider。能力检查优先按目标 model 进行，避免「默认模型不支持但实际调用的模型支持」的误报。 */
+  /**
+   * 按 ChatRequest 三层判定解析归属 provider。
+   *
+   * 当请求字段与现实不符时**优雅降级**而非硬抛错（用户视角更友好，避免一次失效配置把整条会话锁死）：
+   *
+   *   - `provider` 指定但已下线：尝试用同名 model 在剩余 provider 中查找；找到则改路由 + warn。
+   *   - `model` 在多个 provider 中均存在：自动选第一个（注册顺序）+ warn 一次，不再抛 "ambiguous" 错。
+   *     可选 capabilities 优先用于挑选——若有的 provider 满足而其他不满足，优先满足者。
+   *
+   * 仍会抛错的情形：完全找不到任何能用的 provider/model 组合（避免静默走到完全错误的模型）。
+   */
   private async resolveProvider(
     request: ChatRequest,
     extraRequiredCapabilities: string[] = [],
@@ -166,16 +176,33 @@ export class LLMRouter implements LLMService {
 
     const requiredCapabilities = this.getRequiredCapabilities(request, extraRequiredCapabilities);
 
-    // 1. 指定了 provider → 精确路由
+    // 1. 指定了 provider → 精确路由；找不到则尝试按 model 在剩余 provider 中恢复
     if (request.provider) {
       const found = providers.find(p => p.contextId === request.provider);
-      if (!found) {
-        throw new Error(
-          `未知 LLM provider "${request.provider}"，可用：[${providers.map(p => p.contextId).join(', ')}]`,
-        );
+      if (found) {
+        await this.assertCapabilitiesForRequest(found, request.model, requiredCapabilities);
+        return found;
       }
-      await this.assertCapabilitiesForRequest(found, request.model, requiredCapabilities);
-      return found;
+
+      // provider 不存在（已被禁用/卸载）：若同时给了 model，尝试在其他 provider 找
+      if (request.model) {
+        const candidates = await this.findProvidersByModel(providers, request.model);
+        if (candidates.length > 0) {
+          const picked = this.pickByCapabilities(candidates, requiredCapabilities);
+          this.logger.warn(
+            `LLM provider "${request.provider}" 不可用，已自动改用 "${picked.contextId}" 提供同名 model "${request.model}"。` +
+              `若不期望此降级，请通过 /model.set 或 /model.reset 修正会话模型引用。`,
+          );
+          await this.assertCapabilitiesForRequest(picked, request.model, requiredCapabilities);
+          return picked;
+        }
+      }
+
+      throw new Error(
+        `未知 LLM provider "${request.provider}"${request.model ? `（model "${request.model}"）` : ''}，` +
+          `可用：[${providers.map(p => p.contextId).join(', ')}]。` +
+          `若是因禁用插件造成的残留引用，可用 /model.reset 清除会话模型覆盖。`,
+      );
     }
 
     // 2. 仅指定 model → listModels 中按 id 查找
@@ -183,23 +210,41 @@ export class LLMRouter implements LLMService {
       const candidates = await this.findProvidersByModel(providers, request.model);
       if (candidates.length === 0) {
         throw new Error(
-          `没有 LLM provider 列出 model "${request.model}"。请在 ChatRequest.provider 中指定，或在对应 provider 的 customModels 配置里加入此 model。`,
+          `没有 LLM provider 列出 model "${request.model}"。可用 provider：[${providers.map(p => p.contextId).join(', ')}]。` +
+            `请在 ChatRequest.provider 中指定、在对应 provider 的 customModels 配置里加入此 model，或用 /model.reset 清除残留模型引用。`,
         );
       }
+      const picked = this.pickByCapabilities(candidates, requiredCapabilities);
       if (candidates.length > 1) {
-        throw new Error(
+        // 多 provider 同名 model：自动选第一个能力满足的，warn 一次告知用户可显式指定
+        this.logger.warn(
           `model "${request.model}" 在多个 provider 中均存在 [${candidates.map(c => c.contextId).join(', ')}]，` +
-            `请通过 ChatRequest.provider 显式指定。`,
+            `已自动路由到 "${picked.contextId}"。如需固定路由，请显式设置 model 为 "${picked.contextId}::${request.model}" 形式。`,
         );
       }
-      await this.assertCapabilitiesForRequest(candidates[0], request.model, requiredCapabilities);
-      return candidates[0];
+      await this.assertCapabilitiesForRequest(picked, request.model, requiredCapabilities);
+      return picked;
     }
 
     // 3. 都不指定 → 默认 provider
     const defaultProvider = providers[0];
     await this.assertCapabilitiesForRequest(defaultProvider, undefined, requiredCapabilities);
     return defaultProvider;
+  }
+
+  /**
+   * 在多 provider 命中时挑选首个**能力满足**的；都不满足则退回到第一个，由后续
+   * assertCapabilitiesForRequest 给出明确错误，而不是默默路由到一个能力不全的 provider。
+   *
+   * 此处仅用 provider.capabilities 做粗筛（避免在路由阶段为每个候选异步 listModels 拖慢 hot path）；
+   * 选中后由 assertCapabilitiesForRequest 走 model-level 精确判定，错时仍能给清晰错误。
+   */
+  private pickByCapabilities(candidates: LLMProviderEntry[], requiredCapabilities: string[]): LLMProviderEntry {
+    if (requiredCapabilities.length === 0) return candidates[0];
+    for (const c of candidates) {
+      if (requiredCapabilities.every(cap => c.capabilities.includes(cap))) return c;
+    }
+    return candidates[0];
   }
 
   private async findProvidersByModel(providers: LLMProviderEntry[], modelId: string): Promise<LLMProviderEntry[]> {
