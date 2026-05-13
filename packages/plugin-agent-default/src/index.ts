@@ -431,6 +431,11 @@ class DefaultAgent implements AgentService {
       // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 占满物理上限才裁剪
       const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
 
+      // Bug B 防回溯：本回合中通过工具循环写入到 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
+      // 用户中途点「停止生成」时，这些条目要从历史中删除——否则下一条消息发出后，agent 会再次
+      // 看到上一轮被中断的工具调用 + 半截 assistant 文本，导致「假回退」。
+      const turnPersistedTimestamps: number[] = [];
+
       try {
         // 统一解析 session 配置（一次解析，多处复用）
         const sessionMgr = this.ctx.getService<SessionManagerService>('session-manager');
@@ -661,7 +666,7 @@ class DefaultAgent implements AgentService {
             });
           }
 
-          await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages);
+          await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages, turnPersistedTimestamps);
 
           // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
           const nextLlmData = {
@@ -802,9 +807,28 @@ class DefaultAgent implements AgentService {
           metadata: msgHookData.metadata,
         });
       } catch (err) {
-        // 中止错误 — 静默退出，已生成的流内容保留在前端
+        // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer；
+        // 已写入 memory 的中间工具调用/半截 assistant 内容必须回滚，否则下一条消息会让 agent
+        // 再次看到本轮被中断的痕迹（Bug B 假回退根因）。
         if (err instanceof DOMException && err.name === 'AbortError') {
           this.logger.info(`生成已中止: session=${incoming.sessionId}`);
+          if (turnPersistedTimestamps.length > 0) {
+            const memory = this.ctx.getService<MemoryService>('memory', ['message-delete']);
+            if (memory?.deleteMessagesByTimestamps) {
+              try {
+                const deleted = await memory.deleteMessagesByTimestamps(incoming.sessionId, turnPersistedTimestamps);
+                this.logger.debug(
+                  `中止回滚：从 session=${incoming.sessionId} 删除本轮 ${deleted}/${turnPersistedTimestamps.length} 条中间消息`,
+                );
+              } catch (rollbackErr) {
+                this.logger.warn('中止回滚失败:', rollbackErr);
+              }
+            } else {
+              this.logger.warn(
+                `中止回滚跳过：memory 服务不支持 message-delete 能力，本轮 ${turnPersistedTimestamps.length} 条中间消息将残留在历史中`,
+              );
+            }
+          }
           await this.ctx.emit('outbound:stream', {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
@@ -1338,11 +1362,15 @@ class DefaultAgent implements AgentService {
     sessionId: string,
     assistantMessage: Message,
     toolMessages: Message[],
+    persistedTimestamps?: number[],
   ): Promise<void> {
     const timestamp = Date.now();
     await this.saveToMemory(sessionId, { ...assistantMessage, timestamp });
+    persistedTimestamps?.push(timestamp);
     for (let i = 0; i < toolMessages.length; i++) {
-      await this.saveToMemory(sessionId, { ...toolMessages[i], timestamp: timestamp + i + 1 });
+      const ts = timestamp + i + 1;
+      await this.saveToMemory(sessionId, { ...toolMessages[i], timestamp: ts });
+      persistedTimestamps?.push(ts);
     }
   }
 
