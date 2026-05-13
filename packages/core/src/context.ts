@@ -4,9 +4,9 @@ import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
-import { ServicePriority } from './types/service.js';
 import { probeCapability } from './types/capabilities.js';
 import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from './types/index.js';
+import { ServicePriority } from './types/service.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -260,6 +260,17 @@ export class Context {
       if (failures.length > 0) {
         throw new Error(`服务 "${name}" 声明的能力与实例实现不符（provide 拒绝注册）:\n${failures.join('\n')}`);
       }
+    }
+
+    // dev 模式下提示同一上下文重复 provide 同一服务名——容器允许多 entry 但路由按 contextId 精确匹配
+    // 永远只能命中第一个，第二个静默失效。需多实例请改用 plugin 的 reusable=true + 配置后缀。
+    if (this.devMode && this._services.hasByContext(name, this.id)) {
+      this.logger.warn(
+        `服务 "${name}" 已被当前上下文 "${this.id}" provide 过一次。容器允许多 entry，` +
+          `但下游按 contextId 路由时仅能命中首个，后续注册将静默失效。` +
+          `如需多实例（如多套 API key），请在插件 module 上声明 reusable=true，` +
+          `然后在 config 中用 "<name>:<suffix>" 形式注册多份。`,
+      );
     }
 
     const entry = this._services.register(
