@@ -1,7 +1,7 @@
 import { platform } from 'node:os';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { toStorageUri } from '@aalis/plugin-tools-api';
+import { toolsWithGroups, toStorageUri, useToolService } from '@aalis/plugin-tools-api';
 import { type RunnerConfig, runCode } from './runner.js';
 import '@aalis/plugin-tools-api';
 
@@ -137,22 +137,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
 
-  // 创建带分组标记的注册代理
-  function ctxWithGroups(groups: string[]): Context {
-    return new Proxy(ctx, {
-      get(target, prop) {
-        if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
-        }
-        return Reflect.get(target, prop, target);
-      },
-    }) as Context;
-  }
-
-  const groupCtx = ctxWithGroups(['code-runner']);
+  // 创建带分组标记的工具视图
+  const baseTools = useToolService(ctx);
+  const groupTools = toolsWithGroups(baseTools, ['code-runner']);
 
   // 注册工具分组
-  ctx.registerToolGroup({
+  baseTools.registerGroup({
     name: 'code-runner',
     label: '代码执行',
     description: '编写并运行 Python / JavaScript 代码来解决计算、分析、文件处理等问题',
@@ -162,7 +152,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ==================== run_python ====================
   if (cfg.python.enabled) {
-    groupCtx.registerTool({
+    groupTools.register({
       definition: {
         type: 'function',
         function: {
@@ -218,7 +208,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ==================== run_javascript ====================
   if (cfg.javascript.enabled) {
-    groupCtx.registerTool({
+    groupTools.register({
       definition: {
         type: 'function',
         function: {

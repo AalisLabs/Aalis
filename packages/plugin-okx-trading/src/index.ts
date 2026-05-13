@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
+import { useToolService } from '@aalis/plugin-tools-api';
 import { OkxClient } from './client.js';
 import { registerAccountTools } from './tools/account.js';
 import { registerAlgoTools } from './tools/algo.js';
@@ -113,16 +114,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const modeLabel = cfg.demo ? '模拟盘' : '实盘';
   ctx.logger.info(`OKX 交易插件已初始化 (${modeLabel})`);
 
-  ctx.registerToolGroup({
+  const baseTools = useToolService(ctx);
+  baseTools.registerGroup({
     name: 'okx',
     label: 'OKX 交易',
     description: `OKX 虚拟币交易工具集 (${modeLabel})，提供行情查询、账户管理、下单交易等功能`,
   });
 
   // 工具代理：自动注入 groups
-  const reg: Parameters<typeof registerMarketTools>[0] = tool => {
-    ctx.registerTool({ ...tool, groups: ['okx'] });
-  };
+  const reg: Parameters<typeof registerMarketTools>[0] = tool => baseTools.register({ ...tool, groups: ['okx'] });
 
   registerMarketTools(reg, client);
   registerRubikTools(reg, client);

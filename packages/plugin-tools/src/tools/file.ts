@@ -9,8 +9,8 @@
 
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 interface FileConfig {
   maxReadSize: number;
@@ -313,9 +313,9 @@ async function collectFiles(
   return out;
 }
 
-export function registerFileTools(ctx: Context, config: FileConfig): void {
+export function registerFileTools(tools: ScopedToolService, config: FileConfig): void {
   // ==================== file_read ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -385,7 +385,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_write ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -425,7 +425,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_edit ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -492,7 +492,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_append ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -539,7 +539,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_delete ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -573,7 +573,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_list ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -737,7 +737,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_info ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -777,7 +777,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_search ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -924,7 +924,7 @@ export function registerFileTools(ctx: Context, config: FileConfig): void {
   });
 
   // ==================== file_tree ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

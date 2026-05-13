@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
+import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import { registerBaseConvertTools } from './tools/base-convert.js';
 import { registerCalculusTools } from './tools/calculus.js';
 import { registerConversionTools } from './tools/conversion.js';
@@ -98,28 +99,17 @@ interface ToolMathConfig {
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
+  const tools = useToolService(ctx);
   const cfg = resolveConfig(config);
 
-  /** 创建带分组标记的工具注册代理 */
-  function ctxWithGroups(groups: string[]): Context {
-    return new Proxy(ctx, {
-      get(target, prop) {
-        if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
-        }
-        return Reflect.get(target, prop, target);
-      },
-    }) as Context;
-  }
-
   // 注册工具分组
-  ctx.registerToolGroup({
+  tools.registerGroup({
     name: 'math',
     label: '数学工具',
     description: '表达式计算、统计分析、矩阵运算、数论、几何、单位换算、金融数学、微积分、方程求解、进制转换',
   });
 
-  const grouped = ctxWithGroups(['math']);
+  const grouped = toolsWithGroups(tools, ['math']);
 
   if (cfg.evaluate.enabled) {
     registerEvaluateTools(grouped);

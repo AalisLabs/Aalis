@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import {
   AlignmentType,
   BorderStyle,
@@ -54,9 +54,9 @@ const alignMap: Record<string, (typeof AlignmentType)[keyof typeof AlignmentType
   justify: AlignmentType.JUSTIFIED,
 };
 
-export function registerDocxTools(ctx: Context, sessions: DocSessionManager, outputDir: string) {
+export function registerDocxTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
   // ---- doc_create ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -98,7 +98,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_heading ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -135,7 +135,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_paragraph ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -236,7 +236,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_table ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -307,7 +307,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_image ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -343,7 +343,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_list ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -386,7 +386,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_page_break ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -409,7 +409,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_add_toc ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -446,7 +446,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_set_header_footer ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -482,7 +482,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_set_style ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -510,7 +510,7 @@ export function registerDocxTools(ctx: Context, sessions: DocSessionManager, out
   });
 
   // ---- doc_save ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

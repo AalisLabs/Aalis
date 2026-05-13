@@ -1,6 +1,6 @@
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
-export type RegFn = (tool: Parameters<Context['registerTool']>[0]) => void;
+export type RegFn = ScopedToolService['register'];
 
 /** 安全截断工具结果，避免长数据撑爆上下文 */
 export function truncate(data: unknown, maxItems = 20): unknown {

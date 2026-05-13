@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 
 // ════════════════════════════════════════════════════════════
@@ -528,13 +529,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
 
   if (ctx.getService<ToolService>('tools')) {
-    ctx.registerToolGroup({
+    useToolService(ctx).registerGroup({
       name: 'scheduler',
       label: '定时任务',
       description: '创建、查看和取消定时/周期性自主行动计划',
     });
 
-    ctx.registerTool({
+    useToolService(ctx).register({
       groups: ['scheduler'],
       definition: {
         type: 'function',
@@ -579,7 +580,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     });
 
-    ctx.registerTool({
+    useToolService(ctx).register({
       groups: ['scheduler'],
       definition: {
         type: 'function',
@@ -643,7 +644,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     });
 
-    ctx.registerTool({
+    useToolService(ctx).register({
       groups: ['scheduler'],
       definition: {
         type: 'function',
@@ -665,7 +666,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     });
 
-    ctx.registerTool({
+    useToolService(ctx).register({
       groups: ['scheduler'],
       definition: {
         type: 'function',
@@ -687,7 +688,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     });
 
-    ctx.registerTool({
+    useToolService(ctx).register({
       groups: ['scheduler'],
       definition: {
         type: 'function',

@@ -4,7 +4,7 @@
 // - 指令数据结构（CommandDefinition / SubcommandDefinition / RegisteredCommand 等）
 // - 指令执行上下文（CommandContext）
 // - 服务接口（CommandService）
-// - Context 便捷方法的类型增强（ctx.command）
+// - useCommandService(ctx) helper（M2 后取代 ctx.command mixin）
 //
 // 实现见 @aalis/plugin-commands。
 
@@ -228,43 +228,62 @@ export interface CommandService {
   setExecutionGuard(guard: ExecutionGuard): void;
 }
 
-// ===== Context 便捷方法增强 =====
+// ===== 领域便捷封装（M2：Mixin→Service 收编后的 API）=====
 //
-// 实现由 @aalis/plugin-commands 在激活时通过 `Context.extend(...)` 注入到
-// `Context.prototype`，本声明合并提供编译期类型签名。
-declare module '@aalis/core' {
-  interface Context {
-    /**
-     * 注册斜杠指令的便捷方法。
-     *
-     * 若 commands 服务尚不可用，会通过 `whenService` 自动延迟到服务就绪后注册。
-     *
-     * @example
-     * ctx.command('ping', '测试连通性', async () => 'pong!');
-     *
-     * @requires plugin-commands 已加载（提供该方法的运行时实现）
-     */
-    command(
-      name: string,
-      description: string,
-      action: (ctx: CommandContext) => Promise<string | undefined>,
-      options?: {
-        authority?: number;
-        safety?: SafetyLevel;
-        permissions?: PermissionId[];
-        /** 位置参数声明 */
-        arguments?: CommandArgumentDefinition[];
-        /** 选项声明 */
-        options?: CommandOptionDefinition[];
-        /** 自定义用法文本 */
-        usage?: string;
-        /** 示例 */
-        examples?: string[];
-        /** 子指令树（递归）。详见 CommandDefinition.subcommands */
-        subcommands?: SubcommandDefinition[];
-      },
-    ): () => void;
-  }
+// useCommandService(ctx) 取代了 `ctx.command(...)` mixin。
+// 自动 inject 检查 + 自动用 ctx.id 填充 pluginName。
+
+export interface CommandRegisterOptions {
+  authority?: number;
+  safety?: SafetyLevel;
+  permissions?: PermissionId[];
+  arguments?: CommandArgumentDefinition[];
+  options?: CommandOptionDefinition[];
+  usage?: string;
+  examples?: string[];
+  subcommands?: SubcommandDefinition[];
 }
-// 抑制"未使用"警告：Context 在 declare module 块中被引用
-export type _ContextExtended = Context;
+
+export interface ScopedCommandService {
+  /**
+   * 注册斜杠指令的便捷方法。pluginName 自动用 ctx.id 填充。
+   * 服务未就绪时通过 whenService 自动延迟到就绪后执行（与原 mixin 语义一致）。
+   *
+   * @example
+   *   const cmds = useCommandService(ctx);
+   *   cmds.command('ping', '测试连通性', async () => 'pong!');
+   */
+  command(
+    name: string,
+    description: string,
+    action: (ctx: CommandContext) => Promise<string | undefined>,
+    options?: CommandRegisterOptions,
+  ): () => void;
+  /** 原始 CommandService 引用（服务未就绪时为 undefined） */
+  readonly raw: CommandService | undefined;
+}
+
+export function useCommandService(ctx: Context): ScopedCommandService {
+  const svc = ctx.getService<CommandService>('commands');
+  const pluginName = ctx.id;
+  return {
+    command(name, description, action, options) {
+      const def: CommandDefinition = {
+        name,
+        description,
+        action,
+        authority: options?.authority,
+        safety: options?.safety,
+        permissions: options?.permissions,
+        arguments: options?.arguments,
+        options: options?.options,
+        usage: options?.usage,
+        examples: options?.examples,
+        subcommands: options?.subcommands,
+      };
+      if (svc) return svc.register(def, pluginName);
+      return ctx.whenService<CommandService>('commands', s => s.register(def, pluginName));
+    },
+    raw: svc,
+  };
+}

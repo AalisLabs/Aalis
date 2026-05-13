@@ -7,7 +7,7 @@
 
 import { execFile as execFileCb, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { type AppDetectResult, detectAppType, resolveAppPath } from '../app-detect.js';
 import type { CdpManager } from '../cdp/client.js';
 import type { PlatformAdapter } from '../platform.js';
@@ -15,9 +15,9 @@ import { detectPlatform } from '../platform.js';
 
 const execFile = promisify(execFileCb);
 
-export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpManager?: CdpManager): void {
+export function registerAppTools(tools: ScopedToolService, adapter: PlatformAdapter, cdpManager?: CdpManager): void {
   // ── app_launch ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -91,7 +91,7 @@ export function registerAppTools(ctx: Context, adapter: PlatformAdapter, cdpMana
   });
 
   // ── app_close ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import ExcelJS from 'exceljs';
 import type { DocSessionManager } from '../session.js';
 
@@ -20,9 +20,9 @@ function parseAddr(addr: string): { row: number; col: number } {
   return { col: colToNum(m[1]), row: parseInt(m[2], 10) };
 }
 
-export function registerExcelTools(ctx: Context, sessions: DocSessionManager, outputDir: string) {
+export function registerExcelTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
   // ---- excel_create ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -52,7 +52,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_add_sheet ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -79,7 +79,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_set_cells ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -142,7 +142,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_merge_cells ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -169,7 +169,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_set_formula ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -197,7 +197,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_set_style ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -326,7 +326,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_add_chart ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -356,7 +356,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_set_validation ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -420,7 +420,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_set_conditional_format ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -488,7 +488,7 @@ export function registerExcelTools(ctx: Context, sessions: DocSessionManager, ou
   });
 
   // ---- excel_save ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
