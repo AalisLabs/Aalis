@@ -124,7 +124,7 @@ describe('LLMRouter Bug D 回归', () => {
     expect(warnSpy.mock.calls.some(c => String(c[0]).includes('gone-provider'))).toBe(true);
   });
 
-  it('指定 provider 不存在且 model 也找不到 → 抛错并提示 /model.reset', async () => {
+  it('指定 provider 不存在且 model 也找不到 → 降级到首个 provider 默认 model + warn', async () => {
     await env.app.plugin(
       makeProviderPlugin({
         contextId: 'only-prov',
@@ -133,16 +133,21 @@ describe('LLMRouter Bug D 回归', () => {
       }),
     );
 
-    await expect(
-      env.router.chat({
-        messages: [{ role: 'user', content: 'hi' }],
-        provider: 'gone',
-        model: 'gone-model',
-      }),
-    ).rejects.toThrow(/model\.reset/);
+    const warnSpy = vi.spyOn(env.app.ctx.logger, 'warn');
+    const res = await env.router.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      provider: 'gone',
+      model: 'gone-model',
+    });
+
+    expect(res.content).toBe('ok');
+    expect(warnSpy).toHaveBeenCalled();
+    const msg = warnSpy.mock.calls.map(c => String(c[0])).join('\n');
+    expect(msg).toContain('only-prov');
+    expect(msg).toContain('/model.reset');
   });
 
-  it('model 找不到任何 provider → 错误信息含可用 provider 列表 + /model.reset 提示', async () => {
+  it('model 找不到任何 provider → 降级到首个 provider 默认 model + warn 含可用 provider 列表', async () => {
     await env.app.plugin(
       makeProviderPlugin({
         contextId: 'real-prov',
@@ -151,11 +156,22 @@ describe('LLMRouter Bug D 回归', () => {
       }),
     );
 
+    const warnSpy = vi.spyOn(env.app.ctx.logger, 'warn');
+    const res = await env.router.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      model: 'ghost-model',
+    });
+
+    expect(res.content).toBe('ok');
+    expect(warnSpy).toHaveBeenCalled();
+    const msg = warnSpy.mock.calls.map(c => String(c[0])).join('\n');
+    expect(msg).toContain('real-prov');
+    expect(msg).toContain('/model.reset');
+  });
+
+  it('完全没有 LLM provider → 仍然抛错（配置错误必须露出）', async () => {
     await expect(
-      env.router.chat({
-        messages: [{ role: 'user', content: 'hi' }],
-        model: 'ghost-model',
-      }),
-    ).rejects.toThrow(/real-prov.*model\.reset|model\.reset.*real-prov/s);
+      env.router.chat({ messages: [{ role: 'user', content: 'hi' }] }),
+    ).rejects.toThrow(/没有可用的 LLM provider/);
   });
 });

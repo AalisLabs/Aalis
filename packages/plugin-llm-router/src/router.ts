@@ -59,19 +59,19 @@ export class LLMRouter implements LLMService {
   // ---- LLMService 实现 ----
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const { instance, contextId } = await this.resolveProvider(request);
-    if (typeof instance.chat !== 'function') {
-      throw new Error(`LLM provider ${contextId} 不支持 chat()`);
+    const { entry, effectiveRequest } = await this.resolveProvider(request);
+    if (typeof entry.instance.chat !== 'function') {
+      throw new Error(`LLM provider ${entry.contextId} 不支持 chat()`);
     }
-    return instance.chat(request);
+    return entry.instance.chat(effectiveRequest);
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    const { instance, contextId } = await this.resolveProvider(request, ['streaming']);
-    if (typeof instance.chatStream !== 'function') {
-      throw new Error(`LLM provider ${contextId} 不支持 chatStream()`);
+    const { entry, effectiveRequest } = await this.resolveProvider(request, ['streaming']);
+    if (typeof entry.instance.chatStream !== 'function') {
+      throw new Error(`LLM provider ${entry.contextId} 不支持 chatStream()`);
     }
-    yield* instance.chatStream(request);
+    yield* entry.instance.chatStream(effectiveRequest);
   }
 
   getTemperature(): number {
@@ -159,18 +159,22 @@ export class LLMRouter implements LLMService {
   /**
    * 按 ChatRequest 三层判定解析归属 provider。
    *
-   * 当请求字段与现实不符时**优雅降级**而非硬抛错（用户视角更友好，避免一次失效配置把整条会话锁死）：
+   * 返回 `effectiveRequest`：在发生降级时（比如 model 在任何 provider 都找不到）会返回一份清掉 model 字段的
+   * request 副本，让下游 provider 走其自己的默认 model。不修改原始 request（避免误伤调用方状态）。
    *
-   *   - `provider` 指定但已下线：尝试用同名 model 在剩余 provider 中查找；找到则改路由 + warn。
-   *   - `model` 在多个 provider 中均存在：自动选第一个（注册顺序）+ warn 一次，不再抛 "ambiguous" 错。
-   *     可选 capabilities 优先用于挑选——若有的 provider 满足而其他不满足，优先满足者。
+   * 降级策略（都是 warn + fallback，不抛错，避免一条残留配置锁死会话）：
    *
-   * 仍会抛错的情形：完全找不到任何能用的 provider/model 组合（避免静默走到完全错误的模型）。
+   *   - `provider` 指定但下线 + 有 model 且同名在其他 provider 中存在：路由到那个 provider + warn。
+   *   - `provider` 指定但下线 + 无同名 model 可接手：降级到首个 provider 的默认 model + warn。
+   *   - `model` 在任何 provider 都找不到（常见于插件被禁用后会话残留）：同上。
+   *   - `model` 在多 provider 同名：自动选能力满足的首个 + warn。提示可显式写 "provA::model" 钉死。
+   *
+   * 唯一仍会抛错的情形：进程内完全没有任何 LLM provider（那是配置错误，必须露出）。
    */
   private async resolveProvider(
     request: ChatRequest,
     extraRequiredCapabilities: string[] = [],
-  ): Promise<LLMProviderEntry> {
+  ): Promise<{ entry: LLMProviderEntry; effectiveRequest: ChatRequest }> {
     const providers = this.getProviders();
     if (providers.length === 0) throw new Error('没有可用的 LLM provider');
 
@@ -181,7 +185,7 @@ export class LLMRouter implements LLMService {
       const found = providers.find(p => p.contextId === request.provider);
       if (found) {
         await this.assertCapabilitiesForRequest(found, request.model, requiredCapabilities);
-        return found;
+        return { entry: found, effectiveRequest: request };
       }
 
       // provider 不存在（已被禁用/卸载）：若同时给了 model，尝试在其他 provider 找
@@ -194,25 +198,37 @@ export class LLMRouter implements LLMService {
               `若不期望此降级，请通过 /model.set 或 /model.reset 修正会话模型引用。`,
           );
           await this.assertCapabilitiesForRequest(picked, request.model, requiredCapabilities);
-          return picked;
+          return { entry: picked, effectiveRequest: request };
         }
       }
 
-      throw new Error(
-        `未知 LLM provider "${request.provider}"${request.model ? `（model "${request.model}"）` : ''}，` +
-          `可用：[${providers.map(p => p.contextId).join(', ')}]。` +
-          `若是因禁用插件造成的残留引用，可用 /model.reset 清除会话模型覆盖。`,
+      // 未知 provider 且无同名 model 可接手 → 降级到首个 provider 的默认 model
+      const fallback = providers[0];
+      this.logger.warn(
+        `LLM provider "${request.provider}" 不可用${request.model ? `，且无 provider 提供 model "${request.model}"` : ''}。` +
+          `已临时降级到 "${fallback.contextId}" 的默认 model。` +
+          `可用：[${providers.map(p => p.contextId).join(', ')}]。要清除会话残留执行 /model.reset。`,
       );
+      const cleared = { ...request, provider: undefined, model: undefined } as ChatRequest;
+      await this.assertCapabilitiesForRequest(fallback, undefined, requiredCapabilities);
+      return { entry: fallback, effectiveRequest: cleared };
     }
 
     // 2. 仅指定 model → listModels 中按 id 查找
     if (request.model) {
       const candidates = await this.findProvidersByModel(providers, request.model);
       if (candidates.length === 0) {
-        throw new Error(
-          `没有 LLM provider 列出 model "${request.model}"。可用 provider：[${providers.map(p => p.contextId).join(', ')}]。` +
-            `请在 ChatRequest.provider 中指定、在对应 provider 的 customModels 配置里加入此 model，或用 /model.reset 清除残留模型引用。`,
+        // 未知 model → 降级到首个 provider 的默认 model（不抛错，避免会话锁死）
+        const fallback = providers[0];
+        this.logger.warn(
+          `没有 LLM provider 列出 model "${request.model}"（常见于插件被禁用后会话残留了旧引用）。` +
+            `已临时降级到 "${fallback.contextId}" 的默认 model。` +
+            `可用 provider：[${providers.map(p => p.contextId).join(', ')}]。` +
+            `要清除残留执行 /model.reset；要涵盖这个 model 请在某个 provider 的 customModels 配置里加入。`,
         );
+        const cleared = { ...request, model: undefined } as ChatRequest;
+        await this.assertCapabilitiesForRequest(fallback, undefined, requiredCapabilities);
+        return { entry: fallback, effectiveRequest: cleared };
       }
       const picked = this.pickByCapabilities(candidates, requiredCapabilities);
       if (candidates.length > 1) {
@@ -223,13 +239,13 @@ export class LLMRouter implements LLMService {
         );
       }
       await this.assertCapabilitiesForRequest(picked, request.model, requiredCapabilities);
-      return picked;
+      return { entry: picked, effectiveRequest: request };
     }
 
     // 3. 都不指定 → 默认 provider
     const defaultProvider = providers[0];
     await this.assertCapabilitiesForRequest(defaultProvider, undefined, requiredCapabilities);
-    return defaultProvider;
+    return { entry: defaultProvider, effectiveRequest: request };
   }
 
   /**

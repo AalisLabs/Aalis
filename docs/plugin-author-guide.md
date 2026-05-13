@@ -236,6 +236,92 @@ it('should activate when its dependencies are present', async () => {
 
 ---
 
+## 10. 类型化能力（typed capabilities）—— 已有的好东西，记得用
+
+`ServiceCapabilityMap` 是个 declaration-merging 扩展点。`-api` 包应该在自己的入口
+文件里把所属服务的能力枚举声明出来：
+
+```typescript
+// packages/plugin-llm-api/src/index.ts
+export type LLMCapability =
+  | 'chat'
+  | 'tool_calling'
+  | 'streaming'
+  | 'vision'
+  | 'thinking'
+  | (string & {});  // 留逃逸口，允许私有能力字符串
+
+declare module '@aalis/core' {
+  interface ServiceCapabilityMap {
+    llm: LLMCapability;
+  }
+}
+```
+
+收益：
+- `ctx.provide('llm', x, { capabilities: ['streaming'] })` 标准能力有自动补全
+- `'streaaming'` 这种 typo 会被 IDE 提示 `Did you mean 'streaming'?`
+- 模板字面量类型（如 `model:${string}`）能约束"能力名族"
+- 运行时**完全不强制**——`(string & {})` 兜底，私有能力随便写，框架不管
+
+**不要**在每个实现包里也声明自己的能力枚举——只 `-api` 包声明，实现包按需引用。
+
+类似地，`AalisEvents` 和 `HookContextMap` 也是 declaration-merging 扩展点，按同样
+规则使用：契约由 `-api` 包定义，实现包消费。
+
+---
+
+## 11. 用户偏好放哪里？—— per-user 不进 ServiceContainer
+
+ServiceContainer 有个 `preferences: Map<serviceName, contextId>` 用来"钉死某个
+服务的胜者"。**这个机制只用于管理员级 / App 级 default**，不要拿来存 per-user 偏好。
+
+### 为什么
+
+- ServiceContainer 是进程级单例。`A 用户钉了 OpenAI、B 用户钉了 DeepSeek` 在
+  WebUI 多用户场景下会互相覆盖
+- preferences 没有 user 维度，加进去就要把 tenancy 渗入 IoC，是噩梦
+- per-user 偏好语义本质上是**请求维度的 hint**，不是**容器维度的 default**
+
+### 推荐方案
+
+把"用户偏好的 LLM/embedding"等存在用户 profile 数据里：
+
+```typescript
+interface UserProfile {
+  id: string;
+  preferences: {
+    llm?: { providerHint?: string; requiredCapabilities?: string[] };
+    // ...
+  };
+}
+```
+
+每次请求时显式传入：
+
+```typescript
+// agent / chat 路由内
+const userPref = await getUserProfile(sessionUserId);
+const llm = ctx.getService<LLMService>('llm');
+const res = await llm.chat({
+  messages,
+  provider: req.provider ?? userPref.preferences.llm?.providerHint,
+  // ...
+});
+```
+
+优先级链清晰可追溯：**req 显式 > user 偏好 > 管理员 preference > priority enum**。
+
+### 多租户怎么办？
+
+- **Layer A（不同公司）**：走部署，每租户一个独立进程 + 独立 `AALIS_DATA_DIR`
+- **Layer B（沙盒/测试）**：`createApp({ events, services, hooks })` 已经支持完全隔离
+- **Layer C（同租户内多用户）**：上面的"per-user profile + 请求级 hint"方案
+
+**不要**为了多租户改 ServiceContainer。让 IoC 保持"一进程 = 一产品实例"心智。
+
+---
+
 ## 相关文档
 
 - [docs/architecture.md](architecture.md) — 整体架构
