@@ -147,11 +147,6 @@ registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>
     : 'LLMModel.chatStream() is required for capability "streaming"',
 );
 
-// ----- ModelRef 编解码（cleanup-9 从 core 迁入） -----
-import type { ModelRef } from './model-ref.js';
-export type { ModelRef } from './model-ref.js';
-export { formatModelRef, parseModelRef } from './model-ref.js';
-
 // ----- LLM model entry 解析助手 -----
 
 /** ServiceContainer 中一个 'llm' entry 的完整快照（与 ctx.getAllServices 返回的形状一致）。 */
@@ -164,7 +159,18 @@ export interface LLMModelEntry {
 }
 
 /**
- * 把旧式 (provider, model) 解析为最匹配的 LLMModel entry。
+ * LLM model 引用：`{ provider, model }` 二元组。
+ * 由 ConfigSchema type='llm-ref' 字段统一编辑，YAML 中以嵌套对象形式存储。
+ */
+export interface ModelRef {
+  /** provider 的 contextId（plugin instanceId，如 `@aalis/plugin-openai:main`）。 */
+  provider?: string;
+  /** model id（provider 内唯一，如 `gpt-4o`）。 */
+  model?: string;
+}
+
+/**
+ * 把 ref 解析为最匹配的 LLMModel entry。
  *
  * 解析顺序（命中即返回）：
  * 1. ref.provider + ref.model 都有 → 直接拼接 entryId `${provider}/${model}` 查找
@@ -173,10 +179,6 @@ export interface LLMModelEntry {
  * 4. 都为空 → `ctx.getService('llm', requiredCaps)` 取第一个匹配 capability 的 entry
  *
  * 找不到时返回 undefined（调用方决定是抛错还是退化）。
- *
- * 用于：
- *   - 旧 ChatRequest{provider,model} 字段迁移期适配
- *   - 配置项 `extractModel: "@aalis/plugin-openai:main::gpt-4o"` 这类 ref 字符串解析
  */
 export function resolveLLMModel(
   ctx: Context,

@@ -44,20 +44,8 @@ export const configSchema: ConfigSchema = {
   defaults: {
     label: '全局默认配置',
     description:
-      '所有平台共享的最低层默认配置（platform profile 之下的 fallback）。当 session、父 sessionDefaults、platform profile 都未指定时回落到这里。',
+      '所有平台共享的最低层默认配置（platform profile 之下的 fallback）。LLM 默认模型由各 agent 插件通过 ServicePreference 锁定，不再在此配置；本节仅保留 persona 等通用默认。',
     fields: {
-      model: {
-        type: 'select',
-        label: '默认模型',
-        dynamicOptions: 'llm',
-        allowCustom: true,
-        description: '所有平台未单独指定时使用的默认模型（如 "@aalis/plugin-deepseek::deepseek-v4-flash"）',
-      },
-      llmProvider: {
-        type: 'string',
-        label: '默认 LLM 提供者 contextId',
-        description: '不指定模型时锁定的 provider 实例',
-      },
       persona: {
         type: 'select',
         label: '默认人设',
@@ -85,17 +73,10 @@ export const configSchema: ConfigSchema = {
         allowCustom: true,
         description: '该平台默认使用的人设文件名（不含后缀）',
       },
-      model: {
-        type: 'select',
-        label: '模型',
-        dynamicOptions: 'llm',
-        allowCustom: true,
-        description: '该平台默认使用的模型',
-      },
-      llmProvider: {
-        type: 'string',
-        label: 'LLM 提供者 contextId',
-        description: '指定使用哪个 LLM 插件实例（留空则自动选择）',
+      llm: {
+        type: 'llm-ref',
+        label: '默认模型',
+        description: '该平台新会话的默认 LLM (provider + model)。留空则沿用 ServicePreference 锁定的全局默认。',
       },
       enabledToolGroups: {
         type: 'multiselect',
@@ -417,8 +398,7 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
 
 function formatConfigSummary(config: SessionConfig): string {
   const parts: string[] = [];
-  if (config.model) parts.push(config.model);
-  if (config.llmProvider) parts.push(`provider:${config.llmProvider}`);
+  if (config.llm?.model) parts.push(`${config.llm.provider}/${config.llm.model}`);
   if (config.enabledToolGroups?.length) parts.push(`tools:${config.enabledToolGroups.length}组`);
   if (config.persona) parts.push(`persona:${config.persona}`);
   return parts.join(', ') || '(默认)';
@@ -886,8 +866,6 @@ class SessionManager implements SessionManagerService {
     if (!raw || typeof raw !== 'object') return;
     const r = raw as Record<string, unknown>;
     const next: Omit<SessionConfig, 'sessionDefaults'> = {};
-    if (typeof r.model === 'string' && r.model) next.model = r.model;
-    if (typeof r.llmProvider === 'string' && r.llmProvider) next.llmProvider = r.llmProvider;
     if (typeof r.persona === 'string' && r.persona) next.persona = r.persona;
     this.defaults = next;
     if (Object.keys(next).length > 0) {
@@ -916,8 +894,9 @@ class SessionManager implements SessionManagerService {
       if (!entry || typeof entry !== 'object' || typeof entry.platform !== 'string') continue;
       const profile: PlatformProfile = {};
       if (entry.persona) profile.persona = entry.persona;
-      if (entry.model) profile.model = entry.model;
-      if (entry.llmProvider) profile.llmProvider = entry.llmProvider;
+      if (entry.llm && typeof entry.llm === 'object' && entry.llm.provider && entry.llm.model) {
+        profile.llm = { provider: String(entry.llm.provider), model: String(entry.llm.model) };
+      }
       if (Array.isArray(entry.enabledToolGroups)) profile.enabledToolGroups = entry.enabledToolGroups;
       if (entry.disableOutputFormat !== undefined) profile.disableOutputFormat = !!entry.disableOutputFormat;
       if (entry.clientSideJsonRendering !== undefined)
