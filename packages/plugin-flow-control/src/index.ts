@@ -1,7 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { OutgoingMessage } from '@aalis/plugin-message-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import '@aalis/plugin-gateway-api';
 

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
 import WebSocket from 'ws';
 import type {
