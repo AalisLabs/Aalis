@@ -13,6 +13,7 @@ import type {
 } from '@aalis/plugin-session-manager-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
+import { useWebuiService } from '@aalis/plugin-webui-api';
 
 export type {
   PlatformProfile,
@@ -137,7 +138,7 @@ type MemoryClearData = {
 
 // ===== WebuiPages（声明式 UI） =====
 
-export const webuiPages: WebuiPage[] = [
+const webuiPages: WebuiPage[] = [
   {
     key: 'sessions',
     label: '会话管理',
@@ -951,6 +952,10 @@ const stripDefaults = stripUndefined;
 // ===== 插件入口 =====
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+  // 注册 WebUI 页面
+  const webui = useWebuiService(ctx);
+  for (const page of webuiPages) webui.registerPage(page);
+
   const memory = ctx.getService<MemoryService>('memory');
   if (!memory) {
     ctx.logger.error('memory 服务不可用，会话管理无法启动');

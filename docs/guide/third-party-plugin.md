@@ -151,7 +151,8 @@ apply(ctx) {
 |----------|--------|
 | 注册 AI 可调用的工具 | `useToolService(ctx).register(...)`（来自 `@aalis/plugin-tools-api`） |
 | 注册斜杠命令 | `useCommandService(ctx).command(...)`（来自 `@aalis/plugin-commands-api`） |
-| 自定义 WebUI 页面 | 在 `PluginModule` 里导出 `webuiPages` |
+| 自定义 WebUI 页面 | `useWebuiService(ctx).registerPage(...)`（来自 `@aalis/plugin-webui-api`） |
+| 注册 agent 输入预处理器 | `useAgent(ctx).registerPreprocessor(...)`（来自 `@aalis/plugin-agent-api`） |
 | 监听核心事件 | `ctx.on('service:registered', …)` 等 |
 
 helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段调用 `register` /
