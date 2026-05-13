@@ -133,20 +133,21 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
     const flow = ctx.getService<FlowControlService>('flow-control');
 
+    // 不在触发策略作用域内（默认 *:group）：直接放行。
+    // 必须在 mute 检查之前进行，否则 QQ 群的 mute 关键词会泄漏到 WebUI/私聊等不在 scope 内的会话。
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) {
+      return next();
+    }
+
     // mute 关键词命中：设置自禁言并 swallow
     if (checkMuteKeyword(ctx, cfg, message.content)) {
       ctx.logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${message.sessionId}`);
       flow?.setMuted(message.sessionId, cfg.muteTimeSeconds);
       // 与 dev OneBot ChatFlow 一致：设置自禁言后调度一次 idle，
-      // 让禁言结束附近能正常进入"长期静默→主动招呼"路径。
+      // 让禁言结束附近能正常进入「长期静默→主动招呼」路径。
       flow?.rescheduleIdle(message.sessionId, message.platform);
       await shadowArchive(message);
       return; // swallow
-    }
-
-    // 不在触发策略作用域内（默认 *:group）：直接放行
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) {
-      return next();
     }
 
     let decision: ReturnType<typeof service.decide>;

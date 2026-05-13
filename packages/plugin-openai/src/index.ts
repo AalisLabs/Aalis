@@ -54,10 +54,17 @@ export const configSchema: ConfigSchema = {
   },
   modelCapabilities: {
     type: 'textarea',
-    label: '模型能力覆盖',
+    label: '单模型能力覆盖',
     default: '',
     description:
-      '按行指定某个模型的能力集（**覆盖**插件自动推断结果，不叠加）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming\n可用能力：chat / tool_calling / vision / streaming / thinking / json_mode 等。',
+      '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming\n可用能力：chat / tool_calling / vision / streaming / thinking / json_mode 等。',
+  },
+  providerCapabilities: {
+    type: 'string',
+    label: '适配器默认能力（逗号分隔）',
+    default: '',
+    description:
+      '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
   },
   timeout: {
     type: 'number',
@@ -74,6 +81,7 @@ export const defaultConfig = {
   baseUrl: 'https://api.openai.com',
   customModels: '',
   modelCapabilities: '',
+  providerCapabilities: '',
   timeout: 120,
   temperature: 0.7,
   maxTokens: 4096,
@@ -87,6 +95,7 @@ interface OpenAIConfig {
   baseUrl: string;
   customModels: string[];
   modelCapabilities: Map<string, LLMCapability[]>;
+  providerCapabilities: LLMCapability[];
   timeout?: number;
   temperature: number;
   maxTokens: number;
@@ -151,6 +160,7 @@ class OpenAILLMService implements LLMService {
   private baseUrl: string;
   private customModels: string[];
   private modelCapabilities: Map<string, LLMCapability[]>;
+  private providerCapabilities: LLMCapability[];
   /** 启动时解析的默认模型（第一个可用模型） */
   private defaultModel: string | null = null;
   private timeout: number;
@@ -164,6 +174,7 @@ class OpenAILLMService implements LLMService {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
     this.modelCapabilities = config.modelCapabilities;
+    this.providerCapabilities = config.providerCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
@@ -244,9 +255,9 @@ class OpenAILLMService implements LLMService {
     return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
   }
 
-  /** 优先用用户覆盖（modelCapabilities 配置），否则走启发式推断。 */
+  /** 返回某模型的能力集：providerCapabilities ∪ (用户单模型覆盖 或 启发式推断)。 */
   private resolveModelCapabilities(modelId: string): LLMCapability[] {
-    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId));
+    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId), this.providerCapabilities);
   }
 
   /** 获取默认模型，未设置时抛错 */
@@ -546,19 +557,28 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown): LLMCapability[] {
-  // 用户显式声明优先
+function resolveCapabilities(model: string, userOverride?: unknown, providerCaps?: LLMCapability[]): LLMCapability[] {
+  const out = new Set<LLMCapability>(providerCaps ?? []);
+  // 用户显式声明优先（覆盖启发式）
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    return userOverride as LLMCapability[];
+    for (const c of userOverride as LLMCapability[]) out.add(c);
+    return [...out];
   }
   // 精确匹配
-  if (MODEL_CAPABILITIES[model]) return MODEL_CAPABILITIES[model];
+  if (MODEL_CAPABILITIES[model]) {
+    for (const c of MODEL_CAPABILITIES[model]) out.add(c);
+    return [...out];
+  }
   // 模糊匹配
   const lower = model.toLowerCase();
   for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
-    if (lower.startsWith(known)) return caps;
+    if (lower.startsWith(known)) {
+      for (const c of caps) out.add(c);
+      return [...out];
+    }
   }
-  return DEFAULT_CAPABILITIES;
+  for (const c of DEFAULT_CAPABILITIES) out.add(c);
+  return [...out];
 }
 
 // ===== 插件入口 =====
@@ -595,12 +615,24 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   return out;
 }
 
+/**
+ * 解析适配器级别默认能力（逗号/空格/换行分隔）。
+ */
+function parseProviderCapabilities(raw: unknown): LLMCapability[] {
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split(/[,\s\n]/)
+    .map(s => s.trim())
+    .filter(Boolean) as LLMCapability[];
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const openaiConfig: OpenAIConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com',
     customModels: parseCustomModels(config.customModels),
     modelCapabilities: parseModelCapabilities(config.modelCapabilities),
+    providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
     timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,

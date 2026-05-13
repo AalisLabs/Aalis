@@ -124,10 +124,10 @@ describe('checkMuteKeyword', () => {
     const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: ['闭嘴'] };
     expect(checkMuteKeyword(fakeCtx(), cfg, '你给我闭嘴')).toBe(true);
   });
-  it('persona 提供的关键词命中', () => {
+  it('persona 提供的 mute 关键词不再生效（统一收回 trigger-policy 配置，避免单例 PersonaService 跨平台泄漏）', () => {
     const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: [] };
     const persona = { getMuteKeywords: () => ['stop'] };
-    expect(checkMuteKeyword(fakeCtx({ persona }), cfg, 'please stop')).toBe(true);
+    expect(checkMuteKeyword(fakeCtx({ persona }), cfg, 'please stop')).toBe(false);
   });
   it('全部不命中', () => {
     const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: ['x'] };
