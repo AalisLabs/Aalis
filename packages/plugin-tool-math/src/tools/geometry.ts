@@ -1,7 +1,6 @@
-import type { Context } from '@aalis/core';
-
-export function registerGeometryTools(ctx: Context): void {
-  ctx.registerTool({
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
+export function registerGeometryTools(tools: ScopedToolService): void {
+  tools.register({
     definition: {
       type: 'function',
       function: {

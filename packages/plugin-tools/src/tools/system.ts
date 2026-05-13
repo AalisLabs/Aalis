@@ -10,16 +10,16 @@
 
 import * as os from 'node:os';
 import * as process from 'node:process';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 interface SystemConfig {
   cwd: string;
   skipTimeTool?: boolean;
 }
 
-export function registerSystemTools(ctx: Context, config: SystemConfig): void {
+export function registerSystemTools(tools: ScopedToolService, config: SystemConfig): void {
   // ==================== system_info ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -73,7 +73,7 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
   });
 
   // ==================== env_get ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -146,7 +146,7 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
 
   // ==================== system_time ====================
   if (!config.skipTimeTool)
-    ctx.registerTool({
+    tools.register({
       definition: {
         type: 'function',
         function: {
@@ -179,7 +179,7 @@ export function registerSystemTools(ctx: Context, config: SystemConfig): void {
       },
     });
   // ==================== cwd ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

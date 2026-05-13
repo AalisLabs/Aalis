@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { AppService, ConfigManager, Context, Logger } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
+import { useCommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import type {
@@ -286,6 +287,7 @@ export const webuiPages: WebuiPage[] = [
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
+  const cmds = useCommandService(ctx);
   const authority = new AuthorityManager(ctx.config, ctx.logger);
   ctx.provide('authority', authority);
 
@@ -349,7 +351,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   // ===== 权限指令 =====
 
   // /grant — 设置用户权限等级
-  ctx.command(
+  cmds.command(
     'grant',
     '设置用户权限 (用法: grant <platform:userId> <level>)',
     async cmdCtx => {
@@ -380,7 +382,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   );
 
   // /authority — 查看当前用户权限等级
-  ctx.command('authority', '查看自己或指定用户的权限等级', async cmdCtx => {
+  cmds.command('authority', '查看自己或指定用户的权限等级', async cmdCtx => {
     if (cmdCtx.args.length > 0) {
       const target = cmdCtx.args[0];
       const sep = target.indexOf(':');

@@ -21,7 +21,10 @@ interface RegisteredTool {
 ## 注册工具
 
 ```typescript
-const dispose = ctx.registerTool({
+import { useToolService } from '@aalis/plugin-tools-api';
+
+const tools = useToolService(ctx);
+const dispose = tools.register({
   definition: {
     type: 'function',
     function: {

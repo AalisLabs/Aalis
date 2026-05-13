@@ -13,9 +13,11 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { platform } from 'node:os';
 import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { toStorageUri } from '@aalis/plugin-tools-api';
 
 interface ShellConfig {
+  ctx: Context;
   cwdUri: string;
   storage?: StorageService;
   defaultTimeout: number;
@@ -88,7 +90,8 @@ function safeEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function registerShellTools(ctx: Context, config: ShellConfig): void {
+export function registerShellTools(tools: ScopedToolService, config: ShellConfig): void {
+  const ctx = config.ctx;
   const isWin = platform() === 'win32';
   const shellCmd = isWin ? 'cmd' : '/bin/sh';
   const shellFlag = isWin ? '/c' : '-c';
@@ -100,7 +103,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
     : '使用 POSIX shell 语法（如 ls, cat, cp, rm）。bash 特性可通过 bash -c "..." 显式调用。';
 
   // ==================== exec ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -196,7 +199,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
   });
 
   // ==================== exec_background ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -288,7 +291,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
   });
 
   // ==================== process_list ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -322,7 +325,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
   });
 
   // ==================== process_read ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -376,7 +379,7 @@ export function registerShellTools(ctx: Context, config: ShellConfig): void {
   });
 
   // ==================== process_kill ====================
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

@@ -1,5 +1,6 @@
 import type { ConfigSchema, Context, Logger, PluginManagerService } from '@aalis/core';
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
+import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
@@ -1544,7 +1545,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agent = agentImpl as unknown as InternalAgent;
 
   // ===== /model 指令 =====
-  ctx.command('model', '查看或切换当前会话的对话模型', async cmdCtx => {
+  useCommandService(ctx).command('model', '查看或切换当前会话的对话模型', async cmdCtx => {
     const target = cmdCtx.args[0];
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
 

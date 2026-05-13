@@ -1,62 +1,13 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { AppService, ConfigSchema, PermissionId, SafetyLevel } from '@aalis/core';
-import { Context } from '@aalis/core';
-import type {
-  CommandArgumentDefinition,
-  CommandContext,
-  CommandDefinition,
-  CommandOptionDefinition,
-  CommandService,
-  SubcommandDefinition,
-} from '@aalis/plugin-commands-api';
+import type { AppService, ConfigSchema, Context } from '@aalis/core';
+import type { CommandContext } from '@aalis/plugin-commands-api';
+import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { CommandRegistry } from './commands.js';
-
-// ===== Context 便捷方法注入（internal-framework 风格） =====
-//
-// 模块加载即生效，幂等：重新导入本插件不会重复注入。
-// 注入后任何 Context 都可调用 ctx.command(...)；
-// 若 commands 服务尚不可用，调用会通过 whenService 自动延迟到服务就绪后执行。
-if (!('command' in Context.prototype)) {
-  Context.extend(
-    'command',
-    function (
-      this: Context,
-      name: string,
-      description: string,
-      action: (ctx: CommandContext) => Promise<string | undefined>,
-      options?: {
-        authority?: number;
-        safety?: SafetyLevel;
-        permissions?: PermissionId[];
-        arguments?: CommandArgumentDefinition[];
-        options?: CommandOptionDefinition[];
-        usage?: string;
-        examples?: string[];
-        subcommands?: SubcommandDefinition[];
-      },
-    ): () => void {
-      const def: CommandDefinition = {
-        name,
-        description,
-        action,
-        authority: options?.authority,
-        safety: options?.safety,
-        permissions: options?.permissions,
-        arguments: options?.arguments,
-        options: options?.options,
-        usage: options?.usage,
-        examples: options?.examples,
-        subcommands: options?.subcommands,
-      };
-      return this.whenService<CommandService>('commands', svc => svc.register(def, this.id));
-    },
-  );
-}
 
 // ===== 插件元数据 =====
 
@@ -200,7 +151,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== 内置指令 =====
 
-  ctx.command('help', '显示可用指令列表', async () => {
+  useCommandService(ctx).command('help', '显示可用指令列表', async () => {
     const nodes = commands.getAllNodes();
     const lines = ['**可用指令：**', ''];
     for (const n of nodes) {
@@ -212,7 +163,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return lines.join('\n');
   });
 
-  ctx.command('status', '显示系统状态', async () => {
+  useCommandService(ctx).command('status', '显示系统状态', async () => {
     const lines = ['**系统状态：**', ''];
     const checks = [
       ['WebUI Server', ctx.hasService('webui-server')],
@@ -233,7 +184,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return lines.join('\n');
   });
 
-  ctx.command(
+  useCommandService(ctx).command(
     'shutdown',
     '关闭应用',
     async () => {
@@ -248,7 +199,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     { authority: 5, safety: 'dangerous' },
   );
 
-  ctx.command(
+  useCommandService(ctx).command(
     'restart',
     '重启应用',
     async () => {
@@ -368,7 +319,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return runClear(cmdCtx, scope, types);
   }
 
-  ctx.command(
+  useCommandService(ctx).command(
     'clear',
     '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型',
     async cmdCtx => runClearFromOptions(cmdCtx, 'session'),

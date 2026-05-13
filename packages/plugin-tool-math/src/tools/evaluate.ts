@@ -1,7 +1,7 @@
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { listFunctions, safeEval } from '../lib/expression.js';
 
-export function registerEvaluateTools(ctx: Context): void {
+export function registerEvaluateTools(tools: ScopedToolService): void {
   const funcs = listFunctions();
   const funcList = [
     `常量: ${funcs.constants.join(', ')}`,
@@ -10,7 +10,7 @@ export function registerEvaluateTools(ctx: Context): void {
     `多参数函数: ${funcs.functionsVar.join(', ')}`,
   ].join('\n');
 
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

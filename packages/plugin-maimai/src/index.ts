@@ -1,6 +1,8 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { CommandContext } from '@aalis/plugin-commands-api';
+import { useCommandService } from '@aalis/plugin-commands-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -398,6 +400,8 @@ function formatSongMatch(song: MaiSong, idx: SongIndex): string {
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
+  const tools = useToolService(ctx);
+  const cmds = useCommandService(ctx);
   const cfg: MaimaiConfig = {
     developerToken: String(rawConfig.developerToken ?? ''),
     baseUrl: String(rawConfig.baseUrl ?? 'https://maimai.lxns.net'),
@@ -420,14 +424,14 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ===== Agent 工具（结构化参数） =====
   if (cfg.enableTools) {
-    ctx.registerToolGroup({
+    tools.registerGroup({
       name: 'maimai',
       label: '舞萌 DX 查分',
       description: '查询舞萌 DX 玩家信息、Best 50、最近成绩、曲库等',
     });
 
     // 玩家信息
-    ctx.registerTool({
+    tools.register({
       groups: ['maimai'],
       definition: {
         type: 'function',
@@ -449,7 +453,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     });
 
     // B50
-    ctx.registerTool({
+    tools.register({
       groups: ['maimai'],
       definition: {
         type: 'function',
@@ -473,7 +477,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     });
 
     // Recent
-    ctx.registerTool({
+    tools.register({
       groups: ['maimai'],
       definition: {
         type: 'function',
@@ -496,7 +500,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     });
 
     // 搜索曲目
-    ctx.registerTool({
+    tools.register({
       groups: ['maimai'],
       definition: {
         type: 'function',
@@ -518,7 +522,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     });
 
     // 绑定好友码
-    ctx.registerTool({
+    tools.register({
       groups: ['maimai'],
       definition: {
         type: 'function',
@@ -537,7 +541,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       handler: async (args, callCtx) => handleBind(ctx, args, callCtx),
     });
 
-    ctx.registerTool({
+    tools.register({
       groups: ['maimai'],
       definition: {
         type: 'function',
@@ -560,7 +564,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   //
   // 设计：Agent 端走结构化原生工具；用户端走指令。两者共用 handle* 函数。
   if (cfg.enableCommands) {
-    ctx.command('maimai', '舞萌 DX 查分。子指令：info/b50/recent/song/bind/unbind', async () => formatHelp(), {
+    cmds.command('maimai', '舞萌 DX 查分。子指令：info/b50/recent/song/bind/unbind', async () => formatHelp(), {
       subcommands: [
         {
           name: 'info',

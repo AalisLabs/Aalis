@@ -2,12 +2,12 @@
  * 鼠标控制工具（仅保留无 AX API 替代方案的操作）
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { MouseButton, PlatformAdapter } from '../platform.js';
 
-export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void {
+export function registerMouseTools(tools: ScopedToolService, adapter: PlatformAdapter): void {
   // ── mouse_drag ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -52,7 +52,7 @@ export function registerMouseTools(ctx: Context, adapter: PlatformAdapter): void
   });
 
   // ── mouse_scroll ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

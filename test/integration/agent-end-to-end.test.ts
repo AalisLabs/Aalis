@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { App, Context } from '../../packages/core/src/index.js';
+import { App } from '../../packages/core/src/index.js';
 import * as agentDefaultModule from '../../packages/plugin-agent-default/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
 
-// agent-default 调用 ctx.command()（运行时由 plugin-commands 注入 Context.prototype.command）。
-// 集成测试不加载 plugin-commands（避免拉入 gateway 等重依赖），直接桩一个空实现。
-if (!('command' in Context.prototype)) {
-  Context.extend('command', (..._args: never[]) => () => {});
-}
+// agent-default 通过 useCommandService(ctx).command(...) 注册 /model 指令。
+// 集成测试不加载 plugin-commands；useCommandService 在 commands 服务不可用时
+// 会通过 whenService 延迟注册，不会立即抛错，集成测试无需额外桩。
 
 import type { AgentService } from '../../packages/plugin-agent-api/src/index.js';
 import type { ChatRequest, ChatResponse } from '../../packages/plugin-llm-api/src/index.js';

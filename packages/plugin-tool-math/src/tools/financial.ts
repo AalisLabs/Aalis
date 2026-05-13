@@ -1,7 +1,6 @@
-import type { Context } from '@aalis/core';
-
-export function registerFinancialTools(ctx: Context): void {
-  ctx.registerTool({
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
+export function registerFinancialTools(tools: ScopedToolService): void {
+  tools.register({
     definition: {
       type: 'function',
       function: {
