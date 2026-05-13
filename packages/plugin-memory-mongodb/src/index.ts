@@ -258,6 +258,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     const service = new MongoMemoryService(collection, metaCollection);
     ctx.provide('memory', service, {
+      // priority 与同类 memory provider 自文档化对照：
+      //   sqlite=10（零配置默认）, mongodb=5（需服务，但更强）, inmemory=-100（仅测试）
+      // 用户通过 servicePreferences 显式偏好时该字段不影响选择。
+      priority: 5,
       capabilities: [
         MemoryCapabilities.History,
         MemoryCapabilities.Metadata,
