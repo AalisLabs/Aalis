@@ -17,7 +17,6 @@
       "!**/data",
       "!**/*.lock",
       "!packages/plugin-webui-client",
-      "!packages/plugin-slay-spire-agent",
       "!workspace"
     ]
   },
