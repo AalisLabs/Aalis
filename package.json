@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-commands-api": "workspace:*",
     "chalk": "^5.4.0",
     "yaml": "^2.7.0"
   },

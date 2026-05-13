@@ -2,6 +2,7 @@ import { App } from '@aalis/core';
 import { type ConsoleSinkHandle, installConsoleSink } from './runtime/console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
 import { createFsPluginLoader, createFsYamlConfigProvider, createProcessRespawnStrategy } from './runtime/providers.js';
+import { tryDispatchSubcommand } from './runtime/subcommand.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
 
 installTerminalStateRestorer();
@@ -96,41 +97,3 @@ async function main() {
 }
 
 main().catch(err => void exitWithFatalLog('启动失败', err));
-
-/**
- * 尝试把 argv 当作命令调用：`aalis <name> [args...]` ↔ chat 中的 `/<name> args`。
- *
- * - 返回 number 时表示命中并需要按该 exit code 结束进程；
- * - 返回 null 表示未命中（commands 服务不存在或命令名未注册），调用方应继续走守护进程模式。
- *
- * 不直接绑定任何具体命令，所有命令由各自插件向 commands 服务注册。
- */
-async function tryDispatchSubcommand(app: App, argv: string[]): Promise<number | null> {
-  const commands = app.ctx.getService<{
-    has(name: string): boolean;
-    execute(
-      name: string,
-      ctx: {
-        sessionId: string;
-        platform: string;
-        userId?: string;
-        args: string[];
-        raw: string;
-        skipSafetyCheck?: boolean;
-      },
-    ): Promise<string | undefined>;
-  }>('commands');
-  if (!commands) return null;
-  const [cmdName, ...rest] = argv;
-  if (!cmdName || !commands.has(cmdName)) return null;
-  const result = await commands.execute(cmdName, {
-    sessionId: 'cli',
-    platform: 'cli',
-    userId: 'cli',
-    args: rest,
-    raw: `/${cmdName}${rest.length ? ` ${rest.join(' ')}` : ''}`,
-    skipSafetyCheck: true,
-  });
-  if (result) console.log(result);
-  return 0;
-}
