@@ -4,7 +4,7 @@
 
 ## 定位
 
-历史上 OneBot 适配器内置了一整套 ChatFlow 状态机，覆盖：消息计数、活跃指数衰减、禁言/冷却/限速窗口、空闲主动触发。该逻辑已抽到本插件，作为 `inbound:flow` 相位的 handler + 一个 `flow-control` 服务，让 CLI / WebUI / 未来其他平台都能复用同一套防 DDoS / 主动开聊机制。
+ChatFlow 状态机提供：消息计数、活跃指数衰减、禁言/冷却/限速窗口、空闲主动触发。逻辑实现为 `inbound:flow` 相位的 handler + `flow-control` 服务，CLI / WebUI / OneBot 等平台均可复用同一套防 DDoS / 主动开聊机制。
 
 ## 注册的服务
 

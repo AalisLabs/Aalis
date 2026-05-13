@@ -550,7 +550,7 @@ interface HookContextMap {
 }
 ```
 
-> 历史上的 `gateway:inbound` / `gateway:outbound` / `agent:route` 钩子已废弃。
+> 入站请使用 `inbound:*` 相位，出站请使用 `outbound:dispatch`。
 > 入站请使用 `inbound:*` 命名相位，出站请使用 `outbound:dispatch`。
 
 ### MiddlewareFn / MiddlewareNext
