@@ -4,7 +4,7 @@
 // 以及所有声明式页面组件类型。
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
-import type { ConfigSchema } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -25,6 +25,12 @@ export interface WebUIService {
    * 允许外部插件在运行时替换前端
    */
   setClientDir?(dir: string): void;
+  /** 注册一个 WebUI 页面；返回 dispose */
+  registerPage(page: WebuiPage, pluginName: string): () => void;
+  /** 列出当前所有已注册的页面（含插件归属） */
+  getPages(): Array<WebuiPage & { pluginName: string }>;
+  /** 按插件名批量清除（供插件卸载时调用） */
+  unregisterByPlugin(pluginName: string): void;
 }
 
 // -- 声明式页面组件类型 --
@@ -115,14 +121,14 @@ export interface WebuiPage {
 }
 
 /**
- * 通过 declaration merging 向 core 的 PluginModule 注入 webuiPages 字段。
+ * 通过 declaration merging 向 core 的 PluginModule 注入
+ * 纯展示元数据字段（subsystem / extends）。
  *
- * 这样 core 不需要知道 WebuiPage 的存在，但任何 import 本包的插件都能在 PluginModule 上看到该字段。
+ * 注：ADR-0005 后WebuiPage 注册路径改为运行时 `useWebuiService(ctx).registerPage(...)`，
+ * 不再作为静态 module 字段存在。
  */
 declare module '@aalis/core' {
   interface PluginModule {
-    /** 插件声明的 WebUI 页面列表 */
-    webuiPages?: WebuiPage[];
     /**
      * 子系统归属，仅用于 WebUI 分组展示。
      *
@@ -133,6 +139,46 @@ declare module '@aalis/core' {
     /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
     extends?: ExtendDeclaration;
   }
+}
+
+// ----- 领域 helper -----
+
+/**
+ * Scoped WebUI 服务：在插件 apply() 中注册页面，自动绑定到当前 ctx 生命周期。
+ */
+export interface ScopedWebuiService {
+  /** 注册页面；返回 dispose（与 ctx 生命周期绑定）。 */
+  registerPage(page: WebuiPage): () => void;
+  /** 获取底层 service（未就绪时为 undefined）。 */
+  readonly raw: WebUIService | undefined;
+}
+
+/**
+ * 获取 ScopedWebuiService。调用 register 时若 'webui' 服务尚未就绪，
+ * 会通过 `ctx.whenService` 自动延迟到服务提供后执行。
+ */
+export function useWebuiService(ctx: Context): ScopedWebuiService {
+  const pluginName = ctx.id || 'unknown';
+  return {
+    registerPage(page: WebuiPage): () => void {
+      const svc = ctx.getService<WebUIService>('webui-server');
+      if (svc) return svc.registerPage(page, pluginName);
+      let disposed = false;
+      let disposeInner: (() => void) | undefined;
+      ctx.whenService<WebUIService>('webui-server', s => {
+        if (disposed) return undefined;
+        disposeInner = s.registerPage(page, pluginName);
+        return disposeInner;
+      });
+      return () => {
+        disposed = true;
+        disposeInner?.();
+      };
+    },
+    get raw() {
+      return ctx.getService<WebUIService>('webui-server');
+    },
+  };
 }
 
 /**

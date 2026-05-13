@@ -33,7 +33,7 @@ export const inject = {
   optional: ['authority', 'commands', 'storage', 'platform'],
 };
 
-export const webuiPages: WebuiPage[] = [
+const webuiPages: WebuiPage[] = [
   { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10, renderer: 'dashboard' },
   { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20, renderer: 'marketplace' },
   { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30, renderer: 'plugin-config' },
@@ -1325,6 +1325,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('platform', adapter, { capabilities: ['webui'] });
 
   // === 注册 WebUI 服务 ===
+  const registeredPages = new Map<string, Array<WebuiPage & { pluginName: string }>>();
+
+  // 内建页面归属为 webui-server 本身
+  for (const page of webuiPages) {
+    const list = registeredPages.get(name) ?? [];
+    list.push({ ...page, pluginName: name });
+    registeredPages.set(name, list);
+  }
+
   const webuiService: WebUIService = {
     getPort: () => uiConfig.port,
     getHost: () => uiConfig.host,
@@ -1332,6 +1341,26 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       clientDist = dir;
       mountStaticDir(dir);
       ctx.logger.info(`前端已切换: ${dir}`);
+    },
+    registerPage(page, pluginName) {
+      const list = registeredPages.get(pluginName) ?? [];
+      list.push({ ...page, pluginName });
+      registeredPages.set(pluginName, list);
+      return () => {
+        const cur = registeredPages.get(pluginName);
+        if (!cur) return;
+        const idx = cur.findIndex(p => p.key === page.key);
+        if (idx >= 0) cur.splice(idx, 1);
+        if (cur.length === 0) registeredPages.delete(pluginName);
+      };
+    },
+    getPages() {
+      const out: Array<WebuiPage & { pluginName: string }> = [];
+      for (const list of registeredPages.values()) out.push(...list);
+      return out;
+    },
+    unregisterByPlugin(pluginName) {
+      registeredPages.delete(pluginName);
     },
   };
   ctx.provide('webui-server', webuiService, { capabilities: ['api-v1'] });

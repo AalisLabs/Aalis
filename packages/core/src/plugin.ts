@@ -37,9 +37,10 @@ export interface PluginModule {
    */
   actions?: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
-  // 注：webuiPages / subsystem / extends 等纯 WebUI 展示元数据由
+  // 注：subsystem / extends 等纯 WebUI 展示元数据由
   // @aalis/plugin-webui-api 通过 declaration merging 注入；core 不读取它们，
   // 仅在 listPlugins() 中以 unknown 类型透传。
+  // webuiPages 已迁移到 useWebuiService(ctx).registerPage()。
 }
 
 // ----- 插件状态 -----
@@ -241,19 +242,17 @@ export class PluginManager {
     config: Record<string, unknown>;
     configSchema?: ConfigSchema;
     defaultConfig?: Record<string, unknown>;
-    webuiPages?: unknown[];
     actionNames?: string[];
     error?: string;
   }> {
     return [...this.plugins.entries()].map(([, entry]) => {
-      // subsystem / extends / webuiPages 由 @aalis/plugin-webui-api 通过 declaration merging
+      // subsystem / extends 由 @aalis/plugin-webui-api 通过 declaration merging
       // 注入，core 不感知其语义，仅透传给 listPlugins() 调用方。
       // 实际消费者：plugin-webui-server（按 subsystem 将插件归组渲染到 dashboard，
       // 见 packages/plugin-webui-server/src/index.ts）。"core 不消费 ≠ 系统未消费"。
       const m = entry.module as {
         subsystem?: string;
         extends?: unknown;
-        webuiPages?: unknown[];
       };
       return {
         name: entry.module.name,
@@ -268,7 +267,6 @@ export class PluginManager {
         config: entry.config,
         configSchema: entry.module.configSchema,
         defaultConfig: entry.module.defaultConfig,
-        webuiPages: m.webuiPages,
         actionNames: entry.module.actions ? Object.keys(entry.module.actions) : undefined,
         error: entry.error,
       };
