@@ -835,9 +835,6 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

@@ -1,22 +1,24 @@
 // ===== 工具服务接口与契约类型 =====
 //
 // 本包提供工具系统的全部"非实现"契约：
-// - OpenAI/DeepSeek 协议层工具类型（ToolCall / ToolDefinition / ToolFunction）
+// - LLM 函数声明协议类型（ToolDefinition / ToolFunction）
 // - 工具/分组数据结构（RegisteredTool / ToolGroupInfo / ToolSummary）
-// - 工具调用上下文（ToolCallContext）—— 平台/会话语义，非 OpenAI 协议
+// - 工具调用上下文（ToolCallContext）—— 平台/会话语义
 // - 工具执行通知（ToolExecuteMessage）
 // - 服务接口（ToolService）
 // - Context 便捷方法的类型增强（ctx.registerTool / ctx.registerToolGroup）
 // - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
+//
+// 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/plugin-message-api，
+// 与 Message 同源同生命周期。本包不依赖 message-api（双向解耦）。
 //
 // 实现见 @aalis/plugin-tools。
 
 import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
 
-// ----- OpenAI/DeepSeek 协议层工具类型 -----
-// 这些类型描述 LLM 函数调用的 wire format，由 LLM/agent 域消费。
-// 历史上曾驻留在 @aalis/core，cleanup-N 后迁入本包以保持 core 纯通用 IoC。
+// ----- LLM 函数声明协议类型 -----
+// 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
 
 export interface ToolFunction {
   name: string;
@@ -35,16 +37,7 @@ export interface ToolDefinition {
   function: ToolFunction;
 }
 
-export interface ToolCall {
-  id: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-// ----- 工具调用上下文（平台语义；core 仅提供 OpenAI 协议层的 ToolCall/ToolDefinition） -----
+// ----- 工具调用上下文（平台语义） -----
 
 export interface ToolCallContext {
   sessionId: string;
