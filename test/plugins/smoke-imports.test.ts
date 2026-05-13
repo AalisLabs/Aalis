@@ -12,7 +12,6 @@ import { describe, expect, it } from 'vitest';
  * 编译过 ≠ 模块能被 ESM 加载 ≠ 入口契约还在。
  *
  * 跳过名单：
- * - plugin-computer-use：依赖系统级原生绑定（X11/CoreGraphics/Win32）
  * - plugin-vectorstore-lancedb：原生 lance 绑定，CI 镜像不一定可用
  * - plugin-webui-client：纯前端 React 包，不在 node 环境里跑
  * - plugin-sdk：模板库，不是可加载插件
@@ -32,7 +31,6 @@ const PLUGIN_DIRS = [
   'plugin-embedding-openai',
   'plugin-file-reader',
   'plugin-flow-control',
-  'plugin-game-activity',
   'plugin-gateway',
   'plugin-image-recognition',
   'plugin-llm-router',
@@ -59,7 +57,6 @@ const PLUGIN_DIRS = [
   'plugin-session-manager',
   'plugin-session-tools',
   'plugin-skills',
-  'plugin-slay-spire-agent',
   'plugin-storage-local',
   'plugin-storage-router',
   'plugin-todo-list',

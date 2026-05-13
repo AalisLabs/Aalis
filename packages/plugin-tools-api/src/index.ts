@@ -212,7 +212,7 @@ export function useToolService(ctx: Context): ScopedToolService {
  * 返回一个 ScopedToolService 的视图，其 `register` 会自动为工具
  * 追加给定 groups（合并而不是覆盖原 tool.groups）。
  *
- * 用于一组工具想共享相同分组的场景（如 plugin-computer-use 的 'computer-use' 分组）。
+ * 用于一组工具想共享相同分组的场景（如某游戏插件的 'game' 分组）。
  */
 export function toolsWithGroups(tools: ScopedToolService, groups: string[]): ScopedToolService {
   return {
