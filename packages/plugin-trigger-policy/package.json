@@ -13,7 +13,7 @@
     "@aalis/plugin-flow-control": "workspace:*",
     "@aalis/plugin-gateway-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
-    "@aalis/plugin-message-archive": "workspace:*",
+    "@aalis/plugin-message-archive-api": "workspace:*",
     "@aalis/plugin-persona": "workspace:*"
   },
   "devDependencies": {

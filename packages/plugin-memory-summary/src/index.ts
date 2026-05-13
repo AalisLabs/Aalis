@@ -3,7 +3,7 @@ import type { Message } from '@aalis/plugin-message-api';
 import '@aalis/plugin-agent-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 
 // ===== 插件元数据 =====
 

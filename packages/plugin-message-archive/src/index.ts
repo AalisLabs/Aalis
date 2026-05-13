@@ -4,8 +4,8 @@ import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-ap
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel, prefixSender } from '@aalis/plugin-message-api';
-import type { ArchiveNoticeOptions, MessageArchiveService } from './types.js';
-import { MessageArchiveCapabilities } from './types.js';
+import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import { MessageArchiveCapabilities } from '@aalis/plugin-message-archive-api';
 
 export type {
   ArchiveIncomingResult,
@@ -13,8 +13,8 @@ export type {
   MessageArchiveCapability,
   MessageArchiveCapabilityRegistry,
   MessageArchiveService,
-} from './types.js';
-export { MessageArchiveCapabilities } from './types.js';
+} from '@aalis/plugin-message-archive-api';
+export { MessageArchiveCapabilities } from '@aalis/plugin-message-archive-api';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';

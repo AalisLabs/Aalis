@@ -90,9 +90,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
       '@aalis/plugin-platform':
         specifier: workspace:*
         version: link:../plugin-platform
@@ -155,9 +155,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
@@ -485,9 +485,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -784,9 +784,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -853,10 +853,26 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-message-archive-api':
+        specifier: workspace:*
+        version: link:../plugin-message-archive-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-message-archive-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -935,9 +951,9 @@ importers:
       '@aalis/plugin-image-recognition-api':
         specifier: workspace:*
         version: link:../plugin-image-recognition-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
       '@aalis/plugin-platform':
         specifier: workspace:*
         version: link:../plugin-platform
@@ -1149,9 +1165,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
       '@aalis/plugin-session-manager-api':
         specifier: workspace:*
         version: link:../plugin-session-manager-api
@@ -1389,9 +1405,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-message-archive':
+      '@aalis/plugin-message-archive-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive
+        version: link:../plugin-message-archive-api
       '@aalis/plugin-persona':
         specifier: workspace:*
         version: link:../plugin-persona
