@@ -1,5 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
@@ -38,13 +38,10 @@ export const configSchema: ConfigSchema = {
     default: false,
     description: '启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。',
   },
-  compressionModel: {
-    type: 'select',
+  compressionLLM: {
+    type: 'llm-ref',
     label: '压缩模型',
     description: '选择用于压缩搜索结果的模型。留空则使用默认 LLM 提供者。',
-    default: '',
-    options: [{ label: '默认', value: '' }],
-    dynamicOptions: 'llm',
   },
   compressionPrompt: {
     type: 'textarea',
@@ -60,7 +57,6 @@ export const defaultConfig = {
   maxConcurrent: 3,
   defaultNumResults: 5,
   enableCompression: false,
-  compressionModel: '',
   compressionPrompt: '',
 };
 
@@ -73,7 +69,7 @@ interface WebSearchConfig {
   maxConcurrent: number;
   defaultNumResults: number;
   enableCompression: boolean;
-  compressionModel: string;
+  compressionLLM?: { provider: string; model: string };
   compressionPrompt: string;
 }
 
@@ -234,7 +230,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxConcurrent: (config.maxConcurrent as number) ?? 3,
     defaultNumResults: (config.defaultNumResults as number) ?? 5,
     enableCompression: (config.enableCompression as boolean) ?? false,
-    compressionModel: (config.compressionModel as string) ?? '',
+    compressionLLM: (config.compressionLLM && typeof config.compressionLLM === 'object'
+      && (config.compressionLLM as { provider?: unknown }).provider
+      && (config.compressionLLM as { model?: unknown }).model)
+      ? config.compressionLLM as { provider: string; model: string }
+      : undefined,
     compressionPrompt: (config.compressionPrompt as string) ?? '',
   };
 
@@ -251,8 +251,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   /** 使用 LLM 压缩搜索结果 */
   async function compressResults(query: string, rawResults: string): Promise<string> {
-    const ref = parseModelRef(cfg.compressionModel || undefined);
-    const entry = resolveLLMModel(ctx, ref, ['chat']);
+    const entry = resolveLLMModel(ctx, cfg.compressionLLM, ['chat']);
     if (!entry) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
