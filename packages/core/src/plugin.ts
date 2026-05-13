@@ -93,6 +93,18 @@ export class PluginManager {
   private rootCtx: Context;
   private logger: Logger;
   private reloading = false;
+  /**
+   * 全局关机标志。app.stop() 在 dispose 前置位，所有反应式级联（service:registered/
+   * unregistered → checkPending/Active）都会因此跳过——避免「正在关机还去 bounce
+   * 一个永远不会被重新激活的插件」这种无意义噪声，也避免下游插件 dispose 中
+   * 试图 register 命令 / 监听服务等动作触发误重入。
+   */
+  private shuttingDown = false;
+
+  /** 是否正在关机——供插件 dispose hook 短路用 */
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
 
   /**
    * 必需服务列表: softReload 完成后若缺失会自动恢复。
@@ -106,10 +118,10 @@ export class PluginManager {
 
     // 监听服务注册/注销，自动激活/停用插件（softReload 期间跳过，避免重入）
     rootCtx.on('service:registered', () => {
-      if (!this.reloading) this.checkPendingPlugins();
+      if (!this.reloading && !this.shuttingDown) this.checkPendingPlugins();
     });
     rootCtx.on('service:unregistered', name => {
-      if (!this.reloading) this.checkActivePlugins(name);
+      if (!this.reloading && !this.shuttingDown) this.checkActivePlugins(name);
     });
   }
 
@@ -406,6 +418,95 @@ export class PluginManager {
 
     await this.softReload();
     return true;
+  }
+
+  /**
+   * 全局停机：按依赖拓扑逆序 dispose 所有 active 插件。
+   *
+   * 顺序原则：「消费者先关，提供者后关」——一个插件若 require/optional 依赖另一个
+   * 插件 provides 的服务，则前者 dispose 必须先于后者。这样下游插件的 dispose hook
+   * 还能安全地访问其依赖的服务（如把待持久化数据冲到 storage、把订阅从 gateway 摘掉）。
+   *
+   * 实现是 Kahn 风格 BFS：
+   * 1. 把 active 插件构成「依赖图」边：consumer → provider（基于 module.provides）
+   * 2. 反复挑出 in-degree==0 的节点（没人依赖它们 = 处于拓扑顶端 = 应当先 dispose）
+   * 3. dispose 后从图中移除，刷新 in-degree
+   * 4. 若残留环（不应该发生，softReload 期间会警告），按声明顺序 dispose 兜底
+   *
+   * 此方法预设 `shuttingDown=true`，service:unregistered 不再触发反应式 bounce；
+   * 因此本方法是**关机时唯一**的 dispose 编排者，不与级联机制竞争。
+   */
+  async stopAll(): Promise<void> {
+    this.shuttingDown = true;
+
+    // 收集 active 插件 + 服务名→提供者 instanceId 反查表
+    const active: PluginEntry[] = [];
+    const providerOf = new Map<string, string>(); // service name → instanceId
+    for (const entry of this.plugins.values()) {
+      if (entry.state !== 'active') continue;
+      active.push(entry);
+      for (const svc of entry.module.provides ?? []) {
+        providerOf.set(svc, entry.instanceId);
+      }
+    }
+
+    // 构图：providersOf.get(consumer) = 该 consumer 依赖的 provider 集合
+    // dependentCount.get(provider) = 仍未被关掉的 consumer 数量
+    // 拓扑顶（dependentCount==0）= 没人再依赖它 = 可以安全 dispose
+    const providersOf = new Map<string, Set<string>>();
+    const dependentCount = new Map<string, number>();
+    for (const entry of active) {
+      dependentCount.set(entry.instanceId, 0);
+    }
+    for (const entry of active) {
+      const deps = [...entry.requiredDeps, ...entry.optionalDeps];
+      const providers = new Set<string>();
+      for (const dep of deps) {
+        const providerId = providerOf.get(dep.service);
+        if (!providerId || providerId === entry.instanceId) continue;
+        if (!providers.has(providerId)) {
+          providers.add(providerId);
+          dependentCount.set(providerId, (dependentCount.get(providerId) ?? 0) + 1);
+        }
+      }
+      providersOf.set(entry.instanceId, providers);
+    }
+
+    // Kahn：反复挑 dependentCount==0 的（没人再依赖它们 = 可安全先关）
+    const remaining = new Set(active.map(e => e.instanceId));
+    while (remaining.size > 0) {
+      const ready: string[] = [];
+      for (const id of remaining) {
+        if ((dependentCount.get(id) ?? 0) === 0) ready.push(id);
+      }
+      if (ready.length === 0) {
+        // 残留环，剩余按声明顺序兜底 dispose（应不发生）
+        this.logger.warn(`stopAll: 检测到依赖环或残留 ${remaining.size} 个插件，按声明顺序 dispose 兜底`);
+        for (const id of remaining) ready.push(id);
+      }
+
+      for (const id of ready) {
+        const entry = this.plugins.get(id);
+        if (entry?.state === 'active' && entry.context) {
+          try {
+            entry.context.dispose();
+          } catch (err) {
+            this.logger.error(`插件 "${id}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          entry.context = undefined;
+        }
+        if (entry) entry.state = 'disposed';
+        remaining.delete(id);
+
+        // 更新被它依赖的所有 provider 的 dependentCount
+        const providers = providersOf.get(id);
+        if (providers) {
+          for (const providerId of providers) {
+            dependentCount.set(providerId, Math.max(0, (dependentCount.get(providerId) ?? 0) - 1));
+          }
+        }
+      }
+    }
   }
 
   // ---- 内部逻辑 ----

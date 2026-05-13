@@ -198,4 +198,66 @@ describe('App plugin lifecycle', () => {
     expect(log).toContainEqual({ disposed: true });
     expect(log).toContainEqual({ v: 2 });
   });
+
+  it('stopAll: 按拓扑逆序 dispose（消费者先关、提供者后关）', async () => {
+    const order: string[] = [];
+    const provider: PluginModule = {
+      name: 'svc-A',
+      provides: ['serviceA'],
+      apply(ctx) {
+        ctx.provide('serviceA', { ping: () => 'pong' });
+        ctx.onDispose(() => order.push('svc-A.dispose'));
+      },
+    };
+    const consumer: PluginModule = {
+      name: 'cons-B',
+      inject: { required: ['serviceA'] },
+      apply(ctx) {
+        ctx.onDispose(() => order.push('cons-B.dispose'));
+      },
+    };
+
+    await env.app.plugin(provider);
+    await env.app.plugin(consumer);
+    await new Promise(r => setTimeout(r, 10));
+    expect(env.app.plugins.getPlugin('cons-B')?.state).toBe('active');
+
+    await env.app.plugins.stopAll();
+    // 消费者必须先于提供者 dispose
+    expect(order).toEqual(['cons-B.dispose', 'svc-A.dispose']);
+    expect(env.app.plugins.isShuttingDown()).toBe(true);
+  });
+
+  it('stopAll: 关机标志屏蔽 service:unregistered 反应式 bounce', async () => {
+    const events: string[] = [];
+    const provider: PluginModule = {
+      name: 'p-svc',
+      provides: ['s'],
+      apply(ctx) {
+        ctx.provide('s', {});
+        ctx.onDispose(() => events.push('p-svc.dispose'));
+      },
+    };
+    const consumer: PluginModule = {
+      name: 'c-svc',
+      inject: { optional: ['s'] },
+      apply(ctx) {
+        events.push('c-svc.apply');
+        ctx.onDispose(() => events.push('c-svc.dispose'));
+      },
+    };
+    await env.app.plugin(provider);
+    await env.app.plugin(consumer);
+    await new Promise(r => setTimeout(r, 10));
+
+    await env.app.plugins.stopAll();
+    // c-svc 不应该在 stopAll 期间被反应式 bounce 一次再 dispose 一次
+    // —— 应当是 stopAll 主动 dispose 一次（消费者先）
+    const cDisposeCount = events.filter(e => e === 'c-svc.dispose').length;
+    expect(cDisposeCount).toBe(1);
+    // 应用顺序：consumer 先 dispose、provider 后 dispose
+    const cIdx = events.indexOf('c-svc.dispose');
+    const pIdx = events.indexOf('p-svc.dispose');
+    expect(cIdx).toBeLessThan(pIdx);
+  });
 });
