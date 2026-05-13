@@ -13,12 +13,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "ci": "pnpm -r build && pnpm run check:biome && pnpm run test",
-    "ci:local": "pnpm -r build && pnpm run check:biome && pnpm run test"
+    "ci:local": "pnpm -r build && pnpm run check:biome && pnpm run test",
+    "preflight": "pnpm -r build && pnpm test && pnpm exec biome check . && pnpm exec knip --no-progress",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
     "@types/node": "^22.19.15",
     "@vitest/coverage-v8": "^2.1.9",
+    "husky": "^9.1.7",
     "knip": "^5.88.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
