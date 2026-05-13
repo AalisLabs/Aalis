@@ -9,7 +9,7 @@ import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCal
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
-import type { PlatformService } from '@aalis/plugin-platform';
+import type { PlatformService } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';

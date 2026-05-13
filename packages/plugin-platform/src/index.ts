@@ -1,7 +1,7 @@
 import type { Context } from '@aalis/core';
 import { ServicePriority } from '@aalis/core';
+import { PlatformCapabilities } from '@aalis/plugin-platform-api';
 import { PlatformRouter } from './router.js';
-import { PlatformCapabilities } from './types.js';
 
 export type {
   PlatformAdapter,
@@ -10,8 +10,8 @@ export type {
   PlatformConnection,
   PlatformSelfIdentity,
   PlatformService,
-} from './types.js';
-export { PlatformCapabilities } from './types.js';
+} from '@aalis/plugin-platform-api';
+export { PlatformCapabilities } from '@aalis/plugin-platform-api';
 
 // ----- 元数据 -----
 

@@ -12,7 +12,7 @@
     "@aalis/core": "workspace:*",
     "@aalis/plugin-image-recognition-api": "workspace:*",
     "@aalis/plugin-message-archive-api": "workspace:*",
-    "@aalis/plugin-platform": "workspace:*",
+    "@aalis/plugin-platform-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {
