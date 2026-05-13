@@ -127,7 +127,8 @@ interface WSOutgoing {
     | 'reload'
     | 'confirm'
     | 'token_usage'
-    | 'compressing';
+    | 'compressing'
+    | 'page_refresh';
   content?: string;
   sessionId?: string;
   reasoningContent?: string;
@@ -168,6 +169,8 @@ interface WSOutgoing {
       }
   >;
   todoItems?: unknown[];
+  /** page_refresh：通知前端某个插件相关的动态页面刷新数据源。pluginName 缺省 = 全部。 */
+  pluginName?: string;
   // token_usage 字段
   tokenUsage?: {
     contextWindow: number;
@@ -966,6 +969,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('session:updated', broadcastSessionsChanged);
   ctx.on('session:deleted', broadcastSessionsChanged);
   ctx.on('session:completed', broadcastSessionsChanged);
+
+  // 动态页面刷新通知：插件可通过广播 'page_refresh' 让前端无感刷新对应页面数据
+  // 当前已知发射方：plugin-doctor（'doctor:updated'）。新增同类需求时按相同模式订阅即可。
+  const broadcastPageRefresh = (pluginName?: string) => {
+    const payload: WSOutgoing = { type: 'page_refresh', pluginName };
+    const json = JSON.stringify(payload);
+    for (const ws of allClients) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(json);
+    }
+  };
+  ctx.on('doctor:updated', () => broadcastPageRefresh('@aalis/plugin-doctor'));
 
   // 会话历史变更（如 checkpoint 回滚整轮对话）：推送给订阅该会话的客户端，让前端重新拉取历史
   ctx.on('history:changed', (...args: unknown[]) => {

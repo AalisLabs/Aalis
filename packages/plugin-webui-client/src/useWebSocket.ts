@@ -122,6 +122,9 @@ export function useWebSocket(
             onCompressing?.(data.sessionId, data.content ?? 'start');
           } else if (data.type === 'history_changed' && data.sessionId) {
             onHistoryChanged?.(data.sessionId);
+          } else if (data.type === 'page_refresh') {
+            // 通知 DynamicPage 之类的订阅者重新拉数据。pluginName 缺省 = 全部。
+            window.dispatchEvent(new CustomEvent('aalis:page-refresh', { detail: { pluginName: data.pluginName } }));
           }
         } catch { /* ignore */ }
       };

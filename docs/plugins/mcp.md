@@ -29,15 +29,29 @@ Aalis 内部的 `ToolService` 抽象与 MCP 协议是同构的：
 
 Client 端工具名采用 `mcp_<server-id>_<tool-name>` 前缀避免冲突；非法字符（`/`、`.`）替换为 `_`；超长截断到 64 字符（OpenAI 限制）。
 
-## 现状
+## Agent 触发路径
 
-- ✅ Client：stdio transport，可接 npx-style MCP server
-- ✅ Server：HTTP/SSE transport，可被 Claude Desktop / Cursor 类 host 通过 SSE URL 接入
-- ⏳ 未实现：Server 端的 stdio mode（需要新增独立 entry 脚本如 `bin/aalis-mcp-stdio.js`）
-- ⏳ 未实现：Client 端的 SSE / HTTP transport（仅 stdio）
+**MCP 工具在 Aalis 内部就是普通工具**——没有任何特殊代码路径。一旦 plugin-mcp-client 完成 `bridgeClientToTools()` 把远端工具注册到 `ToolService`：
+
+1. **LLM tool-calling 阶段**：agent（如 plugin-agent-default）调用 `useToolService(ctx).getDefinitions({ groups })` 拼装 `tools` 参数发给模型；MCP 工具与 `file_read` / `bash` 等本地工具混在同一个数组里返给 LLM
+2. **执行阶段**：LLM 返回 `tool_call { name: 'mcp_<id>_<tool>', arguments }` → `ToolService.execute()` 找到注册的 handler → handler 内部走 MCP `client.callTool({...})` → 远端 server 返回 content → 文本化后回到 agent
+3. **权限/安全**：`safety` 与 `authority` 由 server config 中按条目设置（默认 `safe` / `1`），执行前会走 Aalis 标准的 ExecutionGuard
+
+也就是说：**agent 既不知道也不需要知道**这条工具是不是来自 MCP。配置上线后无需修改任何 agent 代码。
+
+反向（plugin-mcp-server）同理：外部 Claude Desktop / Cursor 通过 SSE 看到的就是符合 MCP 规范的 `tools/list` 与 `tools/call`，背后是 Aalis ToolService 的过滤视图。
 
 ## 配置示例
 
 详见各插件 README：
 - [packages/plugin-mcp-client/README.md](../packages/plugin-mcp-client/README.md)
 - [packages/plugin-mcp-server/README.md](../packages/plugin-mcp-server/README.md)
+
+## 测试与验证
+
+集成测试位于 [test/plugins/mcp.test.ts](../../test/plugins/mcp.test.ts)，使用 SDK 自带的 `InMemoryTransport.createLinkedPair()` 在同进程内拉起一对联通的 client/server，**无需子进程**即可端到端覆盖：
+
+- mcp-server：`buildMcpServer` 通过 in-memory transport 返回工具列表、调用工具、过滤 dangerous
+- mcp-client：`bridgeClientToTools` 将远端工具按 `mcp_<id>_<tool>` 命名注册到 ToolService、callTool 链路透传
+
+两个内部 helper 均显式 export 以便测试与第三方扩展复用。
