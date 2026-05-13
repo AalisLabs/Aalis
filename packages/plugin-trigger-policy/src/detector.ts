@@ -2,6 +2,9 @@ import type { Context } from '@aalis/core';
 import type { PersonaService } from '@aalis/plugin-persona';
 import type { TriggerPolicyConfig } from './config.js';
 
+// PersonaService 仅用于 getBotNames（读取昵称/名字）。mute 关键词统一由 trigger-policy 下发配置，
+// 不再从 persona 读取（避免单例 PersonaService 跨平台泄漏）。
+
 /** @ 检测：覆盖 onebot 内联格式（<at>、CQ:at）以及通用 @nickname */
 export function checkImmediateMention(content: string): boolean {
   if (/<at self[\s>][\s\S]*?<\/at>/.test(content)) return true;
@@ -37,13 +40,8 @@ export function checkImmediateTrigger(ctx: Context, cfg: TriggerPolicyConfig, co
   return false;
 }
 
-export function checkMuteKeyword(ctx: Context, cfg: TriggerPolicyConfig, content: string): boolean {
+export function checkMuteKeyword(_ctx: Context, cfg: TriggerPolicyConfig, content: string): boolean {
   for (const kw of cfg.muteKeywords) {
-    if (content.includes(kw)) return true;
-  }
-  const persona = ctx.getService<PersonaService>('persona');
-  const extra = persona?.getMuteKeywords?.() ?? [];
-  for (const kw of extra) {
     if (content.includes(kw)) return true;
   }
   return false;
