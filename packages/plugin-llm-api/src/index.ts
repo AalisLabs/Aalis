@@ -75,6 +75,51 @@ export interface LLMService {
   getDefaultModelId?(): string | undefined;
 }
 
+// ----- per-model service entry（feat/service-granularity 引入） -----
+//
+// **新模型**：每个 LLM model 是 ServiceContainer 'llm' 服务名下独立的 entry。
+//   - capability 声明 100% 反映该 model 的实际能力（无 router facade 谎言）
+//   - `getService('llm', ['vision'])` 直接命中合适 model 而非绕过路由
+//   - 移除了 ChatRequest.model/provider 字段：entry 已绑定具体 (provider, model)
+//
+// 旧 LLMService 接口仍在，给迁移期保留，将在 service-granularity 切换完成后删除。
+
+/** Per-model chat request：不再含 model/provider —— entry 已绑定。 */
+export interface ChatModelRequest {
+  messages: Message[];
+  tools?: ToolDefinition[];
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+  think?: boolean;
+}
+
+/**
+ * 单个 LLM model 的 service entry。
+ *
+ * 一个 LLM provider 插件实例（如 plugin-openai）会按其 listModels() 结果
+ * 在 apply() 期间为**每个 model 单独**调用 `ctx.provide('llm', modelHandle, {...})`，
+ * capabilities 数组诚实地反映该 model 的能力。
+ *
+ * 调用约定：
+ *   const handle = ctx.getService<LLMModel>('llm', ['vision']);
+ *   await handle?.chat({ messages });   // entry 已知道是哪个 model
+ *
+ * 选择 default model：通过 ServiceContainer.setPreference('llm', preferredContextId)
+ * 或 persona.yaml 的 defaultServices 配置（见 plugin-author-guide §11）。
+ */
+export interface LLMModel {
+  /** model id（provider 内唯一，如 'gpt-4o'）。来源：provider plugin 注册时填入。 */
+  readonly id: string;
+  /** 该 model 所属 provider 的 contextId（即 plugin instanceId）。 */
+  readonly providerId: string;
+  /** 上下文窗口 tokens。用于上层做 prompt 截断决策。 */
+  readonly contextLength: number;
+
+  chat(request: ChatModelRequest): Promise<ChatResponse>;
+  chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
+}
+
 // ----- LLM 能力声明（capability 框架）-----
 
 export interface LLMCapabilityRegistry {
