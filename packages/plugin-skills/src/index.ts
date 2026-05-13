@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
+import { useWebuiService } from '@aalis/plugin-webui-api';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
@@ -96,7 +97,7 @@ export const defaultConfig = {
 
 // ──────────── WebUI 页面 ────────────
 
-export const webuiPages: WebuiPage[] = [
+const webuiPages: WebuiPage[] = [
   {
     key: 'skills',
     label: '技能库',
@@ -160,6 +161,10 @@ export const actions: PluginModule['actions'] = {
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('skills');
+
+  // 注册 WebUI 页面
+  const webui = useWebuiService(ctx);
+  for (const page of webuiPages) webui.registerPage(page);
 
   // 确保目录存在
   const skillsDir = resolve(process.cwd(), config.skillsDir);

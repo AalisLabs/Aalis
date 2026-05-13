@@ -1,7 +1,7 @@
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA } from '@aalis/core';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
-import type { WebuiPage } from '@aalis/plugin-webui-api';
+import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api';
 import type express from 'express';
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
@@ -35,7 +35,7 @@ export function registerPluginRoutes(
     res.json({ plugins });
   });
 
-  // 获取可用的 WebUI 页面（由活跃插件的 webuiPages 声明汇总，包含声明式内容）
+  // 获取可用的 WebUI 页面（由活跃插件通过 useWebuiService.registerPage 注册）
   expressApp.get('/api/pages', (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
@@ -44,13 +44,18 @@ export function registerPluginRoutes(
       return;
     }
 
+    const webuiSvc = ctx.getService<WebUIService>('webui-server');
+    if (!webuiSvc) {
+      res.json([]);
+      return;
+    }
+
+    const displayNameByPlugin = new Map<string, string | undefined>();
+    for (const p of pm.getStatus()) displayNameByPlugin.set(p.name, p.displayName);
+
     const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
-    for (const plugin of pm.getStatus()) {
-      if (plugin.state === 'active' && plugin.webuiPages) {
-        for (const page of plugin.webuiPages as WebuiPage[]) {
-          pages.push({ ...page, plugin: plugin.name, pluginDisplayName: plugin.displayName });
-        }
-      }
+    for (const page of webuiSvc.getPages()) {
+      pages.push({ ...page, plugin: page.pluginName, pluginDisplayName: displayNameByPlugin.get(page.pluginName) });
     }
     pages.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
     res.json(pages);

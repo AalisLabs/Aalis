@@ -6,6 +6,7 @@ import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
+import { useWebuiService } from '@aalis/plugin-webui-api';
 import type {
   AuthorityService,
   DangerousConfirmHandler,
@@ -280,13 +281,17 @@ export const inject = {
   optional: ['commands', 'tools'],
 };
 
-export const webuiPages: WebuiPage[] = [
+const webuiPages: WebuiPage[] = [
   { key: 'authority', label: '权限管理', icon: 'authority', order: 50, renderer: 'authority' },
 ];
 
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
+  // 注册 WebUI 页面
+  const webui = useWebuiService(ctx);
+  for (const page of webuiPages) webui.registerPage(page);
+
   const cmds = useCommandService(ctx);
   const authority = new AuthorityManager(ctx.config, ctx.logger);
   ctx.provide('authority', authority);
