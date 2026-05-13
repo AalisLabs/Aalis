@@ -8,7 +8,7 @@ import { LogHub } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
-import type { LLMService } from '@aalis/plugin-llm-api';
+import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform-api';
@@ -544,10 +544,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ groups });
   });
 
-  // 获取所有 LLM 模型（聚合所有 LLM 提供者）
+  // 获取所有 LLM 模型（枚举所有注册的 per-model entry）
   expressApp.get('/api/llm-models', async (_req, res) => {
     try {
-      const models = await (ctx.getService<LLMService>('llm')?.listModels?.() ?? Promise.resolve([]));
+      const entries = ctx.getAllServices<LLMModel>('llm');
+      const models: ModelInfo[] = entries.map(e => ({
+        id: e.instance.id,
+        capabilities: e.capabilities,
+        provider: e.instance.providerId,
+        contextId: e.contextId,
+      }));
       res.json({ models });
     } catch {
       res.json({ models: [] });
@@ -621,17 +627,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
+    // LLM 走 per-model entry 枚举（每个 entry 已对应一个具体 model，不再依赖 provider.listModels）
+    if (serviceName === 'llm') {
+      try {
+        const entries = ctx.getAllServices<LLMModel>('llm');
+        const aggregated = entries.map(e => ({
+          value: `${e.contextId}::${e.instance.id}`,
+          model: e.instance.id,
+          provider: e.label ?? e.contextId,
+          contextId: e.contextId,
+          capabilities: e.capabilities,
+        }));
+        res.json({ models: aggregated.map(a => a.value), providers: aggregated });
+      } catch {
+        res.json({ models: [] });
+      }
+      return;
+    }
+
     const service = ctx.getService<{ listModels?(): Promise<unknown[]> }>(serviceName);
     if (!service || typeof service.listModels !== 'function') {
       res.json({ models: [] });
       return;
     }
     try {
-      // 聚合所有提供者的模型列表
-      // - LLM 路由要求精确锁定 (provider, model)，所以 value 编码为 "<contextId>::<modelId>"
-      //   复合 ref（见 @aalis/core parseModelRef/formatModelRef）。同 model id 在多 provider
-      //   中并存时不会被合并——前端 select 会同时列出供用户精确选择。
-      // - 其他服务（embedding 等）listModels 返回 string[]，保持原样（plain id）。
+      // 聚合所有提供者的模型列表（embedding 等服务仍走 listModels()）。
       const allProviders = ctx.getAllServices<{ listModels?(): Promise<unknown[]> }>(serviceName);
       const aggregated: Array<{
         value: string;
@@ -641,28 +661,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         capabilities: string[];
       }> = [];
       const flatValues: string[] = [];
-      const isLLM = serviceName === 'llm';
 
       for (const provider of allProviders) {
         if (typeof provider.instance.listModels !== 'function') continue;
         try {
           const models = await provider.instance.listModels();
           for (const m of models) {
-            // LLM listModels() returns ModelInfo[]，embedding 等返回 string[]
             const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
             const modelId = isModelInfo ? ((m as Record<string, unknown>).id as string) : String(m);
             const modelCaps = isModelInfo
               ? ((m as Record<string, unknown>).capabilities as string[])
               : provider.capabilities;
-            const value = isLLM ? `${provider.contextId}::${modelId}` : modelId;
             aggregated.push({
-              value,
+              value: modelId,
               model: modelId,
               provider: provider.label ?? provider.contextId,
               contextId: provider.contextId,
               capabilities: modelCaps,
             });
-            flatValues.push(value);
+            flatValues.push(modelId);
           }
         } catch {
           // 单个提供者获取模型失败不影响整体

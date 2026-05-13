@@ -1,5 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { LLMService } from '@aalis/plugin-llm-api';
+import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
@@ -15,8 +15,6 @@ export type {
   WebSearchService,
 } from './types.js';
 export { WebSearchCapabilities } from './types.js';
-
-import { parseModelRef } from '@aalis/plugin-llm-api';
 
 // ===== 插件元数据 =====
 
@@ -253,9 +251,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   /** 使用 LLM 压缩搜索结果 */
   async function compressResults(query: string, rawResults: string): Promise<string> {
-    // 通过默认 'llm' 服务（router）调用，传 model 让 router 路由
-    const targetLLM = ctx.getService<LLMService>('llm');
-    if (!targetLLM) return rawResults;
+    const ref = parseModelRef(cfg.compressionModel || undefined);
+    const entry = resolveLLMModel(ctx, ref, ['chat']);
+    if (!entry) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
     const prompt = promptTemplate.replace('{query}', query).replace('{results}', rawResults);
@@ -263,12 +261,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const messages: Message[] = [{ role: 'user', content: prompt }];
 
     try {
-      const ref = parseModelRef(cfg.compressionModel || undefined);
-      const response = await targetLLM.chat({
+      const response = await entry.instance.chat({
         messages,
         maxTokens: 1024,
-        ...(ref.provider ? { provider: ref.provider } : {}),
-        ...(ref.model ? { model: ref.model } : {}),
       });
       return response.content?.trim() || rawResults;
     } catch (err) {
