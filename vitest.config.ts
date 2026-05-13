@@ -26,9 +26,6 @@ export default defineConfig({
         // 类型定义包（无运行时代码）
         'packages/*-api/**',
         'packages/plugin-sdk/**',
-        // 平台原生绑定（需要操作系统能力，CI 难复现）
-        'packages/plugin-computer-use/src/adapters/**',
-        'packages/plugin-computer-use/src/cdp/**',
       ],
       // 当前实际覆盖率：lines/statements ≈ 15.8%，functions ≈ 23.7%，branches ≈ 63%。
       // 门槛设在实际值之下并允许少量回退缓冲，避免无关 PR 误报；

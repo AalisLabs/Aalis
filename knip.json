@@ -9,15 +9,11 @@
       "project": ["src/**/*.{ts,tsx}"]
     }
   },
-  "ignoreDependencies": ["clipboardy", "@aalis/core", "@aalis/plugin-agent-default"],
+  "ignoreDependencies": ["@aalis/core", "@aalis/plugin-agent-default"],
   "ignoreIssues": {
     "packages/plugin-adapter-onebot/src/types.ts": ["exports", "types"],
     "packages/plugin-adapter-onebot/src/forward.ts": ["exports", "types"],
     "packages/plugin-adapter-onebot/src/forward-expand.ts": ["exports", "types"],
-    "packages/plugin-computer-use/src/ax-native.ts": ["exports", "types"],
-    "packages/plugin-computer-use/src/cdp/client.ts": ["exports", "types"],
-    "packages/plugin-computer-use/src/platform.ts": ["exports", "types"],
-    "packages/plugin-game-activity/src/bridge-client.ts": ["exports", "types"],
     "packages/plugin-office/src/session.ts": ["exports", "types"],
     "packages/plugin-okx-trading/src/client.ts": ["exports", "types"],
     "packages/plugin-persona/src/json-repair.ts": ["exports", "types"],
@@ -35,7 +31,6 @@
     "packages/plugin-webui-server/src/auth.ts": ["types"],
     "packages/plugin-webui-server/src/routes/files.ts": ["types"],
     "packages/plugin-checkpoint/src/service.ts": ["exports"],
-    "packages/plugin-slay-spire-agent/package.json": ["binaries"],
     "packages/core/src/types/capabilities.ts": ["types"],
     "packages/core/src/types/index.ts": ["types"],
     "src/runtime/console-sink.ts": ["types"],
