@@ -1,4 +1,4 @@
-import { Logger, LogHub } from '@aalis/core';
+import { DEFAULT_LOG_BUFFER_MAX, Logger, LogHub } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -47,13 +47,15 @@ describe('LogHub 纯 pub-sub', () => {
     expect(hub.getBuffer().map(e => e.level)).toEqual(['warn', 'error']);
   });
 
-  it('缓冲容量上限（默认 2000 条 FIFO）', () => {
+  it('缓冲容量上限（默认 DEFAULT_LOG_BUFFER_MAX 条 FIFO）', () => {
     const hub = new LogHub();
     const logger = new Logger('cap', 'debug', hub);
-    for (let i = 0; i < 2100; i++) logger.info(`m${i}`);
+    const cap = DEFAULT_LOG_BUFFER_MAX;
+    const overflow = 100;
+    for (let i = 0; i < cap + overflow; i++) logger.info(`m${i}`);
     const buf = hub.getBuffer();
-    expect(buf.length).toBe(2000);
-    expect(buf[0].message).toBe('m100');
-    expect(buf.at(-1)?.message).toBe('m2099');
+    expect(buf.length).toBe(cap);
+    expect(buf[0].message).toBe(`m${overflow}`);
+    expect(buf.at(-1)?.message).toBe(`m${cap + overflow - 1}`);
   });
 });
