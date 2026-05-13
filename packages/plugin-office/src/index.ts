@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
+import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import { DocSessionManager } from './session.js';
 import { registerDocxTools } from './tools/docx.js';
 import { registerPdfTools } from './tools/pdf.js';
@@ -70,42 +71,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const outputDir = resolve(process.cwd(), cfg.outputDir);
   const sessions = new DocSessionManager();
 
-  function ctxWithGroups(groups: string[]): Context {
-    return new Proxy(ctx, {
-      get(target, prop) {
-        if (prop === 'registerTool') {
-          return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups });
-        }
-        return Reflect.get(target, prop, target);
-      },
-    }) as Context;
-  }
-
-  ctx.registerToolGroup({
+  const baseTools = useToolService(ctx);
+  baseTools.registerGroup({
     name: 'office',
     label: 'Office 文档工具',
     description: '创建和编辑 Word、Excel、PPT、PDF 文档',
   });
 
-  const groupCtx = ctxWithGroups(['office']);
+  const tools = toolsWithGroups(baseTools, ['office']);
 
   if (cfg.docx.enabled) {
-    registerDocxTools(groupCtx, sessions, outputDir);
+    registerDocxTools(tools, sessions, outputDir);
     ctx.logger.info('Word (docx) 工具已启用');
   }
 
   if (cfg.xlsx.enabled) {
-    registerExcelTools(groupCtx, sessions, outputDir);
+    registerExcelTools(tools, sessions, outputDir);
     ctx.logger.info('Excel (xlsx) 工具已启用');
   }
 
   if (cfg.pptx.enabled) {
-    registerPptTools(groupCtx, sessions, outputDir);
+    registerPptTools(tools, sessions, outputDir);
     ctx.logger.info('PPT (pptx) 工具已启用');
   }
 
   if (cfg.pdf.enabled) {
-    registerPdfTools(groupCtx, sessions, outputDir);
+    registerPdfTools(tools, sessions, outputDir);
     ctx.logger.info('PDF 工具已启用');
   }
 

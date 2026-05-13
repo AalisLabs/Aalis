@@ -6,7 +6,7 @@
 // - 工具调用上下文（ToolCallContext）—— 平台/会话语义
 // - 工具执行通知（ToolExecuteMessage）
 // - 服务接口（ToolService）
-// - Context 便捷方法的类型增强（ctx.registerTool / ctx.registerToolGroup）
+// - useToolService(ctx) helper（M2 后取代 ctx.registerTool mixin）
 // - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
 //
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/plugin-message-api，
@@ -144,33 +144,86 @@ export interface ToolService {
   getGroups(): ToolGroupInfo[];
 }
 
-// ===== Context 便捷方法增强 =====
+// ===== 领域便捷封装（M2：Mixin→Service 收编后的 API）=====
 //
-// 实现由 @aalis/plugin-tools 在激活时通过 `Context.extend(...)` 注入到
-// `Context.prototype`，本声明合并提供编译期类型签名。
-declare module '@aalis/core' {
-  interface Context {
-    /**
-     * 注册 AI 工具的便捷方法。
-     *
-     * 若 tools 服务尚不可用，会通过 `whenService` 自动延迟到服务就绪后注册。
-     * 返回的 dispose 函数：未刷入前调用即取消缓冲；已刷入则从服务取消注册。
-     *
-     * @requires plugin-tools 已加载（提供该方法的运行时实现）
-     */
-    registerTool(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
+// useToolService(ctx) 是 plugin-tools-api 暴露给消费端的 helper：
+// - 自动 inject 检查（找不到服务时抛出明确错误）
+// - 自动用 ctx.id 填充 pluginName 字段
+// - 仅做参数透传，零额外语义
+//
+// 这取代了原 `ctx.registerTool` / `ctx.registerToolGroup` mixin。
+//
+// 用法：
+//   import { useToolService } from '@aalis/plugin-tools-api';
+//   export function apply(ctx: Context) {
+//     const tools = useToolService(ctx);
+//     tools.register({ name: 'foo', ... });
+//   }
 
-    /**
-     * 注册工具分组的便捷方法。
-     * 行为同 `registerTool`：服务未就绪时自动延迟。
-     *
-     * @requires plugin-tools 已加载
-     */
-    registerToolGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
-  }
+/** ToolService 绑定到当前 Context 的便捷视图（pluginName 自动填充） */
+export interface ScopedToolService {
+  /** 注册工具。服务未就绪时通过 whenService 自动延迟到就绪后执行（与原 mixin 语义一致）。 */
+  register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
+  /** 注册工具分组。服务未就绪时通过 whenService 自动延迟。 */
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
+  getDefinitions: ToolService['getDefinitions'];
+  getSummaries: ToolService['getSummaries'];
+  getAll: ToolService['getAll'];
+  getGroups: ToolService['getGroups'];
+  execute: ToolService['execute'];
+  setExecutionGuard: ToolService['setExecutionGuard'];
+  /** 原始 ToolService 引用（服务未就绪时为 undefined） */
+  readonly raw: ToolService | undefined;
 }
-// 抑制"未使用"警告：Context 在 declare module 块中被引用
-export type _ContextExtended = Context;
+
+export function useToolService(ctx: Context): ScopedToolService {
+  const svc = ctx.getService<ToolService>('tools');
+  const pluginName = ctx.id;
+
+  /** 用于读 API：服务未就绪时抛错。 */
+  function need(): ToolService {
+    const s = ctx.getService<ToolService>('tools');
+    if (!s) {
+      throw new Error(
+        `useToolService: 'tools' 服务不可用。请在插件 manifest 的 inject 中声明 'tools'，或确认 plugin-agent-tools 已激活。`,
+      );
+    }
+    return s;
+  }
+
+  return {
+    register: tool =>
+      svc ? svc.register(tool, pluginName) : ctx.whenService<ToolService>('tools', s => s.register(tool, pluginName)),
+    registerGroup: group =>
+      svc
+        ? svc.registerGroup(group, pluginName)
+        : ctx.whenService<ToolService>('tools', s => s.registerGroup(group, pluginName)),
+    getDefinitions: (...args) => need().getDefinitions(...args),
+    getSummaries: (...args) => need().getSummaries(...args),
+    getAll: (...args) => need().getAll(...args),
+    getGroups: (...args) => need().getGroups(...args),
+    execute: (...args) => need().execute(...args),
+    setExecutionGuard: (...args) => need().setExecutionGuard(...args),
+    raw: svc,
+  };
+}
+
+/**
+ * 返回一个 ScopedToolService 的视图，其 `register` 会自动为工具
+ * 追加给定 groups（合并而不是覆盖原 tool.groups）。
+ *
+ * 用于一组工具想共享相同分组的场景（如 plugin-computer-use 的 'computer-use' 分组）。
+ */
+export function toolsWithGroups(tools: ScopedToolService, groups: string[]): ScopedToolService {
+  return {
+    ...tools,
+    register: tool =>
+      tools.register({
+        ...tool,
+        groups: [...(tool.groups ?? []), ...groups],
+      }),
+  };
+}
 
 // ===== AalisEvents 扩展（declaration merging） =====
 

@@ -165,7 +165,7 @@ core 经过多轮纯化，关键节点：
 - 业务服务接口（LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway / WebUI / Authority / Agent / MessageArchive / Persona / Session / Trigger / FlowControl / Skills / Scheduler / ImageRecognition 等）**全部** 迁至对应 `@aalis/plugin-*-api`
 - `HookContextMap` 在三个扩展点中清空骨架键，由各 plugin-*-api 通过 declaration merging 注入业务键
 - `ChatResponse` / `WebuiPage` / `PluginGroupInfo` / `RegisteredTool` / `ToolGroupInfo` / `CommandContext` / `CommandDefinition` 等数据形状全部迁出 core
-- `ctx.registerTool` / `ctx.registerToolGroup` / `ctx.command` 等业务便捷方法移出 `Context`，由 plugin-tools / plugin-commands 在模块加载时通过 `Context.extend()` 注入
+- `ctx.registerTool` / `ctx.registerToolGroup` / `ctx.command` 等业务便捷方法移出 `Context`；进一步在 ADR-0005 中彻底取消 `Context.extend` Mixin 通道，改为契约包导出领域 helper（`useToolService(ctx)` / `useCommandService(ctx)` / `toolsWithGroups(...)`），调用方在 `apply()` 内自取自用；`app.ts` 加载器也从两遍式简化为单遍式
 - `IncomingMessage` / `OutgoingMessage` / `StreamChunkMessage` → plugin-message-api；`ToolCallContext` / `ToolExecuteMessage` → plugin-tools-api；`AalisEvents` 中的业务事件迁至对应 api 包；`INBOUND_PHASE` 等业务相位常量 → plugin-gateway-api
 - `UserIdentity` → plugin-authority-api；`ModelRef` / `parseModelRef` / `formatModelRef` → plugin-llm-api；`getSenderLabel` / `prefixSender` / `getMessageName` → plugin-message-api
 - `AalisConfig` 收窄为基础设施字段 + `[key: string]: unknown` 兜底；业务字段（owners / dangerousPolicy / commandOverrides 等）由 plugin-authority-api 通过 declaration merging 注入；`buildSaveObject` 改为通用 pass-through

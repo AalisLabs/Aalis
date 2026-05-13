@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -212,26 +213,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== 注册工具分组 =====
 
-  ctx.registerToolGroup({
+  const baseTools = useToolService(ctx);
+  baseTools.registerGroup({
     name: 'file-reader',
     label: '文件读取',
     description: '读取用户上传的文档文件（TXT、PDF、DOCX 等）的文本内容',
   });
 
-  // 使用 Proxy 为工具注入分组
-  const toolCtx = new Proxy(ctx, {
-    get(target, prop) {
-      if (prop === 'registerTool') {
-        return (tool: Parameters<Context['registerTool']>[0]) =>
-          target.registerTool({ ...tool, groups: ['file-reader'] });
-      }
-      return Reflect.get(target, prop, target);
-    },
-  }) as Context;
+  const toolTools = toolsWithGroups(baseTools, ['file-reader']);
 
   // ===== 注册工具：read_uploaded_file =====
 
-  toolCtx.registerTool({
+  toolTools.register({
     definition: {
       type: 'function',
       function: {
@@ -284,7 +277,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== 注册工具：list_uploaded_files =====
 
-  toolCtx.registerTool({
+  toolTools.register({
     definition: {
       type: 'function',
       function: {

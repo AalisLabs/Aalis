@@ -7,7 +7,6 @@
  * **应当**实现该接口的 `unregisterByPlugin(contextId)`。当某个 Context dispose 时，
  * core 会遍历所有已注册服务并调用该方法，使服务释放属于该 contextId 的所有注册项。
  *
- * 该协议是 internal-framework 风格 "context dispose 自动级联清理副作用" 的扩展：
  * core 自身不需要知道每个服务内部的注册结构，只通过这个简单接口与服务沟通。
  *
  * @example

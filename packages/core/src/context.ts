@@ -79,7 +79,6 @@ function makeServiceHandle<T>(container: ServiceContainer, name: string, caps: s
  *   读取 fallback、写入隔离的子作用域，用于会话/沙盒
  * - **`whenService(name, cb)`**：服务就绪即触发的延迟订阅，回调可返回 cleanup
  *   纳入 dispose 链
- * - **`Context.extend(name, impl)`**：进程级方法注入，重名抛错避免静默覆盖
  */
 export class Context {
   readonly id: string;
@@ -457,42 +456,14 @@ export class Context {
     };
   }
 
-  /**
-   * 给 Context.prototype 添加一个方法（进程级共享）。
-   *
-   * 用于插件向使用者暴露便捷方法，例如 plugin-tools 注入
-   * `ctx.registerTool()`、plugin-commands 注入 `ctx.command()`。
-   *
-   * **同名方法存在时抛错**，避免静默覆盖。
-   *
-   * @returns 卸载函数：从 prototype 上移除该方法。
-   * @example
-   * Context.extend('registerTool', function(this: Context, tool) {
-   *   return this.whenService<ToolService>('tools', svc => svc.register(tool, this.id));
-   * });
-   */
-  static extend(name: string, impl: (this: Context, ...args: never[]) => unknown): () => void {
-    if (name in Context.prototype) {
-      throw new Error(`Context.extend: 方法 "${name}" 已存在，拒绝覆盖`);
-    }
-    Object.defineProperty(Context.prototype, name, {
-      configurable: true,
-      enumerable: false,
-      writable: true,
-      value: impl,
-    });
-    return () => {
-      delete (Context.prototype as unknown as Record<string, unknown>)[name];
-    };
-  }
-
   // ---- 业务便捷方法已迁出 ----
   //
-  // ctx.registerTool / registerToolGroup —— 见 @aalis/plugin-tools-api +
-  //   @aalis/plugin-tools（通过 Context.extend 注入到 prototype）
-  // ctx.command —— 见 @aalis/plugin-commands-api + @aalis/plugin-commands
+  // 以前用 Context.extend 把 ctx.registerTool / ctx.command 注入到 prototype；
+  // M2 后改为领域 helper：
+  //   - useToolService(ctx) / toolsWithGroups —— 见 @aalis/plugin-tools-api
+  //   - useCommandService(ctx) —— 见 @aalis/plugin-commands-api
   //
-  // core 不再直接知晓 tools / commands 概念。
+  // core 不再直接知晓 tools / commands 概念，也不再提供进程级方法注入机制。
 
   // ---- 中间件/钩子 ----
 

@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
+import { useCommandService } from '@aalis/plugin-commands-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -1023,7 +1024,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // /profile              查看自己的档案
   // /profile clear        清除自己的档案（authority=2，自己删自己的）
   // /profile clear nuke   清空所有用户档案（authority=3，dangerous）
-  ctx.command(
+  useCommandService(ctx).command(
     'profile',
     '查看你在 Aalis 中的事实档案',
     async cmdCtx => {

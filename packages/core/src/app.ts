@@ -200,10 +200,7 @@ export class App {
     // 按模块名索引（用于多实例查找）
     const loadedModules = new Map<string, PluginModule>();
 
-    // Pass 1: 先 import 所有模块，触发其顶层副作用（如 Context.extend 注入便捷方法）。
-    // 这样可以避免按字母序激活时，依赖 Context.extend 注入方法的插件先于
-    // 注入者（如 plugin-tools / plugin-commands）执行而激活失败。
-    const modules: Array<{ desc: PluginDescriptor; mod: PluginModule }> = [];
+    // 加载所有模块（M2 后无 Context.extend 顶层副作用，单次遍历即可：加载并立即注册激活）
     for (const desc of discovered) {
       this.discoveredCache.set(desc.name, desc);
       try {
@@ -212,21 +209,16 @@ export class App {
           this.logger.debug(`跳过非插件模块: ${desc.name}（缺少 name 或 apply）`);
           continue;
         }
-        modules.push({ desc, mod });
+        loadedModules.set(mod.name, mod);
+        try {
+          await this.plugin(mod);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.error(`注册插件 "${mod.name}" 失败: ${message}`);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`加载插件 "${desc.name}" 失败: ${message}`);
-      }
-    }
-
-    // Pass 2: 注册并尝试激活所有已加载模块。
-    for (const { mod } of modules) {
-      loadedModules.set(mod.name, mod);
-      try {
-        await this.plugin(mod);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`注册插件 "${mod.name}" 失败: ${message}`);
       }
     }
 

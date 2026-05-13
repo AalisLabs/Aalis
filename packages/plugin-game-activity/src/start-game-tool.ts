@@ -1,4 +1,5 @@
 import type { Context } from '@aalis/core';
+import { useToolService } from '@aalis/plugin-tools-api';
 import type { BridgeClientHandle } from './bridge-client.js';
 import type { GameActivityManager } from './manager.js';
 
@@ -18,7 +19,7 @@ export function registerStartGameTool(
   manager: GameActivityManager,
   getBridge: () => BridgeClientHandle | undefined,
 ): void {
-  ctx.registerTool({
+  useToolService(ctx).register({
     definition: {
       type: 'function',
       function: {

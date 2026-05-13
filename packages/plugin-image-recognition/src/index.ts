@@ -16,6 +16,7 @@ import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 export type {
@@ -777,7 +778,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return ctx.getService<LLMService>('llm') ?? null;
   }
 
-  ctx.registerTool({
+  useToolService(ctx).register({
     definition: {
       type: 'function',
       function: {
@@ -869,7 +870,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ── 注册图片描述回写工具 ──
 
-  ctx.registerTool({
+  useToolService(ctx).register({
     definition: {
       type: 'function',
       function: {

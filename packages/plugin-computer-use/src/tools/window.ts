@@ -6,17 +6,17 @@
  * window_focus 已合并到 interact.ts 的 focus_app
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { detectRunningAppType } from '../app-detect.js';
 import * as axNative from '../ax-native.js';
 import type { PlatformAdapter } from '../platform.js';
 import { detectPlatform } from '../platform.js';
 
-export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): void {
+export function registerWindowTools(tools: ScopedToolService, adapter: PlatformAdapter): void {
   const axAvailable = axNative.isAvailable();
 
   // ── list_apps ── (合并 window_list + ui_processes)
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -106,7 +106,7 @@ export function registerWindowTools(ctx: Context, adapter: PlatformAdapter): voi
   });
 
   // ── window_resize ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

@@ -7,7 +7,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { PlatformAdapter } from '../platform.js';
 
 interface ScreenshotConfig {
@@ -15,7 +15,11 @@ interface ScreenshotConfig {
   screenshotDir: string;
 }
 
-export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, config: ScreenshotConfig): void {
+export function registerScreenshotTools(
+  tools: ScopedToolService,
+  adapter: PlatformAdapter,
+  config: ScreenshotConfig,
+): void {
   // 确保截图目录存在
   let dirReady: Promise<void> | null = null;
   function ensureDir(): Promise<void> {
@@ -74,7 +78,7 @@ export function registerScreenshotTools(ctx: Context, adapter: PlatformAdapter, 
   }
 
   // ── screen_capture ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

@@ -2,12 +2,12 @@
  * 键盘控制工具（仅保留快捷键，文本输入已合并到 interact.ts 的 type_text）
  */
 
-import type { Context } from '@aalis/core';
+import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { PlatformAdapter } from '../platform.js';
 
-export function registerKeyboardTools(ctx: Context, adapter: PlatformAdapter): void {
+export function registerKeyboardTools(tools: ScopedToolService, adapter: PlatformAdapter): void {
   // ── keyboard_press ──
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

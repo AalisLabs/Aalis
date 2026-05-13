@@ -11,8 +11,7 @@
 - 工具数据结构（`RegisteredTool` / `ToolGroupInfo` / `ToolSummary`）
 - 工具调用上下文（`ToolCallContext`）—— 平台/会话语义
 - 工具执行通知（`ToolExecuteMessage`）
-- 服务接口 `ToolService`
-- `Context.registerTool / registerToolGroup` 类型增强
+- 服务接口 `ToolService` 与领域 helper `useToolService` / `toolsWithGroups`
 - 向 `AalisEvents` 注入 `'tool:execute'`
 
 **新增**（v0.1+）：本包额外导出一组工具实现侧共享的 runtime 工具函数，避免 `plugin-tools / plugin-tool-browser / plugin-tool-code-runner` 重复造轮子。
@@ -48,14 +47,20 @@ interface RegisteredTool {
 }
 ```
 
-## Context 扩展
+## 领域 Helper
 
 ```ts
-ctx.registerTool({ definition, handler, ... }): () => void;
-ctx.registerToolGroup({ name, label, description? }): () => void;
+const tools = useToolService(ctx);
+tools.register({ definition, handler, ... }): () => void;
+tools.registerGroup({ name, label, description? }): () => void;
+
+// 自动给后续 register 注入 groups 字段
+const groupTools = toolsWithGroups(tools, ['my-group']);
+groupTools.register({ definition, handler });   // 自动 groups: ['my-group']
 ```
 
-服务未就绪时自动 `whenService` 延迟。
+helper 内部封装了 `ctx.getService('tools')` 与 `whenService` 延迟逻辑：
+服务尚未 provide 时 `register` 调用会被自动延迟到服务就绪，调用方无需关心顺序。
 
 ## 事件（AalisEvents）
 
@@ -104,7 +109,8 @@ if (isPrivateHost(new URL(rawUrl).hostname)) {
   throw new Error('拒绝访问内网地址');
 }
 
-ctx.registerTool({
+const tools = useToolService(ctx);
+tools.register({
   definition: { type: 'function', function: { name: 'my_tool', ... } },
   handler: async (args, callCtx) => '...',
   permissions: ['tool:custom.my_tool'],
