@@ -5,6 +5,7 @@ import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
+import { useWebuiService } from '@aalis/plugin-webui-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-scheduler — 让 AI 从"被动"变"主动"
@@ -198,7 +199,7 @@ export const defaultConfig = {
 
 // ──────────── WebUI 页面 ────────────
 
-export const webuiPages: WebuiPage[] = [
+const webuiPages: WebuiPage[] = [
   {
     key: 'scheduler',
     label: '计划任务',
@@ -271,6 +272,11 @@ export const actions: PluginModule['actions'] = {
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('scheduler');
+
+  // 注册 WebUI 页面
+  const webui = useWebuiService(ctx);
+  for (const page of webuiPages) webui.registerPage(page);
+
   const runtimes = new Map<string, JobRuntime>();
   let runningCount = 0;
   let cronInterval: ReturnType<typeof setInterval> | null = null;

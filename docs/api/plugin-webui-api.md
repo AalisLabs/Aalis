@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义 WebUI 后台服务接口、声明式页面组件 schema、`webuiPages` 插件字段类型。插件不需要懂 HTTP/React，只需在 PluginModule 上声明 `webuiPages: WebuiPage[]`，由 webui-server 自动渲染并暴露 REST + WebSocket。
+定义 WebUI 后台服务接口、声明式页面组件 schema、页面注册 helper。插件不需要懂 HTTP/React，只需在 `apply(ctx)` 中调用 `useWebuiService(ctx).registerPage(page)`，由 webui-server 自动渲染并暴露 REST + WebSocket。
 
 ## 服务接口
 
@@ -15,8 +15,25 @@ interface WebUIService {
   getPort(): number;
   getHost(): string;
   setClientDir?(dir: string): void;      // 允许替换前端
+  // 页面注册（一般通过 `useWebuiService(ctx)` helper 间接调用）
+  registerPage(page: WebuiPage, pluginName: string): () => void;
+  getPages(): Array<WebuiPage & { pluginName: string }>;
+  unregisterByPlugin(pluginName: string): void;
 }
 ```
+
+## 页面注册 helper
+
+```ts
+import { useWebuiService } from '@aalis/plugin-webui-api';
+
+export function apply(ctx: Context) {
+  const webui = useWebuiService(ctx);
+  webui.registerPage({ key: 'shell', label: 'Shell', content: [/* ... */] });
+}
+```
+
+helper 内部先 `ctx.getService('webui-server')` 取服务；未就绪时自动 `whenService` 延迟。`registerPage` 返回 disposer，插件 `ctx.dispose()` 时自动取消注册。
 
 ## 声明式页面组件
 
@@ -81,12 +98,19 @@ interface WebuiPage {
 }
 ```
 
-在 `PluginModule` 上：
+在插件 `apply()` 中注册：
 
 ```ts
-export const webuiPages: WebuiPage[] = [
-  { key: 'shell', label: 'Shell', components: [...] },
+import { useWebuiService } from '@aalis/plugin-webui-api';
+
+const PAGES: WebuiPage[] = [
+  { key: 'shell', label: 'Shell', content: [/* ... */] },
 ];
+
+export function apply(ctx: Context) {
+  const webui = useWebuiService(ctx);
+  for (const p of PAGES) webui.registerPage(p);
+}
 ```
 
 ## 实现者

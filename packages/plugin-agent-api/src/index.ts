@@ -6,6 +6,7 @@
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
+import type { Context } from '@aalis/core';
 import type { ChatResponse } from '@aalis/plugin-llm-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import type { ToolCallContext, ToolDefinition } from '@aalis/plugin-tools-api';
@@ -108,4 +109,47 @@ declare module '@aalis/core' {
     };
     'agent:llm:after': { response: ChatResponse; messages: Message[] };
   }
+}
+
+// ----- 领域 helper -----
+
+/**
+ * Scoped Agent 服务，用于插件 apply() 中注册预处理器。
+ */
+export interface ScopedAgentService {
+  /**
+   * 注册输入预处理器。若 'agent' 服务尚未就绪，会通过 `ctx.whenService` 自动延迟。
+   *
+   * 仅当 service 提供 `registerPreprocessor` 时生效；不支持预处理器的 Agent 实现下
+   * 调用方应自行降级到 `ctx.middleware('agent:input:before', ...)`。
+   */
+  registerPreprocessor(name: string, handler: PreprocessorFn): () => void;
+  /** 获取底层 service（未就绪时为 undefined） */
+  readonly raw: AgentService | undefined;
+}
+
+/**
+ * 获取 ScopedAgentService。
+ */
+export function useAgent(ctx: Context): ScopedAgentService {
+  return {
+    registerPreprocessor(name: string, handler: PreprocessorFn): () => void {
+      const svc = ctx.getService<AgentService>('agent');
+      if (svc?.registerPreprocessor) return svc.registerPreprocessor(name, handler);
+      let disposed = false;
+      let disposeInner: (() => void) | undefined;
+      ctx.whenService<AgentService>('agent', s => {
+        if (disposed) return undefined;
+        disposeInner = s.registerPreprocessor?.(name, handler);
+        return disposeInner;
+      });
+      return () => {
+        disposed = true;
+        disposeInner?.();
+      };
+    },
+    get raw() {
+      return ctx.getService<AgentService>('agent');
+    },
+  };
 }
