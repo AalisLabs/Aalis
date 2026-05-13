@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Radio, Workflow, Link2, Loader2 } from 'lucide-react';
 import { api } from '../api';
-import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig } from '../components/SchemaForm';
+import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
 import type { PluginInfo, ConfigSchema, SchemaField, ServiceInfo } from '../types';
 
@@ -25,6 +25,7 @@ export function PluginConfigPage({
   const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>({});
   const [modelCache, setModelCache] = useState<Record<string, Array<{ label: string; value: string }>>>({});
   const [providerCache, setProviderCache] = useState<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
+  const [llmProviders, setLLMProviders] = useState<LLMProviderEntry[] | undefined>(undefined);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
@@ -107,6 +108,16 @@ export function PluginConfigPage({
       setProviderCache(prev => ({ ...prev, [service]: [] }));
     }
   }, [providerCache]);
+
+  const fetchLLMProviders = useCallback(async () => {
+    if (llmProviders) return;
+    try {
+      const res = await api<{ providers: LLMProviderEntry[] }>('/api/llm-providers');
+      setLLMProviders(res.providers ?? []);
+    } catch {
+      setLLMProviders([]);
+    }
+  }, [llmProviders]);
 
   const restoreDefaults = (plugin: PluginInfo) => {
     const defaults = plugin.defaultConfig ?? {};
@@ -255,6 +266,8 @@ export function PluginConfigPage({
                 onFetchModels={fetchModels}
                 providerCache={providerCache}
                 onFetchProviders={fetchProviders}
+                llmProviders={llmProviders}
+                onFetchLLMProviders={fetchLLMProviders}
               />
             ) : (
               <>
@@ -477,6 +490,8 @@ export function PluginConfigPage({
                       onFetchModels={fetchModels}
                       providerCache={providerCache}
                       onFetchProviders={fetchProviders}
+                      llmProviders={llmProviders}
+                      onFetchLLMProviders={fetchLLMProviders}
                     />
                     <div className="config-edit-actions">
                       <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, true)} disabled={isBusy(iid)}>保存</button>
