@@ -1,6 +1,7 @@
 // ===== 工具服务接口与契约类型 =====
 //
 // 本包提供工具系统的全部"非实现"契约：
+// - OpenAI/DeepSeek 协议层工具类型（ToolCall / ToolDefinition / ToolFunction）
 // - 工具/分组数据结构（RegisteredTool / ToolGroupInfo / ToolSummary）
 // - 工具调用上下文（ToolCallContext）—— 平台/会话语义，非 OpenAI 协议
 // - 工具执行通知（ToolExecuteMessage）
@@ -10,8 +11,38 @@
 //
 // 实现见 @aalis/plugin-tools。
 
-import type { Context, PermissionId, SafetyLevel, ToolDefinition } from '@aalis/core';
+import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+
+// ----- OpenAI/DeepSeek 协议层工具类型 -----
+// 这些类型描述 LLM 函数调用的 wire format，由 LLM/agent 域消费。
+// 历史上曾驻留在 @aalis/core，cleanup-N 后迁入本包以保持 core 纯通用 IoC。
+
+export interface ToolFunction {
+  name: string;
+  strict?: boolean;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+    additionalProperties?: boolean;
+  };
+}
+
+export interface ToolDefinition {
+  type: 'function';
+  function: ToolFunction;
+}
+
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
 
 // ----- 工具调用上下文（平台语义；core 仅提供 OpenAI 协议层的 ToolCall/ToolDefinition） -----
 

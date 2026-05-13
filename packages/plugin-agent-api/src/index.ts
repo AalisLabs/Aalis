@@ -6,10 +6,9 @@
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
-import type { Message, ToolDefinition } from '@aalis/core';
 import type { ChatResponse } from '@aalis/plugin-llm-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
+import type { ToolCallContext, ToolDefinition } from '@aalis/plugin-tools-api';
 
 /**
  * 插件分组信息（按子系统聚合，供 WebUI Dashboard 等使用）

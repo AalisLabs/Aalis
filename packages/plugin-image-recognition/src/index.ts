@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import type { ConfigSchema, Context, Message } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type {
   ImageRecognitionContextOptions,
@@ -15,7 +15,7 @@ import { ImageRecognitionCapabilities } from '@aalis/plugin-image-recognition-ap
 import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import '@aalis/plugin-tools-api';
 
 export type {
