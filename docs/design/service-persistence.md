@@ -1,7 +1,7 @@
 # 服务持久化与重载语义参考
 
 本文档梳理 Aalis 内置 / 一方插件提供的关键服务在 `App.reloadPlugin(name)`、
-`softReload()`、整进程 `restart()` 三种生命周期事件下的状态保持情况，供
+`recompute(reason)`、整进程 `restart()` 三种生命周期事件下的状态保持情况，供
 插件作者与运维人员判断"我能不能热重载这个插件"。
 
 ## 概念
@@ -43,9 +43,10 @@
 
 1. **下游依赖会短暂 bounce**：`App.reloadPlugin(target)` 时，target dispose
    导致其 provided 服务从 ServiceContainer 中移除，所有依赖该服务且声明在
-   `inject.required` 中的下游插件会被 `softReload` 自动 dispose+pending。
+   `inject.required` 中的下游插件会被 `recompute(service-down)` 自动 dispose+pending。
    随后 target 重新 apply 注册新服务，下游被重新激活。期间存在 100ms 量级
    的不可用窗口。
+   `optional` 依赖同样会被 bounce，以重新 apply 拿到新服务实例。
 
 2. **避免 bounce 持有外部连接的插件**：上表中标注 "重建即可用" 的插件可以
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，
@@ -57,9 +58,9 @@
 4. **多实例插件 (`name:suffix`) 仅作用于指定 instanceId**：同 module 的其
    他实例不受影响，需各自调用 `reloadPlugin(instanceId)`。
 
-5. **integration / e2e 推荐先 `softReload()` 再校验**：直接调用 bounce
-   之后立即 assert 服务可用会读到 dispose 中间态，应等 softReload 的
-   `plugins:changed` 事件触发后再断言。
+5. **integration / e2e 推荐在 bounce 后等 `plugins:changed`**：直接调用 bounce
+   之后立即 assert 服务可用会读到 dispose 中间态，应等 recompute 收收尾发出
+   `plugins:changed` 事件后再断言。
 
 ## 增量重载的 API 速查
 
@@ -73,6 +74,8 @@ await ctx.getService('plugins').bouncePlugin('@aalis/plugin-foo');
 // 配置变化（含 enable/disable）后的标准入口
 await ctx.getService('plugins').updatePluginConfig(name, newConfig);
 
-// 全局收敛：把所有 pending 拉起、把缺依赖的 active 放回 pending
+// 全局收敛：所有生命周期路径的统一入口，按 reason 调度拓扑 dispose / activate
+await ctx.getService('plugins').recompute({ type: 'plugin-state-changed' });
+// （softReload() 是它的薄壳，仍可用）
 await ctx.getService('plugins').softReload();
 ```
