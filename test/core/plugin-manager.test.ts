@@ -143,6 +143,43 @@ describe('App plugin lifecycle', () => {
     expect(env.app.plugins.getPlugin('liar')?.state).toBe('error');
   });
 
+  it('optional 依赖的服务实例被替换时 → 下游插件 bounce 重新 apply', async () => {
+    // 回归 Bug A：plugin-commands 改 commandPrefix 重载后，doctor / agent-default
+    // 等以 optional 方式依赖 commands 的插件之前不会被 bounce，导致命令丢失。
+    const events: string[] = [];
+
+    const provider: PluginModule = {
+      name: 'svc-provider',
+      provides: ['mysvc'],
+      apply(ctx, cfg) {
+        ctx.provide('mysvc', { tag: cfg.tag ?? 'v1' });
+        events.push(`provider:apply:${cfg.tag ?? 'v1'}`);
+      },
+    };
+    const consumer: PluginModule = {
+      name: 'svc-consumer',
+      inject: { optional: ['mysvc'] },
+      apply(ctx) {
+        const svc = ctx.getService<{ tag: string }>('mysvc');
+        events.push(`consumer:apply:${svc?.tag ?? 'none'}`);
+        ctx.onDispose(() => events.push('consumer:dispose'));
+      },
+    };
+
+    await env.app.plugin(provider, { tag: 'v1' });
+    await env.app.plugin(consumer);
+    await new Promise(r => setTimeout(r, 10));
+    expect(events).toContain('consumer:apply:v1');
+
+    // 触发 provider 重载（service 被 dispose 后重新 provide）
+    await env.app.plugins.updatePluginConfig('svc-provider', { tag: 'v2' });
+    await new Promise(r => setTimeout(r, 30));
+
+    // consumer 必须被 bounce 并以新 service 实例重新 apply
+    expect(events).toContain('consumer:dispose');
+    expect(events).toContain('consumer:apply:v2');
+  });
+
   it('updatePluginConfig 在 active 时触发重激活', async () => {
     const log: Array<Record<string, unknown>> = [];
     const mod: PluginModule = {
