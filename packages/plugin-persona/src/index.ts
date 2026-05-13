@@ -93,7 +93,6 @@ interface PersonaCard {
    *  仅在 outputFormat 存在时生效。 */
   outputFormatPrompt?: string;
   nick_name?: string[];
-  mute_keyword?: string[];
   /** JSON 内容由客户端渲染，服务端不提取回复字段 */
   clientSideJsonRendering?: boolean;
 }
@@ -211,7 +210,6 @@ class PersonaServiceImpl implements PersonaService {
               outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
               outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
               nick_name: parsed.nick_name as string[] | undefined,
-              mute_keyword: parsed.mute_keyword as string[] | undefined,
               clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
             };
             this.cardCache.set(name, card);
@@ -391,10 +389,6 @@ class PersonaServiceImpl implements PersonaService {
     return this.card.nick_name ?? [];
   }
 
-  getMuteKeywords(): string[] {
-    return this.card.mute_keyword ?? [];
-  }
-
   isTimeInjectionEnabled(): boolean {
     return this.timeInjection;
   }
@@ -458,7 +452,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
         outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
         nick_name: parsed.nick_name as string[] | undefined,
-        mute_keyword: parsed.mute_keyword as string[] | undefined,
         clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
       };
     } catch {

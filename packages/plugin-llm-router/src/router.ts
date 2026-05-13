@@ -1,12 +1,5 @@
 import type { Context, Logger } from '@aalis/core';
-import type {
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMCapability,
-  LLMService,
-  ModelInfo,
-} from '@aalis/plugin-llm-api';
+import type { ChatRequest, ChatResponse, ChatStreamChunk, LLMService, ModelInfo } from '@aalis/plugin-llm-api';
 
 /** Provider 端额外可选方法（不强制写入 LLMService 主接口） */
 interface LLMProviderShape extends Partial<LLMService> {
@@ -163,7 +156,7 @@ export class LLMRouter implements LLMService {
 
   // ---- 内部 ----
 
-  /** 按 ChatRequest 三层判定解析归属 provider */
+  /** 按 ChatRequest 三层判定解析归属 provider。能力检查优先按目标 model 进行，避免「默认模型不支持但实际调用的模型支持」的误报。 */
   private async resolveProvider(
     request: ChatRequest,
     extraRequiredCapabilities: string[] = [],
@@ -173,7 +166,7 @@ export class LLMRouter implements LLMService {
 
     const requiredCapabilities = this.getRequiredCapabilities(request, extraRequiredCapabilities);
 
-    // 1. 指定了 provider → 精确路由，不校验 model
+    // 1. 指定了 provider → 精确路由
     if (request.provider) {
       const found = providers.find(p => p.contextId === request.provider);
       if (!found) {
@@ -181,7 +174,7 @@ export class LLMRouter implements LLMService {
           `未知 LLM provider "${request.provider}"，可用：[${providers.map(p => p.contextId).join(', ')}]`,
         );
       }
-      this.assertCapabilities(found, requiredCapabilities);
+      await this.assertCapabilitiesForRequest(found, request.model, requiredCapabilities);
       return found;
     }
 
@@ -199,13 +192,13 @@ export class LLMRouter implements LLMService {
             `请通过 ChatRequest.provider 显式指定。`,
         );
       }
-      this.assertCapabilities(candidates[0], requiredCapabilities);
+      await this.assertCapabilitiesForRequest(candidates[0], request.model, requiredCapabilities);
       return candidates[0];
     }
 
     // 3. 都不指定 → 默认 provider
     const defaultProvider = providers[0];
-    this.assertCapabilities(defaultProvider, requiredCapabilities);
+    await this.assertCapabilitiesForRequest(defaultProvider, undefined, requiredCapabilities);
     return defaultProvider;
   }
 
@@ -231,11 +224,41 @@ export class LLMRouter implements LLMService {
     return [...required];
   }
 
-  private assertCapabilities(provider: LLMProviderEntry, requiredCapabilities: string[]): void {
+  /**
+   * 按「目标 model 的能力」检查，避免 provider.capabilities（默认模型能力集）与实际调用模型不一致时误报。
+   * 优先级：
+   *   1. provider.listModels() 中查找该 model，使用其 capabilities
+   *   2. 未找到（custom model / listModels 失败）→ fallback 到 provider.capabilities
+   *      （后者在新架构下是 providerCapabilities ∪ defaultModel 启发式，仍是合理兑底）
+   */
+  private async assertCapabilitiesForRequest(
+    provider: LLMProviderEntry,
+    requestedModel: string | undefined,
+    requiredCapabilities: string[],
+  ): Promise<void> {
     if (requiredCapabilities.length === 0) return;
-    const missing = requiredCapabilities.filter(c => !provider.capabilities.includes(c as LLMCapability));
+
+    let effectiveCaps: string[] = provider.capabilities;
+    if (requestedModel && typeof provider.instance.listModels === 'function') {
+      try {
+        const models = await provider.instance.listModels();
+        const found = models.find(m => m.id === requestedModel);
+        if (found?.capabilities && found.capabilities.length > 0) {
+          effectiveCaps = found.capabilities;
+        }
+      } catch (err) {
+        this.logger.warn(`listModels 失败 [${provider.contextId}]，能力检查回退到 provider 级别：`, err);
+      }
+    }
+
+    const missing = requiredCapabilities.filter(c => !effectiveCaps.includes(c));
     if (missing.length > 0) {
-      throw new Error(`LLM provider ${provider.contextId} 缺少所需能力：[${missing.join(', ')}]`);
+      const scope = requestedModel
+        ? `model "${requestedModel}" 于 provider ${provider.contextId}`
+        : `provider ${provider.contextId}`;
+      throw new Error(
+        `${scope} 缺少所需能力：[${missing.join(', ')}]。请在适配器配置的 modelCapabilities/providerCapabilities 中补充。`,
+      );
     }
   }
 
