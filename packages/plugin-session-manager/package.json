@@ -15,7 +15,8 @@
     "@aalis/plugin-webui-api": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*"
+    "@aalis/plugin-tools-api": "workspace:*",
+    "@aalis/plugin-message-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

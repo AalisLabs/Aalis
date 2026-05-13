@@ -3,13 +3,15 @@
 //
 // core 仅提供：
 //   - 运行时基础设施（App / Context / EventBus / ServiceContainer / HookRegistry / ConfigManager / Logger / PluginManager 等）
-//   - 核心数据契约（Message / ToolDefinition / ToolCall / Schema / AalisEvents 等）
+//   - 通用 IoC 数据契约（Schema / AalisEvents / Middleware / Dependency 声明 等）
 //   - 三个扩展点（ServiceCapabilityMap / AalisEvents / HookContextMap）+ Context.extend / PluginModule augmentation
 //   - 服务能力声明框架（ServiceCapabilityMap + Probe）
 //
-// 所有业务服务接口（LLM / Memory / Storage / Embedding / VectorStore /
-// Tools / Commands / Gateway / WebUI / Authority / Agent / Platform 等）以及它们的关联业务类型
-//（RegisteredTool / ToolGroupInfo / CommandDefinition / CommandContext 等）由对应 `@aalis/plugin-*-api` 包导出。
+// 所有业务/领域类型均由各 @aalis/plugin-*-api 包导出：
+//   - Message / ContentSegment           → @aalis/plugin-agent-api
+//   - ToolCall / ToolDefinition / ToolFunction → @aalis/plugin-tools-api
+//   - LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway /
+//     WebUI / Authority / Agent / Platform 等服务接口及关联业务类型同样在各自的 plugin-*-api。
 // ============================================================
 
 export type { AppOptions } from './app.js';
@@ -30,19 +32,17 @@ export { PluginManager, parseInstanceId } from './plugin.js';
 export type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 export type { NormalizedDependency, ServiceEntry, ServicePriorityValue } from './service.js';
 export { ScopedServiceContainer, ServiceContainer, ServicePriority } from './service.js';
-// ----- 核心数据契约 + 扩展点 -----
+// ----- 通用 IoC 数据契约 + 扩展点 -----
 export type {
   AalisEvents,
   AppService,
   CapabilityList,
   CapabilityOf,
   ConfigSchema,
-  ContentSegment,
   DependencyDeclaration,
   DisposableService,
   HookContextMap,
   InjectDeclaration,
-  Message,
   MiddlewareFn,
   MiddlewareNext,
   PermissionId,
@@ -55,9 +55,6 @@ export type {
   SchemaGroup,
   ServiceCapabilityMap,
   ServiceDependency,
-  ToolCall,
-  ToolDefinition,
-  ToolFunction,
 } from './types/index.js';
 // ----- 服务能力声明框架 -----
 export { probeCapability, registerCapabilityProbe } from './types/index.js';

@@ -1,6 +1,7 @@
-import type { ConfigSchema, Context, Message } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
+import type { Message } from '@aalis/plugin-message-api';
 import { type Collection, type Db, MongoClient } from 'mongodb';
 
 // ===== 插件元数据 =====
