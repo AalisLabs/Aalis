@@ -1,5 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
+import { useAgent } from '@aalis/plugin-agent-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
@@ -398,14 +399,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     await next();
   }
 
-  // 优先使用 agent.registerPreprocessor，回退到 ctx.middleware
+  // 使用 useAgent helper：服务未就绪时自动 whenService 延迟。
+  // 若运行时 agent 实现不提供 registerPreprocessor，降级使用 ctx.middleware。
   const agent = ctx.getService<AgentService>('agent');
-  if (agent?.registerPreprocessor) {
-    agent.registerPreprocessor('file-reader', preprocessFiles);
-  } else {
+  if (agent && !agent.registerPreprocessor) {
     ctx.middleware('agent:input:before', async (data, next) => {
       await preprocessFiles(data.message, next);
     });
+  } else {
+    useAgent(ctx).registerPreprocessor('file-reader', preprocessFiles);
   }
 
   // 注册 file-reader 服务，供其他插件（如 WebUI）查询文件上传能力是否可用

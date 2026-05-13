@@ -1,6 +1,7 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import { isPrivateHost, useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
+import { useWebuiService } from '@aalis/plugin-webui-api';
 import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
@@ -96,7 +97,7 @@ export const defaultConfig = {
 
 // ──────────── WebUI 页面 ────────────
 
-export const webuiPages: WebuiPage[] = [
+const webuiPages: WebuiPage[] = [
   {
     key: 'browser',
     label: '浏览器',
@@ -130,6 +131,10 @@ export const webuiPages: WebuiPage[] = [
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('browser');
+
+  // 注册 WebUI 页面
+  const webui = useWebuiService(ctx);
+  for (const page of webuiPages) webui.registerPage(page);
 
   let browser: any = null;
   const pages = new Map<string, PageSlot>();
