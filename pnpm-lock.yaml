@@ -11,6 +11,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:packages/core
+      '@aalis/plugin-commands-api':
+        specifier: workspace:*
+        version: link:packages/plugin-commands-api
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
