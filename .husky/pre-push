@@ -1,0 +1,20 @@
+# Pre-push 守门：本地完整复现 CI 的检查项。
+#
+# 跑的项目 = .github/workflows/ci.yml 中 build / unit-tests / biome / knip
+# 任何一项失败立即阻止 push（exit 非零）。
+#
+# 紧急绕过：git push --no-verify （仅在确认 CI 会自动 fail-safe 时使用）
+
+echo "[pre-push] 1/4 构建 ..."
+pnpm -r build || exit 1
+
+echo "[pre-push] 2/4 单元测试 ..."
+pnpm test || exit 1
+
+echo "[pre-push] 3/4 Biome ..."
+pnpm exec biome check . || exit 1
+
+echo "[pre-push] 4/4 Knip ..."
+pnpm exec knip --no-progress || exit 1
+
+echo "[pre-push] OK"
