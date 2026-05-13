@@ -65,10 +65,17 @@ export const configSchema: ConfigSchema = {
   },
   modelCapabilities: {
     type: 'textarea',
-    label: '模型能力覆盖',
+    label: '单模型能力覆盖',
     default: '',
     description:
-      '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming',
+      '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming',
+  },
+  providerCapabilities: {
+    type: 'string',
+    label: '适配器默认能力（逗号分隔）',
+    default: '',
+    description:
+      '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
   },
   timeout: {
     type: 'number',
@@ -122,6 +129,7 @@ export const defaultConfig = {
   baseUrl: 'https://api.deepseek.com',
   customModels: '',
   modelCapabilities: '',
+  providerCapabilities: '',
   timeout: 120,
   temperature: 0.7,
   maxTokens: 8192,
@@ -135,6 +143,7 @@ interface DeepSeekConfig {
   baseUrl: string;
   customModels: string[];
   modelCapabilities: Map<string, LLMCapability[]>;
+  providerCapabilities: LLMCapability[];
   timeout?: number;
   temperature: number;
   maxTokens: number;
@@ -201,6 +210,7 @@ class DeepSeekLLMService implements LLMService {
   private baseUrl: string;
   private customModels: string[];
   private modelCapabilities: Map<string, LLMCapability[]>;
+  private providerCapabilities: LLMCapability[];
   private defaultModel: string | null = null;
   private timeout: number;
   private temperature: number;
@@ -217,6 +227,7 @@ class DeepSeekLLMService implements LLMService {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
     this.modelCapabilities = config.modelCapabilities;
+    this.providerCapabilities = config.providerCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
@@ -248,9 +259,9 @@ class DeepSeekLLMService implements LLMService {
     return { defaultModel: this.defaultModel, capabilities };
   }
 
-  /** 优先用用户覆盖（modelCapabilities 配置），否则走启发式推断。 */
+  /** 返回某模型的能力集：providerCapabilities ∪ (用户单模型覆盖 或 启发式推断)。 */
   private resolveModelCapabilities(modelId: string): LLMCapability[] {
-    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId));
+    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId), this.providerCapabilities);
   }
 
   private getDefaultModel(): string {
@@ -654,22 +665,35 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown): LLMCapability[] {
-  // 用户显式声明优先
+function resolveCapabilities(model: string, userOverride?: unknown, providerCaps?: LLMCapability[]): LLMCapability[] {
+  const out = new Set<LLMCapability>(providerCaps ?? []);
+  // 用户显式声明优先（覆盖启发式）
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    return userOverride as LLMCapability[];
+    for (const c of userOverride as LLMCapability[]) out.add(c);
+    return [...out];
   }
   // 精确匹配
-  if (MODEL_CAPABILITIES[model]) return MODEL_CAPABILITIES[model];
+  if (MODEL_CAPABILITIES[model]) {
+    for (const c of MODEL_CAPABILITIES[model]) out.add(c);
+    return [...out];
+  }
   // 模糊匹配：模型名包含关键词
   const lower = model.toLowerCase();
-  if (lower.includes('reasoner')) return [Chat, ToolCalling, Streaming, Thinking];
+  if (lower.includes('reasoner')) {
+    for (const c of [Chat, ToolCalling, Streaming, Thinking]) out.add(c);
+    return [...out];
+  }
   // v4 及后续主线模型默认启用思考
   if (/\bv[4-9]\b/.test(lower) || lower.includes('-pro') || lower.includes('-flash')) {
-    return [Chat, ToolCalling, Streaming, Thinking];
+    for (const c of [Chat, ToolCalling, Streaming, Thinking]) out.add(c);
+    return [...out];
   }
-  if (lower.includes('chat')) return [Chat, ToolCalling, Streaming];
-  return DEFAULT_CAPABILITIES;
+  if (lower.includes('chat')) {
+    for (const c of [Chat, ToolCalling, Streaming]) out.add(c);
+    return [...out];
+  }
+  for (const c of DEFAULT_CAPABILITIES) out.add(c);
+  return [...out];
 }
 
 // ===== 插件入口 =====
@@ -703,12 +727,22 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   return out;
 }
 
+/** 解析适配器级别默认能力（逗号/空格/换行分隔） */
+function parseProviderCapabilities(raw: unknown): LLMCapability[] {
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split(/[,\s\n]/)
+    .map(s => s.trim())
+    .filter(Boolean) as LLMCapability[];
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const deepseekConfig: DeepSeekConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
     customModels: parseCustomModels(config.customModels),
     modelCapabilities: parseModelCapabilities(config.modelCapabilities),
+    providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
     timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 8192,

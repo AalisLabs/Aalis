@@ -35,10 +35,17 @@ export const configSchema: ConfigSchema = {
   },
   modelCapabilities: {
     type: 'textarea',
-    label: '模型能力覆盖',
+    label: '单模型能力覆盖',
     default: '',
     description:
-      '按行指定某个模型的能力集（**覆盖**插件自动推断结果）。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：qwen2.5:7b: chat,tool_calling,streaming',
+      '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：qwen2.5:7b: chat,tool_calling,streaming',
+  },
+  providerCapabilities: {
+    type: 'string',
+    label: '适配器默认能力（逗号分隔）',
+    default: '',
+    description:
+      '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
   },
   timeout: {
     type: 'number',
@@ -72,6 +79,7 @@ export const defaultConfig = {
   baseUrl: 'http://localhost:11434',
   customModels: '',
   modelCapabilities: '',
+  providerCapabilities: '',
   timeout: 120,
   temperature: 0.7,
   maxTokens: 4096,
@@ -86,6 +94,7 @@ interface OllamaConfig {
   baseUrl: string;
   customModels: string[];
   modelCapabilities: Map<string, LLMCapability[]>;
+  providerCapabilities: LLMCapability[];
   timeout?: number;
   temperature: number;
   maxTokens: number;
@@ -187,6 +196,7 @@ class OllamaLLMService implements LLMService {
   private baseUrl: string;
   private customModels: string[];
   private modelCapabilities: Map<string, LLMCapability[]>;
+  private providerCapabilities: LLMCapability[];
   private defaultModel: string | null = null;
   private timeout: number;
   private temperature: number;
@@ -200,6 +210,7 @@ class OllamaLLMService implements LLMService {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.customModels = config.customModels;
     this.modelCapabilities = config.modelCapabilities;
+    this.providerCapabilities = config.providerCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
@@ -226,9 +237,9 @@ class OllamaLLMService implements LLMService {
     return { defaultModel: this.defaultModel, capabilities };
   }
 
-  /** 优先用用户覆盖（modelCapabilities 配置），否则走启发式推断。 */
+  /** 返回某模型的能力集：providerCapabilities ∪ (用户单模型覆盖 或 启发式推断)。 */
   private resolveModelCapabilities(modelId: string): LLMCapability[] {
-    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId));
+    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId), this.providerCapabilities);
   }
 
   private getDefaultModel(): string {
@@ -695,22 +706,39 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown): LLMCapability[] {
+function resolveCapabilities(model: string, userOverride?: unknown, providerCaps?: LLMCapability[]): LLMCapability[] {
+  const out = new Set<LLMCapability>(providerCaps ?? []);
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    return userOverride as LLMCapability[];
+    for (const c of userOverride as LLMCapability[]) out.add(c);
+    return [...out];
   }
   // 去掉 tag 部分（如 llama3.1:8b → llama3.1）
   const baseName = model.split(':')[0].toLowerCase();
-  if (MODEL_CAPABILITIES[baseName]) return MODEL_CAPABILITIES[baseName];
-  // 模糊匹配
+  if (MODEL_CAPABILITIES[baseName]) {
+    for (const c of MODEL_CAPABILITIES[baseName]) out.add(c);
+    return [...out];
+  }
   for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
-    if (baseName.startsWith(known)) return caps;
+    if (baseName.startsWith(known)) {
+      for (const c of caps) out.add(c);
+      return [...out];
+    }
   }
-  // 常见视觉模型关键词
   if (baseName.includes('llava') || baseName.includes('vision')) {
-    return [Chat, Streaming, Vision];
+    for (const c of [Chat, Streaming, Vision]) out.add(c);
+    return [...out];
   }
-  return DEFAULT_CAPABILITIES;
+  for (const c of DEFAULT_CAPABILITIES) out.add(c);
+  return [...out];
+}
+
+/** 解析适配器级别默认能力（逗号/空格/换行分隔） */
+function parseProviderCapabilities(raw: unknown): LLMCapability[] {
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split(/[,\s\n]/)
+    .map(s => s.trim())
+    .filter(Boolean) as LLMCapability[];
 }
 
 // ===== 插件入口 =====
@@ -749,6 +777,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     baseUrl: (config.baseUrl as string) ?? 'http://localhost:11434',
     customModels: parseCustomModels(config.customModels),
     modelCapabilities: parseModelCapabilities(config.modelCapabilities),
+    providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
     timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
