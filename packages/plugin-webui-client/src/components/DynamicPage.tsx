@@ -16,7 +16,7 @@ const dynStatIconMap: Record<string, ReactElement> = {
   tools: <Wrench size={18} />, agent: <Sparkles size={18} />, default: <BarChart2 size={18} />,
 };
 
-function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: string }) {
+function DynStat({ comp, pluginName, refreshTick }: { comp: WebuiStatComponent; pluginName: string; refreshTick: number }) {
   const [value, setValue] = useState<string | number>('—');
   const [loading, setLoading] = useState(true);
 
@@ -26,7 +26,7 @@ function DynStat({ comp, pluginName }: { comp: WebuiStatComponent; pluginName: s
       .then(r => { if (r) setValue(r.value); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [pluginName, comp.source]);
+  }, [pluginName, comp.source, refreshTick]);
 
   const icon = dynStatIconMap[comp.icon ?? ''] ?? dynStatIconMap.default;
 
@@ -79,7 +79,7 @@ function CountdownCell({ target, onZero }: { target: number; onZero?: () => void
   return <span className={diff <= 5 ? 'countdown-imminent' : ''}>{text}</span>;
 }
 
-function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName: string }) {
+function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent; pluginName: string; refreshTick: number }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
@@ -98,7 +98,7 @@ function DynTable({ comp, pluginName }: { comp: WebuiTableComponent; pluginName:
       const timer = setInterval(fetchData, comp.refresh * 1000);
       return () => clearInterval(timer);
     }
-  }, [fetchData, comp.refresh]);
+  }, [fetchData, comp.refresh, refreshTick]);
 
   const handleAction = async (action: NonNullable<WebuiTableComponent['actions']>[number], row: Record<string, unknown>) => {
     if (action.confirm && !confirm(action.confirm)) return;
@@ -261,7 +261,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   );
 }
 
-function DynActions({ comp, pluginName }: { comp: WebuiActionsComponent; pluginName: string }) {
+function DynActions({ comp, pluginName, onRefresh }: { comp: WebuiActionsComponent; pluginName: string; onRefresh: () => void }) {
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
 
   const handleClick = async (item: WebuiActionsComponent['items'][number]) => {
@@ -270,6 +270,8 @@ function DynActions({ comp, pluginName }: { comp: WebuiActionsComponent; pluginN
     try {
       await pageAction(pluginName, item.method);
       setActionMsg(prev => ({ ...prev, [item.method]: '完成' }));
+      // 立即触发同页面其它组件刷新；不等待用户手动刷新
+      onRefresh();
     } catch {
       setActionMsg(prev => ({ ...prev, [item.method]: '失败' }));
     }
@@ -297,14 +299,14 @@ function DynActions({ comp, pluginName }: { comp: WebuiActionsComponent; pluginN
   );
 }
 
-function DynInfo({ comp, pluginName }: { comp: WebuiInfoComponent; pluginName: string }) {
+function DynInfo({ comp, pluginName, refreshTick }: { comp: WebuiInfoComponent; pluginName: string; refreshTick: number }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     pageAction<Record<string, unknown>>(pluginName, comp.source)
       .then(r => { if (r) setData(r); })
       .catch(() => {});
-  }, [pluginName, comp.source]);
+  }, [pluginName, comp.source, refreshTick]);
 
   return (
     <div className="dyn-info-block">
@@ -325,14 +327,14 @@ function DynInfo({ comp, pluginName }: { comp: WebuiInfoComponent; pluginName: s
   );
 }
 
-function DynMarkdown({ comp, pluginName }: { comp: WebuiMarkdownComponent; pluginName: string }) {
+function DynMarkdown({ comp, pluginName, refreshTick }: { comp: WebuiMarkdownComponent; pluginName: string; refreshTick: number }) {
   const [content, setContent] = useState('');
 
   useEffect(() => {
     pageAction<{ content: string }>(pluginName, comp.source)
       .then(r => { if (r) setContent(r.content); })
       .catch(() => {});
-  }, [pluginName, comp.source]);
+  }, [pluginName, comp.source, refreshTick]);
 
   return (
     <div className="dyn-markdown-block">
@@ -344,7 +346,7 @@ function DynMarkdown({ comp, pluginName }: { comp: WebuiMarkdownComponent; plugi
   );
 }
 
-function DynTabs({ comp, pluginName }: { comp: WebuiTabsComponent; pluginName: string }) {
+function DynTabs({ comp, pluginName, refreshTick, onRefresh }: { comp: WebuiTabsComponent; pluginName: string; refreshTick: number; onRefresh: () => void }) {
   const [activeKey, setActiveKey] = useState(comp.items[0]?.key ?? '');
   const activeItem = comp.items.find(i => i.key === activeKey);
 
@@ -364,27 +366,41 @@ function DynTabs({ comp, pluginName }: { comp: WebuiTabsComponent; pluginName: s
       </div>
       <div className="dyn-tabs-body">
         {activeItem && activeItem.content.map((c, i) => (
-          <DynamicComponent key={i} component={c} pluginName={pluginName} />
+          <DynamicComponent key={i} component={c} pluginName={pluginName} refreshTick={refreshTick} onRefresh={onRefresh} />
         ))}
       </div>
     </div>
   );
 }
 
-function DynamicComponent({ component, pluginName }: { component: WebuiComponent; pluginName: string }) {
+function DynamicComponent({ component, pluginName, refreshTick, onRefresh }: { component: WebuiComponent; pluginName: string; refreshTick: number; onRefresh: () => void }) {
   switch (component.type) {
-    case 'stat': return <DynStat comp={component} pluginName={pluginName} />;
-    case 'table': return <DynTable comp={component} pluginName={pluginName} />;
+    case 'stat': return <DynStat comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
+    case 'table': return <DynTable comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
     case 'form': return <DynForm comp={component} pluginName={pluginName} />;
-    case 'actions': return <DynActions comp={component} pluginName={pluginName} />;
-    case 'info': return <DynInfo comp={component} pluginName={pluginName} />;
-    case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} />;
-    case 'tabs': return <DynTabs comp={component} pluginName={pluginName} />;
+    case 'actions': return <DynActions comp={component} pluginName={pluginName} onRefresh={onRefresh} />;
+    case 'info': return <DynInfo comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
+    case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
+    case 'tabs': return <DynTabs comp={component} pluginName={pluginName} refreshTick={refreshTick} onRefresh={onRefresh} />;
     default: return null;
   }
 }
 
 export function DynamicPage({ page }: { page: WebuiPageDef }) {
+  const [refreshTick, setRefreshTick] = useState(0);
+  const bump = useCallback(() => setRefreshTick(t => t + 1), []);
+
+  // 监听 WS 推送：当某插件后端发生需要前端同步的事件（如 /doctor 命令完成后 plugin-doctor 广播）
+  // 自动 bump 当前页（如 pluginName 匹配或缺省）。其它页面不显示故无副作用。
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ pluginName?: string }>).detail;
+      if (!detail.pluginName || detail.pluginName === page.plugin) bump();
+    };
+    window.addEventListener('aalis:page-refresh', handler as EventListener);
+    return () => window.removeEventListener('aalis:page-refresh', handler as EventListener);
+  }, [page.plugin, bump]);
+
   if (!page.content || page.content.length === 0) {
     return <div className="empty-hint" style={{ padding: 24 }}>此页面未提供内容</div>;
   }
@@ -409,11 +425,11 @@ export function DynamicPage({ page }: { page: WebuiPageDef }) {
         g.type === 'stat-grid' ? (
           <div className="dyn-stat-grid" key={i}>
             {g.items.map((comp, j) => (
-              <DynStat key={j} comp={comp} pluginName={page.plugin} />
+              <DynStat key={j} comp={comp} pluginName={page.plugin} refreshTick={refreshTick} />
             ))}
           </div>
         ) : (
-          <DynamicComponent key={i} component={g.item} pluginName={page.plugin} />
+          <DynamicComponent key={i} component={g.item} pluginName={page.plugin} refreshTick={refreshTick} onRefresh={bump} />
         )
       )}
     </div>

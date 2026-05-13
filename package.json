@@ -18,7 +18,9 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@aalis/plugin-tools-api": "workspace:*",
     "@biomejs/biome": "2.4.15",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.19.15",
     "@vitest/coverage-v8": "^2.1.9",
     "husky": "^9.1.7",
