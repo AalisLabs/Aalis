@@ -8,8 +8,8 @@ import type {
   ModelInfo,
 } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
-import type { Message } from '@aalis/plugin-message-api';
-import type { ToolCall, ToolDefinition } from '@aalis/plugin-tools-api';
+import type { Message, ToolCall } from '@aalis/plugin-message-api';
+import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 
