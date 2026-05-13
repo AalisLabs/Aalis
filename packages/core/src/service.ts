@@ -105,6 +105,18 @@ export class ServiceContainer {
   }
 
   /**
+   * 按精确 contextId 拿单个服务实例。
+   *
+   * 用于"会话/偏好已知 contextId、需要直接寻址该 entry"的场景，
+   * 典型如 per-model LLM entry：session.modelContextId = '@aalis/plugin-openai:main/gpt-4o'
+   * → `getByContextId('llm', sessionData.modelContextId)`。
+   */
+  getByContextId<T>(name: string, contextId: string): T | undefined {
+    const list = this.entries.get(name);
+    return (list?.find(e => e.contextId === contextId)?.instance as T | undefined) ?? undefined;
+  }
+
+  /**
    * 获取某个服务的所有能力列表（合并所有提供者）
    */
   getCapabilities(name: string): string[] {

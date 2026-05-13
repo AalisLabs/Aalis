@@ -242,13 +242,30 @@ export class Context {
    * ctx.provide('llm', service, { capabilities: ['chat', 'tool_calling'] });
    * //                                            ^^^^^^  ^^^^^^^^^^^^^^
    * //                                            类型安全，拼错 'tool_call' 会编译报错
+   *
+   * `entryId` 选项：覆盖默认 contextId（默认 = `this.id`）。用于一个 plugin 实例
+   * 需要按某种语义子粒度拆出多个 entry 的场景（典型：per-model LLM、per-path storage）。
+   * 约定：`entryId` 必须以 `this.id` 为前缀（以 `/` 分隔），以保证 plugin 卸载时
+   * `unregisterByContext(this.id)` 如需清理仍可多次调用；dispose 函数并不依赖这个约定，
+   * 但 dev 模式下会验证以避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
    */
   provide<TName extends string>(
     name: TName,
     instance: unknown,
-    options?: { capabilities?: CapabilityList<TName>; priority?: number; label?: string },
+    options?: { capabilities?: CapabilityList<TName>; priority?: number; label?: string; entryId?: string },
   ): () => void {
     const caps = options?.capabilities ?? [];
+    const entryId = options?.entryId ?? this.id;
+
+    if (this.devMode && options?.entryId !== undefined) {
+      if (entryId !== this.id && !entryId.startsWith(`${this.id}/`)) {
+        this.logger.warn(
+          `服务 "${name}" 的 entryId "${entryId}" 不以 "${this.id}/" 为前缀。` +
+            `违反约定后 plugin 卸载时可能遗漏清理。` +
+            `推荐格式：\`\${ctx.id}/\${子粒度标识}\`。`,
+        );
+      }
+    }
 
     // dev 模式下按声明的能力探测实例方法，暴露「声明与实现不符」
     if (this.devMode) {
@@ -264,12 +281,14 @@ export class Context {
 
     // dev 模式下提示同一上下文重复 provide 同一服务名——容器允许多 entry 但路由按 contextId 精确匹配
     // 永远只能命中第一个，第二个静默失效。需多实例请改用 plugin 的 reusable=true + 配置后缀。
-    if (this.devMode && this._services.hasByContext(name, this.id)) {
+    // 使用 entryId 覆盖后不触发该 warn（有意在拆粒度）。
+    if (this.devMode && options?.entryId === undefined && this._services.hasByContext(name, this.id)) {
       this.logger.warn(
         `服务 "${name}" 已被当前上下文 "${this.id}" provide 过一次。容器允许多 entry，` +
           `但下游按 contextId 路由时仅能命中首个，后续注册将静默失效。` +
           `如需多实例（如多套 API key），请在插件 module 上声明 reusable=true，` +
-          `然后在 config 中用 "<name>:<suffix>" 形式注册多份。`,
+          `然后在 config 中用 "<name>:<suffix>" 形式注册多份。` +
+          `若是有意拆出多个子粒度 entry（如 per-model LLM），请传入 options.entryId。`,
       );
     }
 
@@ -278,7 +297,7 @@ export class Context {
       instance,
       caps as readonly string[] as string[],
       options?.priority ?? 0,
-      this.id,
+      entryId,
       options?.label,
     );
 
@@ -344,6 +363,19 @@ export class Context {
    */
   hasService<TName extends string>(name: TName, requiredCapabilities?: CapabilityList<TName>): boolean {
     return this._services.has(name, requiredCapabilities as readonly string[] as string[] | undefined);
+  }
+
+  /**
+   * 按精确 contextId 拿服务实例。
+   *
+   * 用于 "会话/偏好已知 contextId、需要直接寻址 entry" 的场景。典型：per-model LLM entry：
+   *   `session.modelContextId = '@aalis/plugin-openai:main/gpt-4o'`
+   *   → `getServiceByContextId('llm', sessionData.modelContextId)`
+   *
+   * 不走 capability filter、不走 preference——纯粹按 ID 寻址。未找到返回 undefined。
+   */
+  getServiceByContextId<T>(name: string, contextId: string): T | undefined {
+    return this._services.getByContextId<T>(name, contextId);
   }
 
   /**
