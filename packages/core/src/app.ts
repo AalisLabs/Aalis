@@ -366,6 +366,10 @@ export class App {
     this.logger.info('正在停止...');
     this.ctx.config.unwatch();
     await this.ctx.emit('app:stopping');
+    // 先按拓扑逆序 dispose 所有 active 插件——消费者先关，提供者后关——这样下游
+    // 插件的 dispose hook 还能安全访问其依赖的服务。stopAll 会置位 shuttingDown，
+    // 屏蔽反应式 service:unregistered 级联，避免无意义 bounce 噪声。
+    await this.plugins.stopAll();
     await this.ctx.emit('dispose');
     this.ctx.dispose();
     this.logger.info('已停止');
