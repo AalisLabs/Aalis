@@ -5,7 +5,7 @@ import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform';
+import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
