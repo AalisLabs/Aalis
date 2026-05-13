@@ -305,6 +305,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-doctor-api':
+        specifier: workspace:*
+        version: link:../plugin-doctor-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:*
         version: link:../plugin-gateway-api
@@ -400,9 +403,25 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-doctor-api':
+        specifier: workspace:*
+        version: link:../plugin-doctor-api
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-doctor-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1266,6 +1285,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-doctor-api':
+        specifier: workspace:*
+        version: link:../plugin-doctor-api
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api

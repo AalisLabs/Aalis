@@ -82,9 +82,11 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const ids = captured.doctor!.listChecks().map(c => c.id);
     expect(ids).toContain('env.node');
     expect(ids).toContain('env.platform');
-    expect(ids).toContain('fs.data');
     expect(ids).toContain('plugins.status');
-    expect(ids).toContain('commands.overrides');
+    // fs.data 已迁出到 plugin-storage-local；commands.overrides 已迁出到 plugin-commands。
+    // 它们不再由 doctor 自带，由所属插件通过 useDoctorService 自行注册。
+    expect(ids).not.toContain('fs.data');
+    expect(ids).not.toContain('commands.overrides');
     expect(captured.commands.some(c => c.name === 'doctor')).toBe(true);
   });
 

@@ -1,12 +1,20 @@
-import { existsSync } from 'node:fs';
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { version as nodeVersion, platform } from 'node:process';
 import type { Context, PluginManagerService } from '@aalis/core';
-import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import type {
+  CheckCategory,
+  CheckLevel,
+  CheckResult,
+  CheckSpec,
+  DoctorReport,
+  DoctorService,
+} from '@aalis/plugin-doctor-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
+
+// 公共类型由 plugin-doctor-api 维护并增强 @aalis/core；本包从那里 re-export，
+// 让旧消费者 `import { CheckResult } from '@aalis/plugin-doctor'` 继续可用。
+export type { CheckCategory, CheckLevel, CheckResult, CheckSpec, DoctorReport, DoctorService };
 
 // ===== 元数据 =====
 
@@ -17,63 +25,6 @@ export const provides = ['doctor'];
 export const inject = {
   optional: ['plugins', 'commands'],
 };
-
-// ===== 类型 =====
-
-export type CheckLevel = 'ok' | 'warn' | 'error';
-export type CheckCategory = 'env' | 'filesystem' | 'plugins' | 'config' | 'service' | 'other';
-
-export interface CheckResult {
-  id: string;
-  category: CheckCategory;
-  level: CheckLevel;
-  message: string;
-  detail?: string;
-}
-
-export interface DoctorReport {
-  generatedAt: string;
-  summary: { ok: number; warn: number; error: number };
-  checks: CheckResult[];
-}
-
-/** 检查项定义：插件通过 `registerCheck` 注册到 DoctorService */
-export interface CheckSpec {
-  /** 唯一 id，如 'memory.connectivity'；重复注册以最后一次为准 */
-  id: string;
-  /** 检查分类，影响表格分组与默认排序 */
-  category: CheckCategory;
-  /** 可选标签：仅用于日志/调试显示 */
-  label?: string;
-  /** 来源插件名，自动由 DoctorService 注入；外部传入也可 */
-  pluginName?: string;
-  /** 执行函数：返回 1~N 条结果（一个 spec 可输出多条相关 check） */
-  run(ctx: Context): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[];
-}
-
-export interface DoctorService {
-  /** 同步运行所有检查，返回报告 */
-  runChecks(): Promise<DoctorReport>;
-  /** 取上一次报告（未运行过返回 undefined） */
-  getLastReport(): DoctorReport | undefined;
-  /**
-   * 注册检查项。返回 dispose 函数；同 id 重复注册以最后一次为准。
-   * 其他插件应在 apply() 中调用以贡献自我诊断。
-   */
-  registerCheck(spec: CheckSpec): () => void;
-  /** 列出当前所有已注册的检查项（id + category + pluginName） */
-  listChecks(): Array<{ id: string; category: CheckCategory; pluginName?: string }>;
-}
-
-declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    doctor: 'diagnose';
-  }
-  interface AalisEvents {
-    /** 一次诊断完成后发射，供 WebUI 等订阅者即时刷新 */
-    'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
-  }
-}
 
 // ===== Registry =====
 
@@ -215,8 +166,14 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
     });
 }
 
-// ===== Builtin checks（同样走 registerCheck，所有 check 一视同仁） =====
-
+// ===== Builtin checks（同样走 registerCheck，所有 check 一视同仁）=====
+//
+// 此处只保留「与领域无关、纯 doctor 自身职能」的检查项。原本的 fs.data /
+// commands.overrides 已迁出到对应领域插件（plugin-storage-local / plugin-commands），
+// 它们通过 useDoctorService 自行注册——避免 doctor 反向硬依赖业务插件。
+//
+// `plugins.status` 留在这里：它读 PluginManager（核心服务），不属于任何业务插件领域；
+// 若未来 PluginManager 自带 self-check，可一并迁走。
 function registerBuiltinChecks(reg: DoctorRegistry): void {
   reg.registerCheck({
     id: 'env.node',
@@ -240,16 +197,6 @@ function registerBuiltinChecks(reg: DoctorRegistry): void {
     pluginName: '@aalis/plugin-doctor',
     run() {
       return { id: 'env.platform', category: 'env', level: 'ok', message: `平台 ${platform}` };
-    },
-  });
-
-  reg.registerCheck({
-    id: 'fs.data',
-    category: 'filesystem',
-    pluginName: '@aalis/plugin-doctor',
-    async run() {
-      const dataDir = resolve(process.cwd(), 'data');
-      return checkWritable('fs.data', dataDir, '数据目录');
     },
   });
 
@@ -295,31 +242,6 @@ function registerBuiltinChecks(reg: DoctorRegistry): void {
       ];
     },
   });
-
-  reg.registerCheck({
-    id: 'commands.overrides',
-    category: 'config',
-    pluginName: '@aalis/plugin-doctor',
-    run(ctx) {
-      const cmds = ctx.getService<CommandService>('commands');
-      if (!cmds) {
-        return { id: 'commands.overrides', category: 'config', level: 'warn', message: 'commands 服务不可用' };
-      }
-      const overrides = cmds.getOverrides();
-      const known = new Set(cmds.getAll().map(c => c.name));
-      const orphan = Object.keys(overrides).filter(k => !known.has(k));
-      return {
-        id: 'commands.overrides',
-        category: 'config',
-        level: orphan.length === 0 ? 'ok' : 'warn',
-        message:
-          orphan.length === 0
-            ? `已注册指令 ${known.size} 个；覆盖配置 ${Object.keys(overrides).length} 条全部命中`
-            : `commandOverrides 含 ${orphan.length} 条孤立键（无对应指令）`,
-        detail: orphan.length > 0 ? orphan.join(', ') : undefined,
-      };
-    },
-  });
 }
 
 // ===== helpers =====
@@ -362,23 +284,4 @@ function formatLocalTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-async function checkWritable(id: string, dir: string, label: string): Promise<CheckResult> {
-  try {
-    if (!existsSync(dir)) await mkdir(dir, { recursive: true });
-    const probe = resolve(dir, `.doctor-${Date.now()}`);
-    await writeFile(probe, 'ok');
-    await stat(probe);
-    await unlink(probe);
-    return { id, category: 'filesystem', level: 'ok', message: `${label} ${dir} 可写` };
-  } catch (err) {
-    return {
-      id,
-      category: 'filesystem',
-      level: 'error',
-      message: `${label} ${dir} 不可写`,
-      detail: String(err),
-    };
-  }
 }

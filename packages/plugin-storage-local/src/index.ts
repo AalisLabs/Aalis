@@ -1,7 +1,9 @@
 import { createReadStream } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import type { ConfigSchema, Context, Logger } from '@aalis/core';
+import type { CheckResult } from '@aalis/plugin-doctor-api';
+import { useDoctorService } from '@aalis/plugin-doctor-api';
 import type {
   StorageEntry,
   StorageListResult,
@@ -16,6 +18,9 @@ export const name = '@aalis/plugin-storage-local';
 export const displayName = '本地存储根（命名 + 路径解析）';
 export const subsystem = 'storage';
 export const provides = ['storage'];
+export const inject = {
+  optional: ['doctor'],
+};
 
 /**
  * 这个插件不是沙箱。它做三件事：
@@ -545,4 +550,46 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ],
     label: '本地存储根',
   });
+
+  // 诊断检查项：探测每个 writable root 是否真的可写。
+  // 历史上 plugin-doctor 内置了硬编码的 fs.data 检查，但 data/ 仅是默认 root 之一，
+  // 不应由 doctor 单独「祝福」。现统一由 storage 插件按当前 roots 配置上报，能反映
+  // 用户自定义根（如 host:/、project_x）的真实状态。
+  useDoctorService(ctx).registerCheck({
+    id: 'storage.roots',
+    category: 'filesystem',
+    pluginName: name,
+    async run() {
+      const targets = roots.filter(r => r.writable);
+      if (targets.length === 0) {
+        return { id: 'storage.roots', category: 'filesystem', level: 'warn', message: '没有任何 writable 存储根' };
+      }
+      const results: CheckResult[] = [];
+      for (const root of targets) {
+        results.push(await probeRootWritable(root.name, root.realPath));
+      }
+      return results;
+    },
+  });
+}
+
+/** 探测某个根目录是否可写：在根下写一个临时文件并立即删除 */
+async function probeRootWritable(rootName: string, dir: string): Promise<CheckResult> {
+  const id = `storage.roots.${rootName}`;
+  try {
+    await mkdir(dir, { recursive: true });
+    const probe = resolve(dir, `.doctor-probe-${process.pid}-${Date.now()}`);
+    await writeFile(probe, 'ok');
+    await stat(probe);
+    await unlink(probe);
+    return { id, category: 'filesystem', level: 'ok', message: `根 ${rootName} (${dir}) 可写` };
+  } catch (err) {
+    return {
+      id,
+      category: 'filesystem',
+      level: 'error',
+      message: `根 ${rootName} (${dir}) 不可写`,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
