@@ -542,23 +542,34 @@ export class PluginManager {
   }
 
   /**
-   * 当某个服务被移除时，停用依赖该服务的插件
+   * 当某个服务被移除时，bounce 依赖该服务的插件（required + optional 一视同仁）。
+   *
+   * - required 依赖：插件本来就无法在缺该服务时存活，转 pending 等待恢复（旧行为）。
+   * - optional 依赖：服务实例发生替换（dispose + 重新 provide）时，下游插件持有
+   *   的服务引用已失效（例如它们用 `useXxxService(ctx).register(...)` 注册过的
+   *   东西在旧实例上）。bounce 让它们的 apply 重新跑一遍，对接新实例。
+   *
+   * 典型场景：plugin-commands 因 commandPrefix 改动而 reload → `commands` 服务
+   * dispose 再重新 provide → plugin-doctor / plugin-agent-default / plugin-user-profile
+   * 等以 optional 方式依赖 `commands` 的插件需要重新注册自己的命令，
+   * 否则 `/help` 列表会丢失大半。
    */
   private checkActivePlugins(removedService: string): void {
     for (const entry of this.plugins.values()) {
       if (entry.state !== 'active') continue;
 
-      const dependsOnRemoved = entry.requiredDeps.some(dep => dep.service === removedService);
-      if (!dependsOnRemoved) continue;
+      const requiredDep = entry.requiredDeps.find(d => d.service === removedService);
+      const optionalDep = entry.optionalDeps.find(d => d.service === removedService);
+      if (!requiredDep && !optionalDep) continue;
 
       // 检查服务是否真的不可用了（可能还有其他提供者）
-      const dep = entry.requiredDeps.find(d => d.service === removedService)!;
+      const dep = (requiredDep ?? optionalDep)!;
       if (this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
         continue; // 还有其他提供者
       }
 
-      // 停用插件
-      this.logger.info(`服务 "${removedService}" 不可用，停用插件: ${entry.instanceId}`);
+      // 转 pending：softReload / 后续 service:registered 会重新激活
+      this.logger.info(`服务 "${removedService}" 不可用，${requiredDep ? '停用' : 'bounce'} 插件: ${entry.instanceId}`);
       if (entry.context) {
         entry.context.dispose();
         entry.context = undefined;
