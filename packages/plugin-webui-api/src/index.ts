@@ -124,8 +124,8 @@ export interface WebuiPage {
  * 通过 declaration merging 向 core 的 PluginModule 注入
  * 纯展示元数据字段（subsystem / extends）。
  *
- * 注：ADR-0005 后WebuiPage 注册路径改为运行时 `useWebuiService(ctx).registerPage(...)`，
- * 不再作为静态 module 字段存在。
+ * WebuiPage 注册路径为运行时 `useWebuiService(ctx).registerPage(...)`，
+ * 不作为静态 module 字段存在。
  */
 declare module '@aalis/core' {
   interface PluginModule {

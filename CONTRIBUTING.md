@@ -85,9 +85,6 @@ packages/
 }
 ```
 
-详见 [docs/decisions/0002-api-types-split.md](docs/decisions/0002-api-types-split.md) 与
-[docs/decisions/0003-subsystem-manifest.md](docs/decisions/0003-subsystem-manifest.md)。
-
 ## 5. 提交规范（Conventional Commits）
 
 ```
@@ -166,14 +163,7 @@ export function apply(ctx: Context, config: MyConfig) {
 
 详见 [docs/architecture.md](docs/architecture.md) 与 [docs/plugins/](docs/plugins/)。
 
-## 8. 添加 ADR
-
-任何引入新概念、改变包间契约、修改 manifest schema、调整加载顺序的改动，
-都应在 [docs/decisions/](docs/decisions/) 写一份 ADR。
-
-模板见 [docs/decisions/template.md](docs/decisions/template.md)。
-
-## 9. 反馈
+## 8. 反馈
 
 - Bug：GitHub Issues
 - 设计讨论：GitHub Discussions / Issues with `discussion` label
