@@ -1544,98 +1544,104 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('agent', agentImpl);
   const agent = agentImpl as unknown as InternalAgent;
 
-  // ===== /model 指令 =====
-  useCommandService(ctx).command('model', '查看或切换当前会话的对话模型', async cmdCtx => {
-    const target = cmdCtx.args[0];
+  // ===== /model 指令组（split 为 dot-path 子命令）=====
+  // info / status / reset / set <name>
+  async function modelInfo(sessionId: string, platform: string, listAvailable: boolean): Promise<string> {
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
+    const sessionModel = smSvc?.getSession(sessionId)?.config?.model;
+    const parent = smSvc?.getSession(sessionId)?.parentId
+      ? smSvc?.getSession(smSvc.getSession(sessionId)!.parentId!)
+      : undefined;
+    const parentDefaultsModel = parent?.config?.sessionDefaults?.model;
+    const profileModel = smSvc?.getPlatformProfiles()?.[platform || 'webui']?.model;
+    const globalDefaultsModel = smSvc?.getDefaults()?.model;
+    const resolvedModel = smSvc ? smSvc.resolveConfig(sessionId, platform).model : undefined;
 
-    // 无参数 / info / status：显示当前模型与来源（解析链）
-    if (!target || target === 'info' || target === 'status') {
-      const sessionModel = smSvc?.getSession(cmdCtx.sessionId)?.config?.model;
-      const parent = smSvc?.getSession(cmdCtx.sessionId)?.parentId
-        ? smSvc?.getSession(smSvc.getSession(cmdCtx.sessionId)!.parentId!)
-        : undefined;
-      const parentDefaultsModel = parent?.config?.sessionDefaults?.model;
-      const profileModel = smSvc?.getPlatformProfiles()?.[cmdCtx.platform || 'webui']?.model;
-      const globalDefaultsModel = smSvc?.getDefaults()?.model;
-      const resolvedModel = smSvc ? smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model : undefined;
+    let source = '(无)';
+    if (sessionModel) source = '会话覆盖';
+    else if (parentDefaultsModel) source = '父会话 sessionDefaults';
+    else if (profileModel) source = `平台 profile (${platform})`;
+    else if (globalDefaultsModel) source = '全局 defaults';
 
-      // 推断来源
-      let source = '(无)';
-      if (sessionModel) source = '会话覆盖';
-      else if (parentDefaultsModel) source = '父会话 sessionDefaults';
-      else if (profileModel) source = `平台 profile (${cmdCtx.platform})`;
-      else if (globalDefaultsModel) source = '全局 defaults';
+    const lines = [`**当前模型**: ${resolvedModel || '(默认)'}`, `**来源**: ${source}`];
+    const chain: string[] = [];
+    if (sessionModel) chain.push(`会话: ${sessionModel}`);
+    if (parentDefaultsModel) chain.push(`父 sessionDefaults: ${parentDefaultsModel}`);
+    if (profileModel) chain.push(`平台 profile: ${profileModel}`);
+    if (globalDefaultsModel) chain.push(`全局 defaults: ${globalDefaultsModel}`);
+    if (chain.length > 0) {
+      lines.push('', '**解析链**（高优先级在前）:');
+      for (const c of chain) lines.push(`- ${c}`);
+    }
+    if (sessionModel) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
 
-      const lines = [`**当前模型**: ${resolvedModel || '(默认)'}`, `**来源**: ${source}`];
-      // 解析链明细
-      const chain: string[] = [];
-      if (sessionModel) chain.push(`会话: ${sessionModel}`);
-      if (parentDefaultsModel) chain.push(`父 sessionDefaults: ${parentDefaultsModel}`);
-      if (profileModel) chain.push(`平台 profile: ${profileModel}`);
-      if (globalDefaultsModel) chain.push(`全局 defaults: ${globalDefaultsModel}`);
-      if (chain.length > 0) {
-        lines.push('', '**解析链**（高优先级在前）:');
-        for (const c of chain) lines.push(`- ${c}`);
-      }
-      if (sessionModel) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
-
-      // 仅 /model（无参数）时列出可用模型
-      if (!target) {
-        let models: string[] = [];
-        const llm = ctx.getService<LLMService>('llm');
-        if (llm && typeof llm.listModels === 'function') {
-          try {
-            models = (await llm.listModels()).map(m => m.id);
-          } catch {
-            /* ignore */
-          }
+    if (listAvailable) {
+      let models: string[] = [];
+      const llm = ctx.getService<LLMService>('llm');
+      if (llm && typeof llm.listModels === 'function') {
+        try {
+          models = (await llm.listModels()).map(m => m.id);
+        } catch {
+          /* ignore */
         }
-        if (models.length === 0) {
-          const allProviders = ctx.getAllServices<LLMService>('llm').filter(p => !p.capabilities.includes('router'));
-          for (const p of allProviders) {
-            if (typeof p.instance.listModels === 'function') {
-              try {
-                const list = await p.instance.listModels();
-                for (const m of list) models.push(m.id);
-              } catch {
-                /* ignore */
-              }
+      }
+      if (models.length === 0) {
+        const allProviders = ctx.getAllServices<LLMService>('llm').filter(p => !p.capabilities.includes('router'));
+        for (const p of allProviders) {
+          if (typeof p.instance.listModels === 'function') {
+            try {
+              const list = await p.instance.listModels();
+              for (const m of list) models.push(m.id);
+            } catch {
+              /* ignore */
             }
           }
         }
-        if (models.length > 0) {
-          lines.push('', '**可用模型**:');
-          for (const m of models) lines.push(`- ${m}`);
-        }
       }
-      return lines.join('\n');
+      if (models.length > 0) {
+        lines.push('', '**可用模型**:');
+        for (const m of models) lines.push(`- ${m}`);
+      }
     }
+    return lines.join('\n');
+  }
 
-    // /model reset — 清除会话级模型覆盖
-    if (target === 'reset') {
+  useCommandService(ctx)
+    .command('model', '查看当前会话的对话模型与解析链；并列出可用模型')
+    .action(async argv => modelInfo(argv.session.sessionId, argv.session.platform, true));
+
+  useCommandService(ctx)
+    .command('model.info', '查看当前会话的对话模型与解析链')
+    .action(async argv => modelInfo(argv.session.sessionId, argv.session.platform, false));
+
+  useCommandService(ctx)
+    .command('model.status', '查看当前会话的对话模型与解析链')
+    .action(async argv => modelInfo(argv.session.sessionId, argv.session.platform, false));
+
+  useCommandService(ctx)
+    .command('model.reset', '清除当前会话的模型覆盖')
+    .action(async argv => {
+      const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
-      const session = smSvc.getSession(cmdCtx.sessionId);
+      const session = smSvc.getSession(argv.session.sessionId);
       if (session?.config?.model) {
         const { model: _, ...rest } = session.config;
-        await smSvc.updateSession(cmdCtx.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
+        await smSvc.updateSession(argv.session.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
       }
-      // 清除后回退到解析链下一层
-      const fallback = smSvc.resolveConfig(cmdCtx.sessionId, cmdCtx.platform).model || '(默认)';
+      const fallback = smSvc.resolveConfig(argv.session.sessionId, argv.session.platform).model || '(默认)';
       return `已清除会话模型覆盖，回退到: ${fallback}`;
-    }
+    });
 
-    // /model set <name> — 设置会话级模型覆盖（持久化到 SessionConfig）
-    if (target === 'set') {
-      const modelName = cmdCtx.args[1];
+  useCommandService(ctx)
+    .command('model.set <name:string>', '设置会话级模型覆盖')
+    .action(async (argv, name) => {
+      const modelName = name as string;
       if (!modelName) return '用法: /model set <模型名称>';
+      const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
-      await smSvc.updateSession(cmdCtx.sessionId, { config: { model: modelName } as SessionConfig });
+      await smSvc.updateSession(argv.session.sessionId, { config: { model: modelName } as SessionConfig });
       return `当前会话模型已切换为: ${modelName}（已持久化）`;
-    }
-
-    return `未知子命令: ${target}。可用: status / info / set <模型名> / reset`;
-  });
+    });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   ctx.on('token:request', async (...args: unknown[]) => {

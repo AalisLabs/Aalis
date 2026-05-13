@@ -3,6 +3,7 @@ import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { version as nodeVersion, platform } from 'node:process';
 import type { Context, PluginManagerService } from '@aalis/core';
+import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -119,6 +120,24 @@ class DoctorRegistry implements DoctorService {
       });
     }
 
+    // commands —— 检测 commandOverrides 中是否存在指向已不存在指令的孤立键
+    const cmds = this.ctx.getService<CommandService>('commands');
+    if (cmds) {
+      const overrides = cmds.getOverrides();
+      const known = new Set(cmds.getAll().map(c => c.name));
+      const orphan = Object.keys(overrides).filter(k => !known.has(k));
+      checks.push({
+        id: 'commands.overrides',
+        category: 'plugins',
+        level: orphan.length === 0 ? 'ok' : 'warn',
+        message:
+          orphan.length === 0
+            ? `已注册指令 ${known.size} 个；覆盖配置 ${Object.keys(overrides).length} 条全部命中`
+            : `commandOverrides 含 ${orphan.length} 条孤立键（无对应指令）`,
+        detail: orphan.length > 0 ? orphan.join(', ') : undefined,
+      });
+    }
+
     const summary = checks.reduce(
       (acc, c) => {
         acc[c.level]++;
@@ -187,10 +206,12 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   for (const page of webuiPages) webui.registerPage(page);
 
   // 注册 /doctor 命令 —— chat 与 CLI 通用入口
-  useCommandService(ctx).command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）', async () => {
-    const report = await registry.runChecks();
-    return formatReport(report);
-  });
+  useCommandService(ctx)
+    .command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）')
+    .action(async () => {
+      const report = await registry.runChecks();
+      return formatReport(report);
+    });
 }
 
 // ===== helpers =====

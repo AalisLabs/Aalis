@@ -163,13 +163,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   // 注册 /tools 指令以查看可用工具
-  useCommandService(ctx).command('tools', '列出所有已注册的机器交互工具', async () => {
-    const groups = ['shell', 'file', 'system', 'http'].filter(
-      g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false,
-    );
-    const lines = ['📦 机器交互工具:', ...groups.map(g => `  ✅ ${g}`)];
-    return lines.join('\n');
-  });
+  useCommandService(ctx)
+    .command('tools', '列出所有已注册的机器交互工具')
+    .action(async () => {
+      const groups = ['shell', 'file', 'system', 'http'].filter(
+        g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false,
+      );
+      const lines = ['📦 机器交互工具:', ...groups.map(g => `  ✅ ${g}`)];
+      return lines.join('\n');
+    });
 
   ctx.logger.info(`机器交互工具插件已启动 (工作目录: ${cwdUri})`);
 }

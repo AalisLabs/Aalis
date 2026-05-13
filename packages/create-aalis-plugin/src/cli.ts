@@ -170,13 +170,9 @@ function renderIndexTs(a: Answers): string {
   }
   if (a.features.command) {
     body.push(`  // 注册斜杠命令
-  useCommandService(ctx).command({
-    name: 'hello',
-    description: '示例命令',
-    async action() {
-      return '你好';
-    },
-  });`);
+  useCommandService(ctx)
+    .command('hello', '示例命令')
+    .action(async () => '你好');`);
   }
   if (a.features.webui) {
     body.push(`  // 注册 WebUI 页面
