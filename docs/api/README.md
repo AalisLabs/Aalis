@@ -50,4 +50,4 @@
 1. **服务名 = 包名去掉 `@aalis/plugin-` 前缀和 `-api` 后缀**。例：`@aalis/plugin-tools-api` 提供 `ctx.getService('tools')` 取到的 `ToolService`。
 2. **capability 通过 `declare module '@aalis/core' { interface ServiceCapabilityMap }`** 注入；调用方用 `ctx.getService('storage', { capabilities: ['local-path'] })` 或 `inject.required: [{ service: 'storage', capabilities: ['local-path'] }]` 声明需求。
 3. **事件通过 `declare module '@aalis/core' { interface AalisEvents }`** 注入；订阅者用 `ctx.on('event-name', ...)`，类型自动补全。
-4. **领域 helper 代替 Context Mixin**：原 `ctx.registerTool` / `ctx.command` 等便捷方法已移除，改由各契约包导出领域 helper（如 `useToolService(ctx)` / `useCommandService(ctx)`）。helper 内部封装了 `ctx.getService` + `whenService` 延迟语义，调用方仍可在 apply 阶段直接使用。详见 [ADR-0005](../decisions/0005-mixin-to-service-helpers.md)。
+4. **领域 helper**：各契约包导出领域 helper（如 `useToolService(ctx)` / `useCommandService(ctx)`），内部封装 `ctx.getService` + `whenService` 延迟语义；调用方在 apply 阶段直接使用。Core 不再持有任何业务 Mixin。

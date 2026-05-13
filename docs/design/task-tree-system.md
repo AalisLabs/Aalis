@@ -608,4 +608,4 @@ declare module '@aalis/core' {
                     └─────────────────────────┘
 ```
 
-**核心理念**: 任务树系统是 session-manager 之上的一层语义层。session-manager 管结构，agent 管执行，task-orchestrator 管编排。三者通过事件和服务接口解耦，各自可独立演进。
+**核心理念**: 任务树系统是 session-manager 之上的一层语义层。session-manager 管结构，agent 管执行，task-orchestrator 管编排。三者通过事件和服务接口解耦，职责独立。
