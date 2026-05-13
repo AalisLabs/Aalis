@@ -1,265 +1,192 @@
-// ===== 指令服务接口与契约类型 =====
+// ===== 指令服务接口与契约类型（v2 — chatluna 风格） =====
 //
-// 本包提供斜杠指令系统的全部"非实现"契约：
-// - 指令数据结构（CommandDefinition / SubcommandDefinition / RegisteredCommand 等）
-// - 指令执行上下文（CommandContext）
-// - 服务接口（CommandService）
-// - useCommandService(ctx) helper（M2 后取代 ctx.command mixin）
+// 本包提供斜杠指令系统的全部"非实现"契约。
+//
+// 核心理念：
+// - 单一 Command 类型，命令层级用 name 的点路径表达（'memory.clear.all'）
+// - Builder API：useCommandService(ctx).command(name).option().action()
+// - inline DSL 声明位置参数：'memory.set <key:string> [value:text]'
+// - 位置参数作为 handler 形参传入：(argv, key, value) => ...
 //
 // 实现见 @aalis/plugin-commands。
 
 import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
 
-/** 指令执行上下文 */
-export interface CommandContext {
-  /** 会话 ID */
+// ===== handler 接口 =====
+
+/** Handler 收到的会话/选项视图（不含原始 args，位置参数走形参） */
+export interface CommandArgv {
+  session: {
+    sessionId: string;
+    platform: string;
+    userId?: string;
+    /** 原始输入文本（含前缀） */
+    raw: string;
+  };
+  options: Record<string, unknown>;
+}
+
+/**
+ * 命令执行函数。
+ * @param argv 会话上下文 + 解析后的选项
+ * @param positionals 按 inline DSL 顺序解析出的位置参数
+ */
+export type CommandHandler = (
+  argv: CommandArgv,
+  ...positionals: unknown[]
+) => Promise<string | undefined> | string | undefined;
+
+// ===== 已解析的参数 / 选项 spec =====
+
+export type PositionalArgType = 'string' | 'number' | 'boolean' | 'text';
+
+export interface PositionalArgSpec {
+  name: string;
+  type: PositionalArgType;
+  required: boolean;
+}
+
+export type OptionValueType = 'string' | 'number' | 'boolean' | 'string[]';
+
+export interface OptionSpec {
+  /** 长选项名 (--name) */
+  name: string;
+  /** 短选项别名 (-x)，可多个 */
+  aliases: string[];
+  /** 值类型；boolean 表示纯 flag */
+  type: OptionValueType;
+  /** 占位符名（用于 help 输出），如 'page' */
+  valueName?: string;
+  /** 是否需要取值 */
+  takesValue: boolean;
+  /** 值可选时（[val:type] 语法），flag 存在但无值给 true */
+  valueOptional: boolean;
+  description?: string;
+  default?: unknown;
+  required: boolean;
+  choices?: readonly string[];
+}
+
+// ===== 命令元数据 =====
+
+/** 注册时的元数据 */
+export interface CommandMeta {
+  authority?: number;
+  safety?: SafetyLevel;
+  permissions?: PermissionId[];
+  /** 自定义 usage 文本 */
+  usage?: string;
+  /** 示例 */
+  examples?: string[];
+}
+
+/** 已注册命令（运行期完整态） */
+export interface Command {
+  /** 完整点路径名 */
+  name: string;
+  /** 注册插件名 */
+  pluginName: string;
+  description: string;
+  /** 节点自身声明的 authority（缺省 1） */
+  baseAuthority: number;
+  /** 节点自身声明的 safety（缺省 'safe'） */
+  baseSafety: SafetyLevel;
+  /** 节点自身声明的权限标识（不含默认 command:<name>） */
+  basePermissions: PermissionId[];
+  /** 有效 authority */
+  authority: number;
+  /** 有效 safety */
+  safety: SafetyLevel;
+  /** 有效权限标识列表 */
+  permissions: string[];
+  /** 别名（完整点路径） */
+  aliases: string[];
+  positionalArgs: PositionalArgSpec[];
+  options: OptionSpec[];
+  usage?: string;
+  examples?: string[];
+  /** 执行函数；分组节点为 undefined */
+  handler?: CommandHandler;
+  /** 当前 name 是否被 override 命中 */
+  overridden: boolean;
+  /** 是否为自动创建的分组节点 */
+  isGroup: boolean;
+}
+
+/** Authority override */
+export interface AuthorityOverride {
+  authority?: number;
+  safety?: SafetyLevel;
+}
+
+/** 命令服务消费方（CLI / 适配器）传入的执行输入 */
+export interface ExecutionInput {
   sessionId: string;
-  /** 平台标识 */
   platform: string;
-  /** 用户 ID */
   userId?: string;
-  /** 指令参数 (命令名之后的部分，按空格分割) */
   args: string[];
-  /** 按指令声明解析出的具名位置参数 */
-  operands?: Record<string, unknown>;
-  /** 按指令声明解析出的选项参数 */
-  options?: Record<string, unknown>;
-  /** 原始输入文本 */
   raw: string;
-  /** 跳过安全等级检查（用于工具桥接等已在上层完成检查的场景） */
   skipSafetyCheck?: boolean;
 }
 
-export type CommandValueType = 'string' | 'number' | 'boolean' | 'enum' | 'string[]';
+// ===== Builder =====
 
-export interface CommandArgumentDefinition {
-  /** 位置参数名称 */
-  name: string;
-  /** 参数类型。text 会消费剩余所有参数并拼回文本 */
-  type: 'string' | 'number' | 'boolean' | 'text';
-  /** 参数描述 */
+export interface OptionRegisterOptions {
   description?: string;
-  /** 是否必填 */
-  required?: boolean;
-  /** 是否消费剩余所有参数 */
-  variadic?: boolean;
-}
-
-export interface CommandOptionDefinition {
-  /** 长选项名，如 type 对应 --type */
-  name: string;
-  /** 短别名或额外长别名，如 t 对应 -t */
-  alias?: string | string[];
-  /** 选项类型 */
-  type: CommandValueType;
-  /** 选项描述 */
-  description?: string;
-  /** enum 可选值 */
-  choices?: string[];
-  /** 默认值 */
   default?: unknown;
-  /** 是否必填 */
   required?: boolean;
+  choices?: readonly string[];
 }
 
-/** 指令定义 */
-export interface CommandDefinition {
-  /** 指令名称 (不含前缀斜杠) */
-  name: string;
-  /** 指令描述 */
-  description: string;
-  /** 最低权限等级 (默认 1) */
-  authority?: number;
-  /** 安全级别 (默认 'safe') */
-  safety?: SafetyLevel;
-  /** 静态权限标识，用于透明展示与策略匹配 */
-  permissions?: PermissionId[];
-  /** 位置参数声明 */
-  arguments?: CommandArgumentDefinition[];
-  /** 选项声明 */
-  options?: CommandOptionDefinition[];
-  /** 自定义用法文本 */
-  usage?: string;
-  /** 示例 */
-  examples?: string[];
-  /**
-   * 执行函数
-   * @returns 返回字符串表示要回复给用户的文本，返回 void 表示指令自行处理了输出
-   *
-   * 当存在 subcommands 时，未匹配到任何子指令名的情况下回退到此 action（args 保持原样）。
-   * 若希望"必须指定子指令"，可在此返回 usage 提示。
-   */
-  action: (ctx: CommandContext) => Promise<string | undefined>;
-  /**
-   * 子指令树（递归）。匹配规则：
-   * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层并消耗一个 arg
-   * - 命中后调用对应节点的 action（args 为剩余部分）
-   * - 任意一层未命中则停在当前节点，调用其 action
-   *
-   * 权限/安全等级继承：子节点未声明时，继承自其有效父节点（含 override）。
-   * Override 键为冒号拼接的完整路径，如 `clear:all`、`db:migrate:up`。
-   */
-  subcommands?: SubcommandDefinition[];
+export interface CommandBuilder {
+  alias(name: string): CommandBuilder;
+  option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
+  action(handler: CommandHandler): CommandBuilder;
+  usage(text: string): CommandBuilder;
+  example(line: string): CommandBuilder;
 }
 
-/**
- * 子指令定义（递归）
- *
- * 与 CommandDefinition 类似，但：
- * - action 可选：仅作为分组节点（仅含 subcommands）时省略，调用即返回 usage 提示
- * - 子指令的 pluginName 隐式继承自根指令
- */
-export interface SubcommandDefinition {
-  /** 子指令名称（不含前缀） */
-  name: string;
-  /** 子指令描述 */
-  description: string;
-  /** 最低权限等级；未声明则继承父节点的有效值 */
-  authority?: number;
-  /** 安全级别；未声明则继承父节点的有效值 */
-  safety?: SafetyLevel;
-  /** 静态权限标识；会与父节点权限共同生效 */
-  permissions?: PermissionId[];
-  /** 位置参数声明 */
-  arguments?: CommandArgumentDefinition[];
-  /** 选项声明 */
-  options?: CommandOptionDefinition[];
-  /** 自定义用法文本 */
-  usage?: string;
-  /** 示例 */
-  examples?: string[];
-  /** 执行函数；省略时该节点仅作为分组，调用回退为 usage 提示 */
-  action?: (ctx: CommandContext) => Promise<string | undefined>;
-  /** 进一步的孙级子指令 */
-  subcommands?: SubcommandDefinition[];
+// ===== 服务接口 =====
+
+/** 仅供 useCommandService 内部使用：调用 service.command 时携带 pluginName 隐式参数 */
+export interface InternalCommandMeta extends CommandMeta {
+  pluginName?: string;
 }
 
-/** 已注册的指令 */
-export interface RegisteredCommand extends CommandDefinition {
-  /** 注册此指令的插件名 */
-  pluginName: string;
-}
-
-/**
- * 指令树节点的扁平化视图（用于 WebUI 渲染、help 输出等）。
- *
- * 每个根指令及其所有递归后代都会产出一条记录，path 表示完整路径，
- * key = path.join(':') 同时也是 override 的查找键。
- */
-export interface CommandNodeInfo {
-  /** 完整路径，如 ['clear', 'all'] */
-  path: string[];
-  /** override 键 = path.join(':')，如 'clear:all' */
-  key: string;
-  /** 节点自身的名字（path 末段） */
-  name: string;
-  /** 嵌套深度，根为 0 */
-  depth: number;
-  /** 描述 */
-  description: string;
-  /** 有效权限等级（已应用 override + 父节点继承） */
-  authority: number;
-  /** 有效安全级别 */
-  safety: SafetyLevel;
-  /** 细粒度权限标识（含默认 command:<path> 与声明值） */
-  permissions: string[];
-  /** 节点本身声明的 authority；缺省时与父继承值相同 */
-  baseAuthority: number;
-  /** 节点本身声明的 safety；缺省时与父继承值相同 */
-  baseSafety: SafetyLevel;
-  /** 节点自身声明的权限标识（不含默认 command:<path>） */
-  basePermissions: string[];
-  /** 当前键是否存在 override 配置 */
-  overridden: boolean;
-  /** 是否为根指令 */
-  isRoot: boolean;
-  /** 是否含有子指令 */
-  hasSubcommands: boolean;
-  /** 是否提供了 action（无 action 的纯分组节点调用时返回 usage） */
-  hasAction: boolean;
-  /** 注册此根指令的插件名（同根的所有后代共用） */
-  pluginName: string;
-  /** 位置参数声明 */
-  arguments?: CommandArgumentDefinition[];
-  /** 选项声明 */
-  options?: CommandOptionDefinition[];
-  /** 自定义用法文本 */
-  usage?: string;
-  /** 示例 */
-  examples?: string[];
-}
-
-/**
- * 指令服务接口
- *
- * 管理用户可调用的斜杠指令的注册、解析、执行。
- * 由 plugin-commands 创建 CommandRegistry 并注册为服务。
- */
 export interface CommandService {
-  /** 指令前缀 */
   prefix: string;
 
-  register(command: CommandDefinition, pluginName: string): () => void;
+  /**
+   * 启动 builder 注册一个命令。
+   * @param name 完整点路径名，可含 inline DSL：`'memory.set <key:string> [value:text]'`
+   */
+  command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
+
+  unregister(name: string): void;
   unregisterByPlugin(pluginName: string): void;
-  execute(name: string, ctx: CommandContext): Promise<string | undefined>;
+
+  execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
+
+  /** 顶层段是否存在（含分组节点） */
   has(name: string): boolean;
-  get(name: string): RegisteredCommand | undefined;
-  /** 仅返回根指令；保持向后兼容（如 Dashboard chip） */
-  getAll(): RegisteredCommand[];
-  /**
-   * 返回所有节点的扁平化视图（含递归子指令），按深度优先顺序。
-   * 主要供权限管理 UI、help、调试使用。
-   */
-  getAllNodes(): CommandNodeInfo[];
-  /**
-   * 根据路径解析具体节点，返回扁平视图。未命中返回 undefined。
-   * 路径示例：'clear' 或 'clear:all' 或 ['clear','all']。
-   */
-  getNode(path: string | string[]): CommandNodeInfo | undefined;
+  get(name: string): Command | undefined;
+  getNode(name: string | string[]): Command | undefined;
+  getAll(): Command[];
 
-  loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void;
-  setOverride(name: string, override: { authority?: number; safety?: string }): void;
+  loadOverrides(overrides: Record<string, AuthorityOverride>): void;
+  setOverride(name: string, override: AuthorityOverride): void;
   removeOverride(name: string): void;
-  getOverrides(): Record<string, { authority?: number; safety?: string }>;
+  getOverrides(): Record<string, AuthorityOverride>;
 
-  /** 设置执行守卫（由权限插件注入） */
   setExecutionGuard(guard: ExecutionGuard): void;
 }
 
-// ===== 领域便捷封装（M2：Mixin→Service 收编后的 API）=====
-//
-// useCommandService(ctx) 取代了 `ctx.command(...)` mixin。
-// 自动 inject 检查 + 自动用 ctx.id 填充 pluginName。
-
-export interface CommandRegisterOptions {
-  authority?: number;
-  safety?: SafetyLevel;
-  permissions?: PermissionId[];
-  arguments?: CommandArgumentDefinition[];
-  options?: CommandOptionDefinition[];
-  usage?: string;
-  examples?: string[];
-  subcommands?: SubcommandDefinition[];
-}
+// ===== useCommandService helper =====
 
 export interface ScopedCommandService {
-  /**
-   * 注册斜杠指令的便捷方法。pluginName 自动用 ctx.id 填充。
-   * 服务未就绪时通过 whenService 自动延迟到就绪后执行（与原 mixin 语义一致）。
-   *
-   * @example
-   *   const cmds = useCommandService(ctx);
-   *   cmds.command('ping', '测试连通性', async () => 'pong!');
-   */
-  command(
-    name: string,
-    description: string,
-    action: (ctx: CommandContext) => Promise<string | undefined>,
-    options?: CommandRegisterOptions,
-  ): () => void;
-  /** 原始 CommandService 引用（服务未就绪时为 undefined） */
+  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
   readonly raw: CommandService | undefined;
 }
 
@@ -267,23 +194,60 @@ export function useCommandService(ctx: Context): ScopedCommandService {
   const svc = ctx.getService<CommandService>('commands');
   const pluginName = ctx.id;
   return {
-    command(name, description, action, options) {
-      const def: CommandDefinition = {
-        name,
-        description,
-        action,
-        authority: options?.authority,
-        safety: options?.safety,
-        permissions: options?.permissions,
-        arguments: options?.arguments,
-        options: options?.options,
-        usage: options?.usage,
-        examples: options?.examples,
-        subcommands: options?.subcommands,
-      };
-      if (svc) return svc.register(def, pluginName);
-      return ctx.whenService<CommandService>('commands', s => s.register(def, pluginName));
+    command(name, description, meta) {
+      if (svc) return svc.command(name, description, { ...meta, pluginName });
+      return makeDeferredBuilder(ctx, name, description, { ...meta, pluginName });
     },
     raw: svc,
   };
+}
+
+type DeferredCall =
+  | { kind: 'alias'; name: string }
+  | { kind: 'option'; name: string; syntax: string; opts?: OptionRegisterOptions }
+  | { kind: 'action'; handler: CommandHandler }
+  | { kind: 'usage'; text: string }
+  | { kind: 'example'; line: string };
+
+function makeDeferredBuilder(
+  ctx: Context,
+  name: string,
+  description: string | undefined,
+  meta: InternalCommandMeta,
+): CommandBuilder {
+  const calls: DeferredCall[] = [];
+  ctx.whenService<CommandService>('commands', svc => {
+    const builder = svc.command(name, description, meta);
+    for (const c of calls) {
+      if (c.kind === 'alias') builder.alias(c.name);
+      else if (c.kind === 'option') builder.option(c.name, c.syntax, c.opts);
+      else if (c.kind === 'action') builder.action(c.handler);
+      else if (c.kind === 'usage') builder.usage(c.text);
+      else if (c.kind === 'example') builder.example(c.line);
+    }
+    return () => svc.unregister(name);
+  });
+  const self: CommandBuilder = {
+    alias(n) {
+      calls.push({ kind: 'alias', name: n });
+      return self;
+    },
+    option(n, syntax, opts) {
+      calls.push({ kind: 'option', name: n, syntax, opts });
+      return self;
+    },
+    action(handler) {
+      calls.push({ kind: 'action', handler });
+      return self;
+    },
+    usage(text) {
+      calls.push({ kind: 'usage', text });
+      return self;
+    },
+    example(line) {
+      calls.push({ kind: 'example', line });
+      return self;
+    },
+  };
+  return self;
 }

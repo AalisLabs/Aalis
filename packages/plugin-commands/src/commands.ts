@@ -1,62 +1,68 @@
-import type { Logger, SafetyLevel } from '@aalis/core';
+import type { Logger, PermissionId, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
 import type {
-  CommandArgumentDefinition,
-  CommandContext,
-  CommandDefinition,
-  CommandNodeInfo,
-  CommandOptionDefinition,
+  AuthorityOverride,
+  Command,
+  CommandArgv,
+  CommandBuilder,
+  CommandHandler,
   CommandService,
-  RegisteredCommand,
-  SubcommandDefinition,
+  ExecutionInput,
+  InternalCommandMeta,
+  OptionRegisterOptions,
+  OptionSpec,
+  OptionValueType,
+  PositionalArgSpec,
+  PositionalArgType,
 } from '@aalis/plugin-commands-api';
 
-/** 内部解析结果：从根指令出发匹配 args 后，得到的最深节点及其链路上下文 */
-interface ResolvedCommand {
-  /** 根指令 */
-  root: RegisteredCommand;
-  /** 命中的节点（可能是根本身或某层子指令） */
-  node: CommandDefinition | SubcommandDefinition;
-  /** 完整路径，如 ['clear','nuke'] */
-  path: string[];
-  /** 消耗子指令名后剩余的 args（传给 action） */
-  remainingArgs: string[];
-  /** 应用 override + 父继承后的有效权限 */
-  effectiveAuthority: number;
-  /** 应用 override + 父继承后的有效安全级别 */
-  effectiveSafety: SafetyLevel;
-  /** 默认 command:<path> 加声明权限 */
-  permissions: string[];
+// ============================================================================
+// 命令注册表（v2 — chatluna 风格）
+//
+// 契约见 @aalis/plugin-commands-api
+//
+// - Map<fullDotName, Command>，name 即注册键
+// - 注册 'memory.clear.all' 时自动创建 'memory' / 'memory.clear' 分组节点（无 handler）
+// - 解析输入时按最长前缀匹配命中节点
+// - Override key = 完整点路径名（与 name 一致）
+// ============================================================================
+
+const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
+
+/** 内部：构造 Command 时的可变 patches（builder 写入这里，最终 finalize 时合成有效值） */
+interface CommandPatches {
+  description?: string;
+  baseAuthority?: number;
+  baseSafety?: SafetyLevel;
+  basePermissions?: PermissionId[];
+  aliases: string[];
+  positionalArgs: PositionalArgSpec[];
+  options: OptionSpec[];
+  usage?: string;
+  examples: string[];
+  handler?: CommandHandler;
+  pluginName?: string;
+  /** 是否由用户显式 .command() 声明过；自动分组保持 false */
+  declared: boolean;
 }
 
-interface ParsedCommandArgs {
-  args: string[];
-  operands: Record<string, unknown>;
-  options: Record<string, unknown>;
+function emptyPatches(): CommandPatches {
+  return {
+    aliases: [],
+    positionalArgs: [],
+    options: [],
+    examples: [],
+    declared: false,
+  };
 }
 
-/**
- * 指令注册表 —— 管理用户可调用的斜杠指令的注册、解析、执行
- *
- * 由 plugin-commands 创建并注册为服务 'commands'，
- * 所有插件通过 ctx.command() 注册指令，通过 ctx.getService<CommandService>('commands') 访问。
- *
- * 与 plugin-agent-tools/ToolRegistry 同属"中心 Registry 模式"：
- * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
- * - register() 返回 disposer，插件 dispose 时由 Context 链路自动注销
- * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
- *
- * 子指令支持（CommandRegistry 特有）：
- * - CommandDefinition.subcommands 可递归嵌套（子、孙、…）
- * - 解析时按 args 顺序逐层匹配子指令名，命中即下沉一层
- * - Override 键为冒号拼接的完整路径：`clear:all`、`db:migrate:up`
- * - authority/safety 子节点未声明时继承父节点的有效值（含 override）
- */
 export class CommandRegistry implements CommandService {
-  private commands = new Map<string, RegisteredCommand>();
-  private logger: Logger;
+  private readonly nodes = new Map<string, CommandPatches>();
+  /** 别名映射：aliasName → realName */
+  private readonly aliases = new Map<string, string>();
+  private readonly overrides = new Map<string, AuthorityOverride>();
+  private readonly logger: Logger;
   private _guard?: ExecutionGuard;
-  private overrides = new Map<string, { authority?: number; safety?: string }>();
 
   prefix = '/';
 
@@ -64,380 +70,461 @@ export class CommandRegistry implements CommandService {
     this.logger = logger.child('commands');
   }
 
-  // ---- 配置覆盖（authority / safety override）----
+  // ---- Overrides ----
 
-  loadOverrides(overrides: Record<string, { authority?: number; safety?: string }>): void {
+  loadOverrides(overrides: Record<string, AuthorityOverride>): void {
     this.overrides.clear();
     for (const [name, o] of Object.entries(overrides)) this.overrides.set(name, o);
   }
-
-  setOverride(name: string, override: { authority?: number; safety?: string }): void {
+  setOverride(name: string, override: AuthorityOverride): void {
     this.overrides.set(name, override);
   }
-
   removeOverride(name: string): void {
     this.overrides.delete(name);
   }
-
-  getOverrides(): Record<string, { authority?: number; safety?: string }> {
-    const result: Record<string, { authority?: number; safety?: string }> = {};
-    for (const [name, o] of this.overrides) result[name] = o;
-    return result;
+  getOverrides(): Record<string, AuthorityOverride> {
+    return Object.fromEntries(this.overrides);
   }
 
-  // ---- 执行守卫 ----
+  // ---- Guard ----
 
   setExecutionGuard(guard: ExecutionGuard): void {
     this._guard = guard;
   }
 
-  // ---- 解析 / 注册 / 查询 ----
+  // ---- Builder 入口 ----
+
+  command(rawName: string, description?: string, meta?: InternalCommandMeta): CommandBuilder {
+    const parsed = parseCommandName(rawName);
+    const { name, positionalArgs } = parsed;
+    validateName(name);
+
+    // 确保所有祖先分组节点存在
+    this.ensureGroups(name);
+
+    let node = this.nodes.get(name);
+    if (!node) {
+      node = emptyPatches();
+      this.nodes.set(name, node);
+    } else if (node.declared) {
+      this.logger.warn(`指令 ${this.prefix}${name} 已存在，将被覆盖（来自 ${meta?.pluginName ?? 'unknown'}）`);
+      // 复用旧节点但清空可变字段
+      node.aliases = [];
+      node.positionalArgs = [];
+      node.options = [];
+      node.examples = [];
+      node.handler = undefined;
+    }
+
+    node.declared = true;
+    node.description = description ?? '';
+    node.baseAuthority = meta?.authority;
+    node.baseSafety = meta?.safety;
+    node.basePermissions = meta?.permissions ? [...meta.permissions] : [];
+    node.positionalArgs = positionalArgs;
+    node.usage = meta?.usage;
+    if (meta?.examples) node.examples.push(...meta.examples);
+    node.pluginName = meta?.pluginName ?? 'unknown';
+
+    this.logger.debug(`注册指令: ${this.prefix}${name} (来自 ${node.pluginName})`);
+
+    return this.makeBuilder(name);
+  }
+
+  private makeBuilder(name: string): CommandBuilder {
+    const self: CommandBuilder = {
+      alias: (aliasName: string) => {
+        const segs = aliasName.split('.');
+        for (const s of segs) validateNameSegment(s);
+        const existing = this.aliases.get(aliasName);
+        if (existing && existing !== name) {
+          this.logger.warn(`别名 ${this.prefix}${aliasName} 已指向 ${existing}，将改指 ${name}`);
+        }
+        this.aliases.set(aliasName, name);
+        const node = this.nodes.get(name);
+        if (node && !node.aliases.includes(aliasName)) node.aliases.push(aliasName);
+        return self;
+      },
+      option: (optName: string, syntax: string, opts?: OptionRegisterOptions) => {
+        const spec = parseOptionSyntax(optName, syntax, opts);
+        const node = this.nodes.get(name);
+        if (node) node.options.push(spec);
+        return self;
+      },
+      action: (handler: CommandHandler) => {
+        const node = this.nodes.get(name);
+        if (node) node.handler = handler;
+        return self;
+      },
+      usage: (text: string) => {
+        const node = this.nodes.get(name);
+        if (node) node.usage = text;
+        return self;
+      },
+      example: (line: string) => {
+        const node = this.nodes.get(name);
+        if (node) node.examples.push(line);
+        return self;
+      },
+    };
+    return self;
+  }
+
+  /** 自动创建祖先分组节点（不替换已存在节点） */
+  private ensureGroups(name: string): void {
+    const parts = name.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      const groupName = parts.slice(0, i).join('.');
+      if (!this.nodes.has(groupName)) {
+        const patches = emptyPatches();
+        patches.description = `${groupName} 命令组`;
+        this.nodes.set(groupName, patches);
+      }
+    }
+  }
+
+  // ---- 注销 ----
+
+  unregister(name: string): void {
+    const node = this.nodes.get(name);
+    if (!node) return;
+    this.nodes.delete(name);
+    for (const a of node.aliases) this.aliases.delete(a);
+    this.logger.debug(`注销指令: ${this.prefix}${name}`);
+  }
+
+  unregisterByPlugin(pluginName: string): void {
+    for (const [name, node] of [...this.nodes]) {
+      if (node.pluginName === pluginName) this.unregister(name);
+    }
+  }
+
+  // ---- 解析输入 ----
 
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null {
     const trimmed = input.trim();
     if (!trimmed) return null;
+    let body = trimmed;
     if (this.prefix) {
       if (!trimmed.startsWith(this.prefix)) return null;
-      const rest = trimmed.slice(this.prefix.length);
-      const parts = tokenize(rest);
-      const name = parts[0];
-      if (!name) return null;
-      return { name, args: parts.slice(1), raw: trimmed };
+      body = trimmed.slice(this.prefix.length);
     }
-    const parts = tokenize(trimmed);
-    const name = parts[0];
-    if (this.commands.has(name)) return { name, args: parts.slice(1), raw: trimmed };
-    return null;
-  }
-
-  register(command: CommandDefinition, pluginName: string): () => void {
-    const { name } = command;
-    if (this.commands.has(name)) {
-      this.logger.warn(`指令 "${this.prefix}${name}" 已存在，将被覆盖 (来自 ${pluginName})`);
-    }
-    const registered: RegisteredCommand = { ...command, pluginName };
-    this.commands.set(name, registered);
-    this.logger.debug(`注册指令: ${this.prefix}${name} (来自 ${pluginName})`);
-
-    return () => {
-      if (this.commands.get(name)?.pluginName === pluginName) {
-        this.commands.delete(name);
-        this.logger.debug(`注销指令: ${this.prefix}${name}`);
-      }
-    };
+    const parts = tokenize(body);
+    const head = parts[0];
+    if (!head) return null;
+    // 无前缀模式下，只有命中已知命令首段才认为是命令
+    if (!this.prefix && !this.hasTopSegment(head)) return null;
+    return { name: head, args: parts.slice(1), raw: trimmed };
   }
 
   has(name: string): boolean {
-    return this.commands.has(name);
+    return this.hasTopSegment(name);
   }
 
-  get(name: string): RegisteredCommand | undefined {
-    return this.commands.get(name);
+  private hasTopSegment(name: string): boolean {
+    if (this.nodes.has(name) || this.aliases.has(name)) return true;
+    // 也许是 'memory.x' 的 'memory' 顶层段
+    for (const k of this.nodes.keys()) {
+      if (k === name || k.startsWith(`${name}.`)) return true;
+    }
+    return false;
   }
 
-  /** 仅返回根指令，保持向后兼容（Dashboard 概览等旧调用方） */
-  getAll(): RegisteredCommand[] {
-    return [...this.commands.values()];
+  get(name: string): Command | undefined {
+    const real = this.aliases.get(name) ?? name;
+    if (!this.nodes.has(real)) return undefined;
+    return this.materialize(real);
   }
+
+  getNode(path: string | string[]): Command | undefined {
+    const name = Array.isArray(path) ? path.join('.') : path;
+    return this.get(name);
+  }
+
+  getAll(): Command[] {
+    return [...this.nodes.keys()].sort().map(n => this.materialize(n));
+  }
+
+  // ---- 解析与执行 ----
 
   /**
-   * 沿 args 逐层匹配子指令，返回最深命中的节点及链路信息。
-   * 未注册根指令返回 null；命中节点至少为根。
+   * 沿层级最长匹配。tokens 是 parseCommand 后的 args（即 head 之后的部分）；
+   * head 是 parseCommand 返回的 name。
+   *
+   * 返回命中节点的完整 dotName 与剩余 tokens。
    */
-  private resolve(name: string, args: string[]): ResolvedCommand | null {
-    const root = this.commands.get(name);
-    if (!root) return null;
+  private resolve(head: string, tokens: string[]): { name: string; remaining: string[] } | null {
+    const realHead = this.aliases.get(head) ?? head;
+    // 不存在 realHead 节点也不存在以 realHead 开头：未命中
+    if (!this.nodes.has(realHead) && !this.findNodesPrefixed(realHead)) return null;
 
-    let node: CommandDefinition | SubcommandDefinition = root;
-    const path: string[] = [name];
-    let i = 0;
-
-    // 初始有效值 = 根的 override ?? 根声明 ?? 默认
-    const rootOvr = this.overrides.get(name);
-    let effectiveAuthority = rootOvr?.authority ?? root.authority ?? 1;
-    let effectiveSafety: SafetyLevel = (rootOvr?.safety as SafetyLevel) ?? root.safety ?? 'safe';
-    const declaredPermissions = [...(root.permissions ?? [])];
-
-    while (node.subcommands && node.subcommands.length > 0 && i < args.length) {
-      const sub = node.subcommands.find(s => s.name === args[i]);
-      if (!sub) break;
-      node = sub;
-      path.push(sub.name);
-      i += 1;
-      const ovr = this.overrides.get(path.join(':'));
-      effectiveAuthority = ovr?.authority ?? sub.authority ?? effectiveAuthority;
-      effectiveSafety = (ovr?.safety as SafetyLevel) ?? sub.safety ?? effectiveSafety;
-      declaredPermissions.push(...(sub.permissions ?? []));
-    }
-
-    return {
-      root,
-      node,
-      path,
-      remainingArgs: args.slice(i),
-      effectiveAuthority,
-      effectiveSafety,
-      permissions: unique([`command:${path.join(':')}`, ...declaredPermissions]),
-    };
-  }
-
-  /** 扁平化所有节点供 UI / help 使用，深度优先 */
-  getAllNodes(): CommandNodeInfo[] {
-    const out: CommandNodeInfo[] = [];
-    for (const root of this.commands.values()) {
-      this.walkNode(root, [root.name], root.authority ?? 1, root.safety ?? 'safe', [], 0, root.pluginName, true, out);
-    }
-    return out;
-  }
-
-  getNode(path: string | string[]): CommandNodeInfo | undefined {
-    const segs = Array.isArray(path) ? path : path.split(':').filter(Boolean);
-    if (segs.length === 0) return undefined;
-    return this.getAllNodes().find(n => n.path.length === segs.length && n.path.every((p, i) => p === segs[i]));
-  }
-
-  /** 递归遍历，传入父继承的有效值 */
-  private walkNode(
-    node: CommandDefinition | SubcommandDefinition,
-    path: string[],
-    parentEffectiveAuthority: number,
-    parentEffectiveSafety: SafetyLevel,
-    parentPermissions: string[],
-    depth: number,
-    pluginName: string,
-    isRoot: boolean,
-    out: CommandNodeInfo[],
-  ): void {
-    const key = path.join(':');
-    const ovr = this.overrides.get(key);
-    const baseAuthority = node.authority ?? parentEffectiveAuthority;
-    const baseSafety: SafetyLevel = node.safety ?? parentEffectiveSafety;
-    const basePermissions = node.permissions ?? [];
-    const permissions = unique([`command:${key}`, ...parentPermissions, ...basePermissions]);
-    const effAuthority = ovr?.authority ?? baseAuthority;
-    const effSafety: SafetyLevel = (ovr?.safety as SafetyLevel) ?? baseSafety;
-    out.push({
-      path: [...path],
-      key,
-      name: path[path.length - 1],
-      depth,
-      description: node.description,
-      authority: effAuthority,
-      safety: effSafety,
-      permissions,
-      baseAuthority,
-      baseSafety,
-      basePermissions,
-      overridden: !!ovr,
-      isRoot,
-      hasSubcommands: !!(node.subcommands && node.subcommands.length > 0),
-      hasAction: typeof node.action === 'function',
-      pluginName,
-      arguments: node.arguments,
-      options: node.options,
-      usage: node.usage,
-      examples: node.examples,
-    });
-    if (node.subcommands) {
-      for (const sub of node.subcommands) {
-        this.walkNode(
-          sub,
-          [...path, sub.name],
-          effAuthority,
-          effSafety,
-          permissions,
-          depth + 1,
-          pluginName,
-          false,
-          out,
-        );
+    let current = realHead;
+    let consumed = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      const candidate = `${current}.${tokens[i]}`;
+      // 候选要么本身存在，要么作为更深节点的前缀存在
+      if (this.nodes.has(candidate) || this.findNodesPrefixed(candidate)) {
+        current = candidate;
+        consumed = i + 1;
+      } else {
+        break;
       }
     }
+    // 若当前不是真实节点（仅是别名首段而无 head 顶级节点），不应发生（已 ensure）
+    if (!this.nodes.has(current)) return null;
+    return { name: current, remaining: tokens.slice(consumed) };
   }
 
-  // ---- 执行 ----
+  private findNodesPrefixed(prefix: string): boolean {
+    for (const k of this.nodes.keys()) {
+      if (k.startsWith(`${prefix}.`)) return true;
+    }
+    return false;
+  }
 
-  async execute(name: string, cmdCtx: CommandContext): Promise<string | undefined> {
-    const resolved = this.resolve(name, cmdCtx.args);
+  async execute(name: string, input: ExecutionInput): Promise<string | undefined> {
+    const resolved = this.resolve(name, input.args);
     if (!resolved) return `未知指令: ${this.prefix}${name}。输入 ${this.prefix}help 查看帮助。`;
 
-    const action = resolved.node.action;
-    // 纯分组节点（无 action）：返回 usage 提示
-    if (!action) {
-      return this.formatUsage(resolved.node, resolved.path);
+    const cmd = this.materialize(resolved.name);
+    if (!cmd.handler) {
+      return this.formatUsage(cmd);
     }
 
-    const parsed = this.parseArgsForNode(resolved.node, resolved.path, resolved.remainingArgs);
+    const parsed = this.parseArgs(cmd, resolved.remaining);
     if (typeof parsed === 'string') return parsed;
 
     if (this._guard) {
       const rejection = await this._guard({
-        // 使用完整路径做权限标识；guard 内部以名称匹配高危白名单，建议白名单也用冒号路径
-        name: resolved.path.join(':'),
+        name: cmd.name,
         type: 'command',
-        authority: resolved.effectiveAuthority,
-        safety: resolved.effectiveSafety,
-        permissions: resolved.permissions,
-        sessionId: cmdCtx.sessionId,
-        platform: cmdCtx.platform,
-        userId: cmdCtx.userId,
-        skipSafetyCheck: cmdCtx.skipSafetyCheck,
+        authority: cmd.authority,
+        safety: cmd.safety,
+        permissions: cmd.permissions,
+        sessionId: input.sessionId,
+        platform: input.platform,
+        userId: input.userId,
+        skipSafetyCheck: input.skipSafetyCheck,
       });
       if (rejection) return rejection;
     }
 
     try {
-      const subCtx: CommandContext = {
-        ...cmdCtx,
-        args: parsed.args,
-        operands: parsed.operands,
+      const argv: CommandArgv = {
+        session: {
+          sessionId: input.sessionId,
+          platform: input.platform,
+          userId: input.userId,
+          raw: input.raw,
+        },
         options: parsed.options,
       };
-      const result = await action(subCtx);
+      const result = await cmd.handler(argv, ...parsed.positionals);
       return result ?? undefined;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`指令 ${this.prefix}${resolved.path.join(' ')} 执行失败: ${message}`);
+      this.logger.error(`指令 ${this.prefix}${cmd.name} 执行失败: ${message}`);
       return `指令执行失败: ${message}`;
     }
   }
 
-  private formatUsage(node: CommandDefinition | SubcommandDefinition, path: string[]): string {
-    const head = `${this.prefix}${path.join(' ')}`;
-    if (node.usage) return node.usage;
-    const argText = node.arguments
-      ?.map(arg => {
-        const body = arg.variadic ? `...${arg.name}` : arg.name;
-        return arg.required ? `<${body}>` : `[${body}]`;
-      })
+  // ---- 内部：把 patches 合成有效 Command（含父级继承与 override） ----
+
+  private materialize(name: string): Command {
+    const node = this.nodes.get(name);
+    if (!node) throw new Error(`internal: node ${name} missing`);
+
+    // 父继承：沿 dot path 向上合并
+    let effAuthority = 1;
+    let effSafety: SafetyLevel = 'safe';
+    const inheritedPermissions: string[] = [];
+    const parts = name.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      const parent = parts.slice(0, i).join('.');
+      const p = this.nodes.get(parent);
+      const ovr = this.overrides.get(parent);
+      const pAuth = ovr?.authority ?? p?.baseAuthority;
+      const pSafety = ovr?.safety ?? p?.baseSafety;
+      if (pAuth !== undefined) effAuthority = pAuth;
+      if (pSafety !== undefined) effSafety = pSafety;
+      if (p?.basePermissions) inheritedPermissions.push(...p.basePermissions);
+    }
+
+    const ovr = this.overrides.get(name);
+    const baseAuth = node.baseAuthority ?? effAuthority;
+    const baseSafety = node.baseSafety ?? effSafety;
+    const auth = ovr?.authority ?? baseAuth;
+    const safety = ovr?.safety ?? baseSafety;
+    const permissions = unique([`command:${name}`, ...inheritedPermissions, ...(node.basePermissions ?? [])]);
+
+    return {
+      name,
+      pluginName: node.pluginName ?? 'unknown',
+      description: node.description ?? '',
+      baseAuthority: baseAuth,
+      baseSafety,
+      basePermissions: node.basePermissions ?? [],
+      authority: auth,
+      safety,
+      permissions,
+      aliases: [...node.aliases],
+      positionalArgs: [...node.positionalArgs],
+      options: [...node.options],
+      usage: node.usage,
+      examples: [...node.examples],
+      handler: node.handler,
+      overridden: !!ovr,
+      isGroup: !node.declared,
+    };
+  }
+
+  // ---- usage 自动格式化 ----
+
+  private formatUsage(cmd: Command): string {
+    if (cmd.usage) return cmd.usage;
+    const head = `${this.prefix}${cmd.name.replace(/\./g, ' ')}`;
+    const argText = cmd.positionalArgs
+      .map(a => (a.required ? `<${a.name}:${a.type}>` : `[${a.name}:${a.type}]`))
       .join(' ');
-    const optionText = node.options && node.options.length > 0 ? ' [options]' : '';
-    const subText = node.subcommands && node.subcommands.length > 0 && !node.action ? ' <subcommand>' : '';
-    const lines = [`用法: ${head}${subText}${argText ? ` ${argText}` : ''}${optionText}`, ''];
-    lines.push(`${node.description}`);
-    if (node.arguments && node.arguments.length > 0) {
+    const optionText = cmd.options.length > 0 ? ' [options]' : '';
+    const subs = this.directChildren(cmd.name);
+    const subText = subs.length > 0 && !cmd.handler ? ' <subcommand>' : '';
+    const lines: string[] = [`用法: ${head}${subText}${argText ? ` ${argText}` : ''}${optionText}`, ''];
+    lines.push(cmd.description);
+    if (cmd.positionalArgs.length > 0) {
       lines.push('', '参数：');
-      for (const arg of node.arguments) {
-        lines.push(
-          `  ${arg.required ? '<' : '['}${arg.name}${arg.required ? '>' : ']'} — ${arg.description ?? arg.type}`,
-        );
+      for (const a of cmd.positionalArgs) {
+        lines.push(`  ${a.required ? '<' : '['}${a.name}:${a.type}${a.required ? '>' : ']'}`);
       }
     }
-    if (node.options && node.options.length > 0) {
+    if (cmd.options.length > 0) {
       lines.push('', '选项：');
-      for (const opt of node.options) {
-        const aliases = toAliases(opt)
-          .map(a => (a.length === 1 ? `-${a}` : `--${a}`))
-          .join(', ');
-        const choices = opt.choices && opt.choices.length > 0 ? ` (${opt.choices.join('|')})` : '';
-        lines.push(`  --${opt.name}${aliases ? `, ${aliases}` : ''} — ${opt.description ?? opt.type}${choices}`);
+      for (const o of cmd.options) {
+        const flags = [`--${o.name}`, ...o.aliases.map(a => `-${a}`)].join(', ');
+        const val =
+          o.type === 'boolean' ? '' : o.valueOptional ? ` [${o.valueName ?? o.name}]` : ` <${o.valueName ?? o.name}>`;
+        const choices = o.choices && o.choices.length > 0 ? ` (${o.choices.join('|')})` : '';
+        lines.push(`  ${flags}${val} — ${o.description ?? o.type}${choices}`);
       }
     }
-    if (node.subcommands && node.subcommands.length > 0) {
+    if (subs.length > 0) {
       lines.push('', '可用子指令：');
-      for (const sub of node.subcommands) {
-        lines.push(`  ${sub.name} — ${sub.description}`);
+      for (const s of subs) {
+        const child = this.materialize(s);
+        lines.push(`  ${child.name.split('.').pop()} — ${child.description}`);
       }
     }
-    if (node.examples && node.examples.length > 0) {
+    if (cmd.examples && cmd.examples.length > 0) {
       lines.push('', '示例：');
-      for (const example of node.examples) lines.push(`  ${example}`);
+      for (const e of cmd.examples) lines.push(`  ${e}`);
     }
     return lines.join('\n');
   }
 
-  private parseArgsForNode(
-    node: CommandDefinition | SubcommandDefinition,
-    path: string[],
+  private directChildren(parent: string): string[] {
+    const prefix = `${parent}.`;
+    const out: string[] = [];
+    for (const k of this.nodes.keys()) {
+      if (k.startsWith(prefix)) {
+        const rest = k.slice(prefix.length);
+        if (!rest.includes('.')) out.push(k);
+      }
+    }
+    return out.sort();
+  }
+
+  // ---- 选项 + 位置参数 解析 ----
+
+  private parseArgs(
+    cmd: Command,
     rawArgs: string[],
-  ): ParsedCommandArgs | string {
-    const optionDefs = node.options ?? [];
-    const argumentDefs = node.arguments ?? [];
-    const options = this.defaultOptions(optionDefs);
-    const positionals: string[] = [];
+  ): { positionals: unknown[]; options: Record<string, unknown> } | string {
+    const options = this.defaultOptions(cmd.options);
+    const positionalTokens: string[] = [];
 
     for (let i = 0; i < rawArgs.length; i++) {
       const token = rawArgs[i];
       if (token === '--') {
-        positionals.push(...rawArgs.slice(i + 1));
+        positionalTokens.push(...rawArgs.slice(i + 1));
         break;
       }
       if (token.startsWith('--') && token.length > 2) {
         const eq = token.indexOf('=');
         const rawName = eq >= 0 ? token.slice(2, eq) : token.slice(2);
         const negated = rawName.startsWith('no-');
-        const name = negated ? rawName.slice(3) : rawName;
-        const def = findOption(optionDefs, name);
-        if (!def) return `未知选项: --${name}\n\n${this.formatUsage(node, path)}`;
+        const optName = negated ? rawName.slice(3) : rawName;
+        const def = findOption(cmd.options, optName);
+        if (!def) return `未知选项: --${optName}\n\n${this.formatUsage(cmd)}`;
         let rawValue = eq >= 0 ? token.slice(eq + 1) : undefined;
         if (def.type === 'boolean') {
           options[def.name] = negated ? false : rawValue === undefined ? true : parseBoolean(rawValue);
         } else {
           if (rawValue === undefined) {
+            if (def.valueOptional) {
+              options[def.name] = true;
+              continue;
+            }
             i += 1;
             rawValue = rawArgs[i];
           }
-          if (rawValue === undefined) return `选项 --${name} 缺少取值`;
+          if (rawValue === undefined) return `选项 --${optName} 缺少取值`;
           options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
         }
         continue;
       }
       if (token.startsWith('-') && token.length > 1) {
         const alias = token.slice(1);
-        const def = findOption(optionDefs, alias);
-        if (!def) return `未知选项: -${alias}\n\n${this.formatUsage(node, path)}`;
+        const def = findOption(cmd.options, alias);
+        if (!def) return `未知选项: -${alias}\n\n${this.formatUsage(cmd)}`;
         if (def.type === 'boolean') {
           options[def.name] = true;
         } else {
           i += 1;
           const rawValue = rawArgs[i];
-          if (rawValue === undefined) return `选项 -${alias} 缺少取值`;
+          if (rawValue === undefined) {
+            if (def.valueOptional) {
+              options[def.name] = true;
+              continue;
+            }
+            return `选项 -${alias} 缺少取值`;
+          }
           options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
         }
         continue;
       }
-      positionals.push(token);
+      positionalTokens.push(token);
     }
 
-    for (const def of optionDefs) {
-      if (def.required && options[def.name] === undefined) return `缺少必填选项: --${def.name}`;
+    for (const o of cmd.options) {
+      if (o.required && options[o.name] === undefined) return `缺少必填选项: --${o.name}`;
     }
 
-    const operands: Record<string, unknown> = {};
+    const positionals: unknown[] = [];
     let cursor = 0;
-    for (const def of argumentDefs) {
-      const values =
-        def.variadic || def.type === 'text' ? positionals.slice(cursor) : positionals.slice(cursor, cursor + 1);
+    for (const def of cmd.positionalArgs) {
+      const values = def.type === 'text' ? positionalTokens.slice(cursor) : positionalTokens.slice(cursor, cursor + 1);
       if (values.length === 0) {
         if (def.required) return `缺少必填参数: ${def.name}`;
+        positionals.push(undefined);
         continue;
       }
-      operands[def.name] = parseArgumentValue(def, values);
+      positionals.push(parsePositionalValue(def, values));
       cursor += values.length;
     }
 
-    return { args: positionals, operands, options };
+    return { positionals, options };
   }
 
-  private defaultOptions(optionDefs: CommandOptionDefinition[]): Record<string, unknown> {
+  private defaultOptions(opts: OptionSpec[]): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    for (const def of optionDefs) {
-      if (def.default !== undefined) out[def.name] = def.default;
-    }
+    for (const o of opts) if (o.default !== undefined) out[o.name] = o.default;
     return out;
   }
-
-  // ---- 批量注销 ----
-
-  unregisterByPlugin(pluginName: string): void {
-    for (const [name, cmd] of this.commands) {
-      if (cmd.pluginName === pluginName) {
-        this.commands.delete(name);
-        this.logger.debug(`注销指令: ${this.prefix}${name} (插件 ${pluginName} 卸载)`);
-      }
-    }
-  }
 }
+
+// ============================================================================
+// 工具函数
+// ============================================================================
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -480,29 +567,120 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
-function toAliases(def: CommandOptionDefinition): string[] {
-  if (!def.alias) return [];
-  return Array.isArray(def.alias) ? def.alias : [def.alias];
+/**
+ * 解析命令名字符串：
+ *   'memory.clear.all <key:string> [value:text]'
+ *   →  name = 'memory.clear.all'
+ *      positionalArgs = [{name:'key', type:'string', required:true}, {name:'value', type:'text', required:false}]
+ */
+function parseCommandName(raw: string): { name: string; positionalArgs: PositionalArgSpec[] } {
+  const trimmed = raw.trim();
+  const parts = trimmed.split(/\s+/);
+  const name = parts[0];
+  const positionalArgs: PositionalArgSpec[] = [];
+  for (const part of parts.slice(1)) {
+    const m = part.match(/^([<[])([a-z][a-z0-9-]*)(?::([a-z]+))?([>\]])$/i);
+    if (!m) throw new Error(`无法解析位置参数: "${part}"，期望 <name:type> 或 [name:type]`);
+    const required = m[1] === '<';
+    const argName = m[2];
+    const type = (m[3] ?? 'string') as PositionalArgType;
+    if (m[1] === '<' ? m[4] !== '>' : m[4] !== ']') {
+      throw new Error(`位置参数括号不匹配: "${part}"`);
+    }
+    if (!isPositionalType(type)) throw new Error(`未知位置参数类型: "${type}"`);
+    positionalArgs.push({ name: argName, type, required });
+  }
+  return { name, positionalArgs };
 }
 
-function findOption(defs: CommandOptionDefinition[], nameOrAlias: string): CommandOptionDefinition | undefined {
-  return defs.find(def => def.name === nameOrAlias || toAliases(def).includes(nameOrAlias));
+function isPositionalType(t: string): t is PositionalArgType {
+  return t === 'string' || t === 'number' || t === 'boolean' || t === 'text';
+}
+
+function validateName(name: string): void {
+  const parts = name.split('.');
+  for (const p of parts) validateNameSegment(p);
+}
+
+function validateNameSegment(seg: string): void {
+  if (!NAME_SEGMENT_RE.test(seg)) {
+    throw new Error(`非法命令名段: "${seg}"。期望小写字母开头，仅含 [a-z0-9-]`);
+  }
+}
+
+/**
+ * 解析选项 syntax：
+ *   '-v'                    → boolean flag, alias='v'
+ *   '-p <page:number>'      → number 选项, alias='p', 必带值, valueName='page'
+ *   '-p [page:number]'      → number 选项, alias='p', 值可选
+ *   '<page:number>'         → 仅长名，必带值
+ *   ''                      → boolean flag, 仅长名
+ */
+function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOptions): OptionSpec {
+  validateNameSegment(name);
+  const trimmed = (syntax ?? '').trim();
+  const aliases: string[] = [];
+  let type: OptionValueType = 'boolean';
+  let valueName: string | undefined;
+  let takesValue = false;
+  let valueOptional = false;
+
+  if (trimmed) {
+    const parts = trimmed.split(/\s+/);
+    for (const p of parts) {
+      // 别名：-x 或 --foo
+      if (p.startsWith('--') && p.length > 2) {
+        aliases.push(p.slice(2));
+        continue;
+      }
+      if (p.startsWith('-') && p.length > 1 && !/^[<[]/.test(p)) {
+        aliases.push(p.slice(1));
+        continue;
+      }
+      // 值占位符
+      const m = p.match(/^([<[])([a-z][a-z0-9-]*)(?::([a-z]+(?:\[\])?))?([>\]])$/i);
+      if (m) {
+        valueOptional = m[1] === '[';
+        valueName = m[2];
+        const declared = (m[3] ?? 'string').toLowerCase();
+        if (declared !== 'string' && declared !== 'number' && declared !== 'boolean' && declared !== 'string[]') {
+          throw new Error(`未知选项值类型: "${declared}"`);
+        }
+        type = declared as OptionValueType;
+        takesValue = true;
+        if (m[1] === '<' ? m[4] !== '>' : m[4] !== ']') {
+          throw new Error(`选项值括号不匹配: "${p}"`);
+        }
+      }
+    }
+  }
+
+  return {
+    name,
+    aliases,
+    type,
+    valueName,
+    takesValue,
+    valueOptional,
+    description: opts?.description,
+    default: opts?.default,
+    required: opts?.required === true,
+    choices: opts?.choices,
+  };
+}
+
+function findOption(defs: OptionSpec[], nameOrAlias: string): OptionSpec | undefined {
+  return defs.find(o => o.name === nameOrAlias || o.aliases.includes(nameOrAlias));
 }
 
 function parseBoolean(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+  const v = value.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
-function parseOptionValue(def: CommandOptionDefinition, rawValue: string, previous: unknown): unknown {
+function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown): unknown {
   if (def.type === 'number') return Number(rawValue);
   if (def.type === 'boolean') return parseBoolean(rawValue);
-  if (def.type === 'enum') {
-    if (def.choices && !def.choices.includes(rawValue)) {
-      throw new Error(`选项 --${def.name} 只能是: ${def.choices.join(', ')}`);
-    }
-    return rawValue;
-  }
   if (def.type === 'string[]') {
     const current = Array.isArray(previous) ? (previous as string[]) : [];
     return [
@@ -513,11 +691,15 @@ function parseOptionValue(def: CommandOptionDefinition, rawValue: string, previo
         .filter(Boolean),
     ];
   }
+  // string
+  if (def.choices && !def.choices.includes(rawValue)) {
+    throw new Error(`选项 --${def.name} 只能是: ${def.choices.join(', ')}`);
+  }
   return rawValue;
 }
 
-function parseArgumentValue(def: CommandArgumentDefinition, values: string[]): unknown {
-  const raw = def.variadic || def.type === 'text' ? values.join(' ') : values[0];
+function parsePositionalValue(def: PositionalArgSpec, values: string[]): unknown {
+  const raw = def.type === 'text' ? values.join(' ') : values[0];
   if (def.type === 'number') return Number(raw);
   if (def.type === 'boolean') return parseBoolean(raw);
   return raw;
