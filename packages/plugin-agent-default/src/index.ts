@@ -119,6 +119,32 @@ class DefaultAgent implements AgentService {
     return { llm, providerOverride, modelOverride };
   }
 
+  /**
+   * Bug F：按本会话实际使用的 (provider, model) 解析 contextLength。
+   *
+   * 直接调 `llm.getContextLength()` 走的是 router 默认 provider 的全局窗口，与会话切到
+   * 不同 model 后的真实窗口不一致——会触发 token 预算偏差，最坏情况下让请求实际超出
+   * 模型上下文导致截断/报错。
+   *
+   * router 实现了 `getContextLengthFor(model, provider)`（见 plugin-llm-router）；此处
+   * 通过 duck typing 调用，没有该方法的 LLMService 实现退化到 `getContextLength()`。
+   * 设为 public 以便 `token:request` 事件处理器（顶层 closure）也能复用同一逻辑。
+   */
+  async resolveContextLength(llm: LLMService, model?: string, provider?: string): Promise<number> {
+    if (!model && !provider) return llm.getContextLength();
+    const router = llm as LLMService & {
+      getContextLengthFor?(model?: string, provider?: string): Promise<number>;
+    };
+    if (typeof router.getContextLengthFor === 'function') {
+      try {
+        return await router.getContextLengthFor(model, provider);
+      } catch (err) {
+        this.logger.warn('getContextLengthFor 失败，回退到 getContextLength()：', err);
+      }
+    }
+    return llm.getContextLength();
+  }
+
   /** 生成 lane key：同 session + 同 source 共用一个 lane */
   private laneKey(sessionId: string, source?: string): string {
     return `${sessionId}::${source ?? 'user'}`;
@@ -422,11 +448,13 @@ class DefaultAgent implements AgentService {
       }
       const { llm, modelOverride, providerOverride } = resolved;
 
-      // 从 LLM 服务读取参数
+      // 从 LLM 服务读取参数。contextLength 必须按本会话实际使用的 (provider, model) 查询，
+      // 否则 router 默认走「首个 provider 的全局 contextLength」，与会话 model.set 后的真实窗口不一致，
+      // 会触发严重的 token 预算偏差（Bug F）。
       const temperature = llm.getTemperature();
       const maxTokens = llm.getMaxTokens();
       const maxToolIterations = this.maxToolIterations;
-      const contextLength = llm.getContextLength();
+      const contextLength = await this.resolveContextLength(llm, modelOverride, providerOverride);
       // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
       // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 占满物理上限才裁剪
       const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
@@ -1555,6 +1583,7 @@ type InternalAgent = {
     platform?: string,
     sessionId?: string,
   ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined>;
+  resolveContextLength(llm: LLMService, model?: string, provider?: string): Promise<number>;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   emitTokenUsage(
     sessionId: string,
@@ -1679,9 +1708,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const resolved = await agent.resolveLLM(data.platform, data.sessionId);
       if (!resolved) return;
-      const { llm } = resolved;
+      const { llm, modelOverride, providerOverride } = resolved;
 
-      const contextLength = llm.getContextLength();
+      const contextLength = await agent.resolveContextLength(llm, modelOverride, providerOverride);
       const maxTokens = llm.getMaxTokens();
       const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
