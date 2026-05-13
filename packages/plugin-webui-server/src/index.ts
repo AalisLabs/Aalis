@@ -10,7 +10,7 @@ import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
-import type { PersonaService } from '@aalis/plugin-persona';
+import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
