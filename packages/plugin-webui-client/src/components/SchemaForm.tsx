@@ -130,6 +130,83 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
 
 // ===== SchemaForm 组件 =====
 
+export interface LLMProviderEntry {
+  contextId: string;
+  label?: string;
+  models: Array<{ id: string; capabilities: string[]; contextLength?: number }>;
+}
+
+/**
+ * llm-ref 字段渲染：两个联动 select（provider → model）。
+ * value 形如 `{ provider: string; model: string }`，缺失字段以空串保存。
+ * 用户填写的 provider/model 即便不在列表中（provider 暂未注册等）也会被保留显示。
+ */
+function LLMRefField({
+  value,
+  onChange,
+  llmProviders,
+  onFetchLLMProviders,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+  llmProviders: LLMProviderEntry[] | undefined;
+  onFetchLLMProviders: () => void;
+}) {
+  useEffect(() => {
+    if (!llmProviders) onFetchLLMProviders();
+  }, []);
+
+  const ref = (value && typeof value === 'object') ? (value as { provider?: string; model?: string }) : {};
+  const provider = ref.provider ?? '';
+  const model = ref.model ?? '';
+
+  const providers = llmProviders ?? [];
+  const providerOptions = providers.map(p => ({
+    value: p.contextId,
+    label: p.label ? `${p.label} (${p.contextId})` : p.contextId,
+  }));
+  if (provider && !providerOptions.some(o => o.value === provider)) {
+    providerOptions.unshift({ value: provider, label: provider });
+  }
+
+  const currentProvider = providers.find(p => p.contextId === provider);
+  const modelOptions = (currentProvider?.models ?? []).map(m => ({
+    value: m.id,
+    label: m.capabilities.length > 0 ? `${m.id}  [${m.capabilities.join(',')}]` : m.id,
+  }));
+  if (model && !modelOptions.some(o => o.value === model)) {
+    modelOptions.unshift({ value: model, label: model });
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <select
+        className="config-edit-input"
+        style={{ flex: '1 1 200px', minWidth: 0 }}
+        value={provider}
+        onChange={e => onChange({ provider: e.target.value, model: '' })}
+      >
+        <option value="">— 选择提供者 —</option>
+        {providerOptions.map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <select
+        className="config-edit-input"
+        style={{ flex: '1 1 200px', minWidth: 0 }}
+        value={model}
+        onChange={e => onChange({ provider, model: e.target.value })}
+        disabled={!provider}
+      >
+        <option value="">{provider ? '— 选择模型 —' : '先选提供者'}</option>
+        {modelOptions.map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function SchemaFormField({
   field,
   fieldKey,
@@ -139,6 +216,8 @@ function SchemaFormField({
   onFetchModels,
   providerCache,
   onFetchProviders,
+  llmProviders,
+  onFetchLLMProviders,
 }: {
   field: SchemaField;
   fieldKey: string;
@@ -148,6 +227,8 @@ function SchemaFormField({
   onFetchModels: (service: string) => void;
   providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
   onFetchProviders: (service: string) => void;
+  llmProviders: LLMProviderEntry[] | undefined;
+  onFetchLLMProviders: () => void;
 }) {
   if (field.type === 'boolean') {
     return (
@@ -223,6 +304,12 @@ function SchemaFormField({
           </div>
         )}
       </div>
+    );
+  }
+
+  if (field.type === 'llm-ref') {
+    return (
+      <LLMRefField value={value} onChange={onChange} llmProviders={llmProviders} onFetchLLMProviders={onFetchLLMProviders} />
     );
   }
 
@@ -312,6 +399,8 @@ export function SchemaForm({
   onFetchModels,
   providerCache,
   onFetchProviders,
+  llmProviders,
+  onFetchLLMProviders,
 }: {
   schema: ConfigSchema;
   draft: Record<string, unknown>;
@@ -320,6 +409,8 @@ export function SchemaForm({
   onFetchModels: (service: string) => void;
   providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
   onFetchProviders: (service: string) => void;
+  llmProviders?: LLMProviderEntry[];
+  onFetchLLMProviders?: () => void;
 }) {
   return (
     <div className="config-edit-form">
@@ -342,6 +433,8 @@ export function SchemaForm({
                 onFetchModels={onFetchModels}
                 providerCache={providerCache}
                 onFetchProviders={onFetchProviders}
+                llmProviders={llmProviders}
+                onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
               />
             </div>
           );
@@ -415,6 +508,8 @@ export function SchemaForm({
                         onFetchModels={onFetchModels}
                         providerCache={providerCache}
                         onFetchProviders={onFetchProviders}
+                        llmProviders={llmProviders}
+                        onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
                       />
                     </div>
                     );
@@ -450,6 +545,8 @@ export function SchemaForm({
                   onFetchModels={onFetchModels}
                   providerCache={providerCache}
                   onFetchProviders={onFetchProviders}
+                  llmProviders={llmProviders}
+                  onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
                 />
               </div>
               );

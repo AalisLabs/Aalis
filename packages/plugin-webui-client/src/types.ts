@@ -82,7 +82,7 @@ export interface PluginInfo {
 
 // ----- ConfigSchema 类型 (镜像 core) -----
 
-export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea';
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea' | 'llm-ref';
 
 export interface SchemaField {
   type: SchemaFieldType;
