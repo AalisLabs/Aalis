@@ -1,5 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { ToolCallContext, ToolDefinition, ToolService, ToolSummary } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 
 // ===== 插件元数据 =====
@@ -193,7 +194,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   // 注册 search_tools 工具（初始定义，钩子中会动态更新 description）
-  ctx.registerTool({
+  useToolService(ctx).register({
     definition: buildSearchToolDef(),
     async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
       const query = String(args.query ?? '');

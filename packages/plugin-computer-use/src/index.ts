@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
+import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import * as axNative from './ax-native.js';
 import { CdpManager } from './cdp/client.js';
 import { createAdapter, detectPlatform, type PlatformAdapter } from './platform.js';
@@ -177,7 +178,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   }
 
   // 注册工具分组
-  ctx.registerToolGroup({
+  const baseTools = useToolService(ctx);
+  baseTools.registerGroup({
     name: 'computer-use',
     label: '桌面操控',
     description:
@@ -185,23 +187,15 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       '这些工具直接控制桌面，键鼠等，请谨慎使用。',
   });
 
-  // 创建带分组标记的上下文代理
-  const groupCtx = new Proxy(ctx, {
-    get(target, prop) {
-      if (prop === 'registerTool') {
-        return (tool: Parameters<Context['registerTool']>[0]) =>
-          target.registerTool({ ...tool, groups: [...(tool.groups || []), 'computer-use'] });
-      }
-      return Reflect.get(target, prop, target);
-    },
-  }) as Context;
+  // 带分组标记的 tools 视图
+  const tools = toolsWithGroups(baseTools, ['computer-use']);
 
   // CDP 管理器（web 自动化和应用启动共享）
   const cdpManager = config.webAutomation ? new CdpManager() : undefined;
 
   // 按配置注册各工具组
   if (config.screenshot) {
-    registerScreenshotTools(groupCtx, adapter, {
+    registerScreenshotTools(tools, adapter, {
       maxImageWidth: config.maxImageWidth,
       screenshotDir: resolve(process.cwd(), config.screenshotDir),
     });
@@ -209,38 +203,38 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   }
 
   if (config.interact) {
-    registerInteractTools(groupCtx, adapter);
+    registerInteractTools(tools, adapter);
     logger.info('智能交互工具已启用 (click, type_text, focus_app)');
   }
 
   if (config.mouse) {
-    registerMouseTools(groupCtx, adapter);
+    registerMouseTools(tools, adapter);
     logger.info('鼠标工具已启用 (mouse_drag, mouse_scroll)');
   }
 
   if (config.keyboard) {
-    registerKeyboardTools(groupCtx, adapter);
+    registerKeyboardTools(tools, adapter);
     logger.info('键盘工具已启用 (keyboard_press)');
   }
 
   if (config.window) {
-    registerWindowTools(groupCtx, adapter);
+    registerWindowTools(tools, adapter);
     logger.info('桌面管理工具已启用 (list_apps, window_resize)');
   }
 
   if (config.clipboard) {
-    registerClipboardTools(groupCtx, adapter);
+    registerClipboardTools(tools, adapter);
     logger.info('剪贴板工具已启用');
   }
 
   if (config.app) {
-    registerAppTools(groupCtx, adapter, cdpManager);
+    registerAppTools(tools, adapter, cdpManager);
     logger.info('应用管理工具已启用');
   }
 
   if (config.uiAutomation) {
     if (platformType === 'macos' && axNative.isAvailable()) {
-      registerUIAutomationTools(groupCtx);
+      registerUIAutomationTools(tools);
       logger.info('UI 元素树工具已启用 (ui_tree, ui_find, ui_element_at)');
     } else if (platformType === 'macos') {
       const loadErr = axNative.getLoadError();
@@ -252,7 +246,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   }
 
   if (config.webAutomation && cdpManager) {
-    registerWebAutomationTools(groupCtx, cdpManager);
+    registerWebAutomationTools(tools, cdpManager);
     logger.info('Web 自动化工具已启用 (web_connect, web_inspect, web_action, web_eval)');
   }
 

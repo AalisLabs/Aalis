@@ -11,8 +11,10 @@
  * - dispose 时关闭所有 client 连接（通过 ctx.onDispose）
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
+
 import type { ConfigSchema, Context, SafetyLevel } from '@aalis/core';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-tools-api 触发 declaration merging，使 ctx.registerTool 类型生效
 import '@aalis/plugin-tools-api';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -75,7 +77,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   // 注册分组：每个 enabled server 一个分组，让平台可按需启用
   for (const spec of servers) {
     if (spec.enabled === false) continue;
-    ctx.registerToolGroup({
+    useToolService(ctx).registerGroup({
       name: `mcp:${spec.id}`,
       label: `MCP / ${spec.id}`,
       description: `通过 plugin-mcp-client 桥接的远端 MCP server "${spec.id}"`,
@@ -133,7 +135,7 @@ async function connectServer(ctx: Context, spec: ServerSpec): Promise<void> {
       },
     };
 
-    ctx.registerTool({
+    useToolService(ctx).register({
       definition,
       groups: [`mcp:${spec.id}`],
       safety: spec.safety ?? 'safe',

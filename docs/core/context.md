@@ -110,7 +110,10 @@ ctx.middleware('agent:reply:before', async (data, next) => {
 ## 工具 API
 
 ```typescript
-ctx.registerTool({
+import { useToolService } from '@aalis/plugin-tools-api';
+
+const tools = useToolService(ctx);
+tools.register({
   definition: {
     type: 'function',
     function: { name: 'my_tool', description: '...', parameters: { ... } },
@@ -124,26 +127,43 @@ ctx.registerTool({
 ## 指令 API
 
 ```typescript
+import { useCommandService } from '@aalis/plugin-commands-api';
+
+const commands = useCommandService(ctx);
+
 // 简单指令
-ctx.command('ping', '测试连通性', async () => 'pong!');
-
-// 带参数和权限的指令
-ctx.command('echo', '回显消息', async (cmdCtx) => {
-  return cmdCtx.args.join(' ') || '(空)';
-}, { authority: 2 });
-
-// 声明式选项
-ctx.command('clear', '清空记忆', async (cmdCtx) => {
-  const types = cmdCtx.options?.type as string[] | undefined;
-  return clearMemory(types);
-}, {
-  options: [{ name: 'type', alias: 't', type: 'string[]', description: '清理类型' }],
+commands.command({
+  name: 'ping',
+  description: '测试连通性',
+  action: async () => 'pong!',
 });
 
-// 标记为高危指令
-ctx.command('restart', '重启应用', async () => { ... }, {
+// 带参数和权限的指令
+commands.command({
+  name: 'echo',
+  description: '回显消息',
+  authority: 2,
+  action: async (cmdCtx) => cmdCtx.args.join(' ') || '(空)',
+});
+
+// 声明式选项
+commands.command({
+  name: 'clear',
+  description: '清空记忆',
+  options: [{ name: 'type', alias: 't', type: 'string[]', description: '清理类型' }],
+  action: async (cmdCtx) => {
+    const types = cmdCtx.options?.type as string[] | undefined;
+    return clearMemory(types);
+  },
+});
+
+// 高危指令
+commands.command({
+  name: 'restart',
+  description: '重启应用',
   safety: 'dangerous',
   authority: 5,
+  action: async () => { ... },
 });
 ```
 
@@ -182,8 +202,8 @@ Context 作为唯一入口，使得 Aalis 的扩展模型非常统一：
 | 事件通知 | `ctx.on()` / `ctx.emit()` | 松耦合的发布/订阅 |
 | 流程拦截 | `ctx.middleware()` | 中间件管道，可修改数据或中断流程 |
 | 服务替换 | `ctx.provide()` | IoC 容器，同名服务按优先级竞争 |
-| AI 工具 | `ctx.registerTool()` | 注册 LLM 可调用的工具 |
-| 用户指令 | `ctx.command()` | 注册斜杠指令 |
+| AI 工具 | `useToolService(ctx).register()` | 注册 LLM 可调用的工具 |
+| 用户指令 | `useCommandService(ctx).command()` | 注册斜杠指令 |
 | API 代理 | `ctx.mixin()` | 将服务方法代理到 Context 上 |
 
 所有注册都返回 dispose 函数，且绑定到当前 Context 的 disposable 列表中——插件卸载时自动清理，无需手动管理。

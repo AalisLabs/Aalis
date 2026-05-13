@@ -1,6 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
 import { WebSearchCapabilities } from './types.js';
 import '@aalis/plugin-tools-api';
@@ -305,14 +306,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 注册工具分组
-  ctx.registerToolGroup({
+  useToolService(ctx).registerGroup({
     name: 'search',
     label: '网页搜索',
     description: '通过 Serper API 搜索互联网获取最新信息',
   });
 
   // 注册搜索工具
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['search'],
     definition: {
       type: 'function',

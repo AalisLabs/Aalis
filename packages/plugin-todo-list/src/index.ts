@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -90,14 +91,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (config.enabled === false) return;
 
   // 注册工具分组
-  ctx.registerToolGroup({
+  useToolService(ctx).registerGroup({
     name: 'todo',
     label: '任务计划',
     description: '创建和管理任务计划列表，拆分复杂任务并追踪进度',
   });
 
   // ---- manage_todo_list ----
-  ctx.registerTool({
+  useToolService(ctx).register({
     groups: ['todo'],
     definition: {
       type: 'function',

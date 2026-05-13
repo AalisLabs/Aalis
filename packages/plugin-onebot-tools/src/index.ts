@@ -4,7 +4,8 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive';
 import type { PlatformAdapter, PlatformService } from '@aalis/plugin-platform';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
+import type { ScopedToolService, ToolCallContext } from '@aalis/plugin-tools-api';
+import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -469,15 +470,8 @@ async function checkAdminPermission(
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
-  // 创建带分组标记的 Context 代理，所有通过此代理注册的工具自动归入 'onebot' 组
-  const groupedCtx = new Proxy(ctx, {
-    get(target, prop) {
-      if (prop === 'registerTool') {
-        return (tool: Parameters<Context['registerTool']>[0]) => target.registerTool({ ...tool, groups: ['onebot'] });
-      }
-      return Reflect.get(target, prop, target);
-    },
-  }) as Context;
+  const tools = useToolService(ctx);
+  const groupedTools = toolsWithGroups(tools, ['onebot']);
 
   // 仅当 OneBot 平台可用时才注册工具
   // 使用 ready 事件确保平台已加载
@@ -490,7 +484,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
 
     // 注册工具分组
-    ctx.registerToolGroup({
+    tools.registerGroup({
       name: 'onebot',
       label: 'OneBot 工具',
       description: 'QQ 群管理、群信息查询、消息交互等 OneBot 平台工具',
@@ -512,27 +506,27 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
     };
 
-    if (cfg.groupManagement.enabled) registerGroupManagementTools(groupedCtx);
-    if (cfg.groupInfo.enabled) registerGroupInfoTools(groupedCtx);
-    if (cfg.account.enabled) registerAccountTools(groupedCtx);
-    if (cfg.interaction.enabled) registerInteractionTools(groupedCtx);
-    if (cfg.messaging.enabled) registerMessagingTools(groupedCtx, !!cfg.messaging.allowCrossSession);
+    if (cfg.groupManagement.enabled) registerGroupManagementTools(ctx, groupedTools);
+    if (cfg.groupInfo.enabled) registerGroupInfoTools(ctx, groupedTools);
+    if (cfg.account.enabled) registerAccountTools(ctx, groupedTools);
+    if (cfg.interaction.enabled) registerInteractionTools(ctx, groupedTools);
+    if (cfg.messaging.enabled) registerMessagingTools(ctx, groupedTools, !!cfg.messaging.allowCrossSession);
     if (cfg.sessionHistory.enabled)
-      registerSessionHistoryTools(groupedCtx, {
+      registerSessionHistoryTools(ctx, groupedTools, {
         maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 30)),
         allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
         allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
         includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
       });
-    registerRequestTools(groupedCtx);
+    registerRequestTools(ctx, groupedTools);
   });
 }
 
 // ===== 群管理工具 =====
 
-function registerGroupManagementTools(ctx: Context): void {
+function registerGroupManagementTools(ctx: Context, tools: ScopedToolService): void {
   // ---- 群禁言（单人）----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -582,7 +576,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 全群禁言 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -612,7 +606,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 踢人 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -644,7 +638,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 主动退群 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -673,7 +667,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 设置群名片 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -705,7 +699,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 设置群名 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -735,7 +729,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 设置专属头衔 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -768,7 +762,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 设置管理员 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -800,7 +794,7 @@ function registerGroupManagementTools(ctx: Context): void {
   });
 
   // ---- 撤回消息 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -832,9 +826,9 @@ function registerGroupManagementTools(ctx: Context): void {
 
 // ===== 群信息查询工具 =====
 
-function registerGroupInfoTools(ctx: Context): void {
+function registerGroupInfoTools(ctx: Context, tools: ScopedToolService): void {
   // ---- 查看合并转发 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -885,7 +879,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 获取群信息 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -908,7 +902,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 获取群成员信息（user_id 可缺省查自身）----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -936,7 +930,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 获取群成员列表（支持搜索 + 分页）----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1004,7 +998,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 查询自身在当前群是否被禁言 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1069,7 +1063,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 列出所有当前被禁言的群（基于内存事件快照，跨会话可用） ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1105,7 +1099,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 获取消息 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1136,7 +1130,7 @@ function registerGroupInfoTools(ctx: Context): void {
   });
 
   // ---- 获取群荣誉信息 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1173,9 +1167,9 @@ function registerGroupInfoTools(ctx: Context): void {
 
 // ===== 账号 / 好友 / 群列表查询工具 =====
 
-function registerAccountTools(ctx: Context): void {
+function registerAccountTools(ctx: Context, tools: ScopedToolService): void {
   // ---- 群列表 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1231,7 +1225,7 @@ function registerAccountTools(ctx: Context): void {
   });
 
   // ---- 好友列表 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1286,7 +1280,7 @@ function registerAccountTools(ctx: Context): void {
   });
 
   // ---- 陌生人 / 任意 QQ 号信息 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1314,7 +1308,7 @@ function registerAccountTools(ctx: Context): void {
   });
 
   // ---- 机器人自身账号信息 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1331,7 +1325,7 @@ function registerAccountTools(ctx: Context): void {
   });
 
   // ---- 删除好友 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1364,9 +1358,9 @@ function registerAccountTools(ctx: Context): void {
 
 // ===== 特殊交互工具 =====
 
-function registerInteractionTools(ctx: Context): void {
+function registerInteractionTools(ctx: Context, tools: ScopedToolService): void {
   // ---- 戳一戳 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1401,7 +1395,7 @@ function registerInteractionTools(ctx: Context): void {
   });
 
   // ---- 发送好友赞 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1430,7 +1424,7 @@ function registerInteractionTools(ctx: Context): void {
   });
 
   // ---- 群打卡 ----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1469,9 +1463,9 @@ interface OneBotProactiveRateGate {
   checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string };
 }
 
-function registerMessagingTools(ctx: Context, allowCrossSession: boolean): void {
+function registerMessagingTools(ctx: Context, tools: ScopedToolService, allowCrossSession: boolean): void {
   // ---- 主动发送消息（任意私聊 / 群聊）----
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1587,8 +1581,8 @@ interface OneBotSessionHistoryConfig {
   includeArchivedDefault: boolean;
 }
 
-function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConfig): void {
-  ctx.registerTool({
+function registerSessionHistoryTools(ctx: Context, tools: ScopedToolService, cfg: OneBotSessionHistoryConfig): void {
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1637,7 +1631,7 @@ function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConf
     },
   });
 
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1720,7 +1714,7 @@ function registerSessionHistoryTools(ctx: Context, cfg: OneBotSessionHistoryConf
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
 
-function registerRequestTools(ctx: Context): void {
+function registerRequestTools(ctx: Context, tools: ScopedToolService): void {
   /** 找到支持 handleFriendRequest 的 OneBot 适配器 */
   function findRequestAdapter(ctx: Context):
     | (PlatformAdapter & {
@@ -1742,7 +1736,7 @@ function registerRequestTools(ctx: Context): void {
     };
   }
 
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -1770,7 +1764,7 @@ function registerRequestTools(ctx: Context): void {
     },
   });
 
-  ctx.registerTool({
+  tools.register({
     definition: {
       type: 'function',
       function: {

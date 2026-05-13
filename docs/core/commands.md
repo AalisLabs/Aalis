@@ -115,19 +115,24 @@ commands.getOverrides();
 指令可在 `subcommands` 中声明子指令，子指令本身可再含 `subcommands` 形成任意层级：
 
 ```typescript
-ctx.command('clear', '清空当前会话', async (c) => runClear(c, 'session'),
-  {
-    options: [
-      { name: 'type', alias: 't', type: 'string[]', description: '清理类型' },
-    ],
-    subcommands: [
-      { name: 'list', description: '列出可清理类型', action: async () => listClearTypes() },
-      { name: 'all', description: '【危险】全局清空',
-        authority: 3, safety: 'dangerous',
-        options: [{ name: 'type', alias: 't', type: 'string[]' }],
-        action: async (c) => runClear(c, 'all') },
-    ],
-  });
+import { useCommandService } from '@aalis/plugin-commands-api';
+
+const commands = useCommandService(ctx);
+commands.command({
+  name: 'clear',
+  description: '清空当前会话',
+  options: [
+    { name: 'type', alias: 't', type: 'string[]', description: '清理类型' },
+  ],
+  subcommands: [
+    { name: 'list', description: '列出可清理类型', action: async () => listClearTypes() },
+    { name: 'all', description: '【危险】全局清空',
+      authority: 3, safety: 'dangerous',
+      options: [{ name: 'type', alias: 't', type: 'string[]' }],
+      action: async (c) => runClear(c, 'all') },
+  ],
+  action: async (c) => runClear(c, 'session'),
+});
 ```
 
 解析与路由：
