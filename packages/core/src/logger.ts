@@ -15,7 +15,7 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 };
 
 /** 默认环形 buffer 容量（条）。webui 日志面板/CLI 启动回放从这里取最近 N 条。 */
-const DEFAULT_LOG_BUFFER_MAX = 2000;
+export const DEFAULT_LOG_BUFFER_MAX = 2000;
 
 /**
  * 日志中枢：纯 pub-sub 通道。

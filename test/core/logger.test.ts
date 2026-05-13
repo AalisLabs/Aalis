@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Logger, LogHub } from '../../packages/core/src/index.js';
+import { DEFAULT_LOG_BUFFER_MAX, Logger, LogHub } from '../../packages/core/src/index.js';
 
 describe('LogHub', () => {
   it('Logger 写入 → LogHub.push → 触发 onEntry 监听器', () => {
@@ -34,13 +34,16 @@ describe('LogHub', () => {
     expect(seen).toEqual(['warn', 'error']);
   });
 
-  it('buffer 默认上限 2000 条，循环覆盖', () => {
+  it('buffer 默认上限 DEFAULT_LOG_BUFFER_MAX 条，循环覆盖', () => {
     const hub = new LogHub();
     const log = new Logger('t', 'debug', hub);
-    for (let i = 0; i < 2100; i++) log.info(`msg-${i}`);
-    expect(hub.getBuffer().length).toBe(2000);
-    expect(hub.getBuffer()[0].message).toBe('msg-100');
-    expect(hub.getBuffer()[1999].message).toBe('msg-2099');
+    const cap = DEFAULT_LOG_BUFFER_MAX;
+    const overflow = 100;
+    for (let i = 0; i < cap + overflow; i++) log.info(`msg-${i}`);
+    const buf = hub.getBuffer();
+    expect(buf.length).toBe(cap);
+    expect(buf[0].message).toBe(`msg-${overflow}`);
+    expect(buf[cap - 1].message).toBe(`msg-${cap + overflow - 1}`);
   });
 
   it('bufferMax 可构造指定 + setBufferMax 动态调整', () => {
