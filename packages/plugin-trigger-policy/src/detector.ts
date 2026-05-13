@@ -1,5 +1,5 @@
 import type { Context } from '@aalis/core';
-import type { PersonaService } from '@aalis/plugin-persona';
+import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { TriggerPolicyConfig } from './config.js';
 
 // PersonaService 仅用于 getBotNames（读取昵称/名字）。mute 关键词统一由 trigger-policy 下发配置，

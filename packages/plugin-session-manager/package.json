@@ -11,7 +11,7 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
-    "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-persona-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
