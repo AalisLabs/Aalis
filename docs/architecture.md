@@ -95,7 +95,7 @@ App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
 
 ## 核心扩展机制
 
-Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
+Aalis 提供三种互补的扩展手段，覆盖不同粒度的定制需求：
 
 ### 1. 中间件管道 (Hooks)
 
@@ -131,16 +131,7 @@ ctx.provide('agent', myAgent, { capabilities: ['multi-turn'], priority: 20 });
 ctx.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
 ```
 
-### 4. Context Mixin
-
-将服务方法直接代理到 Context 原型上，让所有插件都可以像调用内置方法一样使用：
-
-```typescript
-ctx.mixin('scheduler', ['schedule', 'cron']);
-// 之后任何 Context 实例都可以调用 ctx.schedule(...)
-```
-
-### 5. Declaration Merging
+### 4. Declaration Merging
 
 第三方插件可通过 TypeScript 声明合并来扩展核心类型：
 
@@ -202,18 +193,33 @@ disabled ←─(手动禁用)─ active
   └─(手动启用)─→ pending → ...
 ```
 
-### Soft Reload 机制
+### 统一状态机：`recompute(reason)`
 
-当服务注册/移除时触发 soft reload（固定点迭代）：
+PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)`。所有生命周期路径
+（服务注册/移除、启用/禁用、配置更新、bounce、关机）都被归一为 `RecomputeReason` 后
+汇入同一状态机。
 
-1. **Phase 1**: 停用所有 required 依赖不满足的 active 插件 → pending
-2. **Phase 2**: 尝试激活所有 pending 插件
-3. **Phase 3**: 检查必需服务缺失时自动恢复（`ensureServiceProvider`）
-4. **Phase 4**: 发出 `plugins:changed` 事件
+| Reason | 触发场景 |
+|---|---|
+| `service-up` | `service:registered` 反应式调用 |
+| `service-down` | `service:unregistered` 反应式调用；optional 依赖也会被 bounce 以重新 apply |
+| `plugin-state-changed` | enable/disable/updateConfig/bounce 后调用（`softReload()` 薄壳） |
+| `shutdown` | `App.stop()` 调用（`stopAll()` 薄壳） |
 
-### 依赖与服务恢复
+#### 单轮两阶段（拓扑保证）
 
-`ensureServiceProvider(serviceName)` 会搜索所有 pending 插件中能 `provides` 该服务的插件，并尝试递归激活其依赖链。
+每轮 recompute 先按 provider→consumer 拓扑排序（Kahn），然后：
+
+1. **Phase A 反向遍历 dispose**：消费者先于提供者 dispose，保证 dispose hook 访问依赖服务安全。
+2. **Phase B 正向遍历 activate**（非 shutdown）：提供者先于消费者 active。
+
+如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到 `maxRounds=20`。`service-up` /
+`service-down` 在第二轮起退化为 `plugin-state-changed`，避免无限 optional bounce。
+
+### 服务恢复
+
+`recompute` 收尾会检查 `requiredServices` 列表，对仍缺失的服务调用 `ensureServiceProvider(name)`：
+在所有 pending 插件中查找能 `provides` 该服务的一个，递归激活其依赖链。
 
 ### 沙盒与隔离作用域
 

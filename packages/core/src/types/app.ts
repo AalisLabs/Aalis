@@ -1,7 +1,7 @@
 // ----- App 服务接口 -----
 
-import type { PluginEntry, PluginState } from '../plugin.js';
 import type { ConfigSchema } from './core.js';
+import type { PluginEntry, PluginState } from './plugin.js';
 
 /**
  * App 生命周期 + 配置 + 市场 接口
