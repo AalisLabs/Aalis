@@ -30,6 +30,29 @@ pnpm -r test        # 单元测试（vitest）
 CI（`.github/workflows/ci.yml`）执行 `pnpm ci`，任何 Biome **error** 都会阻断合并。
 warnings 不阻断但会审阅。
 
+### 2.1 pre-push 自动守门（推荐）
+
+仓库装了 husky，`pnpm install` 时会自动启用 `.husky/pre-push` hook：
+
+```
+git push   →   build → test → biome → knip   全过才放行
+```
+
+这等价于本地复现 CI 的所有阻断项，所以**只要本地能 push，CI 基本就过**。
+任何一步失败 push 被拒绝。手动想跑相同检查：
+
+```sh
+pnpm preflight     # = build + test + biome + knip
+```
+
+紧急情况绕过：`git push --no-verify`（请确认 CI 仍会兜底 fail）。
+
+### 2.2 编写测试的纪律
+
+- **不要硬编码内部常量**（如 `expect(buf.length).toBe(2000)`）。改成引用导出的常量或断言性质（`toBeGreaterThan` 等），避免改默认值时连锁断 N 个测试。
+- 新增 export 后请在本地 `pnpm exec knip` 验证无 unused，CI 会卡这个。
+- 改 `*.tsx`/前端样式后即使本地能跑也要 `pnpm exec biome check .`，因为 biome 还做 lint 不只是 format。
+
 ## 3. 代码风格
 
 - 由 [Biome](https://biomejs.dev) 自动管理：`pnpm format` 写格式，`pnpm lint:fix` 自动修复可修项。
