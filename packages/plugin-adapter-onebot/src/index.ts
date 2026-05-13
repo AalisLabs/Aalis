@@ -133,7 +133,7 @@ export const configSchema: ConfigSchema = {
         label: '摘要模型',
         default: '',
         dynamicOptions: 'llm',
-        description: '留空使用默认 LLM 服务的默认模型；选定后通过 LLMRouter 路由到对应 provider。建议挑便宜/快的模型。',
+        description: '留空使用默认 LLM 服务；选定后按 model ref 直接定位到对应 provider/model entry。建议挑便宜/快的模型。',
       },
       summaryMaxChars: {
         type: 'number',

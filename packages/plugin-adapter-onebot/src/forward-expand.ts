@@ -1,7 +1,6 @@
 import type { Context } from '@aalis/core';
 import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
-import type { LLMService } from '@aalis/plugin-llm-api';
-import { parseModelRef } from '@aalis/plugin-llm-api';
+import { parseModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { buildEnvelope, expandForward } from './forward.js';
 import type { OneBotMessageSegment } from './types.js';
@@ -123,12 +122,13 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
-    const llm = ctx.getService<LLMService>('llm');
     const summaryRef = parseModelRef(forwardCfg.summaryModel || undefined);
-    if (!llm || typeof llm.chat !== 'function') {
+    const entry = resolveLLMModel(ctx, summaryRef, ['chat']);
+    if (!entry) {
       ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
       return null;
     }
+    const llm = entry.instance;
 
     const inputLimit = 8000;
     const trimmedInput = text.length > inputLimit ? `${text.slice(0, inputLimit)}\n…（原文已截断）` : text;
@@ -151,8 +151,6 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         temperature: 0.3,
         think: false,
         maxTokens: Math.max(800, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
-        ...(summaryRef.provider ? { provider: summaryRef.provider } : {}),
-        ...(summaryRef.model ? { model: summaryRef.model } : {}),
       });
       const out = (resp.content ?? '').trim();
       if (!out) {
