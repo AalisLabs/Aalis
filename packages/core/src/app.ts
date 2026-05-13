@@ -288,6 +288,43 @@ export class App {
   }
 
   /**
+   * 增量重载单个插件：从磁盘重新 import + 替换 module 引用 + softReload。
+   *
+   * - 找不到 descriptor 或没有 pluginLoader 时退化为"仅 bounce 现有 module"（即重新 apply 同一份代码）。
+   * - 下游依赖该插件 provided 服务的插件会在短暂窗口内 bounce 后自动重激活。
+   * - 多实例 (`name:suffix`) 场景下仅作用于指定 instanceId，其他同 module 实例不受影响。
+   */
+  async reloadPlugin(name: string): Promise<boolean> {
+    const entry = this.plugins.getPlugin(name);
+    if (!entry) {
+      this.logger.warn(`reloadPlugin: 插件 "${name}" 未注册`);
+      return false;
+    }
+
+    let newModule: PluginModule | undefined;
+    const moduleName = entry.module.name;
+    const desc = this.discoveredCache.get(moduleName);
+    if (desc && this.pluginLoader) {
+      try {
+        const mod = this.pluginLoader.reload
+          ? await this.pluginLoader.reload(desc)
+          : await this.pluginLoader.load(desc);
+        if (mod && typeof mod.apply === 'function') {
+          newModule = mod;
+        } else {
+          this.logger.warn(`reloadPlugin "${name}": 模块未导出有效 apply()，跳过 import 改用现有 module bounce`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`reloadPlugin "${name}" 重新加载模块失败: ${message}`);
+        return false;
+      }
+    }
+
+    return this.plugins.bouncePlugin(name, newModule);
+  }
+
+  /**
    * 保存当前配置（委托给 configProvider；无 provider 时静默忽略）。
    */
   saveConfig(): void {

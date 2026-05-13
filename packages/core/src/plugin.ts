@@ -308,6 +308,35 @@ export class PluginManager {
   }
 
   /**
+   * 增量重载单个插件：dispose 旧 ctx，可选替换 module 引用，转为 pending 后
+   * 走 softReload 让依赖该插件 provided 服务的下游插件自动级联 bounce。
+   *
+   * 不负责"重新从磁盘 import"——那是宿主层（App.reloadPlugin）的职责，因为
+   * PluginManager 不感知 pluginLoader / descriptor。
+   *
+   * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
+   */
+  async bouncePlugin(name: string, newModule?: PluginModule): Promise<boolean> {
+    const entry = this.plugins.get(name);
+    if (!entry) return false;
+    if (entry.state === 'disabled') {
+      this.logger.warn(`bouncePlugin: 插件 "${name}" 处于 disabled 态，跳过`);
+      return false;
+    }
+
+    if (entry.state === 'active' && entry.context) {
+      entry.context.dispose();
+      entry.context = undefined;
+      this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+    }
+    if (newModule) entry.module = newModule;
+    entry.state = 'pending';
+    entry.error = undefined;
+    await this.softReload();
+    return true;
+  }
+
+  /**
    * 基于已注册的 reusable 插件创建新实例
    *
    * @param moduleName 原始模块名（如 `@aalis/plugin-openai`）
