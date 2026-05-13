@@ -1,7 +1,7 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { AppService, ConfigSchema, Context } from '@aalis/core';
-import type { CommandContext } from '@aalis/plugin-commands-api';
+import type { AppService, ConfigSchema, Context, SafetyLevel } from '@aalis/core';
+import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
@@ -100,7 +100,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 加载指令覆盖配置
   const cmdOverrides = ctx.config.get('commandOverrides');
-  if (cmdOverrides) commands.loadOverrides(cmdOverrides as Record<string, { authority?: number; safety?: string }>);
+  if (cmdOverrides)
+    commands.loadOverrides(cmdOverrides as Record<string, { authority?: number; safety?: SafetyLevel }>);
 
   // 配置指令系统
   commands.prefix = (config.commandPrefix as string) ?? '/';
@@ -151,43 +152,47 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== 内置指令 =====
 
-  useCommandService(ctx).command('help', '显示可用指令列表', async () => {
-    const nodes = commands.getAllNodes();
-    const lines = ['**可用指令：**', ''];
-    for (const n of nodes) {
-      const indent = '  '.repeat(n.depth);
-      const display = n.depth === 0 ? `\`${commands.prefix}${n.name}\`` : `\`${n.name}\``;
-      const tag = n.hasSubcommands && !n.hasAction ? '（分组）' : '';
-      lines.push(`${indent}- ${display} — ${n.description}${tag}`);
-    }
-    return lines.join('\n');
-  });
+  useCommandService(ctx)
+    .command('help', '显示可用指令列表')
+    .action(async () => {
+      const nodes = commands.getAll();
+      const lines = ['**可用指令：**', ''];
+      for (const n of nodes) {
+        const depth = n.name.split('.').length - 1;
+        const indent = '  '.repeat(depth);
+        const display = depth === 0 ? `\`${commands.prefix}${n.name}\`` : `\`${n.name.split('.').pop()}\``;
+        const tag = n.isGroup ? '（分组）' : '';
+        lines.push(`${indent}- ${display} — ${n.description}${tag}`);
+      }
+      return lines.join('\n');
+    });
 
-  useCommandService(ctx).command('status', '显示系统状态', async () => {
-    const lines = ['**系统状态：**', ''];
-    const checks = [
-      ['WebUI Server', ctx.hasService('webui-server')],
-      ['CLI', ctx.hasService('cli')],
-      ['LLM 服务', ctx.hasService('llm')],
-      ['Agent', ctx.hasService('agent')],
-      ['记忆服务', ctx.hasService('memory')],
-      ['人格服务', ctx.hasService('persona')],
-      ['Embedding', ctx.hasService('embedding')],
-      ['向量库', ctx.hasService('vectorstore')],
-    ] as const;
-    for (const [label, ok] of checks) {
-      lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
-    }
-    const tools = ctx.getService<ToolService>('tools');
-    lines.push(`- 已注册工具: ${tools ? tools.getAll().length : 0} 个`);
-    lines.push(`- 已注册指令: ${commands.getAll().length} 个`);
-    return lines.join('\n');
-  });
+  useCommandService(ctx)
+    .command('status', '显示系统状态')
+    .action(async () => {
+      const lines = ['**系统状态：**', ''];
+      const checks = [
+        ['WebUI Server', ctx.hasService('webui-server')],
+        ['CLI', ctx.hasService('cli')],
+        ['LLM 服务', ctx.hasService('llm')],
+        ['Agent', ctx.hasService('agent')],
+        ['记忆服务', ctx.hasService('memory')],
+        ['人格服务', ctx.hasService('persona')],
+        ['Embedding', ctx.hasService('embedding')],
+        ['向量库', ctx.hasService('vectorstore')],
+      ] as const;
+      for (const [label, ok] of checks) {
+        lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
+      }
+      const tools = ctx.getService<ToolService>('tools');
+      lines.push(`- 已注册工具: ${tools ? tools.getAll().length : 0} 个`);
+      lines.push(`- 已注册指令: ${commands.getAll().length} 个`);
+      return lines.join('\n');
+    });
 
-  useCommandService(ctx).command(
-    'shutdown',
-    '关闭应用',
-    async () => {
+  useCommandService(ctx)
+    .command('shutdown', '关闭应用', { authority: 5, safety: 'dangerous' })
+    .action(async () => {
       const app = ctx.getService<AppService>('app');
       if (!app) return '无法访问应用服务';
       setTimeout(async () => {
@@ -195,21 +200,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         process.exit(0);
       }, 500);
       return '正在关闭应用…';
-    },
-    { authority: 5, safety: 'dangerous' },
-  );
+    });
 
-  useCommandService(ctx).command(
-    'restart',
-    '重启应用',
-    async () => {
+  useCommandService(ctx)
+    .command('restart', '重启应用', { authority: 5, safety: 'dangerous' })
+    .action(async () => {
       const app = ctx.getService<AppService>('app');
       if (!app) return '无法访问应用服务';
       app.restart();
       return '正在重启应用…';
-    },
-    { authority: 5, safety: 'dangerous' },
-  );
+    });
 
   // ===== /clear —— 清空记忆 =====
   // 默认清当前会话；全局清理通过显式危险子指令 /clear all 进入，避免把高危语义藏在普通选项里。
@@ -302,55 +302,36 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`).join('\n');
   }
 
-  async function runClearFromOptions(cmdCtx: CommandContext, scope: ClearScope): Promise<string> {
-    if (cmdCtx.args.length > 0) {
-      return [
-        `未知参数: ${cmdCtx.args.join(' ')}`,
-        '',
-        '使用 /clear list 查看可清理类型；使用 /help 查看完整用法。',
-      ].join('\n');
-    }
+  async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string> {
     let types: string[] | undefined;
     try {
-      types = normalizeClearTypes(cmdCtx.options?.type);
+      types = normalizeClearTypes(argv.options.type);
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
     }
-    return runClear(cmdCtx, scope, types);
+    return runClear({ sessionId: argv.session.sessionId }, scope, types);
   }
 
-  useCommandService(ctx).command(
-    'clear',
-    '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型',
-    async cmdCtx => runClearFromOptions(cmdCtx, 'session'),
-    {
-      options: [
-        {
-          name: 'type',
-          alias: 't',
-          type: 'string[]',
-          description: `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`,
-        },
-      ],
-      examples: ['/clear', '/clear --type context,summary', '/clear -t vector -t image', '/clear all --type all'],
-      subcommands: [
-        { name: 'list', description: '列出可清理类型', action: async () => renderClearTypeList() },
-        {
-          name: 'all',
-          description: '【危险】按 --type 清空全部会话；未指定类型时清空全部类型',
-          authority: 3,
-          safety: 'dangerous',
-          options: [
-            {
-              name: 'type',
-              alias: 't',
-              type: 'string[]',
-              description: `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`,
-            },
-          ],
-          action: async c => runClearFromOptions(c, 'all'),
-        },
-      ],
-    },
-  );
+  const clearTypeOptDesc = `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`;
+
+  useCommandService(ctx)
+    .command('clear', '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型')
+    .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
+    .example('/clear')
+    .example('/clear --type context,summary')
+    .example('/clear -t vector -t image')
+    .example('/clear all --type all')
+    .action(async argv => runClearFromOptions(argv, 'session'));
+
+  useCommandService(ctx)
+    .command('clear.list', '列出可清理类型')
+    .action(async () => renderClearTypeList());
+
+  useCommandService(ctx)
+    .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {
+      authority: 3,
+      safety: 'dangerous',
+    })
+    .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
+    .action(async argv => runClearFromOptions(argv, 'all'));
 }

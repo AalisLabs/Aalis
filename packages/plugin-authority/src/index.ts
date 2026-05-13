@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { AppService, ConfigManager, Context, Logger } from '@aalis/core';
+import type { AppService, ConfigManager, Context, Logger, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
@@ -356,47 +356,35 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
   // ===== 权限指令 =====
 
   // /grant — 设置用户权限等级
-  cmds.command(
-    'grant',
-    '设置用户权限 (用法: grant <platform:userId> <level>)',
-    async cmdCtx => {
-      if (cmdCtx.args.length < 2) {
-        const prefix = ctx.getService<CommandService>('commands')!.prefix;
-        return `用法: ${prefix}grant <platform:userId> <level>`;
-      }
-      const [target, levelStr] = cmdCtx.args;
-      const level = parseInt(levelStr, 10);
-      if (Number.isNaN(level) || level < 0) {
-        return '权限等级必须是非负整数。';
-      }
-      const callerAuth = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
-      if (level >= callerAuth) {
-        return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
-      }
-      const sep = target.indexOf(':');
-      if (sep < 1) {
-        return '目标格式: <platform:userId>，例如 onebot:12345';
-      }
-      const platform = target.slice(0, sep);
-      const userId = target.slice(sep + 1);
-      authority.setAuthority(platform, userId, level);
+  cmds
+    .command('grant <target:string> <level:number>', '设置用户权限等级', { authority: 2 })
+    .example('/grant onebot:12345 2')
+    .action(async (argv, target, level) => {
+      const t = target as string;
+      const lvl = level as number;
+      if (Number.isNaN(lvl) || lvl < 0) return '权限等级必须是非负整数。';
+      const callerAuth = authority.getAuthority(argv.session.platform, argv.session.userId);
+      if (lvl >= callerAuth) return `不能将权限设置为 >= 您自身的等级 (${callerAuth})。`;
+      const sep = t.indexOf(':');
+      if (sep < 1) return '目标格式: <platform:userId>，例如 onebot:12345';
+      const platform = t.slice(0, sep);
+      const userId = t.slice(sep + 1);
+      authority.setAuthority(platform, userId, lvl);
       authority.save();
-      return `已将 ${target} 的权限等级设置为 ${level}。`;
-    },
-    { authority: 2 },
-  );
+      return `已将 ${t} 的权限等级设置为 ${lvl}。`;
+    });
 
   // /authority — 查看当前用户权限等级
-  cmds.command('authority', '查看自己或指定用户的权限等级', async cmdCtx => {
-    if (cmdCtx.args.length > 0) {
-      const target = cmdCtx.args[0];
-      const sep = target.indexOf(':');
+  cmds.command('authority [target:string]', '查看自己或指定用户的权限等级').action(async (argv, target) => {
+    const t = target as string | undefined;
+    if (t) {
+      const sep = t.indexOf(':');
       if (sep < 1) return '目标格式: <platform:userId>';
-      const level = authority.getAuthority(target.slice(0, sep), target.slice(sep + 1));
-      return `${target} 的权限等级: ${level}`;
+      const level = authority.getAuthority(t.slice(0, sep), t.slice(sep + 1));
+      return `${t} 的权限等级: ${level}`;
     }
-    const level = authority.getAuthority(cmdCtx.platform, cmdCtx.userId);
-    const isOwner = authority.isOwner(cmdCtx.platform, cmdCtx.userId);
+    const level = authority.getAuthority(argv.session.platform, argv.session.userId);
+    const isOwner = authority.isOwner(argv.session.platform, argv.session.userId);
     return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
   });
 }
@@ -410,8 +398,10 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     const users = auth?.listUsers() ?? [];
     const owners: Array<{ platform: string; userId: string }> = ctx.config.get('owners') ?? [];
     const overrides = ctx.getService<CommandService>('commands')?.getOverrides() ?? {};
-    // 扁平化所有指令节点（含递归子指令），按深度优先顺序，便于 UI 表格渲染
-    const cmdNodes = ctx.getService<CommandService>('commands')?.getAllNodes() ?? [];
+    // 扁平化所有指令节点，按 dot 名顺序排列，便于 UI 表格渲染
+    const cmdNodes = ctx.getService<CommandService>('commands')?.getAll() ?? [];
+    const commandPrefix = ctx.getService<CommandService>('commands')?.prefix ?? '/';
+    const cmdNames = new Set(cmdNodes.map(n => n.name));
     const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     // 当前已注册的平台 contextId 列表（用于 WebUI 下拉选择，避免手写）
     const platformEntries = ctx.serviceContainer?.getEntries?.('platform') ?? [];
@@ -430,32 +420,38 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
       permissionPolicy: ctx.config.get('permissionPolicy') ?? {},
       dangerousGrants: auth?.listDangerousGrants() ?? [],
-      commandPrefix: ctx.getService<CommandService>('commands')?.prefix ?? '/',
-      commands: cmdNodes.map(n => ({
-        // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'clear:all'
-        key: n.key,
-        // 兼容字段：旧前端使用 c.name 做 React key —— 这里给完整 key
-        name: n.key,
-        // 用于显示，如 '/clear nuke'
-        displayName: `${ctx.getService<CommandService>('commands')?.prefix ?? '/'}${n.path.join(' ')}`,
-        // 路径段名（'nuke'）用于子行紧凑显示
-        leafName: n.name,
-        path: n.path,
-        depth: n.depth,
-        isRoot: n.isRoot,
-        hasSubcommands: n.hasSubcommands,
-        hasAction: n.hasAction,
-        description: n.description,
-        authority: n.authority,
-        safety: n.safety,
-        permissions: n.permissions,
-        baseAuthority: n.baseAuthority,
-        baseSafety: n.baseSafety,
-        basePermissions: n.basePermissions,
-        overridden: n.overridden,
-        pluginName: n.pluginName,
-      })),
+      commandPrefix,
+      commands: cmdNodes.map(n => {
+        const path = n.name.split('.');
+        const depth = path.length - 1;
+        const hasSubcommands = cmdNodes.some(other => other.name.startsWith(`${n.name}.`));
+        return {
+          // key 同时是 override 的查找键与 setCommandOverride 的入参；如 'profile.clear.nuke'
+          key: n.name,
+          // 兼容旧前端：以 name 作 React key
+          name: n.name,
+          // 用于显示，如 '/profile clear nuke'
+          displayName: `${commandPrefix}${path.join(' ')}`,
+          // 叶子段名（'nuke'）用于子行紧凑显示
+          leafName: path[path.length - 1],
+          path,
+          depth,
+          isRoot: depth === 0,
+          hasSubcommands,
+          hasAction: !!n.handler,
+          description: n.description,
+          authority: n.authority,
+          safety: n.safety,
+          permissions: n.permissions,
+          baseAuthority: n.baseAuthority,
+          baseSafety: n.baseSafety,
+          basePermissions: n.basePermissions,
+          overridden: n.overridden,
+          pluginName: n.pluginName,
+        };
+      }),
       commandOverrides: overrides,
+      orphanCommandOverrides: Object.keys(overrides).filter(k => !cmdNames.has(k)),
       tools,
     };
   },
@@ -537,7 +533,7 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     if (!name || typeof name !== 'string') throw new Error('name 必填');
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
-    const override: { authority?: number; safety?: string } = {};
+    const override: { authority?: number; safety?: SafetyLevel } = {};
     if (typeof authority === 'number') override.authority = authority;
     if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
     if (Object.keys(override).length === 0) {
