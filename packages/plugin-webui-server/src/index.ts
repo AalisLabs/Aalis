@@ -560,6 +560,41 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
+  // LLM providers + per-provider models（供 schema type='llm-ref' 联动 select 使用）
+  expressApp.get('/api/llm-providers', async (_req, res) => {
+    try {
+      const entries = ctx.getAllServices<LLMModel>('llm');
+      type ProvAgg = {
+        contextId: string;
+        label?: string;
+        models: Array<{ id: string; capabilities: string[]; contextLength?: number }>;
+      };
+      const byProvider = new Map<string, ProvAgg>();
+      for (const e of entries) {
+        const providerId = e.instance.providerId;
+        let agg = byProvider.get(providerId);
+        if (!agg) {
+          agg = { contextId: providerId, label: e.label, models: [] };
+          byProvider.set(providerId, agg);
+        }
+        // entry.label 形如 "OpenAI / gpt-4o" 或仅 model id；提取 provider 部分
+        if (!agg.label && e.label) {
+          const slash = e.label.indexOf(' / ');
+          agg.label = slash > 0 ? e.label.slice(0, slash) : undefined;
+        }
+        agg.models.push({
+          id: e.instance.id,
+          capabilities: e.capabilities,
+          contextLength: e.instance.contextLength,
+        });
+      }
+      res.json({ providers: [...byProvider.values()] });
+    } catch {
+      res.json({ providers: [] });
+    }
+  });
+
+
   // 获取某个服务的可用模型/选项列表
   expressApp.get('/api/models/:service', async (req, res) => {
     const serviceName = req.params.service;

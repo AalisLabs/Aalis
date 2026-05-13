@@ -31,7 +31,17 @@ export interface InjectDeclaration {
 
 // ----- 配置 Schema  -----
 
-export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea';
+export type SchemaFieldType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'select'
+  | 'multiselect'
+  | 'textarea'
+  /** LLM 模型引用：值形如 `{ provider: string; model: string }`，由前端渲染为联动 select
+   *  （provider 列表来自 `/api/models/llm` 的 contextId 聚合；model 列表由所选 provider 决定）。
+   *  core 不解释此字段，仅作为 schema 标签；运行时由消费方使用 `resolveLLMModel(ctx, value, caps)` 解析。 */
+  | 'llm-ref';
 
 export interface SchemaField {
   type: SchemaFieldType;
