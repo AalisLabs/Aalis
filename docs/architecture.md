@@ -4,11 +4,11 @@
 
 ## 设计哲学
 
-Aalis 的核心遵循**忒修斯之船**原则：Core 自身只提供最小化的基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——包括 LLM 调用、消息存储、对话编排、平台接入——全部由可插拔的插件提供。核心的任何行为都可以被插件拦截、修改或完全替换。
+Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供。核心的任何行为均可被插件拦截、修改或完全替换。
 
-**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）**由对应的 `@aalis/plugin-*-api` 包提供**，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
+**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）由对应的 `@aalis/plugin-*-api` 包提供，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
 
-`@aalis/core` 经过持续纯化，目前对外只暴露：
+`@aalis/core` 对外暴露：
 
 - 运行时基础设施：`App` / `Context` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`
 - 三个扩展点：`ServiceCapabilityMap` / `AalisEvents` / `HookContextMap`（均通过 declaration merging 由 `@aalis/plugin-*-api` 注入业务键）
@@ -99,7 +99,7 @@ Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
 
 ### 1. 中间件管道 (Hooks)
 
-最强大的扩展手段。插件通过 `ctx.middleware(hook, fn)` 注册中间件，拦截核心流程的每个阶段。中间件既可以修改数据、也可以完全中断流程。同一钩子内多个 handler **按注册顺序**执行洋葱模型（无优先级数字）；跨钩子的顺序由调度方（如 plugin-gateway）显式显示。
+插件通过 `ctx.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。
 
 ```typescript
 // 拦截消息（不调用 next = 中断整个管道）
@@ -287,7 +287,6 @@ defaultAction()        ← 所有 handler 通过后执行
 | `agent:tool:after` | `{ name, result, toolCallContext }` | 处理工具返回结果 |
 | `agent:reply:before` | `{ content, sessionId }` | 修改最终回复内容（persona JSON 解析） |
 
-> 历史上的 `gateway:inbound` / `gateway:outbound` / `agent:route` 钩子已废弃。
 > 入站请使用 `inbound:*` 相位，出站请使用 `outbound:dispatch`。
 
 ### 遥测事件

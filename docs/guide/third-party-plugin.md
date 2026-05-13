@@ -156,8 +156,7 @@ apply(ctx) {
 | 监听核心事件 | `ctx.on('service:registered', …)` 等 |
 
 helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段调用 `register` /
-`command`，若对应服务尚未 provide，注册操作会被自动延迟到服务就绪。无需关心
-插件加载顺序（ADR-0005 取消了 ADR-0001 的两阶段加载器）。
+`command`，若对应服务尚未 provide，注册操作会被自动延迟到服务就绪。插件加载采用单遍式，无需关心依赖顺序。
 
 ## 5.1 类型从哪里 import
 
@@ -222,7 +221,4 @@ plugins:
 ## 8. 进一步阅读
 
 - [架构总览](../architecture.md)
-- [ADR-0001 two-pass plugin loader](../decisions/0001-two-pass-plugin-loader.md)
-- [ADR-0002 api 类型包切分](../decisions/0002-api-types-split.md)
-- [ADR-0003 子系统目录](../decisions/0003-subsystem-catalog.md)
 - [api 包设计](../design/api-packages.md)
