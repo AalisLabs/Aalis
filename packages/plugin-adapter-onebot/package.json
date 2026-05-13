@@ -11,7 +11,7 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "ws": "^8.18.0",
-    "@aalis/plugin-message-archive": "workspace:*",
+    "@aalis/plugin-message-archive-api": "workspace:*",
     "@aalis/plugin-image-recognition-api": "workspace:*",
     "@aalis/plugin-flow-control": "workspace:*",
     "@aalis/plugin-platform": "workspace:*",
