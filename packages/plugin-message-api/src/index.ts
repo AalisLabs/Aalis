@@ -3,9 +3,10 @@
 //
 // 本包持有 Aalis 全部"消息载体"类型，分两层：
 //
-// 1. LLM 协议层（OpenAI/DeepSeek format，原驻 @aalis/core，cleanup-N 迁入）：
+// 1. LLM 协议层（OpenAI/DeepSeek format）：
 //   - Message：LLM 对话上下文消息（role / content / toolCalls / segments ...）
 //   - ContentSegment：助手输出的有序时间线分段（text / reasoning_text / tool_call）
+//   - ToolCall：助手消息的 tool_calls 载荷（同为 OpenAI chat 协议字段）
 //
 // 2. 平台适配层（Aalis 边界消息形态）：
 //   - IncomingMessage：从平台适配器（OneBot / WebUI / CLI 等）流入的原始消息
@@ -18,12 +19,27 @@
 //   - 'outbound:message'
 //   - 'outbound:stream'
 //
-// 依赖：core / plugin-tools-api（ToolCall 协议类型）。
+// 依赖：仅 @aalis/core。
 // ============================================================
 
-import type { ToolCall } from '@aalis/plugin-tools-api';
+// declare module 增强需要原模块可见，本包不用 core 的具体类型，
+// 仅以空导入锚点 @aalis/core 让 TS 解析模块身份。
+import type {} from '@aalis/core';
 
 // ----- LLM 协议层消息类型 -----
+
+/**
+ * OpenAI/DeepSeek chat completions 中 assistant 消息携带的工具调用载荷。
+ * 与 Message 同源同生命周期，故所属本包。
+ */
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
 
 /**
  * 内容时间线分段（按到达顺序记录助手输出的真实结构）。
