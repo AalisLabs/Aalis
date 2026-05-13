@@ -1,0 +1,21 @@
+{
+  "name": "create-aalis-plugin",
+  "version": "0.1.0",
+  "description": "Aalis 插件交互式脚手架。",
+  "type": "module",
+  "bin": {
+    "create-aalis-plugin": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
