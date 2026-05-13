@@ -1,14 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
+import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import type { PlatformService } from '@aalis/plugin-platform-api';
 import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
-import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from './types.js';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-memory-api';
 
-export type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from './types.js';
+export type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 
 /**
  * 读取 session-manager 服务时使用的最小结构化切片

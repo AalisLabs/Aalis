@@ -158,9 +158,9 @@ importers:
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
-      '@aalis/plugin-persona':
+      '@aalis/plugin-persona-api':
         specifier: workspace:*
-        version: link:../plugin-persona
+        version: link:../plugin-persona-api
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
@@ -271,9 +271,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-persona':
+      '@aalis/plugin-persona-api':
         specifier: workspace:*
-        version: link:../plugin-persona
+        version: link:../plugin-persona-api
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
@@ -1014,6 +1014,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-persona-api':
+        specifier: workspace:*
+        version: link:../plugin-persona-api
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
@@ -1024,6 +1027,12 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-persona-api:
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -1134,9 +1143,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
-      '@aalis/plugin-persona':
+      '@aalis/plugin-persona-api':
         specifier: workspace:*
-        version: link:../plugin-persona
+        version: link:../plugin-persona-api
       '@aalis/plugin-session-manager-api':
         specifier: workspace:*
         version: link:../plugin-session-manager-api
@@ -1424,9 +1433,9 @@ importers:
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
-      '@aalis/plugin-persona':
+      '@aalis/plugin-persona-api':
         specifier: workspace:*
-        version: link:../plugin-persona
+        version: link:../plugin-persona-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1624,9 +1633,9 @@ importers:
       '@aalis/plugin-package-manager':
         specifier: workspace:*
         version: link:../plugin-package-manager
-      '@aalis/plugin-persona':
+      '@aalis/plugin-persona-api':
         specifier: workspace:*
-        version: link:../plugin-persona
+        version: link:../plugin-persona-api
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api

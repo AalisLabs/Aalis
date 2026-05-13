@@ -8,7 +8,7 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona';
+import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import type { PlatformService } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';

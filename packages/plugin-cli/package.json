@@ -13,7 +13,7 @@
     "@aalis/plugin-authority-api": "workspace:*",
     "@aalis/plugin-commands-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
-    "@aalis/plugin-persona": "workspace:*",
+    "@aalis/plugin-persona-api": "workspace:*",
     "@aalis/plugin-platform-api": "workspace:*",
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
