@@ -156,6 +156,35 @@ apply(ctx) {
 
 ADR-0001 的「two-pass plugin loader」保证：扩展点注入者（plugin-tools / plugin-commands）必然在使用者之前激活。
 
+## 5.1 类型从哪里 import
+
+`@aalis/core` 只导出**通用 IoC 类型**（Context / PluginModule / Service / Schema / 事件
+扩展点 / 能力扩展点 / Dispose / Middleware / Logger 等）。所有 **LLM/agent 领域类型**都在
+`@aalis/plugin-*-api` 里。
+
+最常用的对照：
+
+| 你想 import 的类型 | 真正归属包 | 是否需要进 `dependencies` |
+|---|---|---|
+| `Context` / `PluginModule` / `ConfigSchema` / `SchemaField` | `@aalis/core` | peerDep |
+| `Message` / `ContentSegment` / `IncomingMessage` / `OutgoingMessage` | `@aalis/plugin-message-api` | 是 |
+| `ToolCall` / `ToolDefinition` / `ToolFunction` / `ToolCallContext` / `RegisteredTool` | `@aalis/plugin-tools-api` | 是 |
+| `ChatRequest` / `ChatResponse` / `LLMService` | `@aalis/plugin-llm-api` | 是 |
+| `MemoryService` | `@aalis/plugin-memory-api` | 是 |
+| `AgentService` / `PreprocessorFn` | `@aalis/plugin-agent-api` | 是 |
+| `StorageService` | `@aalis/plugin-storage-api` | 是 |
+| `EmbeddingService` | `@aalis/plugin-embedding-api` | 是 |
+| `VectorStoreService` | `@aalis/plugin-vectorstore-api` | 是 |
+| `IncomingMessage`/`OutgoingMessage` 事件 / `tool:execute` 事件 | 同对应 *-api（包须出现在 `dependencies` 里 TS 才能看到 `declare module` 注入） | 是 |
+
+> **常见错误**：以为 `ctx.registerTool` 来自 core，结果 import 写在
+> `@aalis/core` 里编译报错。`ctx.registerTool` 的**类型扩展**由
+> `@aalis/plugin-tools-api` 通过 `declare module '@aalis/core'` 注入；
+> **必须**把 `@aalis/plugin-tools-api` 放进自己的 `dependencies`（或 `peerDependencies`），TS 才会看到该 augmentation。
+
+全部扩展点（事件 / 钩子 / 能力 / 配置字段 / Context Mixin）的归属表见
+[docs/extensions/index.md](../extensions/index.md)。
+
 ## 6. 发布
 
 ```bash
