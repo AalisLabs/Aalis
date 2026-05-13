@@ -4,6 +4,7 @@ import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
+import { ServicePriority } from './types/service.js';
 import { probeCapability } from './types/capabilities.js';
 import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from './types/index.js';
 
@@ -269,6 +270,18 @@ export class Context {
       this.id,
       options?.label,
     );
+
+    // dev 模式下提示非标准 priority 值——避免插件作者乱填数字破坏全局排序契约
+    if (this.devMode && options?.priority !== undefined) {
+      const standard = Object.values(ServicePriority) as number[];
+      if (!standard.includes(options.priority)) {
+        this.logger.warn(
+          `服务 "${name}" 使用了非标准 priority=${options.priority}。建议改用 ServicePriority enum：` +
+            `Backend(0) / Override(50) / Router(100) / System(200)。` +
+            `裸数字会让"谁是默认胜者"难以静态推断。`,
+        );
+      }
+    }
 
     const dispose = () => {
       const removed = this._services.unregisterEntry(name, entry);
