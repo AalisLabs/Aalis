@@ -6,8 +6,7 @@
  * - 让 index.ts 主类聚焦在编排/状态管理，而不是 token 估算细节
  * - 让纯函数可被 vitest 单独覆盖（无需 mock Context）
  */
-import type { Message } from '@aalis/core';
-
+import type { Message } from '@aalis/plugin-message-api';
 /**
  * 将时间戳格式化为可读的时间标签。距当前时间较近时使用 HH:mm，跨天时加上日期。
  */

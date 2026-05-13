@@ -1,6 +1,7 @@
-import type { Context, Message } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { Message } from '@aalis/plugin-message-api';
 import type { AdapterActionChoice, DecisionRuntime, GameActivityAdapter } from './adapter.js';
 import type { BridgeHelloEvent, BridgePromptEvent, BridgeStateEvent } from './protocol.js';
 

@@ -8,81 +8,10 @@ export type SafetyLevel = 'safe' | 'dangerous';
 /** 细粒度权限标识，如 tool:file.write、storage:workspace:read */
 export type PermissionId = string;
 
-// ----- 消息 -----
-
-/**
- * 内容时间线分段（按到达顺序记录助手输出的真实结构）。
- * - text：正常对话文本
- * - reasoning_text：思考/推理文本（部分模型如 DeepSeek-R1、Ollama thinking 会产出）
- * - tool_call：工具调用片段（startTime/endTime 用于时长展示）
- *
- * 该数组若存在则为渲染顺序的真相；同时 message.content / reasoningContent
- * 仍保留为派生镜像，供 LLM API 与历史压缩等纯文本消费者使用。
- */
-export type ContentSegment =
-  | { type: 'text'; content: string }
-  | { type: 'reasoning_text'; content: string }
-  | {
-      type: 'tool_call';
-      name: string;
-      args: Record<string, unknown>;
-      result?: string;
-      startTime?: number;
-      endTime?: number;
-    };
-
-export interface Message {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | null;
-  toolCalls?: ToolCall[];
-  toolCallId?: string;
-  name?: string;
-  timestamp?: number;
-  reasoningContent?: string | null;
-  /**
-   * 助手输出的有序时间线（含 text / reasoning_text / tool_call）。
-   * 仅 assistant 消息可能携带；存在时为 UI 渲染的权威来源，
-   * content 与 reasoningContent 应与之保持一致（由生产方在累积时同步写）。
-   */
-  segments?: ContentSegment[];
-  /** 图片列表（base64 data URL 或 HTTP URL），用于多模态 LLM */
-  images?: string[];
-  /** 元数据：用于标记消息来源等信息（不会发送给 LLM） */
-  metadata?: Record<string, unknown>;
-}
-
+// 注：Message / ContentSegment 已迁出到 @aalis/plugin-agent-api（cleanup-N，core 纯通用 IoC 化）
+// 注：ToolCall / ToolDefinition / ToolFunction 已迁出到 @aalis/plugin-tools-api（cleanup-N）
 // 注：IncomingMessage / OutgoingMessage / StreamChunkMessage 已迁出到 @aalis/plugin-message-api（cleanup-8）
 // 注：ToolCallContext / ToolExecuteMessage 已迁出到 @aalis/plugin-tools-api（cleanup-8）
-
-// ----- 工具调用 (DeepSeek/OpenAI format) -----
-
-export interface ToolFunction {
-  name: string;
-  strict?: boolean;
-  description: string;
-  parameters: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required?: string[];
-    additionalProperties?: boolean;
-  };
-}
-
-export interface ToolDefinition {
-  type: 'function';
-  function: ToolFunction;
-}
-
-export interface ToolCall {
-  id: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-// 注：ToolCallContext 已迁出到 @aalis/plugin-tools-api（cleanup-8，平台语义而非 OpenAI 协议）
 // 注：RegisteredTool / ToolSummary / ToolGroupInfo 已迁出到 @aalis/plugin-tools-api（cleanup-6）
 // 注：CommandContext / CommandDefinition / SubcommandDefinition / RegisteredCommand 等已迁出到 @aalis/plugin-commands-api（cleanup-6）
 
@@ -114,11 +43,12 @@ export interface SchemaField {
   secret?: boolean;
   /** select / multiselect 类型的静态选项 */
   options?: Array<{ label: string; value: string | number }>;
-  /** select / multiselect 类型的动态选项来源：填服务名 (如 'llm', 'embedding', 'platform')，
-   *  运行时调用 service.listModels() 获取（platform 特殊处理：收集所有 adapter.platform） */
+  /** select / multiselect 动态选项来源：服务名（消费方实现自己的 dynamicOptions 解析器，
+   *  通常约定为运行时调用该服务的 listModels() 或等价方法）。core 不解释此字段语义，
+   *  仅作为透传 hint 给前端/解析器。 */
   dynamicOptions?: string;
-  /** select 类型的动态选项来源：填服务名 (如 'llm')，
-   *  运行时获取该服务的所有提供者列表（contextId + displayName） */
+  /** select 动态选项来源：服务名（解析为该服务的所有提供者列表 contextId + displayName）。
+   *  与 dynamicOptions 一样，core 不解释，由消费方实现。 */
   dynamicProviders?: string;
   /** multiselect 是否允许用户手动输入自定义值（不限于选项列表） */
   allowCustom?: boolean;
