@@ -3,7 +3,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { LLMService } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
-import type { PersonaService } from '@aalis/plugin-persona';
+import type { PersonaService } from '@aalis/plugin-persona-api';
 import type {
   PlatformProfile,
   SessionConfig,
