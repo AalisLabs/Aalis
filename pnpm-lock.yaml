@@ -686,6 +686,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/util-network-guard':
+        specifier: workspace:*
+        version: link:../util-network-guard
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1679,6 +1682,9 @@ importers:
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api
+      '@aalis/util-network-guard':
+        specifier: workspace:*
+        version: link:../util-network-guard
       express:
         specifier: ^5.1.0
         version: 5.2.1
@@ -1735,6 +1741,15 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/util-network-guard:
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
