@@ -71,7 +71,7 @@ async function attachmentToOneBotFile(att: MessageAttachment, logger?: Logger): 
     absPath = resolve(process.cwd(), data);
   }
   const st = await stat(absPath).catch(() => null);
-  if (!st || !st.isFile()) {
+  if (!st?.isFile()) {
     // 让 daemon 自己尝试 file://（适用于 daemon 与 Aalis 共用文件系统的场景）
     logger?.warn?.(`OneBot 附件本地路径不可读，回退 file:// 由 daemon 处理: ${absPath}`);
     return `file://${absPath}`;

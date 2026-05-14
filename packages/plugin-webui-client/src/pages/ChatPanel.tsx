@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
 import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle, History } from 'lucide-react';
-import { pageAction, getSessionId } from '../api';
+import { pageAction, getSessionId, proxiedMediaUrl } from '../api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -432,7 +432,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
         <div className="message-images">
           {msg.images.map((img, j) => (
             <div key={j} className="message-image-wrap">
-              <img src={img} alt={`attached-${j}`} className="message-image" />
+              <img src={proxiedMediaUrl(img)} alt={`attached-${j}`} className="message-image" />
             </div>
           ))}
         </div>
@@ -454,19 +454,19 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
             if (att.kind === 'image') {
               return (
                 <div key={`a-${j}`} className="message-image-wrap">
-                  <img src={att.data} alt={att.name ?? `attachment-${j}`} className="message-image" />
+                  <img src={proxiedMediaUrl(att.data)} alt={att.name ?? `attachment-${j}`} className="message-image" />
                 </div>
               );
             }
             if (att.kind === 'video') {
               return (
                 // biome-ignore lint/a11y/useMediaCaption: assistant 生成内容无字幕信息
-                <video key={`a-${j}`} controls src={att.data} className="message-image" />
+                <video key={`a-${j}`} controls src={proxiedMediaUrl(att.data)} className="message-image" />
               );
             }
             if (att.kind === 'audio') {
               // biome-ignore lint/a11y/useMediaCaption: assistant 生成内容无字幕信息
-              return <audio key={`a-${j}`} controls src={att.data} />;
+              return <audio key={`a-${j}`} controls src={proxiedMediaUrl(att.data)} />;
             }
             return (
               <div key={`a-${j}`} className="message-file-item">
