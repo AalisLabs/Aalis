@@ -339,6 +339,21 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       logger.info(`执行任务: ${jobName}`);
       await ctx.emit('scheduler:job:start' as any, jobName);
 
+      // 通用触发事件：供 workflow 等订阅者使用
+      // （即使本任务用的是旧版 inbound:message，也同时广播 trigger:fired，
+      //  便于平滑迁移到 plugin-workflow）
+      // biome-ignore lint/suspicious/noExplicitAny: 事件类型由 plugin-workflow-api 增广，scheduler 不直接依赖
+      await ctx.emit('trigger:fired' as any, {
+        source: `scheduler:${jobName}`,
+        type: rt.config.cron ? 'cron' : 'interval',
+        payload: {
+          jobName,
+          sessionId: rt.config.sessionId,
+          platform: rt.config.platform,
+          content: rt.config.content,
+        },
+      });
+
       const message: IncomingMessage = {
         content: rt.config.content,
         sessionId: rt.config.sessionId,
