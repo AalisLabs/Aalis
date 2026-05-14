@@ -29,8 +29,8 @@ export interface ChatMessage {
   images?: string[];
   /** 附带的文件名列表（仅用于显示） */
   fileNames?: string[];
-  /** 附件上传顺序（用于展示顺序标注） */
-  attachmentOrder?: Array<'image' | 'file'>;
+  /** 助手附件（agent 通过 send_image 等工具产生的图片/媒体）。 */
+  attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>;
   timestamp: number;
 }
 

@@ -128,7 +128,12 @@ export function App() {
     return { content, reasoning };
   };
 
-  const handleIncoming = useCallback((content: string, reasoningContent?: string, serverSegments?: ContentSegment[]) => {
+  const handleIncoming = useCallback((
+    content: string,
+    reasoningContent?: string,
+    serverSegments?: ContentSegment[],
+    attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>,
+  ) => {
     // 取消 handleStream 尚未执行的 RAF，防止它在 streamingRef 已置 false 后
     // 创建重复的 assistant 消息（竞态：RAF 回调晚于 handleIncoming 执行）
     if (streamBufRef.current.raf) {
@@ -154,6 +159,7 @@ export function App() {
           content,
           reasoningContent: reasoningContent ?? last.reasoningContent,
           segments: finalSegments,
+          attachments: attachments ?? last.attachments,
         }];
       }
       streamingRef.current = false;
@@ -162,6 +168,7 @@ export function App() {
         content,
         reasoningContent,
         segments: finalSegments,
+        attachments,
         timestamp: Date.now(),
       }];
     });
@@ -566,14 +573,37 @@ export function App() {
     await session.ensureSession();
 
     const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
-    const files = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
-    const attachmentOrder = attachmentOrderRef.current.length > 0 ? [...attachmentOrderRef.current] : undefined;
+    // 统一打包成 attachments[]：图片 + 全部 pendingFiles（文档/音视频）按用户上传顺序
+    const order = attachmentOrderRef.current;
+    const attachments: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }> = [];
+    let imgIdx = 0;
+    let fileIdx = 0;
+    if (order.length > 0) {
+      for (const t of order) {
+        if (t === 'image' && imgIdx < pendingImages.length) {
+          attachments.push({ kind: 'image', data: pendingImages[imgIdx++] });
+        } else if (t === 'file' && fileIdx < pendingFiles.length) {
+          const f = pendingFiles[fileIdx++];
+          const mime = f.mimeType ?? '';
+          const kind = mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : 'file';
+          attachments.push({ kind, data: f.data, mimeType: mime, name: f.name });
+        }
+      }
+    }
+    while (imgIdx < pendingImages.length) {
+      attachments.push({ kind: 'image', data: pendingImages[imgIdx++] });
+    }
+    while (fileIdx < pendingFiles.length) {
+      const f = pendingFiles[fileIdx++];
+      const mime = f.mimeType ?? '';
+      const kind = mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : 'file';
+      attachments.push({ kind, data: f.data, mimeType: mime, name: f.name });
+    }
     setMessages(prev => [...prev, {
       role: 'user',
       content: trimmed,
       images,
-      fileNames: files?.map(f => f.name),
-      attachmentOrder: attachmentOrder ? [...attachmentOrder] : undefined,
+      fileNames: pendingFiles.map(f => f.name),
       timestamp: Date.now(),
     }]);
     setInput('');
@@ -582,7 +612,7 @@ export function App() {
     attachmentOrderRef.current = [];
     setToolLimitReached(false);
     setLoading(true);
-    send(trimmed, images, files, attachmentOrder);
+    send(trimmed, attachments.length > 0 ? attachments : undefined);
   };
 
   // 内置页面（webui-server 核心页面）的图标映射
