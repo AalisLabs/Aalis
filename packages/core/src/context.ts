@@ -307,7 +307,7 @@ export class Context {
       if (!standard.includes(options.priority)) {
         this.logger.warn(
           `服务 "${name}" 使用了非标准 priority=${options.priority}。建议改用 ServicePriority enum：` +
-            `Backend(0) / Override(50) / Router(100) / System(200)。` +
+            `Backend(0) / Override(50) / System(200)。` +
             `裸数字会让"谁是默认胜者"难以静态推断。`,
         );
       }

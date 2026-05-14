@@ -17,15 +17,16 @@ import type { DependencyDeclaration } from './core.js';
  * 推荐用法：
  * - `Backend = 0`：普通后端实现（如 plugin-openai / plugin-deepseek）。
  * - `Override = 50`：用户级覆盖；同名服务希望默认胜过普通后端时使用。
- * - `Router = 100`：聚合 facade 层（已不推荐：feat/service-granularity 后 LLM / storage 已废弃 router；
- *   platform router 待后续 commit 同步重构）。
- *   facade 实现 `getAllServices(name)` 时务必过滤 `instance !== this` 以避免自递归。
  * - `System = 200`：保留给核心系统级覆盖。
+ *
+ * 注：feat/service-granularity 之后已不再有 router/facade 层级——LLM / storage / platform
+ * 均改为按 model / root / sessionId 直接注册多 entry，跨 entry 的聚合与路由由各自
+ * `*-api` 的 helper 函数承担（`createStorageGateway` / `resolvePlatformBySession` / ...），
+ * 没有同名 facade entry，因此曾经的 `Router = 100` 槽位整体废弃。
  */
 export const ServicePriority = {
   Backend: 0,
   Override: 50,
-  Router: 100,
   System: 200,
 } as const;
 export type ServicePriorityValue = (typeof ServicePriority)[keyof typeof ServicePriority];
