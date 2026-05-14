@@ -1,6 +1,6 @@
 # plugin-agent-default — 默认对话编排器
 
-**包名**: `@aalis/plugin-agent-default`  
+**包名**: `@aalis/plugin-agent`  
 **源码**: `packages/plugin-agent-default/src/index.ts`
 
 ## 概述
@@ -10,7 +10,7 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-agent-default'
+meta.name = '@aalis/plugin-agent'
 meta.provides = ['agent']
 meta.inject = { optional: ['llm', 'memory', 'persona'] }
 ```

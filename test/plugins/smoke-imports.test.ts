@@ -20,8 +20,8 @@ import { describe, expect, it } from 'vitest';
 
 const PLUGIN_DIRS = [
   'plugin-adapter-onebot',
-  'plugin-agent-default',
-  'plugin-agent-tools',
+  'plugin-agent',
+  'plugin-tools',
   'plugin-authority',
   'plugin-checkpoint',
   'plugin-cli',
@@ -45,7 +45,7 @@ const PLUGIN_DIRS = [
   'plugin-office',
   'plugin-okx-trading',
   'plugin-ollama',
-  'plugin-onebot-tools',
+  'plugin-tool-onebot',
   'plugin-openai',
   'plugin-package-manager',
   'plugin-persona',
@@ -61,7 +61,7 @@ const PLUGIN_DIRS = [
   'plugin-tool-code-runner',
   'plugin-tool-math',
   'plugin-tool-search',
-  'plugin-tools',
+  'plugin-tool-system',
   'plugin-trigger-policy',
   'plugin-user-profile',
   'plugin-vectorstore-flat',

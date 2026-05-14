@@ -10,7 +10,7 @@ import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-onebot-tools';
+export const name = '@aalis/plugin-tool-onebot';
 export const displayName = 'OneBot 工具';
 export const subsystem = 'tools';
 export const inject = {

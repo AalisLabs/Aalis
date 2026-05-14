@@ -110,6 +110,6 @@ plugin-agent-default                     plugin-webui-server
 
 ## 相关
 
-- token:usage 事件结构与 12 桶含义：[plugin-agent-default](./plugin-agent-default.md)
+- token:usage 事件结构与 12 桶含义：[plugin-agent-default](./plugin-agent.md)
 - 自动压缩：[plugin-memory-summary](./plugin-memory-summary.md)
 - WebUI 面板：[plugin-webui-server](./plugin-webui-server.md)

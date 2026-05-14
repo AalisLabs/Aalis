@@ -2,7 +2,7 @@
 
 **包名**: `@aalis/plugin-agent-api`  
 **源码**: `packages/plugin-agent-api/src/index.ts`  
-**实现**: `@aalis/plugin-agent-default`
+**实现**: `@aalis/plugin-agent`
 
 ## 概述
 
@@ -54,7 +54,7 @@ const dispose = ctx.useHook('agent:input:before', async (data, next) => {
 
 ## 实现者列表
 
-- [@aalis/plugin-agent-default](../plugins/plugin-agent-default.md) —— 默认实现，含 12 桶 token 预算追踪与工具循环
+- [@aalis/plugin-agent](../plugins/plugin-agent.md) —— 默认实现，含 12 桶 token 预算追踪与工具循环
 
 ## 相关
 
