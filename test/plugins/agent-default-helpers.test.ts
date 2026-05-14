@@ -7,7 +7,7 @@ import {
   formatTimeLabel,
   INPUT_CONVENTIONS,
   isSameMessage,
-} from '../../packages/plugin-agent-default/src/helpers.js';
+} from '../../packages/plugin-agent/src/helpers.js';
 
 describe('formatTimeLabel', () => {
   it('同一天显示「今天 HH:mm」', () => {

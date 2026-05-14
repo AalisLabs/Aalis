@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
-import * as agentDefaultModule from '../../packages/plugin-agent-default/src/index.js';
+import * as agentDefaultModule from '../../packages/plugin-agent/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
 

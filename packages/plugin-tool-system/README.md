@@ -1,4 +1,4 @@
-# @aalis/plugin-tools
+# @aalis/plugin-tool-system
 
 运行时插件
 
@@ -9,7 +9,7 @@
 ## 安装
 
 ```bash
-pnpm add @aalis/plugin-tools
+pnpm add @aalis/plugin-tool-system
 ```
 
 ## 文档

@@ -2,7 +2,7 @@
 
 **包名**: `@aalis/plugin-tools-api`  
 **源码**: `packages/plugin-tools-api/src/index.ts` + `utils.ts`  
-**实现**: `@aalis/plugin-tools`
+**实现**: `@aalis/plugin-tool-system`
 
 ## 概述
 
@@ -120,7 +120,7 @@ tools.register({
 
 ## 实现者
 
-- [@aalis/plugin-tools](../plugins/plugin-tools.md) —— 提供 shell / file / system / http 工具组
+- [@aalis/plugin-tool-system](../plugins/plugin-tool-system.md) —— 提供 shell / file / system / http 工具组
 
 ## 相关
 

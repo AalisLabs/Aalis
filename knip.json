@@ -9,7 +9,7 @@
       "project": ["src/**/*.{ts,tsx}"]
     }
   },
-  "ignoreDependencies": ["@aalis/core", "@aalis/plugin-agent-default"],
+  "ignoreDependencies": ["@aalis/core", "@aalis/plugin-agent"],
   "ignoreIssues": {
     "packages/plugin-adapter-onebot/src/types.ts": ["exports", "types"],
     "packages/plugin-adapter-onebot/src/forward.ts": ["exports", "types"],

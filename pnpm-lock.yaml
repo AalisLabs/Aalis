@@ -110,29 +110,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-agent-api:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@aalis/plugin-llm-api':
-        specifier: workspace:*
-        version: link:../plugin-llm-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/plugin-agent-default:
+  packages/plugin-agent:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -178,14 +156,17 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-agent-tools:
+  packages/plugin-agent-api:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-authority-api':
+      '@aalis/plugin-llm-api':
         specifier: workspace:*
-        version: link:../plugin-authority-api
+        version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -448,12 +429,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent':
+        specifier: workspace:*
+        version: link:../plugin-agent
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
-      '@aalis/plugin-agent-default':
-        specifier: workspace:*
-        version: link:../plugin-agent-default
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
@@ -501,12 +482,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent':
+        specifier: workspace:*
+        version: link:../plugin-agent
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
-      '@aalis/plugin-agent-default':
-        specifier: workspace:*
-        version: link:../plugin-agent-default
       '@aalis/plugin-gateway-api':
         specifier: workspace:*
         version: link:../plugin-gateway-api
@@ -545,12 +526,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent':
+        specifier: workspace:*
+        version: link:../plugin-agent
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
-      '@aalis/plugin-agent-default':
-        specifier: workspace:*
-        version: link:../plugin-agent-default
       '@aalis/plugin-image-recognition-api':
         specifier: workspace:*
         version: link:../plugin-image-recognition-api
@@ -927,31 +908,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-onebot-tools:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@aalis/plugin-image-recognition-api':
-        specifier: workspace:*
-        version: link:../plugin-image-recognition-api
-      '@aalis/plugin-message-archive-api':
-        specifier: workspace:*
-        version: link:../plugin-message-archive-api
-      '@aalis/plugin-platform-api':
-        specifier: workspace:*
-        version: link:../plugin-platform-api
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-openai:
     dependencies:
       '@aalis/core':
@@ -1305,6 +1261,31 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-tool-onebot:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-image-recognition-api':
+        specifier: workspace:*
+        version: link:../plugin-image-recognition-api
+      '@aalis/plugin-message-archive-api':
+        specifier: workspace:*
+        version: link:../plugin-message-archive-api
+      '@aalis/plugin-platform-api':
+        specifier: workspace:*
+        version: link:../plugin-platform-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-tool-search:
     dependencies:
       '@aalis/core':
@@ -1324,7 +1305,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-tools:
+  packages/plugin-tool-system:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1335,6 +1316,25 @@ importers:
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-tools:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1558,12 +1558,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent':
+        specifier: workspace:*
+        version: link:../plugin-agent
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
-      '@aalis/plugin-agent-default':
-        specifier: workspace:*
-        version: link:../plugin-agent-default
       '@aalis/plugin-authority-api':
         specifier: workspace:*
         version: link:../plugin-authority-api

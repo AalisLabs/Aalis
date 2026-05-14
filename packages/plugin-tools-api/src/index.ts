@@ -12,7 +12,7 @@
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/plugin-message-api，
 // 与 Message 同源同生命周期。本包不依赖 message-api（双向解耦）。
 //
-// 实现见 @aalis/plugin-tools。
+// 实现见 @aalis/plugin-tool-system。
 
 import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';

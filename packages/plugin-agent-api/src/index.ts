@@ -1,7 +1,7 @@
 // ----- Agent 服务接口（完整定义）-----
 //
 // 提供 AgentService 完整契约 + agent:* 钩子声明。
-// 默认实现由 @aalis/plugin-agent-default 提供。
+// 默认实现由 @aalis/plugin-agent 提供。
 //
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
