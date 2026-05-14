@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*"
   },
   "devDependencies": {
