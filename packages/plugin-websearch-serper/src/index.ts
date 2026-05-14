@@ -376,4 +376,60 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     },
   });
+
+  // 图片搜索工具：返回候选图片 URL 列表，配合 send_image 使用
+  useToolService(ctx).register({
+    groups: ['search'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'search_images',
+        description:
+          '搜索互联网图片，返回候选图片 URL 列表。常与 send_image 配合：' +
+          '先 search_images 拿候选 → 评估缩略图 → 调 send_image(url) 发出。' +
+          '适用场景：用户要求"发个 xxx 表情包"、"找张 xxx 的图发我"。',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '图片搜索关键词。' },
+            numResults: {
+              type: 'number',
+              description: `返回数量，默认 ${cfg.defaultNumResults}，范围 1-10`,
+            },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    handler: async args => {
+      const query = args.query as string;
+      const numResults = Math.min(10, Math.max(1, (args.numResults as number) ?? cfg.defaultNumResults));
+      const rejectReason = limiter.check();
+      if (rejectReason) return JSON.stringify({ error: `图片搜索被限流: ${rejectReason}` });
+      limiter.acquire();
+      try {
+        const res = await fetch('https://google.serper.dev/images', {
+          method: 'POST',
+          headers: { 'X-API-KEY': cfg.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ q: query, num: numResults }),
+        });
+        if (!res.ok) return JSON.stringify({ error: `Serper images API 错误 ${res.status}` });
+        const data = (await res.json()) as { images?: Array<Record<string, unknown>> };
+        const images = (data.images ?? []).slice(0, numResults).map(it => ({
+          title: it.title as string,
+          imageUrl: it.imageUrl as string,
+          thumbnailUrl: it.thumbnailUrl as string,
+          source: it.source as string,
+          link: it.link as string,
+          width: it.imageWidth as number,
+          height: it.imageHeight as number,
+        }));
+        return JSON.stringify({ query, count: images.length, images });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        limiter.release();
+      }
+    },
+  });
 }
