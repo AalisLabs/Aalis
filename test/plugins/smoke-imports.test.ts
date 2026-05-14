@@ -57,7 +57,6 @@ const PLUGIN_DIRS = [
   'plugin-session-tools',
   'plugin-skills',
   'plugin-storage-local',
-  'plugin-storage-router',
   'plugin-todo-list',
   'plugin-tool-browser',
   'plugin-tool-code-runner',

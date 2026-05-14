@@ -12,7 +12,7 @@ import type {
   StorageService,
   StorageStat,
 } from '@aalis/plugin-storage-api';
-import { StorageCapabilities } from '@aalis/plugin-storage-api';
+import { StorageCapabilities, type StorageCapability } from '@aalis/plugin-storage-api';
 
 export const name = '@aalis/plugin-storage-local';
 export const displayName = '本地存储根（命名 + 路径解析）';
@@ -241,20 +241,25 @@ interface CheckpointLike {
   ): Promise<void>;
 }
 
-class LocalStorageService implements StorageService {
-  private roots = new Map<string, RootDefinition>();
-
+/**
+ * Per-root 存储服务：每个 root 一个实例 + 一个 ServiceContainer entry。
+ *
+ * 与 service-granularity 整体方向对齐：每个 entry 暴露的 capabilities 反映该 root 的
+ * 真实权限（readable/writable/deletable），消费者用 `ctx.getAllServices('storage', [cap])`
+ * 即可静态过滤；按 URI 调度交给 `createStorageGateway(ctx)` helper。
+ *
+ * 历史上 LocalStorageService 是单实例 + 内部 root 表，依赖 plugin-storage-router 做
+ * URI→root 分发。删除 router 后改为这种自包含设计，单文件即可理解整条数据流。
+ */
+class ScopedStorageService implements StorageService {
   constructor(
-    roots: RootDefinition[],
+    private readonly root: RootDefinition,
     private readonly logger: Logger,
-    private readonly ctx?: Context,
-  ) {
-    for (const root of roots) this.roots.set(root.name, root);
-  }
+    private readonly ctx: Context,
+  ) {}
 
   /** 懒解析 checkpoint 服务；仅当回合活跃时调用 beforeMutate */
   private async snapshot(uri: string, op: 'write' | 'delete' | 'rename', abs: string): Promise<void> {
-    if (!this.ctx) return;
     const cp = this.ctx.getService<CheckpointLike>('checkpoint');
     if (!cp?.isActive()) return;
     await cp.beforeMutate(uri, op, async () => {
@@ -269,28 +274,28 @@ class LocalStorageService implements StorageService {
   }
 
   listRoots(): StorageRootInfo[] {
-    return [...this.roots.values()].map(({ realPath: _realPath, ...root }) => root);
+    return [this.publicRoot()];
   }
 
   async list(uri: string): Promise<StorageListResult> {
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'readable');
-    const abs = await this.resolveExisting(rootDef, relPath);
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('readable');
+    const abs = await this.resolveExisting(relPath);
     const s = await stat(abs);
     if (!s.isDirectory()) throw new Error('不是目录');
-    this.logger.debug(`storage.list ${toUri(rootDef.name, relPath)}`);
+    this.logger.debug(`storage.list ${toUri(this.root.name, relPath)}`);
 
     const entries = await readdir(abs);
     const result: StorageEntry[] = [];
     for (const name of entries) {
       const childRel = normalizeRelPath(`${relPath}/${name}`);
       try {
-        const childAbs = await this.resolveExisting(rootDef, childRel);
+        const childAbs = await this.resolveExisting(childRel);
         const childStat = await stat(childAbs);
         result.push({
           name,
           path: childRel,
-          uri: toUri(rootDef.name, childRel),
+          uri: toUri(this.root.name, childRel),
           isDirectory: childStat.isDirectory(),
           size: childStat.isDirectory() ? 0 : childStat.size,
           mtime: childStat.mtime.toISOString(),
@@ -307,115 +312,123 @@ class LocalStorageService implements StorageService {
     });
 
     return {
-      root: this.publicRoot(rootDef),
+      root: this.publicRoot(),
       path: normalizeRelPath(relPath),
       entries: result,
     };
   }
 
   async stat(uri: string): Promise<StorageStat> {
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'readable');
-    const abs = await this.resolveExisting(rootDef, relPath);
-    this.logger.debug(`storage.stat ${toUri(rootDef.name, relPath)}`);
-    return this.statFromAbs(rootDef, abs, relPath);
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('readable');
+    const abs = await this.resolveExisting(relPath);
+    this.logger.debug(`storage.stat ${toUri(this.root.name, relPath)}`);
+    return this.statFromAbs(abs, relPath);
   }
 
   async readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer> {
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'readable');
-    const abs = await this.resolveExisting(rootDef, relPath);
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('readable');
+    const abs = await this.resolveExisting(relPath);
     const s = await stat(abs);
     if (s.isDirectory()) throw new Error('不能读取目录');
-    this.logger.debug(`storage.read ${toUri(rootDef.name, relPath)} size=${s.size}`);
+    this.logger.debug(`storage.read ${toUri(this.root.name, relPath)} size=${s.size}`);
     return encoding ? readFile(abs, encoding) : readFile(abs);
   }
 
   async createReadStream(uri: string): Promise<StorageReadStreamResult> {
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'readable');
-    const abs = await this.resolveExisting(rootDef, relPath);
-    const fileStat = await this.statFromAbs(rootDef, abs, relPath);
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('readable');
+    const abs = await this.resolveExisting(relPath);
+    const fileStat = await this.statFromAbs(abs, relPath);
     if (fileStat.isDirectory) throw new Error('不能下载目录');
-    this.logger.info(`storage.download ${toUri(rootDef.name, relPath)} size=${fileStat.size}`);
+    this.logger.info(`storage.download ${toUri(this.root.name, relPath)} size=${fileStat.size}`);
     return { stream: createReadStream(abs), stat: fileStat };
   }
 
   async writeFile(uri: string, data: string | Buffer): Promise<void> {
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'writable');
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('writable');
     if (!relPath) throw new Error('不能覆盖根目录');
-    const abs = await this.resolveForWrite(rootDef, relPath);
-    await this.snapshot(toUri(rootDef.name, relPath), 'write', abs);
+    const abs = await this.resolveForWrite(relPath);
+    await this.snapshot(toUri(this.root.name, relPath), 'write', abs);
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, data);
-    this.logger.info(`storage.write ${toUri(rootDef.name, relPath)} size=${Buffer.byteLength(data)}`);
+    this.logger.info(`storage.write ${toUri(this.root.name, relPath)} size=${Buffer.byteLength(data)}`);
   }
 
   async rename(uri: string, newName: string): Promise<string> {
     if (!newName || newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
       throw new Error('文件名不合法');
     }
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'writable');
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('writable');
     if (!relPath) throw new Error('不能重命名根目录');
-    const abs = await this.resolveExisting(rootDef, relPath);
+    const abs = await this.resolveExisting(relPath);
     const newRel = normalizeRelPath(`${dirname(relPath) === '.' ? '' : dirname(relPath)}/${newName}`);
-    const target = await this.resolveForWrite(rootDef, newRel);
+    const target = await this.resolveForWrite(newRel);
     try {
       await lstat(target);
       throw new Error('目标名称已存在');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
-    await this.snapshot(toUri(rootDef.name, relPath), 'rename', abs);
+    await this.snapshot(toUri(this.root.name, relPath), 'rename', abs);
     await rename(abs, target);
-    this.logger.info(`storage.rename ${toUri(rootDef.name, relPath)} -> ${toUri(rootDef.name, newRel)}`);
-    return toUri(rootDef.name, newRel);
+    this.logger.info(`storage.rename ${toUri(this.root.name, relPath)} -> ${toUri(this.root.name, newRel)}`);
+    return toUri(this.root.name, newRel);
   }
 
   async delete(uri: string): Promise<void> {
-    const { root, relPath } = parseUri(uri);
-    const rootDef = this.requireRoot(root, 'deletable');
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('deletable');
     if (!relPath) throw new Error('不能删除根目录');
-    const abs = await this.resolveExisting(rootDef, relPath);
-    await this.snapshot(toUri(rootDef.name, relPath), 'delete', abs);
+    const abs = await this.resolveExisting(relPath);
+    await this.snapshot(toUri(this.root.name, relPath), 'delete', abs);
     await rm(abs, { recursive: true, force: false });
-    this.logger.warn(`storage.delete ${toUri(rootDef.name, relPath)}`);
+    this.logger.warn(`storage.delete ${toUri(this.root.name, relPath)}`);
   }
 
   async resolveLocalPath(uri: string, access: 'read' | 'write' | 'delete' = 'read'): Promise<string> {
-    const { root, relPath } = parseUri(uri);
+    const relPath = this.parseSelfUri(uri);
     const permission = access === 'delete' ? 'deletable' : access === 'write' ? 'writable' : 'readable';
-    const rootDef = this.requireRoot(root, permission);
-    const abs =
-      access === 'write' ? await this.resolveForWrite(rootDef, relPath) : await this.resolveExisting(rootDef, relPath);
-    this.logger.debug(`storage.resolveLocalPath ${toUri(rootDef.name, relPath)} access=${access}`);
+    this.requirePermission(permission);
+    const abs = access === 'write' ? await this.resolveForWrite(relPath) : await this.resolveExisting(relPath);
+    this.logger.debug(`storage.resolveLocalPath ${toUri(this.root.name, relPath)} access=${access}`);
     return abs;
   }
 
-  private requireRoot(root: string, permission: 'readable' | 'writable' | 'deletable'): RootDefinition {
-    const rootDef = this.roots.get(root);
-    if (!rootDef) throw new Error(`未知存储根: ${root}`);
-    if (!rootDef[permission]) throw new Error(`存储根 ${root} 不允许该操作`);
-    return rootDef;
+  // ---- 内部 ----
+
+  private parseSelfUri(uri: string): string {
+    const { root, relPath } = parseUri(uri);
+    if (root !== this.root.name) {
+      throw new Error(`URI 根 "${root}" 不属于本 entry (${this.root.name})`);
+    }
+    return relPath;
   }
 
-  private async resolveExisting(root: RootDefinition, relPath: string): Promise<string> {
-    const lexical = resolve(root.realPath, normalizeRelPath(relPath));
-    if (!isInside(root.realPath, lexical)) throw new Error('路径不合法');
+  private requirePermission(permission: 'readable' | 'writable' | 'deletable'): void {
+    if (!this.root[permission]) {
+      throw new Error(`存储根 ${this.root.name} 不允许该操作 (${permission})`);
+    }
+  }
+
+  private async resolveExisting(relPath: string): Promise<string> {
+    const lexical = resolve(this.root.realPath, normalizeRelPath(relPath));
+    if (!isInside(this.root.realPath, lexical)) throw new Error('路径不合法');
     const resolved = await realpath(lexical);
-    if (!isInside(root.realPath, resolved)) throw new Error('路径不合法');
+    if (!isInside(this.root.realPath, resolved)) throw new Error('路径不合法');
     return resolved;
   }
 
-  private async resolveForWrite(root: RootDefinition, relPath: string): Promise<string> {
+  private async resolveForWrite(relPath: string): Promise<string> {
     const normalized = normalizeRelPath(relPath);
-    const lexical = resolve(root.realPath, normalized);
-    if (!isInside(root.realPath, lexical)) throw new Error('路径不合法');
+    const lexical = resolve(this.root.realPath, normalized);
+    if (!isInside(this.root.realPath, lexical)) throw new Error('路径不合法');
     const existingParent = await this.findExistingParent(dirname(lexical));
     const parent = await realpath(existingParent);
-    if (!isInside(root.realPath, parent)) throw new Error('路径不合法');
+    if (!isInside(this.root.realPath, parent)) throw new Error('路径不合法');
     try {
       const target = await lstat(lexical);
       if (target.isSymbolicLink()) throw new Error('不允许写入符号链接');
@@ -441,13 +454,13 @@ class LocalStorageService implements StorageService {
     }
   }
 
-  private async statFromAbs(root: RootDefinition, abs: string, relPath: string): Promise<StorageStat> {
+  private async statFromAbs(abs: string, relPath: string): Promise<StorageStat> {
     const s = await stat(abs);
-    const path = normalizeRelPath(relPath || relative(root.realPath, abs));
+    const path = normalizeRelPath(relPath || relative(this.root.realPath, abs));
     return {
       name: basename(abs),
       path,
-      uri: toUri(root.name, path),
+      uri: toUri(this.root.name, path),
       isDirectory: s.isDirectory(),
       size: s.size,
       mtime: s.mtime.toISOString(),
@@ -456,9 +469,9 @@ class LocalStorageService implements StorageService {
     };
   }
 
-  private publicRoot(root: RootDefinition): StorageRootInfo {
-    const { realPath: _realPath, ...publicRoot } = root;
-    return publicRoot;
+  private publicRoot(): StorageRootInfo {
+    const { realPath: _realPath, ...info } = this.root;
+    return info;
   }
 }
 
@@ -539,17 +552,26 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const roots = await buildRoots(config.roots, logger);
   if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
 
-  const storage = new LocalStorageService(roots, logger, ctx);
-  ctx.provide('storage', storage, {
-    capabilities: [
-      StorageCapabilities.List,
-      StorageCapabilities.Read,
-      StorageCapabilities.Write,
-      StorageCapabilities.Delete,
-      StorageCapabilities.LocalPath,
-    ],
-    label: '本地存储根',
-  });
+  // service-granularity：每个 root 单独注册一个 entry。
+  // - capabilities 反映该 root 的真实权限（不撒谎、不堆砌全集）；
+  // - entryId = `${ctx.id}/${root.name}`，便于在 ServiceContainer 中按根定位、避免跨实例同名冲突；
+  // - URI 路由由 createStorageGateway(ctx) helper 在调用方完成，不再有 facade。
+  for (const root of roots) {
+    const caps: StorageCapability[] = [];
+    if (root.readable) caps.push(StorageCapabilities.List, StorageCapabilities.Read, StorageCapabilities.LocalPath);
+    if (root.writable) caps.push(StorageCapabilities.Write);
+    if (root.deletable) caps.push(StorageCapabilities.Delete);
+    if (caps.length === 0) {
+      logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
+      continue;
+    }
+    const scoped = new ScopedStorageService(root, logger, ctx);
+    ctx.provide('storage', scoped, {
+      entryId: `${ctx.id}/${root.name}`,
+      capabilities: caps,
+      label: root.label || `本地根 ${root.name}`,
+    });
+  }
 
   // 诊断检查项：探测每个 writable root 是否真的可写。
   // 历史上 plugin-doctor 内置了硬编码的 fs.data 检查，但 data/ 仅是默认 root 之一，
