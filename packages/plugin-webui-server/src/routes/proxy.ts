@@ -1,59 +1,11 @@
-import { promises as dns } from 'node:dns';
-import { isIP } from 'node:net';
 import type { Context } from '@aalis/core';
+import { assertSafeHost } from '@aalis/util-network-guard';
 import type express from 'express';
 
 /** 单张图最大体积（避免代理被滥用成大文件中转）。 */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 /** 上游连接 + 完整下载总超时。 */
 const FETCH_TIMEOUT_MS = 15_000;
-
-/** 判断 IP 是否落在私网 / 回环 / 链路本地 / 元数据地址段，用于 SSRF 防护。 */
-function isPrivateAddress(addr: string): boolean {
-  const fam = isIP(addr);
-  if (fam === 0) return true; // 解析失败按危险处理
-  if (fam === 4) {
-    const parts = addr.split('.').map(Number);
-    if (parts.some(p => Number.isNaN(p))) return true;
-    const [a, b] = parts;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 0) return true;
-    if (a === 169 && b === 254) return true; // link-local + AWS metadata
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a >= 224) return true; // multicast / reserved
-    return false;
-  }
-  // IPv6
-  const lower = addr.toLowerCase();
-  if (lower === '::1' || lower === '::') return true;
-  if (lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) return true;
-  if (lower.startsWith('::ffff:')) {
-    // IPv4-mapped IPv6：剥壳后按 v4 再判一次
-    return isPrivateAddress(lower.slice('::ffff:'.length));
-  }
-  return false;
-}
-
-async function assertSafeHost(hostname: string): Promise<void> {
-  if (isIP(hostname)) {
-    if (isPrivateAddress(hostname)) throw new Error('拒绝代理私网/回环地址');
-    return;
-  }
-  // 黑名单常见名称
-  const lc = hostname.toLowerCase();
-  if (lc === 'localhost' || lc.endsWith('.localhost') || lc.endsWith('.local')) {
-    throw new Error('拒绝代理本地主机名');
-  }
-  // DNS 解析全部 A/AAAA，若任意一个是私网 → 拒绝
-  const records = await dns.lookup(hostname, { all: true });
-  for (const r of records) {
-    if (isPrivateAddress(r.address)) {
-      throw new Error(`拒绝代理：解析得到私网地址 ${r.address}`);
-    }
-  }
-}
 
 /**
  * 图片代理：浏览器直连第三方图片常因 hotlink 防护 / referer / CORS / mixed content 失败；
