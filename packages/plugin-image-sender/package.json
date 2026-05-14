@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-media-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-message-archive-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*"
   },
