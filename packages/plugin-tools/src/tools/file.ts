@@ -1,38 +1,35 @@
 /**
  * 文件操作工具组
  *
- * 文件工具统一通过 storage 服务访问受控根目录：
- * - storage URI: workspace:/path/to/file、tmp:/run/a.txt
- * - 普通相对路径会被解释为 workspace:/...
- * - 绝对路径被拒绝，避免直接触达宿主文件系统
+ * 路径语义（与 shell 一致的 unix 心智模型）：
+ * - 完整 storage URI：如 `aalis:/packages/core`、`workspace:/notes/a.md`、`tmp:/x`
+ * - 相对路径：如 `packages/core`、`./a.ts`、`../plugin-tools` —— 永远基于
+ *   当前 session 的 cwd 解析（由 cwd / cd 工具查询/切换）
+ * - 宿主机绝对路径（如 `/Users/...`、`C:\...`）一律拒绝
+ *
+ * 设计动机：LLM agent 在多轮对话中经常需要"在 X 目录下查看一系列文件"，
+ * 如果每次都要写完整 URI 负担大且易错；有了 cwd + 相对路径后类似人在 shell 里。
  */
 
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { Context } from '@aalis/core';
-import { getStorageRootConflicts, type StorageRootConflict, type StorageService } from '@aalis/plugin-storage-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { CwdState } from './cwd-state.js';
+import { resolveAgainstCwd, rootOf } from './path-resolve.js';
 
 interface FileConfig {
   maxReadSize: number;
   maxSearchBytes: number;
   maxWriteSize: number;
   allowedRoots: string[];
-  defaultRoot: string;
+  /** 共享的 cwd 状态（与 cwd/cd 工具同源），决定相对路径的解析基准 */
+  cwdState: CwdState;
   storage?: StorageService;
-  ctx?: Context;
-}
-
-function normalizePath(input: string): string {
-  return input.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
 function getKnownRoots(config: FileConfig) {
   return config.storage?.listRoots() ?? [];
-}
-
-function getRootConflicts(config: FileConfig): StorageRootConflict[] {
-  return config.ctx ? getStorageRootConflicts(config.ctx) : [];
 }
 
 const ALL_ROOTS = '*';
@@ -51,39 +48,28 @@ function allowedRootsText(config: FileConfig): string {
   return allowed.length ? allowed.join(', ') : '(无)';
 }
 
-function describeRoots(config: FileConfig): string {
-  const roots = getKnownRoots(config);
-  const writable = roots.filter(r => r.writable).map(r => r.name);
-  const allowed = getAllowedRoots(config).filter(r => roots.some(known => known.name === r && known.readable));
-  const parts: string[] = [];
-  if (allowed.length) parts.push(`当前工具允许根: ${allowed.join(', ')}`);
-  if (writable.length) parts.push(`可写根: ${writable.join(', ')}`);
-  return parts.join('；');
-}
-
-function toStorageUri(input: string | undefined, config: FileConfig): string {
-  const raw = (input || '').trim();
-  if (!raw || raw === '.') return `${config.defaultRoot}:/`;
-  if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
-    const stripped = raw.replace(/^[a-zA-Z]:[\\/]+|^\/+/, '');
-    const hostRootAvailable = (config.storage?.listRoots() ?? []).some(r => r.name === 'host');
-    const hint = hostRootAvailable
-      ? `若确需访问宿主机绝对路径，可改用 host:/${stripped}（host 根已开启）。`
-      : `如要访问宿主机文件，可在 storage 配置里把目标目录加成具名根（roots 数组），或把 host 根加进 roots（path: "/"）；之后改用 <根名>:/<路径>。`;
-    throw new Error(
-      `文件工具不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 workspace:/path）或 workspace 内的相对路径。` +
-        `${describeRoots(config)}。${hint} ` +
-        `提示：调用 file_list({ path: "/" }) 可获得所有 storage 根的清单。`,
-    );
+/**
+ * 把用户输入解析为完整 storage URI。
+ *
+ * 仅是 resolveAgainstCwd 的薄包装：从 cwdState 读取当前 session 的 cwd 作为基准。
+ * 宿主机绝对路径的拒绝提示被加强为附带当前可用根信息，避免反复试错。
+ */
+function toStorageUri(input: string | undefined, config: FileConfig, sessionId: string | undefined): string {
+  const cwd = config.cwdState.get(sessionId);
+  try {
+    return resolveAgainstCwd(input, cwd);
+  } catch (err) {
+    // 只在宿主绝对路径分支补充可读根提示。其余错误原样抛出。
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('宿主机绝对路径')) {
+      const known =
+        getKnownRoots(config)
+          .map(r => r.name)
+          .join(', ') || '(无)';
+      throw new Error(`${message} 当前 cwd: ${cwd}。已注册根: ${known}。本工具允许根: ${allowedRootsText(config)}。`);
+    }
+    throw err;
   }
-  if (raw.includes(':/')) return raw;
-  return `${config.defaultRoot}:/${normalizePath(raw)}`;
-}
-
-function rootOf(uri: string): string {
-  const idx = uri.indexOf(':/');
-  if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}（应为 <根名>:/<相对路径>，例如 workspace:/notes/a.md）`);
-  return uri.slice(0, idx);
 }
 
 function ensureRootAllowed(uri: string, config: FileConfig): void {
@@ -102,9 +88,10 @@ function ensureRootAllowed(uri: string, config: FileConfig): void {
 function storagePermission(
   args: Record<string, unknown>,
   config: FileConfig,
+  ctx: { sessionId: string } | undefined,
   op: 'read' | 'write' | 'delete',
 ): string[] {
-  const uri = toStorageUri(args.path as string | undefined, config);
+  const uri = toStorageUri(args.path as string | undefined, config, ctx?.sessionId);
   const root = rootOf(uri);
   return [`storage:${op}`, `storage:${root}:${op}`];
 }
@@ -306,12 +293,12 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       function: {
         name: 'file_read',
         description:
-          '读取受控存储中的文件。路径使用 workspace:/path、tmp:/path，或相对 workspace 的路径。' +
+          '读取受控存储中的文件。路径使用完整 storage URI（如 aalis:/packages/core/index.ts），或相对当前 cwd 的路径。' +
           '不允许读取宿主绝对路径。支持指定行范围读取大文件的部分内容。',
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的文件路径' },
             startLine: { type: 'number', description: '起始行号（从 1 开始，可选）' },
             endLine: { type: 'number', description: '结束行号（包含，可选）' },
             encoding: { type: 'string', description: '编码方式（可选，默认 utf-8；base64 读取二进制）' },
@@ -322,11 +309,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     permissions: ['tool:file.read', 'storage:read'],
-    resolvePermissions: args => storagePermission(args, config, 'read'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         if (info.isDirectory) return JSON.stringify({ error: '路径是一个目录，请使用 file_list' });
@@ -379,7 +366,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的文件路径' },
             content: { type: 'string', description: '要写入的内容' },
           },
           required: ['path', 'content'],
@@ -390,11 +377,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.write', 'storage:write'],
-    resolvePermissions: args => storagePermission(args, config, 'write'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const content = args.content as string;
         if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
@@ -419,7 +406,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的文件路径' },
             oldText: { type: 'string', description: '要被替换的原始文本（必须唯一精确匹配）' },
             newText: { type: 'string', description: '替换后的新文本' },
           },
@@ -431,11 +418,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.edit', 'storage:write'],
-    resolvePermissions: args => storagePermission(args, config, 'write'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const oldText = args.oldText as string;
         const newText = args.newText as string;
@@ -486,7 +473,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件路径' },
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的文件路径' },
             content: { type: 'string', description: '要追加的内容' },
           },
           required: ['path', 'content'],
@@ -497,11 +484,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.append', 'storage:write'],
-    resolvePermissions: args => storagePermission(args, config, 'write'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const appendContent = args.content as string;
         let existing = '';
@@ -533,7 +520,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'storage URI 或相对 workspace 的文件/目录路径' },
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的文件/目录路径' },
           },
           required: ['path'],
           additionalProperties: false,
@@ -543,11 +530,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     authority: 3,
     safety: 'dangerous',
     permissions: ['tool:file.delete', 'storage:delete'],
-    resolvePermissions: args => storagePermission(args, config, 'delete'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'delete'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         await storage.delete(uri);
         return JSON.stringify({ uri, message: '删除成功' });
@@ -565,14 +552,13 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         name: 'file_list',
         description:
           '列出受控存储目录中的文件和子目录，支持关键词过滤、类型过滤与分页。' +
-          '把 path 设为 "/" 或 "*" 可以查看所有可用 storage 根（workspace/data/tmp/...，' +
-          '以及自定义根），用作"我能访问哪些目录"的入口。',
+          '不传 path 默认列出当前 cwd；要查看有哪些 storage 根，调 cwd 工具获得完整根清单。',
         parameters: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
-              description: '目录 storage URI 或相对 workspace 的路径，默认 workspace:/。设为 "/" 列出所有根。',
+              description: '目录 storage URI（<根名>:/<路径>）或相对当前 cwd 的路径；不传则列当前 cwd',
             },
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
             keyword: { type: 'string', description: '按名称子串模糊匹配（不区分大小写）' },
@@ -586,95 +572,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     permissions: ['tool:file.list', 'storage:read'],
-    resolvePermissions: args => {
-      const raw = (args.path as string | undefined) ?? '';
-      // "/" / "*" 走 roots 视图，不需要按根做精细权限
-      if (raw.trim() === '/' || raw.trim() === '*') return ['tool:file.list', 'storage:read'];
-      return storagePermission(args, config, 'read');
-    },
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const raw = ((args.path as string | undefined) ?? '').trim();
-
-        // 特殊入口："/" 或 "*" 表示"列出所有 storage 根"
-        if (raw === '/' || raw === '*') {
-          const allRoots = storage.listRoots();
-          const conflicts = getRootConflicts(config);
-          const conflictByName = new Map(conflicts.map(conflict => [conflict.name, conflict]));
-          const allowedSet = new Set(getAllowedRoots(config));
-          const entries = allRoots.map(r => {
-            const conflict = conflictByName.get(r.name);
-            return {
-              name: r.name,
-              uri: `${r.name}:/`,
-              path: '',
-              type: 'directory' as const,
-              size: undefined,
-              modified: undefined,
-              label: r.label,
-              kind: r.kind,
-              readable: r.readable,
-              writable: r.writable,
-              deletable: r.deletable,
-              allowedByThisTool: allowedSet.has(r.name),
-              ...(conflict
-                ? {
-                    conflict: {
-                      selectedProviderId: conflict.selected.providerId,
-                      selectedProvider: conflict.selected.provider,
-                      shadowedProviders: conflict.shadowed.map(root => ({
-                        providerId: root.providerId,
-                        provider: root.provider,
-                        label: root.label,
-                        kind: root.kind,
-                        readable: root.readable,
-                        writable: root.writable,
-                        deletable: root.deletable,
-                      })),
-                    },
-                  }
-                : {}),
-            };
-          });
-          return JSON.stringify({
-            uri: '/',
-            note:
-              '这是 storage 根的清单（不是宿主机文件系统目录）。' +
-              `本工具当前允许根为 [${allowedRootsText(config)}]` +
-              (config.allowedRoots.includes(ALL_ROOTS)
-                ? '（file.allowedRoots: ["*"]，自动包含全部可读根）'
-                : `（file.allowedRoots: [${config.allowedRoots.join(', ')}]）`) +
-              '。要访问具体根的内容，请用 path: "<根名>:/"。' +
-              (conflicts.length
-                ? `检测到 ${conflicts.length} 个同名根冲突；冲突根会按 provider 优先级选择一个，其余列在 conflicts/shadowedProviders 中。`
-                : ''),
-            roots: entries,
-            conflicts: conflicts.map(conflict => ({
-              name: conflict.name,
-              selected: {
-                providerId: conflict.selected.providerId,
-                provider: conflict.selected.provider,
-                label: conflict.selected.label,
-                kind: conflict.selected.kind,
-                readable: conflict.selected.readable,
-                writable: conflict.selected.writable,
-                deletable: conflict.selected.deletable,
-              },
-              shadowed: conflict.shadowed.map(root => ({
-                providerId: root.providerId,
-                provider: root.provider,
-                label: root.label,
-                kind: root.kind,
-                readable: root.readable,
-                writable: root.writable,
-                deletable: root.deletable,
-              })),
-            })),
-          });
-        }
-
-        const uri = toStorageUri(raw || undefined, config);
+        const uri = toStorageUri((args.path as string | undefined) || undefined, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const result = await storage.list(uri);
         const showHidden = (args.showHidden as boolean) ?? false;
@@ -731,7 +633,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'storage URI 或相对 workspace 的路径' },
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的路径' },
           },
           required: ['path'],
           additionalProperties: false,
@@ -739,11 +641,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     permissions: ['tool:file.info', 'storage:read'],
-    resolvePermissions: args => storagePermission(args, config, 'read'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         return JSON.stringify({
@@ -774,7 +676,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: '要搜索的文件或目录的 storage URI 或相对 workspace 的路径' },
+            path: { type: 'string', description: '要搜索的文件或目录的 storage URI 或相对当前 cwd 的路径' },
             pattern: { type: 'string', description: '搜索模式（纯文本或正则表达式）' },
             isRegex: { type: 'boolean', description: '模式是否为正则表达式（默认 false）' },
             ignoreCase: { type: 'boolean', description: '是否忽略大小写（默认 true）' },
@@ -800,11 +702,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     permissions: ['tool:file.search', 'storage:read'],
-    resolvePermissions: args => storagePermission(args, config, 'read'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string, config);
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         const pattern = args.pattern as string;
@@ -921,7 +823,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: '根目录 storage URI 或相对 workspace 的路径，默认 workspace:/' },
+            path: { type: 'string', description: '根目录 storage URI 或相对当前 cwd 的路径；不传则以 cwd 为根' },
             maxDepth: { type: 'number', description: '最大递归深度（默认 3，最多 10）' },
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
             pattern: {
@@ -942,11 +844,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     permissions: ['tool:file.tree', 'storage:read'],
-    resolvePermissions: args => storagePermission(args, config, 'read'),
-    handler: async args => {
+    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
+    handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const uri = toStorageUri(args.path as string | undefined, config);
+        const uri = toStorageUri(args.path as string | undefined, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const maxDepth = Math.min((args.maxDepth as number) || 3, 10);
         const showHidden = (args.showHidden as boolean) ?? false;
