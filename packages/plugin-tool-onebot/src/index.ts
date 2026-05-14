@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
+import type { MediaService } from '@aalis/plugin-media-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { getPlatformAdapters, getPlatformNames, type PlatformAdapter } from '@aalis/plugin-platform-api';
 import type { ScopedToolService, ToolCallContext } from '@aalis/plugin-tools-api';
@@ -294,9 +294,9 @@ async function recognizeForwardImages(
   const imageDescriptions = new Map<string, string>();
   if (refs.length === 0) return { imageDescriptions };
 
-  const irService = ctx.getService<ImageRecognitionService>('image-recognition');
-  if (!irService?.available || !irService.describe) {
-    ctx.logger.debug(`合并转发包含 ${refs.length} 张图片，但 image-recognition 服务不可用`);
+  const mediaSvc = ctx.getService<MediaService>('media');
+  if (!mediaSvc?.describeImage) {
+    ctx.logger.debug(`合并转发包含 ${refs.length} 张图片，但 media 服务不可用`);
     return { imageDescriptions };
   }
 
@@ -307,7 +307,7 @@ async function recognizeForwardImages(
     seen.add(key);
     try {
       const imageSource = await resolveForwardImageSource(ctx, callCtx, ref);
-      const description = await irService.describe(imageSource);
+      const description = await mediaSvc.describeImage(imageSource);
       if (description) imageDescriptions.set(key, description);
     } catch (err) {
       ctx.logger.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
