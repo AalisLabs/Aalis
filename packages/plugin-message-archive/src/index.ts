@@ -1,6 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 
-import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
+import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel, prefixSender } from '@aalis/plugin-message-api';
@@ -21,7 +21,7 @@ export const displayName = '消息归档';
 export const subsystem = 'message';
 export const inject = {
   required: ['memory'],
-  optional: ['image-recognition'],
+  optional: ['media'],
 };
 export const provides = ['message-archive'];
 
@@ -71,25 +71,12 @@ function buildIncomingContent(incoming: IncomingMessage): string {
     content += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
   }
 
-  if (incoming.attachmentOrder && (incoming._fileDescriptions || incoming._imageDescriptions)) {
-    const fileDescs = incoming._fileDescriptions ?? [];
-    const imageDescs = incoming._imageDescriptions ?? [];
-    let fileIndex = 0;
-    let imageIndex = 0;
-    const ordered: string[] = [];
-
-    for (const type of incoming.attachmentOrder) {
-      if (type === 'file' && fileIndex < fileDescs.length) {
-        ordered.push(fileDescs[fileIndex++]);
-      } else if (type === 'image' && imageIndex < imageDescs.length) {
-        ordered.push(imageDescs[imageIndex++]);
-      }
-    }
-    while (fileIndex < fileDescs.length) ordered.push(fileDescs[fileIndex++]);
-    while (imageIndex < imageDescs.length) ordered.push(imageDescs[imageIndex++]);
-
-    if (ordered.length > 0) {
-      const attachText = ordered.join('\n');
+  // 把 plugin-media 写入的 _attachmentDescriptions 按 attachments 顺序追加
+  const attDescs = incoming._attachmentDescriptions;
+  if (attDescs && attDescs.length > 0) {
+    const lines = attDescs.filter((d): d is string => Boolean(d?.trim()));
+    if (lines.length > 0) {
+      const attachText = lines.join('\n');
       content = content ? `${content}\n${attachText}` : attachText;
     }
   }
@@ -119,36 +106,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     async archiveIncoming(incoming: IncomingMessage) {
       const working: IncomingMessage = {
         ...incoming,
-        images: incoming.images ? [...incoming.images] : incoming.images,
-        files: incoming.files ? [...incoming.files] : incoming.files,
-        attachmentOrder: incoming.attachmentOrder ? [...incoming.attachmentOrder] : incoming.attachmentOrder,
-        _imageDescriptions: incoming._imageDescriptions
-          ? [...incoming._imageDescriptions]
-          : incoming._imageDescriptions,
-        _fileDescriptions: incoming._fileDescriptions ? [...incoming._fileDescriptions] : incoming._fileDescriptions,
-        _imageRecognitionInfo: incoming._imageRecognitionInfo
-          ? {
-              ...incoming._imageRecognitionInfo,
-              descriptions: [...incoming._imageRecognitionInfo.descriptions],
-            }
-          : incoming._imageRecognitionInfo,
+        attachments: incoming.attachments ? incoming.attachments.map(a => ({ ...a })) : incoming.attachments,
+        _attachmentDescriptions: incoming._attachmentDescriptions
+          ? [...incoming._attachmentDescriptions]
+          : incoming._attachmentDescriptions,
       };
 
-      if (working.images && working.images.length > 0 && !working._imageRecognitionInfo) {
-        const irService = ctx.getService<ImageRecognitionService>('image-recognition');
-        if (irService?.available && irService.enabled && irService.processMessage) {
-          const context = await irService.buildContext?.(working);
-          const processed = await irService.processMessage({
-            content: working.content,
-            images: working.images,
-            context,
-            attachmentOrder: working.attachmentOrder,
-          });
-          if (processed) {
-            working.content = processed.content;
-            working._imageDescriptions = processed.imageDescriptions;
-            working._imageRecognitionInfo = processed.info;
-            working.images = undefined;
+      // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
+      if (working.attachments && working.attachments.length > 0 && !working._attachmentDescriptions) {
+        const mediaSvc = ctx.getService<MediaService>('media');
+        if (mediaSvc?.processMessage) {
+          const report = await mediaSvc.processMessage(working);
+          if (cfg.debugLogs && report.total > 0) {
+            ctx.logger.debug(
+              `附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content.slice(0, 200)}`,
+            );
           }
         }
       }
@@ -174,17 +146,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
 
-      if (cfg.debugLogs && working._imageRecognitionInfo) {
-        ctx.logger.debug(
-          `图片解释完成: ${working._imageRecognitionInfo.successCount}/${working._imageRecognitionInfo.imageCount} 张成功 | ${content.slice(0, 200)}`,
-        );
-      }
-
       await memory.saveMessage(working.sessionId, message);
 
-      if (cfg.debugLogs && working._imageRecognitionInfo) {
+      if (cfg.debugLogs && working.attachments?.length) {
         ctx.logger.debug(
-          `图片消息已写入记忆: session=${working.sessionId}, images=${working._imageRecognitionInfo.imageCount}, success=${working._imageRecognitionInfo.successCount} | ${content.slice(0, 200)}`,
+          `附件消息已写入记忆: session=${working.sessionId}, attachments=${working.attachments.length} | ${content.slice(0, 200)}`,
         );
       }
 
@@ -201,7 +167,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return {
         message,
         content,
-        imageRecognitionInfo: working._imageRecognitionInfo,
       };
     },
 

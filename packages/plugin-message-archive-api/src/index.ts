@@ -4,7 +4,6 @@ import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 export interface ArchiveIncomingResult {
   message: Message;
   content: string;
-  imageRecognitionInfo?: IncomingMessage['_imageRecognitionInfo'];
 }
 
 /** 平台通知/事件归档参数（参考 OneBot v11/v12 notice 规范） */

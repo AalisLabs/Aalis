@@ -314,87 +314,60 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== 文件附件预处理函数 =====
 
   async function preprocessFiles(msg: IncomingMessage, next: () => Promise<void>): Promise<void> {
-    if (!msg.files || msg.files.length === 0) {
+    if (!msg.attachments || msg.attachments.length === 0) {
       await next();
       return;
     }
 
-    const fileInfos: string[] = [];
-    // 记录图片文件被路由到 msg.images 的数量（用于 attachmentOrder 更新）
-    let routedImageCount = 0;
+    // 只处理 kind === 'file' 的项；图片/音频/视频留给 plugin-media。
+    // 处理后把 file 项替换为带 description 标记的占位（描述写入 _attachmentDescriptions），
+    // 同时把原始大文件 data 字段裁掉避免重复携带。
+    const attDescs: (string | undefined)[] = msg._attachmentDescriptions ? [...msg._attachmentDescriptions] : [];
+    while (attDescs.length < msg.attachments.length) attDescs.push(undefined);
 
-    for (const fileAttachment of msg.files) {
+    let touched = false;
+    for (let i = 0; i < msg.attachments.length; i++) {
+      const att = msg.attachments[i];
+      if (att.kind !== 'file') continue;
+      const fileName = att.name ?? `file-${i}`;
       try {
-        const { buffer, mimeType: dataMime } = dataUrlToBuffer(fileAttachment.data);
+        const { buffer, mimeType: dataMime } = dataUrlToBuffer(att.data);
+        const resolvedMime = att.mimeType || dataMime;
 
-        // 判断是否为图片文件
-        const resolvedMime = fileAttachment.mimeType || dataMime;
-        if (resolvedMime.startsWith('image/')) {
-          // 图片文件 → 路由到 msg.images，由 image-recognition 中间件或多模态 LLM 处理
-          if (!msg.images) msg.images = [];
-          msg.images.push(fileAttachment.data);
-          routedImageCount++;
-          // 如果存在 attachmentOrder，将对应的 'file' 条目替换为 'image'（因为被路由到了图片队列）
-          if (msg.attachmentOrder) {
-            let fileIdx = 0;
-            for (let i = 0; i < msg.attachmentOrder.length; i++) {
-              if (msg.attachmentOrder[i] === 'file') {
-                // 找到当前文件在 order 中的位置（已处理的非路由文件 + 路由图片 = fileIdx）
-                if (fileIdx === fileInfos.length + routedImageCount - 1) {
-                  msg.attachmentOrder[i] = 'image';
-                  break;
-                }
-                fileIdx++;
-              }
-            }
-          }
-          ctx.logger.debug(`图片文件 ${fileAttachment.name} 已路由到 msg.images`);
-          continue;
-        }
-
-        // 非图片文件：验证大小并存储
         if (buffer.length > maxFileSize) {
-          fileInfos.push(
-            `[文件: ${fileAttachment.name} - 超过大小限制 (${(buffer.length / 1024 / 1024).toFixed(1)}MB > ${(maxFileSize / 1024 / 1024).toFixed(0)}MB)]`,
-          );
+          attDescs[i] =
+            `[文件: ${fileName} - 超过大小限制 (${(buffer.length / 1024 / 1024).toFixed(1)}MB > ${(maxFileSize / 1024 / 1024).toFixed(0)}MB)]`;
+          touched = true;
           continue;
         }
 
-        const mimeType = inferMimeType(fileAttachment.name, resolvedMime);
-        const stored = storeFile(fileAttachment.name, buffer, mimeType, msg.sessionId);
-
+        const mimeType = inferMimeType(fileName, resolvedMime);
+        const stored = storeFile(fileName, buffer, mimeType, msg.sessionId);
         ctx.logger.debug(`文件已存储: ${stored.name} (ID: ${stored.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
 
-        // 小文件自动读取内容并注入消息，大文件仅提供 ID 让模型按需调用工具
-        const AUTO_INLINE_LIMIT = 30_000; // 字符
+        const AUTO_INLINE_LIMIT = 30_000;
         try {
           const text = await extractText(stored);
           if (text.length <= AUTO_INLINE_LIMIT && !text.startsWith('[不支持')) {
-            fileInfos.push(`[文件: ${stored.name}]\n--- 文件内容 ---\n${text}\n--- 文件内容结束 ---`);
+            attDescs[i] = `[文件: ${stored.name}]\n--- 文件内容 ---\n${text}\n--- 文件内容结束 ---`;
           } else {
-            fileInfos.push(`[文件: ${stored.name} (ID: ${stored.id}，大文件，使用 read_uploaded_file 工具读取内容)]`);
+            attDescs[i] = `[文件: ${stored.name} (ID: ${stored.id}，大文件，使用 read_uploaded_file 工具读取内容)]`;
           }
         } catch {
-          fileInfos.push(`[文件: ${stored.name} (ID: ${stored.id})]`);
+          attDescs[i] = `[文件: ${stored.name} (ID: ${stored.id})]`;
         }
+        // 替换原始 data 为 ID 引用，避免后续链路重复携带大 buffer
+        msg.attachments[i] = { ...att, data: `aalis-file://${stored.id}` };
+        touched = true;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`文件处理失败 (${fileAttachment.name}):`, errMsg);
-        fileInfos.push(`[文件: ${fileAttachment.name} - 处理失败]`);
+        ctx.logger.warn(`文件处理失败 (${fileName}):`, errMsg);
+        attDescs[i] = `[文件: ${fileName} - 处理失败]`;
+        touched = true;
       }
     }
 
-    // 如果有 attachmentOrder，将文件描述存入 _fileDescriptions，交由后续统一组装
-    if (msg.attachmentOrder && fileInfos.length > 0) {
-      msg._fileDescriptions = fileInfos;
-    } else if (fileInfos.length > 0) {
-      // 无排序信息时保持原有行为：直接注入 msg.content
-      const fileText = fileInfos.join('\n');
-      msg.content = msg.content ? `${msg.content}\n${fileText}` : fileText;
-    }
-
-    // 清除原始文件数据（已存储到 fileStore 或路由到 images）
-    msg.files = undefined;
+    if (touched) msg._attachmentDescriptions = attDescs;
 
     await next();
   }
