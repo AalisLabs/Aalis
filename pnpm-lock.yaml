@@ -1248,22 +1248,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-storage-router:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@aalis/plugin-storage-api':
-        specifier: workspace:*
-        version: link:../plugin-storage-api
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-todo-list:
     dependencies:
       '@aalis/core':
