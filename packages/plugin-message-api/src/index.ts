@@ -221,5 +221,12 @@ declare module '@aalis/core' {
 // 防止 "未使用导入" 警告（Message 在 declaration merging 中引用）
 export type _MessageRef = Message;
 
+export {
+  type AttachmentRef,
+  AttachmentRefKind,
+  buildAttachmentRefMatcher,
+  formatAttachmentRef,
+  parseAttachmentRefs,
+} from './attachment-ref.js';
 // ----- 身份标识工具（cleanup-9 从 core 迁入） -----
 export { getMessageName, getSenderLabel, prefixSender } from './identity.js';
