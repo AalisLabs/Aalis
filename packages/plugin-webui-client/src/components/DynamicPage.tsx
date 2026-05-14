@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { api, pageAction } from '../api';
-import { SchemaForm } from './SchemaForm';
+import { SchemaForm, type LLMProviderEntry } from './SchemaForm';
 import type {
   WebuiComponent, WebuiStatComponent, WebuiTableComponent,
   WebuiFormComponent, WebuiActionsComponent, WebuiInfoComponent,
@@ -195,6 +195,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   const [msg, setMsg] = useState('');
   const modelCache = useRef<Record<string, Array<{ label: string; value: string }>>>({});
   const providerCacheRef = useRef<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
+  const [llmProviders, setLLMProviders] = useState<LLMProviderEntry[] | undefined>(undefined);
 
   useEffect(() => {
     setLoading(true);
@@ -237,6 +238,13 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
       .catch(() => {});
   };
 
+  const handleFetchLLMProviders = () => {
+    if (llmProviders) return;
+    api<{ providers: LLMProviderEntry[] }>('/api/llm-providers')
+      .then(r => setLLMProviders(r.providers ?? []))
+      .catch(() => setLLMProviders([]));
+  };
+
   if (loading) return <div className="empty-hint">加载中...</div>;
 
   return (
@@ -250,6 +258,8 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
         onFetchModels={handleFetchModels}
         providerCache={providerCacheRef.current}
         onFetchProviders={handleFetchProviders}
+        llmProviders={llmProviders}
+        onFetchLLMProviders={handleFetchLLMProviders}
       />
       <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
         <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>

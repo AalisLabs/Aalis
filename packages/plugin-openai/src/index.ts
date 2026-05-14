@@ -1,12 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import type {
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMCapability,
-  LLMService,
-  ModelInfo,
-} from '@aalis/plugin-llm-api';
+import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
@@ -153,33 +146,23 @@ interface APIChatResponse {
   };
 }
 
-// ===== LLM 服务实现 =====
+// ===== OpenAI 客户端（不是 service、仅是底层 fetch 封装，多个 ModelHandle 共享） =====
 
-class OpenAILLMService implements LLMService {
+class OpenAIClient {
   private apiKey: string;
-  private baseUrl: string;
-  private customModels: string[];
-  private modelCapabilities: Map<string, LLMCapability[]>;
-  private providerCapabilities: LLMCapability[];
-  /** 启动时解析的默认模型（第一个可用模型） */
-  private defaultModel: string | null = null;
+  readonly baseUrl: string;
   private timeout: number;
-  private temperature: number;
-  private maxTokens: number;
-  private contextLength: number;
+  readonly temperature: number;
+  readonly maxTokens: number;
   private logger;
 
   constructor(config: OpenAIConfig, logger: Context['logger']) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.customModels = config.customModels;
-    this.modelCapabilities = config.modelCapabilities;
-    this.providerCapabilities = config.providerCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
-    this.contextLength = config.contextLength;
     this.logger = logger;
   }
 
@@ -190,90 +173,26 @@ class OpenAILLMService implements LLMService {
     return h;
   }
 
-  /**
-   * 初始化：发现远端模型，检查自定义模型重复，解析默认模型。
-   * 返回 { defaultModel, capabilities } 供插件入口注册使用。
-   */
-  async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
-    const discovered = await this.fetchRemoteModels();
-    const discoveredIds = new Set(discovered.map(m => m.id));
-
-    // 检查重复
-    for (const cm of this.customModels) {
-      if (discoveredIds.has(cm)) {
-        this.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
-      }
-    }
-
-    // 默认模型：优先自动发现列表的第一个，其次自定义列表的第一个
-    this.defaultModel = discovered[0]?.id ?? this.customModels[0] ?? null;
-
-    const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
-
-    return { defaultModel: this.defaultModel, capabilities };
-  }
-
-  /** 仅获取远端模型列表（不含自定义模型） */
-  private async fetchRemoteModels(): Promise<ModelInfo[]> {
+  /** 发现远端模型列表（仅含 id） */
+  async fetchRemoteModelIds(): Promise<string[]> {
     try {
       const res = await fetch(`${this.baseUrl}/v1/models`, {
         headers: this.headers,
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { data: { id: string }[] };
-      return data.data.map(m => ({
-        id: m.id,
-        capabilities: this.resolveModelCapabilities(m.id),
-      }));
+      return data.data.map(m => m.id);
     } catch {
       return [];
     }
   }
 
-  getTemperature(): number {
-    return this.temperature;
-  }
-
-  getMaxTokens(): number {
-    return this.maxTokens;
-  }
-
-  getContextLength(): number {
-    return this.contextLength;
-  }
-
-  async listModels(): Promise<ModelInfo[]> {
-    const remote = await this.fetchRemoteModels();
-    const remoteIds = new Set(remote.map(m => m.id));
-    // 只追加不在远端列表中的自定义模型
-    const custom = this.customModels
-      .filter(id => !remoteIds.has(id))
-      .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
-    // 当前实现下所有模型共用同一 contextLength 配置项；为路由器（getContextLengthFor）
-    // 提供有效查询数据，附在每个 ModelInfo 上。如果未来支持按模型差异化窗口，
-    // 应在配置里增加 modelContextLengths 映射并在此覆盖。
-    return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
-  }
-
-  /** 返回某模型的能力集：providerCapabilities ∪ (用户单模型覆盖 或 启发式推断)。 */
-  private resolveModelCapabilities(modelId: string): LLMCapability[] {
-    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId), this.providerCapabilities);
-  }
-
-  /** 获取默认模型，未设置时抛错 */
-  private getDefaultModel(): string {
-    if (!this.defaultModel) {
-      throw new Error('无可用模型：远端模型列表为空且未配置自定义模型，请在 request 中显式指定 model');
-    }
-    return this.defaultModel;
-  }
-
-  async chat(request: ChatRequest): Promise<ChatResponse> {
+  async chat(model: string, request: ChatModelRequest): Promise<ChatResponse> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.getDefaultModel(),
+      model,
       messages,
       temperature: request.temperature ?? this.temperature,
       max_tokens: request.maxTokens ?? 4096,
@@ -333,12 +252,12 @@ class OpenAILLMService implements LLMService {
     return result;
   }
 
-  async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
+  async *chatStream(model: string, request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.getDefaultModel(),
+      model,
       messages,
       temperature: request.temperature ?? this.temperature,
       max_tokens: request.maxTokens ?? 4096,
@@ -626,6 +545,26 @@ function parseProviderCapabilities(raw: unknown): LLMCapability[] {
     .filter(Boolean) as LLMCapability[];
 }
 
+// ===== Per-model handle：每个 model 独立的 LLMModel entry =====
+
+class OpenAIModelHandle implements LLMModel {
+  constructor(
+    private client: OpenAIClient,
+    readonly id: string,
+    readonly providerId: string,
+    readonly contextLength: number,
+    readonly maxOutputTokens: number,
+  ) {}
+
+  chat(request: ChatModelRequest): Promise<ChatResponse> {
+    return this.client.chat(this.id, request);
+  }
+
+  chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    return this.client.chatStream(this.id, request);
+  }
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const openaiConfig: OpenAIConfig = {
     apiKey: (config.apiKey as string) ?? '',
@@ -643,15 +582,40 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     throw new Error('使用 OpenAI 官方 API 需要配置 apiKey');
   }
 
-  const service = new OpenAILLMService(openaiConfig, ctx.logger);
-  const { defaultModel, capabilities } = await service.initialize();
+  const client = new OpenAIClient(openaiConfig, ctx.logger);
 
-  const label = `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})`;
-  ctx.provide('llm', service, { capabilities, label });
-
-  if (defaultModel) {
-    ctx.logger.info(`已连接: ${openaiConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]`);
-  } else {
-    ctx.logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型`);
+  // 探测远端 + 合并自定义模型，生成完整 model id 列表
+  const remoteIds = await client.fetchRemoteModelIds();
+  const remoteSet = new Set(remoteIds);
+  for (const cm of openaiConfig.customModels) {
+    if (remoteSet.has(cm)) {
+      ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+    }
   }
+  const allModelIds = [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
+
+  if (allModelIds.length === 0) {
+    ctx.logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    return;
+  }
+
+  const baseLabel = `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})`;
+
+  // 为每个 model 注册独立的 LLMModel entry：contextId = `${ctx.id}/${modelId}`
+  // capability 数组真实反映该 model 的能力（providerCapabilities ∪ 单模型覆盖 ∪ 启发式）
+  for (const modelId of allModelIds) {
+    const capabilities = resolveCapabilities(
+      modelId,
+      openaiConfig.modelCapabilities.get(modelId),
+      openaiConfig.providerCapabilities,
+    );
+    const handle = new OpenAIModelHandle(client, modelId, ctx.id, openaiConfig.contextLength, openaiConfig.maxTokens);
+    ctx.provide('llm', handle, {
+      capabilities,
+      label: `${baseLabel} / ${modelId}`,
+      entryId: `${ctx.id}/${modelId}`,
+    });
+  }
+
+  ctx.logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry`);
 }

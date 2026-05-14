@@ -1,14 +1,14 @@
 import {
   type NormalizedDependency,
+  normalizeDependency,
+  type ServiceEntry,
   ServicePriority,
   type ServicePriorityValue,
-  type ServiceEntry,
-  normalizeDependency,
 } from './types/service.js';
 
+export type { NormalizedDependency, ServiceEntry, ServicePriorityValue };
 // 类型与纯辅助 re-export，保留同名旧导入路径
-export { ServicePriority, normalizeDependency };
-export type { NormalizedDependency, ServicePriorityValue, ServiceEntry };
+export { normalizeDependency, ServicePriority };
 
 /**
  * 服务容器 —— 支持同名多实现 + 能力匹配
@@ -97,11 +97,28 @@ export class ServiceContainer {
   }
 
   /**
-   * 检查指定 contextId 是否注册了某个服务
+   * 检查指定 contextId 是否注册了某个服务。
+   *
+   * "拥有" 语义：同时匹配 `contextId === ownerId` 和 per-entry 拆粒度的
+   * `contextId` 以 `ownerId + '/'` 为前缀的子 entry（如 `@aalis/plugin-ollama:main/llama3`）。
    */
   hasByContext(name: string, contextId: string): boolean {
     const list = this.entries.get(name);
-    return list?.some(e => e.contextId === contextId) ?? false;
+    if (!list) return false;
+    const prefix = `${contextId}/`;
+    return list.some(e => e.contextId === contextId || e.contextId.startsWith(prefix));
+  }
+
+  /**
+   * 按精确 contextId 拿单个服务实例。
+   *
+   * 用于"会话/偏好已知 contextId、需要直接寻址该 entry"的场景，
+   * 典型如 per-model LLM entry：session.modelContextId = '@aalis/plugin-openai:main/gpt-4o'
+   * → `getByContextId('llm', sessionData.modelContextId)`。
+   */
+  getByContextId<T>(name: string, contextId: string): T | undefined {
+    const list = this.entries.get(name);
+    return (list?.find(e => e.contextId === contextId)?.instance as T | undefined) ?? undefined;
   }
 
   /**
@@ -134,13 +151,17 @@ export class ServiceContainer {
   }
 
   /**
-   * 按 contextId 移除所有该上下文注册的服务，返回被移除的服务名列表
+   * 按 contextId 移除该上下文拥有的所有服务 entry，返回被移除的服务名列表。
+   *
+   * "拥有" 同 hasByContext：包括 `contextId === id` 和以 `id + '/'` 为前缀的 per-entry 子 entry。
+   * 这是插件 unload 时清理多 entry 注册（per-model LLM / per-root storage / …）的路径。
    */
   unregisterByContext(contextId: string): string[] {
     const removed: string[] = [];
+    const prefix = `${contextId}/`;
     for (const [name, list] of this.entries) {
       const before = list.length;
-      const filtered = list.filter(e => e.contextId !== contextId);
+      const filtered = list.filter(e => e.contextId !== contextId && !e.contextId.startsWith(prefix));
       if (filtered.length < before) {
         removed.push(name);
       }
