@@ -23,6 +23,7 @@
     "@aalis/plugin-storage-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
+    "@aalis/util-network-guard": "workspace:*",
     "express": "^5.1.0",
     "ws": "^8.18.0",
     "zod": "^3.25.76"
