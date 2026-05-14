@@ -3,10 +3,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
-import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
+import type { MediaService } from '@aalis/plugin-media-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import WebSocket from 'ws';
+import { renderAttachmentsAsContentMarkers } from './attachments.js';
 import type {
   NormalizedRequestEvent,
   OneBotActionResponse,
@@ -120,7 +121,7 @@ export const configSchema: ConfigSchema = {
         type: 'boolean',
         label: '识别内部图片',
         default: true,
-        description: '把转发内的图片送入 image-recognition 服务转写为文字描述。需要该服务可用。',
+        description: '把转发内的图片送入 media 服务转写为文字描述。需要该服务可用。',
       },
       summarize: {
         type: 'boolean',
@@ -774,8 +775,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 3. 引用消息中的图片：仅查描述缓存复用，不主动触发视觉模型
       if (content.includes('[图片]')) {
-        const ir = ctx.getService<ImageRecognitionService>('image-recognition');
-        if (ir?.lookupDescription) {
+        const media = ctx.getService<MediaService>('media');
+        if (media?.lookupDescription) {
           const imageUrls: string[] = [];
           for (const seg of segments) {
             const s = seg as unknown as Record<string, unknown>;
@@ -789,7 +790,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             content = content.replace(/\[图片\]/g, () => {
               const url = imageUrls[urlIdx++];
               if (!url) return '[图片]';
-              const desc = ir.lookupDescription!(url);
+              const desc = media.lookupDescription(url);
               return desc ? `[图片: ${desc}]` : '[图片]';
             });
           }
@@ -1351,10 +1352,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;
 
       // 下载并缓存图片，替换文本中的 [图片] 为 [图片 | ref:path]
-      if (event.images && event.images.length > 0) {
-        const { text: rewritten } = await cacheImagesAndRewriteText(event.text, event.images, sessionId);
+      const imageAtts = event.attachments?.filter(a => a.kind === 'image') ?? [];
+      if (imageAtts.length > 0) {
+        const { text: rewritten } = await cacheImagesAndRewriteText(
+          event.text,
+          imageAtts.map(a => a.url),
+          sessionId,
+        );
         event.text = rewritten;
-        // images 保持原始 URL，供中间件/多模态模型使用（当前请求内仍有效）
       }
 
       // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
@@ -1406,7 +1411,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         platform: 'onebot',
         userId: event.userId,
         nickname: event.nickname,
-        images: event.images,
+        attachments: event.attachments?.map(a => ({
+          kind: a.kind,
+          data: a.url,
+          mimeType: a.mimeType,
+          name: a.name,
+        })),
         sessionType,
         groupName,
         groupId: event.groupId,
@@ -1833,19 +1843,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ----- 监听消息回复事件 -----
 
-  ctx.on('outbound:message', msg => {
+  ctx.on('outbound:message', async msg => {
     if (!msg.sessionId.startsWith('onebot:')) return;
-    if (!msg.content?.trim()) {
+
+    // 把结构化 attachments 渲染为 <image url="file://..."/> 标记，主动下载远程 URL
+    let content = msg.content ?? '';
+    if (msg.attachments?.length) {
+      try {
+        const markers = await renderAttachmentsAsContentMarkers(msg.attachments, ctx.logger);
+        if (markers) content = content ? `${content}\n${markers}` : markers;
+      } catch (err) {
+        ctx.logger.warn(`OneBot 渲染附件失败: ${err}`);
+      }
+    }
+
+    if (!content.trim()) {
       ctx.logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
       return;
     }
     ctx.logger.debug(
-      `OneBot 发送消息 [${msg.sessionId}]: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '...' : ''}`,
+      `OneBot 发送消息 [${msg.sessionId}]: ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`,
     );
 
     // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
 
-    adapter.sendMessage(msg.sessionId, msg.content, { skipSplit: msg.source !== 'agent' }).catch(err => {
+    adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
       ctx.logger.warn(`OneBot 发送消息失败: ${err}`);
     });
   });

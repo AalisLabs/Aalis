@@ -84,12 +84,20 @@ export class OneBotV12 implements OneBotProtocol {
 
     if (!text.trim()) return null;
 
-    // 提取图片 URL / file_id
-    const images: string[] = [];
+    // 提取图片 URL / file_id（老字段保留）+ 统一附件
+    const attachments: NonNullable<NormalizedMessageEvent['attachments']> = [];
     for (const seg of message) {
+      const data = seg.data as Record<string, unknown>;
+      const url = (data.url ?? data.file_id) as string | undefined;
+      if (!url) continue;
       if (seg.type === 'image') {
-        const url = seg.data.url ?? seg.data.file_id;
-        if (url) images.push(String(url));
+        attachments.push({ kind: 'image', url: String(url) });
+      } else if (seg.type === 'voice' || seg.type === 'audio') {
+        attachments.push({ kind: 'audio', url: String(url) });
+      } else if (seg.type === 'video') {
+        attachments.push({ kind: 'video', url: String(url) });
+      } else if (seg.type === 'file') {
+        attachments.push({ kind: 'file', url: String(url) });
       }
     }
 
@@ -118,7 +126,7 @@ export class OneBotV12 implements OneBotProtocol {
       guildId: raw.guild_id != null ? String(raw.guild_id) : undefined,
       channelId: raw.channel_id != null ? String(raw.channel_id) : undefined,
       message,
-      images: images.length > 0 ? images : undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
       replyToMessageId,
     };
   }

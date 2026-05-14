@@ -1,6 +1,6 @@
 import type { Context } from '@aalis/core';
-import type { ImageRecognitionService } from '@aalis/plugin-image-recognition-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
+import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { buildEnvelope, expandForward } from './forward.js';
 import type { OneBotMessageSegment } from './types.js';
@@ -196,11 +196,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     }
     if (ids.size === 0) return text;
 
-    const irService = forwardCfg.imageRecognition
-      ? ctx.getService<ImageRecognitionService>('image-recognition')
-      : undefined;
-    const recognizeImage =
-      irService?.available && irService.describe ? (src: string) => irService.describe!(src) : undefined;
+    const mediaSvc = forwardCfg.imageRecognition ? ctx.getService<MediaService>('media') : undefined;
+    const recognizeImage = mediaSvc?.describeImage ? (src: string) => mediaSvc.describeImage(src) : undefined;
 
     const envelopeMap = new Map<string, string>();
     for (const id of ids) {
