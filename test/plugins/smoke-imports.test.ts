@@ -32,7 +32,6 @@ const PLUGIN_DIRS = [
   'plugin-file-reader',
   'plugin-flow-control',
   'plugin-gateway',
-  'plugin-image-recognition',
   'plugin-maimai',
   'plugin-mcp-client',
   'plugin-mcp-server',
