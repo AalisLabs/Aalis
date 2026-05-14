@@ -88,19 +88,6 @@ function guessExtFromMime(mime: string | null): string | undefined {
   return undefined;
 }
 
-let ffmpegAvailable: boolean | null = null;
-
-async function checkFfmpeg(): Promise<boolean> {
-  if (ffmpegAvailable !== null) return ffmpegAvailable;
-  try {
-    await execFileAsync('ffmpeg', ['-version']);
-    ffmpegAvailable = true;
-  } catch {
-    ffmpegAvailable = false;
-  }
-  return ffmpegAvailable;
-}
-
 export function selectFrameIndices(totalFrames: number, maxFrames: number): number[] {
   if (totalFrames <= 0) return [];
   if (totalFrames === 1) return [0];
