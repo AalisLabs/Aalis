@@ -534,7 +534,7 @@ class DeepSeekClient {
     };
 
     // DeepSeek API 不支持 image_url content 类型
-    // 图片应由 plugin-image-recognition 预处理为文本描述，不传递给 API
+    // 图片应由 plugin-media 预处理为文本描述，不传递给 API
 
     // 传递思考内容给 API（工具调用循环中需要）
     if (msg.reasoningContent) {

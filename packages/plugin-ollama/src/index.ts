@@ -625,7 +625,7 @@ function safeParseJSON(str: string): Record<string, unknown> {
 
 // ===== 模型能力映射 =====
 
-const { Chat, ToolCalling, Streaming, Vision } = LLMCapabilities;
+const { Chat, ToolCalling, Streaming, Vision, Audio } = LLMCapabilities;
 
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'llama3.1': [Chat, ToolCalling, Streaming],
@@ -655,13 +655,20 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
   }
   // 去掉 tag 部分（如 llama3.1:8b → llama3.1）
   const baseName = model.split(':')[0].toLowerCase();
+
+  // Gemma 4 E 系列（e2b / e4b）原生支持音频输入（约 300M Audio encoder）。
+  // 参考 https://ollama.com/library/gemma4
+  const isGemma4Audio = /^gemma4:e[24]b/.test(model.toLowerCase());
+
   if (MODEL_CAPABILITIES[baseName]) {
     for (const c of MODEL_CAPABILITIES[baseName]) out.add(c);
+    if (isGemma4Audio) out.add(Audio);
     return [...out];
   }
   for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
     if (baseName.startsWith(known)) {
       for (const c of caps) out.add(c);
+      if (isGemma4Audio) out.add(Audio);
       return [...out];
     }
   }
@@ -670,6 +677,7 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
     return [...out];
   }
   for (const c of DEFAULT_CAPABILITIES) out.add(c);
+  if (isGemma4Audio) out.add(Audio);
   return [...out];
 }
 

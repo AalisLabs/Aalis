@@ -81,15 +81,18 @@ importers:
       '@aalis/plugin-flow-control':
         specifier: workspace:*
         version: link:../plugin-flow-control
-      '@aalis/plugin-image-recognition-api':
-        specifier: workspace:*
-        version: link:../plugin-image-recognition-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-media-api':
+        specifier: workspace:*
+        version: link:../plugin-media-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
@@ -170,6 +173,38 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-asr-openai:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-media-api':
+        specifier: workspace:*
+        version: link:../plugin-media-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-asr-whisper-cpp:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-media-api':
+        specifier: workspace:*
+        version: link:../plugin-media-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -521,23 +556,11 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-image-recognition:
+  packages/plugin-image-sender:
     dependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-agent':
-        specifier: workspace:*
-        version: link:../plugin-agent
-      '@aalis/plugin-agent-api':
-        specifier: workspace:*
-        version: link:../plugin-agent-api
-      '@aalis/plugin-image-recognition-api':
-        specifier: workspace:*
-        version: link:../plugin-image-recognition-api
-      '@aalis/plugin-llm-api':
-        specifier: workspace:*
-        version: link:../plugin-llm-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
@@ -547,22 +570,6 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/plugin-image-recognition-api:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -642,6 +649,53 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.4
         version: 1.29.0(zod@4.4.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-media:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
+      '@aalis/plugin-media-api':
+        specifier: workspace:*
+        version: link:../plugin-media-api
+      '@aalis/plugin-memory-api':
+        specifier: workspace:*
+        version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-media-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -809,9 +863,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-image-recognition-api':
+      '@aalis/plugin-media-api':
         specifier: workspace:*
-        version: link:../plugin-image-recognition-api
+        version: link:../plugin-media-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
@@ -1263,9 +1317,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-image-recognition-api':
+      '@aalis/plugin-media-api':
         specifier: workspace:*
-        version: link:../plugin-image-recognition-api
+        version: link:../plugin-media-api
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
@@ -1635,6 +1689,47 @@ importers:
       '@types/ws':
         specifier: ^8.5.0
         version: 8.18.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-workflow:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
+      '@aalis/plugin-workflow-api':
+        specifier: workspace:*
+        version: link:../plugin-workflow-api
+      yaml:
+        specifier: ^2.7.0
+        version: 2.8.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-workflow-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
