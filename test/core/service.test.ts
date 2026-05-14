@@ -28,6 +28,19 @@ describe('ServiceContainer', () => {
     expect(c.get('c')).toEqual({ v: 3 });
   });
 
+  it('hasByContext / unregisterByContext 覆盖 per-entry 子粒度（owner/sub）', () => {
+    const c = new ServiceContainer();
+    c.register('llm', { v: 1 }, [], 0, 'plug-x/m1');
+    c.register('llm', { v: 2 }, [], 0, 'plug-x/m2');
+    c.register('llm', { v: 3 }, [], 0, 'plug-y');
+    expect(c.hasByContext('llm', 'plug-x')).toBe(true);
+    expect(c.hasByContext('llm', 'plug-y')).toBe(true);
+    expect(c.hasByContext('llm', 'plug-z')).toBe(false);
+    c.unregisterByContext('plug-x');
+    expect(c.getAll('llm')).toHaveLength(1);
+    expect(c.get<{ v: number }>('llm')?.v).toBe(3);
+  });
+
   it('能力过滤：required 不满足则 get 返回 undefined', () => {
     const c = new ServiceContainer();
     c.register('llm', { name: 'plain' }, ['chat'], 0, 'p1');

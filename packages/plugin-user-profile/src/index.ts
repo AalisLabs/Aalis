@@ -1,7 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
-import type { LLMService } from '@aalis/plugin-llm-api';
-import { parseModelRef } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import '@aalis/plugin-agent-api';
@@ -99,13 +98,11 @@ export const configSchema: ConfigSchema = {
     description: '群聊频率/活跃度被动触发或普通入站消息增加的关系强度',
     default: 0.5,
   },
-  extractModel: {
-    type: 'select',
+  extractLLM: {
+    type: 'llm-ref',
     label: '提取用模型',
     description:
       '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐选择廉价/快速模型（如 deepseek-chat）以降低成本',
-    default: '',
-    dynamicOptions: 'llm',
   },
   allowGlobalBackfill: {
     type: 'boolean',
@@ -128,7 +125,6 @@ export const defaultConfig = {
   relationIncrementDirect: 1,
   relationIncrementImmediate: 1.5,
   relationIncrementInterval: 0.5,
-  extractModel: '',
   allowGlobalBackfill: false,
 };
 
@@ -198,7 +194,7 @@ interface UserProfileConfig {
   relationIncrementDirect: number;
   relationIncrementImmediate: number;
   relationIncrementInterval: number;
-  extractModel: string;
+  extractLLM?: { provider: string; model: string };
   allowGlobalBackfill: boolean;
 }
 
@@ -310,7 +306,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
     relationIncrementImmediate: Math.max(0, (config.relationIncrementImmediate as number) ?? 1.5),
     relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
-    extractModel: typeof config.extractModel === 'string' ? config.extractModel.trim() : '',
+    extractLLM:
+      config.extractLLM &&
+      typeof config.extractLLM === 'object' &&
+      (config.extractLLM as { provider?: unknown }).provider &&
+      (config.extractLLM as { model?: unknown }).model
+        ? (config.extractLLM as { provider: string; model: string })
+        : undefined,
     allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
   };
 
@@ -448,9 +450,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     userId: string,
     platform: string,
   ): Promise<ExtractResult> {
-    const llm = ctx.getService<LLMService>('llm');
     const empty: ExtractResult = { add: [], update: [], remove: [] };
-    if (!llm?.chat) return empty;
 
     const sys =
       '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：' +
@@ -481,12 +481,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const renderedHistory = renderHistoryForExtract(history, userId, platform);
     const user = `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
 
-    // 提取模型若指定，则通过 chat({provider, model}) 让 router 精确路由；否则用默认 LLM。
-    const extractLlm: LLMService = llm;
-    const extractRef = parseModelRef(cfg.extractModel || undefined);
+    // 优先用 cfg.extractLLM 指定的模型；否则取默认 chat-capable LLM。
+    const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
+    if (!entry) return empty;
+    const extractLlm = entry.instance;
 
     try {
-      const resp = await extractLlm!.chat({
+      const resp = await extractLlm.chat({
         messages: [
           { role: 'system', content: sys },
           { role: 'user', content: user },
@@ -494,8 +495,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         temperature: 0.2,
         maxTokens: 800,
         think: false,
-        ...(extractRef.provider ? { provider: extractRef.provider } : {}),
-        ...(extractRef.model ? { model: extractRef.model } : {}),
       });
       const text = (resp.content ?? '').trim();
       if (!text) return empty;
