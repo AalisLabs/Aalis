@@ -1,5 +1,7 @@
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
+import { activatePlugin, computeTargetState, ensureServiceProvider } from './plugin-activation.js';
+import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 import { normalizeDependency } from './service.js';
 import type { ConfigSchema } from './types/index.js';
 import {
@@ -246,10 +248,7 @@ export class PluginManager {
 
     // 若插件在运行中，dispose 旧上下文后转为 pending 重新激活
     if (entry.state === 'active' && entry.context) {
-      // 先把所有依赖该插件 provided 服务的 active 下游消费者也一并 pending：
-      // 服务实例即将被 dispose+重新 provide，下游持有的引用即失效。
-      // 反应式 listener 走异步 recompute，错过 dispose 同步窗口；这里显式标记。
-      this.evictDownstreamConsumers(entry);
+      evictDownstreamConsumers({ provider: entry, plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
       entry.context.dispose();
       entry.context = undefined;
       entry.state = 'pending';
@@ -283,7 +282,7 @@ export class PluginManager {
     }
 
     if (entry.state === 'active' && entry.context) {
-      this.evictDownstreamConsumers(entry);
+      evictDownstreamConsumers({ provider: entry, plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
       entry.context.dispose();
       entry.context = undefined;
       this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
@@ -296,39 +295,7 @@ export class PluginManager {
   }
 
   /**
-   * 把所有依赖 `provider` 所提供服务的 active 下游消费者降级为 pending。
-   *
-   * 用于 updatePluginConfig / bouncePlugin：当某 provider 即将被 dispose+重启
-   * 时，optional 依赖该 provider 服务的下游插件持有的服务引用会失效，必须 bounce
-   * 以重新 apply 拿到新实例。required 依赖则更明显：服务消失 = 必须停。
-   *
-   * 同步执行（不 await），因为 caller 紧接着会 await softReload 完成全部重激活。
-   */
-  private evictDownstreamConsumers(provider: PluginEntry): void {
-    const provided = provider.module.provides ?? [];
-    if (provided.length === 0) return;
-    const providedSet = new Set(provided);
-    for (const other of this.plugins.values()) {
-      if (other === provider || other.state !== 'active') continue;
-      const allDeps = [...other.requiredDeps, ...other.optionalDeps];
-      if (!allDeps.some(d => providedSet.has(d.service))) continue;
-      if (other.context) {
-        try {
-          other.context.dispose();
-        } catch (err) {
-          this.logger.error(
-            `下游消费者 "${other.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-        other.context = undefined;
-      }
-      other.state = 'pending';
-      this.rootCtx.emit('plugin:unloaded', other.instanceId).catch(() => {});
-    }
-  }
-
-  /**
-   * 基于已注册的 reusable 插件创建新实例
+   * 全局停机：按依赖拓扑逆序 dispose 所有 active 插件。
    *
    * @param moduleName 原始模块名（如 `@aalis/plugin-openai`）
    * @param suffix     实例后缀（如 `vision`），将生成 instanceId `moduleName:suffix`
@@ -472,12 +439,12 @@ export class PluginManager {
         rounds++;
 
         const entries = [...this.plugins.values()];
-        const order = this.topoSortByDeps(entries);
+        const order = topoSortByDeps(entries, this.logger);
 
         // Phase A: 反向遍历，关掉目标不是 active 的 active entry
         for (const entry of [...order].reverse()) {
           if (entry.state !== 'active') continue;
-          const target = this.computeTargetState(entry, currentReason);
+          const target = computeTargetState(entry, currentReason, this.rootCtx);
           if (target === 'active') continue;
 
           // 日志：区分 shutdown / required 不满 / optional bounce
@@ -517,9 +484,9 @@ export class PluginManager {
         // Phase B: 正向遍历，激活目标 active 的 pending entry
         for (const entry of order) {
           if (entry.state !== 'pending') continue;
-          const target = this.computeTargetState(entry, currentReason);
+          const target = computeTargetState(entry, currentReason, this.rootCtx);
           if (target !== 'active') continue;
-          await this.tryActivate(entry);
+          await activatePlugin(entry, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
           if ((entry.state as PluginState) === 'active') changed = true;
         }
 
@@ -543,7 +510,11 @@ export class PluginManager {
     for (const service of this.requiredServices) {
       if (!this.rootCtx.hasService(service)) {
         this.logger.warn(`必需服务 "${service}" 缺失，尝试自动恢复...`);
-        const activated = await this.ensureServiceProvider(service);
+        const activated = await ensureServiceProvider(service, {
+          plugins: this.plugins,
+          rootCtx: this.rootCtx,
+          logger: this.logger,
+        });
         if (activated) {
           this.logger.info(`必需服务 "${service}" 已通过插件 "${activated}" 恢复`);
         } else {
@@ -556,220 +527,11 @@ export class PluginManager {
   }
 
   /**
-   * 计算单个 entry 的目标状态。
+   * u4e3au5916u90e8uff08Appuff09u66b4u9732u7684u300cu5fc5u9700u670du52a1u81eau52a8u6062u590du300du5165u53e3u3002
    *
-   * - disabled / disposed / error 是显式态，recompute 不动它们
-   * - required 依赖不满足 → pending
-   * - service-down 命中 optional 依赖且服务确实没了 → pending（强制 bounce 重新 apply）
-   * - 其余 active / pending / activating → active
+   * u5b9eu9645u903bu8f91u5728 plugin-activation.tsu3002PluginManager u4ec5u8d1fu8d23u6ce8u5165 plugins/rootCtx/loggeru3002
    */
-  private computeTargetState(entry: PluginEntry, reason: RecomputeReason): PluginState {
-    if (entry.state === 'disabled' || entry.state === 'disposed' || entry.state === 'error') {
-      return entry.state;
-    }
-    // 关机：所有 active/pending/activating 都目标 disposed
-    if (reason.type === 'shutdown') return 'disposed';
-    const reqUnmet = entry.requiredDeps.some(
-      d => !this.rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
-    );
-    if (reqUnmet) return 'pending';
-    if (reason.type === 'service-down') {
-      const optHit = entry.optionalDeps.find(d => d.service === reason.service);
-      if (
-        optHit &&
-        !this.rootCtx.hasService(optHit.service, optHit.capabilities.length > 0 ? optHit.capabilities : undefined)
-      ) {
-        return 'pending';
-      }
-    }
-    return 'active';
-  }
-
-  /**
-   * 按"提供者 → 消费者"方向的拓扑排序（Kahn）。
-   *
-   * 关闭顺序 = 此结果反向；激活顺序 = 此结果正序。
-   * 服务名 → 提供者映射只取首个 provides 该服务名的 entry，足以表达依赖图。
-   *
-   * 仅 `requiredDeps` 参与建图：optional 依赖语义为"如果存在则消费"，
-   * 由运行时 `service-up`/`service-down` recompute 异步补救（whenService 钩子等），
-   * 不应制造排序约束。否则插件之间互相 optional 会产生伪环并退化到声明序。
-   *
-   * 残留环（仅由 required 形成的真环）按声明序兜底追加。
-   */
-  private topoSortByDeps(entries: PluginEntry[]): PluginEntry[] {
-    const providerOf = new Map<string, string>();
-    for (const e of entries) {
-      for (const svc of e.module.provides ?? []) {
-        if (!providerOf.has(svc)) providerOf.set(svc, e.instanceId);
-      }
-    }
-    const inDegree = new Map<string, number>();
-    const dependents = new Map<string, Set<string>>();
-    const entryById = new Map(entries.map(e => [e.instanceId, e]));
-    for (const e of entries) {
-      inDegree.set(e.instanceId, 0);
-      dependents.set(e.instanceId, new Set());
-    }
-    for (const e of entries) {
-      const seenProviders = new Set<string>();
-      for (const dep of e.requiredDeps) {
-        const providerId = providerOf.get(dep.service);
-        if (!providerId || providerId === e.instanceId) continue;
-        if (!entryById.has(providerId)) continue;
-        if (seenProviders.has(providerId)) continue;
-        seenProviders.add(providerId);
-        dependents.get(providerId)!.add(e.instanceId);
-        inDegree.set(e.instanceId, (inDegree.get(e.instanceId) ?? 0) + 1);
-      }
-    }
-    const result: PluginEntry[] = [];
-    const queue: string[] = [];
-    for (const [id, deg] of inDegree) {
-      if (deg === 0) queue.push(id);
-    }
-    while (queue.length) {
-      const id = queue.shift()!;
-      result.push(entryById.get(id)!);
-      for (const dep of dependents.get(id) ?? []) {
-        inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
-        if (inDegree.get(dep) === 0) queue.push(dep);
-      }
-    }
-    if (result.length < entries.length) {
-      const seen = new Set(result.map(e => e.instanceId));
-      for (const e of entries) {
-        if (!seen.has(e.instanceId)) result.push(e);
-      }
-      this.logger.warn(`topoSortByDeps: 检测到 required 依赖环，残留 ${entries.length - seen.size} 个按声明序追加`);
-    }
-    return result;
-  }
-
-  private async tryActivate(entry: PluginEntry): Promise<void> {
-    if (entry.state !== 'pending') return;
-
-    // 检查所有必需依赖是否满足
-    for (const dep of entry.requiredDeps) {
-      if (!this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
-        this.logger.debug(
-          `插件 "${entry.instanceId}" 等待服务: ${dep.service}${dep.capabilities.length ? ` [${dep.capabilities.join(', ')}]` : ''}`,
-        );
-        return;
-      }
-    }
-
-    // 先标记为 activating，防止 service:registered 事件导致重入
-    entry.state = 'activating';
-
-    // 所有依赖已满足，激活插件（使用 instanceId 作为 contextId，以区分多实例）
-    const ctx = this.rootCtx.fork(entry.instanceId);
-    entry.context = ctx;
-
-    try {
-      await entry.module.apply(ctx, entry.config);
-
-      // 校验 provides 声明与实际注册的一致性
-      if (entry.module.provides) {
-        const missing = entry.module.provides.filter(
-          name => !this.rootCtx.serviceContainer.hasByContext(name, entry.instanceId),
-        );
-        if (missing.length > 0) {
-          throw new Error(`声明 provides [${missing.join(', ')}] 但未实际注册这些服务`);
-        }
-      }
-
-      entry.state = 'active';
-      entry.error = undefined;
-      this.logger.info(`插件已激活: ${entry.instanceId}`);
-      await this.rootCtx.emit('plugin:loaded', entry.instanceId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`插件 "${entry.instanceId}" 激活失败: ${message}`);
-      ctx.dispose();
-      entry.context = undefined;
-      entry.state = 'error';
-      entry.error = message;
-    }
-  }
-
-  /**
-   * 查找能提供指定服务的插件并尝试激活它
-   *
-   * 用于核心必需服务的自动恢复：
-   * 1. 优先找已注册但被禁用的提供者 → 启用
-   * 2. 其次找已注册但处于 pending/error 的提供者 → 重新激活
-   * 3. 同时跳过已经 active 的（说明服务应该已存在）
-   *
-   * @returns 成功激活的插件名，或 undefined
-   */
-  async ensureServiceProvider(serviceName: string, _resolving?: Set<string>): Promise<string | undefined> {
-    // 先检查是否已经有提供者在运行
-    if (this.rootCtx.hasService(serviceName)) {
-      return undefined; // 已存在，无需处理
-    }
-
-    // 循环依赖检测
-    const resolving = _resolving ?? new Set<string>();
-    if (resolving.has(serviceName)) {
-      this.logger.error(`检测到循环依赖，跳过: ${serviceName}`);
-      return undefined;
-    }
-    resolving.add(serviceName);
-
-    // 遍历所有已注册插件，找到声明 provides 包含该服务名的
-    const candidates: PluginEntry[] = [];
-    for (const entry of this.plugins.values()) {
-      if (!entry.module.provides?.includes(serviceName)) continue;
-      candidates.push(entry);
-    }
-
-    if (candidates.length === 0) {
-      this.logger.error(`必需服务 "${serviceName}" 无可用提供者插件`);
-      return undefined;
-    }
-
-    // 尝试激活一个候选者（优先 disabled → pending/error）
-    const ordered = [
-      ...candidates.filter(e => e.state === 'disabled'),
-      ...candidates.filter(e => e.state === 'pending' || e.state === 'error'),
-    ];
-
-    for (const candidate of ordered) {
-      if (candidate.state === 'disabled') {
-        this.logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${candidate.instanceId}`);
-        candidate.state = 'pending';
-        candidate.error = undefined;
-        this.rootCtx.config.setPluginEnabled(candidate.instanceId, true);
-      } else {
-        this.logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${candidate.instanceId}`);
-        candidate.state = 'pending';
-        candidate.error = undefined;
-      }
-
-      // 递归确保该候选者的依赖链也有提供者
-      for (const dep of candidate.requiredDeps) {
-        if (!this.rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
-          await this.ensureServiceProvider(dep.service, resolving);
-        }
-      }
-
-      await this.tryActivate(candidate);
-      if ((candidate.state as PluginState) === 'active') {
-        this.rootCtx.config.save();
-        return candidate.instanceId;
-      }
-    }
-
-    // 如果有 active 的候选者但服务仍然不存在，可能是插件 bug
-    const active = candidates.find(e => e.state === 'active');
-    if (active) {
-      this.logger.warn(`插件 "${active.instanceId}" 已激活但未提供 "${serviceName}" 服务`);
-    }
-
-    this.logger.error(`无法为必需服务 "${serviceName}" 找到可用的提供者`);
-    return undefined;
+  async ensureServiceProvider(serviceName: string): Promise<string | undefined> {
+    return ensureServiceProvider(serviceName, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
   }
 }
-
-// ----- 辅助 -----

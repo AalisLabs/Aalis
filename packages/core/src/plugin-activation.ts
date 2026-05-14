@@ -1,0 +1,178 @@
+// ============================================================
+// plugin-activation.ts — 插件激活路径辅助
+//
+// 从 plugin.ts 拆出的"如何把单个 entry 推进到 active 态"逻辑：
+//   - computeTargetState：给定 reason，单个 entry 的目标态是什么
+//   - activatePlugin：fork ctx → apply → 校验 provides → 标记 active/error
+//   - ensureServiceProvider：必需服务自动恢复（启用 disabled / 重试 pending）
+//
+// 这些都需要 PluginManager 的状态（plugins map / requiredServices / rootCtx），
+// 但被有意提成 free function：传入 deps 对象，方便单测 mock + 让 PluginManager
+// 自身只负责"事件路由 + recompute 编排"。
+// ============================================================
+
+import type { Context } from './context.js';
+import type { Logger } from './logger.js';
+import type { PluginEntry, PluginState, RecomputeReason } from './types/plugin.js';
+
+interface ActivationDeps {
+  plugins: Map<string, PluginEntry>;
+  rootCtx: Context;
+  logger: Logger;
+}
+
+/**
+ * 计算单个 entry 的目标状态。
+ *
+ * - disabled / disposed / error 是显式态，recompute 不动它们
+ * - required 依赖不满足 → pending
+ * - service-down 命中 optional 依赖且服务确实没了 → pending（强制 bounce 重新 apply）
+ * - 其余 active / pending / activating → active
+ */
+export function computeTargetState(entry: PluginEntry, reason: RecomputeReason, rootCtx: Context): PluginState {
+  if (entry.state === 'disabled' || entry.state === 'disposed' || entry.state === 'error') {
+    return entry.state;
+  }
+  if (reason.type === 'shutdown') return 'disposed';
+  const reqUnmet = entry.requiredDeps.some(
+    d => !rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
+  );
+  if (reqUnmet) return 'pending';
+  if (reason.type === 'service-down') {
+    const optHit = entry.optionalDeps.find(d => d.service === reason.service);
+    if (
+      optHit &&
+      !rootCtx.hasService(optHit.service, optHit.capabilities.length > 0 ? optHit.capabilities : undefined)
+    ) {
+      return 'pending';
+    }
+  }
+  return 'active';
+}
+
+/**
+ * 尝试激活一个 pending 插件：依赖检查 → fork ctx → apply → provides 校验。
+ *
+ * 失败时把 entry 转为 error 态（带 message），ctx 已 dispose，外层 recompute 不会重试。
+ * 调用方需保证 entry.state === 'pending' 才调用本函数（否则直接 return）。
+ */
+export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): Promise<void> {
+  const { rootCtx, logger } = deps;
+  if (entry.state !== 'pending') return;
+
+  for (const dep of entry.requiredDeps) {
+    if (!rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
+      logger.debug(
+        `插件 "${entry.instanceId}" 等待服务: ${dep.service}${dep.capabilities.length ? ` [${dep.capabilities.join(', ')}]` : ''}`,
+      );
+      return;
+    }
+  }
+
+  // 先标记为 activating，防止 service:registered 事件导致重入
+  entry.state = 'activating';
+
+  const ctx = rootCtx.fork(entry.instanceId);
+  entry.context = ctx;
+
+  try {
+    await entry.module.apply(ctx, entry.config);
+
+    if (entry.module.provides) {
+      const missing = entry.module.provides.filter(
+        name => !rootCtx.serviceContainer.hasByContext(name, entry.instanceId),
+      );
+      if (missing.length > 0) {
+        throw new Error(`声明 provides [${missing.join(', ')}] 但未实际注册这些服务`);
+      }
+    }
+
+    entry.state = 'active';
+    entry.error = undefined;
+    logger.info(`插件已激活: ${entry.instanceId}`);
+    await rootCtx.emit('plugin:loaded', entry.instanceId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`插件 "${entry.instanceId}" 激活失败: ${message}`);
+    ctx.dispose();
+    entry.context = undefined;
+    entry.state = 'error';
+    entry.error = message;
+  }
+}
+
+/**
+ * 查找能提供指定服务的插件并尝试激活它。
+ *
+ * 用于核心必需服务的自动恢复：
+ * 1. 优先找已注册但被禁用的提供者 → 启用
+ * 2. 其次找已注册但处于 pending/error 的提供者 → 重新激活
+ * 3. 已经 active 的跳过（说明服务应该已存在；若仍不存在则插件 bug）
+ *
+ * @returns 成功激活的插件 instanceId，或 undefined
+ */
+export async function ensureServiceProvider(
+  serviceName: string,
+  deps: ActivationDeps,
+  resolving?: Set<string>,
+): Promise<string | undefined> {
+  const { plugins, rootCtx, logger } = deps;
+
+  if (rootCtx.hasService(serviceName)) return undefined;
+
+  const inFlight = resolving ?? new Set<string>();
+  if (inFlight.has(serviceName)) {
+    logger.error(`检测到循环依赖，跳过: ${serviceName}`);
+    return undefined;
+  }
+  inFlight.add(serviceName);
+
+  const candidates: PluginEntry[] = [];
+  for (const entry of plugins.values()) {
+    if (!entry.module.provides?.includes(serviceName)) continue;
+    candidates.push(entry);
+  }
+
+  if (candidates.length === 0) {
+    logger.error(`必需服务 "${serviceName}" 无可用提供者插件`);
+    return undefined;
+  }
+
+  const ordered = [
+    ...candidates.filter(e => e.state === 'disabled'),
+    ...candidates.filter(e => e.state === 'pending' || e.state === 'error'),
+  ];
+
+  for (const candidate of ordered) {
+    if (candidate.state === 'disabled') {
+      logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${candidate.instanceId}`);
+      candidate.state = 'pending';
+      candidate.error = undefined;
+      rootCtx.config.setPluginEnabled(candidate.instanceId, true);
+    } else {
+      logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${candidate.instanceId}`);
+      candidate.state = 'pending';
+      candidate.error = undefined;
+    }
+
+    for (const dep of candidate.requiredDeps) {
+      if (!rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
+        await ensureServiceProvider(dep.service, deps, inFlight);
+      }
+    }
+
+    await activatePlugin(candidate, deps);
+    if ((candidate.state as PluginState) === 'active') {
+      rootCtx.config.save();
+      return candidate.instanceId;
+    }
+  }
+
+  const active = candidates.find(e => e.state === 'active');
+  if (active) {
+    logger.warn(`插件 "${active.instanceId}" 已激活但未提供 "${serviceName}" 服务`);
+  }
+
+  logger.error(`无法为必需服务 "${serviceName}" 找到可用的提供者`);
+  return undefined;
+}
