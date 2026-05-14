@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
-import type { PlatformService } from '@aalis/plugin-platform-api';
+import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 import '@aalis/plugin-agent-api';
@@ -520,9 +520,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentSessionId = data.message.sessionId;
     service.currentPlatform = data.message.platform;
     service.currentSessionType = data.message.sessionType;
-    const selfIdentity = ctx
-      .getService<PlatformService>('platform')
-      ?.getSelfIdentity?.(data.message.platform, data.message.sessionId);
+    const selfIdentity = getPlatformSelfIdentity(ctx, data.message.platform, data.message.sessionId);
     service.currentSelfId = selfIdentity?.selfId;
     service.currentSelfNickname = selfIdentity?.nickname;
     service.currentUserId = data.message.userId;

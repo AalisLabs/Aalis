@@ -49,7 +49,6 @@ const PLUGIN_DIRS = [
   'plugin-openai',
   'plugin-package-manager',
   'plugin-persona',
-  'plugin-platform',
   'plugin-prompt-budget',
   'plugin-scheduler',
   'plugin-session-channel',
