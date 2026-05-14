@@ -93,11 +93,23 @@ export class OneBotV11 implements OneBotProtocol {
 
     if (!text.trim()) return null;
 
-    // 提取图片 URL
-    const images: string[] = [];
+    // 提取图片 URL（老字段保留兼容）
+    // 提取统一附件列表（image/record/video/file）
+    const attachments: NonNullable<NormalizedMessageEvent['attachments']> = [];
     for (const seg of message) {
       if (seg.type === 'image' && seg.data.url) {
-        images.push(String(seg.data.url));
+        const url = String(seg.data.url);
+        attachments.push({ kind: 'image', url, name: seg.data.file ? String(seg.data.file) : undefined });
+      } else if (seg.type === 'record' && (seg.data.url || seg.data.file)) {
+        // OneBot v11: 'record' = 语音段
+        const url = String(seg.data.url ?? seg.data.file);
+        attachments.push({ kind: 'audio', url, name: seg.data.file ? String(seg.data.file) : undefined });
+      } else if (seg.type === 'video' && (seg.data.url || seg.data.file)) {
+        const url = String(seg.data.url ?? seg.data.file);
+        attachments.push({ kind: 'video', url, name: seg.data.file ? String(seg.data.file) : undefined });
+      } else if (seg.type === 'file' && (seg.data.url || seg.data.file)) {
+        const url = String(seg.data.url ?? seg.data.file);
+        attachments.push({ kind: 'file', url, name: seg.data.file ? String(seg.data.file) : undefined });
       }
     }
 
@@ -123,7 +135,7 @@ export class OneBotV11 implements OneBotProtocol {
       nickname,
       groupId: raw.group_id != null ? String(raw.group_id) : undefined,
       message,
-      images: images.length > 0 ? images : undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
       replyToMessageId,
     };
   }
