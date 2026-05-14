@@ -1353,13 +1353,46 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 下载并缓存图片，替换文本中的 [图片] 为 [图片 | ref:path]
       const imageAtts = event.attachments?.filter(a => a.kind === 'image') ?? [];
+      let imageLocalPaths: (string | null)[] = [];
       if (imageAtts.length > 0) {
-        const { text: rewritten } = await cacheImagesAndRewriteText(
+        const { text: rewritten, localPaths } = await cacheImagesAndRewriteText(
           event.text,
           imageAtts.map(a => a.url),
           sessionId,
         );
         event.text = rewritten;
+        imageLocalPaths = localPaths;
+      }
+
+      // QQ 语音段（v11 record / v12 voice）默认 silk 编码，ASR 引擎都不认。
+      // 调用 OneBot get_record 让协议端做 silk→mp3 转换；NapCat 等扩展实现
+      // 还会顺手返回 base64，跨机部署也能拿到音频数据。失败时保留原 url，
+      // 让上游 ASR 直接尝试（多半失败但不阻塞消息流）。
+      const audioAtts = event.attachments?.filter(a => a.kind === 'audio') ?? [];
+      const audioConverted: (string | null)[] = new Array(audioAtts.length).fill(null);
+      if (audioAtts.length > 0 && state) {
+        await Promise.all(
+          audioAtts.map(async (att, i) => {
+            const fileRef = att.name ?? att.url;
+            if (!fileRef) return;
+            try {
+              const data = (await sendAction(state, 'get_record', {
+                file: fileRef,
+                out_format: 'mp3',
+              })) as { file?: string; url?: string; base64?: string } | undefined;
+              if (data?.base64) {
+                audioConverted[i] = `data:audio/mpeg;base64,${data.base64}`;
+              } else if (data?.url) {
+                audioConverted[i] = String(data.url);
+              } else if (data?.file) {
+                // 协议端给出本地路径——只有 NapCat 与 Aalis 同机部署时可读
+                audioConverted[i] = `file://${data.file}`;
+              }
+            } catch (err) {
+              ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
+            }
+          }),
+        );
       }
 
       // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
@@ -1411,12 +1444,29 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         platform: 'onebot',
         userId: event.userId,
         nickname: event.nickname,
-        attachments: event.attachments?.map(a => ({
-          kind: a.kind,
-          data: a.url,
-          mimeType: a.mimeType,
-          name: a.name,
-        })),
+        attachments: event.attachments?.map((a, i) => {
+          // 图片附件：优先用本地缓存路径作为 data，让下游（plugin-media 的 ffmpeg
+          // 抽帧、image-sender 的 history_ref 解析等）可以直接读本地文件，
+          // 避免 https URL 反复下载、avoids QQ 鉴权过期。下载失败时退回原 url。
+          if (a.kind === 'image') {
+            const idxInImages = (event.attachments ?? []).slice(0, i).filter(x => x.kind === 'image').length;
+            const local = imageLocalPaths[idxInImages];
+            return { kind: a.kind, data: local ?? a.url, mimeType: a.mimeType, name: a.name };
+          }
+          // 音频附件：若 get_record 转好了 mp3，用转换后的 data URL / 路径替换；
+          // 同时把 mimeType 修正为 audio/mpeg 让 ASR processor 走 mp3 路径。
+          if (a.kind === 'audio') {
+            const idxInAudio = (event.attachments ?? []).slice(0, i).filter(x => x.kind === 'audio').length;
+            const conv = audioConverted[idxInAudio];
+            return {
+              kind: a.kind,
+              data: conv ?? a.url,
+              mimeType: conv ? 'audio/mpeg' : a.mimeType,
+              name: a.name,
+            };
+          }
+          return { kind: a.kind, data: a.url, mimeType: a.mimeType, name: a.name };
+        }),
         sessionType,
         groupName,
         groupId: event.groupId,
