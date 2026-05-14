@@ -175,6 +175,13 @@ interface WSOutgoing {
         endTime?: number;
       }
   >;
+  /** assistant 消息附件（agent 通过 send_image 等工具产生的图片/媒体） */
+  attachments?: Array<{
+    kind: 'image' | 'audio' | 'video' | 'file';
+    data: string;
+    mimeType?: string;
+    name?: string;
+  }>;
   todoItems?: unknown[];
   /** page_refresh：通知前端某个插件相关的动态页面刷新数据源。pluginName 缺省 = 全部。 */
   pluginName?: string;
@@ -372,7 +379,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   expressApp.get('/api/status', (_req, res) => {
     const persona = ctx.getService<PersonaService>('persona');
     // 判断上传能力
-    const hasImageRecognition = ctx.hasService('image-recognition');
+    const hasMedia = ctx.hasService('media');
     const llmHasVision = ctx.getServiceCapabilities('llm').includes('vision');
     const hasFileReader = ctx.hasService('file-reader');
 
@@ -388,8 +395,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
       /** 上传能力：客户端据此决定显示哪些上传按钮 */
       uploadCapabilities: {
-        /** 是否支持图片上传（image-recognition 可用 或 LLM 声明了 vision） */
-        image: hasImageRecognition || llmHasVision,
+        /** 是否支持图片上传（media 可用 或 LLM 声明了 vision） */
+        image: hasMedia || llmHasVision,
         /** 是否支持文件上传（file-reader 可用） */
         file: hasFileReader,
       },
@@ -938,15 +945,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           return;
         }
 
+        // 客户端只通过 attachments 发送多模态内容
         await ctx.emit('inbound:message', {
           content: trimmed,
           sessionId,
           platform: 'webui',
           userId: 'console',
           nickname: undefined,
-          ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
-          ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
-          ...(msg.attachmentOrder && msg.attachmentOrder.length > 0 ? { attachmentOrder: msg.attachmentOrder } : {}),
+          ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
         });
       } catch (err) {
         ctx.logger.warn('WebUI 消息处理失败:', err);
@@ -1098,6 +1104,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       sessionId: msg.sessionId,
       reasoningContent: msg.reasoningContent,
       segments: segments && segments.length > 0 ? segments : undefined,
+      attachments: msg.attachments?.length
+        ? msg.attachments.map(a => ({
+            kind: a.kind,
+            data: a.data,
+            mimeType: a.mimeType,
+            name: a.name,
+          }))
+        : undefined,
     };
     const json = JSON.stringify(payload);
 

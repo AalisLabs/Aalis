@@ -25,7 +25,12 @@ export interface TokenUsageData {
 }
 
 export function useWebSocket(
-  onMessage: (content: string, reasoningContent?: string, segments?: ContentSegment[]) => void,
+  onMessage: (
+    content: string,
+    reasoningContent?: string,
+    segments?: ContentSegment[],
+    attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>,
+  ) => void,
   onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void,
   onLog: (entry: LogEntry) => void,
   onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
@@ -92,8 +97,8 @@ export function useWebSocket(
             if (data.done) {
               onToolCallProgressClear?.();
             }
-          } else if (data.type === 'message' && data.content) {
-            onMessage(data.content, data.reasoningContent, data.segments);
+          } else if (data.type === 'message' && (data.content || data.attachments?.length)) {
+            onMessage(data.content ?? '', data.reasoningContent, data.segments, data.attachments);
           } else if (data.type === 'tool_call' && data.toolName) {
             onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {
@@ -153,21 +158,18 @@ export function useWebSocket(
     return unsubscribe;
   }, []);
 
-  const send = useCallback((content: string, images?: string[], files?: Array<{ name: string; data: string; mimeType?: string }>, attachmentOrder?: Array<'image' | 'file'>) => {
+  const send = useCallback((
+    content: string,
+    attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>,
+  ) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const payload: Record<string, unknown> = {
         type: 'message',
         content,
         sessionId: getSessionId(),
       };
-      if (images && images.length > 0) {
-        payload.images = images;
-      }
-      if (files && files.length > 0) {
-        payload.files = files;
-      }
-      if (attachmentOrder && attachmentOrder.length > 0) {
-        payload.attachmentOrder = attachmentOrder;
+      if (attachments && attachments.length > 0) {
+        payload.attachments = attachments;
       }
       wsRef.current.send(JSON.stringify(payload));
     }

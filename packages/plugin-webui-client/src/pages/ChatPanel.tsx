@@ -324,7 +324,18 @@ function computeAccept(caps?: { image: boolean; file: boolean }): string {
   const parts: string[] = [];
   if (caps.image) parts.push('image/*');
   if (caps.file) parts.push(DOCUMENT_ACCEPT);
+  // 多模态：始终允许 audio/video（由服务端 plugin-media 决定是否处理）
+  parts.push('audio/*');
+  parts.push('video/*');
   return parts.join(',');
+}
+
+/** 判断 mime 是否为 audio/video，用于送 WS 时分流到 attachments[] */
+function classifyMediaKind(mime?: string): 'audio' | 'video' | null {
+  if (!mime) return null;
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  return null;
 }
 
 /** 任务计划状态图标 */
@@ -419,44 +430,47 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
       {/* 用户消息中的图片 */}
       {msg.role === 'user' && msg.images && msg.images.length > 0 && (
         <div className="message-images">
-          {msg.images.map((img, j) => {
-            let globalPos = 0;
-            if (msg.attachmentOrder) {
-              let cnt = 0;
-              for (let k = 0; k < msg.attachmentOrder.length; k++) {
-                if (msg.attachmentOrder[k] === 'image') {
-                  if (cnt === j) { globalPos = k + 1; break; }
-                  cnt++;
-                }
-              }
-            }
-            return (
-              <div key={j} className="message-image-wrap">
-                <img src={img} alt={`attached-${j}`} className="message-image" />
-                {globalPos > 0 && <span className="message-attach-order">#{globalPos}</span>}
-              </div>
-            );
-          })}
+          {msg.images.map((img, j) => (
+            <div key={j} className="message-image-wrap">
+              <img src={img} alt={`attached-${j}`} className="message-image" />
+            </div>
+          ))}
         </div>
       )}
       {/* 用户消息中的文件 */}
       {msg.role === 'user' && msg.fileNames && msg.fileNames.length > 0 && (
         <div className="message-files">
-          {msg.fileNames.map((name, j) => {
-            let globalPos = 0;
-            if (msg.attachmentOrder) {
-              let cnt = 0;
-              for (let k = 0; k < msg.attachmentOrder.length; k++) {
-                if (msg.attachmentOrder[k] === 'file') {
-                  if (cnt === j) { globalPos = k + 1; break; }
-                  cnt++;
-                }
-              }
+          {msg.fileNames.map((name, j) => (
+            <div key={j} className="message-file-item">
+              <FileText size={14} /> {name}
+            </div>
+          ))}
+        </div>
+      )}
+      {/* assistant 主动发送的附件（send_image 等工具产生） */}
+      {msg.role === 'assistant' && msg.attachments && msg.attachments.length > 0 && (
+        <div className="message-images">
+          {msg.attachments.map((att, j) => {
+            if (att.kind === 'image') {
+              return (
+                <div key={`a-${j}`} className="message-image-wrap">
+                  <img src={att.data} alt={att.name ?? `attachment-${j}`} className="message-image" />
+                </div>
+              );
+            }
+            if (att.kind === 'video') {
+              return (
+                // biome-ignore lint/a11y/useMediaCaption: assistant 生成内容无字幕信息
+                <video key={`a-${j}`} controls src={att.data} className="message-image" />
+              );
+            }
+            if (att.kind === 'audio') {
+              // biome-ignore lint/a11y/useMediaCaption: assistant 生成内容无字幕信息
+              return <audio key={`a-${j}`} controls src={att.data} />;
             }
             return (
-              <div key={j} className="message-file-item">
-                {globalPos > 0 && <span className="message-attach-order">#{globalPos}</span>}
-                <FileText size={14} /> {name}
+              <div key={`a-${j}`} className="message-file-item">
+                <FileText size={14} /> {att.name ?? 'attachment'}
               </div>
             );
           })}
