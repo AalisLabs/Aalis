@@ -96,21 +96,28 @@ declare module '@aalis/core/types/capabilities' {
 | 范围 | 用途 |
 |-------|------|
 | `0`（默认） | 普通真实提供者（plugin-openai / plugin-deepseek …） |
-| `10–50` | 用户希望覆盖默认的次级提供者 |
-| `100` | Router（聚合多个底层提供者：`llm-router` / `platform-router` / `storage-router`） |
-| `> 100` | 仅供 core 与 system 级别使用 |
+| `10–50` | 用户希望覆盖默认的次级提供者（`Override`） |
+| `200` | `System`；仅供 core 与系统级别使用 |
 
-> 在同一服务名下，`getService(name)` 默认返回 priority 最高的注册者；`getAllServices(name, caps?)` 返回全部并按 priority 降序排序。
+> Router 层已废除。上层跨 entry 调度请使用 `getAllServices(name, requiredCaps?)` 与各 *-api 提供的纯函数 helper（`resolveLLMModel` / `createStorageGateway` / `resolvePlatformBySession` 等）。
 
-### 2.3 多提供者：Router 模式
+> 在同一服务名下，`getService(name)` 默认返回 ServicePreference > priority > 注册顺序脒首的那个；`getAllServices(name, caps?)` 返回全部并同顺序排序。
 
-需要把多个底层提供者聚合为一个统一入口时（如「按模型名路由到不同的 LLM 提供者」），写一个 `priority: 100, capabilities: ['router']` 的 facade，参考：
+### 2.3 多提供者：per-entry 注册
 
-- `packages/plugin-llm-router`
-- `packages/plugin-platform`
-- `packages/plugin-storage-router`
+需要在一个服务名下暴露多个实例（如多 root storage、多平台适配、多模型 LLM）时，**在同一个 apply() 里多次调用 `ctx.provide`**，每个 entry 携带真实的 capabilities：
 
-不要再实现「运行时手动切换偏好」——核心已删除该机制。priority + Router 即正解。
+```ts
+for (const root of roots) {
+  ctx.provide('storage', new ScopedStorageService(root, ...), {
+    entryId: `${ctx.id}/${root.name}`,
+    capabilities: ['list', 'read', 'write', 'delete', 'local-path'],
+    label: root.label,
+  });
+}
+```
+
+上层需要跨实例路由时，调用各 *-api 中的 helper。禁止再注册同名 facade entry。
 
 ## 3. 配置 schema
 
@@ -213,7 +220,8 @@ plugins:
 | 类型 | 参考包 |
 |------|--------|
 | 单一服务提供者 | `plugin-openai`, `plugin-deepseek` |
-| Router | `plugin-llm-router`, `plugin-platform` |
+| 多 entry 注册 | `plugin-storage-local`（每 root）、`plugin-ollama`（每 model） |
+| 跨 entry helper | `plugin-storage-api` (`createStorageGateway`)、`plugin-platform-api` (`resolvePlatformBySession`) |
 | 工具注入 | `plugin-tool-search`, `plugin-tool-browser` |
 | 命令注入 | `plugin-commands` |
 | WebUI 扩展 | `plugin-webui-server`, `plugin-todo-list` |

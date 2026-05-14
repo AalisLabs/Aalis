@@ -2,14 +2,14 @@ import type { ConfigSchema, Context, Logger, PluginManagerService } from '@aalis
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
-import type { ChatRequest, ChatResponse, LLMService } from '@aalis/plugin-llm-api';
-import { parseModelRef } from '@aalis/plugin-llm-api';
+import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
-import type { PlatformService } from '@aalis/plugin-platform-api';
+import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
@@ -82,71 +82,34 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 根据优先级链获取 LLM 服务与 (provider, model) 覆盖
+   * 根据优先级链解析当前会话该用哪个 LLMModel entry。
    *
    * 全部交给 session-manager.resolveConfig。优先级（从高到低）：
    * 1. 会话 config
    * 2. 父会话 sessionDefaults
    * 3. 平台 profile
-   * 4. session-manager.defaults（全局 fallback）
+   * 4. ServicePreference（由 agent 启动时锁定的全局默认 entry，未传 ref 时生效）
    *
-   * model 字段可以是复合 ref `"<contextId>::<modelId>"`，由 parseModelRef 拆分。
-   * llmProvider 字段为充足优先级（允许在不指定模型的情况下锁定 provider 走其默认 model）。
+   * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
-  private async resolveLLM(
-    platform?: string,
-    sessionId?: string,
-  ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined> {
-    let rawModel: string | undefined;
-    let providerOverride: string | undefined;
+  private async resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined> {
+    let ref: { provider?: string; model?: string } | undefined;
 
-    // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile > 全局 defaults
+    // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile
     const sm = this.ctx.getService<SessionManagerService>('session-manager');
     if (sm && sessionId) {
       const resolved = sm.resolveConfig(sessionId, platform);
-      if (resolved.model) rawModel = resolved.model;
-      if (resolved.llmProvider) providerOverride = resolved.llmProvider;
+      if (resolved.llm?.provider && resolved.llm?.model) ref = resolved.llm;
     }
 
-    // 拆解复合 ref；model 字段内隐含的 provider 优先低于显式 llmProvider 字段
-    const ref = parseModelRef(rawModel);
-    if (!providerOverride && ref.provider) providerOverride = ref.provider;
-    const modelOverride = ref.model;
-
-    // 总是走 'llm' router；provider/model 都交给 ChatRequest 让 router 精确分发。
-    const llm = this.ctx.getService<LLMService>('llm');
-    if (!llm) return undefined;
-    return { llm, providerOverride, modelOverride };
+    // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
+    return resolveLLMModel(this.ctx, ref, ['chat']);
   }
 
-  /**
-   * Bug F：按本会话实际使用的 (provider, model) 解析 contextLength。
-   *
-   * 直接调 `llm.getContextLength()` 走的是 router 默认 provider 的全局窗口，与会话切到
-   * 不同 model 后的真实窗口不一致——会触发 token 预算偏差，最坏情况下让请求实际超出
-   * 模型上下文导致截断/报错。
-   *
-   * router 实现了 `getContextLengthFor(model, provider)`（见 plugin-llm-router）；此处
-   * 通过 duck typing 调用，没有该方法的 LLMService 实现退化到 `getContextLength()`。
-   * 设为 public 以便 `token:request` 事件处理器（顶层 closure）也能复用同一逻辑。
-   */
-  async resolveContextLength(llm: LLMService, model?: string, provider?: string): Promise<number> {
-    if (!model && !provider) return llm.getContextLength();
-    const router = llm as LLMService & {
-      getContextLengthFor?(model?: string, provider?: string): Promise<number>;
-    };
-    if (typeof router.getContextLengthFor === 'function') {
-      try {
-        return await router.getContextLengthFor(model, provider);
-      } catch (err) {
-        this.logger.warn('getContextLengthFor 失败，回退到 getContextLength()：', err);
-      }
-    }
-    return llm.getContextLength();
-  }
-
-  /** 生成 lane key：同 session + 同 source 共用一个 lane */
-  private laneKey(sessionId: string, source?: string): string {
+  /** 生成 lane key：同 session + 同 source 共用一个 lane */ private laneKey(
+    sessionId: string,
+    source?: string,
+  ): string {
     return `${sessionId}::${source ?? 'user'}`;
   }
 
@@ -205,7 +168,7 @@ class DefaultAgent implements AgentService {
    * 获取 Agent 子系统的插件分组
    *
    * 仅纳入 Agent 直接依赖的能力提供者；不包含 `platform`
-   * （平台属于独立子系统，由 PlatformService.getPluginGroups 负责）。
+   * （平台属于独立子系统，由 plugin-platform-api 的 helper 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
     const pm = this.ctx.getService<PluginManagerService>('plugins');
@@ -231,8 +194,8 @@ class DefaultAgent implements AgentService {
    * 相邻同类合并）——用于上层将多轮调用 + 工具执行交错拼接成统一时间线。
    */
   private async consumeStream(
-    llm: LLMService,
-    request: ChatRequest,
+    llm: LLMModel,
+    request: ChatModelRequest,
     sessionId: string,
     platform: string,
     signal?: AbortSignal,
@@ -251,7 +214,7 @@ class DefaultAgent implements AgentService {
       }
     };
 
-    for await (const chunk of llm.chatStream(request)) {
+    for await (const chunk of llm.chatStream!(request)) {
       // 检查中止信号
       if (signal?.aborted) {
         throw new DOMException('Generation aborted', 'AbortError');
@@ -446,15 +409,14 @@ class DefaultAgent implements AgentService {
         });
         return;
       }
-      const { llm, modelOverride, providerOverride } = resolved;
+      const llm = resolved.instance;
 
-      // 从 LLM 服务读取参数。contextLength 必须按本会话实际使用的 (provider, model) 查询，
-      // 否则 router 默认走「首个 provider 的全局 contextLength」，与会话 model.set 后的真实窗口不一致，
-      // 会触发严重的 token 预算偏差（Bug F）。
-      const temperature = llm.getTemperature();
-      const maxTokens = llm.getMaxTokens();
+      // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
+      // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
+      // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
+      const maxTokens = llm.maxOutputTokens ?? 4096;
       const maxToolIterations = this.maxToolIterations;
-      const contextLength = await this.resolveContextLength(llm, modelOverride, providerOverride);
+      const contextLength = llm.contextLength;
       // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
       // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 占满物理上限才裁剪
       const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
@@ -532,7 +494,7 @@ class DefaultAgent implements AgentService {
         this.logger.debug(
           `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
             `${llmBeforeData.tools.length} 个工具, ` +
-            `temperature=${temperature}, maxTokens=${maxTokens}`,
+            `maxTokens=${maxTokens}`,
         );
 
         const t0 = Date.now();
@@ -541,10 +503,7 @@ class DefaultAgent implements AgentService {
           {
             messages: llmBeforeData.messages,
             tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
-            temperature,
             maxTokens,
-            model: modelOverride,
-            provider: providerOverride,
             signal,
           },
           incoming.sessionId,
@@ -727,10 +686,7 @@ class DefaultAgent implements AgentService {
             {
               messages: nextLlmData.messages,
               tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
-              temperature,
               maxTokens,
-              model: modelOverride,
-              provider: providerOverride,
               signal,
             },
             incoming.sessionId,
@@ -1371,9 +1327,7 @@ class DefaultAgent implements AgentService {
   }
 
   private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
-    const identity = this.ctx
-      .getService<PlatformService>('platform')
-      ?.getSelfIdentity?.(incoming.platform, incoming.sessionId);
+    const identity = getPlatformSelfIdentity(this.ctx, incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
       senderType: 'assistant',
@@ -1520,13 +1474,11 @@ export const inject = {
 };
 
 export const configSchema: ConfigSchema = {
-  preferredModel: {
-    type: 'select',
-    label: '对话模型',
-    description: '选择用于对话的模型。留空则使用默认（首个）LLM 提供者的默认模型。',
-    default: '',
-    options: [{ label: '默认', value: '' }],
-    dynamicOptions: 'llm',
+  defaultLLM: {
+    type: 'llm-ref',
+    label: '默认对话模型',
+    description:
+      '全局默认 LLM。apply() 时调用 ctx.preferService("llm", `provider/model`) 锁定 ServiceContainer 偏好。会话 / 平台 profile 未覆盖时生效。',
   },
   systemPrompt: {
     type: 'textarea',
@@ -1579,11 +1531,7 @@ export const defaultConfig = {
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
   historyLimit: number;
-  resolveLLM(
-    platform?: string,
-    sessionId?: string,
-  ): Promise<{ llm: LLMService; providerOverride?: string; modelOverride?: string } | undefined>;
-  resolveContextLength(llm: LLMService, model?: string, provider?: string): Promise<number>;
+  resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined>;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   emitTokenUsage(
     sessionId: string,
@@ -1601,63 +1549,58 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('agent', agentImpl);
   const agent = agentImpl as unknown as InternalAgent;
 
+  // 全局默认 LLM：通过 ServicePreference 锁定 ctx.getService<'llm'>() 的首选 entry。
+  // 偏好持久化由 core 配置层负责（servicePreferences 字段）；这里只是开机时按 agent
+  // 自己的 cfg.defaultLLM 覆写一次，便于纯文件配置流（无 webui 干预）也能生效。
+  const defaultLLM = config.defaultLLM as { provider?: string; model?: string } | undefined;
+  if (defaultLLM?.provider && defaultLLM?.model) {
+    ctx.preferService('llm', `${defaultLLM.provider}/${defaultLLM.model}`);
+  }
+
   // ===== /model 指令组（split 为 dot-path 子命令）=====
   // info / status / reset / set <name>
   async function modelInfo(sessionId: string, platform: string, listAvailable: boolean): Promise<string> {
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
-    const sessionModel = smSvc?.getSession(sessionId)?.config?.model;
+    const sessionLLM = smSvc?.getSession(sessionId)?.config?.llm;
     const parent = smSvc?.getSession(sessionId)?.parentId
       ? smSvc?.getSession(smSvc.getSession(sessionId)!.parentId!)
       : undefined;
-    const parentDefaultsModel = parent?.config?.sessionDefaults?.model;
-    const profileModel = smSvc?.getPlatformProfiles()?.[platform || 'webui']?.model;
-    const globalDefaultsModel = smSvc?.getDefaults()?.model;
-    const resolvedModel = smSvc ? smSvc.resolveConfig(sessionId, platform).model : undefined;
+    const parentDefaultsLLM = parent?.config?.sessionDefaults?.llm;
+    const profileLLM = smSvc?.getPlatformProfiles()?.[platform || 'webui']?.llm;
+    const resolvedLLM = smSvc ? smSvc.resolveConfig(sessionId, platform).llm : undefined;
 
-    let source = '(无)';
-    if (sessionModel) source = '会话覆盖';
-    else if (parentDefaultsModel) source = '父会话 sessionDefaults';
-    else if (profileModel) source = `平台 profile (${platform})`;
-    else if (globalDefaultsModel) source = '全局 defaults';
+    const fmt = (r?: { provider: string; model: string }) => (r ? `${r.provider}/${r.model}` : undefined);
 
-    const lines = [`**当前模型**: ${resolvedModel || '(默认)'}`, `**来源**: ${source}`];
+    let source = '(无 / 走 ServicePreference)';
+    if (sessionLLM) source = '会话覆盖';
+    else if (parentDefaultsLLM) source = '父会话 sessionDefaults';
+    else if (profileLLM) source = `平台 profile (${platform})`;
+
+    const lines = [`**当前模型**: ${fmt(resolvedLLM) || '(默认)'}`, `**来源**: ${source}`];
     const chain: string[] = [];
-    if (sessionModel) chain.push(`会话: ${sessionModel}`);
-    if (parentDefaultsModel) chain.push(`父 sessionDefaults: ${parentDefaultsModel}`);
-    if (profileModel) chain.push(`平台 profile: ${profileModel}`);
-    if (globalDefaultsModel) chain.push(`全局 defaults: ${globalDefaultsModel}`);
+    if (sessionLLM) chain.push(`会话: ${fmt(sessionLLM)}`);
+    if (parentDefaultsLLM) chain.push(`父 sessionDefaults: ${fmt(parentDefaultsLLM)}`);
+    if (profileLLM) chain.push(`平台 profile: ${fmt(profileLLM)}`);
     if (chain.length > 0) {
       lines.push('', '**解析链**（高优先级在前）:');
       for (const c of chain) lines.push(`- ${c}`);
     }
-    if (sessionModel) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
+    if (sessionLLM) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
 
     if (listAvailable) {
-      let models: string[] = [];
-      const llm = ctx.getService<LLMService>('llm');
-      if (llm && typeof llm.listModels === 'function') {
-        try {
-          models = (await llm.listModels()).map(m => m.id);
-        } catch {
-          /* ignore */
-        }
+      // 直接枚举所有 chat-capable LLMModel entry
+      const entries = ctx.getAllServices<LLMModel>('llm', ['chat']);
+      const seen = new Set<string>();
+      const items: string[] = [];
+      for (const e of entries) {
+        const display = e.label ? `${e.contextId}  _(${e.label})_` : e.contextId;
+        if (seen.has(e.contextId)) continue;
+        seen.add(e.contextId);
+        items.push(display);
       }
-      if (models.length === 0) {
-        const allProviders = ctx.getAllServices<LLMService>('llm').filter(p => !p.capabilities.includes('router'));
-        for (const p of allProviders) {
-          if (typeof p.instance.listModels === 'function') {
-            try {
-              const list = await p.instance.listModels();
-              for (const m of list) models.push(m.id);
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      }
-      if (models.length > 0) {
-        lines.push('', '**可用模型**:');
-        for (const m of models) lines.push(`- ${m}`);
+      if (items.length > 0) {
+        lines.push('', '**可用模型**（contextId 形式 `provider/model`）:');
+        for (const m of items) lines.push(`- ${m}`);
       }
     }
     return lines.join('\n');
@@ -1681,23 +1624,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
       const session = smSvc.getSession(argv.session.sessionId);
-      if (session?.config?.model) {
-        const { model: _, ...rest } = session.config;
-        await smSvc.updateSession(argv.session.sessionId, { config: { ...rest, model: undefined } as SessionConfig });
+      if (session?.config?.llm) {
+        const { llm: _, ...rest } = session.config;
+        await smSvc.updateSession(argv.session.sessionId, { config: { ...rest, llm: undefined } as SessionConfig });
       }
-      const fallback = smSvc.resolveConfig(argv.session.sessionId, argv.session.platform).model || '(默认)';
-      return `已清除会话模型覆盖，回退到: ${fallback}`;
+      const fallback = smSvc.resolveConfig(argv.session.sessionId, argv.session.platform).llm;
+      return `已清除会话模型覆盖，回退到: ${fallback ? `${fallback.provider}/${fallback.model}` : '(默认)'}`;
     });
 
   useCommandService(ctx)
-    .command('model.set <name:string>', '设置会话级模型覆盖')
-    .action(async (argv, name) => {
-      const modelName = name as string;
-      if (!modelName) return '用法: /model set <模型名称>';
+    .command('model.set <ref:string>', '设置会话级模型覆盖；ref 形如 `provider/model`（即 LLM entry 的 contextId）')
+    .action(async (argv, ref) => {
+      const refStr = String(ref || '').trim();
+      if (!refStr) return '用法: /model set <provider/model>，例如 /model set @aalis/plugin-openai:main/gpt-4o';
+      // 用最后一个 '/' 切分，因为 provider id 内含有 '/'（如 `@aalis/plugin-openai:main`）。
+      const lastSlash = refStr.lastIndexOf('/');
+      if (lastSlash <= 0 || lastSlash === refStr.length - 1) {
+        return '格式错误。请使用 `provider/model`，例如 `@aalis/plugin-openai:main/gpt-4o`';
+      }
+      const provider = refStr.slice(0, lastSlash);
+      const model = refStr.slice(lastSlash + 1);
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
-      await smSvc.updateSession(argv.session.sessionId, { config: { model: modelName } as SessionConfig });
-      return `当前会话模型已切换为: ${modelName}（已持久化）`;
+      await smSvc.updateSession(argv.session.sessionId, { config: { llm: { provider, model } } as SessionConfig });
+      return `当前会话模型已切换为: ${provider}/${model}（已持久化）`;
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
@@ -1708,10 +1658,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const resolved = await agent.resolveLLM(data.platform, data.sessionId);
       if (!resolved) return;
-      const { llm, modelOverride, providerOverride } = resolved;
+      const llm = resolved.instance;
 
-      const contextLength = await agent.resolveContextLength(llm, modelOverride, providerOverride);
-      const maxTokens = llm.getMaxTokens();
+      const contextLength = llm.contextLength;
+      const maxTokens = llm.maxOutputTokens ?? 4096;
       const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
       // 获取历史消息并构建基础消息列表

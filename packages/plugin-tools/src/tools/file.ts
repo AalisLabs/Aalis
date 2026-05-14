@@ -9,7 +9,8 @@
 
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import type { Context } from '@aalis/core';
+import { getStorageRootConflicts, type StorageRootConflict, type StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 interface FileConfig {
@@ -19,25 +20,8 @@ interface FileConfig {
   allowedRoots: string[];
   defaultRoot: string;
   storage?: StorageService;
+  ctx?: Context;
 }
-
-interface StorageRootConflictView {
-  name: string;
-  selected: RootConflictProvider;
-  shadowed: RootConflictProvider[];
-}
-
-interface RootConflictProvider {
-  providerId: string;
-  provider?: string;
-  label?: string;
-  kind: string;
-  readable: boolean;
-  writable: boolean;
-  deletable: boolean;
-}
-
-const ALL_ROOTS = '*';
 
 function normalizePath(input: string): string {
   return input.replace(/\\/g, '/').replace(/^\/+/, '');
@@ -47,10 +31,11 @@ function getKnownRoots(config: FileConfig) {
   return config.storage?.listRoots() ?? [];
 }
 
-function getRootConflicts(storage: StorageService): StorageRootConflictView[] {
-  const maybeRouter = storage as StorageService & { getRootConflicts?: () => StorageRootConflictView[] };
-  return typeof maybeRouter.getRootConflicts === 'function' ? maybeRouter.getRootConflicts() : [];
+function getRootConflicts(config: FileConfig): StorageRootConflict[] {
+  return config.ctx ? getStorageRootConflicts(config.ctx) : [];
 }
+
+const ALL_ROOTS = '*';
 
 function getAllowedRoots(config: FileConfig): string[] {
   if (config.allowedRoots.includes(ALL_ROOTS)) {
@@ -615,7 +600,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         // 特殊入口："/" 或 "*" 表示"列出所有 storage 根"
         if (raw === '/' || raw === '*') {
           const allRoots = storage.listRoots();
-          const conflicts = getRootConflicts(storage);
+          const conflicts = getRootConflicts(config);
           const conflictByName = new Map(conflicts.map(conflict => [conflict.name, conflict]));
           const allowedSet = new Set(getAllowedRoots(config));
           const entries = allRoots.map(r => {

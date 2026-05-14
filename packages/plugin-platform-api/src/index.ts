@@ -1,4 +1,3 @@
-import type { PluginGroupInfo } from '@aalis/plugin-agent-api';
 // ----- 平台适配器接口 -----
 
 /** 单个平台连接的状态 */
@@ -56,14 +55,14 @@ export interface PlatformAdapter {
   /**
    * 判断该 adapter 是否能处理给定 sessionId（**路由用**）。
    *
-   * - PlatformRouter 按 sessionId 路由时枚举所有 adapter 调此方法定位归属
-   * - 未实现时 router 默认 fallback 为 `sessionId.startsWith(this.platform + ':')`
+   * - `resolvePlatformBySession(ctx, sid)` 枚举所有 adapter 调此方法定位归属
+   * - 未实现时 helper 默认 fallback 为 `sessionId.startsWith(this.platform + ':')`
    *   —— 适合 sessionId 形如 `<platform>:<...>` 的协议平台（如 onebot）
    * - sessionId 不携带 platform 前缀的 adapter（如 cli 的自定义 sessionId）
    *   **必须**显式实现此方法
    *
    * 与 LLMService.supportsModel 的设计意图对称：每个 provider 自报"我接不接这个 key"，
-   * router 不假设 key 的格式约定。
+   * helper 不假设 key 的格式约定。
    */
   canHandle?(sessionId: string): boolean | Promise<boolean>;
   /** 获取当前平台账号自身身份；多连接平台可用 sessionId 定位具体连接 */
@@ -84,53 +83,160 @@ export interface PlatformAdapter {
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>;
 }
 
-// ----- 平台聚合服务接口（同名 facade） -----
-
-/**
- * 平台聚合服务 —— 同名 facade，对外暴露为 `'platform'`
- *
- * 与 storage-router / llm-router 同模式：以 `capability:['router']`
- * 注册到 `'platform'` 服务名下，consumer 通过 `ctx.getService('platform')`
- * 拿到聚合层；如需访问具体某个 adapter，可用
- * `ctx.getService<PlatformAdapter>('platform', ['<platform-name>'])`。
- *
- * 默认由 plugin-platform 提供。
- */
-export interface PlatformService {
-  /** 获取平台子系统的插件分组（基于 provides ∩ inject 自动计算） */
-  getPluginGroups(): PluginGroupInfo[];
-  /** 获取所有平台的聚合连接列表 */
-  getConnections(): PlatformConnection[];
-  /** 获取所有已注册的平台名称 */
-  getPlatformNames(): string[];
-  /** 获取所有合规的平台适配器实例（不含 router 自身） */
-  getAdapters(): PlatformAdapter[];
-  /** 获取所有平台适配器及其连接详情 */
-  getDetails(): Array<{
-    adapterName: string;
-    platform: string;
-    contextId: string;
-    capabilities: string[];
-    connections: PlatformConnection[];
-  }>;
-  /** 获取指定平台在当前会话中的自身身份 */
-  getSelfIdentity?(platform: string, sessionId?: string): PlatformSelfIdentity | undefined;
-}
-
 // ----- 平台能力声明 -----
+//
+// service-granularity 之后，'platform' 服务不再有 router facade；每个 adapter 直接
+// 以 `ctx.provide('platform', adapter, { capabilities: [...] })` 注册，capabilities
+// 同时承担**平台标识**（如 'onebot' / 'cli' / 'webui'）和**消息能力**（如 'text' /
+// 'image' / 'voice' / 'group-chat'）双重语义。下游消费者按需用
+// `ctx.getAllServices('platform', ['text','image'])` 静态过滤。
+//
+// 注：此处仅声明"通用消息能力"集合；平台标识本身（onebot/cli/webui/...）由各
+// adapter 在注册时自行附加。
 
 export interface PlatformCapabilityRegistry {
-  Router: 'router';
+  Text: 'text';
+  Image: 'image';
+  Voice: 'voice';
+  Video: 'video';
+  File: 'file';
+  Forward: 'forward';
+  GroupChat: 'group-chat';
+  PrivateChat: 'private-chat';
+  CallAction: 'call-action';
 }
 
 export type PlatformCapability = PlatformCapabilityRegistry[keyof PlatformCapabilityRegistry];
 
 export const PlatformCapabilities = {
-  Router: 'router',
+  Text: 'text',
+  Image: 'image',
+  Voice: 'voice',
+  Video: 'video',
+  File: 'file',
+  Forward: 'forward',
+  GroupChat: 'group-chat',
+  PrivateChat: 'private-chat',
+  CallAction: 'call-action',
 } as const satisfies PlatformCapabilityRegistry;
 
 declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     platform: PlatformCapability | string;
   }
+}
+
+// ----- 聚合 / 路由 helper -----
+//
+// 取代历史上的 PlatformRouter（同名 facade）：所有按 sessionId 分发、按平台名汇总
+// 的逻辑都用纯函数表达，调用方传 ctx 即可，没有 entry，没有自递归隐患。
+
+import type { Context } from '@aalis/core';
+
+export interface PlatformAdapterEntry {
+  instance: PlatformAdapter;
+  contextId: string;
+  capabilities: string[];
+  label?: string;
+}
+
+/** 枚举所有 platform adapter 条目；可选按 capabilities 过滤 */
+export function getPlatformAdapterEntries(ctx: Context, requiredCaps?: readonly string[]): PlatformAdapterEntry[] {
+  return ctx
+    .getAllServices<PlatformAdapter>('platform', requiredCaps)
+    .filter(e => typeof e.instance?.getConnections === 'function');
+}
+
+/** 枚举所有 platform adapter 实例 */
+export function getPlatformAdapters(ctx: Context, requiredCaps?: readonly string[]): PlatformAdapter[] {
+  return getPlatformAdapterEntries(ctx, requiredCaps).map(e => e.instance);
+}
+
+/** 枚举所有平台名（来自 adapter.platform 字段，去重） */
+export function getPlatformNames(ctx: Context): string[] {
+  const names = new Set<string>();
+  for (const a of getPlatformAdapters(ctx)) names.add(a.platform);
+  return [...names];
+}
+
+/** 聚合所有 adapter 的连接 */
+export function aggregatePlatformConnections(ctx: Context): PlatformConnection[] {
+  return getPlatformAdapters(ctx).flatMap(a => a.getConnections());
+}
+
+/** 聚合所有 adapter 的展示详情（含 contextId / capabilities / connections） */
+export function aggregatePlatformDetails(ctx: Context): Array<{
+  adapterName: string;
+  platform: string;
+  contextId: string;
+  capabilities: string[];
+  connections: PlatformConnection[];
+}> {
+  return getPlatformAdapterEntries(ctx).map(({ instance, contextId, capabilities }) => ({
+    adapterName: instance.adapterName,
+    platform: instance.platform,
+    contextId,
+    capabilities: [...capabilities],
+    connections: instance.getConnections(),
+  }));
+}
+
+/** 按平台名查询 adapter 自身身份 */
+export function getPlatformSelfIdentity(
+  ctx: Context,
+  platform: string,
+  sessionId?: string,
+): PlatformSelfIdentity | undefined {
+  for (const a of getPlatformAdapters(ctx)) {
+    if (a.platform !== platform) continue;
+    return a.getSelfIdentity?.(sessionId);
+  }
+  return undefined;
+}
+
+/**
+ * 按 sessionId 找到接管它的 adapter；优先 `canHandle`，否则 fallback 为
+ * `sessionId.startsWith(platform + ':')`（适合协议类平台）。
+ */
+export async function resolvePlatformBySession(ctx: Context, sessionId: string): Promise<PlatformAdapter | undefined> {
+  const logger = ctx.logger.child('platform');
+  for (const { instance, contextId } of getPlatformAdapterEntries(ctx)) {
+    try {
+      const ok =
+        typeof instance.canHandle === 'function'
+          ? await instance.canHandle(sessionId)
+          : sessionId.startsWith(`${instance.platform}:`);
+      if (ok) return instance;
+    } catch (err) {
+      logger.warn(`canHandle 抛错 [${contextId}]:`, err);
+    }
+  }
+  return undefined;
+}
+
+/** 按 sessionId 路由发送纯文本消息 */
+export async function sendPlatformMessage(
+  ctx: Context,
+  sessionId: string,
+  content: string,
+  options?: { skipSplit?: boolean },
+): Promise<void> {
+  const adapter = await resolvePlatformBySession(ctx, sessionId);
+  if (!adapter) throw new Error(`没有 platform adapter 能处理 sessionId="${sessionId}"`);
+  return adapter.sendMessage(sessionId, content, options);
+}
+
+/** 按 sessionId 路由调用平台原生 action */
+export async function callPlatformAction(
+  ctx: Context,
+  sessionId: string,
+  action: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const adapter = await resolvePlatformBySession(ctx, sessionId);
+  if (!adapter) throw new Error(`没有 platform adapter 能处理 sessionId="${sessionId}"`);
+  if (typeof adapter.callAction !== 'function') {
+    throw new Error(`platform adapter "${adapter.adapterName}" 不支持 callAction`);
+  }
+  return adapter.callAction(sessionId, action, params);
 }

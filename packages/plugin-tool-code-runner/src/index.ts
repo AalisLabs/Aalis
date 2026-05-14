@@ -1,6 +1,7 @@
 import { platform } from 'node:os';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, toStorageUri, useToolService } from '@aalis/plugin-tools-api';
 import { type RunnerConfig, runCode } from './runner.js';
 import '@aalis/plugin-tools-api';
@@ -118,15 +119,17 @@ function safeEnv(): NodeJS.ProcessEnv {
 }
 
 async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<RunnerConfig> {
-  const storage = ctx.getService<StorageService>('storage');
-  if (!storage?.resolveLocalPath) throw new Error('代码执行器需要 storage 服务（且支持 local-path）');
+  if (ctx.getAllServices<StorageService>('storage', ['local-path']).length === 0) {
+    throw new Error('代码执行器需要至少一个支持 local-path 的 storage entry');
+  }
+  const storage = createStorageGateway(ctx);
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
   return {
     defaultTimeout: cfg.defaultTimeout,
     maxTimeout: cfg.maxTimeout,
     maxOutputSize: cfg.maxOutputSize,
-    cwd: await storage.resolveLocalPath(cwdUri, 'read'),
-    tmpDir: await storage.resolveLocalPath('tmp:/code-runner', 'write'),
+    cwd: await storage.resolveLocalPath!(cwdUri, 'read'),
+    tmpDir: await storage.resolveLocalPath!('tmp:/code-runner', 'write'),
     env: safeEnv(),
   };
 }
