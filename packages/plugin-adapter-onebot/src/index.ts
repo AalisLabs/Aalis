@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { MediaService } from '@aalis/plugin-media-api';
+import { AttachmentRefKind, formatAttachmentRef } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import WebSocket from 'ws';
@@ -300,10 +301,12 @@ async function cacheImagesAndRewriteText(
   let idx = 0;
   let rewritten = text.replace(/\[图片\]/g, () => {
     const path = localPaths[idx++];
-    return path ? `[图片 | ref:${path}]` : '[图片]';
+    return path ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: path }) : '[图片]';
   });
 
-  const remaining = localPaths.slice(idx).map(path => (path ? `[图片 | ref:${path}]` : '[图片]'));
+  const remaining = localPaths
+    .slice(idx)
+    .map(path => (path ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: path }) : '[图片]'));
   if (remaining.length > 0) rewritten += remaining.join('');
 
   return { text: rewritten, localPaths };
