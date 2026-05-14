@@ -7,10 +7,11 @@
 // ============================================================
 
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { safeDownloadToTemp } from './safe-fetch.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -50,42 +51,12 @@ export async function fileToDataUri(filePath: string): Promise<string> {
 /**
  * 下载远程 URL 到临时文件。返回本地路径 + 清理函数；失败返回 null。
  * 仅用于 vision/视频帧提取等纯本地处理场景。
+ *
+ * 内部走 safe-fetch（带 SSRF 防护、20 MiB 上限、15s 超时），
+ * 拒绝下载到 169.254.169.254 / 127.0.0.1 / 10.0.0.0/8 等内网地址。
  */
 export async function downloadToTemp(url: string): Promise<{ path: string; cleanup: () => Promise<void> } | null> {
-  if (!url.startsWith('http://') && !url.startsWith('https://')) return null;
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-dl-'));
-  const cleanup = async () => {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  };
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      await cleanup();
-      return null;
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    // 尝试从 URL 取扩展名
-    const clean = url.split('?')[0].split('#')[0];
-    const ext = extname(clean).toLowerCase() || guessExtFromMime(res.headers.get('content-type')) || '.bin';
-    const filePath = join(tmpDir, `download${ext}`);
-    await writeFile(filePath, buf);
-    return { path: filePath, cleanup };
-  } catch {
-    await cleanup();
-    return null;
-  }
-}
-
-function guessExtFromMime(mime: string | null): string | undefined {
-  if (!mime) return undefined;
-  const m = mime.split(';')[0].trim();
-  if (m === 'image/jpeg') return '.jpg';
-  if (m === 'image/png') return '.png';
-  if (m === 'image/gif') return '.gif';
-  if (m === 'image/webp') return '.webp';
-  if (m === 'video/mp4') return '.mp4';
-  if (m === 'video/webm') return '.webm';
-  return undefined;
+  return safeDownloadToTemp(url);
 }
 
 export function selectFrameIndices(totalFrames: number, maxFrames: number): number[] {
