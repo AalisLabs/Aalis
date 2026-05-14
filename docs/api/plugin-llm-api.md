@@ -2,11 +2,11 @@
 
 **包名**: `@aalis/plugin-llm-api`  
 **源码**: `packages/plugin-llm-api/src/index.ts`  
-**实现**: `@aalis/plugin-openai`, `@aalis/plugin-ollama`, `@aalis/plugin-deepseek`, `@aalis/plugin-llm-router`
+**实现**: `@aalis/plugin-openai`, `@aalis/plugin-ollama`, `@aalis/plugin-deepseek`
 
 ## 概述
 
-定义所有 LLM provider 必须满足的服务契约，以及 capability 框架（`chat / tool_calling / streaming / vision / thinking / router`）。Agent / Memory-summary / Image-recognition 等消费方仅依赖本契约。
+定义所有 LLM provider 必须满足的服务契约，以及 capability 框架（`chat / tool_calling / streaming / vision / thinking`）。每个 provider 用 `ctx.provide('llm', handle, { entryId: '<provider>/<modelId>', capabilities })` 为 **每个模型** 独立注册一个 entry。Agent / Memory-summary / Image-recognition 等消费方仅依赖本契约。
 
 ## 关键类型
 
@@ -60,7 +60,6 @@ tool_calling    支持 tools 字段
 streaming       提供 .chatStream()
 vision          支持 image 内容段
 thinking        支持 think=true（reasoning_content）
-router          自身不调用模型，转发给其他 LLM 实例（plugin-llm-router）
 ```
 
 声明依赖：
@@ -74,18 +73,21 @@ export const inject = {
 ## 模型引用解析
 
 ```ts
-export function parseModelRef(value: string | null | undefined): ModelRef;
-export function formatModelRef(ref: ModelRef): string;
+export interface ModelRef { provider?: string; model?: string }
+export function resolveLLMModel(
+  ctx: Context,
+  ref?: ModelRef | null,
+  requiredCaps?: LLMCapability[],
+): LLMModelEntry | undefined;
 ```
 
-支持 `provider:model` 或 `model@provider` 的字符串形式互转，常用于会话级 `model` 配置与 `/model` 指令。
+按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按 ServicePreference > priority > 注册顺序拿首个。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑，YAML 中以嵌套对象形式存储。
 
 ## 实现者
 
 - [@aalis/plugin-openai](../plugins/plugin-openai.md) — 通用 OpenAI 兼容
 - [@aalis/plugin-deepseek](../plugins/plugin-deepseek.md) — DeepSeek（含 thinking）
 - [@aalis/plugin-ollama](../plugins/plugin-ollama.md) — 本地 Ollama
-- `@aalis/plugin-llm-router` — 路由器，按规则转发
 
 ## 相关
 

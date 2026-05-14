@@ -12,8 +12,7 @@
 
 ```ts
 interface SessionConfig {
-  llmProvider?: string;        // 指定 LLM 实例 contextId
-  model?: string;              // 模型 ID，如 'deepseek-chat'
+  llm?: { provider: string; model: string };  // LLM 模型引用（ConfigSchema 中以 type:'llm-ref' 字段编辑）
   enabledToolGroups?: string[];
   persona?: string;            // 人格文件名（不含 .yaml）
   systemPromptExtra?: string;

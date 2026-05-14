@@ -26,7 +26,7 @@
 | [@aalis/plugin-storage-api](packages/plugin-storage-api/src/index.ts) | `storage` | — |
 | [@aalis/plugin-image-recognition-api](packages/plugin-image-recognition-api/src/index.ts) | `image-recognition` | — |
 | [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session-manager` | — |
-| [@aalis/plugin-platform](packages/plugin-platform/src/types.ts) | `platform` | — |
+| [@aalis/plugin-platform-api](packages/plugin-platform-api/src/index.ts) | `platform` | helper: `resolvePlatformBySession` / `aggregatePlatformDetails` |
 | [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` | — |
 | [@aalis/plugin-message-archive](packages/plugin-message-archive/src/types.ts) | `message-archive` | — |
 | [@aalis/plugin-websearch-serper](packages/plugin-websearch-serper/src/types.ts) | `websearch` | — |
