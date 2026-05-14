@@ -41,11 +41,9 @@ export const configSchema: ConfigSchema = {
         default: 'describe',
       },
       prefer: {
-        type: 'string',
-        label: '优先 processor 名称',
-        default: '',
-        description:
-          '留空自动选择优先级最高的；填具体 processor name 可强制指定（如 llm:@aalis/plugin-ollama:main/qwen2-vl#vision）',
+        type: 'llm-ref',
+        label: '优先模型',
+        description: '留空则自动选择优先级最高的 vision LLM；选定后强制使用该模型进行图像描述。',
       },
       maxTokens: { type: 'number', label: '描述最大 token', default: 300 },
       prompt: { type: 'textarea', label: '自定义提示词', default: '' },
@@ -63,7 +61,11 @@ export const configSchema: ConfigSchema = {
         ],
         default: 'enabled',
       },
-      prefer: { type: 'string', label: '优先 processor', default: '' },
+      prefer: {
+        type: 'llm-ref',
+        label: '优先 ASR Processor',
+        description: '留空自动选；选定后强制使用该模型（需具 audio_transcription 或 audio 能力）。',
+      },
       language: { type: 'string', label: '默认语种 (ISO 639-1)', default: '' },
     },
   },
@@ -79,7 +81,11 @@ export const configSchema: ConfigSchema = {
         ],
         default: 'disabled',
       },
-      prefer: { type: 'string', label: '优先 processor', default: '' },
+      prefer: {
+        type: 'llm-ref',
+        label: '优先模型',
+        description: '留空自动选；选定后强制使用该模型（需具 audio 能力）。',
+      },
     },
   },
   video: {
