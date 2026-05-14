@@ -306,11 +306,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
     relationIncrementImmediate: Math.max(0, (config.relationIncrementImmediate as number) ?? 1.5),
     relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
-    extractLLM: (config.extractLLM && typeof config.extractLLM === 'object'
-      && (config.extractLLM as { provider?: unknown }).provider
-      && (config.extractLLM as { model?: unknown }).model)
-      ? config.extractLLM as { provider: string; model: string }
-      : undefined,
+    extractLLM:
+      config.extractLLM &&
+      typeof config.extractLLM === 'object' &&
+      (config.extractLLM as { provider?: unknown }).provider &&
+      (config.extractLLM as { model?: unknown }).model
+        ? (config.extractLLM as { provider: string; model: string })
+        : undefined,
     allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
   };
 
