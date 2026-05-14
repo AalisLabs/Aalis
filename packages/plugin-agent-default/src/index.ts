@@ -9,7 +9,7 @@ import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCal
 import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
-import type { PlatformService } from '@aalis/plugin-platform-api';
+import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
@@ -168,7 +168,7 @@ class DefaultAgent implements AgentService {
    * 获取 Agent 子系统的插件分组
    *
    * 仅纳入 Agent 直接依赖的能力提供者；不包含 `platform`
-   * （平台属于独立子系统，由 PlatformService.getPluginGroups 负责）。
+   * （平台属于独立子系统，由 plugin-platform-api 的 helper 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
     const pm = this.ctx.getService<PluginManagerService>('plugins');
@@ -1327,9 +1327,7 @@ class DefaultAgent implements AgentService {
   }
 
   private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
-    const identity = this.ctx
-      .getService<PlatformService>('platform')
-      ?.getSelfIdentity?.(incoming.platform, incoming.sessionId);
+    const identity = getPlatformSelfIdentity(this.ctx, incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
       senderType: 'assistant',
