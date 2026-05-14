@@ -914,9 +914,10 @@ class DefaultAgent implements AgentService {
       timestamp: Date.now(),
     };
 
-    // 多模态：将图片传递给 LLM（未被图像识别中间件消费的图片）
-    if (incoming.images && incoming.images.length > 0) {
-      userMessage.images = incoming.images;
+    // 多模态：把 attachments 中的 image 项传递给 LLM（视觉模型多模态字段）
+    const imageAtts = incoming.attachments?.filter(a => a.kind === 'image') ?? [];
+    if (imageAtts.length > 0) {
+      userMessage.images = imageAtts.map(a => a.data);
     }
 
     messages.push(userMessage);

@@ -8,19 +8,21 @@ import { z } from 'zod';
 
 // ----- 入站（客户端 → 服务端） -----
 
-const AttachmentFileSchema = z.object({
-  name: z.string(),
+const AttachmentSchema = z.object({
+  kind: z.enum(['image', 'audio', 'video', 'file']),
   data: z.string(),
   mimeType: z.string().optional(),
+  name: z.string().optional(),
+  byteSize: z.number().optional(),
+  durationSec: z.number().optional(),
 });
 
 const WSMessageSchema = z.object({
   type: z.literal('message'),
   content: z.string().optional(),
   sessionId: z.string().optional(),
-  images: z.array(z.string()).optional(),
-  files: z.array(AttachmentFileSchema).optional(),
-  attachmentOrder: z.array(z.enum(['image', 'file'])).optional(),
+  /** 统一附件列表（image/audio/video/file） */
+  attachments: z.array(AttachmentSchema).optional(),
 });
 
 const WSSubscribeLogsSchema = z.object({ type: z.literal('subscribe_logs') });
