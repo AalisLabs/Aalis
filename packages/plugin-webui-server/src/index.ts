@@ -1096,8 +1096,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const sockets = sessions.get(msg.sessionId);
     if (!sockets) return;
 
-    // 优先使用 agent 显式提供的 segments；否则回退到累积缓冲（保留交错顺序）
-    const segments = msg.segments ?? buf?.segments;
+    // 仅信任 msg 本身携带的 segments。不要回退到 buf?.segments：
+    // 工具循环中 agent tool（如 send_image / commands 回复）会直接 emit 'outbound:message'，
+    // 但 streamBuffers[sid].segments 累积的是当前回合的完整时间线（含本工具之前的 reasoning/tool_call）。
+    // 若回退使用 buf，会把整条时间线"借尸还魂"挂到工具消息上 → 前端 REPLACE 当前 assistant 后，
+    // 真正的 agent final outbound:message 再到达时被识别为新消息 APPEND，导致整条时间线渲染两遍。
+    // agent 的 final emit 已显式带 segments=turnSegments，不需要这个隐式 fallback。
+    const segments = msg.segments;
     const payload: WSOutgoing = {
       type: 'message',
       content: msg.content,
