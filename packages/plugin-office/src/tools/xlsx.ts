@@ -400,6 +400,7 @@ export function registerExcelTools(tools: ScopedToolService, sessions: DocSessio
         validation.formulae = [(args.values as string[]).map(v => `"${v}"`).join(',')];
       } else if (args.min != null || args.max != null) {
         validation.operator = 'between' as ExcelJS.DataValidationOperator;
+        // biome-ignore lint/suspicious/noExplicitAny: ExcelJS formulae 接受 number|string 联合数组，类型签名过严
         validation.formulae = [args.min ?? 0, args.max ?? 999999] as any[];
       }
 
@@ -464,6 +465,7 @@ export function registerExcelTools(tools: ScopedToolService, sessions: DocSessio
           {
             priority: 1,
             type: 'cellIs',
+            // biome-ignore lint/suspicious/noExplicitAny: ExcelJS 条件格式 operator 联合类型由用户输入运行时校验
             operator: String(args.rule) as any,
             formulae: (args.values as unknown[]).map(v => String(v)),
             style: {

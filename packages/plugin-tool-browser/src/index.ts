@@ -27,6 +27,7 @@ interface BrowserConfig {
 }
 
 interface PageSlot {
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Page 类型动态导入，避免在顶层 import puppeteer 增加启动负担
   page: any; // puppeteer Page
   url: string;
   title: string;
@@ -136,6 +137,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   let browser: any = null;
   const pages = new Map<string, PageSlot>();
   let pageCounter = 0;
@@ -168,6 +170,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     logger.info('Chrome 下载完成');
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   async function ensureBrowser(): Promise<any> {
     if (browser) return browser;
     try {
@@ -518,6 +521,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── WebUI handlers ──
 
+  // biome-ignore lint/suspicious/noExplicitAny: 使用模块级 apply 函数作为运行时句柄挂载 webui handlers，供actions 闭包调用
   (apply as any).__webuiHandlerFns = {
     async listPages() {
       return [...pages.entries()].map(([id, slot]) => ({
@@ -573,14 +577,17 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 export const actions: PluginModule['actions'] = {
   async listPages(_ctx) {
     // 通过事件通知获取运行时数据 — 由 apply 内部设置
+    // biome-ignore lint/suspicious/noExplicitAny: 读取 apply 上的运行时句柄
     const fns = (apply as any).__webuiHandlerFns;
     return fns ? await fns.listPages() : [];
   },
   async closePage(ctx, args) {
+    // biome-ignore lint/suspicious/noExplicitAny: 读取 apply 上的运行时句柄
     const fns = (apply as any).__webuiHandlerFns;
     return fns ? await fns.closePage(ctx, args) : { error: '插件未初始化' };
   },
   async closeAll(_ctx) {
+    // biome-ignore lint/suspicious/noExplicitAny: 读取 apply 上的运行时句柄
     const fns = (apply as any).__webuiHandlerFns;
     return fns ? await fns.closeAll() : { error: '插件未初始化' };
   },

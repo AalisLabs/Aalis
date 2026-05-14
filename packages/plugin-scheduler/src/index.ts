@@ -295,6 +295,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       if (!existsSync(persistFile)) return [];
       const data = JSON.parse(readFileSync(persistFile, 'utf-8'));
       if (!Array.isArray(data)) return [];
+      // biome-ignore lint/suspicious/noExplicitAny: 从 JSON 文件反序列化的原始字段，手动校验转型
       return data.map((j: any) => ({
         name: String(j.name ?? 'unnamed'),
         cron: j.cron as string | undefined,
@@ -337,6 +338,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
     try {
       logger.info(`执行任务: ${jobName}`);
+      // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明，运行时调度
       await ctx.emit('scheduler:job:start' as any, jobName);
 
       // 通用触发事件：供 workflow 等订阅者使用
@@ -366,11 +368,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       rt.lastRun = Date.now();
       rt.runCount++;
       rt.lastResult = '成功';
+      // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明
       await ctx.emit('scheduler:job:done' as any, jobName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       rt.lastResult = `失败: ${msg}`;
       logger.error(`任务 "${jobName}" 执行失败: ${msg}`);
+      // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明
       await ctx.emit('scheduler:job:error' as any, jobName, msg);
     } finally {
       rt.running = false;
@@ -479,6 +483,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       // 每次 tick 后更新所有 cron 任务的下次执行时间
       rt.nextRun = estimateNextRun(rt.config, rt.lastRun);
     }
+    // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明
     ctx.emit('scheduler:tick' as any).catch(() => {});
   }
 
@@ -750,6 +755,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
   const rawJobs = Array.isArray(raw.jobs) ? raw.jobs : [];
   return {
+    // biome-ignore lint/suspicious/noExplicitAny: 从 YAML 反序列化的原始字段，手动校验转型
     jobs: rawJobs.map((j: any) => ({
       name: String(j.name ?? 'unnamed'),
       cron: j.cron as string | undefined,

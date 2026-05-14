@@ -61,6 +61,7 @@ describe('FsYamlConfigProvider (集成)', () => {
 
   it('从 YAML 加载并支持环境变量插值', () => {
     process.env.TEST_KEY_X = 'value-from-env';
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: YAML 变量占位符，重点验证 ConfigManager 插值能力
     cfg = tempConfig('name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: ${TEST_KEY_X}\n');
     const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
     expect(mgr.get('name')).toBe('MyApp');
@@ -70,12 +71,14 @@ describe('FsYamlConfigProvider (集成)', () => {
 
   it('save() 写入 YAML 并恢复环境变量占位符', () => {
     process.env.TEST_KEY_Y = 'secret';
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: YAML 变量占位符，重点验证保存时占位符被保留
     cfg = tempConfig('name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: ${TEST_KEY_Y}\n');
     const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
     mgr.set('name', 'Y');
     mgr.save();
     const written = readFileSync(cfg.path, 'utf-8');
     expect(written).toMatch(/name: Y/);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: YAML 变量占位符原型字符串
     expect(written).toContain('${TEST_KEY_Y}');
     delete process.env.TEST_KEY_Y;
   });
