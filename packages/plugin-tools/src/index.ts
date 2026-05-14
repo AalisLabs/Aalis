@@ -3,6 +3,7 @@ import { useCommandService } from '@aalis/plugin-commands-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
+import { CwdState } from './tools/cwd-state.js';
 import { registerFileTools } from './tools/file.js';
 import { registerHttpTools } from './tools/http.js';
 import { registerShellTools } from './tools/shell.js';
@@ -20,10 +21,11 @@ export const inject = {
 export const configSchema: ConfigSchema = {
   workingDirectory: {
     type: 'string',
-    label: '工作目录',
+    label: '初始工作目录',
     default: 'workspace:/',
     description:
-      'Shell 等执行工具的默认逻辑目录。使用 storage URI，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
+      '进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。' +
+      'shell/code-runner 仍使用各自独立的 workingDirectory 配置，不受 cd 影响。',
   },
   shell: {
     label: 'Shell 工具',
@@ -41,12 +43,6 @@ export const configSchema: ConfigSchema = {
       maxReadSize: { type: 'number', label: '最大读取字节', default: 1048576 },
       maxSearchBytes: { type: 'number', label: '单次搜索最大扫描字节', default: 1048576 },
       maxWriteSize: { type: 'number', label: '最大写入字节', default: 10485760 },
-      defaultRoot: {
-        type: 'string',
-        label: '默认存储根',
-        default: 'workspace',
-        description: '普通相对路径会被解释到这个 storage 根',
-      },
       allowedRoots: {
         type: 'multiselect',
         label: '允许访问的存储根',
@@ -89,7 +85,6 @@ export const defaultConfig = {
     maxReadSize: 1048576,
     maxSearchBytes: 1048576,
     maxWriteSize: 10485760,
-    defaultRoot: 'workspace',
     allowedRoots: ['*'],
   },
   system: { enabled: true },
@@ -106,7 +101,6 @@ export interface ToolsBasicConfig {
     maxReadSize: number;
     maxSearchBytes: number;
     maxWriteSize: number;
-    defaultRoot: string;
     allowedRoots: string[];
   };
   system: { enabled: boolean };
@@ -118,6 +112,9 @@ export interface ToolsBasicConfig {
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
   const cwdUri = cfg.workingDirectory || 'workspace:/';
+  // 全局唯一的 cwd 状态：system.cwd / system.cd / file_* 都共享同一个 CwdState 实例，
+  // 这是"shell 心智模型一致性"的唯一保证。per-session 在 CwdState 内部按 sessionId 分桶。
+  const cwdState = new CwdState(cwdUri);
 
   const tools = useToolService(ctx);
   const systemTools = toolsWithGroups(tools, ['system']);
@@ -145,7 +142,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (cfg.file.enabled) {
     if (hasStorage) {
       const storage = createStorageGateway(ctx);
-      registerFileTools(systemTools, { ...cfg.file, storage, ctx });
+      registerFileTools(systemTools, { ...cfg.file, storage, cwdState });
       ctx.logger.info('文件工具已启用');
     } else {
       ctx.logger.warn('文件工具需要 storage 服务，已跳过注册');
@@ -155,7 +152,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (cfg.system.enabled) {
     const persona = ctx.getService<{ isTimeInjectionEnabled?(): boolean }>('persona');
     const skipTimeTool = !!persona?.isTimeInjectionEnabled?.();
-    registerSystemTools(systemTools, { cwd: cwdUri, skipTimeTool });
+    const storage = hasStorage ? createStorageGateway(ctx) : undefined;
+    registerSystemTools(systemTools, { cwdState, storage, skipTimeTool });
     ctx.logger.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
   }
 
@@ -203,7 +201,6 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
       maxReadSize: (file?.maxReadSize as number) ?? 1048576,
       maxSearchBytes: (file?.maxSearchBytes as number) ?? 1048576,
       maxWriteSize: (file?.maxWriteSize as number) ?? 10485760,
-      defaultRoot: (file?.defaultRoot as string) ?? 'workspace',
       allowedRoots: configuredAllowedRoots.length ? configuredAllowedRoots : ['*'],
     },
     system: {
