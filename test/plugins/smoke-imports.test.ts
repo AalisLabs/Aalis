@@ -68,6 +68,7 @@ const PLUGIN_DIRS = [
   'plugin-websearch-serper',
   'plugin-webui-server',
   'plugin-media',
+  'plugin-image-sender',
   'plugin-asr-openai',
   'plugin-asr-whisper-cpp',
 ] as const;
