@@ -181,11 +181,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     autoCompressThreshold: (config.autoCompressThreshold as number) ?? 0.7,
     summaryPrompt: (config.summaryPrompt as string) ?? '',
     summaryModelMode: (config.summaryModelMode as string) === 'custom' ? 'custom' : 'global',
-    summaryLLM: (config.summaryLLM && typeof config.summaryLLM === 'object'
-      && (config.summaryLLM as { provider?: unknown }).provider
-      && (config.summaryLLM as { model?: unknown }).model)
-      ? config.summaryLLM as { provider: string; model: string }
-      : undefined,
+    summaryLLM:
+      config.summaryLLM &&
+      typeof config.summaryLLM === 'object' &&
+      (config.summaryLLM as { provider?: unknown }).provider &&
+      (config.summaryLLM as { model?: unknown }).model
+        ? (config.summaryLLM as { provider: string; model: string })
+        : undefined,
   };
 
   const memory = ctx.getService<MemoryService>('memory');
@@ -222,7 +224,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 摘要生成提示词
   const summarySystemPrompt = cfg.summaryPrompt || DEFAULT_SUMMARY_PROMPT;
-
 
   /**
    * 为指定 session 生成/更新摘要

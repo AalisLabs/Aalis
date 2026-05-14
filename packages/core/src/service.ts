@@ -1,14 +1,14 @@
 import {
   type NormalizedDependency,
+  normalizeDependency,
+  type ServiceEntry,
   ServicePriority,
   type ServicePriorityValue,
-  type ServiceEntry,
-  normalizeDependency,
 } from './types/service.js';
 
+export type { NormalizedDependency, ServiceEntry, ServicePriorityValue };
 // 类型与纯辅助 re-export，保留同名旧导入路径
-export { ServicePriority, normalizeDependency };
-export type { NormalizedDependency, ServicePriorityValue, ServiceEntry };
+export { normalizeDependency, ServicePriority };
 
 /**
  * 服务容器 —— 支持同名多实现 + 能力匹配

@@ -6,14 +6,13 @@ import {
   type PluginEntry,
   type PluginModule,
   type PluginState,
-  type RecomputeReason,
   parseInstanceId,
+  type RecomputeReason,
 } from './types/plugin.js';
 
+export type { PluginEntry, PluginModule, PluginState };
 // 类型与纯辅助 re-export，保留同名旧导入路径
 export { parseInstanceId };
-export type { PluginEntry, PluginModule, PluginState };
-
 
 /**
  * 插件管理器

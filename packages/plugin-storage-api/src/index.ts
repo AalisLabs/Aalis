@@ -189,10 +189,7 @@ function safeListRoots(entry: { instance: StorageService; contextId: string }): 
 }
 
 /** 枚举所有 storage entry（capabilities 过滤可选） */
-export function getStorageEntries(
-  ctx: Context,
-  requiredCaps?: readonly StorageCapability[],
-): StorageProviderEntry[] {
+export function getStorageEntries(ctx: Context, requiredCaps?: readonly StorageCapability[]): StorageProviderEntry[] {
   return ctx.getAllServices<StorageService>('storage', requiredCaps as readonly string[] | undefined);
 }
 
@@ -304,11 +301,7 @@ export function createStorageGateway(ctx: Context): StorageService {
     delete: uri => dispatch(uri, ['delete']).delete(uri),
     resolveLocalPath: (uri, access) => {
       const caps: StorageCapability[] =
-        access === 'write'
-          ? ['write', 'local-path']
-          : access === 'delete'
-            ? ['delete', 'local-path']
-            : ['local-path'];
+        access === 'write' ? ['write', 'local-path'] : access === 'delete' ? ['delete', 'local-path'] : ['local-path'];
       const target = dispatch(uri, caps);
       if (!target.resolveLocalPath) {
         throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 local-path（远程协议或纯虚拟根）`);
