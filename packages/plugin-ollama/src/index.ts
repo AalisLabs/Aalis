@@ -103,6 +103,11 @@ interface OllamaMessage {
   content: string;
   thinking?: string;
   images?: string[];
+  /**
+   * Ollama 0.x 起部分多模态模型（如 gemma4:e[24]b）支持音频输入；
+   * 字段名沿用 ollama-python 客户端约定 `audios`（base64 或文件路径）。
+   */
+  audios?: string[];
   tool_calls?: OllamaToolCall[];
 }
 
@@ -542,29 +547,37 @@ class OllamaClient {
    * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。
    * 返回 null 表示图片无法获取。
    */
-  private async resolveImage(img: string): Promise<string | null> {
+  private resolveImage(img: string): Promise<string | null> {
+    return this.resolveBinary(img, 'image');
+  }
+
+  /**
+   * 通用二进制资源解析（图片 / 音频）。
+   * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示获取失败。
+   */
+  private async resolveBinary(data: string, label: 'image' | 'audio'): Promise<string | null> {
     // data URI → 提取 base64（兼容多参数格式如 data:image/png;charset=utf-8;base64,...）
-    const dataMatch = img.match(/^data:[^,]*;base64,(.+)$/);
+    const dataMatch = data.match(/^data:[^,]*;base64,(.+)$/);
     if (dataMatch) return dataMatch[1];
 
     // HTTP(S) URL → 下载并转 base64
-    if (/^https?:\/\//i.test(img)) {
+    if (/^https?:\/\//i.test(data)) {
       try {
-        const res = await fetch(img, { signal: AbortSignal.timeout(30000) });
+        const res = await fetch(data, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) {
-          this.logger.warn(`下载图片失败 (${res.status}): ${img}`);
+          this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${data}`);
           return null;
         }
         const buf = Buffer.from(await res.arrayBuffer());
         return buf.toString('base64');
       } catch (err) {
-        this.logger.warn(`下载图片异常: ${img}`, err);
+        this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}异常: ${data}`, err);
         return null;
       }
     }
 
     // 其他情况（纯 base64 或文件路径）直接返回
-    return img;
+    return data;
   }
 
   /**
@@ -588,6 +601,13 @@ class OllamaClient {
       const resolved = await Promise.all(msg.images.map(img => this.resolveImage(img)));
       const valid = resolved.filter((r): r is string => r !== null);
       if (valid.length > 0) ollamaMsg.images = valid;
+    }
+
+    // 音频：Ollama 部分多模态模型（如 gemma4:e[24]b）支持 audios 字段
+    if (msg.audios && msg.audios.length > 0 && msg.role === 'user') {
+      const resolved = await Promise.all(msg.audios.map(a => this.resolveBinary(a, 'audio')));
+      const valid = resolved.filter((r): r is string => r !== null);
+      if (valid.length > 0) ollamaMsg.audios = valid;
     }
 
     // 传递工具调用（assistant 消息中的）
