@@ -50,7 +50,7 @@ export class PluginManager {
 
   constructor(rootCtx: Context, logger: Logger) {
     this.rootCtx = rootCtx;
-    this.logger = logger.child('plugin');
+    this.logger = logger.child('plugins');
 
     // 监听服务注册/注销，路由到统一 recompute()。reloading 期间与关机后一律跳过。
     rootCtx.on('service:registered', name => {
@@ -590,7 +590,12 @@ export class PluginManager {
    *
    * 关闭顺序 = 此结果反向；激活顺序 = 此结果正序。
    * 服务名 → 提供者映射只取首个 provides 该服务名的 entry，足以表达依赖图。
-   * 残留环按声明序兜底追加。
+   *
+   * 仅 `requiredDeps` 参与建图：optional 依赖语义为"如果存在则消费"，
+   * 由运行时 `service-up`/`service-down` recompute 异步补救（whenService 钩子等），
+   * 不应制造排序约束。否则插件之间互相 optional 会产生伪环并退化到声明序。
+   *
+   * 残留环（仅由 required 形成的真环）按声明序兜底追加。
    */
   private topoSortByDeps(entries: PluginEntry[]): PluginEntry[] {
     const providerOf = new Map<string, string>();
@@ -607,9 +612,8 @@ export class PluginManager {
       dependents.set(e.instanceId, new Set());
     }
     for (const e of entries) {
-      const deps = [...e.requiredDeps, ...e.optionalDeps];
       const seenProviders = new Set<string>();
-      for (const dep of deps) {
+      for (const dep of e.requiredDeps) {
         const providerId = providerOf.get(dep.service);
         if (!providerId || providerId === e.instanceId) continue;
         if (!entryById.has(providerId)) continue;
@@ -637,7 +641,7 @@ export class PluginManager {
       for (const e of entries) {
         if (!seen.has(e.instanceId)) result.push(e);
       }
-      this.logger.warn(`topoSortByDeps: 检测到依赖环，残留 ${entries.length - seen.size} 个按声明序追加`);
+      this.logger.warn(`topoSortByDeps: 检测到 required 依赖环，残留 ${entries.length - seen.size} 个按声明序追加`);
     }
     return result;
   }
