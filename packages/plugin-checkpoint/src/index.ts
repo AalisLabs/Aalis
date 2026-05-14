@@ -1,6 +1,7 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
 import { mkdir } from 'node:fs/promises';
 import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
@@ -98,17 +99,16 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   const service = new CheckpointServiceImpl(config, logger);
   ctx.provide('checkpoint', service);
 
-  // 注入回滚后端：通过 storage 路由器执行写回 / 删除
-  // 在 apply 阶段，storage 可能还没注册；用懒解析
+  // 注入回滚后端：通过 storage gateway helper 按 URI 路由到各 root
+  // 在 apply 阶段，storage 可能还没注册；gateway 本身是闭包，调用时才枚举 entry
+  const storage = createStorageGateway(ctx);
   service.setBackend(
     async (uri, data) => {
-      const storage = ctx.getService<StorageService>('storage');
-      if (!storage) throw new Error('storage 服务不可用');
+      if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
       await storage.writeFile(uri, data);
     },
     async uri => {
-      const storage = ctx.getService<StorageService>('storage');
-      if (!storage) throw new Error('storage 服务不可用');
+      if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
       await storage.delete(uri);
     },
   );

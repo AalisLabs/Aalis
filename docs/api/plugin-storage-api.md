@@ -2,7 +2,7 @@
 
 **包名**: `@aalis/plugin-storage-api`  
 **源码**: `packages/plugin-storage-api/src/index.ts`  
-**实现**: `@aalis/plugin-storage-local`, `@aalis/plugin-storage-router`
+**实现**: `@aalis/plugin-storage-local`（按根多实例注册）
 
 ## 概述
 
@@ -59,7 +59,9 @@ read          .readFile() / .createReadStream()
 write         .writeFile() / .rename()
 delete        .delete()
 local-path    .resolveLocalPath() —— shell/code-runner 必需
-router        多 storage 实例聚合（plugin-storage-router）
+```
+
+每个 `storage` entry 只负责一个根 (root)，以 `entryId = '<plugin-id>/<rootName>'` 名义注册。上层如需跨多个 root 调度，使用 `createStorageGateway(ctx)` 拿一个在调用点按 URI 路由的 `StorageService`（该 gateway **不**注册进容器，避免出现同名 facade entry）。
 ```
 
 依赖声明：
@@ -87,8 +89,14 @@ export const inject = {
 
 ## 实现者
 
-- [@aalis/plugin-storage-local](../plugins/plugin-storage-local.md) — 本地文件系统
-- [@aalis/plugin-storage-router](../plugins/plugin-storage-router.md) — 多 storage 聚合
+- [@aalis/plugin-storage-local](../plugins/plugin-storage-local.md) — 本地文件系统；`apply()` 里为每个 `roots[]` 条目独立 `ctx.provide('storage', ScopedStorageService, { entryId, capabilities })`。
+
+## Helper
+
+- `getStorageEntries(ctx, requiredCaps?)` — 拿到全部注册过的 storage entry。
+- `aggregateStorageRoots(ctx)` / `getStorageRootConflicts(ctx)` — 跨 entry 汇总根、识别同名冲突。
+- `resolveStorageEntryForRoot(ctx, rootName, requiredCaps?)` / `resolveStorageByPath(ctx, uri, requiredCaps?)` — 按 root 名或 URI 查到负责该路径的 entry。
+- `createStorageGateway(ctx)` — 返回一个在调用点路由 URI 、职责该 entry 的临时 `StorageService`；适用于文件工具、code-runner 、checkpoint 、webui-server 等需要统一入口的使用者。
 
 ## 相关
 

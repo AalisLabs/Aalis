@@ -224,7 +224,7 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
           continue;
         }
         const aalisMeta = pkgJson.aalis as Record<string, unknown> | undefined;
-        if (aalisMeta?.core || aalisMeta?.client || aalisMeta?.types) continue;
+        if (aalisMeta?.core || aalisMeta?.client || aalisMeta?.types || aalisMeta?.tooling) continue;
         const main = (pkgJson.main as string) || 'dist/index.js';
         discovered.push({
           name: pkgJson.name as string,

@@ -93,7 +93,6 @@ export interface StorageCapabilityRegistry {
   Write: 'write';
   Delete: 'delete';
   LocalPath: 'local-path';
-  Router: 'router';
 }
 
 export type StorageCapability = StorageCapabilityRegistry[keyof StorageCapabilityRegistry];
@@ -104,7 +103,6 @@ export const StorageCapabilities = {
   Write: 'write',
   Delete: 'delete',
   LocalPath: 'local-path',
-  Router: 'router',
 } as const satisfies StorageCapabilityRegistry;
 
 declare module '@aalis/core' {
@@ -113,6 +111,7 @@ declare module '@aalis/core' {
   }
 }
 
+import type { Context } from '@aalis/core';
 import { registerCapabilityProbe } from '@aalis/core';
 
 registerCapabilityProbe('storage', StorageCapabilities.List, inst =>
@@ -147,3 +146,167 @@ registerCapabilityProbe('storage', StorageCapabilities.LocalPath, inst =>
     ? true
     : 'StorageService.resolveLocalPath() is required for capability "local-path"',
 );
+
+// ----- 聚合 / 路由 helper -----
+//
+// service-granularity 之后，每个 storage 后端按 root 拆出独立 entry：
+//   contextId = `${plugin-instance-id}/${root.name}`
+//   capabilities = 反映该 root 的真实权限（read/write/delete/local-path）
+//
+// 不再有 "router facade entry"。所有按 URI / root 名查询的逻辑都是纯函数。
+
+export interface AggregatedStorageRoot extends StorageRootInfo {
+  /** 提供该根的 entry contextId（便于排查同名冲突） */
+  providerId: string;
+  /** entry 的 label（来自 ctx.provide 的 label 选项） */
+  provider?: string;
+}
+
+export interface StorageRootConflict {
+  /** 冲突的根名 */
+  name: string;
+  /** 当前实际生效的根（按枚举顺序首个） */
+  selected: AggregatedStorageRoot;
+  /** 被遮蔽、不会被 URI 路由到的同名根 */
+  shadowed: AggregatedStorageRoot[];
+  /** 所有候选根，按 entry 顺序从高到低排列 */
+  providers: Array<AggregatedStorageRoot & { selected: boolean }>;
+}
+
+export interface StorageProviderEntry {
+  instance: StorageService;
+  contextId: string;
+  capabilities: string[];
+  label?: string;
+}
+
+function safeListRoots(entry: { instance: StorageService; contextId: string }): StorageRootInfo[] {
+  try {
+    return entry.instance.listRoots() ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** 枚举所有 storage entry（capabilities 过滤可选） */
+export function getStorageEntries(ctx: Context, requiredCaps?: readonly StorageCapability[]): StorageProviderEntry[] {
+  return ctx.getAllServices<StorageService>('storage', requiredCaps as readonly string[] | undefined);
+}
+
+/** 聚合所有 entry 的 root 列表（保留 providerId/label） */
+export function aggregateStorageRoots(ctx: Context): AggregatedStorageRoot[] {
+  const out: AggregatedStorageRoot[] = [];
+  for (const entry of getStorageEntries(ctx)) {
+    for (const r of safeListRoots(entry)) {
+      out.push({ ...r, providerId: entry.contextId, provider: entry.label });
+    }
+  }
+  return out;
+}
+
+/** 同名 root 冲突诊断（用于 doctor / 启动日志） */
+export function getStorageRootConflicts(ctx: Context): StorageRootConflict[] {
+  const grouped = new Map<string, AggregatedStorageRoot[]>();
+  for (const r of aggregateStorageRoots(ctx)) {
+    const arr = grouped.get(r.name);
+    if (arr) arr.push(r);
+    else grouped.set(r.name, [r]);
+  }
+  const conflicts: StorageRootConflict[] = [];
+  for (const [name, roots] of grouped) {
+    if (roots.length <= 1) continue;
+    const [selected, ...shadowed] = roots;
+    conflicts.push({
+      name,
+      selected,
+      shadowed,
+      providers: roots.map((r, i) => ({ ...r, selected: i === 0 })),
+    });
+  }
+  return conflicts;
+}
+
+/** 按 root 名查找首个匹配且满足 caps 的 entry */
+export function resolveStorageEntryForRoot(
+  ctx: Context,
+  rootName: string,
+  requiredCaps?: readonly StorageCapability[],
+): StorageProviderEntry | undefined {
+  for (const entry of getStorageEntries(ctx, requiredCaps)) {
+    if (safeListRoots(entry).some(r => r.name === rootName)) return entry;
+  }
+  return undefined;
+}
+
+/** 按 storage URI（`<root>:/<path>`）找到对应 entry */
+export function resolveStorageByPath(
+  ctx: Context,
+  uri: string,
+  requiredCaps?: readonly StorageCapability[],
+): StorageProviderEntry | undefined {
+  return resolveStorageEntryForRoot(ctx, parseUriRoot(uri), requiredCaps);
+}
+
+function parseUriRoot(uri: string): string {
+  const idx = uri.indexOf(':/');
+  if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}（应为 <根名>:/<相对路径>）`);
+  return uri.slice(0, idx);
+}
+
+/**
+ * 创建一个面向调用方的 StorageService 网关：每次方法调用按 URI 路由到对应 entry。
+ *
+ * 不注册到 ServiceContainer——纯本地构造，没有 facade entry。适用于 tools / shell /
+ * checkpoint 等需要单一 StorageService 句柄、又想透明跨 root 调度的场景。
+ *
+ * 调用方无需关心当前有哪些 root 由哪个后端提供；URI 即标识 + 路由 key。
+ */
+export function createStorageGateway(ctx: Context): StorageService {
+  const knownRootsList = (): string[] => {
+    const set = new Set<string>();
+    for (const entry of getStorageEntries(ctx)) {
+      for (const r of safeListRoots(entry)) set.add(r.name);
+    }
+    return [...set];
+  };
+  const dispatch = (uri: string, caps?: readonly StorageCapability[]): StorageService => {
+    const target = resolveStorageByPath(ctx, uri, caps);
+    if (!target) {
+      const known = knownRootsList();
+      throw new Error(
+        `未知存储根: ${parseUriRoot(uri)}（已注册根: ${known.join(', ') || '(无)'}` +
+          (caps ? `, 需能力 [${caps.join(',')}]` : '') +
+          ')',
+      );
+    }
+    return target.instance;
+  };
+
+  return {
+    listRoots() {
+      const seen = new Map<string, StorageRootInfo>();
+      for (const r of aggregateStorageRoots(ctx)) {
+        if (seen.has(r.name)) continue;
+        const { providerId: _p, provider: _l, ...info } = r;
+        seen.set(r.name, info);
+      }
+      return [...seen.values()];
+    },
+    list: uri => dispatch(uri, ['list']).list(uri),
+    stat: uri => dispatch(uri).stat(uri),
+    readFile: (uri, encoding) => dispatch(uri, ['read']).readFile(uri, encoding),
+    createReadStream: uri => dispatch(uri, ['read']).createReadStream(uri),
+    writeFile: (uri, data) => dispatch(uri, ['write']).writeFile(uri, data),
+    rename: (uri, newName) => dispatch(uri, ['write']).rename(uri, newName),
+    delete: uri => dispatch(uri, ['delete']).delete(uri),
+    resolveLocalPath: (uri, access) => {
+      const caps: StorageCapability[] =
+        access === 'write' ? ['write', 'local-path'] : access === 'delete' ? ['delete', 'local-path'] : ['local-path'];
+      const target = dispatch(uri, caps);
+      if (!target.resolveLocalPath) {
+        throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 local-path（远程协议或纯虚拟根）`);
+      }
+      return target.resolveLocalPath(uri, access);
+    },
+  };
+}

@@ -1,12 +1,5 @@
 import type { ConfigSchema, Context, Logger } from '@aalis/core';
-import type {
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMCapability,
-  LLMService,
-  ModelInfo,
-} from '@aalis/plugin-llm-api';
+import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
@@ -71,7 +64,7 @@ export const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启用思考',
     default: true,
-    description: '为支持思考的模型启用扩展思考（think 参数）',
+    description: '为支持思考的模型启用扩展思考（think 参数）。无 thinking 能力的模型该参数无效。',
   },
 };
 
@@ -190,102 +183,46 @@ function extractThinkTags(text: string): { reasoning: string; content: string } 
   return { reasoning, content };
 }
 
-// ===== LLM 服务实现 =====
+// ===== Ollama 客户端（共享底层 fetch 封装，多个 ModelHandle 复用） =====
 
-class OllamaLLMService implements LLMService {
-  private baseUrl: string;
-  private customModels: string[];
-  private modelCapabilities: Map<string, LLMCapability[]>;
-  private providerCapabilities: LLMCapability[];
-  private defaultModel: string | null = null;
+class OllamaClient {
+  readonly baseUrl: string;
   private timeout: number;
-  private temperature: number;
-  private maxTokens: number;
-  private contextLength: number;
-  private keepAlive: string;
-  private thinking: boolean;
+  readonly temperature: number;
+  readonly maxTokens: number;
+  readonly contextLength: number;
+  readonly keepAlive: string;
   private logger: Logger;
 
   constructor(config: OllamaConfig, logger: Logger) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.customModels = config.customModels;
-    this.modelCapabilities = config.modelCapabilities;
-    this.providerCapabilities = config.providerCapabilities;
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
     this.keepAlive = config.keepAlive;
-    this.thinking = config.thinking;
     this.logger = logger;
   }
 
-  /** 启动时调用：发现本地模型、检查重复、确定默认模型 */
-  async initialize(): Promise<{ defaultModel: string | null; capabilities: LLMCapability[] }> {
-    const remote = await this.fetchRemoteModels();
-    const remoteIds = new Set(remote.map(m => m.id));
-
-    for (const cm of this.customModels) {
-      if (remoteIds.has(cm)) {
-        this.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，建议去重`);
-      }
-    }
-
-    this.defaultModel = remote[0]?.id ?? this.customModels[0] ?? null;
-    const capabilities = this.defaultModel ? this.resolveModelCapabilities(this.defaultModel) : DEFAULT_CAPABILITIES;
-    return { defaultModel: this.defaultModel, capabilities };
-  }
-
-  /** 返回某模型的能力集：providerCapabilities ∪ (用户单模型覆盖 或 启发式推断)。 */
-  private resolveModelCapabilities(modelId: string): LLMCapability[] {
-    return resolveCapabilities(modelId, this.modelCapabilities.get(modelId), this.providerCapabilities);
-  }
-
-  private getDefaultModel(): string {
-    if (!this.defaultModel) throw new Error('无可用模型：Ollama 模型列表为空且未配置 customModels');
-    return this.defaultModel;
-  }
-
-  private async fetchRemoteModels(): Promise<ModelInfo[]> {
+  /** 发现远端模型 id 列表 */
+  async fetchRemoteModelIds(): Promise<string[]> {
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`);
       if (!res.ok) return [];
       const data = (await res.json()) as { models: { name: string }[] };
-      return data.models.map(m => ({
-        id: m.name,
-        capabilities: this.resolveModelCapabilities(m.name),
-      }));
+      return data.models.map(m => m.name);
     } catch {
       return [];
     }
   }
 
-  getTemperature(): number {
-    return this.temperature;
-  }
-  getMaxTokens(): number {
-    return this.maxTokens;
-  }
-  getContextLength(): number {
-    return this.contextLength;
-  }
-
-  async listModels(): Promise<ModelInfo[]> {
-    const remote = await this.fetchRemoteModels();
-    const remoteIds = new Set(remote.map(m => m.id));
-    const custom = this.customModels
-      .filter(id => !remoteIds.has(id))
-      .map(id => ({ id, capabilities: this.resolveModelCapabilities(id) }));
-    return [...remote, ...custom].map(m => ({ ...m, contextLength: this.contextLength }));
-  }
-
-  async chat(request: ChatRequest): Promise<ChatResponse> {
+  async chat(model: string, request: ChatModelRequest, defaultThinking: boolean): Promise<ChatResponse> {
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.getDefaultModel(),
+      model,
       messages,
       stream: false,
       options: {
@@ -304,7 +241,7 @@ class OllamaLLMService implements LLMService {
     // 调用方可通过 request.think === false 显式关闭
     // 必须显式传 think:false 才能关闭 gemma4:31b 等原生 thinking 模型的思考；
     // 仅省略字段会被模型默认启用思考，导致 content 为空。
-    const shouldThink = request.think !== undefined ? request.think : this.thinking;
+    const shouldThink = request.think !== undefined ? request.think : defaultThinking;
     body.think = shouldThink;
 
     this.logger.debug(
@@ -363,12 +300,16 @@ class OllamaLLMService implements LLMService {
     return result;
   }
 
-  async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
+  async *chatStream(
+    model: string,
+    request: ChatModelRequest,
+    defaultThinking: boolean,
+  ): AsyncIterable<ChatStreamChunk> {
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
-      model: request.model ?? this.getDefaultModel(),
+      model,
       messages,
       stream: true,
       options: {
@@ -385,7 +326,7 @@ class OllamaLLMService implements LLMService {
 
     // 启用原生思考模式（调用方可通过 request.think === false 显式关闭）
     // 必须显式传 think:false 才能关闭原生 thinking 模型的思考。
-    const shouldThink = request.think !== undefined ? request.think : this.thinking;
+    const shouldThink = request.think !== undefined ? request.think : defaultThinking;
     body.think = shouldThink;
 
     this.logger.debug(`流式请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
@@ -772,6 +713,27 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   return out;
 }
 
+// ===== Per-model handle：每个 model 独立的 LLMModel entry =====
+
+class OllamaModelHandle implements LLMModel {
+  constructor(
+    private client: OllamaClient,
+    readonly id: string,
+    readonly providerId: string,
+    readonly contextLength: number,
+    readonly maxOutputTokens: number,
+    private defaultThinking: boolean,
+  ) {}
+
+  chat(request: ChatModelRequest): Promise<ChatResponse> {
+    return this.client.chat(this.id, request, this.defaultThinking);
+  }
+
+  chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    return this.client.chatStream(this.id, request, this.defaultThinking);
+  }
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const ollamaConfig: OllamaConfig = {
     baseUrl: (config.baseUrl as string) ?? 'http://localhost:11434',
@@ -786,15 +748,46 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     thinking: config.thinking !== false,
   };
 
-  const service = new OllamaLLMService(ollamaConfig, ctx.logger);
-  const { defaultModel, capabilities } = await service.initialize();
+  const client = new OllamaClient(ollamaConfig, ctx.logger);
 
-  const label = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
-  ctx.provide('llm', service, { capabilities, label });
-
-  if (defaultModel) {
-    ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl} (默认模型: ${defaultModel}) [${capabilities.join(', ')}]`);
-  } else {
-    ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型`);
+  // 探测远端 + 合并自定义模型
+  const remoteIds = await client.fetchRemoteModelIds();
+  const remoteSet = new Set(remoteIds);
+  for (const cm of ollamaConfig.customModels) {
+    if (remoteSet.has(cm)) {
+      ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+    }
   }
+  const allModelIds = [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
+
+  if (allModelIds.length === 0) {
+    ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    return;
+  }
+
+  const baseLabel = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
+
+  // 为每个 model 注册独立的 LLMModel entry
+  for (const modelId of allModelIds) {
+    const capabilities = resolveCapabilities(
+      modelId,
+      ollamaConfig.modelCapabilities.get(modelId),
+      ollamaConfig.providerCapabilities,
+    );
+    const handle = new OllamaModelHandle(
+      client,
+      modelId,
+      ctx.id,
+      ollamaConfig.contextLength,
+      ollamaConfig.maxTokens,
+      ollamaConfig.thinking,
+    );
+    ctx.provide('llm', handle, {
+      capabilities,
+      label: `${baseLabel} / ${modelId}`,
+      entryId: `${ctx.id}/${modelId}`,
+    });
+  }
+
+  ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry`);
 }
