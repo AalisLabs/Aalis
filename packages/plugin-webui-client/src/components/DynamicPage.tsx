@@ -35,7 +35,7 @@ function DynStat({ comp, pluginName, refreshTick }: { comp: WebuiStatComponent; 
       <div className="dyn-stat-icon">{icon}</div>
       <div className="dyn-stat-body">
         <div className="dyn-stat-label">{comp.label}</div>
-        <div className="dyn-stat-value">{loading ? '...' : value}</div>
+        <div className="dyn-stat-value" title={loading ? undefined : String(value)}>{loading ? '...' : value}</div>
       </div>
     </div>
   );

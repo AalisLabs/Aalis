@@ -375,7 +375,7 @@ export function PluginConfigPage({
         const isSub = isSubInstance(p);
         const suffix = isSub ? iid.slice(p.name.length + 1) : undefined;
         const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length || p.extends.mixins && Object.keys(p.extends.mixins).length);
-        const hasDetail = p.provides.length > 0 || hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
+        const hasDetail = hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
         const hasSchema = !!p.configSchema;
         return (
           <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={iid} style={{ position: 'relative' }}>
