@@ -37,3 +37,17 @@ export async function pageAction<T = unknown>(pluginName: string, method: string
   if (!res.ok) throw new Error((json as { error?: string }).error || '请求失败');
   return (json as { ok: boolean; data: T }).data;
 }
+
+/**
+ * 把外部图片 URL 包装成走服务端代理的本地 URL，规避第三方站点 hotlink/referer/CORS 限制。
+ * - http(s):// → /api/proxy/image?url=<encoded>
+ * - data: / blob: / base64 / 已是 /api/... 的本地路径 → 原样返回
+ * - file:// → 浏览器无法直接加载，原样返回（让 alt 显示）
+ */
+export function proxiedMediaUrl(raw: string | undefined | null): string {
+  if (!raw) return '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    return `/api/proxy/image?url=${encodeURIComponent(raw)}`;
+  }
+  return raw;
+}
