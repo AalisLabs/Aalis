@@ -1683,7 +1683,7 @@ function registerSessionHistoryTools(ctx: Context, tools: ScopedToolService, cfg
       const history = ctx.getService<SessionHistoryService>('session-history');
       if (!history)
         return JSON.stringify({
-          error: 'session-history 服务不可用，请启用 @aalis/plugin-session-tools 的 historyAccess',
+          error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session 的 historyAccess',
         });
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || 20)));
