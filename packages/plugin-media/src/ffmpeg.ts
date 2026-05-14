@@ -9,7 +9,7 @@
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { extname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { safeDownloadToTemp } from './safe-fetch.js';
 
@@ -180,12 +180,13 @@ export async function materializeAttachment(
       return { path: data.slice('file://'.length), cleanup };
     }
     if (data.startsWith('http://') || data.startsWith('https://')) {
-      // 由调用方下载；本工具不联网
+      // 远程 URL：走 SSRF 防护通道下载到临时文件（与 downloadToTemp 同栈）
       await cleanup();
-      return null;
+      return await safeDownloadToTemp(data, { imageOnly: false });
     }
-    // 已经是本地路径
-    return { path: data, cleanup };
+    // 已经是本地路径（可能是相对 cwd 的相对路径，例如 adapter 缓存的 data/images/xxx）
+    const abs = resolve(process.cwd(), data);
+    return { path: abs, cleanup };
   } catch {
     await cleanup();
     return null;

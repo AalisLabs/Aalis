@@ -106,6 +106,12 @@ export class App {
           });
 
     this.events = options.events ?? new EventBus();
+    // 'ready' 是"应用启动完成"里程碑：app.start() 仅 emit 一次，但插件
+    // 配置热重载会触发 bouncePlugin → 新插件实例的 ctx.on('ready', ...) 必须
+    // 也能拿到通知，否则 adapter 之类"在 ready 里建立长连"的逻辑在
+    // bounce 后就永远不会重新连接。标记为 sticky 后，bounce 出来的新实例
+    // 注册 listener 时立即被微任务补发一次。
+    this.events.markSticky('ready');
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
     // 应用 logBufferSize 配置到进程级日志中枢（需在创建 Logger 之前，
@@ -371,6 +377,8 @@ export class App {
     // 屏蔽反应式 service:unregistered 级联，避免无意义 bounce 噪声。
     await this.plugins.stopAll();
     await this.ctx.emit('dispose');
+    // 应用已停止：清掉 sticky ready 缓存，防止后续 restart 复用过时的"已 ready"标记
+    this.events.clearSticky('ready');
     this.ctx.dispose();
     this.logger.info('已停止');
   }
