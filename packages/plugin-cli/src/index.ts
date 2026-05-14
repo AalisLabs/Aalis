@@ -99,7 +99,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['cli'] });
+  ctx.provide('platform', adapter, { capabilities: ['cli', 'text'] });
 
   const cliService: CLIService = {
     getSessionId: () => sessionId,

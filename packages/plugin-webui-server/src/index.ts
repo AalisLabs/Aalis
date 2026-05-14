@@ -11,7 +11,13 @@ import type { CommandService } from '@aalis/plugin-commands-api';
 import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
-import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform-api';
+import {
+  aggregatePlatformDetails,
+  getPlatformAdapters,
+  getPlatformNames,
+  type PlatformAdapter,
+  type PlatformConnection,
+} from '@aalis/plugin-platform-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
@@ -491,8 +497,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 获取所有平台适配器及其连接状态
   expressApp.get('/api/platforms', (_req, res) => {
-    const pm = ctx.getService<PlatformService>('platform');
-    res.json({ platforms: pm?.getDetails() ?? [] });
+    res.json({ platforms: aggregatePlatformDetails(ctx) });
   });
 
   // 获取已注册的工具分组（含元数据 + 各组工具数量）
@@ -600,17 +605,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   expressApp.get('/api/models/:service', async (req, res) => {
     const serviceName = req.params.service;
 
-    // 特殊处理 platform：通过 core 的 getPlatformNames() 获取已注册的平台名称
+    // 特殊处理 platform：通过 helper 获取已注册的平台名称
     if (serviceName === 'platform') {
-      const pm = ctx.getService<PlatformService>('platform');
-      res.json({ models: pm?.getPlatformNames() ?? [] });
+      res.json({ models: getPlatformNames(ctx) });
       return;
     }
 
     // 特殊处理 gateway-scopes：基于已注册 adapter.sessionTypes 真实声明生成
     // platform×sessionType 的笛卡尔积。无声明的 adapter 视为单会话（不展开 sessionType）。
     if (serviceName === 'gateway-scopes') {
-      const adapters = ctx.getService<PlatformService>('platform')?.getAdapters() ?? [];
+      const adapters = getPlatformAdapters(ctx);
       const platformTypes = new Map<string, readonly string[]>();
       const allTypes = new Set<string>();
       for (const a of adapters) {
@@ -1390,7 +1394,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['webui'] });
+  ctx.provide('platform', adapter, { capabilities: ['webui', 'text', 'image', 'file'] });
 
   // === 注册 WebUI 服务 ===
   const registeredPages = new Map<string, Array<WebuiPage & { pluginName: string }>>();
