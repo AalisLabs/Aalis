@@ -24,7 +24,7 @@
 | [plugin-commands-api](./plugin-commands-api.md) | `CommandService` + `useCommandService(ctx)` —— 命令系统 | plugin-commands |
 | [plugin-embedding-api](./plugin-embedding-api.md) | `EmbeddingService` —— 文本向量化 | plugin-embedding-openai / plugin-embedding-ollama |
 | [plugin-gateway-api](./plugin-gateway-api.md) | `GatewayService` —— 消息入站编排 | plugin-gateway |
-| [plugin-image-recognition-api](./plugin-image-recognition-api.md) | `ImageRecognitionService` —— 图片描述与上下文构建 | plugin-image-recognition |
+| [plugin-media-api](./plugin-media-api.md) | `MediaService` —— 多模态预处理（vision/audio/video） | plugin-media |
 | [plugin-llm-api](./plugin-llm-api.md) | `LLMService` + capability 框架 | plugin-openai / plugin-ollama / plugin-deepseek 等 |
 | [plugin-memory-api](./plugin-memory-api.md) | `MemoryService` —— 历史与元数据存储 | plugin-memory-inmemory / sqlite / mongodb / vector |
 | [plugin-message-api](./plugin-message-api.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |

@@ -118,7 +118,7 @@ declare module '@aalis/core' {
 - 该领域要 **augment** core 的 `HookContextMap` / `ServiceCapabilityMap`
 - 该领域类型被 **>3 个其他插件**直接 import
 
-只有一个实现且无类型外溢的"叶子插件"（如 plugin-todo-list、plugin-image-recognition 内部）不需要 api 包。
+只有一个实现且无类型外溢的“叶子插件”（如 plugin-todo-list、plugin-image-sender 内部）不需要 api 包。
 
 ## 消费约定
 
