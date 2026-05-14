@@ -693,6 +693,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
