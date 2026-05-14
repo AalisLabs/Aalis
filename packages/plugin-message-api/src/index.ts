@@ -84,6 +84,28 @@ export interface Message {
 
 // ----- 入站消息 -----
 
+/**
+ * 多模态附件统一载体（v2 新主字段）。
+ * 取代 images[] / files[]：所有适配器（OneBot / WebUI / CLI 等）应优先填 attachments，
+ * 旧的 images / files 字段保留以兼容老的预处理器与历史代码，框架内的归一化函数会双向同步。
+ */
+export interface MessageAttachment {
+  /** 媒介类型 */
+  kind: 'image' | 'audio' | 'video' | 'file';
+  /** 内容：base64 data URL / http(s) URL / file:// URI；下游决定如何解析 */
+  data: string;
+  /** MIME 类型，尽量提供以便分发 */
+  mimeType?: string;
+  /** 文件名（如有） */
+  name?: string;
+  /** 来源标识（platform 内部 ID 等，用于幂等与去重） */
+  sourceId?: string;
+  /** 字节大小（如已知，便于上限/计费判断） */
+  byteSize?: number;
+  /** 时长秒（仅音视频，如已知） */
+  durationSec?: number;
+}
+
 export interface IncomingMessage {
   content: string;
   sessionId: string;
@@ -91,29 +113,17 @@ export interface IncomingMessage {
   userId?: string;
   /** 用户昵称 */
   nickname?: string;
-  images?: string[]; // base64 or URL
-  /** 附件文件列表（用户上传的文档等） */
-  files?: Array<{
-    /** 文件名 */
-    name: string;
-    /** 文件内容（base64 data URL） */
-    data: string;
-    /** MIME 类型 */
-    mimeType?: string;
-  }>;
-  /** 附件上传顺序（images 与 files 的交错顺序） */
-  attachmentOrder?: Array<'image' | 'file'>;
-  /** 预处理器生成的图片描述（按 images 原始下标对齐） */
-  _imageDescriptions?: string[];
-  /** 图片识别后的调试信息，供统一日志与持久化链路复用 */
-  _imageRecognitionInfo?: {
-    imageCount: number;
-    successCount: number;
-    descriptions: string[];
-    transformedContent: string;
-  };
-  /** 预处理器生成的文件描述（按 files 原始下标对齐） */
-  _fileDescriptions?: string[];
+  /**
+   * 多模态附件统一载体（唯一入口）。
+   * 所有平台适配器（OneBot / WebUI / CLI 等）都应只填此字段；
+   * plugin-media 在 preprocess 阶段会为每条 attachment 生成文本描述写入 _attachmentDescriptions。
+   */
+  attachments?: MessageAttachment[];
+  /**
+   * 预处理器为各 attachments 生成的文本描述（按 attachments 下标对齐；未识别项为 undefined）。
+   * 由 plugin-media 写入。
+   */
+  _attachmentDescriptions?: Array<string | undefined>;
   /** 会话类型：群聊、私聊、频道等 */
   sessionType?: 'group' | 'private' | 'channel';
   /** 消息来源标识（用于并发隔离：同一 session 不同来源互不打断） */
@@ -151,6 +161,12 @@ export interface OutgoingMessage {
   reasoningContent?: string;
   /** 助手输出的有序时间线（与 Message.segments 含义一致），存在时为 webui 等消费者顺序渲染的依据 */
   segments?: ContentSegment[];
+  /**
+   * 助手要附带发送的多模态附件（图片/音频/视频/文件）。
+   * 适配器（OneBot / WebUI 等）应优先发结构化 attachments，把远程 URL 主动下载为本地文件后用 file:// 形式发送。
+   * 若 attachments 为空但 content 内含 `<image url="...">` 标记，则由适配器解析嵌入式发图（旧路径，仍兼容）。
+   */
+  attachments?: MessageAttachment[];
   /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
   source?: 'agent' | 'system' | 'command';
 }
