@@ -18,7 +18,7 @@ meta.inject = { required: ['tools'] }
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `workingDirectory` | string | `''` | 默认工作目录 |
+| `workingDirectory` | string | `workspace:/` | 进程启动时的初始 cwd（unix 心智模型）。agent 可用 `cd` 工具在会话内切换，不会写回配置 |
 | **shell** (分组) | | | |
 | `shell.enabled` | boolean | true | 启用 Shell 工具 |
 | `shell.defaultTimeout` | number | 30000 | 默认超时 (ms) |
@@ -28,14 +28,26 @@ meta.inject = { required: ['tools'] }
 | `file.enabled` | boolean | true | 启用文件工具 |
 | `file.maxReadSize` | number | 1048576 | 最大读取大小 (1MB) |
 | `file.maxWriteSize` | number | 10485760 | 最大写入大小 (10MB) |
-| `file.defaultRoot` | string | `workspace` | 相对路径默认解释到的 storage 根 |
 | `file.allowedRoots` | string[] | [`*`] | 文件工具可访问的 storage 根；`*` 表示所有 readable 根，写入/删除仍受根自身权限限制 |
 | **system** (分组) | | | |
-| `system.enabled` | boolean | true | 启用系统信息工具 |
+| `system.enabled` | boolean | true | 启用系统信息工具（含 `cwd` / `cd`） |
 | **http** (分组) | | | |
 | `http.enabled` | boolean | true | 启用 HTTP 工具 |
 | `http.defaultTimeout` | number | 30000 | 默认超时 (ms) |
 | `http.maxResponseSize` | number | 1048576 | 最大响应大小 (1MB) |
+
+## 路径与 cwd 心智模型
+
+所有 `file_*` 工具的 `path` 参数遵循 unix shell 风格：
+
+- **完整 storage URI**（`aalis:/packages/core`、`workspace:/notes/a.md`）→ 直接定位
+- **相对路径**（`packages/core`、`./a.ts`、`../plugin-tools`）→ 基于当前 session 的 cwd 解析
+- **宿主机绝对路径**（`/Users/...`、`C:\...`）→ 一律拒绝
+
+`cwd` 工具返回当前目录 + 所有可用 storage 根的清单（含读/写/删权限），调用一次即可看清"我在哪、能去哪"。`cd` 工具切换当前 session 的 cwd（仅内存，进程重启回到 `workingDirectory` 配置值，不写配置文件）。
+
+`shell` 与 `code-runner` 仍使用各自独立的 `workingDirectory` 配置，**不**受 `cd` 影响 —— 子进程模型决定了它们只能在文件系统型根下执行。
+
 
 ## 工具组
 
