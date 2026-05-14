@@ -234,6 +234,7 @@ export function registerPdfTools(tools: ScopedToolService, sessions: DocSessionM
         const pdfPath = resolve(outDir, baseName || 'output.pdf');
 
         return JSON.stringify({ success: true, path: pdfPath, message: `已转换为 PDF: ${pdfPath}` });
+        // biome-ignore lint/suspicious/noExplicitAny: catch 兜底，e 可能为任意类型
       } catch (e: any) {
         return JSON.stringify({
           success: false,

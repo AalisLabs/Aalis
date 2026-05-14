@@ -10,6 +10,7 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  * 也可以使用任意字符串 key 注册/触发自定义事件（运行时安全）。
  */
 export class EventBus {
+  // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，handlers 容器持有不同事件类型，运行时按事件名分发
   private handlers = new Map<string, Set<EventHandler<any>>>();
 
   /**
