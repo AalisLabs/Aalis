@@ -1846,7 +1846,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('outbound:message', async msg => {
     if (!msg.sessionId.startsWith('onebot:')) return;
 
-    // 把结构化 attachments 渲染为 <image url="file://..."/> 标记，主动下载远程 URL
+    // 把结构化 attachments 渲染为 <image url="base64://..."/> 标记，
+    // 远程 URL / 本地文件统一编码为 base64 通过 WS 隧道发送，避免 daemon
+    // 与 Aalis 不在同一文件系统时（典型：Docker 部署）发生 ENOENT
     let content = msg.content ?? '';
     if (msg.attachments?.length) {
       try {
