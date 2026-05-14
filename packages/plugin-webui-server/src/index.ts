@@ -13,6 +13,7 @@ import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { PlatformAdapter, PlatformConnection, PlatformService } from '@aalis/plugin-platform-api';
 import type {} from '@aalis/plugin-session-manager-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
@@ -798,7 +799,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---------- 文件管理 API ----------
-  const storage = ctx.getService<StorageService>('storage') ?? undefined;
+  const storage =
+    ctx.getAllServices<StorageService>('storage').length > 0 ? createStorageGateway(ctx) : undefined;
   const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
   const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
   registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot, workspaceRoot });
