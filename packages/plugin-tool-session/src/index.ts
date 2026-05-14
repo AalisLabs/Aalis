@@ -149,11 +149,7 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
   };
 }
 
-function registerSessionHistoryTools(
-  ctx: Context,
-  historyService: SessionHistoryService,
-  cfg: PluginConfig,
-): void {
+function registerSessionHistoryTools(ctx: Context, historyService: SessionHistoryService, cfg: PluginConfig): void {
   useToolService(ctx).registerGroup({
     name: 'session-history',
     label: '会话历史读取',
