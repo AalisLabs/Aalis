@@ -1,7 +1,7 @@
 import { platform } from 'node:os';
 import type { ConfigSchema, Context } from '@aalis/core';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, toStorageUri, useToolService } from '@aalis/plugin-tools-api';
 import { type RunnerConfig, runCode } from './runner.js';
 import '@aalis/plugin-tools-api';

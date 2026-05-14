@@ -1,11 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import type {
-  ChatModelRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMCapability,
-  LLMModel,
-} from '@aalis/plugin-llm-api';
+import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
@@ -237,7 +231,9 @@ class DeepSeekClient {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        this.logger.warn(`fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body.slice(0, 200)}`);
+        this.logger.warn(
+          `fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body.slice(0, 200)}`,
+        );
         return [];
       }
       const data = (await res.json()) as { data: { id: string }[] };
@@ -335,11 +331,7 @@ class DeepSeekClient {
     return result;
   }
 
-  async *chatStream(
-    model: string,
-    request: ChatModelRequest,
-    enableThinking: boolean,
-  ): AsyncIterable<ChatStreamChunk> {
+  async *chatStream(model: string, request: ChatModelRequest, enableThinking: boolean): AsyncIterable<ChatStreamChunk> {
     const messages = request.messages.map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
@@ -750,7 +742,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       enableThinking = capabilities.includes(Thinking);
     }
 
-    const handle = new DeepSeekModelHandle(client, modelId, ctx.id, deepseekConfig.contextLength, deepseekConfig.maxTokens, enableThinking);
+    const handle = new DeepSeekModelHandle(
+      client,
+      modelId,
+      ctx.id,
+      deepseekConfig.contextLength,
+      deepseekConfig.maxTokens,
+      enableThinking,
+    );
     ctx.provide('llm', handle, {
       capabilities,
       label: `${baseLabel} / ${modelId}${enableThinking ? ' (thinking)' : ''}`,

@@ -10,11 +10,7 @@
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Context } from '@aalis/core';
-import {
-  getStorageRootConflicts,
-  type StorageRootConflict,
-  type StorageService,
-} from '@aalis/plugin-storage-api';
+import { getStorageRootConflicts, type StorageRootConflict, type StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 interface FileConfig {

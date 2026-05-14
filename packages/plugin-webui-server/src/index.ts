@@ -19,8 +19,8 @@ import {
   type PlatformConnection,
 } from '@aalis/plugin-platform-api';
 import type {} from '@aalis/plugin-session-manager-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
 import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';
@@ -600,7 +600,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
-
   // 获取某个服务的可用模型/选项列表
   expressApp.get('/api/models/:service', async (req, res) => {
     const serviceName = req.params.service;
@@ -803,8 +802,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---------- 文件管理 API ----------
-  const storage =
-    ctx.getAllServices<StorageService>('storage').length > 0 ? createStorageGateway(ctx) : undefined;
+  const storage = ctx.getAllServices<StorageService>('storage').length > 0 ? createStorageGateway(ctx) : undefined;
   const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
   const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
   registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot, workspaceRoot });

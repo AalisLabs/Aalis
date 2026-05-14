@@ -141,10 +141,7 @@ export interface PlatformAdapterEntry {
 }
 
 /** 枚举所有 platform adapter 条目；可选按 capabilities 过滤 */
-export function getPlatformAdapterEntries(
-  ctx: Context,
-  requiredCaps?: readonly string[],
-): PlatformAdapterEntry[] {
+export function getPlatformAdapterEntries(ctx: Context, requiredCaps?: readonly string[]): PlatformAdapterEntry[] {
   return ctx
     .getAllServices<PlatformAdapter>('platform', requiredCaps)
     .filter(e => typeof e.instance?.getConnections === 'function');
@@ -201,10 +198,7 @@ export function getPlatformSelfIdentity(
  * 按 sessionId 找到接管它的 adapter；优先 `canHandle`，否则 fallback 为
  * `sessionId.startsWith(platform + ':')`（适合协议类平台）。
  */
-export async function resolvePlatformBySession(
-  ctx: Context,
-  sessionId: string,
-): Promise<PlatformAdapter | undefined> {
+export async function resolvePlatformBySession(ctx: Context, sessionId: string): Promise<PlatformAdapter | undefined> {
   const logger = ctx.logger.child('platform');
   for (const { instance, contextId } of getPlatformAdapterEntries(ctx)) {
     try {

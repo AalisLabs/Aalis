@@ -1723,8 +1723,7 @@ function registerRequestTools(ctx: Context, tools: ScopedToolService): void {
     | undefined {
     const adapter = getPlatformAdapters(ctx).find(
       a =>
-        a.platform === 'onebot' &&
-        typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
+        a.platform === 'onebot' && typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
     );
     return adapter as typeof adapter & {
       handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
