@@ -113,6 +113,29 @@ export const reusable = true;
 如果你的插件**没有这种多实例需求**，**不要**声明 reusable —— 这会让重复注册
 直接抛错变成静默允许，掩盖配置 bug。
 
+### 反模式：单实例 apply 内多次 `ctx.provide(同一服务名)`
+
+```typescript
+// ❌ 不要这么写
+export async function apply(ctx) {
+  ctx.provide('llm', backend1, { capabilities: ['chat'] });
+  ctx.provide('llm', backend2, { capabilities: ['vision'] }); // 静默失效
+}
+```
+
+ServiceContainer **允许**同一 contextId 下多次注册（容器层无校验），但下游
+按 `contextId` 路由（如按 entryId 直查 LLMModel：`resolveLLMModel(ctx, { provider, model })`）
+**只会命中第一个**。第二个 entry 既不会被路由到，也不会被 cap-filter 选中。
+dev 模式下 `ctx.provide` 会 warn 一次提醒你。
+
+正确做法：用 `reusable: true` + 配置后缀注册多份，让两个 entry 拥有不同 contextId：
+
+```yaml
+plugins:
+  '@aalis/plugin-foo:chat': { ... }
+  '@aalis/plugin-foo:vision': { ... }
+```
+
 ---
 
 ## 5. dispose hook：什么放进去、什么不放
