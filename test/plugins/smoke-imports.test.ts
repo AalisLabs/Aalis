@@ -67,6 +67,9 @@ const PLUGIN_DIRS = [
   'plugin-vectorstore-flat',
   'plugin-websearch-serper',
   'plugin-webui-server',
+  'plugin-media',
+  'plugin-asr-openai',
+  'plugin-asr-whisper-cpp',
 ] as const;
 
 describe('全插件 smoke import 契约', () => {

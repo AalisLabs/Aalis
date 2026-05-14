@@ -116,6 +116,12 @@ export interface LLMCapabilityRegistry {
   Streaming: 'streaming';
   Vision: 'vision';
   Thinking: 'thinking';
+  /** 原生音频理解（能接收音频输入，返回描述/问答，如 Gemini / GPT-4o-audio / Gemma 4 E系列） */
+  Audio: 'audio';
+  /** 专门的语音转文本能力（如 Whisper API）。与 Audio 互独立。 */
+  AudioTranscription: 'audio_transcription';
+  /** 原生视频理解（能接收视频 bytes，如 Gemini）。OpenAI Vision 是逐帧，不在此列。 */
+  Video: 'video';
 }
 
 export type LLMCapability = LLMCapabilityRegistry[keyof LLMCapabilityRegistry];
@@ -126,6 +132,9 @@ export const LLMCapabilities = {
   Streaming: 'streaming',
   Vision: 'vision',
   Thinking: 'thinking',
+  Audio: 'audio',
+  AudioTranscription: 'audio_transcription',
+  Video: 'video',
 } as const satisfies LLMCapabilityRegistry;
 
 declare module '@aalis/core' {
