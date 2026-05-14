@@ -230,11 +230,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxConcurrent: (config.maxConcurrent as number) ?? 3,
     defaultNumResults: (config.defaultNumResults as number) ?? 5,
     enableCompression: (config.enableCompression as boolean) ?? false,
-    compressionLLM: (config.compressionLLM && typeof config.compressionLLM === 'object'
-      && (config.compressionLLM as { provider?: unknown }).provider
-      && (config.compressionLLM as { model?: unknown }).model)
-      ? config.compressionLLM as { provider: string; model: string }
-      : undefined,
+    compressionLLM:
+      config.compressionLLM &&
+      typeof config.compressionLLM === 'object' &&
+      (config.compressionLLM as { provider?: unknown }).provider &&
+      (config.compressionLLM as { model?: unknown }).model
+        ? (config.compressionLLM as { provider: string; model: string })
+        : undefined,
     compressionPrompt: (config.compressionPrompt as string) ?? '',
   };
 

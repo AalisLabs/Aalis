@@ -136,9 +136,7 @@ declare module '@aalis/core' {
 
 // 注册能力↔方法探测器
 registerCapabilityProbe('llm', LLMCapabilities.Chat, inst =>
-  typeof (inst as { chat?: unknown }).chat === 'function'
-    ? true
-    : 'LLMModel.chat() is required for capability "chat"',
+  typeof (inst as { chat?: unknown }).chat === 'function' ? true : 'LLMModel.chat() is required for capability "chat"',
 );
 
 registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>

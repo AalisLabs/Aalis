@@ -460,11 +460,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
     imageRecognition: fwdRaw.imageRecognition !== false,
     summarize: fwdRaw.summarize !== false,
-    summaryLLM: (fwdRaw.summaryLLM && typeof fwdRaw.summaryLLM === 'object'
-      && (fwdRaw.summaryLLM as { provider?: unknown }).provider
-      && (fwdRaw.summaryLLM as { model?: unknown }).model)
-      ? fwdRaw.summaryLLM as { provider: string; model: string }
-      : undefined,
+    summaryLLM:
+      fwdRaw.summaryLLM &&
+      typeof fwdRaw.summaryLLM === 'object' &&
+      (fwdRaw.summaryLLM as { provider?: unknown }).provider &&
+      (fwdRaw.summaryLLM as { model?: unknown }).model
+        ? (fwdRaw.summaryLLM as { provider: string; model: string })
+        : undefined,
     summaryMaxChars:
       typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
   };
