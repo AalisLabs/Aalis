@@ -13,7 +13,7 @@
  * 不引入额外依赖：拆/合 URI 都用纯字符串，避免引入 path posix/win32 分歧。
  */
 
-export interface ParsedUri {
+interface ParsedUri {
   root: string;
   /** 不含前导 `/`；空数组表示根目录 `<root>:/` */
   segments: string[];
@@ -35,7 +35,7 @@ export function parseStorageUri(uri: string): ParsedUri {
 }
 
 /** 把根名 + 段重新拼回 URI；空段返回 `<root>:/`。 */
-export function joinStorageUri(root: string, segments: readonly string[]): string {
+function joinStorageUri(root: string, segments: readonly string[]): string {
   const tail = segments.length ? segments.join('/') : '';
   return `${root}:/${tail}`;
 }

@@ -657,4 +657,3 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.logger.info('子任务工具已注册');
 }
-
