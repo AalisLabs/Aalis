@@ -21,8 +21,8 @@
 | `app` | `@aalis/core` | App 实例 | n/a | n/a | 由 host 注入，永不 bounce |
 | `plugins` | `@aalis/core` | PluginManager | n/a | n/a | 由 host 注入，永不 bounce |
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
-| `agent` | `@aalis/plugin-agent-default` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
-| `tools` | `@aalis/plugin-agent-tools` | tool 定义 Map | n/a | 否 | 同上 |
+| `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
+| `tools` | `@aalis/plugin-tool-system` | tool 定义 Map | n/a | 否 | 同上 |
 | `webui-server` | `@aalis/plugin-webui-server` | 已注册页面 Map | n/a | 否 | bounce 后下游插件通过 `useWebuiService.registerPage` 重新注册 |
 | `doctor` | `@aalis/plugin-doctor` | `lastReport` 单例 | n/a | 否 | 重载后报告丢失，需重新 `runChecks` |
 | `scheduler` | `@aalis/plugin-scheduler` | 任务调度状态 | `data/scheduler-jobs.json` | 是（持久部分） | bounce 后从 JSON 读回；运行中的 timer 会重建 |
