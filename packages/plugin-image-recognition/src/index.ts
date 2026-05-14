@@ -359,11 +359,13 @@ async function extractFrames(filePath: string, maxFrames: number, logger: Contex
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg: ImageRecognitionConfig = {
-    preferredLLM: (config.preferredLLM && typeof config.preferredLLM === 'object'
-      && (config.preferredLLM as { provider?: unknown }).provider
-      && (config.preferredLLM as { model?: unknown }).model)
-      ? config.preferredLLM as { provider: string; model: string }
-      : undefined,
+    preferredLLM:
+      config.preferredLLM &&
+      typeof config.preferredLLM === 'object' &&
+      (config.preferredLLM as { provider?: unknown }).provider &&
+      (config.preferredLLM as { model?: unknown }).model
+        ? (config.preferredLLM as { provider: string; model: string })
+        : undefined,
     enabled: (config.enabled as boolean) ?? true,
     maxTokens: (config.maxTokens as number) ?? 300,
     prompt: (config.prompt as string) || '',

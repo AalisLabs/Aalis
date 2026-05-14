@@ -92,10 +92,7 @@ class DefaultAgent implements AgentService {
    *
    * 返回 LLMModelEntry（含 instance / contextId / capabilities），entry 已绑定具体 model。
    */
-  private async resolveLLM(
-    platform?: string,
-    sessionId?: string,
-  ): Promise<LLMModelEntry | undefined> {
+  private async resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined> {
     let ref: { provider?: string; model?: string } | undefined;
 
     // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile
@@ -109,7 +106,10 @@ class DefaultAgent implements AgentService {
     return resolveLLMModel(this.ctx, ref, ['chat']);
   }
 
-  /** 生成 lane key：同 session + 同 source 共用一个 lane */  private laneKey(sessionId: string, source?: string): string {
+  /** 生成 lane key：同 session + 同 source 共用一个 lane */ private laneKey(
+    sessionId: string,
+    source?: string,
+  ): string {
     return `${sessionId}::${source ?? 'user'}`;
   }
 
@@ -1477,7 +1477,8 @@ export const configSchema: ConfigSchema = {
   defaultLLM: {
     type: 'llm-ref',
     label: '默认对话模型',
-    description: '全局默认 LLM。apply() 时调用 ctx.preferService("llm", `provider/model`) 锁定 ServiceContainer 偏好。会话 / 平台 profile 未覆盖时生效。',
+    description:
+      '全局默认 LLM。apply() 时调用 ctx.preferService("llm", `provider/model`) 锁定 ServiceContainer 偏好。会话 / 平台 profile 未覆盖时生效。',
   },
   systemPrompt: {
     type: 'textarea',
@@ -1530,10 +1531,7 @@ export const defaultConfig = {
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
   historyLimit: number;
-  resolveLLM(
-    platform?: string,
-    sessionId?: string,
-  ): Promise<LLMModelEntry | undefined>;
+  resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined>;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   emitTokenUsage(
     sessionId: string,

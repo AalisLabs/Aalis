@@ -1,7 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import { registerFileTools } from './tools/file.js';
 import { registerHttpTools } from './tools/http.js';

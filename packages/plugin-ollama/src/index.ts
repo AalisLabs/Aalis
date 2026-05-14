@@ -1,11 +1,5 @@
 import type { ConfigSchema, Context, Logger } from '@aalis/core';
-import type {
-  ChatModelRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMCapability,
-  LLMModel,
-} from '@aalis/plugin-llm-api';
+import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
@@ -780,7 +774,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ollamaConfig.modelCapabilities.get(modelId),
       ollamaConfig.providerCapabilities,
     );
-    const handle = new OllamaModelHandle(client, modelId, ctx.id, ollamaConfig.contextLength, ollamaConfig.maxTokens, ollamaConfig.thinking);
+    const handle = new OllamaModelHandle(
+      client,
+      modelId,
+      ctx.id,
+      ollamaConfig.contextLength,
+      ollamaConfig.maxTokens,
+      ollamaConfig.thinking,
+    );
     ctx.provide('llm', handle, {
       capabilities,
       label: `${baseLabel} / ${modelId}`,
