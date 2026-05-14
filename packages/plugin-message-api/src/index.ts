@@ -78,6 +78,12 @@ export interface Message {
   segments?: ContentSegment[];
   /** 图片列表（base64 data URL 或 HTTP URL），用于多模态 LLM */
   images?: string[];
+  /**
+   * 音频列表（base64 data URL / 本地路径 / file:// / http(s) URL），
+   * 用于支持原生音频输入的 LLM（如 Gemma 3n E 系列、Gemini、GPT-4o-audio）。
+   * Provider 实现需自行解析为各 API 期望的格式（base64 / file ref 等）。
+   */
+  audios?: string[];
   /** 元数据：用于标记消息来源等信息（不会发送给 LLM） */
   metadata?: Record<string, unknown>;
 }
