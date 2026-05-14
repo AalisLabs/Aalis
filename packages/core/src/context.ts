@@ -4,65 +4,10 @@ import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
-import { probeCapability } from './types/capabilities.js';
+import { emitServiceRegistered, makeServiceHandle, validateProvide } from './service-helpers.js';
 import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from './types/index.js';
-import { ServicePriority } from './types/service.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
-
-/**
- * 创建一个"动态服务句柄"——Proxy，每次属性访问都重新从容器解析当前最佳 provider。
- *
- * 目的：让调用方写 `const memory = ctx.getService('memory')` 后长期持有也安全，
- * 不再因 provider 切换/重载而持有过期实例。
- *
- * 解析策略和 `container.get()` 完全一致（偏好 > 优先级 > 注册顺序，能力过滤）。
- * 若调用时刻没有 provider，访问任意属性会抛错——但 `getService` 入口已先校验
- * 至少有一个匹配 entry 才返回句柄，所以正常路径下不会触发这个抛错；
- * 仅在调用方持有句柄期间所有 provider 都被注销才会遇到。
- */
-function makeServiceHandle<T>(container: ServiceContainer, name: string, caps: string[] | undefined): T {
-  const resolve = (): unknown => {
-    const inst = container.get<unknown>(name, caps);
-    if (inst === undefined) {
-      throw new Error(`服务 "${name}" 已不再可用（持有句柄期间 provider 全部注销）`);
-    }
-    return inst;
-  };
-  // 用空对象做 target，所有 trap 都委托到当前解析结果——保证 typeof / 属性访问 / 调用 / new 等都跟随最新 provider
-  return new Proxy(
-    {},
-    {
-      get(_t, prop, receiver) {
-        const target = resolve() as object;
-        const value = Reflect.get(target, prop, receiver);
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
-      has(_t, prop) {
-        return Reflect.has(resolve() as object, prop);
-      },
-      ownKeys() {
-        return Reflect.ownKeys(resolve() as object);
-      },
-      getOwnPropertyDescriptor(_t, prop) {
-        return Reflect.getOwnPropertyDescriptor(resolve() as object, prop);
-      },
-      getPrototypeOf() {
-        return Reflect.getPrototypeOf(resolve() as object);
-      },
-      apply(_t, thisArg, args) {
-        const fn = resolve();
-        if (typeof fn !== 'function') throw new TypeError(`服务 "${name}" 不是函数`);
-        return Reflect.apply(fn, thisArg, args);
-      },
-      construct(_t, args, newTarget) {
-        const fn = resolve();
-        if (typeof fn !== 'function') throw new TypeError(`服务 "${name}" 不可构造`);
-        return Reflect.construct(fn as new (...a: unknown[]) => object, args, newTarget);
-      },
-    },
-  ) as T;
-}
 
 /**
  * 上下文 (Context)
@@ -254,64 +199,31 @@ export class Context {
     instance: unknown,
     options?: { capabilities?: CapabilityList<TName>; priority?: number; label?: string; entryId?: string },
   ): () => void {
-    const caps = options?.capabilities ?? [];
+    const caps = (options?.capabilities ?? []) as readonly string[];
     const entryId = options?.entryId ?? this.id;
 
-    if (this.devMode && options?.entryId !== undefined) {
-      if (entryId !== this.id && !entryId.startsWith(`${this.id}/`)) {
-        this.logger.warn(
-          `服务 "${name}" 的 entryId "${entryId}" 不以 "${this.id}/" 为前缀。` +
-            `违反约定后 plugin 卸载时可能遗漏清理。` +
-            `推荐格式：\`\${ctx.id}/\${子粒度标识}\`。`,
-        );
-      }
-    }
-
-    // dev 模式下按声明的能力探测实例方法，暴露「声明与实现不符」
     if (this.devMode) {
-      const failures: string[] = [];
-      for (const cap of caps) {
-        const result = probeCapability(name, cap as string, instance);
-        if (typeof result === 'string') failures.push(`  - [${cap}] ${result}`);
-      }
-      if (failures.length > 0) {
-        throw new Error(`服务 "${name}" 声明的能力与实例实现不符（provide 拒绝注册）:\n${failures.join('\n')}`);
-      }
-    }
-
-    // dev 模式下提示同一上下文重复 provide 同一服务名——容器允许多 entry 但路由按 contextId 精确匹配
-    // 永远只能命中第一个，第二个静默失效。需多实例请改用 plugin 的 reusable=true + 配置后缀。
-    // 使用 entryId 覆盖后不触发该 warn（有意在拆粒度）。
-    if (this.devMode && options?.entryId === undefined && this._services.hasByContext(name, this.id)) {
-      this.logger.warn(
-        `服务 "${name}" 已被当前上下文 "${this.id}" provide 过一次。容器允许多 entry，` +
-          `但下游按 contextId 路由时仅能命中首个，后续注册将静默失效。` +
-          `如需多实例（如多套 API key），请在插件 module 上声明 reusable=true，` +
-          `然后在 config 中用 "<name>:<suffix>" 形式注册多份。` +
-          `若是有意拆出多个子粒度 entry（如 per-model LLM），请传入 options.entryId。`,
-      );
+      validateProvide({
+        ctxId: this.id,
+        name,
+        instance,
+        capabilities: caps,
+        entryId,
+        explicitEntryId: options?.entryId !== undefined,
+        priority: options?.priority,
+        services: this._services,
+        logger: this.logger,
+      });
     }
 
     const entry = this._services.register(
       name,
       instance,
-      caps as readonly string[] as string[],
+      caps as string[],
       options?.priority ?? 0,
       entryId,
       options?.label,
     );
-
-    // dev 模式下提示非标准 priority 值——避免插件作者乱填数字破坏全局排序契约
-    if (this.devMode && options?.priority !== undefined) {
-      const standard = Object.values(ServicePriority) as number[];
-      if (!standard.includes(options.priority)) {
-        this.logger.warn(
-          `服务 "${name}" 使用了非标准 priority=${options.priority}。建议改用 ServicePriority enum：` +
-            `Backend(0) / Override(50) / System(200)。` +
-            `裸数字会让"谁是默认胜者"难以静态推断。`,
-        );
-      }
-    }
 
     const dispose = () => {
       const removed = this._services.unregisterEntry(name, entry);
@@ -321,9 +233,7 @@ export class Context {
     };
     this._disposables.push(dispose);
 
-    this._events.emit('service:registered', name, [...caps]).catch(err => {
-      this.logger.warn(`服务注册事件发射失败 [${name}]:`, err);
-    });
+    emitServiceRegistered(this._events, this.logger, name, caps);
     this.logger.debug(`服务已注册: ${name}${caps.length ? ` [${caps.join(', ')}]` : ''}`);
 
     return dispose;
