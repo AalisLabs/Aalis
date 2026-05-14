@@ -56,9 +56,8 @@ describe('Context.useModule 沙盒插件加载', () => {
 
   it('父 ctx dispose 级联销毁 useModule 子上下文', async () => {
     const disposed: string[] = [];
-    let scope: Context | undefined;
     const root = env.app.ctx;
-    scope = root.createScope('outer-scope');
+    const scope: Context | undefined = root.createScope('outer-scope');
     await scope.useModule({
       name: 'inner',
       apply(c) {
