@@ -10,6 +10,7 @@
 // ============================================================
 
 import type { Context } from '@aalis/core';
+import type { ModelRef } from '@aalis/plugin-llm-api';
 import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
 
 /** 媒体能力枚举（与 LLM Capability 互不重叠：LLM 描述模型能力，Media 描述处理动作） */
@@ -86,8 +87,8 @@ export interface MediaService {
   registerProcessor(p: MediaProcessor): () => void;
   /** 列出当前可用 processor */
   listProcessors(cap?: MediaCapability): MediaProcessor[];
-  /** 选 processor：优先 prefer，再按 priority；找不到返回 null */
-  pickProcessor(cap: MediaCapability, prefer?: string): MediaProcessor | null;
+  /** 选 processor：优先 prefer（可是 processor name 字符串或 LLM ModelRef），再按 priority；找不到返回 null */
+  pickProcessor(cap: MediaCapability, prefer?: string | ModelRef | null): MediaProcessor | null;
 
   /** 描述：根据每个 attachment 的 kind/mime 自动选 processor */
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
@@ -142,14 +143,14 @@ export interface BuildContextOptions {
 export interface DescribeOptions {
   hint?: string;
   maxTokens?: number;
-  /** 强制使用某个 processor（按 name 精确匹配） */
-  prefer?: string;
+  /** 强制使用某个 processor（processor name 或 LLM ModelRef） */
+  prefer?: string | ModelRef;
 }
 
 export interface TranscribeOptions {
   language?: string;
   withTimestamps?: boolean;
-  prefer?: string;
+  prefer?: string | ModelRef;
 }
 
 export interface MediaProcessReport {
