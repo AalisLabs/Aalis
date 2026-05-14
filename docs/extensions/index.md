@@ -24,7 +24,7 @@
 | [@aalis/plugin-llm-api](packages/plugin-llm-api/src/index.ts) | `llm` | `chat / tool_calling / vision / ...` |
 | [@aalis/plugin-memory-api](packages/plugin-memory-api/src/index.ts) | `memory` | `persistent / encrypted / ...` |
 | [@aalis/plugin-storage-api](packages/plugin-storage-api/src/index.ts) | `storage` | — |
-| [@aalis/plugin-image-recognition-api](packages/plugin-image-recognition-api/src/index.ts) | `image-recognition` | — |
+| [@aalis/plugin-media-api](packages/plugin-media-api/src/index.ts) | `media` | `vision / audio / video` |
 | [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session-manager` | — |
 | [@aalis/plugin-platform-api](packages/plugin-platform-api/src/index.ts) | `platform` | helper: `resolvePlatformBySession` / `aggregatePlatformDetails` |
 | [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` | — |
