@@ -42,8 +42,13 @@ export interface NormalizedMessageEvent {
   guildId?: string;
   channelId?: string;
   message: OneBotMessageSegment[];
-  /** 图片 URL 列表（从 image 段提取） */
-  images?: string[];
+  /** 统一附件列表（image/record/video/file 等） */
+  attachments?: Array<{
+    kind: 'image' | 'audio' | 'video' | 'file';
+    url: string;
+    mimeType?: string;
+    name?: string;
+  }>;
   /** 引用回复的原消息 ID */
   replyToMessageId?: string;
 }
