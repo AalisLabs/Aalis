@@ -3,6 +3,7 @@
 // ============================================================
 
 import type { Context, Logger } from '@aalis/core';
+import type { ModelRef } from '@aalis/plugin-llm-api';
 import type {
   BuildContextOptions,
   DescribeImageOptions,
@@ -64,12 +65,26 @@ export class MediaServiceImpl implements MediaService {
     return cap ? all.filter(p => p.capabilities.includes(cap)) : all;
   }
 
-  pickProcessor(cap: MediaCapability, prefer?: string): MediaProcessor | null {
+  pickProcessor(cap: MediaCapability, prefer?: string | ModelRef | null): MediaProcessor | null {
     const candidates = this.listProcessors(cap);
     if (candidates.length === 0) return null;
     if (prefer) {
-      const exact = candidates.find(p => p.name === prefer);
-      if (exact) return exact;
+      // 字符串（历史格式 / 代码传入的 processor name）
+      if (typeof prefer === 'string' && prefer.length > 0) {
+        const exact = candidates.find(p => p.name === prefer);
+        if (exact) return exact;
+      } else if (typeof prefer === 'object' && (prefer.provider || prefer.model)) {
+        // ModelRef → 匹配 llm-adapter 生成的 processor name
+        // processor.name 格式：`llm:${provider}/${model}#${capShort}`
+        const exact = candidates.find(p => {
+          if (!p.name.startsWith('llm:')) return false;
+          const ctxPart = p.name.slice('llm:'.length).split('#')[0];
+          if (prefer.provider && prefer.model) return ctxPart === `${prefer.provider}/${prefer.model}`;
+          if (prefer.provider) return ctxPart.startsWith(`${prefer.provider}/`);
+          return ctxPart.endsWith(`/${prefer.model}`);
+        });
+        if (exact) return exact;
+      }
     }
     // 按 priority 降序，再按外部 backend 优先
     return [...candidates].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
