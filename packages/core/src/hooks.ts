@@ -26,6 +26,7 @@ interface HookEntry<T> {
  * 第三方插件可通过 TS declaration merging 扩展 HookContextMap。
  */
 export class HookRegistry {
+  // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，hooks 容器持有不同钩子键的 entry，运行时按 key 分发
   private hooks = new Map<string, HookEntry<any>[]>();
 
   /**
