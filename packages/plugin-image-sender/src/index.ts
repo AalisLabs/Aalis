@@ -16,7 +16,13 @@ import { isAbsolute, resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { Message, MessageAttachment, OutgoingMessage } from '@aalis/plugin-message-api';
+import {
+  AttachmentRefKind,
+  formatAttachmentRef,
+  type Message,
+  type MessageAttachment,
+  type OutgoingMessage,
+} from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 
@@ -230,7 +236,7 @@ async function archiveOutboundImage(
   const archive = ctx.getService<MessageArchiveService>('message-archive');
   if (!archive?.saveMessage) return;
   const refStr = ref ?? imageData;
-  const tag = description ? `[图片: ${description} | ref:${refStr}]` : `[图片 | ref:${refStr}]`;
+  const tag = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: description, ref: refStr });
   const content = caption ? `${caption}\n${tag}` : tag;
   const message: Message = {
     role: 'assistant',

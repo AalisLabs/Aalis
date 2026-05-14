@@ -9,13 +9,14 @@ import { resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { Message } from '@aalis/plugin-message-api';
+import {
+  AttachmentRefKind,
+  buildAttachmentRefMatcher,
+  formatAttachmentRef,
+  type Message,
+} from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import { fileToDataUri } from './ffmpeg.js';
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function normalizeImageRef(input: string): string {
   return input.trim().replace(/^ref:/, '');
@@ -23,8 +24,7 @@ function normalizeImageRef(input: string): string {
 
 /** 在历史消息中找到所有 [图片(: ...)? | ref:xxx] 占位符。 */
 function findImageDescriptionTokens(messages: Message[], imageRef: string): string[] {
-  const refPattern = escapeRegExp(normalizeImageRef(imageRef));
-  const tokenPattern = new RegExp(`\\[图片(?:: [^\\]\\n]*?)? \\| ref:${refPattern}\\]`, 'g');
+  const tokenPattern = buildAttachmentRefMatcher(AttachmentRefKind.Image, normalizeImageRef(imageRef));
   const tokens = new Set<string>();
   for (const message of messages) {
     const content = message.content ?? '';
@@ -128,12 +128,12 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         return JSON.stringify({ error: '记忆服务不可用或不支持内容更新' });
       }
 
-      const newText = `[图片: ${desc} | ref:${imageRef}]`;
+      const newText = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc, ref: imageRef });
       const history = memory.getFullHistory
         ? await memory.getFullHistory(sessionId, 200)
         : await memory.getHistory(sessionId, 200);
       const oldTexts = findImageDescriptionTokens(history, imageRef);
-      if (oldTexts.length === 0) oldTexts.push(`[图片 | ref:${imageRef}]`);
+      if (oldTexts.length === 0) oldTexts.push(formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: imageRef }));
 
       let updated = 0;
       for (const oldText of oldTexts) {
