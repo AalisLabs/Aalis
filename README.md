@@ -113,7 +113,7 @@ aalis/
 │   ├── plugin-webui-server/         # Web 管理后端（Express + WebSocket）
 │   ├── plugin-webui-client/         # Web 管理前端（React SPA）
 │   │
-│   ├── plugin-platform/             # 平台管理聚合
+│   ├── plugin-platform-api/         # 平台适配契约 + helper（聚合 / 路由）
 │   ├── plugin-authority/            # 权限管理系统
 │   ├── plugin-commands/             # 指令系统与工具桥接
 │   │

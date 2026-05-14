@@ -124,7 +124,7 @@ export async function apply(ctx) {
 ```
 
 ServiceContainer **允许**同一 contextId 下多次注册（容器层无校验），但下游
-按 `contextId` 路由（如 router、`parseModelRef('@aalis/plugin-x::model-y')`）
+按 `contextId` 路由（如按 entryId 直查 LLMModel：`resolveLLMModel(ctx, { provider, model })`）
 **只会命中第一个**。第二个 entry 既不会被路由到，也不会被 cap-filter 选中。
 dev 模式下 `ctx.provide` 会 warn 一次提醒你。
 
