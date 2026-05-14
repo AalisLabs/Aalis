@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-agent-default",
+  "name": "@aalis/plugin-agent",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

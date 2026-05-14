@@ -11,7 +11,7 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-agent-api": "workspace:*",
-    "@aalis/plugin-agent-default": "workspace:*",
+    "@aalis/plugin-agent": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "mammoth": "^1.8.0",

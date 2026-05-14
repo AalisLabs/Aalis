@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-agent-tools",
+  "name": "@aalis/plugin-tool-system",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -10,8 +10,9 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*"
+    "@aalis/plugin-commands-api": "workspace:*",
+    "@aalis/plugin-storage-api": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
