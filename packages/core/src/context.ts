@@ -4,7 +4,7 @@ import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
-import { emitServiceRegistered, makeServiceHandle, validateProvide } from './service-helpers.js';
+import { emitServiceRegistered, validateProvide } from './service-helpers.js';
 import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
@@ -240,32 +240,21 @@ export class Context {
   }
 
   /**
-   * 获取服务 (支持能力匹配)
+   * 按名字 + 能力过滤拿服务当前最佳提供者。
+   *
+   * 返回的是**当时点的裸实例**，调用后 provider 发生换跳不会跟随。
+   * 需要跟随切换的场景请听 `service:registered` / `service:unregistered`
+   * 事件重新拉取；常规场景推荐在函数作用域内即取即用，不要长期存入类字段。
    *
    * `requiredCapabilities` 按服务名获得强类型约束（同 `provide()`）。
-   *
-   * **返回的是动态句柄（Proxy），而非裸实例**：
-   * - 调用时若没有任何 provider 匹配 → 返回 `undefined`（保持向后兼容的 null-check 语义）。
-   * - 一旦有匹配 → 返回一个 Proxy，**每次属性访问都重新解析容器**，
-   *   自动跟随用户偏好切换、provider 卸载/重载、router 路由调整。
-   *
-   * 这避免了"在 `apply()` 时把 service 抓进闭包/类字段，
-   * 之后用户切换偏好却仍写入旧 provider"的常见 bug——
-   * 任何插件都可以放心写 `const memory = ctx.getService('memory')` 后长期持有。
-   *
-   * **注意**：Proxy 不等于 provider 实例本身：
-   * - `instanceof` 检查不会按 provider 类工作（应通过能力声明判断）
-   * - 不要把 Proxy 与具体实例做 `===` 比较
-   * - 性能：每次属性访问多一次 Map 查询，热路径密集访问可临时解引用为局部变量
+   * 如果当前没有任何匹配的 entry，返回 `undefined`（保留 null-check 语义）。
    */
   getService<T, TName extends string = string>(
     name: TName,
     requiredCapabilities?: CapabilityList<TName>,
   ): T | undefined {
     const caps = requiredCapabilities as readonly string[] as string[] | undefined;
-    // 调用时若完全没有匹配 entry，返回 undefined 以保留 null-check 语义
-    if (!this._services.has(name, caps)) return undefined;
-    return makeServiceHandle<T>(this._services, name, caps);
+    return this._services.get<T>(name, caps);
   }
 
   /**
