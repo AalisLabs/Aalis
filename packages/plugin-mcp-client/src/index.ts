@@ -12,7 +12,7 @@
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
-import type { ConfigSchema, Context, SafetyLevel } from '@aalis/core';
+import type { AppService, ConfigSchema, Context, PluginManagerService, SafetyLevel } from '@aalis/core';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-tools-api 触发 declaration merging，使 ctx.registerTool 类型生效
@@ -56,7 +56,56 @@ export const configSchema: ConfigSchema = {
     type: 'array',
     label: 'MCP 服务器列表',
     description: '通过 stdio 连接的 MCP 服务器。每条目至少需要 id 与 command；安全级别按需调整。',
-  } as ConfigSchema[string],
+    items: {
+      id: {
+        type: 'string',
+        label: '唯一 ID',
+        description: '用于工具命名空间，最终工具名形如 mcp_<id>_<tool>。仅允许字母数字与下划线/中划线。',
+        required: true,
+      },
+      command: {
+        type: 'string',
+        label: '可执行命令',
+        description: '例如 npx / node / python / 绝对路径。',
+        required: true,
+      },
+      args: {
+        type: 'textarea',
+        label: '命令参数',
+        description: '每行一个参数；或用空格分隔。会按行优先解析，行内再按空格切分。',
+        default: '',
+      },
+      env: {
+        type: 'textarea',
+        label: '环境变量',
+        description: '每行一个 KEY=VALUE。',
+        default: '',
+      },
+      enabled: {
+        type: 'boolean',
+        label: '启用',
+        description: '关闭可临时跳过该 server 而不删除整条配置。',
+        default: true,
+      },
+      safety: {
+        type: 'select',
+        label: '安全级别',
+        description: '控制该 server 暴露的所有工具的默认安全级别；dangerous 受 allowDangerous 约束。',
+        default: 'safe',
+        options: [
+          { label: 'safe（安全）', value: 'safe' },
+          { label: 'dangerous（高危，受授权策略约束）', value: 'dangerous' },
+        ],
+      },
+      authority: {
+        type: 'number',
+        label: '最低权限等级',
+        description: '调用该 server 工具所需的最低 authority；默认 1。',
+        default: 1,
+      },
+    },
+    default: [],
+  },
 };
 
 interface ToolMeta {
@@ -66,11 +115,14 @@ interface ToolMeta {
 }
 
 export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const config = rawConfig as unknown as Config;
-  const servers = config.servers ?? [];
+  const rawServers = ((rawConfig as { servers?: unknown }).servers ?? []) as unknown[];
+  const servers: ServerSpec[] = rawServers
+    .map((s, i) => normalizeServerSpec(s, i, ctx))
+    .filter((s): s is ServerSpec => s !== undefined);
 
   if (servers.length === 0) {
-    ctx.logger.info('未配置任何 MCP server，插件空载激活');
+    ctx.logger.info('未配置任何 MCP server，仅注册元数据工具');
+    registerSelfServiceTools(ctx);
     return;
   }
 
@@ -94,6 +146,154 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         }),
       ),
   );
+
+  // 注册 agent 自服务工具：只读列表 + toggle 已配置 server 的启用开关。
+  // 故意不提供「新增 server」工具——那等价于让 agent 任意 spawn 子进程，授权风险过大。
+  // 若要新增 server，应在 WebUI / yaml 手工配置。
+  registerSelfServiceTools(ctx);
+}
+
+/**
+ * 在 ToolService 中注册 mcp_list_servers / mcp_set_server_enabled 两个 agent 自服务工具。
+ * 二者都属于 `mcp:_meta` 分组，便于平台按需开放。
+ */
+function registerSelfServiceTools(ctx: Context): void {
+  const tools = useToolService(ctx);
+  tools.registerGroup({
+    name: 'mcp:_meta',
+    label: 'MCP / 元数据',
+    description: '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）。',
+  });
+
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'mcp_list_servers',
+        description: '列出本插件已配置的所有 MCP server（id / command / 当前 enabled 状态）。只读，不接触子进程。',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    groups: ['mcp:_meta'],
+    safety: 'safe',
+    authority: 1,
+    handler: async () => {
+      const cfg = ctx.config.getPluginConfig<{ servers?: unknown[] }>(name);
+      const list = (cfg.servers ?? []).map((s, i) => {
+        const r = (s as Record<string, unknown>) ?? {};
+        return {
+          index: i,
+          id: typeof r.id === 'string' ? r.id : `(\u7f3a\u5931 id)`,
+          command: typeof r.command === 'string' ? r.command : '',
+          enabled: r.enabled !== false,
+        };
+      });
+      return JSON.stringify(list, null, 2);
+    },
+  });
+
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'mcp_set_server_enabled',
+        description:
+          '切换某个已配置 MCP server 的 enabled 字段并持久化；插件会自动 bounce 让变更生效。' +
+          '只能开关已存在的条目，不能新增；id 必须匹配 mcp_list_servers 返回的某项。',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: '目标 server 的 id' },
+            enabled: { type: 'boolean', description: 'true = 启用，false = 停用' },
+          },
+          required: ['id', 'enabled'],
+        },
+      },
+    },
+    groups: ['mcp:_meta'],
+    // 写配置 + 触发 bounce 不算 dangerous（不能 spawn 任意命令），但仍要求 authority>=2。
+    safety: 'safe',
+    authority: 2,
+    handler: async args => {
+      const id = typeof args.id === 'string' ? args.id : '';
+      const enabled = args.enabled === true;
+      if (!id) return '失败：参数 id 必填';
+
+      const pm = ctx.getService<PluginManagerService>('plugins');
+      const app = ctx.getService<AppService>('app');
+      if (!pm || !app) return '失败：app/plugins 服务不可用';
+
+      const current = ctx.config.getPluginConfig<{ servers?: unknown[] }>(name);
+      const servers = Array.isArray(current.servers) ? [...current.servers] : [];
+      const idx = servers.findIndex(s => {
+        const r = (s as Record<string, unknown>) ?? {};
+        return r.id === id;
+      });
+      if (idx < 0) return `失败：没有 id="${id}" 的 server，请先用 mcp_list_servers 查看`;
+
+      const before = (servers[idx] as Record<string, unknown>) ?? {};
+      if ((before.enabled !== false) === enabled) {
+        return `无变化：server "${id}" 当前 enabled=${enabled}`;
+      }
+      servers[idx] = { ...before, enabled };
+
+      const ok = await pm.updatePluginConfig(name, { ...current, servers });
+      if (!ok) return `失败：updatePluginConfig 返回 false`;
+      app.saveConfig();
+      return `已将 server "${id}" 设置为 enabled=${enabled}，插件会 bounce 后生效`;
+    },
+  });
+}
+
+/**
+ * 把来自 WebUI（textarea 字符串）/ yaml（数组对象）两种形态的 server 配置项统一成 ServerSpec。
+ * 非法条目（缺 id 或 command）跳过并日志警告，避免整插件挂掉。
+ */
+function normalizeServerSpec(raw: unknown, index: number, ctx: Context): ServerSpec | undefined {
+  if (!raw || typeof raw !== 'object') {
+    ctx.logger.warn(`servers[${index}] 不是对象，跳过`);
+    return undefined;
+  }
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id.trim() : '';
+  const command = typeof r.command === 'string' ? r.command.trim() : '';
+  if (!id || !command) {
+    ctx.logger.warn(`servers[${index}] 缺少 id 或 command，跳过`);
+    return undefined;
+  }
+
+  // args: 支持 string[] | string（每行一参数 / 空格分隔）
+  let args: string[] | undefined;
+  if (Array.isArray(r.args)) {
+    args = r.args.map(x => String(x)).filter(Boolean);
+  } else if (typeof r.args === 'string' && r.args.trim()) {
+    args = r.args
+      .split('\n')
+      .flatMap(line => line.trim().split(/\s+/))
+      .filter(Boolean);
+  }
+
+  // env: 支持 Record<string,string> | string（KEY=VALUE 每行一条）
+  let env: Record<string, string> | undefined;
+  if (r.env && typeof r.env === 'object' && !Array.isArray(r.env)) {
+    env = Object.fromEntries(Object.entries(r.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
+  } else if (typeof r.env === 'string' && r.env.trim()) {
+    env = {};
+    for (const line of r.env.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) continue;
+      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+    }
+  }
+
+  const safety: SafetyLevel | undefined =
+    r.safety === 'dangerous' ? 'dangerous' : r.safety === 'safe' ? 'safe' : undefined;
+  const authority = typeof r.authority === 'number' ? r.authority : undefined;
+  const enabled = r.enabled !== false;
+
+  return { id, command, args, env, enabled, safety, authority };
 }
 
 async function connectServer(ctx: Context, spec: ServerSpec): Promise<void> {
