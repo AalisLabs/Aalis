@@ -18,6 +18,16 @@ import '@aalis/plugin-commands-api';
 // - 冷却节流：同一用户在 N 秒内不重复提取，避免 LLM 调用风暴
 // - 渐进合并：每次提取由 LLM 输出 add/remove 两个数组，自然演化
 // - 零侵入：通过 events + middleware 接入，不修改 agent / persona / memory
+//
+// 关系强度（relationScore, 0~100）计算规则：
+// - 每条入站消息（无论 agent 是否回复）：+ relationIncrementWitness（默认 0.1，旁观档）
+// - 若 agent 触发回复，额外叠加：
+//     direct（私聊）        + relationIncrementDirect    默认 1.0
+//     immediate（@/呼名）   + relationIncrementImmediate 默认 1.5
+//     interval（被动触发）  + relationIncrementInterval  默认 0.5
+// - 每日衰减：(now - lastInteractionAt) 天数 × relationScoreDecayPerDay（默认 0.5/天）
+// - 上限 100，下限 0
+// 例：群聊纯旁观一条 = +0.1；群聊被 @ 并回复 = +0.1 + 1.5 = +1.6；私聊一条 = +0.1 + 1.0 = +1.1
 // ════════════════════════════════════════════════════════════
 
 export const name = '@aalis/plugin-user-profile';
@@ -98,6 +108,13 @@ export const configSchema: ConfigSchema = {
     description: '群聊频率/活跃度被动触发或普通入站消息增加的关系强度',
     default: 0.5,
   },
+  relationIncrementWitness: {
+    type: 'number',
+    label: '旁观（不回复）关系增量',
+    description:
+      '每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示禁用旁观计分',
+    default: 0.1,
+  },
   extractLLM: {
     type: 'llm-ref',
     label: '提取用模型',
@@ -125,6 +142,7 @@ export const defaultConfig = {
   relationIncrementDirect: 1,
   relationIncrementImmediate: 1.5,
   relationIncrementInterval: 0.5,
+  relationIncrementWitness: 0.1,
   allowGlobalBackfill: false,
 };
 
@@ -194,6 +212,7 @@ interface UserProfileConfig {
   relationIncrementDirect: number;
   relationIncrementImmediate: number;
   relationIncrementInterval: number;
+  relationIncrementWitness: number;
   extractLLM?: { provider: string; model: string };
   allowGlobalBackfill: boolean;
 }
@@ -306,6 +325,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
     relationIncrementImmediate: Math.max(0, (config.relationIncrementImmediate as number) ?? 1.5),
     relationIncrementInterval: Math.max(0, (config.relationIncrementInterval as number) ?? 0.5),
+    relationIncrementWitness: Math.max(0, (config.relationIncrementWitness as number) ?? 0.1),
     extractLLM:
       config.extractLLM &&
       typeof config.extractLLM === 'object' &&
@@ -591,16 +611,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return Math.min(100, Math.max(0, Math.round(score * factor) / factor));
   }
 
-  function relationIncrementFor(triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined): number {
+  function relationIncrementFor(
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'witness' | undefined,
+  ): number {
     if (triggerType === 'immediate') return cfg.relationIncrementImmediate;
     if (triggerType === 'interval') return cfg.relationIncrementInterval;
     if (triggerType === 'idle') return 0;
+    if (triggerType === 'witness') return cfg.relationIncrementWitness;
     return cfg.relationIncrementDirect;
   }
 
   function applyRelationUpdate(
     profile: UserProfile,
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'witness' | undefined,
   ): UserProfile {
     const now = Date.now();
     const last = profile.lastInteractionAt;
@@ -729,7 +752,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   async function updateRelationForUser(
     userKey: string,
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | undefined,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'witness' | undefined,
   ): Promise<void> {
     const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
     await saveProfile(userKey, applyRelationUpdate(profile, triggerType));
@@ -773,6 +796,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const { sessionId, incoming } = data;
     const { userId, platform, nickname } = incoming;
     if (!userId) return;
+
+    // 旁观档位：每条入站消息都加 witness 增量（默认 0.1），与 agent 是否回复无关。
+    // agent:input:before 中间件在触发回复时会再叠加 direct/immediate/interval 增量。
+    if (cfg.relationIncrementWitness > 0) {
+      const userKey = userKeyOf(platform, userId);
+      void updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
+        ctx.logger.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }
 
     const countKey = extractionCountKeyOf(sessionId, platform, userId);
     const count = (userMessageCount.get(countKey) ?? 0) + 1;
