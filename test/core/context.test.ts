@@ -91,29 +91,29 @@ describe('Context createScope (sandbox)', () => {
   });
 });
 
-describe('Context.getService 动态句柄（Proxy）', () => {
+describe('Context.getService 即取即用语义（裸实例）', () => {
   interface FooService {
     hello(): string;
     label: string;
   }
 
-  it('在 provider 切换偏好后，长期持有的句柄自动跟随新 provider', () => {
+  it('返回当时点的裸实例：拿到后切偏好不会跟随', () => {
     const ctx = makeContext();
     const a: FooService = { hello: () => 'A', label: 'a' };
     const b: FooService = { hello: () => 'B', label: 'b' };
     ctx.fork('plugin-a').provide('__foo', a);
     ctx.fork('plugin-b').provide('__foo', b);
 
-    const handle = ctx.getService<FooService>('__foo')!;
-    expect(handle.hello()).toBe('A'); // 默认按注册顺序
+    const handle1 = ctx.getService<FooService>('__foo')!;
+    expect(handle1.hello()).toBe('A'); // 默认按注册顺序
 
     ctx.preferService('__foo', 'plugin-b');
-    // 同一个 handle 引用，无需重新 getService
-    expect(handle.hello()).toBe('B');
-    expect(handle.label).toBe('b');
-
-    ctx.preferService('__foo', 'plugin-a');
-    expect(handle.hello()).toBe('A');
+    // 旧句柄仍指向 a
+    expect(handle1.hello()).toBe('A');
+    // 跟随切换需重新拉取
+    const handle2 = ctx.getService<FooService>('__foo')!;
+    expect(handle2.hello()).toBe('B');
+    expect(handle2.label).toBe('b');
   });
 
   it('无 provider 时返回 undefined（保留 null-check 语义）', () => {
@@ -121,17 +121,20 @@ describe('Context.getService 动态句柄（Proxy）', () => {
     expect(ctx.getService('__nonexistent')).toBeUndefined();
   });
 
-  it('持有句柄期间所有 provider 被注销，访问属性抛错', () => {
+  it('provider 全部注销后再次 getService 返回 undefined（旧句柄仍可用，不抛错）', () => {
     const ctx = makeContext();
     const a: FooService = { hello: () => 'A', label: 'a' };
     const disp = ctx.provide('__foo2', a);
     const handle = ctx.getService<FooService>('__foo2')!;
     expect(handle.hello()).toBe('A');
     disp();
-    expect(() => handle.hello()).toThrow(/不再可用/);
+    // 旧句柄仍可用（裸实例引用），调用方需要自己感知
+    expect(handle.hello()).toBe('A');
+    // 重新拉取得到 undefined
+    expect(ctx.getService('__foo2')).toBeUndefined();
   });
 
-  it('this 绑定正确：方法调用时 this 指向当前 provider 实例', () => {
+  it('this 绑定正确：方法调用时 this 指向取出时点的 provider 实例', () => {
     const ctx = makeContext();
     class Counter {
       private n = 0;
@@ -150,10 +153,14 @@ describe('Context.getService 动态句柄（Proxy）', () => {
     expect(h.inc()).toBe(2); // 仍在 c1 上累加
 
     ctx.preferService('__cnt', 'two');
-    expect(h.inc()).toBe(1); // 切到 c2，从 0 开始
+    // 旧句柄仍引用 c1
+    expect(h.inc()).toBe(3);
+    // 新句柄从 c2 开始
+    const h2 = ctx.getService<Counter>('__cnt')!;
+    expect(h2.inc()).toBe(1);
   });
 
-  it('能力过滤参数被句柄持续保留', () => {
+  it('能力过滤参数仅在调用时点解析', () => {
     const ctx = makeContext();
     ctx.provide('__svc', { kind: 'plain' }, { capabilities: [] });
     ctx.provide('__svc', { kind: 'fancy' }, { capabilities: ['advanced'] });
