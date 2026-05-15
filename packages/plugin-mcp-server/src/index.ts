@@ -40,7 +40,7 @@ export const inject = { required: ['tools'] };
 
 export const defaultConfig: Config = {
   enabled: false,
-  port: 0,
+  port: 7861,
   bind: '127.0.0.1',
   toolGroups: [],
   allowDangerous: false,
@@ -48,11 +48,26 @@ export const defaultConfig: Config = {
 
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用', default: false } as ConfigSchema[string],
-  port: { type: 'number', label: '监听端口（0=禁用）', default: 0 } as ConfigSchema[string],
+  port: {
+    type: 'number',
+    label: '监听端口',
+    description: '必须 > 0；设为 0 或负数会报错。要禁用请取消上面的「启用」。',
+    default: 7861,
+  } as ConfigSchema[string],
   bind: { type: 'string', label: '监听地址', default: '127.0.0.1' } as ConfigSchema[string],
   toolGroups: {
     type: 'array',
     label: '允许的工具分组（空=全部，受危险开关约束）',
+    description: '空列表 = 暴露所有分组的工具（仍受 allowDangerous 约束）。',
+    items: {
+      name: {
+        type: 'string',
+        label: '分组名',
+        description: '如 mcp:godot / file / system。',
+        required: true,
+      },
+    },
+    default: [],
   } as ConfigSchema[string],
   allowDangerous: {
     type: 'boolean',
@@ -64,10 +79,19 @@ export const configSchema: ConfigSchema = {
 export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
   const config = rawConfig as unknown as Config;
 
-  if (!config.enabled || config.port <= 0) {
-    ctx.logger.info('plugin-mcp-server 未启用（enabled=false 或 port<=0）');
+  if (!config.enabled) {
+    ctx.logger.info('plugin-mcp-server 未启用（enabled=false）');
     return;
   }
+  if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
+    ctx.logger.error(`plugin-mcp-server 启用但端口非法：port=${config.port}。请设置 1-65535 之间的整数，或取消启用。`);
+    return;
+  }
+
+  // 兼容两种 toolGroups 形态：string[]（yaml 手写）/ Array<{name:string}>（WebUI 数组项）
+  config.toolGroups = (config.toolGroups as unknown as Array<string | { name?: unknown }>)
+    .map(g => (typeof g === 'string' ? g : typeof g?.name === 'string' ? g.name : ''))
+    .filter(Boolean);
 
   const tools = ctx.getService<ToolService>('tools');
   if (!tools) {

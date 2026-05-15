@@ -445,9 +445,17 @@ export function SchemaForm({
           const arr = (Array.isArray(draft[key]) ? draft[key] : []) as Record<string, unknown>[];
           const updateArr = (newArr: Record<string, unknown>[]) => onChange({ ...draft, [key]: newArr });
 
+          // 防御：插件若未声明 items（违反 SchemaArray 契约），addItem 会因 Object.entries(undefined) 抛错；
+          // 此处兜底为空对象，避免 WebUI 看似无响应。仍然记录到控制台便于排查。
+          const items = entry.items ?? {};
+          if (!entry.items) {
+            // biome-ignore lint/suspicious/noConsole: 调试提示
+            console.warn(`[SchemaForm] 数组字段 "${key}" 缺少 items 定义，添加按钮将创建空对象`);
+          }
+
           const addItem = () => {
             const newItem: Record<string, unknown> = {};
-            for (const [fk, field] of Object.entries(entry.items)) {
+            for (const [fk, field] of Object.entries(items)) {
               newItem[fk] = field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : '');
             }
             updateArr([...arr, newItem]);
@@ -490,7 +498,7 @@ export function SchemaForm({
                       onClick={() => removeItem(idx)}
                     >删除</button>
                   </div>
-                  {Object.entries(entry.items).map(([fk, field]) => {
+                  {Object.entries(items).map(([fk, field]) => {
                     const itemHint = field.description || field.label;
                     return (
                     <div className="config-edit-row" key={fk}>
