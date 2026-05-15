@@ -43,6 +43,11 @@ interface AuthorityTool {
   description: string;
   pluginName: string;
   groups?: string[];
+  authority?: number;
+  safety?: string;
+  baseAuthority?: number;
+  baseSafety?: string;
+  overridden?: boolean;
 }
 
 interface AuthorityData {
@@ -56,6 +61,7 @@ interface AuthorityData {
   commands: AuthorityCommand[];
   commandOverrides: Record<string, { authority?: number; safety?: string }>;
   tools: AuthorityTool[];
+  toolOverrides?: Record<string, { authority?: number; safety?: string }>;
   dangerousPolicy: {
     allow?: string[];
     duration?: number;
@@ -88,6 +94,8 @@ export function AuthorityPage() {
   const [showAddOwner, setShowAddOwner] = useState(false);
   const [editingCmd, setEditingCmd] = useState<string | null>(null);
   const [cmdDraft, setCmdDraft] = useState({ authority: 1, safety: 'safe' });
+  const [editingTool, setEditingTool] = useState<string | null>(null);
+  const [toolDraft, setToolDraft] = useState({ authority: 1, safety: 'safe' });
   // 子指令展开状态：存储已展开的根指令 key（深度=0 的 key 即根名）
   const [expandedCmds, setExpandedCmds] = useState<Set<string>>(new Set());
   const toggleCmdExpand = (key: string) => {
@@ -213,6 +221,18 @@ export function AuthorityPage() {
   const resetCommandOverride = async (name: string) => {
     await pageAction('@aalis/plugin-authority', 'resetCommandOverride', { name });
     flash(`指令 ${name} 已恢复默认`);
+    refresh();
+  };
+
+  const saveToolOverride = async (name: string) => {
+    await pageAction('@aalis/plugin-authority', 'setToolOverride', { name, authority: toolDraft.authority, safety: toolDraft.safety });
+    setEditingTool(null);
+    flash(`工具 ${name} 权限已更新`);
+    refresh();
+  };
+  const resetToolOverride = async (name: string) => {
+    await pageAction('@aalis/plugin-authority', 'resetToolOverride', { name });
+    flash(`工具 ${name} 已恢复默认`);
     refresh();
   };
 
@@ -444,7 +464,7 @@ export function AuthorityPage() {
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('tools')}>
           <span className="config-block-title">AI 工具</span>
-          <span className="config-block-hint">工具已从用户权限审查中剥离，此处仅展示当前已注册工具</span>
+          <span className="config-block-hint">工具调用受运行时 guard 检查；可按工具调整最低权限与危险级别</span>
           <span className={`config-block-toggle ${openSections.has('tools') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('tools') && (
@@ -455,18 +475,71 @@ export function AuthorityPage() {
               <div className="authority-cmd-list">
                 <div className="authority-cmd-header">
                   <span>工具</span>
-                  <span>来源</span>
-                  <span>分组</span>
+                  <span>权限</span>
+                  <span>安全</span>
+                  <span>分组 / 来源</span>
+                  <span>操作</span>
                 </div>
-                {data.tools.map(t => (
-                  <div className="authority-cmd-row" key={t.name}>
-                    <span className="authority-cmd-name" title={t.description}>
-                      {t.name}
-                    </span>
-                    <span className="authority-cmd-plugin">{t.pluginName}</span>
-                    <span>{t.groups?.length ? t.groups.join(', ') : '通用'}</span>
-                  </div>
-                ))}
+                {data.tools.map(t => {
+                  const isEditing = editingTool === t.name;
+                  return (
+                    <div className="authority-cmd-row" key={t.name}>
+                      <span className="authority-cmd-name" title={t.description}>
+                        {t.name}
+                        {t.overridden && <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: 11 }}>●</span>}
+                      </span>
+                      {isEditing ? (
+                        <>
+                          <span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={toolDraft.authority}
+                              onChange={e => setToolDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
+                              style={{ width: 60 }}
+                            />
+                          </span>
+                          <span>
+                            <select
+                              value={toolDraft.safety}
+                              onChange={e => setToolDraft(v => ({ ...v, safety: e.target.value }))}>
+                              <option value="safe">safe</option>
+                              <option value="dangerous">dangerous</option>
+                            </select>
+                          </span>
+                          <span style={{ fontSize: 11, color: '#888' }}>
+                            {t.groups?.length ? t.groups.join(', ') : '通用'} / {t.pluginName}
+                          </span>
+                          <span>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveToolOverride(t.name)}>保存</button>
+                            <button className="btn btn-sm" onClick={() => setEditingTool(null)}>取消</button>
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span title={t.overridden ? `插件默认: ${t.baseAuthority ?? 1}` : ''}>
+                            {t.authority ?? 1}
+                          </span>
+                          <span title={t.overridden ? `插件默认: ${t.baseSafety ?? 'safe'}` : ''}>
+                            {t.safety ?? 'safe'}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#888' }}>
+                            {t.groups?.length ? t.groups.join(', ') : '通用'} / {t.pluginName}
+                          </span>
+                          <span>
+                            <button className="btn btn-sm" onClick={() => {
+                              setEditingTool(t.name);
+                              setToolDraft({ authority: t.authority ?? 1, safety: t.safety ?? 'safe' });
+                            }}>编辑</button>
+                            {t.overridden && (
+                              <button className="btn btn-sm" onClick={() => resetToolOverride(t.name)} title="恢复插件默认值">重置</button>
+                            )}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
