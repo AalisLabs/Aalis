@@ -338,6 +338,12 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
         svc.setExecutionGuard(guard);
         ctx.logger.debug(`权限守卫已注入: ${svcName}`);
       }
+      // 加载 tool overrides（与 commandOverrides 对称；tool 注册可能晚于 authority apply
+      // 时刻，但 setOverride 保存的是名字 → override 的映射，后注册的工具拿到时也能匹配）
+      const toolOvr = ctx.config.get('toolOverrides');
+      if (toolOvr && svc?.loadOverrides) {
+        svc.loadOverrides(toolOvr as Record<string, { authority?: number; safety?: SafetyLevel }>);
+      }
     }
   };
 
@@ -453,6 +459,7 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
       commandOverrides: overrides,
       orphanCommandOverrides: Object.keys(overrides).filter(k => !cmdNames.has(k)),
       tools,
+      toolOverrides: ctx.getService<ToolService>('tools')?.getOverrides?.() ?? {},
     };
   },
 
@@ -556,5 +563,39 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     ctx.config.set('commandOverrides', ctx.getService<CommandService>('commands')?.getOverrides() ?? {});
     app.saveConfig();
     return { message: `指令 ${name} 覆盖已重置` };
+  },
+
+  /** 更新单个工具的权限覆盖 */
+  async setToolOverride(ctx, args) {
+    const { name, authority, safety } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const app = ctx.getService<AppService>('app');
+    const tools = ctx.getService<ToolService>('tools');
+    if (!app) throw new Error('App 不可用');
+    if (!tools?.setOverride) throw new Error('ToolService 未支持 override');
+    const override: { authority?: number; safety?: SafetyLevel } = {};
+    if (typeof authority === 'number') override.authority = authority;
+    if (typeof safety === 'string' && (safety === 'safe' || safety === 'dangerous')) override.safety = safety;
+    if (Object.keys(override).length === 0) {
+      tools.removeOverride?.(name);
+    } else {
+      tools.setOverride(name, override);
+    }
+    ctx.config.set('toolOverrides', tools.getOverrides?.() ?? {});
+    app.saveConfig();
+    return { message: `工具 ${name} 权限已更新` };
+  },
+
+  /** 重置工具覆盖 */
+  async resetToolOverride(ctx, args) {
+    const { name } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const app = ctx.getService<AppService>('app');
+    const tools = ctx.getService<ToolService>('tools');
+    if (!app) throw new Error('App 不可用');
+    tools?.removeOverride?.(name);
+    ctx.config.set('toolOverrides', tools?.getOverrides?.() ?? {});
+    app.saveConfig();
+    return { message: `工具 ${name} 覆盖已重置` };
   },
 };
