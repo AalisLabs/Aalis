@@ -15,60 +15,6 @@ import { probeCapability } from './types/capabilities.js';
 import { ServicePriority } from './types/service.js';
 
 /**
- * 创建一个"动态服务句柄"——Proxy，每次属性访问都重新从容器解析当前最佳 provider。
- *
- * 目的：让调用方写 `const memory = ctx.getService('memory')` 后长期持有也安全，
- * 不再因 provider 切换/重载而持有过期实例。
- *
- * 解析策略和 `container.get()` 完全一致（偏好 > 优先级 > 注册顺序，能力过滤）。
- * 若调用时刻没有 provider，访问任意属性会抛错——但 `getService` 入口已先校验
- * 至少有一个匹配 entry 才返回句柄，所以正常路径下不会触发这个抛错；
- * 仅在调用方持有句柄期间所有 provider 都被注销才会遇到。
- */
-export function makeServiceHandle<T>(container: ServiceContainer, name: string, caps: string[] | undefined): T {
-  const resolve = (): unknown => {
-    const inst = container.get<unknown>(name, caps);
-    if (inst === undefined) {
-      throw new Error(`服务 "${name}" 已不再可用（持有句柄期间 provider 全部注销）`);
-    }
-    return inst;
-  };
-  // 用空对象做 target，所有 trap 都委托到当前解析结果——保证 typeof / 属性访问 / 调用 / new 等都跟随最新 provider
-  return new Proxy(
-    {},
-    {
-      get(_t, prop, receiver) {
-        const target = resolve() as object;
-        const value = Reflect.get(target, prop, receiver);
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
-      has(_t, prop) {
-        return Reflect.has(resolve() as object, prop);
-      },
-      ownKeys() {
-        return Reflect.ownKeys(resolve() as object);
-      },
-      getOwnPropertyDescriptor(_t, prop) {
-        return Reflect.getOwnPropertyDescriptor(resolve() as object, prop);
-      },
-      getPrototypeOf() {
-        return Reflect.getPrototypeOf(resolve() as object);
-      },
-      apply(_t, thisArg, args) {
-        const fn = resolve();
-        if (typeof fn !== 'function') throw new TypeError(`服务 "${name}" 不是函数`);
-        return Reflect.apply(fn, thisArg, args);
-      },
-      construct(_t, args, newTarget) {
-        const fn = resolve();
-        if (typeof fn !== 'function') throw new TypeError(`服务 "${name}" 不可构造`);
-        return Reflect.construct(fn as new (...a: unknown[]) => object, args, newTarget);
-      },
-    },
-  ) as T;
-}
-
-/**
  * provide() 的 dev-mode 校验集合：
  *   1. entryId 必须以 ctxId 为前缀（否则 plugin 卸载时清理不到）
  *   2. 声明的 capabilities 必须能在 instance 上探测到对应方法
