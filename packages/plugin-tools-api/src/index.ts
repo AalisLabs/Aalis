@@ -125,16 +125,34 @@ export interface ToolService {
     name: string;
     description: string;
     pluginName: string;
+    /** 生效的 authority（已叠加 override） */
     authority?: number;
+    /** 生效的 safety（已叠加 override） */
     safety?: SafetyLevel;
     permissions?: string[];
     groups?: string[];
+    /** 插件原始声明的 authority（未被 override 覆盖前的值） */
+    baseAuthority?: number;
+    /** 插件原始声明的 safety */
+    baseSafety?: SafetyLevel;
+    /** 是否有 override（UI 高亮用） */
+    overridden?: boolean;
   }>;
 
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
 
   /** 注入执行守卫，用于权限等级与 dangerous 二次确认 */
   setExecutionGuard(guard: ExecutionGuard): void;
+
+  // ---- 权限 override（与 CommandService 对齐）----
+  /** 从配置一次性导入 override，会清空现有 */
+  loadOverrides?(overrides: Record<string, { authority?: number; safety?: SafetyLevel }>): void;
+  /** 设置某个工具的 override（按工具名） */
+  setOverride?(name: string, override: { authority?: number; safety?: SafetyLevel }): void;
+  /** 清除某个工具的 override */
+  removeOverride?(name: string): void;
+  /** 获取全部 override（持久化用） */
+  getOverrides?(): Record<string, { authority?: number; safety?: SafetyLevel }>;
 
   unregisterByPlugin(pluginName: string): void;
 

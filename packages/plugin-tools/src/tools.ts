@@ -1,4 +1,4 @@
-import type { Logger } from '@aalis/core';
+import type { Logger, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuard } from '@aalis/plugin-authority-api';
 import type {
   RegisteredTool,
@@ -26,6 +26,7 @@ import type {
 export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
   private _groups = new Map<string, ToolGroupInfo>();
+  private overrides = new Map<string, { authority?: number; safety?: SafetyLevel }>();
   private logger: Logger;
   private _guard?: ExecutionGuard;
 
@@ -91,16 +92,26 @@ export class ToolRegistry implements ToolService {
     safety?: import('@aalis/core').SafetyLevel;
     permissions?: string[];
     groups?: string[];
+    baseAuthority?: number;
+    baseSafety?: import('@aalis/core').SafetyLevel;
+    overridden?: boolean;
   }> {
     return [...this.tools.values()].map(t => {
+      const name = t.definition.function.name;
+      const ovr = this.overrides.get(name);
+      const baseAuthority = t.authority;
+      const baseSafety = t.safety;
       return {
-        name: t.definition.function.name,
+        name,
         description: t.definition.function.description,
         pluginName: t.pluginName,
-        authority: t.authority,
-        safety: t.safety,
+        authority: ovr?.authority ?? baseAuthority,
+        safety: ovr?.safety ?? baseSafety,
         permissions: this.getStaticPermissions(t),
         groups: t.groups,
+        baseAuthority,
+        baseSafety,
+        overridden: !!ovr,
       };
     });
   }
@@ -127,6 +138,27 @@ export class ToolRegistry implements ToolService {
     this._guard = guard;
   }
 
+  // ---- Overrides（与 CommandRegistry 对齐）----
+
+  loadOverrides(overrides: Record<string, { authority?: number; safety?: SafetyLevel }>): void {
+    this.overrides.clear();
+    for (const [name, o] of Object.entries(overrides)) {
+      // 过滤空 override，避免污染
+      if (o && (typeof o.authority === 'number' || o.safety === 'safe' || o.safety === 'dangerous')) {
+        this.overrides.set(name, o);
+      }
+    }
+  }
+  setOverride(name: string, override: { authority?: number; safety?: SafetyLevel }): void {
+    this.overrides.set(name, override);
+  }
+  removeOverride(name: string): void {
+    this.overrides.delete(name);
+  }
+  getOverrides(): Record<string, { authority?: number; safety?: SafetyLevel }> {
+    return Object.fromEntries(this.overrides);
+  }
+
   async execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> {
     const tool = this.tools.get(toolName);
     if (!tool) return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
@@ -138,8 +170,9 @@ export class ToolRegistry implements ToolService {
       return JSON.stringify({ error: schemaError });
     }
 
-    const authority = tool.authority ?? 1;
-    const safety = tool.safety ?? 'safe';
+    const ovr = this.overrides.get(toolName);
+    const authority = ovr?.authority ?? tool.authority ?? 1;
+    const safety: SafetyLevel = ovr?.safety ?? tool.safety ?? 'safe';
     let permissions: string[];
     try {
       permissions = await this.resolvePermissions(tool, args, callCtx);
