@@ -21,8 +21,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 interface Config {
-  enabled: boolean;
-  /** 监听端口；0 = 不启动 */
+  /** 监听端口（必须 1-65535）。要暂停服务请在插件列表里禁用本插件。 */
   port: number;
   /** 监听地址，默认 127.0.0.1 */
   bind: string;
@@ -39,7 +38,6 @@ export const subsystem = 'tools';
 export const inject = { required: ['tools'] };
 
 export const defaultConfig: Config = {
-  enabled: false,
   port: 7861,
   bind: '127.0.0.1',
   toolGroups: [],
@@ -47,11 +45,10 @@ export const defaultConfig: Config = {
 };
 
 export const configSchema: ConfigSchema = {
-  enabled: { type: 'boolean', label: '启用', default: false } as ConfigSchema[string],
   port: {
     type: 'number',
     label: '监听端口',
-    description: '必须 > 0；设为 0 或负数会报错。要禁用请取消上面的「启用」。',
+    description: '必须 1-65535；非法值会报错不启动。要暂停服务请在「插件列表」里禁用本插件。',
     default: 7861,
   } as ConfigSchema[string],
   bind: { type: 'string', label: '监听地址', default: '127.0.0.1' } as ConfigSchema[string],
@@ -79,12 +76,10 @@ export const configSchema: ConfigSchema = {
 export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
   const config = rawConfig as unknown as Config;
 
-  if (!config.enabled) {
-    ctx.logger.info('plugin-mcp-server 未启用（enabled=false）');
-    return;
-  }
   if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
-    ctx.logger.error(`plugin-mcp-server 启用但端口非法：port=${config.port}。请设置 1-65535 之间的整数，或取消启用。`);
+    ctx.logger.error(
+      `plugin-mcp-server 端口非法：port=${config.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
+    );
     return;
   }
 
