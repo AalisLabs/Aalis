@@ -36,19 +36,60 @@ interface LlmProcessorOptions {
   maxTokens?: number;
 }
 
-/** 把 audio attachment.data 解析为 base64（去掉 data: 前缀），供 LLM provider 直接使用。 */
+/**
+ * 通过 magic header 探测音频格式，仅用于诊断 / 拒绝不支持的格式。
+ * 返回简短格式名（mp3/wav/ogg/m4a/amr/silk/unknown）。
+ */
+function detectAudioFormat(buf: Buffer): string {
+  if (buf.length < 12) return 'unknown';
+  // SILK V3：QQ 语音原生格式，前 1 字节可能为 0x02（"flags" 前缀），随后 "#!SILK_V3"
+  const silkHead = buf[0] === 0x02 ? buf.subarray(1, 10) : buf.subarray(0, 9);
+  if (silkHead.toString('ascii') === '#!SILK_V3') return 'silk';
+  // AMR：'#!AMR\n' 或 '#!AMR-WB\n'
+  if (buf.subarray(0, 5).toString('ascii') === '#!AMR') return 'amr';
+  // mp3：'ID3' 或 MPEG 同步帧 0xFFEx / 0xFFFx
+  if (buf.subarray(0, 3).toString('ascii') === 'ID3') return 'mp3';
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'mp3';
+  // WAV：'RIFF....WAVE'
+  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WAVE') return 'wav';
+  // OGG：'OggS'
+  if (buf.subarray(0, 4).toString('ascii') === 'OggS') return 'ogg';
+  // M4A / MP4：offset 4 'ftyp'
+  if (buf.subarray(4, 8).toString('ascii') === 'ftyp') return 'm4a';
+  // FLAC：'fLaC'
+  if (buf.subarray(0, 4).toString('ascii') === 'fLaC') return 'flac';
+  return 'unknown';
+}
+
+/**
+ * 把 audio attachment.data 解析为 base64（去掉 data: 前缀），供 LLM provider 直接使用。
+ *
+ * 会做一次格式校验：QQ 原生 SILK 格式没有任何主流多模态 LLM / Whisper 能直接解码，
+ * 这里命中即抛错，让上游写入清晰的 warn（典型成因：OneBot 实现端 `get_record` 没真正
+ * 执行 silk→mp3 转码，只是改了扩展名）。
+ */
 async function audioToBase64(data: string): Promise<string> {
+  let buf: Buffer;
   const m = data.match(/^data:[^;]+;base64,(.+)$/);
-  if (m) return m[1];
-  const mat = await materializeAttachment(data);
-  if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
-  try {
-    const { readFile } = await import('node:fs/promises');
-    const buf = await readFile(mat.path);
-    return buf.toString('base64');
-  } finally {
-    await mat.cleanup();
+  if (m) {
+    buf = Buffer.from(m[1], 'base64');
+  } else {
+    const mat = await materializeAttachment(data);
+    if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
+    try {
+      const { readFile } = await import('node:fs/promises');
+      buf = await readFile(mat.path);
+    } finally {
+      await mat.cleanup();
+    }
   }
+  const fmt = detectAudioFormat(buf);
+  if (fmt === 'silk' || fmt === 'amr') {
+    throw new Error(
+      `音频格式为 ${fmt}，主流多模态 LLM/Whisper 均无法解码；请确认 OneBot 实现端 get_record 已正确转码到 mp3/wav`,
+    );
+  }
+  return buf.toString('base64');
 }
 
 /** 把单个 LLMModelEntry 包装成 MediaProcessor。 */
