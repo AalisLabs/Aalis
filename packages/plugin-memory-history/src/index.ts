@@ -54,14 +54,20 @@ export const configSchema: ConfigSchema = {
   limit: {
     type: 'number',
     label: '注入条数上限',
-    default: 20,
+    default: 30,
     description: '每次注入的最大消息条数；工具调用未指定 limit 时也用这个值。',
   },
   maxAgeMinutes: {
     type: 'number',
     label: '时间窗口（分钟）',
-    default: 60,
+    default: 180,
     description: '只取最近 N 分钟内的消息；0 表示不限时间。',
+  },
+  perSessionLimit: {
+    type: 'number',
+    label: '每会话最多条数',
+    default: 5,
+    description: '同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；为 0 = 不做 per-session cap。',
   },
   excludeCurrentSession: {
     type: 'boolean',
@@ -72,8 +78,7 @@ export const configSchema: ConfigSchema = {
   headerText: {
     type: 'string',
     label: '注入 header 文本',
-    default:
-      '📜 以下是仅供参考的近期消息片段（按时间升序）。它们可能来自当前对话对象的过往发言，也可能来自其他来源；请只用作背景理解，不要在回复中提及"其他会话""其他来源""不同平台"等元概念，也不要直接复述这些消息的存在。',
+    default: '📜 以下是来自其他会话/群聊的近期消息片段（按时间升序），供你了解最近发生了什么。',
     description: '注入到 messages[] 的 system 消息开头说明文字。',
   },
   toolEnabled: {
@@ -91,11 +96,11 @@ export const configSchema: ConfigSchema = {
 
 export const defaultConfig = {
   scope: 'same-platform',
-  limit: 20,
-  maxAgeMinutes: 60,
+  limit: 30,
+  maxAgeMinutes: 180,
+  perSessionLimit: 5,
   excludeCurrentSession: true,
-  headerText:
-    '📜 以下是仅供参考的近期消息片段（按时间升序）。它们可能来自当前对话对象的过往发言，也可能来自其他来源；请只用作背景理解，不要在回复中提及"其他会话""其他来源""不同平台"等元概念，也不要直接复述这些消息的存在。',
+  headerText: '📜 以下是来自其他会话/群聊的近期消息片段（按时间升序），供你了解最近发生了什么。',
   toolEnabled: true,
   toolName: 'recent_messages',
 };
@@ -106,6 +111,7 @@ interface HistoryConfig {
   scope: HistoryScope;
   limit: number;
   maxAgeMinutes: number;
+  perSessionLimit: number;
   excludeCurrentSession: boolean;
   headerText: string;
   toolEnabled: boolean;
@@ -133,8 +139,9 @@ function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
     ) || 'recent_messages';
   return {
     scope,
-    limit: Math.max(1, Number(raw.limit ?? 20)),
-    maxAgeMinutes: Math.max(0, Number(raw.maxAgeMinutes ?? 60)),
+    limit: Math.max(1, Number(raw.limit ?? 30)),
+    maxAgeMinutes: Math.max(0, Number(raw.maxAgeMinutes ?? 180)),
+    perSessionLimit: Math.max(0, Number(raw.perSessionLimit ?? 5)),
     excludeCurrentSession: raw.excludeCurrentSession !== false,
     headerText: typeof raw.headerText === 'string' ? raw.headerText : (defaultConfig.headerText as string),
     toolEnabled: raw.toolEnabled !== false,
@@ -197,13 +204,34 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     const platform = scope === 'same-platform' ? opts.currentPlatform : undefined;
     const excludeSessionIds = cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
 
-    return memory.getRecentMessagesAcrossSessions({
-      limit,
+    // 若启用 per-session cap，需要向 backend overscan；上限按 limit * 10 与 1000 取小，
+    // 既能覆盖单会话刷屏场景，又避免极端情况下拉太多。
+    const perSessionLimit = cfg.perSessionLimit;
+    const backendLimit = perSessionLimit > 0 ? Math.min(limit * 10, 1000) : limit;
+
+    const raw = await memory.getRecentMessagesAcrossSessions({
+      limit: backendLimit,
       sinceTs,
       platform,
       excludeSessionIds,
       roles: ['user', 'assistant'],
     });
+
+    if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
+
+    // raw 是时间升序；为做 per-session cap 时优先保留每会话最新若干条，
+    // 先反转为降序遍历，命中即累计；累计到 limit 或扫完为止；最后再反转回升序。
+    const perSessionCount = new Map<string, number>();
+    const picked: RecentMessageRecord[] = [];
+    for (let i = raw.length - 1; i >= 0 && picked.length < limit; i--) {
+      const rec = raw[i];
+      const cnt = perSessionCount.get(rec.sessionId) ?? 0;
+      if (cnt >= perSessionLimit) continue;
+      perSessionCount.set(rec.sessionId, cnt + 1);
+      picked.push(rec);
+    }
+    picked.reverse();
+    return picked;
   }
 
   // ---- 注入 hook ----
@@ -229,6 +257,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       return;
     }
     if (records.length === 0) {
+      ctx.logger.debug(
+        `memory-history: 未找到可注入的跨会话消息 (scope=${cfg.scope}, platform=${data.platform ?? '?'}, session=${data.sessionId ?? '?'})`,
+      );
       await next();
       return;
     }
@@ -242,6 +273,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     const idx = data.messages.findIndex(m => m.role !== 'system');
     const insertIdx = idx === -1 ? data.messages.length : idx;
     data.messages.splice(insertIdx, 0, injectMsg);
+    ctx.logger.debug(
+      `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${cfg.scope}, platform=${data.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
+    );
 
     await next();
   });
