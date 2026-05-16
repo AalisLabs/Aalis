@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { ContentSegment, Message } from '@aalis/plugin-message-api';
 import Database from 'better-sqlite3';
@@ -59,6 +59,8 @@ class SQLiteMemoryService implements MemoryService {
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session
         ON messages(sessionId, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_messages_recent
+        ON messages(archived, timestamp);
 
       CREATE TABLE IF NOT EXISTS metadata (
         namespace TEXT NOT NULL,
@@ -207,7 +209,67 @@ class SQLiteMemoryService implements MemoryService {
     }));
   }
 
-  // ----- 范围查询、归档、全历史 -----
+  async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
+    const limit = Math.max(1, Math.min(query.limit, 1000));
+    const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
+    // platform / excludeSessionIds 走内存过滤；为保证 limit 命中，先用 overscan 倍率拉取候选。
+    const needsPostFilter =
+      typeof query.platform === 'string' || (query.excludeSessionIds && query.excludeSessionIds.length > 0);
+    const overscan = needsPostFilter ? 8 : 1;
+    const candidateLimit = Math.min(limit * overscan, 5000);
+
+    let sql = `SELECT sessionId, role, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
+               FROM messages
+               WHERE archived = 0
+                 AND role IN (${roles.map(() => '?').join(',')})`;
+    const params: unknown[] = [...roles];
+    if (typeof query.sinceTs === 'number') {
+      sql += ' AND timestamp >= ?';
+      params.push(query.sinceTs);
+    }
+    sql += ' ORDER BY timestamp DESC LIMIT ?';
+    params.push(candidateLimit);
+
+    const rows = this.db.prepare(sql).all(...params) as Array<{
+      sessionId: string;
+      role: string;
+      content: string | null;
+      toolCalls: string | null;
+      toolCallId: string | null;
+      name: string | null;
+      timestamp: number;
+      reasoningContent: string | null;
+      metadata: string | null;
+      segments: string | null;
+    }>;
+
+    const excludeSet =
+      query.excludeSessionIds && query.excludeSessionIds.length > 0 ? new Set(query.excludeSessionIds) : null;
+
+    const out: RecentMessageRecord[] = [];
+    for (const row of rows) {
+      if (excludeSet?.has(row.sessionId)) continue;
+      const metadata = SQLiteMemoryService.parseMetadata(row.metadata);
+      if (typeof query.platform === 'string' && metadata?.platform !== query.platform) continue;
+      out.push({
+        sessionId: row.sessionId,
+        message: {
+          role: row.role as Message['role'],
+          content: row.content,
+          toolCalls: row.toolCalls ? JSON.parse(row.toolCalls) : undefined,
+          toolCallId: row.toolCallId ?? undefined,
+          name: row.name ?? undefined,
+          timestamp: row.timestamp,
+          reasoningContent: row.reasoningContent ?? undefined,
+          segments: SQLiteMemoryService.parseSegments(row.segments),
+          metadata,
+        },
+      });
+      if (out.length >= limit) break;
+    }
+    // rows 为 DESC，截取后反转为升序
+    return out.reverse();
+  }
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
     const stmt = this.db.prepare(`
@@ -372,6 +434,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         MemoryCapabilities.Metadata,
         MemoryCapabilities.ContentUpdate,
         MemoryCapabilities.MessageDelete,
+        MemoryCapabilities.RecentAcrossSessions,
       ],
     });
 

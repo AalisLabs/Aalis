@@ -1,5 +1,26 @@
 // ----- 记忆服务接口 -----
 import type { Message } from '@aalis/plugin-message-api';
+
+/** 跨会话最近消息查询参数 */
+export interface RecentMessagesAcrossSessionsQuery {
+  /** 最大返回条数（按 timestamp DESC 取最近 N 条；最终返回时升序） */
+  limit: number;
+  /** 仅返回 timestamp >= sinceTs 的消息（毫秒）；省略则不限 */
+  sinceTs?: number;
+  /** 按 `metadata.platform` 过滤；省略则不限平台 */
+  platform?: string;
+  /** 排除这些 sessionId（通常排除当前会话避免与会话内 history 重复） */
+  excludeSessionIds?: string[];
+  /** 角色过滤；省略时默认为 ['user', 'assistant']（system / tool 不会出现在跨会话注入里） */
+  roles?: Array<Message['role']>;
+}
+
+/** 跨会话查询结果条目 */
+export interface RecentMessageRecord {
+  sessionId: string;
+  message: Message;
+}
+
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
@@ -20,6 +41,17 @@ export interface MemoryService {
     toTs: number,
     roles?: Array<Message['role']>,
   ): Promise<Message[]>;
+
+  /**
+   * 跨会话取最近 N 条消息（按 timestamp 升序返回），供"跨会话历史注入"等场景使用。
+   *
+   * 实现需保证：
+   * - 仅返回未归档（archived=false）消息
+   * - 按 `timestamp DESC` 取最近 `limit` 条后再升序输出
+   * - 按 `query.platform` / `query.excludeSessionIds` / `query.roles` / `query.sinceTs` 过滤
+   * - 返回结果中每条带 `sessionId`，调用方可据此区分来源
+   */
+  getRecentMessagesAcrossSessions?(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]>;
 
   // ----- 结构化元数据存储（供会话管理等场景使用） -----
 
@@ -60,6 +92,8 @@ export interface MemoryCapabilityRegistry {
   ContentUpdate: 'content-update';
   /** 支持按时间戳批量删除消息（deleteMessagesByTimestamps） */
   MessageDelete: 'message-delete';
+  /** 支持跨会话最近消息查询（getRecentMessagesAcrossSessions） */
+  RecentAcrossSessions: 'recent-across-sessions';
 }
 
 export type MemoryCapability = MemoryCapabilityRegistry[keyof MemoryCapabilityRegistry];
@@ -69,6 +103,7 @@ export const MemoryCapabilities = {
   Metadata: 'metadata',
   ContentUpdate: 'content-update',
   MessageDelete: 'message-delete',
+  RecentAcrossSessions: 'recent-across-sessions',
 } as const satisfies MemoryCapabilityRegistry;
 
 declare module '@aalis/core' {
@@ -117,6 +152,12 @@ registerCapabilityProbe('memory', MemoryCapabilities.MessageDelete, inst =>
   typeof (inst as { deleteMessagesByTimestamps?: unknown }).deleteMessagesByTimestamps === 'function'
     ? true
     : 'MemoryService.deleteMessagesByTimestamps() is required for capability "message-delete"',
+);
+
+registerCapabilityProbe('memory', MemoryCapabilities.RecentAcrossSessions, inst =>
+  typeof (inst as { getRecentMessagesAcrossSessions?: unknown }).getRecentMessagesAcrossSessions === 'function'
+    ? true
+    : 'MemoryService.getRecentMessagesAcrossSessions() is required for capability "recent-across-sessions"',
 );
 
 // ----- 服务类型注册（declaration merging）-----

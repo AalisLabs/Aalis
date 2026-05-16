@@ -732,6 +732,31 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-memory-history:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
+      '@aalis/plugin-memory-api':
+        specifier: workspace:*
+        version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-memory-inmemory:
     dependencies:
       '@aalis/core':
@@ -765,31 +790,6 @@ importers:
       mongodb:
         specifier: ^6.12.0
         version: 6.21.0(socks@2.8.7)
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/plugin-memory-recency:
-    dependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@aalis/plugin-agent-api':
-        specifier: workspace:*
-        version: link:../plugin-agent-api
-      '@aalis/plugin-memory-api':
-        specifier: workspace:*
-        version: link:../plugin-memory-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-memory-recency",
+  "name": "@aalis/plugin-memory-history",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
