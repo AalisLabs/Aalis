@@ -81,3 +81,10 @@ registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Notice, in
     ? true
     : 'MessageArchiveService.archiveNotice() is required for capability "notice"',
 );
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'message-archive': MessageArchiveService;
+  }
+}

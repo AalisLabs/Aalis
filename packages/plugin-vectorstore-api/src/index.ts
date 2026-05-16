@@ -1,5 +1,8 @@
 // ----- 向量数据库服务接口 -----
 
+// 触发 @aalis/core 模块解析，使文末 declare module 增强生效
+import type {} from '@aalis/core';
+
 /** 向量搜索结果条目 */
 export interface VectorSearchResult {
   /** 余弦相似度分数 */
@@ -22,4 +25,11 @@ export interface VectorStoreService {
   deleteByFilter?(filter: Record<string, unknown>): Promise<number>;
   /** 持久化（由调用方或 dispose 触发） */
   save(): Promise<void>;
+}
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    vectorstore: VectorStoreService;
+  }
 }

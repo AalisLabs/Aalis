@@ -118,3 +118,10 @@ registerCapabilityProbe('memory', MemoryCapabilities.MessageDelete, inst =>
     ? true
     : 'MemoryService.deleteMessagesByTimestamps() is required for capability "message-delete"',
 );
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    memory: MemoryService;
+  }
+}
