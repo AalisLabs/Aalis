@@ -1,5 +1,5 @@
 import type { Context } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 
@@ -81,6 +81,31 @@ class InMemoryFallbackService implements MemoryService {
         return true;
       })
       .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  }
+
+  async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
+    const limit = Math.max(1, Math.min(query.limit, 1000));
+    const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
+    const roleSet = new Set(roles);
+    const excludeSet =
+      query.excludeSessionIds && query.excludeSessionIds.length > 0 ? new Set(query.excludeSessionIds) : null;
+
+    const all: RecentMessageRecord[] = [];
+    for (const [sessionId, msgs] of this.sessions) {
+      if (excludeSet?.has(sessionId)) continue;
+      for (const m of msgs) {
+        if (!roleSet.has(m.role)) continue;
+        const ts = m.timestamp ?? 0;
+        if (typeof query.sinceTs === 'number' && ts < query.sinceTs) continue;
+        if (typeof query.platform === 'string') {
+          const p = (m.metadata as { platform?: unknown } | undefined)?.platform;
+          if (p !== query.platform) continue;
+        }
+        all.push({ sessionId, message: m });
+      }
+    }
+    all.sort((a, b) => (b.message.timestamp ?? 0) - (a.message.timestamp ?? 0));
+    return all.slice(0, limit).reverse();
   }
 
   // ----- 结构化元数据存储 -----
@@ -175,6 +200,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
       MemoryCapabilities.Metadata,
       MemoryCapabilities.ContentUpdate,
       MemoryCapabilities.MessageDelete,
+      MemoryCapabilities.RecentAcrossSessions,
     ],
     priority: -100,
   });
