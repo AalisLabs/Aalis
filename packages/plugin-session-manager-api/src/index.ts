@@ -237,3 +237,10 @@ registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionTre
     ? true
     : 'SessionManagerService.getTree()/getChildren() are required for capability "session-tree"';
 });
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'session-manager': SessionManagerService;
+  }
+}

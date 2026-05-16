@@ -215,3 +215,10 @@ export function resolveLLMModel(
   const all = ctx.getAllServices<LLMModel>('llm', requiredCaps);
   return all[0];
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    llm: LLMModel;
+  }
+}

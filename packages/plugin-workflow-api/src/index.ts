@@ -164,3 +164,10 @@ declare module '@aalis/core' {
     'workflow:node:done': [info: { runId: string; node: NodeRunInfo }];
   }
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    workflow: WorkflowService;
+  }
+}

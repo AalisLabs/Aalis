@@ -123,3 +123,10 @@ export function useDoctorService(ctx: Context): ScopedDoctorService {
     },
   };
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    doctor: DoctorService;
+  }
+}
