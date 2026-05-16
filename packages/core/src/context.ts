@@ -96,10 +96,6 @@ export class Context {
     return this._services;
   }
 
-  // ---- 内置服务 getter 已移除 ----
-  // 请使用 ctx.getService<ToolService>('tools') / ctx.getService<CommandService>('commands')，
-  // 类型分别来自 @aalis/plugin-tools-api / @aalis/plugin-commands-api。
-
   /**
    * 创建子上下文（通常为每个插件创建一个）
    */
@@ -258,23 +254,16 @@ export class Context {
     name: TName,
     requiredCapabilities?: CapabilityList<TName>,
   ): ServiceTypeMap[TName] | undefined;
-  getService<T = unknown, TName extends string = string>(
-    name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
-  ): T | undefined;
-  getService<T, TName extends string = string>(
-    name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
-  ): T | undefined {
-    const caps = requiredCapabilities as readonly string[] as string[] | undefined;
-    return this._services.get<T>(name, caps);
+  getService<T = unknown>(name: string, requiredCapabilities?: readonly string[]): T | undefined;
+  getService<T>(name: string, requiredCapabilities?: readonly string[]): T | undefined {
+    return this._services.get<T>(name, requiredCapabilities);
   }
 
   /**
    * 检查服务是否可用
    */
   hasService<TName extends string>(name: TName, requiredCapabilities?: CapabilityList<TName>): boolean {
-    return this._services.has(name, requiredCapabilities as readonly string[] as string[] | undefined);
+    return this._services.has(name, requiredCapabilities as readonly string[] | undefined);
   }
 
   /**
@@ -319,24 +308,24 @@ export class Context {
    *
    * @example
    * // 获取所有支持 vision 的 LLM
-   * const visionLLMs = ctx.getAllServices<LLMService>('llm', ['vision']);
+   * const visionLLMs = ctx.getAllServices('llm', ['vision']);
    *
    * // 获取所有 LLM 并聚合模型列表
-   * const allLLMs = ctx.getAllServices<LLMService>('llm');
+   * const allLLMs = ctx.getAllServices('llm');
    */
   getAllServices<TName extends keyof ServiceTypeMap>(
     name: TName,
     requiredCapabilities?: CapabilityList<TName>,
   ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; capabilities: string[]; label?: string }>;
-  getAllServices<T = unknown, TName extends string = string>(
-    name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
+  getAllServices<T = unknown>(
+    name: string,
+    requiredCapabilities?: readonly string[],
   ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }>;
-  getAllServices<T, TName extends string = string>(
-    name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
+  getAllServices<T>(
+    name: string,
+    requiredCapabilities?: readonly string[],
   ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
-    return this._services.getAll<T>(name, requiredCapabilities as readonly string[] as string[] | undefined);
+    return this._services.getAll<T>(name, requiredCapabilities);
   }
 
   /**
@@ -396,7 +385,7 @@ export class Context {
    * 多用于把"对服务的注册"行为缓冲到服务就绪后：
    *
    * @example
-   * ctx.whenService<ToolService>('tools', svc => {
+   * ctx.whenService('tools', svc => {
    *   const off = svc.register(myTool, ctx.id);
    *   return off; // 自动纳入 dispose 链
    * });
@@ -444,15 +433,6 @@ export class Context {
       }
     };
   }
-
-  // ---- 业务便捷方法已迁出 ----
-  //
-  // 以前用 Context.extend 把 ctx.registerTool / ctx.command 注入到 prototype；
-  // M2 后改为领域 helper：
-  //   - useToolService(ctx) / toolsWithGroups —— 见 @aalis/plugin-tools-api
-  //   - useCommandService(ctx) —— 见 @aalis/plugin-commands-api
-  //
-  // core 不再直接知晓 tools / commands 概念，也不再提供进程级方法注入机制。
 
   // ---- 中间件/钩子 ----
 
