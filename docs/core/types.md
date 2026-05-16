@@ -481,7 +481,6 @@ interface AalisEvents {
   'plugins:changed': [];
   'ready': [];
   'app:started': [];
-  'dispose': [];
   'restarting': [];
   'app:starting': [];
   'app:stopping': [];

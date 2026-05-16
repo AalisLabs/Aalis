@@ -506,10 +506,15 @@ export class Context {
   /**
    * 注册一个在本 Context dispose 时执行的清理回调。
    *
-   * 这是替代「监听 `plugin:unloaded` 事件以清理外部资源」的首选 API：
+   * 插件清理副作用的**唯一正确 API**：
    * - 直接挂在 `_disposables` 链上，保证逆序执行
-   * - 调用方无需关心自己 ctx 的 id 与事件比较
+   * - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload /
+   *   updatePluginConfig / softReload 级联 evict）
    * - 沙盒 / fork 子上下文同样适用
+   *
+   * ⚠． 不要用 `ctx.on('app:stopping', ...)` 做资源清理——那只在 app 全局停机
+   *    时触发一次，**不会**在插件 bounce / hot reload 时触发，会造成旧连接、
+   *    旧定时器泄漏。全局停机不需要特别处理——`onDispose` 也会被触发。
    *
    * @example
    * const conn = await connectExternal();
