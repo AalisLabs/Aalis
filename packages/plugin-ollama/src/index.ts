@@ -1,7 +1,6 @@
 import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
-import type { MediaProcessor, MediaService, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
 import type { Message } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
@@ -12,9 +11,6 @@ export const displayName = 'Ollama';
 export const subsystem = 'llm';
 export const provides = ['llm'];
 export const reusable = true;
-// Ollama 同时能充当 audio.transcribe 后端（调用 /v1/audio/transcriptions），
-// 这需要 media 服务才能注册 MediaProcessor；media 不存在时静默跳过。
-export const inject = { optional: ['media'] };
 
 export const configSchema: ConfigSchema = {
   baseUrl: {
@@ -70,22 +66,6 @@ export const configSchema: ConfigSchema = {
     default: true,
     description: '为支持思考的模型启用扩展思考（think 参数）。无 thinking 能力的模型该参数无效。',
   },
-  audioTranscribeModels: {
-    type: 'textarea',
-    label: 'ASR 模型列表',
-    default: '',
-    description:
-      '需要注册为 `audio.transcribe` MediaProcessor 的 Ollama 模型 id（逗号或换行分隔）。\n' +
-      '调用 Ollama OpenAI 兼容的 `/v1/audio/transcriptions`，仅 v0.20.0+ 的 audio-capable 模型可用（如 `gemma4:e2b` / `gemma4:e4b`）。\n' +
-      '不填则不注册任何 ASR processor。',
-  },
-  audioTranscribePriority: {
-    type: 'number',
-    label: 'ASR 优先级',
-    default: 30,
-    description:
-      '本插件注册的 ASR processor 优先级。\u5efa议低于 plugin-asr-whisper-cpp（80）以便 whisper 部署后能自动接管。',
-  },
 };
 
 export const defaultConfig = {
@@ -99,8 +79,6 @@ export const defaultConfig = {
   contextLength: 8192,
   keepAlive: '5m',
   thinking: true,
-  audioTranscribeModels: '',
-  audioTranscribePriority: 30,
 };
 
 // ===== 配置 =====
@@ -116,8 +94,6 @@ interface OllamaConfig {
   contextLength: number;
   keepAlive: string;
   thinking: boolean;
-  audioTranscribeModels: string[];
-  audioTranscribePriority: number;
 }
 
 // ===== Ollama API 消息格式 =====
@@ -127,10 +103,13 @@ interface OllamaMessage {
   content: string;
   thinking?: string;
   images?: string[];
+  /**
+   * 纯 base64 音频（不带 data: 前缀）。仅在“带音频”请求中使用：
+   * 这种请求会被本插件自动改路到 OpenAI 兼容的 /v1/chat/completions +
+   * input_audio 内容块（Ollama v0.20.0+）。原生 /api/chat 不支持音频。
+   */
+  audios?: string[];
   tool_calls?: OllamaToolCall[];
-  // 注意：Ollama 原生 /api/chat 没有 audios 字段（已查 ollama/ollama 官方 api.md）。
-  // gemma4:e[24]b 的音频能力通过 OpenAI 兼容的 /v1/audio/transcriptions 端点暴露，
-  // 由本插件在 apply() 中注册为独立的 audio.transcribe MediaProcessor，不走这条 chat 路径。
 }
 
 interface OllamaToolCall {
@@ -245,6 +224,10 @@ class OllamaClient {
   }
 
   async chat(model: string, request: ChatModelRequest, defaultThinking: boolean): Promise<ChatResponse> {
+    // 包含音频输入 → 改走 OpenAI 兼容的 /v1/chat/completions（/api/chat 不支持 audios）
+    if (request.messages.some(m => m.audios && m.audios.length > 0)) {
+      return this.chatOpenAIWithAudio(model, request);
+    }
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
@@ -332,6 +315,17 @@ class OllamaClient {
     request: ChatModelRequest,
     defaultThinking: boolean,
   ): AsyncIterable<ChatStreamChunk> {
+    // 包含音频输入 → 回退为非流式（OpenAI compat 路径不支持 SSE 交互）后以单 chunk 交付。
+    if (request.messages.some(m => m.audios && m.audios.length > 0)) {
+      const r = await this.chatOpenAIWithAudio(model, request);
+      yield {
+        contentDelta: r.content ?? '',
+        reasoningDelta: r.reasoningContent ?? '',
+        usage: r.usage,
+        done: true,
+      };
+      return;
+    }
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
@@ -636,7 +630,11 @@ class OllamaClient {
       if (valid.length > 0) ollamaMsg.images = valid;
     }
 
-    // 音频不通过 chat：见上方 OllamaMessage 注释，audios 由 audio.transcribe processor 处理。
+    // 音频：Ollama 原生 /api/chat 不支持 audios，有音频时会在 chat() 中
+    // 改走 OpenAI 兼容的 /v1/chat/completions 路径。这里只透传字段。
+    if (msg.audios && msg.audios.length > 0 && msg.role === 'user') {
+      ollamaMsg.audios = msg.audios.map(stripAudioDataPrefix);
+    }
 
     // 传递工具调用（assistant 消息中的）
     if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -663,39 +661,107 @@ class OllamaClient {
   }
 
   /**
-   * 调用 Ollama 的 OpenAI 兼容音频转写端点 `/v1/audio/transcriptions`。
-   * 仅在 Ollama >= 0.20.0 且模型有 audio encoder（gemma4:e[24]b 等）时可用。
+   * 调用 Ollama 的 OpenAI 兼容 /v1/chat/completions 端点。当 messages 包含
+   * audios 字段时，/api/chat 原生路径不支持，必须走这里。
+   * 文本与工具调用等其它能力仍由 chat() 走原生路径。
    */
-  async transcribeAudio(
-    model: string,
-    file: { data: Uint8Array; filename: string; mimeType?: string },
-    language?: string,
-  ): Promise<{ text: string; segments?: Array<{ start: number; end: number; text: string }> }> {
-    const fd = new FormData();
-    const blob = new Blob([file.data as unknown as ArrayBuffer], {
-      type: file.mimeType ?? 'application/octet-stream',
-    });
-    fd.append('file', blob, file.filename);
-    fd.append('model', model);
-    if (language) fd.append('language', language);
-    fd.append('response_format', 'json');
+  async chatOpenAIWithAudio(model: string, request: ChatModelRequest): Promise<ChatResponse> {
+    // 将 Aalis Message 转为 OpenAI multimodal content blocks
+    const oaiMessages = await Promise.all(
+      request.messages.map(async m => {
+        const role = m.role === 'tool' ? 'tool' : m.role;
+        const blocks: Array<Record<string, unknown>> = [];
+        if (m.content) blocks.push({ type: 'text', text: m.content });
+        if (m.images && m.images.length > 0 && m.role === 'user') {
+          for (const img of m.images) {
+            const url = await this.resolveImage(img);
+            if (url)
+              blocks.push({
+                type: 'image_url',
+                image_url: { url: url.startsWith('http') ? url : `data:image/png;base64,${url}` },
+              });
+          }
+        }
+        if (m.audios && m.audios.length > 0 && m.role === 'user') {
+          for (const a of m.audios) {
+            const { data, format } = decodeAudioForOpenAI(a);
+            blocks.push({ type: 'input_audio', input_audio: { data, format } });
+          }
+        }
+        // 纯文本 → string；有多模态 → array
+        const content = blocks.length === 1 && blocks[0].type === 'text' ? blocks[0].text : blocks;
+        return { role, content };
+      }),
+    );
+
+    const body: Record<string, unknown> = {
+      model,
+      messages: oaiMessages,
+      stream: false,
+      max_tokens: request.maxTokens ?? this.maxTokens,
+      temperature: request.temperature ?? this.temperature,
+    };
+
+    this.logger.debug(`请求 Ollama (OpenAI compat, audio): ${model}, ${oaiMessages.length} 条消息`);
 
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    const resp = await fetch(`${this.baseUrl}/v1/audio/transcriptions`, {
+    if (request.signal) signals.push(request.signal);
+
+    const resp = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
-      body: fd,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
       signal: AbortSignal.any(signals),
     });
     if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      throw new Error(`Ollama /v1/audio/transcriptions 失败 ${resp.status}: ${text.slice(0, 300)}`);
+      const errText = await resp.text();
+      throw new Error(`Ollama /v1/chat/completions 错误 (${resp.status}): ${errText.slice(0, 400)}`);
     }
     const data = (await resp.json()) as {
-      text?: string;
-      segments?: Array<{ start: number; end: number; text: string }>;
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
-    return { text: data.text ?? '', segments: data.segments };
+    const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+    const result: ChatResponse = { content: text || null, reasoningContent: null };
+    if (data.usage) {
+      result.usage = {
+        promptTokens: data.usage.prompt_tokens ?? 0,
+        completionTokens: data.usage.completion_tokens ?? 0,
+        totalTokens: data.usage.total_tokens ?? 0,
+      };
+    }
+    return result;
   }
+}
+
+/** 去掉 base64 音频的 data: 前缀，返回纯 payload。 */
+function stripAudioDataPrefix(s: string): string {
+  const m = s.match(/^data:[^;]+;base64,(.+)$/);
+  return m ? m[1] : s;
+}
+
+/**
+ * 将 Aalis 传过来的 audio payload（可能带 data: 前缀也可能不带）解析为
+ * OpenAI input_audio 需要的 `{ data, format }`。format 推断优先级：
+ * data URL 的 mime 后缀 → 默认 wav。
+ */
+function decodeAudioForOpenAI(payload: string): { data: string; format: string } {
+  const m = payload.match(/^data:audio\/([^;]+);base64,(.+)$/);
+  if (m) {
+    const fmt = m[1].toLowerCase();
+    const norm =
+      fmt === 'mpeg' || fmt === 'mp3'
+        ? 'mp3'
+        : fmt === 'x-wav' || fmt === 'wave' || fmt === 'wav'
+          ? 'wav'
+          : fmt === 'ogg' || fmt === 'oga' || fmt === 'opus'
+            ? 'ogg'
+            : fmt === 'm4a' || fmt === 'mp4' || fmt === 'aac'
+              ? 'm4a'
+              : 'wav';
+    return { data: m[2], format: norm };
+  }
+  return { data: stripAudioDataPrefix(payload), format: 'wav' };
 }
 
 function safeParseJSON(str: string): Record<string, unknown> {
@@ -837,8 +903,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     contextLength: (config.contextLength as number) ?? 8192,
     keepAlive: (config.keepAlive as string) ?? '5m',
     thinking: config.thinking !== false,
-    audioTranscribeModels: parseCustomModels(config.audioTranscribeModels),
-    audioTranscribePriority: (config.audioTranscribePriority as number) ?? 30,
   };
 
   const client = new OllamaClient(ollamaConfig, ctx.logger);
@@ -883,83 +947,4 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry`);
-
-  // === 注册 audio.transcribe MediaProcessor ===
-  // 对每个声明为 ASR 能力的模型生成一个 processor，调用
-  // Ollama OpenAI 兼容的 /v1/audio/transcriptions。
-  if (ollamaConfig.audioTranscribeModels.length > 0) {
-    const media = ctx.getService<MediaService>('media');
-    if (!media) {
-      ctx.logger.warn(
-        `配置了 audioTranscribeModels=${ollamaConfig.audioTranscribeModels.join(',')} 但 media 服务不可用，跳过注册。`,
-      );
-    } else {
-      for (const modelId of ollamaConfig.audioTranscribeModels) {
-        if (!new Set(allModelIds).has(modelId)) {
-          ctx.logger.warn(
-            `audioTranscribeModels 中的 "${modelId}" 未在 Ollama 远端可见，仍会注册 processor（调用时如果不存在会报错）。`,
-          );
-        }
-        const processor: MediaProcessor = {
-          name: `asr-ollama:${modelId}`,
-          capabilities: ['audio.transcribe'],
-          priority: ollamaConfig.audioTranscribePriority,
-          async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-            const file = await materializeAudioForOllama(input.attachment);
-            const r = await client.transcribeAudio(modelId, file, input.language);
-            const segments = input.withTimestamps ? r.segments : undefined;
-            return {
-              text: r.text,
-              segments,
-              meta: { processor: `asr-ollama:${modelId}`, model: modelId },
-            };
-          },
-        };
-        const dispose = media.registerProcessor(processor);
-        ctx.on('dispose', () => dispose());
-        ctx.logger.info(
-          `Ollama ASR 已注册 (model=${modelId}, prio=${ollamaConfig.audioTranscribePriority})，走 /v1/audio/transcriptions`,
-        );
-      }
-    }
-  }
-}
-
-/**
- * 将 attachment.data 解析为 Ollama /v1/audio/transcriptions multipart 需要的 bytes。
- * 支持 data: URL、http(s) URL、file:// URI、本地路径。
- */
-async function materializeAudioForOllama(att: {
-  data: string;
-  mimeType?: string;
-  name?: string;
-}): Promise<{ data: Uint8Array; filename: string; mimeType?: string }> {
-  const data = att.data;
-  // data URL
-  const m = data.match(/^data:([^;]+);base64,(.+)$/);
-  if (m) {
-    const mime = m[1];
-    const buf = Buffer.from(m[2], 'base64');
-    const ext = mime.split('/')[1]?.split(';')[0] ?? 'bin';
-    return { data: new Uint8Array(buf), filename: att.name ?? `audio.${ext}`, mimeType: mime };
-  }
-  // http(s)
-  if (/^https?:\/\//i.test(data)) {
-    const resp = await fetch(data, { signal: AbortSignal.timeout(30_000) });
-    if (!resp.ok) throw new Error(`下载音频失败 ${resp.status}: ${data}`);
-    const ab = await resp.arrayBuffer();
-    const ext = data.split('.').pop()?.split('?')[0] ?? 'bin';
-    return {
-      data: new Uint8Array(ab),
-      filename: att.name ?? `audio.${ext}`,
-      mimeType: att.mimeType ?? resp.headers.get('content-type') ?? undefined,
-    };
-  }
-  // file:// or local path
-  const { readFile } = await import('node:fs/promises');
-  const { resolve } = await import('node:path');
-  const path = data.startsWith('file://') ? data.slice('file://'.length) : resolve(process.cwd(), data);
-  const buf = await readFile(path);
-  const ext = path.split('.').pop() ?? 'bin';
-  return { data: new Uint8Array(buf), filename: att.name ?? `audio.${ext}`, mimeType: att.mimeType };
 }
