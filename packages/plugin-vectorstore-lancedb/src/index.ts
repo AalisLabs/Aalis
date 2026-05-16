@@ -165,7 +165,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.provide('vectorstore', store, { priority: 10 });
 
-  ctx.on('dispose', async () => {
+  ctx.onDispose(async () => {
     await store.close();
   });
 }

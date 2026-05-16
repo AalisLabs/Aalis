@@ -739,7 +739,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 清理 ──
 
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     for (const rt of runtimes.values()) {
       if (rt.timer) clearInterval(rt.timer);
     }

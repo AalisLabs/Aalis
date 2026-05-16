@@ -214,7 +214,7 @@ class CliTui {
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
 
-    this.ctx.on('dispose', () => this.stop());
+    this.ctx.onDispose(() => this.stop());
     this.render();
   }
 

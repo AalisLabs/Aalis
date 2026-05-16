@@ -207,7 +207,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }, 60_000);
 
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     clearInterval(cleanupTimer);
     fileStore.clear();
   });

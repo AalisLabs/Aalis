@@ -615,7 +615,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   );
 
   // 清理
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     ctx.logger.info('会话摘要插件已卸载');
   });
 }

@@ -156,6 +156,6 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     return;
   }
   const dispose = media.registerProcessor(processor);
-  ctx.on('dispose', () => dispose());
+  ctx.onDispose(() => dispose());
   logger.info(`Whisper.cpp 转写已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
 }
