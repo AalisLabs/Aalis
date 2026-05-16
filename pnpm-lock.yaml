@@ -960,6 +960,9 @@ importers:
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-media-api':
+        specifier: workspace:*
+        version: link:../plugin-media-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
