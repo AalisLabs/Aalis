@@ -46,3 +46,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
   ctx.logger.info('session-channel 已启动');
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'session-channel': import('./types.js').SessionChannelService;
+  }
+}

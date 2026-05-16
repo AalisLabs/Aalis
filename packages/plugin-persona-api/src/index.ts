@@ -1,6 +1,9 @@
 // ----- 人格服务接口 -----
 // 由 @aalis/plugin-persona 拥有并导出。消费者从本包 import type。
 
+// 触发 @aalis/core 模块解析，使文末 declare module 增强生效
+import type {} from '@aalis/core';
+
 /** 输出格式中单个字段的定义 */
 export interface OutputFormatField {
   /** 字段用途描述（写入 system prompt 供 LLM 理解） */
@@ -45,4 +48,11 @@ export interface PersonaService {
   getNickNames?(): string[];
   /** 是否启用了时间注入（供其他插件判断是否需要注册时间相关工具） */
   isTimeInjectionEnabled?(): boolean;
+}
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    persona: PersonaService;
+  }
 }

@@ -159,3 +159,10 @@ declare module '@aalis/core' {
     commandOverrides?: Record<string, { authority?: number; safety?: string }>;
   }
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    authority: AuthorityService;
+  }
+}

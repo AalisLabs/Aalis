@@ -32,6 +32,7 @@
     "packages/plugin-webui-server/src/routes/files.ts": ["types"],
     "packages/plugin-checkpoint/src/service.ts": ["exports"],
     "packages/core/src/types/capabilities.ts": ["types"],
+    "packages/core/src/types/services.ts": ["types"],
     "packages/core/src/types/index.ts": ["types"],
     "src/runtime/console-sink.ts": ["types"],
     "src/runtime/terminal.ts": ["exports"]

@@ -546,3 +546,10 @@ function resolveConfig(raw: Record<string, unknown>): SkillsConfig {
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_').slice(0, 100);
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    skills: SkillsService;
+  }
+}

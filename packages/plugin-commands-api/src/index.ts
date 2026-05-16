@@ -251,3 +251,10 @@ function makeDeferredBuilder(
   };
   return self;
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    commands: CommandService;
+  }
+}
