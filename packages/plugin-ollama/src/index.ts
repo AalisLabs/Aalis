@@ -576,8 +576,19 @@ class OllamaClient {
       }
     }
 
-    // 其他情况（纯 base64 或文件路径）直接返回
-    return data;
+    // 其他情况：可能是本地文件路径，或者已经是裸 base64。
+    // 先按"文件存在"探测一下——存在则读盘转 base64，避免把诸如
+    // `data/images/onebot_xxx/abc.png` 这种相对路径当作 base64 送给 Ollama
+    // 触发 `illegal base64 data` 错误。读盘失败则按裸 base64 透传。
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const { resolve } = await import('node:path');
+      const path = data.startsWith('file://') ? data.slice('file://'.length) : resolve(process.cwd(), data);
+      const buf = await readFile(path);
+      return buf.toString('base64');
+    } catch {
+      return data;
+    }
   }
 
   /**
