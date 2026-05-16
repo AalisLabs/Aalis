@@ -14,7 +14,7 @@ import type {
   TranscribeResult,
 } from '@aalis/plugin-media-api';
 import type { Message } from '@aalis/plugin-message-api';
-import { materializeAttachment } from './ffmpeg.js';
+import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 
 const DEFAULT_VISION_PROMPT =
   '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如有）、表情包含义等。用中文回答，控制在100字以内。';
@@ -64,32 +64,38 @@ function detectAudioFormat(buf: Buffer): string {
 /**
  * 把 audio attachment.data 解析为 base64（去掉 data: 前缀），供 LLM provider 直接使用。
  *
- * 会做一次格式校验：QQ 原生 SILK 格式没有任何主流多模态 LLM / Whisper 能直接解码，
- * 这里命中即抛错，让上游写入清晰的 warn（典型成因：OneBot 实现端 `get_record` 没真正
- * 执行 silk→mp3 转码，只是改了扩展名）。
+ * 处理策略：
+ * 1. 物化到本地文件
+ * 2. 探测 magic header；mp3/wav/ogg/m4a/flac 等主流格式直接透传
+ * 3. 其它格式（含 OneBot/NapCat 常见的 amr 与 raw audio）一律用 ffmpeg
+ *    转码为 16kHz mono WAV，这是 Gemma 3n 等多模态 LLM 官方推荐的格式
+ * 4. ffmpeg 转码失败（典型如 SILK——ffmpeg 没有 silk 解码器）才抛错
  */
 async function audioToBase64(data: string): Promise<string> {
-  let buf: Buffer;
-  const m = data.match(/^data:[^;]+;base64,(.+)$/);
-  if (m) {
-    buf = Buffer.from(m[1], 'base64');
-  } else {
-    const mat = await materializeAttachment(data);
-    if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
-    try {
-      const { readFile } = await import('node:fs/promises');
-      buf = await readFile(mat.path);
-    } finally {
-      await mat.cleanup();
+  const mat = await materializeAttachment(data);
+  if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const buf = await readFile(mat.path);
+    const fmt = detectAudioFormat(buf);
+
+    // 主流格式：多模态 LLM 与 Whisper 都能直接解码，无需转码
+    if (fmt === 'mp3' || fmt === 'wav' || fmt === 'ogg' || fmt === 'm4a' || fmt === 'flac') {
+      return buf.toString('base64');
     }
+
+    // 其它格式（amr / silk / unknown / 裸 PCM 等）一律走 ffmpeg 转 WAV
+    const wav = await transcodeAudioToWav(mat.path);
+    if (!wav) {
+      throw new Error(
+        `音频格式为 ${fmt}，ffmpeg 无法转码为 WAV（可能是 SILK 或加密格式）；` +
+          '请检查 OneBot 实现端 get_record 是否真正执行了 silk→mp3 转码',
+      );
+    }
+    return wav;
+  } finally {
+    await mat.cleanup();
   }
-  const fmt = detectAudioFormat(buf);
-  if (fmt === 'silk' || fmt === 'amr') {
-    throw new Error(
-      `音频格式为 ${fmt}，主流多模态 LLM/Whisper 均无法解码；请确认 OneBot 实现端 get_record 已正确转码到 mp3/wav`,
-    );
-  }
-  return buf.toString('base64');
 }
 
 /** 把单个 LLMModelEntry 包装成 MediaProcessor。 */
