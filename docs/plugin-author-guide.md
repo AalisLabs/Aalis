@@ -90,6 +90,9 @@ inject: {
 - 关机时下游可能比你先 dispose（虽然有 reactive listener 兜底，但延迟一拍）
 - 服务自动恢复时找不到你
 
+> dev 模式下 core 会在 apply 完成后扫描并 warn：「插件 X 注册了服务 [Y] 但未在
+> module.provides 中声明」，提示你补全 `provides` 列表。
+
 **除非有特殊理由，`provides` 应该和 `ctx.provide()` 完全一致**。
 
 ---
@@ -126,15 +129,35 @@ export async function apply(ctx) {
 ServiceContainer **允许**同一 contextId 下多次注册（容器层无校验），但下游
 按 `contextId` 路由（如按 entryId 直查 LLMModel：`resolveLLMModel(ctx, { provider, model })`）
 **只会命中第一个**。第二个 entry 既不会被路由到，也不会被 cap-filter 选中。
-dev 模式下 `ctx.provide` 会 warn 一次提醒你。
+`ctx.provide` 会 warn 提醒你（详见 `validateProvide`）。
 
-正确做法：用 `reusable: true` + 配置后缀注册多份，让两个 entry 拥有不同 contextId：
+正确做法二选一：
+
+**方案 A：`reusable: true` + 配置后缀**——适合「多套獨立配置」（如多套 API key），
+每份配置一个独立实例：
 
 ```yaml
 plugins:
   '@aalis/plugin-foo:chat': { ... }
   '@aalis/plugin-foo:vision': { ... }
 ```
+
+**方案 B：单实例 apply 内传 `options.entryId` 拆子粒度**——适合「单插件实例、
+但对外提供多个 entry」（如 per-model LLM、per-pool embedding）：
+
+```typescript
+export async function apply(ctx, cfg) {
+  for (const model of cfg.models) {
+    ctx.provide('llm', new LLMBackend(model), {
+      capabilities: model.capabilities,
+      entryId: `${ctx.id}/${model.id}`, // 显式拆子粒度，抽抽 warn
+    });
+  }
+}
+```
+
+下游可用 `ctx.getServiceByContextId('llm', '@aalis/plugin-foo:main/gpt-4o')` 精确寻址。
+这是 plugin-openai / plugin-deepseek 等多型号提供者的实际写法。
 
 ---
 
@@ -245,8 +268,7 @@ it('should activate when its dependencies are present', async () => {
 - `ctx.on(event, ...)` 监听事件
 - `ctx.middleware(hook, ...)` 注册中间件
 - `ctx.whenService(name, svc => …)` **跨插件消费服务的首选** —— 自动响应 provider 上下/下线
-- `ctx.registerTool(...)` 注册 AI 工具（通过 plugin-tools-api）
-- `useXxxService(ctx).register(...)` 通过 -api 包注册子能力
+- `useToolService(ctx).register(...)` / `useCommandService(ctx).command(...)` 通过 -api 包注册子能力
 - `ctx.onDispose(...)` 清理外部资源
 - 启动后台 worker / 连接外部服务
 
