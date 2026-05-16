@@ -1,7 +1,7 @@
 // ============================================================
 // @aalis/plugin-asr-openai — OpenAI Whisper API 转写后端
 //
-// 注册一个 audio.transcribe MediaProcessor，调用 OpenAI 兼容 /audio/transcriptions。
+// 注册一个 audio MediaProcessor，调用 OpenAI 兼容 /audio/transcriptions。
 // 兼容 OpenAI、Groq、本地 ollama-asr 网关等所有 OpenAI 风格协议。
 // ============================================================
 
@@ -76,7 +76,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   const processor: MediaProcessor = {
     name: `asr-openai:${cfg.model}`,
-    capabilities: ['audio.transcribe'],
+    capabilities: ['audio'],
     priority: cfg.priority,
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
       const { blob, filename } = await attachmentToBlob(input.attachment.data);
