@@ -1001,3 +1001,10 @@ function selectionHint(): string {
       return '按住 Shift（多数终端）或 Option（macOS）拖拽即可绕过鼠标上报';
   }
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    cli: import('./types.js').CLIService;
+  }
+}

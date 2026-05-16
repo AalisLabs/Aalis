@@ -433,3 +433,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'web-search': import('./types.js').WebSearchService;
+  }
+}

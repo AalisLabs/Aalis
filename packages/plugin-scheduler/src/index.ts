@@ -769,3 +769,10 @@ function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
     persistPath: (raw.persistPath as string) ?? 'data/scheduler-jobs.json',
   };
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    scheduler: SchedulerService;
+  }
+}

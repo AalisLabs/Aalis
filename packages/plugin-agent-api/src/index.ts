@@ -153,3 +153,10 @@ export function useAgent(ctx: Context): ScopedAgentService {
     },
   };
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    agent: AgentService;
+  }
+}
