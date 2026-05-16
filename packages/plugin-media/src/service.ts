@@ -36,7 +36,17 @@ export interface MediaConfigResolved {
    * - LLM-as-audio backend：全能 prompt 驱动，语音输原文、音乐/环境输描述。
    * - Whisper 类 ASR：仅转写语音，非语音输出为空（service 会补充占位描述）。
    */
-  audio: { mode: 'enabled' | 'disabled'; prefer?: string; language?: string };
+  audio: {
+    mode: 'enabled' | 'disabled';
+    prefer?: string;
+    language?: string;
+    /** 默认最大 output tokens。e4b thinking enabled 时全能 prompt 需要 ≥1024 */
+    maxTokens: number;
+    /** 是否启用 thinking（识别质量 ↑，但 token 成本 ×5-8）。默认 true */
+    think: boolean;
+    /** 自定义 prompt。留空使用 LLM adapter 内置的全能描述 prompt */
+    prompt?: string;
+  };
   video: { mode: 'frames+asr' | 'frames-only' | 'disabled'; maxFrames: number };
   document: { extractImages: boolean };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
@@ -331,6 +341,11 @@ export class MediaServiceImpl implements MediaService {
     const processors = scanLLMProcessors(this.ctx, {
       prompt: this.cfg.vision.prompt,
       maxTokens: this.cfg.vision.maxTokens,
+      audio: {
+        prompt: this.cfg.audio.prompt,
+        maxTokens: this.cfg.audio.maxTokens,
+        think: this.cfg.audio.think,
+      },
     });
     this.llmCache = { processors, signature: sig };
     return processors;

@@ -703,6 +703,13 @@ class OllamaClient {
       max_tokens: request.maxTokens ?? this.maxTokens,
       temperature: request.temperature ?? this.temperature,
     };
+    // Ollama 0.20+ thinking 控制：OpenAI 兼容路径只认 reasoning_effort，
+    // 不认 /api/chat 的 think 字段。think=false → reasoning_effort: "none"
+    // 节省 ~5-8x completion tokens（实测 935 → 155）。
+    // 详见 /memories/repo/aalis-ollama-gemma4-audio.md
+    if (request.think === false) {
+      body.reasoning_effort = 'none';
+    }
 
     this.logger.debug(`请求 Ollama (OpenAI compat, audio): ${model}, ${oaiMessages.length} 条消息`);
 

@@ -22,16 +22,29 @@ const DEFAULT_VISION_PROMPT =
 const DEFAULT_VISION_BATCH_PROMPT =
   '以下是一组（按时间或上下文顺序排列的）图片。请综合所有图片做一段统一描述，重点说明动态变化、关键元素和含义。用中文回答，控制在150字以内。';
 
-// 音频 prompt：极简单句。实证 gemma4:e4b 这类 8B 小模型遇到多段落复杂
-// 指令容易直接输出空字符串或 "嗯" 一字（参见 /memories/repo/aalis-ollama-
-// gemma4-audio.md）。保持单句、目标明确。
-const DEFAULT_AUDIO_PROMPT = '请把这段音频转写为中文文本，仅输出文本本身。';
+// 全能音频 prompt：语音转写为原文 + 音乐/环境音描述。
+// 注意：e4b 这类小模型在 thinking enabled 时此类开放式 prompt 会消耗
+// ~600-900 completion token；要求 maxTokens 至少 1024，否则会被截断为空。
+// 详见 /memories/repo/aalis-ollama-gemma4-audio.md。
+const DEFAULT_AUDIO_PROMPT =
+  '请用中文描述这段音频的内容：' +
+  '若含语音/对话则转写为原文（中文用中文写，英文保留英文）；' +
+  '若含音乐则描述风格、乐器、情绪及可识别歌词；' +
+  '若是环境音/音效则描述场景；' +
+  '仅输出内容本身，不要 markdown 标记。';
 
 interface LlmProcessorOptions {
   /** 自定义 prompt 覆盖默认值 */
   prompt?: string;
   /** 最大输出 tokens */
   maxTokens?: number;
+  /**
+   * 是否启用 thinking（思考链）。
+   * - true（默认）：模型先内部推理后输出，质量更好但 token 消耗 ~5-8 倍
+   * - false：直接输出，token 省但全能 prompt 下偶发 echo prompt
+   * 对 Ollama OpenAI 兼容路径会翻译为 `reasoning_effort: "none"`。
+   */
+  think?: boolean;
 }
 
 /**
@@ -114,7 +127,11 @@ function wrapLLMAsProcessor(
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
       const hintBlock = input.hint ? `\n\n额外要求：${input.hint}` : '';
       const prompt = `${base}${ctxBlock}${hintBlock}`;
-      const maxTokens = input.maxTokens ?? opts.maxTokens ?? 300;
+      // audio 默认更大：e4b thinking enabled 时全能 prompt 消耗 ~600-900 token
+      const defaultMax = cap === 'audio' ? 1024 : 300;
+      const maxTokens = input.maxTokens ?? opts.maxTokens ?? defaultMax;
+      // audio 默认保留 thinking（识别质量更高）；其他 cap 维持原 false 行为。
+      const think = opts.think ?? cap === 'audio';
 
       // image / video.passthrough 走 images[] 字段
       // 视频帧已被预处理拆为图片再调用本方法。
@@ -135,8 +152,10 @@ function wrapLLMAsProcessor(
         const sizesKB = audios.map(a => Math.round((a.length * 3) / 4 / 1024));
         const messages: Message[] = [{ role: 'user', content: prompt, audios }];
         const t0 = Date.now();
-        _ctx.logger.info(`[audio.describe] 调用 ${llm.id}，${audios.length} 段音频 (${sizesKB.join('/')}KB)`);
-        const resp = await llm.chat({ messages, maxTokens, think: false });
+        _ctx.logger.info(
+          `[audio.describe] 调用 ${llm.id}，${audios.length} 段音频 (${sizesKB.join('/')}KB), maxTokens=${maxTokens}, think=${think}`,
+        );
+        const resp = await llm.chat({ messages, maxTokens, think });
         const rawLen = resp.content?.length ?? 0;
         const text = resp.content?.trim() ?? '';
         _ctx.logger.info(
@@ -162,9 +181,13 @@ function wrapLLMAsProcessor(
       const sizeKB = Math.round((b64.length * 3) / 4 / 1024);
       const audios = [b64];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
+      const maxTokens = opts.maxTokens ?? 1024;
+      const think = opts.think ?? true;
       const t0 = Date.now();
-      _ctx.logger.info(`[audio.transcribe] 调用 ${llm.id}，音频 ${sizeKB}KB, prompt ${prompt.length}字`);
-      const resp = await llm.chat({ messages, maxTokens: opts.maxTokens ?? 512, think: false });
+      _ctx.logger.info(
+        `[audio.transcribe] 调用 ${llm.id}，音频 ${sizeKB}KB, prompt ${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
+      );
+      const resp = await llm.chat({ messages, maxTokens, think });
       const rawLen = resp.content?.length ?? 0;
       const text = (resp.content ?? '').trim();
       _ctx.logger.info(
@@ -206,21 +229,29 @@ function defaultPromptFor(cap: MediaCapability, count: number): string {
 /**
  * 扫描当前 ctx 中所有 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
  */
-export function scanLLMProcessors(ctx: Context, opts: LlmProcessorOptions = {}): MediaProcessor[] {
+/**
+ * 扫描当前 ctx 中所有 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
+ * @param opts 默认应用于所有 cap 的参数，以及 per-cap 覆盖（audio 可独立配 prompt/maxTokens/think）
+ */
+export function scanLLMProcessors(
+  ctx: Context,
+  opts: LlmProcessorOptions & { audio?: LlmProcessorOptions } = {},
+): MediaProcessor[] {
+  const { audio: audioOverride, ...defaults } = opts;
   const processors: MediaProcessor[] = [];
   const all = ctx.getAllServices<LLMModel>('llm');
   for (const entry of all) {
     const caps = entry.capabilities;
     if (caps.includes(LLMCapabilities.Vision)) {
-      processors.push(wrapLLMAsProcessor(entry, 'vision', opts));
-      processors.push(wrapLLMAsProcessor(entry, 'document.image', opts));
+      processors.push(wrapLLMAsProcessor(entry, 'vision', defaults));
+      processors.push(wrapLLMAsProcessor(entry, 'document.image', defaults));
     }
     if (caps.includes(LLMCapabilities.Audio)) {
       // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
-      processors.push(wrapLLMAsProcessor(entry, 'audio', opts));
+      processors.push(wrapLLMAsProcessor(entry, 'audio', { ...defaults, ...audioOverride }));
     }
     if (caps.includes(LLMCapabilities.Video)) {
-      processors.push(wrapLLMAsProcessor(entry, 'video.passthrough', opts));
+      processors.push(wrapLLMAsProcessor(entry, 'video.passthrough', defaults));
     }
   }
   return processors;
