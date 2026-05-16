@@ -72,6 +72,25 @@ export const configSchema: ConfigSchema = {
         default: '',
         description: '仅对 Whisper 类 ASR 生效；LLM-as-audio 会在 prompt 里作为提示。',
       },
+      maxTokens: {
+        type: 'number',
+        label: '最大输出 token',
+        default: 1024,
+        description: 'LLM-as-audio 专用。e4b 等小模型在 thinking enabled 下需 ≥1024，否则空响应。',
+      },
+      think: {
+        type: 'boolean',
+        label: '启用思考链 (thinking)',
+        default: true,
+        description:
+          'LLM-as-audio 专用。启用后识别质量更高但 token 成本 ×5-8；关闭则会传 reasoning_effort=none 给 Ollama。',
+      },
+      prompt: {
+        type: 'textarea',
+        label: '自定义 prompt',
+        default: '',
+        description: 'LLM-as-audio 专用。留空使用内置全能描述 prompt。',
+      },
     },
   },
   video: {
@@ -121,7 +140,7 @@ export const configSchema: ConfigSchema = {
 
 export const defaultConfig = {
   vision: { mode: 'describe', maxTokens: 300, prompt: '' },
-  audio: { mode: 'enabled', language: '' },
+  audio: { mode: 'enabled', language: '', maxTokens: 1024, think: true, prompt: '' },
   video: { mode: 'frames+asr', maxFrames: 5 },
   document: { extractImages: false },
   contextHistory: { enabled: true, maxMessages: 4 },
@@ -143,6 +162,9 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'disabled',
       prefer: (audio.prefer as string) || undefined,
       language: (audio.language as string) || undefined,
+      maxTokens: (audio.maxTokens as number) ?? 1024,
+      think: audio.think !== false,
+      prompt: (audio.prompt as string) || undefined,
     },
     video: {
       mode: ((video.mode as string) ?? 'frames+asr') as MediaConfigResolved['video']['mode'],
