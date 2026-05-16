@@ -240,3 +240,10 @@ export async function callPlatformAction(
   }
   return adapter.callAction(sessionId, action, params);
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    platform: PlatformAdapter;
+  }
+}

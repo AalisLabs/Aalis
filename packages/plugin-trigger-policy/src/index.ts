@@ -184,3 +184,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 }
 
 export type { TriggerPolicyConfig };
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'trigger-policy': import('./types.js').TriggerPolicyService;
+  }
+}

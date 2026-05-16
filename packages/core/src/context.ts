@@ -5,7 +5,7 @@ import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
 import { emitServiceRegistered, validateProvide } from './service-helpers.js';
-import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn } from './types/index.js';
+import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -248,7 +248,20 @@ export class Context {
    *
    * `requiredCapabilities` 按服务名获得强类型约束（同 `provide()`）。
    * 如果当前没有任何匹配的 entry，返回 `undefined`（保留 null-check 语义）。
+   *
+   * 重载行为：
+   * - 传入字面量服务名（如 `'memory'`）→ 命中 `ServiceTypeMap` 自动推断为 `MemoryService | undefined`；
+   * - 传入字符串变量或未登记服务名 → 退回 `<T = unknown>`，调用方需自行 narrow，
+   *   仍可显式传 `<T>` 兼容旧写法。
    */
+  getService<TName extends keyof ServiceTypeMap>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): ServiceTypeMap[TName] | undefined;
+  getService<T = unknown, TName extends string = string>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): T | undefined;
   getService<T, TName extends string = string>(
     name: TName,
     requiredCapabilities?: CapabilityList<TName>,
@@ -272,7 +285,15 @@ export class Context {
    *   → `getServiceByContextId('llm', sessionData.modelContextId)`
    *
    * 不走 capability filter、不走 preference——纯粹按 ID 寻址。未找到返回 undefined。
+   *
+   * 重载行为同 `getService`：传入字面量服务名时自动推断为 `ServiceTypeMap[TName]`，
+   * 否则退回 `<T = unknown>`。
    */
+  getServiceByContextId<TName extends keyof ServiceTypeMap>(
+    name: TName,
+    contextId: string,
+  ): ServiceTypeMap[TName] | undefined;
+  getServiceByContextId<T = unknown>(name: string, contextId: string): T | undefined;
   getServiceByContextId<T>(name: string, contextId: string): T | undefined {
     return this._services.getByContextId<T>(name, contextId);
   }
@@ -303,6 +324,14 @@ export class Context {
    * // 获取所有 LLM 并聚合模型列表
    * const allLLMs = ctx.getAllServices<LLMService>('llm');
    */
+  getAllServices<TName extends keyof ServiceTypeMap>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; capabilities: string[]; label?: string }>;
+  getAllServices<T = unknown, TName extends string = string>(
+    name: TName,
+    requiredCapabilities?: CapabilityList<TName>,
+  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }>;
   getAllServices<T, TName extends string = string>(
     name: TName,
     requiredCapabilities?: CapabilityList<TName>,
@@ -372,6 +401,11 @@ export class Context {
    *   return off; // 自动纳入 dispose 链
    * });
    */
+  whenService<TName extends keyof ServiceTypeMap>(
+    name: TName,
+    cb: (svc: ServiceTypeMap[TName]) => undefined | (() => void),
+  ): () => void;
+  whenService<T = unknown>(name: string, cb: (svc: T) => undefined | (() => void)): () => void;
   whenService<T>(name: string, cb: (svc: T) => undefined | (() => void)): () => void {
     let cleanup: (() => void) | undefined;
     let invoked = false;

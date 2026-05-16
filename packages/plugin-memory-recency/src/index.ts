@@ -410,3 +410,10 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 export type { RecentEntry } from './buffer.js';
 export { RecencyBuffer } from './buffer.js';
 export type { QueryOptions, RecencyScope, RecencyService } from './types.js';
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'memory-recency': import('./types.js').RecencyService;
+  }
+}

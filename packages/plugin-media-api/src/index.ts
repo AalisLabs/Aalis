@@ -198,3 +198,10 @@ declare module '@aalis/core' {
     'media:processed': [data: { sessionId: string; report: MediaProcessReport }];
   }
 }
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    media: MediaService;
+  }
+}
