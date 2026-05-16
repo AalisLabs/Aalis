@@ -21,7 +21,7 @@
 //
 // ```ts
 // const m = ctx.getService('memory');        // 自动推断为 MemoryService | undefined
-// const m2 = ctx.getService<MemoryService>('memory'); // 旧式手动写法仍然可用
+// const m2 = ctx.getService('memory'); // 旧式手动写法仍然可用
 // ```
 //
 // ## escape hatch
