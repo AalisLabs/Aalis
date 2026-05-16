@@ -1,5 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { type Collection, type Db, MongoClient } from 'mongodb';
@@ -160,6 +160,42 @@ class MongoMemoryService implements MemoryService {
     }));
   }
 
+  async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
+    const limit = Math.max(1, Math.min(query.limit, 1000));
+    const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
+    const filter: Record<string, unknown> = {
+      archived: { $ne: true },
+      role: { $in: roles },
+    };
+    if (typeof query.sinceTs === 'number') {
+      filter.timestamp = { $gte: query.sinceTs };
+    }
+    if (typeof query.platform === 'string') {
+      filter['metadata.platform'] = query.platform;
+    }
+    if (query.excludeSessionIds && query.excludeSessionIds.length > 0) {
+      filter.sessionId = { $nin: query.excludeSessionIds };
+    }
+
+    const docs = await this.collection.find(filter).sort({ timestamp: -1 }).limit(limit).toArray();
+    docs.reverse();
+
+    return docs.map(d => ({
+      sessionId: d.sessionId,
+      message: {
+        role: d.role as Message['role'],
+        content: d.content,
+        toolCalls: d.toolCalls as Message['toolCalls'],
+        toolCallId: d.toolCallId,
+        name: d.name,
+        timestamp: d.timestamp,
+        reasoningContent: d.reasoningContent ?? undefined,
+        segments: d.segments as Message['segments'],
+        metadata: d.metadata,
+      },
+    }));
+  }
+
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {
     // 找到要保留的最近消息（仅在未归档消息中）
     const keepDocs = await this.collection
@@ -254,6 +290,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     // 创建索引
     await collection.createIndex({ sessionId: 1, timestamp: 1 });
+    await collection.createIndex({ archived: 1, timestamp: -1 });
+    await collection.createIndex({ 'metadata.platform': 1, timestamp: -1 });
     await metaCollection.createIndex({ namespace: 1, key: 1 }, { unique: true });
 
     const service = new MongoMemoryService(collection, metaCollection);
@@ -267,6 +305,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         MemoryCapabilities.Metadata,
         MemoryCapabilities.ContentUpdate,
         MemoryCapabilities.MessageDelete,
+        MemoryCapabilities.RecentAcrossSessions,
       ],
     });
 
