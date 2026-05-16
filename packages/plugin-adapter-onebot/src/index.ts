@@ -2026,7 +2026,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   });
 
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     selfMuted.clear();
     muteRecoveryChecked.clear();
 

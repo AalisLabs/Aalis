@@ -109,6 +109,6 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     return;
   }
   const dispose = media.registerProcessor(processor);
-  ctx.on('dispose', () => dispose());
+  ctx.onDispose(() => dispose());
   logger.info(`OpenAI Whisper 转写已注册 (model=${cfg.model}, prio=${cfg.priority})`);
 }

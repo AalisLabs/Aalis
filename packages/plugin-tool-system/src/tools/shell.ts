@@ -438,7 +438,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
   });
 
   // 清理：插件卸载时终止所有后台进程
-  ctx.on('dispose', async () => {
+  ctx.onDispose(async () => {
     for (const [, processes] of backgroundProcesses) {
       for (const [, managed] of processes) {
         if (!managed.done) {
