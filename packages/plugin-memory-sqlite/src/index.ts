@@ -377,7 +377,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
 
-    ctx.on('dispose', () => {
+    ctx.onDispose(() => {
       service.close();
       ctx.logger.info('SQLite 数据库已关闭');
     });
