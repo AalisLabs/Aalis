@@ -78,7 +78,8 @@ export const configSchema: ConfigSchema = {
   headerText: {
     type: 'string',
     label: '注入 header 文本',
-    default: '📜 以下是来自其他会话/群聊的近期消息片段（按时间升序），供你了解最近发生了什么。',
+    default:
+      '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。',
     description: '注入到 messages[] 的 system 消息开头说明文字。',
   },
   toolEnabled: {
@@ -100,7 +101,8 @@ export const defaultConfig = {
   maxAgeMinutes: 180,
   perSessionLimit: 5,
   excludeCurrentSession: true,
-  headerText: '📜 以下是来自其他会话/群聊的近期消息片段（按时间升序），供你了解最近发生了什么。',
+  headerText:
+    '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。',
   toolEnabled: true,
   toolName: 'recent_messages',
 };
@@ -264,7 +266,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       return;
     }
 
-    const block = `${cfg.headerText}\n\n${formatRecords(records)}`;
+    const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
     const injectMsg: Message = {
       role: 'system',
       content: block,
