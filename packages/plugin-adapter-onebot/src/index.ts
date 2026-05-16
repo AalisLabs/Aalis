@@ -1367,10 +1367,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         imageLocalPaths = localPaths;
       }
 
-      // QQ 语音段（v11 record / v12 voice）默认 silk 编码，ASR 引擎都不认。
+      // QQ 语音段（v11 record / v12 voice）默认 silk 编码，ASR 引擎与多模态 LLM 都不认。
       // 调用 OneBot get_record 让协议端做 silk→mp3 转换；NapCat 等扩展实现
-      // 还会顺手返回 base64，跨机部署也能拿到音频数据。失败时保留原 url，
-      // 让上游 ASR 直接尝试（多半失败但不阻塞消息流）。
+      // 还会顺手返回 base64，跨机部署也能拿到音频数据。
+      //
+      // 注意：部分 OneBot 实现会忽略 out_format 参数、只是把扩展名改成 .mp3 但内容仍是 silk。
+      // 这种情况下游 plugin-media 会在 magic-header 校验阶段抛错并打 warn，
+      // 因此这里成功也打 info，让用户能在日志里区分"协议端没转好"和"模型不会听"。
       const audioAtts = event.attachments?.filter(a => a.kind === 'audio') ?? [];
       const audioConverted: (string | null)[] = new Array(audioAtts.length).fill(null);
       if (audioAtts.length > 0 && state) {
@@ -1383,14 +1386,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                 file: fileRef,
                 out_format: 'mp3',
               })) as { file?: string; url?: string; base64?: string } | undefined;
+              let kind: 'base64' | 'url' | 'file' | 'empty' = 'empty';
               if (data?.base64) {
                 audioConverted[i] = `data:audio/mpeg;base64,${data.base64}`;
+                kind = 'base64';
               } else if (data?.url) {
                 audioConverted[i] = String(data.url);
+                kind = 'url';
               } else if (data?.file) {
                 // 协议端给出本地路径——只有 NapCat 与 Aalis 同机部署时可读
                 audioConverted[i] = `file://${data.file}`;
+                kind = 'file';
               }
+              ctx.logger.debug(
+                `OneBot get_record 完成 (file=${fileRef}, kind=${kind}, ` +
+                  `size=${data?.base64 ? Math.round((data.base64.length * 3) / 4) : '?'}B)`,
+              );
             } catch (err) {
               ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
             }
