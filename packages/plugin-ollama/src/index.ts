@@ -704,9 +704,28 @@ class OllamaClient {
 
     this.logger.debug(`请求 Ollama (OpenAI compat, audio): ${model}, ${oaiMessages.length} 条消息`);
 
+    // 统计本次发送的音频载荷大小，便于诊断模型是否真的收到了音频
+    let totalAudioBytes = 0;
+    let audioCount = 0;
+    for (const m of oaiMessages) {
+      if (Array.isArray(m.content)) {
+        for (const block of m.content) {
+          const b = block as { type?: string; input_audio?: { data?: string; format?: string } };
+          if (b.type === 'input_audio' && b.input_audio?.data) {
+            audioCount++;
+            totalAudioBytes += Math.floor((b.input_audio.data.length * 3) / 4);
+          }
+        }
+      }
+    }
+    if (audioCount > 0) {
+      this.logger.info(`[ollama-audio] 发送 ${audioCount} 段音频，合计 ${(totalAudioBytes / 1024).toFixed(1)}KB`);
+    }
+
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
+    const httpT0 = Date.now();
     const resp = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -715,13 +734,26 @@ class OllamaClient {
     });
     if (!resp.ok) {
       const errText = await resp.text();
+      this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${errText.slice(0, 400)}`);
       throw new Error(`Ollama /v1/chat/completions 错误 (${resp.status}): ${errText.slice(0, 400)}`);
     }
     const data = (await resp.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
-    const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+    const rawContent = data.choices?.[0]?.message?.content ?? '';
+    const finishReason = data.choices?.[0]?.finish_reason ?? '?';
+    const text = rawContent.trim();
+    if (audioCount > 0) {
+      this.logger.info(
+        `[ollama-audio] ${model} HTTP ${Date.now() - httpT0}ms, finish=${finishReason}, ` +
+          `raw=${rawContent.length}字 trim=${text.length}字, ` +
+          `tokens prompt=${data.usage?.prompt_tokens ?? '?'} completion=${data.usage?.completion_tokens ?? '?'}` +
+          (rawContent.length > 0
+            ? `, 原文前300字="${rawContent.slice(0, 300).replace(/\n/g, ' ')}"`
+            : ' [模型返回空字符串]'),
+      );
+    }
     const result: ChatResponse = { content: text || null, reasoningContent: null };
     if (data.usage) {
       result.usage = {

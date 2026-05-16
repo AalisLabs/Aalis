@@ -137,9 +137,17 @@ function wrapLLMAsProcessor(
       if (cap === 'audio') {
         // 把音频附件转 base64 后放到 Message.audios，由 provider 适配（如 plugin-ollama 走 chat-completions audio 块）
         const audios = await Promise.all(input.attachments.map(a => audioToBase64(a.data)));
+        const sizesKB = audios.map(a => Math.round((a.length * 3) / 4 / 1024));
         const messages: Message[] = [{ role: 'user', content: prompt, audios }];
+        const t0 = Date.now();
+        _ctx.logger.info(`[audio.describe] 调用 ${llm.id}，${audios.length} 段音频 (${sizesKB.join('/')}KB)`);
         const resp = await llm.chat({ messages, maxTokens, think: false });
+        const rawLen = resp.content?.length ?? 0;
         const text = resp.content?.trim() ?? '';
+        _ctx.logger.info(
+          `[audio.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${resp.usage?.totalTokens ?? '?'}` +
+            (rawLen > 0 ? `, 内容前200字="${(resp.content ?? '').slice(0, 200).replace(/\n/g, ' ')}"` : ' [空响应]'),
+        );
         return {
           descriptions: input.mode === 'single' ? input.attachments.map(() => text) : [text],
           meta: { processor: name, model: llm.id, tokens: resp.usage?.totalTokens },
@@ -155,10 +163,21 @@ function wrapLLMAsProcessor(
       const langHint = input.language ? `\n* 输出语言：${input.language}` : '';
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
       const prompt = `${opts.prompt ?? DEFAULT_AUDIO_PROMPT}${langHint}${ctxBlock}`;
-      const audios = [await audioToBase64(input.attachment.data)];
+      const b64 = await audioToBase64(input.attachment.data);
+      const sizeKB = Math.round((b64.length * 3) / 4 / 1024);
+      const audios = [b64];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
+      const t0 = Date.now();
+      _ctx.logger.info(`[audio.transcribe] 调用 ${llm.id}，音频 ${sizeKB}KB, prompt ${prompt.length}字`);
       const resp = await llm.chat({ messages, maxTokens: opts.maxTokens ?? 512, think: false });
+      const rawLen = resp.content?.length ?? 0;
       const text = (resp.content ?? '').trim();
+      _ctx.logger.info(
+        `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${resp.usage?.totalTokens ?? '?'}` +
+          (rawLen > 0
+            ? `, 内容前200字="${(resp.content ?? '').slice(0, 200).replace(/\n/g, ' ')}"`
+            : ' [空响应——模型未返回任何内容]'),
+      );
       return {
         text,
         language: input.language,
