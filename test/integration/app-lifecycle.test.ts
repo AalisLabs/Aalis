@@ -24,14 +24,14 @@ describe('App 生命周期', () => {
     expect(app.ctx.config.get('logLevel')).toBe('warn');
   });
 
-  it('app.stop 触发 dispose 事件并清理 ctx', async () => {
+  it('app.stop 触发 app:stopping 事件并清理 ctx（ctx.onDispose 随 ctx.dispose() 触发）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const ctx = app.ctx;
     const events: string[] = [];
     ctx.on('app:stopping', () => {
       events.push('stopping');
     });
-    ctx.on('dispose', () => {
+    ctx.onDispose(() => {
       events.push('dispose');
     });
     await app.stop();

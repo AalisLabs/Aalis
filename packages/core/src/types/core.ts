@@ -110,11 +110,17 @@ export interface AalisEvents {
   ready: [];
   /** 应用已启动完成，适合 CLI / TUI 等用户交互入口接管终端 */
   'app:started': [];
-  dispose: [];
   restarting: [];
   /** 应用正在启动（start() 开头，在服务检查和消息路由注册之前） */
   'app:starting': [];
-  /** 应用正在停止（stop() 开头，在 dispose 之前） */
+  /**
+   * 应用正在停止（stop() 开头，在插件拓扑逆序 dispose 之前）。
+   *
+   * ⚠． 插件内部清理副作用（关连接、停计时器、flush 缓冲区等）请用
+   *    `ctx.onDispose(cb)` 而不是订阅任何事件。事件只在 app 全局停机
+   *    时触发一次，**不会**在插件 bounce / unload / updatePluginConfig 等
+   *    增量重载路径上触发——会造成资源泄漏（旧 ws/db 连接未关闭等）。
+   */
   'app:stopping': [];
   // 允许任意字符串 key 兜底（运行时事件总线开放，但鼓励第三方插件通过 declaration merging 显式声明事件签名以获得类型安全）
   [key: string]: unknown[];

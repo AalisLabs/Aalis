@@ -51,8 +51,9 @@ const app = createApp(options?: AppOptions);
 ### `app.stop()`
 
 1. 保存权限数据到磁盘
-2. 发出 `dispose` 事件
-3. 级联销毁根 Context 及所有子 Context
+2. 发出 `app:stopping` 事件
+3. 按拓扑逆序 dispose 所有 active 插件（触发其 `ctx.onDispose` 回调）
+4. 销毁根 Context
 
 ### `app.plugin(module, config?)`
 
