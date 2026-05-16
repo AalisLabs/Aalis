@@ -16,17 +16,17 @@ import type {
 import type { Message } from '@aalis/plugin-message-api';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 
-const DEFAULT_VISION_PROMPT =
+export const DEFAULT_VISION_PROMPT =
   '请简洁地描述这张图片的内容，包括画面中的主要元素、文字（如有）、表情包含义等。用中文回答，控制在100字以内。';
 
-const DEFAULT_VISION_BATCH_PROMPT =
+export const DEFAULT_VISION_BATCH_PROMPT =
   '以下是一组（按时间或上下文顺序排列的）图片。请综合所有图片做一段统一描述，重点说明动态变化、关键元素和含义。用中文回答，控制在150字以内。';
 
 // 全能音频 prompt：语音转写为原文 + 音乐/环境音描述。
 // 注意：e4b 这类小模型在 thinking enabled 时此类开放式 prompt 会消耗
 // ~600-900 completion token；要求 maxTokens 至少 1024，否则会被截断为空。
 // 详见 /memories/repo/aalis-ollama-gemma4-audio.md。
-const DEFAULT_AUDIO_PROMPT =
+export const DEFAULT_AUDIO_PROMPT =
   '请用中文描述这段音频的内容：' +
   '若含语音/对话则转写为原文（中文用中文写，英文保留英文）；' +
   '若含音乐则描述风格、乐器、情绪及可识别歌词；' +
@@ -34,8 +34,10 @@ const DEFAULT_AUDIO_PROMPT =
   '仅输出内容本身，不要 markdown 标记。';
 
 interface LlmProcessorOptions {
-  /** 自定义 prompt 覆盖默认值 */
+  /** 自定义 prompt 覆盖默认值（单图 / audio / video.passthrough） */
   prompt?: string;
+  /** 多图批量描述专用 prompt，仅 vision 生效。留空使用 prompt（若也为空则用内置默认） */
+  batchPrompt?: string;
   /** 最大输出 tokens */
   maxTokens?: number;
   /**
@@ -123,7 +125,10 @@ function wrapLLMAsProcessor(
     displayName: `${entry.label ?? entry.contextId} (${capShortName(cap)})`,
     priority: 0,
     async describe(input: DescribeInput, _ctx: Context): Promise<DescribeResult> {
-      const base = opts.prompt ?? defaultPromptFor(cap, input.attachments.length);
+      const base =
+        cap === 'vision' && input.attachments.length > 1
+          ? (opts.batchPrompt ?? opts.prompt ?? DEFAULT_VISION_BATCH_PROMPT)
+          : (opts.prompt ?? defaultPromptFor(cap, input.attachments.length));
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
       const hintBlock = input.hint ? `\n\n额外要求：${input.hint}` : '';
       const prompt = `${base}${ctxBlock}${hintBlock}`;
