@@ -47,6 +47,11 @@ export interface DescribeInput {
   attachments: MessageAttachment[];
   /** 上下文提示（可选）：例如 "请详细描述这些图片中的人物表情" */
   hint?: string;
+  /**
+   * 对话上下文文本（可选）：plugin-media 从近期聊天历史构建，
+   * processor 可拼接到 prompt 里让 LLM 能联系上下文理解附件。
+   */
+  context?: string;
   /** 期望最大输出 token */
   maxTokens?: number;
   /** 调用语义：'single' 每个 attachment 单独描述；'combined' 合并描述 */
@@ -67,6 +72,11 @@ export interface TranscribeInput {
   language?: string;
   /** 是否需要时间戳分段 */
   withTimestamps?: boolean;
+  /**
+   * 对话上下文文本（可选）：仅当 backend 为 LLM-as-ASR（如 gemma4:e4b）时有意义；
+   * 传统 Whisper 类 ASR 端点会忽略。
+   */
+  context?: string;
 }
 
 export interface TranscribeResult {

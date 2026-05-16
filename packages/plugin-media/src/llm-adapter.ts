@@ -112,9 +112,10 @@ function wrapLLMAsProcessor(
     displayName: `${entry.label ?? entry.contextId} (${capShortName(cap)})`,
     priority: 0,
     async describe(input: DescribeInput, _ctx: Context): Promise<DescribeResult> {
-      const prompt = input.hint
-        ? `${opts.prompt ?? defaultPromptFor(cap, input.attachments.length)}\n\n额外要求：${input.hint}`
-        : (opts.prompt ?? defaultPromptFor(cap, input.attachments.length));
+      const base = opts.prompt ?? defaultPromptFor(cap, input.attachments.length);
+      const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
+      const hintBlock = input.hint ? `\n\n额外要求：${input.hint}` : '';
+      const prompt = `${base}${ctxBlock}${hintBlock}`;
       const maxTokens = input.maxTokens ?? opts.maxTokens ?? 300;
 
       // image / video.passthrough 走 images[] 字段
@@ -149,7 +150,8 @@ function wrapLLMAsProcessor(
   if (cap === 'audio.transcribe') {
     proc.transcribe = async (input: TranscribeInput, _ctx: Context): Promise<TranscribeResult> => {
       const langHint = input.language ? `\n* 输出语言：${input.language}` : '';
-      const prompt = `${opts.prompt ?? DEFAULT_AUDIO_TRANSCRIBE_PROMPT}${langHint}`;
+      const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
+      const prompt = `${opts.prompt ?? DEFAULT_AUDIO_TRANSCRIBE_PROMPT}${langHint}${ctxBlock}`;
       const audios = [await audioToBase64(input.attachment.data)];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
       const resp = await llm.chat({ messages, maxTokens: opts.maxTokens ?? 512, think: false });
