@@ -36,6 +36,8 @@ export interface MediaConfigResolved {
     maxTokens: number;
     think: boolean;
     prompt?: string;
+    /** 多图批量描述 prompt，留空则回落 prompt / 内置默认 */
+    batchPrompt?: string;
   };
   /**
    * 音频识别（单一 cap，完成转写 + 描述双重职责）。
@@ -62,6 +64,14 @@ export interface MediaConfigResolved {
     think: boolean;
     /** 仅对 video.passthrough 生效 */
     prompt?: string;
+    /** 抽帧后给 vision 模型的 hint，留空为内置默认 */
+    framesHint?: string;
+    /** describeImage 动图分支的 fallback hint，留空为内置默认 */
+    animatedPrompt?: string;
+    /** 综合描述中画面部分的前缀 */
+    framePrefix: string;
+    /** 综合描述中音轨部分的前缀 */
+    audioTrackPrefix: string;
   };
   document: { extractImages: boolean };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
@@ -316,13 +326,13 @@ export class MediaServiceImpl implements MediaService {
                 attachments: frameAtts,
                 mode: 'combined',
                 maxTokens: this.cfg.vision.maxTokens,
-                hint: '以下为同一视频的关键帧，按时间顺序排列。',
+                hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
                 context: contextText,
               },
               this.ctx,
             );
             const text = r.descriptions[0];
-            if (text) frameTexts.push(`[画面] ${text}`);
+            if (text) frameTexts.push(`${this.cfg.video.framePrefix}${text}`);
           }
         }
       }
@@ -334,7 +344,7 @@ export class MediaServiceImpl implements MediaService {
             { kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' },
             { context: contextText },
           );
-          if (text) frameTexts.push(`[音轨] ${text}`);
+          if (text) frameTexts.push(`${this.cfg.video.audioTrackPrefix}${text}`);
         }
       }
 
@@ -358,6 +368,7 @@ export class MediaServiceImpl implements MediaService {
       maxTokens: this.cfg.vision.maxTokens,
       vision: {
         prompt: this.cfg.vision.prompt,
+        batchPrompt: this.cfg.vision.batchPrompt,
         maxTokens: this.cfg.vision.maxTokens,
         think: this.cfg.vision.think,
       },
@@ -439,7 +450,10 @@ export class MediaServiceImpl implements MediaService {
                   attachments: frameAtts,
                   mode: 'combined',
                   maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-                  hint: buildVisionPrompt(this.cfg.vision.prompt ?? '描述这个动图/视频。', opts.hint),
+                  hint: buildVisionPrompt(
+                    this.cfg.vision.prompt ?? this.cfg.video.animatedPrompt ?? '描述这个动图/视频。',
+                    opts.hint,
+                  ),
                 },
                 this.ctx,
               );

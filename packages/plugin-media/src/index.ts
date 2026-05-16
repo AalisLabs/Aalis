@@ -14,6 +14,7 @@
 
 import type { ConfigSchema, Context } from '@aalis/core';
 import { useAgent } from '@aalis/plugin-agent-api';
+import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { type MediaConfigResolved, MediaServiceImpl } from './service.js';
 import { registerMediaTools } from './tools.js';
@@ -52,7 +53,18 @@ export const configSchema: ConfigSchema = {
         default: false,
         description: '启用后识别质量可能提升但 token 成本上升；关闭且后端为 Ollama 时会传 reasoning_effort=none。',
       },
-      prompt: { type: 'textarea', label: '自定义提示词', default: '' },
+      prompt: {
+        type: 'textarea',
+        label: '单图描述 prompt',
+        default: '',
+        description: `留空使用内置默认值。\n默认：${DEFAULT_VISION_PROMPT}`,
+      },
+      batchPrompt: {
+        type: 'textarea',
+        label: '多图批量描述 prompt',
+        default: '',
+        description: `多张图片一起描述时使用（动图抽帧 / 图组）。留空则回落到“单图 prompt”或内置默认。\n默认：${DEFAULT_VISION_BATCH_PROMPT}`,
+      },
     },
   },
   audio: {
@@ -95,7 +107,7 @@ export const configSchema: ConfigSchema = {
         type: 'textarea',
         label: '自定义 prompt',
         default: '',
-        description: 'LLM-as-audio 专用。留空使用内置全能描述 prompt。',
+        description: `LLM-as-audio 专用。留空使用内置全能描述 prompt。\n默认：${DEFAULT_AUDIO_PROMPT}`,
       },
     },
   },
@@ -131,6 +143,31 @@ export const configSchema: ConfigSchema = {
         default: '',
         description: '仅对 video.passthrough 生效；留空使用默认描述 prompt。',
       },
+      framesHint: {
+        type: 'textarea',
+        label: '抽帧描述 hint',
+        default: '',
+        description: '抽帧后拼帧下发 vision 模型时的 hint。留空使用默认：“以下为同一视频的关键帧，按时间顺序排列。”',
+      },
+      animatedPrompt: {
+        type: 'textarea',
+        label: '动图/短视频描述 prompt',
+        default: '',
+        description:
+          '`describeImage` 遇到动图时作为 vision.prompt 的 fallback hint。留空使用默认：“描述这个动图/视频。”',
+      },
+      framePrefix: {
+        type: 'string',
+        label: '画面描述前缀',
+        default: '[画面] ',
+        description: '拼到抽帧综合描述前的标记，例如 “[画面] …”。',
+      },
+      audioTrackPrefix: {
+        type: 'string',
+        label: '音轨转写前缀',
+        default: '[音轨] ',
+        description: '拼到视频音轨转写前的标记，例如 “[音轨] …”。',
+      },
     },
   },
   document: {
@@ -163,9 +200,19 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  vision: { mode: 'describe', maxTokens: 300, think: false, prompt: '' },
+  vision: { mode: 'describe', maxTokens: 300, think: false, prompt: '', batchPrompt: '' },
   audio: { mode: 'enabled', language: '', maxTokens: 1024, think: true, prompt: '' },
-  video: { mode: 'frames+asr', maxFrames: 5, maxTokens: 512, think: false, prompt: '' },
+  video: {
+    mode: 'frames+asr',
+    maxFrames: 5,
+    maxTokens: 512,
+    think: false,
+    prompt: '',
+    framesHint: '',
+    animatedPrompt: '',
+    framePrefix: '[画面] ',
+    audioTrackPrefix: '[音轨] ',
+  },
   document: { extractImages: false },
   contextHistory: { enabled: true, maxMessages: 4 },
 };
@@ -182,6 +229,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       maxTokens: (vision.maxTokens as number) ?? 300,
       think: vision.think === true,
       prompt: (vision.prompt as string) || undefined,
+      batchPrompt: (vision.batchPrompt as string) || undefined,
     },
     audio: {
       mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'disabled',
@@ -197,6 +245,10 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       maxTokens: (video.maxTokens as number) ?? 512,
       think: video.think === true,
       prompt: (video.prompt as string) || undefined,
+      framesHint: (video.framesHint as string) || undefined,
+      animatedPrompt: (video.animatedPrompt as string) || undefined,
+      framePrefix: (video.framePrefix as string) ?? '[画面] ',
+      audioTrackPrefix: (video.audioTrackPrefix as string) ?? '[音轨] ',
     },
     document: { extractImages: !!document.extractImages },
     contextHistory: {
