@@ -113,7 +113,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   const processor: MediaProcessor = {
     name: `asr-whisper-cpp:${cfg.modelPath.split('/').pop() ?? 'model'}`,
-    capabilities: ['audio.transcribe'],
+    capabilities: ['audio'],
     priority: cfg.priority,
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
       const local = await materializeAudio(input.attachment.data);

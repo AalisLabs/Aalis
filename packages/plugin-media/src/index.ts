@@ -49,8 +49,8 @@ export const configSchema: ConfigSchema = {
       prompt: { type: 'textarea', label: '自定义提示词', default: '' },
     },
   },
-  audioTranscribe: {
-    label: '音频转写 (ASR)',
+  audio: {
+    label: '音频识别（转写 + 描述）',
     fields: {
       mode: {
         type: 'select',
@@ -63,28 +63,14 @@ export const configSchema: ConfigSchema = {
       },
       prefer: {
         type: 'llm-ref',
-        label: '优先 ASR Processor',
-        description: '留空自动选；选定后强制使用该模型（需具 audio_transcription 或 audio 能力）。',
+        label: '优先音频 Processor',
+        description: '留空自动选；选定后强制使用该模型。需其提供 audio cap（LLM-as-audio 或 Whisper 类 ASR）。',
       },
-      language: { type: 'string', label: '默认语种 (ISO 639-1)', default: '' },
-    },
-  },
-  audioDescribe: {
-    label: '音频描述 (audio-LLM)',
-    fields: {
-      mode: {
-        type: 'select',
-        label: '模式',
-        options: [
-          { label: '启用（需要支持 audio 能力的 LLM）', value: 'enabled' },
-          { label: '禁用', value: 'disabled' },
-        ],
-        default: 'disabled',
-      },
-      prefer: {
-        type: 'llm-ref',
-        label: '优先模型',
-        description: '留空自动选；选定后强制使用该模型（需具 audio 能力）。',
+      language: {
+        type: 'string',
+        label: '默认语种 (ISO 639-1)',
+        default: '',
+        description: '仅对 Whisper 类 ASR 生效；LLM-as-audio 会在 prompt 里作为提示。',
       },
     },
   },
@@ -122,7 +108,7 @@ export const configSchema: ConfigSchema = {
         label: '允许多模态 processor 读取聊天上下文',
         default: true,
         description:
-          '启用后，图片描述 / 语音转写 / 音频描述 / 视频抽帧调用多模态模型时，会将近期聊天记录拼到 prompt 里，让模型能联系上下文进行识别。对传统 Whisper-style ASR 后端无效。',
+          '启用后，图片描述 / 音频识别 / 视频抽帧调用多模态模型时，会将近期聊天记录拼到 prompt 里，让模型能联系上下文进行识别。对传统 Whisper-style ASR 后端无效。',
       },
       maxMessages: {
         type: 'number',
@@ -135,8 +121,7 @@ export const configSchema: ConfigSchema = {
 
 export const defaultConfig = {
   vision: { mode: 'describe', maxTokens: 300, prompt: '' },
-  audioTranscribe: { mode: 'enabled', language: '' },
-  audioDescribe: { mode: 'disabled' },
+  audio: { mode: 'enabled', language: '' },
   video: { mode: 'frames+asr', maxFrames: 5 },
   document: { extractImages: false },
   contextHistory: { enabled: true, maxMessages: 4 },
@@ -144,8 +129,7 @@ export const defaultConfig = {
 
 function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
   const vision = (raw.vision ?? {}) as Record<string, unknown>;
-  const audioT = (raw.audioTranscribe ?? {}) as Record<string, unknown>;
-  const audioD = (raw.audioDescribe ?? {}) as Record<string, unknown>;
+  const audio = (raw.audio ?? {}) as Record<string, unknown>;
   const video = (raw.video ?? {}) as Record<string, unknown>;
   const document = (raw.document ?? {}) as Record<string, unknown>;
   return {
@@ -156,15 +140,9 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       prompt: (vision.prompt as string) || undefined,
     },
     audio: {
-      transcribe: {
-        mode: ((audioT.mode as string) ?? 'enabled') as 'enabled' | 'disabled',
-        prefer: (audioT.prefer as string) || undefined,
-        language: (audioT.language as string) || undefined,
-      },
-      describe: {
-        mode: ((audioD.mode as string) ?? 'disabled') as 'enabled' | 'disabled',
-        prefer: (audioD.prefer as string) || undefined,
-      },
+      mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'disabled',
+      prefer: (audio.prefer as string) || undefined,
+      language: (audio.language as string) || undefined,
     },
     video: {
       mode: ((video.mode as string) ?? 'frames+asr') as MediaConfigResolved['video']['mode'],
@@ -198,9 +176,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       'media',
       buildPreprocessor(ctx, () => svc),
     );
-    logger.info(
-      `媒体识别预处理器已注册 (vision=${cfg.vision.mode}, audio.asr=${cfg.audio.transcribe.mode}, video=${cfg.video.mode})`,
-    );
+    logger.info(`媒体识别预处理器已注册 (vision=${cfg.vision.mode}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`);
   } catch (err) {
     logger.debug(`预处理器注册跳过: ${err instanceof Error ? err.message : err}`);
   }

@@ -31,10 +31,12 @@ import { normalizeAttachments } from './normalize.js';
 
 export interface MediaConfigResolved {
   vision: { mode: 'describe' | 'passthrough' | 'disabled'; prefer?: string; maxTokens: number; prompt?: string };
-  audio: {
-    transcribe: { mode: 'enabled' | 'disabled'; prefer?: string; language?: string };
-    describe: { mode: 'enabled' | 'disabled'; prefer?: string };
-  };
+  /**
+   * 音频识别（单一 cap，完成转写 + 描述双重职责）。
+   * - LLM-as-audio backend：全能 prompt 驱动，语音输原文、音乐/环境输描述。
+   * - Whisper 类 ASR：仅转写语音，非语音输出为空（service 会补充占位描述）。
+   */
+  audio: { mode: 'enabled' | 'disabled'; prefer?: string; language?: string };
   video: { mode: 'frames+asr' | 'frames-only' | 'disabled'; maxFrames: number };
   document: { extractImages: boolean };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
@@ -120,19 +122,23 @@ export class MediaServiceImpl implements MediaService {
       }
     }
 
-    // audio.describe
-    if (byKind.audio.length > 0 && this.cfg.audio.describe.mode === 'enabled') {
-      const proc = this.pickProcessor('audio.describe', opts.prefer ?? this.cfg.audio.describe.prefer);
-      if (proc?.describe) {
+    // audio：使用统一 audio cap。LLM-as-audio 会同时覆盖转写 + 描述；Whisper 类仅返回转写。
+    if (byKind.audio.length > 0 && this.cfg.audio.mode === 'enabled') {
+      const proc = this.pickProcessor('audio', opts.prefer ?? this.cfg.audio.prefer);
+      if (proc?.transcribe) {
         for (const i of byKind.audio) {
           try {
-            const r = await proc.describe(
-              { attachments: [attachments[i]], mode: 'single', hint: opts.hint, maxTokens: opts.maxTokens },
+            const r = await proc.transcribe(
+              {
+                attachment: attachments[i],
+                language: this.cfg.audio.language,
+                context: opts.hint,
+              },
               this.ctx,
             );
-            out[i] = r.descriptions[0];
+            out[i] = r.text || undefined;
           } catch (err) {
-            this.logger.warn(`音频描述失败: ${err instanceof Error ? err.message : err}`);
+            this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
           }
         }
       }
@@ -145,17 +151,17 @@ export class MediaServiceImpl implements MediaService {
     attachment: MessageAttachment,
     opts: TranscribeOptions & { context?: string } = {},
   ): Promise<string | undefined> {
-    if (this.cfg.audio.transcribe.mode === 'disabled') return undefined;
-    const proc = this.pickProcessor('audio.transcribe', opts.prefer ?? this.cfg.audio.transcribe.prefer);
+    if (this.cfg.audio.mode === 'disabled') return undefined;
+    const proc = this.pickProcessor('audio', opts.prefer ?? this.cfg.audio.prefer);
     if (!proc?.transcribe) {
-      this.logger.debug('无 audio.transcribe processor 可用');
+      this.logger.debug('无 audio processor 可用');
       return undefined;
     }
     try {
       const r = await proc.transcribe(
         {
           attachment,
-          language: opts.language ?? this.cfg.audio.transcribe.language,
+          language: opts.language ?? this.cfg.audio.language,
           withTimestamps: opts.withTimestamps,
           context: opts.context,
         },
@@ -163,7 +169,7 @@ export class MediaServiceImpl implements MediaService {
       );
       return r.text;
     } catch (err) {
-      this.logger.warn(`音频转写失败: ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
       return undefined;
     }
   }
@@ -231,25 +237,13 @@ export class MediaServiceImpl implements MediaService {
             }
           }
         } else if (att.kind === 'audio') {
-          // 优先 transcribe（更准），失败/未启用则降级 describe
-          if (this.cfg.audio.transcribe.mode === 'enabled') {
+          // 统一音频识别：LLM-as-audio 返回转写或描述，Whisper 仅返回转写。
+          // 空串补上占位让主 LLM 知情有附件但未能识别，避免幻觉。
+          if (this.cfg.audio.mode === 'enabled') {
             const text = await this.transcribe(att, { context: ctxText });
-            if (text) {
-              item.cap = 'audio.transcribe';
-              item.description = `[语音转写] ${text}`;
-              descriptions[i] = item.description;
-            }
-          }
-          if (!item.description && this.cfg.audio.describe.mode === 'enabled') {
-            const proc = this.pickProcessor('audio.describe', this.cfg.audio.describe.prefer);
-            item.cap = 'audio.describe';
-            item.processor = proc?.name;
-            if (proc?.describe) {
-              const r = await proc.describe({ attachments: [att], mode: 'single', context: ctxText }, this.ctx);
-              const raw = r.descriptions[0];
-              item.description = raw ? `[音频描述] ${raw}` : undefined;
-              descriptions[i] = item.description;
-            }
+            item.cap = 'audio';
+            item.description = text ? `[音频] ${text}` : '[音频] 无法识别（可能为非语音或听不清）';
+            descriptions[i] = item.description;
           }
         } else if (att.kind === 'video') {
           if (this.cfg.video.mode !== 'disabled') {
@@ -308,7 +302,7 @@ export class MediaServiceImpl implements MediaService {
         }
       }
 
-      if (this.cfg.video.mode === 'frames+asr' && this.cfg.audio.transcribe.mode === 'enabled') {
+      if (this.cfg.video.mode === 'frames+asr' && this.cfg.audio.mode === 'enabled') {
         const audioDataUrl = await extractAudioTrack(local.path);
         if (audioDataUrl) {
           const text = await this.transcribe(
