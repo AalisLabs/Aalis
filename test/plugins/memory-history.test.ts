@@ -178,4 +178,43 @@ describe('plugin-memory-history', () => {
     const injected = messages.filter(m => m.metadata?.source === 'memory-history');
     expect(injected.length).toBe(1);
   });
+
+  it('perSessionLimit 限制单会话刷屏占满 limit', async () => {
+    const app = makeApp();
+    await app.ctx.useModule(memoryInMemoryModule);
+    const memory = app.ctx.getService<MemoryService>('memory')!;
+
+    const base = Date.now() - 1000;
+    // s-spam 刷 20 条；s-quiet 只有 1 条但更新
+    for (let i = 0; i < 20; i++) {
+      await memory.saveMessage('s-spam', {
+        role: 'user',
+        content: `spam-${i}`,
+        timestamp: base + i,
+        metadata: { platform: 'onebot' },
+      });
+    }
+    await memory.saveMessage('s-quiet', {
+      role: 'user',
+      content: 'quiet-only',
+      timestamp: base + 100,
+      metadata: { platform: 'onebot' },
+    });
+
+    await app.ctx.useModule(memoryHistory, {
+      scope: 'cross-platform',
+      maxAgeMinutes: 0,
+      excludeCurrentSession: false,
+      limit: 10,
+      perSessionLimit: 3,
+    });
+
+    const messages: Message[] = [{ role: 'user', content: 'now' }];
+    await app.ctx.hooks.run('agent:llm:before', { messages, tools: [], sessionId: 'current', platform: 'onebot' });
+    const block = messages[0].content as string;
+    // s-spam 只允许 3 条
+    const spamCount = (block.match(/spam-/g) ?? []).length;
+    expect(spamCount).toBe(3);
+    expect(block).toContain('quiet-only');
+  });
 });
