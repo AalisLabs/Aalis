@@ -478,6 +478,32 @@ function splitMessageByPunctuation(content: string, patterns: string[]): string[
   return result.length > 0 ? result : [content];
 }
 
+/**
+ * 把一条消息中的 `<image url="..." />` 标签拆成独立片段，
+ * 让图片始终单条发送，避免与文字粘连显得"假"。
+ * 文本两侧留白会被 trim；如果结果为空则回退到原文。
+ */
+function splitImageOut(content: string): string[] {
+  const re = /<image\s+url=["'][^"']*["']\s*\/>/g;
+  const out: string[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null = re.exec(content);
+  while (m !== null) {
+    if (m.index > last) {
+      const text = content.slice(last, m.index).trim();
+      if (text) out.push(text);
+    }
+    out.push(m[0]);
+    last = m.index + m[0].length;
+    m = re.exec(content);
+  }
+  if (last < content.length) {
+    const tail = content.slice(last).trim();
+    if (tail) out.push(tail);
+  }
+  return out.length > 0 ? out : [content];
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -981,8 +1007,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 消息分条发送（指令回复等短消息可跳过）
-      const pieces =
+      const punctPieces =
         splitEnabled && !options?.skipSplit ? splitMessageByPunctuation(content, splitPatterns) : [content];
+      // 进一步拆出 <image .../>：图片始终独立成条，不与文本粘连。
+      const pieces = punctPieces.flatMap(p => splitImageOut(p));
 
       for (let i = 0; i < pieces.length; i++) {
         const piece = pieces[i].trim();
