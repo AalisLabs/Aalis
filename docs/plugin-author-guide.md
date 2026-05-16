@@ -244,6 +244,7 @@ it('should activate when its dependencies are present', async () => {
 - `ctx.provide(...)` 注册服务
 - `ctx.on(event, ...)` 监听事件
 - `ctx.middleware(hook, ...)` 注册中间件
+- `ctx.whenService(name, svc => …)` **跨插件消费服务的首选** —— 自动响应 provider 上下/下线
 - `ctx.registerTool(...)` 注册 AI 工具（通过 plugin-tools-api）
 - `useXxxService(ctx).register(...)` 通过 -api 包注册子能力
 - `ctx.onDispose(...)` 清理外部资源
@@ -294,8 +295,95 @@ declare module '@aalis/core' {
 
 ---
 
-## 11. 用户偏好放哪里？—— per-user 不进 ServiceContainer
+## 11. 消费跨插件服务的"心智阶梯"
 
+| 顺序 | 写法 | 何时用 |
+|---|---|---|
+| ① | `useXxxService(ctx)` | -api 包里有对应 helper（如 `useToolService` / `useCommandService`） |
+| ② | `ctx.whenService('xxx', svc => …)` | 跨插件消费 + 需要在 provider 重启/替换时**自动**重接 |
+| ③ | `inject.required: ['xxx']` + `ctx.getService('xxx')!` | 你已显式声明依赖、PluginManager 保证你被激活时 provider 一定在 |
+| ④ | `ctx.hasService('xxx')` + `ctx.getService('xxx')` | 探测性可选依赖（更推荐 `inject.optional` + bounce） |
+
+### 反模式
+
+```typescript
+// ❌ 没声明 inject，又直接断言
+export async function apply(ctx) {
+  const llm = ctx.getService<LLMService>('llm')!;  // provider 还没注册 → 运行时崩
+  // ...
+}
+```
+
+正确：
+
+```typescript
+// ✅ 方式 A：声明依赖
+export const inject = { required: ['llm'] };
+export async function apply(ctx) {
+  const llm = ctx.getService<LLMService>('llm')!;  // 框架保证就绪
+}
+
+// ✅ 方式 B：whenService 异步等
+export async function apply(ctx) {
+  ctx.whenService('llm', llm => {
+    // provider 上线时调用；返回的清理函数在 provider 下线/ctx dispose 时执行
+    const off = llm.onEvent(handle);
+    return () => off();
+  });
+}
+```
+
+`whenService` 比"自己 `ctx.on('service:registered', …)` 监听"轻量得多 ——
+core 已经处理好"已就绪立刻同步触发 / 反复上下线重接 / dispose 自动清理"。
+
+---
+
+## 12. -api 包：怎么让 `ctx.getService('xxx')` 拿到强类型
+
+`ServiceTypeMap` 也是 declaration-merging 扩展点。`-api` 包里同时声明能力枚举
+和类型映射，业务插件只要 `import '@aalis/plugin-xxx-api'`（哪怕只是副作用导入）
+就能让 TS 在调用 `ctx.getService('xxx')` 时自动推断出对应接口类型：
+
+```typescript
+// packages/plugin-llm-api/src/index.ts
+export interface LLMService {
+  chat(req: ChatRequest): Promise<ChatResponse>;
+  // ...
+}
+
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    llm: LLMService;
+  }
+  interface ServiceCapabilityMap {
+    llm: LLMCapability;
+  }
+}
+```
+
+业务插件：
+
+```typescript
+import '@aalis/plugin-llm-api';  // 仅副作用：把类型注册进 ServiceTypeMap
+
+export async function apply(ctx) {
+  const llm = ctx.getService('llm');
+  //    ^? LLMService | undefined  ←  无需手动 <LLMService>
+  await llm?.chat({ messages: [...] });
+}
+```
+
+> ⚠️ 没 import `-api` 包时，`ctx.getService('llm')` 会 fallback 到 `unknown`，
+> 你只能 `ctx.getService<LLMService>('llm')` 手动断言。所以**消费方至少要把 -api
+> 包作为 devDep / dep 引入并 import 一次**。helper 形式（`useToolService(ctx)`）
+> 已经把这个副作用包好了，是最省心的写法。
+
+实现包的 `provides` 服务也建议在 -api 包写类型，自己 import 使用 —— 保持
+"接口契约 → -api 包 / 实现 → 实现包"的单向依赖。
+
+---
+
+## 13. 用户偏好放哪里？—— per-user 不进 ServiceContainer
 ServiceContainer 有个 `preferences: Map<serviceName, contextId>` 用来"钉死某个
 服务的胜者"。**这个机制只用于管理员级 / App 级 default**，不要拿来存 per-user 偏好。
 

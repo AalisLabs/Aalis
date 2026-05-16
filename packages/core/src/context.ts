@@ -74,12 +74,10 @@ export class Context {
   /**
    * 底层事件总线实例。
    *
-   * ⚠️ **@internal** —— 仅供需要自定义生命周期的高级插件使用（如桥接外部资源、
-   * 在 dispose 后还需监听的场景）。普通插件请使用 `ctx.on()`，监听器会自动
-   * 在本 Context dispose 时清理。
-   *
-   * 直接调用 `ctx.eventBus.on(...)` **不会**进入 `_disposables` 链；
-   * 若需要"dispose 时清理外部资源"，请改用 `ctx.onDispose(cb)`。
+   * 🚫 **@internal** —— core 内部 / 极少数高级插件（自定义生命周期、桥接外部
+   * 资源、dispose 后仍需监听）才能用。**业务插件请勿触碰**：直接 `eventBus.on(...)`
+   * 不会进入 `_disposables` 链，会泄漏监听器。dispose 时清理外部资源请用
+   * `ctx.onDispose(cb)`。
    */
   get eventBus(): EventBus {
     return this._events;
@@ -88,9 +86,10 @@ export class Context {
   /**
    * 底层服务容器实例。
    *
-   * ⚠️ **@internal** —— 仅供高级巡视/诊断使用（如 plugin-authority 枚举所有
-   * provider）。普通插件请使用 `ctx.provide()` / `ctx.getService()`，副作用
-   * 会自动登记到 `_disposables` 链。
+   * 🚫 **@internal** —— core 内部 / plugin-doctor / plugin-authority 等高级
+   * 巡视诊断类插件用。**业务插件请勿触碰**：直接 `serviceContainer.register(...)`
+   * 不会进入 `_disposables` 链。注册/查询服务请用 `ctx.provide()` /
+   * `ctx.getService()` / `ctx.whenService()`。
    */
   get serviceContainer(): ServiceContainer {
     return this._services;
@@ -267,13 +266,17 @@ export class Context {
   }
 
   /**
-   * 按精确 contextId 拿服务实例。
+   * 【罕用 · 多用于会话级 entry 精确寻址】按精确 contextId 拿服务实例。
    *
-   * 用于 "会话/偏好已知 contextId、需要直接寻址 entry" 的场景。典型：per-model LLM entry：
+   * 与 `getService` 的区别：`getService` 走「偏好 > 优先级 > 注册顺序」路由；
+   * 本方法纯按 entry 的 contextId 寻址，不走路由也不污染全局偏好。
+   *
+   * 典型场景：per-model LLM entry —— 多 LLM provider 都注册为 `'llm'`，
+   * 会话里持久化用户选定的具体 entry contextId，下一轮接续：
    *   `session.modelContextId = '@aalis/plugin-openai:main/gpt-4o'`
    *   → `getServiceByContextId('llm', sessionData.modelContextId)`
    *
-   * 不走 capability filter、不走 preference——纯粹按 ID 寻址。未找到返回 undefined。
+   * 一般业务请优先 `getService` / `getAllServices`。
    *
    * 重载行为同 `getService`：传入字面量服务名时自动推断为 `ServiceTypeMap[TName]`，
    * 否则退回 `<T = unknown>`。
@@ -288,14 +291,14 @@ export class Context {
   }
 
   /**
-   * 获取服务的能力列表
+   * 【罕用 · 诊断用】获取服务的能力列表
    */
   getServiceCapabilities(name: string): string[] {
     return this._services.getCapabilities(name);
   }
 
   /**
-   * 列出所有已注册的服务名
+   * 【罕用 · 诊断/管控用】列出所有已注册的服务名
    */
   getServiceNames(): string[] {
     return this._services.getServiceNames();
@@ -329,12 +332,15 @@ export class Context {
   }
 
   /**
-   * 设置某服务的偏好 provider（按 contextId）
+   * 【罕用 · 多用于 WebUI/CLI 全局路由设置】设置某服务的偏好 provider（按 contextId）。
    *
    * 语义：「偏好 > 优先级 > 注册顺序」。偏好者总是 `getService(name)` 的第一返回值，
    * 即使其 priority 数值低于 router 等其他 entry。
    *
    * 注：偏好可以提前于 entry 注册前设置——一旦目标 contextId 注册即刻生效。
+   * 业务插件如需「这一次调用用某个具体 entry」请用 `getServiceByContextId`，
+   * 不要走偏好机制（会污染全局路由）。
+   *
    * @returns 始终返回 true（偏好已记录）
    */
   preferService(name: string, contextId: string): boolean {
@@ -344,7 +350,7 @@ export class Context {
   }
 
   /**
-   * 清除某服务的偏好（恢复 priority + 注册顺序解析）
+   * 【罕用】清除某服务的偏好（恢复 priority + 注册顺序解析）
    */
   unpreferService(name: string): boolean {
     const ok = this._services.unprefer(name);
@@ -353,17 +359,18 @@ export class Context {
   }
 
   /**
-   * 读取某服务当前的偏好 contextId（无偏好返回 undefined）
+   * 【罕用】读取某服务当前的偏好 contextId（无偏好返回 undefined）
    */
   getPreferredService(name: string): string | undefined {
     return this._services.getPreferred(name);
   }
 
   /**
-   * 获取某服务的全部 entry（含 priority），按「偏好 > 优先级 > 注册顺序」排序。
+   * 【罕用 · 诊断/管控类插件用】获取某服务的全部 entry（含 priority），
+   * 按「偏好 > 优先级 > 注册顺序」排序。
    *
-   * 主要给管控类消费者（如 WebUI / CLI status 视图）枚举展示用。
-   * 业务消费者应优先使用 `getService` / `getAllServices`。
+   * 主要给管控类消费者（如 WebUI / CLI status 视图、plugin-doctor 健康巡检）
+   * 枚举展示用。业务消费者应优先使用 `getService` / `getAllServices`。
    */
   getServiceEntries(name: string): ReadonlyArray<{
     instance: unknown;

@@ -168,3 +168,44 @@ describe('Context.getService 即取即用语义（裸实例）', () => {
     expect(h.kind).toBe('fancy');
   });
 });
+
+describe('Context.getServiceByContextId（per-entry 精确寻址）', () => {
+  it('多 entry 同名服务可按 contextId 精确拿到指定实例', () => {
+    const ctx = makeContext();
+    // 模拟 per-model LLM entry：同名 'llm'，不同 contextId
+    ctx.fork('@aalis/plugin-openai:main/gpt-4o').provide('llm', { provider: 'openai', model: 'gpt-4o' });
+    ctx.fork('@aalis/plugin-openai:main/o1').provide('llm', { provider: 'openai', model: 'o1' });
+    ctx.fork('@aalis/plugin-deepseek:main/v3').provide('llm', { provider: 'deepseek', model: 'v3' });
+
+    // 会话里持久化的 modelContextId 可直接拿到对应实例
+    const llmA = ctx.getServiceByContextId<{ model: string }>('llm', '@aalis/plugin-openai:main/o1');
+    expect(llmA?.model).toBe('o1');
+
+    const llmB = ctx.getServiceByContextId<{ model: string }>('llm', '@aalis/plugin-deepseek:main/v3');
+    expect(llmB?.model).toBe('v3');
+  });
+
+  it('未匹配的 contextId 返回 undefined（不 fallback 到默认）', () => {
+    const ctx = makeContext();
+    ctx.provide('llm', { v: 1 });
+    const llm = ctx.getServiceByContextId('llm', 'no-such-context');
+    expect(llm).toBeUndefined();
+  });
+
+  it('不污染全局偏好：调用后 getService 仍走默认路由', () => {
+    const ctx = makeContext();
+    ctx.fork('p1').provide('llm', { tag: 'A' }, { priority: 10 });
+    ctx.fork('p2').provide('llm', { tag: 'B' }, { priority: 5 });
+
+    // 精确拿低优先级实例
+    const exact = ctx.getServiceByContextId<{ tag: string }>('llm', 'p2');
+    expect(exact?.tag).toBe('B');
+
+    // getService 仍按优先级返回 A（未被污染）
+    const def = ctx.getService<{ tag: string }>('llm');
+    expect(def?.tag).toBe('A');
+
+    // 也没设置偏好
+    expect(ctx.getPreferredService('llm')).toBeUndefined();
+  });
+});
