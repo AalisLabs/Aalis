@@ -118,12 +118,13 @@ describe('plugin-memory-history', () => {
     expect(messages[0].content).not.toContain('SELF');
   });
 
-  it('scope=off: 不注入', async () => {
+  it('injectEnabled=false: 不注入（兼容旧 scope=off）', async () => {
     const app = makeApp();
     await app.ctx.useModule(memoryInMemoryModule);
     const memory = app.ctx.getService<MemoryService>('memory')!;
     await saveAcross(memory, [{ sessionId: 's-a', platform: 'onebot', content: 'X', ts: Date.now() - 1000 }]);
 
+    // 同时传旧字段 scope:'off' 验证向后兼容
     await app.ctx.useModule(memoryHistory, { scope: 'off' });
     const messages: Message[] = [{ role: 'user', content: 'now' }];
     await app.ctx.hooks.run('agent:llm:before', {
