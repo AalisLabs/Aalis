@@ -6,7 +6,7 @@ import type { PluginEntry, PluginState } from './plugin.js';
 /**
  * App 生命周期 + 配置 + 市场 接口
  *
- * 插件通过 `ctx.getService<AppService>('app')` 获取，
+ * 插件通过 `ctx.getService('app')` 获取，
  * 用于触发应用级操作，无需直接导入 App 类。
  */
 export interface AppService {
@@ -43,7 +43,7 @@ export interface PluginStatusEntry {
 /**
  * 插件管理服务接口
  *
- * 通过 `ctx.getService<PluginManagerService>('plugins')` 获取。
+ * 通过 `ctx.getService('plugins')` 获取。
  * 内部由 core 的 PluginManager 提供。消费方不应直接 import App 类。
  */
 export interface PluginManagerService {
@@ -67,5 +67,12 @@ declare module './capabilities.js' {
   interface ServiceCapabilityMap {
     app: 'lifecycle' | 'config';
     plugins: 'plugin-mgmt';
+  }
+}
+
+declare module './services.js' {
+  interface ServiceTypeMap {
+    app: AppService;
+    plugins: PluginManagerService;
   }
 }

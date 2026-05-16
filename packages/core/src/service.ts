@@ -75,7 +75,7 @@ export class ServiceContainer {
   /**
    * 获取一个满足能力要求的服务实例
    */
-  get<T>(name: string, requiredCapabilities?: string[]): T | undefined {
+  get<T>(name: string, requiredCapabilities?: readonly string[]): T | undefined {
     const list = this.resolveEntries(name);
     if (list.length === 0) return undefined;
 
@@ -92,7 +92,7 @@ export class ServiceContainer {
   /**
    * 检查某个服务是否存在（并且满足指定能力）
    */
-  has(name: string, requiredCapabilities?: string[]): boolean {
+  has(name: string, requiredCapabilities?: readonly string[]): boolean {
     return this.get(name, requiredCapabilities) !== undefined;
   }
 
@@ -198,7 +198,7 @@ export class ServiceContainer {
    */
   getAll<T>(
     name: string,
-    requiredCapabilities?: string[],
+    requiredCapabilities?: readonly string[],
   ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     const list = this.resolveEntries(name);
     if (list.length === 0) return [];
@@ -279,13 +279,13 @@ export class ScopedServiceContainer extends ServiceContainer {
     this.parent = parent;
   }
 
-  override get<T>(name: string, requiredCapabilities?: string[]): T | undefined {
+  override get<T>(name: string, requiredCapabilities?: readonly string[]): T | undefined {
     const local = super.get<T>(name, requiredCapabilities);
     if (local !== undefined) return local;
     return this.parent.get<T>(name, requiredCapabilities);
   }
 
-  override has(name: string, requiredCapabilities?: string[]): boolean {
+  override has(name: string, requiredCapabilities?: readonly string[]): boolean {
     return super.has(name, requiredCapabilities) || this.parent.has(name, requiredCapabilities);
   }
 
@@ -308,7 +308,7 @@ export class ScopedServiceContainer extends ServiceContainer {
 
   override getAll<T>(
     name: string,
-    requiredCapabilities?: string[],
+    requiredCapabilities?: readonly string[],
   ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
     const local = super.getAll<T>(name, requiredCapabilities);
     const parent = this.parent.getAll<T>(name, requiredCapabilities);
