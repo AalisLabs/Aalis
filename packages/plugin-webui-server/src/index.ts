@@ -1372,7 +1372,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   });
 
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     removeLogListener();
     wss.close();
     server.close();

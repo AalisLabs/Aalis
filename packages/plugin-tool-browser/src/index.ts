@@ -554,7 +554,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 清理 ──
 
-  ctx.on('dispose', async () => {
+  ctx.onDispose(async () => {
     for (const [, slot] of pages) {
       try {
         await slot.page.close();

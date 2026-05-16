@@ -273,7 +273,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
 
     // 在上下文销毁时关闭连接
-    ctx.on('dispose', async () => {
+    ctx.onDispose(async () => {
       await client.close();
       ctx.logger.info('MongoDB 连接已关闭');
     });

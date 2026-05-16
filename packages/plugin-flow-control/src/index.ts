@@ -306,7 +306,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);

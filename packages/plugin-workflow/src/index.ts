@@ -240,7 +240,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   }
 
   // ── 清理 ──
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     triggers.dispose();
     cancelTokens.clear();
   });

@@ -146,7 +146,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.provide('vectorstore', store);
 
-  ctx.on('dispose', () => {
+  ctx.onDispose(() => {
     store.save();
   });
 }
