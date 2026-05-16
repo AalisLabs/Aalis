@@ -155,6 +155,38 @@ export async function extractAudioTrack(filePath: string): Promise<string | null
   }
 }
 
+/**
+ * 把任意 ffmpeg 可解码的音频文件转码为 16kHz mono WAV。
+ *
+ * 选用 WAV/PCM 而非 mp3：
+ * - Gemma 3n 等多模态模型偏好 16kHz 单声道 PCM（官方 cookbook 示例如此）
+ * - 无损，避免有损二次压缩对 ASR 质量的影响
+ * - 不依赖 libmp3lame，所有 ffmpeg build 都自带 pcm_s16le
+ *
+ * 输入支持的格式取决于本机 ffmpeg：mp3 / wav / amr / m4a / ogg / flac 通常都行；
+ * SILK 不在 ffmpeg 原生支持范围内，会失败返回 null。
+ *
+ * 返回纯 base64（不带 data: 前缀），失败返回 null。
+ */
+export async function transcodeAudioToWav(filePath: string): Promise<string | null> {
+  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-wav-'));
+  try {
+    const out = join(tmpDir, 'audio.wav');
+    await execFileAsync(
+      'ffmpeg',
+      ['-i', filePath, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', out],
+      { timeout: 60000 },
+    );
+    const buf = await readFile(out);
+    if (buf.byteLength < 256) return null;
+    return buf.toString('base64');
+  } catch {
+    return null;
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /** 把 base64 data URL / file:/ 路径写到临时文件，返回本地路径与清理函数。 */
 export async function materializeAttachment(
   data: string,

@@ -103,6 +103,12 @@ interface OllamaMessage {
   content: string;
   thinking?: string;
   images?: string[];
+  /**
+   * 纯 base64 音频（不带 data: 前缀）。仅在“带音频”请求中使用：
+   * 这种请求会被本插件自动改路到 OpenAI 兼容的 /v1/chat/completions +
+   * input_audio 内容块（Ollama v0.20.0+）。原生 /api/chat 不支持音频。
+   */
+  audios?: string[];
   tool_calls?: OllamaToolCall[];
 }
 
@@ -218,6 +224,10 @@ class OllamaClient {
   }
 
   async chat(model: string, request: ChatModelRequest, defaultThinking: boolean): Promise<ChatResponse> {
+    // 包含音频输入 → 改走 OpenAI 兼容的 /v1/chat/completions（/api/chat 不支持 audios）
+    if (request.messages.some(m => m.audios && m.audios.length > 0)) {
+      return this.chatOpenAIWithAudio(model, request);
+    }
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
@@ -305,6 +315,17 @@ class OllamaClient {
     request: ChatModelRequest,
     defaultThinking: boolean,
   ): AsyncIterable<ChatStreamChunk> {
+    // 包含音频输入 → 回退为非流式（OpenAI compat 路径不支持 SSE 交互）后以单 chunk 交付。
+    if (request.messages.some(m => m.audios && m.audios.length > 0)) {
+      const r = await this.chatOpenAIWithAudio(model, request);
+      yield {
+        contentDelta: r.content ?? '',
+        reasoningDelta: r.reasoningContent ?? '',
+        usage: r.usage,
+        done: true,
+      };
+      return;
+    }
     const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
@@ -543,14 +564,14 @@ class OllamaClient {
    * 返回 null 表示图片无法获取。
    */
   private resolveImage(img: string): Promise<string | null> {
-    return this.resolveBinary(img);
+    return this.resolveBinary(img, 'image');
   }
 
   /**
-   * 通用二进制资源解析（目前仅图片使用）。
+   * 通用二进制资源解析（图片 / 音频）。
    * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示获取失败。
    */
-  private async resolveBinary(data: string): Promise<string | null> {
+  private async resolveBinary(data: string, label: 'image' | 'audio'): Promise<string | null> {
     // data URI → 提取 base64（兼容多参数格式如 data:image/png;charset=utf-8;base64,...）
     const dataMatch = data.match(/^data:[^,]*;base64,(.+)$/);
     if (dataMatch) return dataMatch[1];
@@ -560,13 +581,13 @@ class OllamaClient {
       try {
         const res = await fetch(data, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) {
-          this.logger.warn(`下载图片失败 (${res.status}): ${data}`);
+          this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${data}`);
           return null;
         }
         const buf = Buffer.from(await res.arrayBuffer());
         return buf.toString('base64');
       } catch (err) {
-        this.logger.warn(`下载图片异常: ${data}`, err);
+        this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}异常: ${data}`, err);
         return null;
       }
     }
@@ -609,11 +630,11 @@ class OllamaClient {
       if (valid.length > 0) ollamaMsg.images = valid;
     }
 
-    // 注意：Ollama 0.24.0 的 HTTP API（/api/chat 与 /v1/chat/completions）
-    // 均无可用的音频输入字段（官方文档 message 对象仅列 images）。即便模型
-    // GGUF 内含 audio encoder（如 gemma4:e?b），runtime 也不会把音频字节
-    // 传给模型。因此本插件不再尝试发送 m.audios，避免无效请求与误导。
-    // 真正的语音识别请走 @aalis/plugin-asr-whisper-cpp 或 plugin-asr-openai。
+    // 音频：Ollama 原生 /api/chat 不支持 audios，有音频时会在 chat() 中
+    // 改走 OpenAI 兼容的 /v1/chat/completions 路径。这里只透传字段。
+    if (msg.audios && msg.audios.length > 0 && msg.role === 'user') {
+      ollamaMsg.audios = msg.audios.map(stripAudioDataPrefix);
+    }
 
     // 传递工具调用（assistant 消息中的）
     if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -638,6 +659,143 @@ class OllamaClient {
       },
     };
   }
+
+  /**
+   * 调用 Ollama 的 OpenAI 兼容 /v1/chat/completions 端点。当 messages 包含
+   * audios 字段时，/api/chat 原生路径不支持，必须走这里。
+   * 文本与工具调用等其它能力仍由 chat() 走原生路径。
+   */
+  async chatOpenAIWithAudio(model: string, request: ChatModelRequest): Promise<ChatResponse> {
+    // 将 Aalis Message 转为 OpenAI multimodal content blocks
+    const oaiMessages = await Promise.all(
+      request.messages.map(async m => {
+        const role = m.role === 'tool' ? 'tool' : m.role;
+        const blocks: Array<Record<string, unknown>> = [];
+        // Modality order：Ollama 官方 best practice 要求 image/audio content
+        // 必须在 text 之前。参见 /memories/repo/aalis-ollama-gemma4-audio.md
+        if (m.images && m.images.length > 0 && m.role === 'user') {
+          for (const img of m.images) {
+            const url = await this.resolveImage(img);
+            if (url)
+              blocks.push({
+                type: 'image_url',
+                image_url: { url: url.startsWith('http') ? url : `data:image/png;base64,${url}` },
+              });
+          }
+        }
+        if (m.audios && m.audios.length > 0 && m.role === 'user') {
+          for (const a of m.audios) {
+            const { data, format } = decodeAudioForOpenAI(a);
+            blocks.push({ type: 'input_audio', input_audio: { data, format } });
+          }
+        }
+        if (m.content) blocks.push({ type: 'text', text: m.content });
+        // 纯文本 → string；有多模态 → array
+        const content = blocks.length === 1 && blocks[0].type === 'text' ? blocks[0].text : blocks;
+        return { role, content };
+      }),
+    );
+
+    const body: Record<string, unknown> = {
+      model,
+      messages: oaiMessages,
+      stream: false,
+      max_tokens: request.maxTokens ?? this.maxTokens,
+      temperature: request.temperature ?? this.temperature,
+    };
+
+    this.logger.debug(`请求 Ollama (OpenAI compat, audio): ${model}, ${oaiMessages.length} 条消息`);
+
+    // 统计本次发送的音频载荷大小，便于诊断模型是否真的收到了音频
+    let totalAudioBytes = 0;
+    let audioCount = 0;
+    for (const m of oaiMessages) {
+      if (Array.isArray(m.content)) {
+        for (const block of m.content) {
+          const b = block as { type?: string; input_audio?: { data?: string; format?: string } };
+          if (b.type === 'input_audio' && b.input_audio?.data) {
+            audioCount++;
+            totalAudioBytes += Math.floor((b.input_audio.data.length * 3) / 4);
+          }
+        }
+      }
+    }
+    if (audioCount > 0) {
+      this.logger.info(`[ollama-audio] 发送 ${audioCount} 段音频，合计 ${(totalAudioBytes / 1024).toFixed(1)}KB`);
+    }
+
+    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
+    if (request.signal) signals.push(request.signal);
+
+    const httpT0 = Date.now();
+    const resp = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.any(signals),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${errText.slice(0, 400)}`);
+      throw new Error(`Ollama /v1/chat/completions 错误 (${resp.status}): ${errText.slice(0, 400)}`);
+    }
+    const data = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
+    const rawContent = data.choices?.[0]?.message?.content ?? '';
+    const finishReason = data.choices?.[0]?.finish_reason ?? '?';
+    const text = rawContent.trim();
+    if (audioCount > 0) {
+      this.logger.info(
+        `[ollama-audio] ${model} HTTP ${Date.now() - httpT0}ms, finish=${finishReason}, ` +
+          `raw=${rawContent.length}字 trim=${text.length}字, ` +
+          `tokens prompt=${data.usage?.prompt_tokens ?? '?'} completion=${data.usage?.completion_tokens ?? '?'}` +
+          (rawContent.length > 0
+            ? `, 原文前300字="${rawContent.slice(0, 300).replace(/\n/g, ' ')}"`
+            : ' [模型返回空字符串]'),
+      );
+    }
+    const result: ChatResponse = { content: text || null, reasoningContent: null };
+    if (data.usage) {
+      result.usage = {
+        promptTokens: data.usage.prompt_tokens ?? 0,
+        completionTokens: data.usage.completion_tokens ?? 0,
+        totalTokens: data.usage.total_tokens ?? 0,
+      };
+    }
+    return result;
+  }
+}
+
+/** 去掉 base64 音频的 data: 前缀，返回纯 payload。 */
+function stripAudioDataPrefix(s: string): string {
+  const m = s.match(/^data:[^;]+;base64,(.+)$/);
+  return m ? m[1] : s;
+}
+
+/**
+ * 将 Aalis 传过来的 audio payload（可能带 data: 前缀也可能不带）解析为
+ * OpenAI input_audio 需要的 `{ data, format }`。format 推断优先级：
+ * data URL 的 mime 后缀 → 默认 wav。
+ */
+function decodeAudioForOpenAI(payload: string): { data: string; format: string } {
+  const m = payload.match(/^data:audio\/([^;]+);base64,(.+)$/);
+  if (m) {
+    const fmt = m[1].toLowerCase();
+    const norm =
+      fmt === 'mpeg' || fmt === 'mp3'
+        ? 'mp3'
+        : fmt === 'x-wav' || fmt === 'wave' || fmt === 'wav'
+          ? 'wav'
+          : fmt === 'ogg' || fmt === 'oga' || fmt === 'opus'
+            ? 'ogg'
+            : fmt === 'm4a' || fmt === 'mp4' || fmt === 'aac'
+              ? 'm4a'
+              : 'wav';
+    return { data: m[2], format: norm };
+  }
+  return { data: stripAudioDataPrefix(payload), format: 'wav' };
 }
 
 function safeParseJSON(str: string): Record<string, unknown> {
@@ -650,7 +808,7 @@ function safeParseJSON(str: string): Record<string, unknown> {
 
 // ===== 模型能力映射 =====
 
-const { Chat, ToolCalling, Streaming, Vision } = LLMCapabilities;
+const { Chat, ToolCalling, Streaming, Vision, Audio } = LLMCapabilities;
 
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'llama3.1': [Chat, ToolCalling, Streaming],
@@ -681,18 +839,19 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
   // 去掉 tag 部分（如 llama3.1:8b → llama3.1）
   const baseName = model.split(':')[0].toLowerCase();
 
-  // 注：Gemma 4 E 系列（e2b/e4b）GGUF 含 audio encoder，但 Ollama 0.24.0 的
-  // HTTP API（/api/chat 与 /v1/chat/completions）均未暴露音频输入字段，
-  // 模型实际拿不到音频。因此不自动授予 Audio 能力。语音识别请走
-  // @aalis/plugin-asr-whisper-cpp 或 plugin-asr-openai。
+  // Gemma 4 E 系列（e2b / e4b）原生支持音频输入（约 300M Audio encoder）。
+  // 参考 https://ollama.com/library/gemma4
+  const isGemma4Audio = /^gemma4:e[24]b/.test(model.toLowerCase());
 
   if (MODEL_CAPABILITIES[baseName]) {
     for (const c of MODEL_CAPABILITIES[baseName]) out.add(c);
+    if (isGemma4Audio) out.add(Audio);
     return [...out];
   }
   for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
     if (baseName.startsWith(known)) {
       for (const c of caps) out.add(c);
+      if (isGemma4Audio) out.add(Audio);
       return [...out];
     }
   }
@@ -701,6 +860,7 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
     return [...out];
   }
   for (const c of DEFAULT_CAPABILITIES) out.add(c);
+  if (isGemma4Audio) out.add(Audio);
   return [...out];
 }
 
