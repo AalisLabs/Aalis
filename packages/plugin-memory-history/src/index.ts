@@ -36,20 +36,25 @@ export const inject = {
 
 // ===== 配置 schema =====
 
-export type HistoryScope = 'off' | 'same-platform' | 'cross-platform';
+export type HistoryScope = 'same-platform' | 'cross-platform';
 
 export const configSchema: ConfigSchema = {
+  injectEnabled: {
+    type: 'boolean',
+    label: '被动注入 prompt',
+    default: true,
+    description:
+      '是否在每次 LLM 调用前自动将跨会话近期消息作为 system 块注入。关闭后工具仍然可用（需 toolEnabled=true）。',
+  },
   scope: {
     type: 'select',
-    label: '默认作用域',
+    label: '查询作用域（被动注入 + 工具默认）',
     default: 'same-platform',
     options: [
-      { label: '关闭注入（仍保留工具）', value: 'off' },
       { label: '同平台跨会话聚合', value: 'same-platform' },
       { label: '跨平台全部聚合', value: 'cross-platform' },
     ],
-    description:
-      '"同平台" = 仅取与当前消息同 platform 的历史；"跨平台" = 全部 platform 合并。off 时不再自动注入 system-block，但工具仍可主动调用。',
+    description: '被动注入使用该作用域；工具调用未显式传 scope 时也使用该值。要“关闭被动注入”请调 injectEnabled。',
   },
   limit: {
     type: 'number',
@@ -96,6 +101,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
+  injectEnabled: true,
   scope: 'same-platform',
   limit: 30,
   maxAgeMinutes: 180,
@@ -110,6 +116,7 @@ export const defaultConfig = {
 // ===== 内部类型 / 工具 =====
 
 interface HistoryConfig {
+  injectEnabled: boolean;
   scope: HistoryScope;
   limit: number;
   maxAgeMinutes: number;
@@ -128,18 +135,23 @@ interface QueryOptions {
   currentSessionId?: string;
   limit?: number;
   maxAgeMinutes?: number;
+  /** 覆盖 perSessionLimit；不传则用配置默认值 */
+  perSessionLimit?: number;
 }
 
 function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
+  // 向后兼容：旧配置 scope='off' = 关闭被动注入 + scope 回退为 same-platform
   const scopeRaw = (raw.scope as string) ?? 'same-platform';
-  const scope: HistoryScope =
-    scopeRaw === 'off' || scopeRaw === 'same-platform' || scopeRaw === 'cross-platform' ? scopeRaw : 'same-platform';
+  const legacyOff = scopeRaw === 'off';
+  const scope: HistoryScope = scopeRaw === 'cross-platform' ? 'cross-platform' : 'same-platform';
+  const injectEnabled = legacyOff ? false : raw.injectEnabled !== false;
   const toolName =
     (typeof raw.toolName === 'string' && raw.toolName ? raw.toolName : 'recent_messages').replace(
       /[^a-zA-Z0-9_-]/g,
       '_',
     ) || 'recent_messages';
   return {
+    injectEnabled,
     scope,
     limit: Math.max(1, Number(raw.limit ?? 30)),
     maxAgeMinutes: Math.max(0, Number(raw.maxAgeMinutes ?? 180)),
@@ -188,11 +200,12 @@ function formatRecords(records: RecentMessageRecord[]): string {
 export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
   const cfg = normalizeConfig(rawConfig);
 
-  ctx.logger.info(`跨会话历史上下文插件已启动（scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min）`);
+  ctx.logger.info(
+    `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? cfg.toolName : 'off'}）`,
+  );
 
   async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
     const scope: HistoryScope = opts.scope ?? cfg.scope;
-    if (scope === 'off') return [];
 
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory?.getRecentMessagesAcrossSessions) {
@@ -208,7 +221,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
     // 若启用 per-session cap，需要向 backend overscan；上限按 limit * 10 与 1000 取小，
     // 既能覆盖单会话刷屏场景，又避免极端情况下拉太多。
-    const perSessionLimit = cfg.perSessionLimit;
+    const perSessionLimit = Math.max(0, opts.perSessionLimit ?? cfg.perSessionLimit);
     const backendLimit = perSessionLimit > 0 ? Math.min(limit * 10, 1000) : limit;
 
     const raw = await memory.getRecentMessagesAcrossSessions({
@@ -239,7 +252,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   // ---- 注入 hook ----
 
   ctx.middleware('agent:llm:before', async (data, next) => {
-    if (cfg.scope === 'off') {
+    if (!cfg.injectEnabled) {
       await next();
       return;
     }
@@ -299,8 +312,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
               scope: {
                 type: 'string',
                 enum: ['same-platform', 'cross-platform'],
-                description:
-                  'same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值。',
+                description: `same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。`,
               },
               limit: {
                 type: 'number',
@@ -309,6 +321,10 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
               maxAgeMinutes: {
                 type: 'number',
                 description: `只返回最近 N 分钟内的消息；0 = 不限。默认 ${cfg.maxAgeMinutes}。`,
+              },
+              perSessionLimit: {
+                type: 'number',
+                description: `同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；0 = 不限。默认 ${cfg.perSessionLimit}。`,
               },
             },
             additionalProperties: false,
@@ -323,6 +339,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
           currentSessionId: callCtx.sessionId,
           limit: typeof args.limit === 'number' ? args.limit : undefined,
           maxAgeMinutes: typeof args.maxAgeMinutes === 'number' ? args.maxAgeMinutes : undefined,
+          perSessionLimit: typeof args.perSessionLimit === 'number' ? args.perSessionLimit : undefined,
         });
         if (records.length === 0) return '（最近没有匹配的消息）';
         return formatRecords(records);
