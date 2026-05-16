@@ -22,12 +22,15 @@ const DEFAULT_VISION_PROMPT =
 const DEFAULT_VISION_BATCH_PROMPT =
   '以下是一组（按时间或上下文顺序排列的）图片。请综合所有图片做一段统一描述，重点说明动态变化、关键元素和含义。用中文回答，控制在150字以内。';
 
-const DEFAULT_AUDIO_DESCRIBE_PROMPT =
-  '请描述这段音频的内容（语音内容大意、环境音、情绪、音乐风格等）。用中文回答，控制在150字以内。';
-
-// ASR prompt：参考 Google Gemma 3n 官方 audio_understanding 范例措辞，要求模型只输出原文转写。
-const DEFAULT_AUDIO_TRANSCRIBE_PROMPT =
-  '请将下面这段语音转写为原始语言的文字。严格遵循以下格式要求：\n* 仅输出转写文本，不要换行，不要任何前缀或解释。\n* 数字以阿拉伯数字呈现（例如写「3」而非「三」、写「1.7」而非「一点七」）。';
+// 全能音频 prompt：覆盖语音转写 + 音乐/环境音描述 + 听不清时的尽力描述。
+// 不设严格输出限制，避免模型遇非语音输入返回空串。
+const DEFAULT_AUDIO_PROMPT =
+  '请处理这段音频并输出中文文本描述：\n' +
+  '* 如果含语音/对话，以转写原文为主（多人可标「A：」「B：」）。\n' +
+  '* 如果是音乐/旋律，描述风格、乐器、情绪，可识别的歌词片段也写出。\n' +
+  '* 如果主体是环境音/音效，描述主要声音事件与场景。\n' +
+  '* 听不清也要尽力说出你听到了什么（如「模糊的女声，疑似在说…」），不要返回空。\n' +
+  '* 仅输出内容本身，不要任何前缀、引号、解释或 markdown 标记。';
 
 interface LlmProcessorOptions {
   /** 自定义 prompt 覆盖默认值 */
@@ -131,8 +134,8 @@ function wrapLLMAsProcessor(
         };
       }
 
-      if (cap === 'audio.describe') {
-        // 把音频附件转 base64 后放到 Message.audios，由 provider 适配（如 plugin-ollama 透传给 /api/chat audios 字段）
+      if (cap === 'audio') {
+        // 把音频附件转 base64 后放到 Message.audios，由 provider 适配（如 plugin-ollama 走 chat-completions audio 块）
         const audios = await Promise.all(input.attachments.map(a => audioToBase64(a.data)));
         const messages: Message[] = [{ role: 'user', content: prompt, audios }];
         const resp = await llm.chat({ messages, maxTokens, think: false });
@@ -147,11 +150,11 @@ function wrapLLMAsProcessor(
     },
   };
 
-  if (cap === 'audio.transcribe') {
+  if (cap === 'audio') {
     proc.transcribe = async (input: TranscribeInput, _ctx: Context): Promise<TranscribeResult> => {
       const langHint = input.language ? `\n* 输出语言：${input.language}` : '';
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
-      const prompt = `${opts.prompt ?? DEFAULT_AUDIO_TRANSCRIBE_PROMPT}${langHint}${ctxBlock}`;
+      const prompt = `${opts.prompt ?? DEFAULT_AUDIO_PROMPT}${langHint}${ctxBlock}`;
       const audios = [await audioToBase64(input.attachment.data)];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
       const resp = await llm.chat({ messages, maxTokens: opts.maxTokens ?? 512, think: false });
@@ -171,9 +174,7 @@ function capShortName(cap: MediaCapability): string {
   switch (cap) {
     case 'vision':
       return 'vision';
-    case 'audio.transcribe':
-      return 'asr';
-    case 'audio.describe':
+    case 'audio':
       return 'audio';
     case 'video.passthrough':
       return 'video';
@@ -183,8 +184,7 @@ function capShortName(cap: MediaCapability): string {
 }
 
 function defaultPromptFor(cap: MediaCapability, count: number): string {
-  if (cap === 'audio.describe') return DEFAULT_AUDIO_DESCRIBE_PROMPT;
-  if (cap === 'audio.transcribe') return DEFAULT_AUDIO_TRANSCRIBE_PROMPT;
+  if (cap === 'audio') return DEFAULT_AUDIO_PROMPT;
   if (count > 1) return DEFAULT_VISION_BATCH_PROMPT;
   return DEFAULT_VISION_PROMPT;
 }
@@ -202,10 +202,8 @@ export function scanLLMProcessors(ctx: Context, opts: LlmProcessorOptions = {}):
       processors.push(wrapLLMAsProcessor(entry, 'document.image', opts));
     }
     if (caps.includes(LLMCapabilities.Audio)) {
-      // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 同时具备「描述」与「转写」能力，
-      // 仅靠不同 prompt 即可切换；都注册以让 MediaService 的 transcribe-first / describe-fallback 链路完整。
-      processors.push(wrapLLMAsProcessor(entry, 'audio.transcribe', opts));
-      processors.push(wrapLLMAsProcessor(entry, 'audio.describe', opts));
+      // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
+      processors.push(wrapLLMAsProcessor(entry, 'audio', opts));
     }
     if (caps.includes(LLMCapabilities.Video)) {
       processors.push(wrapLLMAsProcessor(entry, 'video.passthrough', opts));

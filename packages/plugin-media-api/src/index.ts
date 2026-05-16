@@ -17,10 +17,13 @@ import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-a
 export type MediaCapability =
   /** 给图描述（含动图抽帧后整合） */
   | 'vision'
-  /** 音频转字幕/逐字稿（whisper-style） */
-  | 'audio.transcribe'
-  /** 音频自然语言描述（含环境音、情绪、音乐风格等，需 audio-LLM） */
-  | 'audio.describe'
+  /**
+   * 音频→文本。同一个能力同时覆盖：
+   * - 语音转写（whisper / LLM-as-ASR）
+   * - 音乐/环境音/旋律描述（需 audio-LLM）
+   * processor 在其 transcribe() 中返回适合该音频的文本表示。
+   */
+  | 'audio'
   /** 视频原生理解（passthrough，需要 LLM 支持 video） */
   | 'video.passthrough'
   /** 文档内嵌图片识别（OCR / 图理解） */
@@ -36,9 +39,12 @@ export interface MediaProcessor {
   displayName?: string;
   /** 优先级（数值大者优先；同 cap 多 processor 时由 MediaService 仲裁；默认 0） */
   priority?: number;
-  /** 描述/识别（用于 vision / audio.describe / document.image / video.passthrough） */
+  /** 描述/识别（用于 vision / document.image / video.passthrough） */
   describe?(input: DescribeInput, ctx: Context): Promise<DescribeResult>;
-  /** 转写（用于 audio.transcribe） */
+  /**
+   * 音频→文本（用于 audio cap）。返回的 text 应能让下游 LLM
+   * “听懂”该音频：语音输原文转写；音乐/环境音输描述；听不清也要说出听到什么。
+   */
   transcribe?(input: TranscribeInput, ctx: Context): Promise<TranscribeResult>;
 }
 
@@ -73,7 +79,7 @@ export interface TranscribeInput {
   /** 是否需要时间戳分段 */
   withTimestamps?: boolean;
   /**
-   * 对话上下文文本（可选）：仅当 backend 为 LLM-as-ASR（如 gemma4:e4b）时有意义；
+   * 对话上下文文本（可选）：仅当 backend 为 LLM-as-audio（如 gemma4:e4b）时有意义；
    * 传统 Whisper 类 ASR 端点会忽略。
    */
   context?: string;
