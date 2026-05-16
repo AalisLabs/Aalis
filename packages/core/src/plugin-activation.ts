@@ -87,6 +87,22 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
       }
     }
 
+    // dev mode：反向一致性检查 —— 实际注册的服务名是否都在 provides 中声明
+    // 不在 provides 的服务无法享受拓扑排序与服务恢复，下游可能错过依赖关系
+    if (process.env.NODE_ENV !== 'production') {
+      const declared = new Set(entry.module.provides ?? []);
+      const actuallyProvided = rootCtx.serviceContainer
+        .getServiceNames()
+        .filter(name => rootCtx.serviceContainer.hasByContext(name, entry.instanceId));
+      const undeclared = actuallyProvided.filter(name => !declared.has(name));
+      if (undeclared.length > 0) {
+        logger.warn(
+          `插件 "${entry.instanceId}" 注册了服务 [${undeclared.join(', ')}] 但未在 module.provides 中声明 —— ` +
+            `下游依赖排序和自动恢复将无法找到该 provider（仅靠 reactive 兜底），建议补全 provides 列表`,
+        );
+      }
+    }
+
     entry.state = 'active';
     entry.error = undefined;
     logger.info(`插件已激活: ${entry.instanceId}`);
