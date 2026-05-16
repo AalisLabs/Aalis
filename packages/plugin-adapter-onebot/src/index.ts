@@ -1,6 +1,3 @@
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { MediaService } from '@aalis/plugin-media-api';
@@ -8,6 +5,12 @@ import { AttachmentRefKind, formatAttachmentRef } from '@aalis/plugin-message-ap
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import WebSocket from 'ws';
+import {
+  cacheAttachmentBuffer,
+  detectExtensionFromBuffer,
+  loadAttachmentBuffer,
+  transcodeAudioBufferToWav,
+} from './attachment-cache.js';
 import { renderAttachmentsAsContentMarkers } from './attachments.js';
 import type {
   NormalizedRequestEvent,
@@ -155,6 +158,19 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
+  attachmentCache: {
+    label: '附件本地缓存',
+    description:
+      '入站 / 出站的 image / audio / video / file 统一缓存到 data/{kind}s/{session}/，与图片目录布局一致，便于人工归档与多轮工具复用',
+    fields: {
+      maxBytes: {
+        type: 'number',
+        label: '单文件大小上限 (Byte)',
+        default: 10 * 1024 * 1024,
+        description: '超过此尺寸的附件不落盘，保留原 URL（典型场景：长视频）。默认 10 MiB。',
+      },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -175,6 +191,9 @@ export const defaultConfig = {
   },
   reply: {
     maxDepth: 5,
+  },
+  attachmentCache: {
+    maxBytes: 10 * 1024 * 1024,
   },
 };
 
@@ -256,60 +275,85 @@ function nextEcho(): string {
   return `aalis_${Date.now()}_${++echoCounter}`;
 }
 
-// ===== 图片下载缓存 =====
+// ===== 附件统一缓存 =====
+//
+// 历史上只有 image 落盘到 data/images/，audio/video/file 直接传 URL；
+// 现统一到 data/{kind}s/{session}/{hash}.{ext}，便于人工归档、跨轮工具复用、
+// 多模态历史回放。详见 ./attachment-cache.ts。
 
-/** 下载图片到本地缓存，返回相对路径（如 data/images/...）。失败返回 null */
-async function downloadAndCacheImage(url: string, sessionId: string): Promise<string | null> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
+/** 占位符 → AttachmentRefKind 映射（与 v11/v12 segmentsToText 的输出对齐） */
+const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placeholder: string; ref: AttachmentRefKind }> =
+  {
+    image: { placeholder: '[图片]', ref: AttachmentRefKind.Image },
+    audio: { placeholder: '[语音]', ref: AttachmentRefKind.Audio },
+    video: { placeholder: '[视频]', ref: AttachmentRefKind.Video },
+    file: { placeholder: '[文件]', ref: AttachmentRefKind.File },
+  };
 
-    const hash = createHash('sha256').update(buffer).digest('hex').slice(0, 16);
-
-    const contentType = response.headers.get('content-type') ?? '';
-    let ext = 'jpg';
-    if (contentType.includes('png')) ext = 'png';
-    else if (contentType.includes('gif')) ext = 'gif';
-    else if (contentType.includes('webp')) ext = 'webp';
-
-    const safeSessionId = sessionId.replace(/[:/\\]/g, '_');
-    const dirRel = `data/images/${safeSessionId}`;
-    const dirAbs = resolve(process.cwd(), dirRel);
-    await mkdir(dirAbs, { recursive: true });
-
-    const filename = `${hash}.${ext}`;
-    await writeFile(resolve(dirAbs, filename), buffer);
-
-    return `${dirRel}/${filename}`;
-  } catch {
-    return null;
+/**
+ * 把单个附件下载（必要时转码）后落盘，返回相对路径。失败返回 null。
+ * - audio：先 ffmpeg → 16kHz mono WAV，再以 .wav 入库（用户期望转码后存储，
+ *   方便后续 LLM 反复分析；同时避免下游每次重转码）。
+ * - 其他 kind：原样落盘，扩展名按 magic header 推断。
+ */
+async function cacheOneAttachment(
+  kind: 'image' | 'audio' | 'video' | 'file',
+  source: string,
+  sessionId: string,
+  maxBytes: number,
+  logger: Context['logger'],
+): Promise<string | null> {
+  const buf = await loadAttachmentBuffer(source);
+  if (!buf) return null;
+  if (kind === 'audio') {
+    const inExt = detectExtensionFromBuffer(buf, 'bin');
+    const wav = await transcodeAudioBufferToWav(buf, inExt);
+    if (!wav) {
+      logger.warn(`OneBot 音频转 WAV 失败 (in=${inExt}, size=${buf.byteLength}B)，保留原 URL`);
+      return null;
+    }
+    return await cacheAttachmentBuffer(wav, 'audio', sessionId, 'wav', maxBytes);
   }
+  const ext = detectExtensionFromBuffer(buf, kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin');
+  return await cacheAttachmentBuffer(buf, kind, sessionId, ext, maxBytes);
 }
 
 /**
- * 下载所有图片并替换文本中的 [图片] 标记为 [图片 | ref:path]。
- * 返回 { text: 替换后文本, localPaths: 本地路径数组（与 images 一一对应） }
+ * 把 text 中所有 [图片]/[语音]/[视频]/[文件] 占位按 attachments 顺序替换为
+ * `[xxx | ref:data/...]`。落盘失败的占位保持原样。
  */
-async function cacheImagesAndRewriteText(
+function rewritePlaceholdersWithRefs(
   text: string,
-  images: string[],
-  sessionId: string,
-): Promise<{ text: string; localPaths: (string | null)[] }> {
-  const localPaths = await Promise.all(images.map(url => downloadAndCacheImage(url, sessionId)));
-
-  let idx = 0;
-  let rewritten = text.replace(/\[图片\]/g, () => {
-    const path = localPaths[idx++];
-    return path ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: path }) : '[图片]';
+  attachments: ReadonlyArray<{ kind: 'image' | 'audio' | 'video' | 'file' }>,
+  localPaths: ReadonlyArray<string | null>,
+): string {
+  // 按 kind 分桶维护游标
+  const cursors: Record<'image' | 'audio' | 'video' | 'file', number> = { image: 0, audio: 0, video: 0, file: 0 };
+  const slotsByKind: Record<'image' | 'audio' | 'video' | 'file', (string | null)[]> = {
+    image: [],
+    audio: [],
+    video: [],
+    file: [],
+  };
+  attachments.forEach((a, i) => {
+    slotsByKind[a.kind].push(localPaths[i]);
   });
 
-  const remaining = localPaths
-    .slice(idx)
-    .map(path => (path ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: path }) : '[图片]'));
-  if (remaining.length > 0) rewritten += remaining.join('');
-
-  return { text: rewritten, localPaths };
+  let out = text;
+  for (const kind of ['image', 'audio', 'video', 'file'] as const) {
+    const { placeholder, ref } = KIND_PLACEHOLDER[kind];
+    const pattern = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(pattern, 'g'), () => {
+      const slot = slotsByKind[kind][cursors[kind]++];
+      return slot ? formatAttachmentRef({ kind: ref, ref: slot }) : placeholder;
+    });
+    // 占位符比 attachments 少时：把多出的 ref 追加到末尾，确保不丢
+    const remaining = slotsByKind[kind].slice(cursors[kind]);
+    for (const slot of remaining) {
+      if (slot) out += formatAttachmentRef({ kind: ref, ref: slot });
+    }
+  }
+  return out;
 }
 
 // ===== 协议版本实例 =====
@@ -480,6 +524,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const replyCfg = {
     maxDepth: typeof replyRaw.maxDepth === 'number' ? Math.max(1, Math.floor(replyRaw.maxDepth)) : 5,
   };
+
+  // 附件落盘上限（image / audio / video / file 共用同一阈值）
+  const attCacheRaw = (config.attachmentCache ?? {}) as Record<string, unknown>;
+  const attachmentMaxBytes =
+    typeof attCacheRaw.maxBytes === 'number' && attCacheRaw.maxBytes > 0 ? attCacheRaw.maxBytes : 10 * 1024 * 1024;
 
   if (connections.length === 0) {
     ctx.logger.info('OneBot 适配器未配置任何连接');
@@ -1354,60 +1403,52 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       let groupName: string | undefined;
       let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;
 
-      // 下载并缓存图片，替换文本中的 [图片] 为 [图片 | ref:path]
-      const imageAtts = event.attachments?.filter(a => a.kind === 'image') ?? [];
-      let imageLocalPaths: (string | null)[] = [];
-      if (imageAtts.length > 0) {
-        const { text: rewritten, localPaths } = await cacheImagesAndRewriteText(
-          event.text,
-          imageAtts.map(a => a.url),
-          sessionId,
-        );
-        event.text = rewritten;
-        imageLocalPaths = localPaths;
-      }
-
-      // QQ 语音段（v11 record / v12 voice）默认 silk 编码，ASR 引擎与多模态 LLM 都不认。
-      // 调用 OneBot get_record 让协议端做 silk→mp3 转换；NapCat 等扩展实现
-      // 还会顺手返回 base64，跨机部署也能拿到音频数据。
+      // ----- 统一附件落盘 -----
+      // 所有 image / audio / video / file 统一缓存到 data/{kind}s/{session}/，
+      // 让历史回放、跨轮工具调用、人工归档使用同一份目录布局。
       //
-      // 注意：部分 OneBot 实现会忽略 out_format 参数、只是把扩展名改成 .mp3 但内容仍是 silk。
-      // 这种情况下游 plugin-media 会在 magic-header 校验阶段抛错并打 warn，
-      // 因此这里成功也打 info，让用户能在日志里区分"协议端没转好"和"模型不会听"。
-      const audioAtts = event.attachments?.filter(a => a.kind === 'audio') ?? [];
-      const audioConverted: (string | null)[] = new Array(audioAtts.length).fill(null);
-      if (audioAtts.length > 0 && state) {
-        await Promise.all(
-          audioAtts.map(async (att, i) => {
-            const fileRef = att.name ?? att.url;
-            if (!fileRef) return;
-            try {
-              const data = (await sendAction(state, 'get_record', {
-                file: fileRef,
-                out_format: 'mp3',
-              })) as { file?: string; url?: string; base64?: string } | undefined;
-              let kind: 'base64' | 'url' | 'file' | 'empty' = 'empty';
-              if (data?.base64) {
-                audioConverted[i] = `data:audio/mpeg;base64,${data.base64}`;
-                kind = 'base64';
-              } else if (data?.url) {
-                audioConverted[i] = String(data.url);
-                kind = 'url';
-              } else if (data?.file) {
-                // 协议端给出本地路径——只有 NapCat 与 Aalis 同机部署时可读
-                audioConverted[i] = `file://${data.file}`;
-                kind = 'file';
+      // 特别地：
+      //  - audio：先调 OneBot get_record 把 QQ silk 转成可解码格式（NapCat 等
+      //    实现常忽略 out_format 参数，返回 amr 原文），随后本地 ffmpeg
+      //    强制转 16kHz mono WAV 再落盘，下游 LLM 直接消费。
+      //  - 落盘失败的项保留原 URL，文本占位也维持 [图片]/[语音]/... 原样。
+      const atts = event.attachments ?? [];
+      const localPaths: (string | null)[] = await Promise.all(
+        atts.map(async att => {
+          try {
+            if (att.kind === 'audio' && state) {
+              // get_record 把 silk → mp3/amr，返回 base64 / url / file 任一
+              const fileRef = att.name ?? att.url;
+              let source = att.url;
+              if (fileRef) {
+                try {
+                  const data = (await sendAction(state, 'get_record', {
+                    file: fileRef,
+                    out_format: 'mp3',
+                  })) as { file?: string; url?: string; base64?: string } | undefined;
+                  if (data?.base64) source = `data:audio/mpeg;base64,${data.base64}`;
+                  else if (data?.url) source = String(data.url);
+                  else if (data?.file) source = `file://${data.file}`;
+                  ctx.logger.debug(
+                    `OneBot get_record 完成 (file=${fileRef}, ` +
+                      `kind=${data?.base64 ? 'base64' : data?.url ? 'url' : data?.file ? 'file' : 'empty'})`,
+                  );
+                } catch (err) {
+                  ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
+                }
               }
-              ctx.logger.debug(
-                `OneBot get_record 完成 (file=${fileRef}, kind=${kind}, ` +
-                  `size=${data?.base64 ? Math.round((data.base64.length * 3) / 4) : '?'}B)`,
-              );
-            } catch (err) {
-              ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
+              return await cacheOneAttachment('audio', source, sessionId, attachmentMaxBytes, ctx.logger);
             }
-          }),
-        );
-      }
+            return await cacheOneAttachment(att.kind, att.url, sessionId, attachmentMaxBytes, ctx.logger);
+          } catch (err) {
+            ctx.logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
+            return null;
+          }
+        }),
+      );
+
+      // 把 [图片]/[语音]/[视频]/[文件] 占位重写为 [xxx | ref:data/...]
+      if (atts.length > 0) event.text = rewritePlaceholdersWithRefs(event.text, atts, localPaths);
 
       // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
       // 这样 LLM 不必再调用工具，且展开后的内容会随 inbound:message 进入历史归档。
@@ -1459,27 +1500,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         userId: event.userId,
         nickname: event.nickname,
         attachments: event.attachments?.map((a, i) => {
-          // 图片附件：优先用本地缓存路径作为 data，让下游（plugin-media 的 ffmpeg
-          // 抽帧、image-sender 的 history_ref 解析等）可以直接读本地文件，
-          // 避免 https URL 反复下载、avoids QQ 鉴权过期。下载失败时退回原 url。
-          if (a.kind === 'image') {
-            const idxInImages = (event.attachments ?? []).slice(0, i).filter(x => x.kind === 'image').length;
-            const local = imageLocalPaths[idxInImages];
-            return { kind: a.kind, data: local ?? a.url, mimeType: a.mimeType, name: a.name };
-          }
-          // 音频附件：若 get_record 转好了 mp3，用转换后的 data URL / 路径替换；
-          // 同时把 mimeType 修正为 audio/mpeg 让 ASR processor 走 mp3 路径。
-          if (a.kind === 'audio') {
-            const idxInAudio = (event.attachments ?? []).slice(0, i).filter(x => x.kind === 'audio').length;
-            const conv = audioConverted[idxInAudio];
-            return {
-              kind: a.kind,
-              data: conv ?? a.url,
-              mimeType: conv ? 'audio/mpeg' : a.mimeType,
-              name: a.name,
-            };
-          }
-          return { kind: a.kind, data: a.url, mimeType: a.mimeType, name: a.name };
+          // 落盘成功 → data 用本地路径（下游 ffmpeg / vision / audio LLM
+          // 都按本地文件读取，避免远程 URL 反复下载与 QQ 鉴权过期）。
+          // 落盘失败 → 退回原 URL，下游各自尝试。
+          const local = localPaths[i];
+          return {
+            kind: a.kind,
+            data: local ?? a.url,
+            // 落盘后的音频统一是 16kHz mono WAV
+            mimeType: local && a.kind === 'audio' ? 'audio/wav' : a.mimeType,
+            name: a.name,
+          };
         }),
         sessionType,
         groupName,
@@ -1915,6 +1946,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 与 Aalis 不在同一文件系统时（典型：Docker 部署）发生 ENOENT
     let content = msg.content ?? '';
     if (msg.attachments?.length) {
+      // 出站附件也统一落盘 data/{kind}s/{session}/ —— 让 agent 自己发出去的
+      // 图/音/视频能进入后续历史回放与归档检索，行为与入站对称。
+      // 落盘失败（超大 / 无法解码）不阻塞发送，保留原 data 继续走 renderer。
+      await Promise.all(
+        msg.attachments.map(async att => {
+          try {
+            const local = await cacheOneAttachment(att.kind, att.data, msg.sessionId, attachmentMaxBytes, ctx.logger);
+            if (local) {
+              att.data = local;
+              if (att.kind === 'audio') att.mimeType = 'audio/wav';
+            }
+          } catch (err) {
+            ctx.logger.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
+          }
+        }),
+      );
+
       try {
         const markers = await renderAttachmentsAsContentMarkers(msg.attachments, ctx.logger);
         if (markers) content = content ? `${content}\n${markers}` : markers;
