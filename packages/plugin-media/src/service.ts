@@ -30,7 +30,13 @@ import { scanLLMProcessors } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
 
 export interface MediaConfigResolved {
-  vision: { mode: 'describe' | 'passthrough' | 'disabled'; prefer?: string; maxTokens: number; prompt?: string };
+  vision: {
+    mode: 'describe' | 'passthrough' | 'disabled';
+    prefer?: string;
+    maxTokens: number;
+    think: boolean;
+    prompt?: string;
+  };
   /**
    * 音频识别（单一 cap，完成转写 + 描述双重职责）。
    * - LLM-as-audio backend：全能 prompt 驱动，语音输原文、音乐/环境输描述。
@@ -47,7 +53,16 @@ export interface MediaConfigResolved {
     /** 自定义 prompt。留空使用 LLM adapter 内置的全能描述 prompt */
     prompt?: string;
   };
-  video: { mode: 'frames+asr' | 'frames-only' | 'disabled'; maxFrames: number };
+  video: {
+    mode: 'frames+asr' | 'frames-only' | 'disabled';
+    maxFrames: number;
+    /** 仅对 video.passthrough 生效（原生视频 LLM）。帧抽取描述走 vision.maxTokens */
+    maxTokens: number;
+    /** 仅对 video.passthrough 生效 */
+    think: boolean;
+    /** 仅对 video.passthrough 生效 */
+    prompt?: string;
+  };
   document: { extractImages: boolean };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
   contextHistory: { enabled: boolean; maxMessages: number };
@@ -341,10 +356,20 @@ export class MediaServiceImpl implements MediaService {
     const processors = scanLLMProcessors(this.ctx, {
       prompt: this.cfg.vision.prompt,
       maxTokens: this.cfg.vision.maxTokens,
+      vision: {
+        prompt: this.cfg.vision.prompt,
+        maxTokens: this.cfg.vision.maxTokens,
+        think: this.cfg.vision.think,
+      },
       audio: {
         prompt: this.cfg.audio.prompt,
         maxTokens: this.cfg.audio.maxTokens,
         think: this.cfg.audio.think,
+      },
+      video: {
+        prompt: this.cfg.video.prompt,
+        maxTokens: this.cfg.video.maxTokens,
+        think: this.cfg.video.think,
       },
     });
     this.llmCache = { processors, signature: sig };

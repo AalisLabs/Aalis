@@ -46,6 +46,12 @@ export const configSchema: ConfigSchema = {
         description: '留空则自动选择优先级最高的 vision LLM；选定后强制使用该模型进行图像描述。',
       },
       maxTokens: { type: 'number', label: '描述最大 token', default: 300 },
+      think: {
+        type: 'boolean',
+        label: '启用思考链 (thinking)',
+        default: false,
+        description: '启用后识别质量可能提升但 token 成本上升；关闭且后端为 Ollama 时会传 reasoning_effort=none。',
+      },
       prompt: { type: 'textarea', label: '自定义提示词', default: '' },
     },
   },
@@ -107,6 +113,24 @@ export const configSchema: ConfigSchema = {
         default: 'frames+asr',
       },
       maxFrames: { type: 'number', label: '最大关键帧数', default: 5 },
+      maxTokens: {
+        type: 'number',
+        label: '最大输出 token',
+        default: 512,
+        description: '仅对 video.passthrough（原生视频 LLM）生效；帧抽取描述由 vision.maxTokens 控制。',
+      },
+      think: {
+        type: 'boolean',
+        label: '启用思考链 (thinking)',
+        default: false,
+        description: '仅对 video.passthrough 生效。关闭且后端为 Ollama 时会传 reasoning_effort=none。',
+      },
+      prompt: {
+        type: 'textarea',
+        label: '自定义 prompt',
+        default: '',
+        description: '仅对 video.passthrough 生效；留空使用默认描述 prompt。',
+      },
     },
   },
   document: {
@@ -139,9 +163,9 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  vision: { mode: 'describe', maxTokens: 300, prompt: '' },
+  vision: { mode: 'describe', maxTokens: 300, think: false, prompt: '' },
   audio: { mode: 'enabled', language: '', maxTokens: 1024, think: true, prompt: '' },
-  video: { mode: 'frames+asr', maxFrames: 5 },
+  video: { mode: 'frames+asr', maxFrames: 5, maxTokens: 512, think: false, prompt: '' },
   document: { extractImages: false },
   contextHistory: { enabled: true, maxMessages: 4 },
 };
@@ -156,6 +180,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       mode: ((vision.mode as string) ?? 'describe') as MediaConfigResolved['vision']['mode'],
       prefer: (vision.prefer as string) || undefined,
       maxTokens: (vision.maxTokens as number) ?? 300,
+      think: vision.think === true,
       prompt: (vision.prompt as string) || undefined,
     },
     audio: {
@@ -169,6 +194,9 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
     video: {
       mode: ((video.mode as string) ?? 'frames+asr') as MediaConfigResolved['video']['mode'],
       maxFrames: Math.max(1, (video.maxFrames as number) ?? 5),
+      maxTokens: (video.maxTokens as number) ?? 512,
+      think: video.think === true,
+      prompt: (video.prompt as string) || undefined,
     },
     document: { extractImages: !!document.extractImages },
     contextHistory: {
