@@ -114,6 +114,23 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
+  contextHistory: {
+    label: '多模态上下文注入',
+    fields: {
+      enabled: {
+        type: 'boolean',
+        label: '允许多模态 processor 读取聊天上下文',
+        default: true,
+        description:
+          '启用后，图片描述 / 语音转写 / 音频描述 / 视频抽帧调用多模态模型时，会将近期聊天记录拼到 prompt 里，让模型能联系上下文进行识别。对传统 Whisper-style ASR 后端无效。',
+      },
+      maxMessages: {
+        type: 'number',
+        label: '上下文最大消息条数',
+        default: 4,
+      },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -122,6 +139,7 @@ export const defaultConfig = {
   audioDescribe: { mode: 'disabled' },
   video: { mode: 'frames+asr', maxFrames: 5 },
   document: { extractImages: false },
+  contextHistory: { enabled: true, maxMessages: 4 },
 };
 
 function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
@@ -153,6 +171,10 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       maxFrames: Math.max(1, (video.maxFrames as number) ?? 5),
     },
     document: { extractImages: !!document.extractImages },
+    contextHistory: {
+      enabled: ((raw.contextHistory ?? {}) as Record<string, unknown>).enabled !== false,
+      maxMessages: Math.max(0, Number(((raw.contextHistory ?? {}) as Record<string, unknown>).maxMessages ?? 4)),
+    },
   };
 }
 

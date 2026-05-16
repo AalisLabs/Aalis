@@ -11,7 +11,6 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-llm-api": "workspace:*",
-    "@aalis/plugin-media-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*"
   },

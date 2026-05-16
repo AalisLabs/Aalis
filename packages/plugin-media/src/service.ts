@@ -37,6 +37,8 @@ export interface MediaConfigResolved {
   };
   video: { mode: 'frames+asr' | 'frames-only' | 'disabled'; maxFrames: number };
   document: { extractImages: boolean };
+  /** 是否在调用多模态 processor 时注入聊天上下文 */
+  contextHistory: { enabled: boolean; maxMessages: number };
 }
 
 export class MediaServiceImpl implements MediaService {
@@ -139,7 +141,10 @@ export class MediaServiceImpl implements MediaService {
     return out;
   }
 
-  async transcribe(attachment: MessageAttachment, opts: TranscribeOptions = {}): Promise<string | undefined> {
+  async transcribe(
+    attachment: MessageAttachment,
+    opts: TranscribeOptions & { context?: string } = {},
+  ): Promise<string | undefined> {
     if (this.cfg.audio.transcribe.mode === 'disabled') return undefined;
     const proc = this.pickProcessor('audio.transcribe', opts.prefer ?? this.cfg.audio.transcribe.prefer);
     if (!proc?.transcribe) {
@@ -152,6 +157,7 @@ export class MediaServiceImpl implements MediaService {
           attachment,
           language: opts.language ?? this.cfg.audio.transcribe.language,
           withTimestamps: opts.withTimestamps,
+          context: opts.context,
         },
         this.ctx,
       );
@@ -166,6 +172,12 @@ export class MediaServiceImpl implements MediaService {
     const attachments = normalizeAttachments(msg);
     const report: MediaProcessReport = { total: attachments.length, successCount: 0, items: [] };
     if (attachments.length === 0) return report;
+
+    // 多模态上下文：在进入任何 processor 调用前构造一次，后续复用。
+    const ctxText =
+      this.cfg.contextHistory.enabled && attachments.length > 0
+        ? await safeBuildContext(this.ctx, msg, this.cfg.contextHistory.maxMessages, this.logger)
+        : undefined;
 
     const descriptions: Array<string | undefined> = new Array(attachments.length).fill(undefined);
 
@@ -189,7 +201,7 @@ export class MediaServiceImpl implements MediaService {
               item.cap = 'vision';
               descriptions[i] = cached;
             } else if (animated) {
-              const text = await this.processVideo(att);
+              const text = await this.processVideo(att, ctxText);
               if (text) {
                 item.description = text;
                 item.cap = 'vision';
@@ -207,10 +219,12 @@ export class MediaServiceImpl implements MediaService {
                     mode: 'single',
                     maxTokens: this.cfg.vision.maxTokens,
                     hint: this.cfg.vision.prompt,
+                    context: ctxText,
                   },
                   this.ctx,
                 );
-                item.description = r.descriptions[0];
+                const raw = r.descriptions[0];
+                item.description = raw ? `[图片描述] ${raw}` : undefined;
                 descriptions[i] = item.description;
                 if (item.description) rememberDescription(att.data, item.description);
               }
@@ -219,7 +233,7 @@ export class MediaServiceImpl implements MediaService {
         } else if (att.kind === 'audio') {
           // 优先 transcribe（更准），失败/未启用则降级 describe
           if (this.cfg.audio.transcribe.mode === 'enabled') {
-            const text = await this.transcribe(att);
+            const text = await this.transcribe(att, { context: ctxText });
             if (text) {
               item.cap = 'audio.transcribe';
               item.description = `[语音转写] ${text}`;
@@ -231,14 +245,15 @@ export class MediaServiceImpl implements MediaService {
             item.cap = 'audio.describe';
             item.processor = proc?.name;
             if (proc?.describe) {
-              const r = await proc.describe({ attachments: [att], mode: 'single' }, this.ctx);
-              item.description = r.descriptions[0];
+              const r = await proc.describe({ attachments: [att], mode: 'single', context: ctxText }, this.ctx);
+              const raw = r.descriptions[0];
+              item.description = raw ? `[音频描述] ${raw}` : undefined;
               descriptions[i] = item.description;
             }
           }
         } else if (att.kind === 'video') {
           if (this.cfg.video.mode !== 'disabled') {
-            item.description = await this.processVideo(att);
+            item.description = await this.processVideo(att, ctxText);
             descriptions[i] = item.description;
             item.cap = 'vision';
           }
@@ -261,7 +276,7 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /** 视频：抽帧 + 抽音轨转写 → 拼综合描述 */
-  private async processVideo(att: MessageAttachment): Promise<string | undefined> {
+  private async processVideo(att: MessageAttachment, contextText?: string): Promise<string | undefined> {
     const local = await materializeAttachment(att.data);
     if (!local) {
       this.logger.debug('视频无法物化为本地文件，跳过');
@@ -283,6 +298,7 @@ export class MediaServiceImpl implements MediaService {
                 mode: 'combined',
                 maxTokens: this.cfg.vision.maxTokens,
                 hint: '以下为同一视频的关键帧，按时间顺序排列。',
+                context: contextText,
               },
               this.ctx,
             );
@@ -295,7 +311,10 @@ export class MediaServiceImpl implements MediaService {
       if (this.cfg.video.mode === 'frames+asr' && this.cfg.audio.transcribe.mode === 'enabled') {
         const audioDataUrl = await extractAudioTrack(local.path);
         if (audioDataUrl) {
-          const text = await this.transcribe({ kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' });
+          const text = await this.transcribe(
+            { kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' },
+            { context: contextText },
+          );
           if (text) frameTexts.push(`[音轨] ${text}`);
         }
       }
@@ -412,5 +431,21 @@ export class MediaServiceImpl implements MediaService {
 
     if (!noCache && !opts.hint && result) rememberDescription(imageUrl, result);
     return result;
+  }
+}
+
+/** 安全构造对话上下文：失败/异常返回 undefined，不让 processor 调用受阻。 */
+async function safeBuildContext(
+  ctx: Context,
+  msg: IncomingMessage,
+  beforeLimit: number,
+  logger: Logger,
+): Promise<string | undefined> {
+  try {
+    const text = await buildIncomingImageContext(ctx, msg, beforeLimit);
+    return text && text.trim().length > 0 ? text : undefined;
+  } catch (err) {
+    logger.debug(`buildContext 失败，跳过: ${err instanceof Error ? err.message : err}`);
+    return undefined;
   }
 }
