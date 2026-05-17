@@ -104,9 +104,15 @@ export class OneBotV11 implements OneBotProtocol {
         // OneBot v11: 'record' = 语音段
         const url = String(seg.data.url ?? seg.data.file);
         attachments.push({ kind: 'audio', url, name: seg.data.file ? String(seg.data.file) : undefined });
-      } else if (seg.type === 'video' && (seg.data.url || seg.data.file)) {
-        const url = String(seg.data.url ?? seg.data.file);
-        attachments.push({ kind: 'video', url, name: seg.data.file ? String(seg.data.file) : undefined });
+      } else if (seg.type === 'video') {
+        // 放宽 URL/file 约束：部分 OneBot 实现（如 NapCat 在 某些场景）不会同步返回 URL，
+        // 此时仍保留 attachment 让下游 media 能输出「无法获取」描述，避免静默丢失
+        const url = seg.data.url ?? seg.data.file;
+        attachments.push({
+          kind: 'video',
+          url: url != null ? String(url) : '',
+          name: seg.data.file ? String(seg.data.file) : undefined,
+        });
       } else if (seg.type === 'file' && (seg.data.url || seg.data.file)) {
         const url = String(seg.data.url ?? seg.data.file);
         attachments.push({ kind: 'file', url, name: seg.data.file ? String(seg.data.file) : undefined });

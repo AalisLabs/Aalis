@@ -221,7 +221,8 @@ export function segmentsToText(
         case 'poke':
           return '[戳一戳]';
         default:
-          return '';
+          // 未识别段类型：保留类型名避免整条消息文本为空被静默丢弃
+          return seg.type ? `[未知段:${seg.type}]` : '';
       }
     })
     .join('');
