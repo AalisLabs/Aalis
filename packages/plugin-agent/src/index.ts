@@ -715,19 +715,22 @@ class DefaultAgent implements AgentService {
         }
 
         // 保留原始 LLM 输出，用于存入 memory（避免纯文本历史污染 few-shot 示例）
-        const rawLlmContent = response.content ?? '';
+        let rawLlmContent = response.content ?? '';
         let replyContent = rawLlmContent;
 
         // Hook: agent:reply:before — 插件可以修改最终回复
         // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
-        const responseData: {
+        type ReplyHookData = {
           content: string;
           archiveContent?: string;
           sessionId: string;
           platform?: string;
           userId?: string;
           triggerType?: typeof incoming.triggerType;
-        } = {
+          retryRequested?: boolean;
+          retryFeedback?: string;
+        };
+        const responseData: ReplyHookData = {
           content: replyContent,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
@@ -735,6 +738,46 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
         };
         await this.ctx.hooks.run('agent:reply:before', responseData);
+
+        // 重试机制：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
+        // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求一次 LLM。
+        // 仅允许 1 次重试，避免无限循环。
+        if (responseData.retryRequested && rawLlmContent.length > 0) {
+          this.logger.debug(
+            `agent:reply:before 请求重试 (session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
+          );
+          llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
+          llmBeforeData.messages.push({
+            role: 'system',
+            content:
+              responseData.retryFeedback ?? '上一次回复未能通过格式校验，请严格按照系统提示中规定的格式重新输出。',
+          });
+          const retryTrimmed = this.trimMessages(llmBeforeData.messages, tokenBudget);
+          const retryResult = await this.consumeStream(
+            llm,
+            {
+              messages: retryTrimmed,
+              tools: undefined,
+              maxTokens,
+              signal,
+            },
+            incoming.sessionId,
+            incoming.platform,
+            signal,
+          );
+          turnSegments.push(...retryResult.segments);
+          response = retryResult;
+          rawLlmContent = response.content ?? '';
+          if (response.reasoningContent) allReasoning.push(response.reasoningContent);
+
+          // 用新输出再次跑一遍 hook，但已不允许再次重试
+          responseData.content = rawLlmContent;
+          responseData.archiveContent = undefined;
+          responseData.retryRequested = false;
+          responseData.retryFeedback = undefined;
+          await this.ctx.hooks.run('agent:reply:before', responseData);
+        }
+
         replyContent = responseData.content;
         const archiveContent = responseData.archiveContent ?? rawLlmContent;
 
