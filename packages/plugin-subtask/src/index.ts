@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
+import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { resolvePlatformBySession } from '@aalis/plugin-platform-api';
@@ -505,6 +506,110 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 向已存在的目标会话派发一次任务，目标会话的 agent 在自己原本的人设/记忆/工具集下完整推理；
   // 与 create_subtask 不同：目标不是新建的"子会话"，而是任意已知 sessionId（如群聊、私聊、跨平台）。
   if (cfg.crossSessionEnabled) {
+    // ---- list_known_sessions ----
+    // 列出最近活跃的会话（按平台/最近活跃时间），供 agent 在 delegate 前发现可派发目标，
+    // 避免凭空拼接 sessionId 出错。基于 memory 的 getRecentMessagesAcrossSessions 能力。
+    useToolService(ctx).register({
+      groups: ['cross-session'],
+      definition: {
+        type: 'function',
+        function: {
+          name: 'list_known_sessions',
+          description: [
+            '列出 agent 最近活跃过的会话，按最近活动时间倒序返回，用于 delegate_to_session 之前发现目标 sessionId。',
+            '',
+            '【返回字段】',
+            '- session_id：完整 sessionId（可直接用于 delegate_to_session 的 target_session_id）',
+            '- platform：所属平台（如 onebot / webui / scheduler）',
+            '- last_activity_ts：最近一条消息的时间戳（毫秒）',
+            '- preview：最近一条消息的内容预览（截断到 80 字）',
+            '',
+            '【注意】',
+            '- 仅返回 memory 中存在历史的会话；从未对话过的群/好友需要用平台专属工具（如 onebot_get_group_list）查询。',
+            '- 默认排除当前会话本身。',
+          ].join('\n'),
+          parameters: {
+            type: 'object',
+            properties: {
+              limit: {
+                type: 'number',
+                description: '最大返回会话数（默认 20，最大 100）',
+              },
+              platform: {
+                type: 'string',
+                description: '仅返回指定平台的会话（如 "onebot"）；省略则不限平台',
+              },
+              since_hours: {
+                type: 'number',
+                description: '仅返回最近 N 小时内有活动的会话（默认 168 小时 = 7 天）',
+              },
+            },
+            required: [],
+            additionalProperties: false,
+          },
+        },
+      },
+      handler: async (args, callCtx) => {
+        const memory = ctx.getService<MemoryService>('memory');
+        if (!memory?.getRecentMessagesAcrossSessions) {
+          return JSON.stringify({
+            error: '当前 memory 服务不支持 getRecentMessagesAcrossSessions 能力',
+          });
+        }
+        const limit = Math.min(100, Math.max(1, Number(args.limit) || 20));
+        const sinceHours =
+          Number.isFinite(Number(args.since_hours)) && Number(args.since_hours) > 0 ? Number(args.since_hours) : 168;
+        const platformFilter =
+          typeof args.platform === 'string' && args.platform.trim().length > 0 ? args.platform.trim() : undefined;
+        const sinceTs = Date.now() - sinceHours * 3600 * 1000;
+
+        // 多取一些消息再按 session 聚合，确保 limit 个会话能凑齐
+        const records = await memory.getRecentMessagesAcrossSessions({
+          limit: Math.max(limit * 10, 200),
+          sinceTs,
+          platform: platformFilter,
+          excludeSessionIds: callCtx.sessionId ? [callCtx.sessionId] : undefined,
+          roles: ['user', 'assistant'],
+        });
+
+        const bySession = new Map<string, { sessionId: string; platform?: string; lastTs: number; preview: string }>();
+        for (const rec of records) {
+          const ts = rec.message.timestamp ?? 0;
+          const existing = bySession.get(rec.sessionId);
+          if (!existing || ts > existing.lastTs) {
+            const content = typeof rec.message.content === 'string' ? rec.message.content : '';
+            const preview = content.length > 80 ? `${content.slice(0, 80)}...` : content;
+            const platform =
+              (rec.message.metadata as Record<string, unknown> | undefined)?.platform != null
+                ? String((rec.message.metadata as Record<string, unknown>).platform)
+                : rec.sessionId.split(':')[0] || undefined;
+            bySession.set(rec.sessionId, {
+              sessionId: rec.sessionId,
+              platform,
+              lastTs: ts,
+              preview,
+            });
+          }
+        }
+
+        const items = [...bySession.values()]
+          .sort((a, b) => b.lastTs - a.lastTs)
+          .slice(0, limit)
+          .map(s => ({
+            session_id: s.sessionId,
+            platform: s.platform,
+            last_activity_ts: s.lastTs,
+            preview: s.preview,
+          }));
+
+        return JSON.stringify({
+          count: items.length,
+          since_hours: sinceHours,
+          sessions: items,
+        });
+      },
+    });
+
     useToolService(ctx).register({
       groups: ['cross-session'],
       definition: {
