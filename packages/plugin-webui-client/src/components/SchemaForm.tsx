@@ -160,6 +160,33 @@ function LLMRefField({
   const provider = ref.provider ?? '';
   const model = ref.model ?? '';
 
+  const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
+  const [refreshMsg, setRefreshMsg] = useState<string>('');
+
+  const handleRefresh = async () => {
+    if (!provider) return;
+    setRefreshState('loading');
+    setRefreshMsg('刷新中…');
+    try {
+      const res = await fetch(`/api/llm-providers/${encodeURIComponent(provider)}/refresh`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRefreshState('error');
+        setRefreshMsg(body?.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      onFetchLLMProviders();
+      const added = Array.isArray(body.added) ? body.added.length : 0;
+      const removed = Array.isArray(body.removed) ? body.removed.length : 0;
+      setRefreshState('ok');
+      setRefreshMsg(added || removed ? `+${added} / -${removed}` : `共 ${body.total ?? 0} 个`);
+      setTimeout(() => setRefreshState('idle'), 3000);
+    } catch (err) {
+      setRefreshState('error');
+      setRefreshMsg((err as Error).message);
+    }
+  };
+
   const providers = llmProviders ?? [];
   const providerOptions = providers.map(p => ({
     value: p.contextId,
@@ -179,7 +206,7 @@ function LLMRefField({
   }
 
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
       <select
         className="config-edit-input"
         style={{ flex: '1 1 200px', minWidth: 0 }}
@@ -203,6 +230,21 @@ function LLMRefField({
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
+      <button
+        type="button"
+        className="config-edit-btn"
+        style={{ fontSize: 11, padding: '2px 8px' }}
+        onClick={handleRefresh}
+        disabled={!provider || refreshState === 'loading'}
+        title={provider ? `重新探测 ${provider} 的远端模型列表（仅对动态发现型 provider 如 Ollama 生效）` : '先选提供者'}
+      >
+        {refreshState === 'loading' ? '⟳' : '⟳ 刷新'}
+      </button>
+      {refreshMsg && (
+        <span style={{ fontSize: 11, color: refreshState === 'error' ? '#c62828' : refreshState === 'ok' ? '#2e7d32' : '#666' }}>
+          {refreshMsg}
+        </span>
+      )}
     </div>
   );
 }

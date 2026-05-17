@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
+import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { MediaService } from '@aalis/plugin-media-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { getPlatformAdapters, getPlatformNames, type PlatformAdapter } from '@aalis/plugin-platform-api';
 import type { ScopedToolService, ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
@@ -1450,36 +1451,68 @@ function registerInteractionTools(ctx: Context, tools: ScopedToolService): void 
 
 // ===== 主动发送消息工具 =====
 //
-// OneBot v11/v12 官方协议参考（onebot.dev）：
-//   v11 send_private_msg: { user_id: int64, message: msg, auto_escape?: bool }
-//   v11 send_group_msg:   { group_id: int64, message: msg, auto_escape?: bool }
-//   v12 send_message:     { detail_type: 'private'|'group'|'channel', user_id?, group_id?, ... , message: segment[] }
-// 适配器内部已封装 buildSendMessage()，按已连接协议版本自动选择上述 action。
-// 这里只需调用 adapter.sendMessage(targetSessionId, content)。
+// 语义（feat/cross-session-delegate）：
+//   "在会话 A 让 agent 给会话 B 发一句话"现在改为**委派完整 agent loop**：
+//   构造一条 IncomingMessage（triggerType='proactive'）注入 gateway，
+//   B 会话像收到普通消息一样跑一遍 persona / memory / tools / hooks，
+//   而不是把 A 模型一次性写完的字面量直推给适配器。
+//
+// 这样 B 的输出风格、上下文感知、工具调用都符合 B 自己的人设，跨平台/跨会话也通用。
+//
+// 防雪崩：进程内 depth Map（per-session, 10min TTL）+ adapter chat-flow 限速。
+//   - depth=1：A→B 允许；B 在 proactive 上下文里再调本工具触发 C 时被拒。
 
 /** 适配器上的非标准限速闸门（OneBot 适配器提供） */
 interface OneBotProactiveRateGate {
   checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string };
 }
 
+// 进程内代理深度跟踪：targetSessionId → { depth, expiresAt }
+// 'depth' 表示「该 session 当前正在以 proactive 链路被驱动的层级」。
+const PROACTIVE_DEPTH_MAX = 1;
+const PROACTIVE_DEPTH_TTL_MS = 10 * 60 * 1000;
+const proactiveDepth = new Map<string, { depth: number; expiresAt: number }>();
+
+function getProactiveDepth(sessionId: string): number {
+  const entry = proactiveDepth.get(sessionId);
+  if (!entry) return 0;
+  if (entry.expiresAt < Date.now()) {
+    proactiveDepth.delete(sessionId);
+    return 0;
+  }
+  return entry.depth;
+}
+
+function setProactiveDepth(sessionId: string, depth: number): void {
+  proactiveDepth.set(sessionId, { depth, expiresAt: Date.now() + PROACTIVE_DEPTH_TTL_MS });
+  // 兜底 GC：到期后清理（避免 Map 长期膨胀）
+  setTimeout(() => {
+    const e = proactiveDepth.get(sessionId);
+    if (e && e.expiresAt <= Date.now()) proactiveDepth.delete(sessionId);
+  }, PROACTIVE_DEPTH_TTL_MS + 1000).unref?.();
+}
+
 function registerMessagingTools(ctx: Context, tools: ScopedToolService, allowCrossSession: boolean): void {
-  // ---- 主动发送消息（任意私聊 / 群聊）----
+  // ---- 主动发送消息（委派 B 会话完整 agent loop）----
   tools.register({
     definition: {
       type: 'function',
       function: {
         name: 'onebot_send_message',
         description:
-          '向指定 QQ 用户（私聊）或 QQ 群（群聊）主动发送消息。该工具为通用出站通道，' +
-          '适用于任何需要向“当前会话以外”发消息的场景，包括但不限于：' +
-          '(1) 用户让你向另一人/另一群转告信息；' +
-          '(2) 你自主决定向某位好友打招呼、问候、分享、提醒；' +
-          '(3) 向某个群发布公告 / 结果 / 总结；' +
-          '(4) 任何你判断合适的跨会话主动联系。\n' +
-          '不需要用户明示“转告”才能调用。但调用前请确认 target_id 准确无误。\n' +
-          '消息体支持纯文本，也支持 Aalis 标准富文本标记：<at qq="123"/>、<image url="..."/>、<reply id="..."/>、<face id="..."/>。\n' +
-          '限制：发送目标用户必须是 bot 已加好友的人；发送目标群必须是 bot 所在的群。' +
-          '频率受限于适配器的 chat-flow 限速设置（防 DDoS），如被限速会在返回值中告知。',
+          '向指定 QQ 用户（私聊）或 QQ 群（群聊）发起一次主动会话。此工具不会把你当前写的内容字面量原样发出去——\n' +
+          '它会把 "task" 字段作为「内部任务说明」交给目标会话的 agent，让其在目标会话的人设、记忆、工具集下\n' +
+          '自主完成一次完整对话（可能调用工具、查上下文、分多段回复等），最终发出的话由目标会话的 agent 决定。\n\n' +
+          '适用场景：\n' +
+          '(1) 用户让你向另一人/另一群转告信息（task 写"请告诉 xx：……"）；\n' +
+          '(2) 你自主决定向某位好友打招呼、问候、分享、提醒；\n' +
+          '(3) 向某个群发布公告 / 结果 / 总结；\n' +
+          '(4) 任何需要跨会话主动联系的场景。\n\n' +
+          '注意：\n' +
+          '- 调用后本工具立即返回"已委派"，**不等待**目标会话的实际输出，也无法获知对方回复内容；\n' +
+          '- 防雪崩：被委派起来的会话最多再链一层（A→B 允许，B 在 proactive 链中不能再触发 C）；\n' +
+          '- 频率受 adapter 限速保护（防 DDoS）。\n' +
+          '消息发送目标用户必须是 bot 已加好友的人；目标群必须是 bot 所在的群。',
         parameters: {
           type: 'object',
           properties: {
@@ -1492,85 +1525,97 @@ function registerMessagingTools(ctx: Context, tools: ScopedToolService, allowCro
               type: 'string',
               description: '目标 QQ 号（私聊）或群号（群聊）',
             },
-            content: {
+            task: {
               type: 'string',
-              description: '要发送的消息内容（纯文本或带富文本标记）',
+              description:
+                '给目标会话 agent 的内部任务描述。注意这不是要发出的原文，而是"该说什么/为什么说"的指令，' +
+                '目标会话 agent 会按自己的风格组织措辞。建议格式："请向 xx 说明 yyy 并询问 zzz" 或 ' +
+                '"主动问候并提到 / 分享 ……"。',
             },
           },
-          required: ['target_type', 'target_id', 'content'],
+          required: ['target_type', 'target_id', 'task'],
         },
       },
     },
     handler: async (args, callCtx) => {
       const targetType = String(args.target_type ?? '').toLowerCase();
       const targetId = String(args.target_id ?? '').trim();
-      const content = String(args.content ?? '');
+      const task = String(args.task ?? '');
 
       if (targetType !== 'private' && targetType !== 'group') {
         return `参数错误：target_type 必须为 'private' 或 'group'，收到 '${args.target_type}'`;
       }
       if (!targetId) return '参数错误：target_id 不能为空';
-      if (!content.trim()) return '参数错误：content 不能为空';
+      if (!task.trim()) return '参数错误：task 不能为空';
 
       const current = requireOneBotSession(callCtx);
 
-      // 跨会话开关：若关闭，仅允许向当前会话发送（等价于普通回复）
+      // 跨会话开关：若关闭，仅允许向当前会话发起（等价于普通回复）
       if (!allowCrossSession) {
         if (current.detailType !== targetType || current.targetId !== targetId) {
-          return '操作被拒绝：跨会话主动发送已在配置中关闭，仅允许向当前会话发送';
+          return '操作被拒绝：跨会话主动发送已在配置中关闭，仅允许向当前会话';
         }
       }
 
       const adapter = findOneBotAdapter(ctx);
-      if (!adapter?.sendMessage) {
-        throw new Error('OneBot 适配器不可用或不支持 sendMessage');
+      if (!adapter) {
+        throw new Error('OneBot 适配器不可用');
+      }
+
+      // 防雪崩：检查源会话当前的 proactive depth
+      const sourceDepth = getProactiveDepth(callCtx.sessionId);
+      const targetDepth = sourceDepth + 1;
+      if (targetDepth > PROACTIVE_DEPTH_MAX) {
+        return `操作被拒绝：跨会话委派链已达最大深度 ${PROACTIVE_DEPTH_MAX}（当前会话本身正以 proactive 链路被驱动，禁止再次发起以防止雪崩）`;
       }
 
       // 复用当前会话所属的 selfId（即 bot 自身），构造目标 sessionId
       const targetSessionId = `onebot:${current.selfId}:${targetType}:${targetId}`;
 
-      // 限速闸门：复用 chat-flow 的滑动窗口限速，防止 prompt injection 导致群发/骚扰
+      // 限速闸门：复用 chat-flow 滑动窗口限速，防止 prompt injection 导致群发/骚扰
       const gate = (adapter as PlatformAdapter & OneBotProactiveRateGate).checkAndRecordProactiveSend;
       if (typeof gate === 'function') {
         const verdict = gate.call(adapter, targetSessionId);
         if (!verdict.allowed) {
-          return `发送被限速拦截：${verdict.reason ?? '超出限速阈值'}`;
+          return `委派被限速拦截：${verdict.reason ?? '超出限速阈值'}`;
         }
       }
 
-      try {
-        await adapter.sendMessage(targetSessionId, content);
-      } catch (err) {
-        return `发送失败：${(err as Error).message}`;
+      const gateway = ctx.getService<GatewayService>('gateway');
+      if (!gateway?.ingressMessage) {
+        return '操作失败：gateway 服务不可用，无法委派目标会话';
       }
 
-      // 写入目标会话记忆，让 bot 在后续对话中能记得自己刚说过什么
-      const archive = ctx.getService<MessageArchiveService>('message-archive');
-      if (archive?.saveMessage) {
-        try {
-          await archive.saveMessage(targetSessionId, {
-            role: 'assistant',
-            content,
-            timestamp: Date.now(),
-            metadata: {
-              source: 'proactive',
-              originSessionId: callCtx.sessionId,
-            },
-          });
-        } catch (err) {
-          ctx.logger.warn(`主动发送写入目标会话记忆失败: ${err}`);
-        }
-      }
+      // 标记目标会话进入 proactive 链路（B 的 agent 后续调用本工具时会读到 depth=1）
+      setProactiveDepth(targetSessionId, targetDepth);
+
+      const incoming: IncomingMessage = {
+        content: task,
+        sessionId: targetSessionId,
+        platform: 'onebot',
+        sessionType: targetType,
+        groupId: targetType === 'group' ? targetId : undefined,
+        userId: targetType === 'private' ? targetId : undefined,
+        source: `proactive:from:${callCtx.sessionId}`,
+        triggerType: 'proactive',
+      };
+
+      // fire-and-forget：A 工具立即返回，B 会话异步推理
+      gateway.ingressMessage(incoming).catch((err: unknown) => {
+        ctx.logger.warn(`[主动委派] 目标会话 ${targetSessionId} 推理失败: ${err}`);
+      });
 
       const targetLabel = targetType === 'private' ? `用户 ${targetId}` : `群 ${targetId}`;
       ctx.logger.info(
-        `[主动发送] selfId=${current.selfId} -> ${targetLabel}: ${content.slice(0, 60)}${content.length > 60 ? '...' : ''}`,
+        `[主动委派] selfId=${current.selfId} from=${callCtx.sessionId} -> ${targetLabel} depth=${targetDepth} task="${task.slice(0, 60)}${task.length > 60 ? '...' : ''}"`,
       );
-      return `已向${targetLabel}发送消息`;
+      return `已委派给${targetLabel}的会话 agent 自主完成（depth=${targetDepth}/${PROACTIVE_DEPTH_MAX}）。该 agent 将按自己的人设、记忆、工具集进行一次完整对话；本工具不返回对方的最终输出。`;
     },
   });
 
-  ctx.logger.info('OneBot 主动发送消息工具已注册');
+  // archive 写入由目标 session 的完整 loop 负责，这里无需手动 saveMessage
+  // 兼容性提示：旧调用方传 'content' 字段会被忽略（已改名为 'task'）
+  ctx.logger.info('OneBot 主动委派工具已注册');
 }
 
 interface OneBotSessionHistoryConfig {
