@@ -135,6 +135,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (working.sessionType) meta.sessionType = working.sessionType;
       // 平台侧消息 ID（如 OneBot message_id），用于"引用回复"反查归档原文
       if (working.messageId) meta.messageId = working.messageId;
+      // 触发与来源溯源：用于区分真实用户消息 vs proactive 委派/调度等系统注入，
+      // 也方便事后审计"agent 在 X 群做过什么"
+      if (working.triggerType) meta.triggerType = working.triggerType;
+      if (working.source) meta.source = working.source;
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
