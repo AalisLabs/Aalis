@@ -509,7 +509,7 @@ export function PluginConfigPage({
                           <label className="config-edit-label">{k}</label>
                           <input
                             className="config-edit-input"
-                            type={/apiKey|password|secret|token/i.test(k) ? 'password' : 'text'}
+                            type={/(apiKey|password|secret|token)(?![a-zA-Z])/i.test(k) ? 'password' : 'text'}
                             value={editBuffer[k]}
                             onChange={e => setEditBuffer(prev => ({ ...prev, [k]: e.target.value }))}
                           />
