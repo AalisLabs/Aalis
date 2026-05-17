@@ -238,10 +238,30 @@ export class PluginManager {
 
   /**
    * 更新插件配置（需要重新激活才生效）
+   *
+   * 优先尝试 module.hotReloadConfig 钩子做"在线吸收"：若钩子返回 true，
+   * 只更新 entry.config + 持久化层，**不**触发 dispose / bounce，避免
+   * 修改纯运行时参数（如摘要模型）就要重连长连接、清空缓存等代价。
    */
   async updatePluginConfig(name: string, config: Record<string, unknown>): Promise<boolean> {
     const entry = this.plugins.get(name);
     if (!entry) return false;
+
+    // ----- 优先尝试热配置吸收 -----
+    const hotHook = entry.module.hotReloadConfig;
+    if (typeof hotHook === 'function' && entry.state === 'active' && entry.context) {
+      try {
+        const absorbed = await hotHook(entry.context, entry.config, config);
+        if (absorbed) {
+          entry.config = config;
+          this.rootCtx.config.setPluginConfig(name, config);
+          this.logger.debug(`插件 "${name}" 配置变更已被 hotReloadConfig 吸收（跳过 bounce）`);
+          return true;
+        }
+      } catch (err) {
+        this.logger.warn(`插件 "${name}" hotReloadConfig 抛错，回退到完整 bounce: ${err}`);
+      }
+    }
 
     entry.config = config;
     this.rootCtx.config.setPluginConfig(name, config);
