@@ -43,6 +43,29 @@ export interface PluginModule {
    * 具体消费者。
    */
   actions?: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>>;
+  /**
+   * 配置热更新钩子（可选）。
+   *
+   * 当 PluginManager.updatePluginConfig 被调用时（来源：WebUI 改配置 / 配置
+   * 文件被外部编辑触发热重载），core 会先尝试调用此钩子：
+   *   - 若返回 `true` —— 视为"插件已在线吸收新配置"，core 仅更新内存 +
+   *     持久化层中的 entry.config / pluginConfig，**不会** dispose 当前
+   *     ctx，也不会触发依赖此插件的下游 bounce；
+   *   - 若返回 `false`（或未定义此钩子，或抛错）—— 回退到默认行为：
+   *     dispose 旧 ctx → softReload 重新 apply。
+   *
+   * 适用场景：纯运行时参数（LLM 模型、超时阈值、摘要 prompt 长度等）
+   * 变更时不希望重新连接长连接 / 重建子进程 / 清空缓存。
+   *
+   * 实现建议：自行做 oldConfig vs newConfig 的差异判断，只有当
+   * "全部 diff 都落在可热替换的字段集合"时才返回 true；任意一处涉及
+   * 启动期不可变字段（如 WS endpoint、监听端口）应返回 false。
+   */
+  hotReloadConfig?(
+    ctx: Context,
+    oldConfig: Record<string, unknown>,
+    newConfig: Record<string, unknown>,
+  ): boolean | Promise<boolean>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
   // 注：subsystem / extends 等纯 WebUI 展示元数据由
   // @aalis/plugin-webui-api 通过 declaration merging 注入；core 不读取它们，
