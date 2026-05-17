@@ -7,6 +7,23 @@ import type { OneBotMessageSegment } from './types.js';
 import { collectForwardSegments } from './types.js';
 
 /**
+ * 合并转发摘要默认 system prompt。
+ *
+ * 设计重点：明确要求保留多人互动结构（谁说了什么 / 态度 / 回应关系）,
+ * 避免出现 “Alice 表达了对…” 这种压成一句、丢掉互动的退化摘要。
+ *
+ * 用户可通过配置 `forward.summaryPrompt` 完全覆盖本默认值。
+ */
+export const DEFAULT_FORWARD_SUMMARY_PROMPT =
+  '你是聊天记录摘要助手。给定一段合并转发的原始内容，用简体中文输出一段含多人互动细节的摘要：\n' +
+  '- 按时间顺序串联主线，使用“某人：……”或“某人对某人说……”这种紧凑句式保留发言人轮次与互动关系，但不要逐条复述每句寒暄；\n' +
+  '- 明确点出每位主要参与人的关键发言 / 立场 / 情绪变化，以及他们互相同意、反驳、调侃、追问的点；\n' +
+  '- 原文里出现的请求 / 指令 / 待执行事项 / 希望机器人代发或转告的内容，必须原文输出并保留具体目标对象 / 群聊 / 要表达的观点；\n' +
+  '- 图片识别结果、链接、文件名等视觉 / 附件信息也要写进来；\n' +
+  '- 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本；\n' +
+  '- 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。';
+
+/**
  * 合并转发原文缓存条目：完整原文 + 摘要 + 元信息。
  */
 export interface ForwardEntry {
@@ -26,7 +43,11 @@ export interface ForwardConfig {
   summaryLLM?: { provider: string; model: string };
   summaryMaxChars: number;
   /** 喂给摘要 LLM 的原文最大字符数。原文超过则前段截断；<=0 表示不截断 */
-  summaryInputLimit: number;
+  summaryInputLimit: number /**
+   * 摘要使用的 system prompt。为空字符串 / undefined 时使用 `DEFAULT_FORWARD_SUMMARY_PROMPT`。
+   * 传入非空字符串则完全覆盖默认 prompt。
+   */;
+  summaryPrompt?: string;
 }
 
 export interface ForwardExpanderDeps<TState> {
@@ -144,16 +165,12 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const trimmedInput =
       inputLimit > 0 && text.length > inputLimit ? `${text.slice(0, inputLimit)}\n…（原文已截断）` : text;
 
-    // 摘要 prompt：明确要求保留多人互动结构（谁说了什么 / 态度 / 回应关系），
-    // 避免出现“Alice 表达了对…”这种压成一句、丢掉互动的退化摘要。
+    // 摘要 prompt：用户可通过 forward.summaryPrompt 覆盖默认值，默认 prompt
+    // 明确要求保留多人互动结构，避免压成一句的退化摘要。
     const sys =
-      '你是聊天记录摘要助手。给定一段合并转发的原始内容，用简体中文输出一段含多人互动细节的摘要：\n' +
-      '- 按时间顺序串联主线，使用“某人：……”或“某人对某人说……”这种紧凑句式保留发言人轮次与互动关系，但不要逐条复述每句寒暄；\n' +
-      '- 明确点出每位主要参与人的关键发言 / 立场 / 情绪变化，以及他们互相同意、反驳、调侪、追问的点；\n' +
-      '- 原文里出现的请求 / 指令 / 待执行事项 / 希望机器人代发或转告的内容，必须原文输出并保留具体目标对象 / 群聊 / 要表达的观点；\n' +
-      '- 图片识别结果、链接、文件名等视觉 / 附件信息也要写进来；\n' +
-      '- 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本；\n' +
-      '- 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。';
+      forwardCfg.summaryPrompt && forwardCfg.summaryPrompt.trim().length > 0
+        ? forwardCfg.summaryPrompt
+        : DEFAULT_FORWARD_SUMMARY_PROMPT;
     const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 字（可超出 10% 以完整保留互动结构）。\n\n原文：\n${trimmedInput}`;
 
     try {
