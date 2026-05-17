@@ -1612,7 +1612,7 @@ function registerMessagingTools(ctx: Context, tools: ScopedToolService, allowCro
 
       const targetLabel = targetType === 'private' ? `用户 ${targetId}` : `群 ${targetId}`;
       ctx.logger.info(
-        `[主动委派] selfId=${current.selfId} from=${callCtx.sessionId} -> ${targetLabel} depth=${targetDepth} task="${task.slice(0, 60)}${task.length > 60 ? '...' : ''}"`,
+        `[主动委派] selfId=${current.selfId} from=${callCtx.sessionId} -> ${targetLabel} depth=${targetDepth} task="${task}"`,
       );
       return `已委派给${targetLabel}的会话 agent 自主完成（depth=${targetDepth}/${PROACTIVE_DEPTH_MAX}）。该 agent 将按自己的人设、记忆、工具集进行一次完整对话；本工具不返回对方的最终输出。`;
     },

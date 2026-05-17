@@ -1245,7 +1245,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         body += chunk.toString();
       });
       res.on('end', () => {
-        ctx.logger.warn(`OneBot unexpected-response body: ${body.slice(0, 500)}`);
+        ctx.logger.warn(`OneBot unexpected-response body: ${body}`);
       });
     });
 
@@ -2032,9 +2032,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       ctx.logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
       return;
     }
-    ctx.logger.debug(
-      `OneBot 发送消息 [${msg.sessionId}]: ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`,
-    );
+    ctx.logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
 
     // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
 

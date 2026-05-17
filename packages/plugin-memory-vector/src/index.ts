@@ -44,8 +44,8 @@ export const configSchema: ConfigSchema = {
       perItemMaxChars: {
         type: 'number',
         label: '单条截断字数',
-        default: 200,
-        description: '每条消息呈现给 LLM 时的字符上限，超出截断',
+        default: 0,
+        description: '每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
       },
       minScore: {
         type: 'number',
@@ -111,7 +111,7 @@ export const defaultConfig = {
     topK: 5,
     timeWeight: 0.3,
     userPriorityBoost: 2.0,
-    perItemMaxChars: 200,
+    perItemMaxChars: 0,
     minScore: 0,
   },
   contextExpand: {
@@ -158,7 +158,8 @@ function recencyScore(timestampMs: number, nowMs: number): number {
 function truncate(text: string | undefined | null, max: number): string {
   const s = text ?? '';
   if (max <= 0 || s.length <= max) return s;
-  return `${s.slice(0, max)}…`;
+  const remaining = s.length - max;
+  return `${s.slice(0, max)}…[已截断，还剩 ${remaining} 个字符未展示]`;
 }
 
 function formatError(err: unknown): string {
@@ -279,7 +280,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       topK: (searchRaw.topK as number) ?? 5,
       timeWeight: Math.max(0, Math.min(1, (searchRaw.timeWeight as number) ?? 0.3)),
       userPriorityBoost: Math.max(1, (searchRaw.userPriorityBoost as number) ?? 2.0),
-      perItemMaxChars: Math.max(20, (searchRaw.perItemMaxChars as number) ?? 200),
+      perItemMaxChars: Math.max(0, (searchRaw.perItemMaxChars as number) ?? 0),
       minScore: Math.max(0, Math.min(1, (searchRaw.minScore as number) ?? 0)),
     },
     contextExpand: {
@@ -296,7 +297,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.logger.info(
     `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery ? '可用' : '不可用'}, ` +
       `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
-      `单条截断=${cfg.search.perItemMaxChars}字, minScore=${cfg.search.minScore}, ` +
+      `单条截断=${cfg.search.perItemMaxChars > 0 ? `${cfg.search.perItemMaxChars}字` : '不截断'}, minScore=${cfg.search.minScore}, ` +
       `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
       `indexQueue=${cfg.indexing.maxQueueSize <= 0 ? 'unlimited' : cfg.indexing.maxQueueSize}`,
   );

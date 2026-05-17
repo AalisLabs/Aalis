@@ -294,9 +294,13 @@ export async function expandForward(
     return `${indent(ln.depth)}${ln.index}. ${prefix}: ${text}`;
   });
 
-  const participantList = [...participants.entries()].slice(0, 8).map(([uid, nick]) => {
+  const allParticipants = [...participants.entries()];
+  const participantList = allParticipants.slice(0, 8).map(([uid, nick]) => {
     return uid === nick ? nick : `${nick}(${uid})`;
   });
+  if (allParticipants.length > 8) {
+    participantList.push(`...(+${allParticipants.length - 8} 人未列出)`);
+  }
 
   return {
     id: topId,
