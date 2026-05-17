@@ -31,7 +31,11 @@ export interface ForwardConfig {
 
 export interface ForwardExpanderDeps<TState> {
   ctx: Context;
-  forwardCfg: ForwardConfig;
+  /**
+   * 可是快照（`ForwardConfig`）也可是 getter（`() => ForwardConfig`）。
+   * 传 getter 可以在不重启适配器的前提下热替摘要模型 / 提示参数，配合 plugin-adapter-onebot 的 `hotReloadConfig` 使用。
+   */
+  forwardCfg: ForwardConfig | (() => ForwardConfig);
   /** 调用 OneBot action 的回调（已绑定到具体的连接状态） */
   sendAction: (state: TState, action: string, params: Record<string, unknown>) => Promise<unknown>;
 }
@@ -60,7 +64,11 @@ const FORWARD_METADATA_NS = 'onebot:forward';
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
 export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>): ForwardExpander<TState> {
-  const { ctx, forwardCfg, sendAction } = deps;
+  const { ctx, sendAction } = deps;
+  const getForwardCfg: () => ForwardConfig =
+    typeof deps.forwardCfg === 'function'
+      ? (deps.forwardCfg as () => ForwardConfig)
+      : () => deps.forwardCfg as ForwardConfig;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
 
   function getCachedForward(id: string): ForwardEntry | undefined {
@@ -122,6 +130,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     text: string,
     hint: { count: number; participants: string[] },
   ): Promise<string | null> {
+    const forwardCfg = getForwardCfg();
     if (!forwardCfg.summarize) return null;
 
     const entry = resolveLLMModel(ctx, forwardCfg.summaryLLM, ['chat']);
@@ -135,14 +144,17 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const trimmedInput =
       inputLimit > 0 && text.length > inputLimit ? `${text.slice(0, inputLimit)}\n…（原文已截断）` : text;
 
+    // 摘要 prompt：明确要求保留多人互动结构（谁说了什么 / 态度 / 回应关系），
+    // 避免出现“Alice 表达了对…”这种压成一句、丢掉互动的退化摘要。
     const sys =
-      '你是消息摘要助手。给定一段聊天合并转发的原始内容，用简体中文输出一段不超过指定字数的摘要：\n' +
-      '- 概括话题主线、关键事实、参与人态度；\n' +
-      '- 如果原文包含请求、指令、待执行事项、希望机器人代发/转告/评价的内容，必须保留具体任务、目标对象/群聊、要表达的观点和可引用原话；\n' +
-      '- 涉及图片识别结果时，把视觉信息也写进来；\n' +
-      '- 不要逐条复述、不要使用列表、不要寒暄、不要解释自己；\n' +
-      '- 控制在目标字数以内，重要细节保留，无关寒暄略去。';
-    const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 字。\n\n原文：\n${trimmedInput}`;
+      '你是聊天记录摘要助手。给定一段合并转发的原始内容，用简体中文输出一段含多人互动细节的摘要：\n' +
+      '- 按时间顺序串联主线，使用“某人：……”或“某人对某人说……”这种紧凑句式保留发言人轮次与互动关系，但不要逐条复述每句寒暄；\n' +
+      '- 明确点出每位主要参与人的关键发言 / 立场 / 情绪变化，以及他们互相同意、反驳、调侪、追问的点；\n' +
+      '- 原文里出现的请求 / 指令 / 待执行事项 / 希望机器人代发或转告的内容，必须原文输出并保留具体目标对象 / 群聊 / 要表达的观点；\n' +
+      '- 图片识别结果、链接、文件名等视觉 / 附件信息也要写进来；\n' +
+      '- 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本；\n' +
+      '- 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。';
+    const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 字（可超出 10% 以完整保留互动结构）。\n\n原文：\n${trimmedInput}`;
 
     try {
       const resp = await llm.chat({
@@ -180,6 +192,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     text: string,
     rawSegments: OneBotMessageSegment[] | undefined,
   ): Promise<string> {
+    const forwardCfg = getForwardCfg();
     if (!forwardCfg.enabled) return text;
     if (!text.includes('<forward id=')) return text;
 
