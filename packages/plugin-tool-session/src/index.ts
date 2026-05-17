@@ -250,8 +250,8 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
 
 function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
   useToolService(ctx).registerGroup({
-    name: 'cross-session',
-    label: '跨会话协作',
+    name: 'session-delegate',
+    label: '跨会话派发',
     description: '向已存在的其他会话（如另一个群、另一个 QQ 好友、另一个平台）派发任务并可选等待结果。',
   });
 
@@ -259,7 +259,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
   // 列出最近活跃的会话（按平台/最近活跃时间），供 agent 在 delegate 前发现可派发目标，
   // 避免凭空拼接 sessionId 出错。基于 memory 的 getRecentMessagesAcrossSessions 能力。
   useToolService(ctx).register({
-    groups: ['cross-session'],
+    groups: ['session-delegate'],
     definition: {
       type: 'function',
       function: {
@@ -363,7 +363,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
   // 向已存在的目标会话派发一次任务，目标会话的 agent 在自己原本的人设/记忆/工具集下完整推理；
   // 与 create_subtask 不同：目标不是新建的"子会话"，而是任意已知 sessionId（如群聊、私聊、跨平台）。
   useToolService(ctx).register({
-    groups: ['cross-session'],
+    groups: ['session-delegate'],
     definition: {
       type: 'function',
       function: {
