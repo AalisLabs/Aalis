@@ -26,7 +26,7 @@ import {
   materializeAttachment,
   selectFrameIndices,
 } from './ffmpeg.js';
-import { scanLLMProcessors } from './llm-adapter.js';
+import { DEFAULT_VISION_PROMPT, scanLLMProcessors } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
 
 export interface MediaConfigResolved {
@@ -475,7 +475,7 @@ export class MediaServiceImpl implements MediaService {
           attachments: [{ kind: 'image', data: imageUrl }],
           mode: 'single',
           maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-          hint: buildVisionPrompt(this.cfg.vision.prompt ?? '请简洁描述这张图片。', opts.hint),
+          hint: buildVisionPrompt(this.cfg.vision.prompt || DEFAULT_VISION_PROMPT, opts.hint),
         },
         this.ctx,
       );

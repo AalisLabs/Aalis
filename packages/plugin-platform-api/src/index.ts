@@ -81,6 +81,15 @@ export interface PlatformAdapter {
    * @param params    API 参数
    */
   callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>;
+  /**
+   * 主动发送限速闸门（可选，由具体适配器实现）。
+   *
+   * 跨会话委派工具（如 `delegate_to_session`）在向某个外部平台 sessionId 派发
+   * 合成消息前会调用此方法。返回 `{ allowed: false, reason }` 即拒绝本次派发，
+   * 用于防止 prompt-injection 驱动的群发 / 骚扰行为。
+   * 未实现表示该平台不做主动发送限速。
+   */
+  checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string };
 }
 
 // ----- 平台能力声明 -----
