@@ -1,7 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control';
 import type { MediaService } from '@aalis/plugin-media-api';
-import { AttachmentRefKind, formatAttachmentRef } from '@aalis/plugin-message-api';
+import { AttachmentRefKind, formatAttachmentRef, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import WebSocket from 'ws';
@@ -813,6 +813,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   async function fetchReplyMessage(
     state: ConnectionState,
     messageId: string,
+    sessionId?: string,
     depth = 0,
     seen = new Set<string>(),
   ): Promise<{
@@ -822,6 +823,33 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   } | null> {
     if (depth >= replyCfg.maxDepth || seen.has(messageId)) return null;
     seen.add(messageId);
+
+    // 0. 优先查我们自己的归档：命中即可拿到已烘焙了图片描述、forward 摘要等的"富文本"原文，
+    //    避免再走 OneBot get_msg（且能跨 URL 鉴权失效）。
+    if (sessionId) {
+      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      if (archive?.findByMessageId) {
+        try {
+          const archived = await archive.findByMessageId(sessionId, messageId);
+          if (archived) {
+            const meta = (archived.metadata ?? {}) as Record<string, unknown>;
+            const userId = meta.userId != null ? String(meta.userId) : undefined;
+            const nickname = meta.nickname != null ? String(meta.nickname) : undefined;
+            // 归档正文带 `[nick(id)]: ` 前缀（prefixSender 的产物），引用渲染层会再加发送者标签，
+            // 这里剥掉首行前缀避免重复。
+            let body = archived.content ?? '';
+            const label = getSenderLabel(nickname, userId);
+            if (label && body.startsWith(`[${label}]: `)) {
+              body = body.slice(`[${label}]: `.length);
+            }
+            return { content: body || undefined, userId, nickname };
+          }
+        } catch (err) {
+          ctx.logger.debug(`引用消息归档反查失败: ${err}`);
+        }
+      }
+    }
+
     try {
       const data = (await sendAction(state, 'get_msg', {
         message_id: Number(messageId) || messageId,
@@ -835,7 +863,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       const nestedReplyId = findReplySegmentId(segments);
       if (nestedReplyId) {
-        const nested = await fetchReplyMessage(state, nestedReplyId, depth + 1, seen);
+        const nested = await fetchReplyMessage(state, nestedReplyId, sessionId, depth + 1, seen);
         if (nested?.content) {
           const nestedLabel = nested.nickname || nested.userId || '?';
           content += `\n[该引用消息又引用 ${nestedLabel} 的消息: ${nested.content}]`;
@@ -1496,7 +1524,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 获取引用消息内容
       if (event.replyToMessageId) {
-        const reply = await fetchReplyMessage(state, event.replyToMessageId);
+        const reply = await fetchReplyMessage(state, event.replyToMessageId, sessionId);
         replyTo = {
           messageId: event.replyToMessageId,
           content: reply?.content,
@@ -1525,6 +1553,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         content: event.text,
         sessionId,
         platform: 'onebot',
+        messageId: event.messageId,
         userId: event.userId,
         nickname: event.nickname,
         attachments: event.attachments?.map((a, i) => {
