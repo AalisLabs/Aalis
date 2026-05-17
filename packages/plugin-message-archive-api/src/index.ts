@@ -37,6 +37,12 @@ export interface MessageArchiveService {
   archiveIncoming(message: IncomingMessage): Promise<ArchiveIncomingResult>;
   /** 平台 notice/事件入档（系统级条目，不会触发 agent 响应） */
   archiveNotice?(options: ArchiveNoticeOptions): Promise<Message | null>;
+  /**
+   * 在指定会话最近 `scanLimit` 条历史中查找 metadata.messageId 命中的归档消息。
+   * 用于"引用回复"反查我方原文（含图片描述等富信息），避免远端再拉一次。
+   * 命中返回归档消息；缺省 scanLimit=100。
+   */
+  findByMessageId?(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null>;
 }
 
 // ----- 消息归档能力声明（capability 框架）-----
@@ -48,6 +54,8 @@ export interface MessageArchiveCapabilityRegistry {
   Generic: 'generic';
   /** 支持平台 notice 事件入档（archiveNotice） */
   Notice: 'notice';
+  /** 支持按 messageId 在历史中反查（findByMessageId） */
+  Lookup: 'lookup';
 }
 
 export type MessageArchiveCapability = MessageArchiveCapabilityRegistry[keyof MessageArchiveCapabilityRegistry];
@@ -56,6 +64,7 @@ export const MessageArchiveCapabilities = {
   Incoming: 'incoming',
   Generic: 'generic',
   Notice: 'notice',
+  Lookup: 'lookup',
 } as const satisfies MessageArchiveCapabilityRegistry;
 
 declare module '@aalis/core' {
@@ -80,6 +89,12 @@ registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Notice, in
   typeof (inst as { archiveNotice?: unknown }).archiveNotice === 'function'
     ? true
     : 'MessageArchiveService.archiveNotice() is required for capability "notice"',
+);
+
+registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Lookup, inst =>
+  typeof (inst as { findByMessageId?: unknown }).findByMessageId === 'function'
+    ? true
+    : 'MessageArchiveService.findByMessageId() is required for capability "lookup"',
 );
 
 // ----- 服务类型注册（declaration merging）-----
