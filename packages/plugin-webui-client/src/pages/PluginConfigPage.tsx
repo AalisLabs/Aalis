@@ -475,7 +475,8 @@ export function PluginConfigPage({
                         const fieldDesc = schemaEntry && 'description' in schemaEntry ? (schemaEntry as SchemaField).description
                           : schemaEntry && 'label' in schemaEntry ? (schemaEntry as SchemaField).label
                           : undefined;
-                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} description={fieldDesc} />;
+                        const defaultValue = schemaEntry && 'default' in schemaEntry ? (schemaEntry as SchemaField).default : undefined;
+                        return <ConfigValue key={k} label={k} value={v} secret={isSecret} description={fieldDesc} defaultValue={defaultValue} />;
                       })}
                     </div>
                     <button className="btn btn-sm" onClick={() => startEdit(p)}>编辑配置</button>
