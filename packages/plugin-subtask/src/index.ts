@@ -1,10 +1,31 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import { resolvePlatformBySession } from '@aalis/plugin-platform-api';
 import type { SessionInfo, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
+
+// ===== 跨会话委派：proactive depth 防雪崩 =====
+// 防止 A→B→C→... 无限链；任一会话被 delegate 进入 proactive 链路后，链上下一跳禁止再次 delegate。
+const PROACTIVE_DEPTH_MAX = 1;
+const PROACTIVE_DEPTH_TTL_MS = 10 * 60 * 1000;
+const proactiveDepth = new Map<string, { depth: number; expiresAt: number }>();
+
+function getProactiveDepth(sessionId: string): number {
+  const entry = proactiveDepth.get(sessionId);
+  if (!entry) return 0;
+  if (entry.expiresAt <= Date.now()) {
+    proactiveDepth.delete(sessionId);
+    return 0;
+  }
+  return entry.depth;
+}
+
+function setProactiveDepth(sessionId: string, depth: number): void {
+  proactiveDepth.set(sessionId, { depth, expiresAt: Date.now() + PROACTIVE_DEPTH_TTL_MS });
+}
 
 // ===== 插件元数据 =====
 
@@ -19,12 +40,27 @@ export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用子任务工具', default: true },
   pollIntervalMs: { type: 'number', label: '等待轮询间隔 (ms)', default: 3000 },
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
+  crossSessionEnabled: {
+    type: 'boolean',
+    label: '启用跨会话委派 (delegate_to_session)',
+    default: true,
+    description:
+      '允许 agent 向任意已知 sessionId 派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与平台限速保护。',
+  },
+  crossSessionDefaultTimeoutSec: {
+    type: 'number',
+    label: '跨会话委派默认等待秒数',
+    default: 60,
+    description: 'delegate_to_session 在未显式指定 timeout_seconds 时使用的等待上限。',
+  },
 };
 
 interface PluginConfig {
   enabled: boolean;
   pollIntervalMs: number;
   maxWaitMs: number;
+  crossSessionEnabled: boolean;
+  crossSessionDefaultTimeoutSec: number;
 }
 
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
@@ -32,6 +68,8 @@ function resolveConfig(raw: Record<string, unknown>): PluginConfig {
     enabled: raw.enabled !== false,
     pollIntervalMs: Number(raw.pollIntervalMs) || 3000,
     maxWaitMs: Number(raw.maxWaitMs) || 300000,
+    crossSessionEnabled: raw.crossSessionEnabled !== false,
+    crossSessionDefaultTimeoutSec: Number(raw.crossSessionDefaultTimeoutSec) || 60,
   };
 }
 
@@ -47,6 +85,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     label: '子任务管理',
     description: '创建、管理和协调子任务会话，支持并行执行',
   });
+
+  if (cfg.crossSessionEnabled) {
+    useToolService(ctx).registerGroup({
+      name: 'cross-session',
+      label: '跨会话协作',
+      description: '向已存在的其他会话（如另一个群、另一个 QQ 好友、另一个平台）派发任务并可选等待结果。',
+    });
+  }
 
   // ---- create_subtask ----
   useToolService(ctx).register({
@@ -454,6 +500,194 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       });
     },
   });
+
+  // ---- delegate_to_session ----
+  // 向已存在的目标会话派发一次任务，目标会话的 agent 在自己原本的人设/记忆/工具集下完整推理；
+  // 与 create_subtask 不同：目标不是新建的"子会话"，而是任意已知 sessionId（如群聊、私聊、跨平台）。
+  if (cfg.crossSessionEnabled) {
+    useToolService(ctx).register({
+      groups: ['cross-session'],
+      definition: {
+        type: 'function',
+        function: {
+          name: 'delegate_to_session',
+          description: [
+            '向指定的目标会话（target_session_id）派发一次任务，目标会话的 agent 会在它自己的人设、记忆、工具集、',
+            '平台环境下自主完成一次完整推理（可能调用工具、分多段回复等）。',
+            '',
+            '【典型使用场景】',
+            '- 你在私聊里被要求"去 xx 群禁言 yyy"：群管理类工具只能在群聊会话内调用，',
+            '  此时应 delegate 到该群 sessionId，让群里的 agent 执行 onebot_group_ban。',
+            '- 跨平台转告：把消息从 webui 转告到某个 QQ 群。',
+            '- 主动联系某位好友 / 在某个群发布公告。',
+            '',
+            '【与 create_subtask 区别】',
+            '- create_subtask：新建一个"子会话"分支，状态独立、有 parent/child 关系，用于把当前任务拆分成并行子任务。',
+            '- delegate_to_session：目标是已经存在（或将以平台身份存在）的会话，没有 parent/child 关系，',
+            '  对目标会话来说就像收到一条"主动消息"。',
+            '',
+            '【sessionId 怎么拿】',
+            '- OneBot 群/私聊：onebot:<selfId>:group:<群号> 或 onebot:<selfId>:private:<QQ号>，',
+            '  也可先调用 onebot_resolve_session_id 转换。',
+            '- 其他平台：参考各平台 adapter 的 sessionId 约定。',
+            '',
+            '【安全限制】',
+            '- 防雪崩：被 delegate 进来的会话最多再链一层（A→B 允许，B 在 proactive 链中不能再 delegate）。',
+            '- 平台限速：平台 adapter 可声明 checkAndRecordProactiveSend 做主动发送频率限制，超额会被拒绝。',
+            '- 自委派被禁止：target_session_id 不能等于当前 sessionId。',
+            '',
+            '【wait_for_result】',
+            '- true（默认）：同步等待目标 agent 完成一轮回复，把对方 reply 文本返回给你，最长等 timeout_seconds 秒。',
+            '- false：fire-and-forget，立刻返回"已派发"，不阻塞当前会话。',
+          ].join('\n'),
+          parameters: {
+            type: 'object',
+            properties: {
+              target_session_id: {
+                type: 'string',
+                description: '目标会话完整 sessionId（如 "onebot:10000:group:20002"）',
+              },
+              task: {
+                type: 'string',
+                description:
+                  '给目标会话 agent 的任务说明。注意这不是要原样发出的文本，而是"该做什么/该说什么"的指令，' +
+                  '目标 agent 会按自己的风格、记忆、工具集组织措辞和动作。',
+              },
+              wait_for_result: {
+                type: 'boolean',
+                description: '是否同步等待目标 agent 完成本轮回复并把内容返回。默认 true。',
+              },
+              timeout_seconds: {
+                type: 'number',
+                description: `wait_for_result=true 时的等待上限，默认 ${cfg.crossSessionDefaultTimeoutSec} 秒，最大 300 秒。`,
+              },
+            },
+            required: ['target_session_id', 'task'],
+            additionalProperties: false,
+          },
+        },
+      },
+      handler: async (args, callCtx) => {
+        const targetSessionId = String(args.target_session_id ?? '').trim();
+        const task = String(args.task ?? '');
+        const waitForResult = args.wait_for_result === undefined ? true : args.wait_for_result === true;
+        const requestedTimeoutSec = Number(args.timeout_seconds);
+        const timeoutSec =
+          Number.isFinite(requestedTimeoutSec) && requestedTimeoutSec > 0
+            ? Math.min(300, requestedTimeoutSec)
+            : cfg.crossSessionDefaultTimeoutSec;
+        const timeoutMs = Math.max(1000, timeoutSec * 1000);
+
+        if (!targetSessionId) return JSON.stringify({ error: 'target_session_id 不能为空' });
+        if (!task.trim()) return JSON.stringify({ error: 'task 不能为空' });
+        if (targetSessionId === callCtx.sessionId) {
+          return JSON.stringify({ error: 'target_session_id 不能等于当前会话；如需自我追问请直接生成下一轮回复。' });
+        }
+
+        // 防雪崩：源 depth + 1 即将传给目标
+        const sourceDepth = getProactiveDepth(callCtx.sessionId);
+        const targetDepth = sourceDepth + 1;
+        if (targetDepth > PROACTIVE_DEPTH_MAX) {
+          return JSON.stringify({
+            error: `委派链已达最大深度 ${PROACTIVE_DEPTH_MAX}（当前会话本身正以 proactive 链路被驱动，禁止再次 delegate 以防雪崩）`,
+          });
+        }
+
+        // 解析目标平台，应用可选限速闸门
+        let platformName: string | undefined;
+        try {
+          const adapter = await resolvePlatformBySession(ctx, targetSessionId);
+          if (adapter) {
+            platformName = adapter.platform;
+            const gate = adapter.checkAndRecordProactiveSend;
+            if (typeof gate === 'function') {
+              const verdict = gate.call(adapter, targetSessionId);
+              if (!verdict.allowed) {
+                return JSON.stringify({ error: `委派被平台限速拦截：${verdict.reason ?? '超出限速阈值'}` });
+              }
+            }
+          }
+        } catch (err) {
+          ctx.logger.warn(`[delegate] 解析目标平台失败 (${targetSessionId}): ${err}`);
+        }
+
+        // 标记目标进入 proactive 链路
+        setProactiveDepth(targetSessionId, targetDepth);
+
+        const incoming: IncomingMessage = {
+          content: task,
+          sessionId: targetSessionId,
+          platform: platformName ?? callCtx.platform ?? 'internal',
+          source: `proactive:from:${callCtx.sessionId}`,
+          triggerType: 'proactive',
+        };
+
+        ctx.logger.info(
+          `[delegate] from=${callCtx.sessionId} -> ${targetSessionId} depth=${targetDepth} wait=${waitForResult} task="${task.slice(0, 80)}"`,
+        );
+
+        if (!waitForResult) {
+          ctx.emit('inbound:message', incoming).catch(err => {
+            ctx.logger.warn(`[delegate] 派发失败 (${targetSessionId}): ${err}`);
+          });
+          return JSON.stringify({
+            delegated: true,
+            targetSessionId,
+            wait: false,
+            depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
+            message: '已派发，不等待目标会话结果',
+          });
+        }
+
+        // wait_for_result=true：在派发前注册 agent:turn:after 监听，捕获目标 sessionId 的首条 reply
+        let captured: { reply: string; outcome: string } | undefined;
+        let resolveWait: (() => void) | undefined;
+        const waitPromise = new Promise<void>(resolve => {
+          resolveWait = resolve;
+        });
+        const dispose = ctx.middleware('agent:turn:after', async (data, next) => {
+          await next();
+          if (captured) return;
+          if (data.sessionId !== targetSessionId) return;
+          captured = { reply: data.reply ?? '', outcome: data.outcome };
+          resolveWait?.();
+        });
+
+        const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
+        try {
+          await ctx.emit('inbound:message', incoming);
+          await waitPromise;
+        } finally {
+          clearTimeout(timeoutHandle);
+          dispose();
+        }
+
+        if (!captured) {
+          return JSON.stringify({
+            delegated: true,
+            targetSessionId,
+            wait: true,
+            timedOut: true,
+            depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
+            message: `已派发但在 ${timeoutSec}s 内未捕获 agent:turn:after（目标可能仍在执行或被中间件 swallow）`,
+          });
+        }
+        const replyTruncated =
+          captured.reply.length > 2000
+            ? `${captured.reply.slice(0, 2000)}\n...[已截断, 原长 ${captured.reply.length} 字]`
+            : captured.reply;
+        return JSON.stringify({
+          delegated: true,
+          targetSessionId,
+          wait: true,
+          timedOut: false,
+          outcome: captured.outcome,
+          reply: replyTruncated,
+          depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
+        });
+      },
+    });
+  }
 
   // ---- 子任务的系统提示增强 ----
   // 当 agent 处理子任务消息时，在系统提示中注入子任务上下文
