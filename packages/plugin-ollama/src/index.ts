@@ -947,26 +947,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   };
 
   const client = new OllamaClient(ollamaConfig, ctx.logger);
-
-  // 探测远端 + 合并自定义模型
-  const remoteIds = await client.fetchRemoteModelIds();
-  const remoteSet = new Set(remoteIds);
-  for (const cm of ollamaConfig.customModels) {
-    if (remoteSet.has(cm)) {
-      ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
-    }
-  }
-  const allModelIds = [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
-
-  if (allModelIds.length === 0) {
-    ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
-    return;
-  }
-
   const baseLabel = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
 
-  // 为每个 model 注册独立的 LLMModel entry
-  for (const modelId of allModelIds) {
+  // 已注册 model entry 的句柄表：modelId → dispose（来自 ctx.provide 返回值）
+  const registered = new Map<string, () => void>();
+
+  function registerOne(modelId: string): void {
+    if (registered.has(modelId)) return;
     const capabilities = resolveCapabilities(
       modelId,
       ollamaConfig.modelCapabilities.get(modelId),
@@ -980,12 +967,72 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ollamaConfig.maxTokens,
       ollamaConfig.thinking,
     );
-    ctx.provide('llm', handle, {
+    const dispose = ctx.provide('llm', handle, {
       capabilities,
       label: `${baseLabel} / ${modelId}`,
       entryId: `${ctx.id}/${modelId}`,
     });
+    registered.set(modelId, dispose);
   }
 
-  ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry`);
+  function unregisterOne(modelId: string): void {
+    const d = registered.get(modelId);
+    if (!d) return;
+    try {
+      d();
+    } catch (err) {
+      ctx.logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
+    }
+    registered.delete(modelId);
+  }
+
+  async function discoverAllModelIds(): Promise<string[]> {
+    const remoteIds = await client.fetchRemoteModelIds();
+    const remoteSet = new Set(remoteIds);
+    for (const cm of ollamaConfig.customModels) {
+      if (remoteSet.has(cm)) {
+        ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+      }
+    }
+    return [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
+  }
+
+  // 初次注册
+  const initialIds = await discoverAllModelIds();
+  if (initialIds.length === 0) {
+    ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+  } else {
+    for (const modelId of initialIds) registerOne(modelId);
+    ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
+  }
+
+  // 注册 admin 服务：webui 触发 refresh 时无需重启插件，按 diff 增删 entries
+  ctx.provide('llm-provider-admin', {
+    async refresh() {
+      const next = await discoverAllModelIds();
+      const nextSet = new Set(next);
+      const added: string[] = [];
+      const removed: string[] = [];
+      for (const id of next) {
+        if (!registered.has(id)) {
+          registerOne(id);
+          added.push(id);
+        }
+      }
+      for (const id of [...registered.keys()]) {
+        if (!nextSet.has(id)) {
+          unregisterOne(id);
+          removed.push(id);
+        }
+      }
+      if (added.length || removed.length) {
+        ctx.logger.info(
+          `Ollama 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
+        );
+      } else {
+        ctx.logger.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
+      }
+      return { added, removed, total: registered.size };
+    },
+  });
 }

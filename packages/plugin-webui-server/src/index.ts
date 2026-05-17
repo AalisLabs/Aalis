@@ -8,7 +8,7 @@ import { LogHub } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
-import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
+import type { LLMModel, LLMProviderAdmin, ModelInfo } from '@aalis/plugin-llm-api';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import {
@@ -605,6 +605,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       res.json({ providers: [...byProvider.values()] });
     } catch {
       res.json({ providers: [] });
+    }
+  });
+
+  // 触发指定 provider 重新探测远端模型列表（用于 webui 上的"刷新模型"按钮）
+  // 仅对实现了 LLMProviderAdmin 的 provider 生效（远端动态发现型，如 Ollama）。
+  expressApp.post('/api/llm-providers/:contextId/refresh', async (req, res) => {
+    const contextId = req.params.contextId;
+    if (!contextId) {
+      res.status(400).json({ error: 'contextId is required' });
+      return;
+    }
+    try {
+      const admins = ctx.getAllServices<LLMProviderAdmin>('llm-provider-admin');
+      const target = admins.find(e => e.contextId === contextId);
+      if (!target) {
+        res.status(404).json({
+          error: `no llm-provider-admin registered for contextId="${contextId}" (provider 可能为静态注册型，不支持运行时刷新)`,
+        });
+        return;
+      }
+      const result = await target.instance.refresh();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 

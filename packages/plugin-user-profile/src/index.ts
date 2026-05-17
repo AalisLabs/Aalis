@@ -612,7 +612,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   function relationIncrementFor(
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'witness' | undefined,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
   ): number {
     if (triggerType === 'immediate') return cfg.relationIncrementImmediate;
     if (triggerType === 'interval') return cfg.relationIncrementInterval;
@@ -623,7 +623,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function applyRelationUpdate(
     profile: UserProfile,
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'witness' | undefined,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
   ): UserProfile {
     const now = Date.now();
     const last = profile.lastInteractionAt;
@@ -752,7 +752,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   async function updateRelationForUser(
     userKey: string,
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'witness' | undefined,
+    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
   ): Promise<void> {
     const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
     await saveProfile(userKey, applyRelationUpdate(profile, triggerType));
@@ -770,7 +770,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           userId?: string;
           platform?: string;
           nickname?: string;
-          triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+          triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
         };
       },
       next,
@@ -884,7 +884,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         sessionId?: string;
         userId?: string;
         platform?: string;
-        triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+        triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
       },
       next,
     ) => {
