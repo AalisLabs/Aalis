@@ -1656,11 +1656,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       let content: string;
       if (req.subType === 'invite') {
-        content = `[系统通知] 用户 ${req.userId} 邀请我加入${groupPart}${commentPart}。请决定是否接受邀请，调用 onebot_handle_group_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
+        content = `[系统通知] 用户 ${req.userId} 邀请我加入${groupPart}${commentPart}。请决定是否接受邀请，调用 onebot_handle_group_invite 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
       } else {
         // sub_type === 'add': 有人申请加入 bot 管理的群（bot 是管理员）
         const gsId = makeSessionId(req.selfId, 'group', undefined, req.groupId);
-        content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_handle_group_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
+        content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_approve_join_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
         ctx
           .emit('inbound:message', {
             content,

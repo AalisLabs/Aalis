@@ -459,25 +459,23 @@ async function checkAdminPermission(
 // ===== 插件入口 =====
 
 /**
- * OneBot 工具按访问级别拆成三组：
- * - onebot-readonly：仅查询，无副作用（可放心暴露给任何 agent）
- * - onebot-mod：常用群务操作（禁言/踢人/撤回/设置卡片等）
- * - onebot-admin：高风险或极少用（全员禁言/退群/改群名/设管理员/删好友 等）
- *
- * 每个工具同时属于 `onebot` 总分组以保持向后兼容。
+ * OneBot 工具按职责语义拆成三组（彼此互不重叠）：
+ * - onebot-daily：只读查询 + 日常低风险互动（戳一戳、点赞）
+ * - onebot-group：群务管理（禁言/踢人/撤回/改群名/设管理员/群打卡/审批加群申请 等）
+ * - onebot-personal：影响 bot 账号本身的人际关系（退群/删好友/处理好友申请/接受入群邀请）
  */
 interface OneBotToolBundle {
-  readonly: ScopedToolService;
-  mod: ScopedToolService;
-  admin: ScopedToolService;
+  daily: ScopedToolService;
+  group: ScopedToolService;
+  personal: ScopedToolService;
 }
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const tools = useToolService(ctx);
   const bundle: OneBotToolBundle = {
-    readonly: toolsWithGroups(tools, ['onebot', 'onebot-readonly']),
-    mod: toolsWithGroups(tools, ['onebot', 'onebot-mod']),
-    admin: toolsWithGroups(tools, ['onebot', 'onebot-admin']),
+    daily: toolsWithGroups(tools, ['onebot-daily']),
+    group: toolsWithGroups(tools, ['onebot-group']),
+    personal: toolsWithGroups(tools, ['onebot-personal']),
   };
 
   // 仅当 OneBot 平台可用时才注册工具
@@ -490,26 +488,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     ctx.logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
 
-    // 注册工具分组：总分组 + 三个按访问级别的细分分组
+    // 注册工具分组：按职责语义切分，彼此不重叠
     tools.registerGroup({
-      name: 'onebot',
-      label: 'OneBot 工具',
-      description: 'QQ 群管理、群信息查询、消息交互等 OneBot 平台工具（聚合 readonly/mod/admin 全部条目）',
+      name: 'onebot-daily',
+      label: 'OneBot 只读与日常',
+      description: '只读查询（群信息/成员/好友列表/历史/登录信息）+ 日常低风险互动（戳一戳、好友赞）',
     });
     tools.registerGroup({
-      name: 'onebot-readonly',
-      label: 'OneBot 只读',
-      description: '只查询不写入：群信息、成员、好友列表、历史归档、登录信息等',
+      name: 'onebot-group',
+      label: 'OneBot 群务',
+      description: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请 等',
     });
     tools.registerGroup({
-      name: 'onebot-mod',
-      label: 'OneBot 常用群务',
-      description: '日常群务：禁言/踢人/撤回消息/设置群名片/处理加群好友请求/戳一戳点赞等',
-    });
-    tools.registerGroup({
-      name: 'onebot-admin',
-      label: 'OneBot 管理员',
-      description: '高风险或极少使用：全员禁言、退群、修改群名、设管理员、删好友、群打卡等',
+      name: 'onebot-personal',
+      label: 'OneBot 个人/私聊',
+      description: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
     });
 
     const cfg = {
@@ -545,9 +538,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 // ===== 群管理工具 =====
 
 function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): void {
-  const { mod, admin } = bundle;
+  const { group, personal } = bundle;
   // ---- 群禁言（单人）----
-  mod.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -597,7 +590,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 全群禁言 ----
-  admin.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -627,7 +620,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 踢人 ----
-  mod.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -659,7 +652,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 主动退群 ----
-  admin.register({
+  personal.register({
     definition: {
       type: 'function',
       function: {
@@ -688,7 +681,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 设置群名片 ----
-  mod.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -720,7 +713,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 设置群名 ----
-  admin.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -750,7 +743,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 设置专属头衔 ----
-  admin.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -783,7 +776,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 设置管理员 ----
-  admin.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -815,7 +808,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
   });
 
   // ---- 撤回消息 ----
-  mod.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -848,9 +841,9 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
 // ===== 群信息查询工具 =====
 
 function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
-  const { readonly } = bundle;
+  const { daily } = bundle;
   // ---- 查看合并转发 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -901,7 +894,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 获取群信息 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -924,7 +917,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 获取群成员信息（user_id 可缺省查自身）----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -952,7 +945,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 获取群成员列表（支持搜索 + 分页）----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1020,7 +1013,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 查询自身在当前群是否被禁言 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1085,7 +1078,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 列出所有当前被禁言的群（基于内存事件快照，跨会话可用） ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1121,7 +1114,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 获取消息 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1152,7 +1145,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 获取群荣誉信息 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1190,9 +1183,9 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
 // ===== 账号 / 好友 / 群列表查询工具 =====
 
 function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
-  const { readonly, admin } = bundle;
+  const { daily, personal } = bundle;
   // ---- 群列表 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1248,7 +1241,7 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 好友列表 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1303,7 +1296,7 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 陌生人 / 任意 QQ 号信息 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1331,7 +1324,7 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 机器人自身账号信息 ----
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1348,7 +1341,7 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
   });
 
   // ---- 删除好友 ----
-  admin.register({
+  personal.register({
     definition: {
       type: 'function',
       function: {
@@ -1382,9 +1375,9 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
 // ===== 特殊交互工具 =====
 
 function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void {
-  const { mod, admin } = bundle;
+  const { daily, group } = bundle;
   // ---- 戳一戳 ----
-  mod.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1419,7 +1412,7 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
   });
 
   // ---- 发送好友赞 ----
-  mod.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1448,7 +1441,7 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
   });
 
   // ---- 群打卡 ----
-  admin.register({
+  group.register({
     definition: {
       type: 'function',
       function: {
@@ -1481,8 +1474,8 @@ interface OneBotSessionHistoryConfig {
 }
 
 function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg: OneBotSessionHistoryConfig): void {
-  const { readonly } = bundle;
-  readonly.register({
+  const { daily } = bundle;
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1531,7 +1524,7 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
     },
   });
 
-  readonly.register({
+  daily.register({
     definition: {
       type: 'function',
       function: {
@@ -1615,7 +1608,7 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
 // ===== 请求处理工具（好友申请 / 群请求）=====
 
 function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
-  const { mod } = bundle;
+  const { group, personal } = bundle;
   /** 找到支持 handleFriendRequest 的 OneBot 适配器 */
   function findRequestAdapter(ctx: Context):
     | (PlatformAdapter & {
@@ -1633,12 +1626,12 @@ function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
     };
   }
 
-  mod.register({
+  personal.register({
     definition: {
       type: 'function',
       function: {
         name: 'onebot_handle_friend_request',
-        description: '处理 QQ 好友申请，同意或拒绝。仅在收到好友申请通知后才有效。',
+        description: '处理 QQ 好友申请（别人加 bot 为好友），同意或拒绝。仅在收到好友申请通知后才有效。',
         parameters: {
           type: 'object',
           properties: {
@@ -1661,18 +1654,54 @@ function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
     },
   });
 
-  mod.register({
+  // 群相关请求拆成两个工具，对应 OneBot v11 set_group_add_request 的两种 sub_type：
+  // - approve_join_request: sub_type=add 「别人申请加入 bot 管理的群」 → 群务
+  // - handle_group_invite:  sub_type=invite 「别人邀请 bot 加入群」 → 个人/私聊
+  // 底层共用同一个适配器方法（pendingGroupRequests 内部已记录 subType），区别在于语义与权限归属。
+  group.register({
     definition: {
       type: 'function',
       function: {
-        name: 'onebot_handle_group_request',
-        description: '处理 QQ 群请求：包括「有人申请加入 bot 管理的群」和「他人邀请 bot 入群」两种情况，同意或拒绝。',
+        name: 'onebot_approve_join_request',
+        description:
+          '审批「有人申请加入 bot 管理的群」的入群请求（OneBot v11 set_group_add_request, sub_type=add）。同意或拒绝。仅在收到加群申请通知后才有效。',
         parameters: {
           type: 'object',
           properties: {
-            user_id: { type: 'string', description: '发起请求的用户 QQ 号' },
+            user_id: { type: 'string', description: '申请加群的用户 QQ 号' },
             group_id: { type: 'string', description: '相关群号' },
-            approve: { type: 'boolean', description: 'true = 同意，false = 拒绝' },
+            approve: { type: 'boolean', description: 'true = 同意加群，false = 拒绝' },
+            reason: { type: 'string', description: '拒绝理由（拒绝时有效，可选）' },
+          },
+          required: ['user_id', 'group_id', 'approve'],
+        },
+      },
+    },
+    handler: async args => {
+      const adapter = findRequestAdapter(ctx);
+      if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
+      return adapter.handleGroupRequest(
+        String(args.user_id),
+        String(args.group_id),
+        !!args.approve,
+        args.reason ? String(args.reason) : undefined,
+      );
+    },
+  });
+
+  personal.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_handle_group_invite',
+        description:
+          '处理「别人邀请 bot 加入某个群」的邀请（OneBot v11 set_group_add_request, sub_type=invite）。同意 = 接受加群；拒绝 = 不入群。仅在收到入群邀请通知后才有效。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: '邀请发起人的 QQ 号' },
+            group_id: { type: 'string', description: '被邀请加入的群号' },
+            approve: { type: 'boolean', description: 'true = 接受邀请并加入群，false = 拒绝' },
             reason: { type: 'string', description: '拒绝理由（拒绝时有效，可选）' },
           },
           required: ['user_id', 'group_id', 'approve'],
