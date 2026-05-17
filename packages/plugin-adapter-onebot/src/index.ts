@@ -144,6 +144,13 @@ export const configSchema: ConfigSchema = {
         default: 400,
         description: '提示给摘要模型的目标长度上限。',
       },
+      summaryInputLimit: {
+        type: 'number',
+        label: '摘要原文输入上限（字符）',
+        default: 8000,
+        description:
+          '喂给摘要模型的原文输入上限；原文超过则前段截断。设为 0 表示不截断（注意超长文本会增加摘要成本）。',
+      },
     },
   },
   reply: {
@@ -543,6 +550,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         : undefined,
     summaryMaxChars:
       typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
+    summaryInputLimit:
+      typeof fwdRaw.summaryInputLimit === 'number' ? Math.max(0, Math.floor(fwdRaw.summaryInputLimit)) : 8000,
   };
 
   // 引用消息处理配置
