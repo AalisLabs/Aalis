@@ -1323,6 +1323,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           handleNoticeEvent(state, event);
         } else if (eventType === 'request') {
           handleRequestEvent(state, event);
+        } else {
+          // 未识别事件类型（如 NapCat 的 post_type='message_sent' 自身消息回显、自定义 post_type 等）
+          const ev = event as Record<string, unknown>;
+          const ident = String(ev.post_type ?? ev.type ?? 'unknown');
+          ctx.logger.debug(
+            `OneBot[${state.protocol.version}] 跳过未识别事件类型: post_type=${ident}, keys=[${Object.keys(ev).slice(0, 12).join(',')}]`,
+          );
         }
       } catch (err) {
         ctx.logger.debug('OneBot 消息解析失败:', err);
@@ -1417,7 +1424,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const fallbackSelfId = state.selfId ?? 'unknown';
     const event = state.protocol.parseMessageEvent(raw, fallbackSelfId, nicknameCache);
-    if (!event) return;
+    if (!event) {
+      // 解析器把消息丢弃（通常是文本为空），打日志暴露原始段类型以便诊断
+      const segs = Array.isArray(raw.message)
+        ? (raw.message as Array<{ type?: string }>).map(s => String(s?.type ?? '?')).filter(Boolean)
+        : [];
+      const rawText = typeof raw.raw_message === 'string' ? raw.raw_message : '';
+      ctx.logger.debug(
+        `OneBot[${state.protocol.version}] 消息事件被解析器丢弃（text 为空）: post_type=${String(raw.post_type ?? raw.type ?? '?')}, message_type=${String(raw.message_type ?? raw.detail_type ?? '?')}, segments=[${segs.join(',')}], raw_message=${rawText}`,
+      );
+      return;
+    }
 
     // 更新 selfId
     if (event.selfId !== 'unknown' && !state.selfId) {
@@ -1587,7 +1604,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const fallbackSelfId = state.selfId ?? 'unknown';
     const req: NormalizedRequestEvent | null = state.protocol.parseRequestEvent(raw, fallbackSelfId);
-    if (!req) return;
+    if (!req) {
+      ctx.logger.debug(
+        `OneBot[${state.protocol.version}] 跳过未识别 request: request_type=${String(raw.request_type ?? raw.detail_type ?? '?')}, sub_type=${String(raw.sub_type ?? '?')}`,
+      );
+      return;
+    }
 
     const requestLabel = req.requestType === 'group' ? `${req.requestType}/${req.subType}` : req.requestType;
     const requestGroupId = req.requestType === 'group' ? req.groupId : '-';
@@ -1660,7 +1682,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const fallbackSelfId = state.selfId ?? 'unknown';
     const notice = state.protocol.parseNoticeEvent(raw, fallbackSelfId);
-    if (!notice) return;
+    if (!notice) {
+      ctx.logger.debug(
+        `OneBot[${state.protocol.version}] 跳过未识别 notice: notice_type=${String(raw.notice_type ?? raw.detail_type ?? '?')}, sub_type=${String(raw.sub_type ?? '?')}`,
+      );
+      return;
+    }
 
     // 过滤高频无用通知（输入状态等）
     if (notice.noticeType === 'notify' && notice.subType === 'input_status') return;
@@ -1935,6 +1962,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 心跳事件不输出日志
     } else if (meta.subType === 'status_update') {
       ctx.logger.debug(`OneBot[${state.protocol.version}] 状态更新事件`);
+    } else {
+      ctx.logger.debug(`OneBot[${state.protocol.version}] 跳过未识别 meta 事件: sub_type=${meta.subType ?? '?'}`);
     }
   }
 
