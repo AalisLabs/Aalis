@@ -166,7 +166,7 @@ function wrapLLMAsProcessor(
         const text = resp.content?.trim() ?? '';
         _ctx.logger.info(
           `[audio.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${resp.usage?.totalTokens ?? '?'}` +
-            (rawLen > 0 ? `, 内容前200字="${(resp.content ?? '').slice(0, 200).replace(/\n/g, ' ')}"` : ' [空响应]'),
+            (rawLen > 0 ? `, 内容="${(resp.content ?? '').replace(/\n/g, ' ')}"` : ' [空响应]'),
         );
         return {
           descriptions: input.mode === 'single' ? input.attachments.map(() => text) : [text],
@@ -198,9 +198,7 @@ function wrapLLMAsProcessor(
       const text = (resp.content ?? '').trim();
       _ctx.logger.info(
         `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${resp.usage?.totalTokens ?? '?'}` +
-          (rawLen > 0
-            ? `, 内容前200字="${(resp.content ?? '').slice(0, 200).replace(/\n/g, ' ')}"`
-            : ' [空响应——模型未返回任何内容]'),
+          (rawLen > 0 ? `, 内容="${(resp.content ?? '').replace(/\n/g, ' ')}"` : ' [空响应——模型未返回任何内容]'),
       );
       return {
         text,

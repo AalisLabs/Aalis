@@ -743,8 +743,8 @@ class OllamaClient {
     });
     if (!resp.ok) {
       const errText = await resp.text();
-      this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${errText.slice(0, 400)}`);
-      throw new Error(`Ollama /v1/chat/completions 错误 (${resp.status}): ${errText.slice(0, 400)}`);
+      this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${errText}`);
+      throw new Error(`Ollama /v1/chat/completions 错误 (${resp.status}): ${errText}`);
     }
     const data = (await resp.json()) as {
       choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
@@ -758,9 +758,7 @@ class OllamaClient {
         `[ollama-audio] ${model} HTTP ${Date.now() - httpT0}ms, finish=${finishReason}, ` +
           `raw=${rawContent.length}字 trim=${text.length}字, ` +
           `tokens prompt=${data.usage?.prompt_tokens ?? '?'} completion=${data.usage?.completion_tokens ?? '?'}` +
-          (rawContent.length > 0
-            ? `, 原文前300字="${rawContent.slice(0, 300).replace(/\n/g, ' ')}"`
-            : ' [模型返回空字符串]'),
+          (rawContent.length > 0 ? `, 原文="${rawContent.replace(/\n/g, ' ')}"` : ' [模型返回空字符串]'),
       );
     }
     const result: ChatResponse = { content: text || null, reasoningContent: null };
