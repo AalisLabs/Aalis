@@ -680,6 +680,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const message = err instanceof Error ? err.message : String(err);
       const preview = jsonStr.length > 300 ? `${jsonStr.slice(0, 300)}...` : jsonStr;
       ctx.logger.debug(`outputFormat 解码失败，保留原始回复：${message}; json=${preview}`);
+
+      // 触发 agent 单次重试：要求模型严格按照 outputFormat 重新输出 JSON。
+      // 这样可以避免失败的纯文本进入 archive 后形成自我强化循环。
+      const fieldSpec = Object.entries(outputFormat.fields)
+        .map(
+          ([k, v]) =>
+            `  - "${k}"（${v.description ?? ''}${k === outputFormat.replyField ? '；最终回复内容写在这里' : ''}）`,
+        )
+        .join('\n');
+      data.retryRequested = true;
+      data.retryFeedback =
+        '你的上一条回复没有按照规定的 JSON 输出格式返回（解析失败原因：' +
+        message +
+        '）。请严格按照以下字段输出一个合法 JSON 对象（不要包 markdown 代码块）：\n' +
+        fieldSpec +
+        '\n请勿输出任何 JSON 之外的文本。';
     }
   });
 }
