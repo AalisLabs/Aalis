@@ -135,6 +135,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (working.groupId) meta.groupId = working.groupId;
       if (working.groupName) meta.groupName = working.groupName;
       if (working.sessionType) meta.sessionType = working.sessionType;
+      // 平台侧消息 ID（如 OneBot message_id），用于"引用回复"反查归档原文
+      if (working.messageId) meta.messageId = working.messageId;
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
@@ -203,6 +205,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       return message;
     },
+
+    async findByMessageId(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null> {
+      if (!messageId) return null;
+      const limit = Math.max(1, Math.min(500, Math.floor(scanLimit ?? 100)));
+      const history = await memory.getHistory(sessionId, limit);
+      // 从最新往旧找：引用通常指向最近发的消息
+      for (let i = history.length - 1; i >= 0; i -= 1) {
+        const m = history[i];
+        const mid = m.metadata?.messageId;
+        if (mid != null && String(mid) === messageId) return m;
+      }
+      return null;
+    },
   };
 
   ctx.provide('message-archive', service, {
@@ -210,6 +225,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       MessageArchiveCapabilities.Incoming,
       MessageArchiveCapabilities.Generic,
       MessageArchiveCapabilities.Notice,
+      MessageArchiveCapabilities.Lookup,
     ],
   });
 }
