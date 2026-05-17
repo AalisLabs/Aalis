@@ -92,7 +92,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`Whisper API 失败 ${resp.status}: ${text.slice(0, 200)}`);
+        throw new Error(`Whisper API 失败 ${resp.status}: ${text}`);
       }
       const data = (await resp.json()) as {
         text: string;
