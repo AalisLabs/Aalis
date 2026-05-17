@@ -422,7 +422,8 @@ function SchemaFormField({
   }
 
   // string (default)
-  const isSensitive = field.secret || /apiKey|password|secret|token/i.test(fieldKey);
+  // 字段名正则要求关键词后不接字母，避免 tokenBudget / secretLength 这类合成词被误判。
+  const isSensitive = field.secret || /(apiKey|password|secret|token)(?![a-zA-Z])/i.test(fieldKey);
   return (
     <input
       className="config-edit-input"
