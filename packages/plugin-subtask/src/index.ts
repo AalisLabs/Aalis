@@ -537,10 +537,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           if (child.status === 'active') {
             activeChildren.push(`  - [进行中] ${child.name} (ID: ${childId})`);
           } else if (child.status === 'completed') {
-            const resultPreview = child.result ? child.result.slice(0, 200) : '(无结果)';
+            const resultPreview = child.result ?? '(无结果)';
             completedChildren.push(`  - [已完成] ${child.name} (ID: ${childId}): ${resultPreview}`);
           } else if (child.status === 'error') {
-            const resultPreview = child.result ? child.result.slice(0, 200) : '(无错误详情)';
+            const resultPreview = child.result ?? '(无错误详情)';
             errorChildren.push(`  - [出错] ${child.name} (ID: ${childId}): ${resultPreview}`);
           }
         }

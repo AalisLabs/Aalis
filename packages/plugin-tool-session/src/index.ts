@@ -29,6 +29,12 @@ export const configSchema: ConfigSchema = {
     ],
   },
   includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
+  perMessageMaxChars: {
+    type: 'number',
+    label: '每条消息截断字数',
+    default: 0,
+    description: '返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
+  },
 };
 
 interface PluginConfig {
@@ -36,6 +42,7 @@ interface PluginConfig {
   maxLimit: number;
   scope: 'current' | 'platform' | 'all';
   includeArchivedDefault: boolean;
+  perMessageMaxChars: number;
 }
 
 interface SessionHistoryOptions {
@@ -68,6 +75,7 @@ function resolveConfig(raw: Record<string, unknown>): PluginConfig {
     maxLimit: Math.max(1, Math.min(100, Number(raw.maxLimit) || 30)),
     scope,
     includeArchivedDefault: raw.includeArchivedDefault === true,
+    perMessageMaxChars: Math.max(0, Number(raw.perMessageMaxChars) || 0),
   };
 }
 
@@ -75,17 +83,21 @@ function parsePlatform(sessionId: string): string {
   return sessionId.split(':')[0] ?? '';
 }
 
-function formatHistoryMessage(message: Message, index: number): Record<string, unknown> {
+function formatHistoryMessage(message: Message, index: number, perMessageMaxChars: number): Record<string, unknown> {
   const text =
     typeof message.content === 'string'
       ? message.content
       : message.content == null
         ? ''
         : JSON.stringify(message.content);
+  const content =
+    perMessageMaxChars > 0 && text.length > perMessageMaxChars
+      ? `${text.slice(0, perMessageMaxChars)}…[已截断，还剩 ${text.length - perMessageMaxChars} 个字符未展示]`
+      : text;
   return {
     index,
     role: message.role,
-    content: text.length > 1200 ? `${text.slice(0, 1200)}...` : text,
+    content,
     timestamp: message.timestamp ?? null,
     name: message.name ?? null,
     metadata: message.metadata ?? undefined,
@@ -138,7 +150,7 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
           count: history.length,
           limit,
           includeArchived: includeArchived && !!memory.getFullHistory,
-          messages: history.map((message, index) => formatHistoryMessage(message, index + 1)),
+          messages: history.map((message, index) => formatHistoryMessage(message, index + 1, cfg.perMessageMaxChars)),
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
