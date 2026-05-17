@@ -153,9 +153,10 @@ export interface IncomingMessage {
    * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）
    * - 'interval'  群聊中因消息频率/活跃度被动触发（无明确主发言者，userId 仅为最后一条消息发送者）
    * - 'idle'      空闲自动触发（无 userId / 无主发言者）
+   * - 'proactive' 由另一会话的 agent 通过工具发起跨会话委派（content 是任务描述而非用户消息）
    * 未设置时下游插件按 'direct' 兼容处理。
    */
-  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
 }
 
 // ----- 出站消息 -----
