@@ -1260,9 +1260,6 @@ importers:
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
-      '@aalis/plugin-platform-api':
-        specifier: workspace:*
-        version: link:../plugin-platform-api
       '@aalis/plugin-session-manager-api':
         specifier: workspace:*
         version: link:../plugin-session-manager-api
@@ -1402,12 +1399,18 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-platform-api':
+        specifier: workspace:*
+        version: link:../plugin-platform-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
