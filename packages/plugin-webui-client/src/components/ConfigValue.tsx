@@ -38,7 +38,10 @@ export function ConfigValue({ label, value, depth = 0, secret, description }: { 
   }
 
   if (value === null || value === undefined || typeof value !== 'object') {
-    const isSensitive = secret || /apiKey|password|secret|token/i.test(label);
+    // 仅对字符串值打码；数字/布尔不可能是密钥。
+    // 字段名正则要求关键词后不接字母，避免 memoryTokenBudget / secretLength 这类合成词被误判。
+    const isSensitive =
+      secret || (typeof value === 'string' && /(apiKey|password|secret|token)(?![a-zA-Z])/i.test(label));
     const raw = value === null || value === undefined ? '-' : String(value);
     const display = isSensitive && raw.length > 4 ? raw.slice(0, 4) + '••••••' : raw;
     return (
