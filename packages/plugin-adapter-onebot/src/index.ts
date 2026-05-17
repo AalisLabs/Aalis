@@ -20,7 +20,7 @@ import type {
   OneBotRawEvent,
 } from './types.js';
 import '@aalis/plugin-agent-api';
-import { createForwardExpander, type ForwardConfig } from './forward-expand.js';
+import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';
 
@@ -48,6 +48,7 @@ function parseForwardConfig(config: Record<string, unknown>): ForwardConfig {
       typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 600,
     summaryInputLimit:
       typeof fwdRaw.summaryInputLimit === 'number' ? Math.max(0, Math.floor(fwdRaw.summaryInputLimit)) : 8000,
+    summaryPrompt: typeof fwdRaw.summaryPrompt === 'string' ? fwdRaw.summaryPrompt : '',
   };
 }
 
@@ -188,6 +189,12 @@ export const configSchema: ConfigSchema = {
         description:
           '喂给摘要模型的原文输入上限；原文超过则前段截断。设为 0 表示不截断（注意超长文本会增加摘要成本）。',
       },
+      summaryPrompt: {
+        type: 'textarea',
+        label: '摘要 system prompt（高级，留空使用内置）',
+        default: '',
+        description: `留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下，可作为撰写参考：\n\n${DEFAULT_FORWARD_SUMMARY_PROMPT}`,
+      },
     },
   },
   reply: {
@@ -232,6 +239,7 @@ export const defaultConfig = {
     imageRecognition: true,
     summarize: true,
     summaryMaxChars: 600,
+    summaryPrompt: '',
   },
   reply: {
     maxDepth: 5,
