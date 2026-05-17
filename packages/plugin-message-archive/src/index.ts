@@ -118,9 +118,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (mediaSvc?.processMessage) {
           const report = await mediaSvc.processMessage(working);
           if (cfg.debugLogs && report.total > 0) {
-            ctx.logger.debug(
-              `附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content.slice(0, 200)}`,
-            );
+            ctx.logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content}`);
           }
         }
       }
@@ -152,7 +150,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       if (cfg.debugLogs && working.attachments?.length) {
         ctx.logger.debug(
-          `附件消息已写入记忆: session=${working.sessionId}, attachments=${working.attachments.length} | ${content.slice(0, 200)}`,
+          `附件消息已写入记忆: session=${working.sessionId}, attachments=${working.attachments.length} | ${content}`,
         );
       }
 
@@ -199,7 +197,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       if (cfg.debugLogs) {
         ctx.logger.debug(
-          `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? `/${opts.subType}` : ''} | ${text.slice(0, 200)}`,
+          `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? `/${opts.subType}` : ''} | ${text}`,
         );
       }
 
