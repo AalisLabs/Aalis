@@ -98,6 +98,16 @@ declare module '@aalis/core' {
       platform?: string;
       userId?: string;
       triggerType?: IncomingMessage['triggerType'];
+      /**
+       * 当中间件检测到回复无法满足约束（如 outputFormat 解析失败）时，
+       * 可将其置为 true 触发 agent 单次重试（agent 端会自动限制最多重试一次）。
+       */
+      retryRequested?: boolean;
+      /**
+       * 重试时附加给模型的反馈系统消息内容，描述本次失败原因与修复要求。
+       * 仅在 retryRequested === true 时生效。
+       */
+      retryFeedback?: string;
     };
     'agent:llm:before': {
       messages: Message[];
