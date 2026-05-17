@@ -231,9 +231,7 @@ class DeepSeekClient {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        this.logger.warn(
-          `fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body.slice(0, 200)}`,
-        );
+        this.logger.warn(`fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body}`);
         return [];
       }
       const data = (await res.json()) as { data: { id: string }[] };
