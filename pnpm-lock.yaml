@@ -1358,12 +1358,15 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-gateway-api':
+        specifier: workspace:*
+        version: link:../plugin-gateway-api
       '@aalis/plugin-media-api':
         specifier: workspace:*
         version: link:../plugin-media-api
-      '@aalis/plugin-message-archive-api':
+      '@aalis/plugin-message-api':
         specifier: workspace:*
-        version: link:../plugin-message-archive-api
+        version: link:../plugin-message-api
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
