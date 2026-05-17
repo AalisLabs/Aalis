@@ -120,6 +120,11 @@ export interface IncomingMessage {
   /** 用户昵称 */
   nickname?: string;
   /**
+   * 平台侧消息 ID（如 OneBot 的 message_id）。
+   * 由适配器填充；归档插件会写入 metadata.messageId，供"引用回复"反查归档原文以保留图片描述等富信息。
+   */
+  messageId?: string;
+  /**
    * 多模态附件统一载体（唯一入口）。
    * 所有平台适配器（OneBot / WebUI / CLI 等）都应只填此字段；
    * plugin-media 在 preprocess 阶段会为每条 attachment 生成文本描述写入 _attachmentDescriptions。

@@ -74,7 +74,12 @@ export const configSchema: ConfigSchema = {
         default: true,
         description: '允许按群号/QQ 号读取对应 OneBot 会话的近期历史',
       },
-      maxLimit: { type: 'number', label: '单次最多读取条数', default: 30 },
+      maxLimit: {
+        type: 'number',
+        label: '单次最多读取条数上限',
+        default: 100,
+        description: 'agent 传入的 limit 参数会被截断到该上限（脚本硬上限 100）；agent 未传 limit 时默认拉取 20 条。',
+      },
       allowGroupReadPrivate: { type: 'boolean', label: '允许群聊读取私聊历史', default: false },
       allowCrossSelf: { type: 'boolean', label: '允许跨机器人账号读取', default: false },
       includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
@@ -90,7 +95,7 @@ export const defaultConfig = {
   messaging: { enabled: true, allowCrossSession: true },
   sessionHistory: {
     enabled: true,
-    maxLimit: 30,
+    maxLimit: 100,
     allowGroupReadPrivate: false,
     allowCrossSelf: false,
     includeArchivedDefault: false,
@@ -498,7 +503,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       messaging: { enabled: true, allowCrossSession: true, ...((config.messaging as Record<string, unknown>) ?? {}) },
       sessionHistory: {
         enabled: true,
-        maxLimit: 30,
+        maxLimit: 100,
         allowGroupReadPrivate: false,
         allowCrossSelf: false,
         includeArchivedDefault: false,
@@ -513,7 +518,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (cfg.messaging.enabled) registerMessagingTools(ctx, groupedTools, !!cfg.messaging.allowCrossSession);
     if (cfg.sessionHistory.enabled)
       registerSessionHistoryTools(ctx, groupedTools, {
-        maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 30)),
+        maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 100)),
         allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
         allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
         includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
