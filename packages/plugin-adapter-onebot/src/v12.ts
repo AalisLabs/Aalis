@@ -89,14 +89,17 @@ export class OneBotV12 implements OneBotProtocol {
     for (const seg of message) {
       const data = seg.data as Record<string, unknown>;
       const url = (data.url ?? data.file_id) as string | undefined;
-      if (!url) continue;
       if (seg.type === 'image') {
+        if (!url) continue;
         attachments.push({ kind: 'image', url: String(url) });
       } else if (seg.type === 'voice' || seg.type === 'audio') {
+        if (!url) continue;
         attachments.push({ kind: 'audio', url: String(url) });
       } else if (seg.type === 'video') {
-        attachments.push({ kind: 'video', url: String(url) });
+        // 放宽 URL 约束：保留 attachment 避免静默丢失
+        attachments.push({ kind: 'video', url: url ? String(url) : '' });
       } else if (seg.type === 'file') {
+        if (!url) continue;
         attachments.push({ kind: 'file', url: String(url) });
       }
     }
