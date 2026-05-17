@@ -20,9 +20,46 @@ import type {
   OneBotRawEvent,
 } from './types.js';
 import '@aalis/plugin-agent-api';
-import { createForwardExpander } from './forward-expand.js';
+import { createForwardExpander, type ForwardConfig } from './forward-expand.js';
 import { segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';
+
+/**
+ * 从原始配置对象中解析出可热替的 forward 子配置。
+ * apply() 初始读取一次；hotReloadConfig 重读一次后写入 holder。
+ */
+function parseForwardConfig(config: Record<string, unknown>): ForwardConfig {
+  const fwdRaw = (config.forward ?? {}) as Record<string, unknown>;
+  return {
+    enabled: fwdRaw.enabled !== false,
+    maxDepth: typeof fwdRaw.maxDepth === 'number' ? Math.max(1, Math.floor(fwdRaw.maxDepth)) : 3,
+    maxNodesPerLevel:
+      typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
+    imageRecognition: fwdRaw.imageRecognition !== false,
+    summarize: fwdRaw.summarize !== false,
+    summaryLLM:
+      fwdRaw.summaryLLM &&
+      typeof fwdRaw.summaryLLM === 'object' &&
+      (fwdRaw.summaryLLM as { provider?: unknown }).provider &&
+      (fwdRaw.summaryLLM as { model?: unknown }).model
+        ? (fwdRaw.summaryLLM as { provider: string; model: string })
+        : undefined,
+    summaryMaxChars:
+      typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 600,
+    summaryInputLimit:
+      typeof fwdRaw.summaryInputLimit === 'number' ? Math.max(0, Math.floor(fwdRaw.summaryInputLimit)) : 8000,
+  };
+}
+
+/**
+ * 每个适配器实例的热替状态句柄（需要跨 apply / hotReloadConfig 两个作用域共享）。
+ * 以 ctx 为键；在 apply() 里由 onDispose 负责清理。
+ */
+interface InstanceHotState {
+  forwardCfg: ForwardConfig;
+}
+const hotStateByCtx = new WeakMap<Context, InstanceHotState>();
+
 import { OneBotV12 } from './v12.js';
 
 // ===== 插件元数据 =====
@@ -141,8 +178,8 @@ export const configSchema: ConfigSchema = {
       summaryMaxChars: {
         type: 'number',
         label: '摘要最大字数',
-        default: 400,
-        description: '提示给摘要模型的目标长度上限。',
+        default: 600,
+        description: '提示给摘要模型的目标长度上限。模型被允许超出 10% 以保留多人互动结构。',
       },
       summaryInputLimit: {
         type: 'number',
@@ -194,7 +231,7 @@ export const defaultConfig = {
     maxNodesPerLevel: 30,
     imageRecognition: true,
     summarize: true,
-    summaryMaxChars: 400,
+    summaryMaxChars: 600,
   },
   reply: {
     maxDepth: 5,
@@ -513,6 +550,32 @@ function splitImageOut(content: string): string[] {
 
 // ===== 插件入口 =====
 
+/**
+ * 配置热更新钩子：仅当本次 diff 完全落在 `forward.*` 子树时，原地更新
+ * hotState 并返回 true（跳过 bounce）；其他字段（connections / splitMessage /
+ * reply / attachmentCache）仍需走完整重启路径，确保 WS 连接与监听拓扑正确。
+ */
+export function hotReloadConfig(
+  ctx: Context,
+  oldConfig: Record<string, unknown>,
+  newConfig: Record<string, unknown>,
+): boolean {
+  const hot = hotStateByCtx.get(ctx);
+  if (!hot) return false;
+  // 比对除 forward 外的所有字段；任意一处不同 → 拒绝吸收，让 core bounce。
+  const omit = (cfg: Record<string, unknown>): Record<string, unknown> => {
+    const { forward: _ignored, ...rest } = cfg;
+    void _ignored;
+    return rest;
+  };
+  if (JSON.stringify(omit(oldConfig)) !== JSON.stringify(omit(newConfig))) {
+    return false;
+  }
+  hot.forwardCfg = parseForwardConfig(newConfig);
+  ctx.logger.info('forward 子配置已热更新（未重启适配器）');
+  return true;
+}
+
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
     ? (config.connections as OneBotConnectionConfig[])
@@ -532,27 +595,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 聊天流控配置已迁移至 plugin-flow-control / plugin-trigger-policy。
 
-  // 合并转发处理配置
-  const fwdRaw = (config.forward ?? {}) as Record<string, unknown>;
-  const forwardCfg = {
-    enabled: fwdRaw.enabled !== false,
-    maxDepth: typeof fwdRaw.maxDepth === 'number' ? Math.max(1, Math.floor(fwdRaw.maxDepth)) : 3,
-    maxNodesPerLevel:
-      typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
-    imageRecognition: fwdRaw.imageRecognition !== false,
-    summarize: fwdRaw.summarize !== false,
-    summaryLLM:
-      fwdRaw.summaryLLM &&
-      typeof fwdRaw.summaryLLM === 'object' &&
-      (fwdRaw.summaryLLM as { provider?: unknown }).provider &&
-      (fwdRaw.summaryLLM as { model?: unknown }).model
-        ? (fwdRaw.summaryLLM as { provider: string; model: string })
-        : undefined,
-    summaryMaxChars:
-      typeof fwdRaw.summaryMaxChars === 'number' ? Math.max(80, Math.floor(fwdRaw.summaryMaxChars)) : 400,
-    summaryInputLimit:
-      typeof fwdRaw.summaryInputLimit === 'number' ? Math.max(0, Math.floor(fwdRaw.summaryInputLimit)) : 8000,
-  };
+  // 合并转发处理配置。放进 hotState；forward-expand 通过 getter 总是读最新值，
+  // 这样修改摘要模型 / 摘要参数就不用重启适配器（不断 WS 连接、不清缓存）。
+  const hotState: InstanceHotState = { forwardCfg: parseForwardConfig(config) };
+  hotStateByCtx.set(ctx, hotState);
+  ctx.onDispose(() => {
+    hotStateByCtx.delete(ctx);
+  });
 
   // 引用消息处理配置
   const replyRaw = (config.reply ?? {}) as Record<string, unknown>;
@@ -923,7 +972,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   // ===== 合并转发自动展开（详见 ./forward-expand.ts）=====
-  const forwardExpander = createForwardExpander({ ctx, forwardCfg, sendAction });
+  const forwardExpander = createForwardExpander({
+    ctx,
+    forwardCfg: () => hotState.forwardCfg,
+    sendAction,
+  });
   const { getCachedForward, setCachedForward, loadPersistedForward, fetchForwardOnce, expandForwardsInText } =
     forwardExpander;
 
