@@ -25,6 +25,8 @@ export interface ForwardConfig {
   summarize: boolean;
   summaryLLM?: { provider: string; model: string };
   summaryMaxChars: number;
+  /** 喂给摘要 LLM 的原文最大字符数。原文超过则前段截断；<=0 表示不截断 */
+  summaryInputLimit: number;
 }
 
 export interface ForwardExpanderDeps<TState> {
@@ -129,8 +131,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     }
     const llm = entry.instance;
 
-    const inputLimit = 8000;
-    const trimmedInput = text.length > inputLimit ? `${text.slice(0, inputLimit)}\n…（原文已截断）` : text;
+    const inputLimit = forwardCfg.summaryInputLimit;
+    const trimmedInput =
+      inputLimit > 0 && text.length > inputLimit ? `${text.slice(0, inputLimit)}\n…（原文已截断）` : text;
 
     const sys =
       '你是消息摘要助手。给定一段聊天合并转发的原始内容，用简体中文输出一段不超过指定字数的摘要：\n' +
@@ -258,12 +261,14 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         };
         setCachedForward(id, stored);
 
-        const previewSrc = summary ?? expanded.fullText;
-        const preview = previewSrc.length > 80 ? `${previewSrc.slice(0, 80)}…` : previewSrc;
         const truncFlag = expanded.truncatedDepth || expanded.truncatedNodes ? ' [truncated]' : '';
+        // 日志里输出完整摘要（或在无摘要时输出完整原文），便于排查 forward 实际入库内容；
+        // 不再做 80 字 preview 截断，避免「日志看不到全貌」。原文/摘要都已入库到
+        // forwardCache + memory metadata，后续 onebot_get_forward_msg 可直接取回。
+        const fullPreview = (summary ?? expanded.fullText).replace(/\n/g, ' ');
         ctx.logger.debug(
           `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]` +
-            ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} preview="${preview.replace(/\n/g, ' ')}"`,
+            ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} content="${fullPreview}"`,
         );
 
         envelopeMap.set(id, buildEnvelope(expanded, summary));
