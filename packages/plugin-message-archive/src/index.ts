@@ -89,15 +89,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     debugLogs: config.debugLogs !== false,
   };
 
-  // memory 句柄会自动跟随 ctx.getService 的动态解析（用户切换 memory 偏好后下次调用即生效）
-  const memory = ctx.getService<MemoryService>('memory');
-  if (!memory) {
-    throw new Error('message-archive 需要 memory 服务');
+  // 必须懒查：ServiceRegistry.get 返回裸引用，apply 时缓存会在 memory provider 重载后失效。
+  // 表面上多一次查表调用，实际开销可忽，换取 provider 切换/bounce 时本插件不被级联 dispose。
+  function getMemory(): MemoryService {
+    const m = ctx.getService<MemoryService>('memory');
+    if (!m) throw new Error('message-archive 需要 memory 服务');
+    return m;
   }
 
   const service: MessageArchiveService = {
     async saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
-      await memory.saveMessage(sessionId, message);
+      await getMemory().saveMessage(sessionId, message);
       if (cfg.debugLogs && options?.debugLabel) {
         ctx.logger.debug(options.debugLabel);
       }
@@ -150,7 +152,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
 
-      await memory.saveMessage(working.sessionId, message);
+      await getMemory().saveMessage(working.sessionId, message);
 
       if (cfg.debugLogs && working.attachments?.length) {
         ctx.logger.debug(
@@ -197,7 +199,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         metadata,
       };
 
-      await memory.saveMessage(opts.sessionId, message);
+      await getMemory().saveMessage(opts.sessionId, message);
 
       if (cfg.debugLogs) {
         ctx.logger.debug(
@@ -211,7 +213,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     async findByMessageId(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null> {
       if (!messageId) return null;
       const limit = Math.max(1, Math.min(500, Math.floor(scanLimit ?? 100)));
-      const history = await memory.getHistory(sessionId, limit);
+      const history = await getMemory().getHistory(sessionId, limit);
       // 从最新往旧找：引用通常指向最近发的消息
       for (let i = history.length - 1; i >= 0; i -= 1) {
         const m = history[i];

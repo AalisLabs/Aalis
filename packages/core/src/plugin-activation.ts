@@ -26,7 +26,9 @@ interface ActivationDeps {
  *
  * - disabled / disposed / error 是显式态，recompute 不动它们
  * - required 依赖不满足 → pending
- * - service-down 命中 optional 依赖且服务确实没了 → pending（强制 bounce 重新 apply）
+ * - service-down 命中 optional 依赖且服务确实没了且声明了
+ *   `requiresBounceOnDepChange: true` → pending（级联 bounce）；
+ *   默认不级联，期望下游在每次访问时 `ctx.getService(...)` 惰性查询
  * - 其余 active / pending / activating → active
  */
 export function computeTargetState(entry: PluginEntry, reason: RecomputeReason, rootCtx: Context): PluginState {
@@ -38,7 +40,7 @@ export function computeTargetState(entry: PluginEntry, reason: RecomputeReason, 
     d => !rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
   );
   if (reqUnmet) return 'pending';
-  if (reason.type === 'service-down') {
+  if (reason.type === 'service-down' && entry.module.requiresBounceOnDepChange) {
     const optHit = entry.optionalDeps.find(d => d.service === reason.service);
     if (
       optHit &&

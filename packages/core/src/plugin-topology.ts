@@ -76,11 +76,19 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
 }
 
 /**
- * 把所有依赖 `provider` 所提供服务的 active 下游消费者降级为 pending。
+ * 把下游消费者降级为 pending —— 仅对显式声明 `requiresBounceOnDepChange: true`
+ * 的插件生效。
  *
- * 用于 updatePluginConfig / bouncePlugin：当某 provider 即将被 dispose+重启
- * 时，optional 依赖该 provider 服务的下游插件持有的服务引用会失效，必须 bounce
- * 以重新 apply 拿到新实例。required 依赖则更明显：服务消失 = 必须停。
+ * 历史背景：早期 core 默认对所有 active 下游做级联 bounce，前提是所有插件都会
+ * 在 apply 时把 `ctx.getService(...)` 的结果缓存到长寿命对象里（class field /
+ * 闭包），导致 provider 一旦 dispose+重启，下游缓存的裸引用立刻失效。
+ *
+ * 当前的契约改为："插件应在每次访问时通过 `ctx.getService(...)` 惰性查询"，
+ * 这样 provider 切换天然跟随，无需级联 bounce。绝大多数 first-party 插件已经
+ * 满足该契约，因此默认行为是**不**级联 dispose 下游。
+ *
+ * `requiresBounceOnDepChange: true` 是给少数无法响应式处理状态的插件
+ * （或迁移成本高的第三方插件）的逃生舱。
  *
  * 同步执行（不 await），caller 紧接着会 await softReload 完成全部重激活。
  */
@@ -96,6 +104,7 @@ export function evictDownstreamConsumers(args: {
   const providedSet = new Set(provided);
   for (const other of plugins.values()) {
     if (other === provider || other.state !== 'active') continue;
+    if (!other.module.requiresBounceOnDepChange) continue;
     const allDeps = [...other.requiredDeps, ...other.optionalDeps];
     if (!allDeps.some(d => providedSet.has(d.service))) continue;
     if (other.context) {
@@ -109,6 +118,9 @@ export function evictDownstreamConsumers(args: {
       other.context = undefined;
     }
     other.state = 'pending';
+    logger.info(
+      `级联 bounce 下游消费者 "${other.instanceId}"（requiresBounceOnDepChange=true，依赖 provider "${provider.instanceId}"）`,
+    );
     rootCtx.emit('plugin:unloaded', other.instanceId).catch(() => {});
   }
 }
