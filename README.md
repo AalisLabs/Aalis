@@ -60,83 +60,38 @@ ctx.provide('llm', service, {
 
 ```
 aalis/
-├── aalis.config.yaml              # 全局配置（YAML + 环境变量插值）
-├── data/
-│   ├── personas/                  # 角色卡目录
-│   ├── aalis.db                   # SQLite 数据库（运行时生成）
-│   ├── lancedb/                   # LanceDB 向量数据（运行时生成）
-│   └── users.json                 # 用户权限数据（运行时生成）
-├── docs/                          # 技术文档
-│   ├── architecture.md            # 架构总览
-│   ├── core/                      # 核心模块文档
-│   └── plugins/                   # 插件文档
+├── aalis.config.yaml         # 全局配置（YAML + 环境变量插值）
+├── data/                     # 运行时数据（角色卡 / SQLite / LanceDB / 权限 / 插件配置覆盖）
+├── docs/                     # 技术文档（architecture / core / plugins / api）
 ├── packages/
-│   ├── core/                        # 核心框架
-│   │
-│   ├── plugin-agent-default/        # 默认对话编排 Agent
-│   ├── plugin-agent-tools/          # Agent 工具注册与权限管理
-│   ├── plugin-session-manager/      # 会话管理与平台配置继承
-│   ├── plugin-session-tools/        # 子任务创建与并行协调
-│   ├── plugin-scheduler/            # Cron 定时任务调度
-│   ├── plugin-todo-list/            # 待办事项管理
-│   ├── plugin-skills/               # AI 技能库系统
-│   │
-│   ├── plugin-deepseek/             # DeepSeek LLM
-│   ├── plugin-openai/               # OpenAI-compatible LLM
-│   ├── plugin-ollama/               # Ollama 本地模型 LLM
-│   ├── plugin-persona/              # 角色人格管理
-│   │
-│   ├── plugin-memory-sqlite/        # SQLite 消息历史
-│   ├── plugin-memory-mongodb/       # MongoDB 消息历史
-│   ├── plugin-memory-inmemory/      # 内存消息存储（fallback）
-│   ├── plugin-memory-summary/       # LLM 对话摘要压缩
-│   ├── plugin-memory-vector/        # 向量语义长期记忆
-│   ├── plugin-embedding-ollama/     # Ollama Embedding
-│   ├── plugin-embedding-openai/     # OpenAI Embedding
-│   ├── plugin-vectorstore-flat/     # 平面 JSON 向量存储
-│   ├── plugin-vectorstore-lancedb/  # LanceDB 向量存储
-│   │
-│   ├── plugin-tools/         # 系统工具集（Shell / 文件 / 系统 / HTTP）
-│   ├── plugin-tool-search/          # 工具搜索层
-│   ├── plugin-tool-browser/         # Puppeteer 浏览器自动化
-│   ├── plugin-tool-code-runner/     # Python / JS 代码执行
-│   ├── plugin-tool-math/            # 数学计算工具集
-│   ├── plugin-office/               # Office 文档操作（Word/Excel/PPT/PDF）
-│   ├── plugin-file-reader/          # 多格式文件上传读取
-│   ├── plugin-image-recognition/    # 图像视觉识别
-│   ├── plugin-websearch-serper/     # Serper 联网搜索
-│   ├── plugin-okx-trading/          # OKX 交易所接口
-│   │
-│   ├── plugin-adapter-onebot/       # OneBot v11/v12 协议适配器
-│   ├── plugin-onebot-tools/         # OneBot 群管工具（禁言/踢人/查询）
-│   ├── plugin-cli/                  # 终端对话界面
-│   ├── plugin-webui-server/         # Web 管理后端（Express + WebSocket）
-│   ├── plugin-webui-client/         # Web 管理前端（React SPA）
-│   │
-│   ├── plugin-platform-api/         # 平台适配契约 + helper（聚合 / 路由）
-│   ├── plugin-authority/            # 权限管理系统
-│   ├── plugin-commands/             # 指令系统与工具桥接
-│   │
-│   ├── plugin-gateway/              # 消息流网关（inbound:command/flow/trigger/dispatch 生命周期相位）
-│   ├── plugin-flow-control/         # 平台无关流控：禁言/冷却/限速/闲置触发
-│   └── plugin-trigger-policy/       # 平台无关触发策略：@/名字/关键词/计数/评分
-└── src/
-    └── index.ts                   # 主入口
+│   ├── core/                              # 核心框架（零外部依赖）
+│   └── plugin-*/                          # 插件（60+ 个，按名称前缀分类）
+│       ├── plugin-agent / plugin-agent-api    # 对话编排
+│       ├── plugin-llm-* / plugin-embedding-*  # LLM / Embedding provider
+│       ├── plugin-memory-* / plugin-vectorstore-*  # 记忆 / 向量存储
+│       ├── plugin-tool-* / plugin-tools       # 工具集与注册表
+│       ├── plugin-storage-*                   # 存储后端 + 路由
+│       ├── plugin-adapter-* / plugin-platform # 平台适配 / 网关
+│       ├── plugin-cli / plugin-webui-*        # 用户界面
+│       └── ...                                # 详见 docs/plugins/
+└── src/index.ts                # 主入口
 ```
+
+> 完整插件清单与职责说明见 [`docs/plugins/`](docs/plugins/)。
 
 ## 核心服务
 
 | 服务名 | 描述 | 实现插件 |
 |---|---|---|
 | `llm` | AI 模型调用（对话、工具调用、流式输出） | plugin-deepseek, plugin-openai, plugin-ollama |
-| `agent` | 对话编排（消息构建、工具循环、上下文管理） | plugin-agent-default |
+| `agent` | 对话编排（消息构建、工具循环、上下文管理） | plugin-agent |
 | `memory` | 消息历史存储与检索 | plugin-memory-sqlite, plugin-memory-mongodb, plugin-memory-inmemory |
 | `embedding` | 文本向量化 | plugin-embedding-ollama, plugin-embedding-openai |
 | `vectorstore` | 向量存储与相似度检索 | plugin-vectorstore-lancedb, plugin-vectorstore-flat |
 | `persona` | 角色人格管理 | plugin-persona |
 | `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui-server |
 | `websearch` | 联网搜索 | plugin-websearch-serper |
-| `tools` | AI 工具注册表 | plugin-agent-tools, plugin-tools |
+| `tools` | AI 工具注册表 | plugin-tools（工具集生产方：plugin-tool-system / plugin-tool-* ）|
 | `semantic-memory` | 语义长期记忆 | plugin-memory-vector |
 | `session-manager` | 会话生命周期、平台配置、会话树 | plugin-session-manager |
 | `scheduler` | 定时任务调度 | plugin-scheduler |
@@ -337,26 +292,18 @@ outputFormat:
 
 ### 插件文档
 
-| 文档 | 内容 |
+按子系统分类查阅 [`docs/plugins/`](docs/plugins/)：
+
+| 子系统 | 代表插件 |
 |---|---|
-| [默认 Agent](docs/plugins/plugin-agent-default.md) | 消息编排、工具循环、五阶段上下文裁剪 |
-| [DeepSeek LLM](docs/plugins/plugin-deepseek.md) | 深度思考、工具调用、SSE 流式 |
-| [OpenAI LLM](docs/plugins/plugin-openai.md) | OpenAI 兼容接口、SSE 流式 |
-| [OneBot 适配器](docs/plugins/plugin-adapter-onebot.md) | v11/v12 协议、WebSocket 连接 |
-| [CLI 终端](docs/plugins/plugin-cli.md) | REPL 交互、指令解析 |
-| [Ollama Embedding](docs/plugins/plugin-embedding-ollama.md) | Ollama 嵌入 API |
-| [OpenAI Embedding](docs/plugins/plugin-embedding-openai.md) | OpenAI 兼容嵌入 API |
-| [MongoDB 记忆](docs/plugins/plugin-memory-mongodb.md) | MongoDB 连接与索引 |
-| [SQLite 记忆](docs/plugins/plugin-memory-sqlite.md) | SQLite WAL 模式存储 |
-| [向量记忆](docs/plugins/plugin-memory-vector.md) | 语义检索与时间衰减 |
-| [角色人格](docs/plugins/plugin-persona.md) | YAML 角色卡与结构化输出 |
-| [工具搜索层](docs/plugins/plugin-tool-search.md) | 工具数量阈值与搜索机制 |
-| [系统工具集](docs/plugins/plugin-tools.md) | Shell / 文件 / 系统 / HTTP 工具 |
-| [平面向量存储](docs/plugins/plugin-vectorstore-flat.md) | JSON 存储、余弦相似度 |
-| [LanceDB 向量存储](docs/plugins/plugin-vectorstore-lancedb.md) | 原生向量检索 |
-| [Serper 搜索](docs/plugins/plugin-websearch-serper.md) | Serper API 联网搜索 |
-| [WebUI 前端](docs/plugins/plugin-webui-client.md) | React 前端、实时通信 |
-| [WebUI 后端](docs/plugins/plugin-webui-server.md) | Express API、WebSocket |
+| **编排 / 会话** | [plugin-agent](docs/plugins/plugin-agent.md)、[plugin-session-manager](docs/plugins/plugin-session-manager.md)、[plugin-commands](docs/plugins/plugin-commands.md) |
+| **LLM / Embedding** | [plugin-openai](docs/plugins/plugin-openai.md)、[plugin-deepseek](docs/plugins/plugin-deepseek.md)、[plugin-ollama](docs/plugins/plugin-ollama.md)、[plugin-embedding-*](docs/plugins/) |
+| **记忆 / 向量** | [plugin-memory-sqlite](docs/plugins/plugin-memory-sqlite.md)、[plugin-memory-mongodb](docs/plugins/plugin-memory-mongodb.md)、[plugin-memory-vector](docs/plugins/plugin-memory-vector.md)、[plugin-vectorstore-lancedb](docs/plugins/plugin-vectorstore-lancedb.md) |
+| **工具集** | [plugin-tools](docs/plugins/plugin-tools.md)、[plugin-tool-system](docs/plugins/plugin-tool-system.md)、[plugin-tool-browser](docs/plugins/plugin-tool-browser.md)、[plugin-tool-code-runner](docs/plugins/plugin-tool-code-runner.md)、[plugin-tool-math](docs/plugins/plugin-tool-math.md)、[plugin-tool-search](docs/plugins/plugin-tool-search.md) |
+| **平台适配** | [plugin-adapter-onebot](docs/plugins/plugin-adapter-onebot.md)、[plugin-cli](docs/plugins/plugin-cli.md)、[plugin-webui-server](docs/plugins/plugin-webui-server.md)、[plugin-webui-client](docs/plugins/plugin-webui-client.md) |
+| **其他** | persona / authority / websearch-serper / office / file-reader / image-recognition / okx-trading / scheduler / todo-list / skills / mcp … 见目录 |
+
+> API 契约（跨插件服务接口）见 [`docs/api/`](docs/api/)。
 
 ## TODO
 
