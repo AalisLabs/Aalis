@@ -1,6 +1,8 @@
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA } from '@aalis/core';
+import type { CommandService } from '@aalis/plugin-commands-api';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
+import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api';
 import type express from 'express';
 
@@ -19,12 +21,31 @@ export function registerPluginRoutes(
       res.json({ plugins: [] });
       return;
     }
+    // 反向索引：pluginName -> tools / commands。
+    // 方便 UI 搜索框命中工具名/指令名时定位到注册插件。
+    const toolsByPlugin = new Map<string, string[]>();
+    const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
+    for (const t of tools) {
+      const list = toolsByPlugin.get(t.pluginName) ?? [];
+      list.push(t.name);
+      toolsByPlugin.set(t.pluginName, list);
+    }
+    const commandsByPlugin = new Map<string, string[]>();
+    const cmds = ctx.getService<CommandService>('commands')?.getAll() ?? [];
+    for (const c of cmds) {
+      const owner = c.pluginName ?? 'unknown';
+      const list = commandsByPlugin.get(owner) ?? [];
+      list.push(c.name);
+      commandsByPlugin.set(owner, list);
+    }
     const plugins = pm.getStatus().map(p => ({
       name: p.name,
       instanceId: p.instanceId,
       displayName: p.displayName,
       state: p.state,
       provides: p.provides ?? [],
+      tools: toolsByPlugin.get(p.name) ?? [],
+      commands: commandsByPlugin.get(p.name) ?? [],
       core: p.core ?? false,
       reusable: p.reusable ?? false,
       config: p.config,

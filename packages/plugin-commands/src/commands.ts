@@ -282,6 +282,15 @@ export class CommandRegistry implements CommandService {
     return false;
   }
 
+  /**
+   * 判断 head + tokens 是否能匹配到任何已注册的指令节点。
+   * 用于 inbound middleware 区分"未匹配指令"和"已命中"。
+   * 未匹配时调用方可决定走普通消息管道，而不是回显"未知指令"。
+   */
+  hasMatch(head: string, tokens: string[] = []): boolean {
+    return this.resolve(head, tokens) !== null;
+  }
+
   async execute(name: string, input: ExecutionInput): Promise<string | undefined> {
     const resolved = this.resolve(name, input.args);
     if (!resolved) return `未知指令: ${this.prefix}${name}。输入 ${this.prefix}help 查看帮助。`;

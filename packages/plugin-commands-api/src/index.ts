@@ -169,6 +169,13 @@ export interface CommandService {
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
 
+  /**
+   * 判断给定 head + tokens 是否能解析到任何已注册指令节点。
+   * inbound middleware 用它区分"已识别的指令"和"碰巧带前缀但无人注册"，
+   * 后者应被放行到普通消息管道（归档 / 触发等），而不是回显"未知指令"。
+   */
+  hasMatch(head: string, tokens?: string[]): boolean;
+
   /** 顶层段是否存在（含分组节点） */
   has(name: string): boolean;
   get(name: string): Command | undefined;

@@ -71,6 +71,10 @@ export interface PluginInfo {
   displayName?: string;
   state: string;
   provides: string[];
+  /** 该插件注册到全局工具表的工具名列表（用于搜索）。后端 /api/plugins 反向索引。 */
+  tools?: string[];
+  /** 该插件注册的指令完整名（含分组路径，例如 "plugins.refresh"）。 */
+  commands?: string[];
   core: boolean;
   reusable: boolean;
   extends?: ExtendDeclaration;
