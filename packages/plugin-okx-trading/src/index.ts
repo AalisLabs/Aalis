@@ -54,6 +54,18 @@ export const configSchema: ConfigSchema = {
   },
   enableAlgo: { type: 'boolean', label: '启用策略委托', default: false, description: '启用止盈止损 / 计划委托工具' },
   enableTransfer: { type: 'boolean', label: '启用资金划转', default: false, description: '启用资金账户划转工具' },
+  defaultPageLimit: {
+    type: 'number',
+    label: '分页查询默认条数',
+    default: 20,
+    description: '查询订单/账单/成交明细等接口，LLM 未传 limit 时使用。',
+  },
+  maxPageLimit: {
+    type: 'number',
+    label: '分页查询最大条数',
+    default: 100,
+    description: 'LLM 传入的 limit 会被 cap 到该值。OKX API 本身单页一般最多 100（个别接口 300）。',
+  },
 };
 
 export const defaultConfig = {
@@ -78,9 +90,13 @@ interface PluginConfig {
   enableTrading: boolean;
   enableAlgo: boolean;
   enableTransfer: boolean;
+  defaultPageLimit: number;
+  maxPageLimit: number;
 }
 
 function resolveConfig(config: Record<string, unknown>): PluginConfig {
+  const maxPageLimit = Math.max(1, Math.min(1000, Number(config.maxPageLimit) || 100));
+  const defaultPageLimitRaw = Math.max(1, Math.floor(Number(config.defaultPageLimit) || 20));
   return {
     apiKey: (config.apiKey as string) ?? '',
     secretKey: (config.secretKey as string) ?? '',
@@ -91,6 +107,8 @@ function resolveConfig(config: Record<string, unknown>): PluginConfig {
     enableTrading: (config.enableTrading as boolean) ?? true,
     enableAlgo: (config.enableAlgo as boolean) ?? false,
     enableTransfer: (config.enableTransfer as boolean) ?? false,
+    defaultPageLimit: Math.min(defaultPageLimitRaw, maxPageLimit),
+    maxPageLimit,
   };
 }
 
@@ -126,8 +144,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   registerMarketTools(reg, client);
   registerRubikTools(reg, client);
-  registerAccountTools(reg, client);
-  registerOrderQueryTools(reg, client);
+  registerAccountTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
+  registerOrderQueryTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
   if (cfg.enableTrading) registerTradeTools(reg, client, modeLabel);
   if (cfg.enableAlgo) registerAlgoTools(reg, client, modeLabel);
   if (cfg.enableTransfer) registerTransferTools(reg, client);

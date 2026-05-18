@@ -1,7 +1,7 @@
 import type { OkxClient } from '../client.js';
-import { errJson, type RegFn, truncate } from './_shared.js';
+import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerAccountTools(reg: RegFn, client: OkxClient): void {
+export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -206,7 +206,10 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
             instType: { type: 'string', description: '产品类型' },
             ccy: { type: 'string', description: '币种' },
             type: { type: 'string', description: '账单类型: 1=划转 2=交易 3=交割 4=强平 5=保证金划转 等' },
-            limit: { type: 'number', description: '条数，默认 20' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -218,7 +221,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
           args.instType as string | undefined,
           args.ccy as string | undefined,
           args.type as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
@@ -239,7 +242,10 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
             instType: { type: 'string', description: '产品类型' },
             ccy: { type: 'string', description: '币种' },
             type: { type: 'string', description: '账单类型' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -251,7 +257,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
           args.instType as string | undefined,
           args.ccy as string | undefined,
           args.type as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
@@ -298,7 +304,10 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
           properties: {
             instType: { type: 'string', description: '产品类型' },
             instId: { type: 'string', description: '产品 ID' },
-            limit: { type: 'number', description: '条数，默认 20' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -309,7 +318,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
         const r = await client.getPositionsHistory(
           args.instType as string | undefined,
           args.instId as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
@@ -329,7 +338,10 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
           properties: {
             instId: { type: 'string', description: '产品 ID' },
             ccy: { type: 'string', description: '币种' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -340,7 +352,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient): void {
         const r = await client.getInterestAccrued(
           args.instId as string | undefined,
           args.ccy as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
