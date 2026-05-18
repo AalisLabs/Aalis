@@ -1119,11 +1119,19 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
         description:
           '列出机器人自身当前被禁言的所有群（基于已收到的禁言事件 + 启动后从 shut_up_timestamp 恢复的状态快照）。' +
           '可在任何会话（包括私聊）调用，用于自查"我目前在哪些群里被禁言、还剩多久"。' +
+          '支持 limit/offset 翻页（默认按剩余时间倒序，最近会过期的在最前）。' +
           '注意：未收到事件且未触发过的群可能不在列表中，最权威的方式仍是 onebot_get_self_mute_status(group_id)。',
-        parameters: { type: 'object', properties: {}, required: [] },
+        parameters: {
+          type: 'object',
+          properties: {
+            limit: { type: 'number', description: '最多返回多少条，默认 30，上限 200' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
+          },
+          required: [],
+        },
       },
     },
-    handler: async () => {
+    handler: async args => {
       const adapter = findOneBotAdapter(ctx) as
         | (PlatformAdapter & {
             getSelfMutes?: () => Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
@@ -1132,11 +1140,22 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
       if (!adapter?.getSelfMutes) {
         return JSON.stringify({ supported: false, reason: '当前 OneBot 适配器版本不支持 getSelfMutes' });
       }
-      const mutes = adapter.getSelfMutes();
+      const limit = Math.max(1, Math.min(200, Math.floor(Number(args.limit) || 30)));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+      const mutes = adapter
+        .getSelfMutes()
+        .slice()
+        .sort((a, b) => a.remainingSec - b.remainingSec);
+      const total = mutes.length;
+      const sliced = mutes.slice(offset, offset + limit);
       return JSON.stringify({
         supported: true,
-        count: mutes.length,
-        mutes: mutes.map(m => ({
+        total,
+        offset,
+        limit,
+        count: sliced.length,
+        hasMore: offset + sliced.length < total,
+        mutes: sliced.map(m => ({
           selfId: m.selfId,
           groupId: m.groupId,
           untilIso: new Date(m.untilTs).toISOString(),
