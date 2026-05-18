@@ -2,10 +2,12 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { resolvePlatformBySession } from '@aalis/plugin-platform-api';
+import type { AccessChecker, AccessCheckerDisposer, SessionHistoryService } from '@aalis/plugin-tool-session-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
+import '@aalis/plugin-tool-session-api';
 
 // ===== 跨会话委派：proactive depth 防雪崩 =====
 // 防止 A→B→C→... 无限链；任一会话被 delegate 进入 proactive 链路后，链上下一跳禁止再次 delegate。
@@ -94,12 +96,6 @@ interface PluginConfig {
   crossSessionDefaultTimeoutSec: number;
 }
 
-interface SessionHistoryOptions {
-  sessionId: string;
-  limit?: number;
-  includeArchived?: boolean;
-}
-
 interface SessionHistoryResult {
   ok: true;
   sessionId: string;
@@ -107,13 +103,6 @@ interface SessionHistoryResult {
   limit: number;
   includeArchived: boolean;
   messages: Array<Record<string, unknown>>;
-}
-
-interface SessionHistoryService {
-  getHistory(
-    options: SessionHistoryOptions,
-    callCtx: ToolCallContext,
-  ): Promise<SessionHistoryResult | { error: string }>;
 }
 
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
@@ -163,22 +152,50 @@ function canReadSessionHistory(
   targetSessionId: string,
   currentPlatform: string | undefined,
   scope: 'current' | 'platform' | 'all',
+  checkers: readonly AccessChecker[],
+  callCtx: ToolCallContext,
 ): { ok: true } | { ok: false; reason: string } {
-  if (scope === 'all') return { ok: true };
-  if (targetSessionId === currentSessionId) return { ok: true };
-  if (scope === 'current') return { ok: false, reason: '当前配置仅允许读取当前会话历史' };
+  // 0. scope 粗筛
+  if (targetSessionId === currentSessionId) {
+    // 同会话仍允许平台 checker 表态（防御性）
+  } else if (scope === 'current') {
+    return { ok: false, reason: '当前配置仅允许读取当前会话历史' };
+  } else if (scope === 'platform') {
+    const current = currentPlatform || parsePlatform(currentSessionId);
+    const target = parsePlatform(targetSessionId);
+    if (!current || !target || current !== target) {
+      return {
+        ok: false,
+        reason: `当前配置仅允许读取同平台会话历史（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`,
+      };
+    }
+  }
+  // scope === 'all' 直接走 checker 链
 
-  const current = currentPlatform || parsePlatform(currentSessionId);
-  const target = parsePlatform(targetSessionId);
-  if (current && target && current === target) return { ok: true };
-  return {
-    ok: false,
-    reason: `当前配置仅允许读取同平台会话历史（当前=${current || 'unknown'}, 目标=${target || 'unknown'}）`,
-  };
+  // 1. 找匹配目标 platform 的 checker，any-deny 短路；无匹配 checker 默认通过
+  const targetPlatform = parsePlatform(targetSessionId);
+  const matched = checkers.filter(c => c.platform === targetPlatform);
+  for (const checker of matched) {
+    const verdict = checker.check({ currentSessionId, targetSessionId, callCtx });
+    if (verdict?.decision === 'deny') {
+      return { ok: false, reason: verdict.reason || `平台 ${targetPlatform} 拒绝此次跨会话访问` };
+    }
+  }
+  return { ok: true };
 }
 
 function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHistoryService {
+  const checkers: AccessChecker[] = [];
+
   return {
+    registerAccessChecker(checker: AccessChecker): AccessCheckerDisposer {
+      checkers.push(checker);
+      return () => {
+        const idx = checkers.indexOf(checker);
+        if (idx >= 0) checkers.splice(idx, 1);
+      };
+    },
+
     async getHistory(options, callCtx) {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory) return { error: 'memory 服务不可用' };
@@ -186,7 +203,14 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
-      const verdict = canReadSessionHistory(callCtx.sessionId, targetSessionId, callCtx.platform, cfg.scope);
+      const verdict = canReadSessionHistory(
+        callCtx.sessionId,
+        targetSessionId,
+        callCtx.platform,
+        cfg.scope,
+        checkers,
+        callCtx,
+      );
       if (!verdict.ok) return { error: verdict.reason };
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(options.limit) || cfg.defaultLimit)));
@@ -198,7 +222,7 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
           includeArchived && memory.getFullHistory
             ? await memory.getFullHistory(targetSessionId, limit)
             : await memory.getHistory(targetSessionId, limit);
-        return {
+        const result: SessionHistoryResult = {
           ok: true,
           sessionId: targetSessionId,
           count: history.length,
@@ -206,6 +230,7 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
           includeArchived: includeArchived && !!memory.getFullHistory,
           messages: history.map((message, index) => formatHistoryMessage(message, index + 1, cfg.perMessageMaxChars)),
         };
+        return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         ctx.logger.warn(`session-history 读取失败 (${targetSessionId}): ${message}`);

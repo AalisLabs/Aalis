@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-tool-onebot",
+  "name": "@aalis/plugin-tool-session-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -10,13 +10,13 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-media-api": "workspace:*",
-    "@aalis/plugin-platform-api": "workspace:*",
-    "@aalis/plugin-tool-session-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
+  },
+  "aalis": {
+    "types": true
   }
 }
