@@ -1,7 +1,7 @@
-# plugin-onebot-tools — OneBot 群管工具
+# plugin-tool-onebot — OneBot 群管工具
 
 **包名**: `@aalis/plugin-tool-onebot`  
-**源码**: `packages/plugin-onebot-tools/src/index.ts`
+**源码**: `packages/plugin-tool-onebot/src/index.ts`
 
 ## 概述
 

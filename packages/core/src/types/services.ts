@@ -30,7 +30,7 @@
 //   1. `<TName extends keyof ServiceTypeMap>(name: TName, ...)` —— 字面量自动强类型
 //   2. `<T = unknown>(name: string, ...)` —— 字符串变量退回 `unknown`，
 //      用于 router 类插件（plugin-llm-router / plugin-storage-router）按运行时
-//      变量寻址 service 的场景，以及 `getServiceByContextId` 这种纯动态调度路径。
+//      变量寻址 service 的场景。
 //
 // ## 边界
 //

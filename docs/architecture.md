@@ -202,7 +202,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 | Reason | 触发场景 |
 |---|---|
 | `service-up` | `service:registered` 反应式调用 |
-| `service-down` | `service:unregistered` 反应式调用；optional 依赖也会被 bounce 以重新 apply |
+| `service-down` | `service:unregistered` 反应式调用；仅下游声明 `requiresBounceOnDepChange: true` 时才级联 bounce（默认否） |
 | `plugin-state-changed` | enable/disable/updateConfig/bounce 后调用（`softReload()` 薄壳） |
 | `shutdown` | `App.stop()` 调用（`stopAll()` 薄壳） |
 
