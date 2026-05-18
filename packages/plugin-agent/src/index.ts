@@ -926,7 +926,7 @@ class DefaultAgent implements AgentService {
       }
     }
 
-    // 3. 当前用户消息
+    // 3. 当前消息
     //
     // 内容主体由 message-archive 烘焙：sender 前缀 / 引用回复 / 图片描述 / 附件描述
     // 都已经写进 archivedIncoming.content。这里只在外层加一个时间标注，
@@ -937,6 +937,37 @@ class DefaultAgent implements AgentService {
     const fallbackBody = senderLabel ? `[${senderLabel}]: ${incoming.content}` : incoming.content;
     const currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
 
+    // 3a. proactive 委派分支：跨会话由「同一 agent 在另一会话的实例」派发过来的任务
+    //
+    // 这条消息不是用户请求，必须作为 system 指令呈现给 LLM，否则 B 会把它当成
+    // 真实用户在指挥（典型 BUG：源会话 agent 决定派发，目标会话 agent 看到 user
+    // 角色的消息，回复时使用「您」「您好」等措辞，把 agent 当成了用户）。
+    //
+    // 同时附上源会话 ID，并明确告诉 B：如需了解源会话上下文，按需调用
+    // session_get_history(sessionId="<源>") —— 把"是否需要上下文"的决策权
+    // 交给 B 的 LLM，避免无差别拼接源历史造成 token 浪费。
+    if (incoming.triggerType === 'proactive') {
+      const sourceMatch = incoming.source?.match(/^proactive:from:(.+)$/);
+      const sourceSessionId = sourceMatch?.[1];
+      const sourceLine = sourceSessionId ? `源会话 ID: ${sourceSessionId}\n` : '';
+      const hintLine = sourceSessionId
+        ? `如需了解源会话上下文（例如「按之前讨论的方案」之类的引用），调用 \`session_get_history(sessionId="${sourceSessionId}", limit=20)\` 自行查阅。\n`
+        : '';
+      messages.push({
+        role: 'system',
+        content:
+          `[跨会话委派 — 非用户消息]\n` +
+          sourceLine +
+          `任务: ${incoming.content}\n\n` +
+          `说明: 这是你（作为同一 agent 在另一会话的实例）派发给本会话的任务指令，` +
+          `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n` +
+          hintLine,
+        metadata: { source: 'cross-session-delegation', sourceSessionId },
+      });
+      return messages;
+    }
+
+    // 3b. 普通用户消息分支
     // 检测预处理附件内容——引导 LLM 综合分析而非逐项转述
     const hasPreprocessed = /\[图片\d*[:：]|\[文件[:：]|--- 文件内容 ---/.test(currentContent);
     if (hasPreprocessed) {

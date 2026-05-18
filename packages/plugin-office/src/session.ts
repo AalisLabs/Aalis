@@ -1,4 +1,3 @@
-
 export type DocType = 'docx' | 'xlsx' | 'pptx' | 'pdf';
 
 export interface DocSession {
