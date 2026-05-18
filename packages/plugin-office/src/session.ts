@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 
 export type DocType = 'docx' | 'xlsx' | 'pptx' | 'pdf';
 
@@ -19,7 +18,7 @@ export class DocSessionManager {
   private sessions = new Map<string, DocSession>();
 
   create(type: DocType, filename: string, doc: unknown): string {
-    const id = `doc-${randomUUID().slice(0, 8)}`;
+    const id = `doc-${crypto.randomUUID().slice(0, 8)}`;
     this.sessions.set(id, { id, type, filename, doc, createdAt: Date.now() });
     return id;
   }
