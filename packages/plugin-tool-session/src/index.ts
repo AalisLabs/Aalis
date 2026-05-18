@@ -439,6 +439,14 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           '【wait_for_result】',
           '- true（默认）：同步等待目标 agent 完成一轮回复，把对方 reply 文本返回给你，最长等 timeout_seconds 秒。',
           '- false：fire-and-forget，立刻返回"已派发"，不阻塞当前会话。',
+          '',
+          '【返回值字段】',
+          '- outcome: replied / silent / aborted。silent 表示目标 agent 因 mood/state 选择沉默或 message 为空，',
+          '  此时 reply=""，不代表任务已执行，请勿向上游脑补"已完成"。',
+          '- reply: 目标 agent 真正对外发出的可见文本（可能为空）。',
+          '- personaState: 目标 agent 本轮结束时的结构化内心状态（mood/state/desire/current_action 等，',
+          '  仅当目标 persona 启用 outputFormat 时有值），可用于理解 silent 的原因。',
+          '- hint: silent / aborted 等异常 outcome 时的人类可读说明。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -522,8 +530,10 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         triggerType: 'proactive',
       };
 
+      const taskPreview =
+        task.length > 80 ? `${task.slice(0, 80)}... (+${task.length - 80}字，全文已完整传递给目标会话)` : task;
       ctx.logger.info(
-        `[delegate] from=${callCtx.sessionId} -> ${targetSessionId} depth=${targetDepth} wait=${waitForResult} task="${task.slice(0, 80)}"`,
+        `[delegate] from=${callCtx.sessionId} -> ${targetSessionId} depth=${targetDepth} wait=${waitForResult} task="${taskPreview}"`,
       );
 
       if (!waitForResult) {
@@ -576,6 +586,28 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         captured.reply.length > 2000
           ? `${captured.reply.slice(0, 2000)}\n...[已截断, 原长 ${captured.reply.length} 字]`
           : captured.reply;
+
+      // 不管 outcome 如何，尝试读一下目标会话 persona 本轮保存的结构化状态，
+      // 让调用方能看到「召叔心里怎么想的」，避免 outcome=silent + reply='' 时调用方脑补「已完成」。
+      let personaState: Record<string, unknown> | undefined;
+      try {
+        const personaService = ctx.getService<{
+          getSessionState?: (sid: string) => Record<string, unknown> | undefined;
+        }>('persona');
+        if (personaService?.getSessionState) {
+          personaState = personaService.getSessionState(targetSessionId);
+        }
+      } catch {
+        // persona 未启用时静默忽略
+      }
+
+      const outcomeHint =
+        captured.outcome === 'silent'
+          ? '⚠️ 目标会话本轮未产生对外可见消息（outcome=silent）：其 persona 在当前 mood/state 下选择了静默。任务可能未被执行，请参考 personaState 了解原因，避免脑补「已完成」。'
+          : captured.outcome === 'aborted'
+            ? '⚠️ 目标会话本轮被中断（outcome=aborted），任务未完整执行。'
+            : undefined;
+
       return JSON.stringify({
         delegated: true,
         targetSessionId,
@@ -583,6 +615,8 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         timedOut: false,
         outcome: captured.outcome,
         reply: replyTruncated,
+        personaState,
+        hint: outcomeHint,
         depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
       });
     },
