@@ -48,6 +48,11 @@ export interface PersonaService {
   getNickNames?(): string[];
   /** 是否启用了时间注入（供其他插件判断是否需要注册时间相关工具） */
   isTimeInjectionEnabled?(): boolean;
+  /**
+   * 读取目标会话最近一次保存的 persona 结构化输出状态（如 mood / state / desire / current_action）。
+   * 用于 delegate_to_session 等跨会话工具在目标会话没有产生可见消息时，仍能把目标 agent 的「内心情况」回报给调用方。
+   */
+  getSessionState?(sessionId: string): Record<string, unknown> | undefined;
 }
 
 // ----- 服务类型注册（declaration merging）-----

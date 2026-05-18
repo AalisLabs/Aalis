@@ -172,6 +172,11 @@ class PersonaServiceImpl implements PersonaService {
     this.sessionStates.set(sessionId, state);
   }
 
+  /** 读取会话状态（用于跨会话工具回报目标 agent 内心情况） */
+  getSessionState(sessionId: string): Record<string, unknown> | undefined {
+    return this.sessionStates.get(sessionId);
+  }
+
   /** 清除指定会话的状态 */
   clearSessionState(sessionId: string): void {
     this.sessionStates.delete(sessionId);
