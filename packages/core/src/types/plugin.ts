@@ -66,6 +66,19 @@ export interface PluginModule {
     oldConfig: Record<string, unknown>,
     newConfig: Record<string, unknown>,
   ): boolean | Promise<boolean>;
+  /**
+   * 逃生舱：声明本插件在依赖的 provider 发生变化（被 dispose / 替换）时
+   * 必须由 core 主动级联 dispose + reapply 才能恢复正确状态。
+   *
+   * 默认 `false`：core **不会**主动级联 bounce 下游。绝大多数插件应让
+   * `ctx.getService(...)` 在 handler/方法体内每次惰性查询，从而天然跟随
+   * provider 切换，无需 bounce。
+   *
+   * 仅当插件无法响应式处理状态（如必须在启动期一次性把 provider 引用
+   * 缓存到第三方 SDK 内部、或必须在 apply 时跑昂贵的同步初始化）时设为
+   * `true`。第三方插件开发者迁移成本太高时也可以临时打开。
+   */
+  requiresBounceOnDepChange?: boolean;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
   // 注：subsystem / extends 等纯 WebUI 展示元数据由
   // @aalis/plugin-webui-api 通过 declaration merging 注入；core 不读取它们，

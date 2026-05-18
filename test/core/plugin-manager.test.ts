@@ -143,9 +143,46 @@ describe('App plugin lifecycle', () => {
     expect(env.app.plugins.getPlugin('liar')?.state).toBe('error');
   });
 
-  it('optional 依赖的服务实例被替换时 → 下游插件 bounce 重新 apply', async () => {
-    // 回归 Bug A：plugin-commands 改 commandPrefix 重载后，doctor / agent-default
-    // 等以 optional 方式依赖 commands 的插件之前不会被 bounce，导致命令丢失。
+  it('optional 依赖默认不级联 bounce —— 下游应通过惰性 getService 跟随 provider 切换', async () => {
+    // 新契约：core 默认不再因 provider 重启级联 dispose 下游。下游若想拿到
+    // 新 provider 实例，应在每次访问时 `ctx.getService(...)` 惰性查询。
+    const events: string[] = [];
+
+    const provider: PluginModule = {
+      name: 'svc-provider',
+      provides: ['mysvc'],
+      apply(ctx, cfg) {
+        ctx.provide('mysvc', { tag: cfg.tag ?? 'v1' });
+        events.push(`provider:apply:${cfg.tag ?? 'v1'}`);
+      },
+    };
+    let consumerCtx: { getService<T>(n: string): T | undefined } | undefined;
+    const consumer: PluginModule = {
+      name: 'svc-consumer',
+      inject: { optional: ['mysvc'] },
+      apply(ctx) {
+        consumerCtx = ctx;
+        events.push('consumer:apply');
+        ctx.onDispose(() => events.push('consumer:dispose'));
+      },
+    };
+
+    await env.app.plugin(provider, { tag: 'v1' });
+    await env.app.plugin(consumer);
+    await new Promise(r => setTimeout(r, 10));
+    expect(consumerCtx?.getService<{ tag: string }>('mysvc')?.tag).toBe('v1');
+
+    await env.app.plugins.updatePluginConfig('svc-provider', { tag: 'v2' });
+    await new Promise(r => setTimeout(r, 30));
+
+    // 默认不级联：consumer 不应被 dispose
+    expect(events).not.toContain('consumer:dispose');
+    // consumer ctx 还活着，再次 getService 应返回新 provider 实例
+    expect(consumerCtx?.getService<{ tag: string }>('mysvc')?.tag).toBe('v2');
+  });
+
+  it('requiresBounceOnDepChange: true → provider 重启时下游被级联 bounce', async () => {
+    // 逃生舱：插件显式声明无法响应式跟随 provider 时，core 仍会级联 bounce。
     const events: string[] = [];
 
     const provider: PluginModule = {
@@ -159,6 +196,7 @@ describe('App plugin lifecycle', () => {
     const consumer: PluginModule = {
       name: 'svc-consumer',
       inject: { optional: ['mysvc'] },
+      requiresBounceOnDepChange: true,
       apply(ctx) {
         const svc = ctx.getService<{ tag: string }>('mysvc');
         events.push(`consumer:apply:${svc?.tag ?? 'none'}`);
@@ -171,11 +209,9 @@ describe('App plugin lifecycle', () => {
     await new Promise(r => setTimeout(r, 10));
     expect(events).toContain('consumer:apply:v1');
 
-    // 触发 provider 重载（service 被 dispose 后重新 provide）
     await env.app.plugins.updatePluginConfig('svc-provider', { tag: 'v2' });
     await new Promise(r => setTimeout(r, 30));
 
-    // consumer 必须被 bounce 并以新 service 实例重新 apply
     expect(events).toContain('consumer:dispose');
     expect(events).toContain('consumer:apply:v2');
   });
