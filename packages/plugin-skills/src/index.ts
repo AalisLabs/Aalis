@@ -483,36 +483,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   });
 
-  // 3. 执行技能（展开模板 → 发送给自己作为新对话输入）
-  useToolService(ctx).register({
-    groups: ['skills'],
-    definition: {
-      type: 'function',
-      function: {
-        name: 'skill_execute',
-        description:
-          '执行一个已保存的技能。将模板中的参数替换后，返回展开后的提示词内容。你应该根据这个内容来执行相应的操作。',
-        parameters: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: '要执行的技能名称' },
-            args: {
-              type: 'object',
-              description: '传入的参数值，对应技能模板中的 {{参数名}} 占位符',
-              additionalProperties: true,
-            },
-          },
-          required: ['name'],
-        },
-      },
-    },
-    handler: async args => {
-      const params = ((args.args as Record<string, string>) ?? {}) as Record<string, string>;
-      return executeSkillExpand(args.name as string, params);
-    },
-  });
-
-  // 4. 更新技能
+  // 3. 更新技能
   useToolService(ctx).register({
     groups: ['skills'],
     definition: {
@@ -550,7 +521,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   });
 
-  // 5. 删除技能
+  // 4. 删除技能
   useToolService(ctx).register({
     groups: ['skills'],
     definition: {
