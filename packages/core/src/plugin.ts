@@ -247,15 +247,12 @@ export class PluginManager {
   /**
    * 增量重载单个插件（核心入口）：
    *
-   * 1. 若提供 `config` 且插件实现了 `hotReloadConfig` 钩子，先尝试在线吸收：
-   *    钩子返回 true → 只更新 entry.config + 持久化层，**不** dispose，
-   *    避免修改纯运行时参数就要重连长连接、清空缓存等代价。
-   * 2. 否则：持久化新 config（如有）+ 替换 module（如有）+ dispose 旧 ctx
+   * 1. 持久化新 config（如有）+ 替换 module（如有）+ dispose 旧 ctx
    *    + 转 pending + softReload 重新激活。下游消费者默认不会被级联 bounce，
    *    除非显式声明 `requiresBounceOnDepChange: true`（见 evictDownstreamConsumers）。
-   * 3. `error` 态插件会被重置为 pending 重试 apply。
+   * 2. `error` 态插件会被重置为 pending 重试 apply。
    *
-   * 不负责"重新从磁盘 import"——那是宿主层（App.reloadPlugin）的职责。
+   * 不负责"重新从磁盘 import"——那是宿主层的职责。
    *
    * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
    */
@@ -273,25 +270,6 @@ export class PluginManager {
     const newConfig = opts?.config;
     const newModule = opts?.module;
 
-    // ----- 优先尝试热配置吸收（仅当传入 config 且未要求换 module） -----
-    if (newConfig && !newModule) {
-      const hotHook = entry.module.hotReloadConfig;
-      if (typeof hotHook === 'function' && entry.state === 'active' && entry.context) {
-        try {
-          const absorbed = await hotHook(entry.context, entry.config, newConfig);
-          if (absorbed) {
-            entry.config = newConfig;
-            this.rootCtx.config.setPluginConfig(name, newConfig);
-            this.logger.debug(`插件 "${name}" 配置变更已被 hotReloadConfig 吸收（跳过 bounce）`);
-            return true;
-          }
-        } catch (err) {
-          this.logger.warn(`插件 "${name}" hotReloadConfig 抛错，回退到完整 bounce: ${err}`);
-        }
-      }
-    }
-
-    // ----- 走完整 bounce 路径 -----
     if (newConfig) {
       entry.config = newConfig;
       this.rootCtx.config.setPluginConfig(name, newConfig);
