@@ -539,6 +539,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         ctx.emit('inbound:message', incoming).catch(err => {
           ctx.logger.warn(`[delegate] 派发失败 (${targetSessionId}): ${err}`);
         });
+        ctx.logger.info(`[delegate] return -> ${callCtx.sessionId} wait=false (fire-and-forget)`);
         return JSON.stringify({
           delegated: true,
           targetSessionId,
@@ -572,6 +573,9 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       }
 
       if (!captured) {
+        ctx.logger.warn(
+          `[delegate] return -> ${callCtx.sessionId} timedOut=true wait=${timeoutSec}s (未捕获 agent:turn:after)`,
+        );
         return JSON.stringify({
           delegated: true,
           targetSessionId,
@@ -611,6 +615,16 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
       };
       if (personaState) payload.personaState = personaState;
+
+      const replyPreview =
+        captured.reply.length === 0
+          ? '<空>'
+          : captured.reply.length > 60
+            ? `"${captured.reply.slice(0, 60).replace(/\n/g, ' ')}..." (+${captured.reply.length - 60}字)`
+            : `"${captured.reply.replace(/\n/g, ' ')}"`;
+      ctx.logger.info(
+        `[delegate] return -> ${callCtx.sessionId} outcome=${captured.outcome} reply=${replyPreview}${personaState ? ' personaState=yes' : ''}`,
+      );
       return JSON.stringify(payload);
     },
   });
