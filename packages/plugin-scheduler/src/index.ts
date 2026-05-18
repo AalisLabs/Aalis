@@ -19,10 +19,12 @@ import { useWebuiService } from '@aalis/plugin-webui-api';
 
 interface SchedulerJobConfig {
   name: string;
-  /** cron 表达式 (5 段: 分 时 日 月 周) */
+  /** cron 表达式 (5 段: 分 时 日 月 周)，支持快捷符 @hourly/@daily/@weekly/@monthly */
   cron?: string;
-  /** 固定间隔秒数（与 cron 二选一） */
+  /** 固定间隔秒数（与 cron 二选一），也可用 cron 的 "@every 30s" 形式表达 */
   interval?: number;
+  /** 一次性任务：在该 ISO 时间执行一次，执行后自动 enabled=false。与 cron/interval 三选一。 */
+  runAt?: string;
   /** 目标 sessionId（消息发往哪个会话） */
   sessionId: string;
   /** 目标平台标识 */
@@ -42,6 +44,47 @@ interface SchedulerConfig {
 }
 
 // ──────────── Cron 解析 ────────────
+
+/**
+ * 将快捷符（@hourly/@daily/@weekly/@monthly/@yearly/@every Ns）归一化为标准 5 段 cron。
+ * 不识别的输入原样返回。
+ * "@every 30s" 这种形式无法用 5 段 cron 表达，由调用方走 interval 通道处理。
+ */
+function normalizeCron(input: string): string {
+  const s = input.trim().toLowerCase();
+  switch (s) {
+    case '@hourly':
+      return '0 * * * *';
+    case '@daily':
+    case '@midnight':
+      return '0 0 * * *';
+    case '@weekly':
+      return '0 0 * * 0';
+    case '@monthly':
+      return '0 0 1 * *';
+    case '@yearly':
+    case '@annually':
+      return '0 0 1 1 *';
+    default:
+      return input;
+  }
+}
+
+/**
+ * 解析 "@every 30s" / "@every 5m" / "@every 2h" 为秒数。返回 0 表示不识别。
+ */
+function parseEverySeconds(input: string): number {
+  const m = input
+    .trim()
+    .toLowerCase()
+    .match(/^@every\s+(\d+)\s*(s|m|h)?$/);
+  if (!m) return 0;
+  const n = parseInt(m[1], 10);
+  const unit = m[2] ?? 's';
+  if (unit === 'h') return n * 3600;
+  if (unit === 'm') return n * 60;
+  return n;
+}
 
 function parseCronField(field: string, min: number, max: number): Set<number> {
   const result = new Set<number>();
@@ -103,6 +146,7 @@ export interface SchedulerService {
     name: string;
     cron?: string;
     interval?: number;
+    runAt?: string;
     sessionId: string;
     platform: string;
     content: string;
@@ -243,7 +287,7 @@ export const actions: PluginModule['actions'] = {
       return {
         ...j,
         nextRun: ready ? j.nextRun : 0,
-        schedule: j.cron ?? `每 ${j.interval}s`,
+        schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
         status: !j.enabled ? '❌ 禁用' : j.paused ? '⏸ 暂停' : j.running ? '⏳ 执行中' : '✅ 就绪',
         lastRunText: j.lastRun ? new Date(j.lastRun).toLocaleString('zh-CN') : '从未',
       };
@@ -300,6 +344,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         name: String(j.name ?? 'unnamed'),
         cron: j.cron as string | undefined,
         interval: j.interval as number | undefined,
+        runAt: j.runAt as string | undefined,
         sessionId: String(j.sessionId ?? 'internal'),
         platform: String(j.platform ?? 'internal'),
         content: String(j.content ?? ''),
@@ -385,6 +430,10 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 估算下次执行时间 ──
 
   function estimateNextRun(job: SchedulerJobConfig, lastRun: number): number {
+    if (job.runAt) {
+      const ms = Date.parse(job.runAt);
+      return Number.isFinite(ms) ? ms : 0;
+    }
     if (job.interval) {
       return (lastRun || Date.now()) + job.interval * 1000;
     }
@@ -404,6 +453,17 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   function initJob(jobCfg: SchedulerJobConfig): void {
     if (runtimes.has(jobCfg.name)) return;
+
+    // 归一化 cron 快捷符；"@every Ns" 转成 interval 通道
+    if (jobCfg.cron) {
+      const everySec = parseEverySeconds(jobCfg.cron);
+      if (everySec > 0) {
+        jobCfg.interval = everySec;
+        jobCfg.cron = undefined;
+      } else {
+        jobCfg.cron = normalizeCron(jobCfg.cron);
+      }
+    }
 
     const rt: JobRuntime = {
       config: jobCfg,
@@ -431,10 +491,48 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       ensureCronLoop();
     }
 
+    // 一次性任务：到点用 setTimeout 触发一次，执行完 disable 并持久化
+    if (jobCfg.runAt && jobCfg.enabled) {
+      const targetMs = Date.parse(jobCfg.runAt);
+      if (Number.isFinite(targetMs)) {
+        const delay = targetMs - Date.now();
+        if (delay <= 0) {
+          // 已过期：立即执行一次，然后 disable
+          setImmediate(() => {
+            executeJob(rt).finally(() => disableOneShot(rt));
+          });
+        } else {
+          rt.timer = setTimeout(() => {
+            if (!rt.paused) {
+              executeJob(rt).finally(() => disableOneShot(rt));
+            }
+          }, delay) as unknown as ReturnType<typeof setInterval>;
+        }
+      } else {
+        logger.warn(`任务 ${jobCfg.name} 的 runAt 无法解析: ${jobCfg.runAt}`);
+      }
+    }
+
     runtimes.set(jobCfg.name, rt);
-    logger.info(
-      `任务已注册: ${jobCfg.name} ${jobCfg.cron ? `(cron: ${jobCfg.cron})` : `(interval: ${jobCfg.interval}s)`}`,
-    );
+    const scheduleHint = jobCfg.cron
+      ? `(cron: ${jobCfg.cron})`
+      : jobCfg.interval
+        ? `(interval: ${jobCfg.interval}s)`
+        : jobCfg.runAt
+          ? `(runAt: ${jobCfg.runAt})`
+          : '(no schedule)';
+    logger.info(`任务已注册: ${jobCfg.name} ${scheduleHint}`);
+  }
+
+  /** 一次性任务执行后将其 enabled=false 并持久化 */
+  function disableOneShot(rt: JobRuntime): void {
+    rt.config.enabled = false;
+    rt.paused = true;
+    if (dynamicJobs.has(rt.config.name)) {
+      dynamicJobs.set(rt.config.name, { ...rt.config });
+      saveDynamicJobs();
+    }
+    logger.info(`一次性任务已执行完毕并停用: ${rt.config.name}`);
   }
 
   for (const job of config.jobs) {
@@ -632,7 +730,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       handler: async args => {
         const all = service.getJobs().map(j => ({
           name: j.name,
-          schedule: j.cron ?? `每 ${j.interval}s`,
+          schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
           sessionId: j.sessionId,
           enabled: j.enabled,
           paused: j.paused,
