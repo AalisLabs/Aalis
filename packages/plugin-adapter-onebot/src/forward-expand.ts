@@ -52,11 +52,7 @@ export interface ForwardConfig {
 
 export interface ForwardExpanderDeps<TState> {
   ctx: Context;
-  /**
-   * 可是快照（`ForwardConfig`）也可是 getter（`() => ForwardConfig`）。
-   * 传 getter 可以在不重启适配器的前提下热替摘要模型 / 提示参数，配合 plugin-adapter-onebot 的 `hotReloadConfig` 使用。
-   */
-  forwardCfg: ForwardConfig | (() => ForwardConfig);
+  forwardCfg: ForwardConfig;
   /** 调用 OneBot action 的回调（已绑定到具体的连接状态） */
   sendAction: (state: TState, action: string, params: Record<string, unknown>) => Promise<unknown>;
 }
@@ -85,11 +81,7 @@ const FORWARD_METADATA_NS = 'onebot:forward';
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
 export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>): ForwardExpander<TState> {
-  const { ctx, sendAction } = deps;
-  const getForwardCfg: () => ForwardConfig =
-    typeof deps.forwardCfg === 'function'
-      ? (deps.forwardCfg as () => ForwardConfig)
-      : () => deps.forwardCfg as ForwardConfig;
+  const { ctx, sendAction, forwardCfg } = deps;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
 
   function getCachedForward(id: string): ForwardEntry | undefined {
@@ -151,7 +143,6 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     text: string,
     hint: { count: number; participants: string[] },
   ): Promise<string | null> {
-    const forwardCfg = getForwardCfg();
     if (!forwardCfg.summarize) return null;
 
     const entry = resolveLLMModel(ctx, forwardCfg.summaryLLM, ['chat']);
@@ -209,7 +200,6 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     text: string,
     rawSegments: OneBotMessageSegment[] | undefined,
   ): Promise<string> {
-    const forwardCfg = getForwardCfg();
     if (!forwardCfg.enabled) return text;
     if (!text.includes('<forward id=')) return text;
 
