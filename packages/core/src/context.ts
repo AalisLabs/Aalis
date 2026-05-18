@@ -267,27 +267,6 @@ export class Context {
   }
 
   /**
-   * 按精确 contextId 拿服务实例。
-   *
-   * 用于 "会话/偏好已知 contextId、需要直接寻址 entry" 的场景。典型：per-model LLM entry：
-   *   `session.modelContextId = '@aalis/plugin-openai:main/gpt-4o'`
-   *   → `getServiceByContextId('llm', sessionData.modelContextId)`
-   *
-   * 不走 capability filter、不走 preference——纯粹按 ID 寻址。未找到返回 undefined。
-   *
-   * 重载行为同 `getService`：传入字面量服务名时自动推断为 `ServiceTypeMap[TName]`，
-   * 否则退回 `<T = unknown>`。
-   */
-  getServiceByContextId<TName extends keyof ServiceTypeMap>(
-    name: TName,
-    contextId: string,
-  ): ServiceTypeMap[TName] | undefined;
-  getServiceByContextId<T = unknown>(name: string, contextId: string): T | undefined;
-  getServiceByContextId<T>(name: string, contextId: string): T | undefined {
-    return this._services.getByContextId<T>(name, contextId);
-  }
-
-  /**
    * 获取服务的能力列表
    */
   getServiceCapabilities(name: string): string[] {

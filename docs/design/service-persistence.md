@@ -41,12 +41,17 @@
 
 ## 重载注意事项
 
-1. **下游依赖会短暂 bounce**：`App.reloadPlugin(target)` 时，target dispose
-   导致其 provided 服务从 ServiceContainer 中移除，所有依赖该服务且声明在
-   `inject.required` 中的下游插件会被 `recompute(service-down)` 自动 dispose+pending。
-   随后 target 重新 apply 注册新服务，下游被重新激活。期间存在 100ms 量级
-   的不可用窗口。
-   `optional` 依赖同样会被 bounce，以重新 apply 拿到新服务实例。
+> **重要变更**（新契约）：下游依赖默认**不**随 provider bounce 级联重启。
+> 只有显式声明 `PluginModule.requiresBounceOnDepChange: true` 的下游会被级联 evict。
+> 其他下游应使用 lazy `ctx.getService()` 透明拿到新实例（参见
+> plugin-session-manager / plugin-memory-summary / plugin-message-archive 实现）。
+
+1. **级联 bounce 是 opt-in**：`App.reloadPlugin(target)` 时，target dispose
+   导致其 provided 服务从 ServiceContainer 中移除。
+   - 下游声明 `requiresBounceOnDepChange: true` 的、且在 `inject.required` / `inject.optional`
+     中声明了该服务 → 会被 `recompute(service-down)` 自动 dispose+pending，
+     随后 target 重新 apply 注册新服务，下游被重新激活。
+   - **未**声明该字段的下游 → 不被级联，lazy lookup 下次调用时拿新实例。
 
 2. **避免 bounce 持有外部连接的插件**：上表中标注 "重建即可用" 的插件可以
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，

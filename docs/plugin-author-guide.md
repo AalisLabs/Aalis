@@ -13,7 +13,7 @@
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，PluginManager 会处理 |
 | 插件 active 期间临时换一个服务实例（同名 provide 二次） | **必须**手动 evict 下游消费者，否则它们仍持有旧引用 |
-| 插件配置变更触发热重载 | **走 `updatePluginConfig()`**，PluginManager 已包办 evict |
+| 插件配置变更触发热重载 | **走 `updatePluginConfig()`**（现为 `bouncePlugin(name, { config })` 别名）；PluginManager 包办 dispose+reapply。下游是否级联看 `requiresBounceOnDepChange`（默认否） |
 
 ### 为什么
 
@@ -97,6 +97,58 @@ inject: {
 
 ---
 
+## 3.5 级联契约（opt-in）：`requiresBounceOnDepChange`
+
+### 默认行为
+
+当某个 provider 插件被 bounce（配置更新 / 热重载 / 手动重启）时，
+**inject 了它服务的下游插件默认不会被级联重启**。下游应该通过
+**lazy `ctx.getService()`** （在方法内调用时查询，而非 apply 时缓存）
+透明拿到新的 provider 实例。
+
+### 何时设 `requiresBounceOnDepChange: true`（罕用）
+
+只有以下场景才需要让下游级联 bounce：
+
+- 你的 provider **改变了服务的核心能力 / 契约**（如动态增删 capability）
+- 下游消费者**必须重新 apply 才能感知变化**（无法通过 lazy lookup 兼容）
+- 典型例：schema-changing provider、需要下游重新注册回调 / 子命令的 provider
+
+```typescript
+export const module: PluginModule = {
+  name: '@aalis/plugin-schema-provider',
+  provides: ['schema'],
+  requiresBounceOnDepChange: true,  // 下游 inject schema 的插件会被级联重新 apply
+  apply(ctx) { ... },
+};
+```
+
+### 下游推荐写法：lazy getter
+
+```typescript
+// ✅ 推荐：存 ctx，方法内查询
+class MyConsumer {
+  constructor(private ctx: Context) {}
+  async doWork() {
+    const llm = this.ctx.getService<LLMService>('llm');
+    if (!llm) return;
+    return llm.chat({...});
+  }
+}
+```
+
+```typescript
+// ❌ 反模式：apply 时缓存，provider 被 bounce 后拿到还是旧实例
+class BadConsumer {
+  constructor(private llm: LLMService) {}  // 在 apply 内 = ctx.getService('llm')
+}
+```
+
+参考实现：plugin-session-manager、plugin-memory-summary、plugin-message-archive
+都采用该模式让 `memory` provider 的切换对它们透明。
+
+---
+
 ## 4. `reusable: true` 的代价
 
 ```typescript
@@ -156,8 +208,9 @@ export async function apply(ctx, cfg) {
 }
 ```
 
-下游可用 `ctx.getServiceByContextId('llm', '@aalis/plugin-foo:main/gpt-4o')` 精确寻址。
-这是 plugin-openai / plugin-deepseek 等多型号提供者的实际写法。
+下游走 capability filter / preference 机制选中所需实例（高优先级 / 偏好），
+或在请求参数中显式传 `provider` / `model` hint（参见 plugin-openai / plugin-deepseek
+的 `resolveLLMModel` 实现）。
 
 ---
 
@@ -208,18 +261,20 @@ hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject
 
 ### 配置变更如何触发 reload
 
-用户在 WebUI 点保存 → `updatePluginConfig(name, newConfig)`：
+用户在 WebUI 点保存 → `updatePluginConfig(name, newConfig)`（现为
+`bouncePlugin(name, { config })` 的薄壳别名）：
 
 1. `entry.config = newConfig` + 写回 ConfigManager
 2. 如果当前 active：
-   - `evictDownstreamConsumers(entry)` 把所有 inject 你 provided 服务的 active 下游降级 pending
+   - `evictDownstreamConsumers(entry)` 仅针对声明了 `requiresBounceOnDepChange: true` 的
+     active 下游降级 pending（默认 false 不级联）
    - dispose 你的 ctx → 你的 onDispose hook 执行
    - 你的 entry 状态 → pending
-   - `recompute({type:'plugin-state-changed'})` 把你和被 evict 的下游一起按拓扑序重激活
+   - `recompute({type:'plugin-state-changed'})` 把你和受影响的下游按拓扑序重激活
 3. 如果之前 error：直接 pending → recompute 重试
 
 **你 apply 内不需要做任何特殊处理**。如果你的服务是无状态的（HTTP client、
-工厂函数），下游会在重激活时自然拿到新实例。
+工厂函数），下游在下一次 `ctx.getService()` lazy 查询时会自然拿到新实例。
 
 ---
 
