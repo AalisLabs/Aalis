@@ -13,7 +13,6 @@
 // ============================================================
 
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -47,7 +46,8 @@ export async function cacheAttachmentBuffer(
   maxBytes: number,
 ): Promise<string | null> {
   if (buf.byteLength > maxBytes) return null;
-  const hash = createHash('sha256').update(buf).digest('hex').slice(0, 16);
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  const hash = Buffer.from(digest).toString('hex').slice(0, 16);
   const dirRel = `data/${KIND_DIR[kind]}/${safeSessionDir(sessionId)}`;
   const dirAbs = resolve(process.cwd(), dirRel);
   await mkdir(dirAbs, { recursive: true });

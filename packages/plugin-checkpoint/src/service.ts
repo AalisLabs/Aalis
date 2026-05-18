@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Logger } from '@aalis/core';
@@ -115,7 +114,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     if (this.current) {
       this.endTurn().catch(err => this.logger.warn(`finalize 旧回合失败: ${(err as Error).message}`));
     }
-    const turnId = randomUUID();
+    const turnId = crypto.randomUUID();
     this.current = {
       turnId,
       sessionId,
