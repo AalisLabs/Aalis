@@ -37,7 +37,6 @@
 | 注册外部资源清理 | `ctx.onDispose(() => …)` | 高频；**唯一正确的清理 API** |
 | 创建沙盒/子作用域 | `ctx.createScope(id)` / `ctx.fork(id)` | 中频；scope 自带服务隔离 |
 | 动态加载子模块 | `ctx.useModule(mod, cfg, opts?)` | 罕用；多用于沙盒/动态注入 |
-| 按精确 contextId 拿服务 | `ctx.getServiceByContextId(name, id)` | 罕用；多 entry 时按会话持久化选定 |
 | 设置全局服务路由偏好 | `ctx.preferService(name, id)` | 罕用；多用于 WebUI/CLI 切换 |
 | 枚举/巡视服务（管控类） | `ctx.getServiceEntries/Names/Capabilities` | 罕用；面向 plugin-doctor / WebUI |
 
@@ -115,15 +114,14 @@ if (ctx.hasService('memory')) { ... }
 
 `getService(name)` 的解析顺序：**偏好 (`preferService`) > 优先级 (`priority`) > 注册顺序**。匹配的第一个返回。
 
-### 跨多 entry 精确寻址
+### 跨多 entry 按会话持久化选择
 
-多 provider 都注册为同名服务（如多个 LLM provider 都叫 `'llm'`）时，会话里持久化用户选择的 contextId，下一轮接续：
+多 provider 同名注册（如多个 LLM provider 都叫 `'llm'`）时，会话需要持久化
+用户选择下一轮接续，推荐走 **请求维度的 hint**（而非容器维度的 preference）：
+把选择存在用户 profile，请求时显式传入面向指定 provider 的参数（参见
+[plugin-author-guide §13](../plugin-author-guide.md#13-用户偏好放哪里-per-user-不进-servicecontainer)）。
 
-```typescript
-ctx.getServiceByContextId('llm', session.modelContextId);
-```
-
-与 `getService` 的区别：不走偏好/优先级路由，纯按 entry 的 contextId 寻址，也不污染全局偏好。
+> `ctx.preferService(name, contextId)` 是全局、进程级单例的偏好、不适合平 per-user。
 
 ## 中间件 API
 
