@@ -5,7 +5,6 @@ import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
@@ -63,10 +62,6 @@ export const displayName = '技能系统';
 export const subsystem = 'skills';
 
 export const provides = ['skills'];
-
-export const inject = {
-  optional: ['agent'],
-};
 
 export const configSchema: ConfigSchema = {
   skillsDir: {
@@ -203,6 +198,106 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   const skillsCache: SkillDefinition[] = loadAllSkills();
 
+  // ── 工具注册映射：每个技能 → 一个可 dispose 的 LLM 工具 ──
+
+  const tools = useToolService(ctx);
+  const skillDisposers = new Map<string, () => void>();
+
+  /** 将技能名转为合法的工具名（OpenAI: ^[a-zA-Z0-9_-]{1,64}$）。返回 null 表示无法生成 */
+  function toolNameForSkill(skillName: string): string | null {
+    const sanitized = skillName
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+    if (!sanitized || !/[a-zA-Z0-9]/.test(sanitized)) return null;
+    return `skill_${sanitized}`.slice(0, 64);
+  }
+
+  /** 将一个技能注册成独立 LLM 工具 */
+  function registerSkillTool(skill: SkillDefinition): void {
+    const toolName = toolNameForSkill(skill.name);
+    if (!toolName) {
+      logger.warn(`技能 "${skill.name}" 名称含不受支持的字符，无法注册为独立工具；仍可通过 skill_execute 调用。`);
+      return;
+    }
+    // 构造 JSONSchema parameters
+    const props: Record<string, { type: string; description: string }> = {};
+    const required: string[] = [];
+    if (skill.parameters) {
+      for (const [k, def] of Object.entries(skill.parameters)) {
+        props[k] = { type: 'string', description: def?.description ?? '' };
+        if (def?.default === undefined) required.push(k);
+      }
+    }
+    const parameters: {
+      type: 'object';
+      properties: Record<string, unknown>;
+      required?: string[];
+    } = { type: 'object', properties: props };
+    if (required.length > 0) parameters.required = required;
+
+    const dispose = tools.register({
+      groups: ['skills'],
+      definition: {
+        type: 'function',
+        function: {
+          name: toolName,
+          description:
+            `[用户技能] ${skill.description}\n` +
+            `（Agent 自定义可复用技能，源技能名 "${skill.name}"。` +
+            '可通过 skill_update / skill_delete 修改或删除。调用后返回展开的提示词，你需要据此执行后续动作。）',
+          parameters,
+        },
+      },
+      handler: async args => {
+        return executeSkillExpand(skill.name, (args ?? {}) as Record<string, string>);
+      },
+    });
+    skillDisposers.set(skill.name, dispose);
+  }
+
+  /** 注销一个技能对应的 LLM 工具 */
+  function unregisterSkillTool(skillName: string): void {
+    const dispose = skillDisposers.get(skillName);
+    if (dispose) {
+      try {
+        dispose();
+      } catch (err) {
+        logger.warn(`注销技能工具失败 ${skillName}: ${err}`);
+      }
+      skillDisposers.delete(skillName);
+    }
+  }
+
+  /** 展开技能 prompt 模板并更新执行计数 */
+  function executeSkillExpand(skillName: string, params: Record<string, string>): string {
+    const skill = skillsCache.find(s => s.name === skillName);
+    if (!skill) return JSON.stringify({ error: `技能 "${skillName}" 不存在` });
+    let prompt = skill.prompt;
+    if (skill.parameters) {
+      for (const [key, def] of Object.entries(skill.parameters)) {
+        const value = params[key] ?? def.default ?? '';
+        prompt = prompt.replaceAll(`{{${key}}}`, value);
+      }
+    }
+    prompt = prompt.replace(/\{\{(\w+)\}\}/g, (m, k) => params[k] ?? m);
+
+    const idx = skillsCache.findIndex(s => s.name === skill.name);
+    if (idx >= 0) {
+      skillsCache[idx] = {
+        ...skillsCache[idx],
+        execCount: (skillsCache[idx].execCount ?? 0) + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      saveSkill(skillsCache[idx]);
+    }
+    return JSON.stringify({
+      skill: skill.name,
+      expandedPrompt: prompt,
+      message: '请根据以上展开后的提示词内容执行相应操作。',
+    });
+  }
+
   // ── 核心服务实现 ──
 
   const service: SkillsService = {
@@ -234,6 +329,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       };
       saveSkill(full);
       skillsCache.push(full);
+      registerSkillTool(full);
       logger.info(`技能已创建: ${skill.name}`);
     },
 
@@ -247,6 +343,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       }
       saveSkill(updated);
       skillsCache[idx] = updated;
+      // 重新注册工具（description/parameters 可能变了）
+      unregisterSkillTool(skillName);
+      registerSkillTool(updated);
       logger.info(`技能已更新: ${skillName}`);
       return true;
     },
@@ -259,6 +358,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         unlinkSync(filePath);
       } catch {}
       skillsCache.splice(idx, 1);
+      unregisterSkillTool(skillName);
       logger.info(`技能已删除: ${skillName}`);
       return true;
     },
@@ -403,38 +503,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     },
     handler: async args => {
-      const skill = service.getSkill(args.name as string);
-      if (!skill) return JSON.stringify({ error: `技能 "${args.name}" 不存在` });
-
-      const params = (args.args as Record<string, string>) ?? {};
-      let prompt = skill.prompt;
-
-      // 替换占位符
-      if (skill.parameters) {
-        for (const [key, def] of Object.entries(skill.parameters)) {
-          const value = params[key] ?? def.default ?? '';
-          prompt = prompt.replaceAll(`{{${key}}}`, value);
-        }
-      }
-      // 替换未定义但存在的占位符
-      prompt = prompt.replace(/\{\{(\w+)\}\}/g, (match, key) => params[key] ?? match);
-
-      // 更新执行计数
-      const idx = skillsCache.findIndex(s => s.name === skill.name);
-      if (idx >= 0) {
-        skillsCache[idx] = {
-          ...skillsCache[idx],
-          execCount: (skillsCache[idx].execCount ?? 0) + 1,
-          updatedAt: new Date().toISOString(),
-        };
-        saveSkill(skillsCache[idx]);
-      }
-
-      return JSON.stringify({
-        skill: skill.name,
-        expandedPrompt: prompt,
-        message: '请根据以上展开后的提示词内容执行相应操作。',
-      });
+      const params = ((args.args as Record<string, string>) ?? {}) as Record<string, string>;
+      return executeSkillExpand(args.name as string, params);
     },
   });
 
@@ -499,35 +569,10 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   });
 
-  // ── 在 agent:llm:before 钩子中注入可用技能摘要 ──
-
-  ctx.middleware('agent:llm:before', async (data, next) => {
-    const skills = service.listSkills();
-    if (skills.length > 0) {
-      const skillSummary = skills
-        .map(
-          s => `- ${s.name}: ${s.description}${s.parameters ? ` (参数: ${Object.keys(s.parameters).join(', ')})` : ''}`,
-        )
-        .join('\n');
-
-      // 在 system 消息后追加技能提示
-      const systemIdx = data.messages.findIndex(m => m.role === 'system');
-      if (systemIdx >= 0 && data.messages[systemIdx].content) {
-        const appendText = `\n\n你拥有以下可复用技能，可以通过 skill_execute 工具调用它们：\n${skillSummary}`;
-        const prevContributions =
-          (data.messages[systemIdx].metadata?._tokenContributions as Record<string, number>) ?? {};
-        data.messages[systemIdx] = {
-          ...data.messages[systemIdx],
-          content: data.messages[systemIdx].content + appendText,
-          metadata: {
-            ...data.messages[systemIdx].metadata,
-            _tokenContributions: { ...prevContributions, skills: appendText.length },
-          },
-        };
-      }
-    }
-    await next();
-  });
+  // ── 启动时为所有已加载技能注册 LLM 工具（取代原全量注入 system prompt 的做法） ──
+  for (const skill of skillsCache) {
+    registerSkillTool(skill);
+  }
 
   logger.info(`技能系统已启动 (目录: ${skillsDir}, 已加载 ${skillsCache.length} 个技能)`);
 }
