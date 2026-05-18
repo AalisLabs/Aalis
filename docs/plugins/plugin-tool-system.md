@@ -1,7 +1,7 @@
-# plugin-tools — 系统工具集
+# plugin-tool-system — 系统工具集
 
 **包名**: `@aalis/plugin-tool-system`  
-**源码**: `packages/plugin-tools/src/index.ts`
+**源码**: `packages/plugin-tool-system/src/index.ts`
 
 ## 概述
 
