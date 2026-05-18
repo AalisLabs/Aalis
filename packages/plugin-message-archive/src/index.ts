@@ -144,10 +144,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
+      // proactive 跨会话委派消息：作为 system 角色落盘（而非 user），
+      // 与 plugin-agent 的 buildMessages 保持一致，避免 B 下次回看历史时
+      // 把派发任务误读为「曾经有用户说过这个」。
+      const isProactive = working.triggerType === 'proactive';
+
       const message: Message = {
-        role: 'user',
+        role: isProactive ? 'system' : 'user',
         content,
-        name: getMessageName(working.userId),
+        name: isProactive ? 'cross-session-delegation' : getMessageName(working.userId),
         timestamp: Date.now(),
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };

@@ -1,6 +1,5 @@
 // ===== OKX API v5 客户端 =====
 
-
 export interface OkxCredentials {
   apiKey: string;
   secretKey: string;
@@ -30,13 +29,9 @@ async function sign(
   secretKey: string,
 ): Promise<string> {
   const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(secretKey),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
+  const key = await crypto.subtle.importKey('raw', enc.encode(secretKey), { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+  ]);
   const sig = await crypto.subtle.sign('HMAC', key, enc.encode(prehash(timestamp, method, requestPath, body)));
   return Buffer.from(sig).toString('base64');
 }
