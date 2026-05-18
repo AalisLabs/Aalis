@@ -1364,6 +1364,9 @@ importers:
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
+      '@aalis/plugin-tool-session-api':
+        specifier: workspace:*
+        version: link:../plugin-tool-session-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1411,6 +1414,25 @@ importers:
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
+      '@aalis/plugin-tool-session-api':
+        specifier: workspace:*
+        version: link:../plugin-tool-session-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-tool-session-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
