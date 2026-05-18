@@ -9,7 +9,6 @@ import type { ServiceInfo } from '../types';
  * - 单 provider：只展示一行
  * - 多 provider：用 <select> 直接切换偏好；当前值 = preferred ?? providers[0]
  * - 用户偏好时显示「偏好」徽标 + 「恢复默认」按钮
- * - 含 'router' capability 的 provider 显示「聚合层」徽标
  * - 解析顺序：preferred > priority > 注册顺序
  */
 export function ServiceCard({
@@ -81,12 +80,10 @@ export function ServiceCard({
           >
             {providers.map(p => {
               const mainName = p.displayName || p.label || p.contextId;
-              const isRouter = p.capabilities.includes('router');
-              const tag = isRouter ? ' [聚合]' : '';
               const text =
                 mainName !== p.contextId
-                  ? `${mainName} · p${p.priority}${tag} (${p.contextId})`
-                  : `${p.contextId} · p${p.priority}${tag}`;
+                  ? `${mainName} · p${p.priority} (${p.contextId})`
+                  : `${p.contextId} · p${p.priority}`;
               return (
                 <option key={p.contextId} value={p.contextId}>
                   {text}

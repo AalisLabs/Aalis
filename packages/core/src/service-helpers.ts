@@ -71,10 +71,11 @@ export function validateProvide(args: {
   if (priority !== undefined) {
     const standard = Object.values(ServicePriority) as number[];
     if (!standard.includes(priority)) {
-      logger.warn(
-        `服务 "${name}" 使用了非标准 priority=${priority}。建议改用 ServicePriority enum：` +
-          `Backend(0) / Override(50) / System(200)。` +
-          `裸数字会让"谁是默认胜者"难以静态推断。`,
+      // 裸数字作为细粒度预留滩位是合理设计（如 priority=10 在 Backend 与 Override 之间插入），
+      // 不强制使用 enum。但保留 debug 日志，方便排查「谁是默认胜者」问题。
+      logger.debug(
+        `服务 "${name}" 使用裸数字 priority=${priority}（非 ServicePriority enum：Backend=0/Override=50/System=200）。` +
+          `这是允许的，但插件作者须自行记载该数值含义以便下游推断胜者。`,
       );
     }
   }
