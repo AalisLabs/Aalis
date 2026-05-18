@@ -93,7 +93,6 @@ export const configSchema: ConfigSchema = {
         default: false,
         description: '私聊会话 → 另一个 QQ 的私聊。默认拒绝（隐私敏感）。',
       },
-      includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
     },
   },
 };
@@ -111,7 +110,6 @@ export const defaultConfig = {
     allowCrossSelf: false,
     allowCrossGroup: true,
     allowCrossPrivate: false,
-    includeArchivedDefault: false,
   },
 };
 
@@ -544,7 +542,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         allowCrossSelf: false,
         allowCrossGroup: true,
         allowCrossPrivate: false,
-        includeArchivedDefault: false,
         ...((config.sessionHistory as Record<string, unknown>) ?? {}),
       },
     };
@@ -563,7 +560,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
         allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
         allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
-        includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
       };
       registerSessionHistoryTools(ctx, bundle, historyCfg);
       registerOneBotHistoryAccessChecker(ctx, historyCfg);
@@ -1510,7 +1506,6 @@ interface OneBotSessionHistoryConfig {
   allowCrossSelf: boolean;
   allowCrossGroup: boolean;
   allowCrossPrivate: boolean;
-  includeArchivedDefault: boolean;
 }
 
 /**
@@ -1640,7 +1635,6 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
               description: `读取最近多少条，默认 ${cfg.defaultLimit}，最多 ${cfg.maxLimit}`,
             },
             self_id: { type: 'string', description: '机器人账号。可选，默认使用当前 OneBot 会话的 selfId' },
-            include_archived: { type: 'boolean', description: '是否包含已归档消息。默认使用插件配置。' },
           },
           required: ['target_type', 'target_id'],
           additionalProperties: false,
@@ -1666,14 +1660,14 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
         });
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || cfg.defaultLimit)));
-      const includeArchived =
-        typeof args.include_archived === 'boolean' ? args.include_archived : cfg.includeArchivedDefault;
       const sessionId = buildOneBotSessionId(selfId, targetType, targetId);
 
       try {
         // 访问控制（跨账号/群读私/跨群/跨私）由 session-history 服务统一执行，
         // OneBot 的规则已通过 registerOneBotHistoryAccessChecker 注册。
-        const result = await history.getHistory({ sessionId, limit, includeArchived }, callCtx);
+        // includeArchived 故意不暴露：archived 是 memory 内部细节，被 summary 替代的老消息
+        // 默认就不该再翻原文（会与 summary 内容双重计费）。如需考古应另起独立工具。
+        const result = await history.getHistory({ sessionId, limit }, callCtx);
         return JSON.stringify({
           ...result,
           sessionId,
