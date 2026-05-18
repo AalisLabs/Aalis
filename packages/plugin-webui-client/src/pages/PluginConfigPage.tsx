@@ -300,7 +300,7 @@ export function PluginConfigPage({
       <div className="plugin-search-row">
         <input
           className="plugin-search-input"
-          placeholder="搜索插件..."
+          placeholder="搜索插件 / 工具名 / 指令名..."
           value={pluginSearch}
           onChange={e => setPluginSearch(e.target.value)}
         />
@@ -316,7 +316,9 @@ export function PluginConfigPage({
               p.name.toLowerCase().includes(q) ||
               p.instanceId.toLowerCase().includes(q) ||
               (p.displayName && p.displayName.toLowerCase().includes(q)) ||
-              p.provides.some(s => s.toLowerCase().includes(q)))
+              p.provides.some(s => s.toLowerCase().includes(q)) ||
+              (p.tools ?? []).some(s => s.toLowerCase().includes(q)) ||
+              (p.commands ?? []).some(s => s.toLowerCase().includes(q)))
           : plugins;
 
         const categoryMap: Record<string, string> = {};
