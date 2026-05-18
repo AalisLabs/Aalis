@@ -10,10 +10,11 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*"
+    "@aalis/plugin-tools-api": "workspace:*",
+    "mathjs": "^14.9.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   }
 }

@@ -10,6 +10,7 @@ import { registerGeometryTools } from './tools/geometry.js';
 import { registerMatrixTools } from './tools/matrix.js';
 import { registerNumberTheoryTools } from './tools/number-theory.js';
 import { registerStatisticsTools } from './tools/statistics.js';
+import { registerSymbolicTools } from './tools/symbolic.js';
 import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -79,6 +80,17 @@ export const configSchema: ConfigSchema = {
       enabled: { type: 'boolean', label: '启用进制转换工具', default: true },
     },
   },
+  symbolic: {
+    label: '符号代数 (mathjs)',
+    fields: {
+      enabled: {
+        type: 'boolean',
+        label: '启用符号计算工具',
+        default: true,
+        description: '符号求导、化简、有理化、LaTeX 输出等，基于 mathjs',
+      },
+    },
+  },
 };
 
 // ===== 配置类型 =====
@@ -94,6 +106,7 @@ interface ToolMathConfig {
   calculus: { enabled: boolean };
   equation: { enabled: boolean };
   baseConvert: { enabled: boolean };
+  symbolic: { enabled: boolean };
 }
 
 // ===== 插件入口 =====
@@ -161,6 +174,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info('进制转换工具已启用');
   }
 
+  if (cfg.symbolic.enabled) {
+    registerSymbolicTools(grouped);
+    ctx.logger.info('符号代数工具已启用 (mathjs)');
+  }
+
   ctx.logger.info('数学工具插件已启动');
 }
 
@@ -182,5 +200,6 @@ function resolveConfig(config: Record<string, unknown>): ToolMathConfig {
     calculus: get('calculus'),
     equation: get('equation'),
     baseConvert: get('baseConvert'),
+    symbolic: get('symbolic'),
   };
 }
