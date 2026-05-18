@@ -554,6 +554,8 @@ class OpenAIModelHandle implements LLMModel {
     readonly providerId: string,
     readonly contextLength: number,
     readonly maxOutputTokens: number,
+    /** Provider 级共享的 refresh 闭包；webui 按 contextId 找到任一 entry 调一次即可。 */
+    readonly refresh: () => Promise<{ added: string[]; removed: string[]; total: number }>,
   ) {}
 
   chat(request: ChatModelRequest): Promise<ChatResponse> {
@@ -583,39 +585,98 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   const client = new OpenAIClient(openaiConfig, ctx.logger);
-
-  // 探测远端 + 合并自定义模型，生成完整 model id 列表
-  const remoteIds = await client.fetchRemoteModelIds();
-  const remoteSet = new Set(remoteIds);
-  for (const cm of openaiConfig.customModels) {
-    if (remoteSet.has(cm)) {
-      ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
-    }
-  }
-  const allModelIds = [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
-
-  if (allModelIds.length === 0) {
-    ctx.logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
-    return;
-  }
-
   const baseLabel = `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})`;
 
-  // 为每个 model 注册独立的 LLMModel entry：contextId = `${ctx.id}/${modelId}`
-  // capability 数组真实反映该 model 的能力（providerCapabilities ∪ 单模型覆盖 ∪ 启发式）
-  for (const modelId of allModelIds) {
+  // 已注册 model entry 的句柄表：modelId → dispose（来自 ctx.provide 返回值）
+  const registered = new Map<string, () => void>();
+
+  // refresh 闭包：apply 末尾装配；先占位以打破环依赖。
+  let refreshFn: () => Promise<{ added: string[]; removed: string[]; total: number }> = async () => ({
+    added: [],
+    removed: [],
+    total: registered.size,
+  });
+  const refresh = (): Promise<{ added: string[]; removed: string[]; total: number }> => refreshFn();
+
+  function registerOne(modelId: string): void {
+    if (registered.has(modelId)) return;
     const capabilities = resolveCapabilities(
       modelId,
       openaiConfig.modelCapabilities.get(modelId),
       openaiConfig.providerCapabilities,
     );
-    const handle = new OpenAIModelHandle(client, modelId, ctx.id, openaiConfig.contextLength, openaiConfig.maxTokens);
-    ctx.provide('llm', handle, {
+    const handle = new OpenAIModelHandle(
+      client,
+      modelId,
+      ctx.id,
+      openaiConfig.contextLength,
+      openaiConfig.maxTokens,
+      refresh,
+    );
+    const dispose = ctx.provide('llm', handle, {
       capabilities,
       label: `${baseLabel} / ${modelId}`,
       entryId: `${ctx.id}/${modelId}`,
     });
+    registered.set(modelId, dispose);
   }
 
-  ctx.logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry`);
+  function unregisterOne(modelId: string): void {
+    const d = registered.get(modelId);
+    if (!d) return;
+    try {
+      d();
+    } catch (err) {
+      ctx.logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
+    }
+    registered.delete(modelId);
+  }
+
+  async function discoverAllModelIds(): Promise<string[]> {
+    const remoteIds = await client.fetchRemoteModelIds();
+    const remoteSet = new Set(remoteIds);
+    for (const cm of openaiConfig.customModels) {
+      if (remoteSet.has(cm)) {
+        ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+      }
+    }
+    return [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
+  }
+
+  // 初次注册
+  const initialIds = await discoverAllModelIds();
+  if (initialIds.length === 0) {
+    ctx.logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+  } else {
+    for (const modelId of initialIds) registerOne(modelId);
+    ctx.logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
+  }
+
+  // 装配 refresh 真实实现
+  refreshFn = async () => {
+    const next = await discoverAllModelIds();
+    const nextSet = new Set(next);
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const id of next) {
+      if (!registered.has(id)) {
+        registerOne(id);
+        added.push(id);
+      }
+    }
+    for (const id of [...registered.keys()]) {
+      if (!nextSet.has(id)) {
+        unregisterOne(id);
+        removed.push(id);
+      }
+    }
+    if (added.length || removed.length) {
+      ctx.logger.info(
+        `OpenAI 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
+      );
+    } else {
+      ctx.logger.debug(`OpenAI 模型列表已刷新: 无变化 (共 ${registered.size})`);
+    }
+    return { added, removed, total: registered.size };
+  };
 }
