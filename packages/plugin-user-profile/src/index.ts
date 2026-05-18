@@ -907,7 +907,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const block =
             `# 关于当前对话者（${data.userId}）的已知事实\n` +
             '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。' +
-            '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择：\n\n' +
+            '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择。' +
+            '这些事实来自零散对话的推断，未必完全准确；也不要把它们与对话历史片段拼接成新的强陈述，' +
+            '若用户否认应坦然接受、不要硬撑：\n\n' +
             (relationLine ? `${relationLine}\n\n` : '') +
             body;
           blocksToInsert.push(block);
