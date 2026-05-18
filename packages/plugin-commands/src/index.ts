@@ -124,6 +124,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const parsed = commands.parseCommand(message.content);
     if (!parsed) return next();
 
+    // 解析到 "<prefix>foo" 但没有任何插件注册过该指令 → 当作普通消息处理
+    // （归档、trigger、agent 等下游相位继续工作），避免对错字/打字噪音回显"未知指令"。
+    if (!commands.hasMatch(parsed.name, parsed.args)) return next();
+
     try {
       const result = await commands.execute(parsed.name, {
         sessionId: message.sessionId,
