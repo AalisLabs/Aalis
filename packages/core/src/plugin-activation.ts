@@ -91,7 +91,8 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
 
     // dev mode：反向一致性检查 —— 实际注册的服务名是否都在 provides 中声明
     // 不在 provides 的服务无法享受拓扑排序与服务恢复，下游可能错过依赖关系
-    if (process.env.NODE_ENV !== 'production') {
+    // 注：是否 dev 由宿主通过 `App({ devMode })` 显式注入，core 不读 process.env
+    if (rootCtx.devMode) {
       const declared = new Set(entry.module.provides ?? []);
       const actuallyProvided = rootCtx.serviceContainer
         .getServiceNames()
