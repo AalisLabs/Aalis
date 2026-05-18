@@ -131,10 +131,18 @@ interface SummaryRecord {
 }
 
 class SummaryStore {
-  constructor(private readonly memory: MemoryService) {
-    if (!memory.saveMetadata || !memory.getMetadata) {
+  constructor(private readonly ctx: Context) {
+    const memory = ctx.getService<MemoryService>('memory');
+    if (!memory?.saveMetadata || !memory?.getMetadata) {
       throw new Error('[memory-summary] 当前 memory 实现缺少 metadata 能力（saveMetadata/getMetadata），无法存储摘要');
     }
+  }
+
+  /** 每次惰性查询 memory provider，避免 apply 时缓存裸引用在 provider 重载后失效。 */
+  private get memory(): MemoryService {
+    const m = this.ctx.getService<MemoryService>('memory');
+    if (!m) throw new Error('[memory-summary] memory 服务不可用');
+    return m;
   }
 
   async getSummary(sessionId: string): Promise<SummaryRecord | null> {
@@ -195,7 +203,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.warn('memory 服务不可用，摘要插件将不会启动');
     return;
   }
-  const store = new SummaryStore(memory);
+  const store = new SummaryStore(ctx);
 
   ctx.logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 

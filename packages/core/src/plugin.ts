@@ -237,63 +237,32 @@ export class PluginManager {
   }
 
   /**
-   * 更新插件配置（需要重新激活才生效）
-   *
-   * 优先尝试 module.hotReloadConfig 钩子做"在线吸收"：若钩子返回 true，
-   * 只更新 entry.config + 持久化层，**不**触发 dispose / bounce，避免
-   * 修改纯运行时参数（如摘要模型）就要重连长连接、清空缓存等代价。
+   * 更新插件配置（thin alias，转发到 bouncePlugin）。保留独立方法名是为了
+   * 让 host 层调用点（WebUI / 配置文件热重载）语义清晰且向后兼容。
    */
   async updatePluginConfig(name: string, config: Record<string, unknown>): Promise<boolean> {
-    const entry = this.plugins.get(name);
-    if (!entry) return false;
-
-    // ----- 优先尝试热配置吸收 -----
-    const hotHook = entry.module.hotReloadConfig;
-    if (typeof hotHook === 'function' && entry.state === 'active' && entry.context) {
-      try {
-        const absorbed = await hotHook(entry.context, entry.config, config);
-        if (absorbed) {
-          entry.config = config;
-          this.rootCtx.config.setPluginConfig(name, config);
-          this.logger.debug(`插件 "${name}" 配置变更已被 hotReloadConfig 吸收（跳过 bounce）`);
-          return true;
-        }
-      } catch (err) {
-        this.logger.warn(`插件 "${name}" hotReloadConfig 抛错，回退到完整 bounce: ${err}`);
-      }
-    }
-
-    entry.config = config;
-    this.rootCtx.config.setPluginConfig(name, config);
-
-    // 若插件在运行中，dispose 旧上下文后转为 pending 重新激活
-    if (entry.state === 'active' && entry.context) {
-      evictDownstreamConsumers({ provider: entry, plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
-      entry.context.dispose();
-      entry.context = undefined;
-      entry.state = 'pending';
-      this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
-      await this.softReload();
-    } else if (entry.state === 'error') {
-      // 之前 apply 抛错而停在 error 态：新配置可能修复问题，重置为 pending 重试
-      entry.state = 'pending';
-      entry.error = undefined;
-      await this.softReload();
-    }
-
-    return true;
+    return this.bouncePlugin(name, { config });
   }
 
   /**
-   * 增量重载单个插件：dispose 旧 ctx，可选替换 module 引用，转为 pending 后
-   * 走 softReload 让依赖该插件 provided 服务的下游插件自动级联 bounce。
+   * 增量重载单个插件（核心入口）：
    *
-   * 不负责"重新从磁盘 import"——那是宿主层（App.reloadPlugin）的职责，因为
-   * PluginManager 不感知 pluginLoader / descriptor。
+   * 1. 若提供 `config` 且插件实现了 `hotReloadConfig` 钩子，先尝试在线吸收：
+   *    钩子返回 true → 只更新 entry.config + 持久化层，**不** dispose，
+   *    避免修改纯运行时参数就要重连长连接、清空缓存等代价。
+   * 2. 否则：持久化新 config（如有）+ 替换 module（如有）+ dispose 旧 ctx
+   *    + 转 pending + softReload 重新激活。下游消费者默认不会被级联 bounce，
+   *    除非显式声明 `requiresBounceOnDepChange: true`（见 evictDownstreamConsumers）。
+   * 3. `error` 态插件会被重置为 pending 重试 apply。
+   *
+   * 不负责"重新从磁盘 import"——那是宿主层（App.reloadPlugin）的职责。
    *
    * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
    */
-  async bouncePlugin(name: string, newModule?: PluginModule): Promise<boolean> {
+  async bouncePlugin(
+    name: string,
+    opts?: { config?: Record<string, unknown>; module?: PluginModule },
+  ): Promise<boolean> {
     const entry = this.plugins.get(name);
     if (!entry) return false;
     if (entry.state === 'disabled') {
@@ -301,13 +270,40 @@ export class PluginManager {
       return false;
     }
 
+    const newConfig = opts?.config;
+    const newModule = opts?.module;
+
+    // ----- 优先尝试热配置吸收（仅当传入 config 且未要求换 module） -----
+    if (newConfig && !newModule) {
+      const hotHook = entry.module.hotReloadConfig;
+      if (typeof hotHook === 'function' && entry.state === 'active' && entry.context) {
+        try {
+          const absorbed = await hotHook(entry.context, entry.config, newConfig);
+          if (absorbed) {
+            entry.config = newConfig;
+            this.rootCtx.config.setPluginConfig(name, newConfig);
+            this.logger.debug(`插件 "${name}" 配置变更已被 hotReloadConfig 吸收（跳过 bounce）`);
+            return true;
+          }
+        } catch (err) {
+          this.logger.warn(`插件 "${name}" hotReloadConfig 抛错，回退到完整 bounce: ${err}`);
+        }
+      }
+    }
+
+    // ----- 走完整 bounce 路径 -----
+    if (newConfig) {
+      entry.config = newConfig;
+      this.rootCtx.config.setPluginConfig(name, newConfig);
+    }
+    if (newModule) entry.module = newModule;
+
     if (entry.state === 'active' && entry.context) {
       evictDownstreamConsumers({ provider: entry, plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
       entry.context.dispose();
       entry.context = undefined;
       this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
     }
-    if (newModule) entry.module = newModule;
     entry.state = 'pending';
     entry.error = undefined;
     await this.softReload();

@@ -410,8 +410,6 @@ class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
   private activeSessionId: string = '';
   private ctx: Context;
-  /** memory 是 ctx.getService 返回的动态句柄——provider 切换时自动跟随，无需重新解析 */
-  private memory: MemoryService;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
   /** 平台 → 默认 SessionConfig 模板 */
@@ -419,9 +417,19 @@ class SessionManager implements SessionManagerService {
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
   private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
 
-  constructor(ctx: Context, memory: MemoryService) {
+  constructor(ctx: Context) {
     this.ctx = ctx;
-    this.memory = memory;
+  }
+
+  /**
+   * memory provider 每次惰性查询：ServiceRegistry.get 返回的是裸 entry.instance，
+   * 缓存到 field 在 provider 重载后会失效。每次调用走 getService 让 provider 切换
+   * 后自然跟随，无需级联 bounce 本插件。
+   */
+  private get memory(): MemoryService {
+    const m = this.ctx.getService<MemoryService>('memory');
+    if (!m) throw new Error('session-manager 需要 memory 服务');
+    return m;
   }
 
   /** 从 memory 元数据加载持久化会话列表 */
@@ -943,13 +951,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
-  const memory = ctx.getService<MemoryService>('memory');
-  if (!memory) {
+  if (!ctx.hasService('memory')) {
     ctx.logger.error('memory 服务不可用，会话管理无法启动');
     return;
   }
 
-  const manager = new SessionManager(ctx, memory);
+  const manager = new SessionManager(ctx);
 
   // 从持久化存储加载
   await manager.load();
