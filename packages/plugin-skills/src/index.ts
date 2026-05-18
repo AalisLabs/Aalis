@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
@@ -203,23 +204,26 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const tools = useToolService(ctx);
   const skillDisposers = new Map<string, () => void>();
 
-  /** 将技能名转为合法的工具名（OpenAI: ^[a-zA-Z0-9_-]{1,64}$）。返回 null 表示无法生成 */
-  function toolNameForSkill(skillName: string): string | null {
+  /**
+   * 将技能名转为合法工具名（OpenAI: ^[a-zA-Z0-9_-]{1,64}$）。
+   * 中文/特殊字符会被剥离；剥离后若不含字母数字，回退到基于 SHA-1 的短 hash，
+   * 这样纯中文名技能也能注册成独立 LLM 工具。
+   */
+  function toolNameForSkill(skillName: string): string {
     const sanitized = skillName
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .replace(/_+/g, '_')
       .replace(/^_|_$/g, '');
-    if (!sanitized || !/[a-zA-Z0-9]/.test(sanitized)) return null;
-    return `skill_${sanitized}`.slice(0, 64);
+    if (sanitized && /[a-zA-Z0-9]/.test(sanitized)) {
+      return `skill_${sanitized}`.slice(0, 64);
+    }
+    const hash = createHash('sha1').update(skillName).digest('hex').slice(0, 10);
+    return `skill_x_${hash}`;
   }
 
   /** 将一个技能注册成独立 LLM 工具 */
   function registerSkillTool(skill: SkillDefinition): void {
     const toolName = toolNameForSkill(skill.name);
-    if (!toolName) {
-      logger.warn(`技能 "${skill.name}" 名称含不受支持的字符，无法注册为独立工具；仍可通过 skill_execute 调用。`);
-      return;
-    }
     // 构造 JSONSchema parameters
     const props: Record<string, { type: string; description: string }> = {};
     const required: string[] = [];
@@ -243,9 +247,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         function: {
           name: toolName,
           description:
-            `[用户技能] ${skill.description}\n` +
-            `（Agent 自定义可复用技能，源技能名 "${skill.name}"。` +
-            '可通过 skill_update / skill_delete 修改或删除。调用后返回展开的提示词，你需要据此执行后续动作。）',
+            `[用户技能·原名"${skill.name}"] ${skill.description}\n` +
+            '（Agent 自定义可复用技能，可通过 skill_update / skill_delete 修改或删除。' +
+            '调用后返回展开的提示词，你需要据此执行后续动作。）',
           parameters,
         },
       },
