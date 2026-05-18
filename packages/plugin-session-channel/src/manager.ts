@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Context } from '@aalis/core';
 
 import type { GatewayService } from '@aalis/plugin-gateway-api';
@@ -108,7 +107,7 @@ export class SessionChannelManager implements SessionChannelService {
   // ── 服务 API ─────────────────────────────────────────────────────────────
 
   async create(opts: { label: string; sessions?: string[]; metadata?: Record<string, unknown> }): Promise<string> {
-    const id = randomUUID();
+    const id = crypto.randomUUID();
     const now = Date.now();
     const sessions = Array.from(new Set(opts.sessions ?? []));
     const ch: SessionChannel = {
