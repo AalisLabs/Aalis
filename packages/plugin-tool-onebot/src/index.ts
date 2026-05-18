@@ -59,7 +59,13 @@ export const configSchema: ConfigSchema = {
         type: 'number',
         label: '单次最多读取条数上限',
         default: 100,
-        description: 'agent 传入的 limit 参数会被截断到该上限（脚本硬上限 100）；agent 未传 limit 时默认拉取 20 条。',
+        description: 'agent 传入的 limit 参数会被截断到该上限。',
+      },
+      defaultLimit: {
+        type: 'number',
+        label: '默认读取条数（agent 不传 limit 时）',
+        default: 20,
+        description: '不能超过 maxLimit。',
       },
       allowGroupReadPrivate: { type: 'boolean', label: '允许群聊读取私聊历史', default: false },
       allowCrossSelf: { type: 'boolean', label: '允许跨机器人账号读取', default: false },
@@ -76,6 +82,7 @@ export const defaultConfig = {
   sessionHistory: {
     enabled: true,
     maxLimit: 100,
+    defaultLimit: 20,
     allowGroupReadPrivate: false,
     allowCrossSelf: false,
     includeArchivedDefault: false,
@@ -513,6 +520,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       sessionHistory: {
         enabled: true,
         maxLimit: 100,
+        defaultLimit: 20,
         allowGroupReadPrivate: false,
         allowCrossSelf: false,
         includeArchivedDefault: false,
@@ -524,13 +532,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (cfg.groupInfo.enabled) registerGroupInfoTools(ctx, bundle);
     if (cfg.account.enabled) registerAccountTools(ctx, bundle);
     if (cfg.interaction.enabled) registerInteractionTools(ctx, bundle);
-    if (cfg.sessionHistory.enabled)
+    if (cfg.sessionHistory.enabled) {
+      const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
+      const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
       registerSessionHistoryTools(ctx, bundle, {
-        maxLimit: Math.max(1, Math.min(100, Number(cfg.sessionHistory.maxLimit) || 100)),
+        maxLimit,
+        defaultLimit: Math.min(defaultLimitRaw, maxLimit),
         allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
         allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
         includeArchivedDefault: cfg.sessionHistory.includeArchivedDefault === true,
       });
+    }
     registerRequestTools(ctx, bundle);
   });
 }
@@ -1468,6 +1480,7 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
 
 interface OneBotSessionHistoryConfig {
   maxLimit: number;
+  defaultLimit: number;
   allowGroupReadPrivate: boolean;
   allowCrossSelf: boolean;
   includeArchivedDefault: boolean;
@@ -1543,7 +1556,10 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
               description: 'group = 群聊（target_id 为群号），private = 私聊（target_id 为 QQ 号）',
             },
             target_id: { type: 'string', description: '群号或 QQ 号' },
-            limit: { type: 'number', description: `读取最近多少条，默认 20，最多 ${cfg.maxLimit}` },
+            limit: {
+              type: 'number',
+              description: `读取最近多少条，默认 ${cfg.defaultLimit}，最多 ${cfg.maxLimit}`,
+            },
             self_id: { type: 'string', description: '机器人账号。可选，默认使用当前 OneBot 会话的 selfId' },
             include_archived: { type: 'boolean', description: '是否包含已归档消息。默认使用插件配置。' },
           },
@@ -1580,7 +1596,7 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
           error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session 的 historyAccess',
         });
 
-      const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || 20)));
+      const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || cfg.defaultLimit)));
       const includeArchived =
         typeof args.include_archived === 'boolean' ? args.include_archived : cfg.includeArchivedDefault;
       const sessionId = buildOneBotSessionId(selfId, targetType, targetId);

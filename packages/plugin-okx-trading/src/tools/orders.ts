@@ -1,7 +1,7 @@
 import type { OkxClient } from '../client.js';
-import { errJson, type RegFn, truncate } from './_shared.js';
+import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerOrderQueryTools(reg: RegFn, client: OkxClient): void {
+export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -39,7 +39,10 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient): void {
           properties: {
             instType: { type: 'string', description: '产品类型: SPOT / SWAP / FUTURES / OPTION' },
             instId: { type: 'string', description: '可选，特定产品' },
-            limit: { type: 'number', description: '返回条数，默认 20' },
+            limit: {
+              type: 'number',
+              description: `返回条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           required: ['instType'],
           additionalProperties: false,
@@ -51,7 +54,7 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient): void {
         const r = await client.getOrderHistory(
           args.instType as string,
           args.instId as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
@@ -71,7 +74,10 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient): void {
           properties: {
             instType: { type: 'string', description: '产品类型' },
             instId: { type: 'string', description: '产品 ID' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `返回条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -82,7 +88,7 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient): void {
         const r = await client.getFills(
           args.instType as string | undefined,
           args.instId as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
