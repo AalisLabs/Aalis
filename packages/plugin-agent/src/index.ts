@@ -950,8 +950,9 @@ class DefaultAgent implements AgentService {
       const sourceMatch = incoming.source?.match(/^proactive:from:(.+)$/);
       const sourceSessionId = sourceMatch?.[1];
       const sourceLine = sourceSessionId ? `源会话 ID: ${sourceSessionId}\n` : '';
+      // 不在 hint 里写死 limit，让 LLM 按 plugin-tool-session 的 defaultLimit / 自身判断决定
       const hintLine = sourceSessionId
-        ? `如需了解源会话上下文（例如「按之前讨论的方案」之类的引用），调用 \`session_get_history(sessionId="${sourceSessionId}", limit=20)\` 自行查阅。\n`
+        ? `如需了解源会话上下文（例如「按之前讨论的方案」之类的引用），调用 \`session_get_history(sessionId="${sourceSessionId}")\` 自行查阅（可按需附加 limit）。\n`
         : '';
       messages.push({
         role: 'system',

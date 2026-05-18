@@ -39,7 +39,18 @@ export const inject = {
 
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true },
-  maxLimit: { type: 'number', label: '单次最多读取条数', default: 30 },
+  maxLimit: {
+    type: 'number',
+    label: '单次最多读取条数',
+    default: 100,
+    description: 'session_get_history 一次能返回的硬上限；LLM 传入 limit 超过此值会被 cap。建议 50~200。',
+  },
+  defaultLimit: {
+    type: 'number',
+    label: '默认读取条数（LLM 不传 limit 时）',
+    default: 20,
+    description: '不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。',
+  },
   scope: {
     type: 'select',
     label: '允许读取范围',
@@ -75,6 +86,7 @@ export const configSchema: ConfigSchema = {
 interface PluginConfig {
   enabled: boolean;
   maxLimit: number;
+  defaultLimit: number;
   scope: 'current' | 'platform' | 'all';
   includeArchivedDefault: boolean;
   perMessageMaxChars: number;
@@ -107,9 +119,12 @@ interface SessionHistoryService {
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
   const scopeRaw = raw.scope;
   const scope = scopeRaw === 'current' || scopeRaw === 'all' ? scopeRaw : 'platform';
+  const maxLimit = Math.max(1, Math.min(1000, Number(raw.maxLimit) || 100));
+  const defaultLimitRaw = Math.max(1, Math.floor(Number(raw.defaultLimit) || 20));
   return {
     enabled: raw.enabled !== false,
-    maxLimit: Math.max(1, Math.min(100, Number(raw.maxLimit) || 30)),
+    maxLimit,
+    defaultLimit: Math.min(defaultLimitRaw, maxLimit),
     scope,
     includeArchivedDefault: raw.includeArchivedDefault === true,
     perMessageMaxChars: Math.max(0, Number(raw.perMessageMaxChars) || 0),
@@ -174,7 +189,7 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
       const verdict = canReadSessionHistory(callCtx.sessionId, targetSessionId, callCtx.platform, cfg.scope);
       if (!verdict.ok) return { error: verdict.reason };
 
-      const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(options.limit) || 20)));
+      const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(options.limit) || cfg.defaultLimit)));
       const includeArchived =
         typeof options.includeArchived === 'boolean' ? options.includeArchived : cfg.includeArchivedDefault;
 
@@ -222,7 +237,10 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
           type: 'object',
           properties: {
             session_id: { type: 'string', description: '目标 Aalis sessionId，例如 onebot:10000:group:20001' },
-            limit: { type: 'number', description: `读取最近多少条，默认 20，最多 ${cfg.maxLimit}` },
+            limit: {
+              type: 'number',
+              description: `读取最近多少条，默认 ${cfg.defaultLimit}，最多 ${cfg.maxLimit}`,
+            },
             include_archived: { type: 'boolean', description: '是否包含已归档消息。默认使用插件配置。' },
           },
           required: ['session_id'],
