@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { LLMModel } from '@aalis/plugin-llm-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
@@ -506,7 +505,9 @@ class SessionManager implements SessionManagerService {
   async createSession(
     opts?: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>>,
   ): Promise<SessionInfo> {
-    const id = opts?.parentId ? `${opts.parentId}::${randomUUID().slice(0, 8)}` : `session-${randomUUID().slice(0, 8)}`;
+    const id = opts?.parentId
+      ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
+      : `session-${crypto.randomUUID().slice(0, 8)}`;
 
     const now = Date.now();
     const session: SessionInfo = {

@@ -1,6 +1,5 @@
-import { createHmac } from 'node:crypto';
-
 // ===== OKX API v5 客户端 =====
+
 
 export interface OkxCredentials {
   apiKey: string;
@@ -22,10 +21,28 @@ export interface OkxApiResponse<T = unknown> {
   data: T;
 }
 
-/** 生成 OKX HMAC-SHA256 签名 */
-function sign(timestamp: string, method: string, requestPath: string, body: string, secretKey: string): string {
-  const prehash = timestamp + method + requestPath + body;
-  return createHmac('sha256', secretKey).update(prehash).digest('base64');
+/** 生成 OKX HMAC-SHA256 签名（Web Crypto 实现，跨运行时） */
+async function sign(
+  timestamp: string,
+  method: string,
+  requestPath: string,
+  body: string,
+  secretKey: string,
+): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secretKey),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(prehash(timestamp, method, requestPath, body)));
+  return Buffer.from(sig).toString('base64');
+}
+
+function prehash(timestamp: string, method: string, requestPath: string, body: string): string {
+  return timestamp + method + requestPath + body;
 }
 
 export class OkxClient {
@@ -56,7 +73,7 @@ export class OkxClient {
     }
 
     const timestamp = new Date().toISOString();
-    const signature = sign(timestamp, method, requestPath, body, credentials.secretKey);
+    const signature = await sign(timestamp, method, requestPath, body, credentials.secretKey);
 
     const headers: Record<string, string> = {
       'OK-ACCESS-KEY': credentials.apiKey,

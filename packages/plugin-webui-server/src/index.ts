@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
@@ -256,7 +255,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       } catch {
         /* ignore */
       }
-      const fresh = randomBytes(24).toString('hex');
+      const fresh = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
       try {
         writeFileSync(tokenFile, fresh, { encoding: 'utf-8' });
         try {
@@ -270,7 +269,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return fresh;
     }
     // ephemeral
-    return randomBytes(24).toString('hex');
+    return Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
   }
 
   function writeAccessFile(url: string, token: string): void {
