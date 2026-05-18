@@ -1,7 +1,7 @@
-# plugin-agent-default — 默认对话编排器
+# plugin-agent — 默认对话编排器
 
 **包名**: `@aalis/plugin-agent`  
-**源码**: `packages/plugin-agent-default/src/index.ts`
+**源码**: `packages/plugin-agent/src/index.ts`
 
 ## 概述
 

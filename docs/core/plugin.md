@@ -12,6 +12,15 @@ interface PluginModule {
   inject?: InjectDeclaration; // 依赖声明
   provides?: string[];        // 提供的服务名
   core?: boolean;             // 核心插件标记（不可禁用）
+  reusable?: boolean;         // 允许同 module 多实例注册（`name:suffix`）
+  /**
+   * 级联契约：下游 inject 了本插件 provided 服务的消费者，
+   * 是否需要在本插件 bounce 时被级联重新 apply。
+   * 默认 false。绝大多数 provider 不需要设为 true，
+   * 下游应使用 lazy `ctx.getService()` 透明获取新实例。
+   * 详见 [plugin-author-guide §3.5](../plugin-author-guide.md#35-级联契约opt-in)。
+   */
+  requiresBounceOnDepChange?: boolean;
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
@@ -96,13 +105,19 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 
 ### `updatePluginConfig(name, config)`
 
-更新配置并热重载（先 dispose 再重新 activate）。会显式 evict 该插件 provided
-服务的下游 active 消费者，弥补反应式 listener 的异步窗口。
+更新配置并热重载。**现为 `bouncePlugin(name, { config })` 的薄壳别名**，
+保留化名便于调用点语义明确（WebUI / mcp-client / ConfigWatcher 都调这个）。
+本插件会被 dispose + reapply；下游是否被级联 evict 取决于各下游插件的
+`requiresBounceOnDepChange`（默认 false 不级联）。
 
-### `bouncePlugin(name, newModule?)`
+### `bouncePlugin(name, opts?: { config?, module? }): Promise<boolean>`
 
-增量重载单个插件：dispose 旧 ctx、可选替换 module 引用、转 pending、recompute。
-同样会显式 evict 下游消费者。
+增量重载单个插件的统一入口：
+- 可选 `opts.config`：同时写回 ConfigManager + entry.config
+- 可选 `opts.module`：热替换 module 引用（热重载代码场景）
+- dispose 旧 ctx → 粗状态转 pending → `recompute({type:'plugin-state-changed'})`
+- 下游是否被级联 evict：仅当下游声明 `requiresBounceOnDepChange: true` 时才级联，
+  默认不动。详见 [plugin-author-guide §3.5](../plugin-author-guide.md#35-级联契约opt-in)。
 
 ### `ensureServiceProvider(serviceName)`
 
