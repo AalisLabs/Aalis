@@ -106,6 +106,18 @@ export interface LLMModel {
 
   chat(request: ChatModelRequest): Promise<ChatResponse>;
   chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
+
+  /**
+   * 让管理面板（webui）触发该 provider 重新探测远端模型列表并 diff 当前已注册 entries。
+   *
+   * - **远端动态发现型** provider（Ollama / OpenAI）应实现：重新拉取 `/v1/models` 等
+   *   并合并 `customModels`、按 model id 增删 `'llm'` entries。
+   * - **静态契约型** provider（如 DeepSeek 单 model）可不实现：webui 端检测到无 refresh
+   *   就不显示"刷新"按钮。
+   * - 同一 provider 下所有 model entries 共享同一份 refresh 闭包；webui 按 contextId
+   *   找到任一 entry 调一次即可。
+   */
+  refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
 }
 
 // ----- LLM 能力声明（capability 框架）-----
@@ -217,27 +229,9 @@ export function resolveLLMModel(
 }
 
 // ----- 服务类型注册（declaration merging）-----
-// ----- LLM Provider 运行时管理（webui 刷新模型列表用） -----
-
-/**
- * LLM Provider 管理服务：让 webui 等管理面板可以触发某 provider 重新探测远端模型列表
- * 并 diff 注册的 `'llm'` entries（增删）—— 无需重启整个插件。
- *
- * 不是所有 provider 都需要实现：远端动态发现型（Ollama / OpenAI）注册；
- * 静态 contract 型（DeepSeek 单 model）可不注册（webui 端就不显示刷新按钮）。
- *
- * 每个 provider 插件实例在 apply() 末尾通过
- *   `ctx.provide('llm-provider-admin', { refresh })`
- * 注册一份；webui 按 contextId（= plugin instanceId）路由。
- */
-export interface LLMProviderAdmin {
-  /** 重新探测远端模型 + 合并 customModels + diff 当前已注册 entries。返回变更摘要。 */
-  refresh(): Promise<{ added: string[]; removed: string[]; total: number }>;
-}
 
 declare module '@aalis/core' {
   interface ServiceTypeMap {
     llm: LLMModel;
-    'llm-provider-admin': LLMProviderAdmin;
   }
 }

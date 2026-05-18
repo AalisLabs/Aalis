@@ -919,6 +919,8 @@ class OllamaModelHandle implements LLMModel {
     readonly contextLength: number,
     readonly maxOutputTokens: number,
     private defaultThinking: boolean,
+    /** Provider 级共享的 refresh 闭包；webui 按 contextId 找到任一 entry 调一次即可。 */
+    readonly refresh: () => Promise<{ added: string[]; removed: string[]; total: number }>,
   ) {}
 
   chat(request: ChatModelRequest): Promise<ChatResponse> {
@@ -950,6 +952,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 已注册 model entry 的句柄表：modelId → dispose（来自 ctx.provide 返回值）
   const registered = new Map<string, () => void>();
 
+  // 前置声明：refresh 闭包稍后定义，但每个 handle 在创建时就需要它的引用
+  // 用一层间接调用以打破环依赖；handle.refresh() 实际转发到此变量。
+  let refreshFn: () => Promise<{ added: string[]; removed: string[]; total: number }> = async () => ({
+    added: [],
+    removed: [],
+    total: registered.size,
+  });
+  const refresh = (): Promise<{ added: string[]; removed: string[]; total: number }> => refreshFn();
+
   function registerOne(modelId: string): void {
     if (registered.has(modelId)) return;
     const capabilities = resolveCapabilities(
@@ -964,6 +975,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ollamaConfig.contextLength,
       ollamaConfig.maxTokens,
       ollamaConfig.thinking,
+      refresh,
     );
     const dispose = ctx.provide('llm', handle, {
       capabilities,
@@ -1004,33 +1016,32 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
   }
 
-  // 注册 admin 服务：webui 触发 refresh 时无需重启插件，按 diff 增删 entries
-  ctx.provide('llm-provider-admin', {
-    async refresh() {
-      const next = await discoverAllModelIds();
-      const nextSet = new Set(next);
-      const added: string[] = [];
-      const removed: string[] = [];
-      for (const id of next) {
-        if (!registered.has(id)) {
-          registerOne(id);
-          added.push(id);
-        }
+  // 装配 refresh 真实实现：webui 触发时无需重启插件，按 diff 增删 entries。
+  // 同 provider 下所有 OllamaModelHandle 共享同一份 refresh（通过 refreshFn 间接转发）。
+  refreshFn = async () => {
+    const next = await discoverAllModelIds();
+    const nextSet = new Set(next);
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const id of next) {
+      if (!registered.has(id)) {
+        registerOne(id);
+        added.push(id);
       }
-      for (const id of [...registered.keys()]) {
-        if (!nextSet.has(id)) {
-          unregisterOne(id);
-          removed.push(id);
-        }
+    }
+    for (const id of [...registered.keys()]) {
+      if (!nextSet.has(id)) {
+        unregisterOne(id);
+        removed.push(id);
       }
-      if (added.length || removed.length) {
-        ctx.logger.info(
-          `Ollama 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
-        );
-      } else {
-        ctx.logger.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
-      }
-      return { added, removed, total: registered.size };
-    },
-  });
+    }
+    if (added.length || removed.length) {
+      ctx.logger.info(
+        `Ollama 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
+      );
+    } else {
+      ctx.logger.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
+    }
+    return { added, removed, total: registered.size };
+  };
 }
