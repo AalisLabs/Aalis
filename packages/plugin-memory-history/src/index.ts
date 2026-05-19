@@ -290,6 +290,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   if (cfg.toolEnabled) {
     const tools = useToolService(ctx);
     tools.register({
+      // 归入 plugin-tool-session 的 'session-history' 分组（同属"读取/聚合会话历史"语义）。
+      // 若 plugin-tool-session 未启用，本工具落入未分组，WebUI 会以"其他"兜底展示。
+      groups: ['session-history'],
       definition: {
         type: 'function',
         function: {
