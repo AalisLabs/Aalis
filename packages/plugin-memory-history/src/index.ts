@@ -89,14 +89,9 @@ export const configSchema: ConfigSchema = {
   },
   toolEnabled: {
     type: 'boolean',
-    label: '注册查询工具',
+    label: '注册 recent_messages 工具',
     default: true,
-    description: '是否注册 recent_messages 工具供 agent 主动按需查询。',
-  },
-  toolName: {
-    type: 'string',
-    label: '工具名',
-    default: 'recent_messages',
+    description: '是否注册 recent_messages 工具供 agent 主动按需查询跨会话近期消息。',
   },
 };
 
@@ -110,7 +105,6 @@ export const defaultConfig = {
   headerText:
     '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。',
   toolEnabled: true,
-  toolName: 'recent_messages',
 };
 
 // ===== 内部类型 / 工具 =====
@@ -124,9 +118,11 @@ interface HistoryConfig {
   excludeCurrentSession: boolean;
   headerText: string;
   toolEnabled: boolean;
-  toolName: string;
   injectMetadataSource: string;
 }
+
+/** 工具名硬编码：避免运行期改名导致 prompt/agent hardcode 失效，与其他插件（subtask/scheduler/todo 等）保持一致 */
+const TOOL_NAME = 'recent_messages';
 
 interface QueryOptions {
   /** 覆盖 scope；不传则用配置默认值 */
@@ -145,11 +141,6 @@ function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
   const legacyOff = scopeRaw === 'off';
   const scope: HistoryScope = scopeRaw === 'cross-platform' ? 'cross-platform' : 'same-platform';
   const injectEnabled = legacyOff ? false : raw.injectEnabled !== false;
-  const toolName =
-    (typeof raw.toolName === 'string' && raw.toolName ? raw.toolName : 'recent_messages').replace(
-      /[^a-zA-Z0-9_-]/g,
-      '_',
-    ) || 'recent_messages';
   return {
     injectEnabled,
     scope,
@@ -159,7 +150,6 @@ function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
     excludeCurrentSession: raw.excludeCurrentSession !== false,
     headerText: typeof raw.headerText === 'string' ? raw.headerText : (defaultConfig.headerText as string),
     toolEnabled: raw.toolEnabled !== false,
-    toolName,
     injectMetadataSource: 'memory-history',
   };
 }
@@ -201,7 +191,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   const cfg = normalizeConfig(rawConfig);
 
   ctx.logger.info(
-    `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? cfg.toolName : 'off'}）`,
+    `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
   );
 
   async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
@@ -303,7 +293,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       definition: {
         type: 'function',
         function: {
-          name: cfg.toolName,
+          name: TOOL_NAME,
           description:
             '查询跨会话近期消息上下文。返回按时间升序排列的消息片段，可用于了解平台/跨平台的近期对话动态。每条格式为 [time][platform/session][role/sender] content。',
           parameters: {
