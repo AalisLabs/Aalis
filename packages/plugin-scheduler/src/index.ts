@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import { parseEverySeconds, useCronEngine } from '@aalis/plugin-cron-engine-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { ToolService } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -44,87 +44,17 @@ interface SchedulerConfig {
 }
 
 // ──────────── Cron 解析 ────────────
-
-/**
- * 将快捷符（@hourly/@daily/@weekly/@monthly/@yearly/@every Ns）归一化为标准 5 段 cron。
- * 不识别的输入原样返回。
- * "@every 30s" 这种形式无法用 5 段 cron 表达，由调用方走 interval 通道处理。
- */
-function normalizeCron(input: string): string {
-  const s = input.trim().toLowerCase();
-  switch (s) {
-    case '@hourly':
-      return '0 * * * *';
-    case '@daily':
-    case '@midnight':
-      return '0 0 * * *';
-    case '@weekly':
-      return '0 0 * * 0';
-    case '@monthly':
-      return '0 0 1 * *';
-    case '@yearly':
-    case '@annually':
-      return '0 0 1 1 *';
-    default:
-      return input;
-  }
-}
-
-/**
- * 解析 "@every 30s" / "@every 5m" / "@every 2h" 为秒数。返回 0 表示不识别。
- */
-function parseEverySeconds(input: string): number {
-  const m = input
-    .trim()
-    .toLowerCase()
-    .match(/^@every\s+(\d+)\s*(s|m|h)?$/);
-  if (!m) return 0;
-  const n = parseInt(m[1], 10);
-  const unit = m[2] ?? 's';
-  if (unit === 'h') return n * 3600;
-  if (unit === 'm') return n * 60;
-  return n;
-}
-
-function parseCronField(field: string, min: number, max: number): Set<number> {
-  const result = new Set<number>();
-  for (const part of field.split(',')) {
-    const trimmed = part.trim();
-    if (trimmed === '*') {
-      for (let i = min; i <= max; i++) result.add(i);
-    } else if (trimmed.startsWith('*/')) {
-      const step = parseInt(trimmed.slice(2), 10);
-      if (step > 0) for (let i = min; i <= max; i += step) result.add(i);
-    } else if (trimmed.includes('-')) {
-      const [a, b] = trimmed.split('-').map(Number);
-      for (let i = a; i <= b; i++) result.add(i);
-    } else {
-      const n = parseInt(trimmed, 10);
-      if (!Number.isNaN(n)) result.add(n);
-    }
-  }
-  return result;
-}
-
-function matchesCron(cron: string, date: Date): boolean {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minute, hour, day, month, weekday] = parts;
-  return (
-    parseCronField(minute, 0, 59).has(date.getMinutes()) &&
-    parseCronField(hour, 0, 23).has(date.getHours()) &&
-    parseCronField(day, 1, 31).has(date.getDate()) &&
-    parseCronField(month, 1, 12).has(date.getMonth() + 1) &&
-    parseCronField(weekday, 0, 6).has(date.getDay())
-  );
-}
+// 已迁移到 @aalis/plugin-cron-engine-api（normalizeCronExpr / parseEverySeconds / matchesCron）；
+// scheduler 改为 inject 'cron-engine' 后调用 subscribe()/nextFireTime()。
 
 // ──────────── 运行时状态 ────────────
 
 interface JobRuntime {
   config: SchedulerJobConfig;
-  /** 固定间隔定时器 */
+  /** 固定间隔 / 一次性 定时器 */
   timer: ReturnType<typeof setInterval> | null;
+  /** cron 订阅 dispose（来自 cron-engine.subscribe） */
+  cronDispose: (() => void) | null;
   /** 上次执行时间 */
   lastRun: number;
   /** 下次执行（预估，用于展示） */
@@ -162,6 +92,8 @@ export interface SchedulerService {
   resumeJob(name: string): boolean;
   triggerJob(name: string): Promise<boolean>;
   addJob(job: SchedulerJobConfig): void;
+  /** upsert：已存在则先 remove 再 add，用于 WebUI 表单"创建/编辑"统一入口 */
+  setJob(job: SchedulerJobConfig): void;
   removeJob(name: string): boolean;
 }
 
@@ -174,6 +106,9 @@ export const subsystem = 'scheduler';
 export const provides = ['scheduler'];
 
 export const inject = {
+  // 'tools' 必须先就绪，否则下方 register tool 全部静默丢失（optional 不参与拓扑排序）
+  // 'cron-engine' 提供共享 cron tick 与表达式校验
+  required: ['tools', 'cron-engine'],
   optional: ['agent'],
 };
 
@@ -272,6 +207,35 @@ const webuiPages: WebuiPage[] = [
         ],
         refresh: 30,
       },
+      {
+        type: 'form',
+        label: '新建 / 编辑任务',
+        source: 'newJobDraft',
+        save: 'upsertJob',
+        schema: {
+          name: {
+            type: 'string',
+            label: '名称',
+            required: true,
+            description: '任务唯一标识；填已有动态任务名会覆盖（配置文件中的静态任务无法覆盖）',
+          },
+          cron: {
+            type: 'string',
+            label: 'Cron 表达式',
+            description: '5 字段或别名：@hourly / @daily / @weekly / @every 30s；与 interval、runAt 三选一',
+          },
+          interval: { type: 'number', label: '固定间隔（秒）', description: '与 cron / runAt 三选一' },
+          runAt: {
+            type: 'string',
+            label: '一次性运行时间',
+            description: 'ISO 字符串，如 2026-05-19T10:00:00；执行一次后自动停用',
+          },
+          sessionId: { type: 'string', label: '目标会话 ID', required: true },
+          platform: { type: 'string', label: '目标平台', default: 'internal' },
+          content: { type: 'textarea', label: '消息内容', required: true, description: '届时发送给自己的指令/提示' },
+          enabled: { type: 'boolean', label: '启用', default: true },
+        },
+      },
     ],
   },
 ];
@@ -309,6 +273,49 @@ export const actions: PluginModule['actions'] = {
     const svc = ctx.getService<SchedulerService>('scheduler');
     return svc?.removeJob(args.name as string);
   },
+  async newJobDraft() {
+    return {
+      name: '',
+      cron: '',
+      interval: 0,
+      runAt: '',
+      sessionId: '',
+      platform: 'internal',
+      content: '',
+      enabled: true,
+    };
+  },
+  async upsertJob(ctx, args) {
+    const svc = ctx.getService<SchedulerService>('scheduler');
+    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
+    const name = String(args.name ?? '').trim();
+    if (!name) return { ok: false, error: '任务名称不能为空' };
+    const cron = String(args.cron ?? '').trim() || undefined;
+    const interval = Number(args.interval) > 0 ? Number(args.interval) : undefined;
+    const runAt = String(args.runAt ?? '').trim() || undefined;
+    if (!cron && !interval && !runAt) {
+      return { ok: false, error: 'cron / interval / runAt 必须填写其中之一' };
+    }
+    const sessionId = String(args.sessionId ?? '').trim();
+    if (!sessionId) return { ok: false, error: 'sessionId 不能为空' };
+    const content = String(args.content ?? '').trim();
+    if (!content) return { ok: false, error: 'content 不能为空' };
+    try {
+      svc.setJob({
+        name,
+        cron,
+        interval,
+        runAt,
+        sessionId,
+        platform: String(args.platform ?? 'internal'),
+        content,
+        enabled: args.enabled !== false,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  },
 };
 
 // ──────────── 插件入口 ────────────
@@ -316,6 +323,7 @@ export const actions: PluginModule['actions'] = {
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('scheduler');
+  const cronEngine = useCronEngine(ctx);
 
   // 注册 WebUI 页面
   const webui = useWebuiService(ctx);
@@ -323,7 +331,6 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   const runtimes = new Map<string, JobRuntime>();
   let runningCount = 0;
-  let cronInterval: ReturnType<typeof setInterval> | null = null;
 
   // 配置中定义的任务名称集合（不需要持久化）
   const configJobNames = new Set(config.jobs.map(j => j.name));
@@ -437,14 +444,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     if (job.interval) {
       return (lastRun || Date.now()) + job.interval * 1000;
     }
-    // cron: 简单估算——从当前时间起逐分钟检查
     if (job.cron) {
-      const now = new Date();
-      for (let offset = 1; offset <= 1440; offset++) {
-        const candidate = new Date(now.getTime() + offset * 60_000);
-        candidate.setSeconds(0, 0);
-        if (matchesCron(job.cron, candidate)) return candidate.getTime();
-      }
+      return cronEngine.nextFireTime(job.cron) ?? 0;
     }
     return 0;
   }
@@ -460,14 +461,14 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       if (everySec > 0) {
         jobCfg.interval = everySec;
         jobCfg.cron = undefined;
-      } else {
-        jobCfg.cron = normalizeCron(jobCfg.cron);
       }
+      // 5 字段 cron 与别名（如 @daily）都直接交给 cron-engine.subscribe 处理，不必预先 normalize
     }
 
     const rt: JobRuntime = {
       config: jobCfg,
       timer: null,
+      cronDispose: null,
       lastRun: 0,
       nextRun: estimateNextRun(jobCfg, 0),
       running: false,
@@ -486,9 +487,17 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       }, jobCfg.interval * 1000);
     }
 
-    // 如果是 cron 任务，确保 cron 主循环已启动
+    // cron 任务：订阅到共享 cron-engine
     if (jobCfg.cron && jobCfg.enabled) {
-      ensureCronLoop();
+      try {
+        rt.cronDispose = cronEngine.subscribe(jobCfg.cron, () => {
+          if (rt.paused || !rt.config.enabled) return;
+          executeJob(rt);
+          rt.nextRun = estimateNextRun(rt.config, rt.lastRun);
+        });
+      } catch (err) {
+        logger.warn(`任务 ${jobCfg.name} cron 订阅失败: ${err instanceof Error ? err.message : err}`);
+      }
     }
 
     // 一次性任务：到点用 setTimeout 触发一次，执行完 disable 并持久化
@@ -551,40 +560,6 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     logger.info(`已加载 ${persisted.length} 个持久化任务`);
   }
 
-  // ── Cron 主循环（每 60 秒检查一次） ──
-
-  /** 启动 cron 主循环（幂等，已启动则跳过） */
-  function ensureCronLoop(): void {
-    if (cronInterval) return;
-    // 对齐到下一分钟的 00 秒
-    const msToNextMinute = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
-    setTimeout(() => {
-      cronTick();
-      cronInterval = setInterval(cronTick, 60_000);
-    }, msToNextMinute);
-    logger.debug('Cron 主循环已启动');
-  }
-
-  const hasCronJobs = config.jobs.some(j => j.cron && j.enabled);
-  if (hasCronJobs) {
-    ensureCronLoop();
-  }
-
-  function cronTick(): void {
-    const now = new Date();
-    now.setSeconds(0, 0);
-    for (const rt of runtimes.values()) {
-      if (!rt.config.cron || rt.paused || !rt.config.enabled) continue;
-      if (matchesCron(rt.config.cron, now)) {
-        executeJob(rt);
-      }
-      // 每次 tick 后更新所有 cron 任务的下次执行时间
-      rt.nextRun = estimateNextRun(rt.config, rt.lastRun);
-    }
-    // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明
-    ctx.emit('scheduler:tick' as any).catch(() => {});
-  }
-
   // ── 注册 scheduler 服务 ──
 
   const service: SchedulerService = {
@@ -634,10 +609,26 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         saveDynamicJobs();
       }
     },
+    setJob(job) {
+      // upsert：先 remove 再 add；命中 config 静态任务时不允许覆盖
+      if (configJobNames.has(job.name)) {
+        throw new Error(`任务 "${job.name}" 来自配置文件，无法通过 setJob 覆盖`);
+      }
+      const existed = runtimes.get(job.name);
+      if (existed) {
+        if (existed.timer) clearInterval(existed.timer);
+        if (existed.cronDispose) existed.cronDispose();
+        runtimes.delete(job.name);
+      }
+      initJob(job);
+      dynamicJobs.set(job.name, job);
+      saveDynamicJobs();
+    },
     removeJob(jobName) {
       const rt = runtimes.get(jobName);
       if (!rt) return false;
       if (rt.timer) clearInterval(rt.timer);
+      if (rt.cronDispose) rt.cronDispose();
       runtimes.delete(jobName);
       if (dynamicJobs.has(jobName)) {
         dynamicJobs.delete(jobName);
@@ -651,198 +642,196 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   ctx.provide('scheduler', service);
 
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
+  // tools 已在 inject.required 中声明，必然就绪
+  useToolService(ctx).registerGroup({
+    name: 'scheduler',
+    label: '定时任务',
+    description: '创建、查看和取消定时/周期性自主行动计划',
+  });
 
-  if (ctx.getService<ToolService>('tools')) {
-    useToolService(ctx).registerGroup({
-      name: 'scheduler',
-      label: '定时任务',
-      description: '创建、查看和取消定时/周期性自主行动计划',
-    });
-
-    useToolService(ctx).register({
-      groups: ['scheduler'],
-      definition: {
-        type: 'function',
-        function: {
-          name: 'scheduler_create_job',
-          description:
-            '创建一个新的定时/周期性自主行动计划。可以用来安排自己将来要做的事情。不传 sessionId 和 platform 时，默认使用当前会话。',
-          parameters: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', description: '任务名称（唯一标识）' },
-              cron: {
-                type: 'string',
-                description: 'Cron 表达式 (分 时 日 月 周)，如 "0 9 * * *" 表示每天9点。与 interval 二选一。',
-              },
-              interval: { type: 'number', description: '固定间隔秒数。与 cron 二选一。' },
-              sessionId: { type: 'string', description: '任务消息发往的会话 ID。不传则默认使用当前会话。' },
-              platform: { type: 'string', description: '目标平台标识。不传则默认使用当前平台。' },
-              content: { type: 'string', description: '届时发送给自己的指令/提示内容' },
+  useToolService(ctx).register({
+    groups: ['scheduler'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'scheduler_create_job',
+        description:
+          '创建一个新的定时/周期性自主行动计划。可以用来安排自己将来要做的事情。不传 sessionId 和 platform 时，默认使用当前会话。',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '任务名称（唯一标识）' },
+            cron: {
+              type: 'string',
+              description: 'Cron 表达式 (分 时 日 月 周)，如 "0 9 * * *" 表示每天9点。与 interval 二选一。',
             },
-            required: ['name', 'content'],
+            interval: { type: 'number', description: '固定间隔秒数。与 cron 二选一。' },
+            sessionId: { type: 'string', description: '任务消息发往的会话 ID。不传则默认使用当前会话。' },
+            platform: { type: 'string', description: '目标平台标识。不传则默认使用当前平台。' },
+            content: { type: 'string', description: '届时发送给自己的指令/提示内容' },
+          },
+          required: ['name', 'content'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const job: SchedulerJobConfig = {
+        name: args.name as string,
+        cron: args.cron as string | undefined,
+        interval: args.interval as number | undefined,
+        sessionId: (args.sessionId as string) || callCtx.sessionId,
+        platform: (args.platform as string) || callCtx.platform || 'internal',
+        content: args.content as string,
+        enabled: true,
+      };
+      if (!job.cron && !job.interval) return JSON.stringify({ error: '必须指定 cron 或 interval' });
+      if (runtimes.has(job.name)) return JSON.stringify({ error: `任务 "${job.name}" 已存在` });
+      service.addJob(job);
+      return JSON.stringify({
+        ok: true,
+        message: `任务 "${job.name}" 已创建，目标会话: ${job.sessionId} (${job.platform})`,
+      });
+    },
+  });
+
+  useToolService(ctx).register({
+    groups: ['scheduler'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'scheduler_list_jobs',
+        description:
+          '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或分页避免返回过多数据。',
+        parameters: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: '可选：按任务名称子串模糊匹配（不区分大小写）' },
+            status: {
+              type: 'string',
+              enum: ['enabled', 'disabled', 'paused', 'running', 'all'],
+              description: '可选：按状态过滤，默认 all',
+            },
+            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
+            pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定）' },
           },
         },
       },
-      handler: async (args, callCtx) => {
-        const job: SchedulerJobConfig = {
-          name: args.name as string,
-          cron: args.cron as string | undefined,
-          interval: args.interval as number | undefined,
-          sessionId: (args.sessionId as string) || callCtx.sessionId,
-          platform: (args.platform as string) || callCtx.platform || 'internal',
-          content: args.content as string,
-          enabled: true,
-        };
-        if (!job.cron && !job.interval) return JSON.stringify({ error: '必须指定 cron 或 interval' });
-        if (runtimes.has(job.name)) return JSON.stringify({ error: `任务 "${job.name}" 已存在` });
-        service.addJob(job);
-        return JSON.stringify({
-          ok: true,
-          message: `任务 "${job.name}" 已创建，目标会话: ${job.sessionId} (${job.platform})`,
-        });
-      },
-    });
+    },
+    handler: async args => {
+      const all = service.getJobs().map(j => ({
+        name: j.name,
+        schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
+        sessionId: j.sessionId,
+        enabled: j.enabled,
+        paused: j.paused,
+        running: j.running,
+        lastRun: j.lastRun ? new Date(j.lastRun).toISOString() : null,
+        runCount: j.runCount,
+      }));
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
+      const status = typeof args.status === 'string' ? args.status : 'all';
+      const filtered = all.filter(j => {
+        if (keyword && !j.name.toLowerCase().includes(keyword)) return false;
+        if (status === 'enabled' && !j.enabled) return false;
+        if (status === 'disabled' && j.enabled) return false;
+        if (status === 'paused' && !j.paused) return false;
+        if (status === 'running' && !j.running) return false;
+        return true;
+      });
+      const page = Math.max(1, Math.floor(Number(args.page) || 1));
+      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+      const matched = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(matched / pageSize));
+      const curPage = Math.min(page, totalPages);
+      const start = (curPage - 1) * pageSize;
+      return JSON.stringify({
+        total: all.length,
+        matched,
+        page: curPage,
+        pageSize,
+        totalPages,
+        hasMore: curPage < totalPages,
+        ...(keyword ? { keyword } : {}),
+        ...(status !== 'all' ? { status } : {}),
+        jobs: filtered.slice(start, start + pageSize),
+      });
+    },
+  });
 
-    useToolService(ctx).register({
-      groups: ['scheduler'],
-      definition: {
-        type: 'function',
-        function: {
-          name: 'scheduler_list_jobs',
-          description:
-            '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或分页避免返回过多数据。',
-          parameters: {
-            type: 'object',
-            properties: {
-              keyword: { type: 'string', description: '可选：按任务名称子串模糊匹配（不区分大小写）' },
-              status: {
-                type: 'string',
-                enum: ['enabled', 'disabled', 'paused', 'running', 'all'],
-                description: '可选：按状态过滤，默认 all',
-              },
-              page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-              pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定）' },
-            },
+  useToolService(ctx).register({
+    groups: ['scheduler'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'scheduler_remove_job',
+        description: '删除一个计划任务。',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '要删除的任务名称' },
           },
+          required: ['name'],
         },
       },
-      handler: async args => {
-        const all = service.getJobs().map(j => ({
-          name: j.name,
-          schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
-          sessionId: j.sessionId,
-          enabled: j.enabled,
-          paused: j.paused,
-          running: j.running,
-          lastRun: j.lastRun ? new Date(j.lastRun).toISOString() : null,
-          runCount: j.runCount,
-        }));
-        const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
-        const status = typeof args.status === 'string' ? args.status : 'all';
-        const filtered = all.filter(j => {
-          if (keyword && !j.name.toLowerCase().includes(keyword)) return false;
-          if (status === 'enabled' && !j.enabled) return false;
-          if (status === 'disabled' && j.enabled) return false;
-          if (status === 'paused' && !j.paused) return false;
-          if (status === 'running' && !j.running) return false;
-          return true;
-        });
-        const page = Math.max(1, Math.floor(Number(args.page) || 1));
-        const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
-        const matched = filtered.length;
-        const totalPages = Math.max(1, Math.ceil(matched / pageSize));
-        const curPage = Math.min(page, totalPages);
-        const start = (curPage - 1) * pageSize;
-        return JSON.stringify({
-          total: all.length,
-          matched,
-          page: curPage,
-          pageSize,
-          totalPages,
-          hasMore: curPage < totalPages,
-          ...(keyword ? { keyword } : {}),
-          ...(status !== 'all' ? { status } : {}),
-          jobs: filtered.slice(start, start + pageSize),
-        });
-      },
-    });
+    },
+    handler: async args => {
+      const ok = service.removeJob(args.name as string);
+      return JSON.stringify({ ok, message: ok ? '已删除' : '任务不存在' });
+    },
+  });
 
-    useToolService(ctx).register({
-      groups: ['scheduler'],
-      definition: {
-        type: 'function',
-        function: {
-          name: 'scheduler_remove_job',
-          description: '删除一个计划任务。',
-          parameters: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', description: '要删除的任务名称' },
-            },
-            required: ['name'],
+  useToolService(ctx).register({
+    groups: ['scheduler'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'scheduler_pause_job',
+        description: '暂停一个正在运行的计划任务。暂停后任务不会被触发，但保留配置，可随时恢复。',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '要暂停的任务名称' },
           },
+          required: ['name'],
         },
       },
-      handler: async args => {
-        const ok = service.removeJob(args.name as string);
-        return JSON.stringify({ ok, message: ok ? '已删除' : '任务不存在' });
-      },
-    });
+    },
+    handler: async args => {
+      const ok = service.pauseJob(args.name as string);
+      return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在' });
+    },
+  });
 
-    useToolService(ctx).register({
-      groups: ['scheduler'],
-      definition: {
-        type: 'function',
-        function: {
-          name: 'scheduler_pause_job',
-          description: '暂停一个正在运行的计划任务。暂停后任务不会被触发，但保留配置，可随时恢复。',
-          parameters: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', description: '要暂停的任务名称' },
-            },
-            required: ['name'],
+  useToolService(ctx).register({
+    groups: ['scheduler'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'scheduler_resume_job',
+        description: '恢复一个已暂停的计划任务。',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '要恢复的任务名称' },
           },
+          required: ['name'],
         },
       },
-      handler: async args => {
-        const ok = service.pauseJob(args.name as string);
-        return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在' });
-      },
-    });
-
-    useToolService(ctx).register({
-      groups: ['scheduler'],
-      definition: {
-        type: 'function',
-        function: {
-          name: 'scheduler_resume_job',
-          description: '恢复一个已暂停的计划任务。',
-          parameters: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', description: '要恢复的任务名称' },
-            },
-            required: ['name'],
-          },
-        },
-      },
-      handler: async args => {
-        const ok = service.resumeJob(args.name as string);
-        return JSON.stringify({ ok, message: ok ? '已恢复' : '任务不存在' });
-      },
-    });
-  }
+    },
+    handler: async args => {
+      const ok = service.resumeJob(args.name as string);
+      return JSON.stringify({ ok, message: ok ? '已恢复' : '任务不存在' });
+    },
+  });
 
   // ── 清理 ──
 
   ctx.onDispose(() => {
     for (const rt of runtimes.values()) {
       if (rt.timer) clearInterval(rt.timer);
+      if (rt.cronDispose) rt.cronDispose();
     }
     runtimes.clear();
-    if (cronInterval) clearInterval(cronInterval);
   });
 
   logger.info(`计划任务调度器已启动 (${config.jobs.length} 个任务, 最大并发 ${config.maxConcurrent})`);

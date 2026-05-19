@@ -1,48 +1,14 @@
 // ============================================================
-// triggers.ts — 触发源管理：cron / interval / event
+// triggers.ts — 触发源管理：cron / interval / once / event
 //
-// scheduler 仍持有 cron 调度的"配置入口" + UI；
-// workflow 内部独立持有自己的 cron/interval/event 监听，
-// 只与"workflow 定义里的 trigger 字段"配对。
+// 通过 cron-engine 服务订阅 cron / @every，scheduler 与 workflow
+// 共享一个整分钟 tick；interval（数字秒）单独 setInterval；
+// once 用 setTimeout；event 通过 ctx.on 订阅。
 // ============================================================
 
 import type { Context, Logger } from '@aalis/core';
+import { useCronEngine } from '@aalis/plugin-cron-engine-api';
 import type { WorkflowDef } from '@aalis/plugin-workflow-api';
-
-// ─── Cron 解析（与 scheduler 同款实现，避免跨包耦合） ───
-
-function parseCronField(field: string, min: number, max: number): Set<number> {
-  const result = new Set<number>();
-  for (const part of field.split(',')) {
-    const trimmed = part.trim();
-    if (trimmed === '*') {
-      for (let i = min; i <= max; i++) result.add(i);
-    } else if (trimmed.startsWith('*/')) {
-      const step = parseInt(trimmed.slice(2), 10);
-      if (step > 0) for (let i = min; i <= max; i += step) result.add(i);
-    } else if (trimmed.includes('-')) {
-      const [a, b] = trimmed.split('-').map(Number);
-      for (let i = a; i <= b; i++) result.add(i);
-    } else {
-      const n = parseInt(trimmed, 10);
-      if (!Number.isNaN(n)) result.add(n);
-    }
-  }
-  return result;
-}
-
-function matchesCron(cron: string, date: Date): boolean {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minute, hour, day, month, weekday] = parts;
-  return (
-    parseCronField(minute, 0, 59).has(date.getMinutes()) &&
-    parseCronField(hour, 0, 23).has(date.getHours()) &&
-    parseCronField(day, 1, 31).has(date.getDate()) &&
-    parseCronField(month, 1, 12).has(date.getMonth() + 1) &&
-    parseCronField(weekday, 0, 6).has(date.getDay())
-  );
-}
 
 // ─── 触发管理器 ───
 
@@ -53,11 +19,10 @@ export class TriggerManager {
   private logger: Logger;
   private fire: FireFn;
 
-  private cronInterval: ReturnType<typeof setInterval> | null = null;
+  private cronDisposers = new Map<string, () => void>();
   private intervalTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private onceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private eventDisposers = new Map<string, () => void>();
-  /** workflowId -> trigger 描述（仅用于 cron 巡检） */
-  private cronWorkflows = new Map<string, string>();
 
   constructor(ctx: Context, logger: Logger, fire: FireFn) {
     this.ctx = ctx;
@@ -71,14 +36,39 @@ export class TriggerManager {
     if (def.enabled === false) return;
     const t = def.trigger;
     switch (t.type) {
-      case 'cron':
-        this.cronWorkflows.set(def.id, t.expr);
-        this.ensureCronLoop();
+      case 'cron': {
+        try {
+          const dispose = useCronEngine(this.ctx).subscribe(t.expr, () => {
+            this.fire(def.id, `cron:${t.expr}`);
+          });
+          this.cronDisposers.set(def.id, dispose);
+        } catch (err) {
+          this.logger.warn(`workflow ${def.id} cron 订阅失败: ${err instanceof Error ? err.message : err}`);
+        }
         break;
+      }
       case 'interval': {
         const sec = Math.max(1, Math.floor(t.seconds));
         const timer = setInterval(() => this.fire(def.id, `interval:${sec}s`), sec * 1000);
         this.intervalTimers.set(def.id, timer);
+        break;
+      }
+      case 'once': {
+        const targetMs = Date.parse(t.runAt);
+        if (!Number.isFinite(targetMs)) {
+          this.logger.warn(`workflow ${def.id} once.runAt 无法解析: ${t.runAt}`);
+          break;
+        }
+        const delay = targetMs - Date.now();
+        if (delay <= 0) {
+          setImmediate(() => this.fire(def.id, `once:${t.runAt}`));
+        } else {
+          const timer = setTimeout(() => {
+            this.onceTimers.delete(def.id);
+            this.fire(def.id, `once:${t.runAt}`);
+          }, delay);
+          this.onceTimers.set(def.id, timer);
+        }
         break;
       }
       case 'event': {
@@ -99,11 +89,20 @@ export class TriggerManager {
   }
 
   unregister(workflowId: string): void {
-    this.cronWorkflows.delete(workflowId);
+    const cd = this.cronDisposers.get(workflowId);
+    if (cd) {
+      cd();
+      this.cronDisposers.delete(workflowId);
+    }
     const t = this.intervalTimers.get(workflowId);
     if (t) {
       clearInterval(t);
       this.intervalTimers.delete(workflowId);
+    }
+    const ot = this.onceTimers.get(workflowId);
+    if (ot) {
+      clearTimeout(ot);
+      this.onceTimers.delete(workflowId);
     }
     const d = this.eventDisposers.get(workflowId);
     if (d) {
@@ -114,35 +113,14 @@ export class TriggerManager {
 
   /** 关闭全部 */
   dispose(): void {
-    if (this.cronInterval) clearInterval(this.cronInterval);
-    this.cronInterval = null;
+    for (const d of this.cronDisposers.values()) d();
+    this.cronDisposers.clear();
     for (const t of this.intervalTimers.values()) clearInterval(t);
     this.intervalTimers.clear();
+    for (const ot of this.onceTimers.values()) clearTimeout(ot);
+    this.onceTimers.clear();
     for (const d of this.eventDisposers.values()) d();
     this.eventDisposers.clear();
-    this.cronWorkflows.clear();
-  }
-
-  // ─── cron 主循环：每分钟扫描一次 ───
-
-  private ensureCronLoop(): void {
-    if (this.cronInterval) return;
-    const msToNextMinute = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
-    setTimeout(() => {
-      this.cronTick();
-      this.cronInterval = setInterval(() => this.cronTick(), 60_000);
-    }, msToNextMinute);
-    this.logger.debug('workflow cron 主循环已启动');
-  }
-
-  private cronTick(): void {
-    const now = new Date();
-    now.setSeconds(0, 0);
-    for (const [wfId, expr] of this.cronWorkflows) {
-      if (matchesCron(expr, now)) {
-        this.fire(wfId, `cron:${expr}`);
-      }
-    }
   }
 }
 
