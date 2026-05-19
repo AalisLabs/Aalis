@@ -19,12 +19,26 @@ export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用子任务工具', default: true },
   pollIntervalMs: { type: 'number', label: '等待轮询间隔 (ms)', default: 3000 },
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
+  defaultProvider: {
+    type: 'string',
+    label: '子任务默认 LLM provider',
+    default: '',
+    description: '不填则继承父会话。建议填轻量本地模型（如 ollama）让子任务跑在更便宜的模型上，节省 token',
+  },
+  defaultModel: {
+    type: 'string',
+    label: '子任务默认模型名',
+    default: '',
+    description: '与 defaultProvider 配套。例如 qwen3:8b、deepseek-chat。两个都不填则继承父会话模型。',
+  },
 };
 
 interface PluginConfig {
   enabled: boolean;
   pollIntervalMs: number;
   maxWaitMs: number;
+  defaultProvider: string;
+  defaultModel: string;
 }
 
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
@@ -32,6 +46,8 @@ function resolveConfig(raw: Record<string, unknown>): PluginConfig {
     enabled: raw.enabled !== false,
     pollIntervalMs: Number(raw.pollIntervalMs) || 3000,
     maxWaitMs: Number(raw.maxWaitMs) || 300000,
+    defaultProvider: String(raw.defaultProvider ?? '').trim(),
+    defaultModel: String(raw.defaultModel ?? '').trim(),
   };
 }
 
@@ -66,6 +82,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           '3. task 描述中应包含：(a) 具体任务内容 (b) 需要使用的共享资源 ID（如 docId）(c) 子任务负责的范围（如"负责第3-4张幻灯片"）',
           '4. 创建完所有子任务后，必须立即调用 wait_subtasks 等待结果，不要在未等待的情况下继续主任务',
           '5. 子任务无法调用 create_subtask（不可嵌套）；保持 save 操作在主会话中执行',
+          '',
+          '【模型选择】可选 provider+model 参数为子任务指定更便宜/轻量的模型：',
+          '- 适合轻量模型的任务：语法检查、格式转换、摄取信息、翻译、简单总结、文档快速审阅',
+          '- 依然需要父同模型的任务：复杂推理、多步规划、代码生成、独立决策',
+          '- 不填则使用插件默认子任务模型，都未配置则继承父会话',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -77,6 +98,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             name: {
               type: 'string',
               description: '子任务显示名称（可选，默认自动生成）',
+            },
+            provider: {
+              type: 'string',
+              description:
+                '可选：为子任务指定 LLM provider（如 ollama 、 deepseek）。与 model 配套使用，二者同填才会生效。',
+            },
+            model: {
+              type: 'string',
+              description:
+                '可选：为子任务指定 model 名称（如 qwen3:8b、deepseek-chat）。二者同填才会生效；未填则使用插件默认或父会话模型。',
             },
           },
           required: ['task'],
@@ -107,12 +138,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // 子会话复制父会话的 resolved config
         const inheritedConfig = sm.resolveConfig(parentId, callCtx.platform);
 
+        // 模型优先级：工具参数 > 插件默认 > 父会话继承
+        // 仅当 provider 和 model 同时提供才覆盖，避免半填产生歧义
+        const argProvider = String((args.provider as string | undefined) ?? '').trim();
+        const argModel = String((args.model as string | undefined) ?? '').trim();
+        let llmOverride: { provider: string; model: string } | undefined;
+        if (argProvider && argModel) {
+          llmOverride = { provider: argProvider, model: argModel };
+        } else if (cfg.defaultProvider && cfg.defaultModel) {
+          llmOverride = { provider: cfg.defaultProvider, model: cfg.defaultModel };
+        }
+        const childConfig = llmOverride ? { ...inheritedConfig, llm: llmOverride } : { ...inheritedConfig };
+
         // 创建子会话（存储 platform 用于后续自动触发）
         const child = await sm.createChildSession(parentId, {
           name: taskName,
           createdBy: 'agent',
           inputContext: task,
-          config: { ...inheritedConfig },
+          config: childConfig,
           metadata: { platform: callCtx.platform || 'internal', title: taskName },
         });
 
