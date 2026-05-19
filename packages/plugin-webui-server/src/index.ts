@@ -507,27 +507,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     res.json({ platforms: aggregatePlatformDetails(ctx) });
   });
 
-  // 获取已注册的工具分组（含元数据 + 各组工具数量）
+  // 获取已注册的工具分组（含元数据 + 各组工具数量 + 贡献插件列表）
   expressApp.get('/api/tool-groups', (_req, res) => {
     const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
     const allTools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     const knownNames = new Set(groups.map(g => g.name));
     const result = groups.map(g => {
-      const toolCount = allTools.filter(t => t.groups?.includes(g.name)).length;
-      return { ...g, toolCount };
+      const toolsInGroup = allTools.filter(t => t.groups?.includes(g.name));
+      // 贡献插件 = 该分组下所有工具的 pluginName 去重（可能跨多个插件，
+      // 例如 'session-history' 同时被 plugin-tool-session 与 plugin-memory-history 贡献）
+      const contributingPlugins = [...new Set(toolsInGroup.map(t => t.pluginName))].sort();
+      return { ...g, toolCount: toolsInGroup.length, contributingPlugins };
     });
     // 兜底：未声明任何 group 或 group 不在已注册集合中的工具，聚成 "other" 组
-    const orphanCount = allTools.filter(t => {
+    const orphans = allTools.filter(t => {
       const gs = t.groups ?? [];
       return gs.length === 0 || gs.every(n => !knownNames.has(n));
-    }).length;
-    if (orphanCount > 0) {
+    });
+    if (orphans.length > 0) {
       result.push({
         name: 'other',
         label: '其他',
         description: '未声明分组的工具',
         pluginName: '(system)',
-        toolCount: orphanCount,
+        toolCount: orphans.length,
+        contributingPlugins: [...new Set(orphans.map(t => t.pluginName))].sort(),
       });
     }
     res.json({ groups: result });
