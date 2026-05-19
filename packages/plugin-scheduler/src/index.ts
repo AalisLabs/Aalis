@@ -33,6 +33,8 @@ interface SchedulerJobConfig {
   content: string;
   /** 是否启用 */
   enabled: boolean;
+  /** 是否处于暂停状态（运行时态，但需要随动态任务持久化，避免重启后自动恢复） */
+  paused?: boolean;
 }
 
 interface SchedulerConfig {
@@ -356,6 +358,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         platform: String(j.platform ?? 'internal'),
         content: String(j.content ?? ''),
         enabled: j.enabled !== false,
+        paused: j.paused === true,
       }));
     } catch (err) {
       logger.warn(`加载持久化任务失败: ${err}`);
@@ -474,7 +477,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       running: false,
       runCount: 0,
       lastResult: '',
-      paused: !jobCfg.enabled,
+      // 优先采用持久化的 paused 字段；若未设置则回落到 enabled 状态（禁用即视作暂停）
+      paused: jobCfg.paused === true || !jobCfg.enabled,
     };
 
     // 固定间隔调度
@@ -584,6 +588,11 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       const rt = runtimes.get(jobName);
       if (!rt) return false;
       rt.paused = true;
+      rt.config.paused = true;
+      if (dynamicJobs.has(jobName)) {
+        dynamicJobs.set(jobName, { ...rt.config });
+        saveDynamicJobs();
+      }
       logger.info(`任务已暂停: ${jobName}`);
       return true;
     },
@@ -591,7 +600,12 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       const rt = runtimes.get(jobName);
       if (!rt) return false;
       rt.paused = false;
+      rt.config.paused = false;
       rt.nextRun = estimateNextRun(rt.config, rt.lastRun);
+      if (dynamicJobs.has(jobName)) {
+        dynamicJobs.set(jobName, { ...rt.config });
+        saveDynamicJobs();
+      }
       logger.info(`任务已恢复: ${jobName}`);
       return true;
     },
