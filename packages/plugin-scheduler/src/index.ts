@@ -656,16 +656,33 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       function: {
         name: 'scheduler_create_job',
         description:
-          '创建一个新的定时/周期性自主行动计划。可以用来安排自己将来要做的事情。不传 sessionId 和 platform 时，默认使用当前会话。',
+          '创建一个新的定时/周期/一次性自主行动计划。务必按"用户意图"选择参数：\n' +
+          '  • interval=N → 每 N 秒重复执行（循环任务，不会自动停）；\n' +
+          '  • delaySeconds=N → N 秒后执行一次后自动停止（"X 分钟后提醒我"用这个）；\n' +
+          '  • runAt="2026-05-19T15:46:44+08:00" → 指定 ISO 时间执行一次后停止；\n' +
+          '  • cron="0 9 * * *" → 按 cron 周期重复（每天 9 点之类）。\n' +
+          '四者互斥、必须恰好提供一个。不传 sessionId 和 platform 时，默认使用当前会话。',
         parameters: {
           type: 'object',
           properties: {
             name: { type: 'string', description: '任务名称（唯一标识）' },
             cron: {
               type: 'string',
-              description: 'Cron 表达式 (分 时 日 月 周)，如 "0 9 * * *" 表示每天9点。与 interval 二选一。',
+              description: 'Cron 表达式 (分 时 日 月 周)，如 "0 9 * * *" 表示每天9点。循环任务。',
             },
-            interval: { type: 'number', description: '固定间隔秒数。与 cron 二选一。' },
+            interval: {
+              type: 'number',
+              description: '固定间隔秒数，到点重复触发（循环任务，永不停）。要"X 秒后只提醒一次"请用 delaySeconds。',
+            },
+            delaySeconds: {
+              type: 'number',
+              description:
+                '相对延迟秒数：从现在起 N 秒后执行一次，执行后自动停止。最适合"X 分钟/秒后提醒我"这类自然语言诉求。',
+            },
+            runAt: {
+              type: 'string',
+              description: 'ISO 8601 绝对时间，到点执行一次后自动停止。例："2026-05-19T15:46:44+08:00"。',
+            },
             sessionId: { type: 'string', description: '任务消息发往的会话 ID。不传则默认使用当前会话。' },
             platform: { type: 'string', description: '目标平台标识。不传则默认使用当前平台。' },
             content: { type: 'string', description: '届时发送给自己的指令/提示内容' },
@@ -675,21 +692,45 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     },
     handler: async (args, callCtx) => {
+      // 互斥校验：cron / interval / delaySeconds / runAt 必须恰好提供一个
+      const hasCron = typeof args.cron === 'string' && args.cron.trim().length > 0;
+      const hasInterval = typeof args.interval === 'number' && args.interval > 0;
+      const hasDelay = typeof args.delaySeconds === 'number' && args.delaySeconds > 0;
+      const hasRunAt = typeof args.runAt === 'string' && args.runAt.trim().length > 0;
+      const provided = [hasCron, hasInterval, hasDelay, hasRunAt].filter(Boolean).length;
+      if (provided === 0) {
+        return JSON.stringify({ error: '必须指定 cron / interval / delaySeconds / runAt 其中之一' });
+      }
+      if (provided > 1) {
+        return JSON.stringify({ error: 'cron / interval / delaySeconds / runAt 互斥，只能提供一个' });
+      }
+      // delaySeconds → runAt 转换
+      let runAt = hasRunAt ? (args.runAt as string).trim() : undefined;
+      if (hasDelay) {
+        runAt = new Date(Date.now() + Math.floor(args.delaySeconds as number) * 1000).toISOString();
+      }
       const job: SchedulerJobConfig = {
         name: args.name as string,
-        cron: args.cron as string | undefined,
-        interval: args.interval as number | undefined,
+        cron: hasCron ? (args.cron as string).trim() : undefined,
+        interval: hasInterval ? (args.interval as number) : undefined,
+        runAt,
         sessionId: (args.sessionId as string) || callCtx.sessionId,
         platform: (args.platform as string) || callCtx.platform || 'internal',
         content: args.content as string,
         enabled: true,
       };
-      if (!job.cron && !job.interval) return JSON.stringify({ error: '必须指定 cron 或 interval' });
       if (runtimes.has(job.name)) return JSON.stringify({ error: `任务 "${job.name}" 已存在` });
       service.addJob(job);
+      const scheduleDesc = job.cron
+        ? `cron="${job.cron}"`
+        : job.interval
+          ? `每 ${job.interval}s 重复`
+          : job.runAt
+            ? `一次性 @ ${job.runAt}`
+            : '?';
       return JSON.stringify({
         ok: true,
-        message: `任务 "${job.name}" 已创建，目标会话: ${job.sessionId} (${job.platform})`,
+        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})`,
       });
     },
   });
