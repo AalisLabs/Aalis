@@ -114,11 +114,13 @@ export function apply(ctx: Context): void {
       function: {
         name: 'send_image',
         description:
-          '主动向当前会话发送一张图片。可以从 URL、本地文件、或历史消息中已识别的图片引用发出。\n' +
+          '主动向当前会话发送一张图片（仅图片，不带文字）。可以从 URL、本地文件、或历史消息中已识别的图片引用发出。\n' +
           '使用场景：用户请求"发个表情包"、"发刚才那张图给我"、"在网上找张猫的图"等。\n' +
           '建议流程：search_images 拿到候选 URL → preview_image 看清内容 → send_image 选其一发出。\n' +
           '若想"重发自己之前发过的图"，先用 memory_recall 按描述检索历史，' +
-          '从命中消息里找到 [图片: ... | ref:xxx]，把 xxx 传给 history_ref。',
+          '从命中消息里找到 [图片: ... | ref:xxx]，把 xxx 传给 history_ref。\n' +
+          '注意：本工具不发送任何文字。如需配文，请把文字写在你本轮最终输出的 message 字段里——' +
+          '不要在 message 中重复图片描述，也不要试图把文字混进图片里。',
         parameters: {
           type: 'object',
           properties: {
@@ -128,7 +130,6 @@ export function apply(ctx: Context): void {
               type: 'string',
               description: '历史消息中的图片引用路径（[图片 | ref:xxx] 中 xxx 部分）。',
             },
-            caption: { type: 'string', description: '可选：图片附带的文字说明。' },
           },
         },
       },
@@ -137,7 +138,6 @@ export function apply(ctx: Context): void {
       const url = (args.url as string)?.trim();
       const filePath = (args.file_path as string)?.trim();
       const historyRef = (args.history_ref as string)?.trim();
-      const caption = (args.caption as string)?.trim() || '';
 
       let imageData: string | null = null;
       let refTag: string | null = null;
@@ -180,7 +180,7 @@ export function apply(ctx: Context): void {
         };
         const outgoing: OutgoingMessage = {
           sessionId: callCtx.sessionId,
-          content: caption,
+          content: '',
           attachments: [attachment],
           source: 'agent',
         };
@@ -190,7 +190,7 @@ export function apply(ctx: Context): void {
         // plugin-memory-vector 会自动 embed 此条，未来 memory_recall 能召回。
         // history_ref 跳过入档（同一张图重发，避免向量库膨胀）。
         if (via !== 'history_ref') {
-          await archiveOutboundImage(ctx, callCtx.sessionId, refTag, description, caption, imageData);
+          await archiveOutboundImage(ctx, callCtx.sessionId, refTag, description, imageData);
         }
 
         return JSON.stringify({
@@ -230,17 +230,15 @@ async function archiveOutboundImage(
   sessionId: string,
   ref: string | null,
   description: string,
-  caption: string,
   imageData: string,
 ): Promise<void> {
   const archive = ctx.getService<MessageArchiveService>('message-archive');
   if (!archive?.saveMessage) return;
   const refStr = ref ?? imageData;
   const tag = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: description, ref: refStr });
-  const content = caption ? `${caption}\n${tag}` : tag;
   const message: Message = {
     role: 'assistant',
-    content,
+    content: tag,
     timestamp: Date.now(),
     metadata: { source: 'image-sender', kind: 'outbound-image', ref: refStr },
   };
