@@ -22,8 +22,8 @@ export class DisposableChain {
     if (this._disposed) {
       try {
         fn();
-      } catch {
-        /* swallow */
+      } catch (err) {
+        this.logger?.warn(`DisposableChain: post-dispose 执行失败: ${err}`);
       }
       return;
     }

@@ -224,7 +224,9 @@ export class Context {
     const dispose = () => {
       const removed = this._services.unregisterEntry(name, entry);
       if (removed) {
-        this._events.emit('service:unregistered', name).catch(() => {});
+        this._events.emit('service:unregistered', name).catch(err => {
+          this.logger.warn(`emit service:unregistered 失败 (${name}): ${err}`);
+        });
       }
     };
     this._disposables.push(dispose);
@@ -559,7 +561,9 @@ export class Context {
 
     // 发射服务注销事件，让 App 的自动恢复监听器能响应
     for (const svc of removedServices) {
-      this._events.emit('service:unregistered', svc).catch(() => {});
+      this._events.emit('service:unregistered', svc).catch(err => {
+        this.logger.warn(`emit service:unregistered 失败 (${svc}): ${err}`);
+      });
     }
 
     // 清理该上下文注册的钩子
