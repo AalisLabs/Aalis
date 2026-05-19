@@ -226,16 +226,27 @@ const webuiPages: WebuiPage[] = [
             label: 'Cron 表达式',
             description: '5 字段或别名：@hourly / @daily / @weekly / @every 30s；与 interval、runAt 三选一',
           },
-          interval: { type: 'number', label: '固定间隔（秒）', description: '与 cron / runAt 三选一' },
+          interval: { type: 'number', label: '固定间隔（秒）', description: '与 cron / runAt / delaySeconds 四选一' },
           runAt: {
             type: 'string',
             label: '一次性运行时间',
-            description: 'ISO 字符串，如 2026-05-19T10:00:00；执行一次后自动停用',
+            description: 'ISO 字符串，如 2026-05-19T10:00:00；执行一次后自动删除',
+          },
+          delaySeconds: {
+            type: 'number',
+            label: 'X 秒后执行一次',
+            description: '与 cron / interval / runAt 四选一；填写后会转换为 runAt = now + N 秒，执行一次后自动删除',
           },
           sessionId: { type: 'string', label: '目标会话 ID', required: true },
           platform: { type: 'string', label: '目标平台', default: 'internal' },
           content: { type: 'textarea', label: '消息内容', required: true, description: '届时发送给自己的指令/提示' },
           enabled: { type: 'boolean', label: '启用', default: true },
+          paused: {
+            type: 'boolean',
+            label: '创建后立即暂停',
+            default: false,
+            description: '勾选后任务创建但不会自动运行，需手动「恢复」',
+          },
         },
       },
     ],
@@ -281,10 +292,12 @@ export const actions: PluginModule['actions'] = {
       cron: '',
       interval: 0,
       runAt: '',
+      delaySeconds: 0,
       sessionId: '',
       platform: 'internal',
       content: '',
       enabled: true,
+      paused: false,
     };
   },
   async upsertJob(ctx, args) {
@@ -537,15 +550,22 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     logger.info(`任务已注册: ${jobCfg.name} ${scheduleHint}`);
   }
 
-  /** 一次性任务执行后将其 enabled=false 并持久化 */
+  /** 一次性任务执行完后的清理：动态任务直接删除；静态 yaml 任务仅标记 enabled=false */
   function disableOneShot(rt: JobRuntime): void {
+    const jobName = rt.config.name;
+    if (dynamicJobs.has(jobName)) {
+      if (rt.timer) clearTimeout(rt.timer as unknown as ReturnType<typeof setTimeout>);
+      if (rt.cronDispose) rt.cronDispose();
+      runtimes.delete(jobName);
+      dynamicJobs.delete(jobName);
+      saveDynamicJobs();
+      logger.info(`一次性任务已执行完毕并删除: ${jobName}`);
+      return;
+    }
+    // 静态配置任务：不删，仅标记 enabled=false（yaml 才是权威源）
     rt.config.enabled = false;
     rt.paused = true;
-    if (dynamicJobs.has(rt.config.name)) {
-      dynamicJobs.set(rt.config.name, { ...rt.config });
-      saveDynamicJobs();
-    }
-    logger.info(`一次性任务已执行完毕并停用: ${rt.config.name}`);
+    logger.info(`一次性任务已执行完毕并停用（静态）: ${jobName}`);
   }
 
   for (const job of config.jobs) {
@@ -572,6 +592,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         name: rt.config.name,
         cron: rt.config.cron,
         interval: rt.config.interval,
+        runAt: rt.config.runAt,
         sessionId: rt.config.sessionId,
         platform: rt.config.platform,
         content: rt.config.content,
