@@ -156,8 +156,11 @@ export interface ToolGroupDetail {
   name: string;
   label: string;
   description?: string;
+  /** 注册该分组的插件（owner，可能与下方贡献插件不同） */
   pluginName: string;
   toolCount: number;
+  /** 该分组下所有工具的来源插件去重列表 */
+  contributingPlugins?: string[];
 }
 
 // ----- 声明式页面类型 (镜像 core) -----
