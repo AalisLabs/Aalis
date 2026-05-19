@@ -19,6 +19,7 @@ import type { Context } from '@aalis/core';
 export type TriggerSpec =
   | { type: 'cron'; expr: string }
   | { type: 'interval'; seconds: number }
+  | { type: 'once'; runAt: string }
   | { type: 'event'; event: string; filter?: Record<string, unknown> }
   | { type: 'manual' };
 

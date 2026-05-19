@@ -357,6 +357,35 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-cron-engine:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-cron-engine-api':
+        specifier: workspace:*
+        version: link:../plugin-cron-engine-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-cron-engine-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-deepseek:
     dependencies:
       '@aalis/core':
@@ -1103,6 +1132,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-cron-engine-api':
+        specifier: workspace:*
+        version: link:../plugin-cron-engine-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
@@ -1767,6 +1799,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-cron-engine-api':
+        specifier: workspace:*
+        version: link:../plugin-cron-engine-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
