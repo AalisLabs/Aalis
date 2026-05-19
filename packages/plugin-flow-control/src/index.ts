@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { OutgoingMessage } from '@aalis/plugin-message-api';
@@ -117,6 +119,53 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const states = new Map<string, MutableFlowSessionState>();
   const platformIdle = new PlatformIdleScheduler(ctx, cfg, states);
 
+  // ===== mutedUntil 持久化（仅此字段） =====
+  // 其他运行时态（cooldownUntil/replyTimestamps/activityScore等）都是秒级短期，
+  // 重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，丢失会导致重启后静默解除。
+  const muteStateFile = resolve(process.cwd(), 'data/flow-control-mutes.json');
+
+  function loadMuteState(): void {
+    try {
+      if (!existsSync(muteStateFile)) return;
+      const data = JSON.parse(readFileSync(muteStateFile, 'utf-8')) as Record<
+        string,
+        { platform?: string; mutedUntil?: number }
+      >;
+      if (!data || typeof data !== 'object') return;
+      const now = Date.now();
+      let restored = 0;
+      for (const [sessionId, entry] of Object.entries(data)) {
+        const mutedUntil = Number(entry?.mutedUntil ?? 0);
+        if (!mutedUntil || mutedUntil <= now) continue;
+        const platform = String(entry?.platform ?? '');
+        const s = createState(platform);
+        s.mutedUntil = mutedUntil;
+        states.set(sessionId, s);
+        restored++;
+      }
+      if (restored > 0) ctx.logger.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
+    } catch (err) {
+      ctx.logger.warn(`[flow] 加载禁言状态失败: ${err}`);
+    }
+  }
+
+  function saveMuteState(): void {
+    try {
+      const dir = dirname(muteStateFile);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const now = Date.now();
+      const out: Record<string, { platform: string; mutedUntil: number }> = {};
+      for (const [sessionId, s] of states.entries()) {
+        if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
+      }
+      writeFileSync(muteStateFile, JSON.stringify(out, null, 2), 'utf-8');
+    } catch (err) {
+      ctx.logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
+    }
+  }
+
+  loadMuteState();
+
   function getOrCreate(sessionId: string, platform: string): MutableFlowSessionState {
     let s = states.get(sessionId);
     if (!s) {
@@ -209,6 +258,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       if (!s) return;
       if (durationSec <= 0) {
         s.mutedUntil = 0;
+        saveMuteState();
         ctx.logger.info(`[flow] 已解除自禁言: session=${sessionId}`);
         return;
       }
@@ -216,6 +266,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       s.messageCount = 0;
       s.activityScore = 0;
       clearSessionIdle(s);
+      saveMuteState();
       ctx.logger.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
     },
     getThreshold(sessionId) {
