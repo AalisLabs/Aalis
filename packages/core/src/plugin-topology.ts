@@ -121,6 +121,8 @@ export function evictDownstreamConsumers(args: {
     logger.info(
       `级联 bounce 下游消费者 "${other.instanceId}"（requiresBounceOnDepChange=true，依赖 provider "${provider.instanceId}"）`,
     );
-    rootCtx.emit('plugin:unloaded', other.instanceId).catch(() => {});
+    rootCtx.emit('plugin:unloaded', other.instanceId).catch(err => {
+      logger.warn(`emit plugin:unloaded 失败 (${other.instanceId}): ${err}`);
+    });
   }
 }

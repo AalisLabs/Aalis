@@ -125,7 +125,9 @@ export class PluginManager {
 
     if (entry.state === 'active' && entry.context) {
       entry.context.dispose();
-      this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+      this.rootCtx.emit('plugin:unloaded', name).catch(err => {
+        this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
+      });
     }
     entry.state = 'disposed';
     this.plugins.delete(name);
@@ -168,7 +170,9 @@ export class PluginManager {
       if (entry.state === 'active' && entry.context) {
         entry.context.dispose();
         entry.context = undefined;
-        this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+        this.rootCtx.emit('plugin:unloaded', name).catch(err => {
+          this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
+        });
       }
 
       entry.state = 'disabled';
@@ -280,7 +284,9 @@ export class PluginManager {
       evictDownstreamConsumers({ provider: entry, plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
       entry.context.dispose();
       entry.context = undefined;
-      this.rootCtx.emit('plugin:unloaded', name).catch(() => {});
+      this.rootCtx.emit('plugin:unloaded', name).catch(err => {
+        this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
+      });
     }
     entry.state = 'pending';
     entry.error = undefined;
@@ -467,7 +473,9 @@ export class PluginManager {
           }
           entry.state = currentReason.type === 'shutdown' ? 'disposed' : 'pending';
           if (currentReason.type !== 'shutdown') {
-            this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(() => {});
+            this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(err => {
+              this.logger.warn(`emit plugin:unloaded 失败 (${entry.instanceId}): ${err}`);
+            });
           }
           changed = true;
         }
@@ -517,13 +525,15 @@ export class PluginManager {
       }
     }
 
-    this.rootCtx.emit('plugins:changed').catch(() => {});
+    this.rootCtx.emit('plugins:changed').catch(err => {
+      this.logger.warn(`emit plugins:changed 失败: ${err}`);
+    });
   }
 
   /**
-   * u4e3au5916u90e8uff08Appuff09u66b4u9732u7684u300cu5fc5u9700u670du52a1u81eau52a8u6062u590du300du5165u53e3u3002
+   * 为外部（App）暴露的「必需服务自动恢复」入口。
    *
-   * u5b9eu9645u903bu8f91u5728 plugin-activation.tsu3002PluginManager u4ec5u8d1fu8d23u6ce8u5165 plugins/rootCtx/loggeru3002
+   * 实际逻辑在 plugin-activation.ts。PluginManager 仅负责注入 plugins/rootCtx/logger。
    */
   async ensureServiceProvider(serviceName: string): Promise<string | undefined> {
     return ensureServiceProvider(serviceName, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
