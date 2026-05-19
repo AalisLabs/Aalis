@@ -511,10 +511,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   expressApp.get('/api/tool-groups', (_req, res) => {
     const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
     const allTools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
+    const knownNames = new Set(groups.map(g => g.name));
     const result = groups.map(g => {
       const toolCount = allTools.filter(t => t.groups?.includes(g.name)).length;
       return { ...g, toolCount };
     });
+    // 兜底：未声明任何 group 或 group 不在已注册集合中的工具，聚成 "other" 组
+    const orphanCount = allTools.filter(t => {
+      const gs = t.groups ?? [];
+      return gs.length === 0 || gs.every(n => !knownNames.has(n));
+    }).length;
+    if (orphanCount > 0) {
+      result.push({
+        name: 'other',
+        label: '其他',
+        description: '未声明分组的工具',
+        pluginName: '(system)',
+        toolCount: orphanCount,
+      });
+    }
     res.json({ groups: result });
   });
 

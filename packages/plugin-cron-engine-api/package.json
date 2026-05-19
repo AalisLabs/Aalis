@@ -1,5 +1,5 @@
 {
-  "name": "@aalis/plugin-scheduler",
+  "name": "@aalis/plugin-cron-engine-api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,14 +9,13 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-cron-engine-api": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-webui-api": "workspace:*"
+    "@aalis/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
+  },
+  "aalis": {
+    "types": true
   }
 }

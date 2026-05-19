@@ -28,6 +28,7 @@ export const subsystem = 'workflow';
 export const provides = ['workflow'];
 
 export const inject = {
+  required: ['cron-engine'],
   optional: ['tools', 'storage'],
 };
 
