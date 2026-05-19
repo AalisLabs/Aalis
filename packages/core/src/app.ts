@@ -362,7 +362,9 @@ export class App {
     this.ctx
       .emit('restarting')
       .then(() => strategy.restart({ stop: () => this.stop() }))
-      .catch(() => {});
+      .catch(err => {
+        this.logger.warn(`restart 失败: ${err}`);
+      });
   }
 
   /**
