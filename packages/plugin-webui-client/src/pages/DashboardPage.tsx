@@ -176,19 +176,26 @@ export function DashboardPage({
       <div className="section-label">工具分组</div>
       {toolGroups.length > 0 ? (
         <div className="tool-groups-grid">
-          {toolGroups.map(g => (
-            <div className="tool-group-card" key={g.name}>
-              <div className="tool-group-header">
-                <span className="tool-group-name">{g.label}</span>
-                <span className="tool-group-count">{g.toolCount} 工具</span>
+          {toolGroups.map(g => {
+            // owner 与 contributingPlugins 合并去重；优先 owner 在前
+            const contributors = g.contributingPlugins ?? [];
+            const plugins = [g.pluginName, ...contributors.filter(p => p !== g.pluginName)];
+            return (
+              <div className="tool-group-card" key={g.name}>
+                <div className="tool-group-header">
+                  <span className="tool-group-name">{g.label}</span>
+                  <span className="tool-group-count">{g.toolCount} 工具</span>
+                </div>
+                {g.description && <div className="tool-group-desc">{g.description}</div>}
+                <div className="tool-group-meta">
+                  <span className="tool-group-id">{g.name}</span>
+                  <span className="tool-group-plugin" title={plugins.join(', ')}>
+                    {plugins.join(' · ')}
+                  </span>
+                </div>
               </div>
-              {g.description && <div className="tool-group-desc">{g.description}</div>}
-              <div className="tool-group-meta">
-                <span className="tool-group-id">{g.name}</span>
-                <span className="tool-group-plugin">{g.pluginName}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="tools-grid">
