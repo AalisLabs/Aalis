@@ -45,6 +45,14 @@ export const configSchema: ConfigSchema = {
     allowCustom: true,
     description: '即使启用工具搜索层，也始终直接暴露这些工具的完整定义。填写工具名，如 web_search。',
   },
+  maxDiscoveredKeep: {
+    type: 'number',
+    label: '已发现工具队列上限',
+    default: 20,
+    description:
+      '从消息历史推断出的“已发现工具”最多保留 N 个（按最近使用时间倒序保留，0 = 不限）。' +
+      '避免长会话里 discovered 集合无限膨胀，使搜索层失去瘦身价值。',
+  },
 };
 
 export const defaultConfig = {
@@ -53,6 +61,7 @@ export const defaultConfig = {
   maxDirectTools: 5,
   maxSearchResults: 5,
   alwaysDirectTools: [],
+  maxDiscoveredKeep: 20,
 };
 
 // ===== 常量 =====
@@ -120,10 +129,14 @@ function searchTools(summaries: ToolSummary[], query: string): ToolSummary[] {
 }
 
 /**
- * 从消息历史中提取已搜索过的工具名称集合
+ * 从消息历史中提取“已发现”工具名集合
  *
- * 扫描所有 assistant 的 search_tools 调用及其对应的 tool 结果消息，
- * 解析出已被发现的工具名。
+ * 两类来源都算已发现（语义：模型已经知道这个工具叫什么并且能调到）：
+ *   1. search_tools 调用结果里返回过的工具名
+ *   2. assistant.toolCalls 中实际被调用且收到执行结果（即对应 tool 消息存在）的工具名
+ *      —— 这覆盖“模型靠工具名清单 hallucinate 直接调出”的情况，避免下轮又只看到 search_tools。
+ *
+ * 返回值按“最近一次出现的时间正序排列”：调用方可对 size 做 FIFO 截断保留最近 N 个。
  */
 function extractDiscoveredTools(
   messages: {
@@ -132,30 +145,44 @@ function extractDiscoveredTools(
     toolCalls?: { id: string; function: { name: string } }[];
     toolCallId?: string;
   }[],
+  maxKeep: number,
 ): Set<string> {
-  const discovered = new Set<string>();
+  // Map 保持插入顺序；重复出现时 delete+set 把它顶到末尾，天然 LRU
+  const ordered = new Map<string, true>();
 
-  // 收集所有 search_tools 调用的 id
+  // 第一遍：识别 search_tools 调用 id 与所有“收到了 tool 响应”的 toolCallId
   const searchCallIds = new Set<string>();
+  const respondedToolCallIds = new Set<string>();
   for (const msg of messages) {
     if (msg.role === 'assistant' && msg.toolCalls) {
       for (const tc of msg.toolCalls) {
-        if (tc.function.name === SEARCH_TOOL_NAME) {
-          searchCallIds.add(tc.id);
-        }
+        if (tc.function.name === SEARCH_TOOL_NAME) searchCallIds.add(tc.id);
       }
+    } else if (msg.role === 'tool' && msg.toolCallId) {
+      respondedToolCallIds.add(msg.toolCallId);
     }
   }
 
-  // 解析对应 tool 结果
+  // 第二遍：按消息时序累积
   for (const msg of messages) {
-    if (msg.role === 'tool' && msg.toolCallId && searchCallIds.has(msg.toolCallId)) {
-      if (!msg.content) continue;
+    if (msg.role === 'assistant' && msg.toolCalls) {
+      for (const tc of msg.toolCalls) {
+        const name = tc.function.name;
+        if (name === SEARCH_TOOL_NAME) continue;
+        if (!respondedToolCallIds.has(tc.id)) continue;
+        if (ordered.has(name)) ordered.delete(name);
+        ordered.set(name, true);
+      }
+      continue;
+    }
+    if (msg.role === 'tool' && msg.toolCallId && searchCallIds.has(msg.toolCallId) && msg.content) {
       try {
         const result = JSON.parse(msg.content);
         if (Array.isArray(result.tools)) {
           for (const t of result.tools) {
-            if (typeof t.name === 'string') discovered.add(t.name);
+            if (typeof t?.name !== 'string') continue;
+            if (ordered.has(t.name)) ordered.delete(t.name);
+            ordered.set(t.name, true);
           }
         }
       } catch {
@@ -164,7 +191,11 @@ function extractDiscoveredTools(
     }
   }
 
-  return discovered;
+  if (maxKeep > 0 && ordered.size > maxKeep) {
+    const arr = [...ordered.keys()];
+    return new Set(arr.slice(-maxKeep));
+  }
+  return new Set(ordered.keys());
 }
 
 function normalizeToolNames(value: unknown): Set<string> {
@@ -186,6 +217,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const maxDirectTools = (config.maxDirectTools as number) ?? 5;
   const maxSearchResults = (config.maxSearchResults as number) ?? 5;
   const alwaysDirectTools = normalizeToolNames(config.alwaysDirectTools);
+  const maxDiscoveredKeep = Math.max(0, Math.floor(Number(config.maxDiscoveredKeep ?? 20)));
   const warnedMissingDirectTools = new Set<string>();
 
   if (!enabled) {
@@ -283,8 +315,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 从消息历史提取已发现的工具
-    const discovered = extractDiscoveredTools(data.messages);
+    // 从消息历史提取已发现的工具（含历史调用过的，FIFO 上限保护）
+    const discovered = extractDiscoveredTools(data.messages, maxDiscoveredKeep);
 
     // 构建 search_tools 定义（showToolNames 时附带工具名列表）
     const otherToolNames = allDefs.map(d => d.function.name).filter(n => n !== SEARCH_TOOL_NAME);
@@ -294,13 +326,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const filtered: ToolDefinition[] = [searchDef];
     const visibleToolNames = new Set<string>();
     let directVisibleCount = 0;
+    let discoveredVisibleCount = 0;
     for (const def of allDefs) {
       const toolName = def.function.name;
       if (toolName === SEARCH_TOOL_NAME) continue;
-      if (!alwaysDirectTools.has(toolName) && !discovered.has(toolName)) continue;
+      const isDirect = alwaysDirectTools.has(toolName);
+      const isDiscovered = discovered.has(toolName);
+      if (!isDirect && !isDiscovered) continue;
       if (visibleToolNames.has(toolName)) continue;
       visibleToolNames.add(toolName);
-      if (alwaysDirectTools.has(toolName)) directVisibleCount += 1;
+      if (isDirect) directVisibleCount += 1;
+      else if (isDiscovered) discoveredVisibleCount += 1;
       filtered.push(def);
     }
 
@@ -316,7 +352,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     data.tools = filtered;
     logger.debug(
       `工具搜索层: ${allDefs.length} 个工具 → 暴露 ${filtered.length} 个` +
-        ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
+        ` (直出 ${directVisibleCount}/${alwaysDirectTools.size}, 已发现 ${discoveredVisibleCount}/${discovered.size}, 名称列表: ${showToolNames ? '是' : '否'})`,
     );
 
     await next();
