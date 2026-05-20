@@ -72,17 +72,6 @@ export class Context {
   // ---- 子系统访问（供高级插件检查/包装用） ----
 
   /**
-   * 底层事件总线实例。
-   *
-   * @deprecated 全仓零消费者（2025-11 审计）。保留仅为当初设计意图占位，后续可能移除。
-   * 普通插件使用 `ctx.on()`，监听器会自动在本 Context dispose 时清理。
-   * 若需「dispose 后还要继续监听」场景，请提 issue 讨论公开 API。
-   */
-  get eventBus(): EventBus {
-    return this._events;
-  }
-
-  /**
    * 底层服务容器实例。
    *
    * ⚠️ **@internal** —— 仅供 host 级巡视代码（如 plugin-activation 检查 provides
