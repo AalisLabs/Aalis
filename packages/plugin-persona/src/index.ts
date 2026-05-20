@@ -600,6 +600,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const clientRendered = service.isClientSideJsonRendering(personaOpts);
 
+    const persistStateFromParsed = (parsedObj: Record<string, unknown>, fmt: OutputFormat): void => {
+      const state: Record<string, unknown> = {};
+      for (const key of Object.keys(fmt.fields)) {
+        if (key !== fmt.replyField && parsedObj[key] !== undefined) {
+          const fieldType = fmt.fields[key].type ?? 'string';
+          let val = parsedObj[key];
+          if (fieldType === 'number') {
+            const n = Number(val);
+            val = Number.isNaN(n) ? val : n;
+          } else if (fieldType === 'boolean') {
+            if (typeof val === 'string') val = val === 'true';
+            else val = Boolean(val);
+          } else {
+            if (typeof val !== 'string') val = String(val);
+          }
+          state[key] = val;
+        }
+      }
+      if (Object.keys(state).length > 0) {
+        service.saveSessionState(data.sessionId, state);
+        ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
+      }
+    };
+
     const jsonStr = extractJsonCandidate(data.content);
     const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
     if (parsed && repairsApplied.length > 0) {
@@ -657,28 +681,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
         // 状态持久化：保存非回复字段（按 field type 强制类型）
         if (statePersistence) {
-          const state: Record<string, unknown> = {};
-          for (const key of Object.keys(outputFormat.fields)) {
-            if (key !== outputFormat.replyField && parsed[key] !== undefined) {
-              const fieldType = outputFormat.fields[key].type ?? 'string';
-              let val = parsed[key];
-              if (fieldType === 'number') {
-                const n = Number(val);
-                val = Number.isNaN(n) ? val : n;
-              } else if (fieldType === 'boolean') {
-                if (typeof val === 'string') val = val === 'true';
-                else val = Boolean(val);
-              } else {
-                if (typeof val !== 'string') val = String(val);
-              }
-              state[key] = val;
-            }
-          }
-          if (Object.keys(state).length > 0) {
-            service.saveSessionState(data.sessionId, state);
-            ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
-          }
+          persistStateFromParsed(parsed, outputFormat);
         }
+      } else {
+        // JSON 合法但找不到回复字段（无 replyField、无 alias、也不是单字符串字段）
+        // 视为"agent 主动选择不对外发送"：清空 content 避免裸 JSON 被发出去，
+        // 但保留 archive 记录完整 JSON，state 字段仍持久化用于下一轮上下文。
+        data.archiveContent = JSON.stringify(parsed);
+        if (!clientRendered) {
+          data.content = '';
+        }
+        if (statePersistence) {
+          persistStateFromParsed(parsed, outputFormat);
+        }
+        const fieldList = Object.keys(parsed).join(',');
+        ctx.logger.warn(
+          `outputFormat JSON 缺回复字段 "${outputFormat.replyField}"（实际字段: ${fieldList}），视为静默回复，content 已清空避免裸 JSON 外发`,
+        );
       }
     } catch (err) {
       // 解析失败时保留原始内容，不影响正常流程；带上原因方便定位下一条修复规则。
