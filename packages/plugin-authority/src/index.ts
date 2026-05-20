@@ -410,7 +410,7 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     const cmdNames = new Set(cmdNodes.map(n => n.name));
     const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     // 当前已注册的平台 contextId 列表（用于 WebUI 下拉选择，避免手写）
-    const platformEntries = ctx.serviceContainer?.getEntries?.('platform') ?? [];
+    const platformEntries = ctx.getServiceEntries('platform');
     const platformsFromServices = platformEntries.map(e => e.contextId);
     const platformsFromUsers = users.map(u => u.platform);
     const platformsFromOwners = owners.map(o => o.platform);
