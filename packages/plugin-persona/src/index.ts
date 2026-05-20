@@ -700,7 +700,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         message +
         '）。请严格按照以下字段输出一个合法 JSON 对象（不要包 markdown 代码块）：\n' +
         fieldSpec +
-        '\n请勿输出任何 JSON 之外的文本。';
+        '\n请勿输出任何 JSON 之外的文本。' +
+        '\n注意：如果你的本意只是"汇报已完成 / 不想再对外发送新内容"，请把回复字段留空（空字符串），仅用其他状态字段说明情况——不要在回复字段里写汇报性文字，否则会被当作新消息发送到对方平台。';
     }
   });
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
@@ -27,6 +28,87 @@ function getProactiveDepth(sessionId: string): number {
 
 function setProactiveDepth(sessionId: string, depth: number): void {
   proactiveDepth.set(sessionId, { depth, expiresAt: Date.now() + PROACTIVE_DEPTH_TTL_MS });
+}
+
+// ===== 跨会话委派：近期派发记录（提醒型，不硬挡） =====
+// 记录每个 (target_session_id, task) 最近一次派发状态。
+// 下一次同目标派发时，在拼装给 target agent 的 task 前注入 META 提醒，
+// 让 target agent 自主判断是否需要重发。不防止派发本身。
+const RECENT_DELEGATION_TTL_MS = 60 * 1000;
+const RECENT_DELEGATION_MAX = 256; // 防止无限增长
+interface RecentDelegationEntry {
+  firedAt: number;
+  expiresAt: number;
+  sourceSessionId: string;
+  taskPreview: string; // 前 80 字
+  taskHash: string;
+  status: 'pending' | 'replied' | 'fired-no-wait';
+  lastReplyPreview?: string;
+  lastOutcome?: string;
+}
+const recentDelegations = new Map<string, RecentDelegationEntry>();
+
+function recentDelegationKey(targetSessionId: string, taskHash: string): string {
+  return `${targetSessionId}::${taskHash}`;
+}
+
+function hashTask(task: string): string {
+  return createHash('sha1').update(task.trim()).digest('hex').slice(0, 12);
+}
+
+function pruneRecentDelegations(now: number): void {
+  for (const [key, entry] of recentDelegations) {
+    if (entry.expiresAt <= now) recentDelegations.delete(key);
+  }
+  // 超上限时删最早的
+  if (recentDelegations.size > RECENT_DELEGATION_MAX) {
+    const oldest = [...recentDelegations.entries()].sort((a, b) => a[1].firedAt - b[1].firedAt);
+    for (let i = 0; i < oldest.length - RECENT_DELEGATION_MAX; i++) {
+      recentDelegations.delete(oldest[i][0]);
+    }
+  }
+}
+
+function findRecentDelegationsForTarget(targetSessionId: string, now: number): RecentDelegationEntry[] {
+  const prefix = `${targetSessionId}::`;
+  const list: RecentDelegationEntry[] = [];
+  for (const [key, entry] of recentDelegations) {
+    if (entry.expiresAt <= now) continue;
+    if (!key.startsWith(prefix)) continue;
+    list.push(entry);
+  }
+  list.sort((a, b) => b.firedAt - a.firedAt);
+  return list;
+}
+
+function buildDelegationMetaBlock(
+  sourceSessionId: string,
+  targetSessionId: string,
+  task: string,
+  recents: RecentDelegationEntry[],
+  now: number,
+): string {
+  const lines: string[] = [];
+  lines.push('[跨会话委派 META]');
+  lines.push(`· 来源会话：${sourceSessionId}`);
+  lines.push('· 提醒：你的 persona JSON 中的 message 字段 = 会被适配器原样发到本会话平台的内容。');
+  lines.push('· 生成前请先回看你自己最近 history：若你认为本任务已经被你完成、或内容与上一条 message 实质重复，');
+  lines.push('  请把 message 字段留空（不重发），仅在 state / current_action 等字段说明 “task already done” 即可。');
+  if (recents.length > 0) {
+    lines.push(`· 检测：60s 内本目标会话 已收到 ${recents.length} 次同/似任务。最近的：`);
+    for (let i = 0; i < Math.min(recents.length, 3); i++) {
+      const r = recents[i];
+      const ageSec = Math.round((now - r.firedAt) / 1000);
+      const reply = r.lastReplyPreview ? ` reply="${r.lastReplyPreview}"` : '';
+      lines.push(
+        `  - ${ageSec}s 前 · from=${r.sourceSessionId} · status=${r.status}${reply} · task="${r.taskPreview}"`,
+      );
+    }
+    lines.push('  若确认重复，请依上面提醒处理。');
+  }
+  lines.push('[任务正文]');
+  lines.push(task);
+  return lines.join('\n');
 }
 
 // ===== 插件元数据 =====
@@ -440,6 +522,14 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           '- true（默认）：同步等待目标 agent 完成一轮回复，把对方 reply 文本返回给你，最长等 timeout_seconds 秒。',
           '- false：fire-and-forget，立刻返回"已派发"，不阻塞当前会话。',
           '',
+          '【fire-and-forget 时延 / 重复派发提醒】',
+          '- fire-and-forget 模式下，目标会话从被派发到真正对外发送通常需要 5~30 秒（大群历史多、目标 agent 多轮工具迭代会更慢）。',
+          '- 用户口头说"没收到"不等于目标真的没发；先用 onebot_get_session_history（或对应平台的 history 工具）',
+          '  查目标 sessionId 最近一条 role=assistant 输出：其 persona JSON 的 message 字段就是已发出的群/私聊消息。',
+          '- 系统会在 60 秒内追踪同一 target_session_id 的多次派发，并在 META 块里告知目标 agent；',
+          '  目标 agent 可识别 META 后选择不重发（留空 message）。但 META 是"提醒"非硬性拦截：',
+          '  调用方仍应避免短时间内对同一目标重复派发同一任务。',
+          '',
           '【返回值字段】',
           '- outcome: replied / silent / aborted。silent 表示目标 agent 本轮 reply 为空（可能在执行工具未发文本、',
           '  或被中间件吞掉、或目标策略层主动静默）；reply="" 不代表任务一定已完成。',
@@ -521,8 +611,30 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       // 标记目标进入 proactive 链路
       setProactiveDepth(targetSessionId, targetDepth);
 
+      // ===== 注入 META 提示（提醒型，不挡派发） =====
+      const now = Date.now();
+      pruneRecentDelegations(now);
+      const taskHash = hashTask(task);
+      const dedupKey = recentDelegationKey(targetSessionId, taskHash);
+      const recents = findRecentDelegationsForTarget(targetSessionId, now);
+      const taskWithMeta = buildDelegationMetaBlock(callCtx.sessionId, targetSessionId, task, recents, now);
+      const entry: RecentDelegationEntry = {
+        firedAt: now,
+        expiresAt: now + RECENT_DELEGATION_TTL_MS,
+        sourceSessionId: callCtx.sessionId,
+        taskPreview: task.length > 80 ? `${task.slice(0, 80)}...` : task,
+        taskHash,
+        status: waitForResult ? 'pending' : 'fired-no-wait',
+      };
+      recentDelegations.set(dedupKey, entry);
+      if (recents.length > 0) {
+        ctx.logger.info(
+          `[delegate] META 提醒已注入：${targetSessionId} 在 60s 内已收到 ${recents.length} 次同/近期任务`,
+        );
+      }
+
       const incoming: IncomingMessage = {
-        content: task,
+        content: taskWithMeta,
         sessionId: targetSessionId,
         platform: platformName ?? callCtx.platform ?? 'internal',
         source: `proactive:from:${callCtx.sessionId}`,
@@ -584,6 +696,15 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           depth: `${targetDepth}/${PROACTIVE_DEPTH_MAX}`,
           message: `已派发但在 ${timeoutSec}s 内未捕获 agent:turn:after（目标可能仍在执行或被中间件 swallow）`,
         });
+      }
+      // 更新 recentDelegations entry：写入回复结果，供后续重复派发提醒展示
+      const entryAfter = recentDelegations.get(dedupKey);
+      if (entryAfter) {
+        entryAfter.status = 'replied';
+        entryAfter.lastOutcome = captured.outcome;
+        const r = captured.reply ?? '';
+        entryAfter.lastReplyPreview =
+          r.length > 60 ? `${r.slice(0, 60).replace(/\n/g, ' ')}...` : r.replace(/\n/g, ' ');
       }
       const replyTruncated =
         captured.reply.length > 2000
