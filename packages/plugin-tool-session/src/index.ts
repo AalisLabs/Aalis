@@ -93,14 +93,15 @@ function buildDelegationMetaBlock(
   recents: RecentDelegationEntry[],
   now: number,
 ): string {
+  void targetSessionId;
   const lines: string[] = [];
   lines.push('[跨会话委派 META]');
   lines.push(`· 来源会话：${sourceSessionId}`);
-  lines.push('· 提醒：你的 persona JSON 中的 message 字段 = 会被适配器原样发到本会话平台的内容。');
-  lines.push('· 生成前请先回看你自己最近 history：若你认为本任务已经被你完成、或内容与上一条 message 实质重复，');
-  lines.push('  请把 message 字段留空（不重发），仅在 state / current_action 等字段说明 “task already done” 即可。');
+  lines.push('· 提醒：你本轮的对外回复内容会原样发送到当前会话所在平台（群/私聊/...）。');
+  lines.push('· 生成回复前请先回看你最近 history：若你认为本任务已经完成、或本轮要写的内容与上一条对外回复实质重复，');
+  lines.push('  请输出空回复（不再对外发送），按你所属 persona / output 约定填写必要的内部状态字段即可。');
   if (recents.length > 0) {
-    lines.push(`· 检测：60s 内本目标会话 已收到 ${recents.length} 次同/似任务。最近的：`);
+    lines.push(`· 检测：60s 内本目标会话 已收到 ${recents.length} 次同/近期任务。最近的：`);
     for (let i = 0; i < Math.min(recents.length, 3); i++) {
       const r = recents[i];
       const ageSec = Math.round((now - r.firedAt) / 1000);
@@ -530,9 +531,9 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           '【fire-and-forget 时延 / 重复派发提醒】',
           '- fire-and-forget 模式下，目标会话从被派发到真正对外发送通常需要 5~30 秒（大群历史多、目标 agent 多轮工具迭代会更慢）。',
           '- 用户口头说"没收到"不等于目标真的没发；先用 onebot_get_session_history（或对应平台的 history 工具）',
-          '  查目标 sessionId 最近一条 role=assistant 输出：其 persona JSON 的 message 字段就是已发出的群/私聊消息。',
-          '- 系统会在 60 秒内追踪同一 target_session_id 的多次派发，并在 META 块里告知目标 agent；',
-          '  目标 agent 可识别 META 后选择不重发（留空 message）。但 META 是"提醒"非硬性拦截：',
+          '  查目标 sessionId 最近一条 role=assistant 输出，结合该会话所用 persona/output 约定判断是否已发出。',
+          '- 系统会在 60 秒内追踪同一 target_session_id 的多次派发，并在派发给目标 agent 的 task 前注入 META 块；',
+          '  目标 agent 可识别 META 后选择不重发（输出空回复）。但 META 是"提醒"非硬性拦截：',
           '  调用方仍应避免短时间内对同一目标重复派发同一任务。',
           '',
           '【返回值字段】',
