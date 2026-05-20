@@ -257,7 +257,7 @@ Aalis 提供两种隔离粒度：
 | 注册中间件 | `ctx.middleware(hook, fn)` — dispose 时自动注销 |
 | 注册服务 | `ctx.provide(name, impl, { capabilities })` — dispose 时自动注销 |
 | 清理外部资源（连接、定时器、子进程） | `ctx.onDispose(() => cleanup())` |
-| ⚠️ 绕过自动清理（需手动管理） | `ctx.eventBus.on(...)` / `ctx.serviceContainer.register(...)` — 仅供桥接/诊断 |
+| ⚠️ 绕过自动清理（需手动管理） | `ctx.serviceContainer.register(...)` — 仅供桥接/诊断 |
 
 ## 中间件钩子管道
 
