@@ -118,6 +118,20 @@ export class OneBotV12 implements OneBotProtocol {
     const nickname =
       (sender?.card as string) || (sender?.nickname as string) || (sender?.user_name as string) || undefined;
 
+    // 群消息：兼容部分实现的 sender.role/sender.title（v12 标准未要求，但常见扩展）
+    let senderRole: 'owner' | 'admin' | 'member' | undefined;
+    let senderTitle: string | undefined;
+    if (detailType === 'group' && sender) {
+      const role = sender.role;
+      if (role === 'owner' || role === 'admin' || role === 'member') {
+        senderRole = role;
+      }
+      const title = sender.title;
+      if (typeof title === 'string' && title.length > 0) {
+        senderTitle = title;
+      }
+    }
+
     return {
       selfId,
       detailType,
@@ -131,6 +145,8 @@ export class OneBotV12 implements OneBotProtocol {
       message,
       attachments: attachments.length > 0 ? attachments : undefined,
       replyToMessageId,
+      senderRole,
+      senderTitle,
     };
   }
 

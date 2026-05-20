@@ -132,6 +132,20 @@ export class OneBotV11 implements OneBotProtocol {
     const sender = raw.sender as Record<string, unknown> | undefined;
     const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
 
+    // 群消息：提取发送者群角色 (owner/admin/member) 与专属头衔
+    let senderRole: 'owner' | 'admin' | 'member' | undefined;
+    let senderTitle: string | undefined;
+    if (detailType === 'group' && sender) {
+      const role = sender.role;
+      if (role === 'owner' || role === 'admin' || role === 'member') {
+        senderRole = role;
+      }
+      const title = sender.title;
+      if (typeof title === 'string' && title.length > 0) {
+        senderTitle = title;
+      }
+    }
+
     return {
       selfId,
       detailType,
@@ -143,6 +157,8 @@ export class OneBotV11 implements OneBotProtocol {
       message,
       attachments: attachments.length > 0 ? attachments : undefined,
       replyToMessageId,
+      senderRole,
+      senderTitle,
     };
   }
 
