@@ -10,6 +10,7 @@ import {
   Header,
   HeadingLevel,
   ImageRun,
+  type IRunOptions,
   LevelFormat,
   Packer,
   PageBreak,
@@ -30,13 +31,83 @@ interface DocState {
   styles: DocStyles;
 }
 
+interface ParagraphDefaults {
+  /** 首行缩进字符数（中文习惯，1 字符 ≈ 字号磅值）。0 = 不缩进。 */
+  firstLineIndentChars?: number;
+  /** 行距倍数（如 1.5 = 1.5 倍行距）。 */
+  lineHeight?: number;
+  /** 段前距（磅）。 */
+  spaceBefore?: number;
+  /** 段后距（磅）。 */
+  spaceAfter?: number;
+}
+
 interface DocStyles {
   defaultFontFamily?: string;
   defaultFontSize?: number;
   defaultColor?: string;
+  paragraphDefaults: ParagraphDefaults;
 }
 
 type SectionChildren = Paragraph | Table;
+
+/**
+ * 文档排版预设。一键应用整套样式，避免 agent 逐项配置。
+ * - chinese-report: 中文报告（微软雅黑、12pt、1.5 倍行距、首行缩进 2 字符、段后 6pt）
+ * - chinese-academic: 中文学术（宋体、12pt、1.5 倍行距、首行缩进 2 字符、段后 0pt）
+ * - minimal: 极简（无首行缩进、1.15 倍行距）
+ */
+const DOC_PRESETS = {
+  'chinese-report': {
+    defaultFontFamily: 'Microsoft YaHei',
+    defaultFontSize: 12,
+    paragraphDefaults: {
+      firstLineIndentChars: 2,
+      lineHeight: 1.5,
+      spaceBefore: 0,
+      spaceAfter: 6,
+    } satisfies ParagraphDefaults,
+  },
+  'chinese-academic': {
+    defaultFontFamily: 'SimSun',
+    defaultFontSize: 12,
+    paragraphDefaults: {
+      firstLineIndentChars: 2,
+      lineHeight: 1.5,
+      spaceBefore: 0,
+      spaceAfter: 0,
+    } satisfies ParagraphDefaults,
+  },
+  minimal: {
+    defaultFontFamily: undefined as string | undefined,
+    defaultFontSize: 11,
+    paragraphDefaults: {
+      firstLineIndentChars: 0,
+      lineHeight: 1.15,
+      spaceBefore: 0,
+      spaceAfter: 6,
+    } satisfies ParagraphDefaults,
+  },
+} as const;
+
+type DocPresetName = keyof typeof DOC_PRESETS;
+
+/**
+ * 把含 \n 的纯文本拆成多个 TextRun，行间用 break: 1（软换行，保持同一段落）。
+ * 修复 agent 传 "第一行\n第二行" 时 Word 渲染为同一行的问题。
+ */
+function splitTextToRuns(text: string, runOpts: Omit<IRunOptions, 'text' | 'break'>): TextRun[] {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  return lines.map(
+    (line, i) =>
+      new TextRun({
+        ...runOpts,
+        text: line,
+        break: i > 0 ? 1 : undefined,
+      }),
+  );
+}
 
 const headingMap: Record<string, (typeof HeadingLevel)[keyof typeof HeadingLevel]> = {
   '1': HeadingLevel.HEADING_1,
@@ -62,15 +133,23 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       function: {
         name: 'doc_create',
         description:
-          '创建一个新的 Word 文档会话，返回 docId 用于后续操作。该 docId 全局共享，可传递给子任务实现并行协作编辑。',
+          '创建一个新的 Word 文档会话，返回 docId 用于后续操作。该 docId 全局共享，可传递给子任务实现并行协作编辑。\n' +
+          '【排版建议】中文文档强烈建议传 preset="chinese-report"（自动应用：微软雅黑、12pt、1.5 倍行距、首行缩进 2 字符、段后 6pt）。' +
+          '不设 preset 时 Word 会用 Times New Roman + Calibri 默认，中文混排显示不佳。',
         parameters: {
           type: 'object',
           properties: {
             filename: { type: 'string', description: '文件名（如 report.docx）' },
             title: { type: 'string', description: '文档标题（元数据）' },
             author: { type: 'string', description: '作者' },
-            defaultFont: { type: 'string', description: '默认字体，如 "Microsoft YaHei"' },
-            defaultFontSize: { type: 'number', description: '默认字号（磅）' },
+            preset: {
+              type: 'string',
+              enum: ['chinese-report', 'chinese-academic', 'minimal'],
+              description:
+                '排版预设：chinese-report=中文报告(微软雅黑/1.5行距/首行缩进2字符/段后6pt，推荐)；chinese-academic=中文学术(宋体/1.5行距/首行缩进2字符)；minimal=极简(无缩进/1.15行距)。不传则保留 Word 空默认。',
+            },
+            defaultFont: { type: 'string', description: '默认字体（覆盖 preset 设置）' },
+            defaultFontSize: { type: 'number', description: '默认字号（磅，覆盖 preset 设置）' },
           },
           required: ['filename'],
         },
@@ -78,13 +157,16 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
     },
     async handler(args) {
       const filename = String(args.filename || 'document.docx');
+      const presetName = args.preset ? (String(args.preset) as DocPresetName) : undefined;
+      const preset = presetName && presetName in DOC_PRESETS ? DOC_PRESETS[presetName] : undefined;
       const state: DocState = {
         doc: null,
         sections: [],
         styles: {
-          defaultFontFamily: args.defaultFont ? String(args.defaultFont) : undefined,
-          defaultFontSize: args.defaultFontSize ? Number(args.defaultFontSize) : undefined,
+          defaultFontFamily: args.defaultFont ? String(args.defaultFont) : preset?.defaultFontFamily,
+          defaultFontSize: args.defaultFontSize ? Number(args.defaultFontSize) : preset?.defaultFontSize,
           defaultColor: args.defaultColor ? String(args.defaultColor) : undefined,
+          paragraphDefaults: { ...(preset?.paragraphDefaults ?? {}) },
         },
       };
       // 存储元数据，最终 save 时构建 Document
@@ -93,7 +175,12 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
         author: args.author ? String(args.author) : undefined,
       };
       const docId = sessions.create('docx', filename, { state, meta });
-      return JSON.stringify({ docId, filename, message: `Word 文档已创建，使用 docId="${docId}" 进行后续操作` });
+      return JSON.stringify({
+        docId,
+        filename,
+        preset: presetName,
+        message: `Word 文档已创建${presetName ? `（预设：${presetName}）` : ''}，使用 docId="${docId}" 进行后续操作`,
+      });
     },
   });
 
@@ -122,12 +209,9 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       const para = new Paragraph({
         heading: level,
         alignment: args.alignment ? alignMap[String(args.alignment)] : undefined,
-        children: [
-          new TextRun({
-            text: String(args.text),
-            font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-          }),
-        ],
+        children: splitTextToRuns(String(args.text), {
+          font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+        }),
       });
       state.sections.push(para);
       return JSON.stringify({ success: true, message: `标题已添加: "${args.text}"` });
@@ -140,15 +224,19 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       type: 'function',
       function: {
         name: 'doc_add_paragraph',
-        description: '向 Word 文档添加段落。支持富文本（粗体、斜体、颜色等）。',
+        description:
+          '向 Word 文档添加段落。支持富文本（粗体、斜体、颜色等）。\n' +
+          '【换行】text 或 runs[].text 中的 \\n 会自动转为软换行（同段落内的换行）。多个段落请多次调用本工具。\n' +
+          '【排版】未传 alignment/indent/spacing 时，会自动应用 doc_create 的 preset 或 doc_set_style 设置的默认值。' +
+          '中文正文建议：firstLineIndentChars=2（首行缩进 2 字符）、lineHeight=1.5（1.5 倍行距）、段后 6pt。',
         parameters: {
           type: 'object',
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
-            text: { type: 'string', description: '纯文本内容（与 runs 二选一）' },
+            text: { type: 'string', description: '纯文本内容（与 runs 二选一）。支持 \\n 软换行。' },
             runs: {
               type: 'array',
-              description: '富文本片段数组（与 text 二选一）',
+              description: '富文本片段数组（与 text 二选一）。每个片段的 text 也支持 \\n 软换行。',
               items: {
                 type: 'object',
                 properties: {
@@ -168,10 +256,23 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
               },
             },
             alignment: { type: 'string', enum: ['left', 'center', 'right', 'justify'] },
-            indent: { type: 'number', description: '首行缩进（磅）' },
+            firstLineIndentChars: {
+              type: 'number',
+              description: '首行缩进字符数（中文习惯，1 字符≈字号磅值；中文正文常用 2）。覆盖全局默认。',
+            },
+            lineHeight: {
+              type: 'number',
+              description: '行距倍数（1.0=单倍，1.5=1.5 倍，2.0=双倍）。覆盖全局默认。',
+            },
+            indent: { type: 'number', description: '首行缩进（磅，已废弃，建议改用 firstLineIndentChars）' },
             spacing: {
               type: 'object',
-              properties: { before: { type: 'number' }, after: { type: 'number' }, line: { type: 'number' } },
+              description: '段落间距与行距（磅），覆盖全局默认。',
+              properties: {
+                before: { type: 'number', description: '段前距（磅）' },
+                after: { type: 'number', description: '段后距（磅，中文正文常用 6）' },
+                line: { type: 'number', description: '行距倍数（与顶层 lineHeight 等价）' },
+              },
             },
           },
           required: ['docId'],
@@ -182,53 +283,77 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       const { state } = sessions.require(String(args.docId), 'docx').doc as { state: DocState };
       const runs: TextRun[] = [];
 
+      const defaultFontOpt = state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined;
+      const defaultSizeHalf = state.styles.defaultFontSize ? state.styles.defaultFontSize * 2 : undefined;
+
       if (args.runs && Array.isArray(args.runs)) {
         for (const r of args.runs as Array<Record<string, unknown>>) {
-          runs.push(
-            new TextRun({
-              text: String(r.text || ''),
-              bold: r.bold as boolean | undefined,
-              italics: r.italics as boolean | undefined,
-              underline: r.underline ? {} : undefined,
-              color: r.color ? String(r.color) : state.styles.defaultColor,
-              size: r.size
-                ? Number(r.size) * 2
-                : state.styles.defaultFontSize
-                  ? state.styles.defaultFontSize * 2
-                  : undefined,
-              font: r.font
-                ? { name: String(r.font) }
-                : state.styles.defaultFontFamily
-                  ? { name: state.styles.defaultFontFamily }
-                  : undefined,
-              strike: r.strike as boolean | undefined,
-              superScript: r.superScript as boolean | undefined,
-              subScript: r.subScript as boolean | undefined,
-            }),
-          );
+          const runOpts = {
+            bold: r.bold as boolean | undefined,
+            italics: r.italics as boolean | undefined,
+            underline: r.underline ? {} : undefined,
+            color: r.color ? String(r.color) : state.styles.defaultColor,
+            size: r.size ? Number(r.size) * 2 : defaultSizeHalf,
+            font: r.font ? { name: String(r.font) } : defaultFontOpt,
+            strike: r.strike as boolean | undefined,
+            superScript: r.superScript as boolean | undefined,
+            subScript: r.subScript as boolean | undefined,
+            highlight: r.highlight ? (String(r.highlight) as IRunOptions['highlight']) : undefined,
+          } satisfies Omit<IRunOptions, 'text' | 'break'>;
+          runs.push(...splitTextToRuns(String(r.text ?? ''), runOpts));
         }
-      } else if (args.text) {
+      } else if (args.text !== undefined && args.text !== null) {
         runs.push(
-          new TextRun({
-            text: String(args.text),
-            font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-            size: state.styles.defaultFontSize ? state.styles.defaultFontSize * 2 : undefined,
+          ...splitTextToRuns(String(args.text), {
+            font: defaultFontOpt,
+            size: defaultSizeHalf,
+            color: state.styles.defaultColor,
           }),
         );
       }
 
-      const spacing = args.spacing as Record<string, number> | undefined;
+      // 计算行距 / 首行缩进 / 段距：调用时显式参数 > paragraphDefaults > 不设置
+      const paraDef = state.styles.paragraphDefaults;
+      const spacing = (args.spacing ?? {}) as Record<string, number>;
+      const effLineHeight =
+        typeof args.lineHeight === 'number'
+          ? Number(args.lineHeight)
+          : typeof spacing.line === 'number'
+            ? Number(spacing.line)
+            : paraDef.lineHeight;
+      const effSpaceBefore = typeof spacing.before === 'number' ? Number(spacing.before) : paraDef.spaceBefore;
+      const effSpaceAfter = typeof spacing.after === 'number' ? Number(spacing.after) : paraDef.spaceAfter;
+      const effFirstLineChars =
+        typeof args.firstLineIndentChars === 'number'
+          ? Number(args.firstLineIndentChars)
+          : args.indent
+            ? undefined
+            : paraDef.firstLineIndentChars;
+
+      // 首行缩进：字符数 × 字号磅值 = 磅；转 twip（1 磅 = 20 twip）
+      const baseFontSize = state.styles.defaultFontSize ?? 12;
+      const firstLineTwip =
+        effFirstLineChars && effFirstLineChars > 0
+          ? Math.round(effFirstLineChars * baseFontSize * 20)
+          : args.indent
+            ? convertInchesToTwip(Number(args.indent) / 72)
+            : undefined;
+
+      // docx 的 spacing.line 单位是二十分之一磅；1.0 倍行距对应字号 × 20。这里以 240（12pt 单倍）为基准乘以倍数。
+      const lineTwip = effLineHeight ? Math.round(effLineHeight * 240) : undefined;
+
       const para = new Paragraph({
         children: runs,
         alignment: args.alignment ? alignMap[String(args.alignment)] : undefined,
-        indent: args.indent ? { firstLine: convertInchesToTwip(Number(args.indent) / 72) } : undefined,
-        spacing: spacing
-          ? {
-              before: spacing.before ? spacing.before * 20 : undefined,
-              after: spacing.after ? spacing.after * 20 : undefined,
-              line: spacing.line ? spacing.line * 240 : undefined,
-            }
-          : undefined,
+        indent: firstLineTwip ? { firstLine: firstLineTwip } : undefined,
+        spacing:
+          effSpaceBefore !== undefined || effSpaceAfter !== undefined || lineTwip !== undefined
+            ? {
+                before: effSpaceBefore !== undefined ? effSpaceBefore * 20 : undefined,
+                after: effSpaceAfter !== undefined ? effSpaceAfter * 20 : undefined,
+                line: lineTwip,
+              }
+            : undefined,
       });
       state.sections.push(para);
       return JSON.stringify({ success: true, message: '段落已添加' });
@@ -275,13 +400,10 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
               new TableCell({
                 children: [
                   new Paragraph({
-                    children: [
-                      new TextRun({
-                        text,
-                        bold,
-                        font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-                      }),
-                    ],
+                    children: splitTextToRuns(text, {
+                      bold,
+                      font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+                    }),
                   }),
                 ],
                 borders: border,
@@ -371,12 +493,10 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       for (const item of items) {
         state.sections.push(
           new Paragraph({
-            children: [
-              new TextRun({
-                text: item,
-                font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
-              }),
-            ],
+            children: splitTextToRuns(item, {
+              font: state.styles.defaultFontFamily ? { name: state.styles.defaultFontFamily } : undefined,
+              size: state.styles.defaultFontSize ? state.styles.defaultFontSize * 2 : undefined,
+            }),
             numbering: { reference, level },
           }),
         );
@@ -487,14 +607,23 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       type: 'function',
       function: {
         name: 'doc_set_style',
-        description: '设置 Word 文档的全局样式（字体、字号、颜色、页面大小等）。影响后续添加的内容。',
+        description:
+          '设置 Word 文档的全局默认样式。影响后续添加的内容；已添加的段落不受影响。\n' +
+          '【典型用法】中文报告：defaultFont="Microsoft YaHei", defaultFontSize=12, defaultFirstLineIndentChars=2, defaultLineHeight=1.5, defaultSpaceAfter=6。',
         parameters: {
           type: 'object',
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
-            defaultFont: { type: 'string', description: '默认字体' },
-            defaultFontSize: { type: 'number', description: '默认字号（磅）' },
-            defaultColor: { type: 'string', description: '默认文字颜色（十六进制）' },
+            defaultFont: { type: 'string', description: '默认字体（中文常用 "Microsoft YaHei"/"SimSun"/"SimHei"）' },
+            defaultFontSize: { type: 'number', description: '默认字号（磅，中文正文常用 12=小四 或 10.5=五号）' },
+            defaultColor: { type: 'string', description: '默认文字颜色（十六进制如 "000000"）' },
+            defaultFirstLineIndentChars: {
+              type: 'number',
+              description: '默认首行缩进字符数（中文正文常用 2；0=不缩进）',
+            },
+            defaultLineHeight: { type: 'number', description: '默认行距倍数（1.0/1.5/2.0；中文常用 1.5）' },
+            defaultSpaceBefore: { type: 'number', description: '默认段前距（磅，常用 0）' },
+            defaultSpaceAfter: { type: 'number', description: '默认段后距（磅，中文正文常用 6）' },
           },
           required: ['docId'],
         },
@@ -505,7 +634,14 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       if (args.defaultFont) state.styles.defaultFontFamily = String(args.defaultFont);
       if (args.defaultFontSize) state.styles.defaultFontSize = Number(args.defaultFontSize);
       if (args.defaultColor) state.styles.defaultColor = String(args.defaultColor);
-      return JSON.stringify({ success: true, message: '样式已更新' });
+      const pd = state.styles.paragraphDefaults;
+      if (typeof args.defaultFirstLineIndentChars === 'number') {
+        pd.firstLineIndentChars = Number(args.defaultFirstLineIndentChars);
+      }
+      if (typeof args.defaultLineHeight === 'number') pd.lineHeight = Number(args.defaultLineHeight);
+      if (typeof args.defaultSpaceBefore === 'number') pd.spaceBefore = Number(args.defaultSpaceBefore);
+      if (typeof args.defaultSpaceAfter === 'number') pd.spaceAfter = Number(args.defaultSpaceAfter);
+      return JSON.stringify({ success: true, message: '样式已更新', styles: { ...state.styles } });
     },
   });
 
