@@ -658,6 +658,38 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (parsed[outputFormat.replyField] !== reply) {
           parsed[outputFormat.replyField] = reply;
         }
+
+        // 严格字段校验：声明的所有字段都必须出现且类型正确，缺一不可 → 否则 retry。
+        // 这样可以避免模型养成省略 state/mood 等状态字段的坏习惯，让上下文信号始终完整。
+        const missing: string[] = [];
+        const typeMismatch: string[] = [];
+        for (const [key, def] of Object.entries(outputFormat.fields)) {
+          const val = parsed[key];
+          if (val === undefined || val === null) {
+            missing.push(key);
+            continue;
+          }
+          const expectedType = def.type ?? 'string';
+          const actualType = typeof val;
+          if (expectedType === 'number') {
+            if (actualType !== 'number' && !(actualType === 'string' && !Number.isNaN(Number(val)))) {
+              typeMismatch.push(`${key}(期望 number, 实际 ${actualType})`);
+            }
+          } else if (expectedType === 'boolean') {
+            if (actualType !== 'boolean' && !(actualType === 'string' && (val === 'true' || val === 'false'))) {
+              typeMismatch.push(`${key}(期望 boolean, 实际 ${actualType})`);
+            }
+          } else if (actualType !== 'string') {
+            typeMismatch.push(`${key}(期望 string, 实际 ${actualType})`);
+          }
+        }
+        if (missing.length > 0 || typeMismatch.length > 0) {
+          const parts: string[] = [];
+          if (missing.length > 0) parts.push(`缺失字段: ${missing.join(',')}`);
+          if (typeMismatch.length > 0) parts.push(`类型错误: ${typeMismatch.join(',')}`);
+          throw new Error(parts.join('; '));
+        }
+
         data.archiveContent = JSON.stringify(parsed);
 
         // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
@@ -710,10 +742,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       data.retryFeedback =
         '你的上一条回复没有按照规定的 JSON 输出格式返回（解析失败原因：' +
         message +
-        '）。请严格按照以下字段输出一个合法 JSON 对象（不要包 markdown 代码块）：\n' +
+        '）。请严格按照以下字段输出一个合法 JSON 对象（不要包 markdown 代码块，所有声明的字段都必须出现，缺一不可）：\n' +
         fieldSpec +
         '\n请勿输出任何 JSON 之外的文本。' +
-        '\n注意：如果你的本意只是"汇报已完成 / 不想再对外发送新内容"，请把回复字段留空（空字符串），仅用其他状态字段说明情况——不要在回复字段里写汇报性文字，否则会被当作新消息发送到对方平台。';
+        '\n注意：如果你的本意只是"汇报已完成 / 不想再对外发送新内容"，请把回复字段留空（空字符串），仅用其他状态字段说明情况——不要省略任何字段，也不要在回复字段里写汇报性文字，否则会被当作新消息发送到对方平台。';
     }
   });
 }
