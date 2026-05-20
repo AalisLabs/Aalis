@@ -734,9 +734,10 @@ class SessionManager implements SessionManagerService {
 
     const entry = resolveLLMModel(this.ctx, undefined, ['chat']);
     if (!entry) {
-      this.ctx.logger.debug('无可用 LLM，无法生成标题');
+      this.ctx.logger.warn(`无可用 LLM，无法生成标题: ${sessionId}`);
       return undefined;
     }
+    this.ctx.logger.debug(`标题生成使用 LLM: ${entry.contextId}`);
     const llm = entry.instance;
 
     // 优先使用直接传入的用户消息；否则从历史获取
@@ -774,11 +775,12 @@ class SessionManager implements SessionManagerService {
         session.updatedAt = Date.now();
         this.markDirty();
         await this.ctx.emit('session:updated', session);
-        this.ctx.logger.debug(`会话标题已生成: [${sessionId}] ${title}`);
+        this.ctx.logger.info(`会话标题已生成: [${sessionId}] ${title}`);
         return title;
       }
+      this.ctx.logger.warn(`会话标题为空字符串，跳过: ${sessionId} (resp.content=${JSON.stringify(resp.content)})`);
     } catch (err) {
-      this.ctx.logger.warn('自动生成标题失败:', err);
+      this.ctx.logger.warn(`自动生成标题失败 [${sessionId}]:`, err);
     }
     return undefined;
   }
@@ -1006,17 +1008,29 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const titleGenerating = new Set<string>();
   ctx.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
     const { sessionId, platform } = msg;
-    if (!sessionId || titleGenerating.has(sessionId)) return;
+    if (!sessionId) {
+      ctx.logger.debug('标题生成跳过: 缺少 sessionId');
+      return;
+    }
+    if (titleGenerating.has(sessionId)) return;
     // 仅对指定平台生成标题
-    if (platform && !TITLE_PLATFORMS.has(platform)) return;
+    if (platform && !TITLE_PLATFORMS.has(platform)) {
+      ctx.logger.debug(`标题生成跳过: 平台 ${platform} 不在允许列表`);
+      return;
+    }
     const session = manager.getSession(sessionId);
-    // 只给没有标题的 session 生成标题；跳过子任务会话
-    if (!session || session.title || session.parentId) return;
+    if (!session) {
+      ctx.logger.warn(`标题生成跳过: 会话不存在 ${sessionId}`);
+      return;
+    }
+    // 已有标题或子任务会话跳过（静默）
+    if (session.title || session.parentId) return;
     titleGenerating.add(sessionId);
+    ctx.logger.info(`开始生成会话标题: ${sessionId} (platform=${platform ?? 'unknown'})`);
     // 异步生成，不阻塞消息处理；直接传入用户消息避免依赖历史
     manager
       .generateTitle(sessionId, msg.content)
-      .catch(err => ctx.logger.debug('标题生成失败:', err))
+      .catch(err => ctx.logger.warn('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });
 
