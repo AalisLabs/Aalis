@@ -51,6 +51,10 @@ export interface NormalizedMessageEvent {
   }>;
   /** 引用回复的原消息 ID */
   replyToMessageId?: string;
+  /** 群消息：发送者在群内的角色（owner/admin/member），从 sender.role 提取 */
+  senderRole?: 'owner' | 'admin' | 'member';
+  /** 群消息：发送者的专属头衔，从 sender.title 提取 */
+  senderTitle?: string;
 }
 
 /** 标准化后的通知事件 */
