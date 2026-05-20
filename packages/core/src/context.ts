@@ -74,12 +74,9 @@ export class Context {
   /**
    * 底层事件总线实例。
    *
-   * ⚠️ **@internal** —— 仅供需要自定义生命周期的高级插件使用（如桥接外部资源、
-   * 在 dispose 后还需监听的场景）。普通插件请使用 `ctx.on()`，监听器会自动
-   * 在本 Context dispose 时清理。
-   *
-   * 直接调用 `ctx.eventBus.on(...)` **不会**进入 `_disposables` 链；
-   * 若需要"dispose 时清理外部资源"，请改用 `ctx.onDispose(cb)`。
+   * @deprecated 全仓零消费者（2025-11 审计）。保留仅为当初设计意图占位，后续可能移除。
+   * 普通插件使用 `ctx.on()`，监听器会自动在本 Context dispose 时清理。
+   * 若需「dispose 后还要继续监听」场景，请提 issue 讨论公开 API。
    */
   get eventBus(): EventBus {
     return this._events;
@@ -88,9 +85,14 @@ export class Context {
   /**
    * 底层服务容器实例。
    *
-   * ⚠️ **@internal** —— 仅供高级巡视/诊断使用（如 plugin-authority 枚举所有
-   * provider）。普通插件请使用 `ctx.provide()` / `ctx.getService()`，副作用
-   * 会自动登记到 `_disposables` 链。
+   * ⚠️ **@internal** —— 仅供 host 级巡视代码（如 plugin-activation 检查 provides
+   * 完整性）使用。
+   *
+   * **插件请勿直接使用**：
+   * - 枚举某服务的所有 entry（含 contextId / capabilities / priority）：
+   *   → 用公开 API `ctx.getServiceEntries(name)`
+   * - 获取服务实例：用 `ctx.getService()` / `ctx.getAllServices()`
+   * - 注册服务：用 `ctx.provide()`（会自动登记到 _disposables 链）
    */
   get serviceContainer(): ServiceContainer {
     return this._services;
