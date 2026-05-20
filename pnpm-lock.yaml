@@ -78,9 +78,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
-      '@aalis/plugin-flow-control':
+      '@aalis/plugin-flow-control-api':
         specifier: workspace:*
-        version: link:../plugin-flow-control
+        version: link:../plugin-flow-control-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
@@ -524,6 +524,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-flow-control-api':
+        specifier: workspace:*
+        version: link:../plugin-flow-control-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:*
         version: link:../plugin-gateway-api
@@ -533,6 +536,15 @@ importers:
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-flow-control-api:
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1538,9 +1550,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-flow-control':
+      '@aalis/plugin-flow-control-api':
         specifier: workspace:*
-        version: link:../plugin-flow-control
+        version: link:../plugin-flow-control-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:*
         version: link:../plugin-gateway-api
