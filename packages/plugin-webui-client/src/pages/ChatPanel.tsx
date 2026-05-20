@@ -11,6 +11,7 @@ import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../typ
 import type { MutableRefObject } from 'react';
 import type { TokenUsageData } from '../useWebSocket';
 import { preprocessLaTeX } from '../preprocessLaTeX';
+import { formatChatTime } from '../utils/dateFormat';
 
 // 模块级常量：避免每次渲染创建新数组引用，防止 ReactMarkdown 不必要地重解析
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
@@ -425,7 +426,12 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
   return (
     <div className={`message-group ${msg.role}`}>
       <div className="message-sender">
-        {msg.role === 'user' ? 'You' : senderName}
+        <span className="message-sender-name">{msg.role === 'user' ? 'You' : senderName}</span>
+        {msg.timestamp ? (
+          <span className="message-time" title={new Date(msg.timestamp).toLocaleString()}>
+            {formatChatTime(msg.timestamp)}
+          </span>
+        ) : null}
       </div>
       {/* 用户消息中的图片 */}
       {msg.role === 'user' && msg.images && msg.images.length > 0 && (
