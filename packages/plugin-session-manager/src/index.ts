@@ -767,10 +767,9 @@ class SessionManager implements SessionManagerService {
           },
           { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
-        // 思考模型可能耗光 token，给 200 余量保证 content 有内容
-        maxTokens: 200,
         temperature: 0.3,
-        // 关闭 thinking：标题生成无需推理，避免 reasoning 占满 tokens 导致 content 为空
+        // 关闭 thinking：标题生成无需推理，避免 reasoning 占满 token 预算导致 content 为空。
+        // DeepSeek 会映射为 thinking.type=disabled；其他不消费此字段的 provider 视为 no-op。
         think: false,
       });
       title = (resp.content || '').trim().slice(0, 50);
