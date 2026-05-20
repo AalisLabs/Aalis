@@ -685,18 +685,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       } else {
         // JSON 合法但找不到回复字段（无 replyField、无 alias、也不是单字符串字段）
-        // 视为"agent 主动选择不对外发送"：清空 content 避免裸 JSON 被发出去，
-        // 但保留 archive 记录完整 JSON，state 字段仍持久化用于下一轮上下文。
-        data.archiveContent = JSON.stringify(parsed);
-        if (!clientRendered) {
-          data.content = '';
-        }
-        if (statePersistence) {
-          persistStateFromParsed(parsed, outputFormat);
-        }
-        const fieldList = Object.keys(parsed).join(',');
-        ctx.logger.warn(
-          `outputFormat JSON 缺回复字段 "${outputFormat.replyField}"（实际字段: ${fieldList}），视为静默回复，content 已清空避免裸 JSON 外发`,
+        // 视为模型违约 → 抛错让 catch 触发 retry，要求重新输出符合 outputFormat 的 JSON。
+        // 注意：agent 主动静默的合法表达是 reply 字段=空字符串（如 {"message":"","state":"..."}），
+        // 那种情况会走上面的 typeof reply === 'string' 分支并被识别为"(空，静默)"。
+        throw new Error(
+          `JSON 合法但找不到回复字段 "${outputFormat.replyField}"（实际字段: ${Object.keys(parsed).join(',')}）`,
         );
       }
     } catch (err) {
