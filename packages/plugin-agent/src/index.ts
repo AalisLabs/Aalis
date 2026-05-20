@@ -1020,16 +1020,6 @@ class DefaultAgent implements AgentService {
     return estimateTokens(messages);
   }
 
-  /** @deprecated 使用 helpers.estimateTextTokens；保留 wrapper 以兼容内部调用 */
-  private estimateTextTokens(text: string): number {
-    return estimateTextTokens(text);
-  }
-
-  /** @deprecated 使用 helpers.estimateMsgTokens；保留 wrapper 以兼容内部调用 */
-  private estimateMsgTokens(msg: Message): number {
-    return estimateMsgTokens(msg);
-  }
-
   /**
    * 推送 token 使用量统计事件
    *
@@ -1056,7 +1046,7 @@ class DefaultAgent implements AgentService {
     let systemOtherTokens = 0;
 
     for (const msg of messages) {
-      const t = this.estimateMsgTokens(msg);
+      const t = estimateMsgTokens(msg);
       if (msg.role === 'system') {
         const source = msg.metadata?.source as string | undefined;
         const contributions = msg.metadata?._tokenContributions as Record<string, number> | undefined;
@@ -1074,7 +1064,7 @@ class DefaultAgent implements AgentService {
           if (contributions) {
             let contributionTokens = 0;
             for (const [key, charCount] of Object.entries(contributions)) {
-              const ct = this.estimateTextTokens('x'.repeat(charCount as number));
+              const ct = estimateTextTokens('x'.repeat(charCount as number));
               if (key === 'skills') skillsTokens += ct;
               else if (key === 'subtask') subtaskTokens += ct;
               else systemOtherTokens += ct;
@@ -1095,7 +1085,7 @@ class DefaultAgent implements AgentService {
     }
 
     // 工具定义的 token 估算
-    const toolDefsTokens = tools.length > 0 ? this.estimateTextTokens(JSON.stringify(tools)) : 0;
+    const toolDefsTokens = tools.length > 0 ? estimateTextTokens(JSON.stringify(tools)) : 0;
 
     const systemTokens =
       personaTokens +
@@ -1181,16 +1171,16 @@ class DefaultAgent implements AgentService {
     // === Phase 1: 缩减超出预留额度的 system 消息 ===
     {
       const sysIdx = findSystemIndices();
-      const sysTokens = sysIdx.reduce((s, i) => s + this.estimateMsgTokens(result[i]), 0);
+      const sysTokens = sysIdx.reduce((s, i) => s + estimateMsgTokens(result[i]), 0);
       if (sysTokens > this.memoryTokenBudget && sysIdx.length > 0) {
         const ratio = this.memoryTokenBudget / sysTokens;
         for (const idx of sysIdx) {
           const msg = result[idx];
           if (msg.content && msg.content.length > 200) {
-            const oldTokens = this.estimateMsgTokens(msg);
+            const oldTokens = estimateMsgTokens(msg);
             const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
             msg.content = `${msg.content.slice(0, targetLen)}\n... [记忆内容已缩减]`;
-            estimated -= oldTokens - this.estimateMsgTokens(msg);
+            estimated -= oldTokens - estimateMsgTokens(msg);
           }
         }
       }
@@ -1201,9 +1191,9 @@ class DefaultAgent implements AgentService {
     for (let i = 1; i < result.length - 1; i++) {
       if (estimated <= budget) break;
       if (result[i].role === 'tool' && result[i].content && result[i].content!.length > 1500) {
-        const oldTokens = this.estimateMsgTokens(result[i]);
+        const oldTokens = estimateMsgTokens(result[i]);
         result[i].content = `${result[i].content!.slice(0, 500)}\n... [工具输出已截断]`;
-        estimated -= oldTokens - this.estimateMsgTokens(result[i]);
+        estimated -= oldTokens - estimateMsgTokens(result[i]);
       }
     }
     if (estimated <= budget) return result;
@@ -1225,11 +1215,11 @@ class DefaultAgent implements AgentService {
       for (let k = 0; k < rcIndices.length && estimated > budget; k++) {
         const idx = rcIndices[k];
         const msg = result[idx];
-        const oldTokens = this.estimateMsgTokens(msg);
+        const oldTokens = estimateMsgTokens(msg);
         // 所有条目统一保留头部 200 字符（最新条保留稍多以保持上下文连贯性）
         const keepLen = k < rcIndices.length - 1 ? 200 : 400;
         msg.reasoningContent = `${msg.reasoningContent!.slice(0, keepLen)}\n... [推理内容已缩减]`;
-        estimated -= oldTokens - this.estimateMsgTokens(msg);
+        estimated -= oldTokens - estimateMsgTokens(msg);
       }
     }
     if (estimated <= budget) return result;
@@ -1258,7 +1248,7 @@ class DefaultAgent implements AgentService {
         let groupTokens = 0;
         const toolPreviews: string[] = [];
         for (let j = start; j < end; j++) {
-          groupTokens += this.estimateMsgTokens(result[j]);
+          groupTokens += estimateMsgTokens(result[j]);
           if (result[j].role === 'tool') {
             const c = result[j].content ?? '';
             toolPreviews.push(c.length > 100 ? `${c.slice(0, 100)}...` : c);
@@ -1273,7 +1263,7 @@ class DefaultAgent implements AgentService {
         if (aMsg.content) text = `${aMsg.content}\n${text}`;
 
         const summaryMsg: Message = { role: 'assistant', content: text };
-        const summaryTokens = this.estimateMsgTokens(summaryMsg);
+        const summaryTokens = estimateMsgTokens(summaryMsg);
 
         // 仅在确实能节省 token 时压缩
         if (summaryTokens < groupTokens) {
@@ -1331,18 +1321,18 @@ class DefaultAgent implements AgentService {
         }
         // assistant(含toolCalls) + 紧跟的 tool 消息成组删除
         if (result[i].role === 'assistant' && result[i].toolCalls?.length) {
-          estimated -= this.estimateMsgTokens(result[i]);
+          estimated -= estimateMsgTokens(result[i]);
           result.splice(i, 1);
           adjustAfterSplice(i);
           while (i < result.length - 1 && result[i].role === 'tool') {
             if (lastGroupIndices.has(i)) break;
-            estimated -= this.estimateMsgTokens(result[i]);
+            estimated -= estimateMsgTokens(result[i]);
             result.splice(i, 1);
             adjustAfterSplice(i);
           }
           continue;
         }
-        estimated -= this.estimateMsgTokens(result[i]);
+        estimated -= estimateMsgTokens(result[i]);
         result.splice(i, 1);
         adjustAfterSplice(i);
       }
@@ -1357,7 +1347,7 @@ class DefaultAgent implements AgentService {
       const sysIdx = findSystemIndices();
       for (let j = sysIdx.length - 1; j >= 0 && estimated > budget; j--) {
         const idx = sysIdx[j];
-        estimated -= this.estimateMsgTokens(result[idx]);
+        estimated -= estimateMsgTokens(result[idx]);
         result.splice(idx, 1);
       }
     }
@@ -1379,7 +1369,7 @@ class DefaultAgent implements AgentService {
         }
       }
       result.splice(insertIdx, 0, hint);
-      estimated += this.estimateMsgTokens(hint);
+      estimated += estimateMsgTokens(hint);
     }
 
     if (result.length < messages.length) {
