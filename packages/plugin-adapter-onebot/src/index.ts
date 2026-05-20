@@ -1,5 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { FlowControlService } from '@aalis/plugin-flow-control';
+import type { FlowControlService } from '@aalis/plugin-flow-control-api';
 import type { MediaService } from '@aalis/plugin-media-api';
 import { AttachmentRefKind, formatAttachmentRef, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
