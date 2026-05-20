@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
@@ -53,7 +52,13 @@ function recentDelegationKey(targetSessionId: string, taskHash: string): string 
 }
 
 function hashTask(task: string): string {
-  return createHash('sha1').update(task.trim()).digest('hex').slice(0, 12);
+  // djb2 (xor variant)：非密码学，零依赖，仅用于 60s 内区分 task 文本
+  const s = task.trim();
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (((h << 5) + h) ^ s.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 function pruneRecentDelegations(now: number): void {
