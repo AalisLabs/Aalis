@@ -143,6 +143,20 @@ export interface IncomingMessage {
   groupName?: string;
   /** 群组 ID（直接字段，无需从 sessionId 解析） */
   groupId?: string;
+  /**
+   * 群聊中发送者在群内的角色：owner=群主, admin=管理员, member=普通成员。
+   * 仅群聊有效，由适配器从平台消息 sender 字段或主动查询填充。
+   */
+  senderRole?: 'owner' | 'admin' | 'member';
+  /** 群聊中发送者的专属头衔（如 "群主"、"打卡王" 等），仅群聊有效。 */
+  senderTitle?: string;
+  /**
+   * 群聊中 self 账号（机器人自身）在该群内的角色。
+   * 适配器应在群消息处理时主动查询（带缓存）并填充，用于让 agent 正确认知自身权限。
+   */
+  selfRole?: 'owner' | 'admin' | 'member';
+  /** 群聊中 self 账号的专属头衔（如有）。 */
+  selfTitle?: string;
   /** 引用回复的原消息 */
   replyTo?: {
     messageId: string;

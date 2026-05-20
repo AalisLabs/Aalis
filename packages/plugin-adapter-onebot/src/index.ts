@@ -792,6 +792,52 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
+  // ----- self 群身份缓存 -----
+
+  interface SelfMemberInfo {
+    role?: 'owner' | 'admin' | 'member';
+    title?: string;
+    fetchedAt: number;
+  }
+  /** key = `${selfId}:${groupId}` */
+  const selfMemberInfoCache = new Map<string, SelfMemberInfo>();
+  const SELF_MEMBER_CACHE_TTL = 10 * 60 * 1000; // 10 分钟
+
+  /**
+   * 获取 self 账号在指定群内的角色与头衔（带缓存）。
+   * 用于把"自己是管理员"等关键身份信息注入到 system prompt，
+   * 避免 LLM 误以为自己只是普通群员。
+   */
+  async function getSelfMemberInfo(
+    state: ConnectionState,
+    selfId: string,
+    groupId: string,
+  ): Promise<SelfMemberInfo | null> {
+    const key = `${selfId}:${groupId}`;
+    const cached = selfMemberInfoCache.get(key);
+    if (cached && Date.now() - cached.fetchedAt < SELF_MEMBER_CACHE_TTL) return cached;
+
+    try {
+      const data = (await sendAction(state, 'get_group_member_info', {
+        group_id: Number(groupId) || groupId,
+        user_id: Number(selfId) || selfId,
+      })) as Record<string, unknown>;
+      const rawRole = data.role;
+      const role: SelfMemberInfo['role'] =
+        rawRole === 'owner' || rawRole === 'admin' || rawRole === 'member' ? rawRole : undefined;
+      const rawTitle = data.title;
+      const title = typeof rawTitle === 'string' && rawTitle.length > 0 ? rawTitle : undefined;
+      const info: SelfMemberInfo = { role, title, fetchedAt: Date.now() };
+      selfMemberInfoCache.set(key, info);
+      return info;
+    } catch (err) {
+      ctx.logger.debug(
+        `获取 self 群身份失败 (selfId=${selfId} groupId=${groupId}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
   /** 获取用户昵称（群聊优先取群名片，私聊取陌生人昵称） */
   async function resolveNickname(
     state: ConnectionState,
@@ -1595,6 +1641,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
       }
 
+      // 群消息：拉取 self 在该群的角色/头衔（带缓存），让 agent 正确认知自身权限
+      let selfRole: 'owner' | 'admin' | 'member' | undefined;
+      let selfTitle: string | undefined;
+      if (sessionType === 'group' && event.groupId && state.selfId) {
+        const selfInfo = await getSelfMemberInfo(state, state.selfId, event.groupId);
+        if (selfInfo) {
+          selfRole = selfInfo.role;
+          selfTitle = selfInfo.title;
+        }
+      }
+
       ctx.emit('inbound:message', {
         content: event.text,
         sessionId,
@@ -1618,6 +1675,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         sessionType,
         groupName,
         groupId: event.groupId,
+        senderRole: event.senderRole,
+        senderTitle: event.senderTitle,
+        selfRole,
+        selfTitle,
         replyTo,
         // triggerType 由 trigger-policy 在 inbound:trigger 相位中填充
       });
