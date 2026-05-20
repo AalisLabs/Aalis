@@ -234,7 +234,6 @@ ctx.onDispose(() => {
 ```typescript
 ctx.onDispose(() => {
   ctx.serviceContainer.unregister('mysvc');     // 已自动处理
-  ctx.eventBus.off('foo', handler);              // ctx.on() 已自动处理
   ctx.hooks.unregister('bar', handler);          // ctx.middleware() 已自动处理
 });
 ```
@@ -332,7 +331,7 @@ it('should activate when its dependencies are present', async () => {
 - `await` 永久阻塞（apply 必须返回，否则 PluginManager 卡住）
 - 直接修改全局 process 状态（`process.env`、信号 handler）
 - 跨插件 import 实现细节（应只 import `@aalis/plugin-xxx-api`）
-- `ctx.serviceContainer.register(...)` / `ctx.eventBus.on(...)` 等绕过自动清理的低层 API（仅供桥接/诊断用）
+- `ctx.serviceContainer.register(...)` 等绕过自动清理的低层 API（仅供桥接/诊断用）
 - 在 apply 内 throw —— 用 `ctx.logger.error` + 优雅降级；throw 会让你的 entry 进 `error` 态直到下次配置变更
 
 ---

@@ -21,7 +21,7 @@
 | `hooks` | `HookRegistry` | 钩子管道注册表（中间件底层） |
 | `disposed` | `boolean` | 是否已销毁 |
 
-> ⚠️ `ctx.eventBus` 和 `ctx.serviceContainer` 标 `@internal`，仅 core 自身与 `plugin-doctor`/`plugin-authority` 等高级巡视类插件使用。**业务插件不要直接访问** —— 走 `ctx.on/emit/provide/getService` 等公共 API，副作用才能进入自动清理链。
+> ⚠️ `ctx.serviceContainer` 标 `@internal`，仅 core 自身（如 `plugin-activation` 检查 provides 完整性）使用。**业务插件不要直接访问** —— 走 `ctx.on/emit/provide/getService/getServiceEntries` 等公共 API，副作用才能进入自动清理链。
 
 ## 按场景选 API（速查）
 
