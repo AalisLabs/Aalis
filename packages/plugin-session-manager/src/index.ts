@@ -756,6 +756,7 @@ class SessionManager implements SessionManagerService {
 
     if (!contextStr.trim()) return undefined;
 
+    let title: string | undefined;
     try {
       const resp = await llm.chat({
         messages: [
@@ -766,21 +767,35 @@ class SessionManager implements SessionManagerService {
           },
           { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
-        maxTokens: 50,
+        // 思考模型可能耗光 token，给 200 余量保证 content 有内容
+        maxTokens: 200,
         temperature: 0.3,
+        // 关闭 thinking：标题生成无需推理，避免 reasoning 占满 tokens 导致 content 为空
+        think: false,
       });
-      const title = (resp.content || '').trim().slice(0, 50);
-      if (title) {
-        session.title = title;
-        session.updatedAt = Date.now();
-        this.markDirty();
-        await this.ctx.emit('session:updated', session);
-        this.ctx.logger.info(`会话标题已生成: [${sessionId}] ${title}`);
-        return title;
+      title = (resp.content || '').trim().slice(0, 50);
+      if (!title) {
+        this.ctx.logger.warn(
+          `会话标题 LLM 返回空内容: ${sessionId} (resp.content=${JSON.stringify(resp.content)}, reasoning=${(resp.reasoningContent ?? '').length}字)`,
+        );
       }
-      this.ctx.logger.warn(`会话标题为空字符串，跳过: ${sessionId} (resp.content=${JSON.stringify(resp.content)})`);
     } catch (err) {
       this.ctx.logger.warn(`自动生成标题失败 [${sessionId}]:`, err);
+    }
+
+    // 兜底：LLM 失败或返回空时，用用户消息首段作为临时标题，避免会话永远没有标题
+    if (!title && userMessage?.trim()) {
+      title = userMessage.trim().replace(/\s+/g, ' ').slice(0, 20);
+      this.ctx.logger.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
+    }
+
+    if (title) {
+      session.title = title;
+      session.updatedAt = Date.now();
+      this.markDirty();
+      await this.ctx.emit('session:updated', session);
+      this.ctx.logger.info(`会话标题已生成: [${sessionId}] ${title}`);
+      return title;
     }
     return undefined;
   }
