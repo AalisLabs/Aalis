@@ -359,6 +359,10 @@ export class App {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
     const strategy = this.restartStrategy;
+    // 防御性清掉 sticky 'ready'：strategy 可能走"快速重启"路径不调 stop()，
+    // 此时新一轮启动期间的早期订阅者会收到上一轮的 sticky ready 信号。
+    // stop() 内部会再清一次，重复调用无副作用。
+    this.events.clearSticky('ready');
     this.ctx
       .emit('restarting')
       .then(() => strategy.restart({ stop: () => this.stop() }))
