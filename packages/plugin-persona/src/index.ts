@@ -130,6 +130,14 @@ class PersonaServiceImpl implements PersonaService {
   currentNickname?: string;
   /** 当前群名称（仅群聊时可用） */
   currentGroupName?: string;
+  /** 当前群中 self 账号的角色（owner/admin/member），仅群聊有效 */
+  currentSelfRole?: 'owner' | 'admin' | 'member';
+  /** 当前群中 self 账号的专属头衔，仅群聊有效 */
+  currentSelfTitle?: string;
+  /** 当前群中消息发送者的角色，仅群聊有效 */
+  currentSenderRole?: 'owner' | 'admin' | 'member';
+  /** 当前群中消息发送者的专属头衔，仅群聊有效 */
+  currentSenderTitle?: string;
 
   constructor(
     card: PersonaCard,
@@ -305,6 +313,15 @@ class PersonaServiceImpl implements PersonaService {
         prompt += '会话类型：群聊\n';
         if (this.currentGroupName) prompt += `群名称：${this.currentGroupName}\n`;
         if (groupId) prompt += `群号：${groupId}\n`;
+        // 自身群身份（关键：避免 LLM 误以为自己是普通群员）
+        if (this.currentSelfRole) {
+          const roleLabel =
+            this.currentSelfRole === 'owner' ? '群主' : this.currentSelfRole === 'admin' ? '管理员' : '普通成员';
+          prompt += `你在该群的身份：${roleLabel}\n`;
+        }
+        if (this.currentSelfTitle) {
+          prompt += `你在该群的专属头衔：${this.currentSelfTitle}\n`;
+        }
       } else if (this.currentSessionType === 'private') {
         prompt += '会话类型：私聊\n';
       } else if (this.currentSessionType === 'channel') {
@@ -315,6 +332,14 @@ class PersonaServiceImpl implements PersonaService {
       }
       if (this.currentNickname) {
         prompt += `当前消息发送者昵称：${this.currentNickname}\n`;
+      }
+      if (this.currentSenderRole) {
+        const senderRoleLabel =
+          this.currentSenderRole === 'owner' ? '群主' : this.currentSenderRole === 'admin' ? '管理员' : '普通成员';
+        prompt += `当前消息发送者群身份：${senderRoleLabel}\n`;
+      }
+      if (this.currentSenderTitle) {
+        prompt += `当前消息发送者群头衔：${this.currentSenderTitle}\n`;
       }
       prompt +=
         '短期历史范围：上下文中的历史消息均来自当前会话，即上述群聊/私聊/频道；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
@@ -531,6 +556,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     service.currentUserId = data.message.userId;
     service.currentNickname = data.message.nickname;
     service.currentGroupName = data.message.groupName;
+    service.currentSelfRole = data.message.selfRole;
+    service.currentSelfTitle = data.message.selfTitle;
+    service.currentSenderRole = data.message.senderRole;
+    service.currentSenderTitle = data.message.senderTitle;
 
     try {
       await next();
@@ -544,6 +573,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       service.currentUserId = undefined;
       service.currentNickname = undefined;
       service.currentGroupName = undefined;
+      service.currentSelfRole = undefined;
+      service.currentSelfTitle = undefined;
+      service.currentSenderRole = undefined;
+      service.currentSenderTitle = undefined;
     }
   });
 
