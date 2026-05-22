@@ -61,6 +61,13 @@ export const configSchema: ConfigSchema = {
     default: 0,
     description: '旧版兼容字段，不再使用——现在所有文件都持久化到 pluginData。',
   },
+  historyHintEnabled: {
+    type: 'boolean',
+    label: '在本轮无新上传时注入历史文件清单提示',
+    default: true,
+    description:
+      '开启后：仅当会话中存在历史上传文件且本轮没有新上传时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时跳过注入（user message 里已有 【文件: ...】 描述）以节省 token。',
+  },
 };
 
 export const defaultConfig = {
@@ -70,6 +77,7 @@ export const defaultConfig = {
   retentionDays: 30,
   lruMaxTotalMB: 500,
   fileRetentionMinutes: 0,
+  historyHintEnabled: true,
 };
 
 // ===== 支持的文件类型 =====
@@ -159,6 +167,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const toolDefaultMaxLength = (config.toolDefaultMaxLength as number) ?? 50000;
   const retentionDays = (config.retentionDays as number) ?? 30;
   const lruMaxTotalBytes = ((config.lruMaxTotalMB as number) ?? 500) * 1024 * 1024;
+  const historyHintEnabled = (config.historyHintEnabled as boolean | undefined) ?? true;
+  const HISTORY_HINT_SOURCE = 'file-reader-history';
 
   const _storage = ctx.getService<StorageService>('storage');
   if (!_storage) {
@@ -642,7 +652,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     try {
       const text = await extractText(entry);
       if (!text.startsWith('[不支持') && !text.startsWith('[PDF 无') && text.length <= autoInlineLimit) {
-        return `[文件: ${entry.name}]\n--- 文件内容 ---\n${text}\n--- 文件内容结束 ---`;
+        // 带 ID 是为了后续轮模型可复用（调 read_uploaded_file 重读 / 在历史清单里对应）
+        return `[文件: ${entry.name} (ID: ${entry.id})]\n--- 文件内容 ---\n${text}\n--- 文件内容结束 ---`;
       }
       return `[文件: ${entry.name} (ID: ${entry.id}，${(entry.size / 1024).toFixed(1)} KB)\n说明：内容较长，请用 ${TOOL_READ}(fileId="${entry.id}") 工具按需读取，可传 maxLength 控制返回长度。]`;
     } catch {
@@ -659,6 +670,60 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     });
   } else {
     useAgent(ctx).registerPreprocessor('file-reader', preprocessFiles);
+  }
+
+  // ===== 历史文件提示注入（agent:llm:before） =====
+  // 仅在「会话有历史文件」且「本轮没有新上传」时注入一条 system 提示，提醒模型
+  // 可用 list_uploaded_files / read_uploaded_file 复用历史文件，避免「上传完下一
+  // 轮就忘」。判定「本轮无新上传」：扫描最后一条 user message content 是否出现
+  // 由 preprocessFiles 生成的 `[文件:` 前缀；若有说明本轮 user message 已经把
+  // 新文件描述带上了，无需重复注入。
+  if (historyHintEnabled) {
+    ctx.middleware('agent:llm:before', async (data, next) => {
+      if (!data.sessionId) {
+        await next();
+        return;
+      }
+      // 防止多轮 tool-call 中重复注入
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === HISTORY_HINT_SOURCE)) {
+        await next();
+        return;
+      }
+      const files = [...index.values()]
+        .filter(e => e.sessionId === data.sessionId)
+        .sort((a, b) => b.uploadedAt - a.uploadedAt);
+      if (files.length === 0) {
+        await next();
+        return;
+      }
+      // 本轮是否有新上传：最后一条 user message 是否含 `[文件:` 标记
+      let lastUserContent = '';
+      for (let i = data.messages.length - 1; i >= 0; i--) {
+        if (data.messages[i].role === 'user') {
+          const c = data.messages[i].content;
+          lastUserContent = typeof c === 'string' ? c : JSON.stringify(c);
+          break;
+        }
+      }
+      if (lastUserContent.includes('[文件:')) {
+        await next();
+        return;
+      }
+      const lines = files.map(
+        f =>
+          `- ${f.name} (ID: ${f.id}, ${f.mimeType}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
+      );
+      const block = `📎 本会话历史上传文件 (${files.length} 个，当前轮次未新上传)：\n${lines.join('\n')}\n\n如需引用上述文件内容，请调用 ${TOOL_READ}(fileId="...") 读取；列出请用 ${TOOL_LIST}。`;
+      const idx = data.messages.findIndex(m => m.role !== 'system');
+      const insertIdx = idx === -1 ? data.messages.length : idx;
+      data.messages.splice(insertIdx, 0, {
+        role: 'system',
+        content: block,
+        metadata: { source: HISTORY_HINT_SOURCE },
+      });
+      ctx.logger.debug(`file-reader: 已注入历史文件提示 (${files.length} 个, session=${data.sessionId})`);
+      await next();
+    });
   }
 
   // ===== 暴露 file-reader 服务 =====
