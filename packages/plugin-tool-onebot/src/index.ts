@@ -1497,33 +1497,60 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
       type: 'function',
       function: {
         name: 'onebot_poke',
-        description: '在群聊中戳一戳指定用户（双击头像效果）。可传 group_id 跨群操作。',
+        description: '戳一戳（双击头像效果）。群聊默认戳当前群里指定用户；私聊默认戳对方（user_id 可省）。',
         parameters: {
           type: 'object',
           properties: {
-            user_id: { type: 'string', description: '要戳的用户QQ号' },
-            group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            user_id: {
+              type: 'string',
+              description: '要戳的用户QQ号。群聊必填；私聊省略则戳当前对话对方。',
+            },
+            group_id: {
+              type: 'string',
+              description: '可选：目标群号。群聊省略则使用当前群；如显式传值则跨群操作。',
+            },
           },
-          required: ['user_id'],
         },
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
-      // 不同 OneBot 实现的戳一戳 API 可能不同，依次尝试
-      try {
-        await callAction(ctx, selfId, 'group_poke', {
-          group_id: Number(groupId),
-          user_id: Number(args.user_id),
-        });
-      } catch {
-        // NapCat 等实现使用不同的 action 名
-        await callAction(ctx, selfId, 'send_group_poke', {
-          group_id: Number(groupId),
-          user_id: Number(args.user_id),
-        });
+      const selfId = resolveSelfId(ctx, callCtx, args);
+      const parsed = parseOneBotSession(callCtx.sessionId);
+      const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
+      const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
+
+      // 1) 群聊场景：显式 group_id 或当前是群会话
+      const groupId = argGroupId || (parsed?.detailType === 'group' ? parsed.targetId : '');
+      if (groupId) {
+        if (!argUserId) {
+          throw new Error('群聊戳一戳必须显式提供 user_id（要戳的对象）。');
+        }
+        try {
+          await callAction(ctx, selfId, 'group_poke', {
+            group_id: Number(groupId),
+            user_id: Number(argUserId),
+          });
+        } catch {
+          await callAction(ctx, selfId, 'send_group_poke', {
+            group_id: Number(groupId),
+            user_id: Number(argUserId),
+          });
+        }
+        return `已在群 ${groupId} 戳了 ${argUserId} 一下`;
       }
-      return `已戳了 ${args.user_id} 一下`;
+
+      // 2) 私聊场景：从 user_id 或当前私聊会话对方取目标
+      const userId = argUserId || (parsed?.detailType === 'private' ? parsed.targetId : '');
+      if (!userId) {
+        throw new Error('无法判断戳一戳目标：当前不在 OneBot 会话内，请显式传入 group_id+user_id 或 user_id。');
+      }
+      // NapCat: friend_poke { user_id }；其他实现可能用 send_poke
+      try {
+        await callAction(ctx, selfId, 'friend_poke', { user_id: Number(userId) });
+      } catch {
+        await callAction(ctx, selfId, 'send_poke', { user_id: Number(userId) });
+      }
+      return `已戳了 ${userId} 一下`;
     },
   });
 
