@@ -1,3 +1,5 @@
+import { inspect } from 'node:util';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
@@ -131,7 +133,13 @@ export class Logger {
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
 
     const timestamp = new Date().toISOString().slice(11, 23);
-    const entry: LogEntry = { timestamp, level, scope: this.scope, message };
+    // 将额外参数（错误对象、上下文等）序列化并拼到 message 末尾，避免被 sink 丢弃。
+    // Error 由 util.inspect 自动展开 name / message / stack；其他值走 util.inspect 默认渲染。
+    const tail =
+      args.length === 0
+        ? ''
+        : ` ${args.map(a => (typeof a === 'string' ? a : inspect(a, { depth: 4, breakLength: 120 }))).join(' ')}`;
+    const entry: LogEntry = { timestamp, level, scope: this.scope, message: `${message}${tail}` };
     this.hub.push(entry, args);
   }
 }
