@@ -5067,3 +5067,47 @@ td.col-actions { text-align: right; }
   from { opacity: 0; transform: translateX(-50%) translateY(10px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* ===== Mermaid 流程图渲染 ===== */
+.mermaid-block {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-block-loading {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.mermaid-block-error {
+  flex-direction: column;
+  align-items: stretch;
+  background: rgba(255, 87, 87, 0.06);
+  border-color: rgba(255, 87, 87, 0.3);
+}
+
+.mermaid-error-banner {
+  color: #ff8a8a;
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: rgba(255, 87, 87, 0.1);
+  border-radius: 4px;
+}
+
+.mermaid-block-error pre {
+  margin: 0;
+  background: transparent;
+}
+
