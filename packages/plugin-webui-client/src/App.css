@@ -1045,6 +1045,122 @@ body {
   flex-shrink: 0;
 }
 
+/* ===== 已上传文件抽屉 ===== */
+.uploaded-files-drawer {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  width: 380px;
+  max-width: calc(100% - 24px);
+  max-height: 60vh;
+  background: var(--bg, #1c1c1e);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.uploaded-files-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+}
+.uploaded-files-drawer-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.uploaded-files-drawer-actions {
+  display: flex;
+  gap: 4px;
+}
+.uploaded-files-drawer-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.uploaded-files-drawer-btn:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.08));
+  color: var(--text);
+}
+.uploaded-files-drawer-btn.danger:hover {
+  color: #ff6b6b;
+}
+.uploaded-files-drawer-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.uploaded-files-drawer-body {
+  overflow-y: auto;
+  padding: 6px;
+}
+.uploaded-files-drawer-empty,
+.uploaded-files-drawer-error {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.uploaded-files-drawer-error {
+  color: #ff6b6b;
+}
+.uploaded-files-drawer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+}
+.uploaded-files-drawer-item:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.04));
+}
+.uploaded-files-drawer-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.uploaded-files-drawer-info {
+  flex: 1;
+  min-width: 0;
+}
+.uploaded-files-drawer-name {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uploaded-files-drawer-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.uploaded-files-drawer-id {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uploaded-files-drawer-btn .spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ===== Token 使用量徽章 ===== */
 .token-usage-badge {
   position: relative;
