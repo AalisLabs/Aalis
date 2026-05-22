@@ -1,9 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeHighlight from 'rehype-highlight';
-import rehypeKatex from 'rehype-katex';
 import { BrainCircuit, Wrench } from 'lucide-react';
 import { pageAction } from '../api';
 import { buildChatMessages } from '../useSessionManager';
@@ -11,9 +7,7 @@ import { useDetailStream } from '../useDetailStream';
 import type { RawMessage } from '../useSessionManager';
 import type { ChatMessage, ContentSegment } from '../types';
 import { preprocessLaTeX } from '../preprocessLaTeX';
-
-const REMARK_PLUGINS = [remarkGfm, remarkMath];
-const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
+import { REMARK_PLUGINS, REHYPE_PLUGINS, MARKDOWN_COMPONENTS } from '../components/markdownConfig';
 
 // ===== 类型 =====
 
@@ -780,7 +774,7 @@ function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: Ses
                             <details key={`r-${i}`} className="thinking-block" open>
                               <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
                               <div className="thinking-content">
-                                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
                                   {preprocessLaTeX(text)}
                                 </ReactMarkdown>
                               </div>
@@ -809,7 +803,7 @@ function DetailSegment({ seg }: { seg: ContentSegment }) {
   if (seg.type === 'text' || seg.type === 'reasoning_text') {
     return seg.content ? (
       <div className="detail-text-segment">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {preprocessLaTeX(seg.content)}
         </ReactMarkdown>
       </div>
@@ -870,7 +864,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
             <details key={`r-${i}`} className="thinking-block">
               <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
               <div className="thinking-content">
-                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
                   {preprocessLaTeX(text)}
                 </ReactMarkdown>
               </div>
@@ -898,7 +892,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
     <details className="thinking-block">
       <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
       <div className="thinking-content">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {preprocessLaTeX(msg.reasoningContent)}
         </ReactMarkdown>
       </div>
@@ -910,7 +904,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
       <div className="detail-msg-role">{roleLabel}</div>
       {fallbackThinking}
       <div className="detail-msg-content detail-msg-md">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {msg.content}
         </ReactMarkdown>
       </div>

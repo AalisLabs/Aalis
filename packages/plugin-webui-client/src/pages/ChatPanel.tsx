@@ -2,20 +2,13 @@ import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
 import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle, History } from 'lucide-react';
 import { pageAction, getSessionId, proxiedMediaUrl } from '../api';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeHighlight from 'rehype-highlight';
-import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../types';
 import type { MutableRefObject } from 'react';
 import type { TokenUsageData } from '../useWebSocket';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 import { formatChatTime } from '../utils/dateFormat';
-
-// 模块级常量：避免每次渲染创建新数组引用，防止 ReactMarkdown 不必要地重解析
-const REMARK_PLUGINS = [remarkGfm, remarkMath];
-const REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
+import { REMARK_PLUGINS, REHYPE_PLUGINS, MARKDOWN_COMPONENTS } from '../components/markdownConfig';
 
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
@@ -242,7 +235,7 @@ function JsonField({ fieldKey, value }: { fieldKey: string; value: unknown }) {
       <span className="json-field-label">{label}</span>
       {isReply ? (
         <div className="json-field-value json-field-value-md">
-          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
             {preprocessLaTeX(strValue)}
           </ReactMarkdown>
         </div>
@@ -283,7 +276,7 @@ function StreamingJsonView({ fields }: { fields: PartialField[] }) {
             {f.keyDone && (
               isReply && f.value ? (
                 <div className="json-field-value json-field-value-md">
-                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
                     {preprocessLaTeX(f.value)}
                   </ReactMarkdown>
                   {showCursor && <span className="streaming-cursor" />}
@@ -313,7 +306,7 @@ const AssistantContent = memo(function AssistantContent({ content }: { content: 
     return null;
   }
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
       {preprocessLaTeX(content)}
     </ReactMarkdown>
   );
@@ -508,7 +501,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
                     <details key={`r-${i}`} className="thinking-block">
                       <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
                       <div className="thinking-content">
-                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
                           {preprocessLaTeX(text)}
                         </ReactMarkdown>
                       </div>
@@ -537,7 +530,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
           <details className="thinking-block">
             <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
             <div className="thinking-content">
-              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
                 {preprocessLaTeX(msg.reasoningContent)}
               </ReactMarkdown>
             </div>
