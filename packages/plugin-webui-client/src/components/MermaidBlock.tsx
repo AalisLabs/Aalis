@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 
 type MermaidApi = {
   initialize: (opts: Record<string, unknown>) => void;
+  parse: (src: string, opts?: { suppressErrors?: boolean }) => Promise<unknown>;
   render: (id: string, src: string) => Promise<{ svg: string }>;
 };
 
@@ -26,6 +27,16 @@ function loadMermaid(): Promise<MermaidApi> {
   return mermaidPromise;
 }
 
+/** mermaid.render 失败时会在 <body> 末尾遗留临时 DOM（id 为我们传入的 id，
+ * 或形如 `d${id}` 的兄弟节点，内含 "Syntax error in text" 大字 SVG）。
+ * 主动清理掉，避免在页面底部出现错误图。 */
+function cleanupMermaidArtifacts(id: string) {
+  if (typeof document === 'undefined') return;
+  for (const sel of [`#${id}`, `#d${id}`, `#${id}-temp`]) {
+    document.querySelectorAll(sel).forEach((el) => el.remove());
+  }
+}
+
 let counter = 0;
 
 function MermaidBlockImpl({ chart }: { chart: string }) {
@@ -35,6 +46,7 @@ function MermaidBlockImpl({ chart }: { chart: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    const id = idRef.current;
     const src = chart.trim();
     if (!src) {
       setSvg(null);
@@ -42,13 +54,20 @@ function MermaidBlockImpl({ chart }: { chart: string }) {
       return;
     }
     loadMermaid()
-      .then((m) => m.render(idRef.current, src))
+      .then(async (m) => {
+        // 先 parse 预校验：parse 不写入 DOM，能在错误时直接抛出，
+        // 避免 render 在 body 末尾留下残留错误 SVG。
+        await m.parse(src);
+        return m.render(id, src);
+      })
       .then(({ svg }) => {
         if (cancelled) return;
         setSvg(svg);
         setError(null);
       })
       .catch((e: unknown) => {
+        // 双保险：parse 漏过的、或 render 中途失败时，主动清理残留节点。
+        cleanupMermaidArtifacts(id);
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : String(e);
         setError(msg);
@@ -56,6 +75,7 @@ function MermaidBlockImpl({ chart }: { chart: string }) {
       });
     return () => {
       cancelled = true;
+      cleanupMermaidArtifacts(id);
     };
   }, [chart]);
 
