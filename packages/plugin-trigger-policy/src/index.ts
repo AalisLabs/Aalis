@@ -82,6 +82,11 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
           reason: `scope 不在触发策略名单内 (${message.platform ?? '?'}:${message.sessionType ?? '?'})`,
         };
       }
+      // 特殊通知事件（poke 等）视同 @ 直触发：能进到这里说明 adapter 已经判断过
+      // 目标是 bot（私聊 poke 全部回复 / 群聊 poke 仅在 target=self 时才转成 inbound）。
+      if (message.noticeType === 'poke') {
+        return { kind: 'immediate', reason: 'poke notice' };
+      }
       if (checkImmediateTrigger(ctx, cfg, message.content)) {
         return { kind: 'immediate', reason: '@/name match' };
       }
