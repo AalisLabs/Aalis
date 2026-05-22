@@ -93,7 +93,7 @@ export const configSchema: ConfigSchema = {
         browsable: false,
         readable: true,
         writable: true,
-        deletable: false,
+        deletable: true,
       },
       {
         name: 'logs',
@@ -179,7 +179,7 @@ export const defaultConfig = {
       browsable: false,
       readable: true,
       writable: true,
-      deletable: false,
+      deletable: true,
     },
     {
       name: 'logs',
