@@ -6,6 +6,7 @@ import { useAgent } from '@aalis/plugin-agent-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
@@ -164,7 +165,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.logger.error('storage 服务不可用，file-reader 无法启动');
     return;
   }
-  const storage: StorageService = _storage;
+  // 每个 storage root 是独立 entry；file-reader 跳跨使用 pluginData:/ 必须走 gateway
+  // 路由，否则 scoped entry 会报 'URI 根 "pluginData" 不属于本 entry'。
+  const storage: StorageService = createStorageGateway(ctx);
 
   // 启动时确保根目录存在（写一个 placeholder 然后立即删——避免目录不存在导致 list 失败）
   try {
