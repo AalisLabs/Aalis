@@ -1,5 +1,3 @@
-import { inspect } from 'node:util';
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
@@ -133,13 +131,45 @@ export class Logger {
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
 
     const timestamp = new Date().toISOString().slice(11, 23);
-    // 将额外参数（错误对象、上下文等）序列化并拼到 message 末尾，避免被 sink 丢弃。
-    // Error 由 util.inspect 自动展开 name / message / stack；其他值走 util.inspect 默认渲染。
-    const tail =
-      args.length === 0
-        ? ''
-        : ` ${args.map(a => (typeof a === 'string' ? a : inspect(a, { depth: 4, breakLength: 120 }))).join(' ')}`;
+    // 将额外参数（错误对象 / 上下文等）序列化并拼到 message 末尾，
+    // 避免 sink 只读 message 时丢失错误细节。**保持运行时中立**：只用纯 ES
+    // 原语，不依赖 node:util / window 等任何宿主 API。
+    const tail = args.length === 0 ? '' : ` ${args.map(stringifyArg).join(' ')}`;
     const entry: LogEntry = { timestamp, level, scope: this.scope, message: `${message}${tail}` };
     this.hub.push(entry, args);
   }
+}
+
+/**
+ * 把 logger.xxx(message, ...args) 里的 args 元素渲染成字符串。
+ *
+ * 设计目标：**零运行时依赖**——只用 ECMAScript 标准原语，Node/Deno/Bun/Browser
+ * 都能跑。需要 `util.inspect` 级别的深度对象渲染时，由外层 sink 自行处理
+ * （sink 可订阅 LogHub 后用宿主 API 二次格式化）。
+ *
+ * - `Error` / 任何带 `stack` 的对象：尽量打印 stack；否则退化为 name + message
+ * - `string`：原样
+ * - `null` / `undefined` / 原始值：`String(v)`
+ * - 普通对象 / 数组：尝试 `JSON.stringify`，遇到循环引用或不可序列化值时退化
+ *   为 `String(v)`（一般得到 `[object Object]`，但至少不会抛）
+ */
+function stringifyArg(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return String(value);
+  if (value instanceof Error) {
+    const head = `${value.name}: ${value.message}`;
+    return value.stack ? value.stack : head;
+  }
+  // 鸭子类型：异步链路里 Error 可能跨 realm，instanceof 失效；只要含 stack 就尽量打 stack
+  if (typeof value === 'object' && typeof (value as { stack?: unknown }).stack === 'string') {
+    return (value as { stack: string }).stack;
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 }
