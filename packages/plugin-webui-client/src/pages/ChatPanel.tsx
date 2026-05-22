@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle, History } from 'lucide-react';
+import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle, History, FolderOpen } from 'lucide-react';
 import { pageAction, getSessionId, proxiedMediaUrl } from '../api';
 import ReactMarkdown from 'react-markdown';
 import 'katex/dist/katex.min.css';
@@ -9,6 +9,7 @@ import type { TokenUsageData } from '../useWebSocket';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 import { formatChatTime } from '../utils/dateFormat';
 import { REMARK_PLUGINS, REHYPE_PLUGINS, MARKDOWN_COMPONENTS } from '../components/markdownConfig';
+import { UploadedFilesDrawer } from '../components/UploadedFilesDrawer';
 
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
@@ -817,6 +818,7 @@ export function ChatPanel({
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const [showTokenPanel, setShowTokenPanel] = useState(false);
+  const [showUploadedFiles, setShowUploadedFiles] = useState(false);
   const compressStartTime = useRef(0);
   const compressEndTime = useRef(0);
 
@@ -1141,8 +1143,21 @@ export function ChatPanel({
           {onNewSession && (
             <button className="chat-panel-new-btn" onClick={onNewSession} title="新对话">+</button>
           )}
+          <button
+            className="chat-panel-new-btn"
+            onClick={() => setShowUploadedFiles(v => !v)}
+            title="已上传的文件"
+            aria-label="已上传的文件"
+          >
+            <FolderOpen size={14} />
+          </button>
         </div>
       </div>
+      <UploadedFilesDrawer
+        open={showUploadedFiles}
+        onClose={() => setShowUploadedFiles(false)}
+        sessionId={getSessionId()}
+      />
       <div className="messages" ref={messagesContainerRef}>
         {messages.length === 0 && (
           <div className="empty">

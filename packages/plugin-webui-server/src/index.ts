@@ -29,6 +29,7 @@ import { createAuthSystem, openBrowser } from './auth.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerPluginRoutes } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
+import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
 
 // ===== 插件元数据 =====
 
@@ -857,6 +858,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
   const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
   registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot, workspaceRoot });
+  registerUploadedFilesRoutes(expressApp, ctx, { storage });
   registerProxyRoutes(expressApp, ctx);
 
   // ---------- WebSocket ----------
