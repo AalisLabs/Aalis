@@ -499,9 +499,15 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
+      '@aalis/plugin-memory-api':
+        specifier: workspace:*
+        version: link:../plugin-memory-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
