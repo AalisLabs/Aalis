@@ -1027,11 +1027,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
     if (titleGenerating.has(sessionId)) return;
-    // 仅对指定平台生成标题
-    if (platform && !TITLE_PLATFORMS.has(platform)) {
-      ctx.logger.debug(`标题生成跳过: 平台 ${platform} 不在允许列表`);
-      return;
-    }
+    // 仅对指定平台生成标题；非 webui/cli 平台（如 onebot）静默跳过，避免日志污染。
+    if (platform && !TITLE_PLATFORMS.has(platform)) return;
     const session = manager.getSession(sessionId);
     if (!session) {
       ctx.logger.warn(`标题生成跳过: 会话不存在 ${sessionId}`);
