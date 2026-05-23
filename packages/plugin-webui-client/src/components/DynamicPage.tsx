@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ReactElement } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactElement, type CSSProperties } from 'react';
 import { Puzzle, Clock, Globe, Brain, Wrench, Sparkles, BarChart2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -131,6 +131,15 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
     }
   };
 
+  // 把列的宽度约束抽成一个 helper，header/body 共用，避免不同步。
+  const colStyle = (col: WebuiTableComponent['columns'][number]): CSSProperties | undefined => {
+    if (!col.minWidth && !col.maxWidth) return undefined;
+    const s: CSSProperties = {};
+    if (col.minWidth) s.minWidth = `${col.minWidth}px`;
+    if (col.maxWidth) s.maxWidth = `${col.maxWidth}px`;
+    return s;
+  };
+
   return (
     <div className="dyn-table-block">
       {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
@@ -139,6 +148,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
       ) : rows.length === 0 ? (
         <div className="empty-hint">暂无数据</div>
       ) : (
+        <div className="dyn-table-scroll">
         <table className="dyn-table">
           <thead>
             <tr>
@@ -146,7 +156,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
                 <th
                   key={col.key}
                   className={col.nowrap ? 'dyn-cell-nowrap' : undefined}
-                  style={col.minWidth ? { minWidth: `${col.minWidth}px` } : undefined}
+                  style={colStyle(col)}
                 >
                   {col.label}
                 </th>
@@ -161,7 +171,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
                   <td
                     key={col.key}
                     className={col.nowrap ? 'dyn-cell-nowrap' : undefined}
-                    style={col.minWidth ? { minWidth: `${col.minWidth}px` } : undefined}
+                    style={colStyle(col)}
                   >
                     {col.render === 'countdown'
                       ? <CountdownCell target={Number(row[col.key]) || 0} onZero={fetchData} />
@@ -191,6 +201,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {detail && (

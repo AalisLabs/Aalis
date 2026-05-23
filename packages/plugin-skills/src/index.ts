@@ -182,7 +182,7 @@ const webuiPages: WebuiPage[] = [
         source: 'listSkills',
         columns: [
           { key: 'name', label: '名称', nowrap: true },
-          { key: 'description', label: '描述', minWidth: 220, render: 'expandable-text' },
+          { key: 'description', label: '描述', minWidth: 220, maxWidth: 360, render: 'expandable-text' },
           { key: 'triggers', label: '自动触发', nowrap: true },
           { key: 'fileCount', label: '资源', nowrap: true, minWidth: 160 },
           { key: 'dir', label: '路径', nowrap: true },
