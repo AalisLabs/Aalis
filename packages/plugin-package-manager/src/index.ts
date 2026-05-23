@@ -1,14 +1,15 @@
-import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
 import type { AppService, Context } from '@aalis/core';
+import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/plugin-process-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-package-manager';
 export const displayName = '包管理器';
 export const subsystem = 'system';
+export const inject = {
+  required: ['process', 'storage'],
+};
 
 // ===== 服务接口 =====
 
@@ -18,7 +19,7 @@ export const subsystem = 'system';
  * 通过 `ctx.getService<PackageManagerService>('package-manager')` 消费。
  *
  * 这些操作涉及子进程（npm/tar/pnpm/rm），不属于 core 内核职责，
- * 因此从 App 抽出到独立插件。
+ * 因此从 App 抽出到独立插件；底层子进程统一走 plugin-process-api。
  */
 export interface PackageManagerService {
   /** 从 npm 安装插件到 packages/ 并触发 rescanPlugins */
@@ -35,17 +36,21 @@ declare module '@aalis/core' {
 
 // ===== 实现 =====
 
-function execProc(cmd: string, args: string[], cwd: string): Promise<string> {
-  return new Promise((res, rej) => {
-    execFile(cmd, args, { cwd, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) rej(new Error(stderr || err.message));
-      else res(stdout);
-    });
-  });
+async function execProc(proc: ProcessService, cmd: string, args: string[], cwd: string): Promise<string> {
+  try {
+    const result: ExecResult = await proc.execFile(cmd, args, { cwd, timeout: 120_000 });
+    return result.stdout;
+  } catch (err) {
+    const withResult = err as { result?: ExecResult } & Error;
+    const stderr = withResult.result?.stderr ?? '';
+    throw new Error(stderr || withResult.message);
+  }
 }
 
 function createService(ctx: Context, config: Record<string, unknown>): PackageManagerService {
   const log = ctx.logger;
+  const proc = createProcessGateway(ctx);
+  const storage: StorageService = createStorageGateway(ctx);
 
   function getApp(): AppService {
     const app = ctx.getService<AppService>('app');
@@ -54,39 +59,66 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
   }
 
   /**
-   * 解析 packages/ 目录。与 core 的 createFsPluginLoader 默认一致：`<cwd>/packages`。
-   * 可通过插件配置 `packagesDir` 字段覆盖（相对路径以 cwd 为基点）。
+   * 解析 packages/ 的 storage URI 与本地绝对路径。
+   *
+   * 与 core 的 createFsPluginLoader 默认一致：`workspace:/packages`。
+   * 可通过插件配置 `packagesDir` 字段覆盖（必须是 storage URI 或 workspace 下的相对路径）。
    */
-  function getPackagesDir(): string {
+  function packagesUri(): string {
     const override = (config as { packagesDir?: unknown }).packagesDir;
-    const cwd = process.cwd();
     if (typeof override === 'string' && override.length > 0) {
-      return isAbsolute(override) ? override : resolve(cwd, override);
+      if (override.includes(':/')) return override;
+      return `workspace:/${override.replace(/^\.?\/+/, '')}`;
     }
-    return resolve(cwd, 'packages');
+    return 'workspace:/packages';
+  }
+
+  async function packagesLocal(): Promise<string> {
+    const uri = packagesUri();
+    if (!storage.resolveLocalPath) {
+      throw new Error('storage 服务未实现 resolveLocalPath，无法执行包管理操作');
+    }
+    return storage.resolveLocalPath(uri, 'write');
+  }
+
+  async function dirExists(uri: string): Promise<boolean> {
+    try {
+      await storage.stat(uri);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   return {
     async install(npmPkg) {
-      const packagesDir = getPackagesDir();
+      const packagesDir = await packagesLocal();
       const dirName = npmPkg.replace(/^@[^/]+\//, '');
-      const targetDir = resolve(packagesDir, dirName);
+      const targetUri = `${packagesUri()}/${dirName}`;
+      const targetDir = `${packagesDir}/${dirName}`;
 
-      if (existsSync(targetDir)) {
+      if (await dirExists(targetUri)) {
         return { ok: false, message: `目录 ${dirName} 已存在` };
       }
       log.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
 
       try {
-        await execProc('npm', ['pack', npmPkg, '--pack-destination', packagesDir], packagesDir);
-        const dirents = await readdir(packagesDir);
-        const tgzFile = dirents.find(f => f.endsWith('.tgz') && f.includes(dirName));
-        if (!tgzFile) return { ok: false, message: '下载包失败: 未找到 tgz 文件' };
-        const tgzPath = resolve(packagesDir, tgzFile);
-        await execProc('mkdir', ['-p', targetDir], packagesDir);
-        await execProc('tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1'], packagesDir);
-        await execProc('rm', ['-f', tgzPath], packagesDir);
-        await execProc('pnpm', ['install', '--filter', npmPkg], process.cwd());
+        await execProc(proc, 'npm', ['pack', npmPkg, '--pack-destination', packagesDir], packagesDir);
+        const listing = await storage.list(packagesUri());
+        const tgzEntry = listing.entries.find(
+          e => !e.isDirectory && e.name.endsWith('.tgz') && e.name.includes(dirName),
+        );
+        if (!tgzEntry) return { ok: false, message: '下载包失败: 未找到 tgz 文件' };
+        const tgzPath = `${packagesDir}/${tgzEntry.name}`;
+        await execProc(proc, 'mkdir', ['-p', targetDir], packagesDir);
+        await execProc(proc, 'tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1'], packagesDir);
+        // 清理 tgz 走 storage 删除
+        try {
+          await storage.delete(`${packagesUri()}/${tgzEntry.name}`);
+        } catch {
+          /* ignore */
+        }
+        await execProc(proc, 'pnpm', ['install', '--filter', npmPkg], process.cwd());
 
         const newPlugins = await getApp().rescanPlugins();
         return newPlugins.length > 0
@@ -100,18 +132,17 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     },
 
     async uninstall(pluginName) {
-      const packagesDir = getPackagesDir();
       // 先卸载插件实例（通过 plugins 服务）
       const pm = ctx.getService<{ disablePlugin(name: string): Promise<boolean> }>('plugins');
       if (pm) await pm.disablePlugin(pluginName);
 
       const dirName = pluginName.replace(/^@[^/]+\//, '');
-      const targetDir = resolve(packagesDir, dirName);
-      if (!existsSync(targetDir)) {
+      const targetUri = `${packagesUri()}/${dirName}`;
+      if (!(await dirExists(targetUri))) {
         return { ok: true, message: `插件 ${pluginName} 已卸载（目录不存在）` };
       }
       try {
-        await execProc('rm', ['-rf', targetDir], packagesDir);
+        await storage.delete(targetUri);
         log.info(`已删除插件目录: packages/${dirName}`);
         return { ok: true, message: `插件 ${pluginName} 已卸载并删除` };
       } catch (err) {
