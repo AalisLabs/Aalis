@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import { createProcessGateway } from '@aalis/plugin-process-api';
 import { isPrivateHost, useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -132,6 +133,7 @@ const webuiPages: WebuiPage[] = [
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('browser');
+  const proc = createProcessGateway(ctx);
 
   // 注册 WebUI 页面
   const webui = useWebuiService(ctx);
@@ -162,8 +164,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       pkgRoot = parent;
     }
     const cliPath = path.join(pkgRoot, 'lib', 'cjs', 'puppeteer', 'node', 'cli.js');
-    const { execFileSync } = await import('node:child_process');
-    execFileSync(process.execPath, [cliPath, 'browsers', 'install', 'chrome'], {
+    // 走 ProcessService.execFile，避免直接 import node:child_process
+    await proc.execFile(process.execPath, [cliPath, 'browsers', 'install', 'chrome'], {
       stdio: 'inherit',
       timeout: 300_000,
     });

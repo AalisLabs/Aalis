@@ -8,12 +8,13 @@
 import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
+import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 
 export const name = '@aalis/plugin-asr-openai';
 export const displayName = 'OpenAI Whisper ASR';
 export const subsystem = 'media';
 export const provides: string[] = [];
-export const inject = { required: ['media'] };
+export const inject = { required: ['media'], optional: ['process'] };
 
 interface Cfg {
   apiKey: string;
@@ -36,7 +37,7 @@ export const defaultConfig: Cfg = {
   priority: 50,
 };
 
-async function attachmentToBlob(data: string): Promise<{ blob: Blob; filename: string }> {
+async function attachmentToBlob(data: string, proc: ProcessService): Promise<{ blob: Blob; filename: string }> {
   if (data.startsWith('data:')) {
     const m = data.match(/^data:([^;]+);base64,(.+)$/);
     if (!m) throw new Error('无效 data URL');
@@ -45,12 +46,12 @@ async function attachmentToBlob(data: string): Promise<{ blob: Blob; filename: s
     const ext = mime.split('/')[1]?.split(';')[0] ?? 'bin';
     return { blob: new Blob([buf as unknown as ArrayBuffer], { type: mime }), filename: `audio.${ext}` };
   }
-  if (data.startsWith('file://')) {
-    const fs = await import('node:fs/promises');
-    const path = data.slice(7);
-    const buf = await fs.readFile(path);
+  if (data.startsWith('file://') || data.startsWith('/')) {
+    // 走 ProcessService.readExternalFile（治外文件能力），避免直 import node:fs
+    const bytes = await proc.readExternalFile(data);
+    const path = data.startsWith('file://') ? data.slice(7) : data;
     const ext = path.split('.').pop() ?? 'bin';
-    return { blob: new Blob([buf as unknown as ArrayBuffer]), filename: `audio.${ext}` };
+    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${ext}` };
   }
   if (data.startsWith('http://') || data.startsWith('https://')) {
     const resp = await fetch(data);
@@ -74,12 +75,14 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     return;
   }
 
+  const proc = createProcessGateway(ctx);
+
   const processor: MediaProcessor = {
     name: `asr-openai:${cfg.model}`,
     capabilities: ['audio'],
     priority: cfg.priority,
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-      const { blob, filename } = await attachmentToBlob(input.attachment.data);
+      const { blob, filename } = await attachmentToBlob(input.attachment.data, proc);
       const fd = new FormData();
       fd.append('file', blob, filename);
       fd.append('model', cfg.model);
