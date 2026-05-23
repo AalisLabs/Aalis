@@ -3,6 +3,8 @@
 本文档解释 Aalis 插件作者**容易踩到但 API 文档不会显式提醒的几条约定**。
 如果你刚写完一个插件、跑起来"看上去能用"，强烈建议过一遍本指南，确认没漏掉任何一条。
 
+> **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/plugin-storage-api` / `@aalis/plugin-process-api` 等网关访问。biome 会拦截违例。
+
 ---
 
 ## 1. 服务实例替换：你需要主动通知下游吗？
