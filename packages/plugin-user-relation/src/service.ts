@@ -365,7 +365,16 @@ export class RelationService {
     evidence?: EvidenceRef[];
   }): Promise<PersonPersonEdge> {
     const normalizedType = normalizeRelationType(input.relationType);
-    const directed = input.directed ?? !isSymmetricRelation(normalizedType);
+    // 始终视为单向声明：A 说"和 B 是朋友"≠ B 也认同。
+    // 若需双向，B 自己再写一条 B → A 即可；UI 渲染时检测对偶边显示双向箭头。
+    const directed = input.directed ?? true;
+
+    // 防孤儿：to 必须已存在 PersonNode（避免指向"被提及但从未发言"的幽灵 id）
+    const snapshot = await this.store.loadAll();
+    const toExists = snapshot.persons.some(p => p.id === input.toPersonId);
+    if (!toExists) {
+      throw new Error(`addPersonPersonEdge: toPersonId ${input.toPersonId} 不存在为 PersonNode（防止孤儿边）`);
+    }
 
     const existing = await this.findPersonPersonEdge(input.fromPersonId, input.toPersonId, normalizedType, directed);
     const now = Date.now();

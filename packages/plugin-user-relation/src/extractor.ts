@@ -45,6 +45,8 @@ export interface ExtractorConfig {
   extractionModel?: ModelRef;
   /** 是否禁用思考模式（思考型模型上）。提取是结构化输出任务，默认禁用以避免 budget 被 reasoning 吃掉 */
   disableThinking: boolean;
+  /** 严格自证：每条 person-* 边必须有 evidence 且 evidence.messageId.sender == fromPersonId */
+  strictSelfAssertion: boolean;
   /** debug 日志 */
   debug: boolean;
 }
@@ -243,13 +245,30 @@ export class RelationExtractor {
   ): Promise<void> {
     const validMessageIds = new Set<string>();
     const contentBySid = new Map<string, string>();
+    const senderBySid = new Map<string, string>(); // messageId -> "platform:userId"
     for (const m of ctxInfo.history) {
-      const sid = (m.metadata as { messageId?: string } | undefined)?.messageId;
+      const meta = (m.metadata as { messageId?: string; userId?: string; platform?: string } | undefined) ?? {};
+      const sid = meta.messageId;
       if (sid) {
         validMessageIds.add(sid);
         contentBySid.set(sid, typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+        if (m.role === 'user' && meta.userId) {
+          senderBySid.set(sid, `${meta.platform ?? ctxInfo.platform}:${meta.userId}`);
+        }
       }
     }
+    const strict = this.cfg.strictSelfAssertion;
+    /** 严格自证校验：evidence.messageIds 中是否有至少一条的 sender == fromPersonId */
+    const isSelfAsserted = (fromPersonId: string, ev: EvidenceRef | null): boolean => {
+      if (!ev) return false;
+      for (const mid of ev.messageIds) {
+        if (senderBySid.get(mid) === fromPersonId) return true;
+      }
+      return false;
+    };
+    const debugSkip = (label: string, reason: string) => {
+      if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 严格自证丢弃 ${label}: ${reason}`);
+    };
     const now = Date.now();
     const mkEvidence = (raw?: { messageIds?: string[]; quote?: string }): EvidenceRef | null => {
       if (!raw) return null;
@@ -359,8 +378,13 @@ export class RelationExtractor {
       const role = VALID_ROLES.includes(pe.role as PersonEventRole) ? (pe.role as PersonEventRole) : 'participant';
       const sentiment = VALID_SENTIMENTS.includes(pe.sentiment as Sentiment) ? (pe.sentiment as Sentiment) : undefined;
       const ev = mkEvidence(pe.evidence);
+      const fromPersonId = `${pe.personPlatform}:${pe.personUserId}`;
+      if (strict && !isSelfAsserted(fromPersonId, ev)) {
+        debugSkip('person-event', `from=${fromPersonId} 无本人 evidence`);
+        continue;
+      }
       await this.service.addPersonEventEdge({
-        fromPersonId: `${pe.personPlatform}:${pe.personUserId}`,
+        fromPersonId,
         toEventId: eventId,
         role,
         sentiment,
@@ -378,8 +402,13 @@ export class RelationExtractor {
         : 'mentioned';
       const sentiment = VALID_SENTIMENTS.includes(pe.sentiment as Sentiment) ? (pe.sentiment as Sentiment) : undefined;
       const ev = mkEvidence(pe.evidence);
+      const fromPersonId = `${pe.personPlatform}:${pe.personUserId}`;
+      if (strict && !isSelfAsserted(fromPersonId, ev)) {
+        debugSkip('person-entity', `from=${fromPersonId} 无本人 evidence`);
+        continue;
+      }
       await this.service.addPersonEntityEdge({
-        fromPersonId: `${pe.personPlatform}:${pe.personUserId}`,
+        fromPersonId,
         toEntityId: entityId,
         role,
         sentiment,
@@ -392,13 +421,24 @@ export class RelationExtractor {
       if (!pp.fromPlatform || !pp.fromUserId || !pp.toPlatform || !pp.toUserId || !pp.relationType) continue;
       if (pp.fromPlatform === pp.toPlatform && pp.fromUserId === pp.toUserId) continue; // 自环
       const ev = mkEvidence(pp.evidence);
-      await this.service.addPersonPersonEdge({
-        fromPersonId: `${pp.fromPlatform}:${pp.fromUserId}`,
-        toPersonId: `${pp.toPlatform}:${pp.toUserId}`,
-        relationType: pp.relationType,
-        directed: pp.directed,
-        evidence: ev ? [ev] : [],
-      });
+      const fromPersonId = `${pp.fromPlatform}:${pp.fromUserId}`;
+      const toPersonId = `${pp.toPlatform}:${pp.toUserId}`;
+      if (strict && !isSelfAsserted(fromPersonId, ev)) {
+        debugSkip('person-person', `from=${fromPersonId} 无本人 evidence`);
+        continue;
+      }
+      try {
+        await this.service.addPersonPersonEdge({
+          fromPersonId,
+          toPersonId,
+          relationType: pp.relationType,
+          directed: pp.directed,
+          evidence: ev ? [ev] : [],
+        });
+      } catch (err) {
+        // to 不存在为 PersonNode → 防孤儿报错，这里静默跳过
+        debugSkip('person-person', stringifyErr(err));
+      }
     }
 
     // 5) event-event edges
@@ -516,6 +556,8 @@ function buildExtractionPrompt(
       '- personPersonEdge 仅在能从对话明确看出"长期身份性关系"时输出（CP / 朋友 / 师徒 / 对手 / 同事 / 仰慕等），',
       '  不要把"参与同一事件"或"共享同一兴趣"误当作朋友关系；',
       `- person-person relationType 优先使用：${RecommendedPersonRelationTypes.join(' / ')}；确无合适词时可自创小写英文短词。`,
+      '- **严格自证**：要给某人写 person-event / person-entity / person-person 边，evidence.messageIds 必须包含至少一条**该人自己发的消息**；不要替别人陈述其关系（如"A 说 B 是 C 的朋友"不可写成 B→C friend）。否则该边会被丢弃。',
+      '- **person-person 视为单向声明**：A→B "friend" 不代表 B 也认同；如要表达双向，必须 B 也在窗口里亲口确认，并各自输出一条 directed 边。除非明确希望强制双向，否则不要写 directed=false。',
       '- existingEventId / existingEntityId：若新条目与候选清单中某项实质相同，请填该 id（让旧节点被强化而非重复创建）。',
       '- 当窗口里没有可靠信号时，对应数组返回空 [] 即可，绝对不要编造。',
       '- **绝不输出裸 `null`、裸字符串或其他非对象 JSON**；完全无可提取时请输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[]}`。',
