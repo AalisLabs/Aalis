@@ -97,6 +97,36 @@ export interface WebuiTabsComponent {
   items: Array<{ key: string; label: string; content: WebuiComponent[] }>;
 }
 
+/**
+ * 交互式关系图组件（基于 Cytoscape）。
+ *
+ * `source` 后端方法签名: `(args: { focusId?: string; maxDepth?: number; maxBreadth?: number; filters?: Record<string, unknown> })`
+ * 返回 cytoscape 风格的 elements：
+ * ```ts
+ * {
+ *   nodes: Array<{ data: { id: string; label: string; kind: 'person' | 'event' | string; [k: string]: unknown } }>;
+ *   edges: Array<{ data: { id: string; source: string; target: string; label?: string; relationType?: string; [k: string]: unknown } }>;
+ *   focusId?: string;
+ *   stats?: Record<string, number | string>;
+ * }
+ * ```
+ *
+ * `detailSource` 可选：节点被点击时调用，签名 `(args: { nodeId: string; kind: string })`，返回任意键值对 → 右侧 Drawer 渲染。
+ */
+export interface WebuiGraphComponent {
+  type: 'graph';
+  label?: string;
+  source: string;
+  detailSource?: string;
+  /** 节点最大深度/宽度默认值（前端展示初值） */
+  defaultMaxDepth?: number;
+  defaultMaxBreadth?: number;
+  /** 自动刷新（毫秒），0 / undefined = 关闭 */
+  refresh?: number;
+  /** 顶部右上角额外按钮 */
+  actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
+}
+
 /** 所有声明式页面组件的联合类型 */
 export type WebuiComponent =
   | WebuiStatComponent
@@ -105,7 +135,8 @@ export type WebuiComponent =
   | WebuiActionsComponent
   | WebuiInfoComponent
   | WebuiMarkdownComponent
-  | WebuiTabsComponent;
+  | WebuiTabsComponent
+  | WebuiGraphComponent;
 
 /**
  * 插件可声明的 WebUI 页面 —— 完整定义。

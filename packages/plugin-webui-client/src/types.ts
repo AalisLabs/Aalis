@@ -172,7 +172,17 @@ export interface WebuiActionsComponent { type: 'actions'; label?: string; items:
 export interface WebuiInfoComponent { type: 'info'; label?: string; source: string }
 export interface WebuiMarkdownComponent { type: 'markdown'; label?: string; source: string }
 export interface WebuiTabsComponent { type: 'tabs'; label?: string; items: Array<{ key: string; label: string; content: WebuiComponent[] }> }
-export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent;
+export interface WebuiGraphComponent {
+  type: 'graph';
+  label?: string;
+  source: string;
+  detailSource?: string;
+  defaultMaxDepth?: number;
+  defaultMaxBreadth?: number;
+  refresh?: number;
+  actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
+}
+export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent | WebuiGraphComponent;
 
 export interface WebuiPageDef {
   key: string;
