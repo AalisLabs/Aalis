@@ -1,21 +1,26 @@
-import { createReadStream, existsSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+// ============================================================
+// routes/files.ts — WebUI 文件管理 REST 路由（storage URI 版）
+//
+// 历史上同时支持 storage 与 node:fs 两种实现；现已要求 storage 必填，
+// node:fs 兜底分支整体移除，所有操作走 StorageService。
+// 前端仅需传递相对于 fileRoot 的路径字符串（如 "data/images/xxx.png"）。
+// ============================================================
+
+import { basename } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type express from 'express';
 
 export interface FileRoutesOptions {
-  /** storage 服务（可选；缺失时降级到本地 workspace 目录） */
-  storage: StorageService | undefined;
+  /** storage 服务（必填） */
+  storage: StorageService;
   /** storage 根 ID，默认 workspace */
   fileRoot: string;
-  /** 本地兼容根目录绝对路径 */
-  workspaceRoot: string;
 }
 
 /** 注册文件管理相关 REST 路由 */
 export function registerFileRoutes(expressApp: express.Express, _ctx: Context, opts: FileRoutesOptions): void {
-  const { storage, fileRoot, workspaceRoot } = opts;
+  const { storage, fileRoot } = opts;
 
   function storageUri(relPath: string): string {
     const cleanPath = relPath.replace(/^\/+/, '');
@@ -28,7 +33,7 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
   }
 
   function storageRootBrowsable(): boolean {
-    const root = storage?.listRoots().find(r => r.name === fileRoot);
+    const root = storage.listRoots().find(r => r.name === fileRoot);
     return Boolean(root?.browsable);
   }
 
@@ -45,169 +50,51 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
     res.status(status).json({ error: message });
   }
 
-  function sendStorageUnavailable(res: express.Response): void {
-    res.status(503).json({ error: '文件管理需要 storage 服务' });
-  }
-
-  /** 安全路径解析：确保在 workspace 目录内，防止路径穿越 */
-  function safeResolvePath(relPath: string): string | null {
-    const abs = resolve(workspaceRoot, relPath);
-    const rel = relative(workspaceRoot, abs);
-    if (rel.startsWith('..') || isAbsolute(rel)) return null;
-    return abs;
+  function guardBrowsable(res: express.Response): boolean {
+    if (!storageRootBrowsable()) {
+      res.status(403).json({ error: '文件根不可浏览' });
+      return false;
+    }
+    return true;
   }
 
   // 列出目录内容
   expressApp.get('/api/files', async (req, res) => {
     const dir = String(req.query.path || '');
-    if (!storage) {
-      sendStorageUnavailable(res);
-      return;
-    }
-    if (storage) {
-      if (!storageRootBrowsable()) {
-        res.status(403).json({ error: '文件根不可浏览' });
-        return;
-      }
-      try {
-        const result = await storage.list(storageUri(dir));
-        res.json({ path: result.path, entries: result.entries });
-      } catch (err) {
-        sendStorageError(res, err);
-      }
-      return;
-    }
-
-    const abs = safeResolvePath(dir);
-    if (!abs) {
-      res.status(403).json({ error: '路径不合法' });
-      return;
-    }
-    if (!existsSync(abs)) {
-      res.status(404).json({ error: '目录不存在' });
-      return;
-    }
-    const stat = statSync(abs);
-    if (!stat.isDirectory()) {
-      res.status(400).json({ error: '不是目录' });
-      return;
-    }
+    if (!guardBrowsable(res)) return;
     try {
-      const entries = readdirSync(abs)
-        .map(name => {
-          const fullPath = join(abs, name);
-          try {
-            const s = statSync(fullPath);
-            return {
-              name,
-              path: relative(workspaceRoot, fullPath).replace(/\\/g, '/'),
-              isDirectory: s.isDirectory(),
-              size: s.isDirectory() ? 0 : s.size,
-              mtime: s.mtime.toISOString(),
-              ext: s.isDirectory() ? '' : extname(name).toLowerCase(),
-            };
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      entries.sort((a, b) => {
-        const ad = a as { isDirectory: boolean; name: string };
-        const bd = b as { isDirectory: boolean; name: string };
-        if (ad.isDirectory !== bd.isDirectory) return ad.isDirectory ? -1 : 1;
-        return ad.name.localeCompare(bd.name);
-      });
-      const currentPath = relative(workspaceRoot, abs).replace(/\\/g, '/');
-      res.json({ path: currentPath, entries });
-    } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+      const result = await storage.list(storageUri(dir));
+      res.json({ path: result.path, entries: result.entries });
+    } catch (err) {
+      sendStorageError(res, err);
     }
   });
 
   // 获取文件/目录详情
   expressApp.get('/api/files/info', async (req, res) => {
     const filePath = String(req.query.path || '');
-    if (!storage) {
-      sendStorageUnavailable(res);
-      return;
+    if (!guardBrowsable(res)) return;
+    try {
+      const info = await storage.stat(storageUri(filePath));
+      res.json(info);
+    } catch (err) {
+      sendStorageError(res, err);
     }
-    if (storage) {
-      if (!storageRootBrowsable()) {
-        res.status(403).json({ error: '文件根不可浏览' });
-        return;
-      }
-      try {
-        const info = await storage.stat(storageUri(filePath));
-        res.json(info);
-      } catch (err) {
-        sendStorageError(res, err);
-      }
-      return;
-    }
-
-    const abs = safeResolvePath(filePath);
-    if (!abs) {
-      res.status(403).json({ error: '路径不合法' });
-      return;
-    }
-    if (!existsSync(abs)) {
-      res.status(404).json({ error: '不存在' });
-      return;
-    }
-    const s = statSync(abs);
-    res.json({
-      name: basename(abs),
-      path: relative(workspaceRoot, abs).replace(/\\/g, '/'),
-      isDirectory: s.isDirectory(),
-      size: s.size,
-      mtime: s.mtime.toISOString(),
-      birthtime: s.birthtime.toISOString(),
-      ext: s.isDirectory() ? '' : extname(abs).toLowerCase(),
-    });
   });
 
   // 下载文件
   expressApp.get('/api/files/download', async (req, res) => {
     const filePath = String(req.query.path || '');
-    if (!storage) {
-      sendStorageUnavailable(res);
-      return;
+    if (!guardBrowsable(res)) return;
+    try {
+      const result = await storage.createReadStream(storageUri(filePath));
+      const fileName = basename(result.stat.name);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      res.setHeader('Content-Length', result.stat.size);
+      result.stream.pipe(res);
+    } catch (err) {
+      sendStorageError(res, err);
     }
-    if (storage) {
-      if (!storageRootBrowsable()) {
-        res.status(403).json({ error: '文件根不可浏览' });
-        return;
-      }
-      try {
-        const result = await storage.createReadStream(storageUri(filePath));
-        const fileName = basename(result.stat.name);
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-        res.setHeader('Content-Length', result.stat.size);
-        result.stream.pipe(res);
-      } catch (err) {
-        sendStorageError(res, err);
-      }
-      return;
-    }
-
-    const abs = safeResolvePath(filePath);
-    if (!abs) {
-      res.status(403).json({ error: '路径不合法' });
-      return;
-    }
-    if (!existsSync(abs)) {
-      res.status(404).json({ error: '文件不存在' });
-      return;
-    }
-    const s = statSync(abs);
-    if (s.isDirectory()) {
-      res.status(400).json({ error: '不能下载目录' });
-      return;
-    }
-    const fileName = basename(abs);
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-    res.setHeader('Content-Length', s.size);
-    createReadStream(abs).pipe(res);
   });
 
   // 重命名
@@ -227,48 +114,12 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
       res.status(400).json({ error: '文件名不合法' });
       return;
     }
-    if (!storage) {
-      sendStorageUnavailable(res);
-      return;
-    }
-    if (storage) {
-      if (!storageRootBrowsable()) {
-        res.status(403).json({ error: '文件根不可浏览' });
-        return;
-      }
-      try {
-        const newUri = await storage.rename(storageUri(String(filePath)), String(newName));
-        res.json({ ok: true, newPath: pathFromStorageUri(newUri) });
-      } catch (err) {
-        sendStorageError(res, err);
-      }
-      return;
-    }
-
-    const abs = safeResolvePath(String(filePath));
-    if (!abs) {
-      res.status(403).json({ error: '路径不合法' });
-      return;
-    }
-    if (!existsSync(abs)) {
-      res.status(404).json({ error: '文件不存在' });
-      return;
-    }
-    const newPath = resolve(dirname(abs), String(newName));
-    const newRel = relative(workspaceRoot, newPath);
-    if (newRel.startsWith('..') || isAbsolute(newRel)) {
-      res.status(403).json({ error: '目标路径不合法' });
-      return;
-    }
-    if (existsSync(newPath)) {
-      res.status(409).json({ error: '目标名称已存在' });
-      return;
-    }
+    if (!guardBrowsable(res)) return;
     try {
-      renameSync(abs, newPath);
-      res.json({ ok: true, newPath: relative(workspaceRoot, newPath).replace(/\\/g, '/') });
-    } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+      const newUri = await storage.rename(storageUri(String(filePath)), String(newName));
+      res.json({ ok: true, newPath: pathFromStorageUri(newUri) });
+    } catch (err) {
+      sendStorageError(res, err);
     }
   });
 
@@ -279,47 +130,12 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
       res.status(400).json({ error: '缺少参数' });
       return;
     }
-    if (!storage) {
-      sendStorageUnavailable(res);
-      return;
-    }
-    if (storage) {
-      if (!storageRootBrowsable()) {
-        res.status(403).json({ error: '文件根不可浏览' });
-        return;
-      }
-      try {
-        await storage.delete(storageUri(String(filePath)));
-        res.json({ ok: true });
-      } catch (err) {
-        sendStorageError(res, err);
-      }
-      return;
-    }
-
-    const abs = safeResolvePath(String(filePath));
-    if (!abs) {
-      res.status(403).json({ error: '路径不合法' });
-      return;
-    }
-    if (!existsSync(abs)) {
-      res.status(404).json({ error: '文件不存在' });
-      return;
-    }
-    if (abs === workspaceRoot) {
-      res.status(403).json({ error: '不能删除根目录' });
-      return;
-    }
+    if (!guardBrowsable(res)) return;
     try {
-      const s = statSync(abs);
-      if (s.isDirectory()) {
-        rmSync(abs, { recursive: true });
-      } else {
-        unlinkSync(abs);
-      }
+      await storage.delete(storageUri(String(filePath)));
       res.json({ ok: true });
-    } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    } catch (err) {
+      sendStorageError(res, err);
     }
   });
 }

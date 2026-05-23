@@ -14,8 +14,11 @@
 
 import type { ConfigSchema, Context } from '@aalis/core';
 import { useAgent } from '@aalis/plugin-agent-api';
+import { createProcessGateway } from '@aalis/plugin-process-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
+import { setMediaRuntime } from './runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from './service.js';
 import { registerMediaTools } from './tools.js';
 
@@ -24,6 +27,7 @@ export const displayName = '多模态媒体识别';
 export const subsystem = 'media';
 export const provides = ['media'];
 export const inject = {
+  required: ['process', 'storage'],
   optional: ['llm', 'agent'],
 };
 
@@ -261,6 +265,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
 export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const cfg = resolveCfg(raw);
   const logger = ctx.logger.child('media');
+  setMediaRuntime({ proc: createProcessGateway(ctx), storage: createStorageGateway(ctx) });
   const svc = new MediaServiceImpl(ctx, logger, cfg);
 
   ctx.provide('media', svc, { capabilities: ['vision', 'audio', 'video'] });
