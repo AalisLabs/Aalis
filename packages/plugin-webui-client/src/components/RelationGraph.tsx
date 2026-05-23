@@ -368,7 +368,10 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
           onChange={e => setSearch(e.target.value)}
           style={{ flex: '1 1 200px', minWidth: 160, padding: '4px 8px' }}
         />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: focusId ? 1 : 0.45 }}
+          title={focusId ? '从焦点节点出发的 BFS 跳数（0 = 不限）' : '深度仅在选定焦点后生效：点击节点 → 详情面板 → 「以此为焦点」'}
+        >
           深度
           <input
             type="range"
@@ -376,7 +379,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
             max={10}
             value={maxDepth}
             onChange={e => setMaxDepth(Number(e.target.value))}
-            title="0 = 不限深度"
+            disabled={!focusId}
           />
           <input
             type="number"
@@ -386,14 +389,31 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
               const n = Number(e.target.value);
               if (Number.isFinite(n) && n >= 0) setMaxDepth(n);
             }}
+            disabled={!focusId}
             style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
-            title="手动输入深度（0 = 不限）"
           />
           <span style={{ width: 32, color: 'var(--text-secondary)' }}>{maxDepth === 0 ? '∞' : maxDepth}</span>
         </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          title={
+            focusId
+              ? '焦点模式：每个节点向外展开的邻居数上限（按边权重降序截断）'
+              : '全图模式：用作活跃节点数缩放因子（personCap ≈ breadth × 6）'
+          }
+        >
           宽度
           <input type="range" min={3} max={30} value={maxBreadth} onChange={e => setMaxBreadth(Number(e.target.value))} />
+          <input
+            type="number"
+            min={1}
+            value={maxBreadth}
+            onChange={e => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n >= 1) setMaxBreadth(n);
+            }}
+            style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
+          />
           <span style={{ width: 24, color: 'var(--text-secondary)' }}>{maxBreadth}</span>
         </label>
         {focusId ? (
