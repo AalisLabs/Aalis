@@ -23,6 +23,45 @@ meta.inject = {} // 无依赖
 |---|---|---|---|
 | `port` | number | 3000 | HTTP 监听端口 |
 | `host` | string | `127.0.0.1` | HTTP 监听地址 |
+| `tokenMode` | `ephemeral` \| `persist` \| `fixed` | `persist` | 访问 token 策略，详见下方"认证" |
+| `fixedToken` | string | `''` | tokenMode=fixed 时使用；为空时降级为 persist |
+| `autoOpen` | boolean | true | 启动时自动打开浏览器到访问 URL |
+
+## 认证 / 访问 token
+
+WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都走相同闭包内的常量校验，没有"一次性"语义——**同一进程内任意多个用户/浏览器都可以反复用同一个 token 登录**。
+
+### tokenMode 三种模式
+
+| 模式 | token 生命周期 | 文件 |
+|---|---|---|
+| `ephemeral` | 每次进程启动随机生成，重启失效 | 仅写出 `data:/webui/access.txt` |
+| `persist`（默认） | 首次生成后写入 `data:/webui/token`，重启沿用 | 同时写出 `data:/webui/access.txt` |
+| `fixed` | 来自配置 `fixedToken`，不变；空则降级 persist | 同上 |
+
+### 访问凭据文件
+
+- **URI**: `data:/webui/access.txt`
+- **物理路径**: `<storage root>/webui/access.txt`，启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
+- **内容**: 注释 + `URL:` + `Token:` + `一键登录:`（带 `?token=` 的完整 URL）
+
+> ⚠️ 不要再读历史路径 `data/webui-access.txt`，已被 `data/webui/access.txt` 取代。
+
+### 登录方式
+
+1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到干净 URL。
+2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。
+3. **登出**：POST `/api/auth/logout` 清除 cookie。
+
+### Cookie
+
+- 名称：`aalis_webui_token`
+- 属性：`HttpOnly; SameSite=Strict; Path=/; Max-Age=30d`
+- 进程重启且 tokenMode=ephemeral 时 cookie 自动失效。
+
+### 自动打开浏览器
+
+`autoOpen=true` 时通过 `ProcessService.spawn('open'|'cmd /c start'|'xdg-open', [accessUrl], { detached:true, stdio:'ignore' })` 后 `unref()` 启动系统默认浏览器，跨平台失败静默。
 
 ## REST API
 
