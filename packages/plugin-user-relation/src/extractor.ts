@@ -155,13 +155,21 @@ export class RelationExtractor {
       const promptMessages = buildExtractionPrompt(history, userMsgs, candidateEvents);
 
       const raw = await callLLM(modelEntry.instance, promptMessages);
-      const parsed = parseJSON(raw);
-      if (!parsed) {
-        if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] LLM 返回非 JSON: ${raw.slice(0, 200)}`);
+      const result = parseExtraction(raw);
+      if (result.kind === 'parse-error') {
+        this.ctx.logger.warn(
+          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.contextId}/${modelEntry.instance.id}）: ${raw.slice(0, 200)}`,
+        );
+        return;
+      }
+      if (result.kind === 'empty') {
+        if (this.cfg.debug) {
+          this.ctx.logger.debug(`[user-relation] ${sessionId} LLM 明确表示本批次无可提取`);
+        }
         return;
       }
 
-      await this.applyExtraction(parsed, { sessionId, platform, history });
+      await this.applyExtraction(result.value, { sessionId, platform, history });
     } finally {
       this.inFlight.delete(sessionId);
     }
@@ -345,6 +353,7 @@ function buildExtractionPrompt(history: Message[], userMsgs: Message[], candidat
       `- relationType 优先使用：${RecommendedPersonRelationTypes.join(' / ')}；确无合适词时可自创小写英文短词。`,
       '- existingEventId：若新事件与"已有候选事件清单"中某项实质相同，请填该 id（让旧事件被强化而非重复创建）。',
       '- 当窗口里没有可靠信号时，对应数组返回空 [] 即可，绝对不要编造。',
+      '- **绝不输出裸 `null`、裸字符串或其他非对象 JSON**；完全无可提取时请输出 `{"persons":[],"events":[],"personEventEdges":[],"personPersonEdges":[]}`。',
     ].join('\n'),
   };
   const user: Message = {
@@ -388,24 +397,49 @@ async function callLLM(model: LLMModel, messages: Message[]): Promise<string> {
   return typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
 }
 
-/** 尝试从 LLM 文本中抽出第一个 JSON 对象；容忍前后噪声 */
-export function parseJSON(text: string): LLMExtraction | null {
-  if (!text) return null;
+export type ParseResult =
+  | { kind: 'ok'; value: LLMExtraction }
+  | { kind: 'empty' } // LLM 明确表达"无可提取"（null / 空对象 / 所有数组为空）
+  | { kind: 'parse-error' };
+
+/**
+ * 从 LLM 文本中解析提取结果。区分三种情况：
+ * - ok：成功解析出含内容的对象
+ * - empty：解析成功但表达为空（LLM 主动指出没什么可提取，属于正常路径）
+ * - parse-error：LLM 输出无法解析或不是对象（需 warn）
+ */
+export function parseExtraction(text: string): ParseResult {
+  if (!text) return { kind: 'parse-error' };
   const trimmed = text.trim();
-  // 去掉可能的 ```json fence
+  if (!trimmed) return { kind: 'parse-error' };
   const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
-  // 直接尝试
-  try {
-    return JSON.parse(cleaned) as LLMExtraction;
-  } catch {
-    // 退化：找第一个 { 与最后一个 } 之间的子串
+
+  const tryParse = (s: string): unknown => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return undefined;
+    }
+  };
+
+  let parsed: unknown = tryParse(cleaned);
+  if (parsed === undefined) {
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(cleaned.slice(start, end + 1)) as LLMExtraction;
-    } catch {
-      return null;
-    }
+    if (start >= 0 && end > start) parsed = tryParse(cleaned.slice(start, end + 1));
   }
+  if (parsed === undefined) return { kind: 'parse-error' };
+
+  // null / 非对象 / 数组 → empty（LLM 明确表达无可提取）
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { kind: 'empty' };
+  }
+  const obj = parsed as LLMExtraction;
+  const totalCount =
+    (obj.persons?.length ?? 0) +
+    (obj.events?.length ?? 0) +
+    (obj.personEventEdges?.length ?? 0) +
+    (obj.personPersonEdges?.length ?? 0);
+  if (totalCount === 0) return { kind: 'empty' };
+  return { kind: 'ok', value: obj };
 }
