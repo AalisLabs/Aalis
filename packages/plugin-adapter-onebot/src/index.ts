@@ -4,6 +4,8 @@ import type { MediaService } from '@aalis/plugin-media-api';
 import { AttachmentRefKind, formatAttachmentRef, getSenderLabel } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
+import { createProcessGateway } from '@aalis/plugin-process-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import WebSocket from 'ws';
 import {
   cacheAttachmentBuffer,
@@ -59,6 +61,7 @@ export const name = '@aalis/plugin-adapter-onebot';
 export const displayName = 'OneBot 适配器';
 export const subsystem = 'platform';
 export const inject = {
+  required: ['storage', 'process'],
   optional: ['llm', 'commands', 'message-archive', 'persona', 'flow-control'],
 };
 export const provides = ['platform'];
@@ -339,25 +342,27 @@ const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placehold
  * - 其他 kind：原样落盘，扩展名按 magic header 推断。
  */
 async function cacheOneAttachment(
+  storage: import('@aalis/plugin-storage-api').StorageService,
+  proc: import('@aalis/plugin-process-api').ProcessService,
   kind: 'image' | 'audio' | 'video' | 'file',
   source: string,
   sessionId: string,
   maxBytes: number,
   logger: Context['logger'],
 ): Promise<string | null> {
-  const buf = await loadAttachmentBuffer(source);
+  const buf = await loadAttachmentBuffer(storage, source);
   if (!buf) return null;
   if (kind === 'audio') {
     const inExt = detectExtensionFromBuffer(buf, 'bin');
-    const wav = await transcodeAudioBufferToWav(buf, inExt);
+    const wav = await transcodeAudioBufferToWav(proc, storage, buf, inExt);
     if (!wav) {
       logger.warn(`OneBot 音频转 WAV 失败 (in=${inExt}, size=${buf.byteLength}B)，保留原 URL`);
       return null;
     }
-    return await cacheAttachmentBuffer(wav, 'audio', sessionId, 'wav', maxBytes);
+    return await cacheAttachmentBuffer(storage, wav, 'audio', sessionId, 'wav', maxBytes);
   }
   const ext = detectExtensionFromBuffer(buf, kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin');
-  return await cacheAttachmentBuffer(buf, kind, sessionId, ext, maxBytes);
+  return await cacheAttachmentBuffer(storage, buf, kind, sessionId, ext, maxBytes);
 }
 
 /**
@@ -549,6 +554,8 @@ function splitImageOut(content: string): string[] {
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
+  const storage = createStorageGateway(ctx);
+  const proc = createProcessGateway(ctx);
   const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
     ? (config.connections as OneBotConnectionConfig[])
     : [];
@@ -1585,9 +1592,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                   ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
                 }
               }
-              return await cacheOneAttachment('audio', source, sessionId, attachmentMaxBytes, ctx.logger);
+              return await cacheOneAttachment(
+                storage,
+                proc,
+                'audio',
+                source,
+                sessionId,
+                attachmentMaxBytes,
+                ctx.logger,
+              );
             }
-            return await cacheOneAttachment(att.kind, att.url, sessionId, attachmentMaxBytes, ctx.logger);
+            return await cacheOneAttachment(
+              storage,
+              proc,
+              att.kind,
+              att.url,
+              sessionId,
+              attachmentMaxBytes,
+              ctx.logger,
+            );
           } catch (err) {
             ctx.logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
             return null;
@@ -2128,7 +2151,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       await Promise.all(
         msg.attachments.map(async att => {
           try {
-            const local = await cacheOneAttachment(att.kind, att.data, msg.sessionId, attachmentMaxBytes, ctx.logger);
+            const local = await cacheOneAttachment(
+              storage,
+              proc,
+              att.kind,
+              att.data,
+              msg.sessionId,
+              attachmentMaxBytes,
+              ctx.logger,
+            );
             if (local) {
               att.data = local;
               if (att.kind === 'audio') att.mimeType = 'audio/wav';
@@ -2140,7 +2171,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       );
 
       try {
-        const markers = await renderAttachmentsAsContentMarkers(msg.attachments, ctx.logger);
+        const markers = await renderAttachmentsAsContentMarkers(msg.attachments, storage, ctx.logger);
         if (markers) content = content ? `${content}\n${markers}` : markers;
       } catch (err) {
         ctx.logger.warn(`OneBot 渲染附件失败: ${err}`);

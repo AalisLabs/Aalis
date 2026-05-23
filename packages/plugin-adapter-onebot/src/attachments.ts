@@ -7,14 +7,18 @@
 //   - base64://<b64>       数据内嵌在消息里随 WS 隧道发送（适合 Docker 部署）
 //
 // 由于 NapCat / go-cqhttp 经常跑在 Docker / 远端机器，file:// 不一定可达。
-// 默认策略：把所有附件转成 base64://，让数据走 WS 隧道，最稳。
-// 超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
+// 默认策略：把 storage URI / data:/http 都转成 base64:// 让数据走 WS 隧道，
+// 最稳。超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
+//
+// file:// 与本地绝对路径不再由本插件直接读取（避免依赖 node:fs），原样透传
+// 给 daemon。生产侧 attachments 几乎都来自 plugin-media / plugin-image-sender
+// 产出的 storage URI / data URI，故此回归仅在裸 file:// 用例下生效。
 // ============================================================
 
-import { readFile, stat } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { Buffer } from 'node:buffer';
 import type { Logger } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/plugin-message-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
@@ -24,15 +28,21 @@ function toBase64Uri(buf: Buffer): string {
   return `base64://${buf.toString('base64')}`;
 }
 
+/** 简易判定：形如 <root>:/<path>，且 root 非 http/https/data/file。 */
+function isStorageUri(s: string): boolean {
+  if (!/^[a-z][a-z0-9_-]*:\//.test(s)) return false;
+  const scheme = s.slice(0, s.indexOf(':')).toLowerCase();
+  return scheme !== 'http' && scheme !== 'https' && scheme !== 'data' && scheme !== 'file';
+}
+
 /**
  * 把附件物化为 OneBot `image.file` 可接受的字符串。
- *
- * 默认始终返回 base64:// 让数据随 WS 隧道发出，避免 OneBot daemon 与 Aalis
- * 不在同一文件系统时（典型场景：NapCat 跑在 Docker 内）发生 ENOENT。
- *
- * 失败时抛错，调用方可降级或忽略此条附件。
  */
-async function attachmentToOneBotFile(att: MessageAttachment, logger?: Logger): Promise<string> {
+async function attachmentToOneBotFile(
+  att: MessageAttachment,
+  storage: StorageService,
+  logger?: Logger,
+): Promise<string> {
   const data = att.data;
   if (!data) throw new Error('attachment.data is empty');
 
@@ -61,27 +71,28 @@ async function attachmentToOneBotFile(att: MessageAttachment, logger?: Logger): 
     return toBase64Uri(Buffer.from(ab));
   }
 
-  // file:// 或本地绝对/相对路径 → 读取后 base64 内联
-  let absPath: string;
+  // storage URI（如 data:/images/xxx）→ storage.readFile → base64
+  if (isStorageUri(data)) {
+    const raw = (await storage.readFile(data)) as Uint8Array;
+    if (raw.byteLength > MAX_INLINE_BYTES) {
+      logger?.warn?.(`OneBot storage 附件 ${raw.byteLength}B 超过内联上限，尝试转 file:// 由 daemon 处理`);
+      try {
+        const local = await storage.resolveLocalPath?.(data, 'read');
+        if (local) return `file://${local}`;
+      } catch {
+        /* fall through */
+      }
+      throw new Error('attachment too large and not resolvable to local path');
+    }
+    return toBase64Uri(Buffer.from(raw));
+  }
+
+  // file:// 或裸路径：直接交给 daemon 处理（依赖 daemon 与文件系统共享）
   if (data.startsWith('file://')) {
-    absPath = data.slice('file://'.length);
-  } else if (isAbsolute(data)) {
-    absPath = data;
-  } else {
-    absPath = resolve(process.cwd(), data);
+    return data;
   }
-  const st = await stat(absPath).catch(() => null);
-  if (!st?.isFile()) {
-    // 让 daemon 自己尝试 file://（适用于 daemon 与 Aalis 共用文件系统的场景）
-    logger?.warn?.(`OneBot 附件本地路径不可读，回退 file:// 由 daemon 处理: ${absPath}`);
-    return `file://${absPath}`;
-  }
-  if (st.size > MAX_INLINE_BYTES) {
-    logger?.warn?.(`OneBot 本地附件 ${st.size}B 超过内联上限，回退 file:// 由 daemon 处理`);
-    return `file://${absPath}`;
-  }
-  const buf = await readFile(absPath);
-  return toBase64Uri(buf);
+  // 兜底：当作本地绝对路径，包成 file://
+  return `file://${data}`;
 }
 
 /**
@@ -91,6 +102,7 @@ async function attachmentToOneBotFile(att: MessageAttachment, logger?: Logger): 
  */
 export async function renderAttachmentsAsContentMarkers(
   attachments: MessageAttachment[] | undefined,
+  storage: StorageService,
   logger?: Logger,
 ): Promise<string> {
   if (!attachments?.length) return '';
@@ -101,7 +113,7 @@ export async function renderAttachmentsAsContentMarkers(
       continue;
     }
     try {
-      const uri = await attachmentToOneBotFile(att, logger);
+      const uri = await attachmentToOneBotFile(att, storage, logger);
       parts.push(`<image url="${uri}"/>`);
     } catch (err) {
       logger?.warn?.(`OneBot 附件物化失败: ${err instanceof Error ? err.message : err}`);

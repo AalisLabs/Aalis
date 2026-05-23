@@ -1,6 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import type { ProcessService } from '@aalis/plugin-process-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { DocSessionManager } from '../session.js';
@@ -18,7 +17,29 @@ interface PdfState {
   pageHeight: number;
 }
 
-export function registerPdfTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
+export function registerPdfTools(
+  tools: ScopedToolService,
+  sessions: DocSessionManager,
+  storage: StorageService,
+  outputUri: string,
+  proc?: ProcessService,
+) {
+  function joinUri(base: string, rel: string): string {
+    const b = base.endsWith('/') ? base : `${base}/`;
+    return `${b}${rel.replace(/^\/+/, '')}`;
+  }
+  function parentUri(uri: string): string {
+    const i = uri.lastIndexOf('/');
+    return i > 0 ? uri.slice(0, i) : uri;
+  }
+  function baseName(uri: string): string {
+    const i = uri.lastIndexOf('/');
+    return i >= 0 ? uri.slice(i + 1) : uri;
+  }
+  function toUri(input: string): string {
+    if (input.includes(':/')) return input;
+    return joinUri(outputUri, input);
+  }
   // 辅助：获取或新建页面
   function ensurePage(state: PdfState): ReturnType<PDFDocument['addPage']> {
     const pages = state.pdfDoc.getPages();
@@ -185,17 +206,16 @@ export function registerPdfTools(tools: ScopedToolService, sessions: DocSessionM
     async handler(args) {
       const session = sessions.require(String(args.docId));
       const state = session.doc as PdfState;
-      const filePath = resolve(outputDir, session.filename);
-      mkdirSync(dirname(filePath), { recursive: true });
+      const fileUri = joinUri(outputUri, session.filename);
       const pdfBytes = await state.pdfDoc.save();
-      writeFileSync(filePath, pdfBytes);
+      await storage.writeFile(fileUri, Buffer.from(pdfBytes));
       sessions.remove(session.id);
       return JSON.stringify({
         success: true,
-        path: filePath,
+        path: fileUri,
         pages: state.pdfDoc.getPageCount(),
         size: pdfBytes.length,
-        message: `PDF 已保存: ${filePath}`,
+        message: `PDF 已保存: ${fileUri}`,
       });
     },
   });
@@ -218,22 +238,36 @@ export function registerPdfTools(tools: ScopedToolService, sessions: DocSessionM
       },
     },
     async handler(args) {
-      const inputPath = resolve(outputDir, String(args.inputPath));
-      const outDir = args.outputDir ? resolve(outputDir, String(args.outputDir)) : dirname(inputPath);
-      mkdirSync(outDir, { recursive: true });
+      const inputUri = toUri(String(args.inputPath));
+      const outUri = args.outputDir ? toUri(String(args.outputDir)) : parentUri(inputUri);
+      const resolveLocal = storage.resolveLocalPath?.bind(storage);
+      if (!resolveLocal) {
+        return JSON.stringify({ success: false, message: 'PDF 转换需要存储提供本地路径能力（resolveLocalPath）。' });
+      }
+      let inputLocal: string;
+      let outDirLocal: string;
+      try {
+        inputLocal = await resolveLocal(inputUri, 'read');
+        outDirLocal = await resolveLocal(outUri, 'write');
+      } catch (e) {
+        return JSON.stringify({ success: false, message: `无法解析本地路径: ${(e as Error).message}` });
+      }
 
       try {
-        execFileSync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDir, inputPath], {
+        if (!proc) {
+          return JSON.stringify({
+            success: false,
+            message: 'PDF 转换需要 process 服务，请启用 @aalis/plugin-process-local。',
+          });
+        }
+        await proc.execFile('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDirLocal, inputLocal], {
           timeout: 60000,
         });
 
-        const baseName = inputPath
-          .replace(/\.[^.]+$/, '.pdf')
-          .split('/')
-          .pop();
-        const pdfPath = resolve(outDir, baseName || 'output.pdf');
+        const pdfName = baseName(inputUri).replace(/\.[^.]+$/, '.pdf') || 'output.pdf';
+        const pdfUri = joinUri(outUri, pdfName);
 
-        return JSON.stringify({ success: true, path: pdfPath, message: `已转换为 PDF: ${pdfPath}` });
+        return JSON.stringify({ success: true, path: pdfUri, message: `已转换为 PDF: ${pdfUri}` });
         // biome-ignore lint/suspicious/noExplicitAny: catch 兜底，e 可能为任意类型
       } catch (e: any) {
         return JSON.stringify({

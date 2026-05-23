@@ -1,24 +1,26 @@
 // ============================================================
-// attachment-cache.ts — 统一附件落盘
+// attachment-cache.ts — 统一附件落盘（storage URI 版）
 //
-// 把入站/出站的 image / audio / video / file 统一缓存到
-//   data/{kind}s/{safeSessionId}/{sha256-16}.{ext}
-// 以保持与图片缓存目录布局一致，便于人工检查、归档、再分析。
+// 入站/出站的 image / audio / video / file 统一缓存到
+//   data:/{kind}s/{safeSessionId}/{sha256-16}.{ext}
 //
 // 设计要点：
 // - 只接受已下载好的 Buffer，下载/get_record/ffmpeg 由调用方负责
-// - 单文件 size cap 由调用方传入，超限直接返回 null（调用方退回原 URL）
+// - 单文件 size cap 由调用方传入，超限直接返回 null
 // - 文件名用 sha256(buffer) 前 16 字符做内容寻址，自然去重
-// - 返回相对 cwd 的路径（如 `data/audios/.../xxx.wav`），供下游读盘
+// - 返回的 ref 仍是相对路径（如 `data/audios/.../xxx.wav`）以兼容历史 ref:
+//   解析；存盘走 storage.writeFile('data:/...')
+//
+// 例外：loadAttachmentBuffer 在遇到 file:// 时仍使用 node:fs/promises 读取
+// 任意 OS 路径。原因是 OneBot daemon 可能把不在 storage 任何根下的文件路径
+// 推过来（典型：NapCat 容器挂载的 /tmp）。这是 adapter 的固有职责，已加入
+// biome noRestrictedImports 白名单。
 // ============================================================
 
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { Buffer } from 'node:buffer';
+import { readFile as fsReadFile } from 'node:fs/promises';
+import type { ProcessService } from '@aalis/plugin-process-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
 
@@ -34,11 +36,21 @@ function safeSessionDir(sessionId: string): string {
   return sessionId.replace(/[:/\\]/g, '_');
 }
 
+/** 简易判定：形如 <root>:/<path>，且 root 非 http/https/data/file。 */
+function isStorageUri(s: string): boolean {
+  if (!/^[a-z][a-z0-9_-]*:\//.test(s)) return false;
+  const scheme = s.slice(0, s.indexOf(':')).toLowerCase();
+  return scheme !== 'http' && scheme !== 'https' && scheme !== 'data' && scheme !== 'file';
+}
+
 /**
- * 把 Buffer 落盘到 `data/{kind}s/{session}/{hash}.{ext}`。
+ * 把 Buffer 落盘到 `data:/{kind}s/{session}/{hash}.{ext}`。
  * 超过 maxBytes 时返回 null，由调用方决定降级策略。
+ * 返回值是 `data/{kind}s/{session}/{filename}` 这一历史相对路径，
+ * 用于写入 attachment ref；storage 落盘走 `data:/...` URI。
  */
 export async function cacheAttachmentBuffer(
+  storage: StorageService,
   buf: Buffer,
   kind: AttachmentKind,
   sessionId: string,
@@ -48,19 +60,17 @@ export async function cacheAttachmentBuffer(
   if (buf.byteLength > maxBytes) return null;
   const digest = await crypto.subtle.digest('SHA-256', buf);
   const hash = Buffer.from(digest).toString('hex').slice(0, 16);
-  const dirRel = `data/${KIND_DIR[kind]}/${safeSessionDir(sessionId)}`;
-  const dirAbs = resolve(process.cwd(), dirRel);
-  await mkdir(dirAbs, { recursive: true });
+  const dirRel = `${KIND_DIR[kind]}/${safeSessionDir(sessionId)}`;
   const filename = `${hash}.${ext.replace(/^\.+/, '') || 'bin'}`;
-  await writeFile(resolve(dirAbs, filename), buf);
-  return `${dirRel}/${filename}`;
+  const uri = `data:/${dirRel}/${filename}`;
+  await storage.writeFile(uri, buf);
+  return `data/${dirRel}/${filename}`;
 }
 
 /**
- * 从 URL / data: URI / file:// / 本地路径取到 Buffer。
- * 失败返回 null。
+ * 从 URL / data: URI / file:// / storage URI 取到 Buffer。失败返回 null。
  */
-export async function loadAttachmentBuffer(source: string): Promise<Buffer | null> {
+export async function loadAttachmentBuffer(storage: StorageService, source: string): Promise<Buffer | null> {
   try {
     if (source.startsWith('data:')) {
       const m = source.match(/^data:[^;]+;base64,(.+)$/);
@@ -72,8 +82,14 @@ export async function loadAttachmentBuffer(source: string): Promise<Buffer | nul
       if (!res.ok) return null;
       return Buffer.from(await res.arrayBuffer());
     }
-    const path = source.startsWith('file://') ? source.slice('file://'.length) : resolve(process.cwd(), source);
-    return await readFile(path);
+    if (isStorageUri(source)) {
+      const raw = (await storage.readFile(source)) as Uint8Array;
+      return Buffer.from(raw);
+    }
+    // file:// 或绝对路径：OneBot daemon 推来的任意 OS 路径，走 node:fs
+    const path = source.startsWith('file://') ? source.slice('file://'.length) : source;
+    const raw = await fsReadFile(path);
+    return raw;
   } catch {
     return null;
   }
@@ -105,26 +121,33 @@ export function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string
 
 /**
  * 用 ffmpeg 把任意可解码音频 Buffer 转为 16kHz mono PCM WAV。
- * Gemma 3n cookbook 推荐格式；ASR / 多模态 LLM 都能直接消费。
- *
  * 失败（典型：SILK，ffmpeg 不含 silk 解码器）返回 null。
  */
-export async function transcodeAudioBufferToWav(input: Buffer, inputExt: string): Promise<Buffer | null> {
-  const tmp = await mkdtemp(join(tmpdir(), 'aalis-onebot-audio-'));
+export async function transcodeAudioBufferToWav(
+  proc: ProcessService,
+  storage: StorageService,
+  input: Buffer,
+  inputExt: string,
+): Promise<Buffer | null> {
+  const tmp = await proc.makeTempDir('onebot-audio');
   try {
-    const inPath = join(tmp, `in.${inputExt.replace(/^\.+/, '') || 'bin'}`);
-    const outPath = join(tmp, 'out.wav');
-    await writeFile(inPath, input);
-    await execFileAsync(
+    const ext = inputExt.replace(/^\.+/, '') || 'bin';
+    const inUri = `${tmp.uri}/in.${ext}`;
+    const outUri = `${tmp.uri}/out.wav`;
+    const inPath = `${tmp.path}/in.${ext}`;
+    const outPath = `${tmp.path}/out.wav`;
+    await storage.writeFile(inUri, input);
+    await proc.execFile(
       'ffmpeg',
       ['-i', inPath, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', outPath],
       { timeout: 60000 },
     );
-    const out = await readFile(outPath);
+    const raw = (await storage.readFile(outUri)) as Uint8Array;
+    const out = Buffer.from(raw);
     return out.byteLength >= 256 ? out : null;
   } catch {
     return null;
   } finally {
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    await tmp.cleanup();
   }
 }

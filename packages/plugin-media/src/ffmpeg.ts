@@ -1,19 +1,14 @@
 // ============================================================
 // ffmpeg.ts — 视频/动图帧提取工具
 //
-// 复用自 plugin-image-recognition 的成熟实现，独立出来以便 plugin-media
-// 与未来其他视频识别 backend 共享。逻辑保持一致，只去掉 sharp fallback
-// （sharp 仅 GIF 有用，新代码统一要求 ffmpeg 即可，简化部署判断）。
+// 通过 plugin-process-api + plugin-storage-api 委托子进程与临时目录。
+// 业务调用方仍以纯函数形式使用，运行时通过 setMediaRuntime() 注入实现。
 // ============================================================
 
-import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { extname, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
+import { Buffer } from 'node:buffer';
+import { extname } from 'node:path';
+import { getMediaRuntime } from './runtime.js';
 import { safeDownloadToTemp } from './safe-fetch.js';
-
-const execFileAsync = promisify(execFile);
 
 /** 动图/视频扩展名集合（GIF 也按动图处理）。 */
 const ANIMATED_EXTS = new Set(['.gif', '.mp4', '.webm', '.avi', '.mov', '.mkv', '.flv', '.m4v']);
@@ -27,25 +22,32 @@ export function isAnimatedFormat(pathOrUrl: string): boolean {
   return ANIMATED_EXTS.has(ext);
 }
 
-/** 本地文件 → data URI（按扩展名猜 mime）。失败抛错。 */
-export async function fileToDataUri(filePath: string): Promise<string> {
-  const buf = await readFile(filePath);
-  const ext = extname(filePath).slice(1).toLowerCase();
-  const mimeMap: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    mov: 'video/quicktime',
-    mp3: 'audio/mpeg',
-    wav: 'audio/wav',
-    ogg: 'audio/ogg',
-  };
-  const mime = mimeMap[ext] ?? 'application/octet-stream';
-  return `data:${mime};base64,${buf.toString('base64')}`;
+const MIME_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+};
+
+function mimeForExt(ext: string): string {
+  return MIME_BY_EXT[ext.toLowerCase()] ?? 'application/octet-stream';
+}
+
+/**
+ * Storage URI → data URI（按扩展名猜 mime）。失败抛错。
+ */
+export async function fileToDataUri(uri: string): Promise<string> {
+  const { storage } = getMediaRuntime();
+  const ext = extname(uri).slice(1).toLowerCase();
+  const buf = (await storage.readFile(uri)) as Uint8Array;
+  return `data:${mimeForExt(ext)};base64,${Buffer.from(buf).toString('base64')}`;
 }
 
 /**
@@ -73,8 +75,9 @@ export function selectFrameIndices(totalFrames: number, maxFrames: number): numb
 }
 
 export async function getFrameCount(filePath: string): Promise<number> {
+  const { proc } = getMediaRuntime();
   try {
-    const { stdout } = await execFileAsync(
+    const r = await proc.execFile(
       'ffprobe',
       [
         '-v',
@@ -90,7 +93,7 @@ export async function getFrameCount(filePath: string): Promise<number> {
       ],
       { timeout: 30000 },
     );
-    const n = Number.parseInt(stdout.trim(), 10);
+    const n = Number.parseInt(r.stdout.trim(), 10);
     return Number.isNaN(n) ? 0 : n;
   } catch {
     return 0;
@@ -100,10 +103,11 @@ export async function getFrameCount(filePath: string): Promise<number> {
 /** 提取指定帧为 PNG，返回 data URI 数组。 */
 export async function extractFrames(filePath: string, frameIndices: number[]): Promise<string[]> {
   if (frameIndices.length === 0) return [];
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-frames-'));
+  const { proc, storage } = getMediaRuntime();
+  const tmp = await proc.makeTempDir('media-frames');
   try {
     const selectExpr = frameIndices.map(i => `eq(n\\,${i})`).join('+');
-    await execFileAsync(
+    await proc.execFile(
       'ffmpeg',
       [
         '-i',
@@ -115,43 +119,45 @@ export async function extractFrames(filePath: string, frameIndices: number[]): P
         '-f',
         'image2',
         '-y',
-        join(tmpDir, 'frame_%04d.png'),
+        `${tmp.path}/frame_%04d.png`,
       ],
       { timeout: 60000 },
     );
     const results: string[] = [];
     for (let i = 1; i <= frameIndices.length; i++) {
-      const framePath = join(tmpDir, `frame_${String(i).padStart(4, '0')}.png`);
+      const name = `frame_${String(i).padStart(4, '0')}.png`;
       try {
-        const buf = await readFile(framePath);
-        results.push(`data:image/png;base64,${buf.toString('base64')}`);
+        const buf = await storage.readFile(`${tmp.uri}/${name}`);
+        results.push(`data:image/png;base64,${Buffer.from(buf as Uint8Array).toString('base64')}`);
       } catch {
         // 该帧可能不存在
       }
     }
     return results;
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await tmp.cleanup();
   }
 }
 
 /** 抽取视频音轨为 mp3。返回 data URI 或 null（失败/无音轨）。 */
 export async function extractAudioTrack(filePath: string): Promise<string | null> {
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-audio-'));
+  const { proc, storage } = getMediaRuntime();
+  const tmp = await proc.makeTempDir('media-audio');
   try {
-    const out = join(tmpDir, 'audio.mp3');
-    await execFileAsync(
+    const outUri = `${tmp.uri}/audio.mp3`;
+    const outLocal = `${tmp.path}/audio.mp3`;
+    await proc.execFile(
       'ffmpeg',
-      ['-i', filePath, '-vn', '-acodec', 'libmp3lame', '-ab', '64k', '-ar', '16000', '-y', out],
+      ['-i', filePath, '-vn', '-acodec', 'libmp3lame', '-ab', '64k', '-ar', '16000', '-y', outLocal],
       { timeout: 120000 },
     );
-    const buf = await readFile(out);
+    const buf = (await storage.readFile(outUri)) as Uint8Array;
     if (buf.byteLength < 256) return null; // 几乎肯定没音轨
-    return `data:audio/mpeg;base64,${buf.toString('base64')}`;
+    return `data:audio/mpeg;base64,${Buffer.from(buf).toString('base64')}`;
   } catch {
     return null;
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await tmp.cleanup();
   }
 }
 
@@ -169,58 +175,59 @@ export async function extractAudioTrack(filePath: string): Promise<string | null
  * 返回纯 base64（不带 data: 前缀），失败返回 null。
  */
 export async function transcodeAudioToWav(filePath: string): Promise<string | null> {
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-wav-'));
+  const { proc, storage } = getMediaRuntime();
+  const tmp = await proc.makeTempDir('media-wav');
   try {
-    const out = join(tmpDir, 'audio.wav');
-    await execFileAsync(
+    const outUri = `${tmp.uri}/audio.wav`;
+    const outLocal = `${tmp.path}/audio.wav`;
+    await proc.execFile(
       'ffmpeg',
-      ['-i', filePath, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', out],
+      ['-i', filePath, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', outLocal],
       { timeout: 60000 },
     );
-    const buf = await readFile(out);
+    const buf = (await storage.readFile(outUri)) as Uint8Array;
     if (buf.byteLength < 256) return null;
-    return buf.toString('base64');
+    return Buffer.from(buf).toString('base64');
   } catch {
     return null;
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await tmp.cleanup();
   }
 }
 
 /** 把 base64 data URL / file:/ 路径写到临时文件，返回本地路径与清理函数。 */
 export async function materializeAttachment(
   data: string,
-): Promise<{ path: string; cleanup: () => Promise<void> } | null> {
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-att-'));
-  const cleanup = async () => {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  };
+): Promise<{ path: string; uri?: string; cleanup: () => Promise<void> } | null> {
+  const { proc, storage } = getMediaRuntime();
   try {
     if (data.startsWith('data:')) {
       const m = data.match(/^data:([^;]+);base64,(.+)$/);
-      if (!m) {
-        await cleanup();
-        return null;
-      }
+      if (!m) return null;
       const ext = m[1].split('/')[1] || 'bin';
-      const filePath = join(tmpDir, `att.${ext}`);
-      const { writeFile } = await import('node:fs/promises');
-      await writeFile(filePath, Buffer.from(m[2], 'base64'));
-      return { path: filePath, cleanup };
+      const tmp = await proc.makeTempDir('media-att');
+      const uri = `${tmp.uri}/att.${ext}`;
+      await storage.writeFile(uri, Buffer.from(m[2], 'base64'));
+      return { path: `${tmp.path}/att.${ext}`, uri, cleanup: tmp.cleanup };
     }
     if (data.startsWith('file://')) {
-      return { path: data.slice('file://'.length), cleanup };
+      return { path: data.slice('file://'.length), cleanup: async () => {} };
     }
     if (data.startsWith('http://') || data.startsWith('https://')) {
-      // 远程 URL：走 SSRF 防护通道下载到临时文件（与 downloadToTemp 同栈）
-      await cleanup();
-      return await safeDownloadToTemp(data, { imageOnly: false });
+      const r = await safeDownloadToTemp(data, { imageOnly: false });
+      return r;
     }
-    // 已经是本地路径（可能是相对 cwd 的相对路径，例如 adapter 缓存的 data/images/xxx）
-    const abs = resolve(process.cwd(), data);
-    return { path: abs, cleanup };
+    // storage URI（如 data:/images/...）→ 解析到本地路径
+    if (/^[a-z][a-z0-9_-]*:\//.test(data)) {
+      try {
+        const local = await storage.resolveLocalPath?.(data, 'read');
+        if (local) return { path: local, uri: data, cleanup: async () => {} };
+      } catch {
+        /* fall through */
+      }
+    }
+    return null;
   } catch {
-    await cleanup();
     return null;
   }
 }

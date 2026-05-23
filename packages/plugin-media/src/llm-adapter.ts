@@ -2,6 +2,7 @@
 // llm-adapter.ts — 把声明了 vision/audio 能力的 LLM 自动包装为 MediaProcessor
 // ============================================================
 
+import { Buffer } from 'node:buffer';
 import type { Context } from '@aalis/core';
 import type { LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
@@ -98,12 +99,18 @@ function detectAudioFormat(buf: Buffer): string {
  *    转码为 16kHz mono WAV，这是 Gemma 3n 等多模态 LLM 官方推荐的格式
  * 4. ffmpeg 转码失败（典型如 SILK——ffmpeg 没有 silk 解码器）才抛错
  */
+import { getMediaRuntime } from './runtime.js';
+
 async function audioToBase64(data: string): Promise<string> {
   const mat = await materializeAttachment(data);
   if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
   try {
-    const { readFile } = await import('node:fs/promises');
-    const buf = await readFile(mat.path);
+    if (!mat.uri) {
+      throw new Error('音频附件未落入 storage 根（请让 adapter 先走 attachment-cache）');
+    }
+    const { storage } = getMediaRuntime();
+    const raw = (await storage.readFile(mat.uri)) as Uint8Array;
+    const buf = Buffer.from(raw);
     const fmt = detectAudioFormat(buf);
 
     // 主流格式：多模态 LLM 与 Whisper 都能直接解码，无需转码
