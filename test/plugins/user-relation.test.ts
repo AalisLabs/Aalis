@@ -11,6 +11,7 @@ import {
 } from '../../packages/plugin-user-relation/src/index.js';
 import {
   clamp01,
+  isEvidenceFullyCovered,
   isSymmetricRelation,
   normalizeRelationType,
   reinforceWeight,
@@ -345,5 +346,77 @@ describe('plugin-user-relation: helpers', () => {
     expect(isSymmetricRelation('cp')).toBe(true);
     expect(isSymmetricRelation('mentor')).toBe(false);
     expect(isSymmetricRelation('admirer')).toBe(false);
+  });
+
+  it('trimEvidence dedup by sessionId + messageIds key', () => {
+    const list: EvidenceRef[] = [
+      ev({ sessionId: 's1', messageIds: ['m1'], extractedAt: 100 }),
+      ev({ sessionId: 's1', messageIds: ['m1'], extractedAt: 200 }), // 重复
+      ev({ sessionId: 's1', messageIds: ['m2', 'm3'], extractedAt: 300 }),
+      ev({ sessionId: 's1', messageIds: ['m3', 'm2'], extractedAt: 400 }), // 顺序不同但 sorted 后相同 → 重复
+      ev({ sessionId: 's2', messageIds: ['m1'], extractedAt: 500 }), // 不同 session
+    ];
+    const trimmed = trimEvidence(list);
+    expect(trimmed).toHaveLength(3);
+    // 按 extractedAt DESC 保留 + 取首次出现 → 500, 400, 200
+    expect(trimmed.map(e => e.extractedAt)).toEqual([500, 400, 200]);
+  });
+
+  it('isEvidenceFullyCovered detects fully-covered batch', () => {
+    const existing: EvidenceRef[] = [
+      ev({ sessionId: 's1', messageIds: ['m1'] }),
+      ev({ sessionId: 's1', messageIds: ['m2'] }),
+    ];
+    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m1'] })], existing)).toBe(true);
+    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m3'] })], existing)).toBe(false);
+    expect(isEvidenceFullyCovered([], existing)).toBe(false); // 空 incoming 不算覆盖
+  });
+});
+
+describe('plugin-user-relation: edge dedup vs double-write', () => {
+  it('addPersonEntityEdge with identical evidence batch does NOT double-reinforce weight', async () => {
+    const { service } = await makeService();
+    const entity = await service.createEntity({ name: 'd', entityKind: 'work', evidence: [] });
+    const evRef = ev({ sessionId: 's1', messageIds: ['m1'], extractedAt: 1000 });
+    const e1 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u1',
+      toEntityId: entity.id,
+      role: 'enthusiast',
+      weight: 0.5,
+      evidence: [evRef],
+    });
+    // 模拟"agent 与 extractor 看到同一条消息后各写一次"——同 messageId
+    const e2 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u1',
+      toEntityId: entity.id,
+      role: 'enthusiast',
+      weight: 0.5,
+      evidence: [evRef],
+    });
+    expect(e2.id).toBe(e1.id);
+    expect(e2.weight).toBe(e1.weight); // 未重复强化
+    expect(e2.evidence).toHaveLength(1); // 未重复堆积
+  });
+
+  it('addPersonEntityEdge still reinforces when evidence is different (new message)', async () => {
+    const { service } = await makeService();
+    const entity = await service.createEntity({ name: 'd', entityKind: 'work', evidence: [] });
+    const e1 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u1',
+      toEntityId: entity.id,
+      role: 'enthusiast',
+      weight: 0.5,
+      evidence: [ev({ messageIds: ['m1'] })],
+    });
+    const e2 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u1',
+      toEntityId: entity.id,
+      role: 'enthusiast',
+      weight: 0.5,
+      evidence: [ev({ messageIds: ['m2'] })],
+    });
+    expect(e2.id).toBe(e1.id);
+    expect(e2.weight).toBeGreaterThan(e1.weight); // 新证据 → 仍强化
+    expect(e2.evidence).toHaveLength(2);
   });
 });
