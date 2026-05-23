@@ -44,6 +44,51 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/**/src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "node:fs": "node:fs 仅允许在 plugin-storage-* / plugin-webui-server / plugin-mcp-server / create-aalis-plugin 中使用；其他插件请通过 @aalis/plugin-storage-api 访问。",
+                  "node:fs/promises": "node:fs/promises 仅允许在 plugin-storage-* / plugin-adapter-onebot/attachment-cache / create-aalis-plugin 中使用；其他插件请通过 @aalis/plugin-storage-api 访问。",
+                  "node:child_process": "node:child_process 仅允许在 plugin-process-local / plugin-webui-server/auth 中使用；其他插件请通过 @aalis/plugin-process-api 访问。",
+                  "node:os": "node:os 仅允许在 plugin-tool-system/system 中使用（系统信息工具）；其他插件请改用 process.platform 或 @aalis/plugin-process-api。",
+                  "node:http": "node:http 仅允许在 plugin-webui-server / plugin-mcp-server 中使用（HTTP 服务接口）。",
+                  "node:https": "node:https 仅允许在 plugin-webui-server / plugin-mcp-server 中使用（HTTPS 服务接口）。"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/plugin-storage-local/src/**",
+        "packages/plugin-process-local/src/**",
+        "packages/plugin-webui-server/src/**",
+        "packages/plugin-mcp-server/src/**",
+        "packages/plugin-adapter-onebot/src/attachment-cache.ts",
+        "packages/plugin-tool-system/src/tools/system.ts",
+        "packages/plugin-asr-openai/src/index.ts",
+        "packages/plugin-ollama/src/index.ts",
+        "packages/plugin-tool-browser/src/index.ts",
+        "packages/create-aalis-plugin/src/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "single",
