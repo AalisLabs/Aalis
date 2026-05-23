@@ -1725,9 +1725,21 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
+      '@aalis/plugin-llm-api':
+        specifier: workspace:*
+        version: link:../plugin-llm-api
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:*
+        version: link:../plugin-message-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
