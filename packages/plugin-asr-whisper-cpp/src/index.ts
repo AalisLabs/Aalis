@@ -9,18 +9,18 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
+import type { ProcessService, TempDirHandle } from '@aalis/plugin-process-api';
+import { createProcessGateway } from '@aalis/plugin-process-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 
 export const name = '@aalis/plugin-asr-whisper-cpp';
 export const displayName = 'Whisper.cpp 本地转写';
 export const subsystem = 'media';
 export const provides: string[] = [];
-export const inject = { required: ['media'] };
+export const inject = { required: ['media', 'process', 'storage'] };
 
 interface Cfg {
   binaryPath: string;
@@ -46,59 +46,70 @@ export const defaultConfig: Cfg = {
   priority: 80,
 };
 
-function exec(bin: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(bin, args);
-    let stdout = '';
-    let stderr = '';
-    p.stdout.on('data', d => {
-      stdout += d.toString();
-    });
-    p.stderr.on('data', d => {
-      stderr += d.toString();
-    });
-    p.on('error', reject);
-    p.on('close', code => resolve({ stdout, stderr, code: code ?? -1 }));
-  });
+interface AudioMaterial {
+  /** ffmpeg 可读的本地输入路径 */
+  path: string;
+  /** tmp 句柄；若来源是已有的 file:// / storage URI 则为 null */
+  tmp: TempDirHandle | null;
+  /** 当 tmp 非 null 时，相对 tmp 根的输入文件名（用于推导后续 wav/.txt 的 storage URI） */
+  audioBase: string | null;
 }
 
-async function materializeAudio(data: string): Promise<{ path: string; cleanup: () => Promise<void> }> {
+async function materializeAudio(proc: ProcessService, storage: StorageService, data: string): Promise<AudioMaterial> {
   if (data.startsWith('file://')) {
-    return { path: data.slice(7), cleanup: async () => {} };
+    return { path: data.slice(7), tmp: null, audioBase: null };
   }
-  const dir = await fs.mkdtemp(join(tmpdir(), 'aalis-whisper-'));
+  // storage URI（如 data:/audios/...）
+  if (
+    /^[a-z][a-z0-9_-]*:\//.test(data) &&
+    !data.startsWith('http://') &&
+    !data.startsWith('https://') &&
+    !data.startsWith('data:')
+  ) {
+    try {
+      const local = await storage.resolveLocalPath?.(data, 'read');
+      if (local) return { path: local, tmp: null, audioBase: null };
+    } catch {
+      /* fall through */
+    }
+  }
+  const tmp = await proc.makeTempDir('whisper');
   let buf: Buffer;
   let ext = 'bin';
   if (data.startsWith('data:')) {
     const m = data.match(/^data:([^;]+);base64,(.+)$/);
-    if (!m) throw new Error('无效 data URL');
+    if (!m) {
+      await tmp.cleanup();
+      throw new Error('无效 data URL');
+    }
     buf = Buffer.from(m[2], 'base64');
     ext = m[1].split('/')[1]?.split(';')[0] ?? 'bin';
   } else if (data.startsWith('http://') || data.startsWith('https://')) {
     const resp = await fetch(data);
-    if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
+    if (!resp.ok) {
+      await tmp.cleanup();
+      throw new Error(`下载失败 ${resp.status}`);
+    }
     buf = Buffer.from(await resp.arrayBuffer());
     ext = data.split('.').pop()?.split('?')[0] ?? 'bin';
   } else {
+    await tmp.cleanup();
     throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
   }
-  const path = join(dir, `audio.${ext}`);
-  await fs.writeFile(path, buf);
-  return {
-    path,
-    cleanup: async () => {
-      try {
-        await fs.rm(dir, { recursive: true, force: true });
-      } catch {}
-    },
-  };
+  const audioBase = `audio.${ext}`;
+  await storage.writeFile(`${tmp.uri}/${audioBase}`, buf);
+  const path = await storage.resolveLocalPath!(`${tmp.uri}/${audioBase}`, 'read');
+  return { path, tmp, audioBase };
 }
 
 /** 用 ffmpeg 把任意音频转成 whisper 需要的 16kHz mono wav。 */
-async function toWav16k(input: string): Promise<string> {
+async function toWav16k(proc: ProcessService, input: string): Promise<string> {
   const out = `${input}.16k.wav`;
-  const r = await exec('ffmpeg', ['-y', '-i', input, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out]);
-  if (r.code !== 0) throw new Error(`ffmpeg 转码失败: ${r.stderr.slice(-200)}`);
+  await proc
+    .execFile('ffmpeg', ['-y', '-i', input, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out])
+    .catch((err: Error & { result?: { stderr: string } }) => {
+      throw new Error(`ffmpeg 转码失败: ${(err.result?.stderr ?? err.message).slice(-200)}`);
+    });
   return out;
 }
 
@@ -110,15 +121,17 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     logger.warn('未配置 modelPath，插件不会注册 processor');
     return;
   }
+  const proc = createProcessGateway(ctx);
+  const storage = createStorageGateway(ctx);
 
   const processor: MediaProcessor = {
     name: `asr-whisper-cpp:${cfg.modelPath.split('/').pop() ?? 'model'}`,
     capabilities: ['audio'],
     priority: cfg.priority,
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-      const local = await materializeAudio(input.attachment.data);
+      const local = await materializeAudio(proc, storage, input.attachment.data);
       try {
-        const wav = await toWav16k(local.path);
+        const wav = await toWav16k(proc, local.path);
         const lang = input.language ?? cfg.language;
         const args = [
           '-m',
@@ -132,20 +145,26 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
           '-nt', // no timestamps in stdout
           '--output-txt',
         ];
-        const r = await exec(cfg.binaryPath, args);
-        if (r.code !== 0) throw new Error(`whisper-cli 失败: ${r.stderr.slice(-200)}`);
+        const r = await proc.execFile(cfg.binaryPath, args).catch((err: Error & { result?: { stderr: string } }) => {
+          throw new Error(`whisper-cli 失败: ${(err.result?.stderr ?? err.message).slice(-200)}`);
+        });
         // 读取生成的 .txt（whisper-cli 默认在输入路径旁生成 <wav>.txt）
-        const txtPath = `${wav}.txt`;
         let text = '';
-        try {
-          text = (await fs.readFile(txtPath, 'utf-8')).trim();
-        } catch {
-          // 回退：直接 parse stdout
+        if (local.tmp && local.audioBase) {
+          const txtUri = `${local.tmp.uri}/${local.audioBase}.16k.wav.txt`;
+          try {
+            const raw = await storage.readFile(txtUri, 'utf-8');
+            text = String(raw).trim();
+          } catch {
+            text = r.stdout.replace(/\[[^\]]+\]/g, '').trim();
+          }
+        } else {
+          // 输入是外部 file:// 或 storage URI，txt 与 wav 在同目录但不一定在我们的 root 内：回退 stdout
           text = r.stdout.replace(/\[[^\]]+\]/g, '').trim();
         }
         return { text };
       } finally {
-        await local.cleanup();
+        if (local.tmp) await local.tmp.cleanup();
       }
     },
   };

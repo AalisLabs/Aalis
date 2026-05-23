@@ -7,10 +7,10 @@
 // plugin-webui-server 的 image proxy 共用同一套规则。
 // ============================================================
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { Buffer } from 'node:buffer';
+import { extname } from 'node:path';
 import { assertSafeHost } from '@aalis/util-network-guard';
+import { getMediaRuntime } from './runtime.js';
 
 /** 单次下载上限，避免 LLM 触发把巨型文件灌进显存。 */
 const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
@@ -125,19 +125,17 @@ export async function safeDownloadToTemp(
   opts: SafeFetchOptions = {},
 ): Promise<{ path: string; cleanup: () => Promise<void> } | null> {
   if (!url.startsWith('http://') && !url.startsWith('https://')) return null;
-  const tmpDir = await mkdtemp(join(tmpdir(), 'aalis-media-dl-'));
-  const cleanup = async () => {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  };
+  const { proc, storage } = getMediaRuntime();
+  const tmp = await proc.makeTempDir('media-dl');
   try {
     const { buffer, contentType } = await safeFetchBuffer(url, opts);
     const clean = url.split('?')[0].split('#')[0];
     const ext = extname(clean).toLowerCase() || guessExtFromMime(contentType) || '.bin';
-    const filePath = join(tmpDir, `download${ext}`);
-    await writeFile(filePath, buffer);
-    return { path: filePath, cleanup };
+    const fileName = `download${ext}`;
+    await storage.writeFile(`${tmp.uri}/${fileName}`, buffer);
+    return { path: `${tmp.path}/${fileName}`, cleanup: tmp.cleanup };
   } catch {
-    await cleanup();
+    await tmp.cleanup();
     return null;
   }
 }

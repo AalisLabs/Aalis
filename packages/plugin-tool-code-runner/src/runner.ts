@@ -1,21 +1,22 @@
 /**
  * 代码执行器 —— 编写临时脚本并运行
  *
- * 将代码写入临时文件后用对应解释器执行，避免 shell 转义问题。
- * 支持 Python / JavaScript (Node.js)。
+ * 临时目录通过 ProcessService.makeTempDir 在 storage tmp:/ 下分配，
+ * 子进程通过 ProcessService.spawn 启动；不直接依赖 node:fs/child_process。
  */
 
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { Buffer } from 'node:buffer';
+import type { ProcessService } from '@aalis/plugin-process-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 export interface RunnerConfig {
   defaultTimeout: number;
   maxTimeout: number;
   maxOutputSize: number;
+  /** 子进程 cwd（已通过 storage.resolveLocalPath 解析的本地路径） */
   cwd: string;
-  tmpDir: string;
-  env?: NodeJS.ProcessEnv;
+  /** 透传给子进程的环境变量；不提供时由 ProcessService 默认合入 process.env */
+  env?: Record<string, string | undefined>;
 }
 
 export interface RunResult {
@@ -35,13 +36,18 @@ function truncateOutput(output: string, maxSize: number): string {
 /**
  * 执行代码脚本
  *
+ * @param proc        ProcessService 句柄
+ * @param storage     StorageService（用于写脚本到 tmp）
  * @param interpreter 解释器路径 (python3 / node)
  * @param code        完整源代码
  * @param ext         临时文件扩展名 (.py / .mjs)
  * @param config      超时 / 输出限制
+ * @param timeout     可选自定义超时
  * @param extraArgs   额外的解释器参数
  */
 export async function runCode(
+  proc: ProcessService,
+  storage: StorageService,
   interpreter: string,
   code: string,
   ext: string,
@@ -50,64 +56,45 @@ export async function runCode(
   extraArgs: string[] = [],
 ): Promise<RunResult> {
   const effectiveTimeout = Math.min(Math.max(1000, timeout ?? config.defaultTimeout), config.maxTimeout);
-
-  // 创建临时目录 + 文件（调用方保证 tmpDir 来自 storage 的受控本地路径）
-  const baseDir = config.tmpDir;
-  await mkdir(baseDir, { recursive: true });
-  const tmpDir = await mkdtemp(join(baseDir, 'run-'));
-  const tmpFile = join(tmpDir, `script${ext}`);
-  await writeFile(tmpFile, code, 'utf-8');
-
+  const tmp = await proc.makeTempDir('code-runner');
   try {
-    return await new Promise<RunResult>(resolve => {
-      let stdout = '';
-      let stderr = '';
-      let killed = false;
+    const scriptUri = `${tmp.uri}/script${ext}`;
+    await storage.writeFile(scriptUri, Buffer.from(code, 'utf-8'));
+    const scriptPath = `${tmp.path}/script${ext}`;
 
-      const child = spawn(interpreter, [...extraArgs, tmpFile], {
+    try {
+      const result = await proc.execFile(interpreter, [...extraArgs, scriptPath], {
         cwd: config.cwd,
         env: { ...(config.env ?? {}), PYTHONIOENCODING: 'utf-8' },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: effectiveTimeout,
       });
-
-      child.stdout?.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-      });
-      child.stderr?.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      const timer = setTimeout(() => {
-        killed = true;
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
-        }, 3000);
-      }, effectiveTimeout);
-
-      child.on('close', exitCode => {
-        clearTimeout(timer);
-        resolve({
-          exitCode: exitCode ?? -1,
-          stdout: truncateOutput(stdout, config.maxOutputSize),
-          stderr: truncateOutput(stderr, config.maxOutputSize),
-          ...(killed ? { timedOut: true } : {}),
-        });
-      });
-
-      child.on('error', err => {
-        clearTimeout(timer);
-        resolve({
-          error: err.message,
-          exitCode: -1,
-          stdout: truncateOutput(stdout, config.maxOutputSize),
-          stderr: truncateOutput(stderr, config.maxOutputSize),
-        });
-      });
-    });
+      return {
+        exitCode: result.code ?? -1,
+        stdout: truncateOutput(result.stdout, config.maxOutputSize),
+        stderr: truncateOutput(result.stderr, config.maxOutputSize),
+      };
+    } catch (err) {
+      // ProcessService.execFile 在非 0 退出时抛错，但会把 .result 挂上
+      const e = err as Error & {
+        result?: { code: number | null; signal: string | null; stdout: string; stderr: string };
+      };
+      if (e.result) {
+        const timedOut = e.result.signal === 'SIGKILL';
+        return {
+          exitCode: e.result.code ?? -1,
+          stdout: truncateOutput(e.result.stdout, config.maxOutputSize),
+          stderr: truncateOutput(e.result.stderr, config.maxOutputSize),
+          ...(timedOut ? { timedOut: true } : {}),
+        };
+      }
+      return {
+        exitCode: -1,
+        stdout: '',
+        stderr: '',
+        error: e.message,
+      };
+    }
   } finally {
-    // 清理临时文件和目录
-    await unlink(tmpFile).catch(() => {});
-    await rmdir(tmpDir).catch(() => {});
+    await tmp.cleanup();
   }
 }

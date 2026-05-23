@@ -5,7 +5,6 @@
 // （本地路径 / URL / data URI），以及把识别结果写回历史消息。
 // ============================================================
 
-import { resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -76,12 +75,14 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
           .join('\n');
 
         let imageUrl: string;
-        let localPath: string | undefined;
+        const localPath: string | undefined = undefined;
         if (imageInput.startsWith('http://') || imageInput.startsWith('https://') || imageInput.startsWith('data:')) {
           imageUrl = imageInput;
         } else {
-          localPath = resolve(process.cwd(), imageInput);
-          imageUrl = await fileToDataUri(localPath);
+          // 兼容裸名/相对路径：转为 storage URI（默认 workspace:/）→ 直接读成 data URI
+          const cleaned = imageInput.replace(/^\.?\/+/, '');
+          const uri = cleaned.includes(':/') ? cleaned : `workspace:/${cleaned}`;
+          imageUrl = await fileToDataUri(uri);
         }
 
         const desc = await svc.describeImage(imageUrl, { hint, localPath });

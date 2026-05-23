@@ -1,6 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+// node:fs/node:path 仅用于发现前端 dist 静态目录（位于工作区外部），
+// 已在 biome.json noRestrictedImports 中作为基础设施例外列出。
+
+import { Buffer } from 'node:buffer';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
 import { LogHub } from '@aalis/core';
@@ -38,7 +42,8 @@ export const displayName = 'WebUI 服务端';
 export const subsystem = 'platform';
 export const provides = ['webui-server'];
 export const inject = {
-  optional: ['authority', 'commands', 'storage', 'platform'],
+  required: ['storage'],
+  optional: ['authority', 'commands', 'platform'],
 };
 
 const webuiPages: WebuiPage[] = [
@@ -58,12 +63,6 @@ export const configSchema: ConfigSchema = {
     label: '文件浏览根',
     default: 'workspace',
     description: '文件管理页面使用的 storage 根 ID，默认 workspace',
-  },
-  workspaceRoot: {
-    type: 'string',
-    label: '兼容文件根目录',
-    default: 'workspace',
-    description: '缺少 storage 服务时的兼容文件根目录',
   },
   autoOpen: {
     type: 'boolean',
@@ -95,7 +94,6 @@ export const defaultConfig = {
   port: 3000,
   host: '127.0.0.1',
   fileRoot: 'workspace',
-  workspaceRoot: 'workspace',
   autoOpen: true,
   tokenMode: 'persist',
   fixedToken: '',
@@ -212,7 +210,7 @@ interface WSOutgoing {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const uiConfig: WebUIConfig = {
     port: (config.port as number) ?? 3000,
     host: (config.host as string) ?? '127.0.0.1',
@@ -225,45 +223,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     fixedToken: (config.fixedToken as string) ?? '',
   };
 
+  // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
+  const storage: StorageService = createStorageGateway(ctx);
+
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
-  // - persist：首次生成后写入 data/.webui-token，重启复用（默认）
+  // - persist：首次生成后写入 storage data:/webui/token，重启复用（默认）
   // - fixed：使用 fixedToken 配置项；为空时降级为 persist
-  // 所有模式都会写出 data/webui-access.txt 便于查找访问 URL（不写日志要求）
-  const dataDir = resolve(process.cwd(), 'data');
-  const tokenFile = join(dataDir, '.webui-token');
-  const accessFile = join(dataDir, 'webui-access.txt');
+  // 所有模式都会写出 data:/webui/access.txt 便于查找访问 URL
+  const tokenFileUri = 'data:/webui/token';
+  const accessFileUri = 'data:/webui/access.txt';
 
-  function ensureDataDir(): void {
-    try {
-      if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function resolveAuthToken(): string {
+  async function resolveAuthToken(): Promise<string> {
     if (uiConfig.tokenMode === 'fixed' && uiConfig.fixedToken.trim()) {
       return uiConfig.fixedToken.trim();
     }
     if (uiConfig.tokenMode === 'persist' || uiConfig.tokenMode === 'fixed') {
-      ensureDataDir();
       try {
-        if (existsSync(tokenFile)) {
-          const existing = readFileSync(tokenFile, 'utf-8').trim();
-          if (existing) return existing;
-        }
+        const raw = await storage.readFile(tokenFileUri, 'utf-8');
+        const existing = (typeof raw === 'string' ? raw : raw.toString('utf-8')).trim();
+        if (existing) return existing;
       } catch {
-        /* ignore */
+        /* not exists or unreadable */
       }
       const fresh = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
       try {
-        writeFileSync(tokenFile, fresh, { encoding: 'utf-8' });
-        try {
-          chmodSync(tokenFile, 0o600);
-        } catch {
-          /* ignore */
-        }
+        await storage.writeFile(tokenFileUri, fresh);
       } catch (err) {
         ctx.logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
       }
@@ -273,8 +258,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
   }
 
-  function writeAccessFile(url: string, token: string): void {
-    ensureDataDir();
+  async function writeAccessFile(url: string, token: string): Promise<void> {
     const lines = [
       '# Aalis WebUI 访问凭据（自动生成）',
       `# 生成时间: ${new Date().toISOString()}`,
@@ -287,18 +271,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       '# 提示：将该一键登录链接粘贴到浏览器即可自动设置 cookie',
     ];
     try {
-      writeFileSync(accessFile, `${lines.join('\n')}\n`, { encoding: 'utf-8' });
-      try {
-        chmodSync(accessFile, 0o600);
-      } catch {
-        /* ignore */
-      }
+      await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`);
     } catch (err) {
       ctx.logger.warn(`写入访问文件失败: ${(err as Error).message}`);
     }
   }
 
-  const authToken = resolveAuthToken();
+  const authToken = await resolveAuthToken();
   const auth = createAuthSystem(authToken, ctx.logger.child('auth'));
 
   const expressApp = express();
@@ -854,10 +833,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---------- 文件管理 API ----------
-  const storage = ctx.getAllServices<StorageService>('storage').length > 0 ? createStorageGateway(ctx) : undefined;
-  const workspaceRootCfg = (config.workspaceRoot as string) || 'workspace';
-  const workspaceRoot = resolve(process.cwd(), workspaceRootCfg);
-  registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot, workspaceRoot });
+  registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot });
   registerUploadedFilesRoutes(expressApp, ctx, { storage });
   registerProxyRoutes(expressApp, ctx);
 
@@ -1403,16 +1379,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     server.listen(uiConfig.port, uiConfig.host, () => {
       const url = `http://${uiConfig.host}:${uiConfig.port}/`;
       const accessUrl = `${url}?token=${authToken}`;
-      writeAccessFile(url, authToken);
+      void writeAccessFile(url, authToken);
       ctx.logger.info(`WebUI 已启动: ${url}`);
       const tokenHint =
         uiConfig.tokenMode === 'ephemeral'
           ? 'token 仅本次启动有效，重启轮换'
           : uiConfig.tokenMode === 'fixed'
             ? 'token 来自配置 fixedToken，固定不变'
-            : 'token 已持久化到 data/.webui-token，重启沿用';
+            : 'token 已持久化到 storage data:/webui/token，重启沿用';
       ctx.logger.info(`首次访问请使用以下 URL（${tokenHint}）: ${accessUrl}`);
-      ctx.logger.info(`访问凭据已写入: ${accessFile}`);
+      ctx.logger.info(`访问凭据已写入: ${accessFileUri}`);
       if (uiConfig.autoOpen) openBrowser(accessUrl);
     });
   });
