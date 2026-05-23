@@ -14,6 +14,7 @@ import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
 import {
+  buildFocusGuidance,
   estimateMsgTokens,
   estimateTextTokens,
   estimateTokens,
@@ -991,6 +992,11 @@ class DefaultAgent implements AgentService {
     if (imageAtts.length > 0) {
       userMessage.images = imageAtts.map(a => a.data);
     }
+
+    // 群聊焦点指引：仅 sessionType=group + triggerType ∈ {direct, immediate} 时注入，
+    // 紧贴在当前 user 消息前，告诉 LLM "下一条就是焦点"。详细动机见 helpers.ts。
+    const focusGuidance = buildFocusGuidance(incoming);
+    if (focusGuidance) messages.push(focusGuidance);
 
     messages.push(userMessage);
 
