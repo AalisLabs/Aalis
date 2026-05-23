@@ -34,6 +34,7 @@
     "packages/plugin-user-relation/src/extractor.ts": ["exports", "types"],
     "packages/plugin-user-relation/src/middleware.ts": ["exports", "types"],
     "packages/plugin-user-relation/src/service.ts": ["types"],
+    "packages/plugin-user-relation/src/tools.ts": ["exports", "types"],
     "packages/core/src/types/capabilities.ts": ["types"],
     "packages/core/src/types/services.ts": ["types"],
     "packages/core/src/types/index.ts": ["types"],

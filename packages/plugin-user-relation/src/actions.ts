@@ -178,4 +178,80 @@ export const actions: PluginModule['actions'] = {
     if (!sessionId) return { error: '请输入 sessionId' };
     return s.triggerExtraction(sessionId);
   },
+
+  // ───── 多层查询（webui view + 调试用，参数走 view.* 范畴的默认值/上限由 index.ts 注入） ─────
+  async expandPerson(ctx, args) {
+    const s = svc(ctx);
+    if (!s) return { error: 'service 不可用' };
+    const personId = String(args.personId ?? args.id ?? '').trim();
+    if (!personId.includes(':')) return { error: 'personId 格式应为 platform:userId' };
+    const maxDepth = numArg(args.maxDepth, 2);
+    const maxBreadth = numArg(args.maxBreadth, 10);
+    const sub = await s.traverseSubgraph({
+      startPersonIds: [personId],
+      maxDepth,
+      maxBreadth,
+    });
+    return {
+      personId,
+      maxDepth,
+      maxBreadth,
+      stats: {
+        persons: sub.persons.length,
+        events: sub.events.length,
+        edges: sub.edges.length,
+      },
+      persons: sub.persons,
+      events: sub.events,
+      edges: sub.edges,
+    };
+  },
+
+  async findPath(ctx, args) {
+    const s = svc(ctx);
+    if (!s) return { error: 'service 不可用' };
+    const from = String(args.fromPersonId ?? args.from ?? '').trim();
+    const to = String(args.toPersonId ?? args.to ?? '').trim();
+    if (!from.includes(':') || !to.includes(':')) return { error: 'person id 格式应为 platform:userId' };
+    const maxDepth = numArg(args.maxDepth, 3);
+    const path = await s.findPath(from, to, maxDepth);
+    if (!path) return { found: false, from, to, maxDepth };
+    return {
+      found: true,
+      length: path.edges.length,
+      nodes: path.nodes,
+      edges: path.edges,
+    };
+  },
+
+  async searchEvents(ctx, args) {
+    const s = svc(ctx);
+    if (!s) return { error: 'service 不可用' };
+    const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
+    const days = numArgOptional(args.days);
+    const limit = numArg(args.limit, 20);
+    const events = await s.searchEvents({ keyword, days, limit });
+    return {
+      count: events.length,
+      events,
+    };
+  },
 };
+
+function numArg(v: unknown, fallback: number): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return fallback;
+}
+
+function numArgOptional(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
