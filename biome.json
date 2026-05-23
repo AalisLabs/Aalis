@@ -54,12 +54,14 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "node:fs": "node:fs 仅允许在 plugin-storage-local / plugin-webui-server / plugin-mcp-server / create-aalis-plugin 中使用；其他插件请通过 @aalis/plugin-storage-api 访问。详见 docs/architecture/node-usage-policy.md。",
+                  "node:fs": "node:fs 仅允许在 plugin-storage-local / plugin-webui-server / plugin-mcp-server / plugin-tool-browser（puppeteer 包探测）/ create-aalis-plugin 中使用；其他插件请通过 @aalis/plugin-storage-api 访问。详见 docs/architecture/node-usage-policy.md。",
                   "node:fs/promises": "node:fs/promises 仅允许在 plugin-storage-local / plugin-process-local（readExternalFile）/ create-aalis-plugin 中使用；其他插件请通过 @aalis/plugin-storage-api 或 @aalis/plugin-process-api 访问。详见 docs/architecture/node-usage-policy.md。",
                   "node:child_process": "node:child_process 仅允许在 plugin-process-local 中使用；其他插件请通过 @aalis/plugin-process-api 访问。详见 docs/architecture/node-usage-policy.md。",
+                  "node:crypto": "node:crypto 已废弃，请使用全局 Web Crypto API（crypto.subtle / crypto.randomUUID / crypto.getRandomValues）。详见 docs/architecture/node-usage-policy.md。",
                   "node:os": "node:os 仅允许在 plugin-tool-system/system 中使用（系统信息工具）；其他插件请改用 process.platform 或 @aalis/plugin-process-api。",
                   "node:http": "node:http 仅允许在 plugin-webui-server / plugin-mcp-server 中使用（HTTP 服务接口）。",
-                  "node:https": "node:https 仅允许在 plugin-webui-server / plugin-mcp-server 中使用（HTTPS 服务接口）。"
+                  "node:https": "node:https 仅允许在 plugin-webui-server / plugin-mcp-server 中使用（HTTPS 服务接口）。",
+                  "node:url": "node:url 仅允许使用 fileURLToPath / pathToFileURL；URL 本身请直接使用全局 URL。详见 docs/architecture/node-usage-policy.md。"
                 }
               }
             }
@@ -74,8 +76,6 @@
         "packages/plugin-webui-server/src/**",
         "packages/plugin-mcp-server/src/**",
         "packages/plugin-tool-system/src/tools/system.ts",
-        "packages/plugin-asr-openai/src/index.ts",
-        "packages/plugin-ollama/src/index.ts",
         "packages/plugin-tool-browser/src/index.ts",
         "packages/create-aalis-plugin/src/**"
       ],
