@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '../../packages/core/src/index.js';
 import {
+  buildFocusGuidance,
   estimateMsgTokens,
   estimateTextTokens,
   estimateTokens,
@@ -8,6 +9,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
 } from '../../packages/plugin-agent/src/helpers.js';
+import type { IncomingMessage } from '../../packages/plugin-message-api/src/index.js';
 
 describe('formatTimeLabel', () => {
   it('同一天显示「今天 HH:mm」', () => {
@@ -92,5 +94,52 @@ describe('INPUT_CONVENTIONS', () => {
   it('包含输入约定标题', () => {
     expect(INPUT_CONVENTIONS).toContain('【输入约定】');
     expect(INPUT_CONVENTIONS).toContain('<forward');
+  });
+});
+
+describe('buildFocusGuidance', () => {
+  const base: IncomingMessage = {
+    content: '你怎么看这个事',
+    sessionId: 's1',
+    platform: 'onebot',
+    userId: 'u1',
+  };
+
+  it('群聊 + immediate（@触发）→ 返回 system 焦点指引', () => {
+    const msg = buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'immediate' });
+    expect(msg).not.toBeNull();
+    expect(msg?.role).toBe('system');
+    expect(msg?.content).toContain('【当前焦点】');
+    expect(msg?.content).toContain('焦点消息');
+    expect(msg?.metadata?.source).toBe('focus-guidance');
+  });
+
+  it('群聊 + direct（直接对话）→ 返回 system 焦点指引', () => {
+    const msg = buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'direct' });
+    expect(msg).not.toBeNull();
+  });
+
+  it('私聊 → 返回 null（私聊本身就是 1v1，无需焦点指引）', () => {
+    expect(buildFocusGuidance({ ...base, sessionType: 'private', triggerType: 'direct' })).toBeNull();
+  });
+
+  it('群聊 + interval（被动触发）→ 返回 null（无明确焦点）', () => {
+    expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'interval' })).toBeNull();
+  });
+
+  it('群聊 + idle → 返回 null', () => {
+    expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'idle' })).toBeNull();
+  });
+
+  it('群聊 + proactive（跨会话委派）→ 返回 null（任务由 system 块传递）', () => {
+    expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'proactive' })).toBeNull();
+  });
+
+  it('triggerType 缺失 → 返回 null（按 direct 兼容但仅在 sessionType 明确为 group 时不主动注入）', () => {
+    expect(buildFocusGuidance({ ...base, sessionType: 'group' })).toBeNull();
+  });
+
+  it('sessionType 缺失 → 返回 null', () => {
+    expect(buildFocusGuidance({ ...base, triggerType: 'immediate' })).toBeNull();
   });
 });
