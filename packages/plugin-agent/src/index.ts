@@ -834,28 +834,25 @@ class DefaultAgent implements AgentService {
           metadata: msgHookData.metadata,
         });
       } catch (err) {
-        // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer；
-        // 已写入 memory 的中间工具调用/半截 assistant 内容必须回滚，否则下一条消息会让 agent
-        // 再次看到本轮被中断的痕迹（Bug B 假回退根因）。
+        // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer。
+        //
+        // 历史教训：早期版本会用 turnPersistedTimestamps 把"本轮已持久化的中间消息"全部删掉，
+        // 注释里写的是防"半截 assistant 内容 / 假回退"。但实际审计 saveToolCallGroup（见下方）发现：
+        //   1. saveToolCallGroup 只在并行工具全部执行完毕后整组写入（assistant tool_call + 所有
+        //      tool result 一次性 push），catch 路径根本进不来；turnPersistedTimestamps 里只
+        //      可能是"已完成、副作用已发生"的工具调用对。
+        //   2. 删除这些 = 让 agent 忘记自己刚刚做过的有副作用的事（戳一戳/发送消息/调度任务/…），
+        //      下一轮 LLM 看不到自己的行为，会重复调用，外部观察就是"agent 一直以为戳不了"。
+        //   3. 真正的 orphan 风险（assistant tool_calls 缺 tool result）由 sanitizeToolCallHistory
+        //      在装载历史时兜底过滤，不需要 abort 路径主动删除。
+        // 所以这里不再回滚，让已完成的工具调用记录留在 memory，agent 下一轮能正确感知。
         if (err instanceof DOMException && err.name === 'AbortError') {
-          this.logger.info(`生成已中止: session=${incoming.sessionId}`);
-          if (turnPersistedTimestamps.length > 0) {
-            const memory = this.ctx.getService<MemoryService>('memory', ['message-delete']);
-            if (memory?.deleteMessagesByTimestamps) {
-              try {
-                const deleted = await memory.deleteMessagesByTimestamps(incoming.sessionId, turnPersistedTimestamps);
-                this.logger.debug(
-                  `中止回滚：从 session=${incoming.sessionId} 删除本轮 ${deleted}/${turnPersistedTimestamps.length} 条中间消息`,
-                );
-              } catch (rollbackErr) {
-                this.logger.warn('中止回滚失败:', rollbackErr);
-              }
-            } else {
-              this.logger.warn(
-                `中止回滚跳过：memory 服务不支持 message-delete 能力，本轮 ${turnPersistedTimestamps.length} 条中间消息将残留在历史中`,
-              );
-            }
-          }
+          this.logger.info(
+            `生成已中止: session=${incoming.sessionId}` +
+              (turnPersistedTimestamps.length > 0
+                ? `（保留本轮已完成的 ${turnPersistedTimestamps.length} 条工具调用记录，便于下一轮 agent 感知）`
+                : ''),
+          );
           await this.ctx.emit('outbound:stream', {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
