@@ -19,6 +19,16 @@ export interface SpawnOptions {
   timeout?: number;
   /** 标准输入要写入的内容 */
   input?: string | Uint8Array;
+  /**
+   * 将子进程与父进程解耦（使其可独立于父进程生存）。
+   * 需要与 stdio:'ignore' 一起使用，且调用方需手动调 handle.unref()。
+   */
+  detached?: boolean;
+  /**
+   * stdio 重定向策略；默认 'pipe'（stdin/stdout/stderr 均为 pipe）。
+   * 'ignore' 可与 detached 携手实现 fire-and-forget（例如启动浏览器）。
+   */
+  stdio?: 'pipe' | 'ignore' | 'inherit';
 }
 
 export interface ExecResult {
@@ -41,6 +51,10 @@ export interface SpawnHandle {
   wait(): Promise<ExecResult>;
   /** 杀子进程 */
   kill(signal?: NodeJS.Signals): boolean;
+  /**
+   * detached 模式下调用以允许父进程独立退出（不等待子进程）。非 detached 下为 no-op。
+   */
+  unref(): void;
 }
 
 /** 一次性获得的本地临时目录句柄；调用 cleanup() 释放 */
@@ -68,9 +82,19 @@ export interface ProcessService {
    * 调用方拿到本地绝对路径，子进程读写后调 cleanup() 删除。
    */
   makeTempDir(prefix: string): Promise<TempDirHandle>;
+  /**
+   * 读取 OS 任意本地路径的文件（绕过 storage root 沙箱）。
+   *
+   * 仅限于手上拿到“外部推来的本地路径”场景（如 OneBot daemon 推送的附件路径、
+   * 用户选择的外部文件拖拽等），不是 storage 的替代品。
+   * storage 负责“在声明的 root 内读写”（受沙箱约束），
+   * 本接口负责“OS 直通读外部路径”（调用方自行保证安全性）。
+   * path 可以是本地绝对路径或 file:// URI。
+   */
+  readExternalFile(path: string): Promise<Uint8Array>;
 }
 
-export type ProcessCapability = 'spawn' | 'exec' | 'temp-dir';
+export type ProcessCapability = 'spawn' | 'exec' | 'temp-dir' | 'external-fs';
 
 declare module '@aalis/core' {
   interface ServiceCapabilityMap {
@@ -96,6 +120,11 @@ registerCapabilityProbe('process', 'temp-dir', inst =>
     ? true
     : 'ProcessService.makeTempDir() is required for capability "temp-dir"',
 );
+registerCapabilityProbe('process', 'external-fs', inst =>
+  typeof (inst as { readExternalFile?: unknown }).readExternalFile === 'function'
+    ? true
+    : 'ProcessService.readExternalFile() is required for capability "external-fs"',
+);
 
 /**
  * 返回一个无服务实例时抛错、单实例时直接转发的 ProcessService 网关。
@@ -112,6 +141,7 @@ export function createProcessGateway(ctx: Context): ProcessService {
     spawn: (cmd, args, opts) => pick().spawn(cmd, args, opts),
     execFile: (cmd, args, opts) => pick().execFile(cmd, args, opts),
     makeTempDir: prefix => pick().makeTempDir(prefix),
+    readExternalFile: path => pick().readExternalFile(path),
   };
 }
 
