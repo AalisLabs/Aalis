@@ -1737,6 +1737,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
       '@aalis/plugin-webui-api':
         specifier: workspace:*
         version: link:../plugin-webui-api
