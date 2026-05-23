@@ -19,6 +19,7 @@ import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { useWebuiService, type WebuiPage } from '@aalis/plugin-webui-api';
 import { actions as baseActions } from './actions.js';
+import { registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationMiddleware } from './middleware.js';
 import { RelationService } from './service.js';
@@ -149,7 +150,13 @@ export const configSchema: ConfigSchema = {
   toolsEnabled: {
     type: 'boolean',
     label: '向 Agent 暴露 dig 工具',
-    description: '允许 LLM 主动调用：expand_person / find_path / search_events',
+    description: '允许 LLM 主动调用：expand_person / find_path / search_events / upsert_* / link / unlink',
+    default: true,
+  },
+  commandsEnabled: {
+    type: 'boolean',
+    label: '注册 /relation 指令',
+    description: '注册 show / orphans / cleanup 系列指令（cleanup 需 authority ≥ 3）',
     default: true,
   },
   digToolDefaultMaxDepth: {
@@ -273,6 +280,28 @@ const webuiPages: WebuiPage[] = [
               },
             ],
           },
+          {
+            key: 'entities',
+            label: '实体列表',
+            content: [
+              {
+                type: 'table',
+                source: 'listEntities',
+                columns: [
+                  { key: 'name', label: '名称', minWidth: 140 },
+                  { key: 'entityKind', label: '类型', nowrap: true },
+                  { key: 'aliases', label: '别名', minWidth: 140, render: 'expandable-text' },
+                  { key: 'summary', label: '摘要', minWidth: 200, maxWidth: 360, render: 'expandable-text' },
+                  { key: 'evidenceCount', label: '证据数', nowrap: true },
+                  { key: 'lastReinforcedAt', label: '最近强化', nowrap: true },
+                ],
+                actions: [
+                  { label: '删除', method: 'deleteEntity', confirm: '确认删除该实体及其所有相关边？', danger: true },
+                ],
+                refresh: 60,
+              },
+            ],
+          },
         ],
       },
     ],
@@ -345,6 +374,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // WebUI 页面
   const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
+
+  // /relation 指令
+  if (config.commandsEnabled !== false) {
+    registerRelationCommands(ctx, service);
+  }
 }
 
 function numCfg(v: unknown, fallback: number): number {
