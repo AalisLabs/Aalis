@@ -99,6 +99,12 @@ importers:
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       ws:
         specifier: ^8.18.0
         version: 8.20.0
@@ -205,6 +211,12 @@ importers:
       '@aalis/plugin-media-api':
         specifier: workspace:*
         version: link:../plugin-media-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -224,6 +236,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -330,6 +345,9 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -542,6 +560,9 @@ importers:
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -620,6 +641,9 @@ importers:
       '@aalis/plugin-message-archive-api':
         specifier: workspace:*
         version: link:../plugin-message-archive-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -730,6 +754,12 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -856,6 +886,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       better-sqlite3:
         specifier: ^11.8.0
         version: 11.10.0
@@ -985,6 +1018,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1073,6 +1112,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1098,6 +1143,9 @@ importers:
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       yaml:
         specifier: ^2.7.0
         version: 2.8.3
@@ -1129,6 +1177,41 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-process-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-process-local:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-prompt-budget:
     dependencies:
       '@aalis/core':
@@ -1156,6 +1239,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1250,6 +1336,9 @@ importers:
       '@aalis/plugin-persona-api':
         specifier: workspace:*
         version: link:../plugin-persona-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1376,6 +1465,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
@@ -1420,6 +1512,9 @@ importers:
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tool-session-api':
         specifier: workspace:*
         version: link:../plugin-tool-session-api
@@ -1508,6 +1603,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
@@ -1631,6 +1729,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-vectorstore-api':
         specifier: workspace:*
         version: link:../plugin-vectorstore-api
@@ -1647,6 +1748,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-vectorstore-api':
         specifier: workspace:*
         version: link:../plugin-vectorstore-api
@@ -1832,6 +1936,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:../plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
