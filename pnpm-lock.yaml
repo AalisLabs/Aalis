@@ -1845,6 +1845,12 @@ importers:
 
   packages/plugin-webui-client:
     dependencies:
+      cytoscape:
+        specifier: ^3.33.4
+        version: 3.33.4
+      cytoscape-fcose:
+        specifier: ^2.2.0
+        version: 2.2.0(cytoscape@3.33.4)
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1

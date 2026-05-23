@@ -10,8 +10,7 @@
  */
 import type { Context, PluginModule } from '@aalis/core';
 import type { RelationService } from './service.js';
-import type { EventNode, PersonEventEdge, PersonNode, PersonPersonEdge, RelationEdge } from './types.js';
-import { RecommendedPersonRelationTypes } from './types.js';
+import type { EventNode, PersonNode, RelationEdge } from './types.js';
 
 function svc(ctx: Context): RelationService | undefined {
   return ctx.getService<RelationService>('user-relation');
@@ -64,46 +63,155 @@ export const actions: PluginModule['actions'] = {
       }));
   },
 
-  async listPersonEventEdges(ctx) {
+  // ───── 关系图（Cytoscape elements） ─────
+  async getRelationGraph(ctx, args) {
     const s = svc(ctx);
-    if (!s) return [];
-    const snap = await s.loadAll();
-    const eventTitleById = new Map(snap.events.map(e => [e.id, e.title] as const));
-    const personLabelById = new Map(
-      snap.persons.map(p => [p.id, p.displayName ? `${p.displayName}(${p.userId})` : p.userId] as const),
-    );
-    return snap.edges
-      .filter((e): e is PersonEventEdge => e.kind === 'person-event')
-      .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
-      .map(e => ({
-        id: e.id,
-        person: personLabelById.get(e.fromPersonId) ?? e.fromPersonId,
-        event: eventTitleById.get(e.toEventId) ?? e.toEventId,
-        role: e.role,
-        sentiment: e.sentiment ?? '',
-        weight: e.weight.toFixed(2),
-        preview: previewEvidence(e),
-      }));
+    if (!s) return { nodes: [], edges: [] };
+    const focusId = typeof args.focusId === 'string' && args.focusId.includes(':') ? args.focusId : undefined;
+    const maxDepth = numArg(args.maxDepth, 2);
+    const maxBreadth = numArg(args.maxBreadth, 10);
+
+    let persons: PersonNode[];
+    let events: EventNode[];
+    let edges: RelationEdge[];
+
+    if (focusId) {
+      const sub = await s.traverseSubgraph({ startPersonIds: [focusId], maxDepth, maxBreadth });
+      persons = sub.persons;
+      events = sub.events;
+      edges = sub.edges;
+    } else {
+      const snap = await s.loadAll();
+      // 全图以“近期活跃 + 高度关系”为主，避免一次过多节点压垄浏览器
+      const personCap = Math.max(20, maxBreadth * 6);
+      const eventCap = Math.max(15, maxBreadth * 4);
+      persons = [...snap.persons].sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, personCap);
+      const personIdSet = new Set(persons.map(p => p.id));
+      // 仅保留与这些人物相关的事件
+      const relatedEventIds = new Set<string>();
+      for (const e of snap.edges) {
+        if (e.kind === 'person-event' && personIdSet.has(e.fromPersonId)) relatedEventIds.add(e.toEventId);
+      }
+      events = snap.events
+        .filter(e => relatedEventIds.has(e.id))
+        .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
+        .slice(0, eventCap);
+      const eventIdSet = new Set(events.map(e => e.id));
+      edges = snap.edges.filter(e => {
+        if (e.kind === 'person-event') return personIdSet.has(e.fromPersonId) && eventIdSet.has(e.toEventId);
+        return personIdSet.has(e.fromPersonId) && personIdSet.has(e.toPersonId);
+      });
+    }
+
+    const personLabel = (p: PersonNode): string => p.displayName?.trim() || p.userId;
+    const truncate = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+
+    return {
+      focusId,
+      stats: {
+        persons: persons.length,
+        events: events.length,
+        edges: edges.length,
+      },
+      nodes: [
+        ...persons.map(p => ({
+          data: {
+            id: p.id,
+            label: personLabel(p),
+            kind: 'person' as const,
+            platform: p.platform,
+            userId: p.userId,
+            displayName: p.displayName,
+          },
+        })),
+        ...events.map(e => ({
+          data: {
+            id: e.id,
+            label: truncate(e.title, 18),
+            kind: 'event' as const,
+            category: e.category,
+            title: e.title,
+          },
+        })),
+      ],
+      edges: edges.map(e =>
+        e.kind === 'person-event'
+          ? {
+              data: {
+                id: e.id,
+                source: e.fromPersonId,
+                target: e.toEventId,
+                kind: 'person-event' as const,
+                label: e.role,
+                weight: e.weight,
+                sentiment: e.sentiment,
+              },
+            }
+          : {
+              data: {
+                id: e.id,
+                source: e.fromPersonId,
+                target: e.toPersonId,
+                kind: 'person-person' as const,
+                label: e.relationType,
+                relationType: e.relationType,
+                directed: e.directed,
+                weight: e.weight,
+              },
+            },
+      ),
+    };
   },
 
-  async listPersonPersonEdges(ctx) {
+  async getGraphNodeDetail(ctx, args) {
     const s = svc(ctx);
-    if (!s) return [];
-    const snap = await s.loadAll();
-    const personLabelById = new Map(
-      snap.persons.map(p => [p.id, p.displayName ? `${p.displayName}(${p.userId})` : p.userId] as const),
-    );
-    return snap.edges
-      .filter((e): e is PersonPersonEdge => e.kind === 'person-person')
-      .sort((a, b) => b.weight - a.weight)
-      .map(e => ({
+    if (!s) return { error: 'service 不可用' };
+    const nodeId = String(args.nodeId ?? '');
+    const kind = String(args.kind ?? '');
+    if (kind === 'person') {
+      if (!nodeId.includes(':')) return { error: '无效 personId' };
+      const nb = await s.getNeighborhood(nodeId);
+      return {
+        person: nb.person,
+        eventCount: nb.events.length,
+        edgeCount: nb.edges.length,
+        recentEvents: nb.events.slice(0, 5).map(e => ({
+          id: e.id,
+          title: e.title,
+          category: e.category,
+          lastReinforcedAt: formatDate(e.lastReinforcedAt),
+        })),
+        edges: nb.edges.slice(0, 10).map(e =>
+          e.kind === 'person-event'
+            ? { kind: e.kind, role: e.role, sentiment: e.sentiment, weight: e.weight, eventId: e.toEventId }
+            : {
+                kind: e.kind,
+                relation: e.relationType,
+                weight: e.weight,
+                fromId: e.fromPersonId,
+                toId: e.toPersonId,
+              },
+        ),
+      };
+    }
+    if (kind === 'event') {
+      const e = await s.getEvent(nodeId);
+      if (!e) return { error: '事件不存在' };
+      return {
         id: e.id,
-        from: personLabelById.get(e.fromPersonId) ?? e.fromPersonId,
-        to: personLabelById.get(e.toPersonId) ?? e.toPersonId,
-        relation: `${e.relationType}${e.directed ? ' (→)' : ' (↔)'}`,
-        weight: e.weight.toFixed(2),
-        preview: previewEvidence(e),
-      }));
+        title: e.title,
+        category: e.category,
+        summary: e.summary,
+        evidenceCount: e.evidence.length,
+        lastReinforcedAt: formatDate(e.lastReinforcedAt),
+        recentEvidence: e.evidence
+          .slice()
+          .sort((a, b) => b.extractedAt - a.extractedAt)
+          .slice(0, 5)
+          .map(ev => ({ quote: ev.quote, messageIds: ev.messageIds, at: formatDate(ev.extractedAt) })),
+      };
+    }
+    return { error: `未知 kind: ${kind}` };
   },
 
   // ───── stat / info ─────
@@ -117,10 +225,6 @@ export const actions: PluginModule['actions'] = {
       value: snap.persons.length,
       detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 人-事 ${pe} / 人-人 ${pp}`,
     };
-  },
-
-  async getRecommendedRelationTypes() {
-    return { items: [...RecommendedPersonRelationTypes] };
   },
 
   // ───── 详情 ─────

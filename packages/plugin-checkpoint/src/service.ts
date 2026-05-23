@@ -89,6 +89,7 @@ interface ServiceConfig {
   rootUri: string;
   maxFileSize: number;
   keepSessions: number;
+  scopes: string[];
 }
 
 /**
@@ -430,10 +431,20 @@ function encodeSegment(s: string): string {
 
 export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
   const rootInput = typeof raw.rootDir === 'string' ? raw.rootDir : 'data:/checkpoints';
+  const rawScopes = raw.scopes;
+  const scopes: string[] = Array.isArray(rawScopes)
+    ? rawScopes.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    : typeof rawScopes === 'string' && rawScopes.length > 0
+      ? rawScopes
+          .split(/[,\s]+/)
+          .map(s => s.trim())
+          .filter(Boolean)
+      : ['webui:*'];
   return {
     rootUri: toUri(rootInput),
     maxFileSize: typeof raw.maxFileSize === 'number' ? Math.max(1024, raw.maxFileSize) : 10 * 1024 * 1024,
     keepSessions: typeof raw.keepSessions === 'number' ? Math.max(0, Math.floor(raw.keepSessions)) : 20,
+    scopes,
   };
 }
 

@@ -34,12 +34,27 @@ export const configSchema: ConfigSchema = {
     description: 'GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。',
     default: 20,
   },
+  scopes: {
+    type: 'multiselect',
+    label: '启用作用域',
+    description:
+      '仅在匹配下列 platform:sessionType 的会话中参与 turn 生命周期（建 checkpoint）。格式举例：`webui:*` / `onebot:group` / `*` 表示全部。默认仅 `webui:*`：onebot 等聊天平台不会为每条消息创建 checkpoint。留空数组 = 禁用 checkpoint（仅允许手动 rollback）。',
+    options: [
+      { label: '所有会话', value: '*' },
+      { label: 'WebUI 会话（推荐）', value: 'webui:*' },
+      { label: 'OneBot 群聊', value: 'onebot:group' },
+      { label: 'OneBot 私聊', value: 'onebot:private' },
+      { label: 'CLI', value: 'cli:*' },
+    ],
+    default: ['webui:*'],
+  },
 };
 
 export const defaultConfig = {
   rootDir: 'data:/checkpoints',
   maxFileSize: 10 * 1024 * 1024,
   keepSessions: 20,
+  scopes: ['webui:*'],
 };
 
 // ──────────── Plugin actions (供 WebUI 调用) ────────────
@@ -138,12 +153,28 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
   // ──────────── 回合生命周期 ────────────
   // agent:input:before：一次 LLM 回合开始（一个用户消息进来）
+  // 仅对配置 scopes 匹配的会话参与回合生命周期，避免 onebot 等聊天平台为每条消息都创建空 checkpoint。
+  const isScopeEnabled = (platform?: string, sessionType?: string): boolean => {
+    if (config.scopes.length === 0) return false;
+    const p = platform ?? '';
+    const t = sessionType ?? '';
+    for (const raw of config.scopes) {
+      const [sp = '*', st = '*'] = raw.includes(':') ? raw.split(':', 2) : [raw, '*'];
+      const platOk = sp === '*' || sp === '' || sp === p;
+      const typeOk = st === '*' || st === '' || st === t;
+      if (platOk && typeOk) return true;
+    }
+    return false;
+  };
+
   ctx.middleware('agent:input:before', async (data, next) => {
-    service.beginTurn(data.message.sessionId);
+    if (isScopeEnabled(data.message.platform, data.message.sessionType)) {
+      service.beginTurn(data.message.sessionId);
+    }
     await next();
   });
 
-  // agent:turn:after：回合结束
+  // agent:turn:after：回合结束（endTurn 是幂等的：没 current 则直接 return）
   ctx.middleware('agent:turn:after', async (_data, next) => {
     await next();
     await service.endTurn();
@@ -157,7 +188,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     await next();
   });
 
-  logger.info(`checkpoint 服务就绪 rootUri=${config.rootUri} maxFileSize=${config.maxFileSize}`);
+  logger.info(
+    `checkpoint 服务就绪 rootUri=${config.rootUri} maxFileSize=${config.maxFileSize} scopes=${config.scopes.join('|') || '<空>'}`,
+  );
 }
 
 export type {
