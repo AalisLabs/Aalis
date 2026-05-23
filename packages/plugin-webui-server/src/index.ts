@@ -21,6 +21,7 @@ import {
   type PlatformAdapter,
   type PlatformConnection,
 } from '@aalis/plugin-platform-api';
+import { createProcessGateway } from '@aalis/plugin-process-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
@@ -43,7 +44,7 @@ export const subsystem = 'platform';
 export const provides = ['webui-server'];
 export const inject = {
   required: ['storage'],
-  optional: ['authority', 'commands', 'platform'],
+  optional: ['authority', 'commands', 'platform', 'process'],
 };
 
 const webuiPages: WebuiPage[] = [
@@ -1389,7 +1390,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
       ctx.logger.info(`首次访问请使用以下 URL（${tokenHint}）: ${accessUrl}`);
       ctx.logger.info(`访问凭据已写入: ${accessFileUri}`);
-      if (uiConfig.autoOpen) openBrowser(accessUrl);
+      if (uiConfig.autoOpen) openBrowser(accessUrl, createProcessGateway(ctx));
     });
   });
 

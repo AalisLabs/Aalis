@@ -11,14 +11,13 @@
 // - 返回的 ref 仍是相对路径（如 `data/audios/.../xxx.wav`）以兼容历史 ref:
 //   解析；存盘走 storage.writeFile('data:/...')
 //
-// 例外：loadAttachmentBuffer 在遇到 file:// 时仍使用 node:fs/promises 读取
-// 任意 OS 路径。原因是 OneBot daemon 可能把不在 storage 任何根下的文件路径
-// 推过来（典型：NapCat 容器挂载的 /tmp）。这是 adapter 的固有职责，已加入
-// biome noRestrictedImports 白名单。
+// loadAttachmentBuffer 遇到 file:// / OS 绝对路径时改走 ProcessService.readExternalFile，
+// 避免 adapter 直接依赖 node:fs。原因：OneBot daemon 推来的路径可能不在任何 storage
+// root 下（典型：NapCat 容器挂载的 /tmp）。“读外部任意路径”是 process 能力、
+// 不应污染 storage 沙箱语义。
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { readFile as fsReadFile } from 'node:fs/promises';
 import type { ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 
@@ -70,7 +69,11 @@ export async function cacheAttachmentBuffer(
 /**
  * 从 URL / data: URI / file:// / storage URI 取到 Buffer。失败返回 null。
  */
-export async function loadAttachmentBuffer(storage: StorageService, source: string): Promise<Buffer | null> {
+export async function loadAttachmentBuffer(
+  storage: StorageService,
+  proc: ProcessService,
+  source: string,
+): Promise<Buffer | null> {
   try {
     if (source.startsWith('data:')) {
       const m = source.match(/^data:[^;]+;base64,(.+)$/);
@@ -86,10 +89,9 @@ export async function loadAttachmentBuffer(storage: StorageService, source: stri
       const raw = (await storage.readFile(source)) as Uint8Array;
       return Buffer.from(raw);
     }
-    // file:// 或绝对路径：OneBot daemon 推来的任意 OS 路径，走 node:fs
-    const path = source.startsWith('file://') ? source.slice('file://'.length) : source;
-    const raw = await fsReadFile(path);
-    return raw;
+    // file:// 或绝对路径：OneBot daemon 推来的任意 OS 路径，走 process.readExternalFile
+    const raw = await proc.readExternalFile(source);
+    return Buffer.from(raw);
   } catch {
     return null;
   }
