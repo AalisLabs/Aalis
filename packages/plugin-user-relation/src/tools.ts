@@ -1,10 +1,15 @@
 /**
  * Agent 工具：让 LLM 在 reasoning 中主动深挖关系图。
  *
- * 提供 3 个工具（注册到 'user-relation' 分组）：
- * - `user_relation_expand_person`：以某人为中心 BFS 抽取子图
- * - `user_relation_find_path`：在两人之间找最短关系链
- * - `user_relation_search_events`：按关键词 substring 搜事件
+ * 设计原则（单写者模型）：
+ * - 关系图的「新建 / 强化」由 extractor 单线程被动归纳，agent **不能** 直接写。
+ * - agent 只暴露 4 个工具：3 个读 (expand / find_path / search_events) + 1 个纠错删除 (unlink)。
+ * - 想让图记住某事？引导用户在对话中说出，extractor 自然会捕获。
+ *
+ * 这样可避免：
+ *  #1 agent 与 extractor 同边并发新建竞争
+ *  #2 同一事实被 agent + extractor 各计一次权重
+ *  #3 cleanup 与 agent 写入相撞导致「幻象复活」
  *
  * 所有 depth/breadth 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
@@ -12,20 +17,15 @@ import type { Context } from '@aalis/core';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { RelationService } from './service.js';
 import type {
-  EntityKind,
   EntityNode,
   EventEventEdge,
   EventNode,
   PersonEntityEdge,
-  PersonEntityRole,
   PersonEventEdge,
-  PersonEventRole,
   PersonNode,
   PersonPersonEdge,
   RelationEdge,
-  Sentiment,
 } from './types.js';
-import { RecommendedEventEventRelationTypes, RecommendedPersonEntityRoles } from './types.js';
 
 export interface ToolsConfig {
   enabled: boolean;
@@ -45,8 +45,6 @@ export interface ToolsConfig {
   /** findPath 默认最大深度 */
   findPathDefaultMaxDepth: number;
   findPathHardMaxDepth: number;
-  /** 严格自证：link 创建 person-* 边时，from_id 必须 == 当前发言者 */
-  strictSelfAssertion: boolean;
   debug: boolean;
 }
 
@@ -58,7 +56,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
   tools.registerGroup({
     name: groupName,
     label: '人物关系图',
-    description: '查询用户关系图：扩展邻域、寻找两人关系链、按关键词搜事件',
+    description:
+      '查询用户关系图（扩展邻域 / 关系链 / 搜事件）+ 删错边纠正。新建与强化由后台被动 LLM 归纳，不在工具中暴露。',
   });
 
   // ---- expand_person ----
@@ -188,241 +187,12 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
-  // ---- upsert_person (mutator) ----
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'user_relation_upsert_person',
-        description: '创建或更新人物（同 platform+userId 已存在时更新 displayName）。',
-        parameters: {
-          type: 'object',
-          properties: {
-            platform: { type: 'string', description: '平台标识，例 onebot / discord / webui' },
-            user_id: { type: 'string', description: '平台内的 userId' },
-            display_name: { type: 'string', description: '显示名（可选）' },
-          },
-          required: ['platform', 'user_id'],
-          additionalProperties: false,
-        },
-      },
-    },
-    groups: [groupName],
-    handler: async args => {
-      const platform = String(args.platform ?? '').trim();
-      const userId = String(args.user_id ?? '').trim();
-      if (!platform || !userId) return JSON.stringify({ error: 'platform / user_id 必填' });
-      const displayName = typeof args.display_name === 'string' ? args.display_name : undefined;
-      const p = await service.observePerson(platform, userId, displayName);
-      return JSON.stringify({
-        ok: true,
-        person: { id: p.id, platform: p.platform, userId: p.userId, displayName: p.displayName },
-      });
-    },
-  });
+  // ---- 写入工具（upsert_person / upsert_entity / upsert_event / link）已移除。
+  //      关系图采用 **单写者** 模型：仅 extractor 通过被动 LLM 归纳来新建/强化节点和边。
+  //      理由：避免 agent 工具与 extractor 双写引发的 race + 同事实双重计权。
+  //      agent 想"记住"某事？引导用户在对话中说出来，extractor 会自动捕获。
 
-  // ---- upsert_entity (mutator) ----
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'user_relation_upsert_entity',
-        description: '创建或强化「实体」节点（话题/地点/物品/作品等持续存在的对象）。同名实体自动复用。',
-        parameters: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: '实体名称（用于去重 key）' },
-            entity_kind: { type: 'string', enum: ['topic', 'place', 'thing', 'work'], description: '实体类型' },
-            aliases: { type: 'array', items: { type: 'string' }, description: '别名（可选）' },
-            summary: { type: 'string', description: '简短描述（可选）' },
-          },
-          required: ['name', 'entity_kind'],
-          additionalProperties: false,
-        },
-      },
-    },
-    groups: [groupName],
-    handler: async args => {
-      const name = String(args.name ?? '').trim();
-      if (!name) return JSON.stringify({ error: 'name 必填' });
-      const entityKind = String(args.entity_kind ?? 'topic') as EntityKind;
-      const aliases = Array.isArray(args.aliases)
-        ? args.aliases.filter((x: unknown): x is string => typeof x === 'string')
-        : undefined;
-      const summary = typeof args.summary === 'string' ? args.summary : undefined;
-      const dup = await service.findEntityByName(name);
-      if (dup) {
-        const reinforced = await service.reinforceEntity(dup.id, { aliases, summary, entityKind });
-        return JSON.stringify({ ok: true, reused: true, entity: reinforced ? serializeEntity(reinforced) : null });
-      }
-      const created = await service.createEntity({ name, entityKind, aliases, summary, evidence: [] });
-      return JSON.stringify({ ok: true, reused: false, entity: serializeEntity(created) });
-    },
-  });
-
-  // ---- upsert_event (mutator) ----
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'user_relation_upsert_event',
-        description: '创建或强化「事件」节点（一次性发生过的事）。需要已有 event_id 时进行强化，否则新建。',
-        parameters: {
-          type: 'object',
-          properties: {
-            event_id: { type: 'string', description: '已存在事件 ID；提供则强化，留空则新建' },
-            title: { type: 'string', description: '事件标题（<=30 字）' },
-            summary: { type: 'string', description: '简短描述（可选）' },
-            category: {
-              type: 'string',
-              enum: ['discussion', 'conflict', 'collaboration', 'incident', 'milestone', 'other'],
-              description: '事件类别（可选）',
-            },
-          },
-          required: ['title'],
-          additionalProperties: false,
-        },
-      },
-    },
-    groups: [groupName],
-    handler: async args => {
-      const title = String(args.title ?? '').trim();
-      if (!title) return JSON.stringify({ error: 'title 必填' });
-      const summary = typeof args.summary === 'string' ? args.summary : undefined;
-      const category = typeof args.category === 'string' ? (args.category as EventNode['category']) : undefined;
-      const eventId = typeof args.event_id === 'string' && args.event_id ? args.event_id : undefined;
-      if (eventId) {
-        const r = await service.reinforceEvent(eventId, { title, summary, category });
-        if (!r) return JSON.stringify({ error: `event_id ${eventId} 不存在` });
-        return JSON.stringify({
-          ok: true,
-          event: { id: r.id, title: r.title, summary: r.summary, category: r.category },
-        });
-      }
-      const created = await service.createEvent({ title, summary, category, evidence: [] });
-      return JSON.stringify({
-        ok: true,
-        event: { id: created.id, title: created.title, summary: created.summary, category: created.category },
-      });
-    },
-  });
-
-  // ---- link (mutator) ----
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'user_relation_link',
-        description:
-          '创建或强化一条边。kind 决定来源/目标类型：person-event / person-entity / person-person / event-event。',
-        parameters: {
-          type: 'object',
-          properties: {
-            kind: {
-              type: 'string',
-              enum: ['person-event', 'person-entity', 'person-person', 'event-event'],
-              description: '边类型',
-            },
-            from_id: {
-              type: 'string',
-              description: 'source 节点 ID（person:`platform:userId`，event/entity 为 UUID）',
-            },
-            to_id: { type: 'string', description: 'target 节点 ID' },
-            role: {
-              type: 'string',
-              description: `person-event: ${['initiator', 'participant', 'witness', 'target', 'reporter'].join(' / ')}；person-entity: ${RecommendedPersonEntityRoles.join(' / ')}`,
-            },
-            relation_type: {
-              type: 'string',
-              description: `person-person: friend/cp/mentor/rival 等；event-event 推荐：${RecommendedEventEventRelationTypes.join(' / ')}`,
-            },
-            sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral', 'mixed'] },
-            directed: {
-              type: 'boolean',
-              description: '仅 person-person / event-event 生效；默认按 relation_type 推断',
-            },
-          },
-          required: ['kind', 'from_id', 'to_id'],
-          additionalProperties: false,
-        },
-      },
-    },
-    groups: [groupName],
-    handler: async (args, callCtx) => {
-      const kind = String(args.kind ?? '');
-      const from = String(args.from_id ?? '').trim();
-      const to = String(args.to_id ?? '').trim();
-      if (!from || !to) return JSON.stringify({ error: 'from_id / to_id 必填' });
-      // 严格自证：person-* 边的 from 必须是当前调用者本人
-      if (
-        cfg.strictSelfAssertion &&
-        (kind === 'person-event' || kind === 'person-entity' || kind === 'person-person')
-      ) {
-        const sender = callCtx.platform && callCtx.userId ? `${callCtx.platform}:${callCtx.userId}` : undefined;
-        if (!sender || from !== sender) {
-          return JSON.stringify({
-            error: `严格自证模式：from_id 必须等于当前发言者 ${sender ?? '(未知)'}，不能代别人写关系`,
-          });
-        }
-      }
-      const sentiment = typeof args.sentiment === 'string' ? (args.sentiment as Sentiment) : undefined;
-      try {
-        if (kind === 'person-event') {
-          const role = (typeof args.role === 'string' ? args.role : 'participant') as PersonEventRole;
-          const e = await service.addPersonEventEdge({
-            fromPersonId: from,
-            toEventId: to,
-            role,
-            sentiment,
-            evidence: [],
-          });
-          return JSON.stringify({ ok: true, edge: serializeEdge(e) });
-        }
-        if (kind === 'person-entity') {
-          const role = (typeof args.role === 'string' ? args.role : 'mentioned') as PersonEntityRole;
-          const e = await service.addPersonEntityEdge({
-            fromPersonId: from,
-            toEntityId: to,
-            role,
-            sentiment,
-            evidence: [],
-          });
-          return JSON.stringify({ ok: true, edge: serializeEdge(e) });
-        }
-        if (kind === 'person-person') {
-          const relationType = String(args.relation_type ?? '').trim();
-          if (!relationType) return JSON.stringify({ error: 'person-person 需要 relation_type' });
-          const directed = typeof args.directed === 'boolean' ? args.directed : undefined;
-          const e = await service.addPersonPersonEdge({
-            fromPersonId: from,
-            toPersonId: to,
-            relationType,
-            directed,
-            evidence: [],
-          });
-          return JSON.stringify({ ok: true, edge: serializeEdge(e) });
-        }
-        if (kind === 'event-event') {
-          const relationType = String(args.relation_type ?? '').trim();
-          if (!relationType) return JSON.stringify({ error: 'event-event 需要 relation_type' });
-          const directed = typeof args.directed === 'boolean' ? args.directed : undefined;
-          const e = await service.addEventEventEdge({
-            fromEventId: from,
-            toEventId: to,
-            relationType,
-            directed,
-            evidence: [],
-          });
-          return JSON.stringify({ ok: true, edge: serializeEdge(e) });
-        }
-        return JSON.stringify({ error: `未知 kind: ${kind}` });
-      } catch (err) {
-        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
-      }
-    },
-  });
-
-  // ---- unlink (mutator) ----
+  // ---- unlink (mutator) ----  仅保留删除通道作为 agent 的纠错出口
   tools.register({
     definition: {
       type: 'function',
@@ -448,7 +218,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
-  if (cfg.debug) ctx.logger.debug(`[user-relation] 已注册 8 个工具到分组 ${groupName}`);
+  if (cfg.debug) ctx.logger.debug(`[user-relation] 已注册 4 个工具到分组 ${groupName}（3 read + 1 unlink）`);
 }
 
 // ----- helpers -----
