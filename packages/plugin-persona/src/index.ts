@@ -732,12 +732,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     };
 
     const jsonStr = extractJsonCandidate(data.content);
-    // 内容里压根没有 JSON 对象（如 agent 工具迭代中间的纯文本、模型直接拒答等），
-    // 此时强行 parse 只会无意义地 retry。提前 bail out，保留原文不动。
-    if (!jsonStr.trimStart().startsWith('{')) {
-      ctx.logger.debug(`outputFormat 跳过：内容非 JSON 对象（开头="${jsonStr.slice(0, 40)}"），保留原文`);
-      return;
-    }
     const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
     if (parsed && repairsApplied.length > 0) {
       ctx.logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
