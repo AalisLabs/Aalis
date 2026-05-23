@@ -134,12 +134,15 @@ describe('plugin-user-relation: person-event edges', () => {
 });
 
 describe('plugin-user-relation: person-person edges', () => {
-  it('symmetric relation merges both directions into one edge', async () => {
+  it('directed=false (explicit) merges both directions into one edge', async () => {
     const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
     const e1 = await service.addPersonPersonEdge({
       fromPersonId: 'onebot:a',
       toPersonId: 'onebot:b',
       relationType: 'friend',
+      directed: false,
     });
     expect((e1 as PersonPersonEdge).directed).toBe(false);
 
@@ -147,12 +150,35 @@ describe('plugin-user-relation: person-person edges', () => {
       fromPersonId: 'onebot:b',
       toPersonId: 'onebot:a',
       relationType: 'friend',
+      directed: false,
     });
     expect(e2.id).toBe(e1.id); // 对称：方向反过来命中同一条
   });
 
+  it('person-person edges default to directed=true (single-direction declaration)', async () => {
+    // 默认语义变为单向：A 说「和 B 是朋友」不代表 B 也认同。
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
+    const a2b = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'friend',
+    });
+    expect(a2b.directed).toBe(true);
+
+    const b2a = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:b',
+      toPersonId: 'onebot:a',
+      relationType: 'friend',
+    });
+    expect(b2a.id).not.toBe(a2b.id); // 默认有向 → 反方向是独立边
+  });
+
   it('directed relation keeps direction distinct', async () => {
     const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
     const a2b = await service.addPersonPersonEdge({
       fromPersonId: 'onebot:a',
       toPersonId: 'onebot:b',
@@ -170,12 +196,26 @@ describe('plugin-user-relation: person-person edges', () => {
 
   it('normalizes synonyms before storage', async () => {
     const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
     const edge = await service.addPersonPersonEdge({
       fromPersonId: 'onebot:a',
       toPersonId: 'onebot:b',
       relationType: 'Best Friend',
     });
     expect((edge as PersonPersonEdge).relationType).toBe('friend');
+  });
+
+  it('rejects edge when toPersonId does not exist as PersonNode (anti-orphan)', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await expect(
+      service.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:ghost',
+        relationType: 'friend',
+      }),
+    ).rejects.toThrow(/不存在/);
   });
 });
 
@@ -215,6 +255,8 @@ describe('plugin-user-relation: cascade delete', () => {
 
   it('deleteEvent removes person-event edges pointing to it', async () => {
     const { service, store } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
     const event = await service.createEvent({ title: 't', evidence: [ev()] });
     await service.addPersonEventEdge({
       fromPersonId: 'onebot:a',
