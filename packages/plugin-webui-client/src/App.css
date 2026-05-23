@@ -3964,6 +3964,10 @@ details[open] > .tool-call-summary::before {
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
   transition: background var(--transition);
+  vertical-align: middle;
+}
+.dyn-cell-nowrap {
+  white-space: nowrap;
 }
 .dyn-table tr:last-child td {
   border-bottom: none;
@@ -3975,6 +3979,8 @@ details[open] > .tool-call-summary::before {
   display: flex;
   gap: 6px;
   flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
 }
 .dyn-badge {
   display: inline-block;

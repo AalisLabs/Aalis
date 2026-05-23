@@ -123,7 +123,15 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
         <table className="dyn-table">
           <thead>
             <tr>
-              {comp.columns.map(col => <th key={col.key}>{col.label}</th>)}
+              {comp.columns.map(col => (
+                <th
+                  key={col.key}
+                  className={col.nowrap ? 'dyn-cell-nowrap' : undefined}
+                  style={col.minWidth ? { minWidth: `${col.minWidth}px` } : undefined}
+                >
+                  {col.label}
+                </th>
+              ))}
               {comp.actions && comp.actions.length > 0 && <th>操作</th>}
             </tr>
           </thead>
@@ -131,7 +139,11 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
             {rows.map((row, i) => (
               <tr key={i}>
                 {comp.columns.map(col => (
-                  <td key={col.key}>
+                  <td
+                    key={col.key}
+                    className={col.nowrap ? 'dyn-cell-nowrap' : undefined}
+                    style={col.minWidth ? { minWidth: `${col.minWidth}px` } : undefined}
+                  >
                     {col.render === 'countdown'
                       ? <CountdownCell target={Number(row[col.key]) || 0} onZero={fetchData} />
                       : col.render === 'status-badge'

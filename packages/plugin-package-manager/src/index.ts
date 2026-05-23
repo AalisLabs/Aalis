@@ -7,6 +7,7 @@ import { createStorageGateway, type StorageService } from '@aalis/plugin-storage
 export const name = '@aalis/plugin-package-manager';
 export const displayName = '包管理器';
 export const subsystem = 'system';
+export const provides = ['package-manager'];
 export const inject = {
   required: ['process', 'storage'],
 };
