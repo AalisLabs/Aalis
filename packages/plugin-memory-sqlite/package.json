@@ -12,7 +12,8 @@
     "@aalis/core": "workspace:*",
     "better-sqlite3": "^11.8.0",
     "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*"
+    "@aalis/plugin-message-api": "workspace:*",
+    "@aalis/plugin-storage-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

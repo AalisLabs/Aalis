@@ -1,8 +1,16 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';
+
+function toUri(input: string): string {
+  const s = String(input ?? '').trim();
+  if (!s) return 'data:/lancedb';
+  if (s.includes(':/')) return s;
+  const cleaned = s.replace(/^\.?\/+/, '');
+  const idx = cleaned.indexOf('/');
+  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `data:/${cleaned}`;
+}
 
 // ===== 插件元数据 =====
 
@@ -12,12 +20,17 @@ export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {
-  path: { type: 'string', label: '数据库目录', default: 'data/lancedb', description: 'LanceDB 数据文件存储目录' },
+  path: {
+    type: 'string',
+    label: '数据库目录',
+    default: 'data:/lancedb',
+    description: 'LanceDB 数据存储 storage URI（也兼容裸名/相对路径）',
+  },
   tableName: { type: 'string', label: '表名', default: 'vectors', description: '向量表名称' },
 };
 
 export const defaultConfig = {
-  path: 'data/lancedb',
+  path: 'data:/lancedb',
   tableName: 'vectors',
 };
 
@@ -47,10 +60,6 @@ class LanceDBVectorStore implements VectorStoreService {
 
   /** 初始化连接（必须在使用前调用） */
   async init(): Promise<void> {
-    if (!existsSync(this.dbPath)) {
-      mkdirSync(this.dbPath, { recursive: true });
-    }
-
     this.db = await connect(this.dbPath);
 
     // 尝试打开已有表
@@ -151,17 +160,23 @@ class LanceDBVectorStore implements VectorStoreService {
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const cfg: LanceDBConfig = {
-    path: (config.path as string) ?? 'data/lancedb',
+    path: (config.path as string) ?? 'data:/lancedb',
     tableName: (config.tableName as string) ?? 'vectors',
   };
 
-  const dbPath = resolve(ctx.config.getConfigDir(), cfg.path);
+  const storage = createStorageGateway(ctx);
+  const dbUri = toUri(cfg.path);
+  if (!storage.resolveLocalPath) {
+    ctx.logger.error('存储实现未提供 resolveLocalPath 能力，无法初始化 LanceDB');
+    return;
+  }
+  const dbPath = await storage.resolveLocalPath(dbUri, 'write');
   const store = new LanceDBVectorStore(dbPath, cfg.tableName, ctx.logger);
 
   await store.init();
 
   const count = await store.size();
-  ctx.logger.info(`LanceDB 向量数据库已加载: ${count} 条记录, 路径=${dbPath}, 表=${cfg.tableName}`);
+  ctx.logger.info(`LanceDB 向量数据库已加载: ${count} 条记录, URI=${dbUri}, 表=${cfg.tableName}`);
 
   ctx.provide('vectorstore', store, { priority: 10 });
 
