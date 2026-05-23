@@ -89,6 +89,13 @@ export const configSchema: ConfigSchema = {
     label: '提取使用的 LLM',
     description: '建议挑一个具备 chat 能力的便宜模型；留空则使用默认 llm 服务',
   },
+  extractionDisableThinking: {
+    type: 'boolean',
+    label: '提取：禁用思考模式',
+    description:
+      '提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。默认禁用',
+    default: true,
+  },
 
   // ────── Middleware 注入侧 ──────
   agentInjection: {
@@ -296,6 +303,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       candidateEventDays: numCfg(config.candidateEventDays, 7),
       candidateEventLimit: numCfg(config.candidateEventLimit, 20),
       extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
+      disableThinking: config.extractionDisableThinking !== false,
       debug,
     });
     extractor.start();
