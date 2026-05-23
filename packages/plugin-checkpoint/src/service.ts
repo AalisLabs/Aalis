@@ -1,7 +1,6 @@
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
 import type { Logger } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 /**
  * Checkpoint 服务
@@ -87,7 +86,7 @@ export interface RollbackWithChatResult extends RollbackResult {
 }
 
 interface ServiceConfig {
-  rootDir: string;
+  rootUri: string;
   maxFileSize: number;
   keepSessions: number;
 }
@@ -105,6 +104,7 @@ export class CheckpointServiceImpl implements CheckpointService {
   constructor(
     private readonly cfg: ServiceConfig,
     private readonly logger: Logger,
+    private readonly storage: StorageService,
   ) {}
 
   // ──────────── 生命周期 ────────────
@@ -155,8 +155,7 @@ export class CheckpointServiceImpl implements CheckpointService {
       return;
     }
     const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
-    await mkdir(turnDir, { recursive: true });
-    await writeFile(join(turnDir, 'manifest.json'), JSON.stringify(this.current, null, 2), 'utf-8');
+    await this.storage.writeFile(joinUri(turnDir, 'manifest.json'), JSON.stringify(this.current, null, 2));
     this.logger.info(`checkpoint 回合提交 turn=${this.current.turnId} 文件数=${this.current.files.length}`);
     this.current = null;
     this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
@@ -213,8 +212,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     // 情况 4：正常快照
     const blobName = `${this.blobIndex++}.bin`;
     const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
-    await mkdir(join(turnDir, 'blobs'), { recursive: true });
-    await writeFile(join(turnDir, 'blobs', blobName), original.data);
+    await this.storage.writeFile(joinUri(turnDir, 'blobs/' + blobName), original.data);
 
     this.current.files.push({
       uri,
@@ -227,10 +225,11 @@ export class CheckpointServiceImpl implements CheckpointService {
   // ──────────── 查询 ────────────
 
   async listTurns(sessionId: string): Promise<TurnSummary[]> {
-    const sessionDir = join(this.cfg.rootDir, encodeSegment(sessionId));
+    const sessionDir = joinUri(this.cfg.rootUri, encodeSegment(sessionId));
     let entries: string[];
     try {
-      entries = await readdir(sessionDir);
+      const listed = await this.storage.list(sessionDir);
+      entries = listed.entries.filter(e => e.isDirectory).map(e => e.name);
     } catch {
       return [];
     }
@@ -253,10 +252,10 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 
   async getManifest(sessionId: string, turnId: string): Promise<TurnManifest | null> {
-    const path = join(this.turnDir(sessionId, turnId), 'manifest.json');
+    const uri = joinUri(this.turnDir(sessionId, turnId), 'manifest.json');
     try {
-      const raw = await readFile(path, 'utf-8');
-      return JSON.parse(raw) as TurnManifest;
+      const raw = await this.storage.readFile(uri, 'utf-8');
+      return JSON.parse(String(raw)) as TurnManifest;
     } catch {
       return null;
     }
@@ -287,8 +286,8 @@ export class CheckpointServiceImpl implements CheckpointService {
           // 跳过快照的，无法恢复
           result.errors.push({ uri: file.uri, reason: file.skipped });
         } else if (file.blob) {
-          const data = await readFile(join(turnDir, 'blobs', file.blob));
-          await this._backendWrite(file.uri, data);
+          const data = await this.storage.readFile(joinUri(turnDir, 'blobs/' + file.blob));
+          await this._backendWrite(file.uri, Buffer.from(data as Uint8Array));
           result.restored.push(file.uri);
         }
       } catch (err) {
@@ -384,20 +383,21 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   private async gc(): Promise<void> {
     if (this.cfg.keepSessions <= 0) return;
-    let sessions: string[];
+    let sessions: Array<{ name: string; uri: string }>;
     try {
-      sessions = await readdir(this.cfg.rootDir);
+      const listed = await this.storage.list(this.cfg.rootUri);
+      sessions = listed.entries.filter(e => e.isDirectory).map(e => ({ name: e.name, uri: e.uri }));
     } catch {
       return;
     }
     if (sessions.length <= this.cfg.keepSessions) return;
 
     // 按 session 目录的最新 mtime 排序，淘汰最旧的
-    const sessionInfo: Array<{ name: string; mtime: number }> = [];
-    for (const name of sessions) {
+    const sessionInfo: Array<{ name: string; uri: string; mtime: number }> = [];
+    for (const item of sessions) {
       try {
-        const s = await stat(join(this.cfg.rootDir, name));
-        sessionInfo.push({ name, mtime: s.mtimeMs });
+        const s = await this.storage.stat(item.uri);
+        sessionInfo.push({ name: item.name, uri: item.uri, mtime: new Date(s.mtime).getTime() || 0 });
       } catch {
         /* skip */
       }
@@ -406,7 +406,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     const toDelete = sessionInfo.slice(this.cfg.keepSessions);
     for (const item of toDelete) {
       try {
-        await rm(join(this.cfg.rootDir, item.name), { recursive: true, force: true });
+        await this.storage.delete(item.uri);
       } catch (err) {
         this.logger.warn(`GC 删除 ${item.name} 失败: ${(err as Error).message}`);
       }
@@ -414,8 +414,13 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 
   private turnDir(sessionId: string, turnId: string): string {
-    return join(this.cfg.rootDir, encodeSegment(sessionId), encodeSegment(turnId));
+    return joinUri(this.cfg.rootUri, encodeSegment(sessionId) + '/' + encodeSegment(turnId));
   }
+}
+
+function joinUri(base: string, rel: string): string {
+  const b = base.endsWith('/') ? base : `${base}/`;
+  return `${b}${rel.replace(/^\/+/, '')}`;
 }
 
 /** 文件系统路径段：把 ":" "/" "\" 等特殊字符 URL 编码 */
@@ -424,12 +429,19 @@ function encodeSegment(s: string): string {
 }
 
 export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
+  const rootInput = typeof raw.rootDir === 'string' ? raw.rootDir : 'data:/checkpoints';
   return {
-    rootDir: resolve(process.cwd(), typeof raw.rootDir === 'string' ? raw.rootDir : 'data/checkpoints'),
+    rootUri: toUri(rootInput),
     maxFileSize: typeof raw.maxFileSize === 'number' ? Math.max(1024, raw.maxFileSize) : 10 * 1024 * 1024,
     keepSessions: typeof raw.keepSessions === 'number' ? Math.max(0, Math.floor(raw.keepSessions)) : 20,
   };
 }
 
-// 让外部不需要重新引入 fs/promises
-export { copyFile, rename };
+function toUri(input: string): string {
+  const s = String(input ?? '').trim();
+  if (!s) return 'data:/checkpoints';
+  if (s.includes(':/')) return s;
+  const cleaned = s.replace(/^\.?\/+/, '');
+  const idx = cleaned.indexOf('/');
+  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `data:/${cleaned}`;
+}
