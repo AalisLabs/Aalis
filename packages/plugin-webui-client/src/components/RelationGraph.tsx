@@ -13,7 +13,13 @@ function ensureFcose(): void {
 }
 
 interface GraphNode {
-  data: { id: string; label?: string; kind?: 'person' | 'event' | string; [k: string]: unknown };
+  data: {
+    id: string;
+    label?: string;
+    kind?: 'person' | 'event' | 'entity' | string;
+    entityKind?: 'topic' | 'place' | 'thing' | 'work' | string;
+    [k: string]: unknown;
+  };
 }
 interface GraphEdge {
   data: { id: string; source: string; target: string; label?: string; relationType?: string; [k: string]: unknown };
@@ -25,9 +31,23 @@ interface GraphPayload {
   stats?: Record<string, number | string>;
 }
 
-const PERSON_COLOR = '#3b82f6';
-const EVENT_COLOR = '#f59e0b';
-const FOCUS_COLOR = '#ef4444';
+// 深色主题硬编码（与 App.css 中 --bg/--surface 对齐）
+const PERSON_COLOR = '#60a5fa'; // 人物=蓝
+const EVENT_COLOR = '#fb923c'; // 事件=橙
+const FOCUS_COLOR = '#ef4444'; // 焦点=红
+const TEXT_COLOR = '#e4e4ef';
+const CANVAS_BG = '#0f0f14';
+const EDGE_COLOR = '#6b7280';
+const EDGE_LABEL_BG = '#1c1c28';
+const ENTITY_COLORS: Record<string, string> = {
+  topic: '#34d399',
+  place: '#a78bfa',
+  thing: '#fbbf24',
+  work: '#f472b6',
+};
+const ENTITY_DEFAULT = '#9ca3af';
+// 深度 0 表示「不限」，送给后端时映射成足够大的有限数
+const UNLIMITED_DEPTH_SENTINEL = 99;
 
 const stylesheet: cytoscape.StylesheetJson = [
   {
@@ -35,11 +55,11 @@ const stylesheet: cytoscape.StylesheetJson = [
     style: {
       label: 'data(label)',
       'background-color': PERSON_COLOR,
-      color: '#1f2937',
+      color: TEXT_COLOR,
       'font-size': 11,
       'text-valign': 'bottom',
       'text-margin-y': 4,
-      'text-outline-color': '#fff',
+      'text-outline-color': CANVAS_BG,
       'text-outline-width': 2,
       width: 28,
       height: 28,
@@ -52,11 +72,25 @@ const stylesheet: cytoscape.StylesheetJson = [
     style: {
       'background-color': EVENT_COLOR,
       shape: 'round-rectangle',
-      'border-color': '#92400e',
+      'border-color': '#9a3412',
       width: 36,
       height: 24,
     },
   },
+  {
+    selector: 'node[kind = "entity"]',
+    style: {
+      shape: 'diamond',
+      'background-color': ENTITY_DEFAULT,
+      'border-color': '#374151',
+      width: 30,
+      height: 30,
+    },
+  },
+  { selector: 'node[entityKind = "topic"]', style: { 'background-color': ENTITY_COLORS.topic } },
+  { selector: 'node[entityKind = "place"]', style: { 'background-color': ENTITY_COLORS.place } },
+  { selector: 'node[entityKind = "thing"]', style: { 'background-color': ENTITY_COLORS.thing } },
+  { selector: 'node[entityKind = "work"]', style: { 'background-color': ENTITY_COLORS.work } },
   {
     selector: 'node[focused = "1"]',
     style: {
@@ -75,22 +109,30 @@ const stylesheet: cytoscape.StylesheetJson = [
     selector: 'edge',
     style: {
       width: 1.5,
-      'line-color': '#9ca3af',
+      'line-color': EDGE_COLOR,
       'curve-style': 'bezier',
       label: 'data(label)',
       'font-size': 9,
-      color: '#6b7280',
+      color: TEXT_COLOR,
       'text-rotation': 'autorotate' as unknown as number,
-      'text-background-color': '#fff',
+      'text-background-color': EDGE_LABEL_BG,
       'text-background-opacity': 0.85,
       'text-background-padding': 1 as unknown as string,
       'target-arrow-shape': 'triangle',
-      'target-arrow-color': '#9ca3af',
+      'target-arrow-color': EDGE_COLOR,
     },
   },
   {
     selector: 'edge[kind = "person-event"]',
     style: { 'line-color': '#fbbf24', 'target-arrow-color': '#fbbf24', 'line-style': 'dashed' },
+  },
+  {
+    selector: 'edge[kind = "person-entity"]',
+    style: { 'line-color': '#34d399', 'target-arrow-color': '#34d399', 'line-style': 'dotted' },
+  },
+  {
+    selector: 'edge[kind = "event-event"]',
+    style: { 'line-color': '#f472b6', 'target-arrow-color': '#f472b6', width: 2 },
   },
   {
     selector: 'edge[dimmed = "1"]',
@@ -131,7 +173,11 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
     setLoading(true);
     setError(null);
     try {
-      const args = { focusId, maxDepth, maxBreadth };
+      const args = {
+        focusId,
+        maxDepth: maxDepth <= 0 ? UNLIMITED_DEPTH_SENTINEL : maxDepth,
+        maxBreadth,
+      };
       const res = await pageAction<GraphPayload>(pluginName, comp.source, args);
       if (!res) {
         setPayload({ nodes: [], edges: [] });
@@ -262,7 +308,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
   const exportPng = useCallback(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    const dataUrl = cy.png({ full: true, scale: 2, bg: '#ffffff' });
+    const dataUrl = cy.png({ full: true, scale: 2, bg: CANVAS_BG });
     const a = document.createElement('a');
     a.href = dataUrl;
     a.download = `relation-graph-${Date.now()}.png`;
@@ -298,14 +344,15 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
     gap: 8,
     alignItems: 'center',
     padding: '8px 10px',
-    background: 'var(--bg-secondary, #f8fafc)',
-    borderBottom: '1px solid var(--border-color, #e5e7eb)',
+    background: 'var(--bg-secondary)',
+    borderBottom: '1px solid var(--border-color, #2a2a42)',
     fontSize: 12,
+    color: 'var(--text)',
   };
   const canvasStyle: CSSProperties = {
     width: '100%',
     height: 520,
-    background: '#ffffff',
+    background: CANVAS_BG,
     position: 'relative',
   };
 
@@ -323,13 +370,31 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           深度
-          <input type="range" min={1} max={5} value={maxDepth} onChange={e => setMaxDepth(Number(e.target.value))} />
-          <span style={{ width: 16 }}>{maxDepth}</span>
+          <input
+            type="range"
+            min={0}
+            max={10}
+            value={maxDepth}
+            onChange={e => setMaxDepth(Number(e.target.value))}
+            title="0 = 不限深度"
+          />
+          <input
+            type="number"
+            min={0}
+            value={maxDepth}
+            onChange={e => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n >= 0) setMaxDepth(n);
+            }}
+            style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
+            title="手动输入深度（0 = 不限）"
+          />
+          <span style={{ width: 32, color: 'var(--text-secondary)' }}>{maxDepth === 0 ? '∞' : maxDepth}</span>
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           宽度
           <input type="range" min={3} max={30} value={maxBreadth} onChange={e => setMaxBreadth(Number(e.target.value))} />
-          <span style={{ width: 24 }}>{maxBreadth}</span>
+          <span style={{ width: 24, color: 'var(--text-secondary)' }}>{maxBreadth}</span>
         </label>
         {focusId ? (
           <button type="button" onClick={() => setFocusId(undefined)} style={{ padding: '4px 8px' }}>
@@ -364,21 +429,26 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
           <aside
             style={{
               width: 280,
-              borderLeft: '1px solid var(--border-color, #e5e7eb)',
+              borderLeft: '1px solid var(--border-color, #2a2a42)',
               padding: 12,
               fontSize: 12,
-              background: 'var(--bg-secondary, #f8fafc)',
+              background: 'var(--surface)',
+              color: 'var(--text)',
               overflow: 'auto',
               maxHeight: 520,
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <strong>{selectedNode.data.label ?? selectedNode.data.id}</strong>
-              <button type="button" onClick={() => setSelectedNode(null)} style={{ background: 'none', border: 0, cursor: 'pointer' }}>
+              <button
+                type="button"
+                onClick={() => setSelectedNode(null)}
+                style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >
                 ✕
               </button>
             </div>
-            <div style={{ color: '#6b7280', marginBottom: 6 }}>{selectedNode.data.kind ?? '—'}</div>
+            <div style={{ color: 'var(--text-secondary)', marginBottom: 6 }}>{selectedNode.data.kind ?? '—'}</div>
             <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
               <button
                 type="button"
@@ -386,25 +456,25 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
                   setFocusId(selectedNode.data.id);
                   setSelectedNode(null);
                 }}
-                style={{ padding: '4px 8px' }}
+                style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
               >
                 以此为焦点
               </button>
             </div>
             {detailLoading ? (
-              <div style={{ color: '#9ca3af' }}>加载详情中…</div>
+              <div style={{ color: 'var(--text-muted)' }}>加载详情中…</div>
             ) : detail ? (
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 11, margin: 0 }}>
+              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 11, margin: 0, color: 'var(--text)' }}>
                 {JSON.stringify(detail, null, 2)}
               </pre>
             ) : (
-              <div style={{ color: '#9ca3af' }}>无详情（detailSource 未配置）</div>
+              <div style={{ color: 'var(--text-muted)' }}>无详情（detailSource 未配置）</div>
             )}
           </aside>
         ) : null}
       </div>
 
-      <div style={{ padding: '4px 10px', fontSize: 11, color: '#6b7280', background: 'var(--bg-secondary, #f8fafc)' }}>
+      <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }}>
         {statsText || '—'}
       </div>
     </div>
