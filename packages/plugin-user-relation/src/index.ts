@@ -375,7 +375,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       findPathHardMaxDepth: numCfg(config.findPathHardMaxDepth, 6),
       searchEventsDefaultLimit: numCfg(config.searchEventsDefaultLimit, 10),
       searchEventsHardMaxLimit: numCfg(config.searchEventsHardMaxLimit, 50),
-      strictSelfAssertion: config.strictSelfAssertion !== false,
       debug,
     });
   }
