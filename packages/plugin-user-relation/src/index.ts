@@ -24,7 +24,6 @@ import { registerRelationMiddleware } from './middleware.js';
 import { RelationService } from './service.js';
 import { RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
-import { RecommendedPersonRelationTypes } from './types.js';
 
 export const name = '@aalis/plugin-user-relation';
 export const displayName = '人物关系图';
@@ -211,15 +210,24 @@ const webuiPages: WebuiPage[] = [
         icon: 'memory',
       },
       {
+        type: 'graph',
+        label: '关系图（点击节点查看详情；可设置焦点重做子图）',
+        source: 'getRelationGraph',
+        detailSource: 'getGraphNodeDetail',
+        defaultMaxDepth: 2,
+        defaultMaxBreadth: 10,
+        refresh: 0,
+      },
+      {
         type: 'tabs',
+        label: '原始数据',
         items: [
           {
             key: 'persons',
-            label: '人物',
+            label: '人物列表',
             content: [
               {
                 type: 'table',
-                label: '人物列表',
                 source: 'listPersons',
                 columns: [
                   { key: 'id', label: 'ID', nowrap: true },
@@ -230,8 +238,6 @@ const webuiPages: WebuiPage[] = [
                   { key: 'lastSeenAt', label: '最近活跃', nowrap: true },
                 ],
                 actions: [
-                  { label: '查看邻域', method: 'getPerson' },
-                  { label: '深度展开', method: 'expandPerson' },
                   { label: '删除', method: 'deletePerson', confirm: '确认删除该人物及其所有相关边？', danger: true },
                 ],
                 refresh: 60,
@@ -240,11 +246,10 @@ const webuiPages: WebuiPage[] = [
           },
           {
             key: 'events',
-            label: '事件',
+            label: '事件列表',
             content: [
               {
                 type: 'table',
-                label: '事件列表',
                 source: 'listEvents',
                 columns: [
                   { key: 'title', label: '标题', minWidth: 160 },
@@ -255,67 +260,9 @@ const webuiPages: WebuiPage[] = [
                   { key: 'lastReinforcedAt', label: '最近强化', nowrap: true },
                 ],
                 actions: [
-                  { label: '查看', method: 'getEvent' },
                   { label: '删除', method: 'deleteEvent', confirm: '确认删除该事件及其所有相关边？', danger: true },
                 ],
                 refresh: 60,
-              },
-            ],
-          },
-          {
-            key: 'pe-edges',
-            label: '人-事件 边',
-            content: [
-              {
-                type: 'table',
-                label: '人 → 事件',
-                source: 'listPersonEventEdges',
-                columns: [
-                  { key: 'person', label: '人物', nowrap: true },
-                  { key: 'event', label: '事件', minWidth: 160 },
-                  { key: 'role', label: '角色', nowrap: true },
-                  { key: 'sentiment', label: '情绪', nowrap: true },
-                  { key: 'weight', label: '权重', nowrap: true },
-                  { key: 'preview', label: '最新证据', minWidth: 160, render: 'expandable-text' },
-                ],
-                actions: [{ label: '删除', method: 'deleteEdge', confirm: '确认删除该边？', danger: true }],
-                refresh: 60,
-              },
-            ],
-          },
-          {
-            key: 'pp-edges',
-            label: '人-人 边',
-            content: [
-              {
-                type: 'table',
-                label: '人 ↔ 人',
-                source: 'listPersonPersonEdges',
-                columns: [
-                  { key: 'from', label: 'From', nowrap: true },
-                  { key: 'to', label: 'To', nowrap: true },
-                  { key: 'relation', label: '关系', nowrap: true },
-                  { key: 'weight', label: '权重', nowrap: true },
-                  { key: 'preview', label: '最新证据', minWidth: 160, render: 'expandable-text' },
-                ],
-                actions: [{ label: '删除', method: 'deleteEdge', confirm: '确认删除该边？', danger: true }],
-                refresh: 60,
-              },
-            ],
-          },
-          {
-            key: 'tools',
-            label: '工具',
-            content: [
-              {
-                type: 'markdown',
-                label: '说明',
-                source: 'getToolsHelp',
-              },
-              {
-                type: 'actions',
-                label: '查看推荐关系类型',
-                items: [{ label: '查看推荐关系类型', method: 'getRecommendedRelationTypes' }],
               },
             ],
           },
@@ -397,37 +344,7 @@ function numCfg(v: unknown, fallback: number): number {
   return fallback;
 }
 
-export const actions: PluginModule['actions'] = {
-  ...baseActions,
-  async getToolsHelp() {
-    return {
-      content: [
-        '# 关系图工具',
-        '',
-        `**推荐关系类型**：${RecommendedPersonRelationTypes.join(' / ')}（同义词会自动归一化，例如 best_friend → friend、couple → cp、teacher → mentor）。`,
-        '',
-        '**层叠提取设计**：每 N 条消息触发一次提取，但每次回读窗口略大于 N（默认 20 / 30），',
-        '让两次提取的窗口有约 10 条消息重叠 —— 同一事件 / 关系会在相邻批次被反复观察，',
-        '权重通过 `prev + (1 - prev) * delta` 收敛累积，证据自动去重保留最近 10 条。',
-        '',
-        '**多层遍历**：BFS，`maxDepth` 控制"探求多远"，`maxBreadth` 控制"单节点展开几个邻居（按 weight 降序）"，',
-        'visited 集合防环。三个使用场景各有独立参数：',
-        '',
-        '- `injectionMaxDepth/Breadth`：每次对话注入用，token 敏感，默认浅。',
-        '- `digToolDefaultMaxDepth/Breadth` + `digToolHardMax*`：Agent 主动调用 `user_relation_expand_person` 时的默认与硬上限。',
-        '- WebUI 行内 "深度展开" 按钮调用 `expandPerson` action（默认中等深度）。',
-        '',
-        '**关系边语义**：对称关系（friend/cp/rival/colleague/familiar/antagonist）合并双向；',
-        '非对称关系（mentor/admirer 等）保留方向。',
-        '',
-        '**Agent 可调工具**（toolsEnabled=true 时）：',
-        '- `user_relation_expand_person(person_id, max_depth?, max_breadth?)`：以某人为中心抽取子图',
-        '- `user_relation_find_path(from_person_id, to_person_id, max_depth?)`：找两人之间最短关系链',
-        '- `user_relation_search_events(keyword?, days?, limit?)`：按关键词搜事件',
-      ].join('\n'),
-    };
-  },
-};
+export const actions: PluginModule['actions'] = baseActions;
 
 export { RelationService } from './service.js';
 export { RelationStore } from './store.js';
