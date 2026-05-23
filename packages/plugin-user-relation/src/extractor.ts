@@ -29,6 +29,8 @@ import type {
   EvidenceRef,
   PersonEntityRole,
   PersonEventRole,
+  PersonNode,
+  RelationEdge,
   Sentiment,
 } from './types.js';
 import { RecommendedEventEventRelationTypes, RecommendedPersonRelationTypes } from './types.js';
@@ -41,6 +43,8 @@ export interface ExtractorConfig {
   /** 提取时把"最近 N 天的活跃事件"作为候选清单交给 LLM 复用 */
   candidateEventDays: number;
   candidateEventLimit: number;
+  /** 提取时，对窗口内每位已知发言人附带其 1 跳邻居子图（已关联的事件/实体/人际关系，按权重降序），上限条数。0=关闭 */
+  senderNeighborhoodEdgeLimit: number;
   /** LLM model 引用；为空走默认 'llm' service */
   extractionModel?: ModelRef;
   /** 是否禁用思考模式（思考型模型上）。提取是结构化输出任务，默认禁用以避免 budget 被 reasoning 吃掉 */
@@ -59,6 +63,18 @@ interface ArchivedEventData {
     sessionType?: string;
   };
   archivedMessage: Message;
+}
+
+/** 单个候选人 1 跳邻居子图视图（已按 weight 降序截断）。 */
+interface SenderNeighborhood {
+  personId: string;
+  platform: string;
+  userId: string;
+  nickname?: string;
+  edges: RelationEdge[];
+  eventById: Map<string, EventNode>;
+  entityById: Map<string, EntityNode>;
+  personById: Map<string, PersonNode>;
 }
 
 interface LLMExtraction {
@@ -199,7 +215,14 @@ export class RelationExtractor {
 
       const platform = inferPlatform(userMsgs);
       const { candidateEvents, candidateEntities } = await this.pickCandidates();
-      const promptMessages = buildExtractionPrompt(history, userMsgs, candidateEvents, candidateEntities);
+      const senderNeighbors = await this.pickSenderNeighbors(userMsgs);
+      const promptMessages = buildExtractionPrompt(
+        history,
+        userMsgs,
+        candidateEvents,
+        candidateEntities,
+        senderNeighbors,
+      );
 
       const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
       const result = parseExtraction(raw);
@@ -236,6 +259,55 @@ export class RelationExtractor {
       .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
       .slice(0, this.cfg.candidateEventLimit * 2);
     return { candidateEvents, candidateEntities };
+  }
+
+  /**
+   * 对窗口内每个已知发言人，拿其 1 跳邻居子图（按 weight 降序，截断到 N 条）。
+   * 目的：让 LLM 在「加强已有 vs 新建」判断时手里有真证据，避免反复创建同一人 / 同一兴趣的重复节点。
+   * 若 senderNeighborhoodEdgeLimit=0 或某 sender 在图中尚未存在，则跳过该 sender。
+   */
+  private async pickSenderNeighbors(userMsgs: Message[]): Promise<SenderNeighborhood[]> {
+    const limit = this.cfg.senderNeighborhoodEdgeLimit;
+    if (!limit || limit <= 0) return [];
+    const senders = new Map<string, { platform: string; userId: string; nickname?: string }>();
+    for (const m of userMsgs) {
+      const meta = (m.metadata as { userId?: string; nickname?: string; platform?: string } | undefined) ?? {};
+      if (!meta.userId || !meta.platform) continue;
+      const key = `${meta.platform}:${meta.userId}`;
+      if (!senders.has(key)) {
+        senders.set(key, { platform: meta.platform, userId: meta.userId, nickname: meta.nickname });
+      }
+    }
+    if (senders.size === 0) return [];
+    const snapshot = await this.service.loadAll();
+    const personById = new Map(snapshot.persons.map(p => [p.id, p]));
+    const eventById = new Map(snapshot.events.map(e => [e.id, e]));
+    const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
+
+    const out: SenderNeighborhood[] = [];
+    for (const [key, s] of senders) {
+      if (!personById.has(key)) continue; // 新人 — 无邻居可注入
+      const edges = snapshot.edges.filter(e => {
+        if (e.kind === 'person-event') return e.fromPersonId === key;
+        if (e.kind === 'person-entity') return e.fromPersonId === key;
+        if (e.kind === 'person-person') return e.fromPersonId === key || e.toPersonId === key;
+        return false;
+      });
+      if (edges.length === 0) continue;
+      // 按 weight 降序，取 top N
+      const top = [...edges].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).slice(0, limit);
+      out.push({
+        personId: key,
+        platform: s.platform,
+        userId: s.userId,
+        nickname: s.nickname,
+        edges: top,
+        eventById,
+        entityById,
+        personById,
+      });
+    }
+    return out;
   }
 
   /** 把 LLM 输出落到关系图中 */
@@ -502,6 +574,7 @@ function buildExtractionPrompt(
   userMsgs: Message[],
   candidateEvents: EventNode[],
   candidateEntities: EntityNode[],
+  senderNeighbors: SenderNeighborhood[],
 ): Message[] {
   const rendered = renderHistoryForLLM(history);
   const evtList =
@@ -516,6 +589,7 @@ function buildExtractionPrompt(
           )
           .join('\n');
   const senderList = collectSenderList(userMsgs);
+  const neighborBlock = renderSenderNeighbors(senderNeighbors);
   const system: Message = {
     role: 'system',
     content: [
@@ -581,6 +655,9 @@ function buildExtractionPrompt(
       '== 已有候选实体（可被强化复用）==',
       entList,
       '',
+      '== 候选人已有 1 跳邻居子图（按权重降序；用于判断"加强已有 vs 新建"）==',
+      neighborBlock,
+      '',
       '== 消息窗口（按时间升序，[mid] = 平台消息 ID）==',
       rendered,
       '',
@@ -602,6 +679,42 @@ function collectSenderList(userMsgs: Message[]): string {
   return [...seen.entries()]
     .map(([k, v]) => `- platform=${v.platform ?? '?'} userId=${k.split(':')[1]} nickname=${v.nickname ?? ''}`)
     .join('\n');
+}
+
+/**
+ * 把每个发言人的 1 跳邻居子图渲染成紧凑文本，给 LLM 看：
+ *   ## Alice (onebot:1234567)
+ *     event[eid] 开黑《三角洲》  role=participant w=2.3
+ *     entity[entid] 三角洲 (work)  role=enthusiast w=4.1
+ *     person→157(onebot) "friend" w=1.0
+ * 没邻居的发言人/新人不渲染。
+ */
+function renderSenderNeighbors(neighbors: SenderNeighborhood[]): string {
+  if (!neighbors || neighbors.length === 0) return '（窗口内发言人均为新人，或邻居子图功能已关闭）';
+  const blocks: string[] = [];
+  for (const n of neighbors) {
+    const lines: string[] = [];
+    lines.push(`## ${n.nickname ?? '匿名'} (${n.platform}:${n.userId})`);
+    for (const e of n.edges) {
+      const w = (e.weight ?? 0).toFixed(1);
+      if (e.kind === 'person-event') {
+        const ev = n.eventById.get(e.toEventId);
+        lines.push(`  event[${e.toEventId}] ${ev?.title ?? '(已删)'}  role=${e.role} w=${w}`);
+      } else if (e.kind === 'person-entity') {
+        const ent = n.entityById.get(e.toEntityId);
+        lines.push(
+          `  entity[${e.toEntityId}] ${ent?.name ?? '(已删)'}${ent ? ` (${ent.entityKind})` : ''}  role=${e.role} w=${w}`,
+        );
+      } else if (e.kind === 'person-person') {
+        const otherId = e.fromPersonId === n.personId ? e.toPersonId : e.fromPersonId;
+        const other = n.personById.get(otherId);
+        const dir = e.fromPersonId === n.personId ? '→' : '←';
+        lines.push(`  person${dir}${other?.displayName ?? otherId} "${e.relationType}" w=${w}`);
+      }
+    }
+    blocks.push(lines.join('\n'));
+  }
+  return blocks.join('\n');
 }
 
 async function callLLM(model: LLMModel, messages: Message[], disableThinking: boolean): Promise<string> {

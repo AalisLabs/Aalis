@@ -1,15 +1,17 @@
 /**
  * Agent 工具：让 LLM 在 reasoning 中主动深挖关系图。
  *
- * 设计原则（单写者模型）：
- * - 关系图的「新建 / 强化」由 extractor 单线程被动归纳，agent **不能** 直接写。
- * - agent 只暴露 4 个工具：3 个读 (expand / find_path / search_events) + 1 个纠错删除 (unlink)。
+ * 设计原则（单写者 + 与 profile 对称）：
+ * - 关系图的「新建 / 强化 / 删除」由 extractor 单线程被动归纳，agent **不能** 直接写或删。
+ * - agent 只暴露 3 个只读工具：expand / find_path / search_events。
+ * - 想纠错？使用 `/relation cleanup` slash 命令（与 profile 的 `/profile clear` 对称）。
  * - 想让图记住某事？引导用户在对话中说出，extractor 自然会捕获。
  *
  * 这样可避免：
  *  #1 agent 与 extractor 同边并发新建竞争
  *  #2 同一事实被 agent + extractor 各计一次权重
  *  #3 cleanup 与 agent 写入相撞导致「幻象复活」
+ *  #4 agent 误删用户珍贵关系且无法回滚
  *
  * 所有 depth/breadth 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
@@ -187,38 +189,14 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
-  // ---- 写入工具（upsert_person / upsert_entity / upsert_event / link）已移除。
+  // ---- 写入与删除工具均已移除 ----
   //      关系图采用 **单写者** 模型：仅 extractor 通过被动 LLM 归纳来新建/强化节点和边。
   //      理由：避免 agent 工具与 extractor 双写引发的 race + 同事实双重计权。
+  //      纠错走 `/relation cleanup` slash 命令（与 profile `/profile clear` 对称）。
   //      agent 想"记住"某事？引导用户在对话中说出来，extractor 会自动捕获。
 
-  // ---- unlink (mutator) ----  仅保留删除通道作为 agent 的纠错出口
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'user_relation_unlink',
-        description: '按 edge_id 删除一条边。可通过 expand_person / find_path 先拿到 edge id。',
-        parameters: {
-          type: 'object',
-          properties: {
-            edge_id: { type: 'string', description: '边 ID（UUID）' },
-          },
-          required: ['edge_id'],
-          additionalProperties: false,
-        },
-      },
-    },
-    groups: [groupName],
-    handler: async args => {
-      const edgeId = String(args.edge_id ?? '').trim();
-      if (!edgeId) return JSON.stringify({ error: 'edge_id 必填' });
-      await service.deleteEdge(edgeId);
-      return JSON.stringify({ ok: true });
-    },
-  });
-
-  if (cfg.debug) ctx.logger.debug(`[user-relation] 已注册 4 个工具到分组 ${groupName}（3 read + 1 unlink）`);
+  if (cfg.debug)
+    ctx.logger.debug(`[user-relation] 已注册 3 个只读工具到分组 ${groupName}（expand / find_path / search_events）`);
 }
 
 // ----- helpers -----

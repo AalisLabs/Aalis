@@ -43,6 +43,7 @@ async function setup(llmContent: string) {
     allNewMaxMessages: 200,
     candidateEventDays: 7,
     candidateEventLimit: 20,
+    senderNeighborhoodEdgeLimit: 0,
     disableThinking: true,
     strictSelfAssertion: false,
     debug: false,
@@ -225,5 +226,64 @@ describe('plugin-user-relation: extractor', () => {
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const snap = await service.loadAll();
     expect(snap.persons.some(p => p.userId === 'c')).toBe(true);
+  });
+
+  it('senderNeighborhoodEdgeLimit>0：把已知发言人的 1 跳邻居子图注入到 LLM prompt', async () => {
+    // 先用一轮提取把 alice→三角洲(entity) 关系写进去
+    const seedJson = JSON.stringify({
+      persons: [{ platform: 'onebot', userId: 'alice', displayName: 'Alice' }],
+      entities: [
+        {
+          refKey: 'g1',
+          name: '三角洲',
+          entityKind: 'work',
+          evidence: { messageIds: ['s1'], quote: '三角洲' },
+        },
+      ],
+      personEntityEdges: [
+        {
+          personPlatform: 'onebot',
+          personUserId: 'alice',
+          entityRefKey: 'g1',
+          role: 'enthusiast',
+          sentiment: 'positive',
+          evidence: { messageIds: ['s1'], quote: '我喜欢三角洲' },
+        },
+      ],
+    });
+    // 第二轮用空 LLM 输出，只为捕获 prompt 中的 neighbor 渲染
+    const probeJson = '{}';
+    const { app, mem, service, extractor, calls } = await setup(seedJson);
+    // 把 cfg 中的 senderNeighborhoodEdgeLimit 改成 5（setup 默认为 0）
+    (extractor as unknown as { cfg: { senderNeighborhoodEdgeLimit: number } }).cfg.senderNeighborhoodEdgeLimit = 5;
+
+    await mem.saveMessage('sN', mkUserMsg('s1', 'alice', '我喜欢三角洲', 'Alice'));
+    let res = await extractor.triggerNow('sN');
+    expect(res.status).toBe('ok');
+    const snapAfterSeed = await service.loadAll();
+    expect(snapAfterSeed.entities.some(e => e.name === '三角洲')).toBe(true);
+
+    // 切换 fake LLM 的 canned response 到 probe（替换 model 内部回应）
+    const llmHandle = app.ctx.getService<{ chat(): Promise<{ content: string }> }>('llm');
+    // 简单 hack: 用新的 fake 替换原本的；改用直接修改原 chat 行为
+    type LlmInternal = { chat: (req: unknown) => Promise<{ content: string }> };
+    (llmHandle as unknown as LlmInternal).chat = (req: unknown) => {
+      calls.push(req as never);
+      return Promise.resolve({ content: probeJson });
+    };
+
+    // 第二轮：再 alice 发一条新消息，触发 neighbor 注入
+    await mem.saveMessage('sN', mkUserMsg('s2', 'alice', '今晚开黑', 'Alice'));
+    res = await extractor.triggerNow('sN');
+    expect(res.status).toBe('ok');
+
+    const lastCall = calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const userMsg = (lastCall as unknown as { messages: Array<{ role: string; content: string }> }).messages.find(
+      m => m.role === 'user',
+    );
+    expect(userMsg?.content).toMatch(/候选人已有 1 跳邻居子图/);
+    expect(userMsg?.content).toMatch(/三角洲/);
+    expect(userMsg?.content).toMatch(/role=enthusiast/);
   });
 });

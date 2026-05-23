@@ -85,6 +85,13 @@ export const configSchema: ConfigSchema = {
     description: '控制 prompt 体积',
     default: 20,
   },
+  senderNeighborhoodEdgeLimit: {
+    type: 'number',
+    label: '候选人 1 跳邻居展示上限',
+    description:
+      '提取时，对窗口内每位已知发言人附带其 1 跳邻居子图（已关联的事件/实体/人际关系，按权重降序），上限条数。0 = 关闭',
+    default: 8,
+  },
   extractionModel: {
     type: 'llm-ref',
     label: '提取使用的 LLM',
@@ -338,6 +345,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       allNewMaxMessages: numCfg(config.allNewMaxMessages, 200),
       candidateEventDays: numCfg(config.candidateEventDays, 7),
       candidateEventLimit: numCfg(config.candidateEventLimit, 20),
+      senderNeighborhoodEdgeLimit: numCfg(config.senderNeighborhoodEdgeLimit, 8),
       extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
       disableThinking: config.extractionDisableThinking !== false,
       strictSelfAssertion: config.strictSelfAssertion !== false,
