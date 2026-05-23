@@ -73,7 +73,6 @@
         "packages/plugin-process-local/src/**",
         "packages/plugin-webui-server/src/**",
         "packages/plugin-mcp-server/src/**",
-        "packages/plugin-adapter-onebot/src/attachment-cache.ts",
         "packages/plugin-tool-system/src/tools/system.ts",
         "packages/plugin-asr-openai/src/index.ts",
         "packages/plugin-ollama/src/index.ts",
