@@ -23,11 +23,31 @@ import type {
 
 const MAX_EVIDENCE_PER_ENTITY = 10; // 单实体保留的 evidence 上限，更早的会被裁掉
 
+export type TriggerExtractionFn = (
+  sessionId: string,
+) => Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }>;
+
 export class RelationService {
+  /** 由 extractor 注入；actions 层通过 triggerExtraction() 调用 */
+  private triggerExtractionHandler?: TriggerExtractionFn;
+
   constructor(private readonly store: RelationStore) {}
 
   static personId(platform: string, userId: string): string {
     return `${platform}:${userId}`;
+  }
+
+  /** 由 extractor 在 start() 后注入 */
+  setTriggerExtractionHandler(fn: TriggerExtractionFn): void {
+    this.triggerExtractionHandler = fn;
+  }
+
+  /** 手动触发某 session 的 LLM 提取；extractor 未挂载时返回 error */
+  triggerExtraction(sessionId: string): Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }> {
+    if (!this.triggerExtractionHandler) {
+      return Promise.resolve({ status: 'error', reason: 'extractor 未启用（请检查 enabled / 模型配置）' });
+    }
+    return this.triggerExtractionHandler(sessionId);
   }
 
   // ----- Person -----
