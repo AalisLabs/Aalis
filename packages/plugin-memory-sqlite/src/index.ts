@@ -1,10 +1,18 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
 import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { ContentSegment, Message } from '@aalis/plugin-message-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import Database from 'better-sqlite3';
+
+function toUri(input: string): string {
+  const s = String(input ?? '').trim();
+  if (!s) return 'data:/aalis.db';
+  if (s.includes(':/')) return s;
+  const cleaned = s.replace(/^\.?\/+/, '');
+  const idx = cleaned.indexOf('/');
+  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `data:/${cleaned}`;
+}
 
 // ===== 插件元数据 =====
 
@@ -400,21 +408,24 @@ class SQLiteMemoryService implements MemoryService {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const sqliteConfig: SQLiteMemoryConfig = {
-    path: (config.path as string) ?? 'data/aalis.db',
+    path: (config.path as string) ?? 'data:/aalis.db',
   };
 
-  // 解析数据库路径
-  const dbPath = resolve(ctx.config.getConfigDir(), sqliteConfig.path);
-  const dbDir = resolve(dbPath, '..');
+  // 解析数据库路径：storage URI → 本地路径
+  const storage = createStorageGateway(ctx);
+  const dbUri = toUri(sqliteConfig.path);
+  if (!storage.resolveLocalPath) {
+    ctx.logger.error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
+    return;
+  }
+  let dbPath: string;
   try {
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true });
-    }
+    dbPath = await storage.resolveLocalPath(dbUri, 'write');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    ctx.logger.error(`无法创建数据库目录 ${dbDir}: ${msg}`);
+    ctx.logger.error(`无法解析数据库路径 ${dbUri}: ${msg}`);
     return;
   }
 
