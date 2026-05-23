@@ -21,6 +21,9 @@ export const displayName = 'SQLite 记忆';
 export const subsystem = 'memory';
 export const provides = ['memory'];
 export const reusable = true;
+export const inject = {
+  required: ['storage'],
+};
 
 export const configSchema: ConfigSchema = {
   path: {
