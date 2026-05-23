@@ -23,6 +23,49 @@ export interface RawMessage {
   /** 持久化的有序时间线（新格式）：text / reasoning_text / tool_call 按真实到达顺序混排 */
   segments?: ContentSegment[];
   timestamp?: number;
+  /** 消息存档时写入的附加元数据（如 fileNames、userId 等） */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 从用户消息 content 中提取文件附件名称并剥离文件内容块，返回适合显示的文本和文件名列表。
+ *
+ * plugin-file-reader 会把文件描述（含 inline 全文或大文件提示）追加到 content，格式：
+ *   [文件: name (ID: id)]\n--- 文件内容 ---\nTEXT\n--- 文件内容结束 ---   (小文件 inline)
+ *   [文件: name (ID: id，SIZE KB)\n说明：...]                              (大文件引用)
+ *   [文件: name - 超过大小限制 ...]                                        (超大文件)
+ *   [文件: name (ID: id)]                                                   (降级/错误)
+ *
+ * 该函数将所有此类块从显示内容中移除，同时提取文件名列表。
+ */
+function stripFileAttachments(content: string): { displayContent: string; fileNames: string[] } {
+  const fileNames: string[] = [];
+
+  // 第一步：剥离 inline 内容块（含 --- 文件内容 --- ... --- 文件内容结束 --- 的多行块）
+  let result = content.replace(
+    /\n?\[文件: ([^\n(]+?)\s*\(ID:[^)]+\)\]\n--- 文件内容 ---[\s\S]*?--- 文件内容结束 ---/g,
+    (_, name: string) => { fileNames.push(name.trim()); return ''; },
+  );
+
+  // 第二步：剥离大文件引用块（括号内含 \n 的多行形式）
+  result = result.replace(
+    /\n?\[文件: ([^\n(]+?)\s*\(ID:[^，\n)]+[，\n][\s\S]*?\)\]/g,
+    (_, name: string) => { fileNames.push(name.trim()); return ''; },
+  );
+
+  // 第三步：剥离错误/超大文件简短引用
+  result = result.replace(
+    /\n?\[文件: ([^\]-]+?) - [^\]]+\]/g,
+    (_, name: string) => { fileNames.push(name.trim()); return ''; },
+  );
+
+  // 第四步：剥离剩余的简单文件引用
+  result = result.replace(
+    /\n?\[文件: ([^\]]+?)\s*(?:\(ID:[^)]+\))?\]/g,
+    (_, name: string) => { fileNames.push(name.trim()); return ''; },
+  );
+
+  return { displayContent: result.trim(), fileNames };
 }
 
 /**
@@ -40,9 +83,15 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
     const msg = raw[i];
 
     if (msg.role === 'user') {
+      const raw = msg.content ?? '';
+      // 优先使用 metadata.fileNames（message-archive 新格式），回退到从 content 中解析
+      const metaFileNames = Array.isArray(msg.metadata?.fileNames) ? (msg.metadata.fileNames as string[]) : null;
+      const { displayContent, fileNames: parsedFileNames } = stripFileAttachments(raw);
+      const fileNames = (metaFileNames ?? parsedFileNames).filter(Boolean);
       result.push({
         role: 'user',
-        content: msg.content ?? '',
+        content: displayContent,
+        fileNames: fileNames.length > 0 ? fileNames : undefined,
         timestamp: msg.timestamp ?? 0,
       });
       i++;
