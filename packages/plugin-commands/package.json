@@ -15,7 +15,8 @@
     "@aalis/plugin-doctor-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/plugin-gateway-api": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*"
+    "@aalis/plugin-authority-api": "workspace:*",
+    "@aalis/plugin-storage-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

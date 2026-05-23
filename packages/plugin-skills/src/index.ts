@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { PersonaService } from '@aalis/plugin-persona-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -44,8 +43,8 @@ interface SkillDefinition {
   body: string;
   triggers?: string[];
   license?: string;
-  /** skill 文件夹绝对路径 */
-  dir: string;
+  /** skill 文件夹 storage URI（如 data:/skills/foo） */
+  uri: string;
   /** scripts/ 下的相对路径列表（不含 scripts/ 前缀） */
   scripts: string[];
   references: string[];
@@ -55,7 +54,7 @@ interface SkillDefinition {
 }
 
 interface SkillsConfig {
-  skillsDir: string;
+  skillsUri: string;
   maxSkillBytes: number;
   maxSkills: number;
   /** 启用启动时 Discovery 注入（默认 true） */
@@ -68,14 +67,22 @@ export interface SkillsService {
   listSkills(): SkillDefinition[];
   getSkill(name: string): SkillDefinition | undefined;
   /** 创建一个新 skill（文件夹 + SKILL.md） */
-  createSkill(input: { name: string; description: string; body?: string; triggers?: string[]; license?: string }): void;
+  createSkill(input: {
+    name: string;
+    description: string;
+    body?: string;
+    triggers?: string[];
+    license?: string;
+  }): Promise<void>;
   /** 更新 SKILL.md frontmatter/body */
   updateSkill(
     name: string,
     updates: { description?: string; body?: string; triggers?: string[]; license?: string },
-  ): boolean;
+  ): Promise<boolean>;
   /** 删除整个 skill 文件夹 */
-  deleteSkill(name: string): boolean;
+  deleteSkill(name: string): Promise<boolean>;
+  /** 手动重扫描 */
+  rescan(): Promise<void>;
   /** 标记某 session 已加载某 skill（下次 LLM 调用注入 body） */
   loadSkillForSession(sessionId: string, name: string): boolean;
   /** 获取 session 已加载的 skills */
@@ -91,11 +98,11 @@ export const subsystem = 'skills';
 export const provides = ['skills'];
 
 export const configSchema: ConfigSchema = {
-  skillsDir: {
+  skillsUri: {
     type: 'string',
-    label: '技能存储目录',
-    default: 'data/skills',
-    description: '技能文件夹存储目录（相对项目根目录）。每个 skill 为一个子目录，含 SKILL.md。',
+    label: '技能存储 URI',
+    default: 'data:/skills',
+    description: '技能文件夹 storage URI（默认 data:/skills）。每个 skill 为一个子目录，含 SKILL.md。',
   },
   maxSkillBytes: {
     type: 'number',
@@ -124,7 +131,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  skillsDir: 'data/skills',
+  skillsUri: 'data:/skills',
   maxSkillBytes: 200_000,
   maxSkills: 200,
   discoveryEnabled: true,
@@ -176,7 +183,7 @@ export const actions: PluginModule['actions'] = {
       description: s.description,
       triggers: s.triggers?.join(', ') || '',
       fileCount: `脚本 ${s.scripts.length} / 引用 ${s.references.length} / 资源 ${s.assets.length}`,
-      dir: relative(process.cwd(), s.dir),
+      dir: s.uri,
     }));
   },
   async getSkill(ctx, args) {
@@ -188,7 +195,7 @@ export const actions: PluginModule['actions'] = {
       description: s.description,
       triggers: s.triggers,
       license: s.license,
-      dir: relative(process.cwd(), s.dir),
+      dir: s.uri,
       scripts: s.scripts,
       references: s.references,
       assets: s.assets,
@@ -197,7 +204,7 @@ export const actions: PluginModule['actions'] = {
   },
   async deleteSkill(ctx, args) {
     const svc = ctx.getService<SkillsService>('skills');
-    return svc?.deleteSkill(args.name as string) ? { ok: true } : { error: '技能不存在' };
+    return (await svc?.deleteSkill(args.name as string)) ? { ok: true } : { error: '技能不存在' };
   },
   async getStats(ctx) {
     const svc = ctx.getService<SkillsService>('skills');
@@ -252,8 +259,19 @@ function buildSkillMd(fm: SkillFrontmatter, body: string): string {
 // ──────────── 辅助 ────────────
 
 function resolveConfig(raw: Record<string, unknown>): SkillsConfig {
+  // 向后兼容：旧字段 skillsDir（如 'data/skills'） → storage URI 'data:/skills'
+  let skillsUri = (raw.skillsUri as string) ?? defaultConfig.skillsUri;
+  if (!raw.skillsUri && typeof raw.skillsDir === 'string') {
+    const s = (raw.skillsDir as string).trim().replace(/^\.?\/+/, '');
+    const slashIdx = s.indexOf('/');
+    if (slashIdx > 0) {
+      skillsUri = `${s.slice(0, slashIdx)}:/${s.slice(slashIdx + 1)}`;
+    } else if (s) {
+      skillsUri = `${s}:/`;
+    }
+  }
   return {
-    skillsDir: (raw.skillsDir as string) ?? defaultConfig.skillsDir,
+    skillsUri,
     maxSkillBytes: (raw.maxSkillBytes as number) ?? defaultConfig.maxSkillBytes,
     maxSkills: (raw.maxSkills as number) ?? defaultConfig.maxSkills,
     discoveryEnabled: (raw.discoveryEnabled as boolean) ?? defaultConfig.discoveryEnabled,
@@ -271,27 +289,29 @@ function sanitizeFolderName(name: string): string {
   return cleaned || 'skill';
 }
 
-function safeListFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  try {
-    const out: string[] = [];
-    const walk = (sub: string) => {
-      for (const entry of readdirSync(sub)) {
-        const p = join(sub, entry);
-        try {
-          const st = statSync(p);
-          if (st.isDirectory()) walk(p);
-          else out.push(relative(dir, p));
-        } catch {
-          /* skip */
-        }
-      }
-    };
-    walk(dir);
-    return out.sort();
-  } catch {
-    return [];
-  }
+async function safeListFiles(storage: StorageService, uri: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (subUri: string, prefix: string): Promise<void> => {
+    let result: Awaited<ReturnType<StorageService['list']>>;
+    try {
+      result = await storage.list(subUri);
+    } catch {
+      return;
+    }
+    for (const entry of result.entries) {
+      if (entry.isDirectory) await walk(entry.uri, prefix ? `${prefix}/${entry.name}` : entry.name);
+      else out.push(prefix ? `${prefix}/${entry.name}` : entry.name);
+    }
+  };
+  await walk(uri, '');
+  return out.sort();
+}
+
+/** join storage URI 下子路径：abc:/x + y → abc:/x/y */
+function joinUri(base: string, sub: string): string {
+  const s = sub.replace(/^\/+/, '');
+  if (base.endsWith('/')) return base + s;
+  return `${base}/${s}`;
 }
 
 // ──────────── 插件入口 ────────────
@@ -300,8 +320,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('skills');
 
-  const skillsDir = resolve(process.cwd(), config.skillsDir);
-  if (!existsSync(skillsDir)) mkdirSync(skillsDir, { recursive: true });
+  // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
+  const storage = createStorageGateway(ctx);
+  const skillsUri = config.skillsUri;
 
   // WebUI 页面
   const webui = useWebuiService(ctx);
@@ -311,19 +332,23 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   /** key = skill.name */
   const skillsCache = new Map<string, SkillDefinition>();
 
-  function loadSkillFromDir(dir: string): SkillDefinition | null {
-    const skillMdPath = join(dir, 'SKILL.md');
-    if (!existsSync(skillMdPath)) return null;
+  async function loadSkillFromDir(dirUri: string): Promise<SkillDefinition | null> {
+    const skillMdUri = joinUri(dirUri, 'SKILL.md');
+    let raw: string;
     try {
-      const st = statSync(skillMdPath);
+      const st = await storage.stat(skillMdUri);
       if (st.size > config.maxSkillBytes) {
-        logger.warn(`SKILL.md 超出大小限制 ${st.size}B > ${config.maxSkillBytes}B: ${dir}`);
+        logger.warn(`SKILL.md 超出大小限制 ${st.size}B > ${config.maxSkillBytes}B: ${dirUri}`);
         return null;
       }
-      const raw = readFileSync(skillMdPath, 'utf-8');
+      raw = (await storage.readFile(skillMdUri, 'utf-8')) as string;
+    } catch {
+      return null;
+    }
+    try {
       const { fm, body } = parseSkillMd(raw);
       if (!fm || typeof fm.name !== 'string' || typeof fm.description !== 'string') {
-        logger.warn(`SKILL.md frontmatter 缺少 name/description: ${dir}`);
+        logger.warn(`SKILL.md frontmatter 缺少 name/description: ${dirUri}`);
         return null;
       }
       const triggers = Array.isArray(fm.triggers) ? fm.triggers.filter(t => typeof t === 'string') : undefined;
@@ -333,59 +358,51 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         body,
         triggers,
         license: typeof fm.license === 'string' ? fm.license : undefined,
-        dir,
-        scripts: safeListFiles(join(dir, 'scripts')),
-        references: safeListFiles(join(dir, 'references')),
-        assets: safeListFiles(join(dir, 'assets')),
+        uri: dirUri,
+        scripts: await safeListFiles(storage, joinUri(dirUri, 'scripts')),
+        references: await safeListFiles(storage, joinUri(dirUri, 'references')),
+        assets: await safeListFiles(storage, joinUri(dirUri, 'assets')),
         raw,
       };
     } catch (err) {
-      logger.warn(`加载 SKILL.md 失败: ${dir} - ${err}`);
+      logger.warn(`加载 SKILL.md 失败: ${dirUri} - ${err}`);
       return null;
     }
   }
 
-  function rescanSkills(): void {
+  async function rescanSkills(): Promise<void> {
     skillsCache.clear();
-    if (!existsSync(skillsDir)) return;
     let count = 0;
-    const walk = (dir: string, depth: number) => {
+    const walk = async (uri: string, depth: number): Promise<void> => {
       if (count >= config.maxSkills || depth > 4) return;
-      let entries: string[];
+      let result: Awaited<ReturnType<StorageService['list']>>;
       try {
-        entries = readdirSync(dir);
+        result = await storage.list(uri);
       } catch {
         return;
       }
-      for (const entry of entries) {
+      for (const entry of result.entries) {
         if (count >= config.maxSkills) return;
-        if (entry.startsWith('.')) continue;
-        const p = join(dir, entry);
-        let st: ReturnType<typeof statSync>;
-        try {
-          st = statSync(p);
-        } catch {
-          continue;
-        }
-        if (!st.isDirectory()) continue;
-        const skill = loadSkillFromDir(p);
+        if (entry.name.startsWith('.')) continue;
+        if (!entry.isDirectory) continue;
+        const skill = await loadSkillFromDir(entry.uri);
         if (skill) {
           if (skillsCache.has(skill.name)) {
-            logger.warn(`重复 skill 名称 "${skill.name}"，跳过 ${p}（已存在于 ${skillsCache.get(skill.name)?.dir}）`);
+            logger.warn(
+              `重复 skill 名称 "${skill.name}"，跳过 ${entry.uri}（已存在于 ${skillsCache.get(skill.name)?.uri}）`,
+            );
             continue;
           }
           skillsCache.set(skill.name, skill);
           count++;
         } else {
           // 没有 SKILL.md 的目录递归向下找
-          walk(p, depth + 1);
+          await walk(entry.uri, depth + 1);
         }
       }
     };
-    walk(skillsDir, 0);
+    await walk(skillsUri, 0);
   }
-
-  rescanSkills();
 
   // ── 编译 triggers regex（缓存） ──
   const compiledTriggers = new Map<string, RegExp[]>();
@@ -468,9 +485,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
               resourceLines.push(`- references/: ${skill.references.join(', ')}（按需读取该文件获取详细参考）`);
             if (skill.assets.length > 0) resourceLines.push(`- assets/: ${skill.assets.join(', ')}（模板/资源）`);
             const resources =
-              resourceLines.length > 0
-                ? `\n\n附属资源（位于 ${relative(process.cwd(), skill.dir)}/）：\n${resourceLines.join('\n')}`
-                : '';
+              resourceLines.length > 0 ? `\n\n附属资源（位于 ${skill.uri}）：\n${resourceLines.join('\n')}` : '';
             const block = `═══ Skill 已激活: ${skill.name} ═══\n${skill.body}${resources}\n═════════════════════════════`;
             const idx = data.messages.findIndex(m => m.role !== 'system');
             const insertIdx = idx === -1 ? data.messages.length : idx;
@@ -519,7 +534,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     getSkill(skillName) {
       return skillsCache.get(skillName);
     },
-    createSkill(input) {
+    async createSkill(input) {
       if (skillsCache.size >= config.maxSkills) {
         throw new Error(`技能数量已达上限 (${config.maxSkills})`);
       }
@@ -530,11 +545,15 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         throw new Error(`技能 "${input.name}" 已存在`);
       }
       const folderName = sanitizeFolderName(input.name);
-      const dir = join(skillsDir, folderName);
-      if (existsSync(dir)) {
-        throw new Error(`目标目录已存在: ${dir}`);
+      const dirUri = joinUri(skillsUri, folderName);
+      // 检查目标目录是否已存在（通过 stat 探测）
+      try {
+        await storage.stat(dirUri);
+        throw new Error(`目标目录已存在: ${dirUri}`);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('目标目录已存在')) throw err;
+        // ENOENT / not found → 可以创建
       }
-      mkdirSync(dir, { recursive: true });
       const fm: SkillFrontmatter = {
         name: input.name,
         description: input.description,
@@ -543,15 +562,15 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       };
       const md = buildSkillMd(fm, input.body ?? '');
       if (md.length > config.maxSkillBytes) {
-        rmSync(dir, { recursive: true, force: true });
         throw new Error(`SKILL.md 超出大小限制 ${md.length}B > ${config.maxSkillBytes}B`);
       }
-      writeFileSync(join(dir, 'SKILL.md'), md, 'utf-8');
-      const loaded = loadSkillFromDir(dir);
+      // writeFile 会自动创建父目录
+      await storage.writeFile(joinUri(dirUri, 'SKILL.md'), md);
+      const loaded = await loadSkillFromDir(dirUri);
       if (loaded) skillsCache.set(loaded.name, loaded);
-      logger.info(`技能已创建: ${input.name} (${dir})`);
+      logger.info(`技能已创建: ${input.name} (${dirUri})`);
     },
-    updateSkill(skillName, updates) {
+    async updateSkill(skillName, updates) {
       const existing = skillsCache.get(skillName);
       if (!existing) return false;
       const { fm: oldFm } = parseSkillMd(existing.raw);
@@ -569,8 +588,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       if (md.length > config.maxSkillBytes) {
         throw new Error(`SKILL.md 超出大小限制 ${md.length}B > ${config.maxSkillBytes}B`);
       }
-      writeFileSync(join(existing.dir, 'SKILL.md'), md, 'utf-8');
-      const reloaded = loadSkillFromDir(existing.dir);
+      await storage.writeFile(joinUri(existing.uri, 'SKILL.md'), md);
+      const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) {
         skillsCache.set(reloaded.name, reloaded);
         compiledTriggers.delete(reloaded.name);
@@ -578,19 +597,23 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       logger.info(`技能已更新: ${skillName}`);
       return true;
     },
-    deleteSkill(skillName) {
+    async deleteSkill(skillName) {
       const existing = skillsCache.get(skillName);
       if (!existing) return false;
       try {
-        rmSync(existing.dir, { recursive: true, force: true });
+        await storage.delete(existing.uri);
       } catch (err) {
-        logger.warn(`删除技能目录失败 ${existing.dir}: ${err}`);
+        logger.warn(`删除技能目录失败 ${existing.uri}: ${err}`);
       }
       skillsCache.delete(skillName);
       compiledTriggers.delete(skillName);
       for (const set of sessionLoaded.values()) set.delete(skillName);
       logger.info(`技能已删除: ${skillName}`);
       return true;
+    },
+    async rescan() {
+      await rescanSkills();
+      compiledTriggers.clear();
     },
     loadSkillForSession(sessionId, skillName) {
       if (!skillsCache.has(skillName)) return false;
@@ -637,7 +660,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       let skill = skillsCache.get(skillName);
       // 若缓存未命中，先 lazy rescan 一次再试
       if (!skill) {
-        rescanSkills();
+        await rescanSkills();
         skill = skillsCache.get(skillName);
       }
       if (!skill) return JSON.stringify({ error: `skill "${skillName}" 不存在` });
@@ -685,7 +708,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
     handler: async args => {
       // 若缓存为空，先做一次 lazy rescan（覆盖"服务启动后才放入 skill"的场景）
-      if (skillsCache.size === 0) rescanSkills();
+      if (skillsCache.size === 0) await rescanSkills();
       const visible = getAllowedSkills();
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const filtered = visible.filter(s => {
@@ -747,7 +770,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
     handler: async args => {
       try {
-        service.createSkill({
+        await service.createSkill({
           name: args.name as string,
           description: args.description as string,
           body: args.body as string | undefined,
@@ -784,7 +807,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
     handler: async args => {
       try {
-        const ok = service.updateSkill(args.name as string, {
+        const ok = await service.updateSkill(args.name as string, {
           description: args.description as string | undefined,
           body: args.body as string | undefined,
           triggers: args.triggers as string[] | undefined,
@@ -815,7 +838,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     },
     handler: async args => {
-      const ok = service.deleteSkill(args.name as string);
+      const ok = await service.deleteSkill(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已删除' : 'skill 不存在' });
     },
   });
@@ -832,13 +855,36 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     },
     handler: async () => {
-      rescanSkills();
-      compiledTriggers.clear();
+      await service.rescan();
       return JSON.stringify({ ok: true, count: skillsCache.size });
     },
   });
 
-  logger.info(`技能系统已启动（兼容 Anthropic Agent Skills 标准） 目录=${skillsDir} 已加载 ${skillsCache.size} 个技能`);
+  // ── 启动：ready 后一次全量扫描 + 启用 storage watch 增量同步 ──
+  // 使用 sticky 'ready' 事件：bouncePlugin 后新实例仍能收到。
+  ctx.on('ready', async () => {
+    try {
+      await rescanSkills();
+      logger.info(`技能系统已启动 (Anthropic Agent Skills) uri=${skillsUri} 已加载 ${skillsCache.size} 个技能`);
+    } catch (err) {
+      logger.warn(`首次扫描 skills 失败：${err}`);
+    }
+    // 监听变化 → 标脏 → 按需重扫（去抖靠 storage 层）
+    try {
+      const unwatch = storage.watch?.(skillsUri, async () => {
+        try {
+          await rescanSkills();
+          compiledTriggers.clear();
+          logger.debug(`skills 目录变化，已重新扫描，现有 ${skillsCache.size} 个技能`);
+        } catch (err) {
+          logger.warn(`重扫 skills 失败：${err}`);
+        }
+      });
+      if (unwatch) ctx.onDispose(unwatch);
+    } catch (err) {
+      logger.warn(`skills 目录监听启动失败，请手动调用 skill_rescan: ${err}`);
+    }
+  });
 }
 
 // ----- 服务类型注册 -----

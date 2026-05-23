@@ -1,11 +1,16 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import type { StorageService } from '@aalis/plugin-storage-api';
 
 /**
- * 从 URL 或本地路径加载图片为 Buffer。
- * 支持 http/https URL 和本地绝对/相对路径。
+ * 从 URL 或 storage URI 加载图片为 Buffer。
+ * - http/https URL：直接 fetch
+ * - storage URI（含 `:/`）：通过 storage.readFile
+ * - 其它（裸路径/相对路径）：若给了 baseUri，按 baseUri 拼接（不带尾部斜杠时自动补）
  */
-export async function loadImage(source: string, basePath?: string): Promise<{ buffer: Buffer; mime: string }> {
+export async function loadImage(
+  storage: StorageService,
+  source: string,
+  baseUri?: string,
+): Promise<{ buffer: Buffer; mime: string }> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
     const resp = await fetch(source);
     if (!resp.ok) throw new Error(`图片下载失败: ${resp.status} ${source}`);
@@ -14,11 +19,14 @@ export async function loadImage(source: string, basePath?: string): Promise<{ bu
     return { buffer: Buffer.from(arrayBuf), mime };
   }
 
-  // 本地路径
-  const absPath = basePath ? resolve(basePath, source) : resolve(source);
-  if (!existsSync(absPath)) throw new Error(`图片文件不存在: ${absPath}`);
-  const buffer = readFileSync(absPath);
-  return { buffer, mime: guessMime(absPath) };
+  const uri = source.includes(':/') ? source : joinUri(baseUri ?? 'workspace:/', source);
+  const data = (await storage.readFile(uri)) as Uint8Array;
+  return { buffer: Buffer.from(data), mime: guessMime(uri) };
+}
+
+function joinUri(base: string, rel: string): string {
+  const b = base.endsWith('/') ? base : `${base}/`;
+  return `${b}${rel.replace(/^\/+/, '')}`;
 }
 
 function guessMime(path: string): string {

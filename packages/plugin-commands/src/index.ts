@@ -1,5 +1,3 @@
-import { readdir, rm, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import type { AppService, ConfigSchema, Context, SafetyLevel } from '@aalis/core';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
@@ -7,6 +5,7 @@ import { useDoctorService } from '@aalis/plugin-doctor-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { CommandRegistry } from './commands.js';
 
@@ -40,15 +39,16 @@ export const defaultConfig = {
  * 删除目录及内部所有内容，返回顶层子项数（用于"清了 N 张/N 个会话"提示）。
  * 目录不存在返回 -1。
  */
-async function removeDirCounted(dirAbs: string): Promise<number> {
+async function removeDirCounted(storage: StorageService, dirUri: string): Promise<number> {
   try {
-    const st = await stat(dirAbs);
-    if (!st.isDirectory()) return -1;
-    const entries = await readdir(dirAbs);
-    await rm(dirAbs, { recursive: true, force: true });
-    return entries.length;
+    const st = await storage.stat(dirUri);
+    if (!st.isDirectory) return -1;
+    const list = await storage.list(dirUri);
+    await storage.delete(dirUri);
+    return list.entries.length;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return -1;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/ENOENT|not found|不存在/i.test(msg)) return -1;
     throw err;
   }
 }
@@ -99,6 +99,7 @@ function renderClearTypeList(): string {
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 创建指令注册表并注册为服务
   const commands = new CommandRegistry(ctx.logger);
+  const storage = createStorageGateway(ctx);
 
   // 加载指令覆盖配置
   const cmdOverrides = ctx.config.get('commandOverrides');
@@ -260,8 +261,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!types || types.includes('image')) {
         try {
           if (isGlobal) {
-            const dirAbs = resolve(process.cwd(), 'data/images');
-            const removed = await removeDirCounted(dirAbs);
+            const dirUri = 'data:/images';
+            const removed = await removeDirCounted(storage, dirUri);
             clearData.results.push({
               source: 'image-cache',
               success: true,
@@ -269,8 +270,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             });
           } else {
             const safeSessionId = cmdCtx.sessionId.replace(/[:/\\]/g, '_');
-            const dirAbs = resolve(process.cwd(), 'data/images', safeSessionId);
-            const removed = await removeDirCounted(dirAbs);
+            const dirUri = `data:/images/${safeSessionId}`;
+            const removed = await removeDirCounted(storage, dirUri);
             clearData.results.push({
               source: 'image-cache',
               success: true,

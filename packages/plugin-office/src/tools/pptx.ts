@@ -1,5 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import PptxGenJS from 'pptxgenjs';
 import type { DocSessionManager } from '../session.js';
@@ -330,7 +329,16 @@ function applyTemplate(pptx: PptxGenJS, templateName: string): PresetTemplate | 
   return tpl;
 }
 
-export function registerPptTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
+export function registerPptTools(
+  tools: ScopedToolService,
+  sessions: DocSessionManager,
+  storage: StorageService,
+  outputUri: string,
+) {
+  function joinUri(base: string, rel: string): string {
+    const b = base.endsWith('/') ? base : `${base}/`;
+    return `${b}${rel.replace(/^\/+/, '')}`;
+  }
   function requireState(docId: string): PptState {
     return sessions.require(docId, 'pptx').doc as PptState;
   }
@@ -610,7 +618,7 @@ export function registerPptTools(tools: ScopedToolService, sessions: DocSessionM
     async handler(args) {
       const state = requireState(String(args.docId));
       const slide = getSlide(state, args.slideNumber as number | undefined);
-      const { buffer, mime } = await loadImage(String(args.source), outputDir);
+      const { buffer, mime } = await loadImage(storage, String(args.source), outputUri);
       const base64 = buffer.toString('base64');
       const ext = mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'jpeg';
 
@@ -1021,18 +1029,17 @@ export function registerPptTools(tools: ScopedToolService, sessions: DocSessionM
     async handler(args) {
       const session = sessions.require(String(args.docId), 'pptx');
       const state = session.doc as PptState;
-      const filePath = resolve(outputDir, session.filename);
-      mkdirSync(dirname(filePath), { recursive: true });
+      const fileUri = joinUri(outputUri, session.filename);
       const buffer = (await state.pptx.write({ outputType: 'nodebuffer' })) as Buffer;
-      writeFileSync(filePath, buffer);
+      await storage.writeFile(fileUri, buffer);
       const slideCount = state.slides.length;
       sessions.remove(session.id);
       return JSON.stringify({
         success: true,
-        path: filePath,
+        path: fileUri,
         slides: slideCount,
         size: buffer.length,
-        message: `PPT 已保存: ${filePath}`,
+        message: `PPT 已保存: ${fileUri}`,
       });
     },
   });

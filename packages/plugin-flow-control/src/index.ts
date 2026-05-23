@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { OutgoingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import '@aalis/plugin-gateway-api';
 
@@ -114,7 +113,7 @@ export const defaultConfig = defaultFlowControlConfig;
 
 // ----- 入口 -----
 
-export function apply(ctx: Context, raw: Record<string, unknown>): void {
+export async function apply(ctx: Context, raw: Record<string, unknown>): Promise<void> {
   const cfg = resolveFlowControlConfig(raw);
   const states = new Map<string, MutableFlowSessionState>();
   const platformIdle = new PlatformIdleScheduler(ctx, cfg, states);
@@ -122,15 +121,18 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // ===== mutedUntil 持久化（仅此字段） =====
   // 其他运行时态（cooldownUntil/replyTimestamps/activityScore等）都是秒级短期，
   // 重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，丢失会导致重启后静默解除。
-  const muteStateFile = resolve(process.cwd(), 'data/flow-control-mutes.json');
+  const storage = createStorageGateway(ctx);
+  const muteStateUri = 'data:/flow-control-mutes.json';
 
-  function loadMuteState(): void {
+  async function loadMuteState(): Promise<void> {
     try {
-      if (!existsSync(muteStateFile)) return;
-      const data = JSON.parse(readFileSync(muteStateFile, 'utf-8')) as Record<
-        string,
-        { platform?: string; mutedUntil?: number }
-      >;
+      let raw: string;
+      try {
+        raw = (await storage.readFile(muteStateUri, 'utf-8')) as string;
+      } catch {
+        return;
+      }
+      const data = JSON.parse(raw) as Record<string, { platform?: string; mutedUntil?: number }>;
       if (!data || typeof data !== 'object') return;
       const now = Date.now();
       let restored = 0;
@@ -149,22 +151,22 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     }
   }
 
+  let saveChain: Promise<void> = Promise.resolve();
   function saveMuteState(): void {
-    try {
-      const dir = dirname(muteStateFile);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const now = Date.now();
-      const out: Record<string, { platform: string; mutedUntil: number }> = {};
-      for (const [sessionId, s] of states.entries()) {
-        if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
-      }
-      writeFileSync(muteStateFile, JSON.stringify(out, null, 2), 'utf-8');
-    } catch (err) {
-      ctx.logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
+    const now = Date.now();
+    const out: Record<string, { platform: string; mutedUntil: number }> = {};
+    for (const [sessionId, s] of states.entries()) {
+      if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
     }
+    const payload = JSON.stringify(out, null, 2);
+    saveChain = saveChain
+      .then(() => storage.writeFile(muteStateUri, payload))
+      .catch(err => {
+        ctx.logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
+      });
   }
 
-  loadMuteState();
+  await loadMuteState();
 
   function getOrCreate(sessionId: string, platform: string): MutableFlowSessionState {
     let s = states.get(sessionId);
