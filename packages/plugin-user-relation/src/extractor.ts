@@ -34,6 +34,8 @@ export interface ExtractorConfig {
   candidateEventLimit: number;
   /** LLM model 引用；为空走默认 'llm' service */
   extractionModel?: ModelRef;
+  /** 是否禁用思考模式（思考型模型上）。提取是结构化输出任务，默认禁用以避免 budget 被 reasoning 吃掉 */
+  disableThinking: boolean;
   /** debug 日志 */
   debug: boolean;
 }
@@ -154,11 +156,11 @@ export class RelationExtractor {
       const candidateEvents = await this.pickCandidateEvents();
       const promptMessages = buildExtractionPrompt(history, userMsgs, candidateEvents);
 
-      const raw = await callLLM(modelEntry.instance, promptMessages);
+      const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
       const result = parseExtraction(raw);
       if (result.kind === 'parse-error') {
         this.ctx.logger.warn(
-          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.contextId}/${modelEntry.instance.id}）: ${raw.slice(0, 200)}`,
+          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.contextId}）: ${raw.slice(0, 200)}`,
         );
         return;
       }
@@ -388,11 +390,11 @@ function collectSenderList(userMsgs: Message[]): string {
     .join('\n');
 }
 
-async function callLLM(model: LLMModel, messages: Message[]): Promise<string> {
+async function callLLM(model: LLMModel, messages: Message[], disableThinking: boolean): Promise<string> {
   const resp = await model.chat({
     messages,
     temperature: 0,
-    maxTokens: 2048,
+    ...(disableThinking ? { think: false } : {}),
   });
   return typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
 }
