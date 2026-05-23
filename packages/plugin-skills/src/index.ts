@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
@@ -63,24 +64,52 @@ interface SkillsConfig {
   triggersEnabled: boolean;
 }
 
+export interface SkillFileInput {
+  /** 相对 skill 根目录的路径，例如 `scripts/run.sh`、`references/api.md`。 */
+  relPath: string;
+  /** 文本内容或二进制内容。 */
+  content: string | Uint8Array;
+}
+
 export interface SkillsService {
   listSkills(): SkillDefinition[];
   getSkill(name: string): SkillDefinition | undefined;
-  /** 创建一个新 skill（文件夹 + SKILL.md） */
+  /**
+   * 创建一个新 skill（文件夹 + SKILL.md + 可选附属文件）。
+   * files 中的 relPath 不能为 `SKILL.md`、不能以 `/` 开头、不能包含 `..` 段。
+   * frontmatter 可传入额外 YAML 字段（例如 compatibility）。
+   */
   createSkill(input: {
     name: string;
     description: string;
     body?: string;
     triggers?: string[];
     license?: string;
+    frontmatter?: Record<string, unknown>;
+    files?: SkillFileInput[];
   }): Promise<void>;
-  /** 更新 SKILL.md frontmatter/body */
+  /** 更新 SKILL.md frontmatter/body；files 会覆盖同名文件、新增不存在的文件。 */
   updateSkill(
     name: string,
-    updates: { description?: string; body?: string; triggers?: string[]; license?: string },
+    updates: {
+      description?: string;
+      body?: string;
+      triggers?: string[];
+      license?: string;
+      frontmatter?: Record<string, unknown>;
+      files?: SkillFileInput[];
+    },
   ): Promise<boolean>;
   /** 删除整个 skill 文件夹 */
   deleteSkill(name: string): Promise<boolean>;
+  /** 在某 skill 中添加/覆盖一个附属文件。 */
+  addSkillFile(name: string, file: SkillFileInput): Promise<boolean>;
+  /** 删除某 skill 下的一个附属文件（不能是 SKILL.md）。 */
+  removeSkillFile(name: string, relPath: string): Promise<boolean>;
+  /** 列出某 skill 下的所有文件相对路径。 */
+  listSkillFiles(name: string): Promise<string[]>;
+  /** 读取某 skill 下某附属文件的文本内容。 */
+  readSkillFile(name: string, relPath: string): Promise<string | null>;
   /** 手动重扫描 */
   rescan(): Promise<void>;
   /** 标记某 session 已加载某 skill（下次 LLM 调用注入 body） */
@@ -312,6 +341,34 @@ function joinUri(base: string, sub: string): string {
   const s = sub.replace(/^\/+/, '');
   if (base.endsWith('/')) return base + s;
   return `${base}/${s}`;
+}
+
+/**
+ * 校验 skill 内附属文件的相对路径：
+ * - 不能是 SKILL.md（由专用 frontmatter/body 写入）
+ * - 不能为空、不能以 `/` 开头
+ * - 不能包含 `..` 段
+ * - 不能是 Windows 绝对路径（如 `C:\\`）
+ * 返回规范化后的相对路径（统一用 `/`）。
+ */
+function validateSkillRelPath(relPath: string): string {
+  if (!relPath || typeof relPath !== 'string') {
+    throw new Error('relPath 必填且需为字符串');
+  }
+  const trimmed = relPath.trim().replace(/\\/g, '/');
+  if (!trimmed) throw new Error('relPath 不能为空');
+  if (trimmed.startsWith('/')) throw new Error(`relPath 不能以 / 开头: ${relPath}`);
+  if (/^[a-zA-Z]:/.test(trimmed)) throw new Error(`relPath 不能为绝对路径: ${relPath}`);
+  const segs = trimmed.split('/');
+  for (const seg of segs) {
+    if (seg === '' || seg === '.' || seg === '..') {
+      throw new Error(`relPath 含非法段 "${seg}": ${relPath}`);
+    }
+  }
+  if (segs[segs.length - 1].toUpperCase() === 'SKILL.MD') {
+    throw new Error('SKILL.md 请通过 description/body/frontmatter 字段更新，不要作为附属文件写入');
+  }
+  return trimmed;
 }
 
 // ──────────── 插件入口 ────────────
@@ -555,6 +612,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         // ENOENT / not found → 可以创建
       }
       const fm: SkillFrontmatter = {
+        ...(input.frontmatter ?? {}),
         name: input.name,
         description: input.description,
         ...(input.triggers && input.triggers.length > 0 ? { triggers: input.triggers } : {}),
@@ -566,19 +624,38 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       }
       // writeFile 会自动创建父目录
       await storage.writeFile(joinUri(dirUri, 'SKILL.md'), md);
+      // 写入附属文件
+      if (input.files && input.files.length > 0) {
+        for (const f of input.files) {
+          const rel = validateSkillRelPath(f.relPath);
+          const byteLen = typeof f.content === 'string' ? Buffer.byteLength(f.content, 'utf-8') : f.content.byteLength;
+          if (byteLen > config.maxSkillBytes) {
+            throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
+          }
+          await storage.writeFile(
+            joinUri(dirUri, rel),
+            typeof f.content === 'string' ? f.content : Buffer.from(f.content),
+          );
+        }
+      }
       const loaded = await loadSkillFromDir(dirUri);
       if (loaded) skillsCache.set(loaded.name, loaded);
-      logger.info(`技能已创建: ${input.name} (${dirUri})`);
+      logger.info(
+        `技能已创建: ${input.name} (${dirUri})${input.files && input.files.length > 0 ? ` + ${input.files.length} 个附属文件` : ''}`,
+      );
     },
     async updateSkill(skillName, updates) {
       const existing = skillsCache.get(skillName);
       if (!existing) return false;
       const { fm: oldFm } = parseSkillMd(existing.raw);
-      const fm: SkillFrontmatter = oldFm ?? {
-        name: existing.name,
-        description: existing.description,
-        ...(existing.triggers ? { triggers: existing.triggers } : {}),
-        ...(existing.license ? { license: existing.license } : {}),
+      const fm: SkillFrontmatter = {
+        ...(updates.frontmatter ?? {}),
+        ...(oldFm ?? {
+          name: existing.name,
+          description: existing.description,
+          ...(existing.triggers ? { triggers: existing.triggers } : {}),
+          ...(existing.license ? { license: existing.license } : {}),
+        }),
       };
       if (updates.description !== undefined) fm.description = updates.description;
       if (updates.triggers !== undefined) fm.triggers = updates.triggers;
@@ -589,6 +666,19 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         throw new Error(`SKILL.md 超出大小限制 ${md.length}B > ${config.maxSkillBytes}B`);
       }
       await storage.writeFile(joinUri(existing.uri, 'SKILL.md'), md);
+      if (updates.files && updates.files.length > 0) {
+        for (const f of updates.files) {
+          const rel = validateSkillRelPath(f.relPath);
+          const byteLen = typeof f.content === 'string' ? Buffer.byteLength(f.content, 'utf-8') : f.content.byteLength;
+          if (byteLen > config.maxSkillBytes) {
+            throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
+          }
+          await storage.writeFile(
+            joinUri(existing.uri, rel),
+            typeof f.content === 'string' ? f.content : Buffer.from(f.content),
+          );
+        }
+      }
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) {
         skillsCache.set(reloaded.name, reloaded);
@@ -610,6 +700,56 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       for (const set of sessionLoaded.values()) set.delete(skillName);
       logger.info(`技能已删除: ${skillName}`);
       return true;
+    },
+    async addSkillFile(skillName, file) {
+      const existing = skillsCache.get(skillName);
+      if (!existing) return false;
+      const rel = validateSkillRelPath(file.relPath);
+      const byteLen =
+        typeof file.content === 'string' ? Buffer.byteLength(file.content, 'utf-8') : file.content.byteLength;
+      if (byteLen > config.maxSkillBytes) {
+        throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
+      }
+      await storage.writeFile(
+        joinUri(existing.uri, rel),
+        typeof file.content === 'string' ? file.content : Buffer.from(file.content),
+      );
+      const reloaded = await loadSkillFromDir(existing.uri);
+      if (reloaded) skillsCache.set(reloaded.name, reloaded);
+      logger.info(`技能 ${skillName} 已写入附属文件: ${rel}`);
+      return true;
+    },
+    async removeSkillFile(skillName, relPath) {
+      const existing = skillsCache.get(skillName);
+      if (!existing) return false;
+      const rel = validateSkillRelPath(relPath);
+      try {
+        await storage.delete(joinUri(existing.uri, rel));
+      } catch (err) {
+        logger.warn(`删除附属文件失败 ${rel}: ${err}`);
+        return false;
+      }
+      const reloaded = await loadSkillFromDir(existing.uri);
+      if (reloaded) skillsCache.set(reloaded.name, reloaded);
+      logger.info(`技能 ${skillName} 已删除附属文件: ${rel}`);
+      return true;
+    },
+    async listSkillFiles(skillName) {
+      const existing = skillsCache.get(skillName);
+      if (!existing) return [];
+      const all = await safeListFiles(storage, existing.uri);
+      return all.filter(p => p !== 'SKILL.md');
+    },
+    async readSkillFile(skillName, relPath) {
+      const existing = skillsCache.get(skillName);
+      if (!existing) return null;
+      const rel = validateSkillRelPath(relPath);
+      try {
+        const raw = (await storage.readFile(joinUri(existing.uri, rel))) as Uint8Array;
+        return Buffer.from(raw).toString('utf-8');
+      } catch {
+        return null;
+      }
     },
     async rescan() {
       await rescanSkills();
@@ -748,7 +888,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         name: 'skill_create',
         description:
           '创建一个新的 Agent Skill（生成 data/skills/<name>/SKILL.md 文件夹）。' +
-          'name 与 description 必填；description 应包含"何时使用"以提高自动激活准确率。',
+          'name 与 description 必填；description 应包含"何时使用"以提高自动激活准确率。' +
+          '可选 files 数组用于一次性写入 scripts/、references/、assets/、LICENSE.txt 等附属资源，' +
+          '符合 Anthropic Agent Skills 完整目录结构。',
         parameters: {
           type: 'object',
           properties: {
@@ -763,6 +905,24 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
               description: '可选：regex 字符串列表；匹配到用户消息时自动激活该 skill',
             },
             license: { type: 'string', description: '可选：许可证说明' },
+            frontmatter: {
+              type: 'object',
+              description: '可选：额外 YAML frontmatter 字段（例如 compatibility）。name/description 由专用字段覆盖。',
+            },
+            files: {
+              type: 'array',
+              description:
+                '可选：附属文件列表，每项 { relPath, content }。relPath 相对 skill 根目录，' +
+                '禁止 SKILL.md / 绝对路径 / `..`。典型布局：scripts/run.sh、references/api.md、assets/template.json、LICENSE.txt。',
+              items: {
+                type: 'object',
+                properties: {
+                  relPath: { type: 'string', description: '相对 skill 根的路径，如 scripts/run.sh' },
+                  content: { type: 'string', description: '文件文本内容' },
+                },
+                required: ['relPath', 'content'],
+              },
+            },
           },
           required: ['name', 'description'],
         },
@@ -776,6 +936,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           body: args.body as string | undefined,
           triggers: args.triggers as string[] | undefined,
           license: args.license as string | undefined,
+          frontmatter: args.frontmatter as Record<string, unknown> | undefined,
+          files: args.files as SkillFileInput[] | undefined,
         });
         return JSON.stringify({ ok: true, message: `技能 "${args.name}" 已创建` });
       } catch (err) {
@@ -791,7 +953,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'skill_update',
-        description: '更新一个已有 skill 的 description / body / triggers / license。',
+        description: '更新一个已有 skill 的 description / body / triggers / license / frontmatter / files。',
         parameters: {
           type: 'object',
           properties: {
@@ -800,6 +962,19 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
             body: { type: 'string', description: '新的 SKILL.md 正文' },
             triggers: { type: 'array', description: '新的 triggers regex 列表' },
             license: { type: 'string', description: '新的 license' },
+            frontmatter: { type: 'object', description: '额外 frontmatter 字段（覆盖同名旧字段）' },
+            files: {
+              type: 'array',
+              description: '要写入/覆盖的附属文件，每项 { relPath, content }。同名直接覆盖，不存在则新增。',
+              items: {
+                type: 'object',
+                properties: {
+                  relPath: { type: 'string' },
+                  content: { type: 'string' },
+                },
+                required: ['relPath', 'content'],
+              },
+            },
           },
           required: ['name'],
         },
@@ -812,6 +987,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           body: args.body as string | undefined,
           triggers: args.triggers as string[] | undefined,
           license: args.license as string | undefined,
+          frontmatter: args.frontmatter as Record<string, unknown> | undefined,
+          files: args.files as SkillFileInput[] | undefined,
         });
         return JSON.stringify({ ok, message: ok ? '已更新' : 'skill 不存在' });
       } catch (err) {
@@ -843,7 +1020,121 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   });
 
-  // 6. skill_rescan —— 手动重新扫描目录（便于外部添加 skill 后无需重启）
+  // 6. skill_add_file —— 单独添加/覆盖一个附属文件
+  tools.register({
+    groups: ['skills'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'skill_add_file',
+        description:
+          '为指定 skill 增量写入一个附属文件（scripts/、references/、assets/、LICENSE.txt 等）。' +
+          '同名文件会被覆盖；relPath 禁止使用 SKILL.md、绝对路径或 `..`。',
+        parameters: {
+          type: 'object',
+          properties: {
+            skill: { type: 'string', description: '目标 skill 名称' },
+            relPath: { type: 'string', description: '相对 skill 根的路径，如 scripts/run.sh' },
+            content: { type: 'string', description: '文件文本内容' },
+          },
+          required: ['skill', 'relPath', 'content'],
+        },
+      },
+    },
+    handler: async args => {
+      try {
+        const ok = await service.addSkillFile(args.skill as string, {
+          relPath: args.relPath as string,
+          content: args.content as string,
+        });
+        return JSON.stringify({ ok, message: ok ? '已写入' : 'skill 不存在' });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  });
+
+  // 7. skill_remove_file
+  tools.register({
+    groups: ['skills'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'skill_remove_file',
+        description: '删除某 skill 下的一个附属文件（不能是 SKILL.md）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            skill: { type: 'string', description: '目标 skill 名称' },
+            relPath: { type: 'string', description: '相对 skill 根的路径' },
+          },
+          required: ['skill', 'relPath'],
+        },
+      },
+    },
+    handler: async args => {
+      try {
+        const ok = await service.removeSkillFile(args.skill as string, args.relPath as string);
+        return JSON.stringify({ ok, message: ok ? '已删除' : 'skill 不存在或文件不存在' });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  });
+
+  // 8. skill_list_files
+  tools.register({
+    groups: ['skills'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'skill_list_files',
+        description: '列出某 skill 目录下所有附属文件（不含 SKILL.md）的相对路径。',
+        parameters: {
+          type: 'object',
+          properties: {
+            skill: { type: 'string', description: '目标 skill 名称' },
+          },
+          required: ['skill'],
+        },
+      },
+    },
+    handler: async args => {
+      const files = await service.listSkillFiles(args.skill as string);
+      return JSON.stringify({ skill: args.skill, count: files.length, files });
+    },
+  });
+
+  // 9. skill_read_file
+  tools.register({
+    groups: ['skills'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'skill_read_file',
+        description: '读取某 skill 下某附属文件的文本内容。二进制文件会按 UTF-8 解码，可能乱码。',
+        parameters: {
+          type: 'object',
+          properties: {
+            skill: { type: 'string', description: '目标 skill 名称' },
+            relPath: { type: 'string', description: '相对 skill 根的路径' },
+          },
+          required: ['skill', 'relPath'],
+        },
+      },
+    },
+    handler: async args => {
+      try {
+        const content = await service.readSkillFile(args.skill as string, args.relPath as string);
+        if (content == null) return JSON.stringify({ error: 'skill 不存在或文件不存在' });
+        return JSON.stringify({ skill: args.skill, relPath: args.relPath, content });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  });
+
+  // 10. skill_rescan —— 手动重新扫描目录（便于外部添加 skill 后无需重启）
   tools.register({
     groups: ['skills'],
     definition: {
