@@ -152,11 +152,11 @@ const webuiPages: WebuiPage[] = [
         label: '技能列表',
         source: 'listSkills',
         columns: [
-          { key: 'name', label: '名称' },
-          { key: 'description', label: '描述' },
-          { key: 'triggers', label: '自动触发' },
-          { key: 'fileCount', label: '资源' },
-          { key: 'dir', label: '路径' },
+          { key: 'name', label: '名称', nowrap: true },
+          { key: 'description', label: '描述', minWidth: 220 },
+          { key: 'triggers', label: '自动触发', nowrap: true },
+          { key: 'fileCount', label: '资源', nowrap: true, minWidth: 160 },
+          { key: 'dir', label: '路径', nowrap: true },
         ],
         actions: [
           { label: '查看', method: 'getSkill' },
