@@ -1720,6 +1720,22 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-user-relation:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-memory-api':
+        specifier: workspace:*
+        version: link:../plugin-memory-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-vectorstore-api:
     dependencies:
       '@aalis/core':
