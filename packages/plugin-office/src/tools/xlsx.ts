@@ -1,8 +1,12 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import ExcelJS from 'exceljs';
 import type { DocSessionManager } from '../session.js';
+
+function joinUri(base: string, rel: string): string {
+  const b = base.endsWith('/') ? base : `${base}/`;
+  return `${b}${rel.replace(/^\/+/, '')}`;
+}
 
 /** 列字母转数字 A→1, B→2, ..., Z→26, AA→27 */
 function colToNum(col: string): number {
@@ -20,7 +24,12 @@ function parseAddr(addr: string): { row: number; col: number } {
   return { col: colToNum(m[1]), row: parseInt(m[2], 10) };
 }
 
-export function registerExcelTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
+export function registerExcelTools(
+  tools: ScopedToolService,
+  sessions: DocSessionManager,
+  storage: StorageService,
+  outputUri: string,
+) {
   // ---- excel_create ----
   tools.register({
     definition: {
@@ -509,16 +518,15 @@ export function registerExcelTools(tools: ScopedToolService, sessions: DocSessio
     async handler(args) {
       const session = sessions.require(String(args.docId), 'xlsx');
       const wb = session.doc as ExcelJS.Workbook;
-      const filePath = resolve(outputDir, session.filename);
-      mkdirSync(dirname(filePath), { recursive: true });
+      const fileUri = joinUri(outputUri, session.filename);
       const buffer = await wb.xlsx.writeBuffer();
-      writeFileSync(filePath, Buffer.from(buffer));
+      await storage.writeFile(fileUri, Buffer.from(buffer));
       sessions.remove(session.id);
       return JSON.stringify({
         success: true,
-        path: filePath,
+        path: fileUri,
         size: buffer.byteLength,
-        message: `Excel 已保存: ${filePath}`,
+        message: `Excel 已保存: ${fileUri}`,
       });
     },
   });

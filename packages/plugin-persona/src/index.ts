@@ -1,8 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 import '@aalis/plugin-agent-api';
@@ -105,15 +104,17 @@ interface PersonaCard {
 class PersonaServiceImpl implements PersonaService {
   private card: PersonaCard;
   private _outputFormat?: OutputFormat;
-  private searchDirs: string[];
+  private searchUris: string[];
   private fileName: string;
   private statePersistence: boolean;
   private timeInjection: boolean;
   private timeZone: string;
-  /** 按名称缓存的角色卡（用于 session 级 persona 切换） */
+  /** 按名称缓存的角色卡（由启动扫描 + watch 预填） */
   private cardCache = new Map<string, PersonaCard | null>();
   /** 按名称缓存的 OutputFormat */
   private formatCache = new Map<string, OutputFormat | null>();
+  /** 启动后扫描到的角色名称（用于 listModels，由启动 + watch 维护） */
+  private knownNames = new Set<string>();
 
   /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
@@ -144,12 +145,12 @@ class PersonaServiceImpl implements PersonaService {
 
   constructor(
     card: PersonaCard,
-    searchDirs: string[],
+    searchUris: string[],
     fileName: string,
     options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
   ) {
     this.card = card;
-    this.searchDirs = searchDirs;
+    this.searchUris = searchUris;
     this.fileName = fileName;
     this.statePersistence = options.statePersistence;
     this.timeInjection = options.timeInjection;
@@ -159,6 +160,39 @@ class PersonaServiceImpl implements PersonaService {
     if (card.outputFormat) {
       this._outputFormat = PersonaServiceImpl.parseRawOutputFormat(card.outputFormat);
     }
+  }
+
+  /** 给外部调用：启动时预填 cache（代替原 sync 按需读盘） */
+  setCardCacheEntry(name: string, card: PersonaCard | null): void {
+    if (card) {
+      this.cardCache.set(name, card);
+      this.knownNames.add(name);
+    } else {
+      this.cardCache.set(name, null);
+      this.knownNames.delete(name);
+    }
+    this.formatCache.delete(name);
+  }
+
+  removeCardCacheEntry(name: string): void {
+    this.cardCache.delete(name);
+    this.formatCache.delete(name);
+    this.knownNames.delete(name);
+  }
+
+  /** 重新加载“主角色卡”（fileName 对应的卡），供 watch 调用 */
+  reloadPrimaryCardFromCache(): void {
+    const refreshed = this.cardCache.get(this.fileName);
+    if (refreshed) {
+      this.card = refreshed;
+      this._outputFormat = refreshed.outputFormat
+        ? PersonaServiceImpl.parseRawOutputFormat(refreshed.outputFormat)
+        : undefined;
+    }
+  }
+
+  knownPersonaNames(): string[] {
+    return [...this.knownNames];
   }
 
   /** 解析原始 outputFormat 定义 → OutputFormat 结构 */
@@ -206,39 +240,11 @@ class PersonaServiceImpl implements PersonaService {
     return this.card;
   }
 
-  /** 按名称动态加载角色卡（带缓存） */
+  /** 按名称动态加载角色卡（仅查 cache，启动时预填） */
   private loadCard(name: string): PersonaCard | undefined {
     if (name === this.fileName) return this.card;
-    if (this.cardCache.has(name)) return this.cardCache.get(name) ?? undefined;
-    for (const dir of this.searchDirs) {
-      for (const ext of ['.yaml', '.yml']) {
-        const p = resolve(dir, `${name}${ext}`);
-        if (existsSync(p)) {
-          try {
-            const raw = readFileSync(p, 'utf-8');
-            const parsed = parseYaml(raw) as Record<string, unknown>;
-            const card: PersonaCard = {
-              name: (parsed.name as string) ?? '',
-              description: (parsed.description as string) ?? '',
-              prompt: (parsed.prompt as string) ?? '',
-              traits: parsed.traits as string[] | undefined,
-              greeting: parsed.greeting as string | undefined,
-              outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
-              outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
-              nick_name: parsed.nick_name as string[] | undefined,
-              clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
-              skills: parsed.skills as string[] | undefined,
-            };
-            this.cardCache.set(name, card);
-            return card;
-          } catch {
-            /* continue searching */
-          }
-        }
-      }
-    }
-    this.cardCache.set(name, null);
-    return undefined;
+    const cached = this.cardCache.get(name);
+    return cached ?? undefined;
   }
 
   /** 获取指定角色卡的 OutputFormat（带缓存） */
@@ -433,54 +439,37 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   async listModels(): Promise<string[]> {
-    const names = new Set<string>();
-    for (const dir of this.searchDirs) {
-      if (!existsSync(dir)) continue;
-      let files: string[];
-      try {
-        files = readdirSync(dir);
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        if (!/\.ya?ml$/i.test(file)) continue;
-        names.add(file.replace(/\.ya?ml$/i, ''));
-      }
-    }
-    return [...names];
+    return [...this.knownNames];
   }
 }
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const personaName = (config.persona as string) || 'default';
-  const personasDir = (config.personasDir as string) || 'data/personas';
+  const personasDirRaw = (config.personasDir as string) || 'data/personas';
   const statePersistence = (config.statePersistence as boolean) ?? false;
   const timeInjection = (config.timeInjection as boolean) ?? false;
   const timeZone = (config.timeZone as string) ?? '';
-  const configDir = ctx.config.getConfigDir();
 
-  // 收集所有候选目录
-  const searchDirs = [resolve(process.cwd(), personasDir), resolve(configDir, 'personas')];
+  const storage = createStorageGateway(ctx);
 
-  /** 在目录中按文件名精确匹配 .yaml/.yml 文件 */
-  function findCard(): { card: PersonaCard; path: string } | undefined {
-    for (const dir of searchDirs) {
-      for (const ext of ['.yaml', '.yml']) {
-        const p = resolve(dir, `${personaName}${ext}`);
-        if (existsSync(p)) {
-          const result = tryLoadCard(p);
-          if (result) return { card: result, path: p };
-        }
-      }
-    }
-    return undefined;
+  // 把 "data/personas" / "abc:/path" 都规范化为 storage URI
+  function toStorageUri(input: string): string {
+    if (input.includes(':/')) return input;
+    const s = input.trim().replace(/^\.?\/+/, '');
+    const idx = s.indexOf('/');
+    return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
   }
 
-  function tryLoadCard(filePath: string): PersonaCard | undefined {
+  // 候选目录：用户配置 + configDir/personas（若存在 configDir 根，则用 configDir 根；否则跳过）
+  const searchUris: string[] = [toStorageUri(personasDirRaw)];
+  const knownRoots = new Set(storage.listRoots().map(r => r.name));
+  if (knownRoots.has('configDir')) searchUris.push('configDir:/personas');
+
+  async function tryLoadCardFromUri(uri: string): Promise<PersonaCard | undefined> {
     try {
-      const raw = readFileSync(filePath, 'utf-8');
+      const raw = (await storage.readFile(uri, 'utf-8')) as string;
       const parsed = parseYaml(raw) as Record<string, unknown>;
       return {
         name: (parsed.name as string) ?? '',
@@ -499,12 +488,53 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
   }
 
-  let card: PersonaCard;
-  const found = findCard();
+  function joinUri(base: string, sub: string): string {
+    const s = sub.replace(/^\/+/, '');
+    return base.endsWith('/') ? base + s : `${base}/${s}`;
+  }
 
+  async function findCard(name: string): Promise<{ card: PersonaCard; uri: string } | undefined> {
+    for (const dir of searchUris) {
+      for (const ext of ['.yaml', '.yml']) {
+        const uri = joinUri(dir, `${name}${ext}`);
+        const card = await tryLoadCardFromUri(uri);
+        if (card) return { card, uri };
+      }
+    }
+    return undefined;
+  }
+
+  /** 扫描所有 personas 目录，预填 cache。 */
+  async function scanAll(svc: PersonaServiceImpl): Promise<Set<string>> {
+    const seenNames = new Set<string>();
+    for (const dir of searchUris) {
+      let result: Awaited<ReturnType<StorageService['list']>>;
+      try {
+        result = await storage.list(dir);
+      } catch {
+        continue;
+      }
+      for (const entry of result.entries) {
+        if (entry.isDirectory) continue;
+        const m = /^(.+)\.ya?ml$/i.exec(entry.name);
+        if (!m) continue;
+        const cardName = m[1];
+        if (seenNames.has(cardName)) continue;
+        const card = await tryLoadCardFromUri(entry.uri);
+        if (card) {
+          svc.setCardCacheEntry(cardName, card);
+          seenNames.add(cardName);
+        }
+      }
+    }
+    return seenNames;
+  }
+
+  let card: PersonaCard;
+  const found = await findCard(personaName);
   if (found) {
     card = found.card;
-    ctx.logger.info(`已加载角色卡: ${card.name} (${found.path})`);
+    ctx.logger.info(`已加载角色卡: ${card.name} (${found.uri})`);
   } else {
     card = {
       name: 'Aalis',
@@ -514,12 +544,46 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
   }
 
-  const service = new PersonaServiceImpl(card, searchDirs, personaName as string, {
+  const service = new PersonaServiceImpl(card, searchUris, personaName as string, {
     statePersistence,
     timeInjection,
     timeZone,
   });
   ctx.provide('persona', service);
+
+  // 启动时一次性预扫所有 personas → cache（用于 listModels / 动态切换）+ 启动 watch
+  ctx.on('ready', async () => {
+    try {
+      const known = await scanAll(service);
+      // 删除 cache 里那些已不存在的
+      for (const n of service.knownPersonaNames()) {
+        if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
+      }
+      service.reloadPrimaryCardFromCache();
+      ctx.logger.debug(`persona 启动扫描完成，已知 ${known.size} 张卡`);
+    } catch (err) {
+      ctx.logger.warn(`persona 启动扫描失败：${err}`);
+    }
+    for (const dir of searchUris) {
+      try {
+        const unwatch = storage.watch?.(dir, async () => {
+          try {
+            const known = await scanAll(service);
+            for (const n of service.knownPersonaNames()) {
+              if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
+            }
+            service.reloadPrimaryCardFromCache();
+            ctx.logger.debug(`persona 目录变化已重新加载（${dir}）`);
+          } catch (err) {
+            ctx.logger.warn(`persona 重扫失败：${err}`);
+          }
+        });
+        if (unwatch) ctx.onDispose(unwatch);
+      } catch (err) {
+        ctx.logger.warn(`persona 目录监听失败（${dir}）：${err}`);
+      }
+    }
+  });
 
   // 参与 memory:clear 清除当前会话的 persona 状态
   ctx.middleware(
