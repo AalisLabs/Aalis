@@ -4,7 +4,7 @@ import { pageAction, getSessionId, proxiedMediaUrl } from '../api';
 import ReactMarkdown from 'react-markdown';
 import 'katex/dist/katex.min.css';
 import type { ChatMessage, SystemStatus, TodoItem, ContentSegment } from '../types';
-import type { MutableRefObject } from 'react';
+
 import type { TokenUsageData } from '../useWebSocket';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 import { formatChatTime } from '../utils/dateFormat';
@@ -646,16 +646,9 @@ export function ChatPanel({
   loading,
   connected,
   status,
-  input,
-  setInput,
   onSend,
   onAbort,
   width,
-  pendingImages,
-  setPendingImages,
-  pendingFiles,
-  setPendingFiles,
-  attachmentOrderRef,
   sessionTitle,
   onNewSession,
   todoItems,
@@ -671,16 +664,15 @@ export function ChatPanel({
   loading: boolean;
   connected: boolean;
   status: SystemStatus | null;
-  input: string;
-  setInput: (v: string) => void;
-  onSend: () => void;
+  /** content, files, images, order → Promise<void> */
+  onSend: (
+    content: string,
+    pendingFiles: Array<{ name: string; data: string; mimeType?: string }>,
+    pendingImages: string[],
+    order: Array<'image' | 'file'>,
+  ) => Promise<void> | void;
   onAbort: () => void;
   width: number;
-  pendingImages: string[];
-  setPendingImages: (v: string[] | ((prev: string[]) => string[])) => void;
-  pendingFiles: Array<{ name: string; data: string; mimeType?: string }>;
-  setPendingFiles: (v: Array<{ name: string; data: string; mimeType?: string }> | ((prev: Array<{ name: string; data: string; mimeType?: string }>) => Array<{ name: string; data: string; mimeType?: string }>)) => void;
-  attachmentOrderRef: MutableRefObject<Array<'image' | 'file'>>;
   /** 当前会话的显示标题 */
   sessionTitle?: string;
   /** 新建会话的回调 */
@@ -703,6 +695,11 @@ export function ChatPanel({
   /** 手动压缩回调 */
   onCompress?: () => void;
 }) {
+  // ──────── 输入区本地状态（不再上浮到 App，避免 App 因输入抖动整树重渲染）────────
+  const [input, setInput] = useState('');
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<Array<{ name: string; data: string; mimeType?: string }>>([]); 
+  const attachmentOrderRef = useRef<Array<'image' | 'file'>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
@@ -887,10 +884,23 @@ export function ChatPanel({
     }
   }, [messages]);
 
+  /** 发送动作：将本地输入/附件状态传给 App.tsx 的 handleSend，成功后清空本地状态 */
+  const handleSendAction = useCallback(async () => {
+    await onSend(input, pendingFiles, pendingImages, attachmentOrderRef.current);
+    setInput('');
+    setPendingImages([]);
+    setPendingFiles([]);
+    attachmentOrderRef.current = [];
+    // 重置 textarea 高度
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  }, [input, pendingFiles, pendingImages, onSend]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      onSend();
+      void handleSendAction();
     }
   };
 
@@ -1346,7 +1356,7 @@ export function ChatPanel({
           ) : (
             <button
               className="send-btn"
-              onClick={onSend}
+              onClick={() => { void handleSendAction(); }}
               disabled={!connected || !hasContent}
             >
               ↑

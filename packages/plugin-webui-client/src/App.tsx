@@ -21,10 +21,7 @@ const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m
 const DynamicPage = lazy(() => import('./components/DynamicPage').then(m => ({ default: m.DynamicPage })));
 
 export function App() {
-  const [input, setInput] = useState('');
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
-  const [pendingFiles, setPendingFiles] = useState<Array<{ name: string; data: string; mimeType?: string }>>([]);
-  const attachmentOrderRef = useRef<Array<'image' | 'file'>>([]);
+  // input, pendingImages, pendingFiles, attachmentOrderRef 已下沉到 ChatPanel，不再在 App 层持有
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
     return hash || 'dashboard';
@@ -545,8 +542,13 @@ export function App() {
     setTodoItems([]);
   }, [session.activeSessionId]);
 
-  const handleSend = async () => {
-    const trimmed = input.trim();
+  const handleSend = useCallback(async (
+    content: string,
+    pendingFilesArg: Array<{ name: string; data: string; mimeType?: string }>,
+    pendingImagesArg: string[],
+    attachmentOrder: Array<'image' | 'file'>,
+  ): Promise<void> => {
+    const trimmed = content.trim();
 
     // 高危操作确认中 — 仅发送确认回复，不中止也不新建 loading
     if (pendingConfirm) {
@@ -557,7 +559,6 @@ export function App() {
         content: trimmed,
         timestamp: Date.now(),
       }]);
-      setInput('');
       send(trimmed);
       return;
     }
@@ -567,34 +568,33 @@ export function App() {
       handleAbort();
     }
 
-    if (!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) return;
+    if (!trimmed && pendingImagesArg.length === 0 && pendingFilesArg.length === 0) return;
 
     // 确保有活跃会话（无会话时自动新建）
     await session.ensureSession();
 
-    const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    const images = pendingImagesArg.length > 0 ? [...pendingImagesArg] : undefined;
     // 统一打包成 attachments[]：图片 + 全部 pendingFiles（文档/音视频）按用户上传顺序
-    const order = attachmentOrderRef.current;
     const attachments: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }> = [];
     let imgIdx = 0;
     let fileIdx = 0;
-    if (order.length > 0) {
-      for (const t of order) {
-        if (t === 'image' && imgIdx < pendingImages.length) {
-          attachments.push({ kind: 'image', data: pendingImages[imgIdx++] });
-        } else if (t === 'file' && fileIdx < pendingFiles.length) {
-          const f = pendingFiles[fileIdx++];
+    if (attachmentOrder.length > 0) {
+      for (const t of attachmentOrder) {
+        if (t === 'image' && imgIdx < pendingImagesArg.length) {
+          attachments.push({ kind: 'image', data: pendingImagesArg[imgIdx++] });
+        } else if (t === 'file' && fileIdx < pendingFilesArg.length) {
+          const f = pendingFilesArg[fileIdx++];
           const mime = f.mimeType ?? '';
           const kind = mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : 'file';
           attachments.push({ kind, data: f.data, mimeType: mime, name: f.name });
         }
       }
     }
-    while (imgIdx < pendingImages.length) {
-      attachments.push({ kind: 'image', data: pendingImages[imgIdx++] });
+    while (imgIdx < pendingImagesArg.length) {
+      attachments.push({ kind: 'image', data: pendingImagesArg[imgIdx++] });
     }
-    while (fileIdx < pendingFiles.length) {
-      const f = pendingFiles[fileIdx++];
+    while (fileIdx < pendingFilesArg.length) {
+      const f = pendingFilesArg[fileIdx++];
       const mime = f.mimeType ?? '';
       const kind = mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : 'file';
       attachments.push({ kind, data: f.data, mimeType: mime, name: f.name });
@@ -603,17 +603,13 @@ export function App() {
       role: 'user',
       content: trimmed,
       images,
-      fileNames: pendingFiles.map(f => f.name),
+      fileNames: pendingFilesArg.map(f => f.name),
       timestamp: Date.now(),
     }]);
-    setInput('');
-    setPendingImages([]);
-    setPendingFiles([]);
-    attachmentOrderRef.current = [];
     setToolLimitReached(false);
     setLoading(true);
     send(trimmed, attachments.length > 0 ? attachments : undefined);
-  };
+  }, [pendingConfirm, loading, send, handleAbort, session]);
 
   // 内置页面（webui-server 核心页面）的图标映射
   const builtinIconMap: Record<string, React.ReactNode> = {
@@ -759,16 +755,9 @@ export function App() {
           loading={loading}
           connected={connected}
           status={status}
-          input={input}
-          setInput={setInput}
           onSend={handleSend}
           onAbort={handleAbort}
           width={chatWidth}
-          pendingImages={pendingImages}
-          setPendingImages={setPendingImages}
-          pendingFiles={pendingFiles}
-          setPendingFiles={setPendingFiles}
-          attachmentOrderRef={attachmentOrderRef}
           sessionTitle={session.isNewChat ? '新对话' : session.activeSessionTitle}
           onNewSession={session.pluginName ? () => session.startNewChat() : undefined}
           todoItems={todoItems}
