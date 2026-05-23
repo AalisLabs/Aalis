@@ -166,7 +166,7 @@ export interface ToolGroupDetail {
 // ----- 声明式页面类型 (镜像 core) -----
 
 export interface WebuiStatComponent { type: 'stat'; label: string; source: string; icon?: string }
-export interface WebuiTableComponent { type: 'table'; label?: string; source: string; columns: Array<{ key: string; label: string; render?: string }>; actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>; refresh?: number }
+export interface WebuiTableComponent { type: 'table'; label?: string; source: string; columns: Array<{ key: string; label: string; render?: string; nowrap?: boolean; minWidth?: number; maxWidth?: number }>; actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>; refresh?: number }
 export interface WebuiFormComponent { type: 'form'; label?: string; source: string; save: string; schema: ConfigSchema }
 export interface WebuiActionsComponent { type: 'actions'; label?: string; items: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }> }
 export interface WebuiInfoComponent { type: 'info'; label?: string; source: string }
