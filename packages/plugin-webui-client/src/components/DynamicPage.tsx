@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { api, pageAction } from '../api';
 import { SchemaForm, type LLMProviderEntry } from './SchemaForm';
+import { RelationGraph } from './RelationGraph';
 import type {
   WebuiComponent, WebuiStatComponent, WebuiTableComponent,
   WebuiFormComponent, WebuiActionsComponent, WebuiInfoComponent,
@@ -436,6 +437,7 @@ function DynamicComponent({ component, pluginName, refreshTick, onRefresh }: { c
     case 'info': return <DynInfo comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
     case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
     case 'tabs': return <DynTabs comp={component} pluginName={pluginName} refreshTick={refreshTick} onRefresh={onRefresh} />;
+    case 'graph': return <RelationGraph comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
     default: return null;
   }
 }
