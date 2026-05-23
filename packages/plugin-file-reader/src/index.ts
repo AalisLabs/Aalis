@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
@@ -253,9 +252,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  /** sha256(content) 前 16 hex → 内容寻址，重传同一文件秒命中 */
-  function hashId(buffer: Buffer): string {
-    return createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+  /** sha256(content) 前 16 hex → 内容寻址，重传同一文件秒命中（Web Crypto 实现，不依赖 node:crypto） */
+  async function hashId(buffer: Buffer): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    const bytes = new Uint8Array(digest);
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+    return hex.slice(0, 16);
   }
 
   function dataUrlToBuffer(dataUrl: string): { buffer: Buffer; mimeType: string } {
@@ -334,7 +337,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // ===== 存储 / 删除 =====
 
   async function storeFile(name: string, data: Buffer, mimeType: string, sessionId: string): Promise<FileEntry> {
-    const id = hashId(data);
+    const id = await hashId(data);
     // 已存在则直接复用（同一内容，仅刷新 uploadedAt）
     const existing = index.get(id);
     if (existing && existing.sessionId === sessionId) {

@@ -18,11 +18,22 @@
 
 - **基础设施插件**（提供上述网关的实现，或本身就是宿主服务，例如 HTTP 入站）才允许直接使用对应的 `node:*`。每个例外都在 `biome.json` 的 `overrides` 例外清单中显式列出，**并在本文件登记原因**——增加新例外必须同时更新两处。
 
-- **永远允许**的 `node:*` 模块：
-  - `node:buffer` —— Web 标准 `Uint8Array` 不完全覆盖二进制 API，允许全局使用。
-  - `node:path` —— 纯函数路径运算（join/resolve/dirname/extname/posix），无 I/O。
-  - `node:url` —— `URL`/`fileURLToPath`，纯解析，无 I/O。
-  - `node:crypto` —— 仅推荐对 Web Crypto 不足的高级 API 使用；常规 hash/uuid 改 Web Crypto。
+- **永远允许**的 `node:*` 模块（详见 § 1.5 边界说明）：
+  - `node:buffer` —— Web 标准 `Uint8Array` 不能完全覆盖二进制 API（`Buffer.from(x,'base64')` / `Buffer.concat` / `Buffer.toString('hex')` 一行搞定），且 `StorageService.writeFile` 签名 `string | Buffer` 等内部 API 直接要求 Buffer。允许全局使用。
+  - `node:path` —— 纯函数路径运算（join/resolve/dirname/extname/posix），无 I/O，无 Web 等价替代。
+  - `node:url` —— **仅允许** `fileURLToPath` / `pathToFileURL`。`URL` 本身请使用全局 `URL`，不要 `import { URL } from 'node:url'`。
+
+- **永远不允许**的 `node:*` 模块（即使在基础设施插件中也优先用 Web 标准）：
+  - `node:crypto` —— 全部用全局 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`）。仅在确有 Web Crypto 无法覆盖的高级需求（如 X.509、传统 hash 算法等）才申报例外。
+
+## 1.5 Buffer / URL / Crypto 边界
+
+- **Buffer**：新代码默认使用 `Uint8Array`；只有以下场景才显式 `import { Buffer } from 'node:buffer'`：
+  - 调用 `StorageService.writeFile` / 第三方库强制要求 Buffer 签名；
+  - 需要 `base64` / `hex` 编解码一行流（`Buffer.from(s,'base64')` / `.toString('base64')`）；
+  - 需要 `Buffer.concat([...])` 拼接多个二进制片段。
+- **URL**：`new URL(...)` 直接用全局；只有把 `file://` URI 换成本地路径或反向操作时才 `import { fileURLToPath, pathToFileURL } from 'node:url'`。
+- **Crypto**：`crypto.subtle.digest('SHA-256', bytes)` 返回 `ArrayBuffer`；hex 化需要手动 `Array.from(new Uint8Array(ab)).map(b=>b.toString(16).padStart(2,'0')).join('')`。`crypto.randomUUID()` 与 `crypto.getRandomValues()` 直接调全局。
 
 ## 2. 模块 → 提供者映射
 
@@ -32,11 +43,14 @@
 |  |  | `plugin-process-local` | `readExternalFile()`：用于 OneBot 直推的 `/tmp/...` 等不在任何 storage 根内的绝对路径 |
 |  |  | `plugin-webui-server` | `existsSync` 探测前端 dist 目录（位于工作区外、由 webui-client 提供） |
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
+|  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
 | `node:child_process` | `@aalis/plugin-process-api`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的唯一实现 |
 | `node:http` / `node:https` | 不允许出站调用使用；出站请用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
 | `node:os` | `system_info` 工具（聚合返回） | `plugin-tool-system/src/tools/system.ts` | 该工具的本意就是暴露系统信息 |
-| `node:buffer` / `node:path` / `node:url` | 直接使用 | 全部 | 纯函数，无 I/O |
+| `node:crypto` | **不允许**；改 Web Crypto（`crypto.subtle.digest` / `crypto.randomUUID` / `crypto.getRandomValues`） | — | 无例外 |
+| `node:buffer` / `node:path` | 直接使用 | 全部 | 纯函数 / Web 标准不覆盖，无 I/O |
+| `node:url` | **仅** `fileURLToPath` / `pathToFileURL`；`URL` 用全局 | 全部 | 仅限路径互转 |
 
 ## 3. 直接持有 node:* 的插件清单（白名单）
 
@@ -68,15 +82,12 @@
 - **`create-aalis-plugin`** — `node:fs`（`existsSync`）+ `node:fs/promises`（`mkdir`/`writeFile`）
   `npm create aalis-plugin` 的 CLI，在工作区外生成新插件目录，无法、也不应通过 storage 网关。
 
-### 历史遗留（计划迁移）
+### 浏览器自动化
 
-下列模块 **仍在白名单**，因为它们在 index.ts 中使用了**动态 import** 直接调用 `node:*`，是未完成的迁移：
+- **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）
+  动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），这是 puppeteer 包的本地资产管理需求，无 storage 网关能覆盖。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。
 
-- `plugin-asr-openai/src/index.ts` — 动态 `import('node:fs/promises')` 读取本地音频文件，应改走 `StorageService.readFile`
-- `plugin-tool-browser/src/index.ts` — 动态 `import('node:fs')` / `node:child_process` 启动 puppeteer 浏览器探针
-- `plugin-ollama/src/index.ts` — 动态 `import('node:fs/promises')` / `node:path` 读取图像文件
-
-> ⚠️ 新代码不要再加入此类直接动态 import；要么走 storage/process 网关，要么按本文件流程申报新的白名单条目。
+> ✅ 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService.execFile`。新代码不要再加入直接动态 import `node:fs|crypto|child_process`。
 
 ## 4. 增加新例外的流程
 

@@ -195,6 +195,9 @@ importers:
       '@aalis/plugin-media-api':
         specifier: workspace:*
         version: link:../plugin-media-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1074,6 +1077,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1443,6 +1449,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api

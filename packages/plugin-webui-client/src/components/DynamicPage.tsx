@@ -79,6 +79,25 @@ function CountdownCell({ target, onZero }: { target: number; onZero?: () => void
   return <span className={diff <= 5 ? 'countdown-imminent' : ''}>{text}</span>;
 }
 
+/** 可展开/收起的长文本单元格：默认单行截断，点击展开完整内容（限高 80px） */
+function ExpandableTextCell({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  return (
+    <div className={`dyn-cell-expandable${expanded ? ' expanded' : ''}`}>
+      <span className="dyn-cell-expandable-text">{text}</span>
+      <button
+        type="button"
+        className="dyn-cell-expandable-toggle"
+        onClick={() => setExpanded(v => !v)}
+        title={expanded ? '收起' : '展开'}
+      >
+        {expanded ? '收起' : '展开'}
+      </button>
+    </div>
+  );
+}
+
 function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent; pluginName: string; refreshTick: number }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,7 +169,9 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
                         ? <span className={`dyn-badge dyn-badge-${String(row[col.key])}`}>{String(row[col.key] ?? '')}</span>
                         : col.render === 'code'
                           ? <code>{String(row[col.key] ?? '')}</code>
-                          : String(row[col.key] ?? '')}
+                          : col.render === 'expandable-text'
+                            ? <ExpandableTextCell text={String(row[col.key] ?? '')} />
+                            : String(row[col.key] ?? '')}
                   </td>
                 ))}
                 {comp.actions && comp.actions.length > 0 && (
