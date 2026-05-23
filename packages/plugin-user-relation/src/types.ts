@@ -48,7 +48,7 @@ export type EventCategory =
   | 'milestone' // 里程碑 / 成就
   | 'other';
 
-/** 事件节点 */
+/** 事件节点（时间性事件：发生过一次的事） */
 export interface EventNode {
   /** UUID */
   id: string;
@@ -60,6 +60,37 @@ export interface EventNode {
   firstSeenAt: number;
   lastReinforcedAt: number;
   /** 提取该事件的证据列表 */
+  evidence: EvidenceRef[];
+}
+
+/**
+ * 实体节点（持续存在的"东西"：作品 / 游戏 / 兴趣 / 地点 / 物品 / 话题）。
+ *
+ * **与 EventNode 的区别**：
+ * - EventNode 表示"发生过的一次事件"（有起止时间感）；
+ * - EntityNode 表示"持续存在的对象"，多个人可以分别与同一个 entity 建立关系（如"喜欢/玩/拥有/创作/讨厌"）。
+ *
+ * 经典场景：群里有两人都喜欢游戏《三角洲》 → 应建模为一个 EntityNode (entityKind='work', name='三角洲')
+ * 两人通过 person-entity 边（role='enthusiast'）共同指向它；而不是塞进一个事件标题。
+ */
+export type EntityKind =
+  | 'topic' // 话题 / 兴趣 / 概念
+  | 'place' // 地点 / 场所
+  | 'thing' // 物品 / 商品
+  | 'work'; // 作品 / 游戏 / 影视 / 书籍
+
+export interface EntityNode {
+  /** UUID */
+  id: string;
+  entityKind: EntityKind;
+  /** 实体名（图上显示，<=20字） */
+  name: string;
+  /** 别名 / 同义词，用于去重匹配 */
+  aliases?: string[];
+  /** 一两句话的描述 */
+  summary?: string;
+  firstSeenAt: number;
+  lastReinforcedAt: number;
   evidence: EvidenceRef[];
 }
 
@@ -126,11 +157,79 @@ export interface PersonPersonEdge {
   evidence: EvidenceRef[];
 }
 
-export type RelationEdge = PersonEventEdge | PersonPersonEdge;
+export type RelationEdge = PersonEventEdge | PersonPersonEdge | PersonEntityEdge | EventEventEdge;
+
+/**
+ * 人 → 实体 的关系角色。
+ *
+ * - `enthusiast`：喜欢/爱好者（"喜欢打三角洲"）
+ * - `participant`：参与/使用（"玩三角洲"）
+ * - `owner`：拥有（"有 PS5"）
+ * - `creator`：创作者（"画了那个表情包"）
+ * - `critic`：批评/反对（"讨厌三角洲"）
+ * - `visitor`：去过 / 到访（适用于 place）
+ * - `mentioned`：仅被提及，态度不明
+ */
+export type PersonEntityRole = 'enthusiast' | 'participant' | 'owner' | 'creator' | 'critic' | 'visitor' | 'mentioned';
+
+export const RecommendedPersonEntityRoles = [
+  'enthusiast',
+  'participant',
+  'owner',
+  'creator',
+  'critic',
+  'visitor',
+  'mentioned',
+] as const;
+
+/** 人 → 实体 边 */
+export interface PersonEntityEdge {
+  id: string;
+  kind: 'person-entity';
+  fromPersonId: string;
+  toEntityId: string;
+  role: PersonEntityRole;
+  sentiment?: Sentiment;
+  weight: number;
+  firstSeenAt: number;
+  lastReinforcedAt: number;
+  evidence: EvidenceRef[];
+}
+
+/**
+ * 事件 → 事件 的关联类型（推荐词表，允许自创小写英文短词）。
+ *
+ * - `caused-by`：A 由 B 引起（有方向）
+ * - `follows`：A 紧随 B 发生（有方向）
+ * - `related`：相关联（无方向）
+ * - `contradicts`：互相矛盾 / 抵消（无方向）
+ * - `part-of`：A 是 B 的一部分（有方向）
+ */
+export const RecommendedEventEventRelationTypes = [
+  'caused-by',
+  'follows',
+  'related',
+  'contradicts',
+  'part-of',
+] as const;
+
+export interface EventEventEdge {
+  id: string;
+  kind: 'event-event';
+  fromEventId: string;
+  toEventId: string;
+  relationType: string;
+  directed: boolean;
+  weight: number;
+  firstSeenAt: number;
+  lastReinforcedAt: number;
+  evidence: EvidenceRef[];
+}
 
 /** 完整关系图快照（供 webui 渲染） */
 export interface RelationGraphSnapshot {
   persons: PersonNode[];
   events: EventNode[];
+  entities: EntityNode[];
   edges: RelationEdge[];
 }

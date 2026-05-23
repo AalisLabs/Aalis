@@ -10,7 +10,7 @@
  */
 import type { Context, PluginModule } from '@aalis/core';
 import type { RelationService } from './service.js';
-import type { EventNode, PersonNode, RelationEdge } from './types.js';
+import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
 function svc(ctx: Context): RelationService | undefined {
   return ctx.getService<RelationService>('user-relation');
@@ -63,6 +63,23 @@ export const actions: PluginModule['actions'] = {
       }));
   },
 
+  async listEntities(ctx) {
+    const s = svc(ctx);
+    if (!s) return [];
+    const snap = await s.loadAll();
+    return snap.entities
+      .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
+      .map((e: EntityNode) => ({
+        id: e.id,
+        name: e.name,
+        entityKind: e.entityKind,
+        aliases: (e.aliases ?? []).join(', '),
+        summary: e.summary ?? '',
+        evidenceCount: e.evidence.length,
+        lastReinforcedAt: formatDate(e.lastReinforcedAt),
+      }));
+  },
+
   // ───── 关系图（Cytoscape elements） ─────
   async getRelationGraph(ctx, args) {
     const s = svc(ctx);
@@ -73,32 +90,44 @@ export const actions: PluginModule['actions'] = {
 
     let persons: PersonNode[];
     let events: EventNode[];
+    let entities: EntityNode[];
     let edges: RelationEdge[];
 
     if (focusId) {
       const sub = await s.traverseSubgraph({ startPersonIds: [focusId], maxDepth, maxBreadth });
       persons = sub.persons;
       events = sub.events;
+      entities = sub.entities;
       edges = sub.edges;
     } else {
       const snap = await s.loadAll();
       // 全图以“近期活跃 + 高度关系”为主，避免一次过多节点压垄浏览器
       const personCap = Math.max(20, maxBreadth * 6);
       const eventCap = Math.max(15, maxBreadth * 4);
+      const entityCap = Math.max(15, maxBreadth * 4);
       persons = [...snap.persons].sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, personCap);
       const personIdSet = new Set(persons.map(p => p.id));
-      // 仅保留与这些人物相关的事件
+      // 仅保留与这些人物相关的事件 / 实体
       const relatedEventIds = new Set<string>();
+      const relatedEntityIds = new Set<string>();
       for (const e of snap.edges) {
         if (e.kind === 'person-event' && personIdSet.has(e.fromPersonId)) relatedEventIds.add(e.toEventId);
+        else if (e.kind === 'person-entity' && personIdSet.has(e.fromPersonId)) relatedEntityIds.add(e.toEntityId);
       }
       events = snap.events
         .filter(e => relatedEventIds.has(e.id))
         .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
         .slice(0, eventCap);
       const eventIdSet = new Set(events.map(e => e.id));
+      entities = snap.entities
+        .filter(e => relatedEntityIds.has(e.id))
+        .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
+        .slice(0, entityCap);
+      const entityIdSet = new Set(entities.map(e => e.id));
       edges = snap.edges.filter(e => {
         if (e.kind === 'person-event') return personIdSet.has(e.fromPersonId) && eventIdSet.has(e.toEventId);
+        if (e.kind === 'person-entity') return personIdSet.has(e.fromPersonId) && entityIdSet.has(e.toEntityId);
+        if (e.kind === 'event-event') return eventIdSet.has(e.fromEventId) && eventIdSet.has(e.toEventId);
         return personIdSet.has(e.fromPersonId) && personIdSet.has(e.toPersonId);
       });
     }
@@ -111,6 +140,7 @@ export const actions: PluginModule['actions'] = {
       stats: {
         persons: persons.length,
         events: events.length,
+        entities: entities.length,
         edges: edges.length,
       },
       nodes: [
@@ -133,33 +163,70 @@ export const actions: PluginModule['actions'] = {
             title: e.title,
           },
         })),
+        ...entities.map(e => ({
+          data: {
+            id: e.id,
+            label: truncate(e.name, 16),
+            kind: 'entity' as const,
+            entityKind: e.entityKind,
+            name: e.name,
+          },
+        })),
       ],
-      edges: edges.map(e =>
-        e.kind === 'person-event'
-          ? {
-              data: {
-                id: e.id,
-                source: e.fromPersonId,
-                target: e.toEventId,
-                kind: 'person-event' as const,
-                label: e.role,
-                weight: e.weight,
-                sentiment: e.sentiment,
-              },
-            }
-          : {
-              data: {
-                id: e.id,
-                source: e.fromPersonId,
-                target: e.toPersonId,
-                kind: 'person-person' as const,
-                label: e.relationType,
-                relationType: e.relationType,
-                directed: e.directed,
-                weight: e.weight,
-              },
+      edges: edges.map(e => {
+        if (e.kind === 'person-event') {
+          return {
+            data: {
+              id: e.id,
+              source: e.fromPersonId,
+              target: e.toEventId,
+              kind: 'person-event' as const,
+              label: e.role,
+              weight: e.weight,
+              sentiment: e.sentiment,
             },
-      ),
+          };
+        }
+        if (e.kind === 'person-entity') {
+          return {
+            data: {
+              id: e.id,
+              source: e.fromPersonId,
+              target: e.toEntityId,
+              kind: 'person-entity' as const,
+              label: e.role,
+              weight: e.weight,
+              sentiment: e.sentiment,
+            },
+          };
+        }
+        if (e.kind === 'event-event') {
+          return {
+            data: {
+              id: e.id,
+              source: e.fromEventId,
+              target: e.toEventId,
+              kind: 'event-event' as const,
+              label: e.relationType,
+              relationType: e.relationType,
+              directed: e.directed,
+              weight: e.weight,
+            },
+          };
+        }
+        return {
+          data: {
+            id: e.id,
+            source: e.fromPersonId,
+            target: e.toPersonId,
+            kind: 'person-person' as const,
+            label: e.relationType,
+            relationType: e.relationType,
+            directed: e.directed,
+            weight: e.weight,
+          },
+        };
+      }),
     };
   },
 
@@ -181,17 +248,36 @@ export const actions: PluginModule['actions'] = {
           category: e.category,
           lastReinforcedAt: formatDate(e.lastReinforcedAt),
         })),
-        edges: nb.edges.slice(0, 10).map(e =>
-          e.kind === 'person-event'
-            ? { kind: e.kind, role: e.role, sentiment: e.sentiment, weight: e.weight, eventId: e.toEventId }
-            : {
-                kind: e.kind,
-                relation: e.relationType,
-                weight: e.weight,
-                fromId: e.fromPersonId,
-                toId: e.toPersonId,
-              },
-        ),
+        edges: nb.edges.slice(0, 10).map(e => {
+          if (e.kind === 'person-event') {
+            return { kind: e.kind, role: e.role, sentiment: e.sentiment, weight: e.weight, eventId: e.toEventId };
+          }
+          if (e.kind === 'person-person') {
+            return {
+              kind: e.kind,
+              relation: e.relationType,
+              weight: e.weight,
+              fromId: e.fromPersonId,
+              toId: e.toPersonId,
+            };
+          }
+          if (e.kind === 'person-entity') {
+            return {
+              kind: e.kind,
+              role: e.role,
+              sentiment: e.sentiment,
+              weight: e.weight,
+              entityId: e.toEntityId,
+            };
+          }
+          return {
+            kind: e.kind,
+            relation: e.relationType,
+            weight: e.weight,
+            fromId: e.fromEventId,
+            toId: e.toEventId,
+          };
+        }),
       };
     }
     if (kind === 'event') {
@@ -201,6 +287,24 @@ export const actions: PluginModule['actions'] = {
         id: e.id,
         title: e.title,
         category: e.category,
+        summary: e.summary,
+        evidenceCount: e.evidence.length,
+        lastReinforcedAt: formatDate(e.lastReinforcedAt),
+        recentEvidence: e.evidence
+          .slice()
+          .sort((a, b) => b.extractedAt - a.extractedAt)
+          .slice(0, 5)
+          .map(ev => ({ quote: ev.quote, messageIds: ev.messageIds, at: formatDate(ev.extractedAt) })),
+      };
+    }
+    if (kind === 'entity') {
+      const e = await s.getEntity(nodeId);
+      if (!e) return { error: '实体不存在' };
+      return {
+        id: e.id,
+        name: e.name,
+        entityKind: e.entityKind,
+        aliases: e.aliases ?? [],
         summary: e.summary,
         evidenceCount: e.evidence.length,
         lastReinforcedAt: formatDate(e.lastReinforcedAt),
@@ -221,9 +325,11 @@ export const actions: PluginModule['actions'] = {
     const snap = await s.loadAll();
     const pe = snap.edges.filter(e => e.kind === 'person-event').length;
     const pp = snap.edges.filter(e => e.kind === 'person-person').length;
+    const pent = snap.edges.filter(e => e.kind === 'person-entity').length;
+    const ee = snap.edges.filter(e => e.kind === 'event-event').length;
     return {
       value: snap.persons.length,
-      detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 人-事 ${pe} / 人-人 ${pp}`,
+      detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 实体 ${snap.entities.length} / 人-事 ${pe} / 人-人 ${pp} / 人-实体 ${pent} / 事-事 ${ee}`,
     };
   },
 
@@ -265,6 +371,13 @@ export const actions: PluginModule['actions'] = {
     const s = svc(ctx);
     if (!s) return { error: 'service 不可用' };
     await s.deleteEvent(String(args.id ?? ''));
+    return { ok: true };
+  },
+
+  async deleteEntity(ctx, args) {
+    const s = svc(ctx);
+    if (!s) return { error: 'service 不可用' };
+    await s.deleteEntity(String(args.id ?? ''));
     return { ok: true };
   },
 

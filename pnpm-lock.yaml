@@ -1728,6 +1728,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:*
         version: link:../plugin-agent-api
+      '@aalis/plugin-commands-api':
+        specifier: workspace:*
+        version: link:../plugin-commands-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
