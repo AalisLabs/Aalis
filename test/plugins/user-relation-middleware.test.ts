@@ -30,8 +30,12 @@ async function runMiddleware(
 ): Promise<Message[]> {
   registerRelationMiddleware(app.ctx, service, {
     enabled: true,
+    maxDepth: 1,
+    maxBreadth: 5,
     maxEvents: 5,
     maxRelations: 5,
+    maxParticipantsPerEvent: 5,
+    maxCooccurrencePartners: 5,
     groupOnly: opts.groupOnly ?? false,
     debug: false,
   });
