@@ -1,5 +1,5 @@
-import { platform } from 'node:os';
 import type { ConfigSchema, Context } from '@aalis/core';
+import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, toStorageUri, useToolService } from '@aalis/plugin-tools-api';
@@ -12,7 +12,7 @@ export const name = '@aalis/plugin-tool-code-runner';
 export const displayName = '代码执行器';
 export const subsystem = 'tools';
 export const inject = {
-  required: [{ service: 'storage', capabilities: ['local-path'] }],
+  required: [{ service: 'storage', capabilities: ['local-path'] }, 'process'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -129,7 +129,6 @@ async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<
     maxTimeout: cfg.maxTimeout,
     maxOutputSize: cfg.maxOutputSize,
     cwd: await storage.resolveLocalPath!(cwdUri, 'read'),
-    tmpDir: await storage.resolveLocalPath!('tmp:/code-runner', 'write'),
     env: safeEnv(),
   };
 }
@@ -139,6 +138,8 @@ async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
+  const proc: ProcessService = createProcessGateway(ctx);
+  const storage: StorageService = createStorageGateway(ctx);
 
   // 创建带分组标记的工具视图
   const baseTools = useToolService(ctx);
@@ -151,7 +152,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     description: '编写并运行 Python / JavaScript 代码来解决计算、分析、文件处理等问题',
   });
 
-  const osName = platform() === 'darwin' ? 'macOS' : platform() === 'win32' ? 'Windows' : 'Linux';
+  const osName = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
 
   // ==================== run_python ====================
   if (cfg.python.enabled) {
@@ -201,7 +202,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const timeout = args.timeout as number | undefined;
         ctx.logger.debug(`run_python: ${code.length} 字符`);
         const runnerConfig = await createRunnerConfig(ctx, cfg);
-        const result = await runCode(cfg.python.interpreter, code, '.py', runnerConfig, timeout);
+        const result = await runCode(proc, storage, cfg.python.interpreter, code, '.py', runnerConfig, timeout);
         return JSON.stringify(result);
       },
     });
@@ -254,7 +255,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const timeout = args.timeout as number | undefined;
         ctx.logger.debug(`run_javascript: ${code.length} 字符`);
         const runnerConfig = await createRunnerConfig(ctx, cfg);
-        const result = await runCode(cfg.javascript.interpreter, code, '.mjs', runnerConfig, timeout);
+        const result = await runCode(proc, storage, cfg.javascript.interpreter, code, '.mjs', runnerConfig, timeout);
         return JSON.stringify(result);
       },
     });

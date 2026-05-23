@@ -9,9 +9,8 @@
  * - process_kill: 终止后台进程
  */
 
-import { type ChildProcess, spawn } from 'node:child_process';
-import { platform } from 'node:os';
 import type { Context } from '@aalis/core';
+import type { ProcessService, SpawnHandle } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { toStorageUri } from '@aalis/plugin-tools-api';
@@ -19,6 +18,7 @@ import { toStorageUri } from '@aalis/plugin-tools-api';
 interface ShellConfig {
   ctx: Context;
   cwdUri: string;
+  proc: ProcessService;
   storage?: StorageService;
   defaultTimeout: number;
   maxTimeout: number;
@@ -30,7 +30,7 @@ interface ManagedProcess {
   command: string;
   pid: number;
   startedAt: number;
-  process: ChildProcess;
+  handle: SpawnHandle;
   stdout: string;
   stderr: string;
   exitCode: number | null;
@@ -81,9 +81,9 @@ async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: 
   return { uri, localPath: await config.storage.resolveLocalPath(uri, 'read') };
 }
 
-function safeEnv(): NodeJS.ProcessEnv {
+function safeEnv(): Record<string, string | undefined> {
   const keep = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'];
-  const env: NodeJS.ProcessEnv = {};
+  const env: Record<string, string | undefined> = {};
   for (const key of keep) {
     if (process.env[key]) env[key] = process.env[key];
   }
@@ -92,11 +92,12 @@ function safeEnv(): NodeJS.ProcessEnv {
 
 export function registerShellTools(tools: ScopedToolService, config: ShellConfig): void {
   const ctx = config.ctx;
-  const isWin = platform() === 'win32';
+  const proc = config.proc;
+  const isWin = process.platform === 'win32';
   const shellCmd = isWin ? 'cmd' : '/bin/sh';
   const shellFlag = isWin ? '/c' : '-c';
 
-  const platformName = isWin ? 'Windows' : platform() === 'darwin' ? 'macOS' : 'Linux';
+  const platformName = isWin ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
   const shellName = isWin ? 'cmd.exe' : 'sh (POSIX shell)';
   const syntaxHint = isWin
     ? '使用 Windows cmd 语法（如 dir, type, copy, del）。若需 PowerShell，请以 powershell -Command "..." 调用。'
@@ -145,56 +146,38 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
 
       ctx.logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
 
-      return new Promise<string>(resolve => {
-        let stdout = '';
-        let stderr = '';
-        let killed = false;
-
-        const child = spawn(shellCmd, [shellFlag, command], {
-          cwd: cwd.localPath,
-          env: safeEnv(),
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout,
-        });
-
-        child.stdout?.on('data', (chunk: Buffer) => {
-          stdout += chunk.toString();
-        });
-        child.stderr?.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString();
-        });
-
-        const timer = setTimeout(() => {
-          killed = true;
-          child.kill('SIGTERM');
-          setTimeout(() => {
-            if (!child.killed) child.kill('SIGKILL');
-          }, 3000);
-        }, timeout);
-
-        child.on('close', code => {
-          clearTimeout(timer);
-          const result = {
-            exitCode: code ?? -1,
-            stdout: truncateOutput(stdout, config.maxOutputSize),
-            stderr: truncateOutput(stderr, config.maxOutputSize),
-            ...(killed ? { timedOut: true } : {}),
-          };
-          resolve(JSON.stringify(result));
-        });
-
-        child.on('error', err => {
-          clearTimeout(timer);
-          resolve(
-            JSON.stringify({
-              error: err.message,
-              exitCode: -1,
-              stdout: truncateOutput(stdout, config.maxOutputSize),
-              stderr: truncateOutput(stderr, config.maxOutputSize),
-            }),
-          );
-        });
+      const child = proc.spawn(shellCmd, [shellFlag, command], {
+        cwd: cwd.localPath,
+        env: safeEnv(),
+        timeout,
       });
+
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        stdout += typeof chunk === 'string' ? chunk : chunk.toString();
+      });
+      child.stderr?.on('data', (chunk: Buffer | string) => {
+        stderr += typeof chunk === 'string' ? chunk : chunk.toString();
+      });
+
+      try {
+        const result = await child.wait();
+        const timedOut = result.signal === 'SIGKILL' || result.signal === 'SIGTERM';
+        return JSON.stringify({
+          exitCode: result.code ?? -1,
+          stdout: truncateOutput(stdout || result.stdout, config.maxOutputSize),
+          stderr: truncateOutput(stderr || result.stderr, config.maxOutputSize),
+          ...(timedOut ? { timedOut: true } : {}),
+        });
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+          exitCode: -1,
+          stdout: truncateOutput(stdout, config.maxOutputSize),
+          stderr: truncateOutput(stderr, config.maxOutputSize),
+        });
+      }
     },
   });
 
@@ -234,49 +217,48 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       const id = `proc_${++processIdCounter}`;
       const processes = getSessionProcesses(callCtx.sessionId);
 
-      const child = spawn(shellCmd, [shellFlag, command], {
+      const child = proc.spawn(shellCmd, [shellFlag, command], {
         cwd: cwd.localPath,
         env: safeEnv(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: false,
       });
 
       const managed: ManagedProcess = {
         id,
         command,
-        pid: child.pid!,
+        pid: child.pid ?? -1,
         startedAt: Date.now(),
-        process: child,
+        handle: child,
         stdout: '',
         stderr: '',
         exitCode: null,
         done: false,
       };
 
-      child.stdout?.on('data', (chunk: Buffer) => {
-        managed.stdout += chunk.toString();
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        managed.stdout += typeof chunk === 'string' ? chunk : chunk.toString();
         // 保持缓冲区在合理范围
         if (managed.stdout.length > config.maxOutputSize * 2) {
           managed.stdout = managed.stdout.slice(-config.maxOutputSize);
         }
       });
-      child.stderr?.on('data', (chunk: Buffer) => {
-        managed.stderr += chunk.toString();
+      child.stderr?.on('data', (chunk: Buffer | string) => {
+        managed.stderr += typeof chunk === 'string' ? chunk : chunk.toString();
         if (managed.stderr.length > config.maxOutputSize * 2) {
           managed.stderr = managed.stderr.slice(-config.maxOutputSize);
         }
       });
 
-      child.on('close', code => {
-        managed.exitCode = code;
-        managed.done = true;
-      });
-
-      child.on('error', err => {
-        managed.stderr += `\n[进程错误] ${err.message}`;
-        managed.done = true;
-        managed.exitCode = -1;
-      });
+      child.wait().then(
+        result => {
+          managed.exitCode = result.code;
+          managed.done = true;
+        },
+        err => {
+          managed.stderr += `\n[进程错误] ${err instanceof Error ? err.message : String(err)}`;
+          managed.done = true;
+          managed.exitCode = -1;
+        },
+      );
 
       processes.set(id, managed);
       ctx.logger.debug(`exec_background: ${command} -> ${id} (pid: ${child.pid})`);
@@ -424,7 +406,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       }
 
       try {
-        managed.process.kill(signal as NodeJS.Signals);
+        managed.handle.kill(signal as NodeJS.Signals);
         return JSON.stringify({
           processId,
           message: `已发送 ${signal} 信号到进程 (pid: ${managed.pid})`,
@@ -443,7 +425,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       for (const [, managed] of processes) {
         if (!managed.done) {
           try {
-            managed.process.kill('SIGTERM');
+            managed.handle.kill('SIGTERM');
           } catch {}
         }
       }

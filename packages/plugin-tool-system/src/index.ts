@@ -1,5 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
@@ -15,7 +16,7 @@ export const name = '@aalis/plugin-tool-system';
 export const displayName = '系统工具';
 export const subsystem = 'tools';
 export const inject = {
-  optional: ['commands', 'persona', 'storage'],
+  optional: ['commands', 'persona', 'storage', 'process'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -130,12 +131,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册各工具组
   if (cfg.shell.enabled) {
-    if (hasStorage) {
+    const hasProc = ctx.hasService('process');
+    if (hasStorage && hasProc) {
       const storage = createStorageGateway(ctx);
-      registerShellTools(systemTools, { ctx, cwdUri, storage, ...cfg.shell });
+      const proc = createProcessGateway(ctx);
+      registerShellTools(systemTools, { ctx, cwdUri, storage, proc, ...cfg.shell });
       ctx.logger.info('Shell 工具已启用');
     } else {
-      ctx.logger.warn('Shell 工具需要 storage 服务，已跳过注册');
+      ctx.logger.warn('Shell 工具需要 storage 与 process 服务，已跳过注册');
     }
   }
 
