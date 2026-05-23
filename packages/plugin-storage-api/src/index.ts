@@ -54,6 +54,23 @@ export interface StorageReadStreamResult {
 }
 
 /**
+ * 文件变化事件。当前实现统一上报 `change`（含创建/修改/删除）；
+ * `type` 字段保留扩展空间以便后续细分。
+ */
+export interface StorageWatchEvent {
+  type: 'change';
+  /** 完整 storage URI，如 `data:/skills/foo/SKILL.md` */
+  uri: string;
+  /** 根内相对路径 */
+  path: string;
+}
+
+export type StorageWatchListener = (event: StorageWatchEvent) => void;
+
+/** 取消监听 */
+export type StorageUnwatch = () => void;
+
+/**
  * StorageService 的职责定位：
  *
  * 1) **命名根**：把项目里的几个目录起一个稳定名字（workspace / data / tmp /
@@ -83,6 +100,15 @@ export interface StorageService {
    * 调用方必须自觉只把这条路径用作"工作目录/起点"，不要把它当成沙箱边界。
    */
   resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
+  /**
+   * 监听某个 URI（文件或目录）下的变化。返回取消监听的函数。
+   *
+   * - 目录 URI（如 `data:/skills`）：递归监听其下所有文件/子目录。
+   * - 文件 URI（如 `data:/persona.yaml`）：仅监听该文件本身。
+   * - 后端可能对事件做去抖处理；调用方不应假定一次写操作必定对应一次事件。
+   * - 远程/纯虚拟根可能不支持，此时方法本身可能不存在或调用抛错。
+   */
+  watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;
 }
 
 // ----- 存储能力声明 -----
@@ -93,6 +119,7 @@ export interface StorageCapabilityRegistry {
   Write: 'write';
   Delete: 'delete';
   LocalPath: 'local-path';
+  Watch: 'watch';
 }
 
 export type StorageCapability = StorageCapabilityRegistry[keyof StorageCapabilityRegistry];
@@ -103,6 +130,7 @@ export const StorageCapabilities = {
   Write: 'write',
   Delete: 'delete',
   LocalPath: 'local-path',
+  Watch: 'watch',
 } as const satisfies StorageCapabilityRegistry;
 
 declare module '@aalis/core' {
@@ -145,6 +173,12 @@ registerCapabilityProbe('storage', StorageCapabilities.LocalPath, inst =>
   typeof (inst as { resolveLocalPath?: unknown }).resolveLocalPath === 'function'
     ? true
     : 'StorageService.resolveLocalPath() is required for capability "local-path"',
+);
+
+registerCapabilityProbe('storage', StorageCapabilities.Watch, inst =>
+  typeof (inst as { watch?: unknown }).watch === 'function'
+    ? true
+    : 'StorageService.watch() is required for capability "watch"',
 );
 
 // ----- 聚合 / 路由 helper -----
@@ -307,6 +341,13 @@ export function createStorageGateway(ctx: Context): StorageService {
         throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 local-path（远程协议或纯虚拟根）`);
       }
       return target.resolveLocalPath(uri, access);
+    },
+    watch: (uri, listener) => {
+      const target = dispatch(uri, ['watch']);
+      if (!target.watch) {
+        throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 watch（远程协议或纯虚拟根）`);
+      }
+      return target.watch(uri, listener);
     },
   };
 }
