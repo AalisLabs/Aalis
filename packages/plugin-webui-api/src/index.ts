@@ -48,7 +48,14 @@ export interface WebuiTableComponent {
   type: 'table';
   label?: string;
   source: string;
-  columns: Array<{ key: string; label: string; render?: string; nowrap?: boolean; minWidth?: number }>;
+  columns: Array<{
+    key: string;
+    label: string;
+    render?: string;
+    nowrap?: boolean;
+    minWidth?: number;
+    maxWidth?: number;
+  }>;
   actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>;
   refresh?: number;
 }
