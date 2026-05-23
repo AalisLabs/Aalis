@@ -3940,9 +3940,17 @@ details[open] > .tool-call-summary::before {
   border-radius: var(--radius);
   padding: 16px;
   transition: border-color var(--transition);
+  /* 内部宽表格不能撑爆外层布局；用专门的滚动容器（.dyn-table-scroll）承担横向滚动 */
+  max-width: 100%;
+  min-width: 0;
 }
 .dyn-table-block:hover {
   border-color: var(--border-light);
+}
+.dyn-table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
 }
 .dyn-table {
   width: 100%;
@@ -3970,12 +3978,14 @@ details[open] > .tool-call-summary::before {
   white-space: nowrap;
 }
 .dyn-cell-expandable {
+  /* 让按钮与文本在视觉上居中对齐，与同行其他 vertical-align:middle 的单元格保持一致 */
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
 }
 .dyn-cell-expandable .dyn-cell-expandable-text {
   flex: 1;
+  min-width: 0;
   display: -webkit-box;
   -webkit-line-clamp: 1;
   line-clamp: 1;
@@ -3984,6 +3994,10 @@ details[open] > .tool-call-summary::before {
   text-overflow: ellipsis;
   white-space: normal;
   word-break: break-word;
+}
+.dyn-cell-expandable.expanded {
+  /* 展开后让按钮回到顶部，避免按钮跟着内容居中而漂浮在长段落中央 */
+  align-items: flex-start;
 }
 .dyn-cell-expandable.expanded .dyn-cell-expandable-text {
   -webkit-line-clamp: unset;
