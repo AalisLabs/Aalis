@@ -10,6 +10,7 @@ import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 
 export const name = '@aalis/plugin-process-local';
+export const provides = ['process'];
 
 class LocalProcessService implements ProcessService {
   constructor(private readonly storage: StorageService) {}
