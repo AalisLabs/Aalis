@@ -1381,6 +1381,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 提示浏览器启用硬件加速合成层，减少滚动时的重绘 */
+  will-change: scroll-position;
+  /* 使用标准滚动行为以减少卡顿 */
+  scroll-behavior: auto;
 }
 
 .messages::-webkit-scrollbar {
@@ -1411,6 +1415,8 @@ body {
   gap: 2px;
   max-width: 88%;
   animation: msg-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+  /* 限制布局/样式作用域，减少每条消息更新时的回流范围 */
+  contain: layout style;
 }
 
 .message-group.user {
