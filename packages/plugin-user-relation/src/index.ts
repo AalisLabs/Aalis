@@ -159,6 +159,13 @@ export const configSchema: ConfigSchema = {
     description: '注册 show / orphans / cleanup 系列指令（cleanup 需 authority ≥ 3）',
     default: true,
   },
+  strictSelfAssertion: {
+    type: 'boolean',
+    label: '严格自证模式',
+    description:
+      '开启后，提取/工具只允许把关系归到「说过那条原话的人」名下：每条人-* 边必须有 evidence，且至少一条 evidence.messageId 对应消息的发言者 == fromPersonId；agent 工具调用 link/upsert_person 时 from 必须 == 当前发言者。person-person 边的 to 必须已存在 PersonNode。',
+    default: true,
+  },
   digToolDefaultMaxDepth: {
     type: 'number',
     label: 'dig 工具：默认深度',
@@ -333,6 +340,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       candidateEventLimit: numCfg(config.candidateEventLimit, 20),
       extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
       disableThinking: config.extractionDisableThinking !== false,
+      strictSelfAssertion: config.strictSelfAssertion !== false,
       debug,
     });
     extractor.start();
@@ -367,6 +375,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       findPathHardMaxDepth: numCfg(config.findPathHardMaxDepth, 6),
       searchEventsDefaultLimit: numCfg(config.searchEventsDefaultLimit, 10),
       searchEventsHardMaxLimit: numCfg(config.searchEventsHardMaxLimit, 50),
+      strictSelfAssertion: config.strictSelfAssertion !== false,
       debug,
     });
   }

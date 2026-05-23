@@ -43,6 +43,8 @@ async function setup(llmContent: string) {
     allNewMaxMessages: 200,
     candidateEventDays: 7,
     candidateEventLimit: 20,
+    disableThinking: true,
+    strictSelfAssertion: false,
     debug: false,
   });
   extractor.start();
@@ -177,6 +179,8 @@ describe('plugin-user-relation: extractor', () => {
       allNewMaxMessages: 100,
       candidateEventDays: 7,
       candidateEventLimit: 10,
+      disableThinking: true,
+      strictSelfAssertion: false,
       debug: false,
     });
     extractor.start();

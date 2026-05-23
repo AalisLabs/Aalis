@@ -45,6 +45,8 @@ export interface ToolsConfig {
   /** findPath 默认最大深度 */
   findPathDefaultMaxDepth: number;
   findPathHardMaxDepth: number;
+  /** 严格自证：link 创建 person-* 边时，from_id 必须 == 当前发言者 */
+  strictSelfAssertion: boolean;
   debug: boolean;
 }
 
@@ -346,11 +348,23 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, callCtx) => {
       const kind = String(args.kind ?? '');
       const from = String(args.from_id ?? '').trim();
       const to = String(args.to_id ?? '').trim();
       if (!from || !to) return JSON.stringify({ error: 'from_id / to_id 必填' });
+      // 严格自证：person-* 边的 from 必须是当前调用者本人
+      if (
+        cfg.strictSelfAssertion &&
+        (kind === 'person-event' || kind === 'person-entity' || kind === 'person-person')
+      ) {
+        const sender = callCtx.platform && callCtx.userId ? `${callCtx.platform}:${callCtx.userId}` : undefined;
+        if (!sender || from !== sender) {
+          return JSON.stringify({
+            error: `严格自证模式：from_id 必须等于当前发言者 ${sender ?? '(未知)'}，不能代别人写关系`,
+          });
+        }
+      }
       const sentiment = typeof args.sentiment === 'string' ? (args.sentiment as Sentiment) : undefined;
       try {
         if (kind === 'person-event') {
