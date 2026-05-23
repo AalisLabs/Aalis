@@ -3,6 +3,7 @@
 // ============================================================
 
 import { spawn as nodeSpawn } from 'node:child_process';
+import { readFile as fsReadFile } from 'node:fs/promises';
 import type { Context, PluginModule } from '@aalis/core';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/plugin-process-api';
 import { makeTempDirViaStorage } from '@aalis/plugin-process-api';
@@ -16,12 +17,14 @@ class LocalProcessService implements ProcessService {
   constructor(private readonly storage: StorageService) {}
 
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
+    const stdioMode = opts.stdio ?? 'pipe';
     const child = nodeSpawn(cmd, [...args], {
       cwd: opts.cwd,
       env: { ...process.env, ...(opts.env ?? {}) } as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: stdioMode === 'pipe' ? ['pipe', 'pipe', 'pipe'] : stdioMode,
+      detached: opts.detached === true,
     });
-    if (opts.input != null) {
+    if (opts.input != null && stdioMode === 'pipe') {
       try {
         child.stdin?.end(opts.input);
       } catch {
@@ -44,6 +47,13 @@ class LocalProcessService implements ProcessService {
       stdout: child.stdout,
       stderr: child.stderr,
       kill: signal => child.kill(signal),
+      unref: () => {
+        try {
+          child.unref();
+        } catch {
+          /* ignore */
+        }
+      },
       wait: () =>
         new Promise<ExecResult>((resolve, reject) => {
           const chunksOut: Buffer[] = [];
@@ -83,6 +93,11 @@ class LocalProcessService implements ProcessService {
 
   async makeTempDir(prefix: string): Promise<TempDirHandle> {
     return makeTempDirViaStorage(this.storage, prefix);
+  }
+
+  async readExternalFile(path: string): Promise<Uint8Array> {
+    const realPath = path.startsWith('file://') ? path.slice('file://'.length) : path;
+    return fsReadFile(realPath);
   }
 }
 
