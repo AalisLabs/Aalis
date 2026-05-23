@@ -11,6 +11,7 @@
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-cron-engine-api": "workspace:*",
+    "@aalis/plugin-storage-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",

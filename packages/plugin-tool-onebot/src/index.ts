@@ -1,8 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import { extname, isAbsolute, resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import { getPlatformAdapters, getPlatformNames, type PlatformAdapter } from '@aalis/plugin-platform-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { AccessChecker, SessionHistoryService } from '@aalis/plugin-tool-session-api';
 import type { ScopedToolService, ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
@@ -217,7 +216,9 @@ async function callAction(
 }
 
 function imageMimeFromPath(path: string): string {
-  const ext = extname(path.split('?')[0]).toLowerCase();
+  const cleaned = path.split('?')[0];
+  const dot = cleaned.lastIndexOf('.');
+  const ext = dot >= 0 ? cleaned.slice(dot).toLowerCase() : '';
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
   if (ext === '.gif') return 'image/gif';
   if (ext === '.webp') return 'image/webp';
@@ -225,11 +226,17 @@ function imageMimeFromPath(path: string): string {
   return 'image/png';
 }
 
-async function localImageToDataUri(path: string): Promise<string | null> {
-  const filePath = isAbsolute(path) ? path : resolve(process.cwd(), path);
+/**
+ * 尝试将 OneBot get_image 返回的文件路径转为 data URI。
+ * 仅支持 storage URI 形式（含 ':/'）。裸本地 fs 路径不再处理，
+ * 交由上游 vision 退路使用原始 source（该 fallback 本身在实践中极少命中）。
+ */
+async function localImageToDataUri(storage: StorageService, path: string): Promise<string | null> {
+  if (!path.includes(':/')) return null;
   try {
-    const buf = await readFile(filePath);
-    return `data:${imageMimeFromPath(filePath)};base64,${buf.toString('base64')}`;
+    const buf = (await storage.readFile(path)) as Uint8Array;
+    const b64 = Buffer.from(buf).toString('base64');
+    return `data:${imageMimeFromPath(path)};base64,${b64}`;
   } catch {
     return null;
   }
@@ -325,7 +332,12 @@ function collectForwardImageRefs(data: unknown, limit: number): ForwardImageRef[
     .flatMap(item => extractImageRefsFromContent(getForwardNodeContent(item)));
 }
 
-async function resolveForwardImageSource(ctx: Context, selfId: string, ref: ForwardImageRef): Promise<string> {
+async function resolveForwardImageSource(
+  ctx: Context,
+  storage: StorageService,
+  selfId: string,
+  ref: ForwardImageRef,
+): Promise<string> {
   if (/^(https?:|data:)/i.test(ref.source)) return ref.source;
 
   try {
@@ -333,7 +345,7 @@ async function resolveForwardImageSource(ctx: Context, selfId: string, ref: Forw
     const resolvedSource = imageData.url ?? imageData.file ?? ref.source;
     if (typeof resolvedSource === 'string') {
       if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
-      const dataUri = await localImageToDataUri(resolvedSource);
+      const dataUri = await localImageToDataUri(storage, resolvedSource);
       if (dataUri) return dataUri;
       return resolvedSource;
     }
@@ -341,12 +353,13 @@ async function resolveForwardImageSource(ctx: Context, selfId: string, ref: Forw
     ctx.logger.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
   }
 
-  const dataUri = await localImageToDataUri(ref.source);
+  const dataUri = await localImageToDataUri(storage, ref.source);
   return dataUri ?? ref.source;
 }
 
 async function recognizeForwardImages(
   ctx: Context,
+  storage: StorageService,
   selfId: string,
   data: unknown,
   limit: number,
@@ -367,7 +380,7 @@ async function recognizeForwardImages(
     if (seen.has(key)) continue;
     seen.add(key);
     try {
-      const imageSource = await resolveForwardImageSource(ctx, selfId, ref);
+      const imageSource = await resolveForwardImageSource(ctx, storage, selfId, ref);
       const description = await mediaSvc.describeImage(imageSource);
       if (description) imageDescriptions.set(key, description);
     } catch (err) {
@@ -542,6 +555,7 @@ interface OneBotToolBundle {
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const tools = useToolService(ctx);
+  const storage = createStorageGateway(ctx);
   const bundle: OneBotToolBundle = {
     daily: toolsWithGroups(tools, ['onebot-daily']),
     group: toolsWithGroups(tools, ['onebot-group']),
@@ -593,7 +607,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     };
 
     if (cfg.groupManagement.enabled) registerGroupManagementTools(ctx, bundle);
-    if (cfg.groupInfo.enabled) registerGroupInfoTools(ctx, bundle);
+    if (cfg.groupInfo.enabled) registerGroupInfoTools(ctx, storage, bundle);
     if (cfg.account.enabled) registerAccountTools(ctx, bundle);
     if (cfg.interaction.enabled) registerInteractionTools(ctx, bundle);
     if (cfg.sessionHistory.enabled) {
@@ -927,7 +941,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
 
 // ===== 群信息查询工具 =====
 
-function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
+function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: OneBotToolBundle): void {
   const { daily } = bundle;
   // ---- 查看合并转发 ----
   daily.register({
@@ -975,7 +989,7 @@ function registerGroupInfoTools(ctx: Context, bundle: OneBotToolBundle): void {
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
 
-      const formatContext = await recognizeForwardImages(ctx, selfId, data, limit);
+      const formatContext = await recognizeForwardImages(ctx, storage, selfId, data, limit);
       return formatForwardMessage(data, limit, formatContext);
     },
   });

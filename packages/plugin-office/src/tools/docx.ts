@@ -1,5 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import {
   AlignmentType,
@@ -125,7 +124,16 @@ const alignMap: Record<string, (typeof AlignmentType)[keyof typeof AlignmentType
   justify: AlignmentType.JUSTIFIED,
 };
 
-export function registerDocxTools(tools: ScopedToolService, sessions: DocSessionManager, outputDir: string) {
+export function registerDocxTools(
+  tools: ScopedToolService,
+  sessions: DocSessionManager,
+  storage: StorageService,
+  outputUri: string,
+) {
+  function joinUri(base: string, rel: string): string {
+    const b = base.endsWith('/') ? base : `${base}/`;
+    return `${b}${rel.replace(/^\/+/, '')}`;
+  }
   // ---- doc_create ----
   tools.register({
     definition: {
@@ -451,7 +459,7 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
     async handler(args) {
       sessions.require(String(args.docId), 'docx');
       const { state } = sessions.get(String(args.docId))!.doc as { state: DocState };
-      const { buffer } = await loadImage(String(args.source), outputDir);
+      const { buffer } = await loadImage(storage, String(args.source), outputUri);
       const width = Number(args.width || 400);
       const height = Number(args.height || 300);
 
@@ -728,11 +736,10 @@ export function registerDocxTools(tools: ScopedToolService, sessions: DocSession
       });
 
       const buffer = await Packer.toBuffer(doc);
-      const filePath = resolve(outputDir, session.filename);
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, buffer);
+      const fileUri = joinUri(outputUri, session.filename);
+      await storage.writeFile(fileUri, buffer);
       sessions.remove(session.id);
-      return JSON.stringify({ success: true, path: filePath, size: buffer.length, message: `文档已保存: ${filePath}` });
+      return JSON.stringify({ success: true, path: fileUri, size: buffer.length, message: `文档已保存: ${fileUri}` });
     },
   });
 }

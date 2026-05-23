@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 
 // ===== 插件元数据 =====
@@ -11,11 +10,16 @@ export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
 
 export const configSchema: ConfigSchema = {
-  path: { type: 'string', label: '存储目录', default: 'data/vectorstore', description: 'JSON 向量文件存储目录' },
+  path: {
+    type: 'string',
+    label: '存储目录',
+    default: 'data:/vectorstore',
+    description: 'JSON 向量文件存储目录（storage URI）。也兼容旧格式 “data/vectorstore”。',
+  },
 };
 
 export const defaultConfig = {
-  path: 'data/vectorstore',
+  path: 'data:/vectorstore',
 };
 
 // ===== 配置 =====
@@ -50,31 +54,30 @@ interface StoredEntry {
 
 class FlatVectorStore implements VectorStoreService {
   private entries: StoredEntry[] = [];
-  private readonly dataPath: string;
+  private readonly storage: StorageService;
+  private readonly dataUri: string;
   private dirty = false;
 
   constructor(
-    storagePath: string,
+    storage: StorageService,
+    dataUri: string,
     private readonly logger?: { warn: (msg: string, ...args: unknown[]) => void },
   ) {
-    this.dataPath = resolve(storagePath, 'vectors.json');
+    this.storage = storage;
+    this.dataUri = dataUri;
+  }
 
+  /** 启动加载（由 apply 调用） */
+  async init(): Promise<void> {
     try {
-      if (!existsSync(storagePath)) {
-        mkdirSync(storagePath, { recursive: true });
-      }
+      const raw = (await this.storage.readFile(this.dataUri, 'utf-8')) as string;
+      this.entries = JSON.parse(raw);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger?.warn(`无法创建存储目录 ${storagePath}: ${msg}`);
-    }
-
-    try {
-      if (existsSync(this.dataPath)) {
-        this.entries = JSON.parse(readFileSync(this.dataPath, 'utf-8'));
+      // 文件不存在 = 冷启动，不警告；其他错误才警
+      if (!/ENOENT|not found|不存在/i.test(msg)) {
+        this.logger?.warn(`向量数据文件损坏，将从空数据开始: ${msg}`);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger?.warn(`向量数据文件损坏，将从空数据开始: ${msg}`);
       this.entries = [];
     }
   }
@@ -123,7 +126,7 @@ class FlatVectorStore implements VectorStoreService {
   async save(): Promise<void> {
     if (!this.dirty) return;
     try {
-      writeFileSync(this.dataPath, JSON.stringify(this.entries));
+      await this.storage.writeFile(this.dataUri, JSON.stringify(this.entries));
       this.dirty = false;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -136,17 +139,28 @@ class FlatVectorStore implements VectorStoreService {
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const storeConfig: VectorStoreConfig = {
-    path: (config.path as string) ?? 'data/vectorstore',
+    path: (config.path as string) ?? 'data:/vectorstore',
   };
 
-  const storagePath = resolve(ctx.config.getConfigDir(), storeConfig.path);
-  const store = new FlatVectorStore(storagePath, ctx.logger);
+  // 兼容旧格式 “data/vectorstore”
+  function toUri(input: string): string {
+    if (input.includes(':/')) return input;
+    const s = input.trim().replace(/^\.?\/+/, '');
+    const idx = s.indexOf('/');
+    return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
+  }
 
-  ctx.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储路径=${storagePath}`);
+  const dirUri = toUri(storeConfig.path);
+  const dataUri = dirUri.endsWith('/') ? `${dirUri}vectors.json` : `${dirUri}/vectors.json`;
+  const storage = createStorageGateway(ctx);
+  const store = new FlatVectorStore(storage, dataUri, ctx.logger);
+  await store.init();
+
+  ctx.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储 URI=${dataUri}`);
 
   ctx.provide('vectorstore', store);
 
   ctx.onDispose(() => {
-    store.save();
+    void store.save();
   });
 }

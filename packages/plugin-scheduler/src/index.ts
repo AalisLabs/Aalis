@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import { parseEverySeconds, useCronEngine } from '@aalis/plugin-cron-engine-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -167,15 +166,16 @@ export const configSchema: ConfigSchema = {
   persistPath: {
     type: 'string',
     label: '动态任务存储路径',
-    default: 'data/scheduler-jobs.json',
-    description: '通过 AI 或 WebUI 创建的任务会持久化到此文件，重启后自动加载。',
+    default: 'data:/scheduler-jobs.json',
+    description:
+      '通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。也兼容旧格式 “data/scheduler-jobs.json”。',
   },
 };
 
 export const defaultConfig = {
   jobs: [] as Record<string, unknown>[],
   maxConcurrent: 3,
-  persistPath: 'data/scheduler-jobs.json',
+  persistPath: 'data:/scheduler-jobs.json',
 };
 
 // ──────────── WebUI 页面 ────────────
@@ -335,7 +335,7 @@ export const actions: PluginModule['actions'] = {
 
 // ──────────── 插件入口 ────────────
 
-export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
+export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('scheduler');
   const cronEngine = useCronEngine(ctx);
@@ -352,14 +352,26 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // 动态任务集合（需要持久化）
   const dynamicJobs = new Map<string, SchedulerJobConfig>();
 
-  // ── 持久化读写 ──
+  // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
 
-  const persistFile = resolve(process.cwd(), config.persistPath);
+  const storage = createStorageGateway(ctx);
+  function toUri(input: string): string {
+    if (input.includes(':/')) return input;
+    const s = input.trim().replace(/^\.?\/+/, '');
+    const idx = s.indexOf('/');
+    return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
+  }
+  const persistUri = toUri(config.persistPath);
 
-  function loadDynamicJobs(): SchedulerJobConfig[] {
+  async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
     try {
-      if (!existsSync(persistFile)) return [];
-      const data = JSON.parse(readFileSync(persistFile, 'utf-8'));
+      let raw: string;
+      try {
+        raw = (await storage.readFile(persistUri, 'utf-8')) as string;
+      } catch {
+        return [];
+      }
+      const data = JSON.parse(raw);
       if (!Array.isArray(data)) return [];
       // biome-ignore lint/suspicious/noExplicitAny: 从 JSON 文件反序列化的原始字段，手动校验转型
       return data.map((j: any) => ({
@@ -379,16 +391,26 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     }
   }
 
+  /**
+   * 串行化下发 storage.writeFile（fire-and-forget）：
+   * - SchedulerService 接口保留同步语义，调用方不需 await；
+   * - 使用 chain 串行避免并发写产生中间态；
+   * - storage.writeFile 会自动 mkdir 父目录。
+   */
+  let saveChain: Promise<void> = Promise.resolve();
   function saveDynamicJobs(): void {
-    try {
-      const dir = dirname(persistFile);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const jobs = [...dynamicJobs.values()];
-      writeFileSync(persistFile, JSON.stringify(jobs, null, 2), 'utf-8');
-      logger.debug(`已持久化 ${jobs.length} 个动态任务`);
-    } catch (err) {
-      logger.warn(`持久化任务失败: ${err}`);
-    }
+    const jobs = [...dynamicJobs.values()];
+    const payload = JSON.stringify(jobs, null, 2);
+    saveChain = saveChain
+      .then(() => storage.writeFile(persistUri, payload))
+      .then(
+        () => {
+          logger.debug(`已持久化 ${jobs.length} 个动态任务`);
+        },
+        err => {
+          logger.warn(`持久化任务失败: ${err}`);
+        },
+      );
   }
 
   // ── 发送调度消息 ──
@@ -573,7 +595,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   }
 
   // 加载持久化的动态任务
-  const persisted = loadDynamicJobs();
+  const persisted = await loadDynamicJobs();
   for (const job of persisted) {
     if (!runtimes.has(job.name)) {
       dynamicJobs.set(job.name, job);
@@ -929,7 +951,7 @@ function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
       enabled: j.enabled !== false,
     })),
     maxConcurrent: (raw.maxConcurrent as number) ?? 3,
-    persistPath: (raw.persistPath as string) ?? 'data/scheduler-jobs.json',
+    persistPath: (raw.persistPath as string) ?? 'data:/scheduler-jobs.json',
   };
 }
 
