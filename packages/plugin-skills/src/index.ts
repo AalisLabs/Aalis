@@ -634,7 +634,12 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     handler: async (args, callCtx) => {
       const skillName = String(args.name ?? '').trim();
       if (!skillName) return JSON.stringify({ error: 'name 不能为空' });
-      const skill = skillsCache.get(skillName);
+      let skill = skillsCache.get(skillName);
+      // 若缓存未命中，先 lazy rescan 一次再试
+      if (!skill) {
+        rescanSkills();
+        skill = skillsCache.get(skillName);
+      }
       if (!skill) return JSON.stringify({ error: `skill "${skillName}" 不存在` });
       const sessionId = callCtx?.sessionId;
       if (!sessionId) {
@@ -679,6 +684,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       },
     },
     handler: async args => {
+      // 若缓存为空，先做一次 lazy rescan（覆盖"服务启动后才放入 skill"的场景）
+      if (skillsCache.size === 0) rescanSkills();
       const visible = getAllowedSkills();
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const filtered = visible.filter(s => {
