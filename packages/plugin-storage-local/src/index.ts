@@ -1,6 +1,6 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, type FSWatcher, watch as fsWatch } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type { CheckResult } from '@aalis/plugin-doctor-api';
 import { useDoctorService } from '@aalis/plugin-doctor-api';
@@ -11,6 +11,9 @@ import type {
   StorageRootInfo,
   StorageService,
   StorageStat,
+  StorageUnwatch,
+  StorageWatchEvent,
+  StorageWatchListener,
 } from '@aalis/plugin-storage-api';
 import { StorageCapabilities, type StorageCapability } from '@aalis/plugin-storage-api';
 
@@ -398,6 +401,89 @@ class ScopedStorageService implements StorageService {
     return abs;
   }
 
+  /**
+   * 监听某个 URI 下的变化。基于 fs.watch + 50ms 去抖。
+   *
+   * - 目录 URI：尝试 recursive 监听整个子树；若平台不支持 recursive，降级为只监听该目录顶层（warn）。
+   * - 文件 URI：监听该文件本身。
+   * - 事件路径会归一化为相对该 URI 的 storage URI 路径并去抖（同一相对路径 50ms 内只触发一次）。
+   */
+  watch(uri: string, listener: StorageWatchListener): StorageUnwatch {
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('readable');
+    const absBase = resolve(this.root.realPath, normalizeRelPath(relPath));
+    if (!isInside(this.root.realPath, absBase) && absBase !== this.root.realPath) {
+      throw new Error('路径不合法');
+    }
+
+    const debounceMs = 50;
+    const pending = new Map<string, NodeJS.Timeout>();
+    let closed = false;
+
+    const emit = (eventRelToRoot: string): void => {
+      if (closed) return;
+      const norm = normalizeRelPath(eventRelToRoot).replace(/\\/g, '/');
+      const existing = pending.get(norm);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        pending.delete(norm);
+        if (closed) return;
+        const event: StorageWatchEvent = {
+          type: 'change',
+          uri: toUri(this.root.name, norm),
+          path: norm,
+        };
+        try {
+          listener(event);
+        } catch (err) {
+          this.logger.warn(`storage.watch listener 抛错 ${event.uri}: ${err}`);
+        }
+      }, debounceMs);
+      pending.set(norm, timer);
+    };
+
+    let watcher: FSWatcher;
+    const baseRelToRoot = normalizeRelPath(relPath);
+    const handle = (filename: string | Buffer | null): void => {
+      if (!filename) {
+        emit(baseRelToRoot);
+        return;
+      }
+      const name = typeof filename === 'string' ? filename : filename.toString('utf8');
+      // fs.watch 给的 filename 是相对被监听路径的相对路径
+      const rel = baseRelToRoot ? `${baseRelToRoot}/${name.split(sep).join('/')}` : name.split(sep).join('/');
+      emit(rel);
+    };
+
+    try {
+      watcher = fsWatch(absBase, { recursive: true }, (_event, filename) => handle(filename));
+      this.logger.debug(`storage.watch ${toUri(this.root.name, baseRelToRoot)} (recursive)`);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM') {
+        this.logger.warn(`storage.watch 当前平台不支持 recursive，仅监听顶层: ${toUri(this.root.name, baseRelToRoot)}`);
+        watcher = fsWatch(absBase, (_event, filename) => handle(filename));
+      } else {
+        throw err;
+      }
+    }
+
+    watcher.on('error', e => this.logger.warn(`storage.watch 错误 ${toUri(this.root.name, baseRelToRoot)}: ${e}`));
+
+    return () => {
+      if (closed) return;
+      closed = true;
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+      try {
+        watcher.close();
+      } catch {
+        // ignore
+      }
+      this.logger.debug(`storage.watch 已停止 ${toUri(this.root.name, baseRelToRoot)}`);
+    };
+  }
+
   // ---- 内部 ----
 
   private parseSelfUri(uri: string): string {
@@ -558,7 +644,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // - URI 路由由 createStorageGateway(ctx) helper 在调用方完成，不再有 facade。
   for (const root of roots) {
     const caps: StorageCapability[] = [];
-    if (root.readable) caps.push(StorageCapabilities.List, StorageCapabilities.Read, StorageCapabilities.LocalPath);
+    if (root.readable)
+      caps.push(
+        StorageCapabilities.List,
+        StorageCapabilities.Read,
+        StorageCapabilities.LocalPath,
+        StorageCapabilities.Watch,
+      );
     if (root.writable) caps.push(StorageCapabilities.Write);
     if (root.deletable) caps.push(StorageCapabilities.Delete);
     if (caps.length === 0) {
