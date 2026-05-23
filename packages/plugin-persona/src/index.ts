@@ -95,6 +95,9 @@ interface PersonaCard {
   nick_name?: string[];
   /** JSON 内容由客户端渲染，服务端不提取回复字段 */
   clientSideJsonRendering?: boolean;
+  /** 该角色卡可用的 skill 名称白名单（@aalis/plugin-skills 用于过滤暴露给 LLM 的 skill 列表）。
+   *  缺省/undefined 表示不限制；空数组表示该角色不暴露任何 skill。 */
+  skills?: string[];
 }
 
 // ===== 实现 =====
@@ -224,6 +227,7 @@ class PersonaServiceImpl implements PersonaService {
               outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
               nick_name: parsed.nick_name as string[] | undefined,
               clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
+              skills: parsed.skills as string[] | undefined,
             };
             this.cardCache.set(name, card);
             return card;
@@ -423,6 +427,11 @@ class PersonaServiceImpl implements PersonaService {
     return this.timeInjection;
   }
 
+  getPersonaSkills(options?: PersonaSessionOptions): string[] | undefined {
+    const effectiveCard = this.getEffectiveCard(options);
+    return effectiveCard.skills;
+  }
+
   async listModels(): Promise<string[]> {
     const names = new Set<string>();
     for (const dir of this.searchDirs) {
@@ -483,6 +492,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
         nick_name: parsed.nick_name as string[] | undefined,
         clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
+        skills: parsed.skills as string[] | undefined,
       };
     } catch {
       return undefined;
