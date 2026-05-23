@@ -12,8 +12,11 @@
  */
 import type { RelationStore } from './store.js';
 import type {
+  EntityNode,
+  EventEventEdge,
   EventNode,
   EvidenceRef,
+  PersonEntityEdge,
   PersonEventEdge,
   PersonNode,
   PersonPersonEdge,
@@ -128,6 +131,188 @@ export class RelationService {
 
   deleteEvent(eventId: string) {
     return this.store.deleteEventCascade(eventId);
+  }
+
+  // ----- Entity -----
+
+  /**
+   * 新建实体。ID 由本方法生成；调用方拿到 ID 后即可挂边。
+   */
+  async createEntity(input: Omit<EntityNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EntityNode> {
+    const now = Date.now();
+    const node: EntityNode = {
+      id: globalThis.crypto.randomUUID(),
+      entityKind: input.entityKind,
+      name: input.name,
+      aliases: input.aliases,
+      summary: input.summary,
+      firstSeenAt: now,
+      lastReinforcedAt: now,
+      evidence: trimEvidence(input.evidence ?? []),
+    };
+    await this.store.upsertEntity(node);
+    return node;
+  }
+
+  /**
+   * 强化已有实体：追加 evidence、更新 lastReinforcedAt，可选更新字段。
+   */
+  async reinforceEntity(
+    entityId: string,
+    patch: {
+      name?: string;
+      aliases?: string[];
+      summary?: string;
+      entityKind?: EntityNode['entityKind'];
+      evidence?: EvidenceRef[];
+    },
+  ): Promise<EntityNode | undefined> {
+    const existing = await this.store.getEntity(entityId);
+    if (!existing) return undefined;
+    const mergedAliases = patch.aliases
+      ? Array.from(new Set([...(existing.aliases ?? []), ...patch.aliases]))
+      : existing.aliases;
+    const merged: EntityNode = {
+      ...existing,
+      name: patch.name ?? existing.name,
+      aliases: mergedAliases,
+      summary: patch.summary ?? existing.summary,
+      entityKind: patch.entityKind ?? existing.entityKind,
+      lastReinforcedAt: Date.now(),
+      evidence: trimEvidence([...(patch.evidence ?? []), ...existing.evidence]),
+    };
+    await this.store.upsertEntity(merged);
+    return merged;
+  }
+
+  getEntity(entityId: string) {
+    return this.store.getEntity(entityId);
+  }
+
+  deleteEntity(entityId: string) {
+    return this.store.deleteEntityCascade(entityId);
+  }
+
+  /**
+   * 按 name / aliases 精确匹配（不区分大小写）查找已有实体。
+   * 用于抽取阶段去重 —— LLM 提取出"三角洲"时优先复用已存在的同名实体。
+   */
+  async findEntityByName(name: string): Promise<EntityNode | undefined> {
+    const target = name.trim().toLowerCase();
+    if (!target) return undefined;
+    const snap = await this.store.loadAll();
+    return snap.entities.find(
+      e => e.name.trim().toLowerCase() === target || (e.aliases ?? []).some(a => a.trim().toLowerCase() === target),
+    );
+  }
+
+  // ----- Edge: person → entity -----
+
+  async addPersonEntityEdge(input: {
+    fromPersonId: string;
+    toEntityId: string;
+    role: PersonEntityEdge['role'];
+    sentiment?: PersonEntityEdge['sentiment'];
+    weight?: number;
+    evidence?: EvidenceRef[];
+  }): Promise<PersonEntityEdge> {
+    const existing = await this.findPersonEntityEdge(input.fromPersonId, input.toEntityId, input.role);
+    const now = Date.now();
+    if (existing) {
+      const merged: PersonEntityEdge = {
+        ...existing,
+        sentiment: input.sentiment ?? existing.sentiment,
+        weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+        lastReinforcedAt: now,
+        evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
+      };
+      await this.store.upsertEdge(merged);
+      return merged;
+    }
+    const fresh: PersonEntityEdge = {
+      id: globalThis.crypto.randomUUID(),
+      kind: 'person-entity',
+      fromPersonId: input.fromPersonId,
+      toEntityId: input.toEntityId,
+      role: input.role,
+      sentiment: input.sentiment,
+      weight: clamp01(input.weight ?? 0.5),
+      firstSeenAt: now,
+      lastReinforcedAt: now,
+      evidence: trimEvidence(input.evidence ?? []),
+    };
+    await this.store.upsertEdge(fresh);
+    return fresh;
+  }
+
+  async findPersonEntityEdge(
+    fromPersonId: string,
+    toEntityId: string,
+    role: PersonEntityEdge['role'],
+  ): Promise<PersonEntityEdge | undefined> {
+    const snapshot = await this.store.loadAll();
+    return snapshot.edges.find(
+      (e): e is PersonEntityEdge =>
+        e.kind === 'person-entity' && e.fromPersonId === fromPersonId && e.toEntityId === toEntityId && e.role === role,
+    );
+  }
+
+  // ----- Edge: event → event -----
+
+  async addEventEventEdge(input: {
+    fromEventId: string;
+    toEventId: string;
+    relationType: string;
+    directed?: boolean;
+    weight?: number;
+    evidence?: EvidenceRef[];
+  }): Promise<EventEventEdge> {
+    const normalizedType = input.relationType.trim().toLowerCase().replace(/\s+/g, '-');
+    const directed = input.directed ?? isDirectedEventEventRelation(normalizedType);
+    const existing = await this.findEventEventEdge(input.fromEventId, input.toEventId, normalizedType, directed);
+    const now = Date.now();
+    if (existing) {
+      const merged: EventEventEdge = {
+        ...existing,
+        weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+        lastReinforcedAt: now,
+        evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
+      };
+      await this.store.upsertEdge(merged);
+      return merged;
+    }
+    const fresh: EventEventEdge = {
+      id: globalThis.crypto.randomUUID(),
+      kind: 'event-event',
+      fromEventId: input.fromEventId,
+      toEventId: input.toEventId,
+      relationType: normalizedType,
+      directed,
+      weight: clamp01(input.weight ?? 0.5),
+      firstSeenAt: now,
+      lastReinforcedAt: now,
+      evidence: trimEvidence(input.evidence ?? []),
+    };
+    await this.store.upsertEdge(fresh);
+    return fresh;
+  }
+
+  async findEventEventEdge(
+    fromEventId: string,
+    toEventId: string,
+    relationType: string,
+    directed: boolean,
+  ): Promise<EventEventEdge | undefined> {
+    const snapshot = await this.store.loadAll();
+    return snapshot.edges.find((e): e is EventEventEdge => {
+      if (e.kind !== 'event-event') return false;
+      if (e.relationType !== relationType) return false;
+      if (directed) return e.fromEventId === fromEventId && e.toEventId === toEventId;
+      return (
+        (e.fromEventId === fromEventId && e.toEventId === toEventId) ||
+        (e.fromEventId === toEventId && e.toEventId === fromEventId)
+      );
+    });
   }
 
   // ----- Edge: person → event -----
@@ -259,23 +444,30 @@ export class RelationService {
     return this.store.loadAll();
   }
 
-  /** 查询某人涉及的所有事件 + 直连人际关系（深度 1 快捷方法） */
+  /** 查询某人涉及的所有事件 + 实体 + 直连人际关系（深度 1 快捷方法） */
   async getNeighborhood(personId: string): Promise<{
     person: PersonNode | undefined;
     events: EventNode[];
+    entities: EntityNode[];
     edges: RelationEdge[];
   }> {
     const snapshot = await this.store.loadAll();
     const person = snapshot.persons.find(p => p.id === personId);
     const relatedEdges = snapshot.edges.filter(e => {
       if (e.kind === 'person-event') return e.fromPersonId === personId;
-      return e.fromPersonId === personId || e.toPersonId === personId;
+      if (e.kind === 'person-entity') return e.fromPersonId === personId;
+      if (e.kind === 'person-person') return e.fromPersonId === personId || e.toPersonId === personId;
+      return false; // event-event 不算 person 邻接
     });
     const eventIds = new Set(
       relatedEdges.filter((e): e is PersonEventEdge => e.kind === 'person-event').map(e => e.toEventId),
     );
+    const entityIds = new Set(
+      relatedEdges.filter((e): e is PersonEntityEdge => e.kind === 'person-entity').map(e => e.toEntityId),
+    );
     const events = snapshot.events.filter(ev => eventIds.has(ev.id));
-    return { person, events, edges: relatedEdges };
+    const entities = snapshot.entities.filter(ent => entityIds.has(ent.id));
+    return { person, events, entities, edges: relatedEdges };
   }
 
   /**
@@ -292,15 +484,16 @@ export class RelationService {
     startPersonIds: string[];
     maxDepth: number;
     maxBreadth: number;
-  }): Promise<{ persons: PersonNode[]; events: EventNode[]; edges: RelationEdge[] }> {
-    const empty = { persons: [], events: [], edges: [] };
+  }): Promise<{ persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] }> {
+    const empty = { persons: [], events: [], entities: [], edges: [] };
     if (opts.maxDepth < 0 || opts.maxBreadth < 1 || opts.startPersonIds.length === 0) return empty;
 
     const snapshot = await this.store.loadAll();
-    const { peByPerson, ppByPerson, peByEvent } = buildAdjacency(snapshot.edges);
+    const { peByPerson, ppByPerson, peByEvent, pentByPerson, pentByEntity, eeByEvent } = buildAdjacency(snapshot.edges);
 
     const visited = new Set<string>();
-    const queue: Array<{ id: string; kind: 'person' | 'event'; depth: number }> = [];
+    type NodeKind = 'person' | 'event' | 'entity';
+    const queue: Array<{ id: string; kind: NodeKind; depth: number }> = [];
     for (const sid of opts.startPersonIds) {
       if (!visited.has(sid)) {
         visited.add(sid);
@@ -312,7 +505,7 @@ export class RelationService {
       const cur = queue.shift();
       if (!cur) break;
       if (cur.depth >= opts.maxDepth) continue;
-      const neighbors: Array<{ id: string; kind: 'person' | 'event'; weight: number }> = [];
+      const neighbors: Array<{ id: string; kind: NodeKind; weight: number }> = [];
       if (cur.kind === 'person') {
         for (const e of ppByPerson.get(cur.id) ?? []) {
           const other = e.fromPersonId === cur.id ? e.toPersonId : e.fromPersonId;
@@ -321,8 +514,20 @@ export class RelationService {
         for (const e of peByPerson.get(cur.id) ?? []) {
           neighbors.push({ id: e.toEventId, kind: 'event', weight: e.weight });
         }
-      } else {
+        for (const e of pentByPerson.get(cur.id) ?? []) {
+          neighbors.push({ id: e.toEntityId, kind: 'entity', weight: e.weight });
+        }
+      } else if (cur.kind === 'event') {
         for (const e of peByEvent.get(cur.id) ?? []) {
+          neighbors.push({ id: e.fromPersonId, kind: 'person', weight: e.weight });
+        }
+        for (const e of eeByEvent.get(cur.id) ?? []) {
+          const other = e.fromEventId === cur.id ? e.toEventId : e.fromEventId;
+          neighbors.push({ id: other, kind: 'event', weight: e.weight });
+        }
+      } else {
+        // entity
+        for (const e of pentByEntity.get(cur.id) ?? []) {
           neighbors.push({ id: e.fromPersonId, kind: 'person', weight: e.weight });
         }
       }
@@ -339,11 +544,14 @@ export class RelationService {
 
     const persons = snapshot.persons.filter(p => visited.has(p.id));
     const events = snapshot.events.filter(e => visited.has(e.id));
+    const entities = snapshot.entities.filter(e => visited.has(e.id));
     const edges = snapshot.edges.filter(e => {
       if (e.kind === 'person-event') return visited.has(e.fromPersonId) && visited.has(e.toEventId);
+      if (e.kind === 'person-entity') return visited.has(e.fromPersonId) && visited.has(e.toEntityId);
+      if (e.kind === 'event-event') return visited.has(e.fromEventId) && visited.has(e.toEventId);
       return visited.has(e.fromPersonId) && visited.has(e.toPersonId);
     });
-    return { persons, events, edges };
+    return { persons, events, entities, edges };
   }
 
   /**
@@ -355,11 +563,12 @@ export class RelationService {
     fromPersonId: string,
     toPersonId: string,
     maxDepth: number,
-  ): Promise<{ nodes: Array<PersonNode | EventNode>; edges: RelationEdge[] } | null> {
+  ): Promise<{ nodes: Array<PersonNode | EventNode | EntityNode>; edges: RelationEdge[] } | null> {
     if (maxDepth < 1) return null;
     const snapshot = await this.store.loadAll();
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
+    const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
     if (fromPersonId === toPersonId) {
       const p = personById.get(fromPersonId);
       return p ? { nodes: [p], edges: [] } : null;
@@ -374,6 +583,12 @@ export class RelationService {
       if (e.kind === 'person-event') {
         addAdj(e.fromPersonId, e.toEventId, e);
         addAdj(e.toEventId, e.fromPersonId, e);
+      } else if (e.kind === 'person-entity') {
+        addAdj(e.fromPersonId, e.toEntityId, e);
+        addAdj(e.toEntityId, e.fromPersonId, e);
+      } else if (e.kind === 'event-event') {
+        addAdj(e.fromEventId, e.toEventId, e);
+        if (!e.directed) addAdj(e.toEventId, e.fromEventId, e);
       } else {
         addAdj(e.fromPersonId, e.toPersonId, e);
         if (!e.directed) addAdj(e.toPersonId, e.fromPersonId, e);
@@ -410,8 +625,8 @@ export class RelationService {
       cursor = p.from;
     }
     const nodes = pathNodeIds
-      .map(id => personById.get(id) ?? eventById.get(id))
-      .filter((n): n is PersonNode | EventNode => !!n);
+      .map(id => personById.get(id) ?? eventById.get(id) ?? entityById.get(id))
+      .filter((n): n is PersonNode | EventNode | EntityNode => !!n);
     return { nodes, edges: pathEdges };
   }
 
@@ -441,6 +656,9 @@ function buildAdjacency(edges: RelationEdge[]) {
   const peByPerson = new Map<string, PersonEventEdge[]>();
   const ppByPerson = new Map<string, PersonPersonEdge[]>();
   const peByEvent = new Map<string, PersonEventEdge[]>();
+  const pentByPerson = new Map<string, PersonEntityEdge[]>();
+  const pentByEntity = new Map<string, PersonEntityEdge[]>();
+  const eeByEvent = new Map<string, EventEventEdge[]>();
   const push = <K, V>(map: Map<K, V[]>, k: K, v: V) => {
     const arr = map.get(k);
     if (arr) arr.push(v);
@@ -450,12 +668,18 @@ function buildAdjacency(edges: RelationEdge[]) {
     if (e.kind === 'person-event') {
       push(peByPerson, e.fromPersonId, e);
       push(peByEvent, e.toEventId, e);
+    } else if (e.kind === 'person-entity') {
+      push(pentByPerson, e.fromPersonId, e);
+      push(pentByEntity, e.toEntityId, e);
+    } else if (e.kind === 'event-event') {
+      push(eeByEvent, e.fromEventId, e);
+      if (!e.directed) push(eeByEvent, e.toEventId, e);
     } else {
       push(ppByPerson, e.fromPersonId, e);
       if (!e.directed) push(ppByPerson, e.toPersonId, e);
     }
   }
-  return { peByPerson, ppByPerson, peByEvent };
+  return { peByPerson, ppByPerson, peByEvent, pentByPerson, pentByEntity, eeByEvent };
 }
 
 // ----- 辅助函数 -----
@@ -510,4 +734,10 @@ const SYMMETRIC_RELATIONS = new Set<string>(['friend', 'cp', 'rival', 'colleague
 
 export function isSymmetricRelation(relationType: string): boolean {
   return SYMMETRIC_RELATIONS.has(relationType);
+}
+
+/** event-event 边的方向性默认：有向的常见关系 */
+const DIRECTED_EVENT_EVENT_RELATIONS = new Set<string>(['caused-by', 'follows', 'part-of']);
+function isDirectedEventEventRelation(relationType: string): boolean {
+  return DIRECTED_EVENT_EVENT_RELATIONS.has(relationType);
 }

@@ -14,7 +14,7 @@ import type { Context } from '@aalis/core';
 import '@aalis/plugin-agent-api'; // declaration merging：注册 'agent:llm:before' HookContextMap
 import type { Message } from '@aalis/plugin-message-api';
 import type { RelationService } from './service.js';
-import type { EventNode, PersonEventEdge, PersonNode, PersonPersonEdge } from './types.js';
+import type { EventNode, PersonEntityEdge, PersonEventEdge, PersonNode, PersonPersonEdge } from './types.js';
 
 export interface MiddlewareConfig {
   enabled: boolean;
@@ -93,8 +93,10 @@ async function buildBlock(
   if (!self && subgraph.events.length === 0) return null;
 
   const personById = new Map(subgraph.persons.map(p => [p.id, p]));
+  const entityById = new Map(subgraph.entities.map(e => [e.id, e]));
   const personEventEdges = subgraph.edges.filter((e): e is PersonEventEdge => e.kind === 'person-event');
   const personPersonEdges = subgraph.edges.filter((e): e is PersonPersonEdge => e.kind === 'person-person');
+  const personEntityEdges = subgraph.edges.filter((e): e is PersonEntityEdge => e.kind === 'person-entity');
 
   // 自己参与的事件（用于"近期事件"小节）
   const selfEventEdges = personEventEdges.filter(e => e.fromPersonId === personId);
@@ -104,7 +106,10 @@ async function buildBlock(
   // 自己的人-人边
   const selfPpEdges = personPersonEdges.filter(e => e.fromPersonId === personId || e.toPersonId === personId);
 
-  if (selfEvents.length === 0 && selfPpEdges.length === 0) return null;
+  // 自己的人-实体边
+  const selfPentEdges = personEntityEdges.filter(e => e.fromPersonId === personId);
+
+  if (selfEvents.length === 0 && selfPpEdges.length === 0 && selfPentEdges.length === 0) return null;
 
   const lines: string[] = [
     '# 当前对话者的关系图速览',
@@ -160,6 +165,19 @@ async function buildBlock(
       const other = personById.get(otherId);
       const label = displayLabel(other, otherId);
       lines.push(`- ${formatDirection(edge, personId)} ${edge.relationType} → ${label}`);
+    }
+    lines.push('');
+  }
+
+  // ---- 关注/合作的事物实体 ----
+  if (selfPentEdges.length > 0) {
+    const sorted = [...selfPentEdges].sort((a, b) => b.weight - a.weight).slice(0, cfg.maxRelations);
+    lines.push('## 关注/参与的事物');
+    for (const edge of sorted) {
+      const ent = entityById.get(edge.toEntityId);
+      if (!ent) continue;
+      const s = edge.sentiment ? ` / ${edge.sentiment}` : '';
+      lines.push(`- ${ent.name} [${ent.entityKind}] — ${edge.role}${s}`);
     }
     lines.push('');
   }
