@@ -350,7 +350,7 @@ async function cacheOneAttachment(
   maxBytes: number,
   logger: Context['logger'],
 ): Promise<string | null> {
-  const buf = await loadAttachmentBuffer(storage, source);
+  const buf = await loadAttachmentBuffer(storage, proc, source);
   if (!buf) return null;
   if (kind === 'audio') {
     const inExt = detectExtensionFromBuffer(buf, 'bin');
