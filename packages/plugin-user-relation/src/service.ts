@@ -219,6 +219,8 @@ export class RelationService {
     const existing = await this.findPersonEntityEdge(input.fromPersonId, input.toEntityId, input.role);
     const now = Date.now();
     if (existing) {
+      // 同批 evidence 已记过 → 不重复计权，原样返回。
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
       const merged: PersonEntityEdge = {
         ...existing,
         sentiment: input.sentiment ?? existing.sentiment,
@@ -272,6 +274,7 @@ export class RelationService {
     const existing = await this.findEventEventEdge(input.fromEventId, input.toEventId, normalizedType, directed);
     const now = Date.now();
     if (existing) {
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
       const merged: EventEventEdge = {
         ...existing,
         weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
@@ -328,6 +331,7 @@ export class RelationService {
     const existing = await this.findPersonEventEdge(input.fromPersonId, input.toEventId, input.role);
     const now = Date.now();
     if (existing) {
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
       const merged: PersonEventEdge = {
         ...existing,
         sentiment: input.sentiment ?? existing.sentiment,
@@ -379,6 +383,7 @@ export class RelationService {
     const existing = await this.findPersonPersonEdge(input.fromPersonId, input.toPersonId, normalizedType, directed);
     const now = Date.now();
     if (existing) {
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
       const merged: PersonPersonEdge = {
         ...existing,
         weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
@@ -703,10 +708,36 @@ export function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
-/** 单实体保留最近 N 条 evidence（按 extractedAt DESC 截断） */
+/** 单实体保留最近 N 条 evidence（按 extractedAt DESC 截断 + 同 key 去重）
+ *  Key = `sessionId|sorted(messageIds).join(',')`。不同批抽取打到同一批 messageIds 会被认为重复。
+ */
 export function trimEvidence(list: EvidenceRef[]): EvidenceRef[] {
-  if (list.length <= MAX_EVIDENCE_PER_ENTITY) return [...list];
-  return [...list].sort((a, b) => b.extractedAt - a.extractedAt).slice(0, MAX_EVIDENCE_PER_ENTITY);
+  const sorted = [...list].sort((a, b) => b.extractedAt - a.extractedAt);
+  const seen = new Set<string>();
+  const out: EvidenceRef[] = [];
+  for (const e of sorted) {
+    const k = evidenceKey(e);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(e);
+    if (out.length >= MAX_EVIDENCE_PER_ENTITY) break;
+  }
+  return out;
+}
+
+/** 两条 evidence 是否识别为「同一条」（来自同会话 + 同批 messageIds）。 */
+function evidenceKey(e: EvidenceRef): string {
+  return `${e.sessionId}|${[...e.messageIds].sort().join(',')}`;
+}
+
+/** incoming 是否被 existing 完全覆盖（同一批消息已记过）。
+ *  成立时调用方可跳过 reinforce，避免同事实被重复计权。
+ *  incoming 为空时返回 false（保留原有「无 evidence 仍允许动作」语义）。
+ */
+export function isEvidenceFullyCovered(incoming: EvidenceRef[], existing: EvidenceRef[]): boolean {
+  if (incoming.length === 0) return false;
+  const keys = new Set(existing.map(evidenceKey));
+  return incoming.every(e => keys.has(evidenceKey(e)));
 }
 
 /**
