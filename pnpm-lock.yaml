@@ -1244,6 +1244,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
+      '@aalis/plugin-persona-api':
+        specifier: workspace:*
+        version: link:../plugin-persona-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
