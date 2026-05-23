@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import type { AppService, ConfigManager, Context, Logger, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -30,8 +29,10 @@ class AuthorityManager implements AuthorityService {
   private users = new Map<string, number>();
   private config: ConfigManager;
   private logger: Logger;
-  private filePath: string;
+  private storage: StorageService;
+  private fileUri: string;
   private dirty = false;
+  private saveChain: Promise<void> = Promise.resolve();
   private confirmHandlers = new Map<string, DangerousConfirmHandler>();
   private dangerousGrants = new Map<string, DangerousGrant>();
   private grantSeq = 0;
@@ -41,11 +42,11 @@ class AuthorityManager implements AuthorityService {
    */
   private dangerousEnabledAt: number | null = null;
 
-  constructor(config: ConfigManager, logger: Logger) {
+  constructor(config: ConfigManager, logger: Logger, storage: StorageService) {
     this.config = config;
     this.logger = logger.child('authority');
-    this.filePath = resolve(config.getConfigDir(), 'data', 'users.json');
-    this.load();
+    this.storage = storage;
+    this.fileUri = 'data:/users.json';
   }
 
   getAuthority(platform: string, userId?: string): number {
@@ -243,23 +244,31 @@ class AuthorityManager implements AuthorityService {
 
   save(): void {
     if (!this.dirty) return;
-    try {
-      const dir = dirname(this.filePath);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const data: Record<string, number> = {};
-      for (const [key, level] of this.users) data[key] = level;
-      writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
-      this.dirty = false;
-      this.logger.debug('用户权限数据已保存');
-    } catch (err) {
-      this.logger.warn(`保存用户权限数据失败: ${err}`);
-    }
+    const data: Record<string, number> = {};
+    for (const [key, level] of this.users) data[key] = level;
+    const payload = JSON.stringify(data, null, 2);
+    this.dirty = false;
+    this.saveChain = this.saveChain
+      .then(() => this.storage.writeFile(this.fileUri, payload))
+      .then(
+        () => {
+          this.logger.debug('用户权限数据已保存');
+        },
+        err => {
+          this.logger.warn(`保存用户权限数据失败: ${err}`);
+          this.dirty = true;
+        },
+      );
   }
 
-  private load(): void {
-    if (!existsSync(this.filePath)) return;
+  async init(): Promise<void> {
     try {
-      const raw = readFileSync(this.filePath, 'utf-8');
+      let raw: string;
+      try {
+        raw = (await this.storage.readFile(this.fileUri, 'utf-8')) as string;
+      } catch {
+        return;
+      }
       const data = JSON.parse(raw) as Record<string, number>;
       for (const [key, level] of Object.entries(data)) {
         if (typeof level === 'number') this.users.set(key, level);
@@ -287,13 +296,15 @@ const webuiPages: WebuiPage[] = [
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, _config: Record<string, unknown>): void {
+export async function apply(ctx: Context, _config: Record<string, unknown>): Promise<void> {
   // 注册 WebUI 页面
   const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
   const cmds = useCommandService(ctx);
-  const authority = new AuthorityManager(ctx.config, ctx.logger);
+  const storage = createStorageGateway(ctx);
+  const authority = new AuthorityManager(ctx.config, ctx.logger, storage);
+  await authority.init();
   ctx.provide('authority', authority);
 
   // ===== 向 tools/commands 注入执行守卫 =====

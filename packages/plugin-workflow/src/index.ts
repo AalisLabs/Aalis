@@ -7,6 +7,7 @@
 // ============================================================
 
 import type { ConfigSchema, Context } from '@aalis/core';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-webui-api 的副作用以激活 PluginModule.extends/subsystem 类型增广
@@ -49,14 +50,15 @@ export const configSchema: ConfigSchema = {
   defsDir: {
     type: 'string',
     label: '工作流定义目录',
-    default: 'workspace/workflows',
-    description: '加载 workspace/workflows/*.yaml；AI 通过 workflow_define 创建的定义也写入此处。',
+    default: 'workspace:/workflows',
+    description:
+      '加载存储下的 *.yaml 定义（storage URI，也兼容旧【workspace/workflows】）；AI 通过 workflow_define 创建的定义也写入此处。',
   },
   runsFile: {
     type: 'string',
     label: '运行历史文件',
-    default: 'data/workflow-runs.json',
-    description: '保存最近 N 条运行实例；用于 workflow_get_runs 查询。',
+    default: 'data:/workflow-runs.json',
+    description: '保存最近 N 条运行实例（storage URI，也兼容旧【data/workflow-runs.json】）。',
   },
   maxRuns: {
     type: 'number',
@@ -73,16 +75,25 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  defsDir: 'workspace/workflows',
-  runsFile: 'data/workflow-runs.json',
+  defsDir: 'workspace:/workflows',
+  runsFile: 'data:/workflow-runs.json',
   maxRuns: 200,
   enableTools: true,
 };
 
+function toUri(input: string, fallback: string): string {
+  const s = String(input ?? '').trim();
+  if (!s) return fallback;
+  if (s.includes(':/')) return s;
+  const cleaned = s.replace(/^\.?\/+/, '');
+  const idx = cleaned.indexOf('/');
+  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `${cleaned}:/`;
+}
+
 function resolveConfig(raw: Record<string, unknown>): WorkflowConfig {
   return {
-    defsDir: typeof raw.defsDir === 'string' ? raw.defsDir : 'workspace/workflows',
-    runsFile: typeof raw.runsFile === 'string' ? raw.runsFile : 'data/workflow-runs.json',
+    defsDir: toUri(typeof raw.defsDir === 'string' ? raw.defsDir : '', 'workspace:/workflows'),
+    runsFile: toUri(typeof raw.runsFile === 'string' ? raw.runsFile : '', 'data:/workflow-runs.json'),
     maxRuns: typeof raw.maxRuns === 'number' && raw.maxRuns > 0 ? raw.maxRuns : 200,
     enableTools: raw.enableTools !== false,
   };
@@ -90,14 +101,16 @@ function resolveConfig(raw: Record<string, unknown>): WorkflowConfig {
 
 // ─── apply ───
 
-export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
+export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('workflow');
+  const storage = createStorageGateway(ctx);
 
-  const loader = new WorkflowLoader(config.defsDir, logger);
-  loader.loadAll();
+  const loader = new WorkflowLoader(storage, config.defsDir, logger);
+  await loader.loadAll();
 
-  const runStore = new RunStore(config.runsFile, config.maxRuns, logger);
+  const runStore = new RunStore(storage, config.runsFile, config.maxRuns, logger);
+  await runStore.init();
 
   const cancelTokens = new Map<string, { cancelled: boolean }>();
 
@@ -205,7 +218,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       if (err) throw new Error(err);
       // 重新触发器
       if (opts?.persist !== false) {
-        loader.saveDef(def);
+        await loader.saveDef(def);
       } else {
         loader.putMemory(def);
       }
@@ -214,7 +227,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
     async removeWorkflow(id) {
       triggers.unregister(id);
-      return loader.removeDef(id);
+      return await loader.removeDef(id);
     },
     async runWorkflow(id, vars, source) {
       return await runById(id, vars ?? {}, source ?? 'manual');

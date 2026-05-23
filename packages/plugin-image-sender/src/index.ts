@@ -11,8 +11,6 @@
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
 
-import { existsSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -24,6 +22,7 @@ import {
   type OutgoingMessage,
 } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-image-sender';
@@ -38,6 +37,31 @@ const PREVIEW_MAX_CANDIDATES = 8;
 
 export function apply(ctx: Context): void {
   const tools = useToolService(ctx);
+  const storage = createStorageGateway(ctx);
+
+  // 尝试将任意输入 路径 解析为 发送可用的描述。
+  // - storage URI 形式（含 ':/'）→ stat 验证 + resolveLocalPath（如可用）转 file://
+  // - file://开头 → 原样传递
+  // - 其它本地路径 → 拼为 file:// （仅作为后续 adapter 提示，不做存在性预检）
+  async function resolveImagePath(
+    input: string,
+  ): Promise<{ ok: true; data: string; abs: string } | { ok: false; error: string }> {
+    if (input.startsWith('file://')) return { ok: true, data: input, abs: input.slice(7) };
+    if (input.includes(':/')) {
+      try {
+        await storage.stat(input);
+      } catch {
+        return { ok: false, error: `存储资源不存在: ${input}` };
+      }
+      const local = await tryResolveLocal(storage, input);
+      if (local) return { ok: true, data: `file://${local}`, abs: local };
+      // 无本地路径退路时直接使用 URI。
+      return { ok: true, data: input, abs: input };
+    }
+    // 裸路径：交由下游处理，不做 fs 检查。
+    const file = input.startsWith('/') ? input : input;
+    return { ok: true, data: `file://${file}`, abs: file };
+  }
 
   // ── preview_image ─────────────────────────────────────────────────────────
   tools.register({
@@ -151,13 +175,13 @@ export function apply(ctx: Context): void {
           refTag = url;
           via = 'url';
         } else if (filePath) {
-          const abs = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
-          if (!existsSync(abs)) return JSON.stringify({ error: `本地文件不存在: ${abs}` });
-          imageData = `file://${abs}`;
-          refTag = abs;
+          const resolved = await resolveImagePath(filePath);
+          if (!resolved.ok) return JSON.stringify({ error: resolved.error });
+          imageData = resolved.data;
+          refTag = resolved.abs;
           via = 'file_path';
         } else if (historyRef) {
-          const found = await resolveHistoryRef(ctx, callCtx.sessionId, historyRef);
+          const found = await resolveHistoryRef(ctx, storage, callCtx.sessionId, historyRef);
           if (!found) return JSON.stringify({ error: `未在历史中找到引用: ${historyRef}` });
           imageData = found;
           refTag = historyRef.replace(/^ref:/, '').trim();
@@ -250,19 +274,33 @@ async function archiveOutboundImage(
 }
 
 /** 在最近 200 条消息里寻找匹配 historyRef 的图片来源（取本地路径或 URL）。 */
-async function resolveHistoryRef(ctx: Context, sessionId: string, ref: string): Promise<string | null> {
+async function resolveHistoryRef(
+  ctx: Context,
+  storage: StorageService,
+  sessionId: string,
+  ref: string,
+): Promise<string | null> {
   const memory = ctx.getService<MemoryService>('memory');
   if (!memory) return null;
   const history: Message[] = memory.getFullHistory
     ? await memory.getFullHistory(sessionId, 200)
     : await memory.getHistory(sessionId, 200);
   const normalized = ref.replace(/^ref:/, '').trim();
-  // 允许 ref 形如 data/images/xxx.jpg；优先本地文件路径
-  const abs = isAbsolute(normalized) ? normalized : resolve(process.cwd(), normalized);
-  if (existsSync(abs)) return `file://${abs}`;
-  // http(s) ref：直接当 URL 用（image-sender 自己入档的出站图通常走这条）
+  // http(s) ref：直接当 URL 用
   if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
     return normalized;
+  }
+  // file:// ref：原样返回
+  if (normalized.startsWith('file://')) return normalized;
+  // storage URI 格式：stat 不在则忽略，在则尝试本地路径
+  if (normalized.includes(':/')) {
+    try {
+      await storage.stat(normalized);
+      const local = await tryResolveLocal(storage, normalized);
+      return local ? `file://${local}` : normalized;
+    } catch {
+      // fallthrough 到历史子串匹配
+    }
   }
   // 回退：搜历史里 images / attachments 数组里包含 normalized 子串的项
   for (const msg of history) {
@@ -279,4 +317,15 @@ async function resolveHistoryRef(ctx: Context, sessionId: string, ref: string): 
     }
   }
   return null;
+}
+
+/** 如果 storage 支持 resolveLocalPath，则解析为本地绝对路径供下游 file:// 直链使用。 */
+async function tryResolveLocal(storage: StorageService, uri: string): Promise<string | null> {
+  if (typeof storage.resolveLocalPath !== 'function') return null;
+  try {
+    const p = await storage.resolveLocalPath(uri, 'read');
+    return p ?? null;
+  } catch {
+    return null;
+  }
 }
