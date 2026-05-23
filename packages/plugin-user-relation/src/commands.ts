@@ -86,6 +86,25 @@ export function registerRelationCommands(ctx: Context, service: RelationService)
       return `✓ 已删除 person ${id}（级联 ${r.deletedEdges} 条边）`;
     });
 
+  // ---- forget-me：用户自助清理自己的节点 ----
+  // 注意：只能清掉「自己作为发言者」被记录的节点和直接挂在节点上的边；
+  // 别人在事件 title / evidence 里**提及**你的名字（纯字符串）无法清理——
+  // 因为这种情况下系统压根没把"你"识别为一个节点，没有 id 可定位。
+  cmds
+    .command('relation.forget-me', '清理我自己在关系图中的节点与直接关联（不清理别人对我的文本提及）', {
+      authority: 1,
+    })
+    .action(async argv => {
+      const { platform, userId } = argv.session;
+      if (!platform || !userId) return '当前会话无法识别你的身份（缺少 platform / userId）';
+      const id = `${platform}:${userId}`;
+      const snap = await service.loadAll();
+      const exists = snap.persons.some(p => p.id === id);
+      if (!exists) return `✓ 关系图中没有你的节点（${id}），无需清理。`;
+      const r = await service.deletePerson(platform, userId);
+      return `✓ 已删除你的节点 ${id}（级联 ${r.deletedEdges} 条边）。注意：别人在事件文本中提到你的字符串不会被清理。`;
+    });
+
   cmds
     .command('relation.cleanup.event <id:text>', '删除事件及其所有相关边', { authority: 3 })
     .action(async (_argv, idArg) => {
