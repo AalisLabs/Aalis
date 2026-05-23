@@ -2,6 +2,7 @@ import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -10,6 +11,7 @@ export const name = '@aalis/plugin-ollama';
 export const displayName = 'Ollama';
 export const subsystem = 'llm';
 export const provides = ['llm'];
+export const inject = { optional: ['process'] };
 export const reusable = true;
 
 export const configSchema: ConfigSchema = {
@@ -199,8 +201,9 @@ class OllamaClient {
   readonly contextLength: number;
   readonly keepAlive: string;
   private logger: Logger;
+  private proc: ProcessService | null;
 
-  constructor(config: OllamaConfig, logger: Logger) {
+  constructor(config: OllamaConfig, logger: Logger, proc: ProcessService | null) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
@@ -209,6 +212,7 @@ class OllamaClient {
     this.contextLength = config.contextLength;
     this.keepAlive = config.keepAlive;
     this.logger = logger;
+    this.proc = proc;
   }
 
   /** 发现远端模型 id 列表 */
@@ -592,19 +596,20 @@ class OllamaClient {
       }
     }
 
-    // 其他情况：可能是本地文件路径，或者已经是裸 base64。
-    // 先按"文件存在"探测一下——存在则读盘转 base64，避免把诸如
-    // `data/images/onebot_xxx/abc.png` 这种相对路径当作 base64 送给 Ollama
+    // 其他情况：可能是本地文件路径（file:// 或绝对路径），或者已经是裸 base64。
+    // 走 ProcessService.readExternalFile 探测是否为文件，避免把路径当作 base64 送给 Ollama
     // 触发 `illegal base64 data` 错误。读盘失败则按裸 base64 透传。
-    try {
-      const { readFile } = await import('node:fs/promises');
-      const { resolve } = await import('node:path');
-      const path = data.startsWith('file://') ? data.slice('file://'.length) : resolve(process.cwd(), data);
-      const buf = await readFile(path);
-      return buf.toString('base64');
-    } catch {
-      return data;
+    // 注意：不再治「相对 cwd 路径」场景（原先的 resolve(process.cwd(), data)）——
+    // 该场景脆弱且需要插件层读 process.cwd，请上游只传绝对路径或 file://。
+    if (this.proc && (data.startsWith('file://') || data.startsWith('/'))) {
+      try {
+        const bytes = await this.proc.readExternalFile(data);
+        return Buffer.from(bytes).toString('base64');
+      } catch {
+        return data;
+      }
     }
+    return data;
   }
 
   /**
@@ -946,7 +951,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     thinking: config.thinking !== false,
   };
 
-  const client = new OllamaClient(ollamaConfig, ctx.logger);
+  const client = new OllamaClient(ollamaConfig, ctx.logger, createProcessGateway(ctx));
   const baseLabel = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
 
   // 已注册 model entry 的句柄表：modelId → dispose（来自 ctx.provide 返回值）

@@ -3969,6 +3969,45 @@ details[open] > .tool-call-summary::before {
 .dyn-cell-nowrap {
   white-space: nowrap;
 }
+.dyn-cell-expandable {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.dyn-cell-expandable .dyn-cell-expandable-text {
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+}
+.dyn-cell-expandable.expanded .dyn-cell-expandable-text {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  display: block;
+  max-height: 80px;
+  overflow-y: auto;
+}
+.dyn-cell-expandable-toggle {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.dyn-cell-expandable-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
 .dyn-table tr:last-child td {
   border-bottom: none;
 }
