@@ -1389,7 +1389,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             ? 'token 来自配置 fixedToken，固定不变'
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
       ctx.logger.info(`首次访问请使用以下 URL（${tokenHint}）: ${accessUrl}`);
-      ctx.logger.info(`访问凭据已写入: ${accessFileUri}`);
+      void (async () => {
+        let absHint = accessFileUri;
+        try {
+          if (storage.resolveLocalPath) {
+            absHint = await storage.resolveLocalPath(accessFileUri, 'read');
+          }
+        } catch {
+          /* ignore */
+        }
+        ctx.logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
+      })();
       if (uiConfig.autoOpen) openBrowser(accessUrl, createProcessGateway(ctx));
     });
   });

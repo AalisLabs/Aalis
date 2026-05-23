@@ -53,7 +53,7 @@ button:disabled{opacity:.5;cursor:wait}
 </style></head>
 <body><form class="card" id="f">
 <h1>Aalis WebUI</h1>
-<p>请输入启动日志或 data/webui-access.txt 中显示的访问 token。</p>
+<p>请输入启动日志或 data/webui/access.txt 中显示的访问 token。</p>
 ${note}
 <input id="t" type="password" autocomplete="off" placeholder="访问 token" autofocus required>
 <button type="submit" id="b">登录</button>
@@ -83,9 +83,9 @@ export interface AuthSystem {
 }
 
 /**
- * 创建一次性 token 认证系统
+ * 创建 token 认证系统
  *
- * - token 仅内存持有，进程重启即轮换
+ * - token 由调用方传入（参见 index.ts resolveAuthToken，支持 ephemeral / persist / fixed 三种模式）
  * - HttpOnly + SameSite=Strict cookie
  * - 同源 POST /api/auth/login 提交，避免 querystring 泄露
  * - 用户首次进入若 URL 带 ?token= 则自动设置 cookie 并 302 到干净 URL
