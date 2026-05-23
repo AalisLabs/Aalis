@@ -1887,6 +1887,9 @@ importers:
       '@aalis/plugin-platform-api':
         specifier: workspace:*
         version: link:../plugin-platform-api
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
       '@aalis/plugin-session-manager-api':
         specifier: workspace:*
         version: link:../plugin-session-manager-api

@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
 import type { IncomingMessage } from 'node:http';
 import type { Logger } from '@aalis/core';
+import type { ProcessService } from '@aalis/plugin-process-api';
 import type { RequestHandler } from 'express';
 
 const COOKIE_NAME = 'aalis_webui_token';
@@ -170,14 +170,17 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
  * 跨平台打开默认浏览器到指定 URL（无外部依赖）
  * 失败静默；此为便利功能，不影响服务启动。
  */
-export function openBrowser(url: string): void {
+export function openBrowser(url: string, proc: ProcessService): void {
   try {
+    const spawnDetached = (cmd: string, args: string[]) => {
+      proc.spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+    };
     if (process.platform === 'darwin') {
-      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+      spawnDetached('open', [url]);
     } else if (process.platform === 'win32') {
-      spawn('cmd', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore' }).unref();
+      spawnDetached('cmd', ['/c', 'start', '""', url]);
     } else {
-      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+      spawnDetached('xdg-open', [url]);
     }
   } catch {
     /* ignore */
