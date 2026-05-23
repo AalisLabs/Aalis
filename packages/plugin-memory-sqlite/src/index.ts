@@ -417,16 +417,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const storage = createStorageGateway(ctx);
   const dbUri = toUri(sqliteConfig.path);
   if (!storage.resolveLocalPath) {
-    ctx.logger.error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
-    return;
+    throw new Error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
   }
   let dbPath: string;
   try {
     dbPath = await storage.resolveLocalPath(dbUri, 'write');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    ctx.logger.error(`无法解析数据库路径 ${dbUri}: ${msg}`);
-    return;
+    throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`);
   }
 
   ctx.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
@@ -457,7 +455,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    ctx.logger.error(`SQLite 打开失败: ${message}`);
-    // 不提供服务 — core 的 fallback 会接管
+    throw new Error(`SQLite 打开失败: ${message}`);
   }
 }
