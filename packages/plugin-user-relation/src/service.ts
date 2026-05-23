@@ -259,7 +259,7 @@ export class RelationService {
     return this.store.loadAll();
   }
 
-  /** 查询某人涉及的所有事件 + 直连人际关系 */
+  /** 查询某人涉及的所有事件 + 直连人际关系（深度 1 快捷方法） */
   async getNeighborhood(personId: string): Promise<{
     person: PersonNode | undefined;
     events: EventNode[];
@@ -277,6 +277,185 @@ export class RelationService {
     const events = snapshot.events.filter(ev => eventIds.has(ev.id));
     return { person, events, edges: relatedEdges };
   }
+
+  /**
+   * 按 BFS 抽取以指定 person 为起点的子图。
+   *
+   * - **maxDepth**：探求层数（0 = 仅起点；1 = 起点 + 直接邻居；以此类推）。
+   *   人 → 事件 / 人 → 人 各算 1 跳；事件 → 人也算 1 跳，因此 depth=2 可触达"同事件其他参与者"。
+   * - **maxBreadth**：单个节点在 BFS 中最多展开的邻居数，按边 weight 降序选取。
+   * - **visited**：以 nodeId 集合去重，防止环 / 重复展开（同一节点最多被加入队列一次）。
+   *
+   * 返回子图包含访问过的节点之间的全部已存在边（不仅 BFS 树边），便于上层渲染完整局部结构。
+   */
+  async traverseSubgraph(opts: {
+    startPersonIds: string[];
+    maxDepth: number;
+    maxBreadth: number;
+  }): Promise<{ persons: PersonNode[]; events: EventNode[]; edges: RelationEdge[] }> {
+    const empty = { persons: [], events: [], edges: [] };
+    if (opts.maxDepth < 0 || opts.maxBreadth < 1 || opts.startPersonIds.length === 0) return empty;
+
+    const snapshot = await this.store.loadAll();
+    const { peByPerson, ppByPerson, peByEvent } = buildAdjacency(snapshot.edges);
+
+    const visited = new Set<string>();
+    const queue: Array<{ id: string; kind: 'person' | 'event'; depth: number }> = [];
+    for (const sid of opts.startPersonIds) {
+      if (!visited.has(sid)) {
+        visited.add(sid);
+        queue.push({ id: sid, kind: 'person', depth: 0 });
+      }
+    }
+
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      if (!cur) break;
+      if (cur.depth >= opts.maxDepth) continue;
+      const neighbors: Array<{ id: string; kind: 'person' | 'event'; weight: number }> = [];
+      if (cur.kind === 'person') {
+        for (const e of ppByPerson.get(cur.id) ?? []) {
+          const other = e.fromPersonId === cur.id ? e.toPersonId : e.fromPersonId;
+          neighbors.push({ id: other, kind: 'person', weight: e.weight });
+        }
+        for (const e of peByPerson.get(cur.id) ?? []) {
+          neighbors.push({ id: e.toEventId, kind: 'event', weight: e.weight });
+        }
+      } else {
+        for (const e of peByEvent.get(cur.id) ?? []) {
+          neighbors.push({ id: e.fromPersonId, kind: 'person', weight: e.weight });
+        }
+      }
+      neighbors.sort((a, b) => b.weight - a.weight);
+      let added = 0;
+      for (const n of neighbors) {
+        if (visited.has(n.id)) continue;
+        visited.add(n.id);
+        queue.push({ id: n.id, kind: n.kind, depth: cur.depth + 1 });
+        added++;
+        if (added >= opts.maxBreadth) break;
+      }
+    }
+
+    const persons = snapshot.persons.filter(p => visited.has(p.id));
+    const events = snapshot.events.filter(e => visited.has(e.id));
+    const edges = snapshot.edges.filter(e => {
+      if (e.kind === 'person-event') return visited.has(e.fromPersonId) && visited.has(e.toEventId);
+      return visited.has(e.fromPersonId) && visited.has(e.toPersonId);
+    });
+    return { persons, events, edges };
+  }
+
+  /**
+   * 寻找两个人之间的最短关系链。BFS，事件节点作为中间桥（A→事件→B 算 2 跳）。
+   * - maxDepth：路径最大边数；超过返回 null。
+   * - 返回 { nodes, edges } 节点列表按路径顺序排列；找不到返回 null。
+   */
+  async findPath(
+    fromPersonId: string,
+    toPersonId: string,
+    maxDepth: number,
+  ): Promise<{ nodes: Array<PersonNode | EventNode>; edges: RelationEdge[] } | null> {
+    if (maxDepth < 1) return null;
+    const snapshot = await this.store.loadAll();
+    const personById = new Map(snapshot.persons.map(p => [p.id, p]));
+    const eventById = new Map(snapshot.events.map(e => [e.id, e]));
+    if (fromPersonId === toPersonId) {
+      const p = personById.get(fromPersonId);
+      return p ? { nodes: [p], edges: [] } : null;
+    }
+    const adj = new Map<string, Array<{ next: string; edge: RelationEdge }>>();
+    const addAdj = (a: string, b: string, edge: RelationEdge) => {
+      const arr = adj.get(a);
+      if (arr) arr.push({ next: b, edge });
+      else adj.set(a, [{ next: b, edge }]);
+    };
+    for (const e of snapshot.edges) {
+      if (e.kind === 'person-event') {
+        addAdj(e.fromPersonId, e.toEventId, e);
+        addAdj(e.toEventId, e.fromPersonId, e);
+      } else {
+        addAdj(e.fromPersonId, e.toPersonId, e);
+        if (!e.directed) addAdj(e.toPersonId, e.fromPersonId, e);
+      }
+    }
+    const prev = new Map<string, { from: string; edge: RelationEdge }>();
+    const visited = new Set<string>([fromPersonId]);
+    const queue: Array<{ id: string; depth: number }> = [{ id: fromPersonId, depth: 0 }];
+    let found = false;
+    bfs: while (queue.length > 0) {
+      const cur = queue.shift();
+      if (!cur) break;
+      if (cur.depth >= maxDepth) continue;
+      for (const { next, edge } of adj.get(cur.id) ?? []) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        prev.set(next, { from: cur.id, edge });
+        if (next === toPersonId) {
+          found = true;
+          break bfs;
+        }
+        queue.push({ id: next, depth: cur.depth + 1 });
+      }
+    }
+    if (!found) return null;
+    const pathNodeIds: string[] = [toPersonId];
+    const pathEdges: RelationEdge[] = [];
+    let cursor = toPersonId;
+    while (cursor !== fromPersonId) {
+      const p = prev.get(cursor);
+      if (!p) return null;
+      pathEdges.unshift(p.edge);
+      pathNodeIds.unshift(p.from);
+      cursor = p.from;
+    }
+    const nodes = pathNodeIds
+      .map(id => personById.get(id) ?? eventById.get(id))
+      .filter((n): n is PersonNode | EventNode => !!n);
+    return { nodes, edges: pathEdges };
+  }
+
+  /**
+   * 按关键词搜索事件（substring，标题 + summary，不区分大小写）。
+   * - days：仅返回 lastReinforcedAt 在 N 天内的事件；0/未传 → 不限
+   * - limit：返回上限（默认 20）
+   */
+  async searchEvents(opts: { keyword?: string; days?: number; limit?: number }): Promise<EventNode[]> {
+    const snapshot = await this.store.loadAll();
+    const cutoff = opts.days && opts.days > 0 ? Date.now() - opts.days * 86400_000 : 0;
+    const kw = opts.keyword?.trim().toLowerCase() ?? '';
+    const res = snapshot.events.filter(e => {
+      if (e.lastReinforcedAt < cutoff) return false;
+      if (!kw) return true;
+      const hay = `${e.title} ${e.summary ?? ''}`.toLowerCase();
+      return hay.includes(kw);
+    });
+    res.sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt);
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
+    return res.slice(0, limit);
+  }
+}
+
+/** 边邻接索引：供 BFS 复用，避免每次扫全表 */
+function buildAdjacency(edges: RelationEdge[]) {
+  const peByPerson = new Map<string, PersonEventEdge[]>();
+  const ppByPerson = new Map<string, PersonPersonEdge[]>();
+  const peByEvent = new Map<string, PersonEventEdge[]>();
+  const push = <K, V>(map: Map<K, V[]>, k: K, v: V) => {
+    const arr = map.get(k);
+    if (arr) arr.push(v);
+    else map.set(k, [v]);
+  };
+  for (const e of edges) {
+    if (e.kind === 'person-event') {
+      push(peByPerson, e.fromPersonId, e);
+      push(peByEvent, e.toEventId, e);
+    } else {
+      push(ppByPerson, e.fromPersonId, e);
+      if (!e.directed) push(ppByPerson, e.toPersonId, e);
+    }
+  }
+  return { peByPerson, ppByPerson, peByEvent };
 }
 
 // ----- 辅助函数 -----
