@@ -3,7 +3,6 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
-import { mkdir } from 'node:fs/promises';
 import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
 
 // ════════════════════════════════════════════════════════════
@@ -19,8 +18,9 @@ export const configSchema: ConfigSchema = {
   rootDir: {
     type: 'string',
     label: '存储目录',
-    description: '相对工作目录的路径，所有 checkpoint blob 和 manifest 写入此目录。',
-    default: 'data/checkpoints',
+    description:
+      '存储 URI（默认 data:/checkpoints），也兼容裸名/相对路径。所有 checkpoint blob 和 manifest 写入此位置。',
+    default: 'data:/checkpoints',
   },
   maxFileSize: {
     type: 'number',
@@ -37,7 +37,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export const defaultConfig = {
-  rootDir: 'data/checkpoints',
+  rootDir: 'data:/checkpoints',
   maxFileSize: 10 * 1024 * 1024,
   keepSessions: 20,
 };
@@ -94,14 +94,14 @@ export const actions: PluginModule['actions'] = {
 export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('checkpoint');
-  await mkdir(config.rootDir, { recursive: true });
+  const storage = createStorageGateway(ctx);
 
-  const service = new CheckpointServiceImpl(config, logger);
+  const service = new CheckpointServiceImpl(config, logger, storage);
   ctx.provide('checkpoint', service);
 
   // 注入回滚后端：通过 storage gateway helper 按 URI 路由到各 root
   // 在 apply 阶段，storage 可能还没注册；gateway 本身是闭包，调用时才枚举 entry
-  const storage = createStorageGateway(ctx);
+
   service.setBackend(
     async (uri, data) => {
       if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
@@ -157,7 +157,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     await next();
   });
 
-  logger.info(`checkpoint 服务就绪 rootDir=${config.rootDir} maxFileSize=${config.maxFileSize}`);
+  logger.info(`checkpoint 服务就绪 rootUri=${config.rootUri} maxFileSize=${config.maxFileSize}`);
 }
 
 export type {
