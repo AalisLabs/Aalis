@@ -157,6 +157,10 @@ const stylesheet: cytoscape.StylesheetJson = [
     style: { 'line-color': '#a855f7', 'target-arrow-color': '#a855f7', 'line-style': 'dashed' },
   },
   {
+    selector: 'edge[kind = "person-person"]',
+    style: { 'line-color': '#f87171', 'target-arrow-color': '#f87171', width: 2 },
+  },
+  {
     selector: 'edge[focused = "1"]',
     style: {
       'line-color': '#facc15',
@@ -772,6 +776,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
         <LegendEdge color="#06b6d4" dashStyle="dotted" label="事→实体" />
         <LegendEdge color="#a855f7" dashStyle="dashed" label="实体↔实体" />
+        <LegendEdge color="#f87171" dashStyle="solid" label="人↔人" />
         <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点；清除焦点请点左上「✕ 清除焦点」按钮</span>
       </div>
 
