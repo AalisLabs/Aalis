@@ -418,16 +418,33 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       name: 'fcose',
       animate: false,
       randomize: payload.nodes.length > 20,
-      nodeRepulsion: 6000,
-      idealEdgeLength: 80,
-      gravity: 0.25,
-      padding: 30,
+      // 降低节点重叠：加大排斥 + 加长理想边长 + 减小重力（不把节点都吸到中心）
+      nodeRepulsion: 14000,
+      idealEdgeLength: 120,
+      nodeSeparation: 80,
+      gravity: 0.1,
+      gravityRange: 3.0,
+      padding: 40,
+      // 'proof' 比默认 'default' 收敛更彻底（耗时稍长，节点数 < ~200 时不明显）
+      quality: 'proof',
+      uniformNodeDimensions: false,
     } as cytoscape.LayoutOptions).run();
   }, [payload, focusId]);
 
   // 搜索高亮 / dim。规则（见 README/相关讨论）：
   //  - 空格分隔的多关键词，AND 语义（所有 token 都必须命中）；
   //  - 每个 token 不区分大小写，对 label 或 type 做子串匹配；
+  //    （不参与 id —— id 多为 platform:userId，容易误命中）；
+  //  - 边：任一端命中则保留，否则 dim；
+  //  - 清空 / 零匹配：移除所有 dim，全图恢复可见；
+  //  - 不再阻塞 composition：某些 IME 删除时不发 compositionend，
+  //    若守门会把 effect 整段跳过，造成「全图卡死变灰 + 删字不扩展」。
+  //    拼音中间态可能造成一瞬闪烁，但 IME 完成后会自动归位，可接受。
+  //  - deps 加 payload：刷图后节点重建需重新应用 dim。
+  // 搜索高亮 / dim。规则（见 README/相关讨论）：
+  //  - 空格分隔的多关键词，AND 语义（所有 token 都必须命中）；
+  //  - 每个 token 不区分大小写，对节点的 label / kind / entityKind / category
+  //    任一字段做子串匹配；
   //    （不参与 id —— id 多为 platform:userId，容易误命中）；
   //  - 边：任一端命中则保留，否则 dim；
   //  - 清空 / 零匹配：移除所有 dim，全图恢复可见；
@@ -446,9 +463,13 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     cy.elements().removeClass('dimmed');
     if (tokens.length === 0) return;
     const matched = cy.nodes().filter(n => {
-      const label = String(n.data('label') ?? '').toLowerCase();
-      const type = String(n.data('type') ?? '').toLowerCase();
-      return tokens.every(t => label.includes(t) || type.includes(t));
+      const fields = [
+        String(n.data('label') ?? ''),
+        String(n.data('kind') ?? ''), // person / event / entity
+        String(n.data('entityKind') ?? ''), // work / place / ...
+        String(n.data('category') ?? ''), // event category
+      ].map(s => s.toLowerCase());
+      return tokens.every(t => fields.some(f => f.includes(t)));
     });
     // 零匹配：保持全图可见，不 dim。
     if (matched.length === 0) return;
@@ -556,7 +577,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
           <input
             type="text"
-            placeholder="搜索 (label/type，空格分多关键词)"
+            placeholder="搜索 (label / kind / entityKind / category，空格分多关键词)"
             value={search}
             onChange={e => setSearch(e.target.value)}
             // compositionend 兜底：少数浏览器在 IME 结束时不再补发 onChange
