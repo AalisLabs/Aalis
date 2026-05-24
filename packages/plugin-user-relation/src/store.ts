@@ -177,7 +177,8 @@ export class RelationStore {
     for (const edge of snapshot.edges) {
       const involved =
         (edge.kind === 'person-event' && edge.toEventId === eventId) ||
-        (edge.kind === 'event-event' && (edge.fromEventId === eventId || edge.toEventId === eventId));
+        (edge.kind === 'event-event' && (edge.fromEventId === eventId || edge.toEventId === eventId)) ||
+        (edge.kind === 'event-entity' && edge.fromEventId === eventId);
       if (involved) {
         await this.deleteEdge(edge.id);
         deletedEdges++;
@@ -187,12 +188,16 @@ export class RelationStore {
     return { deletedEdges };
   }
 
-  /** 级联删除实体：移除所有指向该实体的 person-entity 边 */
+  /** 级联删除实体：移除所有指向该实体的 person-entity / event-entity / entity-entity 边 */
   async deleteEntityCascade(entityId: string): Promise<{ deletedEdges: number }> {
     const snapshot = await this.loadAll();
     let deletedEdges = 0;
     for (const edge of snapshot.edges) {
-      if (edge.kind === 'person-entity' && edge.toEntityId === entityId) {
+      const involved =
+        (edge.kind === 'person-entity' && edge.toEntityId === entityId) ||
+        (edge.kind === 'event-entity' && edge.toEntityId === entityId) ||
+        (edge.kind === 'entity-entity' && (edge.fromEntityId === entityId || edge.toEntityId === entityId));
+      if (involved) {
         await this.deleteEdge(edge.id);
         deletedEdges++;
       }

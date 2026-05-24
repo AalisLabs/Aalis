@@ -236,5 +236,7 @@ function formatEdgeLine(e: RelationEdge): string {
   if (e.kind === 'person-event') return `[${e.kind}] ${e.fromPersonId} → ${e.toEventId} (${e.role})`;
   if (e.kind === 'person-person') return `[${e.kind}] ${e.fromPersonId} → ${e.toPersonId} (${e.relationType})`;
   if (e.kind === 'person-entity') return `[${e.kind}] ${e.fromPersonId} → ${e.toEntityId} (${e.role})`;
-  return `[event-event] ${e.fromEventId} → ${e.toEventId} (${e.relationType})`;
+  if (e.kind === 'event-event') return `[event-event] ${e.fromEventId} → ${e.toEventId} (${e.relationType})`;
+  if (e.kind === 'event-entity') return `[event-entity] ${e.fromEventId} → ${e.toEntityId} (${e.relationType})`;
+  return `[entity-entity] ${e.fromEntityId} → ${e.toEntityId} (${e.relationType})`;
 }
