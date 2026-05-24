@@ -87,10 +87,26 @@ export class RelationService {
   // ----- Event -----
 
   /**
-   * 新建事件。ID 由本方法生成；调用方拿到 ID 后即可挂边。
+   * 新建事件。严格按 normalized title 去重：若已存在同名事件，**强制合并**到旧节点
+   * （追加 evidence、累加权重 += 0.3、occurrences 追加当前时间戳），返回旧节点。
+   * 这样保证「同一件事被反复提及」不会产生重复 event，但通过 occurrences[] 保留时间维度。
    */
   async createEvent(input: Omit<EventNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EventNode> {
     const now = Date.now();
+    const dup = await this.findEventByTitle(input.title);
+    if (dup) {
+      const merged: EventNode = {
+        ...dup,
+        summary: input.summary ?? dup.summary,
+        category: input.category ?? dup.category,
+        lastReinforcedAt: now,
+        evidence: trimEvidence([...(input.evidence ?? []), ...dup.evidence]),
+        occurrences: [...(dup.occurrences ?? [dup.firstSeenAt]), now],
+        weight: clamp01((dup.weight ?? 0.5) + 0.3),
+      };
+      await this.store.upsertEvent(merged);
+      return merged;
+    }
     const node: EventNode = {
       id: globalThis.crypto.randomUUID(),
       title: input.title,
@@ -99,9 +115,22 @@ export class RelationService {
       firstSeenAt: now,
       lastReinforcedAt: now,
       evidence: trimEvidence(input.evidence ?? []),
+      occurrences: [now],
+      weight: 0.5,
     };
     await this.store.upsertEvent(node);
     return node;
+  }
+
+  /**
+   * 按 normalized title 精确匹配（不区分大小写、压缩空白）查找已有事件。
+   * 用于 createEvent 入口去重。
+   */
+  async findEventByTitle(title: string): Promise<EventNode | undefined> {
+    const target = normalizeName(title);
+    if (!target) return undefined;
+    const snap = await this.store.loadAll();
+    return snap.events.find(e => normalizeName(e.title) === target);
   }
 
   /**
@@ -136,10 +165,27 @@ export class RelationService {
   // ----- Entity -----
 
   /**
-   * 新建实体。ID 由本方法生成；调用方拿到 ID 后即可挂边。
+   * 新建实体。严格按 (entityKind, normalized name) 去重：若已存在同 kind 同名实体，
+   * **强制合并**到旧节点（追加 evidence、合并 aliases、累加权重 += 0.3），返回旧节点。
    */
   async createEntity(input: Omit<EntityNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EntityNode> {
     const now = Date.now();
+    const dup = await this.findEntityByKindAndName(input.entityKind, input.name);
+    if (dup) {
+      const mergedAliases = input.aliases
+        ? Array.from(new Set([...(dup.aliases ?? []), ...input.aliases]))
+        : dup.aliases;
+      const merged: EntityNode = {
+        ...dup,
+        aliases: mergedAliases,
+        summary: input.summary ?? dup.summary,
+        lastReinforcedAt: now,
+        evidence: trimEvidence([...(input.evidence ?? []), ...dup.evidence]),
+        weight: clamp01((dup.weight ?? 0.5) + 0.3),
+      };
+      await this.store.upsertEntity(merged);
+      return merged;
+    }
     const node: EntityNode = {
       id: globalThis.crypto.randomUUID(),
       entityKind: input.entityKind,
@@ -149,6 +195,7 @@ export class RelationService {
       firstSeenAt: now,
       lastReinforcedAt: now,
       evidence: trimEvidence(input.evidence ?? []),
+      weight: 0.5,
     };
     await this.store.upsertEntity(node);
     return node;
@@ -198,12 +245,23 @@ export class RelationService {
    * 用于抽取阶段去重 —— LLM 提取出"三角洲"时优先复用已存在的同名实体。
    */
   async findEntityByName(name: string): Promise<EntityNode | undefined> {
-    const target = name.trim().toLowerCase();
+    const target = normalizeName(name);
     if (!target) return undefined;
     const snap = await this.store.loadAll();
     return snap.entities.find(
-      e => e.name.trim().toLowerCase() === target || (e.aliases ?? []).some(a => a.trim().toLowerCase() === target),
+      e => normalizeName(e.name) === target || (e.aliases ?? []).some(a => normalizeName(a) === target),
     );
+  }
+
+  /**
+   * 按 (entityKind, normalized name) 精确匹配查找已有实体；用于 createEntity 入口去重。
+   * 比 findEntityByName 更严格（要求 kind 一致），避免「同名不同类」误合并（如游戏《北京》vs 地点北京）。
+   */
+  async findEntityByKindAndName(kind: EntityNode['entityKind'], name: string): Promise<EntityNode | undefined> {
+    const target = normalizeName(name);
+    if (!target) return undefined;
+    const snap = await this.store.loadAll();
+    return snap.entities.find(e => e.entityKind === kind && normalizeName(e.name) === target);
   }
 
   // ----- Edge: person → entity -----
@@ -458,6 +516,107 @@ export class RelationService {
     return this.store.loadAll();
   }
 
+  /**
+   * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后顺手扫"风格，不开独立调度器。
+   *
+   * 优先级（每次仅在超额时执行）：
+   *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）；
+   *   2. 仍超额时，按 (Date.now() - lastReinforcedAt) / max(weight, 0.05) **降序**排序删；
+   *      即"老旧且权重低"的优先删。
+   *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）跳过删除。
+   *   4. 边也按配额删（保留 weight 最高的）。
+   *
+   * 返回各类删除计数，便于日志/测试断言。
+   */
+  async evictByQuota(quota: {
+    maxEvents: number;
+    maxEntities: number;
+    maxEdges: number;
+    protectEvidenceCount?: number;
+    protectWeight?: number;
+  }): Promise<{ deletedEvents: number; deletedEntities: number; deletedEdges: number }> {
+    const protectEv = quota.protectEvidenceCount ?? 3;
+    const protectW = quota.protectWeight ?? 0.8;
+    const snap = await this.store.loadAll();
+    let deletedEvents = 0;
+    let deletedEntities = 0;
+    let deletedEdges = 0;
+
+    const isProtected = (n: EventNode | EntityNode): boolean =>
+      (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
+
+    const referencedEventIds = new Set<string>();
+    const referencedEntityIds = new Set<string>();
+    for (const e of snap.edges) {
+      if (e.kind === 'person-event') referencedEventIds.add(e.toEventId);
+      else if (e.kind === 'person-entity') referencedEntityIds.add(e.toEntityId);
+      else if (e.kind === 'event-event') {
+        referencedEventIds.add(e.fromEventId);
+        referencedEventIds.add(e.toEventId);
+      }
+    }
+
+    // 1) 孤儿先删
+    for (const ev of snap.events) {
+      if (!referencedEventIds.has(ev.id) && !isProtected(ev)) {
+        await this.store.deleteEventCascade(ev.id);
+        deletedEvents++;
+      }
+    }
+    for (const en of snap.entities) {
+      if (!referencedEntityIds.has(en.id) && !isProtected(en)) {
+        await this.store.deleteEntityCascade(en.id);
+        deletedEntities++;
+      }
+    }
+
+    // 2) 超额：按 age/weight 排序删
+    const now = Date.now();
+    const ageScore = (n: EventNode | EntityNode): number =>
+      (now - n.lastReinforcedAt) / Math.max(n.weight ?? 0.5, 0.05);
+
+    if (quota.maxEvents > 0) {
+      const remainingEvents = (await this.store.loadAll()).events.filter(e => !isProtected(e));
+      const overflow = remainingEvents.length + deletedEvents - quota.maxEvents - deletedEvents;
+      // 注意：上行简化为 remainingEvents.length - quota.maxEvents
+      const toDelete = remainingEvents.length - quota.maxEvents;
+      if (toDelete > 0) {
+        const sorted = [...remainingEvents].sort((a, b) => ageScore(b) - ageScore(a));
+        for (const ev of sorted.slice(0, toDelete)) {
+          await this.store.deleteEventCascade(ev.id);
+          deletedEvents++;
+        }
+      }
+      void overflow; // 调试用，无副作用
+    }
+    if (quota.maxEntities > 0) {
+      const remainingEntities = (await this.store.loadAll()).entities.filter(e => !isProtected(e));
+      const toDelete = remainingEntities.length - quota.maxEntities;
+      if (toDelete > 0) {
+        const sorted = [...remainingEntities].sort((a, b) => ageScore(b) - ageScore(a));
+        for (const en of sorted.slice(0, toDelete)) {
+          await this.store.deleteEntityCascade(en.id);
+          deletedEntities++;
+        }
+      }
+    }
+
+    // 3) 边配额：保留 weight 最高的
+    if (quota.maxEdges > 0) {
+      const refreshed = await this.store.loadAll();
+      const toDelete = refreshed.edges.length - quota.maxEdges;
+      if (toDelete > 0) {
+        const sorted = [...refreshed.edges].sort((a, b) => (a.weight ?? 0) - (b.weight ?? 0));
+        for (const e of sorted.slice(0, toDelete)) {
+          await this.store.deleteEdge(e.id);
+          deletedEdges++;
+        }
+      }
+    }
+
+    return { deletedEvents, deletedEntities, deletedEdges };
+  }
+
   /** 查询某人涉及的所有事件 + 实体 + 直连人际关系（深度 1 快捷方法） */
   async getNeighborhood(personId: string): Promise<{
     person: PersonNode | undefined;
@@ -697,6 +856,11 @@ function buildAdjacency(edges: RelationEdge[]) {
 }
 
 // ----- 辅助函数 -----
+
+/** 节点名称归一化：去首尾空白、压缩中间空白、小写化。用于按名去重。 */
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
 
 /** weight 累积：增量按 (1 - weight) * delta 收敛，避免无限增长 */
 export function reinforceWeight(prev: number, delta: number): number {
