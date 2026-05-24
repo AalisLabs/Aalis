@@ -84,7 +84,7 @@ async function buildBlock(
 
   const personId = `${data.platform}:${data.userId}`;
   const subgraph = await service.traverseSubgraph({
-    startPersonIds: [personId],
+    startNodeIds: [personId],
     maxDepth: cfg.maxDepth,
     maxBreadth: cfg.maxBreadth,
   });
@@ -125,7 +125,7 @@ async function buildBlock(
       if (!prev || e.lastReinforcedAt > prev.lastReinforcedAt) roleByEventId.set(e.toEventId, e);
     }
     const sortedEvents = [...selfEvents]
-      .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
+      .sort((a, b) => (b.lastMentionedAt ?? b.lastReinforcedAt) - (a.lastMentionedAt ?? a.lastReinforcedAt))
       .slice(0, cfg.maxEvents);
 
     lines.push('## 近期参与的事件');
