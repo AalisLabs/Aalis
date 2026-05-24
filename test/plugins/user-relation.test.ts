@@ -578,16 +578,18 @@ describe('plugin-user-relation: evictByQuota', () => {
     expect(snap.events.find(e => e.id === richOrphan.id)).toBeUndefined();
   });
 
-  it('pruneOrphans opts can opt-in protection if caller wants', async () => {
+  it('pruneOrphans 无条件删孤儿，无论 evidence 多少（不再有 opts 保护参数）', async () => {
     const { service } = await makeService();
+    // evidence=3 的孤儿——v3 零参数设计中无保护，应被直接删除
     const orphan = await service.createEvent({
       title: 'rich',
       evidence: [ev({ messageIds: ['a'] }), ev({ messageIds: ['b'] }), ev({ messageIds: ['c'] })],
     });
-    const r = await service.pruneOrphans({ protectEvidenceCount: 3 });
-    expect(r.deletedEvents).toBe(0);
+    const r = await service.pruneOrphans();
+    expect(r.deletedEvents).toBe(1);
+    expect(r.deletedPersons).toBe(0); // 无孤儿 person
     const snap = await service.loadAll();
-    expect(snap.events.find(e => e.id === orphan.id)).toBeDefined();
+    expect(snap.events.find(e => e.id === orphan.id)).toBeUndefined();
   });
 
   it('enforces quota by removing oldest+lowest-weight nodes first', async () => {
