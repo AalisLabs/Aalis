@@ -10,6 +10,7 @@ import {
   RelationService,
   RelationStore,
 } from '../../packages/plugin-user-relation/src/index.js';
+import { edgeKey, eventKey, personKey, RELATION_NAMESPACE } from '../../packages/plugin-user-relation/src/store.js';
 import {
   clamp01,
   isEvidenceFullyCovered,
@@ -17,8 +18,7 @@ import {
   normalizeRelationType,
   reinforceWeight,
   trimEvidence,
-} from '../../packages/plugin-user-relation/src/service.js';
-import { edgeKey, eventKey, personKey, RELATION_NAMESPACE } from '../../packages/plugin-user-relation/src/store.js';
+} from '../../packages/plugin-user-relation/src/utils.js';
 
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
