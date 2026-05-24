@@ -36,6 +36,13 @@ import {
  *
  * 外部插件可以注册高优先级的 AgentService 来完全替换此默认实现。
  */
+
+/** 统一读取 LLM 单次最大输出 token；缺省回退 4096（与各 adapter 默认一致）。 */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
+  return llm.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 class DefaultAgent implements AgentService {
   private ctx: Context;
   private logger: Logger;
@@ -415,7 +422,7 @@ class DefaultAgent implements AgentService {
       // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
       // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
       // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
-      const maxTokens = llm.maxOutputTokens ?? 4096;
+      const maxTokens = getModelMaxOutput(llm);
       const maxToolIterations = this.maxToolIterations;
       const contextLength = llm.contextLength;
       // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
@@ -1730,7 +1737,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const llm = resolved.instance;
 
       const contextLength = llm.contextLength;
-      const maxTokens = llm.maxOutputTokens ?? 4096;
+      const maxTokens = getModelMaxOutput(llm);
       const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
       // 获取历史消息并构建基础消息列表
