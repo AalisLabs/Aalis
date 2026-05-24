@@ -199,6 +199,25 @@ const VALID_PERSON_ENTITY_ROLES: PersonEntityRole[] = [
   'mentioned',
 ];
 
+/**
+ * 占位符 self person id 黑名单：扩展过滤 `aalis:aalis` / `aalis:self` / `onebot:aalis`
+ * 等 LLM 历史产生的伪 id。被 extractor.applyExtraction 落库守卫和
+ * `/relation cleanup fake-self` 清理命令共用，确保两端口径一致。
+ *
+ * 命中规则（任一即视为占位）：
+ *   1) platform 为空 / userId 为空；
+ *   2) platform 小写为 'aalis'（没有真实平台 adapter 叫这个名字，只有占位才会出现）；
+ *   3) userId 小写命中下列黑名单。
+ */
+const SELF_PLACEHOLDER_USERIDS = new Set(['aalis', 'self', 'me', 'bot', 'assistant', '本机器人', '机器人']);
+
+export function isPlaceholderSelfPersonId(platform?: string, userId?: string): boolean {
+  if (!platform || !userId) return true;
+  if (platform.toLowerCase() === 'aalis') return true;
+  if (SELF_PLACEHOLDER_USERIDS.has(userId.toLowerCase())) return true;
+  return false;
+}
+
 export class RelationExtractor {
   private readonly counts = new Map<string, number>();
   private readonly inFlight = new Set<string>();
@@ -398,10 +417,12 @@ export class RelationExtractor {
     };
     const now = Date.now();
     // ── self-placeholder 守卫：LLM 历史上会把 assistant 消息当占位 person 抽出
-    //    `platform="aalis", userId="aalis"` 这种伪 id；即便 prompt + 渲染都改对了，仍做最后一道防线。
-    //    任何端点命中占位 id 的 person / edge 一律剔除，防止脏数据流回库里。
-    const isPlaceholderSelfId = (platform?: string, userId?: string): boolean =>
-      platform === 'aalis' && userId === 'aalis';
+    //    `aalis:aalis` / `aalis:self` / `onebot:aalis` 等伪 id；即便 prompt + 渲染都改对了，仍做最后一道防线。
+    //    判定规则（任一命中即视为占位）：
+    //      · platform 大小写为 'aalis'（不存在叫 'aalis' 的真实平台 adapter，只有占位才会出现）
+    //      · userId 命中黑名单（self / aalis / me / bot / assistant / 本机器人 / 机器人 等）
+    //      · platform 或 userId 为空
+    const isPlaceholderSelfId = isPlaceholderSelfPersonId;
     const dropSelf = (label: string, pid: string): void => {
       if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 丢弃 self 占位 ${label}: ${pid}`);
     };
@@ -801,7 +822,11 @@ function renderHistoryForLLM(history: Message[]): string {
     // 若元数据缺失（旧消息 / 历史未注入身份）：仅写 `Aalis(self)`，并在 prompt 里要求 LLM 不要给这种"裸 self" 创建 person。
     let sender: string;
     if (m.role === 'assistant') {
-      sender = meta.userId ? `${meta.nickname ?? 'Aalis'}(${meta.userId})` : 'Aalis(self)';
+      // 关键：fallback **不能**长成 `nickname(userId)` 的 ASCII 圆括号形态，否则 LLM 会原样拆成 person id
+      // （历史上 `Aalis(self)` 被抽成 `platform=aalis, userId=self`）。
+      // 真元数据：仍用 `nickname(userId)` 同用户消息格式（id 是真实 selfId，可被抽取）。
+      // 缺元数据：用 CJK 全角括号 + 中文标签，与 user 行明显不同，且即便误抽 userId='本机器人' 也会被守卫黑名单拦掉。
+      sender = meta.userId ? `${meta.nickname ?? 'Aalis'}(${meta.userId})` : 'Aalis（本机器人）';
     } else {
       sender = `${meta.nickname ?? '匿名'}(${meta.userId ?? '?'})`;
     }
@@ -858,15 +883,15 @@ function buildExtractionPrompt(
       '**第 2 步：建 Event 时强制做 part-of 挂载**',
       '  若 event.title 中含有任何第 1 步抽出的 entity 名（或其同义词），**必须同时输出一条 eventEntityEdges relationType="part-of"** 把事件挂在 entity 下。',
       '  反面：「打《绝航》」「讨论《绝航》」两个事件如果都不挂 part-of → 绝航这个 entity 被切碎、两个事件成为孤岛、参与/讨论的人无法通过绝航相互发现 → **这是关系图最严重的失效**。',
-      '  ⚠️ **part-of 与 about 互斥**：对同一对 (event, entity) 只输出**一条** event-entity 边。若事件围绕该对象展开（讨论/打/玩/合作），优先用 `part-of`；只有当事件只是顺带"提到"而非围绕它时才用 `about`。**不要同时输出两条**（part-of + about），后端会判为重复并合并。',
+      '  **part-of 与 about 互斥**：对同一对 (event, entity) 只输出**一条** event-entity 边。若事件围绕该对象展开（讨论/打/玩/合作），优先用 `part-of`；只有当事件只是顺带"提到"而非围绕它时才用 `about`。**不要同时输出两条**（part-of + about），后端会判为重复并合并。',
       '',
       '**第 3 步：人通过共享 entity / event 自然连接（不要伪造 person-person 边）**',
       '  当两人 A、B 都指向同一 entity（如都玩绝航、都在某店打卡）→ 直接输出 A→entity 和 B→entity 两条 personEntityEdge 即可，图层会自动呈现 A↔entity↔B 的二跳连接。',
-      '  ⚠️ **不要因为"共同兴趣 / 共同参与"就推断 person-person friend/familiar 边** —— 那是幻觉。person-person 边只在有**身份性陈述**（「是我兄弟」「跟我闹翻了」「我老婆」）时建。',
+      '  **不要因为"共同兴趣 / 共同参与"就推断 person-person friend/familiar 边** —— 那是幻觉。person-person 边只在有**身份性陈述**（「是我兄弟」「跟我闹翻了」「我老婆」）时建。',
       '',
-      '## ⭐ 关于「Aalis 自己」（机器人本体）',
+      '## 关于「Aalis 自己」（机器人本体）',
       '- 窗口里 assistant 消息会被渲染为 `(nickname(userId))` 同用户消息一样的格式，其中 userId 是 **Aalis 在该平台上真实的 selfId**（如 `(Aalis(10000))`）。这时你**可以**把它当成一个普通 person 抽出来（用真实 personPlatform / personUserId），让 Aalis 与人的互动也能进入关系图。',
-      '- ⚠️ **绝不要凭空生成占位符**：如果 assistant 消息渲染成 `(Aalis(self))`（说明该轮元数据缺失），**禁止**给它任何 person 字段、不要写成 `platform="aalis", userId="aalis"` 这种伪 id；这一轮就当 Aalis 没出现，跳过。',
+      '- **绝不要凭空生成占位符**：当 assistant 行渲染成 `Aalis（本机器人）`（CJK 全角括号 = 元数据缺失）时，**禁止**给它任何 person 字段；也**禁止**自己编 `platform="aalis"` 或 `userId ∈ {aalis, self, me, bot, assistant, 本机器人}` 这种伪 id —— 后端会一律剔除。这一轮就当 Aalis 没出现，跳过。',
       '- 这条规则比 hub-first 优先：宁可少抽，也不要造假 id。',
       '',
       '## 输出格式（严格 JSON）',
