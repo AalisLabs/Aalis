@@ -239,11 +239,11 @@ const stylesheet: cytoscape.StylesheetJson = [
     },
   },
   {
-    selector: 'edge[dimmed = "1"]',
+    selector: 'edge.dimmed',
     style: { opacity: 0.15 },
   },
   {
-    selector: 'node[dimmed = "1"]',
+    selector: 'node.dimmed',
     style: { opacity: 0.2, 'text-opacity': 0 },
   },
 ];
@@ -442,28 +442,23 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       .toLowerCase()
       .split(/\s+/)
       .filter(Boolean);
-    if (tokens.length === 0) {
-      cy.nodes().removeData('dimmed');
-      cy.edges().removeData('dimmed');
-      return;
-    }
+    // 先一律清除上轮的 dim，避免“残留 dim 造成全图变灰”。
+    cy.elements().removeClass('dimmed');
+    if (tokens.length === 0) return;
     const matched = cy.nodes().filter(n => {
       const label = String(n.data('label') ?? '').toLowerCase();
       const type = String(n.data('type') ?? '').toLowerCase();
       return tokens.every(t => label.includes(t) || type.includes(t));
     });
-    if (matched.length === 0) {
-      cy.nodes().removeData('dimmed');
-      cy.edges().removeData('dimmed');
-      return;
-    }
+    // 零匹配：保持全图可见，不 dim。
+    if (matched.length === 0) return;
     const matchedIds = new Set(matched.map(n => n.id()));
     cy.nodes().forEach(n => {
-      n.data('dimmed', matchedIds.has(n.id()) ? undefined : '1');
+      if (!matchedIds.has(n.id())) n.addClass('dimmed');
     });
     cy.edges().forEach(e => {
       const ok = matchedIds.has(e.source().id()) || matchedIds.has(e.target().id());
-      e.data('dimmed', ok ? undefined : '1');
+      if (!ok) e.addClass('dimmed');
     });
   }, [search, payload]);
 
