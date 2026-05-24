@@ -269,10 +269,6 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   const [maxDepth, setMaxDepth] = useState<number>(comp.defaultMaxDepth ?? 2);
   const [maxBreadth, setMaxBreadth] = useState<number>(comp.defaultMaxBreadth ?? 10);
   const [search, setSearch] = useState('');
-  // 中文/日语/韩文 IME 拼音中间态。拼音期间 search 会被设为拼音字母，
-  // 如果拿去过滤会“拼音 zh咪个都不匹配”。这里只用于钔离 effect，
-  // 不去拦 onChange（拦了受控 input 会被 React 回写 → 表现为“输不了字”）。
-  const [composing, setComposing] = useState(false);
 
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
@@ -429,25 +425,32 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     } as cytoscape.LayoutOptions).run();
   }, [payload, focusId]);
 
-  // 搜索高亮：dim 不匹配。
-  // 设计：
-  //  - composing 中不跑（避免拿拼音去过滤）；
-  //  - 零匹配不 dim（避免全图变透明让用户误以为“搜索坏了”）；
+  // 搜索高亮 / dim。规则（见 README/相关讨论）：
+  //  - 空格分隔的多关键词，AND 语义（所有 token 都必须命中）；
+  //  - 每个 token 不区分大小写，对 label 或 type 做子串匹配；
+  //    （不参与 id —— id 多为 platform:userId，容易误命中）；
+  //  - 边：任一端命中则保留，否则 dim；
+  //  - 清空 / 零匹配：移除所有 dim，全图恢复可见；
+  //  - 不再阻塞 composition：某些 IME 删除时不发 compositionend，
+  //    若守门会把 effect 整段跳过，造成「全图卡死变灰 + 删字不扩展」。
+  //    拼音中间态可能造成一瞬闪烁，但 IME 完成后会自动归位，可接受。
   //  - deps 加 payload：刷图后节点重建需重新应用 dim。
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    if (composing) return;
-    const term = search.trim().toLowerCase();
-    if (!term) {
+    const tokens = search
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (tokens.length === 0) {
       cy.nodes().removeData('dimmed');
       cy.edges().removeData('dimmed');
       return;
     }
     const matched = cy.nodes().filter(n => {
       const label = String(n.data('label') ?? '').toLowerCase();
-      const id = String(n.data('id') ?? '').toLowerCase();
-      return label.includes(term) || id.includes(term);
+      const type = String(n.data('type') ?? '').toLowerCase();
+      return tokens.every(t => label.includes(t) || type.includes(t));
     });
     if (matched.length === 0) {
       cy.nodes().removeData('dimmed');
@@ -462,7 +465,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       const ok = matchedIds.has(e.source().id()) || matchedIds.has(e.target().id());
       e.data('dimmed', ok ? undefined : '1');
     });
-  }, [search, payload, composing]);
+  }, [search, payload]);
 
   // ── detail drawer ─────────────────────────────────────────
   useEffect(() => {
@@ -558,15 +561,11 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
           <input
             type="text"
-            placeholder="搜索节点 (姓名/事件标题)"
+            placeholder="搜索 (label/type，空格分多关键词)"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            onCompositionStart={() => setComposing(true)}
-            onCompositionEnd={e => {
-              // compositionend 中某些浏览器不会重新发 onChange，这里手动同步一下
-              setSearch((e.target as HTMLInputElement).value);
-              setComposing(false);
-            }}
+            // compositionend 兜底：少数浏览器在 IME 结束时不再补发 onChange
+            onCompositionEnd={e => setSearch((e.target as HTMLInputElement).value)}
             style={{ width: '100%', padding: '4px 24px 4px 8px' }}
           />
           {search ? (
