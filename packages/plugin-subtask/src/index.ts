@@ -6,6 +6,23 @@ import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-tools-api';
 
+// =====================================================================
+// plugin-subtask —— 派发并行子会话（独立 sessionId 的子 agent）
+//
+// 与相邻插件的职责区分（不冲突，可组合）：
+//   - plugin-workflow：声明式 DAG，编排可被回放/版本化的多步流程
+//   - plugin-todo-list：单会话内的"步骤列表"，给 agent 自己规划用
+//   - plugin-subtask  ：跨会话的并行子 agent，适合「拆分独立调研任务」
+//   - plugin-skills   ：可加载的提示词模板，正交，可在子任务里继续使用
+//
+// 推荐协作模式：
+//   1. 父会话 manage_todo_list 列出大步骤
+//   2. 对独立可并行的子任务 create_subtask × N（可指定轻量 model 省 token）
+//   3. wait_subtasks 阻塞等待
+//   4. 父会话整合 → manage_todo_list 标记完成
+// 子会话内可自行再用 manage_todo_list / load_skill / workflow_run 等工具。
+// =====================================================================
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-subtask';
