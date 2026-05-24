@@ -64,6 +64,16 @@ export interface ExtractorConfig {
   maxEntities: number;
   /** 边总数上限（保留 weight 最高的）。0=不限。 */
   maxEdges: number;
+  /** PageRank 阻尼系数，淘汰打分用。默认 0.85 */
+  pagerankDamping: number;
+  /** PageRank 最大迭代次数。默认 20（图较大时可调大） */
+  pagerankIterations: number;
+  /** PageRank 收敛阈值（L1 误差），达到即提前停止。默认 1e-4 */
+  pagerankEpsilon: number;
+  /** 淘汰滞回：count > quota·(1+pct) 才触发；用以避免每写一条都裁。默认 0.2 */
+  evictHysteresisPct: number;
+  /** 触发后裁到 floor(quota·pct)。默认 0.8，配合 hysteresis=0.2 → 单次清理 ~40% quota */
+  evictTargetPct: number;
   /** debug 日志 */
   debug: boolean;
 }
@@ -602,6 +612,11 @@ export class RelationExtractor {
           maxEvents: this.cfg.maxEvents,
           maxEntities: this.cfg.maxEntities,
           maxEdges: this.cfg.maxEdges,
+          pagerankDamping: this.cfg.pagerankDamping,
+          pagerankIterations: this.cfg.pagerankIterations,
+          pagerankEpsilon: this.cfg.pagerankEpsilon,
+          hysteresisPct: this.cfg.evictHysteresisPct,
+          targetPct: this.cfg.evictTargetPct,
         });
         if (this.cfg.debug && (evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)) {
           this.ctx.logger.debug(
@@ -680,9 +695,9 @@ function buildExtractionPrompt(
       '  "personEventEdges": [{ "personPlatform": str, "personUserId": str, "eventRefKey": str, "role": "initiator"|"participant"|"witness"|"target"|"reporter", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEntityEdges": [{ "personPlatform": str, "personUserId": str, "entityRefKey": str, "role": "enthusiast"|"participant"|"owner"|"creator"|"critic"|"visitor"|"mentioned", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personPersonEdges": [{ "fromPlatform": str, "fromUserId": str, "toPlatform": str, "toUserId": str, "relationType": str, "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
-      `  "eventEventEdges": [{ "fromEventRefKey": str, "toEventRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEventEventRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
-      `  "eventEntityEdges": [{ "eventRefKey": str, "entityRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEventEntityRelationTypes.join(' / ')}), "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
-      `  "entityEntityEdges": [{ "fromEntityRefKey": str, "toEntityRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEntityEntityRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }]`,
+      `  "eventEventEdges": [{ "fromEventRefKey": str, "toEventRefKey": str, "relationType": str(推荐: ${RecommendedEventEventRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
+      `  "eventEntityEdges": [{ "eventRefKey": str, "entityRefKey": str, "relationType": str(推荐: ${RecommendedEventEntityRelationTypes.join(' / ')}), "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
+      `  "entityEntityEdges": [{ "fromEntityRefKey": str, "toEntityRefKey": str, "relationType": str(推荐: ${RecommendedEntityEntityRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }]`,
       '}',
       '',
       '## 关键区别：Event vs Entity（务必正确使用）',

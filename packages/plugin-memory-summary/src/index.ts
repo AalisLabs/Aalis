@@ -454,7 +454,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const allHistory = await memory.getHistory(data.sessionId, 200);
         // 手动压缩：只要有 > keepRecent 条消息就压缩
         if (allHistory.length <= cfg.keepRecent) {
-          ctx.logger.info(`会话消息数 ${allHistory.length} \u2264 keepRecent(${cfg.keepRecent})，无需压缩`);
+          ctx.logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
           ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
           return;
         }

@@ -546,7 +546,13 @@ describe('plugin-user-relation: evictByQuota', () => {
       });
       await new Promise(r => setTimeout(r, 1));
     }
-    const result = await service.evictByQuota({ maxEvents: 3, maxEntities: 0, maxEdges: 0 });
+    const result = await service.evictByQuota({
+      maxEvents: 3,
+      maxEntities: 0,
+      maxEdges: 0,
+      hysteresisPct: 0,
+      targetPct: 1,
+    });
     expect(result.deletedEvents).toBe(2);
     const snap = await service.loadAll();
     expect(snap.events.length).toBe(3);
