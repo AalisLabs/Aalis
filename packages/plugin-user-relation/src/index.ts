@@ -39,15 +39,16 @@ export const configSchema: ConfigSchema = {
   // ────── 抽取（写入）侧 ──────
   extractionEnabled: {
     type: 'boolean',
-    label: '允许从对话中提取新关系',
+    label: '允许从对话中提取新关系（写入总开关）',
     description:
-      '关闭后停止生成新关系，但 middleware 仍读取并注入旧关系、actions 仍可查/删。若希望彻底关闭，请整体停用该插件。',
+      '**写入总开关**：关闭后插件停止生成任何新关系节点/边（自动触发、手动 /relation extract、Agent upsert_* 工具全部失效）；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"而保留手动命令，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。',
     default: true,
   },
   triggerEveryNMessages: {
     type: 'number',
-    label: '提取触发阈值（每 N 条消息）',
-    description: '每会话累计 N 条入站消息后触发一次 LLM 关系提取；0 关闭自动触发（仍可手动触发）',
+    label: '自动触发阈值（每 N 条消息）',
+    description:
+      '**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=**仅手动**（slash 命令 /relation extract 仍可触发，Agent 工具仍可用——与 extractionEnabled 不同）。',
     default: 20,
   },
   readWindowSize: {
@@ -105,6 +106,32 @@ export const configSchema: ConfigSchema = {
     default: true,
   },
 
+  // ────── 自动老化（写后顺手扫，profile 风格，不开独立调度器）──────
+  evictionEnabled: {
+    type: 'boolean',
+    label: '启用自动老化',
+    description:
+      '每次提取完成后扫一遍当前图：先删孤儿节点（无任何边），再按"超出配额"逐项删除"老旧 + 低权重"的事件/实体/边。evidence ≥3 或 weight ≥0.8 的节点受保护不会被删。',
+    default: true,
+  },
+  maxEvents: {
+    type: 'number',
+    label: '事件总数上限',
+    description: '超过则按 (now - lastReinforcedAt) / weight 排序，先删老旧低权重事件。0=不限。',
+    default: 500,
+  },
+  maxEntities: {
+    type: 'number',
+    label: '实体总数上限',
+    description: '同上策略。0=不限。',
+    default: 300,
+  },
+  maxEdges: {
+    type: 'number',
+    label: '边总数上限',
+    description: '超过则保留 weight 最高的边。0=不限。',
+    default: 2000,
+  },
   // ────── Middleware 注入侧 ──────
   agentInjection: {
     type: 'boolean',
@@ -335,9 +362,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const debug = config.debug === true;
 
   // ─── 提取（写入）─── 受 extractionEnabled 控制
+  // 注意：triggerEveryN=0 时不再绕过 extractor 构造，仅 disable 自动触发；
+  // 这样 slash 命令 /relation extract 与 Agent 工具仍能调用。
   const extractionEnabled = config.extractionEnabled !== false;
   const triggerEveryN = numCfg(config.triggerEveryNMessages, 20);
-  if (extractionEnabled && triggerEveryN > 0) {
+  if (extractionEnabled) {
     const extractor = new RelationExtractor(ctx, service, {
       triggerEveryNMessages: triggerEveryN,
       readWindowSize: numCfg(config.readWindowSize, 30),
@@ -349,6 +378,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
       disableThinking: config.extractionDisableThinking !== false,
       strictSelfAssertion: config.strictSelfAssertion !== false,
+      evictionEnabled: config.evictionEnabled !== false,
+      maxEvents: numCfg(config.maxEvents, 500),
+      maxEntities: numCfg(config.maxEntities, 300),
+      maxEdges: numCfg(config.maxEdges, 2000),
       debug,
     });
     extractor.start();
