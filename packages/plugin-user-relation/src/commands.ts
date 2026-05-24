@@ -308,13 +308,12 @@ export function registerRelationCommands(
       const ev = options?.eviction;
       ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
       const before = await service.loadAll();
-      // step 1: 无条件清孤儿（与配额无关，旧账噪声总是清）
-      const orphans = await service.pruneOrphans();
-      let deletedEvents = orphans.deletedEvents;
-      let deletedEntities = orphans.deletedEntities;
+      let deletedPersons = 0;
+      let deletedEvents = 0;
+      let deletedEntities = 0;
       let deletedEdges = 0;
-      // step 2: 配额有设置才执行超额淘汰
       if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+        // evictByQuota 内部已经先做 pruneOrphans，再做配额淘汰；不要在外面重复调
         const r = await service.evictByQuota({
           maxEvents: ev.maxEvents,
           maxEntities: ev.maxEntities,
@@ -325,16 +324,23 @@ export function registerRelationCommands(
           hysteresisPct: ev.hysteresisPct,
           targetPct: ev.targetPct,
         });
-        // evictByQuota 内部也会调 pruneOrphans，但幂等安全（第二次 deletedEvents=0），直接叠加不会重复
+        deletedPersons = r.deletedPersons;
         deletedEvents = r.deletedEvents;
         deletedEntities = r.deletedEntities;
         deletedEdges = r.deletedEdges;
+      } else {
+        // 没配置配额：只清孤儿
+        const orphans = await service.pruneOrphans();
+        deletedPersons = orphans.deletedPersons;
+        deletedEvents = orphans.deletedEvents;
+        deletedEntities = orphans.deletedEntities;
       }
       const eventCap = ev?.maxEvents ?? 0;
       const entityCap = ev?.maxEntities ?? 0;
       const edgeCap = ev?.maxEdges ?? 0;
       return [
         '✓ 关系图压缩完成：',
+        `- 人物：${before.persons.length} → ${before.persons.length - deletedPersons}（删 ${deletedPersons} 个孤儿）`,
         `- 事件：${before.events.length} → ${before.events.length - deletedEvents}（删 ${deletedEvents}，阈 ${eventCap}）`,
         `- 实体：${before.entities.length} → ${before.entities.length - deletedEntities}（删 ${deletedEntities}，阈 ${entityCap}）`,
         `- 边：  ${before.edges.length} → ${before.edges.length - deletedEdges}（删 ${deletedEdges}，阈 ${edgeCap}）`,
@@ -360,12 +366,12 @@ export function registerRelationCommands(
       );
       const lines: string[] = ['✓ 关系图体检完成：'];
       const before = await service.loadAll();
-      // step 1: 无条件清孤儿 + 可选超额淘汰
-      const orphans = await service.pruneOrphans();
-      let dEvents = orphans.deletedEvents;
-      let dEntities = orphans.deletedEntities;
+      let dPersons = 0;
+      let dEvents = 0;
+      let dEntities = 0;
       let dEdges = 0;
       if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+        // evictByQuota 自带孤儿清理，不重复调
         const r = await service.evictByQuota({
           maxEvents: ev.maxEvents,
           maxEntities: ev.maxEntities,
@@ -376,15 +382,20 @@ export function registerRelationCommands(
           hysteresisPct: ev.hysteresisPct,
           targetPct: ev.targetPct,
         });
+        dPersons = r.deletedPersons;
         dEvents = r.deletedEvents;
         dEntities = r.deletedEntities;
         dEdges = r.deletedEdges;
         lines.push(
-          `[1/2] 压缩：事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}，边 ${before.edges.length}→${before.edges.length - dEdges}`,
+          `[1/2] 压缩：人物 ${before.persons.length}→${before.persons.length - dPersons}，事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}，边 ${before.edges.length}→${before.edges.length - dEdges}`,
         );
       } else {
+        const orphans = await service.pruneOrphans();
+        dPersons = orphans.deletedPersons;
+        dEvents = orphans.deletedEvents;
+        dEntities = orphans.deletedEntities;
         lines.push(
-          `[1/2] 压缩：仅清孤儿（未配置淘汰阈值）—事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}`,
+          `[1/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${before.persons.length}→${before.persons.length - dPersons}，事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}`,
         );
       }
       // step 2: consolidate
