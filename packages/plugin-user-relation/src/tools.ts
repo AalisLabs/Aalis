@@ -213,8 +213,15 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       type: 'function',
       function: {
         name: 'user_relation_score',
-        description:
-          '计算两节点间的「联系强度」分数（0~1）。基于 Katz 限深路径累加：枚举所有 a→b 简单路径（长度 ≤ max_depth），每条贡献 β^长度 × ∏边权，全部累加后 tanh 归一化。返回分数、最短距离、参考路径，可解释。两端可为人/事件/实体的任意组合。',
+        description: [
+          '计算两节点间的「联系强度」分数（0~1），融合 3 类信号：',
+          '1) Katz 限深路径累加：枚举 a→b 所有简单路径（长度 ≤ max_depth），贡献 = β^长度 × ∏边权',
+          '2) 边类型权重：person↔person 直接边权 ×1.0；含 event/entity 桥 ×0.5~0.7（防"群聊事件"刷爆）',
+          '3) 直接连接 boost：长度 1 路径额外 ×1.5；',
+          '4) Adamic-Adar 共同邻居：Σ 1/log(度+1.7)，奖励小圈子私密关联、惩罚"人人都参与的大事件"',
+          '最终 score = tanh(katzScore + 0.3 × commonNeighborsScore)。',
+          '两端可为人/事件/实体的任意组合。返回 top_paths + common_neighbors 作为可解释证据。',
+        ].join('\n'),
         parameters: {
           type: 'object',
           properties: {
@@ -222,7 +229,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
             to_node_id: { type: 'string', description: '终点节点 ID' },
             max_depth: {
               type: 'number',
-              description: '路径最大边数，1~6，默认 4。越大越能体现间接联系，但耗时指数增长。',
+              description:
+                '路径最大边数，1~6，默认 4。越大越能体现间接联系，但耗时指数增长；建议人对人=4，含事件/实体=3。',
             },
             top_paths: {
               type: 'number',
@@ -248,6 +256,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           to_id: r.toId,
           score: Number(r.score.toFixed(4)),
           raw_score: Number(r.rawScore.toFixed(4)),
+          katz_score: Number(r.katzScore.toFixed(4)),
+          common_neighbors_score: Number(r.commonNeighborsScore.toFixed(4)),
           paths_considered: r.pathsConsidered,
           shortest_length: r.shortestLength,
           directly_connected: r.directlyConnected,
@@ -257,6 +267,11 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
             contribution: Number(p.contribution.toFixed(4)),
             nodes: p.nodes.map(n => serializeNode(n)),
             edges: p.edges.map(e => serializeEdge(e)),
+          })),
+          common_neighbors: r.commonNeighbors.map(c => ({
+            degree: c.degree,
+            aa_contribution: Number(c.aaContribution.toFixed(4)),
+            node: serializeNode(c.node),
           })),
         },
         null,
