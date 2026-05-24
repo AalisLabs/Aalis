@@ -869,71 +869,100 @@ export class RelationService {
   }
 
   /**
-   * 清理孤儿节点（无任何边引用的 event / entity；person 节点永不视为孤儿）。
+   * 清理孤儿节点：删除所有"没有任何边引用"的 person / event / entity。
    *
-   * **设计意图**：
-   * - 与配额淘汰解耦——无论是否超过 maxEvents/maxEntities 配额，孤儿都应被清掉。
-   * - extractor 在写入层已尽量保证新建节点至少带一条边，因此运行期孤儿都是迁移
-   *   或边被显式删除后遗留下来的旧账噪声。
-   * - **默认不保护任何孤儿**：weight 通过 reinforceWeight 累加几次就会到 ≥0.8
-   *   （0.5→0.65→0.755→0.829），如果沿用配额阶段的 weight≥0.8/evidence≥3 保护，
-   *   绝大多数 noise 都会被噤声而无法清理——这是 v0 设计上的过保护。
-   *   配额淘汰阶段才需要保护（避免误删活跃节点），孤儿阶段不需要。
-   * - 调用方可显式传入 `protectEvidenceCount` / `protectWeight` 来开启保护。
+   * 设计原则（v3，最简）：
+   * - **没有任何边端点引用 = 孤儿**，三类节点一视同仁。边的 6 种 kind 中只要节点
+   *   出现在任一 from/to 字段上就算"被引用"。
+   * - **person 孤儿也清**：observePerson 按 (platform, userId) upsert，删掉的"水群幽灵"
+   *   下次发言时会自动重建，所以删除安全。
+   * - **零保护**：weight/evidence 门槛属于配额淘汰阶段的事，与孤儿无关；
+   *   孤儿的语义就是"没人指向"，无条件清。
+   * - **零参数**：刻意不暴露任何 opts，避免重新引入误用。
+   *
+   * 返回被删除的 id 列表，便于 caller 打日志/报告。
    */
-  async pruneOrphans(opts?: {
-    /** 保护门槛：evidence 数 ≥ 此值则跳过删除。默认 Infinity（不保护） */
-    protectEvidenceCount?: number;
-    /** 保护门槛：weight ≥ 此值则跳过删除。默认 Infinity（不保护） */
-    protectWeight?: number;
-  }): Promise<{ deletedEvents: number; deletedEntities: number }> {
-    const protectEv = opts?.protectEvidenceCount ?? Number.POSITIVE_INFINITY;
-    const protectW = opts?.protectWeight ?? Number.POSITIVE_INFINITY;
+  async pruneOrphans(): Promise<{
+    deletedPersons: number;
+    deletedEvents: number;
+    deletedEntities: number;
+    deletedPersonIds: string[];
+    deletedEventIds: string[];
+    deletedEntityIds: string[];
+  }> {
     const snap = await this.store.loadAll();
-    let deletedEvents = 0;
-    let deletedEntities = 0;
-    const isProtected = (n: EventNode | EntityNode): boolean =>
-      (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
+    const referencedPersonIds = new Set<string>();
     const referencedEventIds = new Set<string>();
     const referencedEntityIds = new Set<string>();
     for (const e of snap.edges) {
-      if (e.kind === 'person-event') referencedEventIds.add(e.toEventId);
-      else if (e.kind === 'person-entity') referencedEntityIds.add(e.toEntityId);
-      else if (e.kind === 'event-event') {
-        referencedEventIds.add(e.fromEventId);
-        referencedEventIds.add(e.toEventId);
-      } else if (e.kind === 'event-entity') {
-        referencedEventIds.add(e.fromEventId);
-        referencedEntityIds.add(e.toEntityId);
-      } else if (e.kind === 'entity-entity') {
-        referencedEntityIds.add(e.fromEntityId);
-        referencedEntityIds.add(e.toEntityId);
+      switch (e.kind) {
+        case 'person-event':
+          referencedPersonIds.add(e.fromPersonId);
+          referencedEventIds.add(e.toEventId);
+          break;
+        case 'person-entity':
+          referencedPersonIds.add(e.fromPersonId);
+          referencedEntityIds.add(e.toEntityId);
+          break;
+        case 'person-person':
+          referencedPersonIds.add(e.fromPersonId);
+          referencedPersonIds.add(e.toPersonId);
+          break;
+        case 'event-event':
+          referencedEventIds.add(e.fromEventId);
+          referencedEventIds.add(e.toEventId);
+          break;
+        case 'event-entity':
+          referencedEventIds.add(e.fromEventId);
+          referencedEntityIds.add(e.toEntityId);
+          break;
+        case 'entity-entity':
+          referencedEntityIds.add(e.fromEntityId);
+          referencedEntityIds.add(e.toEntityId);
+          break;
+      }
+    }
+    const deletedPersonIds: string[] = [];
+    const deletedEventIds: string[] = [];
+    const deletedEntityIds: string[] = [];
+    for (const p of snap.persons) {
+      if (!referencedPersonIds.has(p.id)) {
+        await this.store.deletePersonCascade(p.platform, p.userId);
+        deletedPersonIds.push(p.id);
       }
     }
     for (const ev of snap.events) {
-      if (!referencedEventIds.has(ev.id) && !isProtected(ev)) {
+      if (!referencedEventIds.has(ev.id)) {
         await this.store.deleteEventCascade(ev.id);
-        deletedEvents++;
+        deletedEventIds.push(ev.id);
       }
     }
     for (const en of snap.entities) {
-      if (!referencedEntityIds.has(en.id) && !isProtected(en)) {
+      if (!referencedEntityIds.has(en.id)) {
         await this.store.deleteEntityCascade(en.id);
-        deletedEntities++;
+        deletedEntityIds.push(en.id);
       }
     }
-    return { deletedEvents, deletedEntities };
+    return {
+      deletedPersons: deletedPersonIds.length,
+      deletedEvents: deletedEventIds.length,
+      deletedEntities: deletedEntityIds.length,
+      deletedPersonIds,
+      deletedEventIds,
+      deletedEntityIds,
+    };
   }
 
   /**
    * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后顺手扫"风格，不开独立调度器。
    *
    * 优先级（每次仅在超额时执行）：
-   *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）。**孤儿清理与配额无关**，
-   *      旧账噪声任何时候都清；委托 `pruneOrphans()`。
+   *   1. **孤儿节点**先删（无任何边引用的 person / event / entity；委托 `pruneOrphans()`）。
+   *      孤儿清理与配额无关，旧账噪声任何时候都清。
    *   2. 仍超额时按 `(now - lastReinforcedAt) / (max(weight,0.05) · max(PR,ε))` **降序**删；
    *      即"老旧 + 低权重 + 在 PageRank 上无人指向"的优先丢。
-   *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）跳过删除。
+   *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）在配额阶段跳过删除，
+   *      避免误删活跃节点。该保护**仅作用于配额阶段**，不影响孤儿清理。
    *   4. **滞回（hysteresis）**：仅当 count > quota·(1+hysteresisPct) 时才触发，
    *      触发后一次性裁到 floor(quota·targetPct)。默认 hysteresis=0.2, target=0.8 ——
    *      quota=500 时会在 600 触发并裁到 400，相当于一次清理 ~200 条；不会每写一条就裁。
@@ -967,7 +996,14 @@ export class RelationService {
     personSeed?: number;
     entitySeed?: number;
     eventSeed?: number;
-  }): Promise<{ deletedEvents: number; deletedEntities: number; deletedEdges: number }> {
+  }): Promise<{
+    deletedPersons: number;
+    deletedEvents: number;
+    deletedEntities: number;
+    deletedEdges: number;
+    /** 孤儿阶段被删的 id 列表（前 50 个），便于日志/诊断 */
+    orphanSamples: { persons: string[]; events: string[]; entities: string[] };
+  }> {
     const protectEv = quota.protectEvidenceCount ?? 3;
     const protectW = quota.protectWeight ?? 0.8;
     const damping = quota.pagerankDamping ?? 0.85;
@@ -978,6 +1014,7 @@ export class RelationService {
     const personSeed = quota.personSeed ?? 3;
     const entitySeed = quota.entitySeed ?? 2;
     const eventSeed = quota.eventSeed ?? 1;
+    let deletedPersons = 0;
     let deletedEvents = 0;
     let deletedEntities = 0;
     let deletedEdges = 0;
@@ -985,8 +1022,9 @@ export class RelationService {
     const isProtected = (n: EventNode | EntityNode): boolean =>
       (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
 
-    // 1) 先做孤儿清理（与配额无关，旧账噪声总是清；不沿用 evidence/weight 保护）
+    // 1) 先做孤儿清理（与配额无关，旧账噪声总是清；person / event / entity 一视同仁）
     const orphanResult = await this.pruneOrphans();
+    deletedPersons += orphanResult.deletedPersons;
     deletedEvents += orphanResult.deletedEvents;
     deletedEntities += orphanResult.deletedEntities;
 
@@ -1130,7 +1168,17 @@ export class RelationService {
       }
     }
 
-    return { deletedEvents, deletedEntities, deletedEdges };
+    return {
+      deletedPersons,
+      deletedEvents,
+      deletedEntities,
+      deletedEdges,
+      orphanSamples: {
+        persons: orphanResult.deletedPersonIds.slice(0, 50),
+        events: orphanResult.deletedEventIds.slice(0, 50),
+        entities: orphanResult.deletedEntityIds.slice(0, 50),
+      },
+    };
   }
 
   /** 查询某人涉及的所有事件 + 实体 + 直连人际关系（深度 1 快捷方法） */

@@ -63,6 +63,72 @@ const ENTITY_DEFAULT = '#9ca3af';
 // 深度 0 表示「不限」，送给后端时映射成足够大的有限数
 const UNLIMITED_DEPTH_SENTINEL = 99;
 
+// --------------------------------------------------------------------------
+// 边字段中英对照（仅用于 UI 显示，存储层保持英文 token）。
+// 缺失映射时回退到原始 token —— 不抛错，避免后端新增枚举时 WebUI 崩溃。
+// --------------------------------------------------------------------------
+const EDGE_KIND_ZH: Record<string, string> = {
+  'person-event': '人 → 事件',
+  'person-entity': '人 → 物',
+  'person-person': '人 → 人',
+  'event-event': '事件 → 事件',
+  'event-entity': '事件 → 物',
+  'entity-entity': '物 → 物',
+};
+const PERSON_EVENT_ROLE_ZH: Record<string, string> = {
+  initiator: '发起者',
+  participant: '参与者',
+  witness: '旁观者',
+  target: '被指向',
+  reporter: '转述者',
+};
+const PERSON_ENTITY_ROLE_ZH: Record<string, string> = {
+  enthusiast: '深度卷入',
+  participant: '参与/使用',
+  owner: '拥有',
+  creator: '创作者',
+  critic: '行为性批评',
+  visitor: '到访',
+  mentioned: '仅被提及',
+};
+const PERSON_RELATION_ZH: Record<string, string> = {
+  friend: '朋友',
+  cp: 'CP',
+  rival: '对手',
+  mentor: '师徒',
+  colleague: '同事',
+  familiar: '熟人',
+  antagonist: '敌对',
+  admirer: '仰慕者',
+  'is-alias-of': '是…的别名',
+  'alt-account-of': '是…的小号',
+};
+const SENTIMENT_ZH: Record<string, string> = {
+  positive: '积极',
+  negative: '消极',
+  neutral: '中性',
+  mixed: '复杂',
+};
+const HIERARCHY_ZH: Record<string, string> = {
+  superior: '高位（from 高于 to）',
+  peer: '平级',
+  subordinate: '低位（from 低于 to）',
+  unknown: '未知',
+};
+/** 渲染 "中文（英文）"；中文映射缺失时仅显示英文。 */
+function bilingual(en: string | undefined, map: Record<string, string>): string {
+  if (!en) return '';
+  const zh = map[en];
+  return zh ? `${zh}（${en}）` : en;
+}
+/** 根据 kind 决定 role 应该走人-事件还是人-实体的中文表。 */
+function roleLabel(kind: string | undefined, role: string | undefined): string {
+  if (!role) return '';
+  if (kind === 'person-event') return bilingual(role, PERSON_EVENT_ROLE_ZH);
+  if (kind === 'person-entity') return bilingual(role, PERSON_ENTITY_ROLE_ZH);
+  return role;
+}
+
 const stylesheet: cytoscape.StylesheetJson = [
   {
     selector: 'node',
@@ -609,18 +675,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                     ? `${selectedNode.data.kind ?? '节点'}：${selectedNode.data.label ?? selectedNode.data.id}`
                     : '焦点（边）'}
                 </strong>
-                <details style={{ marginLeft: 'auto' }}>
-                  <summary style={{ cursor: 'help', color: 'var(--text-muted)', fontSize: 11, listStyle: 'none' }}>ⓘ 字段含义</summary>
-                </details>
+                <span style={{ marginLeft: 'auto' }}>
+                  <FieldGlossary />
+                </span>
               </div>
-              <details style={{ marginBottom: 8 }}>
-                <summary style={{ display: 'none' }}>fields</summary>
-                <div style={{ padding: '6px 8px', background: 'var(--bg-secondary, rgba(255,255,255,0.04))', borderRadius: 4, color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.5 }}>
-                  <div><b>合并强度</b>(weight, 0~1)：节点/边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1-prev)·0.3</code> → 0.65 → 0.755 → 0.829 →…(clamp 1.0)。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
-                  <div style={{ marginTop: 3 }}><b>图重要性</b>(lastPageRank)：最近一次 <code>/relation compress|maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权(人 3 · 物 2 · 事 1)。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。</div>
-                  <div style={{ marginTop: 3 }}><b>边淘汰分</b>(仅边详情)：<code>合并强度 × ((PR_from + PR_to)/2)</code>。配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
-                </div>
-              </details>
               {selectedNode ? (
                 <NodeDetailCard
                   node={selectedNode}
@@ -658,10 +716,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                     </div>
                     <div style={{ marginBottom: 6 }}>{fe.description ?? '(无描述)'}</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      <span>kind</span><span>{fe.kind}{fe.directed === true ? ' (directed)' : fe.directed === false ? ' (undirected)' : ''}</span>
-                      {fe.relation ? (<><span>relation</span><span>{fe.relation}</span></>) : null}
-                      {fe.role ? (<><span>role</span><span>{fe.role}</span></>) : null}
-                      {fe.sentiment ? (<><span>sentiment</span><span>{fe.sentiment}</span></>) : null}
+                      <span>kind</span><span>{bilingual(fe.kind, EDGE_KIND_ZH)}{fe.directed === true ? ' · 有向' : fe.directed === false ? ' · 无向' : ''}</span>
+                      {fe.relation ? (<><span>relation</span><span>{bilingual(fe.relation, PERSON_RELATION_ZH)}</span></>) : null}
+                      {fe.role ? (<><span>role</span><span>{roleLabel(fe.kind, fe.role)}</span></>) : null}
+                      {fe.sentiment ? (<><span>sentiment</span><span>{bilingual(fe.sentiment, SENTIMENT_ZH)}</span></>) : null}
                       {typeof fe.weight === 'number' ? (
                         <>
                           <span title="边按 (kind, source, target[, role/relation]) 重复合并的累计强度：0.5 起步，每次合并 +0.3 → 0.65 → 0.755 → … (clamp 1.0)。语义=被强化次数，不是重要性。" style={{ cursor: 'help' }}>合并强度</span>
@@ -887,20 +945,167 @@ interface NodeDetailCardProps {
   hasDetailSource: boolean;
   isFocus: boolean;
 }
-/** 字段含义说明：合并强度 / 图重要性 / 边淘汰分。节点详情、边详情都用它，集中维护语义。 */
+/**
+ * 字段含义入口：点击弹出 modal，内含三大数值指标解释 + 六类边 / 角色 / 关系
+ * 的中英对照（与 docs/plugins/user-relation-graph.md 对齐）。
+ *
+ * 为什么走 modal 而不是 `<details>`：
+ * - 内容已经从"3 行 weight/PR/边淘汰"扩到"6 类边 + 12 个角色 + 10 个关系"，
+ *   塞 inline 会撑爆 320px 宽的侧边详情卡。
+ * - 多个 NodeDetailCard / 边详情都引用同一个组件，modal 单实例切换更清爽。
+ */
 function FieldGlossary(): JSX.Element {
+  const [open, setOpen] = useState(false);
   return (
-    <details style={{ display: 'inline', marginLeft: 8 }}>
-      <summary style={{ display: 'inline', cursor: 'help', color: 'var(--text-muted)', listStyle: 'none' }}>ⓘ 字段含义</summary>
-      <div style={{ marginTop: 4, padding: '6px 8px', background: 'var(--bg-secondary, rgba(255,255,255,0.04))', borderRadius: 4, color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.5 }}>
-        <div><b>合并强度</b>（weight, 0~1）：节点/边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1-prev)·0.3</code> →
-          0.65 → 0.755 → 0.829 →…（clamp 1.0）。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
-        <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress|maintain</code> 计算的全图 PageRank。
-          个性化种子按 kind 加权（人 3 · 物 2 · 事 1）。越高表示越靠近"核心人物 · 热门事件"。未跑过压缩则为空。</div>
-        <div style={{ marginTop: 3 }}><b>边淘汰分</b>（仅边详情）：<code>合并强度 × ((PR_from + PR_to)/2)</code>。
-          配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          background: 'none',
+          border: 0,
+          padding: 0,
+          cursor: 'help',
+          color: 'var(--text-muted)',
+          fontSize: 11,
+          textDecoration: 'underline dotted',
+        }}
+        title="字段含义说明"
+      >
+        ⓘ 字段含义
+      </button>
+      {open ? <FieldGlossaryModal onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
+function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
+  // 简易模态：固定全屏遮罩 + 居中卡片。点遮罩 / Esc / ✕ 都能关。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const row: CSSProperties = { display: 'grid', gridTemplateColumns: '120px 1fr', columnGap: 12, rowGap: 4, fontSize: 12 };
+  const h: CSSProperties = { margin: '12px 0 4px', fontSize: 13, color: 'var(--text-primary, #e4e4ef)' };
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.55)',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-primary, #0f0f14)',
+          color: 'var(--text-primary, #e4e4ef)',
+          border: '1px solid var(--border-color, #2a2a42)',
+          borderRadius: 8,
+          padding: '16px 20px',
+          width: 'min(680px, 92vw)',
+          maxHeight: '82vh',
+          overflowY: 'auto',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          lineHeight: 1.55,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+          <strong style={{ fontSize: 14 }}>关系图字段含义</strong>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ marginLeft: 'auto', background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 16 }}
+            aria-label="关闭"
+            title="关闭 (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={h}>三个数值指标</div>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <div><b>合并强度</b>（weight, 0~1）：节点 / 边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1-prev)·0.3</code> → 0.65 → 0.755 → 0.829 → … (clamp 1.0)。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
+          <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress | maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权（人 3 · 物 2 · 事 1）。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。</div>
+          <div style={{ marginTop: 3 }}><b>边淘汰分</b>（仅边详情）：<code>合并强度 × ((PR_from + PR_to) / 2)</code>。配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
+        </div>
+
+        <div style={h}>边 kind（六类）</div>
+        <div style={row}>
+          {Object.entries(EDGE_KIND_ZH).map(([en, zh]) => (
+            <React.Fragment key={en}>
+              <code style={{ color: 'var(--text-muted)' }}>{en}</code>
+              <span>{zh}</span>
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div style={h}>role · 人 → 事件</div>
+        <div style={row}>
+          {Object.entries(PERSON_EVENT_ROLE_ZH).map(([en, zh]) => (
+            <React.Fragment key={en}>
+              <code style={{ color: 'var(--text-muted)' }}>{en}</code>
+              <span>{zh}</span>
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div style={h}>role · 人 → 物</div>
+        <div style={row}>
+          {Object.entries(PERSON_ENTITY_ROLE_ZH).map(([en, zh]) => (
+            <React.Fragment key={en}>
+              <code style={{ color: 'var(--text-muted)' }}>{en}</code>
+              <span>{zh}</span>
+            </React.Fragment>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          注：单句态度声明（"我喜欢 X"）不在关系图记录，归 user-profile 画像层。
+        </div>
+
+        <div style={h}>relation · 人 → 人</div>
+        <div style={row}>
+          {Object.entries(PERSON_RELATION_ZH).map(([en, zh]) => (
+            <React.Fragment key={en}>
+              <code style={{ color: 'var(--text-muted)' }}>{en}</code>
+              <span>{zh}</span>
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div style={h}>sentiment</div>
+        <div style={row}>
+          {Object.entries(SENTIMENT_ZH).map(([en, zh]) => (
+            <React.Fragment key={en}>
+              <code style={{ color: 'var(--text-muted)' }}>{en}</code>
+              <span>{zh}</span>
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div style={h}>hierarchy（人 → 人，与 directed 正交）</div>
+        <div style={row}>
+          {Object.entries(HIERARCHY_ZH).map(([en, zh]) => (
+            <React.Fragment key={en}>
+              <code style={{ color: 'var(--text-muted)' }}>{en}</code>
+              <span>{zh}</span>
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-muted)' }}>
+          完整文档：<code>docs/plugins/user-relation-graph.md</code>
+        </div>
       </div>
-    </details>
+    </div>
   );
 }
 function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: NodeDetailCardProps): JSX.Element {
