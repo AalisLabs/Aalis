@@ -74,6 +74,17 @@ export interface ExtractorConfig {
   evictHysteresisPct: number;
   /** 触发后裁到 floor(quota·pct)。默认 0.8，配合 hysteresis=0.2 → 单次清理 ~40% quota */
   evictTargetPct: number;
+  /**
+   * 淘汰完成后自动运行一次 consolidate（去重/整理/层级推断）。
+   * 仅在实际发生淘汰（deletedEvents/Entities/Edges > 0）时触发。默认 true。
+   */
+  consolidateAfterEviction: boolean;
+  /** consolidation 使用的 LLM 模型（可选；为空则退化为纯算法模式） */
+  consolidateLLMModelRef?: ModelRef;
+  /** consolidation LLM 是否禁用思考模式 */
+  consolidateLLMDisableThinking: boolean;
+  /** consolidation 是否自动建别名/层级边（对应 consolidate({ autoLink }) 参数） */
+  consolidateAutoLink: boolean;
   /** debug 日志 */
   debug: boolean;
 }
@@ -677,6 +688,33 @@ export class RelationExtractor {
           this.ctx.logger.debug(
             `[user-relation] 自动老化: 删除 events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
           );
+        }
+        // 淘汰后自动 consolidate（仅在实际发生淘汰时触发）
+        if (
+          this.cfg.consolidateAfterEviction &&
+          (evicted.deletedEvents > 0 || evicted.deletedEntities > 0 || evicted.deletedEdges > 0)
+        ) {
+          try {
+            const cr = await this.service.consolidate({
+              autoLink: this.cfg.consolidateAutoLink,
+              ...(this.cfg.consolidateLLMModelRef
+                ? {
+                    llm: {
+                      ctx: this.ctx,
+                      modelRef: this.cfg.consolidateLLMModelRef,
+                      disableThinking: this.cfg.consolidateLLMDisableThinking,
+                    },
+                  }
+                : {}),
+            });
+            if (this.cfg.debug) {
+              this.ctx.logger.debug(
+                `[user-relation] 淘汰后 consolidate 完成: 事件边整理=${cr.eventEdgesNormalized} 层级候选=${cr.entityHierarchyCandidates} 层级边=${cr.entityHierarchyEdgesCreated}`,
+              );
+            }
+          } catch (err) {
+            this.ctx.logger.warn(`[user-relation] 淘汰后 consolidate 失败: ${(err as Error).message}`);
+          }
         }
       } catch (err) {
         this.ctx.logger.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
