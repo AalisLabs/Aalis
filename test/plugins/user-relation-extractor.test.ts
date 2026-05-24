@@ -215,7 +215,12 @@ describe('plugin-user-relation: extractor', () => {
   });
 
   it('计数器：emit inbound:message:archived 累积到阈值才触发', async () => {
-    const llmJson = JSON.stringify({ persons: [{ platform: 'onebot', userId: 'c' }] });
+    // person 必须被边引用才能通过反孤儿守卫，所以给条 entity 边
+    const llmJson = JSON.stringify({
+      persons: [{ platform: 'onebot', userId: 'c' }],
+      entities: [{ refKey: 'g1', name: '游戏', entityKind: 'work' }],
+      personEntityEdges: [{ personPlatform: 'onebot', personUserId: 'c', entityRefKey: 'g1', role: 'mentioned' }],
+    });
     const { app, mem, service, calls } = await setup(llmJson);
     await mem.saveMessage('sess2', mkUserMsg('m1', 'c', '消息1'));
     // 阈值 3：emit 两次不触发

@@ -403,19 +403,18 @@ export class RelationExtractor {
       };
     };
 
-    // 1) persons
-    for (const p of parsed.persons ?? []) {
-      if (!p.platform || !p.userId) continue;
-      await this.service.observePerson(p.platform, p.userId, p.displayName);
-    }
-
-    // ── 反孤儿守卫：统计 LLM payload 中被任意边引用的 event/entity refKey；
-    //    未被引用的"裸节点"不予落库（既节省存储，也避免 evictByQuota 周期性回收噪声）。
+    // ── 反孤儿守卫：先扫一遍 LLM payload，收集被任意边引用的 person id / event refKey / entity refKey。
+    //    未被任何边引用的"裸节点"不予落库——既节省存储，也避免 evictByQuota 周期性回收噪声。
     //    existingEventId/existingEntityId 视为已在库的强化操作，豁免（即便本轮没新增边也合理）。
+    //    Person 没有 refKey 体系，按 `${platform}:${userId}` 作集合 key；person-person 边的双向端点都计入。
+    const referencedPersonIds = new Set<string>();
     const referencedEventRefKeys = new Set<string>();
     const referencedEntityRefKeys = new Set<string>();
     for (const pe of parsed.personEventEdges ?? []) {
       if (pe.eventRefKey) referencedEventRefKeys.add(pe.eventRefKey);
+      if (pe.personPlatform && pe.personUserId) {
+        referencedPersonIds.add(`${pe.personPlatform}:${pe.personUserId}`);
+      }
     }
     for (const ee of parsed.eventEventEdges ?? []) {
       if (ee.fromEventRefKey) referencedEventRefKeys.add(ee.fromEventRefKey);
@@ -427,10 +426,34 @@ export class RelationExtractor {
     }
     for (const pe of parsed.personEntityEdges ?? []) {
       if (pe.entityRefKey) referencedEntityRefKeys.add(pe.entityRefKey);
+      if (pe.personPlatform && pe.personUserId) {
+        referencedPersonIds.add(`${pe.personPlatform}:${pe.personUserId}`);
+      }
     }
     for (const ee of parsed.entityEntityEdges ?? []) {
       if (ee.fromEntityRefKey) referencedEntityRefKeys.add(ee.fromEntityRefKey);
       if (ee.toEntityRefKey) referencedEntityRefKeys.add(ee.toEntityRefKey);
+    }
+    for (const pp of parsed.personPersonEdges ?? []) {
+      if (pp.fromPlatform && pp.fromUserId) {
+        referencedPersonIds.add(`${pp.fromPlatform}:${pp.fromUserId}`);
+      }
+      if (pp.toPlatform && pp.toUserId) {
+        referencedPersonIds.add(`${pp.toPlatform}:${pp.toUserId}`);
+      }
+    }
+
+    // 1) persons：只 observe 被边引用的；未被引用的旁观者跳过，避免孤儿人永久积累
+    for (const p of parsed.persons ?? []) {
+      if (!p.platform || !p.userId) continue;
+      const pid = `${p.platform}:${p.userId}`;
+      if (!referencedPersonIds.has(pid)) {
+        if (this.cfg.debug) {
+          this.ctx.logger.debug(`[user-relation] 跳过孤立人物 "${p.displayName ?? pid}"（${pid} 无任何边引用）`);
+        }
+        continue;
+      }
+      await this.service.observePerson(p.platform, p.userId, p.displayName);
     }
 
     // 2) events: refKey → real eventId
@@ -749,9 +772,10 @@ function buildExtractionPrompt(
       '- 当你犹豫"这件事算不算值得记"时，**默认答案是不记**。提取器后续会做老化淘汰，但更省事的是源头别记。',
       '',
       '## ⚠️ 反孤儿节点（强制）',
-      '- 每一个你创建的 event / entity，**必须至少被一条边引用**（personEvent / eventEvent / eventEntity 或 personEntity / entityEntity）。',
-      '- 不要写"光杆节点"——若你不打算给它任何边，就**直接从 events / entities 数组里去掉**。提取器会丢弃这种孤立节点，等于白做。',
-      '- 自检顺序：先列边 → 边中提到哪些 refKey → 只把这些 refKey 写进 events / entities。',
+      '- 每一个你创建的 person / event / entity，**必须至少被一条边引用**（personEvent / eventEvent / eventEntity 或 personEntity / entityEntity / personPerson）。',
+      '- 不要写"光杆节点"——若你不打算给它任何边，就**直接从 persons / events / entities 数组里去掉**。提取器会丢弃这种孤立节点，等于白做。',
+      '- persons 数组的作用是登记"这一轮你打算与之建立关系的人"，**不是聊天窗口参与者花名册**。窗口里只是旁观的人若没有任何边引用，请不要列出。',
+      '- 自检顺序：先列边 → 边中提到哪些 person id / refKey → 只把这些 person / refKey 写进 persons / events / entities。',
       '',
       '- **以下情况一律不要建 event**（直接走 personEntityEdge 或留空）：',
       '  · 偏好/事实声明：「我喜欢 X / 我讨厌 Y / 我有 Z / 我会 W」——只建 entity 边，不建 event。',
