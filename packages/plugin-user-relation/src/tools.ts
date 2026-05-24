@@ -3,17 +3,19 @@
  *
  * 设计原则（单写者 + 与 profile 对称）：
  * - 关系图的「新建 / 强化 / 删除」由 extractor 单线程被动归纳，agent **不能** 直接写或删。
- * - agent 只暴露 3 个只读工具：expand / find_path / search_events。
- * - 想纠错？使用 `/relation cleanup` slash 命令（与 profile 的 `/profile clear` 对称）。
- * - 想让图记住某事？引导用户在对话中说出，extractor 自然会捕获。
+ * - agent 暴露的工具全部 **只读**；纠错走 `/relation cleanup` slash 命令。
  *
- * 这样可避免：
- *  #1 agent 与 extractor 同边并发新建竞争
- *  #2 同一事实被 agent + extractor 各计一次权重
- *  #3 cleanup 与 agent 写入相撞导致「幻象复活」
- *  #4 agent 误删用户珍贵关系且无法回滚
+ * 这套 8 个工具覆盖 6 类边、3 类节点的检索/分析需求：
+ *   resolve_node   —— 由关键词跨类解析节点 ID
+ *   expand_node    —— 以任意节点为中心 BFS 子图（替代旧 expand_person）
+ *   find_path      —— 任意节点 ↔ 任意节点 最短路径（替代旧 find_path 的 person 限制）
+ *   search_persons —— 按 platform/关键词列人
+ *   search_entities—— 按 kind/关键词列实体
+ *   search_events  —— 按关键词/天数列事件
+ *   list_edges     —— 多条件过滤边（kind/relationType/role/from/to/days）
+ *   timeline       —— 给定节点的时间线（按事件 lastReinforcedAt 倒序）
  *
- * 所有 depth/breadth 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
+ * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
 import type { Context } from '@aalis/core';
 import { useToolService } from '@aalis/plugin-tools-api';
@@ -35,18 +37,18 @@ export interface ToolsConfig {
   enabled: boolean;
   /** 工具分组名（默认 'user-relation'） */
   group: string;
-  /** Agent 调用时的默认 depth */
+  /** Agent 调用时的默认 depth（expand_node） */
   defaultMaxDepth: number;
-  /** Agent 调用时的默认 breadth */
+  /** Agent 调用时的默认 breadth（expand_node） */
   defaultMaxBreadth: number;
   /** 硬上限 depth；超过会被截断 */
   hardMaxDepth: number;
   /** 硬上限 breadth */
   hardMaxBreadth: number;
-  /** searchEvents 默认 limit */
+  /** search_events / search_persons / search_entities 默认 limit */
   searchEventsDefaultLimit: number;
   searchEventsHardMaxLimit: number;
-  /** findPath 默认最大深度 */
+  /** find_path 默认/硬上限最大深度 */
   findPathDefaultMaxDepth: number;
   findPathHardMaxDepth: number;
   debug: boolean;
@@ -61,46 +63,99 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     name: groupName,
     label: '人物关系图',
     description:
-      '查询用户关系图（扩展邻域 / 关系链 / 搜事件）+ 删错边纠正。新建与强化由后台被动 LLM 归纳，不在工具中暴露。',
+      '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。只读，纠错走 /relation cleanup。',
   });
 
-  // ---- expand_person ----
+  // ───────────────────────────── resolve_node ─────────────────────────────
   tools.register({
     definition: {
       type: 'function',
       function: {
-        name: 'user_relation_expand_person',
+        name: 'user_relation_resolve_node',
         description:
-          '以某人为中心按 BFS 展开人物关系子图。返回子图中的人、事件、边。用于回答"X 跟谁有关系 / 参与了什么事件"。',
+          '把"赵敏 / 三角洲 / 那次吵架"这种自然语言关键词解析成节点 ID。返回多个候选，按相关度+权重排序。后续可把 id 喂给 expand_node / find_path / timeline。',
         parameters: {
           type: 'object',
           properties: {
-            person_id: {
-              type: 'string',
-              description: '人物 ID，格式 platform:userId（如 onebot:1234567）',
+            keyword: { type: 'string', description: '人名 / 实体名 / 事件名 / 别名 等关键词' },
+            kinds: {
+              type: 'array',
+              items: { type: 'string', enum: ['person', 'event', 'entity'] },
+              description: '可选：只在指定节点类型中搜索。不传则三类都搜。',
             },
-            max_depth: {
+            limit: {
               type: 'number',
-              description: `BFS 最大深度（0=仅此人；1=直接邻居；2=同事件其他参与者 / 朋友的朋友）。默认 ${cfg.defaultMaxDepth}，硬上限 ${cfg.hardMaxDepth}`,
-            },
-            max_breadth: {
-              type: 'number',
-              description: `单节点展开邻居上限（按 weight 降序）。默认 ${cfg.defaultMaxBreadth}，硬上限 ${cfg.hardMaxBreadth}`,
+              description: `每类返回上限。默认 ${cfg.searchEventsDefaultLimit}，硬上限 ${cfg.searchEventsHardMaxLimit}`,
             },
           },
-          required: ['person_id'],
+          required: ['keyword'],
           additionalProperties: false,
         },
       },
     },
     groups: [groupName],
     handler: async args => {
-      const personId = String(args.person_id ?? '').trim();
-      if (!personId.includes(':')) return JSON.stringify({ error: 'person_id 格式应为 platform:userId' });
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim() : '';
+      if (!keyword) return JSON.stringify({ error: 'keyword 不能为空' });
+      const wanted = new Set(
+        (Array.isArray(args.kinds) ? (args.kinds as unknown[]) : []).filter((k): k is string => typeof k === 'string'),
+      );
+      const wantAll = wanted.size === 0;
+      const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit, 1, cfg.searchEventsHardMaxLimit);
+      const out: Array<Record<string, unknown>> = [];
+      if (wantAll || wanted.has('person')) {
+        const list = await service.searchPersons({ keyword, limit });
+        for (const p of list) out.push({ kind: 'person', ...serializePerson(p) });
+      }
+      if (wantAll || wanted.has('entity')) {
+        const list = await service.searchEntities({ keyword, limit });
+        for (const e of list) out.push({ kind: 'entity', ...serializeEntity(e) });
+      }
+      if (wantAll || wanted.has('event')) {
+        const list = await service.searchEvents({ keyword, limit });
+        for (const e of list) out.push({ kind: 'event', ...serializeEventForSearch(e) });
+      }
+      return JSON.stringify({ keyword, count: out.length, candidates: out }, null, 2);
+    },
+  });
+
+  // ───────────────────────────── expand_node ──────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_expand_node',
+        description:
+          '以任意节点（人 / 事件 / 实体）为中心做 BFS 展开子图。比 expand_person 更通用：可以从实体出发看"谁关心《三角洲》"，或从事件出发看"这件事牵连了谁"。',
+        parameters: {
+          type: 'object',
+          properties: {
+            node_id: {
+              type: 'string',
+              description: '节点 ID：person 形如 platform:userId；event/entity 是 UUID。先用 resolve_node 拿到。',
+            },
+            max_depth: {
+              type: 'number',
+              description: `BFS 最大深度（0=仅此节点；1=直接邻居；2=邻居的邻居）。默认 ${cfg.defaultMaxDepth}，硬上限 ${cfg.hardMaxDepth}`,
+            },
+            max_breadth: {
+              type: 'number',
+              description: `单节点展开邻居上限（按 weight 降序）。默认 ${cfg.defaultMaxBreadth}，硬上限 ${cfg.hardMaxBreadth}`,
+            },
+          },
+          required: ['node_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const nodeId = String(args.node_id ?? '').trim();
+      if (!nodeId) return JSON.stringify({ error: 'node_id 不能为空' });
       const depth = clampNum(args.max_depth, cfg.defaultMaxDepth, 0, cfg.hardMaxDepth);
       const breadth = clampNum(args.max_breadth, cfg.defaultMaxBreadth, 1, cfg.hardMaxBreadth);
       const sub = await service.traverseSubgraph({
-        startNodeIds: [personId],
+        startNodeIds: [nodeId],
         maxDepth: depth,
         maxBreadth: breadth,
       });
@@ -108,35 +163,34 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
-  // ---- find_path ----
+  // ───────────────────────────── find_path ────────────────────────────────
   tools.register({
     definition: {
       type: 'function',
       function: {
         name: 'user_relation_find_path',
-        description: '在两人之间寻找最短关系链（经过的边可包含事件作为桥）。找不到返回 null。',
+        description:
+          '在任意两个节点之间寻找最短关系链（可经过事件 / 实体作为桥）。两端节点可以是人 / 事件 / 实体的任意组合。找不到返回 found=false。',
         parameters: {
           type: 'object',
           properties: {
-            from_person_id: { type: 'string', description: '起点人物 ID (platform:userId)' },
-            to_person_id: { type: 'string', description: '终点人物 ID (platform:userId)' },
+            from_node_id: { type: 'string', description: '起点节点 ID' },
+            to_node_id: { type: 'string', description: '终点节点 ID' },
             max_depth: {
               type: 'number',
               description: `最大边数（路径长度上限）。默认 ${cfg.findPathDefaultMaxDepth}，硬上限 ${cfg.findPathHardMaxDepth}`,
             },
           },
-          required: ['from_person_id', 'to_person_id'],
+          required: ['from_node_id', 'to_node_id'],
           additionalProperties: false,
         },
       },
     },
     groups: [groupName],
     handler: async args => {
-      const from = String(args.from_person_id ?? '').trim();
-      const to = String(args.to_person_id ?? '').trim();
-      if (!from.includes(':') || !to.includes(':')) {
-        return JSON.stringify({ error: 'person_id 格式应为 platform:userId' });
-      }
+      const from = String(args.from_node_id ?? '').trim();
+      const to = String(args.to_node_id ?? '').trim();
+      if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
       const depth = clampNum(args.max_depth, cfg.findPathDefaultMaxDepth, 1, cfg.findPathHardMaxDepth);
       const path = await service.findPath(from, to, depth);
       if (!path) return JSON.stringify({ found: false });
@@ -153,13 +207,79 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
-  // ---- search_events ----
+  // ───────────────────────────── search_persons ───────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_search_persons',
+        description: '按关键词 / 平台筛选人。匹配 displayName / userId / aliases / id（substring，不区分大小写）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: '关键词；留空则按 lastMentionedAt 倒序列出活跃的人' },
+            platform: { type: 'string', description: '仅返回该平台的人，如 onebot' },
+            limit: {
+              type: 'number',
+              description: `结果上限。默认 ${cfg.searchEventsDefaultLimit}，硬上限 ${cfg.searchEventsHardMaxLimit}`,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
+      const platform = typeof args.platform === 'string' && args.platform.trim() ? args.platform.trim() : undefined;
+      const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit, 1, cfg.searchEventsHardMaxLimit);
+      const persons = await service.searchPersons({ keyword, platform, limit });
+      return JSON.stringify({ count: persons.length, persons: persons.map(serializePerson) }, null, 2);
+    },
+  });
+
+  // ───────────────────────────── search_entities ──────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_search_entities',
+        description: '按关键词 / 类型筛选实体。匹配 name / aliases / summary / id（substring，不区分大小写）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: '关键词；留空则按 lastReinforcedAt 倒序列出最近实体' },
+            kind: {
+              type: 'string',
+              enum: ['topic', 'place', 'thing', 'work'],
+              description: '实体类型筛选',
+            },
+            limit: {
+              type: 'number',
+              description: `结果上限。默认 ${cfg.searchEventsDefaultLimit}，硬上限 ${cfg.searchEventsHardMaxLimit}`,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
+      const kind = typeof args.kind === 'string' ? (args.kind as EntityNode['entityKind']) : undefined;
+      const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit, 1, cfg.searchEventsHardMaxLimit);
+      const ents = await service.searchEntities({ keyword, kind, limit });
+      return JSON.stringify({ count: ents.length, entities: ents.map(serializeEntity) }, null, 2);
+    },
+  });
+
+  // ───────────────────────────── search_events ────────────────────────────
   tools.register({
     definition: {
       type: 'function',
       function: {
         name: 'user_relation_search_events',
-        description: '按关键词 substring 搜索事件（匹配标题 + summary，不区分大小写）。',
+        description: '按关键词 substring 搜索事件（匹配 title + summary，不区分大小写）。',
         parameters: {
           type: 'object',
           properties: {
@@ -180,10 +300,121 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
       const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit, 1, cfg.searchEventsHardMaxLimit);
       const events = await service.searchEvents({ keyword, days, limit });
+      return JSON.stringify({ count: events.length, events: events.map(serializeEventForSearch) }, null, 2);
+    },
+  });
+
+  // ───────────────────────────── list_edges ───────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_list_edges',
+        description:
+          '多条件筛选边。常见用途：找"A 和 B 之间的所有边"(from_id+to_id)、"所有 CP 关系"(kinds=person-person,relation_types=cp)、"最近 7 天的发起者参与"(kinds=person-event,roles=initiator,days=7)。所有过滤器是 AND 关系。',
+        parameters: {
+          type: 'object',
+          properties: {
+            kinds: {
+              type: 'array',
+              items: {
+                type: 'string',
+                enum: [
+                  'person-event',
+                  'person-person',
+                  'person-entity',
+                  'event-event',
+                  'event-entity',
+                  'entity-entity',
+                ],
+              },
+              description: '边大类筛选；不传 = 全部',
+            },
+            relation_types: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                '关系类型筛选（仅对 person-person / event-event / event-entity / entity-entity 有效），如 ["cp","friend"]',
+            },
+            roles: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '角色筛选（仅对 person-event / person-entity 有效），如 ["initiator","target"]',
+            },
+            node_id: {
+              type: 'string',
+              description: '边的任一端 = 该节点（无方向）',
+            },
+            from_id: { type: 'string', description: '边起点 = 该节点（有方向，注意无向边的方向由 LLM 提取时给定）' },
+            to_id: { type: 'string', description: '边终点 = 该节点' },
+            days: { type: 'number', description: '仅返回最近 N 天内强化过的边；0 / 不传 = 不限' },
+            limit: {
+              type: 'number',
+              description: `结果上限。默认 ${cfg.searchEventsDefaultLimit * 2}，硬上限 ${cfg.searchEventsHardMaxLimit * 2}`,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const kinds = Array.isArray(args.kinds)
+        ? (args.kinds as unknown[]).filter((k): k is RelationEdge['kind'] => typeof k === 'string')
+        : undefined;
+      const relationTypes = Array.isArray(args.relation_types)
+        ? (args.relation_types as unknown[]).filter((k): k is string => typeof k === 'string')
+        : undefined;
+      const roles = Array.isArray(args.roles)
+        ? (args.roles as unknown[]).filter((k): k is string => typeof k === 'string')
+        : undefined;
+      const nodeId = typeof args.node_id === 'string' && args.node_id.trim() ? args.node_id.trim() : undefined;
+      const fromId = typeof args.from_id === 'string' && args.from_id.trim() ? args.from_id.trim() : undefined;
+      const toId = typeof args.to_id === 'string' && args.to_id.trim() ? args.to_id.trim() : undefined;
+      const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
+      const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit * 2, 1, cfg.searchEventsHardMaxLimit * 2);
+      const edges = await service.listEdges({ kinds, relationTypes, roles, nodeId, fromId, toId, days, limit });
+      return JSON.stringify({ count: edges.length, edges: edges.map(serializeEdge) }, null, 2);
+    },
+  });
+
+  // ───────────────────────────── timeline ─────────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_timeline',
+        description:
+          '给定任意节点，按时间倒序返回相关事件。person → 该人参与的事件；entity → 涉及该实体的事件；event → 通过 event-event 边相连的事件。每条结果附带触达它的边，便于追溯"为什么相关"。',
+        parameters: {
+          type: 'object',
+          properties: {
+            node_id: { type: 'string', description: '节点 ID' },
+            days: { type: 'number', description: '仅返回最近 N 天内强化过的；0 / 不传 = 不限' },
+            limit: {
+              type: 'number',
+              description: `结果上限。默认 ${cfg.searchEventsDefaultLimit * 2}，硬上限 ${cfg.searchEventsHardMaxLimit * 2}`,
+            },
+          },
+          required: ['node_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const nodeId = String(args.node_id ?? '').trim();
+      if (!nodeId) return JSON.stringify({ error: 'node_id 不能为空' });
+      const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
+      const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit * 2, 1, cfg.searchEventsHardMaxLimit * 2);
+      const items = await service.getTimeline({ nodeId, days, limit });
       return JSON.stringify(
         {
-          count: events.length,
-          events: events.map(e => serializeEventForSearch(e)),
+          count: items.length,
+          items: items.map(it => ({
+            event: serializeEventForSearch(it.event),
+            viaEdge: serializeEdge(it.viaEdge),
+          })),
         },
         null,
         2,
@@ -191,17 +422,14 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
-  // ---- 写入与删除工具均已移除 ----
-  //      关系图采用 **单写者** 模型：仅 extractor 通过被动 LLM 归纳来新建/强化节点和边。
-  //      理由：避免 agent 工具与 extractor 双写引发的 race + 同事实双重计权。
-  //      纠错走 `/relation cleanup` slash 命令（与 profile `/profile clear` 对称）。
-  //      agent 想"记住"某事？引导用户在对话中说出来，extractor 会自动捕获。
-
-  if (cfg.debug)
-    ctx.logger.debug(`[user-relation] 已注册 3 个只读工具到分组 ${groupName}（expand / find_path / search_events）`);
+  if (cfg.debug) {
+    ctx.logger.debug(
+      `[user-relation] 已注册 8 个只读工具到分组 ${groupName}（resolve_node / expand_node / find_path / search_persons / search_entities / search_events / list_edges / timeline）`,
+    );
+  }
 }
 
-// ----- helpers -----
+// ─────────────────────────────── helpers ────────────────────────────────
 
 function clampNum(raw: unknown, fallback: number, min: number, max: number): number {
   const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
@@ -215,12 +443,7 @@ function serializeSubgraph(sub: {
   edges: RelationEdge[];
 }) {
   return {
-    persons: sub.persons.map(p => ({
-      id: p.id,
-      platform: p.platform,
-      userId: p.userId,
-      displayName: p.displayName,
-    })),
+    persons: sub.persons.map(serializePerson),
     events: sub.events.map(e => ({
       id: e.id,
       title: e.title,
@@ -229,7 +452,19 @@ function serializeSubgraph(sub: {
       lastReinforcedAt: e.lastReinforcedAt,
     })),
     entities: (sub.entities ?? []).map(serializeEntity),
-    edges: sub.edges.map(e => serializeEdge(e)),
+    edges: sub.edges.map(serializeEdge),
+  };
+}
+
+function serializePerson(p: PersonNode) {
+  return {
+    id: p.id,
+    platform: p.platform,
+    userId: p.userId,
+    displayName: p.displayName,
+    lastSeenAt: p.lastSeenAt,
+    lastMentionedAt: p.lastMentionedAt,
+    mentionCount: p.mentionCount,
   };
 }
 
@@ -266,6 +501,7 @@ function serializeEdge(e: RelationEdge) {
       sentiment: pe.sentiment,
       weight: pe.weight,
       description: pe.description,
+      lastReinforcedAt: pe.lastReinforcedAt,
     };
   }
   if (e.kind === 'person-entity') {
@@ -279,6 +515,7 @@ function serializeEdge(e: RelationEdge) {
       sentiment: pe.sentiment,
       weight: pe.weight,
       description: pe.description,
+      lastReinforcedAt: pe.lastReinforcedAt,
     };
   }
   if (e.kind === 'event-event') {
@@ -292,6 +529,7 @@ function serializeEdge(e: RelationEdge) {
       directed: ee.directed,
       weight: ee.weight,
       description: ee.description,
+      lastReinforcedAt: ee.lastReinforcedAt,
     };
   }
   if (e.kind === 'event-entity') {
@@ -305,6 +543,7 @@ function serializeEdge(e: RelationEdge) {
       directed: ee.directed,
       weight: ee.weight,
       description: ee.description,
+      lastReinforcedAt: ee.lastReinforcedAt,
     };
   }
   if (e.kind === 'entity-entity') {
@@ -318,6 +557,7 @@ function serializeEdge(e: RelationEdge) {
       directed: ee.directed,
       weight: ee.weight,
       description: ee.description,
+      lastReinforcedAt: ee.lastReinforcedAt,
     };
   }
   const pp = e as PersonPersonEdge;
@@ -330,6 +570,7 @@ function serializeEdge(e: RelationEdge) {
     directed: pp.directed,
     weight: pp.weight,
     description: pp.description,
+    lastReinforcedAt: pp.lastReinforcedAt,
   };
 }
 

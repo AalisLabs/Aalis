@@ -152,6 +152,18 @@ const stylesheet: cytoscape.StylesheetJson = [
     style: { 'line-color': '#a855f7', 'target-arrow-color': '#a855f7', 'line-style': 'dashed' },
   },
   {
+    selector: 'edge[focused = "1"]',
+    style: {
+      'line-color': '#facc15',
+      'target-arrow-color': '#facc15',
+      width: 4,
+      'overlay-color': '#facc15',
+      'overlay-opacity': 0.25,
+      'overlay-padding': 5,
+      'z-index': 9999,
+    },
+  },
+  {
     selector: 'edge[dimmed = "1"]',
     style: { opacity: 0.15 },
   },
@@ -316,6 +328,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
             ...e.data,
             label: baseLabel,
             kind: e.data.kind ?? (e.data.relationType ? 'person-person' : 'person-event'),
+            focused: focusedId && e.data.id === focusedId ? '1' : undefined,
           },
           group: 'edges' as const,
         };

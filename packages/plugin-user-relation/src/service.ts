@@ -1100,8 +1100,8 @@ export class RelationService {
    * - 返回 { nodes, edges } 节点列表按路径顺序排列；找不到返回 null。
    */
   async findPath(
-    fromPersonId: string,
-    toPersonId: string,
+    fromNodeId: string,
+    toNodeId: string,
     maxDepth: number,
   ): Promise<{ nodes: Array<PersonNode | EventNode | EntityNode>; edges: RelationEdge[] } | null> {
     if (maxDepth < 1) return null;
@@ -1109,9 +1109,9 @@ export class RelationService {
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
-    if (fromPersonId === toPersonId) {
-      const p = personById.get(fromPersonId);
-      return p ? { nodes: [p], edges: [] } : null;
+    if (fromNodeId === toNodeId) {
+      const n = personById.get(fromNodeId) ?? eventById.get(fromNodeId) ?? entityById.get(fromNodeId);
+      return n ? { nodes: [n], edges: [] } : null;
     }
     const adj = new Map<string, Array<{ next: string; edge: RelationEdge }>>();
     const addAdj = (a: string, b: string, edge: RelationEdge) => {
@@ -1141,8 +1141,8 @@ export class RelationService {
       }
     }
     const prev = new Map<string, { from: string; edge: RelationEdge }>();
-    const visited = new Set<string>([fromPersonId]);
-    const queue: Array<{ id: string; depth: number }> = [{ id: fromPersonId, depth: 0 }];
+    const visited = new Set<string>([fromNodeId]);
+    const queue: Array<{ id: string; depth: number }> = [{ id: fromNodeId, depth: 0 }];
     let found = false;
     bfs: while (queue.length > 0) {
       const cur = queue.shift();
@@ -1152,7 +1152,7 @@ export class RelationService {
         if (visited.has(next)) continue;
         visited.add(next);
         prev.set(next, { from: cur.id, edge });
-        if (next === toPersonId) {
+        if (next === toNodeId) {
           found = true;
           break bfs;
         }
@@ -1160,10 +1160,10 @@ export class RelationService {
       }
     }
     if (!found) return null;
-    const pathNodeIds: string[] = [toPersonId];
+    const pathNodeIds: string[] = [toNodeId];
     const pathEdges: RelationEdge[] = [];
-    let cursor = toPersonId;
-    while (cursor !== fromPersonId) {
+    let cursor = toNodeId;
+    while (cursor !== fromNodeId) {
       const p = prev.get(cursor);
       if (!p) return null;
       pathEdges.unshift(p.edge);
@@ -1196,8 +1196,142 @@ export class RelationService {
     return res.slice(0, limit);
   }
 
-  // ────────────────────────────────────────────────────────────────
-  // 关系图整理（consolidate）—— 手动 / 周期触发的清扫与发现
+  /**
+   * 按关键词搜索人物。匹配 displayName / userId / aliases / id（substring，不区分大小写）。
+   * - platform：可选，仅返回该平台下的人物
+   * - limit：返回上限（默认 20）
+   */
+  async searchPersons(opts: { keyword?: string; platform?: string; limit?: number }): Promise<PersonNode[]> {
+    const snapshot = await this.store.loadAll();
+    const kw = opts.keyword?.trim().toLowerCase() ?? '';
+    const plat = opts.platform?.trim() || undefined;
+    const res = snapshot.persons.filter(p => {
+      if (plat && p.platform !== plat) return false;
+      if (!kw) return true;
+      const hay = `${p.displayName ?? ''} ${p.userId} ${p.id}`.toLowerCase();
+      return hay.includes(kw);
+    });
+    // 排序：按 lastMentionedAt 降序；缺失则按 lastSeenAt 兜底
+    res.sort((a, b) => (b.lastMentionedAt ?? b.lastSeenAt ?? 0) - (a.lastMentionedAt ?? a.lastSeenAt ?? 0));
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
+    return res.slice(0, limit);
+  }
+
+  /**
+   * 按关键词搜索实体。匹配 name / aliases / summary / id（substring，不区分大小写）。
+   * - kind：可选，仅返回指定 entityKind
+   * - limit：返回上限（默认 20）
+   */
+  async searchEntities(opts: {
+    keyword?: string;
+    kind?: EntityNode['entityKind'];
+    limit?: number;
+  }): Promise<EntityNode[]> {
+    const snapshot = await this.store.loadAll();
+    const kw = opts.keyword?.trim().toLowerCase() ?? '';
+    const res = snapshot.entities.filter(e => {
+      if (opts.kind && e.entityKind !== opts.kind) return false;
+      if (!kw) return true;
+      const hay = `${e.name} ${(e.aliases ?? []).join(' ')} ${e.summary ?? ''} ${e.id}`.toLowerCase();
+      return hay.includes(kw);
+    });
+    res.sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt);
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
+    return res.slice(0, limit);
+  }
+
+  /**
+   * 列出符合过滤条件的边。所有过滤器是 AND 关系；不传任何过滤器 = 返回全部（受 limit 限制）。
+   * - kinds：边大类（person-event / person-person / person-entity / event-event / event-entity / entity-entity）
+   * - relationTypes：仅对带 relationType 的边生效（person-person / event-event / event-entity / entity-entity）
+   * - roles：仅对带 role 的边生效（person-event / person-entity）
+   * - nodeId：边的任一端等于该 id（用于"这条边和某节点相关"）
+   * - fromId/toId：方向敏感（注意无向边的 from/to 由 LLM 提取时给定，未必符合直觉）
+   * - days：仅返回 lastReinforcedAt 在 N 天内的；0/未传 → 不限
+   * - limit：返回上限（默认 50）
+   * 按 lastReinforcedAt 降序。
+   */
+  async listEdges(opts: {
+    kinds?: RelationEdge['kind'][];
+    relationTypes?: string[];
+    roles?: string[];
+    nodeId?: string;
+    fromId?: string;
+    toId?: string;
+    days?: number;
+    limit?: number;
+  }): Promise<RelationEdge[]> {
+    const snapshot = await this.store.loadAll();
+    const cutoff = opts.days && opts.days > 0 ? Date.now() - opts.days * 86400_000 : 0;
+    const kindSet = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : undefined;
+    const relSet = opts.relationTypes && opts.relationTypes.length > 0 ? new Set(opts.relationTypes) : undefined;
+    const roleSet = opts.roles && opts.roles.length > 0 ? new Set(opts.roles) : undefined;
+    const edgeEnds = (e: RelationEdge): { from: string; to: string } => {
+      if (e.kind === 'person-event') return { from: e.fromPersonId, to: e.toEventId };
+      if (e.kind === 'person-entity') return { from: e.fromPersonId, to: e.toEntityId };
+      if (e.kind === 'event-event') return { from: e.fromEventId, to: e.toEventId };
+      if (e.kind === 'event-entity') return { from: e.fromEventId, to: e.toEntityId };
+      if (e.kind === 'entity-entity') return { from: e.fromEntityId, to: e.toEntityId };
+      return { from: e.fromPersonId, to: e.toPersonId };
+    };
+    const res = snapshot.edges.filter(e => {
+      if (kindSet && !kindSet.has(e.kind)) return false;
+      if (e.lastReinforcedAt < cutoff) return false;
+      const { from, to } = edgeEnds(e);
+      if (opts.nodeId && from !== opts.nodeId && to !== opts.nodeId) return false;
+      if (opts.fromId && from !== opts.fromId) return false;
+      if (opts.toId && to !== opts.toId) return false;
+      if (relSet) {
+        if (e.kind === 'person-event' || e.kind === 'person-entity') return false;
+        if (!relSet.has(e.relationType)) return false;
+      }
+      if (roleSet) {
+        if (e.kind !== 'person-event' && e.kind !== 'person-entity') return false;
+        if (!roleSet.has(e.role)) return false;
+      }
+      return true;
+    });
+    res.sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt);
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 50;
+    return res.slice(0, limit);
+  }
+
+  /**
+   * 时间线：给定节点，返回与其相关的事件按时间倒序排列。
+   * - 节点是 person → 返回该人参与的事件（按 personEvent.lastReinforcedAt 降序）
+   * - 节点是 entity → 返回涉及该实体的事件（按 eventEntity.lastReinforcedAt 降序）
+   * - 节点是 event → 返回该事件 + 由 event-event 边相连的相关事件
+   * 返回每个事件附带触达它的边信息（用于追溯"为什么相关"）。
+   */
+  async getTimeline(opts: {
+    nodeId: string;
+    days?: number;
+    limit?: number;
+  }): Promise<Array<{ event: EventNode; viaEdge: RelationEdge }>> {
+    const snapshot = await this.store.loadAll();
+    const eventById = new Map(snapshot.events.map(e => [e.id, e]));
+    const cutoff = opts.days && opts.days > 0 ? Date.now() - opts.days * 86400_000 : 0;
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 30;
+    const collected: Array<{ event: EventNode; viaEdge: RelationEdge }> = [];
+    const seen = new Set<string>();
+    for (const e of snapshot.edges) {
+      let evId: string | undefined;
+      if (e.kind === 'person-event' && e.fromPersonId === opts.nodeId) evId = e.toEventId;
+      else if (e.kind === 'event-entity' && e.toEntityId === opts.nodeId) evId = e.fromEventId;
+      else if (e.kind === 'event-event' && e.fromEventId === opts.nodeId) evId = e.toEventId;
+      else if (e.kind === 'event-event' && !e.directed && e.toEventId === opts.nodeId) evId = e.fromEventId;
+      if (!evId) continue;
+      if (seen.has(evId)) continue;
+      const ev = eventById.get(evId);
+      if (!ev) continue;
+      if (ev.lastReinforcedAt < cutoff) continue;
+      seen.add(evId);
+      collected.push({ event: ev, viaEdge: e });
+    }
+    collected.sort((a, b) => b.event.lastReinforcedAt - a.event.lastReinforcedAt);
+    return collected.slice(0, limit);
+  }
+
   // 1) 别名候选发现：人物 displayName 与 实体 name/aliases 的高相似对，给出候选
   //    （不自动合并，只输出报告供用户决定；若 confidence 极高且开启 autoLink，则建 is-alias-of 边）
   // 2) 自动 part-of：实体 name 出现在事件 title 中 → 建 event-entity[relationType=part-of]
