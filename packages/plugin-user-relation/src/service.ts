@@ -839,7 +839,8 @@ export class RelationService {
    * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后顺手扫"风格，不开独立调度器。
    *
    * 优先级（每次仅在超额时执行）：
-   *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）；
+   *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）。孤儿 = 噪声，
+   *      由 extractor 在写入层手剩下的旧账一次清掉；不设宽限期、不设批量上限。
    *   2. 仍超额时按 `(now - lastReinforcedAt) / (max(weight,0.05) · max(PR,ε))` **降序**删；
    *      即"老旧 + 低权重 + 在 PageRank 上无人指向"的优先丢。
    *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）跳过删除。
@@ -909,7 +910,7 @@ export class RelationService {
       }
     }
 
-    // 1) 孤儿先删
+    // 1) 孤儿即删（孤儿 = 噪声，extractor 已在写入层拦截新增孤儿；这里仅清旧账）
     for (const ev of snap.events) {
       if (!referencedEventIds.has(ev.id) && !isProtected(ev)) {
         await this.store.deleteEventCascade(ev.id);
