@@ -155,6 +155,8 @@ interface LLMExtraction {
     toUserId: string;
     relationType: string;
     directed?: boolean;
+    /** 从 from 视角看 to 的层级：superior=对方更高(对方是师/上级), peer, subordinate=对方更低, unknown */
+    hierarchy?: 'superior' | 'peer' | 'subordinate' | 'unknown';
     description?: string;
     evidence?: { messageIds?: string[]; quote?: string };
   }>;
@@ -604,6 +606,7 @@ export class RelationExtractor {
           toPersonId,
           relationType: pp.relationType,
           directed: pp.directed,
+          hierarchy: pp.hierarchy,
           description: pp.description,
           evidence: ev ? [ev] : [],
         });
@@ -816,7 +819,7 @@ function buildExtractionPrompt(
       '  "entities": [{ "refKey": str, "existingEntityId"?: str|null, "name": str(<=20字), "aliases"?: str[], "summary"?: str(<=80字), "entityKind": "topic"|"place"|"thing"|"work", "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEventEdges": [{ "personPlatform": str, "personUserId": str, "eventRefKey": str, "role": "initiator"|"participant"|"witness"|"target"|"reporter", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEntityEdges": [{ "personPlatform": str, "personUserId": str, "entityRefKey": str, "role": "enthusiast"|"participant"|"owner"|"creator"|"critic"|"visitor"|"mentioned", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
-      '  "personPersonEdges": [{ "fromPlatform": str, "fromUserId": str, "toPlatform": str, "toUserId": str, "relationType": str, "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
+      '  "personPersonEdges": [{ "fromPlatform": str, "fromUserId": str, "toPlatform": str, "toUserId": str, "relationType": str, "directed"?: bool, "hierarchy"?: "superior"|"peer"|"subordinate"|"unknown", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
       `  "eventEventEdges": [{ "fromEventRefKey": str, "toEventRefKey": str, "relationType": str(推荐: ${RecommendedEventEventRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
       `  "eventEntityEdges": [{ "eventRefKey": str, "entityRefKey": str, "relationType": str(推荐: ${RecommendedEventEntityRelationTypes.join(' / ')}), "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
       `  "entityEntityEdges": [{ "fromEntityRefKey": str, "toEntityRefKey": str, "relationType": str(推荐: ${RecommendedEntityEntityRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }]`,
@@ -901,6 +904,12 @@ function buildExtractionPrompt(
       '  · 例外：若同一人对同一事件存在**真正不同性质的角色**（如既是 initiator 又是 target —— 自作自受 / 被自己引发的后果反噬），允许各自输出一条；后端会按规则保留可共存的角色。',
       '- **严格自证（仅 person-person）**：要写 personPersonEdge A→B 时，evidence.messageIds 必须包含至少一条 **A 自己发的消息**（表达对 B 的关系定位）。"A 说 B 是 C 的朋友" 不能写成 B→C friend（B 没自己说过）；但可写 A→B/A→C 的相关边。person-event / person-entity 边不再强制自证，evidence 只需能从原文佐证该人参与即可。',
       '- **person-person 视为单向声明**：A→B 总是 directed=true，B 不背书也无妨；如要表达双向关系（互为朋友/互为敌人），必须 B 也在窗口里有相应陈述，各自输出一条 directed=true 边，不要用 directed=false。',
+      '- **hierarchy 维度（与 directed 正交）**：当 from 的话语**明确**透露与 to 的高低 / 平级关系时，填 hierarchy 字段（`superior` / `peer` / `subordinate` / `unknown`）。语义统一为「from 视角下 to 处于什么位置」：',
+      '  · "X 是我师傅 / 老板 / 老师 / 老前辈" → from=X 的说话人，to=X，hierarchy="superior"（对方更高）；',
+      '  · "X 是我徒弟 / 下属 / 小弟" → hierarchy="subordinate"（对方更低）；',
+      '  · "我跟 X 是同学 / 同事 / 朋友 / 兄弟" → hierarchy="peer"；',
+      '  · 不确定 / 不适用（如 cp、rival、antagonist 这类水平关系或纯情感） → 省略字段或填 "unknown"。',
+      '  · **不要靠 relationType 文本去暗示层级**（不要写 "mentor-superior" 这种），把层级正交分离到 hierarchy 字段。',
       '- **person-entity 门槛**（记「结构性连接」，不记「态度声明」）：',
       '  · `participant / owner / creator / visitor / mentioned` —— 行为性角色，有 evidence 支持即可建边；可附加 sentiment 字段表达态度方向。',
       '  · `enthusiast` —— 需要**深度行为性证据**（规律参与 / 制作内容 / 购买 / 直播 / 多人共同指向同一实体揭示社会连接）；单句「我喜欢 X」**不够**，改用 participant + sentiment=positive。',
