@@ -409,10 +409,41 @@ export class RelationExtractor {
       await this.service.observePerson(p.platform, p.userId, p.displayName);
     }
 
+    // ── 反孤儿守卫：统计 LLM payload 中被任意边引用的 event/entity refKey；
+    //    未被引用的"裸节点"不予落库（既节省存储，也避免 evictByQuota 周期性回收噪声）。
+    //    existingEventId/existingEntityId 视为已在库的强化操作，豁免（即便本轮没新增边也合理）。
+    const referencedEventRefKeys = new Set<string>();
+    const referencedEntityRefKeys = new Set<string>();
+    for (const pe of parsed.personEventEdges ?? []) {
+      if (pe.eventRefKey) referencedEventRefKeys.add(pe.eventRefKey);
+    }
+    for (const ee of parsed.eventEventEdges ?? []) {
+      if (ee.fromEventRefKey) referencedEventRefKeys.add(ee.fromEventRefKey);
+      if (ee.toEventRefKey) referencedEventRefKeys.add(ee.toEventRefKey);
+    }
+    for (const ee of parsed.eventEntityEdges ?? []) {
+      if (ee.eventRefKey) referencedEventRefKeys.add(ee.eventRefKey);
+      if (ee.entityRefKey) referencedEntityRefKeys.add(ee.entityRefKey);
+    }
+    for (const pe of parsed.personEntityEdges ?? []) {
+      if (pe.entityRefKey) referencedEntityRefKeys.add(pe.entityRefKey);
+    }
+    for (const ee of parsed.entityEntityEdges ?? []) {
+      if (ee.fromEntityRefKey) referencedEntityRefKeys.add(ee.fromEntityRefKey);
+      if (ee.toEntityRefKey) referencedEntityRefKeys.add(ee.toEntityRefKey);
+    }
+
     // 2) events: refKey → real eventId
     const refToEventId = new Map<string, string>();
     for (const e of parsed.events ?? []) {
       if (!e.refKey || !e.title) continue;
+      // 反孤儿：本轮没有任何边引用该 refKey 且不是已存在节点的强化 → 跳过
+      if (!e.existingEventId && !referencedEventRefKeys.has(e.refKey)) {
+        if (this.cfg.debug) {
+          this.ctx.logger.debug(`[user-relation] 跳过孤立事件 "${e.title}"（refKey=${e.refKey} 无任何边引用）`);
+        }
+        continue;
+      }
       const ev = mkEvidence(e.evidence);
       const category = VALID_CATEGORIES.includes(e.category as EventCategory)
         ? (e.category as EventCategory)
@@ -443,6 +474,13 @@ export class RelationExtractor {
     const refToEntityId = new Map<string, string>();
     for (const e of parsed.entities ?? []) {
       if (!e.refKey || !e.name) continue;
+      // 反孤儿：本轮没有任何边引用该 refKey 且不是已存在节点的强化 → 跳过
+      if (!e.existingEntityId && !referencedEntityRefKeys.has(e.refKey)) {
+        if (this.cfg.debug) {
+          this.ctx.logger.debug(`[user-relation] 跳过孤立实体 "${e.name}"（refKey=${e.refKey} 无任何边引用）`);
+        }
+        continue;
+      }
       const ev = mkEvidence(e.evidence);
       const entityKind = VALID_ENTITY_KINDS.includes(e.entityKind as EntityKind)
         ? (e.entityKind as EntityKind)
@@ -709,6 +747,11 @@ function buildExtractionPrompt(
       '- 只挑**最显著、有长期价值**的事件记录：重大冲突、里程碑、首次合作、长期回响、明显改变关系的转折点。',
       '- **一般日常聊天、随口提及、无后续的玩笑、单次客套、临时调侃** —— **一律不要建 event**。宁可 events 数组返回空，也不要凑数。',
       '- 当你犹豫"这件事算不算值得记"时，**默认答案是不记**。提取器后续会做老化淘汰，但更省事的是源头别记。',
+      '',
+      '## ⚠️ 反孤儿节点（强制）',
+      '- 每一个你创建的 event / entity，**必须至少被一条边引用**（personEvent / eventEvent / eventEntity 或 personEntity / entityEntity）。',
+      '- 不要写"光杆节点"——若你不打算给它任何边，就**直接从 events / entities 数组里去掉**。提取器会丢弃这种孤立节点，等于白做。',
+      '- 自检顺序：先列边 → 边中提到哪些 refKey → 只把这些 refKey 写进 events / entities。',
       '',
       '- **以下情况一律不要建 event**（直接走 personEntityEdge 或留空）：',
       '  · 偏好/事实声明：「我喜欢 X / 我讨厌 Y / 我有 Z / 我会 W」——只建 entity 边，不建 event。',
