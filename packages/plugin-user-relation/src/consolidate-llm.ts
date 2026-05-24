@@ -131,6 +131,74 @@ export async function rewriteEntitySummary(
   }
 }
 
+/**
+ * (C) 推断实体父子层级：给定一批「名称上有包含关系」的实体对，让 LLM 确认是否真实存在 part-of 关系。
+ * 输入：候选列表，每项 {parent, child}（parent 名称是 child 名称的子串）。
+ * 输出：每项 {parentId, childId, confirmed, reason}。
+ * 解析失败 / LLM 表示 false → confirmed=false。
+ */
+export async function inferEntityHierarchy(
+  ctx: Context,
+  model: LLMModel,
+  candidates: Array<{ parent: EntityNode; child: EntityNode }>,
+  disableThinking = true,
+): Promise<Array<{ parentId: string; childId: string; confirmed: boolean; reason: string }>> {
+  if (candidates.length === 0) return [];
+  const candidateLines = candidates.map(
+    (c, i) =>
+      `[${i}] 父实体: ${c.parent.name}（${c.parent.entityKind}${c.parent.summary ? `，${c.parent.summary.slice(0, 40)}` : ''}）` +
+      ` ← 子实体候选: ${c.child.name}（${c.child.entityKind}${c.child.summary ? `，${c.child.summary.slice(0, 40)}` : ''}）`,
+  );
+  const prompt = [
+    {
+      role: 'system' as const,
+      content:
+        '你是一个实体层级推断助手。对每对实体，判断"子实体候选"是否确实属于"父实体"（part-of 关系：子是父的具体版本、模式、章节、关卡、地点分支等），而非仅仅名字字符串上包含父的名称。' +
+        '只输出 JSON 数组，不要带 markdown 代码块。格式：[{"index":0,"isPartOf":true,"reason":"简短说明"},…]',
+    },
+    {
+      role: 'user' as const,
+      content: `请判断以下 ${candidates.length} 对实体的父子关系：\n\n${candidateLines.join('\n')}`,
+    },
+  ];
+  try {
+    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
+    const parsed = tryParseJson(raw) as Array<{ index?: number; isPartOf?: unknown; reason?: unknown }> | undefined;
+    if (!Array.isArray(parsed)) {
+      ctx.logger.warn('[user-relation] inferEntityHierarchy: LLM 输出无法解析为数组');
+      return candidates.map(c => ({
+        parentId: c.parent.id,
+        childId: c.child.id,
+        confirmed: false,
+        reason: 'LLM 输出解析失败',
+      }));
+    }
+    return candidates.map((c, i) => {
+      const item = parsed.find(x => x.index === i);
+      if (!item || typeof item.isPartOf !== 'boolean') {
+        return { parentId: c.parent.id, childId: c.child.id, confirmed: false, reason: 'LLM 未返回该项' };
+      }
+      return {
+        parentId: c.parent.id,
+        childId: c.child.id,
+        confirmed: item.isPartOf,
+        reason: typeof item.reason === 'string' ? item.reason : '',
+      };
+    });
+  } catch (err) {
+    ctx.logger.warn(
+      `[user-relation] inferEntityHierarchy LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return candidates.map(c => ({
+      parentId: c.parent.id,
+      childId: c.child.id,
+      confirmed: false,
+      reason: `LLM 失败: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+  }
+}
+
 function tryParseJson(text: string): unknown {
   if (!text) return undefined;
   const trimmed = text

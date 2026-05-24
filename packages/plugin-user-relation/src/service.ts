@@ -13,7 +13,12 @@
 import type { Context } from '@aalis/core';
 import type { ModelRef } from '@aalis/plugin-llm-api';
 
-import { resolveConsolidateModel, rewriteEntitySummary, verifyAliasPair } from './consolidate-llm.js';
+import {
+  inferEntityHierarchy,
+  resolveConsolidateModel,
+  rewriteEntitySummary,
+  verifyAliasPair,
+} from './consolidate-llm.js';
 import type { RelationStore } from './store.js';
 import type {
   EntityEntityEdge,
@@ -65,8 +70,17 @@ export type TriggerExtractionFn = (
 export class RelationService {
   /** 由 extractor 注入；actions 层通过 triggerExtraction() 调用 */
   private triggerExtractionHandler?: TriggerExtractionFn;
+  /** 最近一次 consolidate() 完成的时间戳（ms）；未运行时为 undefined */
+  private _lastConsolidateAt?: number;
+  /** 最近一次 consolidate() 结果的简短摘要 */
+  private _lastConsolidateResultSummary?: string;
 
   constructor(private readonly store: RelationStore) {}
+
+  /** 查询最近一次 consolidation 运行时间与结果摘要 */
+  getLastConsolidateInfo(): { lastRunAt?: number; summary?: string } {
+    return { lastRunAt: this._lastConsolidateAt, summary: this._lastConsolidateResultSummary };
+  }
 
   static personId(platform: string, userId: string): string {
     return `${platform}:${userId}`;
@@ -1439,6 +1453,8 @@ export class RelationService {
     aliasEdgesCreated: number;
     partOfEdgesCreated: number;
     eventEdgesNormalized: number;
+    entityHierarchyCandidates: number;
+    entityHierarchyEdgesCreated: number;
     llmVerified?: number;
     llmRejected?: number;
     summariesRewritten?: number;
@@ -1454,6 +1470,8 @@ export class RelationService {
     let aliasEdgesCreated = 0;
     let partOfEdgesCreated = 0;
     let eventEdgesNormalized = 0;
+    let entityHierarchyCandidates = 0;
+    let entityHierarchyEdgesCreated = 0;
     let llmVerified = 0;
     let llmRejected = 0;
     let summariesRewritten = 0;
@@ -1724,10 +1742,12 @@ export class RelationService {
       eventEdgesNormalized++; // 共用计数（含人-实体折叠）
     }
 
-    // ─── (3c) EventEntityEdge 旧账整理：同一 (event,entity) 多 relationType 折叠
-    //   场景：LLM 对同一对象同时输出 about + part-of（语义重复，应保留更强的 part-of）。
-    //   优先级：part-of > about > 其他 → 保留最高优先一条，合并 evidence/weight。
-    const eePriority: Record<string, number> = { 'part-of': 3, about: 2 };
+    // ─── (3c) EventEntityEdge 旧账整理：同一 (event,entity) 若有 about + 非 about 并存 → 驱逐 about
+    //   语义：about = "顺带提及"，是所有 relationType 中最弱的标注。
+    //   规则：
+    //     · 若同一 (event,entity) 存在任何非 about 边 → 删除全部 about 边，evidence 合并到权重最高的非 about 边。
+    //     · 非 about 边之间（part-of / related / involves 等）可以共存，不做折叠。
+    //     · 若全为 about → 只保留 weight 最高的一条，合并 evidence。
     const eePairs = new Map<string, EventEntityEdge[]>();
     for (const e of snapshot.edges) {
       if (e.kind !== 'event-entity') continue;
@@ -1737,40 +1757,65 @@ export class RelationService {
     }
     for (const [, list] of eePairs.entries()) {
       if (list.length < 2) continue;
-      // 按优先级降序，同优先级按 weight 降序
-      const sorted = [...list].sort((a, b) => {
-        const pa = eePriority[a.relationType] ?? 1;
-        const pb = eePriority[b.relationType] ?? 1;
-        if (pb !== pa) return pb - pa;
-        return (b.weight ?? 0) - (a.weight ?? 0);
-      });
-      const keep = sorted[0];
-      // 合并 evidence（按 messageIds 去重）
-      const mergedEvidence = [...keep.evidence];
-      const seenMsgKey = new Set<string>(
-        mergedEvidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
-      );
-      let maxWeight = keep.weight ?? 0;
-      for (const dup of sorted.slice(1)) {
-        for (const ev of dup.evidence ?? []) {
-          const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
-          if (!seenMsgKey.has(mk)) {
-            seenMsgKey.add(mk);
-            mergedEvidence.push(ev);
+      const nonAbout = list.filter(e => e.relationType !== 'about');
+      const aboutEdges = list.filter(e => e.relationType === 'about');
+
+      if (nonAbout.length > 0 && aboutEdges.length > 0) {
+        // 有非 about → about 全部被驱逐，evidence 合并到权重最高的非 about 边
+        const target = nonAbout.reduce((a, b) => ((b.weight ?? 0) > (a.weight ?? 0) ? b : a));
+        const seenMsgKey = new Set<string>(
+          target.evidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
+        );
+        const extraEvidence: EvidenceRef[] = [];
+        for (const ab of aboutEdges) {
+          for (const ev of ab.evidence ?? []) {
+            const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
+            if (!seenMsgKey.has(mk)) {
+              seenMsgKey.add(mk);
+              extraEvidence.push(ev);
+            }
           }
+          await this.store.deleteEdge(ab.id);
         }
-        if ((dup.weight ?? 0) > maxWeight) maxWeight = dup.weight ?? 0;
-        await this.store.deleteEdge(dup.id);
+        if (extraEvidence.length > 0) {
+          await this.store.upsertEdge({
+            ...target,
+            evidence: trimEvidence([...extraEvidence, ...target.evidence]),
+            lastReinforcedAt: Date.now(),
+          });
+        }
+        eventEdgesNormalized++;
+      } else if (nonAbout.length === 0 && aboutEdges.length > 1) {
+        // 全为 about → 保留 weight 最高的一条，合并 evidence
+        const sorted = [...aboutEdges].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+        const keep = sorted[0];
+        const mergedEvidence = [...keep.evidence];
+        const seenMsgKey = new Set<string>(
+          mergedEvidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
+        );
+        let maxWeight = keep.weight ?? 0;
+        for (const dup of sorted.slice(1)) {
+          for (const ev of dup.evidence ?? []) {
+            const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
+            if (!seenMsgKey.has(mk)) {
+              seenMsgKey.add(mk);
+              mergedEvidence.push(ev);
+            }
+          }
+          if ((dup.weight ?? 0) > maxWeight) maxWeight = dup.weight ?? 0;
+          await this.store.deleteEdge(dup.id);
+        }
+        if (mergedEvidence.length !== keep.evidence.length || maxWeight !== keep.weight) {
+          await this.store.upsertEdge({
+            ...keep,
+            evidence: mergedEvidence,
+            weight: maxWeight,
+            lastReinforcedAt: Date.now(),
+          });
+        }
+        eventEdgesNormalized++;
       }
-      if (mergedEvidence.length !== keep.evidence.length || maxWeight !== keep.weight) {
-        await this.store.upsertEdge({
-          ...keep,
-          evidence: mergedEvidence,
-          weight: maxWeight,
-          lastReinforcedAt: Date.now(),
-        });
-      }
-      eventEdgesNormalized++;
+      // nonAbout.length > 1 && aboutEdges.length === 0：多条非 about → 全部保留，无需处理
     }
 
     // (B) 合并后摘要重写：基于最新 snapshot 收集 canonical 的别名/相关事件/相关人物
@@ -1833,13 +1878,85 @@ export class RelationService {
       }
     }
 
-    return {
+    // ─── (3d) 实体层级推断：名称包含关系 → 候选 entity-entity[part-of] 边
+    //   规则：normName(A) 是 normName(B) 的真子串，A.length >= 3，B > A → A 是 B 的父实体候选。
+    //   无 LLM 时（autoLink=true）：仅当 B.name 以 A.name 精确开头，直接建边（高置信启发式）。
+    //   有 LLM 时：批量发给 inferEntityHierarchy 核验后建边。
+    //   autoLink=false：收集候选但不建边。
+    {
+      const afterSnapshot = await this.store.loadAll();
+      const hierarchyCandidates: Array<{ parent: EntityNode; child: EntityNode }> = [];
+      const existingHierarchyKeys = new Set<string>();
+      for (const e of afterSnapshot.edges) {
+        if (e.kind === 'entity-entity') existingHierarchyKeys.add(`${e.fromEntityId}>${e.toEntityId}`);
+      }
+      for (const parentEnt of afterSnapshot.entities) {
+        const normParent = normalizeName(parentEnt.name);
+        if (normParent.length < 3) continue; // 太短的名字不做父实体（防误判）
+        for (const childEnt of afterSnapshot.entities) {
+          if (parentEnt.id === childEnt.id) continue;
+          const normChild = normalizeName(childEnt.name);
+          if (normChild.length <= normParent.length) continue; // child 必须比 parent 更长
+          if (!normChild.includes(normParent)) continue;
+          // 已有任意方向的 entity-entity 边则跳过（含 is-alias-of / part-of 等）
+          if (
+            existingHierarchyKeys.has(`${childEnt.id}>${parentEnt.id}`) ||
+            existingHierarchyKeys.has(`${parentEnt.id}>${childEnt.id}`)
+          )
+            continue;
+          hierarchyCandidates.push({ parent: parentEnt, child: childEnt });
+        }
+      }
+      entityHierarchyCandidates = hierarchyCandidates.length;
+
+      if (hierarchyCandidates.length > 0) {
+        const toCreate: Array<{ parentId: string; childId: string }> = [];
+
+        if (llmModel && opts.llm) {
+          // LLM 核验：批量确认
+          const llmCtx = opts.llm.ctx;
+          const results = await inferEntityHierarchy(llmCtx, llmModel, hierarchyCandidates, llmDisableThinking);
+          for (const r of results) {
+            if (r.confirmed) toCreate.push({ parentId: r.parentId, childId: r.childId });
+          }
+        } else if (opts.autoLink) {
+          // 无 LLM + autoLink：保守启发式 — child.name 精确以 parent.name 开头（字符串级别）
+          for (const c of hierarchyCandidates) {
+            const normP = normalizeName(c.parent.name);
+            const normC = normalizeName(c.child.name);
+            if (normC.startsWith(normP)) toCreate.push({ parentId: c.parent.id, childId: c.child.id });
+          }
+        }
+
+        for (const { parentId, childId } of toCreate) {
+          await this.addEntityEntityEdge({
+            fromEntityId: childId,
+            toEntityId: parentId,
+            relationType: 'part-of',
+            directed: true,
+            weight: 0.7,
+            evidence: [],
+          });
+          entityHierarchyEdgesCreated++;
+        }
+      }
+    }
+
+    const consolidateResult = {
       aliasCandidates,
       aliasEdgesCreated,
       partOfEdgesCreated,
       eventEdgesNormalized,
+      entityHierarchyCandidates,
+      entityHierarchyEdgesCreated,
       ...(opts.llm ? { llmVerified, llmRejected, summariesRewritten } : {}),
     };
+    this._lastConsolidateAt = Date.now();
+    this._lastConsolidateResultSummary =
+      `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，part-of ${partOfEdgesCreated}，` +
+      `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
+      (opts.llm ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected} 摘要重写 ${summariesRewritten}` : '');
+    return consolidateResult;
   }
 
   // ============================================================
