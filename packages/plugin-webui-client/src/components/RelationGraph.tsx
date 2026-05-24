@@ -135,6 +135,14 @@ const stylesheet: cytoscape.StylesheetJson = [
     style: { 'line-color': '#f472b6', 'target-arrow-color': '#f472b6', width: 2 },
   },
   {
+    selector: 'edge[kind = "event-entity"]',
+    style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', 'line-style': 'dotted' },
+  },
+  {
+    selector: 'edge[kind = "entity-entity"]',
+    style: { 'line-color': '#a855f7', 'target-arrow-color': '#a855f7', 'line-style': 'dashed' },
+  },
+  {
     selector: 'edge[dimmed = "1"]',
     style: { opacity: 0.15 },
   },
@@ -259,13 +267,10 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
       // 单击节点 = 设为焦点（同时显示详情），触发 fetchGraph 做服务端子图过滤
       setFocusId(String(data.id));
     });
-    cy.on('tap', (e: EventObject) => {
-      if (e.target === cy) {
-        // 点击画布空白处 = 清除焦点 + 关闭详情
-        setSelectedNode(null);
-        setFocusId(undefined);
-      }
-    });
+    // 注意：故意不监听「点击空白处」清焦点，避免：
+    // (1) 误点空白导致全图强制刷新丢失布局；
+    // (2) 焦点态下拖拽画布时被识别为 tap 触发清焦点。
+    // 清除焦点请通过工具栏「✕ 清除焦点」按钮。
 
     return () => {
       cy.destroy();
@@ -284,10 +289,20 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         data: { ...n.data, focused: focusedId && n.data.id === focusedId ? '1' : undefined },
         group: 'nodes' as const,
       })),
-      ...payload.edges.map(e => ({
-        data: { ...e.data, kind: e.data.kind ?? (e.data.relationType ? 'person-person' : 'person-event') },
-        group: 'edges' as const,
-      })),
+      ...payload.edges.map(e => {
+        const desc = typeof e.data.description === 'string' && e.data.description ? e.data.description : '';
+        const baseLabel = typeof e.data.label === 'string' ? e.data.label : '';
+        // 描述存在时追加到边 label【role｜desc】
+        const composedLabel = desc ? (baseLabel ? `${baseLabel}｜${desc}` : desc) : baseLabel;
+        return {
+          data: {
+            ...e.data,
+            label: composedLabel,
+            kind: e.data.kind ?? (e.data.relationType ? 'person-person' : 'person-event'),
+          },
+          group: 'edges' as const,
+        };
+      }),
     ];
 
     cy.elements().remove();
@@ -434,12 +449,12 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         </label>
         <label
           style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: focusId ? 1 : 0.45 }}
-          title={focusId ? '焦点模式：每个节点向外展开的邻居数上限（按边权重降序截断）' : '宽度仅在选定焦点后生效：点击图中任一节点即可设为焦点'}
+          title={focusId ? '焦点模式：每个节点向外展开的邻居数上限（按边权重降序截断；0 = 不限）' : '宽度仅在选定焦点后生效：点击图中任一节点即可设为焦点'}
         >
           宽度
           <input
             type="range"
-            min={3}
+            min={0}
             max={30}
             value={maxBreadth}
             onChange={e => setMaxBreadth(Number(e.target.value))}
@@ -447,16 +462,16 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
           />
           <input
             type="number"
-            min={1}
+            min={0}
             value={maxBreadth}
             onChange={e => {
               const n = Number(e.target.value);
-              if (Number.isFinite(n) && n >= 1) setMaxBreadth(n);
+              if (Number.isFinite(n) && n >= 0) setMaxBreadth(n);
             }}
             disabled={!focusId}
             style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
           />
-          <span style={{ width: 24, color: 'var(--text-secondary)' }}>{maxBreadth}</span>
+          <span style={{ width: 32, color: 'var(--text-secondary)' }}>{maxBreadth === 0 ? '∞' : maxBreadth}</span>
         </label>
         {focusId ? (
           <button
@@ -494,7 +509,61 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
       ) : null}
 
       <div style={{ display: 'flex' }}>
-        <div ref={containerRef} style={canvasStyle} />
+        <div style={{ position: 'relative', flex: 1 }}>
+          <div ref={containerRef} style={canvasStyle} />
+          {focusId && payload?.focusId ? (
+            <div
+              style={{
+                position: 'absolute',
+                top: 10,
+                right: 10,
+                minWidth: 180,
+                maxWidth: 260,
+                padding: '8px 10px',
+                background: 'rgba(28, 28, 40, 0.92)',
+                color: TEXT_COLOR,
+                border: `1px solid ${FOCUS_COLOR}`,
+                borderRadius: 6,
+                fontSize: 11,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                pointerEvents: 'auto',
+                zIndex: 5,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <strong style={{ color: FOCUS_COLOR }}>焦点</strong>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFocusId(undefined);
+                    setSelectedNode(null);
+                  }}
+                  style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}
+                  title="清除焦点"
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ marginBottom: 2 }}>
+                {(() => {
+                  const fn = payload.nodes.find(n => n.data.id === payload.focusId);
+                  return fn?.data.label ?? payload.focusId;
+                })()}
+              </div>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
+                {(() => {
+                  const fn = payload.nodes.find(n => n.data.id === payload.focusId);
+                  return String(fn?.data.kind ?? '—');
+                })()}
+              </div>
+              <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                深度 {maxDepth === 0 ? '∞' : maxDepth} · 宽度 {maxBreadth === 0 ? '∞' : maxBreadth}
+                <br />
+                节点 {payload.nodes.length} · 边 {payload.edges.length}
+              </div>
+            </div>
+          ) : null}
+        </div>
         {selectedNode ? (
           <aside
             style={{
@@ -588,7 +657,13 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         <LegendItem shape="diamond" color={ENTITY_COLORS.thing} label="事物" />
         <LegendItem shape="diamond" color={ENTITY_COLORS.work} label="作品" />
         <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
-        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点 · 点击空白 = 清除焦点</span>
+        <span style={{ width: 1, height: 12, background: 'var(--border-color, #2a2a42)', margin: '0 4px' }} />
+        <LegendEdge color="#fbbf24" dashStyle="dashed" label="人→事" />
+        <LegendEdge color="#34d399" dashStyle="dotted" label="人→实体" />
+        <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
+        <LegendEdge color="#06b6d4" dashStyle="dotted" label="事→实体" />
+        <LegendEdge color="#a855f7" dashStyle="dashed" label="实体↔实体" />
+        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点；清除焦点请点左上「✕ 清除焦点」按钮</span>
       </div>
 
       <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }}>
@@ -607,6 +682,16 @@ function LegendItem({ shape, color, label }: { shape: 'circle' | 'round-rect' | 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span style={shapeStyle} />
+      {label}
+    </span>
+  );
+}
+
+function LegendEdge({ color, dashStyle, label }: { color: string; dashStyle: 'solid' | 'dashed' | 'dotted'; label: string }): JSX.Element {
+  const borderStyle = dashStyle === 'solid' ? 'solid' : dashStyle === 'dashed' ? 'dashed' : 'dotted';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ width: 18, height: 0, borderTop: `2px ${borderStyle} ${color}`, display: 'inline-block' }} />
       {label}
     </span>
   );

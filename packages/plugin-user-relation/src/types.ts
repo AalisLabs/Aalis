@@ -128,6 +128,8 @@ export interface PersonEventEdge {
   sentiment?: Sentiment;
   /** 强度 0~1，时间衰减 + 反复强化累积 */
   weight: number;
+  /** 可选人可读注释（LLM 提取时输出，<=40 字）。例：「发起讨论后被反驳」 */
+  description?: string;
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
@@ -164,12 +166,20 @@ export interface PersonPersonEdge {
   /** 是否有向：'admirer' / 'mentor' 单向，'cp' / 'friend' / 'rival' 双向 */
   directed: boolean;
   weight: number;
+  /** 可选人可读注释（<=40 字） */
+  description?: string;
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
 }
 
-export type RelationEdge = PersonEventEdge | PersonPersonEdge | PersonEntityEdge | EventEventEdge;
+export type RelationEdge =
+  | PersonEventEdge
+  | PersonPersonEdge
+  | PersonEntityEdge
+  | EventEventEdge
+  | EventEntityEdge
+  | EntityEntityEdge;
 
 /**
  * 人 → 实体 的关系角色。
@@ -203,6 +213,8 @@ export interface PersonEntityEdge {
   role: PersonEntityRole;
   sentiment?: Sentiment;
   weight: number;
+  /** 可选人可读注释（<=40 字）。例：「主机玩家，每晚直播」 */
+  description?: string;
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
@@ -233,6 +245,66 @@ export interface EventEventEdge {
   relationType: string;
   directed: boolean;
   weight: number;
+  /** 可选人可读注释（<=40 字） */
+  description?: string;
+  firstSeenAt: number;
+  lastReinforcedAt: number;
+  evidence: EvidenceRef[];
+}
+
+/**
+ * 事件 → 实体 的关联类型（推荐词表，允许自创小写英文短词）。
+ *
+ * - `about`：事件讨论/关于该实体（如「讨论三角洲新赛季」 about 《三角洲》）
+ * - `uses`：事件使用该实体（如「直播」 uses 《三角洲》）
+ * - `located-at`：事件发生在某地点 / 场所
+ * - `produced`：事件产生了该实体（作品 / 产品）
+ */
+export const RecommendedEventEntityRelationTypes = ['about', 'uses', 'located-at', 'produced'] as const;
+
+export interface EventEntityEdge {
+  id: string;
+  kind: 'event-entity';
+  fromEventId: string;
+  toEntityId: string;
+  relationType: string;
+  /** 事件→实体 始终有向（directed=true），保留字段以便与其他边签名一致 */
+  directed: boolean;
+  weight: number;
+  /** 可选人可读注释（<=40 字） */
+  description?: string;
+  firstSeenAt: number;
+  lastReinforcedAt: number;
+  evidence: EvidenceRef[];
+}
+
+/**
+ * 实体 → 实体 的关联类型（推荐词表，允许自创）。常用于表达实体间的属于 / 包含 / 变体 / 对立 关系。
+ *
+ * - `part-of`：A 是 B 的一部分（有向），如「绝巴 part-of 三角洲」
+ * - `contains`：A 包含 B（有向，与 part-of 互为逆）
+ * - `variant-of`：A 是 B 的变体 / 资料片（有向）
+ * - `related`：相关（无向）
+ * - `opposite`：对立 / 互斥（无向）
+ */
+export const RecommendedEntityEntityRelationTypes = [
+  'part-of',
+  'contains',
+  'variant-of',
+  'related',
+  'opposite',
+] as const;
+
+export interface EntityEntityEdge {
+  id: string;
+  kind: 'entity-entity';
+  fromEntityId: string;
+  toEntityId: string;
+  relationType: string;
+  directed: boolean;
+  weight: number;
+  /** 可选人可读注释（<=40 字）。例：「绝巴是三角洲的高难度关卡」 */
+  description?: string;
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
