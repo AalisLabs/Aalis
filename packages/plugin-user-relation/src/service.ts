@@ -23,6 +23,7 @@ import {
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationStore } from './store.js';
 import type {
+  EdgeWeightAudit,
   EntityEntityEdge,
   EntityNode,
   EventEntityEdge,
@@ -2587,6 +2588,104 @@ export class RelationService {
       nameHistory: [...(node.nameHistory ?? []), audit],
     });
     return { from, to: newName, aliasesAdded: true };
+  }
+
+  /**
+   * 关系边修正：LLM 发现某条边过弱 / 过强 / 是幻觉时调用。
+   *
+   * 设计原则（小破坏性 + 高效修正）：
+   * - **阶梯保护**：weight 越高越难物理删除，避免误删强关系
+   *   - weight ≥ 0.5：只允许 weaken；想 remove 需先反复 weaken 到 < 0.5（或 force=true）
+   *   - 0.3 ≤ weight < 0.5：可 weaken 或 remove
+   *   - weight < 0.3：自由（含 strengthen 重建）
+   * - **alias 边禁操作**：is-alias-of / alt-account-of 是结构性边，
+   *   修改会破坏 mergeAlias 不变量。需取消别名请走未来的 splitAlias 工具。
+   * - **必填 reason**（≤80 字），写入 weightHistory[] 留痕
+   * - **物理删除清理干净**：deleteEdge 直接落盘，不留墓碑（避免脏数据）
+   *
+   * 不接受 multiplier > 1 的 weaken / multiplier < 1 的 strengthen
+   * （语义错位会让 LLM 误用）。
+   */
+  async correctEdge(opts: {
+    edgeId: string;
+    action: 'weaken' | 'strengthen' | 'remove';
+    /** weaken 默认 0.5；strengthen 默认 1.5；remove 忽略 */
+    multiplier?: number;
+    reason: string;
+    /** 调用来源标识，默认 'llm' */
+    by?: string;
+    /** true → 跳过阶梯保护（仅 manual / 系统纠错使用） */
+    force?: boolean;
+  }): Promise<{
+    action: 'weakened' | 'strengthened' | 'removed';
+    edgeId: string;
+    from: number;
+    to: number;
+    edge?: RelationEdge;
+  }> {
+    const reason = opts.reason?.trim().slice(0, 80);
+    if (!reason) throw new Error('correctEdge: reason 必填，请说明修正理由');
+
+    const edge = await this.store.getEdge(opts.edgeId);
+    if (!edge) throw new Error(`correctEdge: edge ${opts.edgeId} 不存在`);
+
+    // alias / alt-account 边禁操作
+    if (edge.kind === 'person-person' || edge.kind === 'entity-entity') {
+      const rt = edge.relationType;
+      if (rt === 'is-alias-of' || rt === 'alt-account-of') {
+        throw new Error(
+          `correctEdge: 禁止操作 alias 边 (relationType=${rt})。alias 是结构性边，错绑请走未来的 splitAlias 流程，不要直接 weaken/remove。`,
+        );
+      }
+    }
+
+    const by = opts.by ?? 'llm';
+    const now = Date.now();
+    const prevWeight = edge.weight;
+
+    if (opts.action === 'remove') {
+      // 阶梯保护
+      if (!opts.force && prevWeight >= 0.5) {
+        throw new Error(
+          `correctEdge: edge.weight=${prevWeight.toFixed(2)} ≥ 0.5，禁止直接 remove。请先用 weaken 把权重降到 < 0.5（建议反复 weaken 直至 < 0.3 再 remove），或确认后传 force=true。`,
+        );
+      }
+      await this.store.deleteEdge(opts.edgeId);
+      return { action: 'removed', edgeId: opts.edgeId, from: prevWeight, to: 0 };
+    }
+
+    if (opts.action === 'weaken') {
+      const m = opts.multiplier ?? 0.5;
+      if (m <= 0 || m >= 1) {
+        throw new Error(`correctEdge: weaken multiplier 必须 ∈ (0, 1)，收到 ${m}`);
+      }
+      const newWeight = Math.max(0.001, prevWeight * m);
+      const audit: EdgeWeightAudit = { from: prevWeight, to: newWeight, action: 'weaken', at: now, by, reason };
+      const updated = {
+        ...edge,
+        weight: newWeight,
+        lastReinforcedAt: now,
+        weightHistory: [...(edge.weightHistory ?? []), audit],
+      } as RelationEdge;
+      await this.store.upsertEdge(updated);
+      return { action: 'weakened', edgeId: opts.edgeId, from: prevWeight, to: newWeight, edge: updated };
+    }
+
+    // strengthen
+    const m = opts.multiplier ?? 1.5;
+    if (m <= 1 || m > 5) {
+      throw new Error(`correctEdge: strengthen multiplier 必须 ∈ (1, 5]，收到 ${m}`);
+    }
+    const newWeight = Math.min(1, prevWeight * m);
+    const audit: EdgeWeightAudit = { from: prevWeight, to: newWeight, action: 'strengthen', at: now, by, reason };
+    const updated = {
+      ...edge,
+      weight: newWeight,
+      lastReinforcedAt: now,
+      weightHistory: [...(edge.weightHistory ?? []), audit],
+    } as RelationEdge;
+    await this.store.upsertEdge(updated);
+    return { action: 'strengthened', edgeId: opts.edgeId, from: prevWeight, to: newWeight, edge: updated };
   }
 
   // ============================================================

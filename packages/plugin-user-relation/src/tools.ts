@@ -552,9 +552,82 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
+  // ───────────────────────────── correct_edge ────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_correct_edge',
+        description: [
+          '修正一条关系边（weaken / strengthen / remove）。',
+          '使用场景：',
+          '- **weaken**: 发现某条边过强（如 LLM 之前过度提取）、对话否认了这层关系、关系明显淡化',
+          '- **strengthen**: 发现某条边过弱但实际很重要（很少这样用，通常 addEdge 自然累加足够）',
+          '- **remove**: 确认是幻觉边 / 关系已彻底中断 / 错误归类',
+          '阶梯保护（避免误删强关系）：',
+          '- weight ≥ 0.5：禁止直接 remove，必须先 weaken 到 < 0.5（建议反复 weaken 至 < 0.3 再 remove）',
+          '- 0.3 ≤ weight < 0.5：可 weaken / remove',
+          '- weight < 0.3：自由',
+          '禁止操作 **alias 边**（relationType = is-alias-of / alt-account-of）—— 这是结构性边，错绑请走后续 splitAlias 流程，不要 weaken/remove。',
+          '使用准则：必须先用 list_edges / find_path 拿到具体 edge id；必填 reason（≤80 字）说明判断依据。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            edge_id: { type: 'string', description: '边 ID（UUID）。先用 list_edges / find_path / expand_node 拿到。' },
+            action: {
+              type: 'string',
+              enum: ['weaken', 'strengthen', 'remove'],
+              description:
+                'weaken=权重×multiplier(默认0.5)；strengthen=权重×multiplier(默认1.5)；remove=物理删除（受阶梯保护）',
+            },
+            multiplier: {
+              type: 'number',
+              description:
+                '可选；weaken 时 ∈(0,1)，默认 0.5；strengthen 时 ∈(1,5]，默认 1.5；remove 时忽略。激进衰减用 0.3，温和用 0.7。',
+            },
+            reason: { type: 'string', description: '修正理由（≤80 字），写入 weightHistory[]' },
+          },
+          required: ['edge_id', 'action', 'reason'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const edgeId = String(args.edge_id ?? '').trim();
+      const action = String(args.action ?? '').trim() as 'weaken' | 'strengthen' | 'remove';
+      const reason = String(args.reason ?? '').trim();
+      if (!edgeId) return JSON.stringify({ error: 'edge_id 不能为空' });
+      if (action !== 'weaken' && action !== 'strengthen' && action !== 'remove') {
+        return JSON.stringify({ error: 'action 必须是 weaken / strengthen / remove' });
+      }
+      if (!reason) return JSON.stringify({ error: 'reason 必填，请说明修正理由' });
+      const multiplier =
+        typeof args.multiplier === 'number' && Number.isFinite(args.multiplier) ? args.multiplier : undefined;
+      try {
+        const result = await service.correctEdge({ edgeId, action, multiplier, reason, by: 'llm' });
+        return JSON.stringify(
+          {
+            ok: true,
+            action: result.action,
+            edge_id: result.edgeId,
+            weight_from: Number(result.from.toFixed(4)),
+            weight_to: Number(result.to.toFixed(4)),
+            ...(result.edge ? { edge: serializeEdge(result.edge) } : {}),
+          },
+          null,
+          2,
+        );
+      } catch (err) {
+        return JSON.stringify({ error: (err as Error).message });
+      }
+    },
+  });
+
   if (cfg.debug) {
     ctx.logger.debug(
-      `[user-relation] 已注册 9 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / search_persons / search_entities / search_events / list_edges / timeline / rename_node）`,
+      `[user-relation] 已注册 10 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / rename_node / correct_edge）`,
     );
   }
 }
