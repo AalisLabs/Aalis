@@ -89,6 +89,13 @@ export const configSchema: ConfigSchema = {
     default: '',
     description: '请使用足够长的随机字符串。生产环境强烈建议通过环境变量或受限文件保存。',
   },
+  relationGraphDefaultSpacing: {
+    type: 'number',
+    label: '关系图默认密度',
+    default: 120,
+    description:
+      '关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。',
+  },
 };
 
 export const defaultConfig = {
@@ -98,6 +105,7 @@ export const defaultConfig = {
   autoOpen: true,
   tokenMode: 'persist',
   fixedToken: '',
+  relationGraphDefaultSpacing: 120,
 };
 
 // ===== 配置 =====
@@ -109,6 +117,7 @@ interface WebUIConfig {
   autoOpen: boolean;
   tokenMode: 'ephemeral' | 'persist' | 'fixed';
   fixedToken: string;
+  relationGraphDefaultSpacing: number;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -222,6 +231,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         ? (config.tokenMode as 'ephemeral' | 'fixed')
         : 'persist',
     fixedToken: (config.fixedToken as string) ?? '',
+    relationGraphDefaultSpacing: (() => {
+      const v = Number(config.relationGraphDefaultSpacing);
+      return Number.isFinite(v) && v > 0 ? v : 120;
+    })(),
   };
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
