@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react';
 import cytoscape, { type Core, type ElementDefinition, type EventObject } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { pageAction } from '../api';
+import { api, pageAction } from '../api';
 import type { WebuiGraphComponent } from '../types';
 
 // 注册一次 fcose 布局
@@ -260,6 +260,8 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   ensureFcose();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  // 上一次 layout effect 使用的 payload 引用：用于判断本次重跑是「数据变化」还是「仅 spacing 变化」
+  const lastLayoutPayloadRef = useRef<GraphPayload | null>(null);
 
   const [payload, setPayload] = useState<GraphPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -276,6 +278,55 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   // 详情卡片折叠态：collapsed=true 时只显示一个 header 条，不挡画面；焦点高亮保持。
   // 关闭（✕）按钮仍然 = 退出焦点 + 清卡片，与之前一致。
   const [detailCollapsed, setDetailCollapsed] = useState(false);
+
+  // 布局密度（≈ fcose idealEdgeLength px），影响节点排布稀疏程度。
+  //   优先级：localStorage（本机用户偏好） > 服务端 webui-server.relationGraphDefaultSpacing > 内置 120
+  //   规则：UI 滑动时只更新 draft（即时显示数字），松手才 commit 到 spacing 触发 layout 重跑（动画过渡）
+  //         同时把 commit 值写回 localStorage 作下次默认。
+  const SPACING_STORAGE_KEY = 'aalis.relgraph.spacing';
+  const SPACING_MIN = 60;
+  const SPACING_MAX = 250;
+  const SPACING_FALLBACK = 120;
+  const readSpacingFromStorage = (): number | undefined => {
+    if (typeof window === 'undefined') return undefined;
+    const raw = window.localStorage.getItem(SPACING_STORAGE_KEY);
+    if (raw == null) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= SPACING_MIN && n <= SPACING_MAX ? n : undefined;
+  };
+  const [spacing, setSpacing] = useState<number>(() => readSpacingFromStorage() ?? SPACING_FALLBACK);
+  const [spacingDraft, setSpacingDraft] = useState<number>(spacing);
+  // 仅当用户没有本地覆盖时，才在拿到服务端默认值后采纳之
+  useEffect(() => {
+    if (readSpacingFromStorage() !== undefined) return;
+    let cancelled = false;
+    api<{ config?: { relationGraphDefaultSpacing?: number } }>(
+      '/api/plugins/@aalis/plugin-webui-server/config',
+    )
+      .then(d => {
+        if (cancelled) return;
+        const v = Number(d?.config?.relationGraphDefaultSpacing);
+        if (Number.isFinite(v) && v >= SPACING_MIN && v <= SPACING_MAX) {
+          setSpacing(v);
+          setSpacingDraft(v);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const commitSpacing = useCallback((next: number) => {
+    const v = Math.max(SPACING_MIN, Math.min(SPACING_MAX, Math.round(next)));
+    setSpacing(v);
+    setSpacingDraft(v);
+    try {
+      window.localStorage.setItem(SPACING_STORAGE_KEY, String(v));
+    } catch {
+      // 忽略 quota
+    }
+  }, []);
 
   // 画布高度可拖拽（持久化到 localStorage，按 source key 区分不同图）
   const heightStorageKey = `relation-graph-h:${pluginName}:${comp.source}`;
@@ -441,16 +492,27 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       }),
     ];
 
-    cy.elements().remove();
-    cy.add(elements);
+    // 仅 spacing 变化（payload 引用未变）时启用动画，让现有节点平滑滑到新位置；
+    // payload 变化时不开动画，避免抖动。
+    const isSpacingOnly = lastLayoutPayloadRef.current === payload;
+    lastLayoutPayloadRef.current = payload;
+    if (!isSpacingOnly) {
+      cy.elements().remove();
+      cy.add(elements);
+    }
     cy.layout({
       name: 'fcose',
-      animate: false,
-      randomize: payload.nodes.length > 20,
-      // 降低节点重叠：加大排斥 + 加长理想边长 + 减小重力（不把节点都吸到中心）
-      nodeRepulsion: 14000,
-      idealEdgeLength: 120,
-      nodeSeparation: 80,
+      animate: isSpacingOnly,
+      animationDuration: 400,
+      randomize: !isSpacingOnly && payload.nodes.length > 20,
+      // 节点稀疏度由 spacing 线性驱动：
+      //   idealEdgeLength = spacing
+      //   nodeRepulsion   ≈ spacing * 117（120 -> 14000，对齐原默认）
+      //   nodeSeparation  ≈ spacing * 0.67（120 -> 80）
+      // 这样一根 slider 同时拉动三者，避免互相打架。
+      nodeRepulsion: Math.round(spacing * 117),
+      idealEdgeLength: spacing,
+      nodeSeparation: Math.round(spacing * 0.67),
       gravity: 0.1,
       gravityRange: 3.0,
       padding: 40,
@@ -458,7 +520,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       quality: 'proof',
       uniformNodeDimensions: false,
     } as cytoscape.LayoutOptions).run();
-  }, [payload, focusId]);
+  }, [payload, focusId, spacing]);
 
   // 搜索高亮 / dim。规则（见 README/相关讨论）：
   //  - 空格分隔的多关键词，AND 语义（所有 token 都必须命中）；
@@ -688,6 +750,53 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
           />
           <span style={{ width: 32, color: 'var(--text-secondary)' }}>{maxBreadth === 0 ? '∞' : maxBreadth}</span>
         </label>
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          title={`布局密度（≈ 理想边长 px）。当前 ${spacingDraft}。松开鼠标后才会重排（动画过渡）；写入浏览器本地存储作下次默认。`}
+        >
+          密度
+          <input
+            type="range"
+            min={SPACING_MIN}
+            max={SPACING_MAX}
+            step={5}
+            value={spacingDraft}
+            onChange={e => setSpacingDraft(Number(e.target.value))}
+            onMouseUp={e => commitSpacing(Number((e.target as HTMLInputElement).value))}
+            onTouchEnd={e => commitSpacing(Number((e.target as HTMLInputElement).value))}
+            onKeyUp={e => commitSpacing(Number((e.target as HTMLInputElement).value))}
+          />
+          <input
+            type="number"
+            min={SPACING_MIN}
+            max={SPACING_MAX}
+            value={spacingDraft}
+            onChange={e => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n)) setSpacingDraft(n);
+            }}
+            onBlur={e => commitSpacing(Number((e.target as HTMLInputElement).value))}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitSpacing(Number((e.target as HTMLInputElement).value));
+            }}
+            style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            try {
+              window.localStorage.removeItem(SPACING_STORAGE_KEY);
+            } catch {
+              // ignore
+            }
+            commitSpacing(SPACING_FALLBACK);
+          }}
+          title="重置密度为默认值（同时清除本地覆盖）"
+          style={{ padding: '2px 6px', fontSize: 11 }}
+        >
+          ↺
+        </button>
         {focusId ? (
           <button
             type="button"
