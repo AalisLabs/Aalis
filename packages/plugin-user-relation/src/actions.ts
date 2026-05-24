@@ -145,13 +145,28 @@ export const actions: PluginModule['actions'] = {
     let events: EventNode[];
     let entities: EntityNode[];
     let edges: RelationEdge[];
+    let focusEdge: RelationEdge | undefined;
 
     if (focusId) {
-      const sub = await s.traverseSubgraph({ startNodeIds: [focusId], maxDepth, maxBreadth });
-      persons = sub.persons;
-      events = sub.events;
-      entities = sub.entities;
-      edges = sub.edges;
+      // 先检测 focusId 是否为某条边的 id：若是 → 取边两端点作为起点 + 1 跳邻域
+      const snap = await s.loadAll();
+      const edgeMatch = snap.edges.find(e => e.id === focusId);
+      if (edgeMatch) {
+        focusEdge = edgeMatch;
+        const endpointIds = edgeEndpointIds(edgeMatch);
+        const sub = await s.traverseSubgraph({ startNodeIds: endpointIds, maxDepth, maxBreadth });
+        persons = sub.persons;
+        events = sub.events;
+        entities = sub.entities;
+        edges = sub.edges;
+        if (!edges.some(e => e.id === edgeMatch.id)) edges.push(edgeMatch);
+      } else {
+        const sub = await s.traverseSubgraph({ startNodeIds: [focusId], maxDepth, maxBreadth });
+        persons = sub.persons;
+        events = sub.events;
+        entities = sub.entities;
+        edges = sub.edges;
+      }
     } else {
       const snap = await s.loadAll();
       // 全图以“近期活跃 + 高度关系”为主，避免一次过多节点压垮浏览器
@@ -193,6 +208,17 @@ export const actions: PluginModule['actions'] = {
 
     return {
       focusId,
+      focusEdge: focusEdge
+        ? {
+            id: focusEdge.id,
+            kind: focusEdge.kind,
+            weight: focusEdge.weight,
+            description: focusEdge.description,
+            lastReinforcedAt: focusEdge.lastReinforcedAt,
+            evidence: focusEdge.evidence,
+            endpoints: edgeEndpointIds(focusEdge),
+          }
+        : undefined,
       stats: {
         persons: persons.length,
         events: events.length,
@@ -596,4 +622,22 @@ function numArgOptional(v: unknown): number | undefined {
     if (Number.isFinite(n)) return n;
   }
   return undefined;
+}
+
+/** 给定一条边，返回它的两个端点 id（统一为字符串数组） */
+function edgeEndpointIds(e: RelationEdge): string[] {
+  switch (e.kind) {
+    case 'person-event':
+      return [e.fromPersonId, e.toEventId];
+    case 'person-person':
+      return [e.fromPersonId, e.toPersonId];
+    case 'person-entity':
+      return [e.fromPersonId, e.toEntityId];
+    case 'event-event':
+      return [e.fromEventId, e.toEventId];
+    case 'event-entity':
+      return [e.fromEventId, e.toEntityId];
+    case 'entity-entity':
+      return [e.fromEntityId, e.toEntityId];
+  }
 }

@@ -10,6 +10,10 @@
  * - LLM 提取本身 → M2 的 extractor.ts
  * - WebUI 端点 → M4 的 actions
  */
+import type { Context } from '@aalis/core';
+import type { ModelRef } from '@aalis/plugin-llm-api';
+
+import { resolveConsolidateModel, rewriteEntitySummary, verifyAliasPair } from './consolidate-llm.js';
 import type { RelationStore } from './store.js';
 import type {
   EntityEntityEdge,
@@ -431,6 +435,9 @@ export class RelationService {
       evidence: trimEvidence(input.evidence ?? []),
     };
     await this.store.upsertEdge(fresh);
+    if (normalizedType === 'is-alias-of') {
+      await this.mergeAlias({ aliasId: fresh.fromEventId, canonicalId: fresh.toEventId, kind: 'event' });
+    }
     return fresh;
   }
 
@@ -553,6 +560,9 @@ export class RelationService {
       evidence: trimEvidence(input.evidence ?? []),
     };
     await this.store.upsertEdge(fresh);
+    if (normalizedType === 'is-alias-of') {
+      await this.mergeAlias({ aliasId: fresh.fromEntityId, canonicalId: fresh.toEntityId, kind: 'entity' });
+    }
     return fresh;
   }
 
@@ -770,6 +780,9 @@ export class RelationService {
       evidence: trimEvidence(input.evidence ?? []),
     };
     await this.store.upsertEdge(fresh);
+    if (normalizedType === 'is-alias-of' || normalizedType === 'alt-account-of') {
+      await this.mergeAlias({ aliasId: fresh.fromPersonId, canonicalId: fresh.toPersonId, kind: 'person' });
+    }
     return fresh;
   }
 
@@ -1191,7 +1204,13 @@ export class RelationService {
   // 3) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
   // 4) 报告：返回结构化结果，调用方按需展示
   // ────────────────────────────────────────────────────────────────
-  async consolidate(opts: { autoLink?: boolean } = {}): Promise<{
+  async consolidate(
+    opts: {
+      autoLink?: boolean;
+      /** 可选：传入后 consolidate 末尾会调用 LLM 做别名核验与摘要重写 */
+      llm?: { ctx: Context; modelRef: ModelRef; disableThinking?: boolean };
+    } = {},
+  ): Promise<{
     aliasCandidates: Array<{
       aId: string;
       bId: string;
@@ -1202,6 +1221,9 @@ export class RelationService {
     aliasEdgesCreated: number;
     partOfEdgesCreated: number;
     eventEdgesNormalized: number;
+    llmVerified?: number;
+    llmRejected?: number;
+    summariesRewritten?: number;
   }> {
     const snapshot = await this.store.loadAll();
     const aliasCandidates: Array<{
@@ -1214,6 +1236,15 @@ export class RelationService {
     let aliasEdgesCreated = 0;
     let partOfEdgesCreated = 0;
     let eventEdgesNormalized = 0;
+    let llmVerified = 0;
+    let llmRejected = 0;
+    let summariesRewritten = 0;
+
+    // 解析可选 LLM 模型（A: 别名核验；B: 合并后摘要重写）
+    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.ctx, { modelRef: opts.llm.modelRef }) : undefined;
+    const llmDisableThinking = opts.llm?.disableThinking ?? true;
+    /** 待合并实体 id → 经过 LLM 确认（或未启用 LLM 时直接 true）的列表 */
+    const mergedCanonicals = new Set<string>();
 
     // ─── (1) 别名候选：实体之间 name/aliases 完全相同（不同 id）→ 高置信
     const entitiesByNormName = new Map<string, EntityNode[]>();
@@ -1244,6 +1275,21 @@ export class RelationService {
             reason: `name/aliases 完全等价于 "${norm}"`,
           });
           if (opts.autoLink) {
+            // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
+            let shouldMerge = true;
+            if (llmModel && opts.llm) {
+              const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
+              if (v.isSame) {
+                llmVerified++;
+              } else {
+                llmRejected++;
+                shouldMerge = false;
+                if (opts.llm.ctx.logger) {
+                  opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
+                }
+              }
+            }
+            if (!shouldMerge) continue;
             const exists = snapshot.edges.some(
               e =>
                 e.kind === 'entity-entity' &&
@@ -1267,6 +1313,9 @@ export class RelationService {
                 evidence: [],
               });
               aliasEdgesCreated++;
+              // 立即触发合并（A 方案：路由+壳子）
+              const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
+              mergedCanonicals.add(mergeResult.effectiveCanonicalId);
             }
           }
         }
@@ -1331,7 +1380,178 @@ export class RelationService {
       eventEdgesNormalized++;
     }
 
-    return { aliasCandidates, aliasEdgesCreated, partOfEdgesCreated, eventEdgesNormalized };
+    // (B) 合并后摘要重写：基于最新 snapshot 收集 canonical 的别名/相关事件/相关人物
+    if (llmModel && opts.llm && mergedCanonicals.size > 0) {
+      const after = await this.store.loadAll();
+      const entityById = new Map(after.entities.map(e => [e.id, e]));
+      const personById = new Map(after.persons.map(p => [p.id, p]));
+      const eventById = new Map(after.events.map(e => [e.id, e]));
+      for (const canonicalId of mergedCanonicals) {
+        const ent = entityById.get(canonicalId);
+        if (!ent) continue;
+        // 收集别名（含 is-alias-of 关联实体的 name 与 aliases）
+        const aliasSet = new Set<string>(ent.aliases ?? []);
+        for (const e of after.edges) {
+          if (e.kind === 'entity-entity' && e.relationType === 'is-alias-of') {
+            const other =
+              e.fromEntityId === canonicalId
+                ? entityById.get(e.toEntityId)
+                : e.toEntityId === canonicalId
+                  ? entityById.get(e.fromEntityId)
+                  : undefined;
+            if (other) {
+              aliasSet.add(other.name);
+              for (const al of other.aliases ?? []) aliasSet.add(al);
+            }
+          }
+        }
+        // 收集近期相关事件（通过 event-entity 边）
+        const recentEvents: Array<Pick<EventNode, 'title' | 'summary'>> = [];
+        for (const e of after.edges) {
+          if (e.kind === 'event-entity' && e.toEntityId === canonicalId) {
+            const ev = eventById.get(e.fromEventId);
+            if (ev) recentEvents.push({ title: ev.title, summary: ev.summary });
+          }
+        }
+        recentEvents.sort((a, b) => (b.summary ? 1 : 0) - (a.summary ? 1 : 0));
+        // 相关人物（通过 person-entity 边）
+        const relatedPersons: Array<Pick<PersonNode, 'displayName'>> = [];
+        for (const e of after.edges) {
+          if (e.kind === 'person-entity' && e.toEntityId === canonicalId) {
+            const p = personById.get(e.fromPersonId);
+            if (p?.displayName) relatedPersons.push({ displayName: p.displayName });
+          }
+        }
+        const newSummary = await rewriteEntitySummary(
+          opts.llm.ctx,
+          llmModel,
+          ent,
+          {
+            aliases: [...aliasSet].filter(a => a && a !== ent.name).slice(0, 10),
+            recentEvents: recentEvents.slice(0, 6),
+            relatedPersons: relatedPersons.slice(0, 8),
+          },
+          llmDisableThinking,
+        );
+        if (newSummary && newSummary !== ent.summary) {
+          await this.store.upsertEntity({ ...ent, summary: newSummary, lastReinforcedAt: Date.now() });
+          summariesRewritten++;
+        }
+      }
+    }
+
+    return {
+      aliasCandidates,
+      aliasEdgesCreated,
+      partOfEdgesCreated,
+      eventEdgesNormalized,
+      ...(opts.llm ? { llmVerified, llmRejected, summariesRewritten } : {}),
+    };
+  }
+
+  // ============================================================
+  //  Alias merging（方案 A：路由 + 壳子）
+  //  is-alias-of / alt-account-of 边写入后立即触发：
+  //    - 按启发式校正 canonical 方向（name 较长 / aliases 较多 / 总 evidence 较多）
+  //    - 将所有引用 aliasId 的其它边重写为指向 canonicalId
+  //    - 同 dedup key 冲突时合并 evidence/weight 并删除冗余
+  //    - alias 节点保留，仅保留指向 canonical 的 alias 标记边
+  // ============================================================
+  async mergeAlias(opts: {
+    aliasId: string;
+    canonicalId: string;
+    kind: 'person' | 'entity' | 'event';
+    /** 若为 true，不做启发式校正，强制按传入方向 */
+    noCanonicalCorrection?: boolean;
+  }): Promise<{
+    effectiveCanonicalId: string;
+    effectiveAliasId: string;
+    edgesRewritten: number;
+    edgesMerged: number;
+    edgesDeleted: number;
+    swapped: boolean;
+  }> {
+    let aliasId = opts.aliasId;
+    let canonicalId = opts.canonicalId;
+    let swapped = false;
+
+    if (aliasId === canonicalId) {
+      return {
+        effectiveCanonicalId: canonicalId,
+        effectiveAliasId: aliasId,
+        edgesRewritten: 0,
+        edgesMerged: 0,
+        edgesDeleted: 0,
+        swapped,
+      };
+    }
+
+    const snapshot = await this.store.loadAll();
+
+    if (!opts.noCanonicalCorrection) {
+      const corrected = chooseCanonicalDirection(snapshot, aliasId, canonicalId, opts.kind);
+      if (corrected) {
+        swapped = true;
+        aliasId = corrected.alias;
+        canonicalId = corrected.canonical;
+      }
+    }
+
+    // 索引：未被 alias 引用的现有边按 dedupKey 入索引，用于冲突检测
+    const byKey = new Map<string, RelationEdge>();
+    for (const e of snapshot.edges) {
+      if (edgeReferences(e, aliasId)) continue;
+      byKey.set(edgeDedupKey(e), e);
+    }
+
+    let edgesRewritten = 0;
+    let edgesMerged = 0;
+    let edgesDeleted = 0;
+
+    for (const e of snapshot.edges) {
+      if (!edgeReferences(e, aliasId)) continue;
+
+      // 保留 alias↔canonical 的 alias 标记边自身；必要时翻转方向到 alias→canonical
+      if (isAliasMarkerEdge(e) && edgeInvolvesBoth(e, aliasId, canonicalId)) {
+        if (!isAliasEdgeDirectionCorrect(e, aliasId, canonicalId)) {
+          const flipped = flipDirectedEdge(e, aliasId, canonicalId);
+          if (flipped) await this.store.upsertEdge(flipped);
+        }
+        continue;
+      }
+
+      const rewritten = rewriteEdgeIds(e, aliasId, canonicalId);
+
+      // 自环禁止：合并后从 == 到 → 直接删除
+      if (isEdgeSelfLoop(rewritten)) {
+        await this.store.deleteEdge(e.id);
+        edgesDeleted++;
+        continue;
+      }
+
+      const newKey = edgeDedupKey(rewritten);
+      const conflict = byKey.get(newKey);
+      if (conflict && conflict.id !== rewritten.id) {
+        const merged = mergeTwoEdges(conflict, rewritten);
+        await this.store.upsertEdge(merged);
+        await this.store.deleteEdge(e.id);
+        byKey.set(newKey, merged);
+        edgesMerged++;
+      } else {
+        await this.store.upsertEdge(rewritten);
+        byKey.set(newKey, rewritten);
+        edgesRewritten++;
+      }
+    }
+
+    return {
+      effectiveCanonicalId: canonicalId,
+      effectiveAliasId: aliasId,
+      edgesRewritten,
+      edgesMerged,
+      edgesDeleted,
+      swapped,
+    };
   }
 }
 
@@ -1478,8 +1698,8 @@ function isDirectedEventEventRelation(relationType: string): boolean {
   return DIRECTED_EVENT_EVENT_RELATIONS.has(relationType);
 }
 
-/** entity-entity 边的方向性默认：「part-of / contains / variant-of」有向；「related / opposite」无向 */
-const DIRECTED_ENTITY_ENTITY_RELATIONS = new Set<string>(['part-of', 'contains', 'variant-of']);
+/** entity-entity 边的方向性默认：「part-of / contains / variant-of / is-alias-of」有向；「related / opposite」无向 */
+const DIRECTED_ENTITY_ENTITY_RELATIONS = new Set<string>(['part-of', 'contains', 'variant-of', 'is-alias-of']);
 function isDirectedEntityEntityRelation(relationType: string): boolean {
   return DIRECTED_ENTITY_ENTITY_RELATIONS.has(relationType);
 }
@@ -1490,4 +1710,159 @@ function trimDescription(d: string | undefined): string | undefined {
   const t = d.trim();
   if (!t) return undefined;
   return t.length > 40 ? `${t.slice(0, 40)}…` : t;
+}
+
+// ============================================================
+//  Alias merge helpers
+// ============================================================
+
+const ALIAS_MARKER_RELATIONS = new Set<string>(['is-alias-of', 'alt-account-of']);
+
+function isAliasMarkerEdge(e: RelationEdge): boolean {
+  if (e.kind === 'entity-entity' || e.kind === 'person-person' || e.kind === 'event-event') {
+    return ALIAS_MARKER_RELATIONS.has(e.relationType);
+  }
+  return false;
+}
+
+/** 判断边是否在任意字段引用了某 id（覆盖 6 种 edge kind） */
+function edgeReferences(e: RelationEdge, id: string): boolean {
+  switch (e.kind) {
+    case 'person-event':
+      return e.fromPersonId === id || e.toEventId === id;
+    case 'person-person':
+      return e.fromPersonId === id || e.toPersonId === id;
+    case 'person-entity':
+      return e.fromPersonId === id || e.toEntityId === id;
+    case 'event-event':
+      return e.fromEventId === id || e.toEventId === id;
+    case 'event-entity':
+      return e.fromEventId === id || e.toEntityId === id;
+    case 'entity-entity':
+      return e.fromEntityId === id || e.toEntityId === id;
+  }
+}
+
+function edgeInvolvesBoth(e: RelationEdge, a: string, b: string): boolean {
+  return edgeReferences(e, a) && edgeReferences(e, b);
+}
+
+function isAliasEdgeDirectionCorrect(e: RelationEdge, aliasId: string, canonicalId: string): boolean {
+  if (e.kind === 'entity-entity') return e.fromEntityId === aliasId && e.toEntityId === canonicalId;
+  if (e.kind === 'person-person') return e.fromPersonId === aliasId && e.toPersonId === canonicalId;
+  if (e.kind === 'event-event') return e.fromEventId === aliasId && e.toEventId === canonicalId;
+  return true;
+}
+
+function flipDirectedEdge(e: RelationEdge, aliasId: string, canonicalId: string): RelationEdge | null {
+  if (e.kind === 'entity-entity') return { ...e, fromEntityId: aliasId, toEntityId: canonicalId };
+  if (e.kind === 'person-person') return { ...e, fromPersonId: aliasId, toPersonId: canonicalId };
+  if (e.kind === 'event-event') return { ...e, fromEventId: aliasId, toEventId: canonicalId };
+  return null;
+}
+
+/** 把边中任一等于 aliasId 的字段替换为 canonicalId，返回浅拷贝 */
+function rewriteEdgeIds(e: RelationEdge, aliasId: string, canonicalId: string): RelationEdge {
+  const swap = (v: string) => (v === aliasId ? canonicalId : v);
+  switch (e.kind) {
+    case 'person-event':
+      return { ...e, fromPersonId: swap(e.fromPersonId), toEventId: swap(e.toEventId) };
+    case 'person-person':
+      return { ...e, fromPersonId: swap(e.fromPersonId), toPersonId: swap(e.toPersonId) };
+    case 'person-entity':
+      return { ...e, fromPersonId: swap(e.fromPersonId), toEntityId: swap(e.toEntityId) };
+    case 'event-event':
+      return { ...e, fromEventId: swap(e.fromEventId), toEventId: swap(e.toEventId) };
+    case 'event-entity':
+      return { ...e, fromEventId: swap(e.fromEventId), toEntityId: swap(e.toEntityId) };
+    case 'entity-entity':
+      return { ...e, fromEntityId: swap(e.fromEntityId), toEntityId: swap(e.toEntityId) };
+  }
+}
+
+function isEdgeSelfLoop(e: RelationEdge): boolean {
+  switch (e.kind) {
+    case 'person-event':
+      return false; // 跨类型，不可能自环
+    case 'person-person':
+      return e.fromPersonId === e.toPersonId;
+    case 'person-entity':
+      return false;
+    case 'event-event':
+      return e.fromEventId === e.toEventId;
+    case 'event-entity':
+      return false;
+    case 'entity-entity':
+      return e.fromEntityId === e.toEntityId;
+  }
+}
+
+/** 边的去重键（用于合并冲突检测）。无向边按字典序规范化端点。 */
+function edgeDedupKey(e: RelationEdge): string {
+  switch (e.kind) {
+    case 'person-event':
+      return `pe|${e.fromPersonId}|${e.toEventId}|${e.role}`;
+    case 'person-person': {
+      const [a, b] = e.directed ? [e.fromPersonId, e.toPersonId] : [e.fromPersonId, e.toPersonId].sort();
+      return `pp|${a}|${b}|${e.relationType}|${e.directed ? 'd' : 'u'}`;
+    }
+    case 'person-entity':
+      return `pent|${e.fromPersonId}|${e.toEntityId}|${e.role}`;
+    case 'event-event': {
+      const [a, b] = e.directed ? [e.fromEventId, e.toEventId] : [e.fromEventId, e.toEventId].sort();
+      return `ee|${a}|${b}|${e.relationType}|${e.directed ? 'd' : 'u'}`;
+    }
+    case 'event-entity':
+      return `eent|${e.fromEventId}|${e.toEntityId}|${e.relationType}`;
+    case 'entity-entity': {
+      const [a, b] = e.directed ? [e.fromEntityId, e.toEntityId] : [e.fromEntityId, e.toEntityId].sort();
+      return `entent|${a}|${b}|${e.relationType}|${e.directed ? 'd' : 'u'}`;
+    }
+  }
+}
+
+/** 合并两条同 dedupKey 的边：保留 keeper.id，合并 evidence、weight 取强化、时间取较新 */
+function mergeTwoEdges<T extends RelationEdge>(keeper: T, incoming: T): T {
+  const allEvidence = trimEvidence([...keeper.evidence, ...incoming.evidence]);
+  const weight = clamp01(reinforceWeight(keeper.weight ?? 0, incoming.weight ?? 0));
+  const lastReinforcedAt = Math.max(keeper.lastReinforcedAt, incoming.lastReinforcedAt);
+  const firstSeenAt = Math.min(keeper.firstSeenAt, incoming.firstSeenAt);
+  const description = keeper.description ?? incoming.description;
+  return { ...keeper, weight, lastReinforcedAt, firstSeenAt, description, evidence: allEvidence } as T;
+}
+
+/** 启发式：决定真正的 (alias, canonical) 方向。返回 null 表示无需翻转。 */
+function chooseCanonicalDirection(
+  snapshot: RelationGraphSnapshot,
+  aId: string,
+  bId: string,
+  kind: 'person' | 'entity' | 'event',
+): { alias: string; canonical: string } | null {
+  const score = (id: string): { name: number; aliases: number; evidence: number } => {
+    let name = 0;
+    let aliases = 0;
+    let evidence = 0;
+    if (kind === 'entity') {
+      const node = snapshot.entities.find(n => n.id === id);
+      name = node?.name.length ?? 0;
+      aliases = node?.aliases?.length ?? 0;
+    } else if (kind === 'event') {
+      const node = snapshot.events.find(n => n.id === id);
+      name = node?.title.length ?? 0;
+    } else {
+      const node = snapshot.persons.find(n => n.id === id);
+      name = node?.displayName?.length ?? 0;
+    }
+    for (const e of snapshot.edges) {
+      if (edgeReferences(e, id)) evidence += e.evidence.length;
+    }
+    return { name, aliases, evidence };
+  };
+  const sa = score(aId);
+  const sb = score(bId);
+  // a 得分越高 → a 更应是 canonical
+  const cmp = sa.aliases - sb.aliases || sa.name - sb.name || sa.evidence - sb.evidence;
+  // 当前调用方传入 alias=aId, canonical=bId；若 a 评分更高 → 翻转
+  if (cmp > 0) return { alias: bId, canonical: aId };
+  return null;
 }

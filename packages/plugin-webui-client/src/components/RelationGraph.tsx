@@ -28,6 +28,15 @@ interface GraphPayload {
   nodes: GraphNode[];
   edges: GraphEdge[];
   focusId?: string;
+  focusEdge?: {
+    id: string;
+    kind: string;
+    weight?: number;
+    description?: string;
+    lastReinforcedAt?: number;
+    evidence?: Array<{ quote?: string; sessionId?: string; messageIds?: string[] }>;
+    endpoints?: string[];
+  };
   stats?: Record<string, number | string>;
 }
 
@@ -226,6 +235,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
           nodes: Array.isArray(res.nodes) ? res.nodes : [],
           edges: Array.isArray(res.edges) ? res.edges : [],
           focusId: res.focusId,
+          focusEdge: res.focusEdge,
           stats: res.stats,
         });
       }
@@ -266,6 +276,14 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
       setSelectedNode({ data });
       // 单击节点 = 设为焦点（同时显示详情），触发 fetchGraph 做服务端子图过滤
       setFocusId(String(data.id));
+    });
+    // 点击边 = 把焦点设为该边（后端会回传 focusEdge 详情 + 两端 1 跳邻域）
+    cy.on('tap', 'edge', (e: EventObject) => {
+      const edgeId = e.target.id();
+      if (typeof edgeId === 'string' && edgeId) {
+        setSelectedNode(null);
+        setFocusId(edgeId);
+      }
     });
     // 注意：故意不监听「点击空白处」清焦点，避免：
     // (1) 误点空白导致全图强制刷新丢失布局；
@@ -543,7 +561,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <strong style={{ color: FOCUS_COLOR }}>焦点</strong>
+                <strong style={{ color: FOCUS_COLOR }}>{payload.focusEdge ? '焦点（边）' : '焦点'}</strong>
                 <button
                   type="button"
                   onClick={() => {
@@ -556,23 +574,44 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
                   ✕
                 </button>
               </div>
-              <div style={{ marginBottom: 2 }}>
-                {(() => {
-                  const fn = payload.nodes.find(n => n.data.id === payload.focusId);
-                  return fn?.data.label ?? payload.focusId;
-                })()}
-              </div>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
-                {(() => {
-                  const fn = payload.nodes.find(n => n.data.id === payload.focusId);
-                  return String(fn?.data.kind ?? '—');
-                })()}
-              </div>
-              <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                深度 {maxDepth === 0 ? '∞' : maxDepth} · 宽度 {maxBreadth === 0 ? '∞' : maxBreadth}
-                <br />
-                节点 {payload.nodes.length} · 边 {payload.edges.length}
-              </div>
+              {payload.focusEdge ? (
+                <>
+                  <div style={{ marginBottom: 2 }}>{payload.focusEdge.description ?? '(无描述)'}</div>
+                  <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
+                    {payload.focusEdge.kind}
+                    {typeof payload.focusEdge.weight === 'number' ? ` · w=${payload.focusEdge.weight.toFixed(2)}` : null}
+                  </div>
+                  {payload.focusEdge.evidence && payload.focusEdge.evidence.length > 0 ? (
+                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 4 }}>
+                      证据 {payload.focusEdge.evidence.length} 条
+                      {payload.focusEdge.evidence[0]?.quote ? `：「${payload.focusEdge.evidence[0].quote.slice(0, 30)}…」` : ''}
+                    </div>
+                  ) : null}
+                  <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    节点 {payload.nodes.length} · 边 {payload.edges.length}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 2 }}>
+                    {(() => {
+                      const fn = payload.nodes.find(n => n.data.id === payload.focusId);
+                      return fn?.data.label ?? payload.focusId;
+                    })()}
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
+                    {(() => {
+                      const fn = payload.nodes.find(n => n.data.id === payload.focusId);
+                      return String(fn?.data.kind ?? '—');
+                    })()}
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    深度 {maxDepth === 0 ? '∞' : maxDepth} · 宽度 {maxBreadth === 0 ? '∞' : maxBreadth}
+                    <br />
+                    节点 {payload.nodes.length} · 边 {payload.edges.length}
+                  </div>
+                </>
+              )}
             </div>
           ) : null}
         </div>
