@@ -269,13 +269,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   const [maxDepth, setMaxDepth] = useState<number>(comp.defaultMaxDepth ?? 2);
   const [maxBreadth, setMaxBreadth] = useState<number>(comp.defaultMaxBreadth ?? 10);
   const [search, setSearch] = useState('');
-  // IME(中文/日语/韩文输入法)正在拼音中间态。
-  // 某些浏览器会在拼音过程中频繁触发 onChange，不过滤会导致：
-  //  - 以中间态进行过滤→所有节点被 dim，看不到哪些能匹配；
-  //  - 个别浏览器 compositionend 后 onChange 不会重新触发，导致 React 状态
-  //    卡在中间拼音上，造成“中文搜不到东西”。
-  // 解决思路：composing 期间不更新 search，仅在 compositionend 一次性提交。
-  const composingRef = useRef(false);
+  // 中文/日语/韩文 IME 拼音中间态。拼音期间 search 会被设为拼音字母，
+  // 如果拿去过滤会“拼音 zh咪个都不匹配”。这里只用于钔离 effect，
+  // 不去拦 onChange（拦了受控 input 会被 React 回写 → 表现为“输不了字”）。
+  const [composing, setComposing] = useState(false);
 
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
@@ -433,13 +430,14 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   }, [payload, focusId]);
 
   // 搜索高亮：dim 不匹配。
-  // 说明：
-  //  - deps 加 payload：重新拉到图后节点/边重建，需重新应用 dim；
-  //  - matched.length === 0 时不 dim——否则全图变透明容易让用户误以为“搜不到 = 什么都没了”，
-  //    这也是原“搜过一次后无法搜别的”现象的根因（需先手动清空才恢复可见）。
+  // 设计：
+  //  - composing 中不跑（避免拿拼音去过滤）；
+  //  - 零匹配不 dim（避免全图变透明让用户误以为“搜索坏了”）；
+  //  - deps 加 payload：刷图后节点重建需重新应用 dim。
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
+    if (composing) return;
     const term = search.trim().toLowerCase();
     if (!term) {
       cy.nodes().removeData('dimmed');
@@ -452,7 +450,6 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       return label.includes(term) || id.includes(term);
     });
     if (matched.length === 0) {
-      // 零匹配 → 不 dim，保证可见。UI 上另外提示“未命中”。
       cy.nodes().removeData('dimmed');
       cy.edges().removeData('dimmed');
       return;
@@ -465,7 +462,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       const ok = matchedIds.has(e.source().id()) || matchedIds.has(e.target().id());
       e.data('dimmed', ok ? undefined : '1');
     });
-  }, [search, payload]);
+  }, [search, payload, composing]);
 
   // ── detail drawer ─────────────────────────────────────────
   useEffect(() => {
@@ -563,26 +560,19 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
             type="text"
             placeholder="搜索节点 (姓名/事件标题)"
             value={search}
-            // IME composing 期间不同步中间拼音 → 避免拿拼音去过滤全图。
-            // compositionend 后从 e.target.value 一次性提交最终结果（含能负责兴兴起來中文字符）。
-            onChange={e => {
-              if (!composingRef.current) setSearch(e.target.value);
-            }}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
+            onChange={e => setSearch(e.target.value)}
+            onCompositionStart={() => setComposing(true)}
             onCompositionEnd={e => {
-              composingRef.current = false;
+              // compositionend 中某些浏览器不会重新发 onChange，这里手动同步一下
               setSearch((e.target as HTMLInputElement).value);
+              setComposing(false);
             }}
             style={{ width: '100%', padding: '4px 24px 4px 8px' }}
           />
           {search ? (
             <button
               type="button"
-              onClick={() => {
-                setSearch('');
-              }}
+              onClick={() => setSearch('')}
               title="清除搜索"
               style={{
                 position: 'absolute',
