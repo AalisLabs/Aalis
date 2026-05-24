@@ -142,7 +142,7 @@ const stylesheet: cytoscape.StylesheetJson = [
   },
   {
     selector: 'edge[kind = "person-entity"]',
-    style: { 'line-color': '#34d399', 'target-arrow-color': '#34d399', 'line-style': 'dotted' },
+    style: { 'line-color': '#34d399', 'target-arrow-color': '#34d399', 'line-style': 'dashed' },
   },
   {
     selector: 'edge[kind = "event-event"]',
@@ -150,11 +150,11 @@ const stylesheet: cytoscape.StylesheetJson = [
   },
   {
     selector: 'edge[kind = "event-entity"]',
-    style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', 'line-style': 'dotted' },
+    style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', 'line-style': 'dashed' },
   },
   {
     selector: 'edge[kind = "entity-entity"]',
-    style: { 'line-color': '#a855f7', 'target-arrow-color': '#a855f7', 'line-style': 'dashed' },
+    style: { 'line-color': '#a855f7', 'target-arrow-color': '#a855f7' },
   },
   {
     selector: 'edge[kind = "person-person"]',
@@ -772,10 +772,10 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
         <span style={{ width: 1, height: 12, background: 'var(--border-color, #2a2a42)', margin: '0 4px' }} />
         <LegendEdge color="#fbbf24" dashStyle="dashed" label="人→事" />
-        <LegendEdge color="#34d399" dashStyle="dotted" label="人→实体" />
+        <LegendEdge color="#34d399" dashStyle="dashed" label="人→实体" />
         <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
-        <LegendEdge color="#06b6d4" dashStyle="dotted" label="事→实体" />
-        <LegendEdge color="#a855f7" dashStyle="dashed" label="实体↔实体" />
+        <LegendEdge color="#06b6d4" dashStyle="dashed" label="事→实体" />
+        <LegendEdge color="#a855f7" dashStyle="solid" label="实体↔实体" />
         <LegendEdge color="#f87171" dashStyle="solid" label="人↔人" />
         <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点；清除焦点请点左上「✕ 清除焦点」按钮</span>
       </div>
