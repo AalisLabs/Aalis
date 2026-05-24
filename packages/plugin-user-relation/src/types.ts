@@ -422,6 +422,20 @@ export interface EntityEntityEdge {
   weightHistory?: EdgeWeightAudit[];
 }
 
+/**
+ * scoreBetween 模式：
+ * - `'symmetric'`（默认）= **联系紧密度**。a→b、b→a 两个方向各算一次取 max。
+ *   "这两个节点之间存在任意方向的关系连通"。人际单方面声明（A 把 B 当朋友、B 不知）会从一侧贡献。
+ * - `'directed'` = **关注/影响传播度**。只跑 from→to。
+ *   "从 A 出发能通过主动声明触达 B 的强度"。
+ *
+ * 方向约束（两种模式共同遵守）：
+ * - 桥型边（person-event / person-entity / event-entity）：事件/实体是中介无主观能动 → 邻接表里总是双向
+ * - 主体间边（person-person / event-event / entity-entity）：按 edge.directed 决定单/双向遍历
+ *   - person-person 默认 directed=true（人有主观能动，不可单方面假设双向）
+ */
+export type ScoreMode = 'symmetric' | 'directed';
+
 /** 完整关系图快照（供 webui 渲染） */
 export interface RelationGraphSnapshot {
   persons: PersonNode[];
