@@ -358,28 +358,47 @@ describe('plugin-user-relation: helpers', () => {
     expect(isSymmetricRelation('admirer')).toBe(false);
   });
 
-  it('trimEvidence dedup by sessionId + messageIds key', () => {
+  it('trimEvidence dedup by sessionId + messageIds key (no quote / different quotes)', () => {
+    // 使用不同 quote 让 quote-key 失效，回退到 messageIds-key 兜底
     const list: EvidenceRef[] = [
-      ev({ sessionId: 's1', messageIds: ['m1'], extractedAt: 100 }),
-      ev({ sessionId: 's1', messageIds: ['m1'], extractedAt: 200 }), // 重复
-      ev({ sessionId: 's1', messageIds: ['m2', 'm3'], extractedAt: 300 }),
-      ev({ sessionId: 's1', messageIds: ['m3', 'm2'], extractedAt: 400 }), // 顺序不同但 sorted 后相同 → 重复
-      ev({ sessionId: 's2', messageIds: ['m1'], extractedAt: 500 }), // 不同 session
+      ev({ sessionId: 's1', messageIds: ['m1'], quote: 'a', extractedAt: 100 }),
+      ev({ sessionId: 's1', messageIds: ['m1'], quote: 'a', extractedAt: 200 }), // quote+msg 双重重复
+      ev({ sessionId: 's1', messageIds: ['m2', 'm3'], quote: 'b', extractedAt: 300 }),
+      ev({ sessionId: 's1', messageIds: ['m3', 'm2'], quote: 'b', extractedAt: 400 }), // sorted msg 相同 → 重复
+      ev({ sessionId: 's2', messageIds: ['m1'], quote: 'a', extractedAt: 500 }), // 不同 session
     ];
     const trimmed = trimEvidence(list);
     expect(trimmed).toHaveLength(3);
-    // 按 extractedAt DESC 保留 + 取首次出现 → 500, 400, 200
     expect(trimmed.map(e => e.extractedAt)).toEqual([500, 400, 200]);
+  });
+
+  it('trimEvidence merges entries with same sessionId + quote even when messageIds differ', () => {
+    // 关键回归：滑动窗口导致同一句被抽到不同 messageIds 集合，旧逻辑下会保留两条。
+    // 新逻辑按 sessionId|quote 合并：messageIds 取并集，extractedAt 取较新者。
+    const list: EvidenceRef[] = [
+      ev({ sessionId: 's1', messageIds: ['m1'], quote: '同一句原话', extractedAt: 100 }),
+      ev({ sessionId: 's1', messageIds: ['m1', 'm2'], quote: '同一句原话', extractedAt: 200 }),
+    ];
+    const trimmed = trimEvidence(list);
+    expect(trimmed).toHaveLength(1);
+    expect(trimmed[0].extractedAt).toBe(200);
+    expect([...trimmed[0].messageIds].sort()).toEqual(['m1', 'm2']);
   });
 
   it('isEvidenceFullyCovered detects fully-covered batch', () => {
     const existing: EvidenceRef[] = [
-      ev({ sessionId: 's1', messageIds: ['m1'] }),
-      ev({ sessionId: 's1', messageIds: ['m2'] }),
+      ev({ sessionId: 's1', messageIds: ['m1'], quote: 'a' }),
+      ev({ sessionId: 's1', messageIds: ['m2'], quote: 'b' }),
     ];
-    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m1'] })], existing)).toBe(true);
-    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m3'] })], existing)).toBe(false);
+    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m1'], quote: 'a' })], existing)).toBe(true);
+    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m3'], quote: 'c' })], existing)).toBe(false);
     expect(isEvidenceFullyCovered([], existing)).toBe(false); // 空 incoming 不算覆盖
+    // quote-key 覆盖：同 sessionId+quote 且 messageIds 有交集 → 视为已覆盖
+    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m1', 'm9'], quote: 'a' })], existing)).toBe(
+      true,
+    );
+    // 同 quote 但 messageIds 完全不相交 → 不算覆盖（可能是不同时段的独立陈述）
+    expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m9'], quote: 'a' })], existing)).toBe(false);
   });
 });
 

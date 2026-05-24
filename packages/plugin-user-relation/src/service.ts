@@ -1849,10 +1849,50 @@ export function clamp01(x: number): number {
 }
 
 /** 单实体保留最近 N 条 evidence（按 extractedAt DESC 截断 + 同 key 去重）
- *  Key = `sessionId|sorted(messageIds).join(',')`。不同批抽取打到同一批 messageIds 会被认为重复。
+ *  去重双键：
+ *    1) `sessionId|sorted(messageIds).join(',')` — 精确判同：同会话同批 messageIds 视为重复。
+ *    2) 内容合并：同 sessionId + 同 quote 且 messageIds **存在交集** → 合并为一条
+ *       （messageIds 取并集，extractedAt 取较新者）。这覆盖「滑动窗口对同句重复抽取」场景，
+ *       但不会把完全不相交的同句条目（可能是不同时段不同人重复说）错误合并。
  */
 export function trimEvidence(list: EvidenceRef[]): EvidenceRef[] {
-  const sorted = [...list].sort((a, b) => b.extractedAt - a.extractedAt);
+  // 1) 按 sessionId|quote 分桶，桶内按 messageIds 是否相交进行合并
+  const buckets = new Map<string, EvidenceRef[]>(); // key = sessionId|q:quote
+  const passthrough: EvidenceRef[] = []; // 无 quote → 不参与内容合并，仅走 evidenceKey 兜底
+  for (const e of list) {
+    const qk = quoteKey(e);
+    if (!qk) {
+      passthrough.push(e);
+      continue;
+    }
+    const arr = buckets.get(qk);
+    if (!arr) {
+      buckets.set(qk, [{ ...e, messageIds: [...new Set(e.messageIds)] }]);
+      continue;
+    }
+    // 在桶内寻找 messageIds 有交集的现存条目并合并；否则新增一条
+    const incomingIds = new Set(e.messageIds);
+    let mergedInto: EvidenceRef | undefined;
+    for (let i = 0; i < arr.length; i++) {
+      const cur = arr[i];
+      if (cur.messageIds.some(id => incomingIds.has(id))) {
+        const unionIds = [...new Set([...cur.messageIds, ...e.messageIds])];
+        arr[i] = {
+          ...cur,
+          messageIds: unionIds,
+          extractedAt: Math.max(cur.extractedAt, e.extractedAt),
+          quote: cur.quote ?? e.quote,
+        };
+        mergedInto = arr[i];
+        break;
+      }
+    }
+    if (!mergedInto) arr.push({ ...e, messageIds: [...new Set(e.messageIds)] });
+  }
+  // 2) 合并后做 messageIds-key 兜底去重 + 按 extractedAt DESC 截断
+  const merged: EvidenceRef[] = [...passthrough];
+  for (const arr of buckets.values()) merged.push(...arr);
+  const sorted = merged.sort((a, b) => b.extractedAt - a.extractedAt);
   const seen = new Set<string>();
   const out: EvidenceRef[] = [];
   for (const e of sorted) {
@@ -1870,14 +1910,42 @@ function evidenceKey(e: EvidenceRef): string {
   return `${e.sessionId}|${[...e.messageIds].sort().join(',')}`;
 }
 
+/** quote 归一化去重键：仅当 quote 存在且非空时返回 `${sessionId}|q:${stripped}`；否则返回 undefined。 */
+function quoteKey(e: EvidenceRef): string | undefined {
+  const raw = e.quote?.trim();
+  if (!raw) return undefined;
+  const normalized = raw.replace(/\s+/g, '').toLowerCase();
+  if (!normalized) return undefined;
+  return `${e.sessionId}|q:${normalized}`;
+}
+
 /** incoming 是否被 existing 完全覆盖（同一批消息已记过）。
  *  成立时调用方可跳过 reinforce，避免同事实被重复计权。
+ *  双键判定：
+ *   - 精确：incoming.evidenceKey ∈ existing.evidenceKey
+ *   - 内容：存在同 sessionId+quote 的 existing 条目，且 messageIds 有交集
  *  incoming 为空时返回 false（保留原有「无 evidence 仍允许动作」语义）。
  */
 export function isEvidenceFullyCovered(incoming: EvidenceRef[], existing: EvidenceRef[]): boolean {
   if (incoming.length === 0) return false;
-  const keys = new Set(existing.map(evidenceKey));
-  return incoming.every(e => keys.has(evidenceKey(e)));
+  const evKeys = new Set(existing.map(evidenceKey));
+  const byQuote = new Map<string, EvidenceRef[]>();
+  for (const e of existing) {
+    const qk = quoteKey(e);
+    if (!qk) continue;
+    const arr = byQuote.get(qk);
+    if (arr) arr.push(e);
+    else byQuote.set(qk, [e]);
+  }
+  return incoming.every(e => {
+    if (evKeys.has(evidenceKey(e))) return true;
+    const qk = quoteKey(e);
+    if (!qk) return false;
+    const peers = byQuote.get(qk);
+    if (!peers) return false;
+    const ids = new Set(e.messageIds);
+    return peers.some(p => p.messageIds.some(id => ids.has(id)));
+  });
 }
 
 /**
