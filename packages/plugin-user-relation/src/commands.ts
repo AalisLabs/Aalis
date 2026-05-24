@@ -199,7 +199,8 @@ export function registerRelationCommands(
         '关系图整理完成：',
         `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
         `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
-        `- PersonEventEdge 规范化：${r.eventEdgesNormalized} 组重整`,
+        `- EventEntityEdge 去重：${r.eventEdgesNormalized} 组重整`,
+        `- 实体层级候选：${r.entityHierarchyCandidates} 对，新增 ${r.entityHierarchyEdgesCreated} 条 entity-entity[part-of] 边`,
       ];
       if (useLlm) {
         lines.push(
@@ -213,6 +214,23 @@ export function registerRelationCommands(
         }
       }
       return lines.join('\n');
+    });
+
+  // ---- consolidation-status（查询最近一次 consolidate 运行情况） ----
+  cmds
+    .command('relation.consolidation-status', '查看最近一次关系图整理（consolidate）的运行时间与结果', {
+      authority: 1,
+    })
+    .action(async () => {
+      const info = service.getLastConsolidateInfo();
+      if (!info.lastRunAt) {
+        return (
+          '⚠ 本次运行以来尚未执行过 consolidation。\n' +
+          '触发方式：/relation consolidate（手动）或等待容量淘汰自动触发。'
+        );
+      }
+      const time = new Date(info.lastRunAt).toLocaleString('zh-CN', { hour12: false });
+      return `✓ 最近一次 consolidation 于 ${time} 完成。\n${info.summary ?? '（无详情）'}`;
     });
 }
 
