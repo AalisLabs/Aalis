@@ -397,6 +397,50 @@ export class RelationExtractor {
       if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 严格自证丢弃 ${label}: ${reason}`);
     };
     const now = Date.now();
+    // ── self-placeholder 守卫：LLM 历史上会把 assistant 消息当占位 person 抽出
+    //    `platform="aalis", userId="aalis"` 这种伪 id；即便 prompt + 渲染都改对了，仍做最后一道防线。
+    //    任何端点命中占位 id 的 person / edge 一律剔除，防止脏数据流回库里。
+    const isPlaceholderSelfId = (platform?: string, userId?: string): boolean =>
+      platform === 'aalis' && userId === 'aalis';
+    const dropSelf = (label: string, pid: string): void => {
+      if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 丢弃 self 占位 ${label}: ${pid}`);
+    };
+    if (parsed.persons?.length) {
+      parsed.persons = parsed.persons.filter(p => {
+        if (isPlaceholderSelfId(p.platform, p.userId)) {
+          dropSelf('person', `${p.platform}:${p.userId}`);
+          return false;
+        }
+        return true;
+      });
+    }
+    if (parsed.personEventEdges?.length) {
+      parsed.personEventEdges = parsed.personEventEdges.filter(pe => {
+        if (isPlaceholderSelfId(pe.personPlatform, pe.personUserId)) {
+          dropSelf('person-event', `${pe.personPlatform}:${pe.personUserId}`);
+          return false;
+        }
+        return true;
+      });
+    }
+    if (parsed.personEntityEdges?.length) {
+      parsed.personEntityEdges = parsed.personEntityEdges.filter(pe => {
+        if (isPlaceholderSelfId(pe.personPlatform, pe.personUserId)) {
+          dropSelf('person-entity', `${pe.personPlatform}:${pe.personUserId}`);
+          return false;
+        }
+        return true;
+      });
+    }
+    if (parsed.personPersonEdges?.length) {
+      parsed.personPersonEdges = parsed.personPersonEdges.filter(pp => {
+        if (isPlaceholderSelfId(pp.fromPlatform, pp.fromUserId) || isPlaceholderSelfId(pp.toPlatform, pp.toUserId)) {
+          dropSelf('person-person', `${pp.fromPlatform}:${pp.fromUserId} ↔ ${pp.toPlatform}:${pp.toUserId}`);
+          return false;
+        }
+        return true;
+      });
+    }
     const mkEvidence = (raw?: { messageIds?: string[]; quote?: string }): EvidenceRef | null => {
       if (!raw) return null;
       const ids = (raw.messageIds ?? []).filter(id => validMessageIds.has(id));
@@ -751,7 +795,16 @@ function renderHistoryForLLM(history: Message[]): string {
   for (const m of history) {
     if (m.role !== 'user' && m.role !== 'assistant') continue;
     const meta = (m.metadata as { messageId?: string; userId?: string; nickname?: string } | undefined) ?? {};
-    const sender = m.role === 'assistant' ? 'aalis(我)' : `${meta.nickname ?? '匿名'}(${meta.userId ?? '?'})`;
+    // assistant 消息同样按真实元数据 (Aalis 自身在该平台上的 selfId) 渲染——
+    // 历史 hack `aalis(我)` 会让 LLM 把它当占位符 person 抽出 `aalis:aalis`，故移除。
+    // 若元数据完整：渲染成与用户消息同格式 `nickname(userId)`，LLM 抽到的是真实 personId（如 onebot:10000），合理；
+    // 若元数据缺失（旧消息 / 历史未注入身份）：仅写 `Aalis(self)`，并在 prompt 里要求 LLM 不要给这种"裸 self" 创建 person。
+    let sender: string;
+    if (m.role === 'assistant') {
+      sender = meta.userId ? `${meta.nickname ?? 'Aalis'}(${meta.userId})` : 'Aalis(self)';
+    } else {
+      sender = `${meta.nickname ?? '匿名'}(${meta.userId ?? '?'})`;
+    }
     const mid = meta.messageId ?? '-';
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
     lines.push(`[${mid}] (${sender}) ${content.replace(/\n+/g, ' ').slice(0, 400)}`);
@@ -810,6 +863,11 @@ function buildExtractionPrompt(
       '**第 3 步：人通过共享 entity / event 自然连接（不要伪造 person-person 边）**',
       '  当两人 A、B 都指向同一 entity（如都玩绝航、都在某店打卡）→ 直接输出 A→entity 和 B→entity 两条 personEntityEdge 即可，图层会自动呈现 A↔entity↔B 的二跳连接。',
       '  ⚠️ **不要因为"共同兴趣 / 共同参与"就推断 person-person friend/familiar 边** —— 那是幻觉。person-person 边只在有**身份性陈述**（「是我兄弟」「跟我闹翻了」「我老婆」）时建。',
+      '',
+      '## ⭐ 关于「Aalis 自己」（机器人本体）',
+      '- 窗口里 assistant 消息会被渲染为 `(nickname(userId))` 同用户消息一样的格式，其中 userId 是 **Aalis 在该平台上真实的 selfId**（如 `(Aalis(10000))`）。这时你**可以**把它当成一个普通 person 抽出来（用真实 personPlatform / personUserId），让 Aalis 与人的互动也能进入关系图。',
+      '- ⚠️ **绝不要凭空生成占位符**：如果 assistant 消息渲染成 `(Aalis(self))`（说明该轮元数据缺失），**禁止**给它任何 person 字段、不要写成 `platform="aalis", userId="aalis"` 这种伪 id；这一轮就当 Aalis 没出现，跳过。',
+      '- 这条规则比 hub-first 优先：宁可少抽，也不要造假 id。',
       '',
       '## 输出格式（严格 JSON）',
       '严格输出**单个 JSON 对象**（不要任何解释文字、不要 ```json 包裹），结构如下：',
