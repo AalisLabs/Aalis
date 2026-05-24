@@ -847,6 +847,90 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(snap.entities.find(e => e.name === '三角洲行动')).toBeUndefined();
   });
 
+  it('(3f) part-of auto-link: 严格边界匹配，"绝航" 不应锚到 "讨论绝航刀皮"（已有更长的"绝航刀皮"实体）', async () => {
+    const { service } = await makeService();
+    // 创建父子实体（先建立 entity-entity part-of 链）
+    const parent = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
+    const child = await service.createEntity({ name: '绝航刀皮', entityKind: 'thing', evidence: [] });
+    // 事件标题含"绝航刀皮"（自然也含"绝航"）
+    const evNode = await service.createEvent({ title: '讨论绝航刀皮的属性', evidence: [] });
+
+    // 第一次 consolidate：「最长候选优先」规则在 candidate 列表里就剔除"绝航"
+    // （即使尚未建 entity-entity part-of 链），只保留"绝航刀皮"
+    await service.consolidate({ autoLink: true });
+
+    const snap = await service.loadAll();
+    const peoEdges = snap.edges.filter(
+      e => e.kind === 'event-entity' && e.fromEventId === evNode.id && e.relationType === 'part-of',
+    ) as EventEntityEdge[];
+    const targetIds = new Set(peoEdges.map(e => e.toEntityId));
+    expect(targetIds.has(child.id)).toBe(true);
+    expect(targetIds.has(parent.id)).toBe(false); // 父被「最长候选优先」剔除
+  });
+
+  it('(3f) part-of auto-link: 仅 work/place/thing 参与，topic 实体不参与 part-of 锚定', async () => {
+    const { service } = await makeService();
+    const topic = await service.createEntity({ name: '健康', entityKind: 'topic', evidence: [] });
+    const evNode = await service.createEvent({ title: '聊聊健康话题', evidence: [] });
+
+    await service.consolidate({ autoLink: true });
+    const snap = await service.loadAll();
+    const edge = snap.edges.find(
+      e => e.kind === 'event-entity' && e.fromEventId === evNode.id && e.toEntityId === topic.id,
+    );
+    expect(edge).toBeUndefined(); // topic 跳过
+  });
+
+  it('(3f) part-of auto-link: entity-entity part-of 链祖先剔除（间接父也不锚）', async () => {
+    const { service } = await makeService();
+    // 三级链：刀皮纹理 part-of 绝航刀皮 part-of 绝航
+    const grand = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
+    const mid = await service.createEntity({ name: '绝航刀皮', entityKind: 'thing', evidence: [] });
+    const leaf = await service.createEntity({ name: '刀皮纹理', entityKind: 'thing', evidence: [] });
+    // 手动建链（绕过名称包含规则）
+    await service.addEntityEntityEdge({
+      fromEntityId: mid.id,
+      toEntityId: grand.id,
+      relationType: 'part-of',
+      evidence: [],
+    });
+    await service.addEntityEntityEdge({
+      fromEntityId: leaf.id,
+      toEntityId: mid.id,
+      relationType: 'part-of',
+      evidence: [],
+    });
+    // 事件标题同时含三个名字
+    const evNode = await service.createEvent({ title: '绝航绝航刀皮刀皮纹理调研', evidence: [] });
+
+    await service.consolidate({ autoLink: true });
+    const snap = await service.loadAll();
+    const peoEdges = snap.edges.filter(
+      e => e.kind === 'event-entity' && e.fromEventId === evNode.id && e.relationType === 'part-of',
+    ) as EventEntityEdge[];
+    const targetIds = new Set(peoEdges.map(e => e.toEntityId));
+    expect(targetIds.has(leaf.id)).toBe(true);
+    expect(targetIds.has(mid.id)).toBe(false); // 直接父被剔除
+    expect(targetIds.has(grand.id)).toBe(false); // 间接祖先也被剔除
+  });
+
+  it('(3f) part-of auto-link: 短名 "PS5" 在事件标题中正常锚定', async () => {
+    const { service } = await makeService();
+    const ps5 = await service.createEntity({ name: 'PS5', entityKind: 'thing', evidence: [] });
+    const evNode = await service.createEvent({ title: '聊 PS5 的体验', evidence: [] });
+
+    await service.consolidate({ autoLink: true });
+    const snap = await service.loadAll();
+    const edge = snap.edges.find(
+      e =>
+        e.kind === 'event-entity' &&
+        e.fromEventId === evNode.id &&
+        e.toEntityId === ps5.id &&
+        e.relationType === 'part-of',
+    );
+    expect(edge).toBeDefined();
+  });
+
   it('normalizeName: 连接符/下划线/中点 视为装饰，「三角洲-行动」≡「三角洲行动」', async () => {
     const { service } = await makeService();
     const a = await service.createEntity({
