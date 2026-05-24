@@ -256,9 +256,15 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
     cy.on('tap', 'node', (e: EventObject) => {
       const data = e.target.data() as GraphNode['data'];
       setSelectedNode({ data });
+      // 单击节点 = 设为焦点（同时显示详情），触发 fetchGraph 做服务端子图过滤
+      setFocusId(String(data.id));
     });
     cy.on('tap', (e: EventObject) => {
-      if (e.target === cy) setSelectedNode(null);
+      if (e.target === cy) {
+        // 点击画布空白处 = 清除焦点 + 关闭详情
+        setSelectedNode(null);
+        setFocusId(undefined);
+      }
     });
 
     return () => {
@@ -427,15 +433,18 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
           <span style={{ width: 32, color: 'var(--text-secondary)' }}>{maxDepth === 0 ? '∞' : maxDepth}</span>
         </label>
         <label
-          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-          title={
-            focusId
-              ? '焦点模式：每个节点向外展开的邻居数上限（按边权重降序截断）'
-              : '全图模式：用作活跃节点数缩放因子（personCap ≈ breadth × 6）'
-          }
+          style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: focusId ? 1 : 0.45 }}
+          title={focusId ? '焦点模式：每个节点向外展开的邻居数上限（按边权重降序截断）' : '宽度仅在选定焦点后生效：点击图中任一节点即可设为焦点'}
         >
           宽度
-          <input type="range" min={3} max={30} value={maxBreadth} onChange={e => setMaxBreadth(Number(e.target.value))} />
+          <input
+            type="range"
+            min={3}
+            max={30}
+            value={maxBreadth}
+            onChange={e => setMaxBreadth(Number(e.target.value))}
+            disabled={!focusId}
+          />
           <input
             type="number"
             min={1}
@@ -444,13 +453,22 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
               const n = Number(e.target.value);
               if (Number.isFinite(n) && n >= 1) setMaxBreadth(n);
             }}
+            disabled={!focusId}
             style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
           />
           <span style={{ width: 24, color: 'var(--text-secondary)' }}>{maxBreadth}</span>
         </label>
         {focusId ? (
-          <button type="button" onClick={() => setFocusId(undefined)} style={{ padding: '4px 8px' }}>
-            ← 返回全图
+          <button
+            type="button"
+            onClick={() => {
+              setFocusId(undefined);
+              setSelectedNode(null);
+            }}
+            style={{ padding: '4px 8px' }}
+            title="清除焦点，返回全图视图"
+          >
+            ✕ 清除焦点
           </button>
         ) : null}
         <button type="button" onClick={fetchGraph} disabled={loading} style={{ padding: '4px 8px' }}>
@@ -500,18 +518,9 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
                 ✕
               </button>
             </div>
-            <div style={{ color: 'var(--text-secondary)', marginBottom: 6 }}>{selectedNode.data.kind ?? '—'}</div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setFocusId(selectedNode.data.id);
-                  setSelectedNode(null);
-                }}
-                style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
-              >
-                以此为焦点
-              </button>
+            <div style={{ color: 'var(--text-secondary)', marginBottom: 10 }}>
+              {selectedNode.data.kind ?? '—'}
+              {focusId === selectedNode.data.id ? <span style={{ marginLeft: 6, color: FOCUS_COLOR }}>· 当前焦点</span> : null}
             </div>
             {detailLoading ? (
               <div style={{ color: 'var(--text-muted)' }}>加载详情中…</div>
@@ -559,9 +568,46 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         />
       </div>
 
+      {/* 图例：节点形状/颜色含义 */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 12,
+          padding: '4px 10px',
+          fontSize: 11,
+          color: 'var(--text-secondary)',
+          background: 'var(--bg-secondary)',
+          borderTop: '1px solid var(--border-color, #2a2a42)',
+        }}
+      >
+        <LegendItem shape="circle" color={PERSON_COLOR} label="人物" />
+        <LegendItem shape="round-rect" color={EVENT_COLOR} label="事件" />
+        <LegendItem shape="diamond" color={ENTITY_COLORS.topic} label="话题" />
+        <LegendItem shape="diamond" color={ENTITY_COLORS.place} label="地点" />
+        <LegendItem shape="diamond" color={ENTITY_COLORS.thing} label="事物" />
+        <LegendItem shape="diamond" color={ENTITY_COLORS.work} label="作品" />
+        <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
+        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点 · 点击空白 = 清除焦点</span>
+      </div>
+
       <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }}>
         {statsText || '—'}
       </div>
     </div>
+  );
+}
+
+function LegendItem({ shape, color, label }: { shape: 'circle' | 'round-rect' | 'diamond'; color: string; label: string }): JSX.Element {
+  const base: CSSProperties = { width: 12, height: 12, background: color, display: 'inline-block', verticalAlign: 'middle' };
+  let shapeStyle: CSSProperties;
+  if (shape === 'circle') shapeStyle = { ...base, borderRadius: '50%' };
+  else if (shape === 'round-rect') shapeStyle = { ...base, width: 16, height: 10, borderRadius: 3 };
+  else shapeStyle = { ...base, transform: 'rotate(45deg)' };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={shapeStyle} />
+      {label}
+    </span>
   );
 }

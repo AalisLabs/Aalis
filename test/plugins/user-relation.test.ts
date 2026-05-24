@@ -124,13 +124,23 @@ describe('plugin-user-relation: person-event edges', () => {
     expect(e2.weight).toBeGreaterThan(e1.weight); // weight 应被强化
     expect(e2.evidence).toHaveLength(2);
 
-    // 同人同事件但不同 role → 独立的边
-    const eDifferentRole = await service.addPersonEventEdge({
+    // 同人同事件但更强 role (target rank=3 < participant rank=4) → 合并到原边，role 保持 participant
+    const eWeakerRole = await service.addPersonEventEdge({
       fromPersonId: 'onebot:u1',
       toEventId: event.id,
-      role: 'target',
+      role: 'witness', // 比 participant 弱
     });
-    expect(eDifferentRole.id).not.toBe(e1.id);
+    expect(eWeakerRole.id).toBe(e1.id);
+    expect(eWeakerRole.role).toBe('participant'); // 保留最强 role
+
+    // 更强 role (initiator rank=5 > participant rank=4) → 升级
+    const eStrongerRole = await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u1',
+      toEventId: event.id,
+      role: 'initiator',
+    });
+    expect(eStrongerRole.id).toBe(e1.id);
+    expect(eStrongerRole.role).toBe('initiator'); // 升级到 initiator
   });
 });
 

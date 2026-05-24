@@ -26,6 +26,32 @@ import type {
 
 const MAX_EVIDENCE_PER_ENTITY = 10; // 单实体保留的 evidence 上限，更早的会被裁掉
 
+/**
+ * 人-事件角色优先级。同一 (person, event) 只保留最强角色的一条边：
+ * 发起者 > 参与者 > 被指向 > 转述者 > 旁观者。语义上强角色含盖弱角色。
+ */
+const PERSON_EVENT_ROLE_RANK: Record<PersonEventEdge['role'], number> = {
+  initiator: 5,
+  participant: 4,
+  target: 3,
+  reporter: 2,
+  witness: 1,
+};
+
+/**
+ * 人-实体角色优先级。同一 (person, entity) 只保留最强角色。
+ * 热爱 > 创作者 > 拥有者 > 批评者 > 参与者 > 访问者 > 仅提及。
+ */
+const PERSON_ENTITY_ROLE_RANK: Record<PersonEntityEdge['role'], number> = {
+  enthusiast: 6,
+  creator: 5,
+  owner: 4,
+  critic: 3,
+  participant: 2,
+  visitor: 1,
+  mentioned: 0,
+};
+
 export type TriggerExtractionFn = (
   sessionId: string,
 ) => Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }>;
@@ -274,35 +300,64 @@ export class RelationService {
     weight?: number;
     evidence?: EvidenceRef[];
   }): Promise<PersonEntityEdge> {
-    const existing = await this.findPersonEntityEdge(input.fromPersonId, input.toEntityId, input.role);
+    const snapshot = await this.store.loadAll();
+    const sameLink = snapshot.edges.filter(
+      (e): e is PersonEntityEdge =>
+        e.kind === 'person-entity' && e.fromPersonId === input.fromPersonId && e.toEntityId === input.toEntityId,
+    );
     const now = Date.now();
-    if (existing) {
-      // 同批 evidence 已记过 → 不重复计权，原样返回。
-      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
-      const merged: PersonEntityEdge = {
-        ...existing,
-        sentiment: input.sentiment ?? existing.sentiment,
-        weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+
+    if (sameLink.length === 0) {
+      const fresh: PersonEntityEdge = {
+        id: globalThis.crypto.randomUUID(),
+        kind: 'person-entity',
+        fromPersonId: input.fromPersonId,
+        toEntityId: input.toEntityId,
+        role: input.role,
+        sentiment: input.sentiment,
+        weight: clamp01(input.weight ?? 0.5),
+        firstSeenAt: now,
         lastReinforcedAt: now,
-        evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
+        evidence: trimEvidence(input.evidence ?? []),
       };
-      await this.store.upsertEdge(merged);
-      return merged;
+      await this.store.upsertEdge(fresh);
+      return fresh;
     }
-    const fresh: PersonEntityEdge = {
-      id: globalThis.crypto.randomUUID(),
-      kind: 'person-entity',
-      fromPersonId: input.fromPersonId,
-      toEntityId: input.toEntityId,
-      role: input.role,
-      sentiment: input.sentiment,
-      weight: clamp01(input.weight ?? 0.5),
-      firstSeenAt: now,
+
+    // 选出当前已存在的最强 role 边作为保留者
+    const strongest = sameLink.reduce((a, b) =>
+      (PERSON_ENTITY_ROLE_RANK[a.role] ?? 0) >= (PERSON_ENTITY_ROLE_RANK[b.role] ?? 0) ? a : b,
+    );
+    const inputRank = PERSON_ENTITY_ROLE_RANK[input.role] ?? 0;
+    const strongestRank = PERSON_ENTITY_ROLE_RANK[strongest.role] ?? 0;
+    const finalRole = inputRank > strongestRank ? input.role : strongest.role;
+
+    // 如果证据已被覆盖且 role 未变，则原样返回
+    if (
+      finalRole === strongest.role &&
+      isEvidenceFullyCovered(input.evidence ?? [], strongest.evidence) &&
+      sameLink.length === 1
+    ) {
+      return strongest;
+    }
+
+    // 合并 evidence + 加权
+    const allEvidence = trimEvidence([...(input.evidence ?? []), ...sameLink.flatMap(e => e.evidence)]);
+    const merged: PersonEntityEdge = {
+      ...strongest,
+      role: finalRole,
+      sentiment: input.sentiment ?? strongest.sentiment,
+      weight: clamp01(reinforceWeight(strongest.weight, input.weight ?? 0.1)),
       lastReinforcedAt: now,
-      evidence: trimEvidence(input.evidence ?? []),
+      evidence: allEvidence,
     };
-    await this.store.upsertEdge(fresh);
-    return fresh;
+
+    // 删除其余 weaker 同对边
+    for (const e of sameLink) {
+      if (e.id !== strongest.id) await this.store.deleteEdge(e.id);
+    }
+    await this.store.upsertEdge(merged);
+    return merged;
   }
 
   async findPersonEntityEdge(
@@ -386,34 +441,60 @@ export class RelationService {
     weight?: number;
     evidence?: EvidenceRef[];
   }): Promise<PersonEventEdge> {
-    const existing = await this.findPersonEventEdge(input.fromPersonId, input.toEventId, input.role);
+    const snapshot = await this.store.loadAll();
+    const sameLink = snapshot.edges.filter(
+      (e): e is PersonEventEdge =>
+        e.kind === 'person-event' && e.fromPersonId === input.fromPersonId && e.toEventId === input.toEventId,
+    );
     const now = Date.now();
-    if (existing) {
-      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
-      const merged: PersonEventEdge = {
-        ...existing,
-        sentiment: input.sentiment ?? existing.sentiment,
-        weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+
+    if (sameLink.length === 0) {
+      const fresh: PersonEventEdge = {
+        id: globalThis.crypto.randomUUID(),
+        kind: 'person-event',
+        fromPersonId: input.fromPersonId,
+        toEventId: input.toEventId,
+        role: input.role,
+        sentiment: input.sentiment,
+        weight: clamp01(input.weight ?? 0.5),
+        firstSeenAt: now,
         lastReinforcedAt: now,
-        evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
+        evidence: trimEvidence(input.evidence ?? []),
       };
-      await this.store.upsertEdge(merged);
-      return merged;
+      await this.store.upsertEdge(fresh);
+      return fresh;
     }
-    const fresh: PersonEventEdge = {
-      id: globalThis.crypto.randomUUID(),
-      kind: 'person-event',
-      fromPersonId: input.fromPersonId,
-      toEventId: input.toEventId,
-      role: input.role,
-      sentiment: input.sentiment,
-      weight: clamp01(input.weight ?? 0.5),
-      firstSeenAt: now,
+
+    const strongest = sameLink.reduce((a, b) =>
+      (PERSON_EVENT_ROLE_RANK[a.role] ?? 0) >= (PERSON_EVENT_ROLE_RANK[b.role] ?? 0) ? a : b,
+    );
+    const inputRank = PERSON_EVENT_ROLE_RANK[input.role] ?? 0;
+    const strongestRank = PERSON_EVENT_ROLE_RANK[strongest.role] ?? 0;
+    const finalRole = inputRank > strongestRank ? input.role : strongest.role;
+
+    if (
+      finalRole === strongest.role &&
+      isEvidenceFullyCovered(input.evidence ?? [], strongest.evidence) &&
+      sameLink.length === 1
+    ) {
+      return strongest;
+    }
+
+    const allEvidence = trimEvidence([...(input.evidence ?? []), ...sameLink.flatMap(e => e.evidence)]);
+    const merged: PersonEventEdge = {
+      ...strongest,
+      role: finalRole,
+      sentiment: input.sentiment ?? strongest.sentiment,
+      weight: clamp01(reinforceWeight(strongest.weight, input.weight ?? 0.1)),
       lastReinforcedAt: now,
-      evidence: trimEvidence(input.evidence ?? []),
+      evidence: allEvidence,
     };
-    await this.store.upsertEdge(fresh);
-    return fresh;
+
+    for (const e of sameLink) {
+      if (e.id !== strongest.id) await this.store.deleteEdge(e.id);
+    }
+    await this.store.upsertEdge(merged);
+    return merged;
   }
 
   // ----- Edge: person → person -----
