@@ -261,6 +261,33 @@ class ScopedStorageService implements StorageService {
     private readonly ctx: Context,
   ) {}
 
+  /**
+   * 读路径 debug 日志去重：同一 key 在 LOG_DEDUP_MS 内只打一次。
+   *
+   * 背景：checkpoint manifest / file-reader meta / skills 目录在单次回合里会被反复读 list/read/stat，
+   * 之前 debug 层级每次都打一行，单次启动加载就能产生数百行噪声。
+   * 这里用 LRU + 时间窗口去重，保留首次/边界事件，过滤密集重复。
+   * write/delete/download 保持原样（频次低 + 有审计价值）。
+   */
+  private readonly recentLogAt = new Map<string, number>();
+  private static readonly LOG_DEDUP_MS = 1000;
+  private static readonly LOG_DEDUP_MAX = 512;
+
+  private debugSampled(key: string, msg: string): void {
+    const now = Date.now();
+    const last = this.recentLogAt.get(key);
+    if (last !== undefined && now - last < ScopedStorageService.LOG_DEDUP_MS) return;
+    // LRU：超出上限时清理已过期的条目
+    if (this.recentLogAt.size >= ScopedStorageService.LOG_DEDUP_MAX) {
+      const cutoff = now - ScopedStorageService.LOG_DEDUP_MS;
+      for (const [k, v] of this.recentLogAt) {
+        if (v < cutoff) this.recentLogAt.delete(k);
+      }
+    }
+    this.recentLogAt.set(key, now);
+    this.logger.debug(msg);
+  }
+
   /** 懒解析 checkpoint 服务；仅当回合活跃时调用 beforeMutate */
   private async snapshot(uri: string, op: 'write' | 'delete' | 'rename', abs: string): Promise<void> {
     const cp = this.ctx.getService<CheckpointLike>('checkpoint');
@@ -286,7 +313,8 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveExisting(relPath);
     const s = await stat(abs);
     if (!s.isDirectory()) throw new Error('不是目录');
-    this.logger.debug(`storage.list ${toUri(this.root.name, relPath)}`);
+    const dispUri = toUri(this.root.name, relPath);
+    this.debugSampled(`list:${dispUri}`, `storage.list ${dispUri}`);
 
     const entries = await readdir(abs);
     const result: StorageEntry[] = [];
@@ -325,7 +353,8 @@ class ScopedStorageService implements StorageService {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('readable');
     const abs = await this.resolveExisting(relPath);
-    this.logger.debug(`storage.stat ${toUri(this.root.name, relPath)}`);
+    const dispUri = toUri(this.root.name, relPath);
+    this.debugSampled(`stat:${dispUri}`, `storage.stat ${dispUri}`);
     return this.statFromAbs(abs, relPath);
   }
 
@@ -335,7 +364,8 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveExisting(relPath);
     const s = await stat(abs);
     if (s.isDirectory()) throw new Error('不能读取目录');
-    this.logger.debug(`storage.read ${toUri(this.root.name, relPath)} size=${s.size}`);
+    const dispUri = toUri(this.root.name, relPath);
+    this.debugSampled(`read:${dispUri}`, `storage.read ${dispUri} size=${s.size}`);
     return encoding ? readFile(abs, encoding) : readFile(abs);
   }
 
