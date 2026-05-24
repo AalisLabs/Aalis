@@ -840,10 +840,16 @@ export class RelationService {
    *
    * 优先级（每次仅在超额时执行）：
    *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）；
-   *   2. 仍超额时，按 (Date.now() - lastReinforcedAt) / max(weight, 0.05) **降序**排序删；
-   *      即"老旧且权重低"的优先删。
+   *   2. 仍超额时按 `(now - lastReinforcedAt) / (max(weight,0.05) · max(PR,ε))` **降序**删；
+   *      即"老旧 + 低权重 + 在 PageRank 上无人指向"的优先丢。
    *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）跳过删除。
-   *   4. 边也按配额删（保留 weight 最高的）。
+   *   4. **滞回（hysteresis）**：仅当 count > quota·(1+hysteresisPct) 时才触发，
+   *      触发后一次性裁到 floor(quota·targetPct)。默认 hysteresis=0.2, target=0.8 ——
+   *      quota=500 时会在 600 触发并裁到 400，相当于一次清理 ~200 条；不会每写一条就裁。
+   *   5. 边也按配额删（保留 weight 最高的）。
+   *
+   * PageRank 个性化向量按 kind 加权（人=3，物=2，事=1），从而"重要性 人>物>事"
+   * 直接体现为分数偏置：人物附近的事件/实体更难被淘汰。
    *
    * 返回各类删除计数，便于日志/测试断言。
    */
@@ -853,9 +859,31 @@ export class RelationService {
     maxEdges: number;
     protectEvidenceCount?: number;
     protectWeight?: number;
+    /** PageRank 阻尼，默认 0.85 */
+    pagerankDamping?: number;
+    /** PageRank 最大迭代次数，默认 20 */
+    pagerankIterations?: number;
+    /** PageRank 收敛阈值（L1 误差），默认 1e-4 */
+    pagerankEpsilon?: number;
+    /** 滞回百分比；count > quota·(1+hysteresisPct) 才触发淘汰。默认 0.2 */
+    hysteresisPct?: number;
+    /** 触发后裁到 floor(quota·targetPct)。默认 0.8 */
+    targetPct?: number;
+    /** PageRank 个性化向量种子权（人/物/事），默认 3/2/1 */
+    personSeed?: number;
+    entitySeed?: number;
+    eventSeed?: number;
   }): Promise<{ deletedEvents: number; deletedEntities: number; deletedEdges: number }> {
     const protectEv = quota.protectEvidenceCount ?? 3;
     const protectW = quota.protectWeight ?? 0.8;
+    const damping = quota.pagerankDamping ?? 0.85;
+    const maxIter = quota.pagerankIterations ?? 20;
+    const epsilon = quota.pagerankEpsilon ?? 1e-4;
+    const hysteresisPct = Math.max(quota.hysteresisPct ?? 0.2, 0);
+    const targetPct = Math.min(Math.max(quota.targetPct ?? 0.8, 0.1), 1);
+    const personSeed = quota.personSeed ?? 3;
+    const entitySeed = quota.entitySeed ?? 2;
+    const eventSeed = quota.eventSeed ?? 1;
     const snap = await this.store.loadAll();
     let deletedEvents = 0;
     let deletedEntities = 0;
@@ -895,61 +923,66 @@ export class RelationService {
       }
     }
 
-    // 2) 超额：按 age / weight / degree 排序删
-    //    分数越大越「容易丢」：长久未强化 + 权重低 + 在图里几乎孤立（度数低）。
-    //    degree 用 sqrt 收敛，避免让超级枢纽节点完全免疫淘汰。
+    // 2) 超额：用 PageRank 评估节点重要性，把"老旧 + 低权 + PR 边缘"的优先丢
+    //    PageRank 个性化向量给人/物/事不同的种子权重，让"重要性 人>物>事"直接体现在分数偏置上。
+    //    无需 sqrt(degree+1) 之类启发式 —— 全图 PR 同时反映"度"和"被高重要节点引用"。
     const now = Date.now();
-    const degreeById = new Map<string, number>();
-    for (const e of snap.edges) {
-      const ids: string[] = [];
-      if (e.kind === 'person-event') ids.push(e.toEventId);
-      else if (e.kind === 'person-entity') ids.push(e.toEntityId);
-      else if (e.kind === 'event-event') ids.push(e.fromEventId, e.toEventId);
-      else if (e.kind === 'event-entity') ids.push(e.fromEventId, e.toEntityId);
-      else if (e.kind === 'entity-entity') ids.push(e.fromEntityId, e.toEntityId);
-      for (const id of ids) degreeById.set(id, (degreeById.get(id) ?? 0) + 1);
-    }
+    const pr = computePageRank(snap, {
+      damping,
+      maxIter,
+      epsilon,
+      personSeed,
+      entitySeed,
+      eventSeed,
+    });
     const ageScore = (n: EventNode | EntityNode): number => {
       const w = Math.max(n.weight ?? 0.5, 0.05);
-      const d = Math.sqrt(Math.max(degreeById.get(n.id) ?? 0, 0) + 1); // 1..∞
-      return (now - n.lastReinforcedAt) / (w * d);
+      const p = Math.max(pr.get(n.id) ?? 0, 1e-6);
+      return (now - n.lastReinforcedAt) / (w * p);
     };
+
+    // 滞回：仅当超出 quota·(1+hysteresisPct) 才裁；裁到 floor(quota·targetPct)
+    const triggerCount = (cap: number): number => Math.ceil(cap * (1 + hysteresisPct));
+    const targetCount = (cap: number): number => Math.floor(cap * targetPct);
 
     if (quota.maxEvents > 0) {
       const remainingEvents = (await this.store.loadAll()).events.filter(e => !isProtected(e));
-      const overflow = remainingEvents.length + deletedEvents - quota.maxEvents - deletedEvents;
-      // 注意：上行简化为 remainingEvents.length - quota.maxEvents
-      const toDelete = remainingEvents.length - quota.maxEvents;
-      if (toDelete > 0) {
-        const sorted = [...remainingEvents].sort((a, b) => ageScore(b) - ageScore(a));
-        for (const ev of sorted.slice(0, toDelete)) {
-          await this.store.deleteEventCascade(ev.id);
-          deletedEvents++;
+      if (remainingEvents.length >= triggerCount(quota.maxEvents)) {
+        const toDelete = remainingEvents.length - targetCount(quota.maxEvents);
+        if (toDelete > 0) {
+          const sorted = [...remainingEvents].sort((a, b) => ageScore(b) - ageScore(a));
+          for (const ev of sorted.slice(0, toDelete)) {
+            await this.store.deleteEventCascade(ev.id);
+            deletedEvents++;
+          }
         }
       }
-      void overflow; // 调试用，无副作用
     }
     if (quota.maxEntities > 0) {
       const remainingEntities = (await this.store.loadAll()).entities.filter(e => !isProtected(e));
-      const toDelete = remainingEntities.length - quota.maxEntities;
-      if (toDelete > 0) {
-        const sorted = [...remainingEntities].sort((a, b) => ageScore(b) - ageScore(a));
-        for (const en of sorted.slice(0, toDelete)) {
-          await this.store.deleteEntityCascade(en.id);
-          deletedEntities++;
+      if (remainingEntities.length >= triggerCount(quota.maxEntities)) {
+        const toDelete = remainingEntities.length - targetCount(quota.maxEntities);
+        if (toDelete > 0) {
+          const sorted = [...remainingEntities].sort((a, b) => ageScore(b) - ageScore(a));
+          for (const en of sorted.slice(0, toDelete)) {
+            await this.store.deleteEntityCascade(en.id);
+            deletedEntities++;
+          }
         }
       }
     }
 
-    // 3) 边配额：保留 weight 最高的
+    // 3) 边配额：保留 weight 最高的（同样应用滞回）
     if (quota.maxEdges > 0) {
       const refreshed = await this.store.loadAll();
-      const toDelete = refreshed.edges.length - quota.maxEdges;
-      if (toDelete > 0) {
-        const sorted = [...refreshed.edges].sort((a, b) => (a.weight ?? 0) - (b.weight ?? 0));
-        for (const e of sorted.slice(0, toDelete)) {
-          await this.store.deleteEdge(e.id);
-          deletedEdges++;
+      if (refreshed.edges.length >= triggerCount(quota.maxEdges)) {
+        const toDelete = refreshed.edges.length - targetCount(quota.maxEdges);
+        if (toDelete > 0) {
+          const sorted = [...refreshed.edges].sort((a, b) => (a.weight ?? 0) - (b.weight ?? 0));
+          for (const e of sorted.slice(0, toDelete)) {
+            await this.store.deleteEdge(e.id);
+            deletedEdges++;
+          }
         }
       }
     }
@@ -1529,6 +1562,47 @@ export class RelationService {
       eventEdgesNormalized++;
     }
 
+    // ─── (3b) PersonEntityEdge 旧账整理：同一 (person,entity) 多条不同 role 行 → 留最强 role
+    //    旧版插入逻辑可能未做 (from,to) 级别去重；此处按当前 addPersonEntityEdge 规则修旧账。
+    const peEntityPairs = new Map<string, PersonEntityEdge[]>();
+    for (const e of snapshot.edges) {
+      if (e.kind !== 'person-entity') continue;
+      const k = `${e.fromPersonId}|${e.toEntityId}`;
+      if (!peEntityPairs.has(k)) peEntityPairs.set(k, []);
+      peEntityPairs.get(k)!.push(e);
+    }
+    for (const [, list] of peEntityPairs.entries()) {
+      if (list.length < 2) continue;
+      // 选 evidence 最多 / weight 最高的作为"代表"，调用 addPersonEntityEdge 触发"保留最强 role"逻辑
+      const rep = list.reduce((a, b) => (b.evidence.length > a.evidence.length || b.weight > a.weight ? b : a));
+      for (const e of list) {
+        if (e.id !== rep.id) await this.store.deleteEdge(e.id);
+      }
+      await this.addPersonEntityEdge({
+        fromPersonId: rep.fromPersonId,
+        toEntityId: rep.toEntityId,
+        role: rep.role,
+        sentiment: rep.sentiment,
+        weight: rep.weight,
+        description: rep.description,
+        evidence: rep.evidence,
+      });
+      // 进一步：吸收同对、weaker role 的"残留"——遍历 list 中除 rep 之外的 role，逐条 add 触发吸收
+      for (const e of list) {
+        if (e.id === rep.id) continue;
+        await this.addPersonEntityEdge({
+          fromPersonId: e.fromPersonId,
+          toEntityId: e.toEntityId,
+          role: e.role,
+          sentiment: e.sentiment,
+          weight: e.weight,
+          description: e.description,
+          evidence: e.evidence,
+        });
+      }
+      eventEdgesNormalized++; // 共用计数（含人-实体折叠）
+    }
+
     // (B) 合并后摘要重写：基于最新 snapshot 收集 canonical 的别名/相关事件/相关人物
     if (llmModel && opts.llm && mergedCanonicals.size > 0) {
       const after = await this.store.loadAll();
@@ -2014,4 +2088,134 @@ function chooseCanonicalDirection(
   // 当前调用方传入 alias=aId, canonical=bId；若 a 评分更高 → 翻转
   if (cmp > 0) return { alias: bId, canonical: aId };
   return null;
+}
+
+/**
+ * 标准 PageRank（带个性化向量），用于淘汰打分。
+ *
+ * - 把所有节点（人/事件/实体）放进同一张图；边权重取 `edge.weight`（最低 0.05）。
+ * - 无向边（is-alias-of 之外的 person-person/entity-entity directed=false）双向传播；
+ *   directed=true 边只按 from→to 传播。
+ * - 个性化向量按 kind 分配种子权重（默认 人=3 / 物=2 / 事=1），从而"重要性 人>物>事"
+ *   不需要硬编码到打分，而是体现在 PR 的偏置上：人物附近的事件/实体 PR 更高。
+ * - 迭代到 L1 误差 < epsilon 或达到 maxIter 终止。
+ */
+function computePageRank(
+  snap: RelationGraphSnapshot,
+  opts: {
+    damping: number;
+    maxIter: number;
+    epsilon: number;
+    personSeed: number;
+    entitySeed: number;
+    eventSeed: number;
+  },
+): Map<string, number> {
+  const allIds: string[] = [];
+  const kindOf = new Map<string, 'person' | 'event' | 'entity'>();
+  for (const p of snap.persons) {
+    allIds.push(p.id);
+    kindOf.set(p.id, 'person');
+  }
+  for (const e of snap.events) {
+    allIds.push(e.id);
+    kindOf.set(e.id, 'event');
+  }
+  for (const en of snap.entities) {
+    allIds.push(en.id);
+    kindOf.set(en.id, 'entity');
+  }
+  const n = allIds.length;
+  if (n === 0) return new Map();
+
+  // 出向加权邻接 + 节点出度权和
+  const outAdj = new Map<string, Array<{ to: string; w: number }>>();
+  const outWeightSum = new Map<string, number>();
+  const addOut = (from: string, to: string, w: number) => {
+    if (!kindOf.has(from) || !kindOf.has(to) || from === to) return;
+    if (!outAdj.has(from)) outAdj.set(from, []);
+    outAdj.get(from)!.push({ to, w });
+    outWeightSum.set(from, (outWeightSum.get(from) ?? 0) + w);
+  };
+  for (const e of snap.edges) {
+    const w = Math.max(e.weight ?? 0.5, 0.05);
+    let from = '';
+    let to = '';
+    let directed = true;
+    switch (e.kind) {
+      case 'person-event':
+        from = e.fromPersonId;
+        to = e.toEventId;
+        directed = true;
+        break;
+      case 'person-entity':
+        from = e.fromPersonId;
+        to = e.toEntityId;
+        directed = true;
+        break;
+      case 'person-person':
+        from = e.fromPersonId;
+        to = e.toPersonId;
+        directed = e.directed;
+        break;
+      case 'event-event':
+        from = e.fromEventId;
+        to = e.toEventId;
+        directed = e.directed;
+        break;
+      case 'event-entity':
+        from = e.fromEventId;
+        to = e.toEntityId;
+        directed = e.directed;
+        break;
+      case 'entity-entity':
+        from = e.fromEntityId;
+        to = e.toEntityId;
+        directed = e.directed;
+        break;
+    }
+    addOut(from, to, w);
+    if (!directed) addOut(to, from, w);
+  }
+
+  // 个性化向量（归一化）
+  const seedRaw = new Map<string, number>();
+  let seedTotal = 0;
+  for (const id of allIds) {
+    const k = kindOf.get(id);
+    const s = k === 'person' ? opts.personSeed : k === 'entity' ? opts.entitySeed : opts.eventSeed;
+    seedRaw.set(id, s);
+    seedTotal += s;
+  }
+  const seed = new Map<string, number>();
+  for (const [id, v] of seedRaw) seed.set(id, v / Math.max(seedTotal, 1));
+
+  // 初始化 PR = 个性化向量
+  let pr = new Map<string, number>(seed);
+  const d = opts.damping;
+  for (let iter = 0; iter < opts.maxIter; iter++) {
+    const next = new Map<string, number>();
+    let danglingMass = 0;
+    for (const id of allIds) {
+      const w = outWeightSum.get(id);
+      if (!w || w === 0) danglingMass += pr.get(id) ?? 0;
+    }
+    for (const id of allIds) {
+      // teleport + dangling 均匀按 seed 分布
+      next.set(id, (1 - d) * (seed.get(id) ?? 0) + d * danglingMass * (seed.get(id) ?? 0));
+    }
+    for (const [from, neighbors] of outAdj) {
+      const ws = outWeightSum.get(from) ?? 1;
+      const share = ((pr.get(from) ?? 0) * d) / ws;
+      for (const { to, w } of neighbors) {
+        next.set(to, (next.get(to) ?? 0) + share * w);
+      }
+    }
+    // L1 收敛判断
+    let delta = 0;
+    for (const id of allIds) delta += Math.abs((next.get(id) ?? 0) - (pr.get(id) ?? 0));
+    pr = next;
+    if (delta < opts.epsilon) break;
+  }
+  return pr;
 }

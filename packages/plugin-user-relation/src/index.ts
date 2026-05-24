@@ -164,6 +164,37 @@ export const configSchema: ConfigSchema = {
     description: '超过则保留 weight 最高的边。0=不限。',
     default: 2000,
   },
+  pagerankDamping: {
+    type: 'number',
+    label: 'PageRank 阻尼系数',
+    description: '淘汰打分用。常用 0.85。',
+    default: 0.85,
+  },
+  pagerankIterations: {
+    type: 'number',
+    label: 'PageRank 最大迭代次数',
+    description: '20 通常够用；图较大、邻接稠密可调到 30~50。',
+    default: 20,
+  },
+  pagerankEpsilon: {
+    type: 'number',
+    label: 'PageRank 收敛阈值',
+    description: 'L1 误差小于该值即提前停止迭代。',
+    default: 0.0001,
+  },
+  evictHysteresisPct: {
+    type: 'number',
+    label: '淘汰滞回 (0~1)',
+    description: 'count > quota·(1+该值) 才触发淘汰；设为 0.2 时，quota=500 在 600 触发。用以避免"写一条删一条"。',
+    default: 0.2,
+  },
+  evictTargetPct: {
+    type: 'number',
+    label: '淘汰回落目标 (0~1)',
+    description:
+      '触发后裁到 floor(quota·该值)；配合 hysteresisPct=0.2 与该值=0.8，单次裁 ~40% quota（quota=500 → 一次裁 ~200 条）。',
+    default: 0.8,
+  },
   // ────── Middleware 注入侧 ──────
   agentInjection: {
     type: 'boolean',
@@ -434,6 +465,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       maxEvents: numCfg(config.maxEvents, 500),
       maxEntities: numCfg(config.maxEntities, 300),
       maxEdges: numCfg(config.maxEdges, 2000),
+      pagerankDamping: numCfg(config.pagerankDamping, 0.85),
+      pagerankIterations: numCfg(config.pagerankIterations, 20),
+      pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
+      evictHysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
+      evictTargetPct: numCfg(config.evictTargetPct, 0.8),
       debug,
     });
     extractor.start();
