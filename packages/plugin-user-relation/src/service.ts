@@ -37,6 +37,7 @@ import type {
   PersonPersonEdge,
   RelationEdge,
   RelationGraphSnapshot,
+  ScoreMode,
 } from './types.js';
 
 import {
@@ -1414,35 +1415,62 @@ export class RelationService {
   }
 
   /**
-   * 计算两节点间「联系强度」(Katz-style limited-depth path enumeration)。
+   * 计算两节点间联系强度（方向感知版）。
    *
-   * 算法：枚举 a→b 所有简单路径（长度 ≤ maxDepth），每条路径贡献
-   *   contrib = β^|p| * ∏_{e∈p} w_e
-   * 汇总 rawScore = Σ contrib；归一化 score = tanh(rawScore) ∈ [0,1]。
+   * **方向语义模型**：
+   * - **桥型边**（person-event / person-entity / event-entity）：事件/实体没有主观能动，
+   *   仅作中介出现 → 邻接表里总是双向（无视 edge.directed）
+   * - **主体间边**（person-person / event-event / entity-entity）：
+   *   - `directed=false` → 双向（如 event "related" event）
+   *   - `directed=true` → 严格 from→to 单向（如 A "admirer" B：B 不一定认识 A）
    *
-   * - 多条路径累加 → 体现「多途径连通」（如三角闭合）
-   * - β（默认 0.5）按路径长度衰减，长路径权重指数减小
-   * - 路径上不允许重复节点（简单路径），避免环膨胀
-   * - 复杂度 O(deg^maxDepth)，maxDepth ≤ 4 时在中等图上完全可控
+   * **mode 参数**：
+   * - `'symmetric'`（默认）= **联系紧密度**。跑 a→b 与 b→a 两遍取 max。
+   *   语义："存在任意方向的关系连通"。单方面声明至少会从一侧贡献。
+   * - `'directed'` = **关注/影响传播度**。仅跑 fromNodeId → toNodeId 一次。
+   *   语义："从 A 出发能否通过主动声明触达 B"。适用于"A 都关心了谁/A 的影响波及谁"。
    *
-   * 返回 topPaths 用于「为什么这么高」的可解释性，对 LLM 友好。
-   * 同节点 → score=1。任一端不在图中 → score=0 + paths=[]。
+   * **kindMultiplier**（待数据观察调整，目前为直觉估计）：
+   * - person-person = 1.0（社会语义最强）
+   * - person-event = 0.8（事件 = 真实互动）
+   * - person-entity = 0.5（兴趣共鸣 < 真实互动）
+   * - event-event = 0.4
+   * - event-entity = 0.4
+   * - entity-entity = 0.3（内容关联，非社会信号）
+   *
+   * **算法**：限深简单路径枚举（Katz 风格） + Adamic-Adar 共同邻居
+   * - contrib = β^|p| × Π w_e × (len==1 ? 1.5 : 1) — 直接连接 boost
+   * - common = Σ 1/log(deg(C)+1.7) — 惩罚高度共同节点（群聊噪声）
+   * - raw = katz + 0.3 × common；score = tanh(raw) ∈ [0, 1]
+   *
+   * **未来扩展点**（在 opts 里预留）：hierarchy 反向降权、relationType 加权、时间衰减…
    */
   async scoreBetween(
     fromNodeId: string,
     toNodeId: string,
-    opts: { maxDepth?: number; beta?: number; topPaths?: number } = {},
+    opts: {
+      maxDepth?: number;
+      beta?: number;
+      topPaths?: number;
+      /** 'symmetric'（默认）= 联系紧密度；'directed' = 关注/影响传播度 */
+      mode?: ScoreMode;
+    } = {},
   ): Promise<{
     fromId: string;
     toId: string;
-    score: number; // 归一化 [0,1]，融合 Katz 路径 + AA 共同邻居
+    mode: ScoreMode;
+    score: number;
     rawScore: number;
-    katzScore: number; // 仅 Katz 部分（未归一化）
-    commonNeighborsScore: number; // Adamic-Adar 共同邻居指标（未归一化）
+    katzScore: number;
+    commonNeighborsScore: number;
     pathsConsidered: number;
     shortestLength: number | null;
     directlyConnected: boolean;
+    /** 仅 symmetric 模式同时利用；directed 模式 backward* 固定 0 */
+    forwardKatzScore: number;
+    backwardKatzScore: number;
     topPaths: Array<{
+      direction: 'forward' | 'backward';
       nodes: Array<PersonNode | EventNode | EntityNode>;
       edges: RelationEdge[];
       length: number;
@@ -1452,9 +1480,10 @@ export class RelationService {
     commonNeighbors: Array<{
       node: PersonNode | EventNode | EntityNode;
       degree: number;
-      aaContribution: number; // 1 / log(deg+1)
+      aaContribution: number;
     }>;
   }> {
+    const mode: ScoreMode = opts.mode ?? 'symmetric';
     const maxDepth = Math.max(1, Math.min(6, opts.maxDepth ?? 4));
     const beta = Math.max(0.05, Math.min(1, opts.beta ?? 0.5));
     const topK = Math.max(1, Math.min(20, opts.topPaths ?? 3));
@@ -1465,9 +1494,20 @@ export class RelationService {
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
     const nodeOf = (id: string) => personById.get(id) ?? eventById.get(id) ?? entityById.get(id);
 
-    const emptyResult = (score: number, katz: number, shortest: number | null) => ({
+    type TopPath = {
+      direction: 'forward' | 'backward';
+      nodes: Array<PersonNode | EventNode | EntityNode>;
+      edges: RelationEdge[];
+      length: number;
+      weightProduct: number;
+      contribution: number;
+    };
+    type CN = { node: PersonNode | EventNode | EntityNode; degree: number; aaContribution: number };
+
+    const empty = (score: number, katz: number, shortest: number | null) => ({
       fromId: fromNodeId,
       toId: toNodeId,
+      mode,
       score,
       rawScore: katz,
       katzScore: katz,
@@ -1475,131 +1515,185 @@ export class RelationService {
       pathsConsidered: 0,
       shortestLength: shortest,
       directlyConnected: false,
-      topPaths: [],
-      commonNeighbors: [],
+      forwardKatzScore: katz,
+      backwardKatzScore: 0,
+      topPaths: [] as TopPath[],
+      commonNeighbors: [] as CN[],
     });
 
     if (fromNodeId === toNodeId) {
       const present = !!nodeOf(fromNodeId);
-      return emptyResult(present ? 1 : 0, present ? 1 : 0, present ? 0 : null);
+      return empty(present ? 1 : 0, present ? 1 : 0, present ? 0 : null);
     }
-    if (!nodeOf(fromNodeId) || !nodeOf(toNodeId)) {
-      return emptyResult(0, 0, null);
-    }
+    if (!nodeOf(fromNodeId) || !nodeOf(toNodeId)) return empty(0, 0, null);
 
-    // 边权按 kind 缩放：person↔person 直接最重；含 event/entity 的桥稍弱
-    // 防止"高频共同事件"（如群聊全员事件）把分数刷爆
+    // ---- kind 缩放（待数据观察调整） ----
     const kindMultiplier = (kind: RelationEdge['kind']): number => {
       switch (kind) {
         case 'person-person':
           return 1.0;
         case 'person-event':
+          return 0.8;
         case 'person-entity':
-          return 0.7;
+          return 0.5;
+        case 'event-event':
+        case 'event-entity':
+          return 0.4;
         default:
-          return 0.5; // event-event / event-entity / entity-entity
+          return 0.3; // entity-entity
       }
     };
     const effectiveWeight = (e: RelationEdge) => Math.max(1e-6, e.weight) * kindMultiplier(e.kind);
 
-    // 邻接表：联系强度是对称的，无论 edge.directed，所有边都双向化
+    // ---- 邻接表（方向感知） ----
+    // 桥型边：双向；主体边按 directed 字段决定。
+    // commonNeighbors 也用同一张表，保持方向语义一致（单向声明的 admirer 不算共同邻居）。
     const adj = new Map<string, Array<{ next: string; edge: RelationEdge }>>();
-    const addAdj = (a: string, b: string, edge: RelationEdge) => {
+    const addArc = (a: string, b: string, edge: RelationEdge) => {
       const arr = adj.get(a);
       if (arr) arr.push({ next: b, edge });
       else adj.set(a, [{ next: b, edge }]);
     };
     const addBoth = (a: string, b: string, edge: RelationEdge) => {
-      addAdj(a, b, edge);
-      addAdj(b, a, edge);
+      addArc(a, b, edge);
+      addArc(b, a, edge);
     };
     for (const e of snapshot.edges) {
       if (e.kind === 'person-event') addBoth(e.fromPersonId, e.toEventId, e);
       else if (e.kind === 'person-entity') addBoth(e.fromPersonId, e.toEntityId, e);
-      else if (e.kind === 'event-event') addBoth(e.fromEventId, e.toEventId, e);
       else if (e.kind === 'event-entity') addBoth(e.fromEventId, e.toEntityId, e);
-      else if (e.kind === 'entity-entity') addBoth(e.fromEntityId, e.toEntityId, e);
-      else addBoth(e.fromPersonId, e.toPersonId, e);
+      else {
+        // 主体边：person-person / event-event / entity-entity
+        const directed = e.directed !== false;
+        let f: string;
+        let t: string;
+        if (e.kind === 'person-person') {
+          f = e.fromPersonId;
+          t = e.toPersonId;
+        } else if (e.kind === 'event-event') {
+          f = e.fromEventId;
+          t = e.toEventId;
+        } else {
+          f = e.fromEntityId;
+          t = e.toEntityId;
+        }
+        if (directed) addArc(f, t, e);
+        else addBoth(f, t, e);
+      }
     }
 
-    // DFS 枚举所有 a→b 简单路径（限深 maxDepth）
-    type Path = { edges: RelationEdge[]; nodeIds: string[]; weightProduct: number };
-    const allPaths: Path[] = [];
-    const visited = new Set<string>([fromNodeId]);
-    const curEdges: RelationEdge[] = [];
-    const curNodes: string[] = [fromNodeId];
-    const dfs = (cur: string, depth: number) => {
-      if (cur === toNodeId) {
-        let prod = 1;
-        for (const e of curEdges) prod *= effectiveWeight(e);
-        allPaths.push({ edges: [...curEdges], nodeIds: [...curNodes], weightProduct: prod });
-        return;
-      }
-      if (depth >= maxDepth) return;
-      for (const { next, edge } of adj.get(cur) ?? []) {
-        if (visited.has(next)) continue;
-        visited.add(next);
-        curEdges.push(edge);
-        curNodes.push(next);
-        dfs(next, depth + 1);
-        curEdges.pop();
-        curNodes.pop();
-        visited.delete(next);
-      }
+    // ---- DFS 限深简单路径枚举 ----
+    const enumPaths = (start: string, end: string) => {
+      const result: Array<{ edges: RelationEdge[]; nodeIds: string[]; weightProduct: number }> = [];
+      const visited = new Set<string>([start]);
+      const curEdges: RelationEdge[] = [];
+      const curNodes: string[] = [start];
+      const dfs = (cur: string, depth: number) => {
+        if (cur === end) {
+          let prod = 1;
+          for (const e of curEdges) prod *= effectiveWeight(e);
+          result.push({ edges: [...curEdges], nodeIds: [...curNodes], weightProduct: prod });
+          return;
+        }
+        if (depth >= maxDepth) return;
+        for (const { next, edge } of adj.get(cur) ?? []) {
+          if (visited.has(next)) continue;
+          visited.add(next);
+          curEdges.push(edge);
+          curNodes.push(next);
+          dfs(next, depth + 1);
+          curEdges.pop();
+          curNodes.pop();
+          visited.delete(next);
+        }
+      };
+      dfs(start, 0);
+      return result;
     };
-    dfs(fromNodeId, 0);
 
-    // Adamic-Adar 共同邻居：对每个 a/b 都直连的 C，累加 1/log(deg(C)+1)
-    // 惩罚"群聊全员事件"等高度节点的共同贡献，奖励"小圈子私密关联"
-    const neighborsOf = (id: string): Set<string> => {
-      const s = new Set<string>();
-      for (const { next } of adj.get(id) ?? []) s.add(next);
-      return s;
+    const contribOf = (len: number, prod: number) => beta ** len * prod * (len === 1 ? 1.5 : 1);
+
+    const forwardPaths = enumPaths(fromNodeId, toNodeId);
+    const backwardPaths = mode === 'symmetric' ? enumPaths(toNodeId, fromNodeId) : [];
+
+    let forwardKatz = 0;
+    let backwardKatz = 0;
+    let shortestF = Number.POSITIVE_INFINITY;
+    let shortestB = Number.POSITIVE_INFINITY;
+    for (const p of forwardPaths) {
+      forwardKatz += contribOf(p.edges.length, p.weightProduct);
+      if (p.edges.length < shortestF) shortestF = p.edges.length;
+    }
+    for (const p of backwardPaths) {
+      backwardKatz += contribOf(p.edges.length, p.weightProduct);
+      if (p.edges.length < shortestB) shortestB = p.edges.length;
+    }
+
+    // ---- Adamic-Adar 共同邻居 ----
+    // AA 衡量"两端共同接触的第三方"，是无方向概念（A 关注 C / D 关注 A 都让 A 与 C/D 相邻）。
+    // 用 出邻居 ∪ 入邻居 构造无向邻居集；度数也取无向度，避免与 Katz 方向语义混淆。
+    const undirectedAdj = new Map<string, Set<string>>();
+    const linkUndir = (a: string, b: string) => {
+      let sa = undirectedAdj.get(a);
+      if (!sa) {
+        sa = new Set();
+        undirectedAdj.set(a, sa);
+      }
+      sa.add(b);
+      let sb = undirectedAdj.get(b);
+      if (!sb) {
+        sb = new Set();
+        undirectedAdj.set(b, sb);
+      }
+      sb.add(a);
     };
-    const nFrom = neighborsOf(fromNodeId);
-    const nTo = neighborsOf(toNodeId);
-    const commonNeighbors: Array<{
-      node: PersonNode | EventNode | EntityNode;
-      degree: number;
-      aaContribution: number;
-    }> = [];
+    for (const [a, arcs] of adj) {
+      for (const { next } of arcs) linkUndir(a, next);
+    }
+    const nFrom = undirectedAdj.get(fromNodeId) ?? new Set<string>();
+    const nTo = undirectedAdj.get(toNodeId) ?? new Set<string>();
+    const commonNeighborsList: CN[] = [];
     let commonNeighborsScore = 0;
     for (const c of nFrom) {
       if (!nTo.has(c) || c === fromNodeId || c === toNodeId) continue;
       const node = nodeOf(c);
       if (!node) continue;
-      const deg = adj.get(c)?.length ?? 0;
-      const aa = 1 / Math.log(deg + 1.7); // deg=1 → 1/log(2.7)≈1，避免炸
+      const deg = undirectedAdj.get(c)?.size ?? 0;
+      const aa = 1 / Math.log(deg + 1.7);
       commonNeighborsScore += aa;
-      commonNeighbors.push({ node, degree: deg, aaContribution: aa });
+      commonNeighborsList.push({ node, degree: deg, aaContribution: aa });
     }
-    commonNeighbors.sort((a, b) => b.aaContribution - a.aaContribution);
+    commonNeighborsList.sort((a, b) => b.aaContribution - a.aaContribution);
 
-    if (allPaths.length === 0 && commonNeighborsScore === 0) {
-      return emptyResult(0, 0, null);
+    if (forwardPaths.length === 0 && backwardPaths.length === 0 && commonNeighborsScore === 0) {
+      return empty(0, 0, null);
     }
 
-    // Katz 累加，直接连接 (len=1) 额外 × 1.5 boost
-    let katzScore = 0;
-    let shortestLength = Infinity;
-    const contribOf = (len: number, prod: number) => beta ** len * prod * (len === 1 ? 1.5 : 1);
-    for (const p of allPaths) {
-      const len = p.edges.length;
-      katzScore += contribOf(len, p.weightProduct);
-      if (len < shortestLength) shortestLength = len;
-    }
-    // 共同邻居贡献融合：以 0.3 系数加到 raw（经验权重，AA 量级一般比 Katz 大）
+    // ---- 汇总 ----
+    const katzScore = mode === 'directed' ? forwardKatz : Math.max(forwardKatz, backwardKatz);
     const rawScore = katzScore + 0.3 * commonNeighborsScore;
     const score = Math.tanh(rawScore);
+    const sl = mode === 'directed' ? shortestF : Math.min(shortestF, shortestB);
+    const shortestLength = sl === Number.POSITIVE_INFINITY ? null : sl;
 
-    const topPaths = allPaths
-      .map(p => {
-        const len = p.edges.length;
-        return { p, len, contribution: contribOf(len, p.weightProduct) };
-      })
+    const topPaths: TopPath[] = [
+      ...forwardPaths.map(p => ({
+        direction: 'forward' as const,
+        p,
+        len: p.edges.length,
+        contribution: contribOf(p.edges.length, p.weightProduct),
+      })),
+      ...backwardPaths.map(p => ({
+        direction: 'backward' as const,
+        p,
+        len: p.edges.length,
+        contribution: contribOf(p.edges.length, p.weightProduct),
+      })),
+    ]
       .sort((a, b) => b.contribution - a.contribution)
       .slice(0, topK)
-      .map(({ p, len, contribution }) => ({
+      .map(({ direction, p, len, contribution }) => ({
+        direction,
         nodes: p.nodeIds.map(id => nodeOf(id)).filter((n): n is PersonNode | EventNode | EntityNode => !!n),
         edges: p.edges,
         length: len,
@@ -1610,15 +1704,18 @@ export class RelationService {
     return {
       fromId: fromNodeId,
       toId: toNodeId,
+      mode,
       score,
       rawScore,
       katzScore,
       commonNeighborsScore,
-      pathsConsidered: allPaths.length,
-      shortestLength: shortestLength === Infinity ? null : shortestLength,
+      pathsConsidered: forwardPaths.length + backwardPaths.length,
+      shortestLength,
       directlyConnected: shortestLength === 1,
+      forwardKatzScore: forwardKatz,
+      backwardKatzScore: backwardKatz,
       topPaths,
-      commonNeighbors: commonNeighbors.slice(0, topK),
+      commonNeighbors: commonNeighborsList.slice(0, topK),
     };
   }
 
