@@ -506,6 +506,33 @@ describe('plugin-user-relation: node dedup on create', () => {
     expect((await service.findEntityByKindAndName('topic', 'X'))?.id).toBe(ent.id);
     expect(await service.findEntityByKindAndName('place', 'X')).toBeUndefined();
   });
+
+  it('normalizeName: 书名号/全角/大小写 装饰符号都视为同名', async () => {
+    const { service } = await makeService();
+    // 「《绝航》」与「绝航」与「 绝航 」与「绝航  」（多空格）应归一为同一实体
+    const a = await service.createEntity({
+      name: '《绝航》',
+      entityKind: 'work',
+      evidence: [ev({ messageIds: ['m1'] })],
+    });
+    const b = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [ev({ messageIds: ['m2'] })] });
+    const c = await service.createEntity({
+      name: ' 绝航 ',
+      entityKind: 'work',
+      evidence: [ev({ messageIds: ['m3'] })],
+    });
+    expect(b.id).toBe(a.id);
+    expect(c.id).toBe(a.id);
+
+    // 全角英文 vs 半角英文 视为同名
+    const d = await service.createEntity({ name: 'ＰＳ５', entityKind: 'thing', evidence: [] });
+    const e2 = await service.createEntity({ name: 'PS5', entityKind: 'thing', evidence: [] });
+    expect(e2.id).toBe(d.id);
+
+    // findEntityByKindAndName 同样按归一查找
+    expect((await service.findEntityByKindAndName('work', '《绝航》'))?.id).toBe(a.id);
+    expect((await service.findEntityByKindAndName('work', '绝航'))?.id).toBe(a.id);
+  });
 });
 
 describe('plugin-user-relation: evictByQuota', () => {
