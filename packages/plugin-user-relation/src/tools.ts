@@ -33,7 +33,7 @@ import type {
   RelationEdge,
 } from './types.js';
 
-export interface ToolsConfig {
+interface ToolsConfig {
   enabled: boolean;
   /** 工具分组名（默认 'user-relation'） */
   group: string;

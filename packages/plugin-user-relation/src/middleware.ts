@@ -16,7 +16,7 @@ import type { Message } from '@aalis/plugin-message-api';
 import type { RelationService } from './service.js';
 import type { EventNode, PersonEntityEdge, PersonEventEdge, PersonNode, PersonPersonEdge } from './types.js';
 
-export interface MiddlewareConfig {
+interface MiddlewareConfig {
   enabled: boolean;
   /** BFS 最大深度（0=仅起点，1=直接邻居，2=同事件其他参与者 / 朋友的朋友） */
   maxDepth: number;
