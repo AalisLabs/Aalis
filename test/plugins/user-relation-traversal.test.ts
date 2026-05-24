@@ -297,6 +297,92 @@ describe('plugin-user-relation: 多层遍历', () => {
       // 小度共同邻居 AA 贡献更大
       expect(r1.commonNeighbors[0]!.aaContribution).toBeGreaterThan(r2.commonNeighbors[0]!.aaContribution);
     });
+
+    it('mode 默认 symmetric，返回 mode 字段', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      await svc.addPersonPersonEdge({ fromPersonId: 'onebot:a', toPersonId: 'onebot:b', relationType: 'friend' });
+      const r = await svc.scoreBetween('onebot:a', 'onebot:b');
+      expect(r.mode).toBe('symmetric');
+      expect(r.forwardKatzScore).toBeGreaterThan(0);
+    });
+
+    it('directed 模式：admirer A→B 单向声明，score(B,A)=0', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'fan');
+      await svc.observePerson('onebot', 'idol');
+      // 粉丝→偶像：admirer 必须主动方写
+      await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:fan',
+        toPersonId: 'onebot:idol',
+        relationType: 'admirer',
+      });
+      const ab = await svc.scoreBetween('onebot:fan', 'onebot:idol', { mode: 'directed' });
+      const ba = await svc.scoreBetween('onebot:idol', 'onebot:fan', { mode: 'directed' });
+      expect(ab.katzScore).toBeGreaterThan(0);
+      expect(ab.directlyConnected).toBe(true);
+      expect(ba.katzScore).toBe(0);
+      // 但 AA 共同邻居此场景为空，所以 score 也是 0
+      expect(ba.score).toBe(0);
+      expect(ba.backwardKatzScore).toBe(0);
+    });
+
+    it('symmetric 模式：admirer 单向，但 score(A,B)=score(B,A) 同值', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'fan');
+      await svc.observePerson('onebot', 'idol');
+      await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:fan',
+        toPersonId: 'onebot:idol',
+        relationType: 'admirer',
+      });
+      const ab = await svc.scoreBetween('onebot:fan', 'onebot:idol', { mode: 'symmetric' });
+      const ba = await svc.scoreBetween('onebot:idol', 'onebot:fan', { mode: 'symmetric' });
+      expect(ab.score).toBeGreaterThan(0);
+      // symmetric 取 max(forward,backward)；fan→idol 那条弧两端互换后角色互换
+      expect(ba.score).toBeCloseTo(ab.score, 6);
+      // forward/backward 在两次调用中是镜像关系
+      expect(ba.backwardKatzScore).toBeCloseTo(ab.forwardKatzScore, 6);
+      expect(ba.forwardKatzScore).toBeCloseTo(ab.backwardKatzScore, 6);
+    });
+
+    it('directed：仅单方面写 friend（仅 A→B），B 视角看 A 无 katz 路径', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      await svc.addPersonPersonEdge({ fromPersonId: 'onebot:a', toPersonId: 'onebot:b', relationType: 'friend' });
+      const ba = await svc.scoreBetween('onebot:b', 'onebot:a', { mode: 'directed' });
+      expect(ba.katzScore).toBe(0);
+      expect(ba.shortestLength).toBeNull();
+    });
+
+    it('桥型 person-event：参与即对称，两 mode 下都互通', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const ev = await svc.createEvent({ title: 'meet', evidence: [] });
+      await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev.id, role: 'participant' });
+      await svc.addPersonEventEdge({ fromPersonId: 'onebot:b', toEventId: ev.id, role: 'participant' });
+      const ab = await svc.scoreBetween('onebot:a', 'onebot:b', { mode: 'directed' });
+      const ba = await svc.scoreBetween('onebot:b', 'onebot:a', { mode: 'directed' });
+      expect(ab.katzScore).toBeGreaterThan(0);
+      expect(ba.katzScore).toBeGreaterThan(0);
+      // 桥型对称：两方向 katz 相等
+      expect(ab.katzScore).toBeCloseTo(ba.katzScore, 6);
+    });
+
+    it('topPaths 携带 direction 字段', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      await svc.addPersonPersonEdge({ fromPersonId: 'onebot:a', toPersonId: 'onebot:b', relationType: 'friend' });
+      const r = await svc.scoreBetween('onebot:a', 'onebot:b', { mode: 'symmetric' });
+      expect(r.topPaths.length).toBeGreaterThan(0);
+      for (const p of r.topPaths) {
+        expect(['forward', 'backward']).toContain(p.direction);
+      }
+    });
   });
 
   describe('searchEvents', () => {

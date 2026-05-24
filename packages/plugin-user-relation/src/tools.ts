@@ -62,8 +62,16 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
   tools.registerGroup({
     name: groupName,
     label: '人物关系图',
-    description:
+    description: [
       '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。只读，纠错走 /relation cleanup。',
+      '',
+      '⚠️ 方向语义（写边时必须遵守，本组工具与写边工具共用此约定）：',
+      '- person-person 边一律是「主动声明」：必须从主动方写到被动方。',
+      '  · admirer/follower/student：粉丝→偶像、关注者→被关注者、学生→老师；禁止反向声明。',
+      '  · friend / colleague 等"看似对称"的关系：默认仍按 directed=true 处理；如果你只听到 A 说"我朋友 B"而 B 没出场，就只写 A→B，不要替 B 反向再写一条。只有当双方都明确表态时才写两条。',
+      '- 事件/实体没有主观能动 → 桥型边（person-event / person-entity / event-entity）参与即对称，可双向连通。',
+      '- 评估"联系紧密度"用 user_relation_score 的 mode="symmetric"（默认）；评估"A 主动关心了谁/A 的影响波及谁"用 mode="directed"。',
+    ].join('\n'),
   });
 
   // ───────────────────────────── resolve_node ─────────────────────────────
@@ -214,19 +222,32 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       function: {
         name: 'user_relation_score',
         description: [
-          '计算两节点间的「联系强度」分数（0~1），融合 3 类信号：',
-          '1) Katz 限深路径累加：枚举 a→b 所有简单路径（长度 ≤ max_depth），贡献 = β^长度 × ∏边权',
-          '2) 边类型权重：person↔person 直接边权 ×1.0；含 event/entity 桥 ×0.5~0.7（防"群聊事件"刷爆）',
-          '3) 直接连接 boost：长度 1 路径额外 ×1.5；',
-          '4) Adamic-Adar 共同邻居：Σ 1/log(度+1.7)，奖励小圈子私密关联、惩罚"人人都参与的大事件"',
+          '计算两节点间的联系分数（0~1，tanh 归一化），方向感知。融合 4 类信号：',
+          '1) Katz 限深简单路径累加：贡献 = β^长度 × ∏(边权 × kindMultiplier)；',
+          '2) 边类型权重 kindMultiplier：person-person=1.0, person-event=0.8, person-entity=0.5, event-event/event-entity=0.4, entity-entity=0.3（数值待数据反馈调整）；',
+          '3) 直接连接 boost：长度=1 路径额外 ×1.5；',
+          '4) Adamic-Adar 共同邻居：Σ 1/log(度+1.7)，奖励小圈子私密关联、惩罚"人人都参与的大事件"。',
           '最终 score = tanh(katzScore + 0.3 × commonNeighborsScore)。',
-          '两端可为人/事件/实体的任意组合。返回 top_paths + common_neighbors 作为可解释证据。',
+          '',
+          '⚠️ 方向语义（关键）：',
+          '- 桥型边（person-event / person-entity / event-entity）总是双向：事/物没有主观能动，参与即对称连通。',
+          '- 主体边（person-person / event-event / entity-entity）严格按 edge.directed：directed=true 仅 from→to 一条弧；directed=false 双向。',
+          '- mode="symmetric"（默认，「联系紧密度」）：a→b 与 b→a 各跑一次取 max。能体现"任一方向连通即算紧密"。',
+          '- mode="directed"（「关注/影响传播度」）：只跑 from_node_id→to_node_id 一次。适用于"A 主动关心了谁 / A 的影响能波及谁"。',
+          '  例：A admirer B（A 是粉丝，B 是偶像），mode=directed 时 score(A,B)>0 但 score(B,A)=0（B 不一定认识 A）；mode=symmetric 时两者相等且 > 0。',
+          '',
+          '返回 top_paths（含 direction 字段）+ common_neighbors 作为可解释证据。',
         ].join('\n'),
         parameters: {
           type: 'object',
           properties: {
             from_node_id: { type: 'string', description: '起点节点 ID' },
             to_node_id: { type: 'string', description: '终点节点 ID' },
+            mode: {
+              type: 'string',
+              enum: ['symmetric', 'directed'],
+              description: '默认 symmetric（联系紧密度，双向取 max）。directed=只从 from 出发，体现主动关注/影响传播。',
+            },
             max_depth: {
               type: 'number',
               description:
@@ -249,19 +270,25 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
       const maxDepth = clampNum(args.max_depth, 4, 1, 6);
       const topPaths = clampNum(args.top_paths, 3, 1, 20);
-      const r = await service.scoreBetween(from, to, { maxDepth, topPaths });
+      const rawMode = String(args.mode ?? 'symmetric').trim();
+      const mode: 'symmetric' | 'directed' = rawMode === 'directed' ? 'directed' : 'symmetric';
+      const r = await service.scoreBetween(from, to, { maxDepth, topPaths, mode });
       return JSON.stringify(
         {
           from_id: r.fromId,
           to_id: r.toId,
+          mode: r.mode,
           score: Number(r.score.toFixed(4)),
           raw_score: Number(r.rawScore.toFixed(4)),
           katz_score: Number(r.katzScore.toFixed(4)),
+          forward_katz_score: Number(r.forwardKatzScore.toFixed(4)),
+          backward_katz_score: Number(r.backwardKatzScore.toFixed(4)),
           common_neighbors_score: Number(r.commonNeighborsScore.toFixed(4)),
           paths_considered: r.pathsConsidered,
           shortest_length: r.shortestLength,
           directly_connected: r.directlyConnected,
           top_paths: r.topPaths.map(p => ({
+            direction: p.direction,
             length: p.length,
             weight_product: Number(p.weightProduct.toFixed(4)),
             contribution: Number(p.contribution.toFixed(4)),
