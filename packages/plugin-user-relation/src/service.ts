@@ -1088,15 +1088,13 @@ export class RelationService {
    * 返回子图包含访问过的节点之间的全部已存在边（不仅 BFS 树边），便于上层渲染完整局部结构。
    */
   async traverseSubgraph(opts: {
-    /** @deprecated 使用 startNodeIds（兼容字段）。任意节点 id（person/event/entity）都接受 */
-    startPersonIds?: string[];
-    /** 起点节点 id 列表，按 snapshot 自动推断 kind */
-    startNodeIds?: string[];
+    /** 起点节点 id 列表，按 snapshot 自动推断 kind（person / event / entity） */
+    startNodeIds: string[];
     maxDepth: number;
     maxBreadth: number;
   }): Promise<{ persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] }> {
     const empty = { persons: [], events: [], entities: [], edges: [] };
-    const starts = opts.startNodeIds ?? opts.startPersonIds ?? [];
+    const starts = opts.startNodeIds ?? [];
     if (opts.maxDepth < 0 || opts.maxBreadth < 0 || starts.length === 0) return empty;
     // 0 = 不限，内部映射为足够大的有限数（避免 Infinity 与 BFS 深度比较出错）
     const effectiveDepth = opts.maxDepth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxDepth;

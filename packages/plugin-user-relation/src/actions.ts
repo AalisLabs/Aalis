@@ -540,7 +540,7 @@ export const actions: PluginModule['actions'] = {
     const maxDepth = numArg(args.maxDepth, 2);
     const maxBreadth = numArg(args.maxBreadth, 10);
     const sub = await s.traverseSubgraph({
-      startPersonIds: [personId],
+      startNodeIds: [personId],
       maxDepth,
       maxBreadth,
     });
