@@ -869,18 +869,73 @@ export class RelationService {
   }
 
   /**
+   * 清理孤儿节点（无任何边引用的 event / entity；person 节点永不视为孤儿）。
+   *
+   * **设计意图**：
+   * - 与配额淘汰解耦——无论是否超过 maxEvents/maxEntities 配额，孤儿都应被清掉。
+   * - extractor 在写入层已尽量保证新建节点至少带一条边，因此运行期孤儿都是迁移
+   *   或边被显式删除后遗留下来的旧账噪声。
+   * - 保护规则与 evictByQuota 一致：`evidence.length ≥ protectEvidenceCount`
+   *   或 `weight ≥ protectWeight` 视为受保护，跳过删除。
+   */
+  async pruneOrphans(opts?: {
+    protectEvidenceCount?: number;
+    protectWeight?: number;
+  }): Promise<{ deletedEvents: number; deletedEntities: number }> {
+    const protectEv = opts?.protectEvidenceCount ?? 3;
+    const protectW = opts?.protectWeight ?? 0.8;
+    const snap = await this.store.loadAll();
+    let deletedEvents = 0;
+    let deletedEntities = 0;
+    const isProtected = (n: EventNode | EntityNode): boolean =>
+      (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
+    const referencedEventIds = new Set<string>();
+    const referencedEntityIds = new Set<string>();
+    for (const e of snap.edges) {
+      if (e.kind === 'person-event') referencedEventIds.add(e.toEventId);
+      else if (e.kind === 'person-entity') referencedEntityIds.add(e.toEntityId);
+      else if (e.kind === 'event-event') {
+        referencedEventIds.add(e.fromEventId);
+        referencedEventIds.add(e.toEventId);
+      } else if (e.kind === 'event-entity') {
+        referencedEventIds.add(e.fromEventId);
+        referencedEntityIds.add(e.toEntityId);
+      } else if (e.kind === 'entity-entity') {
+        referencedEntityIds.add(e.fromEntityId);
+        referencedEntityIds.add(e.toEntityId);
+      }
+    }
+    for (const ev of snap.events) {
+      if (!referencedEventIds.has(ev.id) && !isProtected(ev)) {
+        await this.store.deleteEventCascade(ev.id);
+        deletedEvents++;
+      }
+    }
+    for (const en of snap.entities) {
+      if (!referencedEntityIds.has(en.id) && !isProtected(en)) {
+        await this.store.deleteEntityCascade(en.id);
+        deletedEntities++;
+      }
+    }
+    return { deletedEvents, deletedEntities };
+  }
+
+  /**
    * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后顺手扫"风格，不开独立调度器。
    *
    * 优先级（每次仅在超额时执行）：
-   *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）。孤儿 = 噪声，
-   *      由 extractor 在写入层手剩下的旧账一次清掉；不设宽限期、不设批量上限。
+   *   1. **孤儿节点**先删（无任何边的 event / entity；person 不删）。**孤儿清理与配额无关**，
+   *      旧账噪声任何时候都清；委托 `pruneOrphans()`。
    *   2. 仍超额时按 `(now - lastReinforcedAt) / (max(weight,0.05) · max(PR,ε))` **降序**删；
    *      即"老旧 + 低权重 + 在 PageRank 上无人指向"的优先丢。
    *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）跳过删除。
    *   4. **滞回（hysteresis）**：仅当 count > quota·(1+hysteresisPct) 时才触发，
    *      触发后一次性裁到 floor(quota·targetPct)。默认 hysteresis=0.2, target=0.8 ——
    *      quota=500 时会在 600 触发并裁到 400，相当于一次清理 ~200 条；不会每写一条就裁。
-   *   5. 边也按配额删（保留 weight 最高的）。
+   *   5. 边也按配额删——保留 `weight · 端点PR平均` 最高的，让"弱权但连接重要节点"的边受保护。
+   *
+   * 副作用：每次调用都会把 PageRank 写回三类节点的 `lastPageRank` / `lastPageRankAt`，
+   * 用于 WebUI 展示"图重要性"。
    *
    * PageRank 个性化向量按 kind 加权（人=3，物=2，事=1），从而"重要性 人>物>事"
    * 直接体现为分数偏置：人物附近的事件/实体更难被淘汰。
@@ -918,7 +973,6 @@ export class RelationService {
     const personSeed = quota.personSeed ?? 3;
     const entitySeed = quota.entitySeed ?? 2;
     const eventSeed = quota.eventSeed ?? 1;
-    const snap = await this.store.loadAll();
     let deletedEvents = 0;
     let deletedEntities = 0;
     let deletedEdges = 0;
@@ -926,36 +980,13 @@ export class RelationService {
     const isProtected = (n: EventNode | EntityNode): boolean =>
       (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
 
-    const referencedEventIds = new Set<string>();
-    const referencedEntityIds = new Set<string>();
-    for (const e of snap.edges) {
-      if (e.kind === 'person-event') referencedEventIds.add(e.toEventId);
-      else if (e.kind === 'person-entity') referencedEntityIds.add(e.toEntityId);
-      else if (e.kind === 'event-event') {
-        referencedEventIds.add(e.fromEventId);
-        referencedEventIds.add(e.toEventId);
-      } else if (e.kind === 'event-entity') {
-        referencedEventIds.add(e.fromEventId);
-        referencedEntityIds.add(e.toEntityId);
-      } else if (e.kind === 'entity-entity') {
-        referencedEntityIds.add(e.fromEntityId);
-        referencedEntityIds.add(e.toEntityId);
-      }
-    }
+    // 1) 先做孤儿清理（与配额无关，旧账噪声总是清）
+    const orphanResult = await this.pruneOrphans({ protectEvidenceCount: protectEv, protectWeight: protectW });
+    deletedEvents += orphanResult.deletedEvents;
+    deletedEntities += orphanResult.deletedEntities;
 
-    // 1) 孤儿即删（孤儿 = 噪声，extractor 已在写入层拦截新增孤儿；这里仅清旧账）
-    for (const ev of snap.events) {
-      if (!referencedEventIds.has(ev.id) && !isProtected(ev)) {
-        await this.store.deleteEventCascade(ev.id);
-        deletedEvents++;
-      }
-    }
-    for (const en of snap.entities) {
-      if (!referencedEntityIds.has(en.id) && !isProtected(en)) {
-        await this.store.deleteEntityCascade(en.id);
-        deletedEntities++;
-      }
-    }
+    // 之后再加载快照（pruneOrphans 已写入存储）
+    const snap = await this.store.loadAll();
 
     // 2) 超额：用 PageRank 评估节点重要性，把"老旧 + 低权 + PR 边缘"的优先丢
     //    PageRank 个性化向量给人/物/事不同的种子权重，让"重要性 人>物>事"直接体现在分数偏置上。
@@ -1041,18 +1072,56 @@ export class RelationService {
       }
     }
 
-    // 3) 边配额：保留 weight 最高的（同样应用滞回）
+    // 3) 边配额：按 `weight · 端点PR平均` 升序删（弱权且连接边缘节点的边优先丢）
     if (quota.maxEdges > 0) {
       const refreshed = await this.store.loadAll();
       if (refreshed.edges.length >= triggerCount(quota.maxEdges)) {
         const toDelete = refreshed.edges.length - targetCount(quota.maxEdges);
         if (toDelete > 0) {
-          const sorted = [...refreshed.edges].sort((a, b) => (a.weight ?? 0) - (b.weight ?? 0));
+          const edgeEndpoints = (e: RelationEdge): [string, string] => {
+            switch (e.kind) {
+              case 'person-event':
+                return [e.fromPersonId, e.toEventId];
+              case 'person-entity':
+                return [e.fromPersonId, e.toEntityId];
+              case 'person-person':
+                return [e.fromPersonId, e.toPersonId];
+              case 'event-event':
+                return [e.fromEventId, e.toEventId];
+              case 'event-entity':
+                return [e.fromEventId, e.toEntityId];
+              case 'entity-entity':
+                return [e.fromEntityId, e.toEntityId];
+            }
+          };
+          const edgeScore = (e: RelationEdge): number => {
+            const [a, b] = edgeEndpoints(e);
+            const prAvg = ((pr.get(a) ?? 0) + (pr.get(b) ?? 0)) / 2;
+            return (e.weight ?? 0) * Math.max(prAvg, 1e-6);
+          };
+          const sorted = [...refreshed.edges].sort((a, b) => edgeScore(a) - edgeScore(b));
           for (const e of sorted.slice(0, toDelete)) {
             await this.store.deleteEdge(e.id);
             deletedEdges++;
           }
         }
+      }
+    }
+
+    // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"
+    {
+      const after = await this.store.loadAll();
+      for (const p of after.persons) {
+        const score = pr.get(p.id);
+        if (score !== undefined) await this.store.upsertPerson({ ...p, lastPageRank: score, lastPageRankAt: now });
+      }
+      for (const ev of after.events) {
+        const score = pr.get(ev.id);
+        if (score !== undefined) await this.store.upsertEvent({ ...ev, lastPageRank: score, lastPageRankAt: now });
+      }
+      for (const en of after.entities) {
+        const score = pr.get(en.id);
+        if (score !== undefined) await this.store.upsertEntity({ ...en, lastPageRank: score, lastPageRankAt: now });
       }
     }
 

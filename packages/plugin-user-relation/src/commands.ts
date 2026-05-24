@@ -306,26 +306,38 @@ export function registerRelationCommands(
     })
     .action(async argv => {
       const ev = options?.eviction;
-      if (!ev || (ev.maxEvents <= 0 && ev.maxEntities <= 0 && ev.maxEdges <= 0)) {
-        return '⚠ 未配置淘汰阈值（maxEvents / maxEntities / maxEdges 均 ≤0），无法手动压缩。';
-      }
-      ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（PageRank 计算 + 容量淘汰），请稍候…');
+      ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
       const before = await service.loadAll();
-      const r = await service.evictByQuota({
-        maxEvents: ev.maxEvents,
-        maxEntities: ev.maxEntities,
-        maxEdges: ev.maxEdges,
-        pagerankDamping: ev.pagerankDamping,
-        pagerankIterations: ev.pagerankIterations,
-        pagerankEpsilon: ev.pagerankEpsilon,
-        hysteresisPct: ev.hysteresisPct,
-        targetPct: ev.targetPct,
-      });
+      // step 1: 无条件清孤儿（与配额无关，旧账噪声总是清）
+      const orphans = await service.pruneOrphans();
+      let deletedEvents = orphans.deletedEvents;
+      let deletedEntities = orphans.deletedEntities;
+      let deletedEdges = 0;
+      // step 2: 配额有设置才执行超额淘汰
+      if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+        const r = await service.evictByQuota({
+          maxEvents: ev.maxEvents,
+          maxEntities: ev.maxEntities,
+          maxEdges: ev.maxEdges,
+          pagerankDamping: ev.pagerankDamping,
+          pagerankIterations: ev.pagerankIterations,
+          pagerankEpsilon: ev.pagerankEpsilon,
+          hysteresisPct: ev.hysteresisPct,
+          targetPct: ev.targetPct,
+        });
+        // evictByQuota 内部也会调 pruneOrphans，但幂等安全（第二次 deletedEvents=0），直接叠加不会重复
+        deletedEvents = r.deletedEvents;
+        deletedEntities = r.deletedEntities;
+        deletedEdges = r.deletedEdges;
+      }
+      const eventCap = ev?.maxEvents ?? 0;
+      const entityCap = ev?.maxEntities ?? 0;
+      const edgeCap = ev?.maxEdges ?? 0;
       return [
         '✓ 关系图压缩完成：',
-        `- 事件：${before.events.length} → ${before.events.length - r.deletedEvents}（删 ${r.deletedEvents}，阈 ${ev.maxEvents}）`,
-        `- 实体：${before.entities.length} → ${before.entities.length - r.deletedEntities}（删 ${r.deletedEntities}，阈 ${ev.maxEntities}）`,
-        `- 边：  ${before.edges.length} → ${before.edges.length - r.deletedEdges}（删 ${r.deletedEdges}，阈 ${ev.maxEdges}）`,
+        `- 事件：${before.events.length} → ${before.events.length - deletedEvents}（删 ${deletedEvents}，阈 ${eventCap}）`,
+        `- 实体：${before.entities.length} → ${before.entities.length - deletedEntities}（删 ${deletedEntities}，阈 ${entityCap}）`,
+        `- 边：  ${before.edges.length} → ${before.edges.length - deletedEdges}（删 ${deletedEdges}，阈 ${edgeCap}）`,
       ].join('\n');
     });
 
@@ -347,9 +359,13 @@ export function registerRelationCommands(
         `⏳ 正在体检关系图：先压缩再整理（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
       );
       const lines: string[] = ['✓ 关系图体检完成：'];
-      // step 1: compress
+      const before = await service.loadAll();
+      // step 1: 无条件清孤儿 + 可选超额淘汰
+      const orphans = await service.pruneOrphans();
+      let dEvents = orphans.deletedEvents;
+      let dEntities = orphans.deletedEntities;
+      let dEdges = 0;
       if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
-        const before = await service.loadAll();
         const r = await service.evictByQuota({
           maxEvents: ev.maxEvents,
           maxEntities: ev.maxEntities,
@@ -360,11 +376,16 @@ export function registerRelationCommands(
           hysteresisPct: ev.hysteresisPct,
           targetPct: ev.targetPct,
         });
+        dEvents = r.deletedEvents;
+        dEntities = r.deletedEntities;
+        dEdges = r.deletedEdges;
         lines.push(
-          `[1/2] 压缩：事件 ${before.events.length}→${before.events.length - r.deletedEvents}，实体 ${before.entities.length}→${before.entities.length - r.deletedEntities}，边 ${before.edges.length}→${before.edges.length - r.deletedEdges}`,
+          `[1/2] 压缩：事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}，边 ${before.edges.length}→${before.edges.length - dEdges}`,
         );
       } else {
-        lines.push('[1/2] 压缩：跳过（未配置淘汰阈值）');
+        lines.push(
+          `[1/2] 压缩：仅清孤儿（未配置淘汰阈值）—事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}`,
+        );
       }
       // step 2: consolidate
       const cr = await service.consolidate({
