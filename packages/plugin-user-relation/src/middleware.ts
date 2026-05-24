@@ -30,6 +30,10 @@ export interface MiddlewareConfig {
   maxParticipantsPerEvent: number;
   /** 共现伙伴小节展示上限；0 关闭 */
   maxCooccurrencePartners: number;
+  /** 全局热点：最近被提及的事件数量，0 关闭 */
+  maxGlobalHotEvents: number;
+  /** 全局热点：最近被提及的实体数量，0 关闭 */
+  maxGlobalHotEntities: number;
   /** 仅 sessionType === 'group' 时注入 */
   groupOnly: boolean;
   debug: boolean;
@@ -211,6 +215,37 @@ async function buildBlock(
         const label = displayLabel(personById.get(otherId), otherId);
         const sampleTitles = v.eventTitles.slice(0, 2).join('、');
         lines.push(`- ${label} 共现 ${v.count} 次（如：${sampleTitles}）`);
+      }
+    }
+  }
+
+  // ---- 全局热点（与当前用户子图无关，按 lastMentionedAt 全局排序） ----
+  if (cfg.maxGlobalHotEvents > 0 || cfg.maxGlobalHotEntities > 0) {
+    const snap = await service.loadAll();
+    const hotEvents =
+      cfg.maxGlobalHotEvents > 0
+        ? [...snap.events]
+            .filter(e => typeof e.lastMentionedAt === 'number')
+            .sort((a, b) => (b.lastMentionedAt ?? 0) - (a.lastMentionedAt ?? 0))
+            .slice(0, cfg.maxGlobalHotEvents)
+        : [];
+    const hotEntities =
+      cfg.maxGlobalHotEntities > 0
+        ? [...snap.entities]
+            .filter(e => typeof e.lastMentionedAt === 'number')
+            .sort((a, b) => (b.lastMentionedAt ?? 0) - (a.lastMentionedAt ?? 0))
+            .slice(0, cfg.maxGlobalHotEntities)
+        : [];
+    if (hotEvents.length > 0 || hotEntities.length > 0) {
+      lines.push('');
+      lines.push('## 最近热点（全局）');
+      for (const ev of hotEvents) {
+        const sum = ev.summary ? ` — ${truncate(ev.summary, 40)}` : '';
+        lines.push(`- 事件: ${ev.title}${sum}`);
+      }
+      for (const ent of hotEntities) {
+        const sum = ent.summary ? ` — ${truncate(ent.summary, 40)}` : '';
+        lines.push(`- 实体: ${ent.name} [${ent.entityKind}]${sum}`);
       }
     }
   }
