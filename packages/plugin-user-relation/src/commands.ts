@@ -11,6 +11,7 @@
 import type { Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import { sendPlatformMessage } from '@aalis/plugin-platform-api';
+import { isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
@@ -161,6 +162,49 @@ export function registerRelationCommands(
     }
     return `✓ 已清理 ${deleted} 个孤立点（人物 ${orphanPersons.length} / 事件 ${orphanEvents.length} / 实体 ${orphanEntities.length}）`;
   });
+
+  // ---- cleanup fake-self ----
+  // 专门清理 LLM 误抽出的 「Aalis 本体」占位 person：aalis:aalis / aalis:self / onebot:aalis 等。
+  // 依赖 extractor.isPlaceholderSelfPersonId 保证与写入守卫口径一致。
+  cmds
+    .command(
+      'relation.cleanup.fake-self',
+      '清理所有 Aalis 本体占位 person（aalis:aalis / aalis:self / onebot:aalis 等）',
+      {
+        authority: 3,
+      },
+    )
+    .option('dry-run', '--dry-run', { description: '只列出会被删的节点，不实际删除' })
+    .action(async argv => {
+      const snap = await service.loadAll();
+      const fakes = snap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId));
+      if (fakes.length === 0) return '✓ 未发现 Aalis 本体占位。';
+      const dry = argv.options['dry-run'] === true;
+      const lines: string[] = [
+        dry ? `[dry-run] 将删除 ${fakes.length} 个占位 person：` : `已删除 ${fakes.length} 个占位 person：`,
+      ];
+      let edgesTotal = 0;
+      for (const p of fakes) {
+        if (dry) {
+          const incident = snap.edges.filter(
+            ed =>
+              (ed.kind === 'person-event' && ed.fromPersonId === p.id) ||
+              (ed.kind === 'person-entity' && ed.fromPersonId === p.id) ||
+              (ed.kind === 'person-person' && (ed.fromPersonId === p.id || ed.toPersonId === p.id)),
+          );
+          lines.push(`- ${p.id}  ${p.displayName ?? ''}  (级联 ${incident.length} 边)`);
+          edgesTotal += incident.length;
+        } else {
+          const r = await service.deletePerson(p.platform, p.userId);
+          lines.push(`- ${p.id}  ${p.displayName ?? ''}  (级联删 ${r.deletedEdges} 边)`);
+          edgesTotal += r.deletedEdges;
+        }
+      }
+      lines.push(
+        dry ? `[dry-run] 合计会级联删 ${edgesTotal} 边。去掉 --dry-run 实际执行。` : `合计级联删 ${edgesTotal} 边。`,
+      );
+      return lines.join('\n');
+    });
 
   cmds
     .command('relation.cleanup.all', '⚠ 危险：清空整个关系图（需要 --yes 确认）', {

@@ -351,4 +351,60 @@ describe('plugin-user-relation: extractor', () => {
     // person-person 边因含 self 占位 → 不应有
     expect(snap.edges.filter(e => e.kind === 'person-person')).toHaveLength(0);
   });
+
+  it('self-placeholder 守卫扩展：aalis:self / onebot:aalis / telegram:bot 等变种全部拦截', async () => {
+    // 用户实际数据库里出现过 `aalis:self`（旧 fallback `Aalis(self)` 被 LLM 拆出）
+    // 和 `onebot:aalis`（LLM 拿到真实平台名却把 userId 编成 "aalis"）等变种。
+    const llmJson = JSON.stringify({
+      persons: [
+        { platform: 'aalis', userId: 'self', displayName: 'Aalis' },
+        { platform: 'aalis', userId: 'me', displayName: 'Aalis' },
+        { platform: 'onebot', userId: 'aalis', displayName: 'Aalis' },
+        { platform: 'telegram', userId: 'bot', displayName: 'Aalis' },
+        { platform: 'discord', userId: 'assistant', displayName: 'Aalis' },
+        { platform: 'onebot', userId: 'a', displayName: 'Alice' }, // 真实用户，应保留
+      ],
+      entities: [{ refKey: 'e1', name: '测试', entityKind: 'topic', evidence: { messageIds: ['m1'], quote: '测试' } }],
+      personEntityEdges: [
+        {
+          personPlatform: 'onebot',
+          personUserId: 'aalis',
+          entityRefKey: 'e1',
+          role: 'mentioned',
+          evidence: { messageIds: ['m1'], quote: '测试' },
+        },
+        {
+          personPlatform: 'aalis',
+          personUserId: 'self',
+          entityRefKey: 'e1',
+          role: 'mentioned',
+          evidence: { messageIds: ['m1'], quote: '测试' },
+        },
+        {
+          personPlatform: 'onebot',
+          personUserId: 'a',
+          entityRefKey: 'e1',
+          role: 'enthusiast',
+          evidence: { messageIds: ['m1'], quote: '测试' },
+        },
+      ],
+    });
+    const { mem, service, extractor } = await setup(llmJson);
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '测试', 'Alice'));
+    const res = await extractor.triggerNow('sess1');
+    expect(res.status).toBe('ok');
+
+    const snap = await service.loadAll();
+    const personIds = snap.persons.map(p => p.id).sort();
+    // 所有 5 种占位变体均不应入库
+    expect(personIds).not.toContain('aalis:self');
+    expect(personIds).not.toContain('aalis:me');
+    expect(personIds).not.toContain('onebot:aalis');
+    expect(personIds).not.toContain('telegram:bot');
+    expect(personIds).not.toContain('discord:assistant');
+    // 真实用户 alice 应保留
+    expect(personIds).toContain('onebot:a');
+    // 只剩 alice 的那条 person-entity 边
+    expect(snap.edges.filter(e => e.kind === 'person-entity')).toHaveLength(1);
+  });
 });
