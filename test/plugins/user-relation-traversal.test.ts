@@ -24,7 +24,7 @@ describe('plugin-user-relation: 多层遍历', () => {
         toPersonId: 'onebot:b',
         relationType: 'friend',
       });
-      const sub = await svc.traverseSubgraph({ startPersonIds: ['onebot:a'], maxDepth: 0, maxBreadth: 10 });
+      const sub = await svc.traverseSubgraph({ startNodeIds: ['onebot:a'], maxDepth: 0, maxBreadth: 10 });
       const ids = new Set(sub.persons.map(p => p.id));
       expect(ids.has('onebot:a')).toBe(true);
       expect(ids.has('onebot:b')).toBe(true);
@@ -42,7 +42,7 @@ describe('plugin-user-relation: 多层遍历', () => {
         relationType: 'friend',
       });
       await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev.id, role: 'participant' });
-      const sub = await svc.traverseSubgraph({ startPersonIds: ['onebot:a'], maxDepth: 1, maxBreadth: 10 });
+      const sub = await svc.traverseSubgraph({ startNodeIds: ['onebot:a'], maxDepth: 1, maxBreadth: 10 });
       const ids = new Set(sub.persons.map(p => p.id));
       expect(ids.has('onebot:a')).toBe(true);
       expect(ids.has('onebot:b')).toBe(true);
@@ -58,7 +58,7 @@ describe('plugin-user-relation: 多层遍历', () => {
       await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev.id, role: 'participant' });
       await svc.addPersonEventEdge({ fromPersonId: 'onebot:b', toEventId: ev.id, role: 'participant' });
       await svc.addPersonEventEdge({ fromPersonId: 'onebot:c', toEventId: ev.id, role: 'participant' });
-      const sub = await svc.traverseSubgraph({ startPersonIds: ['onebot:a'], maxDepth: 2, maxBreadth: 10 });
+      const sub = await svc.traverseSubgraph({ startNodeIds: ['onebot:a'], maxDepth: 2, maxBreadth: 10 });
       const ids = new Set(sub.persons.map(p => p.id));
       expect(ids.has('onebot:b')).toBe(true);
       expect(ids.has('onebot:c')).toBe(true);
@@ -89,7 +89,7 @@ describe('plugin-user-relation: 多层遍历', () => {
         relationType: 'friend',
         weight: 0.8,
       });
-      const sub = await svc.traverseSubgraph({ startPersonIds: ['onebot:a'], maxDepth: 1, maxBreadth: 2 });
+      const sub = await svc.traverseSubgraph({ startNodeIds: ['onebot:a'], maxDepth: 1, maxBreadth: 2 });
       const ids = new Set(sub.persons.map(p => p.id));
       // 最高 weight 的 b、d 应入选，c 不应
       expect(ids.has('onebot:b')).toBe(true);
@@ -106,7 +106,7 @@ describe('plugin-user-relation: 多层遍历', () => {
         toPersonId: 'onebot:b',
         relationType: 'friend',
       });
-      const sub = await svc.traverseSubgraph({ startPersonIds: ['onebot:a'], maxDepth: 10, maxBreadth: 10 });
+      const sub = await svc.traverseSubgraph({ startNodeIds: ['onebot:a'], maxDepth: 10, maxBreadth: 10 });
       expect(sub.persons.length).toBe(2);
     });
   });
