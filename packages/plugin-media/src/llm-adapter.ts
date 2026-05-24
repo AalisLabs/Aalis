@@ -101,6 +101,44 @@ function detectAudioFormat(buf: Buffer): string {
  */
 import { getMediaRuntime } from './runtime.js';
 
+/**
+ * 把 image attachment.data 规范化为 `data:image/...;base64,...` 形式，
+ * 供 LLM provider 直接消费。处理策略：
+ * - 已经是 `data:image/...;base64,...` → 原样返回
+ * - http(s) URL → 原样返回（由 provider 自行下载）
+ * - 其他形式（storage URI `data:/...`、相对路径 `data/...`、file://、绝对路径）
+ *   → 走 materializeAttachment 物化到 storage，读出字节后转为 data URL
+ *
+ * 历史上 adapter-onebot 直接把 `data/images/...` 这种"相对路径 ref"塞进
+ * att.data。ollama provider 的 resolveBinary 只认 data URI / http / file:// / 绝对路径，
+ * 这种 bare 相对路径会被原样当作 base64 送给 Ollama，触发 `illegal base64 data at input byte N`。
+ * 在 media 层统一规范化为 data URL 后，所有 vision provider 都能正确解码。
+ */
+async function imageToBase64DataUrl(data: string, mimeType?: string): Promise<string> {
+  if (/^data:image\/[^;]+;base64,/.test(data)) return data;
+  if (/^https?:\/\//i.test(data)) return data;
+  const mat = await materializeAttachment(data);
+  if (!mat) throw new Error(`无法物化图片附件: ${data.slice(0, 80)}`);
+  try {
+    const { storage } = getMediaRuntime();
+    let buf: Buffer;
+    if (mat.uri) {
+      const raw = (await storage.readFile(mat.uri)) as Uint8Array;
+      buf = Buffer.from(raw);
+    } else {
+      const { proc } = getMediaRuntime();
+      const raw = await proc.readExternalFile(mat.path);
+      buf = Buffer.from(raw);
+    }
+    // 尝试基于扩展名 / 显式 mime 推断；缺省走 png（绝大多数 vision provider 都接受）
+    const ext = mat.path.match(/\.([a-zA-Z0-9]+)$/)?.[1]?.toLowerCase();
+    const mime = mimeType ?? (ext ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'image/png');
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } finally {
+    await mat.cleanup();
+  }
+}
+
 async function audioToBase64(data: string): Promise<string> {
   const mat = await materializeAttachment(data);
   if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
@@ -162,7 +200,7 @@ function wrapLLMAsProcessor(
       // image / video.passthrough 走 images[] 字段
       // 视频帧已被预处理拆为图片再调用本方法。
       if (cap === 'vision' || cap === 'document.image' || cap === 'video.passthrough') {
-        const images = input.attachments.map(a => a.data);
+        const images = await Promise.all(input.attachments.map(a => imageToBase64DataUrl(a.data, a.mimeType)));
         const messages: Message[] = [{ role: 'user', content: prompt, images }];
         _ctx.logger.debug(`[${cap}.describe] ${llm.id} maxTokens=${maxTokens}, think=${think}`);
         const resp = await llm.chat({ messages, maxTokens, think });

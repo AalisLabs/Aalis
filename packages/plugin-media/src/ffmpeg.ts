@@ -201,13 +201,13 @@ export async function materializeAttachment(
 ): Promise<{ path: string; uri?: string; cleanup: () => Promise<void> } | null> {
   const { proc, storage } = getMediaRuntime();
   try {
-    if (data.startsWith('data:')) {
-      const m = data.match(/^data:([^;]+);base64,(.+)$/);
-      if (!m) return null;
-      const ext = m[1].split('/')[1] || 'bin';
+    // data URI（必须带 `;base64,`）：区分于 storage URI `data:/...`
+    const dataUriMatch = data.match(/^data:([^;]+);base64,(.+)$/);
+    if (dataUriMatch) {
+      const ext = dataUriMatch[1].split('/')[1] || 'bin';
       const tmp = await proc.makeTempDir('media-att');
       const uri = `${tmp.uri}/att.${ext}`;
-      await storage.writeFile(uri, Buffer.from(m[2], 'base64'));
+      await storage.writeFile(uri, Buffer.from(dataUriMatch[2], 'base64'));
       return { path: `${tmp.path}/att.${ext}`, uri, cleanup: tmp.cleanup };
     }
     if (data.startsWith('file://')) {
@@ -217,11 +217,18 @@ export async function materializeAttachment(
       const r = await safeDownloadToTemp(data, { imageOnly: false });
       return r;
     }
-    // storage URI（如 data:/images/...）→ 解析到本地路径
+    // storage URI（如 data:/images/...）→ 解析到本地路径。
+    // 同时兼容历史相对路径（如 `data/images/...`，缺少冒号），统一补成 storage URI。
+    let storageUri: string | null = null;
     if (/^[a-z][a-z0-9_-]*:\//.test(data)) {
+      storageUri = data;
+    } else if (/^data\//.test(data)) {
+      storageUri = `data:/${data.slice('data/'.length)}`;
+    }
+    if (storageUri) {
       try {
-        const local = await storage.resolveLocalPath?.(data, 'read');
-        if (local) return { path: local, uri: data, cleanup: async () => {} };
+        const local = await storage.resolveLocalPath?.(storageUri, 'read');
+        if (local) return { path: local, uri: storageUri, cleanup: async () => {} };
       } catch {
         /* fall through */
       }
