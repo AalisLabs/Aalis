@@ -1505,6 +1505,91 @@ export class RelationService {
       }
     }
 
+    // ─── (1.5) 别名候选「宽召回」：仅当启用 LLM 时执行
+    //   目的：让 LLM 看到「绝航」vs「绝航号」、「绝航」vs「Project Juehang」等
+    //         normalize 后不严格相等、但语义上可能同一对象的候选对。
+    //   召回路径（同 entityKind 内）：
+    //     (a) name 子串包含（短名 ⊂ 长名，且短名长度 ≥ 2）
+    //     (b) 一方的某个 alias 与另一方的 name 归一相等
+    //   严判：交给 verifyAliasPair LLM，否决就不合并。
+    //   未启用 LLM 时跳过本段（保持原算法的零误合并保证）。
+    if (opts.autoLink && llmModel && opts.llm) {
+      const entitiesByKind = new Map<string, EntityNode[]>();
+      for (const e of snapshot.entities) {
+        const k = e.entityKind ?? 'topic';
+        if (!entitiesByKind.has(k)) entitiesByKind.set(k, []);
+        entitiesByKind.get(k)!.push(e);
+      }
+      for (const list of entitiesByKind.values()) {
+        for (let i = 0; i < list.length; i++) {
+          for (let j = i + 1; j < list.length; j++) {
+            const a = list[i];
+            const b = list[j];
+            const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+            if (reportedEntityPairs.has(k)) continue;
+
+            const an = normalizeName(a.name);
+            const bn = normalizeName(b.name);
+            if (!an || !bn) continue;
+            const aAliasNorms = (a.aliases ?? []).map(normalizeName).filter(Boolean);
+            const bAliasNorms = (b.aliases ?? []).map(normalizeName).filter(Boolean);
+
+            // (a) 子串包含
+            const minSubstrLen = 2;
+            const substring =
+              (an.length >= minSubstrLen && bn.includes(an)) || (bn.length >= minSubstrLen && an.includes(bn));
+            // (b) 别名/名互覆盖
+            const aliasCover =
+              aAliasNorms.includes(bn) || bAliasNorms.includes(an) || aAliasNorms.some(x => bAliasNorms.includes(x));
+
+            if (!substring && !aliasCover) continue;
+            reportedEntityPairs.add(k);
+
+            const reason = substring ? `名称子串包含：${a.name} ↔ ${b.name}` : `别名/名互覆盖：${a.name} ↔ ${b.name}`;
+            aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
+
+            const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
+            if (!v.isSame) {
+              llmRejected++;
+              if (opts.llm.ctx.logger) {
+                opts.llm.ctx.logger.info(
+                  `[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`,
+                );
+              }
+              continue;
+            }
+            llmVerified++;
+            const exists = snapshot.edges.some(
+              e =>
+                e.kind === 'entity-entity' &&
+                e.relationType === 'is-alias-of' &&
+                ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
+                  (e.fromEntityId === b.id && e.toEntityId === a.id)),
+            );
+            if (!exists) {
+              const now = Date.now();
+              await this.store.upsertEdge({
+                id: globalThis.crypto.randomUUID(),
+                kind: 'entity-entity',
+                fromEntityId: a.id,
+                toEntityId: b.id,
+                relationType: 'is-alias-of',
+                directed: true,
+                weight: 0.7,
+                description: `consolidate LLM 确认：${reason}`,
+                firstSeenAt: now,
+                lastReinforcedAt: now,
+                evidence: [],
+              });
+              aliasEdgesCreated++;
+              const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
+              mergedCanonicals.add(mergeResult.effectiveCanonicalId);
+            }
+          }
+        }
+      }
+    }
+
     // ─── (2) 自动 part-of：实体 name 是事件 title 子串
     const minNameLen = 2; // 太短的名字易误判，跳过
     for (const ent of snapshot.entities) {
@@ -1833,9 +1918,22 @@ function buildAdjacency(edges: RelationEdge[]) {
 
 // ----- 辅助函数 -----
 
-/** 节点名称归一化：去首尾空白、压缩中间空白、小写化。用于按名去重。 */
+/** 节点名称归一化：用于按名去重和别名匹配。
+ *  零风险规则（确定无歧义、不会错合）：
+ *    - NFKC 归一化：全角→半角、合字拆分（避免「ＡＢＣ」与「ABC」不等）
+ *    - trim + 压缩中间空白
+ *    - 小写化（英文）
+ *    - 去除外层装饰符号：中英文书名号《》「」『』【】〈〉、引号""''""''、括号（）()[]、空格
+ *      （这些只是"装饰"，不改变指代——「《绝航》」与「绝航」是同一对象）
+ *  注意：不做后缀剥离（如「OL/手游/PC版」），那种语义合并交给 LLM verifyAliasPair。
+ */
 function normalizeName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+  return name
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[《》「」『』【】〈〉()()[\]"'""''""''`]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 /** weight 累积：增量按 (1 - weight) * delta 收敛，避免无限增长 */
