@@ -574,24 +574,29 @@ class OllamaClient {
   /**
    * 通用二进制资源解析（图片 / 音频）。
    * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示获取失败。
+   * 所有返回都会去除空白字符（Ollama 校验时不容忍 base64 内的换行/空格，
+   * 否则会返回 `illegal base64 data at input byte N` 错误）。
    */
   private async resolveBinary(data: string, label: 'image' | 'audio'): Promise<string | null> {
+    const sanitize = (b64: string) => b64.replace(/[\s\r\n]+/g, '');
+    const trimmed = data.trim();
+
     // data URI → 提取 base64（兼容多参数格式如 data:image/png;charset=utf-8;base64,...）
-    const dataMatch = data.match(/^data:[^,]*;base64,(.+)$/);
-    if (dataMatch) return dataMatch[1];
+    const dataMatch = trimmed.match(/^data:[^,]*;base64,(.+)$/);
+    if (dataMatch) return sanitize(dataMatch[1]);
 
     // HTTP(S) URL → 下载并转 base64
-    if (/^https?:\/\//i.test(data)) {
+    if (/^https?:\/\//i.test(trimmed)) {
       try {
-        const res = await fetch(data, { signal: AbortSignal.timeout(30000) });
+        const res = await fetch(trimmed, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) {
-          this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${data}`);
+          this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${trimmed}`);
           return null;
         }
         const buf = Buffer.from(await res.arrayBuffer());
         return buf.toString('base64');
       } catch (err) {
-        this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}异常: ${data}`, err);
+        this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}异常: ${trimmed}`, err);
         return null;
       }
     }
@@ -601,15 +606,15 @@ class OllamaClient {
     // 触发 `illegal base64 data` 错误。读盘失败则按裸 base64 透传。
     // 注意：不再治「相对 cwd 路径」场景（原先的 resolve(process.cwd(), data)）——
     // 该场景脆弱且需要插件层读 process.cwd，请上游只传绝对路径或 file://。
-    if (this.proc && (data.startsWith('file://') || data.startsWith('/'))) {
+    if (this.proc && (trimmed.startsWith('file://') || trimmed.startsWith('/'))) {
       try {
-        const bytes = await this.proc.readExternalFile(data);
+        const bytes = await this.proc.readExternalFile(trimmed);
         return Buffer.from(bytes).toString('base64');
       } catch {
-        return data;
+        return sanitize(trimmed);
       }
     }
-    return data;
+    return sanitize(trimmed);
   }
 
   /**
