@@ -763,6 +763,7 @@ function buildExtractionPrompt(
       '**第 2 步：建 Event 时强制做 part-of 挂载**',
       '  若 event.title 中含有任何第 1 步抽出的 entity 名（或其同义词），**必须同时输出一条 eventEntityEdges relationType="part-of"** 把事件挂在 entity 下。',
       '  反面：「打《绝航》」「讨论《绝航》」两个事件如果都不挂 part-of → 绝航这个 entity 被切碎、两个事件成为孤岛、参与/讨论的人无法通过绝航相互发现 → **这是关系图最严重的失效**。',
+      '  ⚠️ **part-of 与 about 互斥**：对同一对 (event, entity) 只输出**一条** event-entity 边。若事件围绕该对象展开（讨论/打/玩/合作），优先用 `part-of`；只有当事件只是顺带"提到"而非围绕它时才用 `about`。**不要同时输出两条**（part-of + about），后端会判为重复并合并。',
       '',
       '**第 3 步：人通过共享 entity / event 自然连接（不要伪造 person-person 边）**',
       '  当两人 A、B 都指向同一 entity（如都玩绝航、都在某店打卡）→ 直接输出 A→entity 和 B→entity 两条 personEntityEdge 即可，图层会自动呈现 A↔entity↔B 的二跳连接。',

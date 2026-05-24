@@ -606,4 +606,145 @@ describe('plugin-user-relation: evictByQuota', () => {
     expect(snap.events.find(e => e.id === ids[0])).toBeUndefined();
     expect(snap.events.find(e => e.id === ids[1])).toBeUndefined();
   });
+
+  it('优先淘汰裸 event（无 part-of 锚、且参与者间无 person-person 边）', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'u1');
+    await service.observePerson('onebot', 'u2');
+
+    // 锚定 event：有 part-of 实体
+    const anchorEnt = await service.createEntity({ name: '某游戏', entityKind: 'work', evidence: [] });
+    const anchored = await service.createEvent({ title: '打某游戏', evidence: [] });
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u1',
+      toEventId: anchored.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+    await service.addEventEntityEdge({
+      fromEventId: anchored.id,
+      toEntityId: anchorEnt.id,
+      relationType: 'part-of',
+      evidence: [ev()],
+    });
+
+    // 裸 event：仅有 person-event 边，无 part-of、无 person-person
+    const naked = await service.createEvent({ title: '裸事件', evidence: [] });
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u1',
+      toEventId: naked.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u2',
+      toEventId: naked.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+
+    // 配额限定为 1，应优先淘汰裸 event
+    const result = await service.evictByQuota({
+      maxEvents: 1,
+      maxEntities: 0,
+      maxEdges: 0,
+      hysteresisPct: 0,
+      targetPct: 1,
+    });
+    expect(result.deletedEvents).toBe(1);
+    const snap = await service.loadAll();
+    // 锚定 event 应保留，裸 event 应被删
+    expect(snap.events.find(e => e.id === anchored.id)).toBeDefined();
+    expect(snap.events.find(e => e.id === naked.id)).toBeUndefined();
+  });
+
+  it('有 person-person 边连接参与者时，event 不视为裸（不优先淘汰）', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'u1');
+    await service.observePerson('onebot', 'u2');
+
+    // event A：无 part-of，但参与者 u1↔u2 有 person-person 边 → 不裸
+    const evA = await service.createEvent({ title: 'A', evidence: [] });
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u1',
+      toEventId: evA.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u2',
+      toEventId: evA.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+    await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:u1',
+      toPersonId: 'onebot:u2',
+      relationType: 'friend',
+      directed: false,
+      evidence: [ev()],
+    });
+
+    // event B：完全裸 (单一参与者，无任何锚)
+    const evB = await service.createEvent({ title: 'B', evidence: [] });
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u1',
+      toEventId: evB.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+
+    const result = await service.evictByQuota({
+      maxEvents: 1,
+      maxEntities: 0,
+      maxEdges: 0,
+      hysteresisPct: 0,
+      targetPct: 1,
+    });
+    expect(result.deletedEvents).toBe(1);
+    const snap = await service.loadAll();
+    expect(snap.events.find(e => e.id === evA.id)).toBeDefined();
+    expect(snap.events.find(e => e.id === evB.id)).toBeUndefined();
+  });
+});
+
+describe('plugin-user-relation: consolidate event-entity 去重', () => {
+  it('同一 (event,entity) 同时 about + part-of → 合并保留 part-of，evidence 合并', async () => {
+    const { service } = await makeService();
+    const event = await service.createEvent({ title: '跨会话逻辑答疑', evidence: [] });
+    const entity = await service.createEntity({ name: '跨会话逻辑', entityKind: 'topic', evidence: [] });
+
+    await service.addEventEntityEdge({
+      fromEventId: event.id,
+      toEntityId: entity.id,
+      relationType: 'about',
+      evidence: [ev({ messageIds: ['a1'] })],
+    });
+    await service.addEventEntityEdge({
+      fromEventId: event.id,
+      toEntityId: entity.id,
+      relationType: 'part-of',
+      evidence: [ev({ messageIds: ['a2'] })],
+    });
+
+    const before = await service.loadAll();
+    const eeBefore = before.edges.filter(
+      e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
+    );
+    expect(eeBefore.length).toBe(2);
+
+    const r = await service.consolidate({});
+    expect(r.eventEdgesNormalized).toBeGreaterThanOrEqual(1);
+
+    const after = await service.loadAll();
+    const eeAfter = after.edges.filter(
+      e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
+    );
+    expect(eeAfter.length).toBe(1);
+    expect(eeAfter[0].relationType).toBe('part-of');
+    // evidence 合并去重：含两条 messageIds
+    const flat = (eeAfter[0].evidence ?? []).flatMap(e => e.messageIds ?? []);
+    expect(flat).toContain('a1');
+    expect(flat).toContain('a2');
+  });
 });
