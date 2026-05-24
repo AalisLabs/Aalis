@@ -59,7 +59,7 @@ function extractMentions(text: string): string[] {
 /** 单用户平台：无需发送者前缀（不存在多人说话歧义） */
 const SINGLE_USER_PLATFORMS = new Set(['webui', 'cli']);
 
-function buildIncomingContent(incoming: IncomingMessage, opts?: { skipDescs?: boolean }): string {
+function buildIncomingContent(incoming: IncomingMessage): string {
   const useSenderPrefix = !SINGLE_USER_PLATFORMS.has(incoming.platform);
   let content = useSenderPrefix ? prefixSender(incoming.content, incoming.nickname, incoming.userId) : incoming.content;
 
@@ -72,16 +72,13 @@ function buildIncomingContent(incoming: IncomingMessage, opts?: { skipDescs?: bo
   }
 
   // 把 plugin-media 写入的 _attachmentDescriptions 按 attachments 顺序追加。
-  // skipDescs=true 时跳过：说明 plugin-media preprocessor 已在 agent:input:before 阶段
-  // 把描述以 [图片: d] 格式写入了 msg.content，此处若再追加裸描述会造成重复。
-  if (!opts?.skipDescs) {
-    const attDescs = incoming._attachmentDescriptions;
-    if (attDescs && attDescs.length > 0) {
-      const lines = attDescs.filter((d): d is string => Boolean(d?.trim()));
-      if (lines.length > 0) {
-        const attachText = lines.join('\n');
-        content = content ? `${content}\n${attachText}` : attachText;
-      }
+  // 这里是图片/语音/视频描述合入对话文本的**唯一**入口——preprocessor 只负责写 descs，不改 content。
+  const attDescs = incoming._attachmentDescriptions;
+  if (attDescs && attDescs.length > 0) {
+    const lines = attDescs.filter((d): d is string => Boolean(d?.trim()));
+    if (lines.length > 0) {
+      const attachText = lines.join('\n');
+      content = content ? `${content}\n${attachText}` : attachText;
     }
   }
 
@@ -110,10 +107,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
 
     async archiveIncoming(incoming: IncomingMessage) {
-      // preprocessor（agent:input:before）若已运行，会同时设置 _attachmentDescriptions
-      // 并把描述以 [图片: d] 形式追加到 content。此时 buildIncomingContent 不应再追加裸描述。
-      const descWasPreset = Boolean(incoming._attachmentDescriptions);
-
       const working: IncomingMessage = {
         ...incoming,
         attachments: incoming.attachments ? incoming.attachments.map(a => ({ ...a })) : incoming.attachments,
@@ -134,7 +127,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
 
-      const content = buildIncomingContent(working, { skipDescs: descWasPreset });
+      const content = buildIncomingContent(working);
 
       // 把会话身份信息存入 metadata，供向量检索/上下文渲染等场景使用
       const meta: Record<string, unknown> = {};
