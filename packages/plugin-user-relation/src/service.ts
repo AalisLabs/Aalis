@@ -12,7 +12,9 @@
  */
 import type { RelationStore } from './store.js';
 import type {
+  EntityEntityEdge,
   EntityNode,
+  EventEntityEdge,
   EventEventEdge,
   EventNode,
   EvidenceRef,
@@ -298,6 +300,7 @@ export class RelationService {
     role: PersonEntityEdge['role'];
     sentiment?: PersonEntityEdge['sentiment'];
     weight?: number;
+    description?: string;
     evidence?: EvidenceRef[];
   }): Promise<PersonEntityEdge> {
     const snapshot = await this.store.loadAll();
@@ -316,6 +319,7 @@ export class RelationService {
         role: input.role,
         sentiment: input.sentiment,
         weight: clamp01(input.weight ?? 0.5),
+        description: trimDescription(input.description),
         firstSeenAt: now,
         lastReinforcedAt: now,
         evidence: trimEvidence(input.evidence ?? []),
@@ -336,7 +340,8 @@ export class RelationService {
     if (
       finalRole === strongest.role &&
       isEvidenceFullyCovered(input.evidence ?? [], strongest.evidence) &&
-      sameLink.length === 1
+      sameLink.length === 1 &&
+      !input.description
     ) {
       return strongest;
     }
@@ -348,6 +353,7 @@ export class RelationService {
       role: finalRole,
       sentiment: input.sentiment ?? strongest.sentiment,
       weight: clamp01(reinforceWeight(strongest.weight, input.weight ?? 0.1)),
+      description: trimDescription(input.description) ?? strongest.description,
       lastReinforcedAt: now,
       evidence: allEvidence,
     };
@@ -380,6 +386,7 @@ export class RelationService {
     relationType: string;
     directed?: boolean;
     weight?: number;
+    description?: string;
     evidence?: EvidenceRef[];
   }): Promise<EventEventEdge> {
     const normalizedType = input.relationType.trim().toLowerCase().replace(/\s+/g, '-');
@@ -387,10 +394,11 @@ export class RelationService {
     const existing = await this.findEventEventEdge(input.fromEventId, input.toEventId, normalizedType, directed);
     const now = Date.now();
     if (existing) {
-      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence) && !input.description) return existing;
       const merged: EventEventEdge = {
         ...existing,
         weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+        description: trimDescription(input.description) ?? existing.description,
         lastReinforcedAt: now,
         evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
       };
@@ -405,6 +413,7 @@ export class RelationService {
       relationType: normalizedType,
       directed,
       weight: clamp01(input.weight ?? 0.5),
+      description: trimDescription(input.description),
       firstSeenAt: now,
       lastReinforcedAt: now,
       evidence: trimEvidence(input.evidence ?? []),
@@ -431,6 +440,128 @@ export class RelationService {
     });
   }
 
+  // ----- Edge: event → entity -----
+
+  async addEventEntityEdge(input: {
+    fromEventId: string;
+    toEntityId: string;
+    relationType: string;
+    weight?: number;
+    description?: string;
+    evidence?: EvidenceRef[];
+  }): Promise<EventEntityEdge> {
+    const normalizedType = input.relationType.trim().toLowerCase().replace(/\s+/g, '-');
+    const existing = await this.findEventEntityEdge(input.fromEventId, input.toEntityId, normalizedType);
+    const now = Date.now();
+    if (existing) {
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence) && !input.description) return existing;
+      const merged: EventEntityEdge = {
+        ...existing,
+        weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+        description: trimDescription(input.description) ?? existing.description,
+        lastReinforcedAt: now,
+        evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
+      };
+      await this.store.upsertEdge(merged);
+      return merged;
+    }
+    const fresh: EventEntityEdge = {
+      id: globalThis.crypto.randomUUID(),
+      kind: 'event-entity',
+      fromEventId: input.fromEventId,
+      toEntityId: input.toEntityId,
+      relationType: normalizedType,
+      directed: true,
+      weight: clamp01(input.weight ?? 0.5),
+      description: trimDescription(input.description),
+      firstSeenAt: now,
+      lastReinforcedAt: now,
+      evidence: trimEvidence(input.evidence ?? []),
+    };
+    await this.store.upsertEdge(fresh);
+    return fresh;
+  }
+
+  async findEventEntityEdge(
+    fromEventId: string,
+    toEntityId: string,
+    relationType: string,
+  ): Promise<EventEntityEdge | undefined> {
+    const snapshot = await this.store.loadAll();
+    return snapshot.edges.find(
+      (e): e is EventEntityEdge =>
+        e.kind === 'event-entity' &&
+        e.relationType === relationType &&
+        e.fromEventId === fromEventId &&
+        e.toEntityId === toEntityId,
+    );
+  }
+
+  // ----- Edge: entity → entity -----
+
+  async addEntityEntityEdge(input: {
+    fromEntityId: string;
+    toEntityId: string;
+    relationType: string;
+    directed?: boolean;
+    weight?: number;
+    description?: string;
+    evidence?: EvidenceRef[];
+  }): Promise<EntityEntityEdge> {
+    if (input.fromEntityId === input.toEntityId) {
+      throw new Error('addEntityEntityEdge: 不允许实体自环');
+    }
+    const normalizedType = input.relationType.trim().toLowerCase().replace(/\s+/g, '-');
+    const directed = input.directed ?? isDirectedEntityEntityRelation(normalizedType);
+    const existing = await this.findEntityEntityEdge(input.fromEntityId, input.toEntityId, normalizedType, directed);
+    const now = Date.now();
+    if (existing) {
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence) && !input.description) return existing;
+      const merged: EntityEntityEdge = {
+        ...existing,
+        weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+        description: trimDescription(input.description) ?? existing.description,
+        lastReinforcedAt: now,
+        evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
+      };
+      await this.store.upsertEdge(merged);
+      return merged;
+    }
+    const fresh: EntityEntityEdge = {
+      id: globalThis.crypto.randomUUID(),
+      kind: 'entity-entity',
+      fromEntityId: input.fromEntityId,
+      toEntityId: input.toEntityId,
+      relationType: normalizedType,
+      directed,
+      weight: clamp01(input.weight ?? 0.5),
+      description: trimDescription(input.description),
+      firstSeenAt: now,
+      lastReinforcedAt: now,
+      evidence: trimEvidence(input.evidence ?? []),
+    };
+    await this.store.upsertEdge(fresh);
+    return fresh;
+  }
+
+  async findEntityEntityEdge(
+    fromEntityId: string,
+    toEntityId: string,
+    relationType: string,
+    directed: boolean,
+  ): Promise<EntityEntityEdge | undefined> {
+    const snapshot = await this.store.loadAll();
+    return snapshot.edges.find((e): e is EntityEntityEdge => {
+      if (e.kind !== 'entity-entity') return false;
+      if (e.relationType !== relationType) return false;
+      if (directed) return e.fromEntityId === fromEntityId && e.toEntityId === toEntityId;
+      return (
+        (e.fromEntityId === fromEntityId && e.toEntityId === toEntityId) ||
+        (e.fromEntityId === toEntityId && e.toEntityId === fromEntityId)
+      );
+    });
+  }
+
   // ----- Edge: person → event -----
 
   async addPersonEventEdge(input: {
@@ -439,6 +570,7 @@ export class RelationService {
     role: PersonEventEdge['role'];
     sentiment?: PersonEventEdge['sentiment'];
     weight?: number;
+    description?: string;
     evidence?: EvidenceRef[];
   }): Promise<PersonEventEdge> {
     const snapshot = await this.store.loadAll();
@@ -457,6 +589,7 @@ export class RelationService {
         role: input.role,
         sentiment: input.sentiment,
         weight: clamp01(input.weight ?? 0.5),
+        description: trimDescription(input.description),
         firstSeenAt: now,
         lastReinforcedAt: now,
         evidence: trimEvidence(input.evidence ?? []),
@@ -475,7 +608,8 @@ export class RelationService {
     if (
       finalRole === strongest.role &&
       isEvidenceFullyCovered(input.evidence ?? [], strongest.evidence) &&
-      sameLink.length === 1
+      sameLink.length === 1 &&
+      !input.description
     ) {
       return strongest;
     }
@@ -486,6 +620,7 @@ export class RelationService {
       role: finalRole,
       sentiment: input.sentiment ?? strongest.sentiment,
       weight: clamp01(reinforceWeight(strongest.weight, input.weight ?? 0.1)),
+      description: trimDescription(input.description) ?? strongest.description,
       lastReinforcedAt: now,
       evidence: allEvidence,
     };
@@ -505,6 +640,7 @@ export class RelationService {
     relationType: string;
     directed?: boolean;
     weight?: number;
+    description?: string;
     evidence?: EvidenceRef[];
   }): Promise<PersonPersonEdge> {
     const normalizedType = normalizeRelationType(input.relationType);
@@ -522,10 +658,11 @@ export class RelationService {
     const existing = await this.findPersonPersonEdge(input.fromPersonId, input.toPersonId, normalizedType, directed);
     const now = Date.now();
     if (existing) {
-      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence)) return existing;
+      if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence) && !input.description) return existing;
       const merged: PersonPersonEdge = {
         ...existing,
         weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
+        description: trimDescription(input.description) ?? existing.description,
         lastReinforcedAt: now,
         evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
       };
@@ -540,6 +677,7 @@ export class RelationService {
       relationType: normalizedType,
       directed,
       weight: clamp01(input.weight ?? 0.5),
+      description: trimDescription(input.description),
       firstSeenAt: now,
       lastReinforcedAt: now,
       evidence: trimEvidence(input.evidence ?? []),
@@ -634,6 +772,12 @@ export class RelationService {
       else if (e.kind === 'event-event') {
         referencedEventIds.add(e.fromEventId);
         referencedEventIds.add(e.toEventId);
+      } else if (e.kind === 'event-entity') {
+        referencedEventIds.add(e.fromEventId);
+        referencedEntityIds.add(e.toEntityId);
+      } else if (e.kind === 'entity-entity') {
+        referencedEntityIds.add(e.fromEntityId);
+        referencedEntityIds.add(e.toEntityId);
       }
     }
 
@@ -740,10 +884,23 @@ export class RelationService {
     maxBreadth: number;
   }): Promise<{ persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] }> {
     const empty = { persons: [], events: [], entities: [], edges: [] };
-    if (opts.maxDepth < 0 || opts.maxBreadth < 1 || opts.startPersonIds.length === 0) return empty;
+    if (opts.maxDepth < 0 || opts.maxBreadth < 0 || opts.startPersonIds.length === 0) return empty;
+    // 0 = 不限，内部映射为足够大的有限数（避免 Infinity 与 BFS 深度比较出错）
+    const effectiveDepth = opts.maxDepth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxDepth;
+    const effectiveBreadth = opts.maxBreadth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxBreadth;
 
     const snapshot = await this.store.loadAll();
-    const { peByPerson, ppByPerson, peByEvent, pentByPerson, pentByEntity, eeByEvent } = buildAdjacency(snapshot.edges);
+    const {
+      peByPerson,
+      ppByPerson,
+      peByEvent,
+      pentByPerson,
+      pentByEntity,
+      eeByEvent,
+      eentByEvent,
+      eentByEntity,
+      ententByEntity,
+    } = buildAdjacency(snapshot.edges);
 
     const visited = new Set<string>();
     type NodeKind = 'person' | 'event' | 'entity';
@@ -758,7 +915,7 @@ export class RelationService {
     while (queue.length > 0) {
       const cur = queue.shift();
       if (!cur) break;
-      if (cur.depth >= opts.maxDepth) continue;
+      if (cur.depth >= effectiveDepth) continue;
       const neighbors: Array<{ id: string; kind: NodeKind; weight: number }> = [];
       if (cur.kind === 'person') {
         for (const e of ppByPerson.get(cur.id) ?? []) {
@@ -779,10 +936,20 @@ export class RelationService {
           const other = e.fromEventId === cur.id ? e.toEventId : e.fromEventId;
           neighbors.push({ id: other, kind: 'event', weight: e.weight });
         }
+        for (const e of eentByEvent.get(cur.id) ?? []) {
+          neighbors.push({ id: e.toEntityId, kind: 'entity', weight: e.weight });
+        }
       } else {
         // entity
         for (const e of pentByEntity.get(cur.id) ?? []) {
           neighbors.push({ id: e.fromPersonId, kind: 'person', weight: e.weight });
+        }
+        for (const e of eentByEntity.get(cur.id) ?? []) {
+          neighbors.push({ id: e.fromEventId, kind: 'event', weight: e.weight });
+        }
+        for (const e of ententByEntity.get(cur.id) ?? []) {
+          const other = e.fromEntityId === cur.id ? e.toEntityId : e.fromEntityId;
+          neighbors.push({ id: other, kind: 'entity', weight: e.weight });
         }
       }
       neighbors.sort((a, b) => b.weight - a.weight);
@@ -792,7 +959,7 @@ export class RelationService {
         visited.add(n.id);
         queue.push({ id: n.id, kind: n.kind, depth: cur.depth + 1 });
         added++;
-        if (added >= opts.maxBreadth) break;
+        if (added >= effectiveBreadth) break;
       }
     }
 
@@ -803,6 +970,8 @@ export class RelationService {
       if (e.kind === 'person-event') return visited.has(e.fromPersonId) && visited.has(e.toEventId);
       if (e.kind === 'person-entity') return visited.has(e.fromPersonId) && visited.has(e.toEntityId);
       if (e.kind === 'event-event') return visited.has(e.fromEventId) && visited.has(e.toEventId);
+      if (e.kind === 'event-entity') return visited.has(e.fromEventId) && visited.has(e.toEntityId);
+      if (e.kind === 'entity-entity') return visited.has(e.fromEntityId) && visited.has(e.toEntityId);
       return visited.has(e.fromPersonId) && visited.has(e.toPersonId);
     });
     return { persons, events, entities, edges };
@@ -843,6 +1012,12 @@ export class RelationService {
       } else if (e.kind === 'event-event') {
         addAdj(e.fromEventId, e.toEventId, e);
         if (!e.directed) addAdj(e.toEventId, e.fromEventId, e);
+      } else if (e.kind === 'event-entity') {
+        addAdj(e.fromEventId, e.toEntityId, e);
+        addAdj(e.toEntityId, e.fromEventId, e);
+      } else if (e.kind === 'entity-entity') {
+        addAdj(e.fromEntityId, e.toEntityId, e);
+        if (!e.directed) addAdj(e.toEntityId, e.fromEntityId, e);
       } else {
         addAdj(e.fromPersonId, e.toPersonId, e);
         if (!e.directed) addAdj(e.toPersonId, e.fromPersonId, e);
@@ -913,6 +1088,11 @@ function buildAdjacency(edges: RelationEdge[]) {
   const pentByPerson = new Map<string, PersonEntityEdge[]>();
   const pentByEntity = new Map<string, PersonEntityEdge[]>();
   const eeByEvent = new Map<string, EventEventEdge[]>();
+  // event-entity 双向索引（事件节点 / 实体节点都可能作为 BFS 起点）
+  const eentByEvent = new Map<string, EventEntityEdge[]>();
+  const eentByEntity = new Map<string, EventEntityEdge[]>();
+  // entity-entity 索引：无向边两端均插入
+  const ententByEntity = new Map<string, EntityEntityEdge[]>();
   const push = <K, V>(map: Map<K, V[]>, k: K, v: V) => {
     const arr = map.get(k);
     if (arr) arr.push(v);
@@ -928,12 +1108,28 @@ function buildAdjacency(edges: RelationEdge[]) {
     } else if (e.kind === 'event-event') {
       push(eeByEvent, e.fromEventId, e);
       if (!e.directed) push(eeByEvent, e.toEventId, e);
+    } else if (e.kind === 'event-entity') {
+      push(eentByEvent, e.fromEventId, e);
+      push(eentByEntity, e.toEntityId, e);
+    } else if (e.kind === 'entity-entity') {
+      push(ententByEntity, e.fromEntityId, e);
+      if (!e.directed) push(ententByEntity, e.toEntityId, e);
     } else {
       push(ppByPerson, e.fromPersonId, e);
       if (!e.directed) push(ppByPerson, e.toPersonId, e);
     }
   }
-  return { peByPerson, ppByPerson, peByEvent, pentByPerson, pentByEntity, eeByEvent };
+  return {
+    peByPerson,
+    ppByPerson,
+    peByEvent,
+    pentByPerson,
+    pentByEntity,
+    eeByEvent,
+    eentByEvent,
+    eentByEntity,
+    ententByEntity,
+  };
 }
 
 // ----- 辅助函数 -----
@@ -1025,4 +1221,18 @@ export function isSymmetricRelation(relationType: string): boolean {
 const DIRECTED_EVENT_EVENT_RELATIONS = new Set<string>(['caused-by', 'follows', 'part-of']);
 function isDirectedEventEventRelation(relationType: string): boolean {
   return DIRECTED_EVENT_EVENT_RELATIONS.has(relationType);
+}
+
+/** entity-entity 边的方向性默认：「part-of / contains / variant-of」有向；「related / opposite」无向 */
+const DIRECTED_ENTITY_ENTITY_RELATIONS = new Set<string>(['part-of', 'contains', 'variant-of']);
+function isDirectedEntityEntityRelation(relationType: string): boolean {
+  return DIRECTED_ENTITY_ENTITY_RELATIONS.has(relationType);
+}
+
+/** description 裁剪：去首尾空白、限长 40 字，空串返回 undefined */
+function trimDescription(d: string | undefined): string | undefined {
+  if (!d) return undefined;
+  const t = d.trim();
+  if (!t) return undefined;
+  return t.length > 40 ? `${t.slice(0, 40)}…` : t;
 }

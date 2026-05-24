@@ -15,7 +15,7 @@ async function setup() {
 
 describe('plugin-user-relation: 多层遍历', () => {
   describe('traverseSubgraph', () => {
-    it('depth=0 仅返回起点（无邻居展开）', async () => {
+    it('depth=0 表示不限：返回全连通子图', async () => {
       const svc = await setup();
       await svc.observePerson('onebot', 'a', 'A');
       await svc.observePerson('onebot', 'b', 'B');
@@ -25,10 +25,10 @@ describe('plugin-user-relation: 多层遍历', () => {
         relationType: 'friend',
       });
       const sub = await svc.traverseSubgraph({ startPersonIds: ['onebot:a'], maxDepth: 0, maxBreadth: 10 });
-      expect(sub.persons.map(p => p.id)).toEqual(['onebot:a']);
-      expect(sub.events).toEqual([]);
-      // 边只保留在 visited 内部，depth=0 时唯一节点是 a，所以 a→b 边不应出现
-      expect(sub.edges).toEqual([]);
+      const ids = new Set(sub.persons.map(p => p.id));
+      expect(ids.has('onebot:a')).toBe(true);
+      expect(ids.has('onebot:b')).toBe(true);
+      expect(sub.edges.length).toBe(1);
     });
 
     it('depth=1 包含直接邻居人与事件', async () => {
