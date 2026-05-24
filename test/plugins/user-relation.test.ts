@@ -961,7 +961,7 @@ describe('plugin-user-relation: renameNode', () => {
 
   it('entity 改名：name 进 aliases，nameHistory 累加', async () => {
     const { service } = await makeService();
-    const en = await service.createEntity({ entityKind: 'organization', name: 'Old Co' });
+    const en = await service.createEntity({ entityKind: 'topic', name: 'Old Co', evidence: [] });
     await service.renameNode({ kind: 'entity', id: en.id, newName: 'Mid Co', reason: 'r1' });
     const a = await service.getEntity(en.id);
     expect(a?.name).toBe('Mid Co');

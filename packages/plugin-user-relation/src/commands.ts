@@ -10,6 +10,7 @@
  */
 import type { Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import { sendPlatformMessage } from '@aalis/plugin-platform-api';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
@@ -188,6 +189,18 @@ export function registerRelationCommands(
       return `✓ 已清空关系图（删除 ${n} 个节点）`;
     });
 
+  /**
+   * 长任务前的"立即反馈"：fire-and-forget 推送一条 ack 给当前会话，
+   * 让用户知道命令已被接到、正在跑（consolidate/compress 在大图上可能跑数秒到数十秒）。
+   * - 失败静默（CLI 会话没有 platform adapter 会抛错，不影响主流程）
+   * - 不 await 完成，纯并发
+   */
+  function ackBackground(sessionId: string, text: string): void {
+    void sendPlatformMessage(ctx, sessionId, text).catch(err => {
+      ctx.logger?.debug?.(`[user-relation] 立即反馈推送失败（可忽略）：${(err as Error).message}`);
+    });
+  }
+
   // ---- consolidate（整理：别名候选 / 自动 part-of / 旧账去重） ----
   cmds
     .command('relation.consolidate', '整理关系图：扫描别名候选、自动 part-of、规范化 PersonEventEdge', {
@@ -198,6 +211,10 @@ export function registerRelationCommands(
     .action(async argv => {
       const autoLink = argv.options['auto-link'] === true;
       const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
+      ackBackground(
+        argv.session.sessionId,
+        `⏳ 正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+      );
       const r = await service.consolidate({
         autoLink,
         triggerSource: 'manual',
@@ -238,11 +255,12 @@ export function registerRelationCommands(
     .command('relation.compress', '关系图压缩：手动触发容量淘汰（PageRank 低分 → 删 events/entities/edges）', {
       authority: 3,
     })
-    .action(async () => {
+    .action(async argv => {
       const ev = options?.eviction;
       if (!ev || (ev.maxEvents <= 0 && ev.maxEntities <= 0 && ev.maxEdges <= 0)) {
         return '⚠ 未配置淘汰阈值（maxEvents / maxEntities / maxEdges 均 ≤0），无法手动压缩。';
       }
+      ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（PageRank 计算 + 容量淘汰），请稍候…');
       const before = await service.loadAll();
       const r = await service.evictByQuota({
         maxEvents: ev.maxEvents,
@@ -275,6 +293,10 @@ export function registerRelationCommands(
       const ev = options?.eviction;
       const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
       const autoLink = argv.options['no-auto-link'] !== true && (options?.consolidateAutoLink ?? true);
+      ackBackground(
+        argv.session.sessionId,
+        `⏳ 正在体检关系图：先压缩再整理（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+      );
       const lines: string[] = ['✓ 关系图体检完成：'];
       // step 1: compress
       if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
