@@ -1,12 +1,29 @@
+import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
 import type { ChatModelRequest, ChatResponse, LLMModel } from '../../packages/plugin-llm-api/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/plugin-message-api/src/index.js';
+import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
+
+/** ExtractorConfig 中测试用例普遍不关心的字段，统一提供默认值以满足 strict 类型。 */
+const EXTRACTOR_DEFAULTS = {
+  evictionEnabled: false,
+  maxEvents: 0,
+  maxEntities: 0,
+  maxEdges: 0,
+  pagerankDamping: 0.85,
+  pagerankIterations: 20,
+  pagerankEpsilon: 1e-4,
+  evictHysteresisPct: 0.2,
+  evictTargetPct: 0.8,
+  consolidateAfterEviction: false,
+  consolidateLLMDisableThinking: true,
+  consolidateAutoLink: false,
+} satisfies Partial<ExtractorConfig>;
 
 /** 构造可注入的 fake LLM model。chat() 返回 cannedResponse；记录最后一次请求供断言 */
 function makeFakeLLM(cannedResponse: string): { model: LLMModel; calls: ChatModelRequest[] } {
@@ -30,6 +47,17 @@ async function setup(llmContent: string) {
   if (!mem) throw new Error('no memory');
   const store = new RelationStore(mem);
   const service = new RelationService(store);
+  // 注册若干 mock platform adapter，让 `getPlatformNames(ctx)` 在测试里也有
+  // 真实集合（{onebot, test}），从而触发 extractor 的 persona-agnostic 平台白名单
+  // 守卫。否则空集会落入 permissive 模式，绕过守卫。
+  const mkMockAdapter = (platform: string): unknown => ({
+    adapterName: `mock-${platform}`,
+    platform,
+    getConnections: () => [],
+    sendMessage: () => Promise.resolve(),
+  });
+  app.ctx.provide('platform', mkMockAdapter('onebot'), { capabilities: ['text'], entryId: 'mock/onebot' });
+  app.ctx.provide('platform', mkMockAdapter('test'), { capabilities: ['text'], entryId: 'mock/test' });
   const { model, calls } = makeFakeLLM(llmContent);
   app.ctx.provide('llm', model, {
     capabilities: ['chat'],
@@ -37,6 +65,7 @@ async function setup(llmContent: string) {
     entryId: 'fake/extractor',
   });
   const extractor = new RelationExtractor(app.ctx, service, {
+    ...EXTRACTOR_DEFAULTS,
     triggerEveryNMessages: 3,
     readWindowSize: 10,
     mode: 'incremental',
@@ -177,12 +206,14 @@ describe('plugin-user-relation: extractor', () => {
     const service = new RelationService(new RelationStore(mem));
     app.ctx.provide('llm', slowLLM, { capabilities: ['chat'], entryId: 'slow/x' });
     const extractor = new RelationExtractor(app.ctx, service, {
+      ...EXTRACTOR_DEFAULTS,
       triggerEveryNMessages: 1,
       readWindowSize: 5,
       mode: 'incremental',
       allNewMaxMessages: 100,
       candidateEventDays: 7,
       candidateEventLimit: 10,
+      senderNeighborhoodEdgeLimit: 0,
       disableThinking: true,
       strictSelfAssertion: false,
       debug: false,
@@ -352,23 +383,30 @@ describe('plugin-user-relation: extractor', () => {
     expect(snap.edges.filter(e => e.kind === 'person-person')).toHaveLength(0);
   });
 
-  it('self-placeholder 守卫扩展：aalis:self / onebot:aalis / telegram:bot 等变种全部拦截', async () => {
-    // 用户实际数据库里出现过 `aalis:self`（旧 fallback `Aalis(self)` 被 LLM 拆出）
-    // 和 `onebot:aalis`（LLM 拿到真实平台名却把 userId 编成 "aalis"）等变种。
+  it('self-placeholder 守卫扩展：platform 不在白名单 + userId 通用占位 全部拦截（persona-agnostic）', async () => {
+    // 新规则（persona-agnostic）：
+    //   - platform 不在 `getPlatformNames(ctx)` 运行时白名单 → 一律视为伪 id 丢弃；
+    //   - userId 命中通用占位 {self, me, bot, assistant} → 一律丢弃。
+    //   - **不**再硬编码 persona 专属词（aalis / 本机器人 / Mia 等）；那种「平台真实但
+    //     userId 是 persona 名」的脏数据（如 `onebot:aalis`）交给
+    //     `/relation cleanup fake-self` 命令手动清理，而不是 extractor 自动拦截
+    //     ——避免 persona 改名时漏 / 误判。
+    // setup() 中已注册 mock `onebot` + `test` adapter，下列其他平台名都不在白名单。
     const llmJson = JSON.stringify({
       persons: [
         { platform: 'aalis', userId: 'self', displayName: 'Aalis' },
         { platform: 'aalis', userId: 'me', displayName: 'Aalis' },
-        { platform: 'onebot', userId: 'aalis', displayName: 'Aalis' },
+        { platform: 'onebot', userId: 'self', displayName: 'Aalis' },
         { platform: 'telegram', userId: 'bot', displayName: 'Aalis' },
         { platform: 'discord', userId: 'assistant', displayName: 'Aalis' },
+        { platform: 'mia', userId: 'mia', displayName: 'Mia' }, // 改名 persona 的伪平台
         { platform: 'onebot', userId: 'a', displayName: 'Alice' }, // 真实用户，应保留
       ],
       entities: [{ refKey: 'e1', name: '测试', entityKind: 'topic', evidence: { messageIds: ['m1'], quote: '测试' } }],
       personEntityEdges: [
         {
           personPlatform: 'onebot',
-          personUserId: 'aalis',
+          personUserId: 'self',
           entityRefKey: 'e1',
           role: 'mentioned',
           evidence: { messageIds: ['m1'], quote: '测试' },
@@ -376,6 +414,13 @@ describe('plugin-user-relation: extractor', () => {
         {
           personPlatform: 'aalis',
           personUserId: 'self',
+          entityRefKey: 'e1',
+          role: 'mentioned',
+          evidence: { messageIds: ['m1'], quote: '测试' },
+        },
+        {
+          personPlatform: 'mia',
+          personUserId: 'mia',
           entityRefKey: 'e1',
           role: 'mentioned',
           evidence: { messageIds: ['m1'], quote: '测试' },
@@ -396,13 +441,15 @@ describe('plugin-user-relation: extractor', () => {
 
     const snap = await service.loadAll();
     const personIds = snap.persons.map(p => p.id).sort();
-    // 所有 5 种占位变体均不应入库
+    // platform 不在白名单 → 全部丢弃（persona 名无关）
     expect(personIds).not.toContain('aalis:self');
     expect(personIds).not.toContain('aalis:me');
-    expect(personIds).not.toContain('onebot:aalis');
     expect(personIds).not.toContain('telegram:bot');
     expect(personIds).not.toContain('discord:assistant');
-    // 真实用户 alice 应保留
+    expect(personIds).not.toContain('mia:mia');
+    // userId 通用占位 → 即便 platform 合法（onebot 在白名单）也丢弃
+    expect(personIds).not.toContain('onebot:self');
+    // 真实用户应保留
     expect(personIds).toContain('onebot:a');
     // 只剩 alice 的那条 person-entity 边
     expect(snap.edges.filter(e => e.kind === 'person-entity')).toHaveLength(1);

@@ -11,7 +11,7 @@
 import type { Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import { sendPlatformMessage } from '@aalis/plugin-platform-api';
-import { isPlaceholderSelfPersonId } from './extractor.js';
+import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
@@ -164,12 +164,15 @@ export function registerRelationCommands(
   });
 
   // ---- cleanup fake-self ----
-  // 专门清理 LLM 误抽出的 「Aalis 本体」占位 person：aalis:aalis / aalis:self / onebot:aalis 等。
-  // 依赖 extractor.isPlaceholderSelfPersonId 保证与写入守卫口径一致。
+  // 专门清理 LLM 误抽出的「伪 person」占位：platform 不在运行时白名单
+  // (`getPlatformNames(ctx)`) 中，或者 userId 命中通用占位词 `{self, me, bot, assistant}`。
+  // 以往的「aalis:aalis / aalis:self / onebot:aalis」都被该规则覆盖，且同时 persona-agnostic
+  // （改 persona 名为 Mia / 任意名字都不需要改代码）。依赖 extractor.isPlaceholderSelfPersonId
+  // 保证与写入守卫、consolidate 三处口径一致。
   cmds
     .command(
       'relation.cleanup.fake-self',
-      '清理所有 Aalis 本体占位 person（aalis:aalis / aalis:self / onebot:aalis 等）',
+      '清理 LLM 误抽的伪 person（platform 不在运行时白名单或 userId 为 self/me/bot/assistant）',
       {
         authority: 3,
       },
@@ -177,11 +180,12 @@ export function registerRelationCommands(
     .option('dry-run', '--dry-run', { description: '只列出会被删的节点，不实际删除' })
     .action(async argv => {
       const snap = await service.loadAll();
-      const fakes = snap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId));
-      if (fakes.length === 0) return '✓ 未发现 Aalis 本体占位。';
+      const knownPlatforms = getKnownPlatformsLower(ctx);
+      const fakes = snap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId, knownPlatforms));
+      if (fakes.length === 0) return '✓ 未发现伪 person。';
       const dry = argv.options['dry-run'] === true;
       const lines: string[] = [
-        dry ? `[dry-run] 将删除 ${fakes.length} 个占位 person：` : `已删除 ${fakes.length} 个占位 person：`,
+        dry ? `[dry-run] 将删除 ${fakes.length} 个伪 person：` : `已删除 ${fakes.length} 个伪 person：`,
       ];
       let edgesTotal = 0;
       for (const p of fakes) {
@@ -262,6 +266,7 @@ export function registerRelationCommands(
       const r = await service.consolidate({
         autoLink,
         triggerSource: 'manual',
+        ctx,
         ...(useLlm && options?.consolidateLLM
           ? {
               llm: {
@@ -365,6 +370,7 @@ export function registerRelationCommands(
       const cr = await service.consolidate({
         autoLink,
         triggerSource: 'manual',
+        ctx,
         ...(useLlm && options?.consolidateLLM
           ? {
               llm: {
