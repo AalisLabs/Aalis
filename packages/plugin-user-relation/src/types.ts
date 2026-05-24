@@ -198,13 +198,22 @@ export type RelationEdge =
 /**
  * 人 → 实体 的关系角色。
  *
- * - `enthusiast`：喜欢/爱好者（"喜欢打三角洲"）
- * - `participant`：参与/使用（"玩三角洲"）
- * - `owner`：拥有（"有 PS5"）
- * - `creator`：创作者（"画了那个表情包"）
- * - `critic`：批评/反对（"讨厌三角洲"）
+ * 关系图记录「结构性连接」——帮助发现「多人通过共同对象形成的社会连接」。
+ * 判断原则：有行为性证据才建边；纯态度/声明交给 plugin-user-profile。
+ *
+ * - `enthusiast`：**深度行为性卷入**（规律参与、制作内容、购买、直播等），
+ *   多人共同 enthusiast 同一实体可揭示隐性社会连接。
+ *   ⚠️ 不是"单句喜欢声明"，那是 user-profile 的画像属性。
+ * - `participant`：参与/使用（"玩三角洲"、"用了这个工具"）
+ * - `owner`：拥有（"有 PS5"、"买了这张专辑"）
+ * - `creator`：创作者（"画了那个表情包"、"做了 mod"）
+ * - `critic`：**主动行为性批评**（写评测、公开对抗、反复表达负面互动），
+ *   不是单次"我不喜欢 X"的吐槽声明。
  * - `visitor`：去过 / 到访（适用于 place）
- * - `mentioned`：仅被提及，态度不明
+ * - `mentioned`：仅被提及，态度不明；可搭配 sentiment 字段
+ *
+ * 纯态度信号（好感/反感/兴趣）请用 `sentiment` 字段附加在任意角色边上，
+ * 不要为此单独选择 enthusiast/critic 角色。
  */
 export type PersonEntityRole = 'enthusiast' | 'participant' | 'owner' | 'creator' | 'critic' | 'visitor' | 'mentioned';
 
