@@ -69,7 +69,15 @@ export function App() {
   /** 当前会话的 todo 列表 */
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
 
-  const [chatWidth, setChatWidth] = useState(420);
+  const [chatWidth, setChatWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 420;
+    const stored = Number(window.localStorage.getItem('aalis:chatWidth'));
+    return Number.isFinite(stored) && stored >= 280 ? stored : 420;
+  });
+  // 持久化 chatWidth
+  useEffect(() => {
+    try { window.localStorage.setItem('aalis:chatWidth', String(chatWidth)); } catch { /* quota */ }
+  }, [chatWidth]);
 
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
@@ -726,12 +734,16 @@ export function App() {
           e.preventDefault();
           const startX = e.clientX;
           const startW = chatWidth;
+          // 在 mousedown 时快照边界：避免 nav-rail:hover 展开或窗口 resize 中途变动
+          const appW = document.querySelector('.app-layout')?.clientWidth ?? window.innerWidth;
+          const navEl = document.querySelector<HTMLElement>('.nav-rail');
+          const navW = navEl?.getBoundingClientRect().width ?? 56;
+          const minContent = 360;
+          const minChat = 280;
+          const maxChat = Math.max(minChat, appW - navW - minContent);
+          // 拖拽期间给 body 加上 class，用 CSS 抑制 nav-rail hover 展开
+          document.body.classList.add('is-dragging-chat');
           const onMove = (ev: MouseEvent) => {
-            const appW = document.querySelector('.app-layout')!.clientWidth;
-            const navW = document.querySelector('.nav-rail')!.clientWidth;
-            const minContent = 360;
-            const minChat = 280;
-            const maxChat = appW - navW - minContent;
             const raw = startW - (ev.clientX - startX);
             setChatWidth(Math.max(minChat, Math.min(maxChat, raw)));
           };
@@ -740,6 +752,7 @@ export function App() {
             document.removeEventListener('mouseup', onUp);
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
+            document.body.classList.remove('is-dragging-chat');
           };
           document.body.style.cursor = 'col-resize';
           document.body.style.userSelect = 'none';
@@ -749,7 +762,7 @@ export function App() {
       />
 
       {/* 右侧固定聊天面板 */}
-      <div className="chat-column" style={{ width: chatWidth, minWidth: chatWidth }}>
+      <div className="chat-column" style={{ width: chatWidth }}>
         <ChatPanel
           messages={messages}
           loading={loading}

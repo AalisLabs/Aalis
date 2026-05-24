@@ -317,9 +317,17 @@ const webuiPages: WebuiPage[] = [
         defaultMaxBreadth: 10,
         refresh: 0,
       },
+    ],
+  },
+  {
+    key: 'user-relation-raw',
+    label: '关系图·原始数据',
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="20"/></svg>',
+    order: 59,
+    content: [
       {
         type: 'tabs',
-        label: '原始数据',
+        label: '原始数据（与关系图共用同一份存储）',
         items: [
           {
             key: 'persons',

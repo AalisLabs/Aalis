@@ -895,10 +895,25 @@ export class RelationService {
       }
     }
 
-    // 2) 超额：按 age/weight 排序删
+    // 2) 超额：按 age / weight / degree 排序删
+    //    分数越大越「容易丢」：长久未强化 + 权重低 + 在图里几乎孤立（度数低）。
+    //    degree 用 sqrt 收敛，避免让超级枢纽节点完全免疫淘汰。
     const now = Date.now();
-    const ageScore = (n: EventNode | EntityNode): number =>
-      (now - n.lastReinforcedAt) / Math.max(n.weight ?? 0.5, 0.05);
+    const degreeById = new Map<string, number>();
+    for (const e of snap.edges) {
+      const ids: string[] = [];
+      if (e.kind === 'person-event') ids.push(e.toEventId);
+      else if (e.kind === 'person-entity') ids.push(e.toEntityId);
+      else if (e.kind === 'event-event') ids.push(e.fromEventId, e.toEventId);
+      else if (e.kind === 'event-entity') ids.push(e.fromEventId, e.toEntityId);
+      else if (e.kind === 'entity-entity') ids.push(e.fromEntityId, e.toEntityId);
+      for (const id of ids) degreeById.set(id, (degreeById.get(id) ?? 0) + 1);
+    }
+    const ageScore = (n: EventNode | EntityNode): number => {
+      const w = Math.max(n.weight ?? 0.5, 0.05);
+      const d = Math.sqrt(Math.max(degreeById.get(n.id) ?? 0, 0) + 1); // 1..∞
+      return (now - n.lastReinforcedAt) / (w * d);
+    };
 
     if (quota.maxEvents > 0) {
       const remainingEvents = (await this.store.loadAll()).events.filter(e => !isProtected(e));
