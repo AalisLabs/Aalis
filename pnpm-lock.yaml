@@ -1740,6 +1740,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-platform-api':
+        specifier: workspace:*
+        version: link:../plugin-platform-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
