@@ -61,6 +61,16 @@ export interface EventNode {
   lastReinforcedAt: number;
   /** 提取该事件的证据列表 */
   evidence: EvidenceRef[];
+  /**
+   * 多次发生 / 重复提及时累计的发生时间戳列表（首次创建时为 [firstSeenAt]）。
+   * 严格按 title 去重后，每次合并会追加一个时间戳，保留时间维度。
+   */
+  occurrences?: number[];
+  /**
+   * 节点权重 0~1。每次按 title 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。
+   * 老节点未设置则视为 0.5。
+   */
+  weight?: number;
 }
 
 /**
@@ -92,6 +102,8 @@ export interface EntityNode {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** 节点权重 0~1。每次按 (kind, name) 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。 */
+  weight?: number;
 }
 
 /** 人 → 事件 的参与角色 */
