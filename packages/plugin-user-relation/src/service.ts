@@ -91,6 +91,8 @@ export class RelationService {
           ...existing,
           displayName: displayName ?? existing.displayName,
           lastSeenAt: now,
+          lastMentionedAt: now,
+          mentionCount: (existing.mentionCount ?? 0) + 1,
         }
       : {
           id: RelationService.personId(platform, userId),
@@ -99,6 +101,8 @@ export class RelationService {
           displayName,
           firstSeenAt: now,
           lastSeenAt: now,
+          lastMentionedAt: now,
+          mentionCount: 1,
         };
     await this.store.upsertPerson(node);
     return node;
@@ -128,6 +132,8 @@ export class RelationService {
         summary: input.summary ?? dup.summary,
         category: input.category ?? dup.category,
         lastReinforcedAt: now,
+        lastMentionedAt: now,
+        mentionCount: (dup.mentionCount ?? 0) + 1,
         evidence: trimEvidence([...(input.evidence ?? []), ...dup.evidence]),
         occurrences: [...(dup.occurrences ?? [dup.firstSeenAt]), now],
         weight: clamp01((dup.weight ?? 0.5) + 0.3),
@@ -142,6 +148,8 @@ export class RelationService {
       category: input.category,
       firstSeenAt: now,
       lastReinforcedAt: now,
+      lastMentionedAt: now,
+      mentionCount: 1,
       evidence: trimEvidence(input.evidence ?? []),
       occurrences: [now],
       weight: 0.5,
@@ -208,6 +216,8 @@ export class RelationService {
         aliases: mergedAliases,
         summary: input.summary ?? dup.summary,
         lastReinforcedAt: now,
+        lastMentionedAt: now,
+        mentionCount: (dup.mentionCount ?? 0) + 1,
         evidence: trimEvidence([...(input.evidence ?? []), ...dup.evidence]),
         weight: clamp01((dup.weight ?? 0.5) + 0.3),
       };
@@ -222,6 +232,8 @@ export class RelationService {
       summary: input.summary,
       firstSeenAt: now,
       lastReinforcedAt: now,
+      lastMentionedAt: now,
+      mentionCount: 1,
       evidence: trimEvidence(input.evidence ?? []),
       weight: 0.5,
     };
@@ -580,13 +592,95 @@ export class RelationService {
     );
     const now = Date.now();
 
-    if (sameLink.length === 0) {
+    // ─── 第 1 步：按 role 分桶，去除同 role 重复行 ───
+    const byRole = new Map<PersonEventEdge['role'], PersonEventEdge>();
+    for (const e of sameLink) {
+      const prev = byRole.get(e.role);
+      if (!prev) {
+        byRole.set(e.role, e);
+      } else {
+        // 同 role 多条：保留较早的，合并 evidence/权重，删除新的
+        const folded: PersonEventEdge = {
+          ...prev,
+          firstSeenAt: Math.min(prev.firstSeenAt, e.firstSeenAt),
+          lastReinforcedAt: Math.max(prev.lastReinforcedAt, e.lastReinforcedAt),
+          weight: clamp01(Math.max(prev.weight, e.weight)),
+          sentiment: prev.sentiment ?? e.sentiment,
+          description: prev.description ?? e.description,
+          evidence: trimEvidence([...prev.evidence, ...e.evidence]),
+        };
+        byRole.set(e.role, folded);
+        await this.store.deleteEdge(e.id);
+      }
+    }
+
+    // ─── 第 2 步：决定 input 的归属（吸收规则） ───
+    // R1: initiator 吸收 participant —— 若加入 input 后两者并存，participant 并入 initiator
+    // R2: 任何非 witness 角色吸收 witness —— witness 仅在「单独存在」时保留
+    // 其它角色 (target / reporter) 与 initiator / participant 可独立并存
+    const absorberFor = (
+      role: PersonEventEdge['role'],
+      others: Set<PersonEventEdge['role']>,
+    ): PersonEventEdge['role'] => {
+      if (role === 'participant' && others.has('initiator')) return 'initiator';
+      if (role === 'witness') {
+        const candidates = [...others].filter(r => r !== 'witness');
+        if (candidates.length > 0) {
+          return candidates.reduce((a, b) =>
+            (PERSON_EVENT_ROLE_RANK[a] ?? 0) >= (PERSON_EVENT_ROLE_RANK[b] ?? 0) ? a : b,
+          );
+        }
+      }
+      return role;
+    };
+
+    const presentRoles = new Set(byRole.keys());
+    // 把 input 也加入一起考虑
+    const all = new Set(presentRoles);
+    all.add(input.role);
+    // 先解决 input.role
+    const inputTargetRole = absorberFor(input.role, all);
+
+    // ─── 第 3 步：把已存在的旧 role 中需要被吸收的也并入 ───
+    const finalRoles = new Set<PersonEventEdge['role']>();
+    finalRoles.add(inputTargetRole);
+    for (const r of presentRoles) {
+      const tgt = absorberFor(r, all);
+      if (tgt === r) finalRoles.add(r);
+      else {
+        // r 被吸收到 tgt：把这条 role 的 evidence 转移给吸收者
+        const absorbed = byRole.get(r);
+        const absorber = byRole.get(tgt);
+        if (absorbed && absorber) {
+          const merged: PersonEventEdge = {
+            ...absorber,
+            firstSeenAt: Math.min(absorber.firstSeenAt, absorbed.firstSeenAt),
+            lastReinforcedAt: Math.max(absorber.lastReinforcedAt, absorbed.lastReinforcedAt),
+            weight: clamp01(Math.max(absorber.weight, absorbed.weight)),
+            sentiment: absorber.sentiment ?? absorbed.sentiment,
+            description: absorber.description ?? absorbed.description,
+            evidence: trimEvidence([...absorber.evidence, ...absorbed.evidence]),
+          };
+          byRole.set(tgt, merged);
+        } else if (absorbed && !absorber) {
+          // 吸收者尚不存在（input 即将创建），先临时改 role 让它存到 inputTargetRole 上
+          byRole.set(tgt, { ...absorbed, role: tgt });
+        }
+        if (absorbed) await this.store.deleteEdge(absorbed.id);
+        byRole.delete(r);
+        finalRoles.add(tgt);
+      }
+    }
+
+    // ─── 第 4 步：把 input 写入 inputTargetRole 对应的边 ───
+    const target = byRole.get(inputTargetRole);
+    if (!target) {
       const fresh: PersonEventEdge = {
         id: globalThis.crypto.randomUUID(),
         kind: 'person-event',
         fromPersonId: input.fromPersonId,
         toEventId: input.toEventId,
-        role: input.role,
+        role: inputTargetRole,
         sentiment: input.sentiment,
         weight: clamp01(input.weight ?? 0.5),
         description: trimDescription(input.description),
@@ -598,36 +692,29 @@ export class RelationService {
       return fresh;
     }
 
-    const strongest = sameLink.reduce((a, b) =>
-      (PERSON_EVENT_ROLE_RANK[a.role] ?? 0) >= (PERSON_EVENT_ROLE_RANK[b.role] ?? 0) ? a : b,
-    );
-    const inputRank = PERSON_EVENT_ROLE_RANK[input.role] ?? 0;
-    const strongestRank = PERSON_EVENT_ROLE_RANK[strongest.role] ?? 0;
-    const finalRole = inputRank > strongestRank ? input.role : strongest.role;
-
+    // 命中已有 role 行：强化
     if (
-      finalRole === strongest.role &&
-      isEvidenceFullyCovered(input.evidence ?? [], strongest.evidence) &&
-      sameLink.length === 1 &&
-      !input.description
+      isEvidenceFullyCovered(input.evidence ?? [], target.evidence) &&
+      !input.description &&
+      input.sentiment === undefined
     ) {
-      return strongest;
+      if (target.role !== inputTargetRole) {
+        const fixed: PersonEventEdge = { ...target, role: inputTargetRole };
+        await this.store.upsertEdge(fixed);
+        return fixed;
+      }
+      return target;
     }
 
-    const allEvidence = trimEvidence([...(input.evidence ?? []), ...sameLink.flatMap(e => e.evidence)]);
     const merged: PersonEventEdge = {
-      ...strongest,
-      role: finalRole,
-      sentiment: input.sentiment ?? strongest.sentiment,
-      weight: clamp01(reinforceWeight(strongest.weight, input.weight ?? 0.1)),
-      description: trimDescription(input.description) ?? strongest.description,
+      ...target,
+      role: inputTargetRole,
+      sentiment: input.sentiment ?? target.sentiment,
+      weight: clamp01(reinforceWeight(target.weight, input.weight ?? 0.1)),
+      description: trimDescription(input.description) ?? target.description,
       lastReinforcedAt: now,
-      evidence: allEvidence,
+      evidence: trimEvidence([...(input.evidence ?? []), ...target.evidence]),
     };
-
-    for (const e of sameLink) {
-      if (e.id !== strongest.id) await this.store.deleteEdge(e.id);
-    }
     await this.store.upsertEdge(merged);
     return merged;
   }
@@ -879,12 +966,16 @@ export class RelationService {
    * 返回子图包含访问过的节点之间的全部已存在边（不仅 BFS 树边），便于上层渲染完整局部结构。
    */
   async traverseSubgraph(opts: {
-    startPersonIds: string[];
+    /** @deprecated 使用 startNodeIds（兼容字段）。任意节点 id（person/event/entity）都接受 */
+    startPersonIds?: string[];
+    /** 起点节点 id 列表，按 snapshot 自动推断 kind */
+    startNodeIds?: string[];
     maxDepth: number;
     maxBreadth: number;
   }): Promise<{ persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] }> {
     const empty = { persons: [], events: [], entities: [], edges: [] };
-    if (opts.maxDepth < 0 || opts.maxBreadth < 0 || opts.startPersonIds.length === 0) return empty;
+    const starts = opts.startNodeIds ?? opts.startPersonIds ?? [];
+    if (opts.maxDepth < 0 || opts.maxBreadth < 0 || starts.length === 0) return empty;
     // 0 = 不限，内部映射为足够大的有限数（避免 Infinity 与 BFS 深度比较出错）
     const effectiveDepth = opts.maxDepth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxDepth;
     const effectiveBreadth = opts.maxBreadth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxBreadth;
@@ -902,14 +993,27 @@ export class RelationService {
       ententByEntity,
     } = buildAdjacency(snapshot.edges);
 
-    const visited = new Set<string>();
     type NodeKind = 'person' | 'event' | 'entity';
+    // 起点 kind 推断：先查 persons/events/entities 集合
+    const personIdSet0 = new Set(snapshot.persons.map(p => p.id));
+    const eventIdSet0 = new Set(snapshot.events.map(e => e.id));
+    const entityIdSet0 = new Set(snapshot.entities.map(e => e.id));
+    const inferKind = (id: string): NodeKind | undefined => {
+      if (personIdSet0.has(id)) return 'person';
+      if (eventIdSet0.has(id)) return 'event';
+      if (entityIdSet0.has(id)) return 'entity';
+      // 兜底：含冒号当 person（兼容 platform:userId 即便尚未入库）
+      return id.includes(':') ? 'person' : undefined;
+    };
+
+    const visited = new Set<string>();
     const queue: Array<{ id: string; kind: NodeKind; depth: number }> = [];
-    for (const sid of opts.startPersonIds) {
-      if (!visited.has(sid)) {
-        visited.add(sid);
-        queue.push({ id: sid, kind: 'person', depth: 0 });
-      }
+    for (const sid of starts) {
+      if (visited.has(sid)) continue;
+      const k = inferKind(sid);
+      if (!k) continue;
+      visited.add(sid);
+      queue.push({ id: sid, kind: k, depth: 0 });
     }
 
     while (queue.length > 0) {
@@ -1077,6 +1181,157 @@ export class RelationService {
     res.sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt);
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
     return res.slice(0, limit);
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 关系图整理（consolidate）—— 手动 / 周期触发的清扫与发现
+  // 1) 别名候选发现：人物 displayName 与 实体 name/aliases 的高相似对，给出候选
+  //    （不自动合并，只输出报告供用户决定；若 confidence 极高且开启 autoLink，则建 is-alias-of 边）
+  // 2) 自动 part-of：实体 name 出现在事件 title 中 → 建 event-entity[relationType=part-of]
+  // 3) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
+  // 4) 报告：返回结构化结果，调用方按需展示
+  // ────────────────────────────────────────────────────────────────
+  async consolidate(opts: { autoLink?: boolean } = {}): Promise<{
+    aliasCandidates: Array<{
+      aId: string;
+      bId: string;
+      aKind: 'person' | 'entity';
+      bKind: 'person' | 'entity';
+      reason: string;
+    }>;
+    aliasEdgesCreated: number;
+    partOfEdgesCreated: number;
+    eventEdgesNormalized: number;
+  }> {
+    const snapshot = await this.store.loadAll();
+    const aliasCandidates: Array<{
+      aId: string;
+      bId: string;
+      aKind: 'person' | 'entity';
+      bKind: 'person' | 'entity';
+      reason: string;
+    }> = [];
+    let aliasEdgesCreated = 0;
+    let partOfEdgesCreated = 0;
+    let eventEdgesNormalized = 0;
+
+    // ─── (1) 别名候选：实体之间 name/aliases 完全相同（不同 id）→ 高置信
+    const entitiesByNormName = new Map<string, EntityNode[]>();
+    for (const e of snapshot.entities) {
+      const all = [e.name, ...(e.aliases ?? [])].map(normalizeName).filter(Boolean);
+      for (const n of all) {
+        if (!entitiesByNormName.has(n)) entitiesByNormName.set(n, []);
+        entitiesByNormName.get(n)!.push(e);
+      }
+    }
+    const reportedEntityPairs = new Set<string>();
+    for (const [norm, list] of entitiesByNormName.entries()) {
+      if (list.length < 2) continue;
+      // 同 norm 多个实体 → 两两为候选
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i];
+          const b = list[j];
+          if (a.id === b.id) continue;
+          const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+          if (reportedEntityPairs.has(k)) continue;
+          reportedEntityPairs.add(k);
+          aliasCandidates.push({
+            aId: a.id,
+            bId: b.id,
+            aKind: 'entity',
+            bKind: 'entity',
+            reason: `name/aliases 完全等价于 "${norm}"`,
+          });
+          if (opts.autoLink) {
+            const exists = snapshot.edges.some(
+              e =>
+                e.kind === 'entity-entity' &&
+                e.relationType === 'is-alias-of' &&
+                ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
+                  (e.fromEntityId === b.id && e.toEntityId === a.id)),
+            );
+            if (!exists) {
+              const now = Date.now();
+              await this.store.upsertEdge({
+                id: globalThis.crypto.randomUUID(),
+                kind: 'entity-entity',
+                fromEntityId: a.id,
+                toEntityId: b.id,
+                relationType: 'is-alias-of',
+                directed: true,
+                weight: 0.8,
+                description: 'consolidate 自动识别：名称/别名等价',
+                firstSeenAt: now,
+                lastReinforcedAt: now,
+                evidence: [],
+              });
+              aliasEdgesCreated++;
+            }
+          }
+        }
+      }
+    }
+
+    // ─── (2) 自动 part-of：实体 name 是事件 title 子串
+    const minNameLen = 2; // 太短的名字易误判，跳过
+    for (const ent of snapshot.entities) {
+      const nm = ent.name.trim();
+      if (nm.length < minNameLen) continue;
+      for (const ev of snapshot.events) {
+        if (!ev.title.includes(nm)) continue;
+        const exists = snapshot.edges.some(
+          e => e.kind === 'event-entity' && e.fromEventId === ev.id && e.toEntityId === ent.id,
+        );
+        if (exists) continue;
+        const now = Date.now();
+        await this.store.upsertEdge({
+          id: globalThis.crypto.randomUUID(),
+          kind: 'event-entity',
+          fromEventId: ev.id,
+          toEntityId: ent.id,
+          relationType: 'part-of',
+          directed: true,
+          weight: 0.6,
+          description: `consolidate 自动识别：事件标题包含实体名 "${nm}"`,
+          firstSeenAt: now,
+          lastReinforcedAt: now,
+          evidence: [],
+        });
+        partOfEdgesCreated++;
+      }
+    }
+
+    // ─── (3) PersonEventEdge 旧账整理：对每对 (person,event) 跑一次吸收规则
+    const pairs = new Map<string, PersonEventEdge[]>();
+    for (const e of snapshot.edges) {
+      if (e.kind !== 'person-event') continue;
+      const k = `${e.fromPersonId}|${e.toEventId}`;
+      if (!pairs.has(k)) pairs.set(k, []);
+      pairs.get(k)!.push(e);
+    }
+    for (const [, list] of pairs.entries()) {
+      if (list.length < 2) continue;
+      // 选 evidence 最多 / weight 最高的作为"代表"，调用 addPersonEventEdge 触发合并
+      const rep = list.reduce((a, b) => (b.evidence.length > a.evidence.length || b.weight > a.weight ? b : a));
+      // 删掉所有现有，再用最高 rank 的 role 写回，触发吸收
+      for (const e of list) {
+        if (e.id !== rep.id) await this.store.deleteEdge(e.id);
+      }
+      // 触发一次 add（input.role 取 rep.role），让逻辑重整
+      await this.addPersonEventEdge({
+        fromPersonId: rep.fromPersonId,
+        toEventId: rep.toEventId,
+        role: rep.role,
+        sentiment: rep.sentiment,
+        weight: rep.weight,
+        description: rep.description,
+        evidence: rep.evidence,
+      });
+      eventEdgesNormalized++;
+    }
+
+    return { aliasCandidates, aliasEdgesCreated, partOfEdgesCreated, eventEdgesNormalized };
   }
 }
 

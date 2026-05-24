@@ -290,14 +290,13 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         group: 'nodes' as const,
       })),
       ...payload.edges.map(e => {
-        const desc = typeof e.data.description === 'string' && e.data.description ? e.data.description : '';
+        // 边 label 仅显示 role / relationType 等基础信息；description 不再拼接到 label 上
+        //（避免画面拥挤；description 会在节点详情面板/边 hover tooltip 中展示）
         const baseLabel = typeof e.data.label === 'string' ? e.data.label : '';
-        // 描述存在时追加到边 label【role｜desc】
-        const composedLabel = desc ? (baseLabel ? `${baseLabel}｜${desc}` : desc) : baseLabel;
         return {
           data: {
             ...e.data,
-            label: composedLabel,
+            label: baseLabel,
             kind: e.data.kind ?? (e.data.relationType ? 'person-person' : 'person-event'),
           },
           group: 'edges' as const,
@@ -356,6 +355,19 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
       .catch(e => setDetail({ error: (e as Error).message }))
       .finally(() => setDetailLoading(false));
   }, [selectedNode, pluginName, comp.detailSource]);
+
+  // ── 焦点卡片显隐 / 焦点变化 → 通知 cytoscape 重新计算视口 ──
+  // 否则会出现「鼠标点击位置与画布坐标偏移」的诡异 bug（画布尺寸变了 cy 不知道）
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    // 下一帧执行，等待 DOM 已经 reflow
+    const raf = requestAnimationFrame(() => {
+      cy.resize();
+      cy.fit(undefined, 30);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [focusId, selectedNode]);
 
   // ── 导出 PNG ──────────────────────────────────────────────
   const exportPng = useCallback(() => {
