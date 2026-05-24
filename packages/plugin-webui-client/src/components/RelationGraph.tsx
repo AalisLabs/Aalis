@@ -269,6 +269,13 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   const [maxDepth, setMaxDepth] = useState<number>(comp.defaultMaxDepth ?? 2);
   const [maxBreadth, setMaxBreadth] = useState<number>(comp.defaultMaxBreadth ?? 10);
   const [search, setSearch] = useState('');
+  // IME(中文/日语/韩文输入法)正在拼音中间态。
+  // 某些浏览器会在拼音过程中频繁触发 onChange，不过滤会导致：
+  //  - 以中间态进行过滤→所有节点被 dim，看不到哪些能匹配；
+  //  - 个别浏览器 compositionend 后 onChange 不会重新触发，导致 React 状态
+  //    卡在中间拼音上，造成“中文搜不到东西”。
+  // 解决思路：composing 期间不更新 search，仅在 compositionend 一次性提交。
+  const composingRef = useRef(false);
 
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
@@ -425,7 +432,11 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     } as cytoscape.LayoutOptions).run();
   }, [payload, focusId]);
 
-  // 搜索高亮：dim 不匹配
+  // 搜索高亮：dim 不匹配。
+  // 说明：
+  //  - deps 加 payload：重新拉到图后节点/边重建，需重新应用 dim；
+  //  - matched.length === 0 时不 dim——否则全图变透明容易让用户误以为“搜不到 = 什么都没了”，
+  //    这也是原“搜过一次后无法搜别的”现象的根因（需先手动清空才恢复可见）。
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -440,13 +451,21 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       const id = String(n.data('id') ?? '').toLowerCase();
       return label.includes(term) || id.includes(term);
     });
+    if (matched.length === 0) {
+      // 零匹配 → 不 dim，保证可见。UI 上另外提示“未命中”。
+      cy.nodes().removeData('dimmed');
+      cy.edges().removeData('dimmed');
+      return;
+    }
     const matchedIds = new Set(matched.map(n => n.id()));
-    cy.nodes().forEach(n => { n.data('dimmed', matchedIds.has(n.id()) ? undefined : '1'); });
+    cy.nodes().forEach(n => {
+      n.data('dimmed', matchedIds.has(n.id()) ? undefined : '1');
+    });
     cy.edges().forEach(e => {
       const ok = matchedIds.has(e.source().id()) || matchedIds.has(e.target().id());
       e.data('dimmed', ok ? undefined : '1');
     });
-  }, [search]);
+  }, [search, payload]);
 
   // ── detail drawer ─────────────────────────────────────────
   useEffect(() => {
@@ -539,13 +558,50 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       {comp.label ? <div style={{ padding: '8px 12px', fontWeight: 600 }}>{comp.label}</div> : null}
 
       <div style={toolbarStyle}>
-        <input
-          type="text"
-          placeholder="搜索节点 (姓名/事件标题)"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ flex: '1 1 200px', minWidth: 160, padding: '4px 8px' }}
-        />
+        <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
+          <input
+            type="text"
+            placeholder="搜索节点 (姓名/事件标题)"
+            value={search}
+            // IME composing 期间不同步中间拼音 → 避免拿拼音去过滤全图。
+            // compositionend 后从 e.target.value 一次性提交最终结果（含能负责兴兴起來中文字符）。
+            onChange={e => {
+              if (!composingRef.current) setSearch(e.target.value);
+            }}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={e => {
+              composingRef.current = false;
+              setSearch((e.target as HTMLInputElement).value);
+            }}
+            style={{ width: '100%', padding: '4px 24px 4px 8px' }}
+          />
+          {search ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+              }}
+              title="清除搜索"
+              style={{
+                position: 'absolute',
+                right: 4,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted, #888)',
+                cursor: 'pointer',
+                fontSize: 14,
+                padding: '0 4px',
+                lineHeight: 1,
+              }}
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
         <label
           style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: focusId ? 1 : 0.45 }}
           title={focusId ? '从焦点节点出发的 BFS 跳数（0 = 不限）' : '深度仅在选定焦点后生效：点击节点 → 详情面板 → 「以此为焦点」'}
