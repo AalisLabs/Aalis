@@ -766,7 +766,20 @@ export class RelationExtractor {
       );
     }
 
-    // 写后顺手老化（模仿 profile 风格，不开独立调度器）。配额来自 cfg；任一为 0 跳过该维度。
+    // 写后顺手老化（模仿 profile 风格，不开独立调度器）。
+    // 孤儿清理与配额无关——总是顺手扫一遍。
+    if (this.cfg.evictionEnabled) {
+      try {
+        const orphans = await this.service.pruneOrphans();
+        if (this.cfg.debug && (orphans.deletedEvents || orphans.deletedEntities)) {
+          this.ctx.logger.debug(
+            `[user-relation] 自动孤儿清理: events=${orphans.deletedEvents} entities=${orphans.deletedEntities}`,
+          );
+        }
+      } catch (err) {
+        if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 孤儿清理失败: ${stringifyErr(err)}`);
+      }
+    }
     if (this.cfg.evictionEnabled && (this.cfg.maxEvents > 0 || this.cfg.maxEntities > 0 || this.cfg.maxEdges > 0)) {
       try {
         const evicted = await this.service.evictByQuota({
