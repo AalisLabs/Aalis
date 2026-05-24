@@ -214,9 +214,20 @@ export const actions: PluginModule['actions'] = {
             kind: focusEdge.kind,
             weight: focusEdge.weight,
             description: focusEdge.description,
+            firstSeenAt: focusEdge.firstSeenAt,
             lastReinforcedAt: focusEdge.lastReinforcedAt,
             evidence: focusEdge.evidence,
             endpoints: edgeEndpointIds(focusEdge),
+            // 按 kind 暴露的额外语义字段（在前端面板里展示）
+            relation:
+              focusEdge.kind === 'person-event' || focusEdge.kind === 'person-entity'
+                ? undefined
+                : focusEdge.relationType,
+            role: focusEdge.kind === 'person-event' || focusEdge.kind === 'person-entity' ? focusEdge.role : undefined,
+            sentiment:
+              focusEdge.kind === 'person-event' || focusEdge.kind === 'person-entity' ? focusEdge.sentiment : undefined,
+            directed:
+              focusEdge.kind === 'person-event' || focusEdge.kind === 'person-entity' ? undefined : focusEdge.directed,
           }
         : undefined,
       stats: {

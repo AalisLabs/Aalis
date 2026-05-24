@@ -69,6 +69,12 @@ body {
   min-width: var(--nav-expanded);
 }
 
+/* 拖拽聊天面板宽度时，禁止 nav-rail hover 展开，避免画面尺寸中途变化导致夹紧失败 */
+body.is-dragging-chat .nav-rail:hover {
+  width: var(--nav-width);
+  min-width: var(--nav-width);
+}
+
 .nav-rail-top {
   display: flex;
   flex-direction: column;

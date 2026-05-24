@@ -33,9 +33,14 @@ interface GraphPayload {
     kind: string;
     weight?: number;
     description?: string;
+    firstSeenAt?: number;
     lastReinforcedAt?: number;
-    evidence?: Array<{ quote?: string; sessionId?: string; messageIds?: string[] }>;
+    evidence?: Array<{ quote?: string; sessionId?: string; messageIds?: string[]; extractedAt?: number }>;
     endpoints?: string[];
+    relation?: string;
+    role?: string;
+    sentiment?: string;
+    directed?: boolean;
   };
   stats?: Record<string, number | string>;
 }
@@ -560,10 +565,12 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
                 position: 'absolute',
                 top: 10,
                 right: 10,
-                minWidth: 180,
-                maxWidth: 260,
-                padding: '8px 10px',
-                background: 'rgba(28, 28, 40, 0.92)',
+                width: 360,
+                maxWidth: 'calc(100% - 20px)',
+                maxHeight: graphHeight - 20,
+                overflowY: 'auto',
+                padding: '10px 12px',
+                background: 'rgba(28, 28, 40, 0.94)',
                 color: TEXT_COLOR,
                 border: `1px solid ${FOCUS_COLOR}`,
                 borderRadius: 6,
@@ -573,7 +580,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
                 zIndex: 5,
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <strong style={{ color: FOCUS_COLOR }}>{payload.focusEdge ? '焦点（边）' : '焦点'}</strong>
                 <button
                   type="button"
@@ -587,24 +594,62 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
                   ✕
                 </button>
               </div>
-              {payload.focusEdge ? (
-                <>
-                  <div style={{ marginBottom: 2 }}>{payload.focusEdge.description ?? '(无描述)'}</div>
-                  <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
-                    {payload.focusEdge.kind}
-                    {typeof payload.focusEdge.weight === 'number' ? ` · w=${payload.focusEdge.weight.toFixed(2)}` : null}
-                  </div>
-                  {payload.focusEdge.evidence && payload.focusEdge.evidence.length > 0 ? (
-                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 4 }}>
-                      证据 {payload.focusEdge.evidence.length} 条
-                      {payload.focusEdge.evidence[0]?.quote ? `：「${payload.focusEdge.evidence[0].quote.slice(0, 30)}…」` : ''}
+              {payload.focusEdge ? (() => {
+                const fe = payload.focusEdge;
+                const fmt = (ts?: number): string => {
+                  if (!ts || !Number.isFinite(ts)) return '—';
+                  try { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); } catch { return String(ts); }
+                };
+                const nodeOf = (id: string): { label?: string; kind?: string } | undefined => {
+                  const n = payload.nodes.find(x => x.data.id === id);
+                  return n?.data;
+                };
+                const endpoints = fe.endpoints ?? [];
+                return (
+                  <>
+                    <div style={{ marginBottom: 6 }}>{fe.description ?? '(无描述)'}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      <span>kind</span><span>{fe.kind}{fe.directed === true ? ' (directed)' : fe.directed === false ? ' (undirected)' : ''}</span>
+                      {fe.relation ? (<><span>relation</span><span>{fe.relation}</span></>) : null}
+                      {fe.role ? (<><span>role</span><span>{fe.role}</span></>) : null}
+                      {fe.sentiment ? (<><span>sentiment</span><span>{fe.sentiment}</span></>) : null}
+                      {typeof fe.weight === 'number' ? (<><span>weight</span><span>{fe.weight.toFixed(2)}</span></>) : null}
+                      <span>first</span><span>{fmt(fe.firstSeenAt)}</span>
+                      <span>last</span><span>{fmt(fe.lastReinforcedAt)}</span>
                     </div>
-                  ) : null}
-                  <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                    节点 {payload.nodes.length} · 边 {payload.edges.length}
-                  </div>
-                </>
-              ) : (
+                    {endpoints.length > 0 ? (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>端点</div>
+                        {endpoints.map(eid => {
+                          const n = nodeOf(eid);
+                          return (
+                            <div key={eid} style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-secondary)' }}>
+                              {n?.label ?? eid} <span style={{ opacity: 0.6 }}>[{String(n?.kind ?? '?')}]</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                    <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>证据 {fe.evidence?.length ?? 0} 条</div>
+                    {(fe.evidence ?? []).map((ev, i) => (
+                      <div
+                        key={`${ev.messageIds?.join(',') ?? i}-${ev.extractedAt ?? i}`}
+                        style={{ borderLeft: '2px solid var(--border-color, #2a2a42)', padding: '2px 6px', marginBottom: 4, color: 'var(--text-secondary)', lineHeight: 1.4 }}
+                      >
+                        <div>「{ev.quote ?? '(无摘录)'}」</div>
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>
+                          {ev.extractedAt ? fmt(ev.extractedAt) : '—'}
+                          {ev.sessionId ? ` · ${ev.sessionId}` : ''}
+                          {ev.messageIds?.length ? ` · ${ev.messageIds.length} msg` : ''}
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>
+                      子图 节点 {payload.nodes.length} · 边 {payload.edges.length}
+                    </div>
+                  </>
+                );
+              })() : (
                 <>
                   <div style={{ marginBottom: 2 }}>
                     {(() => {
