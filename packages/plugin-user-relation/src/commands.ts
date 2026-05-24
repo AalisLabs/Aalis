@@ -13,7 +13,11 @@ import { useCommandService } from '@aalis/plugin-commands-api';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
-export function registerRelationCommands(ctx: Context, service: RelationService): void {
+export function registerRelationCommands(
+  ctx: Context,
+  service: RelationService,
+  options?: { consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking?: boolean } },
+): void {
   const cmds = useCommandService(ctx);
 
   // ---- show ----
@@ -174,16 +178,34 @@ export function registerRelationCommands(ctx: Context, service: RelationService)
     .command('relation.consolidate', '整理关系图：扫描别名候选、自动 part-of、规范化 PersonEventEdge', {
       authority: 3,
     })
-    .option('autoLink', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
+    .option('auto-link', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
+    .option('no-llm', '--no-llm', { description: '跳过 consolidationModel 配置的 LLM 增强（A 核验 + B 摘要重写）' })
     .action(async argv => {
-      const autoLink = argv.options.autoLink === true;
-      const r = await service.consolidate({ autoLink });
+      const autoLink = argv.options['auto-link'] === true;
+      const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
+      const r = await service.consolidate({
+        autoLink,
+        ...(useLlm && options?.consolidateLLM
+          ? {
+              llm: {
+                ctx,
+                modelRef: options.consolidateLLM.modelRef,
+                disableThinking: options.consolidateLLM.disableThinking ?? true,
+              },
+            }
+          : {}),
+      });
       const lines = [
         '关系图整理完成：',
         `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
         `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
         `- PersonEventEdge 规范化：${r.eventEdgesNormalized} 组重整`,
       ];
+      if (useLlm) {
+        lines.push(
+          `- LLM 核验：通过 ${r.llmVerified ?? 0}，否决 ${r.llmRejected ?? 0}；摘要重写 ${r.summariesRewritten ?? 0} 条`,
+        );
+      }
       if (r.aliasCandidates.length > 0) {
         lines.push('', '别名候选（前 10 条）：');
         for (const c of r.aliasCandidates.slice(0, 10)) {

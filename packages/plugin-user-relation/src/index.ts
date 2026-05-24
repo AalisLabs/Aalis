@@ -106,6 +106,38 @@ export const configSchema: ConfigSchema = {
     default: true,
   },
 
+  // ────── Consolidate（图整理 + 自动别名合并 + 可选 LLM 增强）──────
+  consolidationModel: {
+    type: 'llm-ref',
+    label: 'Consolidate 使用的 LLM',
+    description:
+      '可选。配置后 /relation.consolidate 与定时整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写。推荐选大上下文模型（如 GPT-4o、Claude Opus），留空则保持纯算法行为。',
+  },
+  consolidationDisableThinking: {
+    type: 'boolean',
+    label: 'Consolidate LLM：禁用思考模式',
+    description: '同 extractionDisableThinking。默认禁用',
+    default: true,
+  },
+  consolidationScheduleEnabled: {
+    type: 'boolean',
+    label: '启用定时 Consolidate',
+    description: '后台周期性运行整理任务（仅在 apply() 之后启动；未配置 consolidationModel 时仍可跑纯算法）。',
+    default: false,
+  },
+  consolidationIntervalHours: {
+    type: 'number',
+    label: '定时 Consolidate 间隔（小时）',
+    description: '建议 ≥ 6。最小 1 小时',
+    default: 24,
+  },
+  consolidationAutoLink: {
+    type: 'boolean',
+    label: '定时 Consolidate 启用 autoLink',
+    description: '为 true 时自动合并别名实体（结合 consolidationModel 可由 LLM 二次核验）；false 仅打印候选不动数据。',
+    default: false,
+  },
+
   // ────── 自动老化（写后顺手扫，profile 风格，不开独立调度器）──────
   evictionEnabled: {
     type: 'boolean',
@@ -142,14 +174,14 @@ export const configSchema: ConfigSchema = {
   injectionMaxDepth: {
     type: 'number',
     label: '注入：BFS 最大深度',
-    description: '0=仅起点；1=直接邻居；2=同事件其他参与者 / 朋友的朋友。token 敏感，默认 1',
-    default: 1,
+    description: '0=仅起点；1=直接邻居；2=同事件其他参与者 / 朋友的朋友。token 敏感，默认 2',
+    default: 2,
   },
   injectionMaxBreadth: {
     type: 'number',
     label: '注入：单节点展开邻居上限',
-    description: '按 weight 降序展开。默认 5',
-    default: 5,
+    description: '按 weight 降序展开。默认 10',
+    default: 10,
   },
   maxInjectedEvents: {
     type: 'number',
@@ -171,6 +203,18 @@ export const configSchema: ConfigSchema = {
     type: 'number',
     label: '注入：共现伙伴展示数',
     description: '基于事件桥统计的隐式二跳；0 关闭该小节',
+    default: 5,
+  },
+  maxGlobalHotEvents: {
+    type: 'number',
+    label: '注入：全局热点事件数',
+    description: '与当前用户子图无关，按全局 lastMentionedAt 排序的最近事件；0 关闭',
+    default: 5,
+  },
+  maxGlobalHotEntities: {
+    type: 'number',
+    label: '注入：全局热点实体数',
+    description: '与当前用户子图无关，按全局 lastMentionedAt 排序的最近实体；0 关闭',
     default: 5,
   },
   groupOnly: {
@@ -392,12 +436,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   if (config.agentInjection !== false) {
     registerRelationMiddleware(ctx, service, {
       enabled: true,
-      maxDepth: numCfg(config.injectionMaxDepth, 1),
-      maxBreadth: numCfg(config.injectionMaxBreadth, 5),
+      maxDepth: numCfg(config.injectionMaxDepth, 2),
+      maxBreadth: numCfg(config.injectionMaxBreadth, 10),
       maxEvents: numCfg(config.maxInjectedEvents, 5),
       maxRelations: numCfg(config.maxInjectedRelations, 8),
       maxParticipantsPerEvent: numCfg(config.maxParticipantsPerEvent, 5),
       maxCooccurrencePartners: numCfg(config.maxCooccurrencePartners, 5),
+      maxGlobalHotEvents: numCfg(config.maxGlobalHotEvents, 5),
+      maxGlobalHotEntities: numCfg(config.maxGlobalHotEntities, 5),
       groupOnly: config.groupOnly === true,
       debug,
     });
@@ -426,7 +472,49 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // /relation 指令
   if (config.commandsEnabled !== false) {
-    registerRelationCommands(ctx, service);
+    const consolidateModel = config.consolidationModel as { provider: string; model: string } | undefined;
+    registerRelationCommands(ctx, service, {
+      ...(consolidateModel
+        ? {
+            consolidateLLM: {
+              modelRef: consolidateModel,
+              disableThinking: config.consolidationDisableThinking !== false,
+            },
+          }
+        : {}),
+    });
+  }
+
+  // ─── 定时 Consolidate ─── 受 consolidationScheduleEnabled 控制
+  if (config.consolidationScheduleEnabled === true) {
+    const intervalHours = Math.max(1, numCfg(config.consolidationIntervalHours, 24));
+    const intervalMs = intervalHours * 3_600_000;
+    const autoLink = config.consolidationAutoLink === true;
+    const modelRef = config.consolidationModel as { provider: string; model: string } | undefined;
+    const disableThinking = config.consolidationDisableThinking !== false;
+    const runOnce = async () => {
+      try {
+        const r = await service.consolidate({
+          autoLink,
+          ...(modelRef ? { llm: { ctx, modelRef, disableThinking } } : {}),
+        });
+        ctx.logger.info(
+          `[user-relation] 定时 consolidate 完成：候选=${r.aliasCandidates.length} 建别名边=${r.aliasEdgesCreated} part-of=${r.partOfEdgesCreated} 事件边整理=${r.eventEdgesNormalized}` +
+            (typeof r.llmVerified === 'number'
+              ? ` LLM 通过=${r.llmVerified} 否决=${r.llmRejected ?? 0} 摘要重写=${r.summariesRewritten ?? 0}`
+              : ''),
+        );
+      } catch (err) {
+        ctx.logger.warn(`[user-relation] 定时 consolidate 失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    const timer = setInterval(runOnce, intervalMs);
+    if (typeof (timer as { unref?: () => void }).unref === 'function') {
+      (timer as { unref: () => void }).unref();
+    }
+    ctx.logger.info(
+      `[user-relation] 定时 consolidate 已启动：间隔 ${intervalHours}h，autoLink=${autoLink}，LLM=${modelRef ? `${modelRef.provider}/${modelRef.model}` : '关闭'}`,
+    );
   }
 }
 

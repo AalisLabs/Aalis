@@ -571,7 +571,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             .map(s => s.trim())
         : [];
 
-      // sourceQuote 校验：每条 add/update 的 sourceQuote 必须能在「目标用户」语料中找到。
+      // sourceQuote 校验：quote 可能跨多条消息（LLM 用 \n 拼接），
+      // 因此按行拆分，每行（非空）都必须能在「目标用户」语料中找到 normalize 后的子串。
+      // 这样即使行与行之间夹着其他用户的消息也不会被错误拒收。
       const targetCorpus = normalizeForQuoteMatch(buildTargetUserCorpus(history, userId, platform));
       const validateSourceQuote = (item: { text: string; sourceQuote?: string }, kind: 'add' | 'update'): boolean => {
         const q = item.sourceQuote?.trim() ?? '';
@@ -579,12 +581,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           ctx.logger.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
           return false;
         }
-        const normalized = normalizeForQuoteMatch(q);
-        if (!normalized || !targetCorpus.includes(normalized)) {
-          ctx.logger.warn(
-            `[user-profile] 丢弃 ${kind} fact（sourceQuote 不在目标用户 ${userId} 发言中）: text="${item.text}" quote="${q}"`,
-          );
-          return false;
+        const lines = q
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(l => l.length > 0);
+        const fragments = lines.length > 0 ? lines : [q];
+        for (const frag of fragments) {
+          const normalized = normalizeForQuoteMatch(frag);
+          if (!normalized) continue;
+          if (!targetCorpus.includes(normalized)) {
+            ctx.logger.warn(
+              `[user-profile] 丢弃 ${kind} fact（sourceQuote 片段不在目标用户 ${userId} 发言中）: text="${item.text}" fragment="${frag}"`,
+            );
+            return false;
+          }
         }
         return true;
       };
