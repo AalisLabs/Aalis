@@ -23,7 +23,7 @@ import { registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationMiddleware } from './middleware.js';
 import { RelationService } from './service.js';
-import { RelationStore } from './store.js';
+import { RELATION_NAMESPACE, RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
 
 export const name = '@aalis/plugin-user-relation';
@@ -539,6 +539,50 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       consolidateAutoLink: config.consolidationAutoLink === true,
     });
   }
+
+  // ─── 参与统一的 memory:clear（与 plugin-user-profile 对称） ───
+  // scope='all'：清空整个关系图；scope='session'：跨会话存储，不动。
+  // types 过滤：未指定 / 包含 'user-relation' 时执行。
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+      },
+      next,
+    ) => {
+      if (data.types && !data.types.includes('user-relation')) {
+        await next();
+        return;
+      }
+      if (data.scope !== 'all') {
+        await next();
+        return;
+      }
+      if (!memory.listMetadata || !memory.deleteMetadata) {
+        await next();
+        return;
+      }
+      try {
+        const items = await memory.listMetadata(RELATION_NAMESPACE);
+        for (const it of items) await memory.deleteMetadata(RELATION_NAMESPACE, it.key);
+        ctx.logger.info(`[user-relation] 关系图已清空 (${items.length} 条)`);
+        data.results.push({
+          source: 'user-relation',
+          success: true,
+          message: `关系图已清空 (${items.length} 条)`,
+        });
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        ctx.logger.warn(`[user-relation] 清空失败: ${m}`);
+        data.results.push({ source: 'user-relation', success: false, message: `关系图清空失败: ${m}` });
+      }
+      await next();
+    },
+  );
 }
 
 function numCfg(v: unknown, fallback: number): number {
