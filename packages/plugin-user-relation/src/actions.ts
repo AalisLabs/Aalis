@@ -195,39 +195,15 @@ export const actions: PluginModule['actions'] = {
         edges = sub.edges;
       }
     } else {
+      // 全图模式：直接全量返回，由前端 / 焦点功能进行筛选。
+      // 历史上这里做过「按 lastSeenAt 截断 + 过滤未触达事件/实体」的优化，
+      // 但会导致「person A 在图里但其关系对端 B 被截断 → A 看似孤儿」的视觉错觉
+      // （真正的孤儿在压缩阶段已由 pruneOrphans 删除）。压缩流程已收紧，全图直出更诚实。
       const snap = await s.loadAll();
-      // 全图以“近期活跃 + 高度关系”为主，避免一次过多节点压垮浏览器
-      // maxBreadth=0 表示“不限”，但全图模式必须给硬上限防爆
-      const personCap = maxBreadth === 0 ? 500 : Math.max(20, maxBreadth * 6);
-      const eventCap = maxBreadth === 0 ? 500 : Math.max(15, maxBreadth * 4);
-      const entityCap = maxBreadth === 0 ? 500 : Math.max(15, maxBreadth * 4);
-      persons = [...snap.persons].sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, personCap);
-      const personIdSet = new Set(persons.map(p => p.id));
-      // 仅保留与这些人物相关的事件 / 实体
-      const relatedEventIds = new Set<string>();
-      const relatedEntityIds = new Set<string>();
-      for (const e of snap.edges) {
-        if (e.kind === 'person-event' && personIdSet.has(e.fromPersonId)) relatedEventIds.add(e.toEventId);
-        else if (e.kind === 'person-entity' && personIdSet.has(e.fromPersonId)) relatedEntityIds.add(e.toEntityId);
-      }
-      events = snap.events
-        .filter(e => relatedEventIds.has(e.id))
-        .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
-        .slice(0, eventCap);
-      const eventIdSet = new Set(events.map(e => e.id));
-      entities = snap.entities
-        .filter(e => relatedEntityIds.has(e.id))
-        .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
-        .slice(0, entityCap);
-      const entityIdSet = new Set(entities.map(e => e.id));
-      edges = snap.edges.filter(e => {
-        if (e.kind === 'person-event') return personIdSet.has(e.fromPersonId) && eventIdSet.has(e.toEventId);
-        if (e.kind === 'person-entity') return personIdSet.has(e.fromPersonId) && entityIdSet.has(e.toEntityId);
-        if (e.kind === 'event-event') return eventIdSet.has(e.fromEventId) && eventIdSet.has(e.toEventId);
-        if (e.kind === 'event-entity') return eventIdSet.has(e.fromEventId) && entityIdSet.has(e.toEntityId);
-        if (e.kind === 'entity-entity') return entityIdSet.has(e.fromEntityId) && entityIdSet.has(e.toEntityId);
-        return personIdSet.has(e.fromPersonId) && personIdSet.has(e.toPersonId);
-      });
+      persons = snap.persons;
+      events = snap.events;
+      entities = snap.entities;
+      edges = snap.edges;
     }
 
     const personLabel = (p: PersonNode): string => p.displayName?.trim() || p.userId;
