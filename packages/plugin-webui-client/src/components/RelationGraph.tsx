@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react';
 import cytoscape, { type Core, type ElementDefinition, type EventObject } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { pageAction } from '../api';
@@ -373,7 +373,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
       return label.includes(term) || id.includes(term);
     });
     const matchedIds = new Set(matched.map(n => n.id()));
-    cy.nodes().forEach(n => n.data('dimmed', matchedIds.has(n.id()) ? undefined : '1'));
+    cy.nodes().forEach(n => { n.data('dimmed', matchedIds.has(n.id()) ? undefined : '1'); });
     cy.edges().forEach(e => {
       const ok = matchedIds.has(e.source().id()) || matchedIds.has(e.target().id());
       e.data('dimmed', ok ? undefined : '1');
@@ -771,12 +771,12 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
         <LegendItem shape="diamond" color={ENTITY_COLORS.work} label="作品" />
         <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
         <span style={{ width: 1, height: 12, background: 'var(--border-color, #2a2a42)', margin: '0 4px' }} />
-        <LegendEdge color="#fbbf24" dashStyle="dashed" label="人→事" />
-        <LegendEdge color="#34d399" dashStyle="dashed" label="人→实体" />
-        <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
-        <LegendEdge color="#06b6d4" dashStyle="dashed" label="事→实体" />
-        <LegendEdge color="#a855f7" dashStyle="solid" label="实体↔实体" />
         <LegendEdge color="#f87171" dashStyle="solid" label="人↔人" />
+        <LegendEdge color="#34d399" dashStyle="dashed" label="人→实体" />
+        <LegendEdge color="#fbbf24" dashStyle="dashed" label="人→事" />
+        <LegendEdge color="#a855f7" dashStyle="solid" label="实体↔实体" />
+        <LegendEdge color="#06b6d4" dashStyle="dashed" label="事→实体" />
+        <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
         <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点；清除焦点请点左上「✕ 清除焦点」按钮</span>
       </div>
 
