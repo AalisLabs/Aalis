@@ -37,6 +37,10 @@ export interface PersonNode {
   firstSeenAt: number;
   /** 最近一次被强化（提到 / 参与事件）时间 */
   lastSeenAt: number;
+  /** 最近一次在对话中被提及的时间（含本人发言）。用于「最近发烫」排序 */
+  lastMentionedAt?: number;
+  /** 总共被提及次数（每次 extractor 命中该节点 +1） */
+  mentionCount?: number;
 }
 
 /** 事件类别（粗分类，仅供 UI 上色与过滤） */
@@ -71,6 +75,10 @@ export interface EventNode {
    * 老节点未设置则视为 0.5。
    */
   weight?: number;
+  /** 最近一次在对话窗口中被提及的时间 */
+  lastMentionedAt?: number;
+  /** 总共被提及次数 */
+  mentionCount?: number;
 }
 
 /**
@@ -104,6 +112,10 @@ export interface EntityNode {
   evidence: EvidenceRef[];
   /** 节点权重 0~1。每次按 (kind, name) 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。 */
   weight?: number;
+  /** 最近一次在对话窗口中被提及的时间 */
+  lastMentionedAt?: number;
+  /** 总共被提及次数 */
+  mentionCount?: number;
 }
 
 /** 人 → 事件 的参与角色 */
@@ -150,6 +162,8 @@ export const RecommendedPersonRelationTypes = [
   'familiar',
   'antagonist',
   'admirer',
+  'is-alias-of', // 「A 是 B 的别名 / 小号」（有向）
+  'alt-account-of', // 「A 是 B 的小号」（有向）
 ] as const;
 
 export type RecommendedPersonRelationType = (typeof RecommendedPersonRelationTypes)[number];
@@ -260,7 +274,7 @@ export interface EventEventEdge {
  * - `located-at`：事件发生在某地点 / 场所
  * - `produced`：事件产生了该实体（作品 / 产品）
  */
-export const RecommendedEventEntityRelationTypes = ['about', 'uses', 'located-at', 'produced'] as const;
+export const RecommendedEventEntityRelationTypes = ['about', 'uses', 'located-at', 'produced', 'part-of'] as const;
 
 export interface EventEntityEdge {
   id: string;
@@ -293,6 +307,7 @@ export const RecommendedEntityEntityRelationTypes = [
   'variant-of',
   'related',
   'opposite',
+  'is-alias-of', // 「《绝巴》 is-alias-of 《绝密公司上巴谷》」（有向）
 ] as const;
 
 export interface EntityEntityEdge {

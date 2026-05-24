@@ -134,7 +134,10 @@ export const actions: PluginModule['actions'] = {
   async getRelationGraph(ctx, args) {
     const s = svc(ctx);
     if (!s) return { nodes: [], edges: [] };
-    const focusId = typeof args.focusId === 'string' && args.focusId.includes(':') ? args.focusId : undefined;
+    // 焦点可为 person(`platform:userId`，含冒号) / event / entity(UUID)。
+    // 不再以「包含冒号」来过滤——event/entity UUID 不含冒号也应被接受。
+    const focusIdRaw = typeof args.focusId === 'string' ? args.focusId.trim() : '';
+    const focusId = focusIdRaw || undefined;
     const maxDepth = numArg(args.maxDepth, 2);
     const maxBreadth = numArg(args.maxBreadth, 10);
 
@@ -144,7 +147,7 @@ export const actions: PluginModule['actions'] = {
     let edges: RelationEdge[];
 
     if (focusId) {
-      const sub = await s.traverseSubgraph({ startPersonIds: [focusId], maxDepth, maxBreadth });
+      const sub = await s.traverseSubgraph({ startNodeIds: [focusId], maxDepth, maxBreadth });
       persons = sub.persons;
       events = sub.events;
       entities = sub.entities;

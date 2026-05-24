@@ -19,7 +19,9 @@ import type { Context } from '@aalis/core';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { RelationService } from './service.js';
 import type {
+  EntityEntityEdge,
   EntityNode,
+  EventEntityEdge,
   EventEventEdge,
   EventNode,
   PersonEntityEdge,
@@ -98,7 +100,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       const depth = clampNum(args.max_depth, cfg.defaultMaxDepth, 0, cfg.hardMaxDepth);
       const breadth = clampNum(args.max_breadth, cfg.defaultMaxBreadth, 1, cfg.hardMaxBreadth);
       const sub = await service.traverseSubgraph({
-        startPersonIds: [personId],
+        startNodeIds: [personId],
         maxDepth: depth,
         maxBreadth: breadth,
       });
@@ -263,6 +265,7 @@ function serializeEdge(e: RelationEdge) {
       role: pe.role,
       sentiment: pe.sentiment,
       weight: pe.weight,
+      description: pe.description,
     };
   }
   if (e.kind === 'person-entity') {
@@ -275,6 +278,7 @@ function serializeEdge(e: RelationEdge) {
       role: pe.role,
       sentiment: pe.sentiment,
       weight: pe.weight,
+      description: pe.description,
     };
   }
   if (e.kind === 'event-event') {
@@ -287,6 +291,33 @@ function serializeEdge(e: RelationEdge) {
       relation: ee.relationType,
       directed: ee.directed,
       weight: ee.weight,
+      description: ee.description,
+    };
+  }
+  if (e.kind === 'event-entity') {
+    const ee = e as EventEntityEdge;
+    return {
+      kind: 'event-entity',
+      id: ee.id,
+      from: ee.fromEventId,
+      to: ee.toEntityId,
+      relation: ee.relationType,
+      directed: ee.directed,
+      weight: ee.weight,
+      description: ee.description,
+    };
+  }
+  if (e.kind === 'entity-entity') {
+    const ee = e as EntityEntityEdge;
+    return {
+      kind: 'entity-entity',
+      id: ee.id,
+      from: ee.fromEntityId,
+      to: ee.toEntityId,
+      relation: ee.relationType,
+      directed: ee.directed,
+      weight: ee.weight,
+      description: ee.description,
     };
   }
   const pp = e as PersonPersonEdge;
@@ -298,6 +329,7 @@ function serializeEdge(e: RelationEdge) {
     relation: pp.relationType,
     directed: pp.directed,
     weight: pp.weight,
+    description: pp.description,
   };
 }
 

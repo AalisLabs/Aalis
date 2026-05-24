@@ -168,6 +168,30 @@ export function registerRelationCommands(ctx: Context, service: RelationService)
       }
       return `✓ 已清空关系图（删除 ${n} 个节点）`;
     });
+
+  // ---- consolidate（整理：别名候选 / 自动 part-of / 旧账去重） ----
+  cmds
+    .command('relation.consolidate', '整理关系图：扫描别名候选、自动 part-of、规范化 PersonEventEdge', {
+      authority: 3,
+    })
+    .option('autoLink', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
+    .action(async argv => {
+      const autoLink = argv.options.autoLink === true;
+      const r = await service.consolidate({ autoLink });
+      const lines = [
+        '关系图整理完成：',
+        `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
+        `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
+        `- PersonEventEdge 规范化：${r.eventEdgesNormalized} 组重整`,
+      ];
+      if (r.aliasCandidates.length > 0) {
+        lines.push('', '别名候选（前 10 条）：');
+        for (const c of r.aliasCandidates.slice(0, 10)) {
+          lines.push(`  · [${c.aKind}] ${c.aId}  ↔  [${c.bKind}] ${c.bId}  —  ${c.reason}`);
+        }
+      }
+      return lines.join('\n');
+    });
 }
 
 // ───── helpers ─────
