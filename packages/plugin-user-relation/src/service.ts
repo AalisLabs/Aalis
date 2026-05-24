@@ -875,15 +875,20 @@ export class RelationService {
    * - 与配额淘汰解耦——无论是否超过 maxEvents/maxEntities 配额，孤儿都应被清掉。
    * - extractor 在写入层已尽量保证新建节点至少带一条边，因此运行期孤儿都是迁移
    *   或边被显式删除后遗留下来的旧账噪声。
-   * - 保护规则与 evictByQuota 一致：`evidence.length ≥ protectEvidenceCount`
-   *   或 `weight ≥ protectWeight` 视为受保护，跳过删除。
+   * - **默认不保护任何孤儿**：weight 通过 reinforceWeight 累加几次就会到 ≥0.8
+   *   （0.5→0.65→0.755→0.829），如果沿用配额阶段的 weight≥0.8/evidence≥3 保护，
+   *   绝大多数 noise 都会被噤声而无法清理——这是 v0 设计上的过保护。
+   *   配额淘汰阶段才需要保护（避免误删活跃节点），孤儿阶段不需要。
+   * - 调用方可显式传入 `protectEvidenceCount` / `protectWeight` 来开启保护。
    */
   async pruneOrphans(opts?: {
+    /** 保护门槛：evidence 数 ≥ 此值则跳过删除。默认 Infinity（不保护） */
     protectEvidenceCount?: number;
+    /** 保护门槛：weight ≥ 此值则跳过删除。默认 Infinity（不保护） */
     protectWeight?: number;
   }): Promise<{ deletedEvents: number; deletedEntities: number }> {
-    const protectEv = opts?.protectEvidenceCount ?? 3;
-    const protectW = opts?.protectWeight ?? 0.8;
+    const protectEv = opts?.protectEvidenceCount ?? Number.POSITIVE_INFINITY;
+    const protectW = opts?.protectWeight ?? Number.POSITIVE_INFINITY;
     const snap = await this.store.loadAll();
     let deletedEvents = 0;
     let deletedEntities = 0;
@@ -980,8 +985,8 @@ export class RelationService {
     const isProtected = (n: EventNode | EntityNode): boolean =>
       (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
 
-    // 1) 先做孤儿清理（与配额无关，旧账噪声总是清）
-    const orphanResult = await this.pruneOrphans({ protectEvidenceCount: protectEv, protectWeight: protectW });
+    // 1) 先做孤儿清理（与配额无关，旧账噪声总是清；不沿用 evidence/weight 保护）
+    const orphanResult = await this.pruneOrphans();
     deletedEvents += orphanResult.deletedEvents;
     deletedEntities += orphanResult.deletedEntities;
 

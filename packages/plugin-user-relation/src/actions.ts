@@ -272,6 +272,7 @@ export const actions: PluginModule['actions'] = {
             platform: p.platform,
             userId: p.userId,
             displayName: p.displayName,
+            lastPageRank: p.lastPageRank,
           },
         })),
         ...events.map(e => ({
@@ -281,6 +282,7 @@ export const actions: PluginModule['actions'] = {
             kind: 'event' as const,
             category: e.category,
             title: e.title,
+            lastPageRank: e.lastPageRank,
           },
         })),
         ...entities.map(e => ({
@@ -290,6 +292,7 @@ export const actions: PluginModule['actions'] = {
             kind: 'entity' as const,
             entityKind: e.entityKind,
             name: e.name,
+            lastPageRank: e.lastPageRank,
           },
         })),
       ],

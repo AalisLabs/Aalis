@@ -609,7 +609,18 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                     ? `${selectedNode.data.kind ?? '节点'}：${selectedNode.data.label ?? selectedNode.data.id}`
                     : '焦点（边）'}
                 </strong>
+                <details style={{ marginLeft: 'auto' }}>
+                  <summary style={{ cursor: 'help', color: 'var(--text-muted)', fontSize: 11, listStyle: 'none' }}>ⓘ 字段含义</summary>
+                </details>
               </div>
+              <details style={{ marginBottom: 8 }}>
+                <summary style={{ display: 'none' }}>fields</summary>
+                <div style={{ padding: '6px 8px', background: 'var(--bg-secondary, rgba(255,255,255,0.04))', borderRadius: 4, color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.5 }}>
+                  <div><b>合并强度</b>(weight, 0~1)：节点/边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1-prev)·0.3</code> → 0.65 → 0.755 → 0.829 →…(clamp 1.0)。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
+                  <div style={{ marginTop: 3 }}><b>图重要性</b>(lastPageRank)：最近一次 <code>/relation compress|maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权(人 3 · 物 2 · 事 1)。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。</div>
+                  <div style={{ marginTop: 3 }}><b>边淘汰分</b>(仅边详情)：<code>合并强度 × ((PR_from + PR_to)/2)</code>。配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
+                </div>
+              </details>
               {selectedNode ? (
                 <NodeDetailCard
                   node={selectedNode}
@@ -624,20 +635,45 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                   if (!ts || !Number.isFinite(ts)) return '—';
                   try { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); } catch { return String(ts); }
                 };
-                const nodeOf = (id: string): { label?: string; kind?: string } | undefined => {
+                const nodeOf = (id: string): { label?: string; kind?: string; lastPageRank?: number } | undefined => {
                   const n = payload.nodes.find(x => x.data.id === id);
-                  return n?.data;
+                  if (!n) return undefined;
+                  const pr = n.data.lastPageRank;
+                  return {
+                    label: typeof n.data.label === 'string' ? n.data.label : undefined,
+                    kind: typeof n.data.kind === 'string' ? n.data.kind : undefined,
+                    lastPageRank: typeof pr === 'number' && Number.isFinite(pr) ? pr : undefined,
+                  };
                 };
                 const endpoints = fe.endpoints ?? [];
+                // 边综合分：weight · ((PR_from + PR_to) / 2)。淘汰阶段按此升序删（分越低越先删）。
+                const endpointPRs = endpoints.map(eid => nodeOf(eid)?.lastPageRank).filter((x): x is number => typeof x === 'number');
+                const avgPR = endpointPRs.length > 0 ? endpointPRs.reduce((a, b) => a + b, 0) / endpointPRs.length : undefined;
+                const evictionScore = typeof fe.weight === 'number' && typeof avgPR === 'number' ? fe.weight * avgPR : undefined;
                 return (
                   <>
+                    <div style={{ marginBottom: 6, fontSize: 10, color: 'var(--text-secondary)' }}>
+                      id={fe.id}
+                      <FieldGlossary />
+                    </div>
                     <div style={{ marginBottom: 6 }}>{fe.description ?? '(无描述)'}</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
                       <span>kind</span><span>{fe.kind}{fe.directed === true ? ' (directed)' : fe.directed === false ? ' (undirected)' : ''}</span>
                       {fe.relation ? (<><span>relation</span><span>{fe.relation}</span></>) : null}
                       {fe.role ? (<><span>role</span><span>{fe.role}</span></>) : null}
                       {fe.sentiment ? (<><span>sentiment</span><span>{fe.sentiment}</span></>) : null}
-                      {typeof fe.weight === 'number' ? (<><span>weight</span><span>{fe.weight.toFixed(2)}</span></>) : null}
+                      {typeof fe.weight === 'number' ? (
+                        <>
+                          <span title="边按 (kind, source, target[, role/relation]) 重复合并的累计强度：0.5 起步，每次合并 +0.3 → 0.65 → 0.755 → … (clamp 1.0)。语义=被强化次数，不是重要性。" style={{ cursor: 'help' }}>合并强度</span>
+                          <span>{fe.weight.toFixed(2)}</span>
+                        </>
+                      ) : null}
+                      {typeof evictionScore === 'number' ? (
+                        <>
+                          <span title="边淘汰分 = 合并强度 × 端点 PR 平均。配额淘汰时按此升序删——分越低越先删。让「弱权但连接重要节点」的边受保护。" style={{ cursor: 'help' }}>边淘汰分</span>
+                          <span>{evictionScore.toFixed(5)} <span style={{ opacity: 0.6 }}>= {fe.weight!.toFixed(2)} × {avgPR!.toFixed(4)}</span></span>
+                        </>
+                      ) : null}
                       <span>first</span><span>{fmt(fe.firstSeenAt)}</span>
                       <span>last</span><span>{fmt(fe.lastReinforcedAt)}</span>
                     </div>
@@ -646,9 +682,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                         <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>端点</div>
                         {endpoints.map(eid => {
                           const n = nodeOf(eid);
+                          const pr = typeof n?.lastPageRank === 'number' ? ` · PR ${n.lastPageRank.toFixed(4)}` : '';
                           return (
                             <div key={eid} style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-secondary)' }}>
-                              {n?.label ?? eid} <span style={{ opacity: 0.6 }}>[{String(n?.kind ?? '?')}]</span>
+                              {n?.label ?? eid} <span style={{ opacity: 0.6 }}>[{String(n?.kind ?? '?')}]{pr}</span>
                             </div>
                           );
                         })}
@@ -850,12 +887,29 @@ interface NodeDetailCardProps {
   hasDetailSource: boolean;
   isFocus: boolean;
 }
+/** 字段含义说明：合并强度 / 图重要性 / 边淘汰分。节点详情、边详情都用它，集中维护语义。 */
+function FieldGlossary(): JSX.Element {
+  return (
+    <details style={{ display: 'inline', marginLeft: 8 }}>
+      <summary style={{ display: 'inline', cursor: 'help', color: 'var(--text-muted)', listStyle: 'none' }}>ⓘ 字段含义</summary>
+      <div style={{ marginTop: 4, padding: '6px 8px', background: 'var(--bg-secondary, rgba(255,255,255,0.04))', borderRadius: 4, color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.5 }}>
+        <div><b>合并强度</b>（weight, 0~1）：节点/边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1-prev)·0.3</code> →
+          0.65 → 0.755 → 0.829 →…（clamp 1.0）。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
+        <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress|maintain</code> 计算的全图 PageRank。
+          个性化种子按 kind 加权（人 3 · 物 2 · 事 1）。越高表示越靠近"核心人物 · 热门事件"。未跑过压缩则为空。</div>
+        <div style={{ marginTop: 3 }}><b>边淘汰分</b>（仅边详情）：<code>合并强度 × ((PR_from + PR_to)/2)</code>。
+          配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
+      </div>
+    </details>
+  );
+}
 function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: NodeDetailCardProps): JSX.Element {
   const kind = node.data.kind;
   const headerMeta = (
     <div style={{ color: 'var(--text-secondary)', marginBottom: 8, fontSize: 10 }}>
       id={node.data.id}
       {isFocus ? <span style={{ marginLeft: 6, color: FOCUS_COLOR }}>· 当前焦点</span> : null}
+      <FieldGlossary />
     </div>
   );
   if (loading) return <>{headerMeta}<div style={{ color: 'var(--text-muted)' }}>加载详情中…</div></>;
