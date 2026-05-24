@@ -78,6 +78,33 @@ function formatDate(ts: number): string {
   return new Date(ts).toISOString().replace('T', ' ').slice(0, 16);
 }
 
+/** 给任意对象补充时间戳的可读字符串字段（保留原数字字段不动）。 */
+function withReadableDates<T extends Record<string, unknown>>(o: T): T & Record<string, unknown> {
+  const out: Record<string, unknown> = { ...o };
+  for (const key of ['firstSeenAt', 'lastSeenAt', 'lastReinforcedAt', 'lastMentionedAt'] as const) {
+    const v = o[key];
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      out[`${key}Text`] = formatDate(v);
+    }
+  }
+  return out as T & Record<string, unknown>;
+}
+
+/** evidence 列表的统一展开（按时间倒序 + 附时间文本，保留 messageIds/quote/sessionId 原样）。 */
+function expandEvidence(
+  list: ReadonlyArray<{ quote?: string; messageIds: string[]; sessionId?: string; extractedAt: number }>,
+): unknown[] {
+  return [...list]
+    .sort((a, b) => b.extractedAt - a.extractedAt)
+    .map(ev => ({
+      quote: ev.quote,
+      messageIds: ev.messageIds,
+      sessionId: ev.sessionId,
+      extractedAt: ev.extractedAt,
+      extractedAtText: formatDate(ev.extractedAt),
+    }));
+}
+
 export const actions: PluginModule['actions'] = {
   // ───── 表格数据源 ─────
   async listPersons(ctx) {
@@ -368,75 +395,37 @@ export const actions: PluginModule['actions'] = {
       if (!nodeId.includes(':')) return { error: '无效 personId' };
       const nb = await s.getNeighborhood(nodeId);
       return {
-        person: nb.person,
+        person: withReadableDates(nb.person as unknown as Record<string, unknown>),
         eventCount: nb.events.length,
         edgeCount: nb.edges.length,
-        recentEvents: nb.events.slice(0, 5).map(e => ({
-          id: e.id,
-          title: e.title,
-          category: e.category,
-          lastReinforcedAt: formatDate(e.lastReinforcedAt),
-        })),
-        edges: nb.edges.slice(0, 10).map(e => {
-          if (e.kind === 'person-event') {
-            return {
-              kind: e.kind,
-              role: e.role,
-              roleZh: labelZh(e.role),
-              sentiment: e.sentiment,
-              weight: e.weight,
-              eventId: e.toEventId,
-            };
-          }
-          if (e.kind === 'person-person') {
-            return {
-              kind: e.kind,
-              relation: e.relationType,
-              relationZh: labelZh(e.relationType),
-              weight: e.weight,
-              fromId: e.fromPersonId,
-              toId: e.toPersonId,
-            };
-          }
-          if (e.kind === 'person-entity') {
-            return {
-              kind: e.kind,
-              role: e.role,
-              roleZh: labelZh(e.role),
-              sentiment: e.sentiment,
-              weight: e.weight,
-              entityId: e.toEntityId,
-            };
-          }
-          if (e.kind === 'event-event') {
-            return {
-              kind: e.kind,
-              relation: e.relationType,
-              relationZh: labelZh(e.relationType),
-              weight: e.weight,
-              fromId: e.fromEventId,
-              toId: e.toEventId,
-            };
-          }
-          if (e.kind === 'event-entity') {
-            return {
-              kind: e.kind,
-              relation: e.relationType,
-              relationZh: labelZh(e.relationType),
-              weight: e.weight,
-              fromId: e.fromEventId,
-              toId: e.toEntityId,
-            };
-          }
-          // entity-entity
-          return {
-            kind: e.kind,
-            relation: e.relationType,
-            relationZh: labelZh(e.relationType),
+        recentEvents: nb.events.slice(0, 5).map(e =>
+          withReadableDates({
+            id: e.id,
+            title: e.title,
+            category: e.category,
+            summary: e.summary,
             weight: e.weight,
-            fromId: e.fromEntityId,
-            toId: e.toEntityId,
-          };
+            mentionCount: e.mentionCount,
+            firstSeenAt: e.firstSeenAt,
+            lastReinforcedAt: e.lastReinforcedAt,
+            lastMentionedAt: e.lastMentionedAt,
+            evidenceCount: e.evidence.length,
+            evidencePreview: previewEvidence(e),
+          }),
+        ),
+        edges: nb.edges.slice(0, 10).map(e => {
+          // 通用骨架：把所有边都 spread 出来，并补可读时间 + 中文 role/relation
+          const base = withReadableDates({
+            ...(e as unknown as Record<string, unknown>),
+            evidenceCount: e.evidence.length,
+            evidencePreview: previewEvidence(e),
+          });
+          if (e.kind === 'person-event' || e.kind === 'person-entity') {
+            base.roleZh = labelZh(e.role);
+          } else if ('relationType' in e && e.relationType) {
+            base.relationZh = labelZh(e.relationType);
+          }
+          return base;
         }),
       };
     }
@@ -444,35 +433,19 @@ export const actions: PluginModule['actions'] = {
       const e = await s.getEvent(nodeId);
       if (!e) return { error: '事件不存在' };
       return {
-        id: e.id,
-        title: e.title,
-        category: e.category,
-        summary: e.summary,
+        ...withReadableDates(e as unknown as Record<string, unknown>),
         evidenceCount: e.evidence.length,
-        lastReinforcedAt: formatDate(e.lastReinforcedAt),
-        recentEvidence: e.evidence
-          .slice()
-          .sort((a, b) => b.extractedAt - a.extractedAt)
-          .slice(0, 5)
-          .map(ev => ({ quote: ev.quote, messageIds: ev.messageIds, at: formatDate(ev.extractedAt) })),
+        evidence: expandEvidence(e.evidence),
       };
     }
     if (kind === 'entity') {
       const e = await s.getEntity(nodeId);
       if (!e) return { error: '实体不存在' };
       return {
-        id: e.id,
-        name: e.name,
-        entityKind: e.entityKind,
+        ...withReadableDates(e as unknown as Record<string, unknown>),
         aliases: e.aliases ?? [],
-        summary: e.summary,
         evidenceCount: e.evidence.length,
-        lastReinforcedAt: formatDate(e.lastReinforcedAt),
-        recentEvidence: e.evidence
-          .slice()
-          .sort((a, b) => b.extractedAt - a.extractedAt)
-          .slice(0, 5)
-          .map(ev => ({ quote: ev.quote, messageIds: ev.messageIds, at: formatDate(ev.extractedAt) })),
+        evidence: expandEvidence(e.evidence),
       };
     }
     return { error: `未知 kind: ${kind}` };
