@@ -166,6 +166,70 @@ describe('plugin-user-relation: 多层遍历', () => {
     });
   });
 
+  describe('scoreBetween', () => {
+    it('同节点 → score=1', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      const r = await svc.scoreBetween('onebot:a', 'onebot:a');
+      expect(r.score).toBe(1);
+      expect(r.shortestLength).toBe(0);
+    });
+
+    it('不存在的节点 → score=0', async () => {
+      const svc = await setup();
+      const r = await svc.scoreBetween('onebot:x', 'onebot:y');
+      expect(r.score).toBe(0);
+      expect(r.shortestLength).toBeNull();
+      expect(r.topPaths).toEqual([]);
+    });
+
+    it('直接好友 → directlyConnected=true，score>0', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+      });
+      const r = await svc.scoreBetween('onebot:a', 'onebot:b');
+      expect(r.directlyConnected).toBe(true);
+      expect(r.shortestLength).toBe(1);
+      expect(r.score).toBeGreaterThan(0);
+      expect(r.topPaths.length).toBeGreaterThan(0);
+    });
+
+    it('多条间接路径累加 > 单条路径', async () => {
+      const buildPair = async (withSecondBridge: boolean) => {
+        const svc = await setup();
+        await svc.observePerson('onebot', 'a');
+        await svc.observePerson('onebot', 'b');
+        const ev1 = await svc.createEvent({ title: 'E1', evidence: [] });
+        await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev1.id, role: 'participant' });
+        await svc.addPersonEventEdge({ fromPersonId: 'onebot:b', toEventId: ev1.id, role: 'participant' });
+        if (withSecondBridge) {
+          const ev2 = await svc.createEvent({ title: 'E2', evidence: [] });
+          await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev2.id, role: 'participant' });
+          await svc.addPersonEventEdge({ fromPersonId: 'onebot:b', toEventId: ev2.id, role: 'participant' });
+        }
+        return svc.scoreBetween('onebot:a', 'onebot:b');
+      };
+      const r1 = await buildPair(false);
+      const r2 = await buildPair(true);
+      expect(r2.pathsConsidered).toBeGreaterThan(r1.pathsConsidered);
+      expect(r2.rawScore).toBeGreaterThan(r1.rawScore);
+    });
+
+    it('无连通 → score=0', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const r = await svc.scoreBetween('onebot:a', 'onebot:b');
+      expect(r.score).toBe(0);
+      expect(r.pathsConsidered).toBe(0);
+    });
+  });
+
   describe('searchEvents', () => {
     it('substring 匹配标题', async () => {
       const svc = await setup();

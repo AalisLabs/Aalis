@@ -207,6 +207,64 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
+  // ───────────────────────────── score ────────────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_score',
+        description:
+          '计算两节点间的「联系强度」分数（0~1）。基于 Katz 限深路径累加：枚举所有 a→b 简单路径（长度 ≤ max_depth），每条贡献 β^长度 × ∏边权，全部累加后 tanh 归一化。返回分数、最短距离、参考路径，可解释。两端可为人/事件/实体的任意组合。',
+        parameters: {
+          type: 'object',
+          properties: {
+            from_node_id: { type: 'string', description: '起点节点 ID' },
+            to_node_id: { type: 'string', description: '终点节点 ID' },
+            max_depth: {
+              type: 'number',
+              description: '路径最大边数，1~6，默认 4。越大越能体现间接联系，但耗时指数增长。',
+            },
+            top_paths: {
+              type: 'number',
+              description: '返回贡献最高的 N 条路径作为解释，默认 3，最大 20',
+            },
+          },
+          required: ['from_node_id', 'to_node_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const from = String(args.from_node_id ?? '').trim();
+      const to = String(args.to_node_id ?? '').trim();
+      if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
+      const maxDepth = clampNum(args.max_depth, 4, 1, 6);
+      const topPaths = clampNum(args.top_paths, 3, 1, 20);
+      const r = await service.scoreBetween(from, to, { maxDepth, topPaths });
+      return JSON.stringify(
+        {
+          from_id: r.fromId,
+          to_id: r.toId,
+          score: Number(r.score.toFixed(4)),
+          raw_score: Number(r.rawScore.toFixed(4)),
+          paths_considered: r.pathsConsidered,
+          shortest_length: r.shortestLength,
+          directly_connected: r.directlyConnected,
+          top_paths: r.topPaths.map(p => ({
+            length: p.length,
+            weight_product: Number(p.weightProduct.toFixed(4)),
+            contribution: Number(p.contribution.toFixed(4)),
+            nodes: p.nodes.map(n => serializeNode(n)),
+            edges: p.edges.map(e => serializeEdge(e)),
+          })),
+        },
+        null,
+        2,
+      );
+    },
+  });
+
   // ───────────────────────────── search_persons ───────────────────────────
   tools.register({
     definition: {

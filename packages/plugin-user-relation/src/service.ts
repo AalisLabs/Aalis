@@ -1413,6 +1413,185 @@ export class RelationService {
   }
 
   /**
+   * 计算两节点间「联系强度」(Katz-style limited-depth path enumeration)。
+   *
+   * 算法：枚举 a→b 所有简单路径（长度 ≤ maxDepth），每条路径贡献
+   *   contrib = β^|p| * ∏_{e∈p} w_e
+   * 汇总 rawScore = Σ contrib；归一化 score = tanh(rawScore) ∈ [0,1]。
+   *
+   * - 多条路径累加 → 体现「多途径连通」（如三角闭合）
+   * - β（默认 0.5）按路径长度衰减，长路径权重指数减小
+   * - 路径上不允许重复节点（简单路径），避免环膨胀
+   * - 复杂度 O(deg^maxDepth)，maxDepth ≤ 4 时在中等图上完全可控
+   *
+   * 返回 topPaths 用于「为什么这么高」的可解释性，对 LLM 友好。
+   * 同节点 → score=1。任一端不在图中 → score=0 + paths=[]。
+   */
+  async scoreBetween(
+    fromNodeId: string,
+    toNodeId: string,
+    opts: { maxDepth?: number; beta?: number; topPaths?: number } = {},
+  ): Promise<{
+    fromId: string;
+    toId: string;
+    score: number; // 归一化 [0,1]
+    rawScore: number;
+    pathsConsidered: number;
+    shortestLength: number | null;
+    directlyConnected: boolean;
+    topPaths: Array<{
+      nodes: Array<PersonNode | EventNode | EntityNode>;
+      edges: RelationEdge[];
+      length: number;
+      weightProduct: number;
+      contribution: number;
+    }>;
+  }> {
+    const maxDepth = Math.max(1, Math.min(6, opts.maxDepth ?? 4));
+    const beta = Math.max(0.05, Math.min(1, opts.beta ?? 0.5));
+    const topK = Math.max(1, Math.min(20, opts.topPaths ?? 3));
+
+    const snapshot = await this.store.loadAll();
+    const personById = new Map(snapshot.persons.map(p => [p.id, p]));
+    const eventById = new Map(snapshot.events.map(e => [e.id, e]));
+    const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
+    const nodeOf = (id: string) => personById.get(id) ?? eventById.get(id) ?? entityById.get(id);
+
+    if (fromNodeId === toNodeId) {
+      return {
+        fromId: fromNodeId,
+        toId: toNodeId,
+        score: nodeOf(fromNodeId) ? 1 : 0,
+        rawScore: nodeOf(fromNodeId) ? 1 : 0,
+        pathsConsidered: 0,
+        shortestLength: 0,
+        directlyConnected: false,
+        topPaths: [],
+      };
+    }
+    if (!nodeOf(fromNodeId) || !nodeOf(toNodeId)) {
+      return {
+        fromId: fromNodeId,
+        toId: toNodeId,
+        score: 0,
+        rawScore: 0,
+        pathsConsidered: 0,
+        shortestLength: null,
+        directlyConnected: false,
+        topPaths: [],
+      };
+    }
+
+    // 邻接表（无向化，与 findPath 一致：directed 边只单向，其余双向）
+    const adj = new Map<string, Array<{ next: string; edge: RelationEdge }>>();
+    const addAdj = (a: string, b: string, edge: RelationEdge) => {
+      const arr = adj.get(a);
+      if (arr) arr.push({ next: b, edge });
+      else adj.set(a, [{ next: b, edge }]);
+    };
+    for (const e of snapshot.edges) {
+      if (e.kind === 'person-event') {
+        addAdj(e.fromPersonId, e.toEventId, e);
+        addAdj(e.toEventId, e.fromPersonId, e);
+      } else if (e.kind === 'person-entity') {
+        addAdj(e.fromPersonId, e.toEntityId, e);
+        addAdj(e.toEntityId, e.fromPersonId, e);
+      } else if (e.kind === 'event-event') {
+        addAdj(e.fromEventId, e.toEventId, e);
+        if (!e.directed) addAdj(e.toEventId, e.fromEventId, e);
+      } else if (e.kind === 'event-entity') {
+        addAdj(e.fromEventId, e.toEntityId, e);
+        addAdj(e.toEntityId, e.fromEventId, e);
+      } else if (e.kind === 'entity-entity') {
+        addAdj(e.fromEntityId, e.toEntityId, e);
+        if (!e.directed) addAdj(e.toEntityId, e.fromEntityId, e);
+      } else {
+        addAdj(e.fromPersonId, e.toPersonId, e);
+        if (!e.directed) addAdj(e.toPersonId, e.fromPersonId, e);
+      }
+    }
+
+    // DFS 枚举所有 a→b 简单路径（限深 maxDepth）
+    type Path = { edges: RelationEdge[]; nodeIds: string[]; weightProduct: number };
+    const allPaths: Path[] = [];
+    const visited = new Set<string>([fromNodeId]);
+    const curEdges: RelationEdge[] = [];
+    const curNodes: string[] = [fromNodeId];
+    const dfs = (cur: string, depth: number) => {
+      if (cur === toNodeId) {
+        // 计算 weight 乘积
+        let prod = 1;
+        for (const e of curEdges) prod *= Math.max(1e-6, e.weight);
+        allPaths.push({ edges: [...curEdges], nodeIds: [...curNodes], weightProduct: prod });
+        return;
+      }
+      if (depth >= maxDepth) return;
+      for (const { next, edge } of adj.get(cur) ?? []) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        curEdges.push(edge);
+        curNodes.push(next);
+        dfs(next, depth + 1);
+        curEdges.pop();
+        curNodes.pop();
+        visited.delete(next);
+      }
+    };
+    dfs(fromNodeId, 0);
+
+    if (allPaths.length === 0) {
+      return {
+        fromId: fromNodeId,
+        toId: toNodeId,
+        score: 0,
+        rawScore: 0,
+        pathsConsidered: 0,
+        shortestLength: null,
+        directlyConnected: false,
+        topPaths: [],
+      };
+    }
+
+    let rawScore = 0;
+    let shortestLength = Infinity;
+    for (const p of allPaths) {
+      const len = p.edges.length;
+      const contrib = beta ** len * p.weightProduct;
+      rawScore += contrib;
+      if (len < shortestLength) shortestLength = len;
+    }
+    const score = Math.tanh(rawScore);
+
+    // 取 top-K 路径（按 contribution 降序）
+    const scored = allPaths
+      .map(p => {
+        const len = p.edges.length;
+        return { p, len, contribution: beta ** len * p.weightProduct };
+      })
+      .sort((a, b) => b.contribution - a.contribution)
+      .slice(0, topK);
+
+    const topPaths = scored.map(({ p, len, contribution }) => ({
+      nodes: p.nodeIds.map(id => nodeOf(id)).filter((n): n is PersonNode | EventNode | EntityNode => !!n),
+      edges: p.edges,
+      length: len,
+      weightProduct: p.weightProduct,
+      contribution,
+    }));
+
+    return {
+      fromId: fromNodeId,
+      toId: toNodeId,
+      score,
+      rawScore,
+      pathsConsidered: allPaths.length,
+      shortestLength: shortestLength === Infinity ? null : shortestLength,
+      directlyConnected: shortestLength === 1,
+      topPaths,
+    };
+  }
+
+  /**
    * 按关键词搜索事件（substring，标题 + summary，不区分大小写）。
    * - days：仅返回 lastReinforcedAt 在 N 天内的事件；0/未传 → 不限
    * - limit：返回上限（默认 20）
