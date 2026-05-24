@@ -639,17 +639,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   function applyRelationUpdate(
     profile: UserProfile,
     triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
+    options: { countInteraction?: boolean } = {},
   ): UserProfile {
+    // countInteraction：是否计入互动计数与更新 lastInteractionAt。
+    // 同一条入站消息会先走 witness 路径，若被 trigger-policy 判为需回复又会走
+    // agent:input:before 路径。为避免 interactionCount/lastInteractionAt 被同一条
+    // 消息计两次，计数与时戳只由 witness 路径负责，agent:input:before 仅叠加 score。
+    const countInteraction = options.countInteraction ?? true;
     const now = Date.now();
     const last = profile.lastInteractionAt;
     const daysSinceLast = last ? Math.max(0, (now - last) / 86_400_000) : 0;
     const decayed = clampRelationScore((profile.relationScore ?? 0) - daysSinceLast * cfg.relationScoreDecayPerDay);
     const nextScore = clampRelationScore(decayed + relationIncrementFor(triggerType));
+    const shouldCount = countInteraction && triggerType !== 'idle';
     return {
       ...profile,
       relationScore: nextScore,
-      interactionCount: (profile.interactionCount ?? 0) + (triggerType === 'idle' ? 0 : 1),
-      lastInteractionAt: triggerType === 'idle' ? profile.lastInteractionAt : now,
+      interactionCount: (profile.interactionCount ?? 0) + (shouldCount ? 1 : 0),
+      lastInteractionAt: shouldCount ? now : profile.lastInteractionAt,
       updatedAt: now,
     };
   }
@@ -768,9 +775,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   async function updateRelationForUser(
     userKey: string,
     triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
+    options?: { countInteraction?: boolean },
   ): Promise<void> {
     const profile = (await loadProfile(userKey)) ?? { facts: [], relationScore: 0, interactionCount: 0, updatedAt: 0 };
-    await saveProfile(userKey, applyRelationUpdate(profile, triggerType));
+    await saveProfile(userKey, applyRelationUpdate(profile, triggerType, options));
   }
 
   // ─── 关系分数：在 agent 触发回复路径上更新 ───
@@ -794,7 +802,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (userId) {
         const userKey = userKeyOf(platform, userId);
         try {
-          await updateRelationForUser(userKey, triggerType);
+          // 仅叠加 score，互动计数与时戳由 witness 路径统一负责，
+          // 避免同一条入站消息被计两次 interactionCount。
+          await updateRelationForUser(userKey, triggerType, { countInteraction: false });
         } catch (err) {
           ctx.logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
         }
