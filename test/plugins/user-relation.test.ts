@@ -420,3 +420,128 @@ describe('plugin-user-relation: edge dedup vs double-write', () => {
     expect(e2.evidence).toHaveLength(2);
   });
 });
+
+describe('plugin-user-relation: node dedup on create', () => {
+  it('createEvent with same normalized title merges into existing event', async () => {
+    const { service } = await makeService();
+    const e1 = await service.createEvent({
+      title: ' 讨论 BWS 直播 ',
+      evidence: [ev({ messageIds: ['m1'] })],
+    });
+    await new Promise(r => setTimeout(r, 2));
+    const e2 = await service.createEvent({
+      title: '讨论  BWS  直播', // 大小写/空白差异
+      evidence: [ev({ messageIds: ['m2'] })],
+    });
+    expect(e2.id).toBe(e1.id); // 同 id
+    expect(e2.evidence.length).toBe(2);
+    expect((e2.occurrences ?? []).length).toBe(2);
+    expect(e2.weight).toBeGreaterThan(0.5); // 权重已 +0.3
+    expect(e2.lastReinforcedAt).toBeGreaterThanOrEqual(e1.lastReinforcedAt);
+  });
+
+  it('createEntity with same (kind, name) merges into existing entity', async () => {
+    const { service } = await makeService();
+    const ent1 = await service.createEntity({
+      name: '三角洲',
+      entityKind: 'work',
+      aliases: ['Delta Force'],
+      evidence: [ev({ messageIds: ['m1'] })],
+    });
+    const ent2 = await service.createEntity({
+      name: '三角洲',
+      entityKind: 'work',
+      aliases: ['DF', '三角洲'],
+      evidence: [ev({ messageIds: ['m2'] })],
+    });
+    expect(ent2.id).toBe(ent1.id);
+    expect(ent2.aliases).toEqual(expect.arrayContaining(['Delta Force', 'DF']));
+    expect(ent2.evidence.length).toBe(2);
+    expect(ent2.weight).toBeGreaterThan(0.5);
+  });
+
+  it('createEntity with same name but different kind does NOT merge', async () => {
+    const { service } = await makeService();
+    const a = await service.createEntity({ name: '北京', entityKind: 'place', evidence: [] });
+    const b = await service.createEntity({ name: '北京', entityKind: 'work', evidence: [] });
+    expect(b.id).not.toBe(a.id);
+  });
+
+  it('findEventByTitle / findEntityByKindAndName helpers', async () => {
+    const { service } = await makeService();
+    const e = await service.createEvent({ title: '里程碑事件', evidence: [] });
+    expect((await service.findEventByTitle('里程碑事件'))?.id).toBe(e.id);
+    expect(await service.findEventByTitle('不存在')).toBeUndefined();
+
+    const ent = await service.createEntity({ name: 'X', entityKind: 'topic', evidence: [] });
+    expect((await service.findEntityByKindAndName('topic', 'X'))?.id).toBe(ent.id);
+    expect(await service.findEntityByKindAndName('place', 'X')).toBeUndefined();
+  });
+});
+
+describe('plugin-user-relation: evictByQuota', () => {
+  it('removes orphan event/entity unconditionally', async () => {
+    const { service } = await makeService();
+    const orphan = await service.createEvent({ title: 'orphan-evt', evidence: [] });
+    const orphanEnt = await service.createEntity({ name: 'orphan-ent', entityKind: 'topic', evidence: [] });
+    // 给 orphan2 挂一条边，使其不再是孤儿
+    const linked = await service.createEvent({ title: 'linked-evt', evidence: [] });
+    await service.observePerson('onebot', 'u1');
+    await service.addPersonEventEdge({
+      fromPersonId: 'onebot:u1',
+      toEventId: linked.id,
+      role: 'participant',
+      evidence: [ev()],
+    });
+
+    const result = await service.evictByQuota({
+      maxEvents: 0,
+      maxEntities: 0,
+      maxEdges: 0,
+    });
+    expect(result.deletedEvents).toBe(1);
+    expect(result.deletedEntities).toBe(1);
+    const snap = await service.loadAll();
+    expect(snap.events.find(e => e.id === orphan.id)).toBeUndefined();
+    expect(snap.events.find(e => e.id === linked.id)).toBeDefined();
+    expect(snap.entities.find(e => e.id === orphanEnt.id)).toBeUndefined();
+  });
+
+  it('respects protection: high-weight or rich-evidence nodes are kept', async () => {
+    const { service } = await makeService();
+    const protectedEvent = await service.createEvent({
+      title: 'important',
+      evidence: [ev({ messageIds: ['m1'] }), ev({ messageIds: ['m2'] }), ev({ messageIds: ['m3'] })],
+    });
+    // 该节点 evidence=3 → 受保护，即使是孤儿也不删
+    const result = await service.evictByQuota({ maxEvents: 0, maxEntities: 0, maxEdges: 0 });
+    expect(result.deletedEvents).toBe(0);
+    const snap = await service.loadAll();
+    expect(snap.events.find(e => e.id === protectedEvent.id)).toBeDefined();
+  });
+
+  it('enforces quota by removing oldest+lowest-weight nodes first', async () => {
+    const { service } = await makeService();
+    // 创建 5 个有边的事件（不是孤儿）
+    await service.observePerson('onebot', 'u1');
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const e = await service.createEvent({ title: `evt-${i}`, evidence: [] });
+      ids.push(e.id);
+      await service.addPersonEventEdge({
+        fromPersonId: 'onebot:u1',
+        toEventId: e.id,
+        role: 'participant',
+        evidence: [ev()],
+      });
+      await new Promise(r => setTimeout(r, 1));
+    }
+    const result = await service.evictByQuota({ maxEvents: 3, maxEntities: 0, maxEdges: 0 });
+    expect(result.deletedEvents).toBe(2);
+    const snap = await service.loadAll();
+    expect(snap.events.length).toBe(3);
+    // 老的两个先删
+    expect(snap.events.find(e => e.id === ids[0])).toBeUndefined();
+    expect(snap.events.find(e => e.id === ids[1])).toBeUndefined();
+  });
+});

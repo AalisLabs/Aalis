@@ -51,6 +51,14 @@ export interface ExtractorConfig {
   disableThinking: boolean;
   /** 严格自证：每条 person-* 边必须有 evidence 且 evidence.messageId.sender == fromPersonId */
   strictSelfAssertion: boolean;
+  /** 自动老化：每次写入完成后扫一遍并按 quota 删除（profile 风格，不开调度器）。默认 true。 */
+  evictionEnabled: boolean;
+  /** 事件节点总数上限；超过则按 (age/weight) 排序删除老旧低权重节点。0=不限。 */
+  maxEvents: number;
+  /** 实体节点总数上限。0=不限。 */
+  maxEntities: number;
+  /** 边总数上限（保留 weight 最高的）。0=不限。 */
+  maxEdges: number;
   /** debug 日志 */
   debug: boolean;
 }
@@ -406,7 +414,7 @@ export class RelationExtractor {
         ? (e.entityKind as EntityKind)
         : 'topic';
       let entityId: string | undefined;
-      // 优先尊重 LLM 指明的 existingEntityId；否则按 name 自动去重
+      // 优先尊重 LLM 指明的 existingEntityId；service.createEntity 内部已按 (kind,name) 强制去重
       if (e.existingEntityId) {
         const reinforced = await this.service.reinforceEntity(e.existingEntityId, {
           name: e.name,
@@ -418,18 +426,7 @@ export class RelationExtractor {
         if (reinforced) entityId = reinforced.id;
       }
       if (!entityId) {
-        const dup = await this.service.findEntityByName(e.name);
-        if (dup) {
-          const reinforced = await this.service.reinforceEntity(dup.id, {
-            aliases: e.aliases,
-            summary: e.summary,
-            entityKind,
-            evidence: ev ? [ev] : [],
-          });
-          if (reinforced) entityId = reinforced.id;
-        }
-      }
-      if (!entityId) {
+        // createEntity 自身做 (kind, name) 去重；不再在 extractor 层重复
         const created = await this.service.createEntity({
           name: e.name,
           aliases: e.aliases,
@@ -534,6 +531,24 @@ export class RelationExtractor {
         `[user-relation] ${ctxInfo.sessionId} 提取完成: persons=${parsed.persons?.length ?? 0}, events=${parsed.events?.length ?? 0}, entities=${parsed.entities?.length ?? 0}, pe=${parsed.personEventEdges?.length ?? 0}, pent=${parsed.personEntityEdges?.length ?? 0}, pp=${parsed.personPersonEdges?.length ?? 0}, ee=${parsed.eventEventEdges?.length ?? 0}`,
       );
     }
+
+    // 写后顺手老化（模仿 profile 风格，不开独立调度器）。配额来自 cfg；任一为 0 跳过该维度。
+    if (this.cfg.evictionEnabled && (this.cfg.maxEvents > 0 || this.cfg.maxEntities > 0 || this.cfg.maxEdges > 0)) {
+      try {
+        const evicted = await this.service.evictByQuota({
+          maxEvents: this.cfg.maxEvents,
+          maxEntities: this.cfg.maxEntities,
+          maxEdges: this.cfg.maxEdges,
+        });
+        if (this.cfg.debug && (evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)) {
+          this.ctx.logger.debug(
+            `[user-relation] 自动老化: 删除 events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
+          );
+        }
+      } catch (err) {
+        this.ctx.logger.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
+      }
+    }
   }
 }
 
@@ -609,6 +624,12 @@ function buildExtractionPrompt(
       '- **Event（事件）= 一次性发生的事**：必须有**明确的时间锚点**（昨晚 / 上周 / 刚才 / 某场 / 下周三…）和**可识别的动作或结果**（开黑、争吵、发布、签约、相遇、比赛…）。',
       '- **Entity（实体）= 持续存在的"东西"**：可被多人长期关联。例：游戏《三角洲》、电影《奥本海默》、北京、PS5、某个表情包、某个梗。',
       '- **当多人共享某个对象时，请把它建模为 Entity，让每个人各自通过 personEntityEdge 指向它**；不要把它写进事件标题里。',
+      '',
+      '## ⚠️ 事件提取须保持冷淡（重要）',
+      '- 只挑**最显著、有长期价值**的事件记录：重大冲突、里程碑、首次合作、长期回响、明显改变关系的转折点。',
+      '- **一般日常聊天、随口提及、无后续的玩笑、单次客套、临时调侃** —— **一律不要建 event**。宁可 events 数组返回空，也不要凑数。',
+      '- 当你犹豫"这件事算不算值得记"时，**默认答案是不记**。提取器后续会做老化淘汰，但更省事的是源头别记。',
+      '',
       '- **以下情况一律不要建 event**（直接走 personEntityEdge 或留空）：',
       '  · 偏好/事实声明：「我喜欢 X / 我讨厌 Y / 我有 Z / 我会 W」——只建 entity 边，不建 event。',
       '  · 元对话/元请求：「帮我记一下…」「你的关系系统测试一下」「这是我」——这些是对工具的指令，不是世界中发生的事件，**完全不要建 event**。',
