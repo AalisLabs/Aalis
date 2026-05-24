@@ -20,6 +20,7 @@ import type { Context } from '@aalis/core';
 import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { getPlatformNames } from '@aalis/plugin-platform-api';
 import type { RelationService } from './service.js';
 import type {
   EntityKind,
@@ -200,21 +201,48 @@ const VALID_PERSON_ENTITY_ROLES: PersonEntityRole[] = [
 ];
 
 /**
- * 占位符 self person id 黑名单：扩展过滤 `aalis:aalis` / `aalis:self` / `onebot:aalis`
- * 等 LLM 历史产生的伪 id。被 extractor.applyExtraction 落库守卫和
- * `/relation cleanup fake-self` 清理命令共用，确保两端口径一致。
+ * 占位/伪 person 守卫：用于过滤 LLM 抽出的「不真实」person id（典型如
+ * `aalis:aalis` / `mia:mia` / `discord:xxx`——历史 prompt/渲染遗留下来的自指占位）。
  *
- * 命中规则（任一即视为占位）：
- *   1) platform 为空 / userId 为空；
- *   2) platform 小写为 'aalis'（没有真实平台 adapter 叫这个名字，只有占位才会出现）；
- *   3) userId 小写命中下列黑名单。
+ * 设计原则（**persona-agnostic**）：
+ *   - 「真实平台」 = `getPlatformNames(ctx)` 返回的、当前运行时实际注册了 adapter
+ *     的平台集合。persona 改名、配置改名都不影响判定。
+ *   - 通用 placeholder userId（self/me/bot/assistant）作为兜底，捕获
+ *     `onebot:self` 这类「平台合法、id 是自指占位」的情形。**不再硬编码 persona
+ *     专属词**（aalis / 本机器人 / 机器人 / Mia / ...）。
+ *
+ * 判定规则（任一命中即视为占位）：
+ *   1) platform / userId 为空；
+ *   2) 当 ctx 提供的 `knownPlatforms` 非空时，`platform` 小写不在白名单中；
+ *      （为空时跳过该检查——保护「无 adapter 已注册」的测试 / 空环境场景，避免
+ *       误删旧数据）
+ *   3) `userId` 小写命中通用占位词 `{self, me, bot, assistant}`。
+ *
+ * 一致性：extractor.applyExtraction、`/relation cleanup fake-self` 命令、
+ * `RelationService.consolidate` 都共用本函数，保证三处口径完全一致。
  */
-const SELF_PLACEHOLDER_USERIDS = new Set(['aalis', 'self', 'me', 'bot', 'assistant', '本机器人', '机器人']);
+const GENERIC_PLACEHOLDER_USERIDS = new Set(['self', 'me', 'bot', 'assistant']);
 
-export function isPlaceholderSelfPersonId(platform?: string, userId?: string): boolean {
+/** 取当前运行时已注册的平台名集合（小写）。无 adapter 时返回空集——调用方应
+ *  在传入 isPlaceholderSelfPersonId 时把「空集」视为 permissive。 */
+export function getKnownPlatformsLower(ctx: Context): Set<string> {
+  try {
+    return new Set(getPlatformNames(ctx).map(p => p.toLowerCase()));
+  } catch {
+    return new Set();
+  }
+}
+
+export function isPlaceholderSelfPersonId(
+  platform: string | undefined,
+  userId: string | undefined,
+  knownPlatforms?: Set<string>,
+): boolean {
   if (!platform || !userId) return true;
-  if (platform.toLowerCase() === 'aalis') return true;
-  if (SELF_PLACEHOLDER_USERIDS.has(userId.toLowerCase())) return true;
+  if (knownPlatforms && knownPlatforms.size > 0 && !knownPlatforms.has(platform.toLowerCase())) {
+    return true;
+  }
+  if (GENERIC_PLACEHOLDER_USERIDS.has(userId.toLowerCase())) return true;
   return false;
 }
 
@@ -416,13 +444,12 @@ export class RelationExtractor {
       if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 严格自证丢弃 ${label}: ${reason}`);
     };
     const now = Date.now();
-    // ── self-placeholder 守卫：LLM 历史上会把 assistant 消息当占位 person 抽出
-    //    `aalis:aalis` / `aalis:self` / `onebot:aalis` 等伪 id；即便 prompt + 渲染都改对了，仍做最后一道防线。
-    //    判定规则（任一命中即视为占位）：
-    //      · platform 大小写为 'aalis'（不存在叫 'aalis' 的真实平台 adapter，只有占位才会出现）
-    //      · userId 命中黑名单（self / aalis / me / bot / assistant / 本机器人 / 机器人 等）
-    //      · platform 或 userId 为空
-    const isPlaceholderSelfId = isPlaceholderSelfPersonId;
+    // ── 伪 person 守卫：persona-agnostic 平台白名单 + 通用占位 userId 兜底。
+    //    详细规则见 `isPlaceholderSelfPersonId` 的 jsdoc。这里在每次 applyExtraction
+    //    入口快照一次 `knownPlatforms`，避免内层多次 ctx.getAllServices。
+    const knownPlatforms = getKnownPlatformsLower(this.ctx);
+    const isPlaceholderSelfId = (platform?: string, userId?: string): boolean =>
+      isPlaceholderSelfPersonId(platform, userId, knownPlatforms);
     const dropSelf = (label: string, pid: string): void => {
       if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 丢弃 self 占位 ${label}: ${pid}`);
     };
@@ -766,6 +793,7 @@ export class RelationExtractor {
             const cr = await this.service.consolidate({
               autoLink: this.cfg.consolidateAutoLink,
               triggerSource: 'eviction',
+              ctx: this.ctx,
               ...(this.cfg.consolidateLLMModelRef
                 ? {
                     llm: {

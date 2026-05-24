@@ -20,6 +20,7 @@ import {
   rewriteEntitySummary,
   verifyAliasPair,
 } from './consolidate-llm.js';
+import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationStore } from './store.js';
 import type {
   EntityEntityEdge,
@@ -1459,6 +1460,17 @@ export class RelationService {
       llm?: { ctx: Context; modelRef: ModelRef; disableThinking?: boolean };
       /** 调用来源标识，仅用于 getLastConsolidateInfo() 报告。默认 api。 */
       triggerSource?: 'manual' | 'eviction' | 'api';
+      /**
+       * 可选 ctx。若传入则 consolidate 会顺带做一次「伪 person 自动清理」：
+       * platform 不在 `getPlatformNames(ctx)` 运行时白名单内（或 userId 命中
+       * 通用占位 self/me/bot/assistant）的 person，连同级联边一起删除。
+       * 与写入守卫 `isPlaceholderSelfPersonId` 共用同一谓词，口径一致。
+       *
+       * 警告：临时禁用了某个 adapter 时（白名单收缩），这里会把对应平台的
+       * **真实历史 person** 误判为 fake。`getPlatformNames(ctx)` 为空时本步骤
+       * 自动跳过以保护历史数据。
+       */
+      ctx?: Context;
     } = {},
   ): Promise<{
     aliasCandidates: Array<{
@@ -1479,7 +1491,33 @@ export class RelationService {
     lateralParentCandidates: number;
     lateralParentsCreated: number;
     lateralEdgesCreated: number;
+    /** 自动清理删掉的伪 person 数（platform 不在白名单或 userId 为通用占位）。 */
+    fakePersonsDeleted: number;
+    /** 自动清理时级联删的 person-* 边总数。 */
+    fakePersonEdgesDeleted: number;
   }> {
+    // ─── (0) 伪 person 自动清理：与 extractor 落库守卫共用同一谓词。
+    //   仅在 opts.ctx 传入且 `getPlatformNames(ctx)` 非空时启用 platform-whitelist
+    //   分支；否则只兜底过滤 userId 通用占位（self/me/bot/assistant）。
+    //   先做此步，再 loadAll，避免后续 alias / 层级推断把 fake person 牵连进去。
+    let fakePersonsDeleted = 0;
+    let fakePersonEdgesDeleted = 0;
+    {
+      const preSnap = await this.store.loadAll();
+      const knownPlatforms = opts.ctx ? getKnownPlatformsLower(opts.ctx) : new Set<string>();
+      const fakes = preSnap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId, knownPlatforms));
+      for (const p of fakes) {
+        const r = await this.store.deletePersonCascade(p.platform, p.userId);
+        fakePersonsDeleted++;
+        fakePersonEdgesDeleted += r.deletedEdges;
+      }
+      if (fakes.length > 0 && opts.llm?.ctx?.logger) {
+        opts.llm.ctx.logger.info(
+          `[user-relation] consolidate 清理伪 person ${fakes.length} 个 / 级联边 ${fakePersonEdgesDeleted} 条`,
+        );
+      }
+    }
+
     const snapshot = await this.store.loadAll();
     const aliasCandidates: Array<{
       aId: string;
@@ -2152,6 +2190,8 @@ export class RelationService {
       lateralParentCandidates,
       lateralParentsCreated,
       lateralEdgesCreated,
+      fakePersonsDeleted,
+      fakePersonEdgesDeleted,
       ...(opts.llm ? { llmVerified, llmRejected, summariesRewritten } : {}),
     };
     this._lastConsolidateAt = Date.now();
@@ -2160,6 +2200,7 @@ export class RelationService {
       `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，part-of ${partOfEdgesCreated}，` +
       `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
       `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
+      (fakePersonsDeleted > 0 ? `，伪 person 清理 ${fakePersonsDeleted}（级联边 ${fakePersonEdgesDeleted}）` : '') +
       (opts.llm ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected} 摘要重写 ${summariesRewritten}` : '');
     return consolidateResult;
   }
