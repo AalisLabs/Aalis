@@ -134,6 +134,8 @@ describe('plugin-user-relation: extractor', () => {
           evidence: { messageIds: ['nonexistent'], quote: '不存在' },
         },
       ],
+      // 给一条边让 event 通过反孤儿守卫
+      personEventEdges: [{ personPlatform: 'test', personUserId: 'a', eventRefKey: 'e1', role: 'participant' }],
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', 'hello'));
@@ -152,6 +154,7 @@ describe('plugin-user-relation: extractor', () => {
           evidence: { messageIds: ['m1'], quote: '幻觉文本' },
         },
       ],
+      personEventEdges: [{ personPlatform: 'test', personUserId: 'a', eventRefKey: 'e1', role: 'participant' }],
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '完全无关的内容'));
