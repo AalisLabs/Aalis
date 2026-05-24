@@ -422,9 +422,66 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
+  // ───────────────────────────── rename_node ─────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_rename_node',
+        description: [
+          '把一个 **event / entity** 节点改名（Person 禁改，会与 platform 昵称脱节）。',
+          '语义：',
+          '- 原 title/name 自动追加到 aliases，旧名仍可通过搜索命中；',
+          '- 自动写入 nameHistory 审计条目（from/to/at/by=llm/reason）；',
+          '- key/id 不变，所有引用边 0 风险。',
+          '使用准则：',
+          '- 只在你**确信**新名字更准确时调用（例：发现"绝航"实际是"绝密公司上巴谷"的简称、合并后想换正式名）；',
+          '- 必须给出 `reason`（≤80 字）说明为什么改；',
+          '- 不要为了"风格化"反复改名；不要把通用词改成更通用的词。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            node_id: { type: 'string', description: '节点 ID（仅 event / entity）' },
+            new_name: { type: 'string', description: '新 name / title，≤80 字符，与原名不同' },
+            reason: { type: 'string', description: '改名理由（≤80 字），写入 audit log' },
+          },
+          required: ['node_id', 'new_name', 'reason'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const id = String(args.node_id ?? '').trim();
+      const newName = String(args.new_name ?? '').trim();
+      const reason = String(args.reason ?? '').trim();
+      if (!id) return JSON.stringify({ error: 'node_id 不能为空' });
+      if (!newName) return JSON.stringify({ error: 'new_name 不能为空' });
+      if (!reason) return JSON.stringify({ error: 'reason 必填，请给出改名理由' });
+      // 仅允许 event / entity；person id 形如 'platform:userId'，含冒号直接拒绝
+      if (id.includes(':')) {
+        return JSON.stringify({
+          error: 'Person.name = platform displayName，禁止改名。如需追加别名请走 add-alias 流程。',
+        });
+      }
+      // 先按 event 试，再按 entity 试
+      let kind: 'event' | 'entity' | null = null;
+      if (await service.getEvent(id)) kind = 'event';
+      else if (await service.getEntity(id)) kind = 'entity';
+      if (!kind) return JSON.stringify({ error: `node_id ${id} 不存在（event/entity 均未命中）` });
+      try {
+        const result = await service.renameNode({ kind, id, newName, by: 'llm', reason });
+        return JSON.stringify({ ok: true, kind, ...result }, null, 2);
+      } catch (err) {
+        return JSON.stringify({ error: (err as Error).message });
+      }
+    },
+  });
+
   if (cfg.debug) {
     ctx.logger.debug(
-      `[user-relation] 已注册 8 个只读工具到分组 ${groupName}（resolve_node / expand_node / find_path / search_persons / search_entities / search_events / list_edges / timeline）`,
+      `[user-relation] 已注册 9 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / search_persons / search_entities / search_events / list_edges / timeline / rename_node）`,
     );
   }
 }

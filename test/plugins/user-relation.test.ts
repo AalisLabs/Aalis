@@ -884,3 +884,115 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(service.getLastConsolidateInfo().trigger).toBe('api');
   });
 });
+
+describe('plugin-user-relation: person-person hierarchy', () => {
+  it('hierarchy 与 directed 正交存储', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
+    const edge = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'mentor',
+      hierarchy: 'superior',
+    });
+    expect(edge.hierarchy).toBe('superior');
+    expect(edge.directed).toBe(true);
+  });
+
+  it('后来者覆盖 unknown：具体值不会被 unknown 抹平', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
+    const e1 = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'colleague',
+      hierarchy: 'peer',
+    });
+    const e2 = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'colleague',
+      hierarchy: 'unknown',
+    });
+    expect(e2.id).toBe(e1.id);
+    expect(e2.hierarchy).toBe('peer'); // 不被 unknown 覆盖
+  });
+
+  it('后来者用具体值覆盖原 unknown', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
+    await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'mentor',
+      hierarchy: 'unknown',
+    });
+    const e2 = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'mentor',
+      hierarchy: 'subordinate',
+    });
+    expect(e2.hierarchy).toBe('subordinate');
+  });
+});
+
+describe('plugin-user-relation: renameNode', () => {
+  it('event 改名：原 title 进 aliases，nameHistory 追加 audit', async () => {
+    const { service } = await makeService();
+    const e = await service.createEvent({ title: '旧标题', evidence: [ev()] });
+    const res = await service.renameNode({
+      kind: 'event',
+      id: e.id,
+      newName: '新标题',
+      by: 'llm',
+      reason: 'unit-test',
+    });
+    expect(res).toEqual({ from: '旧标题', to: '新标题', aliasesAdded: true });
+    const after = await service.getEvent(e.id);
+    expect(after?.title).toBe('新标题');
+    expect(after?.aliases).toContain('旧标题');
+    expect(after?.nameHistory).toHaveLength(1);
+    expect(after?.nameHistory?.[0]).toMatchObject({ from: '旧标题', to: '新标题', by: 'llm', reason: 'unit-test' });
+  });
+
+  it('entity 改名：name 进 aliases，nameHistory 累加', async () => {
+    const { service } = await makeService();
+    const en = await service.createEntity({ entityKind: 'organization', name: 'Old Co' });
+    await service.renameNode({ kind: 'entity', id: en.id, newName: 'Mid Co', reason: 'r1' });
+    const a = await service.getEntity(en.id);
+    expect(a?.name).toBe('Mid Co');
+    expect(a?.aliases).toContain('Old Co');
+    await service.renameNode({ kind: 'entity', id: en.id, newName: 'New Co', reason: 'r2' });
+    const b = await service.getEntity(en.id);
+    expect(b?.name).toBe('New Co');
+    expect(b?.aliases).toEqual(expect.arrayContaining(['Old Co', 'Mid Co']));
+    expect(b?.nameHistory).toHaveLength(2);
+  });
+
+  it('同名重命名是 no-op', async () => {
+    const { service } = await makeService();
+    const e = await service.createEvent({ title: '相同', evidence: [ev()] });
+    const res = await service.renameNode({ kind: 'event', id: e.id, newName: '相同', reason: 'noop' });
+    expect(res.aliasesAdded).toBe(false);
+    const a = await service.getEvent(e.id);
+    expect(a?.aliases ?? []).not.toContain('相同');
+    expect(a?.nameHistory ?? []).toHaveLength(0);
+  });
+
+  it('空 newName / 不存在 id 抛错', async () => {
+    const { service } = await makeService();
+    await expect(service.renameNode({ kind: 'event', id: 'x', newName: '   ', reason: 'r' })).rejects.toThrow(
+      /不能为空/,
+    );
+    await expect(service.renameNode({ kind: 'event', id: 'missing', newName: 'x', reason: 'r' })).rejects.toThrow(
+      /不存在/,
+    );
+    await expect(service.renameNode({ kind: 'entity', id: 'missing', newName: 'x', reason: 'r' })).rejects.toThrow(
+      /不存在/,
+    );
+  });
+});
