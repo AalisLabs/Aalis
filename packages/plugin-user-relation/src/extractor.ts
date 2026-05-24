@@ -697,6 +697,7 @@ export class RelationExtractor {
           try {
             const cr = await this.service.consolidate({
               autoLink: this.cfg.consolidateAutoLink,
+              triggerSource: 'eviction',
               ...(this.cfg.consolidateLLMModelRef
                 ? {
                     llm: {
