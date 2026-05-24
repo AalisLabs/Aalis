@@ -565,17 +565,29 @@ describe('plugin-user-relation: evictByQuota', () => {
     expect(snap.entities.find(e => e.id === orphanEnt.id)).toBeUndefined();
   });
 
-  it('respects protection: high-weight or rich-evidence nodes are kept', async () => {
+  it('orphan cleanup is unconditional by default; protection only applies to quota-stage', async () => {
     const { service } = await makeService();
-    const protectedEvent = await service.createEvent({
-      title: 'important',
+    // evidence=3 的"孤儿"——按 v0 旧契约会被保护，但 v1 默认无保护：孤儿就删
+    const richOrphan = await service.createEvent({
+      title: 'important-but-orphan',
       evidence: [ev({ messageIds: ['m1'] }), ev({ messageIds: ['m2'] }), ev({ messageIds: ['m3'] })],
     });
-    // 该节点 evidence=3 → 受保护，即使是孤儿也不删
     const result = await service.evictByQuota({ maxEvents: 0, maxEntities: 0, maxEdges: 0 });
-    expect(result.deletedEvents).toBe(0);
+    expect(result.deletedEvents).toBe(1);
     const snap = await service.loadAll();
-    expect(snap.events.find(e => e.id === protectedEvent.id)).toBeDefined();
+    expect(snap.events.find(e => e.id === richOrphan.id)).toBeUndefined();
+  });
+
+  it('pruneOrphans opts can opt-in protection if caller wants', async () => {
+    const { service } = await makeService();
+    const orphan = await service.createEvent({
+      title: 'rich',
+      evidence: [ev({ messageIds: ['a'] }), ev({ messageIds: ['b'] }), ev({ messageIds: ['c'] })],
+    });
+    const r = await service.pruneOrphans({ protectEvidenceCount: 3 });
+    expect(r.deletedEvents).toBe(0);
+    const snap = await service.loadAll();
+    expect(snap.events.find(e => e.id === orphan.id)).toBeDefined();
   });
 
   it('enforces quota by removing oldest+lowest-weight nodes first', async () => {
