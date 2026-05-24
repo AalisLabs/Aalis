@@ -58,6 +58,8 @@ export interface EventNode {
   id: string;
   /** 事件简称（LLM 提取生成，限长，便于图上显示） */
   title: string;
+  /** 别名 / 历史 title，rename 时原 title 自动落到此处供检索 */
+  aliases?: string[];
   /** 一两句话的事件摘要 */
   summary?: string;
   category?: EventCategory;
@@ -79,6 +81,8 @@ export interface EventNode {
   lastMentionedAt?: number;
   /** 总共被提及次数 */
   mentionCount?: number;
+  /** rename 审计：每次改名追加一条 */
+  nameHistory?: NodeNameAudit[];
 }
 
 /**
@@ -116,6 +120,26 @@ export interface EntityNode {
   lastMentionedAt?: number;
   /** 总共被提及次数 */
   mentionCount?: number;
+  /** rename 审计：每次改名追加一条 */
+  nameHistory?: NodeNameAudit[];
+}
+
+/**
+ * 节点改名审计记录（仅 Event/Entity 可改名；Person.name 与 platform displayName 绑定，禁改）。
+ *
+ * 每次 `renameNode()` 调用追加一条；老 name 同步追加到 `aliases`，所以即便回滚成本也很低。
+ */
+export interface NodeNameAudit {
+  /** 改名前的 name / title */
+  from: string;
+  /** 改名后的 name / title */
+  to: string;
+  /** 时间戳 ms */
+  at: number;
+  /** 触发来源标识：'llm' / 'manual' / 'consolidate' / 系统其它 */
+  by?: string;
+  /** 改名理由（≤80 字，由 LLM 或调用方提供） */
+  reason?: string;
 }
 
 /** 人 → 事件 的参与角色 */
@@ -168,6 +192,20 @@ export const RecommendedPersonRelationTypes = [
 
 export type RecommendedPersonRelationType = (typeof RecommendedPersonRelationTypes)[number];
 
+/**
+ * 人际层级维度 —— 与 `directed` 正交。
+ *
+ * `directed` 描述"A 声明与 B 的关系"（reporter 语义）；`hierarchy` 单独描述
+ * 角色高低，避免把"上下/平级"塞进 relationType 文本里污染语义。
+ *
+ * - `superior`：from 视角下 from > to（如 from 是老板、师父、长辈）
+ * - `subordinate`：from < to
+ * - `peer`：明确平级（同学、同事、朋友）
+ * - `unknown`：未知或不适用（默认）
+ */
+export const PersonHierarchyValues = ['superior', 'peer', 'subordinate', 'unknown'] as const;
+export type PersonHierarchy = (typeof PersonHierarchyValues)[number];
+
 /** 人 → 人 边 */
 export interface PersonPersonEdge {
   /** UUID */
@@ -179,6 +217,13 @@ export interface PersonPersonEdge {
   relationType: string;
   /** 是否有向：'admirer' / 'mentor' 单向，'cp' / 'friend' / 'rival' 双向 */
   directed: boolean;
+  /**
+   * 人际层级（与 directed 正交）。未填视为 'unknown'。
+   *
+   * 注意：取值是 **from 视角**。例如 from 是徒、to 是师 → `subordinate`；
+   * 反过来 from 是师 → `superior`。
+   */
+  hierarchy?: PersonHierarchy;
   weight: number;
   /** 可选人可读注释（<=40 字） */
   description?: string;

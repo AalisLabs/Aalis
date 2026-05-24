@@ -28,6 +28,7 @@ import type {
   EventEventEdge,
   EventNode,
   EvidenceRef,
+  NodeNameAudit,
   PersonEntityEdge,
   PersonEventEdge,
   PersonNode,
@@ -761,6 +762,7 @@ export class RelationService {
     toPersonId: string;
     relationType: string;
     directed?: boolean;
+    hierarchy?: PersonPersonEdge['hierarchy'];
     weight?: number;
     description?: string;
     evidence?: EvidenceRef[];
@@ -785,6 +787,10 @@ export class RelationService {
         ...existing,
         weight: clamp01(reinforceWeight(existing.weight, input.weight ?? 0.1)),
         description: trimDescription(input.description) ?? existing.description,
+        // hierarchy 使用「后来者覆盖 unknown」策略：如果之前是 unknown / 未填、
+        // 今次增量证据给出了具体值，则采纳；反之已有具体值不被 unknown 覆盖。
+        hierarchy:
+          input.hierarchy && input.hierarchy !== 'unknown' ? input.hierarchy : (existing.hierarchy ?? input.hierarchy),
         lastReinforcedAt: now,
         evidence: trimEvidence([...(input.evidence ?? []), ...existing.evidence]),
       };
@@ -798,6 +804,7 @@ export class RelationService {
       toPersonId: input.toPersonId,
       relationType: normalizedType,
       directed,
+      hierarchy: input.hierarchy,
       weight: clamp01(input.weight ?? 0.5),
       description: trimDescription(input.description),
       firstSeenAt: now,
@@ -2083,6 +2090,60 @@ export class RelationService {
       `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
       (opts.llm ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected} 摘要重写 ${summariesRewritten}` : '');
     return consolidateResult;
+  }
+
+  // ============================================================
+  //  renameNode —— 仅允许 Event / Entity 改名
+  //    - Person.name = platform displayName，禁改（不在此暴露）
+  //    - 旧 name/title 自动进 aliases，引用层 0 风险（key = id，非 name）
+  //    - 同步追加 nameHistory 审计条目
+  // ============================================================
+  async renameNode(opts: {
+    kind: 'event' | 'entity';
+    id: string;
+    newName: string;
+    /** 调用来源标识：'llm' / 'manual' / 'consolidate' 等；默认 'manual' */
+    by?: string;
+    /** 改名理由（≤80 字），写入 audit log */
+    reason?: string;
+  }): Promise<{ from: string; to: string; aliasesAdded: boolean }> {
+    const newName = opts.newName.trim();
+    if (!newName) throw new Error('renameNode: newName 不能为空');
+    if (newName.length > 80) throw new Error('renameNode: newName 过长（>80）');
+    const now = Date.now();
+    const by = opts.by ?? 'manual';
+    const reason = opts.reason?.trim().slice(0, 80);
+
+    if (opts.kind === 'event') {
+      const node = await this.store.getEvent(opts.id);
+      if (!node) throw new Error(`renameNode: event ${opts.id} 不存在`);
+      const from = node.title;
+      if (from === newName) return { from, to: newName, aliasesAdded: false };
+      const aliases = Array.from(new Set([...(node.aliases ?? []), from]));
+      const audit: NodeNameAudit = { from, to: newName, at: now, by, ...(reason ? { reason } : {}) };
+      await this.store.upsertEvent({
+        ...node,
+        title: newName,
+        aliases,
+        lastReinforcedAt: now,
+        nameHistory: [...(node.nameHistory ?? []), audit],
+      });
+      return { from, to: newName, aliasesAdded: true };
+    }
+    const node = await this.store.getEntity(opts.id);
+    if (!node) throw new Error(`renameNode: entity ${opts.id} 不存在`);
+    const from = node.name;
+    if (from === newName) return { from, to: newName, aliasesAdded: false };
+    const aliases = Array.from(new Set([...(node.aliases ?? []), from]));
+    const audit: NodeNameAudit = { from, to: newName, at: now, by, ...(reason ? { reason } : {}) };
+    await this.store.upsertEntity({
+      ...node,
+      name: newName,
+      aliases,
+      lastReinforcedAt: now,
+      nameHistory: [...(node.nameHistory ?? []), audit],
+    });
+    return { from, to: newName, aliasesAdded: true };
   }
 
   // ============================================================

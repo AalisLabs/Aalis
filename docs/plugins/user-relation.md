@@ -132,18 +132,70 @@ $$
 | 字段 | 用作 key？ | rename 安全性 |
 |---|---|---|
 | `PersonNode.name` (= displayName) | 否（key = `person:{platform}:{userId}`） | ✅ 引用层完全安全 |
-| `EventNode.name` | 否（key = `event:{uuid}`） | ✅ 引用层完全安全 |
+| `EventNode.title` | 否（key = `event:{uuid}`） | ✅ 引用层完全安全 |
 | `EntityNode.name` | 否（key = `entity:{uuid}`） | ✅ 引用层完全安全 |
 
 业务层风险（**与引用完整性无关**）：
 
-1. `PersonNode.name` 本质是 platform 拉的 displayName。LLM 改它 → 与 platform 实际昵称脱节。**禁改**。
-2. `Event/Entity.name` 是 LLM 自己生成的，可改；要求原 name 进 `aliases` 不丢检索路径。
-3. 频繁 rename 让用户困惑 → 建议加 rate-limit / audit log。
+1. `PersonNode.name` 本质是 platform 拉的 displayName。LLM 改它 → 与 platform 实际昵称脱节。**禁改**：类型层即 `renameNode({kind: 'event'|'entity', ...})` 不接受 `'person'`，工具层额外拦截 `id` 含 `:` 的 person key。
+2. `Event/Entity` 改名通过 `service.renameNode` / 工具 `user_relation_rename_node`：
+   - 原 `title` / `name` **自动**进 `aliases`（去重），旧名仍可被搜索命中；
+   - 写入 `nameHistory: NodeNameAudit[]`（`{from, to, at, by, reason}`），无静默改名；
+   - `key`/`id` 不变，所有引用边 0 风险。
+3. 工具描述里强制要求 `reason`（≤80 字），LLM 必须给出改名理由 → 防止"风格化"反复改。
+
+### LLM 工具：`user_relation_rename_node`
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `node_id` | ✅ | event / entity 的 UUID（带 `:` 的 person key 直接被拒） |
+| `new_name` | ✅ | 新 title / name，≤80 字符，与原名不同（同名 = no-op，不写 audit） |
+| `reason` | ✅ | 改名理由 |
+
+同名拆物（disambiguation / split，一个名字承载两类含义 → 拆成两个具体子物）**不在 rename 范围**，需单独开 issue。
 
 ---
 
-## 5. 配置开关索引
+## 5. Person-Person `hierarchy` 维度（与 `directed` 正交）
+
+`PersonPersonEdge` 同时携带两个独立维度：
+
+| 维度 | 取值 | 语义 |
+|---|---|---|
+| `directed` | `true` / `false` | **声明的对称性**：`true` = "A 单方面声明与 B 有此关系"（B 不一定认同）；`false` = 双方一致的对等关系 |
+| `hierarchy` | `superior` / `peer` / `subordinate` / `unknown` | **从 `fromPerson` 视角看的上下位**：A 视 B 为上 / 平 / 下 / 不明 |
+
+**关键：不要用 `relationType` 文本去暗示层级**（如 "mentor" 不自动 = superior，因为方向取决于谁是 from）。
+
+### 例
+
+| 自然语言 | from | to | relationType | directed | hierarchy |
+|---|---|---|---|---|---|
+| "X 是我师傅" (说话人=A) | A | X | mentor | true | superior |
+| "X 是我徒弟" (说话人=A) | A | X | mentor | true | subordinate |
+| "我和 X 是同学" (双方一致) | A | X | classmate | false | peer |
+| "A 提到 B 是他朋友"（B 是否认同未知） | A | B | friend | true | unknown |
+
+### 合并规则（addPersonPersonEdge）
+
+后来者覆盖 `unknown`，但 `unknown` **不会**覆盖已有的具体值：
+
+$$
+\text{hierarchy}_{\text{merged}} = \begin{cases}
+\text{hierarchy}_{\text{new}} & \text{if } \text{hierarchy}_{\text{old}} = \text{unknown} \lor \text{hierarchy}_{\text{old}} = \emptyset \\
+\text{hierarchy}_{\text{old}} & \text{otherwise}
+\end{cases}
+$$
+
+这样既能把模糊判断升级为具体判断，又不会被后续的"无信息观察"抹平。
+
+### 大号 / 小号 ≠ hierarchy
+
+大号 / 小号是**同一人**的两个账号，走 `is-alias-of` / `alt-account-of` → `mergeAlias({kind: 'person'})`，把 alias 账号的边重写到 canonical，alias `name` 进 `aliases`。**不要**用 `hierarchy: superior` 表达"大号是小号的主人"，那是别名问题不是层级问题。
+
+---
+
+## 6. 配置开关索引
 
 | 配置 | 默认 | 影响 |
 |---|---|---|
