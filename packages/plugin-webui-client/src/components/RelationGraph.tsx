@@ -795,18 +795,21 @@ function asNum(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
-interface FieldGridProps { rows: Array<[string, string | number | undefined | null]>; }
+interface FieldGridProps { rows: Array<[string, string | number | undefined | null] | [string, string | number | undefined | null, string]>; }
 function FieldGrid({ rows }: FieldGridProps): JSX.Element {
   const visible = rows.filter(([, v]) => v !== undefined && v !== null && v !== '');
   if (visible.length === 0) return <></>;
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
-      {visible.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <span style={{ color: 'var(--text-muted)' }}>{k}</span>
-          <span style={{ color: 'var(--text)', wordBreak: 'break-word' }}>{String(v)}</span>
-        </React.Fragment>
-      ))}
+      {visible.map(row => {
+        const [k, v, tip] = row;
+        return (
+          <React.Fragment key={k}>
+            <span style={{ color: 'var(--text-muted)', cursor: tip ? 'help' : undefined }} title={tip}>{k}</span>
+            <span style={{ color: 'var(--text)', wordBreak: 'break-word' }}>{String(v)}</span>
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -865,12 +868,16 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
   // 人物
   if (kind === 'person' && detail.person && typeof detail.person === 'object') {
     const p = detail.person as DetailRecord;
-    const rows: Array<[string, string | number | undefined]> = [
+    const rows: Array<[string, string | number | undefined] | [string, string | number | undefined, string]> = [
       ['昵称', asStr(p.displayName)],
       ['平台', asStr(p.platform)],
       ['用户 ID', asStr(p.userId)],
       ['提及次数', asNum(p.mentionCount)],
-      ['权重', typeof p.weight === 'number' ? p.weight.toFixed(2) : undefined],
+      [
+        '图重要性',
+        typeof p.lastPageRank === 'number' ? (p.lastPageRank as number).toFixed(4) : undefined,
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。人/物/事 个性化种子 3:2:1；该节点越靠近「核心人物 · 热门事件」越高。未跑过压缩时为空。',
+      ],
       ['首次出现', pickText(p, 'firstSeenAt')],
       ['最近出现', pickText(p, 'lastSeenAt')],
       ['最近提及', pickText(p, 'lastMentionedAt')],
@@ -915,12 +922,21 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
 
   // 事件
   if (kind === 'event') {
-    const rows: Array<[string, string | number | undefined]> = [
+    const rows: Array<[string, string | number | undefined] | [string, string | number | undefined, string]> = [
       ['标题', asStr(detail.title)],
       ['类别', asStr(detail.category)],
       ['摘要', asStr(detail.summary)],
       ['提及次数', asNum(detail.mentionCount)],
-      ['权重', typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined],
+      [
+        '合并强度',
+        typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined,
+        '按 title 重复合并的累计强度：0.5 起步，每次合并 +0.3 (clamp 1.0)。语义 = 被强化次数，不是重要性。',
+      ],
+      [
+        '图重要性',
+        typeof detail.lastPageRank === 'number' ? (detail.lastPageRank as number).toFixed(4) : undefined,
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。反映"被重要节点引用"的结构性重要性；与合并强度独立。',
+      ],
       ['首次出现', pickText(detail, 'firstSeenAt')],
       ['最近强化', pickText(detail, 'lastReinforcedAt')],
       ['证据数', asNum(detail.evidenceCount)],
@@ -932,12 +948,21 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
   // 实体
   if (kind === 'entity') {
     const aliases = Array.isArray(detail.aliases) ? (detail.aliases as unknown[]).filter(x => typeof x === 'string').join(' / ') : undefined;
-    const rows: Array<[string, string | number | undefined]> = [
+    const rows: Array<[string, string | number | undefined] | [string, string | number | undefined, string]> = [
       ['名称', asStr(detail.name)],
       ['类型', asStr(detail.entityKind)],
       ['别名', aliases || undefined],
       ['摘要', asStr(detail.summary)],
-      ['权重', typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined],
+      [
+        '合并强度',
+        typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined,
+        '按 (kind, name) 重复合并的累计强度：0.5 起步，每次合并 +0.3 (clamp 1.0)。语义 = 被强化次数，不是重要性。',
+      ],
+      [
+        '图重要性',
+        typeof detail.lastPageRank === 'number' ? (detail.lastPageRank as number).toFixed(4) : undefined,
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。多人共同指向的实体一般分数更高。',
+      ],
       ['首次出现', pickText(detail, 'firstSeenAt')],
       ['最近强化', pickText(detail, 'lastReinforcedAt')],
       ['证据数', asNum(detail.evidenceCount)],

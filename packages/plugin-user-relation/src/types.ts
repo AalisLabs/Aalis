@@ -41,6 +41,14 @@ export interface PersonNode {
   lastMentionedAt?: number;
   /** 总共被提及次数（每次 extractor 命中该节点 +1） */
   mentionCount?: number;
+  /**
+   * 最近一次 evictByQuota 计算出的全图 PageRank 分数。
+   * 个性化向量按 kind 偏置（人>物>事），反映该节点在关系网中的结构性重要性。
+   * 由 `evictByQuota` 写入，供 WebUI 展示"图重要性"。**未跑过淘汰的实例可能为 undefined**。
+   */
+  lastPageRank?: number;
+  /** lastPageRank 的写入时间戳 */
+  lastPageRankAt?: number;
 }
 
 /** 事件类别（粗分类，仅供 UI 上色与过滤） */
@@ -73,8 +81,9 @@ export interface EventNode {
    */
   occurrences?: number[];
   /**
-   * 节点权重 0~1。每次按 title 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。
-   * 老节点未设置则视为 0.5。
+   * 节点合并强度 0~1。每次按 title 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。
+   * 老节点未设置则视为 0.5。**语义 = 被强化次数累计，不是"重要性"**；
+   * 真正的结构性重要性看 `lastPageRank`。
    */
   weight?: number;
   /** 最近一次在对话窗口中被提及的时间 */
@@ -83,6 +92,9 @@ export interface EventNode {
   mentionCount?: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
+  /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
+  lastPageRank?: number;
+  lastPageRankAt?: number;
 }
 
 /**
@@ -114,8 +126,14 @@ export interface EntityNode {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
-  /** 节点权重 0~1。每次按 (kind, name) 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。 */
+  /**
+   * 节点合并强度 0~1。每次按 (kind, name) 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。
+   * **语义 = 被强化次数累计，不是"重要性"**；真正的结构性重要性看 `lastPageRank`。
+   */
   weight?: number;
+  /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
+  lastPageRank?: number;
+  lastPageRankAt?: number;
   /** 最近一次在对话窗口中被提及的时间 */
   lastMentionedAt?: number;
   /** 总共被提及次数 */
@@ -162,7 +180,7 @@ export interface PersonEventEdge {
   role: PersonEventRole;
   /** 该人对该事件的态度倾向（如有可识别） */
   sentiment?: Sentiment;
-  /** 强度 0~1，时间衰减 + 反复强化累积 */
+  /** 强度 0~1，反复强化累积：`reinforceWeight(prev, delta) = prev + (1-prev)·delta`，不做时间衰减 */
   weight: number;
   /** 可选人可读注释（LLM 提取时输出，<=40 字）。例：「发起讨论后被反驳」 */
   description?: string;
