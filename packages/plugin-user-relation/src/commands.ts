@@ -16,7 +16,22 @@ import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js
 export function registerRelationCommands(
   ctx: Context,
   service: RelationService,
-  options?: { consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking?: boolean } },
+  options?: {
+    consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking?: boolean };
+    /** 淘汰配置；/relation compress 与 /relation maintain 会使用 */
+    eviction?: {
+      maxEvents: number;
+      maxEntities: number;
+      maxEdges: number;
+      pagerankDamping: number;
+      pagerankIterations: number;
+      pagerankEpsilon: number;
+      hysteresisPct: number;
+      targetPct: number;
+    };
+    /** consolidate 是否默认开 autoLink（/relation maintain 需要） */
+    consolidateAutoLink?: boolean;
+  },
 ): void {
   const cmds = useCommandService(ctx);
 
@@ -185,6 +200,7 @@ export function registerRelationCommands(
       const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
       const r = await service.consolidate({
         autoLink,
+        triggerSource: 'manual',
         ...(useLlm && options?.consolidateLLM
           ? {
               llm: {
@@ -201,6 +217,7 @@ export function registerRelationCommands(
         `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
         `- EventEntityEdge 去重：${r.eventEdgesNormalized} 组重整`,
         `- 实体层级候选：${r.entityHierarchyCandidates} 对，新增 ${r.entityHierarchyEdgesCreated} 条 entity-entity[part-of] 边`,
+        `- 侧向父候选：${r.lateralParentCandidates} 簇，新建父实体 ${r.lateralParentsCreated} 个，新增 ${r.lateralEdgesCreated} 条侧向 part-of 边`,
       ];
       if (useLlm) {
         lines.push(
@@ -216,9 +233,97 @@ export function registerRelationCommands(
       return lines.join('\n');
     });
 
+  // ---- compress（仅跳出一次容量淘汰 + 伤亡报告） ----
+  cmds
+    .command('relation.compress', '关系图压缩：手动触发容量淘汰（PageRank 低分 → 删 events/entities/edges）', {
+      authority: 3,
+    })
+    .action(async () => {
+      const ev = options?.eviction;
+      if (!ev || (ev.maxEvents <= 0 && ev.maxEntities <= 0 && ev.maxEdges <= 0)) {
+        return '⚠ 未配置淘汰阈值（maxEvents / maxEntities / maxEdges 均 ≤0），无法手动压缩。';
+      }
+      const before = await service.loadAll();
+      const r = await service.evictByQuota({
+        maxEvents: ev.maxEvents,
+        maxEntities: ev.maxEntities,
+        maxEdges: ev.maxEdges,
+        pagerankDamping: ev.pagerankDamping,
+        pagerankIterations: ev.pagerankIterations,
+        pagerankEpsilon: ev.pagerankEpsilon,
+        hysteresisPct: ev.hysteresisPct,
+        targetPct: ev.targetPct,
+      });
+      return [
+        '✓ 关系图压缩完成：',
+        `- 事件：${before.events.length} → ${before.events.length - r.deletedEvents}（删 ${r.deletedEvents}，阈 ${ev.maxEvents}）`,
+        `- 实体：${before.entities.length} → ${before.entities.length - r.deletedEntities}（删 ${r.deletedEntities}，阈 ${ev.maxEntities}）`,
+        `- 边：  ${before.edges.length} → ${before.edges.length - r.deletedEdges}（删 ${r.deletedEdges}，阈 ${ev.maxEdges}）`,
+      ].join('\n');
+    });
+
+  // ---- maintain（压缩 + 整理 一步完成） ----
+  cmds
+    .command(
+      'relation.maintain',
+      '关系图体检：先压缩（容量淘汰），再整理（别名 / part-of / 层级 / 侧向父），全过程报告',
+      { authority: 3 },
+    )
+    .option('no-llm', '--no-llm', { description: '跳过 consolidate 阶段的 LLM 增强' })
+    .option('no-auto-link', '--no-auto-link', { description: '取消 consolidate 阶段的 autoLink' })
+    .action(async argv => {
+      const ev = options?.eviction;
+      const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
+      const autoLink = argv.options['no-auto-link'] !== true && (options?.consolidateAutoLink ?? true);
+      const lines: string[] = ['✓ 关系图体检完成：'];
+      // step 1: compress
+      if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+        const before = await service.loadAll();
+        const r = await service.evictByQuota({
+          maxEvents: ev.maxEvents,
+          maxEntities: ev.maxEntities,
+          maxEdges: ev.maxEdges,
+          pagerankDamping: ev.pagerankDamping,
+          pagerankIterations: ev.pagerankIterations,
+          pagerankEpsilon: ev.pagerankEpsilon,
+          hysteresisPct: ev.hysteresisPct,
+          targetPct: ev.targetPct,
+        });
+        lines.push(
+          `[1/2] 压缩：事件 ${before.events.length}→${before.events.length - r.deletedEvents}，实体 ${before.entities.length}→${before.entities.length - r.deletedEntities}，边 ${before.edges.length}→${before.edges.length - r.deletedEdges}`,
+        );
+      } else {
+        lines.push('[1/2] 压缩：跳过（未配置淘汰阈值）');
+      }
+      // step 2: consolidate
+      const cr = await service.consolidate({
+        autoLink,
+        triggerSource: 'manual',
+        ...(useLlm && options?.consolidateLLM
+          ? {
+              llm: {
+                ctx,
+                modelRef: options.consolidateLLM.modelRef,
+                disableThinking: options.consolidateLLM.disableThinking ?? true,
+              },
+            }
+          : {}),
+      });
+      lines.push(
+        `[2/2] 整理：别名 ${cr.aliasCandidates.length} 候选/${cr.aliasEdgesCreated} 边，` +
+          `part-of 新增 ${cr.partOfEdgesCreated}，事件边重整 ${cr.eventEdgesNormalized}，` +
+          `层级 ${cr.entityHierarchyCandidates} 候选/${cr.entityHierarchyEdgesCreated} 边，` +
+          `侧向父 ${cr.lateralParentCandidates} 簇/新建 ${cr.lateralParentsCreated}/边 ${cr.lateralEdgesCreated}` +
+          (useLlm
+            ? `，LLM 通过 ${cr.llmVerified ?? 0} 否决 ${cr.llmRejected ?? 0} 摘要重写 ${cr.summariesRewritten ?? 0}`
+            : ''),
+      );
+      return lines.join('\n');
+    });
+
   // ---- consolidation-status（查询最近一次 consolidate 运行情况） ----
   cmds
-    .command('relation.consolidation-status', '查看最近一次关系图整理（consolidate）的运行时间与结果', {
+    .command('relation.consolidation-status', '查看最近一次关系图整理（consolidate）的运行时间、触发源与结果', {
       authority: 1,
     })
     .action(async () => {
@@ -226,11 +331,12 @@ export function registerRelationCommands(
       if (!info.lastRunAt) {
         return (
           '⚠ 本次运行以来尚未执行过 consolidation。\n' +
-          '触发方式：/relation consolidate（手动）或等待容量淘汰自动触发。'
+          '触发方式：/relation consolidate（手动）、/relation maintain（压缩后连着整理），或容量淘汰后自动触发。'
         );
       }
       const time = new Date(info.lastRunAt).toLocaleString('zh-CN', { hour12: false });
-      return `✓ 最近一次 consolidation 于 ${time} 完成。\n${info.summary ?? '（无详情）'}`;
+      const triggerLabel = info.trigger === 'manual' ? '手动' : info.trigger === 'eviction' ? '淘汰后自动' : 'API 调用';
+      return `✓ 最近一次 consolidation：${time}（触发方式：${triggerLabel}）\n${info.summary ?? '（无详情）'}`;
     });
 }
 

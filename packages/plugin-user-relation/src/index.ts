@@ -526,6 +526,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             },
           }
         : {}),
+      eviction: {
+        maxEvents: numCfg(config.maxEvents, 500),
+        maxEntities: numCfg(config.maxEntities, 300),
+        maxEdges: numCfg(config.maxEdges, 2000),
+        pagerankDamping: numCfg(config.pagerankDamping, 0.85),
+        pagerankIterations: numCfg(config.pagerankIterations, 20),
+        pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
+        hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
+        targetPct: numCfg(config.evictTargetPct, 0.8),
+      },
+      consolidateAutoLink: config.consolidationAutoLink === true,
     });
   }
 }
