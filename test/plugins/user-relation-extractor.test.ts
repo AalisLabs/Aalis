@@ -294,4 +294,61 @@ describe('plugin-user-relation: extractor', () => {
     expect(userMsg?.content).toMatch(/三角洲/);
     expect(userMsg?.content).toMatch(/role=enthusiast/);
   });
+
+  it('self-placeholder 守卫：LLM 误抽出的 aalis:aalis 占位 person + 边一律丢弃', async () => {
+    // 模拟 LLM 把 assistant 自身误抽成占位 person，并尝试给它建 person-entity 边
+    const llmJson = JSON.stringify({
+      persons: [
+        { platform: 'aalis', userId: 'aalis', displayName: 'Aalis' },
+        { platform: 'onebot', userId: 'a', displayName: 'Alice' },
+      ],
+      entities: [
+        { refKey: 'e1', name: '三角洲', entityKind: 'work', evidence: { messageIds: ['m1'], quote: '三角洲' } },
+      ],
+      personEntityEdges: [
+        // 占位 self → 应被丢弃
+        {
+          personPlatform: 'aalis',
+          personUserId: 'aalis',
+          entityRefKey: 'e1',
+          role: 'mentioned',
+          evidence: { messageIds: ['m1'], quote: '三角洲' },
+        },
+        // 真实用户 → 应保留
+        {
+          personPlatform: 'onebot',
+          personUserId: 'a',
+          entityRefKey: 'e1',
+          role: 'enthusiast',
+          evidence: { messageIds: ['m1'], quote: '三角洲' },
+        },
+      ],
+      personPersonEdges: [
+        // 占位 self 任一端 → 整条丢弃
+        {
+          fromPlatform: 'onebot',
+          fromUserId: 'a',
+          toPlatform: 'aalis',
+          toUserId: 'aalis',
+          relationType: 'friend',
+          evidence: { messageIds: ['m1'], quote: '三角洲' },
+        },
+      ],
+    });
+    const { mem, service, extractor } = await setup(llmJson);
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '我玩三角洲', 'Alice'));
+    const res = await extractor.triggerNow('sess1');
+    expect(res.status).toBe('ok');
+
+    const snap = await service.loadAll();
+    // aalis:aalis 不应入库
+    expect(snap.persons.find(p => p.id === 'aalis:aalis')).toBeUndefined();
+    // alice 入库，其对实体 e1 的 enthusiast 边保留
+    expect(snap.persons.find(p => p.id === 'onebot:a')).toBeDefined();
+    const peEnt = snap.edges.filter(e => e.kind === 'person-entity');
+    expect(peEnt).toHaveLength(1);
+    expect(peEnt[0].kind === 'person-entity' && peEnt[0].fromPersonId).toBe('onebot:a');
+    // person-person 边因含 self 占位 → 不应有
+    expect(snap.edges.filter(e => e.kind === 'person-person')).toHaveLength(0);
+  });
 });
