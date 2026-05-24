@@ -341,4 +341,118 @@ describe('plugin-user-relation: 多层遍历', () => {
       expect(r).toEqual([]);
     });
   });
+
+  describe('correctEdge', () => {
+    it('weaken 成功降低 weight 并写入 weightHistory', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+        weight: 0.3,
+      });
+      const r = await svc.correctEdge({ edgeId: e.id, action: 'weaken', reason: '关系淡化' });
+      expect(r.action).toBe('weakened');
+      expect(r.to).toBeLessThan(r.from);
+      expect(r.edge?.weight).toBeLessThan(0.3);
+      expect((r.edge?.weightHistory ?? []).length).toBe(1);
+      expect(r.edge?.weightHistory?.[0]?.action).toBe('weaken');
+      expect(r.edge?.weightHistory?.[0]?.reason).toBe('关系淡化');
+    });
+
+    it('strengthen 成功提高 weight 但封顶 1', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+        weight: 0.8,
+      });
+      const r = await svc.correctEdge({ edgeId: e.id, action: 'strengthen', multiplier: 2, reason: '关键关系' });
+      expect(r.action).toBe('strengthened');
+      expect(r.edge?.weight).toBe(1);
+    });
+
+    it('weight ≥ 0.5 时禁止直接 remove（阶梯保护）', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+        weight: 0.7,
+      });
+      await expect(svc.correctEdge({ edgeId: e.id, action: 'remove', reason: '错误' })).rejects.toThrow(/≥ 0\.5/);
+    });
+
+    it('force=true 跳过阶梯保护', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+        weight: 0.9,
+      });
+      const r = await svc.correctEdge({ edgeId: e.id, action: 'remove', reason: '系统纠错', force: true });
+      expect(r.action).toBe('removed');
+    });
+
+    it('remove 后 store 中边被物理删除（无脏数据）', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+        weight: 0.2,
+      });
+      const r = await svc.correctEdge({ edgeId: e.id, action: 'remove', reason: '幻觉' });
+      expect(r.action).toBe('removed');
+      // biome-ignore lint/suspicious/noExplicitAny: 测试中直接访问私有 store 验证物理删除
+      const store = (svc as any).store as RelationStore;
+      expect(await store.getEdge(e.id)).toBeUndefined();
+    });
+
+    it('alias 边禁操作', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'is-alias-of',
+        weight: 0.2,
+      });
+      await expect(svc.correctEdge({ edgeId: e.id, action: 'weaken', reason: 'x' })).rejects.toThrow(/alias/);
+    });
+
+    it('reason 缺失 / 不存在的 edge → 报错', async () => {
+      const svc = await setup();
+      await expect(svc.correctEdge({ edgeId: 'x', action: 'weaken', reason: '' })).rejects.toThrow(/reason 必填/);
+      await expect(svc.correctEdge({ edgeId: 'nope', action: 'weaken', reason: 'r' })).rejects.toThrow(/不存在/);
+    });
+
+    it('weaken multiplier 越界 → 报错', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a');
+      await svc.observePerson('onebot', 'b');
+      const e = await svc.addPersonPersonEdge({
+        fromPersonId: 'onebot:a',
+        toPersonId: 'onebot:b',
+        relationType: 'friend',
+        weight: 0.3,
+      });
+      await expect(svc.correctEdge({ edgeId: e.id, action: 'weaken', multiplier: 2, reason: 'r' })).rejects.toThrow(
+        /\(0, 1\)/,
+      );
+    });
+  });
 });

@@ -160,6 +160,19 @@ export interface NodeNameAudit {
   reason?: string;
 }
 
+/**
+ * 边权 audit：correctEdge 修改 weight 时写入 edge.weightHistory[]。
+ * 物理删除的边随边一起销毁，不留 audit（避免脏数据堆积）。
+ */
+export interface EdgeWeightAudit {
+  from: number;
+  to: number;
+  action: 'weaken' | 'strengthen';
+  at: number;
+  by?: string;
+  reason?: string;
+}
+
 /** 人 → 事件 的参与角色 */
 export type PersonEventRole =
   | 'initiator' // 发起者 / 提起话题者
@@ -187,6 +200,8 @@ export interface PersonEventEdge {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** weight 调整审计（correctEdge 写入） */
+  weightHistory?: EdgeWeightAudit[];
 }
 
 /**
@@ -248,6 +263,8 @@ export interface PersonPersonEdge {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** weight 调整审计（correctEdge 写入） */
+  weightHistory?: EdgeWeightAudit[];
 }
 
 export type RelationEdge =
@@ -304,6 +321,8 @@ export interface PersonEntityEdge {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** weight 调整审计（correctEdge 写入） */
+  weightHistory?: EdgeWeightAudit[];
 }
 
 /**
@@ -336,6 +355,8 @@ export interface EventEventEdge {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** weight 调整审计（correctEdge 写入） */
+  weightHistory?: EdgeWeightAudit[];
 }
 
 /**
@@ -362,6 +383,8 @@ export interface EventEntityEdge {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** weight 调整审计（correctEdge 写入） */
+  weightHistory?: EdgeWeightAudit[];
 }
 
 /**
@@ -395,6 +418,8 @@ export interface EntityEntityEdge {
   firstSeenAt: number;
   lastReinforcedAt: number;
   evidence: EvidenceRef[];
+  /** weight 调整审计（correctEdge 写入） */
+  weightHistory?: EdgeWeightAudit[];
 }
 
 /** 完整关系图快照（供 webui 渲染） */
