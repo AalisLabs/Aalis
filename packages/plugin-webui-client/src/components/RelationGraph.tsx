@@ -186,9 +186,11 @@ interface Props {
   comp: WebuiGraphComponent;
   pluginName: string;
   refreshTick?: number;
+  /** 同页其它组件（如 stat）的刷新回调；按下「刷新」/执行 action 时一并 bump 全页，避免规模数字与图脱节 */
+  onRefresh?: () => void;
 }
 
-export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Element {
+export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Props): JSX.Element {
   ensureFcose();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -421,17 +423,22 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
   }, []);
 
   // ── 操作按钮 ──────────────────────────────────────────────
+  // 触发 onRefresh（若提供）以同步刷新页面上的 stat 等组件；fallback 到本地 fetchGraph。
+  const triggerRefresh = useCallback(() => {
+    if (onRefresh) onRefresh();
+    else fetchGraph();
+  }, [onRefresh, fetchGraph]);
   const runAction = useCallback(
     async (method: string, confirmText?: string) => {
       if (confirmText && !window.confirm(confirmText)) return;
       try {
         await pageAction(pluginName, method, { focusId });
-        fetchGraph();
+        triggerRefresh();
       } catch (e) {
         alert(`操作失败: ${(e as Error).message}`);
       }
     },
-    [pluginName, focusId, fetchGraph],
+    [pluginName, focusId, triggerRefresh],
   );
 
   // ── UI ────────────────────────────────────────────────────
@@ -538,7 +545,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
             ✕ 清除焦点
           </button>
         ) : null}
-        <button type="button" onClick={fetchGraph} disabled={loading} style={{ padding: '4px 8px' }}>
+        <button type="button" onClick={triggerRefresh} disabled={loading} style={{ padding: '4px 8px' }}>
           {loading ? '加载中…' : '刷新'}
         </button>
         <button type="button" onClick={exportPng} style={{ padding: '4px 8px' }}>

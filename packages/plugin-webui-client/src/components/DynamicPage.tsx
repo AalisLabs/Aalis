@@ -437,7 +437,7 @@ function DynamicComponent({ component, pluginName, refreshTick, onRefresh }: { c
     case 'info': return <DynInfo comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
     case 'markdown': return <DynMarkdown comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
     case 'tabs': return <DynTabs comp={component} pluginName={pluginName} refreshTick={refreshTick} onRefresh={onRefresh} />;
-    case 'graph': return <RelationGraph comp={component} pluginName={pluginName} refreshTick={refreshTick} />;
+    case 'graph': return <RelationGraph comp={component} pluginName={pluginName} refreshTick={refreshTick} onRefresh={onRefresh} />;
     default: return null;
   }
 }
