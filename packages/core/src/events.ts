@@ -15,11 +15,13 @@ export class EventBus {
 
   /**
    * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on/once 监听该事件时
-   * 立即用缓存参数同步触发回调。用于"应用生命周期里只发一次的里程碑事件"
-   * （目前是 'ready'），让被热重载的插件在 reactivate 后仍能拿到 ready 通知。
+   * 立即用缓存参数同步触发回调。用于"应用生命周期里只发一次的里程碑事件"，
+   * 让被热重载的插件在 reactivate 后仍能拿到启动通知。
+   * 当前标记为 sticky 的事件：'ready'、'app:started'。
    *
-   * - 注册：`markSticky('ready')` 由 App 在构造时调用
-   * - 清除：`clearSticky('ready')` 由 App 在 dispose / 重启时调用
+   * - 注册：`markSticky(event)` 由 App 在构造时调用
+   * - 清除：`clearSticky(event)` 供 App 在进程内完整重启时调用（目前未使用，
+   *   因为 restartStrategy 采用 spawn 新进程方案，App 实例不会复用）
    */
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   private stickyArgs = new Map<string, any[]>();
