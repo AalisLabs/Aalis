@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react';
 import cytoscape, { type Core, type ElementDefinition, type EventObject } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { pageAction } from '../api';
@@ -570,12 +570,12 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       <div style={{ display: 'flex' }}>
         <div style={{ position: 'relative', flex: 1 }}>
           <div ref={containerRef} style={canvasStyle} />
-          {focusId && payload?.focusId ? (
+          {(selectedNode || (focusId && payload?.focusEdge)) ? (
             <div
               style={{
                 position: 'absolute',
                 top: 10,
-                right: 10,
+                left: 10,
                 width: 360,
                 maxWidth: 'calc(100% - 20px)',
                 maxHeight: graphHeight - 20,
@@ -599,14 +599,26 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                     setSelectedNode(null);
                   }}
                   style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}
-                  title="清除焦点"
-                  aria-label="清除焦点"
+                  title="关闭"
+                  aria-label="关闭"
                 >
                   ✕
                 </button>
-                <strong style={{ color: FOCUS_COLOR }}>{payload.focusEdge ? '焦点（边）' : '焦点'}</strong>
+                <strong style={{ color: FOCUS_COLOR }}>
+                  {selectedNode
+                    ? `${selectedNode.data.kind ?? '节点'}：${selectedNode.data.label ?? selectedNode.data.id}`
+                    : '焦点（边）'}
+                </strong>
               </div>
-              {payload.focusEdge ? (() => {
+              {selectedNode ? (
+                <NodeDetailCard
+                  node={selectedNode}
+                  detail={detail}
+                  loading={detailLoading}
+                  hasDetailSource={Boolean(comp.detailSource)}
+                  isFocus={focusId === selectedNode.data.id}
+                />
+              ) : payload?.focusEdge ? (() => {
                 const fe = payload.focusEdge;
                 const fmt = (ts?: number): string => {
                   if (!ts || !Number.isFinite(ts)) return '—';
@@ -661,68 +673,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                     </div>
                   </>
                 );
-              })() : (
-                <>
-                  <div style={{ marginBottom: 2 }}>
-                    {(() => {
-                      const fn = payload.nodes.find(n => n.data.id === payload.focusId);
-                      return fn?.data.label ?? payload.focusId;
-                    })()}
-                  </div>
-                  <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
-                    {(() => {
-                      const fn = payload.nodes.find(n => n.data.id === payload.focusId);
-                      return String(fn?.data.kind ?? '—');
-                    })()}
-                  </div>
-                  <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                    深度 {maxDepth === 0 ? '∞' : maxDepth} · 宽度 {maxBreadth === 0 ? '∞' : maxBreadth}
-                    <br />
-                    节点 {payload.nodes.length} · 边 {payload.edges.length}
-                  </div>
-                </>
-              )}
+              })() : null}
             </div>
           ) : null}
         </div>
-        {selectedNode ? (
-          <aside
-            style={{
-              width: 280,
-              borderLeft: '1px solid var(--border-color, #2a2a42)',
-              padding: 12,
-              fontSize: 12,
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              overflow: 'auto',
-              maxHeight: graphHeight,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <strong>{selectedNode.data.label ?? selectedNode.data.id}</strong>
-              <button
-                type="button"
-                onClick={() => setSelectedNode(null)}
-                style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
-            </div>
-            <div style={{ color: 'var(--text-secondary)', marginBottom: 10 }}>
-              {selectedNode.data.kind ?? '—'}
-              {focusId === selectedNode.data.id ? <span style={{ marginLeft: 6, color: FOCUS_COLOR }}>· 当前焦点</span> : null}
-            </div>
-            {detailLoading ? (
-              <div style={{ color: 'var(--text-muted)' }}>加载详情中…</div>
-            ) : detail ? (
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 11, margin: 0, color: 'var(--text)' }}>
-                {JSON.stringify(detail, null, 2)}
-              </pre>
-            ) : (
-              <div style={{ color: 'var(--text-muted)' }}>无详情（detailSource 未配置）</div>
-            )}
-          </aside>
-        ) : null}
       </div>
 
       {/* 拖拽改变画布高度。改完写入 localStorage，下次保持。 */}
@@ -785,7 +739,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         <LegendEdge color="#a855f7" dashStyle="solid" label="实体↔实体" />
         <LegendEdge color="#06b6d4" dashStyle="dashed" label="事→实体" />
         <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
-        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点；清除焦点请点左上「✕ 清除焦点」按钮</span>
+        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点 + 显示左上详情卡片；清除焦点请点工具栏「✕ 清除焦点」按钮</span>
       </div>
 
       <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }}>
@@ -816,5 +770,189 @@ function LegendEdge({ color, dashStyle, label }: { color: string; dashStyle: 'so
       <span style={{ width: 18, height: 0, borderTop: `2px ${borderStyle} ${color}`, display: 'inline-block' }} />
       {label}
     </span>
+  );
+}
+
+// ── 节点详情卡片：把 detailSource 返回的 person/event/entity 字段化展示 ──────
+type DetailRecord = Record<string, unknown>;
+
+function fmtTs(ts: unknown): string {
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return '—';
+  try { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); } catch { return String(ts); }
+}
+function pickText(d: DetailRecord, key: string): string | undefined {
+  const v = d[`${key}Text`] ?? d[key];
+  if (typeof v === 'string' && v) return v;
+  if (typeof v === 'number') return fmtTs(v);
+  return undefined;
+}
+function asStr(v: unknown): string | undefined {
+  if (typeof v === 'string' && v) return v;
+  if (typeof v === 'number') return String(v);
+  return undefined;
+}
+function asNum(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+interface FieldGridProps { rows: Array<[string, string | number | undefined | null]>; }
+function FieldGrid({ rows }: FieldGridProps): JSX.Element {
+  const visible = rows.filter(([, v]) => v !== undefined && v !== null && v !== '');
+  if (visible.length === 0) return <></>;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
+      {visible.map(([k, v]) => (
+        <React.Fragment key={k}>
+          <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+          <span style={{ color: 'var(--text)', wordBreak: 'break-word' }}>{String(v)}</span>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+interface EvidenceItem {
+  quote?: string;
+  messageIds?: string[];
+  sessionId?: string;
+  extractedAt?: number;
+  extractedAtText?: string;
+}
+function EvidenceList({ list }: { list: EvidenceItem[] }): JSX.Element {
+  if (!list || list.length === 0) return <></>;
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>证据 {list.length} 条</div>
+      {list.map((ev, i) => (
+        <div
+          key={`${ev.messageIds?.join(',') ?? i}-${ev.extractedAt ?? i}`}
+          style={{ borderLeft: '2px solid var(--border-color, #2a2a42)', padding: '2px 6px', marginBottom: 4, color: 'var(--text-secondary)', lineHeight: 1.4 }}
+        >
+          <div>「{ev.quote ?? '(无摘录)'}」</div>
+          <div style={{ fontSize: 10, opacity: 0.7 }}>
+            {ev.extractedAtText ?? fmtTs(ev.extractedAt)}
+            {ev.sessionId ? ` · ${ev.sessionId}` : ''}
+            {ev.messageIds?.length ? ` · ${ev.messageIds.length} msg` : ''}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface NodeDetailCardProps {
+  node: GraphNode;
+  detail: DetailRecord | null;
+  loading: boolean;
+  hasDetailSource: boolean;
+  isFocus: boolean;
+}
+function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: NodeDetailCardProps): JSX.Element {
+  const kind = node.data.kind;
+  const headerMeta = (
+    <div style={{ color: 'var(--text-secondary)', marginBottom: 8, fontSize: 10 }}>
+      id={node.data.id}
+      {isFocus ? <span style={{ marginLeft: 6, color: FOCUS_COLOR }}>· 当前焦点</span> : null}
+    </div>
+  );
+  if (loading) return <>{headerMeta}<div style={{ color: 'var(--text-muted)' }}>加载详情中…</div></>;
+  if (!hasDetailSource) return <>{headerMeta}<div style={{ color: 'var(--text-muted)' }}>无详情（detailSource 未配置）</div></>;
+  if (!detail) return <>{headerMeta}<div style={{ color: 'var(--text-muted)' }}>无数据</div></>;
+  if (typeof detail.error === 'string') {
+    return <>{headerMeta}<div style={{ color: '#dc2626' }}>错误: {detail.error}</div></>;
+  }
+
+  // 人物
+  if (kind === 'person' && detail.person && typeof detail.person === 'object') {
+    const p = detail.person as DetailRecord;
+    const rows: Array<[string, string | number | undefined]> = [
+      ['昵称', asStr(p.displayName)],
+      ['平台', asStr(p.platform)],
+      ['用户 ID', asStr(p.userId)],
+      ['提及次数', asNum(p.mentionCount)],
+      ['权重', typeof p.weight === 'number' ? p.weight.toFixed(2) : undefined],
+      ['首次出现', pickText(p, 'firstSeenAt')],
+      ['最近出现', pickText(p, 'lastSeenAt')],
+      ['最近提及', pickText(p, 'lastMentionedAt')],
+      ['关联事件', asNum(detail.eventCount)],
+      ['关联边数', asNum(detail.edgeCount)],
+    ];
+    const recent = Array.isArray(detail.recentEvents) ? (detail.recentEvents as DetailRecord[]) : [];
+    const edges = Array.isArray(detail.edges) ? (detail.edges as DetailRecord[]) : [];
+    return (
+      <>
+        {headerMeta}
+        <FieldGrid rows={rows} />
+        {recent.length > 0 ? (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>近期事件 {recent.length}</div>
+            {recent.slice(0, 8).map((ev, i) => (
+              <div key={asStr(ev.id) ?? i} style={{ color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                · {asStr(ev.title) ?? '(无标题)'}
+                {asStr(ev.category) ? <span style={{ opacity: 0.6 }}> [{asStr(ev.category)}]</span> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {edges.length > 0 ? (
+          <div>
+            <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>边 {edges.length}</div>
+            {edges.slice(0, 12).map((e, i) => {
+              const w = typeof e.weight === 'number' ? ` w=${(e.weight as number).toFixed(1)}` : '';
+              const label = asStr(e.relationZh) ?? asStr(e.roleZh) ?? asStr(e.relationType) ?? asStr(e.role) ?? asStr(e.kind) ?? '?';
+              const target = asStr(e.targetLabel) ?? asStr(e.toEntityId) ?? asStr(e.toEventId) ?? asStr(e.toPersonId) ?? '';
+              return (
+                <div key={asStr(e.id) ?? i} style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-secondary)' }}>
+                  {label}{w} → {target}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  // 事件
+  if (kind === 'event') {
+    const rows: Array<[string, string | number | undefined]> = [
+      ['标题', asStr(detail.title)],
+      ['类别', asStr(detail.category)],
+      ['摘要', asStr(detail.summary)],
+      ['提及次数', asNum(detail.mentionCount)],
+      ['权重', typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined],
+      ['首次出现', pickText(detail, 'firstSeenAt')],
+      ['最近强化', pickText(detail, 'lastReinforcedAt')],
+      ['证据数', asNum(detail.evidenceCount)],
+    ];
+    const evidence = Array.isArray(detail.evidence) ? (detail.evidence as EvidenceItem[]) : [];
+    return <>{headerMeta}<FieldGrid rows={rows} /><EvidenceList list={evidence} /></>;
+  }
+
+  // 实体
+  if (kind === 'entity') {
+    const aliases = Array.isArray(detail.aliases) ? (detail.aliases as unknown[]).filter(x => typeof x === 'string').join(' / ') : undefined;
+    const rows: Array<[string, string | number | undefined]> = [
+      ['名称', asStr(detail.name)],
+      ['类型', asStr(detail.entityKind)],
+      ['别名', aliases || undefined],
+      ['摘要', asStr(detail.summary)],
+      ['权重', typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined],
+      ['首次出现', pickText(detail, 'firstSeenAt')],
+      ['最近强化', pickText(detail, 'lastReinforcedAt')],
+      ['证据数', asNum(detail.evidenceCount)],
+    ];
+    const evidence = Array.isArray(detail.evidence) ? (detail.evidence as EvidenceItem[]) : [];
+    return <>{headerMeta}<FieldGrid rows={rows} /><EvidenceList list={evidence} /></>;
+  }
+
+  // 兜底
+  return (
+    <>
+      {headerMeta}
+      <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 11, margin: 0, color: 'var(--text)' }}>
+        {JSON.stringify(detail, null, 2)}
+      </pre>
+    </>
   );
 }
