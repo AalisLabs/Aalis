@@ -111,7 +111,7 @@ export const configSchema: ConfigSchema = {
     type: 'llm-ref',
     label: 'Consolidate 使用的 LLM',
     description:
-      '可选。配置后 /relation.consolidate 与定时整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写。推荐选大上下文模型（如 GPT-4o、Claude Opus），留空则保持纯算法行为。',
+      '可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus），留空则保持纯算法行为。',
   },
   consolidationDisableThinking: {
     type: 'boolean',
@@ -119,23 +119,19 @@ export const configSchema: ConfigSchema = {
     description: '同 extractionDisableThinking。默认禁用',
     default: true,
   },
-  consolidationScheduleEnabled: {
-    type: 'boolean',
-    label: '启用定时 Consolidate',
-    description: '后台周期性运行整理任务（仅在 apply() 之后启动；未配置 consolidationModel 时仍可跑纯算法）。',
-    default: false,
-  },
-  consolidationIntervalHours: {
-    type: 'number',
-    label: '定时 Consolidate 间隔（小时）',
-    description: '建议 ≥ 6。最小 1 小时',
-    default: 24,
-  },
   consolidationAutoLink: {
     type: 'boolean',
-    label: '定时 Consolidate 启用 autoLink',
-    description: '为 true 时自动合并别名实体（结合 consolidationModel 可由 LLM 二次核验）；false 仅打印候选不动数据。',
+    label: 'Consolidate autoLink',
+    description:
+      '为 true 时自动合并别名实体、建层级边（结合 consolidationModel 可由 LLM 核验）；false 仅打印候选不动数据。',
     default: false,
+  },
+  consolidateAfterEviction: {
+    type: 'boolean',
+    label: '淘汰后自动 consolidate',
+    description:
+      '每次发生容量淘汰后自动运行一次 consolidate（去重 / 整理 / 层级推断）。取代旧的定时 consolidate 调度器。',
+    default: true,
   },
 
   // ────── 自动老化（写后顺手扫，profile 风格，不开独立调度器）──────
@@ -470,6 +466,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
       evictHysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
       evictTargetPct: numCfg(config.evictTargetPct, 0.8),
+      consolidateAfterEviction: config.consolidateAfterEviction !== false,
+      consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
+      consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
+      consolidateAutoLink: config.consolidationAutoLink === true,
       debug,
     });
     extractor.start();
@@ -527,38 +527,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           }
         : {}),
     });
-  }
-
-  // ─── 定时 Consolidate ─── 受 consolidationScheduleEnabled 控制
-  if (config.consolidationScheduleEnabled === true) {
-    const intervalHours = Math.max(1, numCfg(config.consolidationIntervalHours, 24));
-    const intervalMs = intervalHours * 3_600_000;
-    const autoLink = config.consolidationAutoLink === true;
-    const modelRef = config.consolidationModel as { provider: string; model: string } | undefined;
-    const disableThinking = config.consolidationDisableThinking !== false;
-    const runOnce = async () => {
-      try {
-        const r = await service.consolidate({
-          autoLink,
-          ...(modelRef ? { llm: { ctx, modelRef, disableThinking } } : {}),
-        });
-        ctx.logger.info(
-          `[user-relation] 定时 consolidate 完成：候选=${r.aliasCandidates.length} 建别名边=${r.aliasEdgesCreated} part-of=${r.partOfEdgesCreated} 事件边整理=${r.eventEdgesNormalized}` +
-            (typeof r.llmVerified === 'number'
-              ? ` LLM 通过=${r.llmVerified} 否决=${r.llmRejected ?? 0} 摘要重写=${r.summariesRewritten ?? 0}`
-              : ''),
-        );
-      } catch (err) {
-        ctx.logger.warn(`[user-relation] 定时 consolidate 失败: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    };
-    const timer = setInterval(runOnce, intervalMs);
-    if (typeof (timer as { unref?: () => void }).unref === 'function') {
-      (timer as { unref: () => void }).unref();
-    }
-    ctx.logger.info(
-      `[user-relation] 定时 consolidate 已启动：间隔 ${intervalHours}h，autoLink=${autoLink}，LLM=${modelRef ? `${modelRef.provider}/${modelRef.model}` : '关闭'}`,
-    );
   }
 }
 

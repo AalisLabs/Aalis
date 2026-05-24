@@ -747,4 +747,87 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(flat).toContain('a1');
     expect(flat).toContain('a2');
   });
+
+  it('(3c) about + related → 驱逐 about，保留 related，evidence 合并', async () => {
+    const { service } = await makeService();
+    const event = await service.createEvent({ title: 'test-ev-3c2', evidence: [] });
+    const entity = await service.createEntity({ name: 'test-ent-3c2', entityKind: 'topic', evidence: [] });
+    const ref = (msgId: string) => [ev({ messageIds: [msgId] })];
+
+    await service.addEventEntityEdge({
+      fromEventId: event.id,
+      toEntityId: entity.id,
+      relationType: 'about',
+      evidence: ref('a1'),
+    });
+    await service.addEventEntityEdge({
+      fromEventId: event.id,
+      toEntityId: entity.id,
+      relationType: 'related',
+      evidence: ref('a2'),
+    });
+
+    const r = await service.consolidate({});
+    expect(r.eventEdgesNormalized).toBeGreaterThanOrEqual(1);
+
+    const snap = await service.loadAll();
+    const edges = snap.edges.filter(
+      e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
+    );
+    expect(edges).toHaveLength(1);
+    expect(edges[0].relationType).toBe('related');
+    const msgIds = edges[0].evidence.flatMap(e => e.messageIds ?? []);
+    expect(msgIds).toContain('a1');
+    expect(msgIds).toContain('a2');
+  });
+
+  it('(3c) part-of + related 同一 (event,entity) → 两者共存不折叠', async () => {
+    const { service } = await makeService();
+    const event = await service.createEvent({ title: 'test-ev-3c3', evidence: [] });
+    const entity = await service.createEntity({ name: 'test-ent-3c3', entityKind: 'topic', evidence: [] });
+    const ref = (msgId: string) => [ev({ messageIds: [msgId] })];
+
+    await service.addEventEntityEdge({
+      fromEventId: event.id,
+      toEntityId: entity.id,
+      relationType: 'part-of',
+      evidence: ref('b1'),
+    });
+    await service.addEventEntityEdge({
+      fromEventId: event.id,
+      toEntityId: entity.id,
+      relationType: 'related',
+      evidence: ref('b2'),
+    });
+
+    await service.consolidate({});
+
+    const snap = await service.loadAll();
+    const edges = snap.edges.filter(
+      e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
+    );
+    expect(edges).toHaveLength(2);
+    const types = edges.map(e => e.relationType).sort();
+    expect(types).toEqual(['part-of', 'related']);
+  });
+
+  it('(3d) entity 名称包含关系 → autoLink 无 LLM 建 entity-entity part-of 边', async () => {
+    const { service } = await makeService();
+    const parent = await service.createEntity({ name: '三角洲行动', entityKind: 'work', evidence: [] });
+    const child = await service.createEntity({ name: '三角洲行动刀皮', entityKind: 'thing', evidence: [] });
+
+    const r = await service.consolidate({ autoLink: true });
+    expect(r.entityHierarchyCandidates).toBeGreaterThanOrEqual(1);
+    expect(r.entityHierarchyEdgesCreated).toBeGreaterThanOrEqual(1);
+
+    const snap = await service.loadAll();
+    const edge = snap.edges.find(
+      e =>
+        e.kind === 'entity-entity' &&
+        e.fromEntityId === child.id &&
+        e.toEntityId === parent.id &&
+        e.relationType === 'part-of',
+    );
+    expect(edge).toBeDefined();
+  });
 });
