@@ -273,6 +273,9 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 详情卡片折叠态：collapsed=true 时只显示一个 header 条，不挡画面；焦点高亮保持。
+  // 关闭（✕）按钮仍然 = 退出焦点 + 清卡片，与之前一致。
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
 
   // 画布高度可拖拽（持久化到 localStorage，按 source key 区分不同图）
   const heightStorageKey = `relation-graph-h:${pluginName}:${comp.source}`;
@@ -391,11 +394,37 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     if (!cy || !payload) return;
 
     const focusedId = payload.focusId ?? focusId;
+    // 同名 person 消歧：同 displayName 出现 ≥ 2 次时，在 label 后追加 `· {platform}:…{tail}`
+    // 仅 person 节点处理；不同名节点保持原 label，避免噪声。
+    const personLabelCount = new Map<string, number>();
+    for (const n of payload.nodes) {
+      if (n.data.kind !== 'person') continue;
+      const lbl = typeof n.data.label === 'string' ? n.data.label : '';
+      if (!lbl) continue;
+      personLabelCount.set(lbl, (personLabelCount.get(lbl) ?? 0) + 1);
+    }
+    const disambigLabel = (data: GraphNode['data']): string | undefined => {
+      if (data.kind !== 'person') return undefined;
+      const lbl = typeof data.label === 'string' ? data.label : '';
+      if (!lbl) return undefined;
+      if ((personLabelCount.get(lbl) ?? 0) < 2) return undefined;
+      const platform = typeof data.platform === 'string' ? data.platform : '?';
+      const uid = typeof data.userId === 'string' ? data.userId : '';
+      const tail = uid ? `…${uid.slice(-4)}` : (typeof data.id === 'string' ? `…${data.id.slice(-4)}` : '?');
+      return `${lbl} · ${platform}:${tail}`;
+    };
     const elements: ElementDefinition[] = [
-      ...payload.nodes.map(n => ({
-        data: { ...n.data, focused: focusedId && n.data.id === focusedId ? '1' : undefined },
-        group: 'nodes' as const,
-      })),
+      ...payload.nodes.map(n => {
+        const dis = disambigLabel(n.data);
+        return {
+          data: {
+            ...n.data,
+            ...(dis ? { label: dis } : {}),
+            focused: focusedId && n.data.id === focusedId ? '1' : undefined,
+          },
+          group: 'nodes' as const,
+        };
+      }),
       ...payload.edges.map(e => {
         // 边 label 仅显示 role / relationType 等基础信息；description 不再拼接到 label 上
         //（避免画面拥挤；description 会在节点详情面板/边 hover tooltip 中展示）
@@ -703,11 +732,11 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                 position: 'absolute',
                 top: 10,
                 left: 10,
-                width: 360,
+                width: detailCollapsed ? 'auto' : 360,
                 maxWidth: 'calc(100% - 20px)',
-                maxHeight: graphHeight - 20,
-                overflowY: 'auto',
-                padding: '10px 12px',
+                maxHeight: detailCollapsed ? undefined : graphHeight - 20,
+                overflowY: detailCollapsed ? 'visible' : 'auto',
+                padding: detailCollapsed ? '4px 8px' : '10px 12px',
                 background: 'rgba(28, 28, 40, 0.94)',
                 color: TEXT_COLOR,
                 border: `1px solid ${FOCUS_COLOR}`,
@@ -718,15 +747,25 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                 zIndex: 5,
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8, marginBottom: detailCollapsed ? 0 : 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setDetailCollapsed(c => !c)}
+                  style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: 1, width: 16 }}
+                  title={detailCollapsed ? '展开详情' : '收起详情（保留焦点）'}
+                  aria-label={detailCollapsed ? '展开' : '收起'}
+                >
+                  {detailCollapsed ? '▸' : '▾'}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setFocusId(undefined);
                     setSelectedNode(null);
+                    setDetailCollapsed(false);
                   }}
                   style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}
-                  title="关闭"
+                  title="关闭（清焦点）"
                   aria-label="关闭"
                 >
                   ✕
@@ -740,7 +779,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                   <FieldGlossary />
                 </span>
               </div>
-              {selectedNode ? (
+              {detailCollapsed ? null : selectedNode ? (
                 <NodeDetailCard
                   node={selectedNode}
                   detail={detail}
@@ -773,7 +812,6 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                   <>
                     <div style={{ marginBottom: 6, fontSize: 10, color: 'var(--text-secondary)' }}>
                       id={fe.id}
-                      <FieldGlossary />
                     </div>
                     <div style={{ marginBottom: 6 }}>{fe.description ?? '(无描述)'}</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
@@ -1175,7 +1213,6 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
     <div style={{ color: 'var(--text-secondary)', marginBottom: 8, fontSize: 10 }}>
       id={node.data.id}
       {isFocus ? <span style={{ marginLeft: 6, color: FOCUS_COLOR }}>· 当前焦点</span> : null}
-      <FieldGlossary />
     </div>
   );
   if (loading) return <>{headerMeta}<div style={{ color: 'var(--text-muted)' }}>加载详情中…</div></>;
