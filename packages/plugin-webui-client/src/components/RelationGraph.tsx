@@ -285,14 +285,17 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   //         同时把 commit 值写回 localStorage 作下次默认。
   const SPACING_STORAGE_KEY = 'aalis.relgraph.spacing';
   const SPACING_MIN = 60;
-  const SPACING_MAX = 250;
+  // slider 上限；数字框不受此限制，允许手动输入任意正数。
+  // commit 只作 min-clamp + 上限 SPACING_HARD_MAX 的安全护栏（避免 1e9 这种超大值冻死 layout）。
+  const SPACING_SLIDER_MAX = 1000;
+  const SPACING_HARD_MAX = 5000;
   const SPACING_FALLBACK = 120;
   const readSpacingFromStorage = (): number | undefined => {
     if (typeof window === 'undefined') return undefined;
     const raw = window.localStorage.getItem(SPACING_STORAGE_KEY);
     if (raw == null) return undefined;
     const n = Number(raw);
-    return Number.isFinite(n) && n >= SPACING_MIN && n <= SPACING_MAX ? n : undefined;
+    return Number.isFinite(n) && n >= SPACING_MIN && n <= SPACING_HARD_MAX ? n : undefined;
   };
   const [spacing, setSpacing] = useState<number>(() => readSpacingFromStorage() ?? SPACING_FALLBACK);
   const [spacingDraft, setSpacingDraft] = useState<number>(spacing);
@@ -306,7 +309,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       .then(d => {
         if (cancelled) return;
         const v = Number(d?.config?.relationGraphDefaultSpacing);
-        if (Number.isFinite(v) && v >= SPACING_MIN && v <= SPACING_MAX) {
+        if (Number.isFinite(v) && v >= SPACING_MIN && v <= SPACING_HARD_MAX) {
           setSpacing(v);
           setSpacingDraft(v);
         }
@@ -318,7 +321,8 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const commitSpacing = useCallback((next: number) => {
-    const v = Math.max(SPACING_MIN, Math.min(SPACING_MAX, Math.round(next)));
+    if (!Number.isFinite(next)) return;
+    const v = Math.max(SPACING_MIN, Math.min(SPACING_HARD_MAX, Math.round(next)));
     setSpacing(v);
     setSpacingDraft(v);
     try {
@@ -752,15 +756,15 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         </label>
         <label
           style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-          title={`布局密度（≈ 理想边长 px）。当前 ${spacingDraft}。松开鼠标后才会重排（动画过渡）；写入浏览器本地存储作下次默认。`}
+          title={`布局密度（≈ 理想边长 px）。当前 ${spacingDraft}。\nslider 范围 ${SPACING_MIN}–${SPACING_SLIDER_MAX}；数字框可手动输入更大值（上限 ${SPACING_HARD_MAX}）。\n松开鼠标 / Enter / 失焦后才重排（动画过渡），同时写入本地存储。`}
         >
           密度
           <input
             type="range"
             min={SPACING_MIN}
-            max={SPACING_MAX}
+            max={SPACING_SLIDER_MAX}
             step={5}
-            value={spacingDraft}
+            value={Math.min(spacingDraft, SPACING_SLIDER_MAX)}
             onChange={e => setSpacingDraft(Number(e.target.value))}
             onMouseUp={e => commitSpacing(Number((e.target as HTMLInputElement).value))}
             onTouchEnd={e => commitSpacing(Number((e.target as HTMLInputElement).value))}
@@ -769,7 +773,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
           <input
             type="number"
             min={SPACING_MIN}
-            max={SPACING_MAX}
+            // 有意不设 max：允许手动输入 1000 以上的任意值；commit 时才 clamp 到 SPACING_HARD_MAX。
             value={spacingDraft}
             onChange={e => {
               const n = Number(e.target.value);
@@ -779,7 +783,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
             onKeyDown={e => {
               if (e.key === 'Enter') commitSpacing(Number((e.target as HTMLInputElement).value));
             }}
-            style={{ width: 56, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
+            style={{ width: 64, padding: '2px 4px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-active)' }}
           />
         </label>
         <button
@@ -1207,8 +1211,12 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
         background: 'rgba(0,0,0,0.55)',
         zIndex: 9999,
         display: 'flex',
-        alignItems: 'center',
+        // 顶部对齐 + 外层可滚：当内容高于可视区时，
+        // 避免 alignItems:center 把顶部挤出视口造成「最上面几行看不见」。
+        alignItems: 'flex-start',
         justifyContent: 'center',
+        overflowY: 'auto',
+        padding: '4vh 16px',
       }}
     >
       <div
@@ -1220,8 +1228,8 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
           borderRadius: 8,
           padding: '16px 20px',
           width: 'min(680px, 92vw)',
-          maxHeight: '82vh',
-          overflowY: 'auto',
+          // 不再限高 + 内部滚动；改为随内容自然高，由外层 overlay 负责滚动。
+          // 这样顶部始终从 padding 处起，不会被裁。
           boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
           lineHeight: 1.55,
         }}
