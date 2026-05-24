@@ -3874,6 +3874,35 @@ details[open] > .tool-call-summary::before {
   padding: 24px;
 }
 
+/* 含 graph 的页面：把整个动态页变成 flex 列 + 高度限制，
+ * graph 自身保持可拖拽高度（固定值），tabs 区域 flex:1 独立滚动。
+ * 这样用户滚动原始数据列表时，关系图不会跟着被滚走。 */
+.dynamic-page.has-graph {
+  height: 100%;
+  min-height: 0;
+  /* 父 .page-content 自身已有 overflow-y:auto；含 graph 时禁用外层滚动，
+   * 让 .dyn-scroll-region 接管。 */
+  overflow: hidden;
+}
+.page-content.has-graph {
+  /* 同样保险，避免 page-content / dynamic-page 两层都允许滚动 */
+  overflow: hidden;
+}
+.dyn-scroll-region {
+  flex: 1 1 0;
+  min-height: 160px;
+  overflow-y: auto;
+  /* 给独立滚动区一点缓冲：底部留白避免内容贴底 */
+  padding-bottom: 12px;
+}
+.dyn-scroll-region::-webkit-scrollbar {
+  width: 5px;
+}
+.dyn-scroll-region::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 4px;
+}
+
 .dyn-section-title {
   margin: 0 0 12px;
   font-size: 0.68rem;

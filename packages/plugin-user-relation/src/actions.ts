@@ -12,6 +12,47 @@ import type { Context, PluginModule } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
+/** 关系类型 → 中文显示（WebUI 渲染用；不影响存储里的英文 key） */
+const RELATION_LABEL_ZH: Record<string, string> = {
+  // person-event role
+  initiator: '发起者',
+  participant: '参与者',
+  witness: '旁观者',
+  target: '被指向',
+  reporter: '转述者',
+  // person-entity role
+  enthusiast: '爱好者',
+  owner: '拥有者',
+  creator: '创作者',
+  critic: '批评者',
+  visitor: '访客',
+  mentioned: '仅提及',
+  // person-person relation
+  friend: '朋友',
+  cp: 'CP',
+  rival: '对手',
+  mentor: '师徒',
+  colleague: '同事',
+  familiar: '熟人',
+  antagonist: '对头',
+  admirer: '仰慕者',
+  // event-event relation
+  'caused-by': '因→果',
+  follows: '随后',
+  'part-of': '属于',
+  related: '相关',
+  // entity kind / sentiment（少量备用）
+  positive: '正向',
+  negative: '负向',
+  neutral: '中性',
+  mixed: '复杂',
+};
+
+function labelZh(raw: string | undefined): string | undefined {
+  if (!raw) return raw;
+  return RELATION_LABEL_ZH[raw] ?? raw;
+}
+
 function svc(ctx: Context): RelationService | undefined {
   return ctx.getService<RelationService>('user-relation');
 }
@@ -181,7 +222,8 @@ export const actions: PluginModule['actions'] = {
               source: e.fromPersonId,
               target: e.toEventId,
               kind: 'person-event' as const,
-              label: e.role,
+              label: labelZh(e.role),
+              role: e.role,
               weight: e.weight,
               sentiment: e.sentiment,
             },
@@ -194,7 +236,8 @@ export const actions: PluginModule['actions'] = {
               source: e.fromPersonId,
               target: e.toEntityId,
               kind: 'person-entity' as const,
-              label: e.role,
+              label: labelZh(e.role),
+              role: e.role,
               weight: e.weight,
               sentiment: e.sentiment,
             },
@@ -207,7 +250,7 @@ export const actions: PluginModule['actions'] = {
               source: e.fromEventId,
               target: e.toEventId,
               kind: 'event-event' as const,
-              label: e.relationType,
+              label: labelZh(e.relationType),
               relationType: e.relationType,
               directed: e.directed,
               weight: e.weight,
@@ -220,7 +263,7 @@ export const actions: PluginModule['actions'] = {
             source: e.fromPersonId,
             target: e.toPersonId,
             kind: 'person-person' as const,
-            label: e.relationType,
+            label: labelZh(e.relationType),
             relationType: e.relationType,
             directed: e.directed,
             weight: e.weight,
@@ -250,12 +293,20 @@ export const actions: PluginModule['actions'] = {
         })),
         edges: nb.edges.slice(0, 10).map(e => {
           if (e.kind === 'person-event') {
-            return { kind: e.kind, role: e.role, sentiment: e.sentiment, weight: e.weight, eventId: e.toEventId };
+            return {
+              kind: e.kind,
+              role: e.role,
+              roleZh: labelZh(e.role),
+              sentiment: e.sentiment,
+              weight: e.weight,
+              eventId: e.toEventId,
+            };
           }
           if (e.kind === 'person-person') {
             return {
               kind: e.kind,
               relation: e.relationType,
+              relationZh: labelZh(e.relationType),
               weight: e.weight,
               fromId: e.fromPersonId,
               toId: e.toPersonId,
@@ -265,6 +316,7 @@ export const actions: PluginModule['actions'] = {
             return {
               kind: e.kind,
               role: e.role,
+              roleZh: labelZh(e.role),
               sentiment: e.sentiment,
               weight: e.weight,
               entityId: e.toEntityId,
@@ -273,6 +325,7 @@ export const actions: PluginModule['actions'] = {
           return {
             kind: e.kind,
             relation: e.relationType,
+            relationZh: labelZh(e.relationType),
             weight: e.weight,
             fromId: e.fromEventId,
             toId: e.toEventId,
