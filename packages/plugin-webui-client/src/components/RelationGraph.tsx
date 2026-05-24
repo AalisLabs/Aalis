@@ -591,19 +591,20 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                 zIndex: 5,
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <strong style={{ color: FOCUS_COLOR }}>{payload.focusEdge ? '焦点（边）' : '焦点'}</strong>
+              <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <button
                   type="button"
                   onClick={() => {
                     setFocusId(undefined);
                     setSelectedNode(null);
                   }}
-                  style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}
+                  style={{ background: 'none', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}
                   title="清除焦点"
+                  aria-label="清除焦点"
                 >
                   ✕
                 </button>
+                <strong style={{ color: FOCUS_COLOR }}>{payload.focusEdge ? '焦点（边）' : '焦点'}</strong>
               </div>
               {payload.focusEdge ? (() => {
                 const fe = payload.focusEdge;
