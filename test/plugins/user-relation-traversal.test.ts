@@ -228,6 +228,75 @@ describe('plugin-user-relation: 多层遍历', () => {
       expect(r.score).toBe(0);
       expect(r.pathsConsidered).toBe(0);
     });
+
+    it('直接连接 boost > 仅间接 2 跳路径（同等其它条件）', async () => {
+      const buildDirect = async () => {
+        const svc = await setup();
+        await svc.observePerson('onebot', 'a');
+        await svc.observePerson('onebot', 'b');
+        await svc.addPersonPersonEdge({
+          fromPersonId: 'onebot:a',
+          toPersonId: 'onebot:b',
+          relationType: 'friend',
+        });
+        return svc.scoreBetween('onebot:a', 'onebot:b');
+      };
+      const buildIndirect = async () => {
+        const svc = await setup();
+        await svc.observePerson('onebot', 'a');
+        await svc.observePerson('onebot', 'b');
+        await svc.observePerson('onebot', 'c');
+        await svc.addPersonPersonEdge({
+          fromPersonId: 'onebot:a',
+          toPersonId: 'onebot:c',
+          relationType: 'friend',
+        });
+        await svc.addPersonPersonEdge({
+          fromPersonId: 'onebot:c',
+          toPersonId: 'onebot:b',
+          relationType: 'friend',
+        });
+        return svc.scoreBetween('onebot:a', 'onebot:b');
+      };
+      const direct = await buildDirect();
+      const indirect = await buildIndirect();
+      expect(direct.directlyConnected).toBe(true);
+      expect(indirect.directlyConnected).toBe(false);
+      expect(direct.score).toBeGreaterThan(indirect.score);
+    });
+
+    it('Adamic-Adar：小度共同邻居 > 大度共同邻居（同等路径数）', async () => {
+      // 场景1：a/b 通过 1 个 person-person 共同朋友 C 连接（C 只有 a/b 两个邻居 = 度 2）
+      const smallDeg = async () => {
+        const svc = await setup();
+        await svc.observePerson('onebot', 'a');
+        await svc.observePerson('onebot', 'b');
+        await svc.observePerson('onebot', 'c');
+        await svc.addPersonPersonEdge({ fromPersonId: 'onebot:a', toPersonId: 'onebot:c', relationType: 'friend' });
+        await svc.addPersonPersonEdge({ fromPersonId: 'onebot:c', toPersonId: 'onebot:b', relationType: 'friend' });
+        return svc.scoreBetween('onebot:a', 'onebot:b');
+      };
+      // 场景2：a/b 通过 1 个共同事件 E 连接，E 还牵涉 5 个其它人 → E 度 = 7
+      const bigDeg = async () => {
+        const svc = await setup();
+        await svc.observePerson('onebot', 'a');
+        await svc.observePerson('onebot', 'b');
+        const ev = await svc.createEvent({ title: 'big', evidence: [] });
+        await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev.id, role: 'participant' });
+        await svc.addPersonEventEdge({ fromPersonId: 'onebot:b', toEventId: ev.id, role: 'participant' });
+        for (let i = 0; i < 5; i++) {
+          await svc.observePerson('onebot', `p${i}`);
+          await svc.addPersonEventEdge({ fromPersonId: `onebot:p${i}`, toEventId: ev.id, role: 'participant' });
+        }
+        return svc.scoreBetween('onebot:a', 'onebot:b');
+      };
+      const r1 = await smallDeg();
+      const r2 = await bigDeg();
+      expect(r1.commonNeighbors.length).toBe(1);
+      expect(r2.commonNeighbors.length).toBe(1);
+      // 小度共同邻居 AA 贡献更大
+      expect(r1.commonNeighbors[0]!.aaContribution).toBeGreaterThan(r2.commonNeighbors[0]!.aaContribution);
+    });
   });
 
   describe('searchEvents', () => {

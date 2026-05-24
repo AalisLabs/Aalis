@@ -1434,8 +1434,10 @@ export class RelationService {
   ): Promise<{
     fromId: string;
     toId: string;
-    score: number; // 归一化 [0,1]
+    score: number; // 归一化 [0,1]，融合 Katz 路径 + AA 共同邻居
     rawScore: number;
+    katzScore: number; // 仅 Katz 部分（未归一化）
+    commonNeighborsScore: number; // Adamic-Adar 共同邻居指标（未归一化）
     pathsConsidered: number;
     shortestLength: number | null;
     directlyConnected: boolean;
@@ -1445,6 +1447,11 @@ export class RelationService {
       length: number;
       weightProduct: number;
       contribution: number;
+    }>;
+    commonNeighbors: Array<{
+      node: PersonNode | EventNode | EntityNode;
+      degree: number;
+      aaContribution: number; // 1 / log(deg+1)
     }>;
   }> {
     const maxDepth = Math.max(1, Math.min(6, opts.maxDepth ?? 4));
@@ -1457,58 +1464,61 @@ export class RelationService {
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
     const nodeOf = (id: string) => personById.get(id) ?? eventById.get(id) ?? entityById.get(id);
 
+    const emptyResult = (score: number, katz: number, shortest: number | null) => ({
+      fromId: fromNodeId,
+      toId: toNodeId,
+      score,
+      rawScore: katz,
+      katzScore: katz,
+      commonNeighborsScore: 0,
+      pathsConsidered: 0,
+      shortestLength: shortest,
+      directlyConnected: false,
+      topPaths: [],
+      commonNeighbors: [],
+    });
+
     if (fromNodeId === toNodeId) {
-      return {
-        fromId: fromNodeId,
-        toId: toNodeId,
-        score: nodeOf(fromNodeId) ? 1 : 0,
-        rawScore: nodeOf(fromNodeId) ? 1 : 0,
-        pathsConsidered: 0,
-        shortestLength: 0,
-        directlyConnected: false,
-        topPaths: [],
-      };
+      const present = !!nodeOf(fromNodeId);
+      return emptyResult(present ? 1 : 0, present ? 1 : 0, present ? 0 : null);
     }
     if (!nodeOf(fromNodeId) || !nodeOf(toNodeId)) {
-      return {
-        fromId: fromNodeId,
-        toId: toNodeId,
-        score: 0,
-        rawScore: 0,
-        pathsConsidered: 0,
-        shortestLength: null,
-        directlyConnected: false,
-        topPaths: [],
-      };
+      return emptyResult(0, 0, null);
     }
 
-    // 邻接表（无向化，与 findPath 一致：directed 边只单向，其余双向）
+    // 边权按 kind 缩放：person↔person 直接最重；含 event/entity 的桥稍弱
+    // 防止"高频共同事件"（如群聊全员事件）把分数刷爆
+    const kindMultiplier = (kind: RelationEdge['kind']): number => {
+      switch (kind) {
+        case 'person-person':
+          return 1.0;
+        case 'person-event':
+        case 'person-entity':
+          return 0.7;
+        default:
+          return 0.5; // event-event / event-entity / entity-entity
+      }
+    };
+    const effectiveWeight = (e: RelationEdge) => Math.max(1e-6, e.weight) * kindMultiplier(e.kind);
+
+    // 邻接表：联系强度是对称的，无论 edge.directed，所有边都双向化
     const adj = new Map<string, Array<{ next: string; edge: RelationEdge }>>();
     const addAdj = (a: string, b: string, edge: RelationEdge) => {
       const arr = adj.get(a);
       if (arr) arr.push({ next: b, edge });
       else adj.set(a, [{ next: b, edge }]);
     };
+    const addBoth = (a: string, b: string, edge: RelationEdge) => {
+      addAdj(a, b, edge);
+      addAdj(b, a, edge);
+    };
     for (const e of snapshot.edges) {
-      if (e.kind === 'person-event') {
-        addAdj(e.fromPersonId, e.toEventId, e);
-        addAdj(e.toEventId, e.fromPersonId, e);
-      } else if (e.kind === 'person-entity') {
-        addAdj(e.fromPersonId, e.toEntityId, e);
-        addAdj(e.toEntityId, e.fromPersonId, e);
-      } else if (e.kind === 'event-event') {
-        addAdj(e.fromEventId, e.toEventId, e);
-        if (!e.directed) addAdj(e.toEventId, e.fromEventId, e);
-      } else if (e.kind === 'event-entity') {
-        addAdj(e.fromEventId, e.toEntityId, e);
-        addAdj(e.toEntityId, e.fromEventId, e);
-      } else if (e.kind === 'entity-entity') {
-        addAdj(e.fromEntityId, e.toEntityId, e);
-        if (!e.directed) addAdj(e.toEntityId, e.fromEntityId, e);
-      } else {
-        addAdj(e.fromPersonId, e.toPersonId, e);
-        if (!e.directed) addAdj(e.toPersonId, e.fromPersonId, e);
-      }
+      if (e.kind === 'person-event') addBoth(e.fromPersonId, e.toEventId, e);
+      else if (e.kind === 'person-entity') addBoth(e.fromPersonId, e.toEntityId, e);
+      else if (e.kind === 'event-event') addBoth(e.fromEventId, e.toEventId, e);
+      else if (e.kind === 'event-entity') addBoth(e.fromEventId, e.toEntityId, e);
+      else if (e.kind === 'entity-entity') addBoth(e.fromEntityId, e.toEntityId, e);
+      else addBoth(e.fromPersonId, e.toPersonId, e);
     }
 
     // DFS 枚举所有 a→b 简单路径（限深 maxDepth）
@@ -1519,9 +1529,8 @@ export class RelationService {
     const curNodes: string[] = [fromNodeId];
     const dfs = (cur: string, depth: number) => {
       if (cur === toNodeId) {
-        // 计算 weight 乘积
         let prod = 1;
-        for (const e of curEdges) prod *= Math.max(1e-6, e.weight);
+        for (const e of curEdges) prod *= effectiveWeight(e);
         allPaths.push({ edges: [...curEdges], nodeIds: [...curNodes], weightProduct: prod });
         return;
       }
@@ -1539,55 +1548,76 @@ export class RelationService {
     };
     dfs(fromNodeId, 0);
 
-    if (allPaths.length === 0) {
-      return {
-        fromId: fromNodeId,
-        toId: toNodeId,
-        score: 0,
-        rawScore: 0,
-        pathsConsidered: 0,
-        shortestLength: null,
-        directlyConnected: false,
-        topPaths: [],
-      };
+    // Adamic-Adar 共同邻居：对每个 a/b 都直连的 C，累加 1/log(deg(C)+1)
+    // 惩罚"群聊全员事件"等高度节点的共同贡献，奖励"小圈子私密关联"
+    const neighborsOf = (id: string): Set<string> => {
+      const s = new Set<string>();
+      for (const { next } of adj.get(id) ?? []) s.add(next);
+      return s;
+    };
+    const nFrom = neighborsOf(fromNodeId);
+    const nTo = neighborsOf(toNodeId);
+    const commonNeighbors: Array<{
+      node: PersonNode | EventNode | EntityNode;
+      degree: number;
+      aaContribution: number;
+    }> = [];
+    let commonNeighborsScore = 0;
+    for (const c of nFrom) {
+      if (!nTo.has(c) || c === fromNodeId || c === toNodeId) continue;
+      const node = nodeOf(c);
+      if (!node) continue;
+      const deg = adj.get(c)?.length ?? 0;
+      const aa = 1 / Math.log(deg + 1.7); // deg=1 → 1/log(2.7)≈1，避免炸
+      commonNeighborsScore += aa;
+      commonNeighbors.push({ node, degree: deg, aaContribution: aa });
+    }
+    commonNeighbors.sort((a, b) => b.aaContribution - a.aaContribution);
+
+    if (allPaths.length === 0 && commonNeighborsScore === 0) {
+      return emptyResult(0, 0, null);
     }
 
-    let rawScore = 0;
+    // Katz 累加，直接连接 (len=1) 额外 × 1.5 boost
+    let katzScore = 0;
     let shortestLength = Infinity;
+    const contribOf = (len: number, prod: number) => beta ** len * prod * (len === 1 ? 1.5 : 1);
     for (const p of allPaths) {
       const len = p.edges.length;
-      const contrib = beta ** len * p.weightProduct;
-      rawScore += contrib;
+      katzScore += contribOf(len, p.weightProduct);
       if (len < shortestLength) shortestLength = len;
     }
+    // 共同邻居贡献融合：以 0.3 系数加到 raw（经验权重，AA 量级一般比 Katz 大）
+    const rawScore = katzScore + 0.3 * commonNeighborsScore;
     const score = Math.tanh(rawScore);
 
-    // 取 top-K 路径（按 contribution 降序）
-    const scored = allPaths
+    const topPaths = allPaths
       .map(p => {
         const len = p.edges.length;
-        return { p, len, contribution: beta ** len * p.weightProduct };
+        return { p, len, contribution: contribOf(len, p.weightProduct) };
       })
       .sort((a, b) => b.contribution - a.contribution)
-      .slice(0, topK);
-
-    const topPaths = scored.map(({ p, len, contribution }) => ({
-      nodes: p.nodeIds.map(id => nodeOf(id)).filter((n): n is PersonNode | EventNode | EntityNode => !!n),
-      edges: p.edges,
-      length: len,
-      weightProduct: p.weightProduct,
-      contribution,
-    }));
+      .slice(0, topK)
+      .map(({ p, len, contribution }) => ({
+        nodes: p.nodeIds.map(id => nodeOf(id)).filter((n): n is PersonNode | EventNode | EntityNode => !!n),
+        edges: p.edges,
+        length: len,
+        weightProduct: p.weightProduct,
+        contribution,
+      }));
 
     return {
       fromId: fromNodeId,
       toId: toNodeId,
       score,
       rawScore,
+      katzScore,
+      commonNeighborsScore,
       pathsConsidered: allPaths.length,
       shortestLength: shortestLength === Infinity ? null : shortestLength,
       directlyConnected: shortestLength === 1,
       topPaths,
+      commonNeighbors: commonNeighbors.slice(0, topK),
     };
   }
 
