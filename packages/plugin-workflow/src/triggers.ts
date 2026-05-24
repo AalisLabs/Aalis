@@ -2,8 +2,9 @@
 // triggers.ts — 触发源管理：cron / interval / once / event
 //
 // 通过 cron-engine 服务订阅 cron / @every，scheduler 与 workflow
-// 共享一个整分钟 tick；interval（数字秒）单独 setInterval；
-// once 用 setTimeout；event 通过 ctx.on 订阅。
+// 共享一个整分钟 tick 与 setInterval；once 用 setTimeout；
+// event 通过 ctx.on 订阅。所有"周期型"触发器现在都走 cron-engine，
+// 不再在本文件里直接 new setInterval。
 // ============================================================
 
 import type { Context, Logger } from '@aalis/core';
@@ -20,7 +21,6 @@ export class TriggerManager {
   private fire: FireFn;
 
   private cronDisposers = new Map<string, () => void>();
-  private intervalTimers = new Map<string, ReturnType<typeof setInterval>>();
   private onceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private eventDisposers = new Map<string, () => void>();
 
@@ -48,9 +48,17 @@ export class TriggerManager {
         break;
       }
       case 'interval': {
+        // 改为委托 cron-engine 的 @every Ns 表达式，避免与 scheduler 维护两份 setInterval 实现。
         const sec = Math.max(1, Math.floor(t.seconds));
-        const timer = setInterval(() => this.fire(def.id, `interval:${sec}s`), sec * 1000);
-        this.intervalTimers.set(def.id, timer);
+        const expr = `@every ${sec}s`;
+        try {
+          const dispose = useCronEngine(this.ctx).subscribe(expr, () => {
+            this.fire(def.id, `interval:${sec}s`);
+          });
+          this.cronDisposers.set(def.id, dispose);
+        } catch (err) {
+          this.logger.warn(`workflow ${def.id} interval 订阅失败: ${err instanceof Error ? err.message : err}`);
+        }
         break;
       }
       case 'once': {
@@ -94,11 +102,6 @@ export class TriggerManager {
       cd();
       this.cronDisposers.delete(workflowId);
     }
-    const t = this.intervalTimers.get(workflowId);
-    if (t) {
-      clearInterval(t);
-      this.intervalTimers.delete(workflowId);
-    }
     const ot = this.onceTimers.get(workflowId);
     if (ot) {
       clearTimeout(ot);
@@ -115,8 +118,6 @@ export class TriggerManager {
   dispose(): void {
     for (const d of this.cronDisposers.values()) d();
     this.cronDisposers.clear();
-    for (const t of this.intervalTimers.values()) clearInterval(t);
-    this.intervalTimers.clear();
     for (const ot of this.onceTimers.values()) clearTimeout(ot);
     this.onceTimers.clear();
     for (const d of this.eventDisposers.values()) d();
