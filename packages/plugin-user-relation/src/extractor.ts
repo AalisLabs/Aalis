@@ -760,10 +760,24 @@ export class RelationExtractor {
       }
     }
 
-    if (this.cfg.debug) {
-      this.ctx.logger.debug(
-        `[user-relation] ${ctxInfo.sessionId} 提取完成: persons=${parsed.persons?.length ?? 0}, events=${parsed.events?.length ?? 0}, entities=${parsed.entities?.length ?? 0}, pe=${parsed.personEventEdges?.length ?? 0}, pent=${parsed.personEntityEdges?.length ?? 0}, pp=${parsed.personPersonEdges?.length ?? 0}, ee=${parsed.eventEventEdges?.length ?? 0}, eent=${parsed.eventEntityEdges?.length ?? 0}, entent=${parsed.entityEntityEdges?.length ?? 0}`,
+    // 提取完成后打一条 info 级日志。这里用「解析出的数量」作为近似，
+    // 零变动时不打（避免闹日志）。
+    const total =
+      (parsed.persons?.length ?? 0) +
+      (parsed.events?.length ?? 0) +
+      (parsed.entities?.length ?? 0) +
+      (parsed.personEventEdges?.length ?? 0) +
+      (parsed.personEntityEdges?.length ?? 0) +
+      (parsed.personPersonEdges?.length ?? 0) +
+      (parsed.eventEventEdges?.length ?? 0) +
+      (parsed.eventEntityEdges?.length ?? 0) +
+      (parsed.entityEntityEdges?.length ?? 0);
+    if (total > 0) {
+      this.ctx.logger.info(
+        `[user-relation] 关系图已更新 (session=${ctxInfo.sessionId}): persons=${parsed.persons?.length ?? 0}, events=${parsed.events?.length ?? 0}, entities=${parsed.entities?.length ?? 0}, edges=${(parsed.personEventEdges?.length ?? 0) + (parsed.personEntityEdges?.length ?? 0) + (parsed.personPersonEdges?.length ?? 0) + (parsed.eventEventEdges?.length ?? 0) + (parsed.eventEntityEdges?.length ?? 0) + (parsed.entityEntityEdges?.length ?? 0)}`,
       );
+    } else if (this.cfg.debug) {
+      this.ctx.logger.debug(`[user-relation] ${ctxInfo.sessionId} 提取完成，本批次无变动`);
     }
 
     // 写后顺手老化（模仿 profile 风格，不开独立调度器）。
