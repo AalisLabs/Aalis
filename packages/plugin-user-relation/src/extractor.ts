@@ -543,10 +543,7 @@ export class RelationExtractor {
       const sentiment = VALID_SENTIMENTS.includes(pe.sentiment as Sentiment) ? (pe.sentiment as Sentiment) : undefined;
       const ev = mkEvidence(pe.evidence);
       const fromPersonId = `${pe.personPlatform}:${pe.personUserId}`;
-      if (strict && !isSelfAsserted(fromPersonId, ev)) {
-        debugSkip('person-event', `from=${fromPersonId} 无本人 evidence`);
-        continue;
-      }
+      // person-event 不再强制自证：evidence 能从原文佐证该人参与即可，避免跟贴型参与者被误删。
       await this.service.addPersonEventEdge({
         fromPersonId,
         toEventId: eventId,
@@ -568,10 +565,7 @@ export class RelationExtractor {
       const sentiment = VALID_SENTIMENTS.includes(pe.sentiment as Sentiment) ? (pe.sentiment as Sentiment) : undefined;
       const ev = mkEvidence(pe.evidence);
       const fromPersonId = `${pe.personPlatform}:${pe.personUserId}`;
-      if (strict && !isSelfAsserted(fromPersonId, ev)) {
-        debugSkip('person-entity', `from=${fromPersonId} 无本人 evidence`);
-        continue;
-      }
+      // person-entity 不再强制自证；偏好类关系已在提示词中引导交给 user-profile。
       await this.service.addPersonEntityEdge({
         fromPersonId,
         toEntityId: entityId,
@@ -766,10 +760,10 @@ function buildExtractionPrompt(
       '- **Entity（实体）= 持续存在的"东西"**：可被多人长期关联。例：游戏《三角洲》、电影《奥本海默》、北京、PS5、某个表情包、某个梗。',
       '- **当多人共享某个对象时，请把它建模为 Entity，让每个人各自通过 personEntityEdge 指向它**；不要把它写进事件标题里。',
       '',
-      '## ⚠️ 事件提取须保持冷淡（重要）',
-      '- 只挑**最显著、有长期价值**的事件记录：重大冲突、里程碑、首次合作、长期回响、明显改变关系的转折点。',
-      '- **一般日常聊天、随口提及、无后续的玩笑、单次客套、临时调侃** —— **一律不要建 event**。宁可 events 数组返回空，也不要凑数。',
-      '- 当你犹豫"这件事算不算值得记"时，**默认答案是不记**。提取器后续会做老化淘汰，但更省事的是源头别记。',
+      '## 事件提取（要积极但有据）',
+      '- 优先记录：有**可识别动作**（开黑/争吵/比赛/发布/相遇/讨论某话题…）且**多人参与或多条消息支撑**的事。',
+      '- 「X 和 Y 讨论 Z」「群里围绕 Z 聊了一阵」这类**多人对话事件**值得记 —— 只要 evidence.messageIds ≥ 2 条且至少 2 人发言，可以建。后端会按 weight 老化，不必过度自我审查。',
+      '- 完全单条、零回应的随口提及不建；问候/客套/单字回应不建（见下方负面清单）。',
       '',
       '## ⚠️ 反孤儿节点（强制）',
       '- 每一个你创建的 person / event / entity，**必须至少被一条边引用**（personEvent / eventEvent / eventEntity 或 personEntity / entityEntity / personPerson）。',
@@ -777,39 +771,46 @@ function buildExtractionPrompt(
       '- persons 数组的作用是登记"这一轮你打算与之建立关系的人"，**不是聊天窗口参与者花名册**。窗口里只是旁观的人若没有任何边引用，请不要列出。',
       '- 自检顺序：先列边 → 边中提到哪些 person id / refKey → 只把这些 person / refKey 写进 persons / events / entities。',
       '',
-      '- **以下情况一律不要建 event**（直接走 personEntityEdge 或留空）：',
-      '  · 偏好/事实声明：「我喜欢 X / 我讨厌 Y / 我有 Z / 我会 W」——只建 entity 边，不建 event。',
-      '  · 元对话/元请求：「帮我记一下…」「你的关系系统测试一下」「这是我」——这些是对工具的指令，不是世界中发生的事件，**完全不要建 event**。',
-      '  · 单纯转述/提及：「A 说他喜欢 X」——只建 A→X 的 entity 边，不要把"A 提及 X"包装成 event。',
-      '  · 问候/客套/无信息内容：「在吗」「早」「哈哈」——什么都不建。',
-      '- event.title 必须能反映"何时发生了何事"（如「2024-某周开黑《三角洲》」），**禁止**形如「X 提及 Y」「讨论 Z」「测试系统」「关于…的对话」这类把"说话/讨论"本身当事件的标题。',
+      '- **以下情况不要建 event**（负面清单）：',
+      '  · 偏好/事实声明：「我喜欢 X / 我讨厌 Y / 我有 Z / 我会 W」——这类**个人画像**由 plugin-user-profile 负责；user-relation 不应再为此建 person-entity "enthusiast"/"critic" 边，**也不要建 event**。',
+      '  · 元对话/元请求：「帮我记一下…」「测试一下你的关系系统」「这是我」——对工具的指令不是世界中发生的事，**不要建 event**。',
+      '  · 问候/客套/无信息内容：「在吗」「早」「哈哈」「ok」——什么都不建。',
+      '- event.title 应反映**何事 / 何主题**，鼓励包含时间锚点（如「2024-某周开黑《三角洲》」）。允许「围绕《三角洲》的讨论」「关于关系系统的复盘对话」这类**对话型事件**标题；但需 evidence.messageIds ≥ 2 条作为支撑，并尽量通过 eventEntityEdges part-of 把话题实体挂上，让事件可被检索。',
       '',
       '## 正确建模示例',
+      '### 示例 1：偏好声明 → 留给 user-profile，不在本插件建边',
       "原话：'我喜欢打三角洲，157也喜欢'（Alice 发言）",
+      '✅ 正确输出：persons: [], entities: [], personEntityEdges: []  ← 喜欢/讨厌 由 user-profile 处理；本插件全空即可。',
+      '❌ 不要：personEntityEdges role="enthusiast"（与 user-profile 重复，且会污染关系图）。',
+      '',
+      '### 示例 2：多人共同行为/讨论 → 建 event + part-of entity',
+      "原话（多人多轮）：A: '今晚一起打三角洲？' B: '行' A: '我开车' B: '157 你来不？' 157: '来'",
       '✅ 正确输出：',
-      '  persons: [Alice, 157]',
       '  entities: [{ refKey: "e1", name: "三角洲", entityKind: "work" }]',
-      '  personEntityEdges: [',
-      '    { person=Alice, entityRefKey="e1", role="enthusiast", sentiment="positive" },',
-      '    { person=157,     entityRefKey="e1", role="enthusiast", sentiment="positive" },',
-      '  ]',
-      '❌ 错误输出（不要这样做）：',
-      '  events: [{ title: "Alice 提及 157 喜欢三角洲" }]  ← 把实体塞进事件标题，丢失了"两人共同喜欢"这个图结构。',
+      '  events: [{ refKey: "ev1", title: "约局开黑《三角洲》", category: "collaboration" }]',
+      '  personEventEdges: [{ A→ev1 role=initiator }, { B→ev1 role=participant }, { 157→ev1 role=participant }]',
+      '  eventEntityEdges: [{ ev1→e1 relationType="part-of" }]',
+      '',
+      '### 示例 3：单向 person-person 声明（允许不对等）',
+      "原话：A: '157 是我兄弟' （A 自己说；窗口里 157 没回应或没否认）",
+      '✅ 正确输出：personPersonEdges: [{ A→157 relationType="friend" directed=true }]  ← 仅 A 的单向声明；不写 157→A。',
+      '✅ 同理：A: "我跟 157 闹翻了" → personPersonEdges: [{ A→157 relationType="hostile" directed=true }]，允许负向且不对等。',
       '',
       '## 其他规则（违反则该条目会被丢弃）',
       `- 每条 evidence.messageIds 必须从窗口里实际出现的 messageId 中选取，至少 1 个；`,
       `- 每条 evidence.quote 必须是 messageIds 中某条消息内容的原文子串（≤80 字）；`,
       '- 一个 event/entity 可被多人共同关联（输出多条 edge 指向同一 refKey）；',
       '- 一个人可同时参与多个 event/entity；',
-      '- personPersonEdge 仅在能从对话明确看出"长期身份性关系"时输出（CP / 朋友 / 师徒 / 对手 / 同事 / 仰慕等），',
-      '  不要把"参与同一事件"或"共享同一兴趣"误当作朋友关系；',
+      '- personPersonEdge **是单向声明**：只要发话人 A 自己亲口表达了对 B 的关系定位（朋友 / 敌人 / 师傅 / 暗恋 / 讨厌 / CP / 同事…），就可以输出 A→B 一条 directed=true 边，**无需 B 回应或背书**。负面关系（讨厌 / 拉黑 / 仇人）同样适用。',
+      '  不要把"参与同一事件"或"共享同一兴趣"误当作朋友关系——必须有明确的身份性陈述（"是我朋友""跟我闹翻了""我老婆"…）；',
       `- person-person relationType 优先使用：${RecommendedPersonRelationTypes.join(' / ')}；确无合适词时可自创小写英文短词。`,
       '- **角色单选最强**：同一人对同一 event / entity 只输出**一条最强角色边**。语义包含关系：',
       '  · 人-事件：initiator > participant > target > reporter > witness（参与者已含旁观者，不要又写 participant 又写 witness）；',
       '  · 人-实体：enthusiast > creator > owner > critic > participant > visitor > mentioned。',
       '  · 例外：若同一人对同一事件存在**真正不同性质的角色**（如既是 initiator 又是 target —— 自作自受 / 被自己引发的后果反噬），允许各自输出一条；后端会按规则保留可共存的角色。',
-      '- **严格自证**：要给某人写 person-event / person-entity / person-person 边，evidence.messageIds 必须包含至少一条**该人自己发的消息**；不要替别人陈述其关系（如"A 说 B 是 C 的朋友"不可写成 B→C friend）。否则该边会被丢弃。',
-      '- **person-person 视为单向声明**：A→B "friend" 不代表 B 也认同；如要表达双向，必须 B 也在窗口里亲口确认，并各自输出一条 directed 边。除非明确希望强制双向，否则不要写 directed=false。',
+      '- **严格自证（仅 person-person）**：要写 personPersonEdge A→B 时，evidence.messageIds 必须包含至少一条 **A 自己发的消息**（表达对 B 的关系定位）。"A 说 B 是 C 的朋友" 不能写成 B→C friend（B 没自己说过）；但可写 A→B/A→C 的相关边。person-event / person-entity 边不再强制自证，evidence 只需能从原文佐证该人参与即可。',
+      '- **person-person 视为单向声明**：A→B 总是 directed=true，B 不背书也无妨；如要表达双向关系（互为朋友/互为敌人），必须 B 也在窗口里有相应陈述，各自输出一条 directed=true 边，不要用 directed=false。',
+      '- **person-entity 收紧**：本插件只在**行为性**关系（participant / owner / creator / visitor / mentioned）才建 person-entity 边。「喜欢 / 讨厌 / 是粉丝 / 收藏 / 关注 / 一般偏好」一律**不建** —— 这些是个人画像，由 plugin-user-profile 在另一条管道维护。若你不确定是行为性关系还是偏好声明，**省略该边**。',
       '- **event-entity / entity-entity 边不要求严格自证**（无 fromPerson），但仍需 evidence + quote。仅在明显能从原文看出【事件关于/使用 某实体】、【实体 part-of/contains 实体】时才输出。',
       '- **description 字段是可选注释**（≤ 40 字中文/英文），只在 role / relationType 代号不足以表达语义时与以补充（例：「绝巴 part-of 三角洲」可加 description="三角洲的高难度关卡"）。能靠 role/relationType 表达清楚的别冗余加。',
       '- **别名识别（is-alias-of）**：当窗口内同一句或紧邻句出现「A 又叫 / 也叫 / 别名 / 就是 B」「A 是 B 的小号 / 马甲」等等同表述时：',
