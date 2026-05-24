@@ -830,4 +830,55 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     );
     expect(edge).toBeDefined();
   });
+
+  it('(3e) 兄弟实体无 LLM → 仅计数候选，不创建父实体', async () => {
+    const { service } = await makeService();
+    await service.createEntity({ name: '三角洲行动刀皮', entityKind: 'thing', evidence: [] });
+    await service.createEntity({ name: '三角洲行动绝密航天', entityKind: 'thing', evidence: [] });
+
+    const r = await service.consolidate({ autoLink: true });
+    expect(r.lateralParentCandidates).toBeGreaterThanOrEqual(1);
+    expect(r.lateralParentsCreated).toBe(0);
+    expect(r.lateralEdgesCreated).toBe(0);
+
+    const snap = await service.loadAll();
+    expect(snap.entities.find(e => e.name === '三角洲行动')).toBeUndefined();
+  });
+
+  it('normalizeName: 连接符/下划线/中点 视为装饰，「三角洲-行动」≡「三角洲行动」', async () => {
+    const { service } = await makeService();
+    const a = await service.createEntity({
+      name: '三角洲-行动',
+      entityKind: 'work',
+      evidence: [ev({ messageIds: ['m1'] })],
+    });
+    const b = await service.createEntity({
+      name: '三角洲_行动',
+      entityKind: 'work',
+      evidence: [ev({ messageIds: ['m2'] })],
+    });
+    const c = await service.createEntity({
+      name: '三角洲·行动',
+      entityKind: 'work',
+      evidence: [ev({ messageIds: ['m3'] })],
+    });
+    const d = await service.createEntity({
+      name: '三角洲行动',
+      entityKind: 'work',
+      evidence: [ev({ messageIds: ['m4'] })],
+    });
+    expect(b.id).toBe(a.id);
+    expect(c.id).toBe(a.id);
+    expect(d.id).toBe(a.id);
+  });
+
+  it('consolidate triggerSource 透传到 getLastConsolidateInfo', async () => {
+    const { service } = await makeService();
+    await service.consolidate({ triggerSource: 'manual' });
+    expect(service.getLastConsolidateInfo().trigger).toBe('manual');
+    await service.consolidate({ triggerSource: 'eviction' });
+    expect(service.getLastConsolidateInfo().trigger).toBe('eviction');
+    await service.consolidate({});
+    expect(service.getLastConsolidateInfo().trigger).toBe('api');
+  });
 });

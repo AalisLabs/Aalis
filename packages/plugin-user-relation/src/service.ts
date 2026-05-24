@@ -15,6 +15,7 @@ import type { ModelRef } from '@aalis/plugin-llm-api';
 
 import {
   inferEntityHierarchy,
+  inferMissingParent,
   resolveConsolidateModel,
   rewriteEntitySummary,
   verifyAliasPair,
@@ -74,12 +75,22 @@ export class RelationService {
   private _lastConsolidateAt?: number;
   /** 最近一次 consolidate() 结果的简短摘要 */
   private _lastConsolidateResultSummary?: string;
+  /** 最近一次 consolidate() 的触发来源：manual | eviction | api */
+  private _lastConsolidateTrigger?: 'manual' | 'eviction' | 'api';
 
   constructor(private readonly store: RelationStore) {}
 
-  /** 查询最近一次 consolidation 运行时间与结果摘要 */
-  getLastConsolidateInfo(): { lastRunAt?: number; summary?: string } {
-    return { lastRunAt: this._lastConsolidateAt, summary: this._lastConsolidateResultSummary };
+  /** 查询最近一次 consolidation 运行时间、触发源与结果摘要 */
+  getLastConsolidateInfo(): {
+    lastRunAt?: number;
+    summary?: string;
+    trigger?: 'manual' | 'eviction' | 'api';
+  } {
+    return {
+      lastRunAt: this._lastConsolidateAt,
+      summary: this._lastConsolidateResultSummary,
+      trigger: this._lastConsolidateTrigger,
+    };
   }
 
   static personId(platform: string, userId: string): string {
@@ -1441,6 +1452,8 @@ export class RelationService {
       autoLink?: boolean;
       /** 可选：传入后 consolidate 末尾会调用 LLM 做别名核验与摘要重写 */
       llm?: { ctx: Context; modelRef: ModelRef; disableThinking?: boolean };
+      /** 调用来源标识，仅用于 getLastConsolidateInfo() 报告。默认 api。 */
+      triggerSource?: 'manual' | 'eviction' | 'api';
     } = {},
   ): Promise<{
     aliasCandidates: Array<{
@@ -1458,6 +1471,9 @@ export class RelationService {
     llmVerified?: number;
     llmRejected?: number;
     summariesRewritten?: number;
+    lateralParentCandidates: number;
+    lateralParentsCreated: number;
+    lateralEdgesCreated: number;
   }> {
     const snapshot = await this.store.loadAll();
     const aliasCandidates: Array<{
@@ -1942,6 +1958,113 @@ export class RelationService {
       }
     }
 
+    // ─── (3e) 兄弟实体 → 共同父实体「侧向推断」（仅 LLM 启用时执行）
+    //   场景：同 kind 下 ≥2 个实体名共享前缀 ≥3 字（如「三角洲行动刀皮」+「三角洲行动绝密航天」），
+    //   但父实体「三角洲行动」尚未作为节点存在 → (3d) 找不到候选。
+    //   流程：
+    //     1) 同 kind 内按 name 排序，贪心聚类：相邻 LCP ≥3 字 → 同簇；
+    //     2) 跳过已有任意 entity-entity[part-of] 出边的成员（不重复挂父）；
+    //     3) 跳过 LCP 已作为同 kind 实体存在的簇（让 (3d) 处理）；
+    //     4) 发给 LLM inferMissingParent 核验「父名是否有意义」；
+    //     5) accept → 新建父实体（可用 LLM 修正名），并为每个兄弟建 entity-entity[part-of] 边。
+    //   未启用 LLM → 不创建（避免误造实体节点），但记录候选数到 lateralParentCandidates。
+    let lateralParentCandidates = 0;
+    let lateralParentsCreated = 0;
+    let lateralEdgesCreated = 0;
+    if (opts.autoLink) {
+      const minLcpLen = 3;
+      const afterSnap = await this.store.loadAll();
+      // 已经有 entity-entity[part-of] 出边的子实体 id 集合
+      const hasParent = new Set<string>();
+      for (const e of afterSnap.edges) {
+        if (e.kind === 'entity-entity' && e.relationType === 'part-of') {
+          hasParent.add(e.fromEntityId);
+        }
+      }
+      const byKind = new Map<string, EntityNode[]>();
+      for (const e of afterSnap.entities) {
+        if (hasParent.has(e.id)) continue;
+        const k = e.entityKind ?? 'topic';
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k)!.push(e);
+      }
+      type Cluster = { lcp: string; members: EntityNode[] };
+      const clusters: Array<{ kind: string; cluster: Cluster }> = [];
+      for (const [kind, list] of byKind.entries()) {
+        if (list.length < 2) continue;
+        const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name));
+        let cur: Cluster = { lcp: '', members: [] };
+        const flush = () => {
+          if (cur.members.length >= 2 && cur.lcp.length >= minLcpLen) {
+            clusters.push({ kind, cluster: { lcp: cur.lcp, members: cur.members } });
+          }
+        };
+        for (const e of sorted) {
+          if (cur.members.length === 0) {
+            cur = { lcp: e.name, members: [e] };
+            continue;
+          }
+          const newLcp = commonPrefix(cur.lcp, e.name);
+          if (newLcp.length >= minLcpLen) {
+            cur.members.push(e);
+            cur.lcp = newLcp;
+          } else {
+            flush();
+            cur = { lcp: e.name, members: [e] };
+          }
+        }
+        flush();
+      }
+      lateralParentCandidates = clusters.length;
+
+      if (llmModel && opts.llm) {
+        for (const { kind, cluster } of clusters) {
+          const entityKind = kind as EntityNode['entityKind'];
+          // 父名若已作为同 kind 实体存在则跳过（交给 (3d)）
+          const existingParent = await this.findEntityByKindAndName(entityKind, cluster.lcp);
+          if (existingParent) continue;
+          const verdict = await inferMissingParent(
+            opts.llm.ctx,
+            llmModel,
+            { parentName: cluster.lcp, kind, siblings: cluster.members },
+            llmDisableThinking,
+          );
+          if (!verdict.accept) {
+            if (opts.llm.ctx.logger) {
+              opts.llm.ctx.logger.info(
+                `[user-relation] consolidate LLM 否决侧向父实体「${cluster.lcp}」(${kind}): ${verdict.reason}`,
+              );
+            }
+            continue;
+          }
+          const finalName = verdict.suggestedName ?? cluster.lcp;
+          // 再次按 finalName 检查（LLM 可能修正成已有名）
+          const dup = await this.findEntityByKindAndName(entityKind, finalName);
+          const parentEntity =
+            dup ??
+            (await this.createEntity({
+              name: finalName,
+              entityKind,
+              evidence: [],
+              summary: `consolidate 侧向推断：根据 ${cluster.members.length} 个子实体共同前缀建立。`,
+            }));
+          if (!dup) lateralParentsCreated++;
+          for (const child of cluster.members) {
+            if (child.id === parentEntity.id) continue;
+            await this.addEntityEntityEdge({
+              fromEntityId: child.id,
+              toEntityId: parentEntity.id,
+              relationType: 'part-of',
+              directed: true,
+              weight: 0.7,
+              evidence: [],
+            });
+            lateralEdgesCreated++;
+          }
+        }
+      }
+    }
+
     const consolidateResult = {
       aliasCandidates,
       aliasEdgesCreated,
@@ -1949,12 +2072,17 @@ export class RelationService {
       eventEdgesNormalized,
       entityHierarchyCandidates,
       entityHierarchyEdgesCreated,
+      lateralParentCandidates,
+      lateralParentsCreated,
+      lateralEdgesCreated,
       ...(opts.llm ? { llmVerified, llmRejected, summariesRewritten } : {}),
     };
     this._lastConsolidateAt = Date.now();
+    this._lastConsolidateTrigger = opts.triggerSource ?? 'api';
     this._lastConsolidateResultSummary =
       `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，part-of ${partOfEdgesCreated}，` +
       `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
+      `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
       (opts.llm ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected} 摘要重写 ${summariesRewritten}` : '');
     return consolidateResult;
   }
@@ -2129,12 +2257,25 @@ function buildAdjacency(edges: RelationEdge[]) {
  *  注意：不做后缀剥离（如「OL/手游/PC版」），那种语义合并交给 LLM verifyAliasPair。
  */
 function normalizeName(name: string): string {
-  return name
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[《》「」『』【】〈〉()()[\]"'""''""''`]/g, '')
-    .trim()
-    .replace(/\s+/g, ' ');
+  return (
+    name
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[《》「」『』【】〈〉()()[\]"'""''""''`]/g, '')
+      // 连接符 / 下划线 / 中点 视为「装饰」去除：
+      //   「三角洲-行动」/「三角洲_行动」/「三角洲·行动」 ≡ 「三角洲行动」
+      .replace(/[-_·]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ')
+  );
+}
+
+/** 计算两字符串的最长公共前缀（按 UTF-16 code unit，对中文足够稳定）。 */
+function commonPrefix(a: string, b: string): string {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return a.slice(0, i);
 }
 
 /** weight 累积：增量按 (1 - weight) * delta 收敛，避免无限增长 */

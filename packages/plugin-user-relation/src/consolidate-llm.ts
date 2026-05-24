@@ -199,6 +199,66 @@ export async function inferEntityHierarchy(
   }
 }
 
+/**
+ * (D) 父实体「侧向推断」：给定一组同 kind 的「兄弟实体」（它们的名字共享一段前缀），
+ * 让 LLM 判断「该共同前缀作为父实体名是否有意义」。
+ * 输入：候选父名 + 候选 kind + 兄弟实体（≥2）。
+ * 输出：{ accept: boolean, suggestedName?: string, reason: string }
+ *   - accept=true 且未给 suggestedName → 用原前缀；给了则用 LLM 修正后的名字（可能更通顺）。
+ *   - accept=false → 调用方不创建该父实体。
+ * 解析失败 / LLM 失败 → accept=false。
+ */
+export async function inferMissingParent(
+  ctx: Context,
+  model: LLMModel,
+  candidate: { parentName: string; kind: string; siblings: EntityNode[] },
+  disableThinking = true,
+): Promise<{ accept: boolean; suggestedName?: string; reason: string }> {
+  const siblingLines = candidate.siblings.map(s => `- ${s.name}${s.summary ? `（${s.summary.slice(0, 40)}）` : ''}`);
+  const prompt = [
+    {
+      role: 'system' as const,
+      content:
+        '你是一个实体层级推断助手。给定一组同类「兄弟实体」和它们名字的共同前缀，判断「这个前缀作为它们的父实体名是否在现实中有意义」。' +
+        '只输出 JSON，不要带 markdown 代码块。格式：{"accept": true/false, "suggestedName": "可选，更通顺的父名", "reason": "简短说明"}。' +
+        '判断要点：' +
+        '(1) 前缀必须能独立指代一个真实存在的、被广泛理解的「父级概念」（如游戏系列、作品、品牌、地点）；' +
+        '(2) 不要因为名字字面包含就硬造（例如「橙汁」不是「橙色橘子」的父级）；' +
+        '(3) 若前缀仅是没意义的字符片段，accept=false；' +
+        '(4) 若前缀略不通顺但语义清晰，可在 suggestedName 给出修正名。',
+    },
+    {
+      role: 'user' as const,
+      content: [
+        `候选父实体名: ${candidate.parentName}`,
+        `类型: ${candidate.kind}`,
+        `兄弟实体（共 ${candidate.siblings.length} 个）:`,
+        ...siblingLines,
+      ].join('\n'),
+    },
+  ];
+  try {
+    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
+    const parsed = tryParseJson(raw) as { accept?: unknown; suggestedName?: unknown; reason?: unknown } | undefined;
+    if (!parsed || typeof parsed.accept !== 'boolean') {
+      return { accept: false, reason: 'LLM 输出解析失败' };
+    }
+    return {
+      accept: parsed.accept,
+      ...(typeof parsed.suggestedName === 'string' && parsed.suggestedName.trim()
+        ? { suggestedName: parsed.suggestedName.trim() }
+        : {}),
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+    };
+  } catch (err) {
+    ctx.logger.warn(
+      `[user-relation] inferMissingParent LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { accept: false, reason: `LLM 失败: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 function tryParseJson(text: string): unknown {
   if (!text) return undefined;
   const trimmed = text
