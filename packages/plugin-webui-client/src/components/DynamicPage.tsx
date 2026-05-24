@@ -475,19 +475,33 @@ export function DynamicPage({ page }: { page: WebuiPageDef }) {
     }
   }
 
+  // 含关系图（或其他 graph）的页面：上半固定（stats + graph），下半 tabs 独立滚动，
+  // 避免滚动数据列表时把图也带着滚出视野。
+  const hasGraph = groups.some(g => g.type === 'component' && g.item.type === 'graph');
+
   return (
-    <div className="page-content dynamic-page">
-      {groups.map((g, i) =>
-        g.type === 'stat-grid' ? (
-          <div className="dyn-stat-grid" key={i}>
-            {g.items.map((comp, j) => (
-              <DynStat key={j} comp={comp} pluginName={page.plugin} refreshTick={refreshTick} />
-            ))}
+    <div className={`page-content dynamic-page${hasGraph ? ' has-graph' : ''}`}>
+      {groups.map((g, i) => {
+        const isTabsBelowGraph =
+          hasGraph && g.type === 'component' && g.item.type === 'tabs';
+        if (g.type === 'stat-grid') {
+          return (
+            <div className="dyn-stat-grid" key={i}>
+              {g.items.map((comp, j) => (
+                <DynStat key={j} comp={comp} pluginName={page.plugin} refreshTick={refreshTick} />
+              ))}
+            </div>
+          );
+        }
+        return (
+          <div
+            key={i}
+            className={isTabsBelowGraph ? 'dyn-scroll-region' : undefined}
+          >
+            <DynamicComponent component={g.item} pluginName={page.plugin} refreshTick={refreshTick} onRefresh={bump} />
           </div>
-        ) : (
-          <DynamicComponent key={i} component={g.item} pluginName={page.plugin} refreshTick={refreshTick} onRefresh={bump} />
-        )
-      )}
+        );
+      })}
     </div>
   );
 }

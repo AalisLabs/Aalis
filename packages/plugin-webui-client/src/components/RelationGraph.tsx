@@ -168,6 +168,38 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // 画布高度可拖拽（持久化到 localStorage，按 source key 区分不同图）
+  const heightStorageKey = `relation-graph-h:${pluginName}:${comp.source}`;
+  const [graphHeight, setGraphHeight] = useState<number>(() => {
+    if (typeof window === 'undefined') return 520;
+    const stored = Number(window.localStorage.getItem(heightStorageKey));
+    return Number.isFinite(stored) && stored >= 200 ? stored : 520;
+  });
+  const dragStartRef = useRef<{ y: number; h: number } | null>(null);
+  const onResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragStartRef.current = { y: e.clientY, h: graphHeight };
+  }, [graphHeight]);
+  const onResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) return;
+    const next = Math.max(200, Math.min(1600, dragStartRef.current.h + (e.clientY - dragStartRef.current.y)));
+    setGraphHeight(next);
+  }, []);
+  const onResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) return;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    dragStartRef.current = null;
+    try {
+      window.localStorage.setItem(heightStorageKey, String(graphHeight));
+    } catch {
+      // 忽略 quota 错误
+    }
+  }, [heightStorageKey, graphHeight]);
+  // 拖拽后通知 cytoscape resize
+  useEffect(() => {
+    cyRef.current?.resize();
+  }, [graphHeight]);
+
   // ── fetch graph ───────────────────────────────────────────
   const fetchGraph = useCallback(async () => {
     setLoading(true);
@@ -351,7 +383,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
   };
   const canvasStyle: CSSProperties = {
     width: '100%',
-    height: 520,
+    height: graphHeight,
     background: CANVAS_BG,
     position: 'relative',
   };
@@ -455,7 +487,7 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
               background: 'var(--surface)',
               color: 'var(--text)',
               overflow: 'auto',
-              maxHeight: 520,
+              maxHeight: graphHeight,
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -492,6 +524,39 @@ export function RelationGraph({ comp, pluginName, refreshTick }: Props): JSX.Ele
             )}
           </aside>
         ) : null}
+      </div>
+
+      {/* 拖拽改变画布高度。改完写入 localStorage，下次保持。 */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        title="拖拽调整画布高度"
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeEnd}
+        onPointerCancel={onResizeEnd}
+        style={{
+          height: 8,
+          cursor: 'ns-resize',
+          background: 'var(--bg-secondary)',
+          borderTop: '1px solid var(--border-color, #2a2a42)',
+          borderBottom: '1px solid var(--border-color, #2a2a42)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          userSelect: 'none',
+          touchAction: 'none',
+        }}
+      >
+        <div
+          style={{
+            width: 40,
+            height: 3,
+            borderRadius: 2,
+            background: 'var(--text-muted, #6b7280)',
+            opacity: 0.6,
+          }}
+        />
       </div>
 
       <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }}>
