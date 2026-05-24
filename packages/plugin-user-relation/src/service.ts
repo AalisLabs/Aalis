@@ -942,6 +942,41 @@ export class RelationService {
       return (now - n.lastReinforcedAt) / (w * p);
     };
 
+    // ─── 裸 event 加权：无 part-of 实体锚 且 其参与人之间无 person-person 边 → 优先淘汰
+    //   背景：纯人际事件应配 person-person 关系；既无 entity 锚也无人际边的 event = 噪声
+    //   实现：用绝对偏移（Number.MAX_SAFE_INTEGER 量级）作为分桶标记，确保裸 event 始终排在非裸前面，
+    //          不依赖时间差/PageRank 比值，避免毫秒级测试与小图场景下相对差被噪声淹没
+    const nakedTier = Number.MAX_SAFE_INTEGER / 2;
+    const eventPartOfCount = new Map<string, number>();
+    const eventParticipants = new Map<string, Set<string>>();
+    for (const e of snap.edges) {
+      if (e.kind === 'event-entity' && e.relationType === 'part-of') {
+        eventPartOfCount.set(e.fromEventId, (eventPartOfCount.get(e.fromEventId) ?? 0) + 1);
+      } else if (e.kind === 'person-event') {
+        if (!eventParticipants.has(e.toEventId)) eventParticipants.set(e.toEventId, new Set());
+        eventParticipants.get(e.toEventId)!.add(e.fromPersonId);
+      }
+    }
+    const personPersonPairs = new Set<string>();
+    for (const e of snap.edges) {
+      if (e.kind === 'person-person') {
+        const k = [e.fromPersonId, e.toPersonId].sort().join('|');
+        personPersonPairs.add(k);
+      }
+    }
+    const isNakedEvent = (ev: EventNode): boolean => {
+      if ((eventPartOfCount.get(ev.id) ?? 0) > 0) return false;
+      const parts = [...(eventParticipants.get(ev.id) ?? [])];
+      for (let i = 0; i < parts.length; i++) {
+        for (let j = i + 1; j < parts.length; j++) {
+          const k = [parts[i], parts[j]].sort().join('|');
+          if (personPersonPairs.has(k)) return false;
+        }
+      }
+      return true;
+    };
+    const eventEvictScore = (ev: EventNode): number => (isNakedEvent(ev) ? ageScore(ev) + nakedTier : ageScore(ev));
+
     // 滞回：仅当超出 quota·(1+hysteresisPct) 才裁；裁到 floor(quota·targetPct)
     const triggerCount = (cap: number): number => Math.ceil(cap * (1 + hysteresisPct));
     const targetCount = (cap: number): number => Math.floor(cap * targetPct);
@@ -951,7 +986,7 @@ export class RelationService {
       if (remainingEvents.length >= triggerCount(quota.maxEvents)) {
         const toDelete = remainingEvents.length - targetCount(quota.maxEvents);
         if (toDelete > 0) {
-          const sorted = [...remainingEvents].sort((a, b) => ageScore(b) - ageScore(a));
+          const sorted = [...remainingEvents].sort((a, b) => eventEvictScore(b) - eventEvictScore(a));
           for (const ev of sorted.slice(0, toDelete)) {
             await this.store.deleteEventCascade(ev.id);
             deletedEvents++;
@@ -1687,6 +1722,55 @@ export class RelationService {
         });
       }
       eventEdgesNormalized++; // 共用计数（含人-实体折叠）
+    }
+
+    // ─── (3c) EventEntityEdge 旧账整理：同一 (event,entity) 多 relationType 折叠
+    //   场景：LLM 对同一对象同时输出 about + part-of（语义重复，应保留更强的 part-of）。
+    //   优先级：part-of > about > 其他 → 保留最高优先一条，合并 evidence/weight。
+    const eePriority: Record<string, number> = { 'part-of': 3, about: 2 };
+    const eePairs = new Map<string, EventEntityEdge[]>();
+    for (const e of snapshot.edges) {
+      if (e.kind !== 'event-entity') continue;
+      const k = `${e.fromEventId}|${e.toEntityId}`;
+      if (!eePairs.has(k)) eePairs.set(k, []);
+      eePairs.get(k)!.push(e);
+    }
+    for (const [, list] of eePairs.entries()) {
+      if (list.length < 2) continue;
+      // 按优先级降序，同优先级按 weight 降序
+      const sorted = [...list].sort((a, b) => {
+        const pa = eePriority[a.relationType] ?? 1;
+        const pb = eePriority[b.relationType] ?? 1;
+        if (pb !== pa) return pb - pa;
+        return (b.weight ?? 0) - (a.weight ?? 0);
+      });
+      const keep = sorted[0];
+      // 合并 evidence（按 messageIds 去重）
+      const mergedEvidence = [...keep.evidence];
+      const seenMsgKey = new Set<string>(
+        mergedEvidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
+      );
+      let maxWeight = keep.weight ?? 0;
+      for (const dup of sorted.slice(1)) {
+        for (const ev of dup.evidence ?? []) {
+          const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
+          if (!seenMsgKey.has(mk)) {
+            seenMsgKey.add(mk);
+            mergedEvidence.push(ev);
+          }
+        }
+        if ((dup.weight ?? 0) > maxWeight) maxWeight = dup.weight ?? 0;
+        await this.store.deleteEdge(dup.id);
+      }
+      if (mergedEvidence.length !== keep.evidence.length || maxWeight !== keep.weight) {
+        await this.store.upsertEdge({
+          ...keep,
+          evidence: mergedEvidence,
+          weight: maxWeight,
+          lastReinforcedAt: Date.now(),
+        });
+      }
+      eventEdgesNormalized++;
     }
 
     // (B) 合并后摘要重写：基于最新 snapshot 收集 canonical 的别名/相关事件/相关人物
