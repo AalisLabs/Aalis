@@ -33,7 +33,12 @@ import type {
   RelationEdge,
   Sentiment,
 } from './types.js';
-import { RecommendedEventEventRelationTypes, RecommendedPersonRelationTypes } from './types.js';
+import {
+  RecommendedEntityEntityRelationTypes,
+  RecommendedEventEntityRelationTypes,
+  RecommendedEventEventRelationTypes,
+  RecommendedPersonRelationTypes,
+} from './types.js';
 
 export interface ExtractorConfig {
   triggerEveryNMessages: number;
@@ -110,6 +115,7 @@ interface LLMExtraction {
     eventRefKey: string;
     role: string;
     sentiment?: string;
+    description?: string;
     evidence?: { messageIds?: string[]; quote?: string };
   }>;
   personEntityEdges?: Array<{
@@ -118,6 +124,7 @@ interface LLMExtraction {
     entityRefKey: string;
     role: string;
     sentiment?: string;
+    description?: string;
     evidence?: { messageIds?: string[]; quote?: string };
   }>;
   personPersonEdges?: Array<{
@@ -127,6 +134,7 @@ interface LLMExtraction {
     toUserId: string;
     relationType: string;
     directed?: boolean;
+    description?: string;
     evidence?: { messageIds?: string[]; quote?: string };
   }>;
   eventEventEdges?: Array<{
@@ -134,6 +142,22 @@ interface LLMExtraction {
     toEventRefKey: string;
     relationType: string;
     directed?: boolean;
+    description?: string;
+    evidence?: { messageIds?: string[]; quote?: string };
+  }>;
+  eventEntityEdges?: Array<{
+    eventRefKey: string;
+    entityRefKey: string;
+    relationType: string;
+    description?: string;
+    evidence?: { messageIds?: string[]; quote?: string };
+  }>;
+  entityEntityEdges?: Array<{
+    fromEntityRefKey: string;
+    toEntityRefKey: string;
+    relationType: string;
+    directed?: boolean;
+    description?: string;
     evidence?: { messageIds?: string[]; quote?: string };
   }>;
 }
@@ -457,6 +481,7 @@ export class RelationExtractor {
         toEventId: eventId,
         role,
         sentiment,
+        description: pe.description,
         evidence: ev ? [ev] : [],
       });
     }
@@ -481,6 +506,7 @@ export class RelationExtractor {
         toEntityId: entityId,
         role,
         sentiment,
+        description: pe.description,
         evidence: ev ? [ev] : [],
       });
     }
@@ -502,6 +528,7 @@ export class RelationExtractor {
           toPersonId,
           relationType: pp.relationType,
           directed: pp.directed,
+          description: pp.description,
           evidence: ev ? [ev] : [],
         });
       } catch (err) {
@@ -522,13 +549,49 @@ export class RelationExtractor {
         toEventId: toId,
         relationType: ee.relationType,
         directed: ee.directed,
+        description: ee.description,
         evidence: ev ? [ev] : [],
       });
     }
 
+    // 5b) event-entity edges
+    for (const ee of parsed.eventEntityEdges ?? []) {
+      const eventId = refToEventId.get(ee.eventRefKey);
+      const entityId = refToEntityId.get(ee.entityRefKey);
+      if (!eventId || !entityId || !ee.relationType) continue;
+      const ev = mkEvidence(ee.evidence);
+      await this.service.addEventEntityEdge({
+        fromEventId: eventId,
+        toEntityId: entityId,
+        relationType: ee.relationType,
+        description: ee.description,
+        evidence: ev ? [ev] : [],
+      });
+    }
+
+    // 5c) entity-entity edges
+    for (const ee of parsed.entityEntityEdges ?? []) {
+      const fromId = refToEntityId.get(ee.fromEntityRefKey);
+      const toId = refToEntityId.get(ee.toEntityRefKey);
+      if (!fromId || !toId || fromId === toId || !ee.relationType) continue;
+      const ev = mkEvidence(ee.evidence);
+      try {
+        await this.service.addEntityEntityEdge({
+          fromEntityId: fromId,
+          toEntityId: toId,
+          relationType: ee.relationType,
+          directed: ee.directed,
+          description: ee.description,
+          evidence: ev ? [ev] : [],
+        });
+      } catch (err) {
+        debugSkip('entity-entity', stringifyErr(err));
+      }
+    }
+
     if (this.cfg.debug) {
       this.ctx.logger.debug(
-        `[user-relation] ${ctxInfo.sessionId} 提取完成: persons=${parsed.persons?.length ?? 0}, events=${parsed.events?.length ?? 0}, entities=${parsed.entities?.length ?? 0}, pe=${parsed.personEventEdges?.length ?? 0}, pent=${parsed.personEntityEdges?.length ?? 0}, pp=${parsed.personPersonEdges?.length ?? 0}, ee=${parsed.eventEventEdges?.length ?? 0}`,
+        `[user-relation] ${ctxInfo.sessionId} 提取完成: persons=${parsed.persons?.length ?? 0}, events=${parsed.events?.length ?? 0}, entities=${parsed.entities?.length ?? 0}, pe=${parsed.personEventEdges?.length ?? 0}, pent=${parsed.personEntityEdges?.length ?? 0}, pp=${parsed.personPersonEdges?.length ?? 0}, ee=${parsed.eventEventEdges?.length ?? 0}, eent=${parsed.eventEntityEdges?.length ?? 0}, entent=${parsed.entityEntityEdges?.length ?? 0}`,
       );
     }
 
@@ -614,10 +677,12 @@ function buildExtractionPrompt(
       '  "persons": [{ "platform": str, "userId": str, "displayName"?: str }],',
       '  "events": [{ "refKey": str, "existingEventId"?: str|null, "title": str(<=30字), "summary"?: str(<=80字), "category"?: "discussion"|"conflict"|"collaboration"|"incident"|"milestone"|"other", "evidence": { "messageIds": str[], "quote": str } }],',
       '  "entities": [{ "refKey": str, "existingEntityId"?: str|null, "name": str(<=20字), "aliases"?: str[], "summary"?: str(<=80字), "entityKind": "topic"|"place"|"thing"|"work", "evidence": { "messageIds": str[], "quote": str } }],',
-      '  "personEventEdges": [{ "personPlatform": str, "personUserId": str, "eventRefKey": str, "role": "initiator"|"participant"|"witness"|"target"|"reporter", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "evidence": { "messageIds": str[], "quote": str } }],',
-      '  "personEntityEdges": [{ "personPlatform": str, "personUserId": str, "entityRefKey": str, "role": "enthusiast"|"participant"|"owner"|"creator"|"critic"|"visitor"|"mentioned", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "evidence": { "messageIds": str[], "quote": str } }],',
-      '  "personPersonEdges": [{ "fromPlatform": str, "fromUserId": str, "toPlatform": str, "toUserId": str, "relationType": str, "directed"?: bool, "evidence": { "messageIds": str[], "quote": str } }],',
-      `  "eventEventEdges": [{ "fromEventRefKey": str, "toEventRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEventEventRelationTypes.join(' / ')}), "directed"?: bool, "evidence": { "messageIds": str[], "quote": str } }]`,
+      '  "personEventEdges": [{ "personPlatform": str, "personUserId": str, "eventRefKey": str, "role": "initiator"|"participant"|"witness"|"target"|"reporter", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
+      '  "personEntityEdges": [{ "personPlatform": str, "personUserId": str, "entityRefKey": str, "role": "enthusiast"|"participant"|"owner"|"creator"|"critic"|"visitor"|"mentioned", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
+      '  "personPersonEdges": [{ "fromPlatform": str, "fromUserId": str, "toPlatform": str, "toUserId": str, "relationType": str, "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
+      `  "eventEventEdges": [{ "fromEventRefKey": str, "toEventRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEventEventRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
+      `  "eventEntityEdges": [{ "eventRefKey": str, "entityRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEventEntityRelationTypes.join(' / ')}), "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],`,
+      `  "entityEntityEdges": [{ "fromEntityRefKey": str, "toEntityRefKey": str, "relationType": str(\u63a8\u8350: ${RecommendedEntityEntityRelationTypes.join(' / ')}), "directed"?: bool, "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }]`,
       '}',
       '',
       '## 关键区别：Event vs Entity（务必正确使用）',
@@ -662,9 +727,11 @@ function buildExtractionPrompt(
       '  · 人-实体：enthusiast > creator > owner > critic > participant > visitor > mentioned。',
       '- **严格自证**：要给某人写 person-event / person-entity / person-person 边，evidence.messageIds 必须包含至少一条**该人自己发的消息**；不要替别人陈述其关系（如"A 说 B 是 C 的朋友"不可写成 B→C friend）。否则该边会被丢弃。',
       '- **person-person 视为单向声明**：A→B "friend" 不代表 B 也认同；如要表达双向，必须 B 也在窗口里亲口确认，并各自输出一条 directed 边。除非明确希望强制双向，否则不要写 directed=false。',
+      '- **event-entity / entity-entity 边不要求严格自证**（无 fromPerson），但仍需 evidence + quote。仅在明显能从原文看出【事件关于/使用 某实体】、【实体 part-of/contains 实体】时才输出。',
+      '- **description 字段是可选注释**（≤ 40 字中文/英文），只在 role / relationType 代号不足以表达语义时与以补充（例：「绝巴 part-of 三角洲」可加 description="三角洲的高难度关卡"）。能靠 role/relationType 表达清楚的别冗余加。',
       '- existingEventId / existingEntityId：若新条目与候选清单中某项实质相同，请填该 id（让旧节点被强化而非重复创建）。',
       '- 当窗口里没有可靠信号时，对应数组返回空 [] 即可，绝对不要编造。',
-      '- **绝不输出裸 `null`、裸字符串或其他非对象 JSON**；完全无可提取时请输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[]}`。',
+      '- **绝不输出裸 `null`、裸字符串或其他非对象 JSON**；完全无可提取时请输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[],"eventEntityEdges":[],"entityEntityEdges":[]}`。',
     ].join('\n'),
   };
   const user: Message = {
@@ -795,7 +862,9 @@ export function parseExtraction(text: string): ParseResult {
     (obj.personEventEdges?.length ?? 0) +
     (obj.personEntityEdges?.length ?? 0) +
     (obj.personPersonEdges?.length ?? 0) +
-    (obj.eventEventEdges?.length ?? 0);
+    (obj.eventEventEdges?.length ?? 0) +
+    (obj.eventEntityEdges?.length ?? 0) +
+    (obj.entityEntityEdges?.length ?? 0);
   if (totalCount === 0) return { kind: 'empty' };
   return { kind: 'ok', value: obj };
 }

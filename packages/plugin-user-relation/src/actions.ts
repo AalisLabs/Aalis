@@ -41,6 +41,15 @@ const RELATION_LABEL_ZH: Record<string, string> = {
   follows: '随后',
   'part-of': '属于',
   related: '相关',
+  // event-entity relation
+  about: '关于',
+  uses: '使用',
+  'located-at': '位于',
+  produced: '产出',
+  // entity-entity relation
+  contains: '包含',
+  'variant-of': '变体',
+  opposite: '对立',
   // entity kind / sentiment（少量备用）
   positive: '正向',
   negative: '负向',
@@ -142,10 +151,11 @@ export const actions: PluginModule['actions'] = {
       edges = sub.edges;
     } else {
       const snap = await s.loadAll();
-      // 全图以“近期活跃 + 高度关系”为主，避免一次过多节点压垄浏览器
-      const personCap = Math.max(20, maxBreadth * 6);
-      const eventCap = Math.max(15, maxBreadth * 4);
-      const entityCap = Math.max(15, maxBreadth * 4);
+      // 全图以“近期活跃 + 高度关系”为主，避免一次过多节点压垮浏览器
+      // maxBreadth=0 表示“不限”，但全图模式必须给硬上限防爆
+      const personCap = maxBreadth === 0 ? 500 : Math.max(20, maxBreadth * 6);
+      const eventCap = maxBreadth === 0 ? 500 : Math.max(15, maxBreadth * 4);
+      const entityCap = maxBreadth === 0 ? 500 : Math.max(15, maxBreadth * 4);
       persons = [...snap.persons].sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, personCap);
       const personIdSet = new Set(persons.map(p => p.id));
       // 仅保留与这些人物相关的事件 / 实体
@@ -169,6 +179,8 @@ export const actions: PluginModule['actions'] = {
         if (e.kind === 'person-event') return personIdSet.has(e.fromPersonId) && eventIdSet.has(e.toEventId);
         if (e.kind === 'person-entity') return personIdSet.has(e.fromPersonId) && entityIdSet.has(e.toEntityId);
         if (e.kind === 'event-event') return eventIdSet.has(e.fromEventId) && eventIdSet.has(e.toEventId);
+        if (e.kind === 'event-entity') return eventIdSet.has(e.fromEventId) && entityIdSet.has(e.toEntityId);
+        if (e.kind === 'entity-entity') return entityIdSet.has(e.fromEntityId) && entityIdSet.has(e.toEntityId);
         return personIdSet.has(e.fromPersonId) && personIdSet.has(e.toPersonId);
       });
     }
@@ -226,6 +238,7 @@ export const actions: PluginModule['actions'] = {
               role: e.role,
               weight: e.weight,
               sentiment: e.sentiment,
+              description: e.description,
             },
           };
         }
@@ -240,6 +253,7 @@ export const actions: PluginModule['actions'] = {
               role: e.role,
               weight: e.weight,
               sentiment: e.sentiment,
+              description: e.description,
             },
           };
         }
@@ -254,6 +268,37 @@ export const actions: PluginModule['actions'] = {
               relationType: e.relationType,
               directed: e.directed,
               weight: e.weight,
+              description: e.description,
+            },
+          };
+        }
+        if (e.kind === 'event-entity') {
+          return {
+            data: {
+              id: e.id,
+              source: e.fromEventId,
+              target: e.toEntityId,
+              kind: 'event-entity' as const,
+              label: labelZh(e.relationType),
+              relationType: e.relationType,
+              directed: true,
+              weight: e.weight,
+              description: e.description,
+            },
+          };
+        }
+        if (e.kind === 'entity-entity') {
+          return {
+            data: {
+              id: e.id,
+              source: e.fromEntityId,
+              target: e.toEntityId,
+              kind: 'entity-entity' as const,
+              label: labelZh(e.relationType),
+              relationType: e.relationType,
+              directed: e.directed,
+              weight: e.weight,
+              description: e.description,
             },
           };
         }
@@ -267,6 +312,7 @@ export const actions: PluginModule['actions'] = {
             relationType: e.relationType,
             directed: e.directed,
             weight: e.weight,
+            description: e.description,
           },
         };
       }),
@@ -322,13 +368,34 @@ export const actions: PluginModule['actions'] = {
               entityId: e.toEntityId,
             };
           }
+          if (e.kind === 'event-event') {
+            return {
+              kind: e.kind,
+              relation: e.relationType,
+              relationZh: labelZh(e.relationType),
+              weight: e.weight,
+              fromId: e.fromEventId,
+              toId: e.toEventId,
+            };
+          }
+          if (e.kind === 'event-entity') {
+            return {
+              kind: e.kind,
+              relation: e.relationType,
+              relationZh: labelZh(e.relationType),
+              weight: e.weight,
+              fromId: e.fromEventId,
+              toId: e.toEntityId,
+            };
+          }
+          // entity-entity
           return {
             kind: e.kind,
             relation: e.relationType,
             relationZh: labelZh(e.relationType),
             weight: e.weight,
-            fromId: e.fromEventId,
-            toId: e.toEventId,
+            fromId: e.fromEntityId,
+            toId: e.toEntityId,
           };
         }),
       };
@@ -380,9 +447,11 @@ export const actions: PluginModule['actions'] = {
     const pp = snap.edges.filter(e => e.kind === 'person-person').length;
     const pent = snap.edges.filter(e => e.kind === 'person-entity').length;
     const ee = snap.edges.filter(e => e.kind === 'event-event').length;
+    const eent = snap.edges.filter(e => e.kind === 'event-entity').length;
+    const entent = snap.edges.filter(e => e.kind === 'entity-entity').length;
     return {
       value: snap.persons.length,
-      detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 实体 ${snap.entities.length} / 人-事 ${pe} / 人-人 ${pp} / 人-实体 ${pent} / 事-事 ${ee}`,
+      detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 实体 ${snap.entities.length} / 人-事 ${pe} / 人-人 ${pp} / 人-实体 ${pent} / 事-事 ${ee} / 事-实体 ${eent} / 实体-实体 ${entent}`,
     };
   },
 
