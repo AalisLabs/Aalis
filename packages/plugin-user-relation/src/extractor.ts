@@ -767,20 +767,23 @@ export class RelationExtractor {
     }
 
     // 写后顺手老化（模仿 profile 风格，不开独立调度器）。
-    // 孤儿清理与配额无关——总是顺手扫一遍。
-    if (this.cfg.evictionEnabled) {
+    // 孤儿清理与配额无关——总是顺手扫一遍。注意：evictByQuota 内部已自带孤儿清理，
+    // 配了配额时不要重复调用 pruneOrphans。
+    const hasQuota =
+      this.cfg.evictionEnabled && (this.cfg.maxEvents > 0 || this.cfg.maxEntities > 0 || this.cfg.maxEdges > 0);
+    if (this.cfg.evictionEnabled && !hasQuota) {
       try {
         const orphans = await this.service.pruneOrphans();
-        if (this.cfg.debug && (orphans.deletedEvents || orphans.deletedEntities)) {
+        if (this.cfg.debug && (orphans.deletedPersons || orphans.deletedEvents || orphans.deletedEntities)) {
           this.ctx.logger.debug(
-            `[user-relation] 自动孤儿清理: events=${orphans.deletedEvents} entities=${orphans.deletedEntities}`,
+            `[user-relation] 自动孤儿清理: persons=${orphans.deletedPersons} events=${orphans.deletedEvents} entities=${orphans.deletedEntities}`,
           );
         }
       } catch (err) {
         if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 孤儿清理失败: ${stringifyErr(err)}`);
       }
     }
-    if (this.cfg.evictionEnabled && (this.cfg.maxEvents > 0 || this.cfg.maxEntities > 0 || this.cfg.maxEdges > 0)) {
+    if (hasQuota) {
       try {
         const evicted = await this.service.evictByQuota({
           maxEvents: this.cfg.maxEvents,
@@ -792,15 +795,21 @@ export class RelationExtractor {
           hysteresisPct: this.cfg.evictHysteresisPct,
           targetPct: this.cfg.evictTargetPct,
         });
-        if (this.cfg.debug && (evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)) {
+        if (
+          this.cfg.debug &&
+          (evicted.deletedPersons || evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)
+        ) {
           this.ctx.logger.debug(
-            `[user-relation] 自动老化: 删除 events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
+            `[user-relation] 自动老化: 删除 persons=${evicted.deletedPersons} events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
           );
         }
         // 淘汰后自动 consolidate（仅在实际发生淘汰时触发）
         if (
           this.cfg.consolidateAfterEviction &&
-          (evicted.deletedEvents > 0 || evicted.deletedEntities > 0 || evicted.deletedEdges > 0)
+          (evicted.deletedPersons > 0 ||
+            evicted.deletedEvents > 0 ||
+            evicted.deletedEntities > 0 ||
+            evicted.deletedEdges > 0)
         ) {
           try {
             const cr = await this.service.consolidate({
