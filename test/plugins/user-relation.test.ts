@@ -3,6 +3,7 @@ import { App } from '../../packages/core/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import {
+  type EventEntityEdge,
   type EvidenceRef,
   type PersonEventEdge,
   type PersonPersonEdge,
@@ -21,7 +22,8 @@ import { edgeKey, eventKey, personKey, RELATION_NAMESPACE } from '../../packages
 
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
+  // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
+  await app.ctx.useModule(memoryInMemoryModule as any);
   const mem = app.ctx.getService<MemoryService>('memory');
   if (!mem) throw new Error('memory service missing');
   const store = new RelationStore(mem);
@@ -739,7 +741,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     const after = await service.loadAll();
     const eeAfter = after.edges.filter(
       e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
-    );
+    ) as EventEntityEdge[];
     expect(eeAfter.length).toBe(1);
     expect(eeAfter[0].relationType).toBe('part-of');
     // evidence 合并去重：含两条 messageIds
@@ -773,7 +775,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     const snap = await service.loadAll();
     const edges = snap.edges.filter(
       e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
-    );
+    ) as EventEntityEdge[];
     expect(edges).toHaveLength(1);
     expect(edges[0].relationType).toBe('related');
     const msgIds = edges[0].evidence.flatMap(e => e.messageIds ?? []);
@@ -805,7 +807,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     const snap = await service.loadAll();
     const edges = snap.edges.filter(
       e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
-    );
+    ) as EventEntityEdge[];
     expect(edges).toHaveLength(2);
     const types = edges.map(e => e.relationType).sort();
     expect(types).toEqual(['part-of', 'related']);
