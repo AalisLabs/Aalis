@@ -1664,13 +1664,85 @@ export class RelationService {
       }
     }
 
-    // ─── (2) 自动 part-of：实体 name 是事件 title 子串
-    const minNameLen = 2; // 太短的名字易误判，跳过
+    // ─── (2) 自动 part-of：实体 name 是事件 title 子串（强化版）
+    //   规则演进（防误锚 "绝航" ⊂ "绝航刀皮"）：
+    //   (a) kind 偏置：仅 work / place / thing 参与（topic/泛人物概念易撞名）
+    //   (b) 最短长度 2，覆盖 "原神" "PS5" "BWS" 等真实短名
+    //   (c) 最长候选优先：同一 event 命中多个 entity 时，
+    //         若 entity A 的归一化名是 entity B 的归一化名的子串 → 剔除 A，
+    //         避免 "绝航" 在已有 "绝航刀皮" 实体时被同时锚定
+    //   (d) part-of 链祖先剔除：若 candidate 之间已有 entity-entity[part-of] 链
+    //         传递关系，剔除上游（最深子已经能通过 hierarchy 传递语义到父）
+    //   （中文无 word boundary，靠 (c)(d) 双策略而非字符级边界判断 ——
+    //    若临时缺更深子实体导致父被误锚，待 extractor 抽到子实体并建好
+    //    entity-entity 链后，下一轮 consolidate 会自动修正。）
+    const minNameLen = 2;
+    const allowedKinds: ReadonlySet<string> = new Set(['work', 'place', 'thing']);
+
+    // 预构建 entity-entity[part-of] 祖先映射（child → set<ancestor>）
+    const partOfAncestors = new Map<string, Set<string>>();
+    {
+      const directParents = new Map<string, Set<string>>();
+      for (const e of snapshot.edges) {
+        if (e.kind === 'entity-entity' && e.relationType === 'part-of') {
+          if (!directParents.has(e.fromEntityId)) directParents.set(e.fromEntityId, new Set());
+          directParents.get(e.fromEntityId)!.add(e.toEntityId);
+        }
+      }
+      const walk = (id: string, acc: Set<string>, depth: number): void => {
+        if (depth > 8) return;
+        for (const p of directParents.get(id) ?? []) {
+          if (acc.has(p)) continue;
+          acc.add(p);
+          walk(p, acc, depth + 1);
+        }
+      };
+      for (const child of directParents.keys()) {
+        const acc = new Set<string>();
+        walk(child, acc, 0);
+        partOfAncestors.set(child, acc);
+      }
+    }
+
+    // 第一遍：收集每个 event 的「candidate entity 列表」
+    const eventCandidates = new Map<string, EntityNode[]>();
     for (const ent of snapshot.entities) {
       const nm = ent.name.trim();
       if (nm.length < minNameLen) continue;
+      if (!allowedKinds.has(ent.entityKind)) continue;
       for (const ev of snapshot.events) {
         if (!ev.title.includes(nm)) continue;
+        if (!eventCandidates.has(ev.id)) eventCandidates.set(ev.id, []);
+        eventCandidates.get(ev.id)!.push(ent);
+      }
+    }
+
+    // 第二遍：应用「最长候选优先 + 祖先剔除」
+    for (const [eventId, candidates] of eventCandidates.entries()) {
+      const ev = snapshot.events.find(e => e.id === eventId);
+      if (!ev) continue;
+      const dropIds = new Set<string>();
+      // 规则 (c)：A.name ⊊ B.name → 剔除 A
+      for (const a of candidates) {
+        for (const b of candidates) {
+          if (a.id === b.id) continue;
+          const an = a.name.trim();
+          const bn = b.name.trim();
+          if (an.length < bn.length && bn.includes(an)) {
+            dropIds.add(a.id);
+          }
+        }
+      }
+      // 规则 (d)：candidate 间的祖先剔除
+      for (const c of candidates) {
+        const anc = partOfAncestors.get(c.id);
+        if (!anc) continue;
+        for (const a of anc) {
+          if (candidates.some(x => x.id === a)) dropIds.add(a);
+        }
+      }
+      const finalists = candidates.filter(c => !dropIds.has(c.id));
+      for (const ent of finalists) {
         const exists = snapshot.edges.some(
           e => e.kind === 'event-entity' && e.fromEventId === ev.id && e.toEntityId === ent.id,
         );
@@ -1684,7 +1756,7 @@ export class RelationService {
           relationType: 'part-of',
           directed: true,
           weight: 0.6,
-          description: `consolidate 自动识别：事件标题包含实体名 "${nm}"`,
+          description: `consolidate 自动识别：事件标题包含实体名 "${ent.name.trim()}"`,
           firstSeenAt: now,
           lastReinforcedAt: now,
           evidence: [],
