@@ -161,6 +161,25 @@ export class RelationService {
     return this.store.getPerson(platform, userId);
   }
 
+  /**
+   * 同步平台 displayName 到 Person 节点：仅当节点已存在且 displayName 与传入不同时才 upsert。
+   * 不创建新节点（避免水群幽灵）；不动 mentionCount / firstSeenAt / lastMentionedAt（与
+   * 「显式提及」语义区分）；仅刷新 lastSeenAt。返回是否真的发生了改名。
+   *
+   * 调用方：rename-watcher（订阅 inbound:message:archived，从 metadata.nickname 同步）。
+   */
+  async syncDisplayName(platform: string, userId: string, displayName: string): Promise<boolean> {
+    const existing = await this.store.getPerson(platform, userId);
+    if (!existing) return false;
+    if (existing.displayName === displayName) return false;
+    await this.store.upsertPerson({
+      ...existing,
+      displayName,
+      lastSeenAt: Date.now(),
+    });
+    return true;
+  }
+
   deletePerson(platform: string, userId: string) {
     return this.store.deletePersonCascade(platform, userId);
   }
