@@ -74,6 +74,8 @@ export interface MediaConfigResolved {
     audioTrackPrefix: string;
   };
   document: { extractImages: boolean };
+  /** 动图/GIF 的关键帧抽取上限（与视频拆分，便于给动图更小的预算） */
+  animatedImage: { maxFrames: number };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
   contextHistory: { enabled: boolean; maxMessages: number };
 }
@@ -242,7 +244,7 @@ export class MediaServiceImpl implements MediaService {
               item.cap = 'vision';
               descriptions[i] = cached;
             } else if (animated) {
-              const text = await this.processVideo(att, ctxText);
+              const text = await this.processVideo(att, ctxText, 'animated');
               if (text) {
                 item.description = text;
                 item.cap = 'vision';
@@ -304,8 +306,16 @@ export class MediaServiceImpl implements MediaService {
     return report;
   }
 
-  /** 视频：抽帧 + 抽音轨转写 → 拼综合描述 */
-  private async processVideo(att: MessageAttachment, contextText?: string): Promise<string | undefined> {
+  /** 视频：抽帧 + 抽音轨转写 → 拼综合描述
+   *
+   * sourceKind: 'video'（默认）用 cfg.video.maxFrames；'animated' 用 cfg.animatedImage.maxFrames。
+   * 动图比纯视频信息量低，默认给更小预算（5 vs 8），节省 vision 调用。
+   */
+  private async processVideo(
+    att: MessageAttachment,
+    contextText?: string,
+    sourceKind: 'video' | 'animated' = 'video',
+  ): Promise<string | undefined> {
     const local = await materializeAttachment(att.data);
     if (!local) {
       this.logger.debug('视频无法物化为本地文件，跳过');
@@ -319,7 +329,8 @@ export class MediaServiceImpl implements MediaService {
       const frameTexts: string[] = [];
       const totalFrames = await getFrameCount(local.path);
       if (totalFrames > 0) {
-        const indices = selectFrameIndices(totalFrames, this.cfg.video.maxFrames);
+        const maxFrames = sourceKind === 'animated' ? this.cfg.animatedImage.maxFrames : this.cfg.video.maxFrames;
+        const indices = selectFrameIndices(totalFrames, maxFrames);
         const frames = await extractFrames(local.path, indices);
         if (frames.length > 0) {
           const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
@@ -442,7 +453,7 @@ export class MediaServiceImpl implements MediaService {
         try {
           const total = await getFrameCount(local.path);
           if (total > 0) {
-            const indices = selectFrameIndices(total, this.cfg.video.maxFrames);
+            const indices = selectFrameIndices(total, this.cfg.animatedImage.maxFrames);
             const frames = await extractFrames(local.path, indices);
             if (frames.length > 0) {
               const frameAtts: MessageAttachment[] = frames.map(d => ({

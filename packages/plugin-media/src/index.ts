@@ -184,6 +184,18 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
+  animatedImage: {
+    label: '动图 / GIF',
+    fields: {
+      maxFrames: {
+        type: 'number',
+        label: '最大关键帧数',
+        default: 5,
+        description:
+          '动图（gif/webp 动画等）抽帧上限，与视频 video.maxFrames 独立。动图信息量较低，默认 5 已足够；调高会增加 vision 调用成本。',
+      },
+    },
+  },
   contextHistory: {
     label: '多模态上下文注入',
     fields: {
@@ -218,6 +230,7 @@ export const defaultConfig = {
     audioTrackPrefix: '[音轨] ',
   },
   document: { extractImages: false },
+  animatedImage: { maxFrames: 5 },
   contextHistory: { enabled: true, maxMessages: 4 },
 };
 
@@ -255,6 +268,9 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       audioTrackPrefix: (video.audioTrackPrefix as string) ?? '[音轨] ',
     },
     document: { extractImages: !!document.extractImages },
+    animatedImage: {
+      maxFrames: Math.max(1, (((raw.animatedImage ?? {}) as Record<string, unknown>).maxFrames as number) ?? 5),
+    },
     contextHistory: {
       enabled: ((raw.contextHistory ?? {}) as Record<string, unknown>).enabled !== false,
       maxMessages: Math.max(0, Number(((raw.contextHistory ?? {}) as Record<string, unknown>).maxMessages ?? 4)),
