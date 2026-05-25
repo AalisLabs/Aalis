@@ -56,7 +56,7 @@ export async function appendCrashLog(label: string, err: unknown, logFile = DEFA
     logFile,
     formatEntry({
       seq: LogHub.default.allocSeq(),
-      timestamp: new Date().toISOString().slice(11, 23),
+      timestamp: new Date().toISOString(),
       level: 'error',
       scope: RUNTIME_SCOPE,
       message: `${label}: ${formatUnknownError(err)}`,
