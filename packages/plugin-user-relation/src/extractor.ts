@@ -1175,6 +1175,7 @@ function buildExtractionPrompt(
       '- **别名识别（is-alias-of）**：当窗口内同一句或紧邻句出现「A 又叫 / 也叫 / 别名 / 就是 B」「A 是 B 的小号 / 马甲」等等同表述时：',
       '  · 若 A、B 都是人物 → personPersonEdges 输出 relationType="is-alias-of"（或 "alt-account-of" 用于小号），directed=true（A 是 B 的别名/小号）。',
       '  · 若 A、B 都是实体 → entityEntityEdges 输出 relationType="is-alias-of"，directed=true。',
+      '  · **eventEventEdges 严禁使用 `is-alias-of`**：事件天然带 sessionScope，不同会话/群里同名事件（"群A 聊三角洲" vs "群B 聊三角洲"）是**不同事件**而非别名。若想表达"同一主题在多个群发生"，请按上文"跨会话共享主题"规则建 `scope=global` hub event 并用 `part-of` 挂接。后端会拒绝跨 scope 的 event is-alias-of。',
       '  · 不要直接合并两个 entity / person 节点，让用户决定是否合并。',
       '- **part-of 强制挂载（hub-first 落地）**：若事件标题中含有任何具名对象（作品 / 游戏 / 地点 / 物品 / 话题 / 关卡 / mod / 比赛名…），**必须**：(1) 把它单独抽成 entity；(2) 同时输出一条 eventEntityEdges relationType="part-of" 把事件挂在该 entity 下。即便该 entity 在本窗口里只出现一次也要抽，因为它可能被未来的其他窗口复用，从而把"打X / 讨论X / 安利X / 吐槽X" 等围绕同一对象的事件串成一张可遍历的网。**漏挂 part-of = 制造孤岛 = Aalis 失忆的最大单一原因**。',
       '- **歧义实体必须带限定词（重要）**：后端按 (entityKind, name) 强制合并同名实体。对于跨作品/跨场景容易撞名的「通用词」——例如「月卡 / 年卡 / 会员 / 公会 / 副本 / 装备 / 皮肤 / boss / npc / 主线 / 支线」等——**name 字段必须带上限定的母实体名**，形如「洛克王国月卡」「原神月卡」「《三角洲》公会」，而不是裸的「月卡」。若上下文无法确定母实体，则宁可不建该实体（建 event 描述即可），避免错误合并到无关游戏。',
