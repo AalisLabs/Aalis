@@ -191,3 +191,81 @@ describe('user-relation: computeNodeScore', () => {
     expect(s?.pagerankFresh).toBe(false);
   });
 });
+
+describe('user-relation: 首次建边默认权按 role/relationType 区分', () => {
+  it('person-entity: enthusiast 起始 0.55，mentioned 起始 0.1', async () => {
+    const { service } = await makeService();
+    const ent = await service.createEntity({ name: '原神', entityKind: 'work', evidence: [ev()] });
+    const ent2 = await service.createEntity({ name: '某游戏', entityKind: 'work', evidence: [ev()] });
+    const e1 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:p1',
+      toEntityId: ent.id,
+      role: 'enthusiast',
+      evidence: [ev()],
+    });
+    const e2 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:p1',
+      toEntityId: ent2.id,
+      role: 'mentioned',
+      evidence: [ev()],
+    });
+    expect(e1.weight).toBeCloseTo(0.55, 5);
+    expect(e2.weight).toBeCloseTo(0.1, 5);
+  });
+
+  it('person-event: initiator 起始 0.5，witness 起始 0.15', async () => {
+    const { service } = await makeService();
+    const ev1 = await service.createEvent({ title: '开会', evidence: [ev()] });
+    const ev2 = await service.createEvent({ title: '路过', evidence: [ev()] });
+    const e1 = await service.addPersonEventEdge({
+      fromPersonId: 'onebot:p2',
+      toEventId: ev1.id,
+      role: 'initiator',
+      evidence: [ev()],
+    });
+    const e2 = await service.addPersonEventEdge({
+      fromPersonId: 'onebot:p2',
+      toEventId: ev2.id,
+      role: 'witness',
+      evidence: [ev()],
+    });
+    expect(e1.weight).toBeCloseTo(0.5, 5);
+    expect(e2.weight).toBeCloseTo(0.15, 5);
+  });
+
+  it('entity-entity: is-alias-of 起始 0.6（强声明），未知关系起始 0.3', async () => {
+    const { service } = await makeService();
+    const a = await service.createEntity({ name: 'A', entityKind: 'work', evidence: [ev()] });
+    const b = await service.createEntity({ name: 'B', entityKind: 'work', evidence: [ev()] });
+    const c = await service.createEntity({ name: 'C', entityKind: 'work', evidence: [ev()] });
+    const e1 = await service.addEntityEntityEdge({
+      fromEntityId: a.id,
+      toEntityId: b.id,
+      relationType: 'is-alias-of',
+      directed: true,
+      evidence: [ev()],
+    });
+    const e2 = await service.addEntityEntityEdge({
+      fromEntityId: a.id,
+      toEntityId: c.id,
+      relationType: 'inspired-by',
+      directed: true,
+      evidence: [ev()],
+    });
+    expect(e1.weight).toBeCloseTo(0.6, 5);
+    expect(e2.weight).toBeCloseTo(0.3, 5);
+  });
+
+  it('显式传 weight 仍然覆盖默认值', async () => {
+    const { service } = await makeService();
+    const ent = await service.createEntity({ name: '某物', entityKind: 'work', evidence: [ev()] });
+    const e1 = await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:p3',
+      toEntityId: ent.id,
+      role: 'mentioned',
+      weight: 0.9,
+      evidence: [ev()],
+    });
+    expect(e1.weight).toBeCloseTo(0.9, 5);
+  });
+});
