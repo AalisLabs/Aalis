@@ -30,6 +30,10 @@ export function registerRelationCommands(
       pagerankEpsilon: number;
       hysteresisPct: number;
       targetPct: number;
+      /** Weight 时间衰减半衰期（天），0=关闭。默认 180 */
+      weightDecayHalfLifeDays?: number;
+      /** Weight 衰减下限因子。默认 0.3 */
+      weightDecayFloor?: number;
     };
     /** consolidate 是否默认开 autoLink（/relation maintain 需要） */
     consolidateAutoLink?: boolean;
@@ -333,6 +337,10 @@ export function registerRelationCommands(
           pagerankEpsilon: ev.pagerankEpsilon,
           hysteresisPct: ev.hysteresisPct,
           targetPct: ev.targetPct,
+          decay: {
+            halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
+            floor: ev.weightDecayFloor ?? 0.3,
+          },
         });
         deletedPersons = r.deletedPersons;
         deletedEvents = r.deletedEvents;
@@ -391,6 +399,10 @@ export function registerRelationCommands(
           pagerankEpsilon: ev.pagerankEpsilon,
           hysteresisPct: ev.hysteresisPct,
           targetPct: ev.targetPct,
+          decay: {
+            halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
+            floor: ev.weightDecayFloor ?? 0.3,
+          },
         });
         dPersons = r.deletedPersons;
         dEvents = r.deletedEvents;
