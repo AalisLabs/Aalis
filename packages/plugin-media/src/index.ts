@@ -213,6 +213,24 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
+  senderContext: {
+    label: '发送者画像注入 (vision)',
+    fields: {
+      enabled: {
+        type: 'boolean',
+        label: '允许在 vision 上下文中注入发送者 user-profile 摘要',
+        default: true,
+        description:
+          '启用后，vision 描述图片时会带上发送者的长期 fact 摘要（来自 plugin-user-profile），帮助模型理解 “草羊机截图 = Minecraft 玩家在炫耀” 类场景。读取失败微 user-profile 未启用时静默跳过，不会阻断识别。',
+      },
+      profileMaxChars: {
+        type: 'number',
+        label: 'profile 摘要最大字符数',
+        default: 200,
+        description: '超过截断。填 0 等于禁用 profile 注入。',
+      },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -232,6 +250,7 @@ export const defaultConfig = {
   document: { extractImages: false },
   animatedImage: { maxFrames: 5 },
   contextHistory: { enabled: true, maxMessages: 4 },
+  senderContext: { enabled: true, profileMaxChars: 200 },
 };
 
 function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
@@ -274,6 +293,13 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
     contextHistory: {
       enabled: ((raw.contextHistory ?? {}) as Record<string, unknown>).enabled !== false,
       maxMessages: Math.max(0, Number(((raw.contextHistory ?? {}) as Record<string, unknown>).maxMessages ?? 4)),
+    },
+    senderContext: {
+      enabled: ((raw.senderContext ?? {}) as Record<string, unknown>).enabled !== false,
+      profileMaxChars: Math.max(
+        0,
+        Number(((raw.senderContext ?? {}) as Record<string, unknown>).profileMaxChars ?? 200),
+      ),
     },
   };
 }

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/util-json-repair": "workspace:*",
     "yaml": "^2.7.0",
     "@aalis/plugin-platform-api": "workspace:*",
     "@aalis/plugin-persona-api": "workspace:*",
