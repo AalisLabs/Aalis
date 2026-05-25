@@ -1,6 +1,7 @@
 import type { Context } from '@aalis/core';
 import { type LogEntry, LogHub, type LogLevel } from '@aalis/core';
 import chalk from 'chalk';
+import { getBootstrapBuffer } from './bootstrap-buffer.js';
 
 /**
  * 运行时层注入的事件——`@aalis/core` 不感知"终端归属"这件事，
@@ -91,8 +92,8 @@ export interface ConsoleSinkHandle {
 export function installConsoleSink(): ConsoleSinkHandle {
   const hub = LogHub.default;
 
-  // 冲洗启动前缓冲
-  for (const entry of hub.getBuffer()) {
+  // 冲洗启动期 bootstrap buffer
+  for (const entry of getBootstrapBuffer().snapshot()) {
     console.log(formatEntry(entry));
   }
 
