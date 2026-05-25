@@ -130,6 +130,12 @@ function roleLabel(kind: string | undefined, role: string | undefined): string {
   return role;
 }
 
+// 节点大小：按 pageRankScale（0~1，前端在构建 elements 时计算）线性映射到
+//   person:  20 → 56 px
+//   event:   24×16 → 64×40 px（宽高比固定 3:2）
+//   entity:  22 → 60 px
+// 边粗细：按 weightScale（0~1）线性映射到 1 → 6 px
+// 这样 PageRank 越高的「关键人/物/事」节点越大、合并越强的边越粗，一眼看出权重。
 const stylesheet: cytoscape.StylesheetJson = [
   {
     selector: 'node',
@@ -142,8 +148,9 @@ const stylesheet: cytoscape.StylesheetJson = [
       'text-margin-y': 4,
       'text-outline-color': CANVAS_BG,
       'text-outline-width': 2,
-      width: 28,
-      height: 28,
+      // 默认 person 尺寸（被下方 kind 选择器覆写）；mapData fallback：缺 pageRankScale 时取 0 → 最小值
+      width: 'mapData(pageRankScale, 0, 1, 20, 56)' as unknown as number,
+      height: 'mapData(pageRankScale, 0, 1, 20, 56)' as unknown as number,
       'border-width': 1,
       'border-color': '#1e3a8a',
     },
@@ -154,8 +161,8 @@ const stylesheet: cytoscape.StylesheetJson = [
       'background-color': EVENT_COLOR,
       shape: 'round-rectangle',
       'border-color': '#9a3412',
-      width: 36,
-      height: 24,
+      width: 'mapData(pageRankScale, 0, 1, 24, 64)' as unknown as number,
+      height: 'mapData(pageRankScale, 0, 1, 16, 40)' as unknown as number,
     },
   },
   {
@@ -164,8 +171,8 @@ const stylesheet: cytoscape.StylesheetJson = [
       shape: 'diamond',
       'background-color': ENTITY_DEFAULT,
       'border-color': '#374151',
-      width: 30,
-      height: 30,
+      width: 'mapData(pageRankScale, 0, 1, 22, 60)' as unknown as number,
+      height: 'mapData(pageRankScale, 0, 1, 22, 60)' as unknown as number,
     },
   },
   { selector: 'node[entityKind = "topic"]', style: { 'background-color': ENTITY_COLORS.topic } },
@@ -189,7 +196,8 @@ const stylesheet: cytoscape.StylesheetJson = [
   {
     selector: 'edge',
     style: {
-      width: 1.5,
+      // 边粗细按合并强度 weight 线性放大：弱关系 1px，强关系 6px
+      width: 'mapData(weightScale, 0, 1, 1, 6)' as unknown as number,
       'line-color': EDGE_COLOR,
       'curve-style': 'bezier',
       label: 'data(label)',
@@ -213,7 +221,7 @@ const stylesheet: cytoscape.StylesheetJson = [
   },
   {
     selector: 'edge[kind = "event-event"]',
-    style: { 'line-color': '#f472b6', 'target-arrow-color': '#f472b6', width: 2 },
+    style: { 'line-color': '#f472b6', 'target-arrow-color': '#f472b6' },
   },
   {
     selector: 'edge[kind = "event-entity"]',
@@ -225,7 +233,7 @@ const stylesheet: cytoscape.StylesheetJson = [
   },
   {
     selector: 'edge[kind = "person-person"]',
-    style: { 'line-color': '#f87171', 'target-arrow-color': '#f87171', width: 2 },
+    style: { 'line-color': '#f87171', 'target-arrow-color': '#f87171' },
   },
   {
     selector: 'edge[focused = "1"]',
@@ -520,13 +528,55 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       const tail = uid ? `…${uid.slice(-4)}` : (typeof data.id === 'string' ? `…${data.id.slice(-4)}` : '?');
       return `${lbl} · ${platform}:${tail}`;
     };
+
+    // ─── 计算 pageRankScale ∈ [0,1]（按 kind 内的相对位置）──────────────────────
+    // 用百分位排名而非线性归一化，避免极端值（个别 hub 的 PR 比中位高几个数量级）
+    // 把绝大多数节点压缩到 0 附近。
+    //   pageRankScale = 0 → 该 kind 内 PR 最低 / 缺失；映射到最小尺寸
+    //   pageRankScale = 1 → 该 kind 内 PR 最高；映射到最大尺寸
+    // 缺失 lastPageRank 视为 0（新节点）。
+    const prByKind = new Map<string, Map<string, number>>();
+    for (const n of payload.nodes) {
+      const kind = String(n.data.kind ?? 'person');
+      const pr = typeof n.data.lastPageRank === 'number' ? n.data.lastPageRank : 0;
+      let m = prByKind.get(kind);
+      if (!m) {
+        m = new Map();
+        prByKind.set(kind, m);
+      }
+      m.set(String(n.data.id), pr);
+    }
+    const prScaleByNodeId = new Map<string, number>();
+    for (const [, m] of prByKind) {
+      const sorted = [...m.entries()].sort((a, b) => a[1] - b[1]);
+      const N = sorted.length;
+      for (let i = 0; i < N; i++) {
+        const scale = N > 1 ? i / (N - 1) : 0.5;
+        prScaleByNodeId.set(sorted[i][0], scale);
+      }
+    }
+
+    // ─── 计算 weightScale ∈ [0,1]（全图边按 weight 百分位）─────────────────────
+    const weightScaleByEdgeId = new Map<string, number>();
+    {
+      const arr = payload.edges
+        .map(e => ({ id: e.data.id, w: typeof e.data.weight === 'number' ? e.data.weight : 0 }))
+        .sort((a, b) => a.w - b.w);
+      const N = arr.length;
+      for (let i = 0; i < N; i++) {
+        weightScaleByEdgeId.set(arr[i].id, N > 1 ? i / (N - 1) : 0.5);
+      }
+    }
+
     const elements: ElementDefinition[] = [
       ...payload.nodes.map(n => {
         const dis = disambigLabel(n.data);
+        const pageRankScale = prScaleByNodeId.get(String(n.data.id)) ?? 0;
         return {
           data: {
             ...n.data,
             ...(dis ? { label: dis } : {}),
+            pageRankScale,
             focused: focusedId && n.data.id === focusedId ? '1' : undefined,
           },
           group: 'nodes' as const,
@@ -536,11 +586,13 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         // 边 label 仅显示 role / relationType 等基础信息；description 不再拼接到 label 上
         //（避免画面拥挤；description 会在节点详情面板/边 hover tooltip 中展示）
         const baseLabel = typeof e.data.label === 'string' ? e.data.label : '';
+        const weightScale = weightScaleByEdgeId.get(e.data.id) ?? 0;
         return {
           data: {
             ...e.data,
             label: baseLabel,
             kind: e.data.kind ?? (e.data.relationType ? 'person-person' : 'person-event'),
+            weightScale,
             focused: focusedId && e.data.id === focusedId ? '1' : undefined,
           },
           group: 'edges' as const,
@@ -566,8 +618,22 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       //   nodeRepulsion   ≈ spacing * 117（120 -> 14000，对齐原默认）
       //   nodeSeparation  ≈ spacing * 0.67（120 -> 80）
       // 这样一根 slider 同时拉动三者，避免互相打架。
-      nodeRepulsion: Math.round(spacing * 117),
-      idealEdgeLength: spacing,
+      //
+      // 「重力分簇」：nodeRepulsion 改为函数式 —— 高 PR 节点斥力倍增（×1 ~ ×4），
+      // 让重要 hub 互相推远、低 PR 卫星节点贴近它们，从而把图天然分成
+      // 「以关键人/物/事为中心」的几个簇，便于一眼看出重点分布。
+      // idealEdgeLength 也按边的 weightScale 缩短：合并强度越高的边越短，
+      // 强联系的两端会靠得更近，弱联系会被拉远 → 进一步强化分簇感。
+      nodeRepulsion: ((node: cytoscape.NodeSingular) => {
+        const base = Math.round(spacing * 117);
+        const s = Number(node.data('pageRankScale')) || 0;
+        return Math.round(base * (1 + 3 * s));
+      }) as unknown as number,
+      idealEdgeLength: ((edge: cytoscape.EdgeSingular) => {
+        const ws = Number(edge.data('weightScale')) || 0;
+        // 强边短（spacing * 0.6），弱边长（spacing * 1.4）
+        return Math.round(spacing * (1.4 - 0.8 * ws));
+      }) as unknown as number,
       nodeSeparation: Math.round(spacing * 0.67),
       gravity: 0.1,
       gravityRange: 3.0,
