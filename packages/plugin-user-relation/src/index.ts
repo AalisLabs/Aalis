@@ -22,6 +22,7 @@ import { actions as baseActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationMiddleware } from './middleware.js';
+import { startRenameWatcher } from './rename-watcher.js';
 import { RelationService } from './service.js';
 import { RELATION_NAMESPACE, RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
@@ -486,6 +487,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const store = new RelationStore(memory);
   const service = new RelationService(store, ctx);
   ctx.provide('user-relation', service);
+
+  // 平台 displayName 同步：与 extractionEnabled 解耦，即便关掉写入提取，
+  // 改名也应反映到已存在的 Person 节点（仅同步，不创建新节点）。
+  startRenameWatcher(ctx, service);
 
   const debug = config.debug === true;
 

@@ -77,6 +77,39 @@ describe('plugin-user-relation: person CRUD', () => {
   });
 });
 
+describe('plugin-user-relation: syncDisplayName (platform rename)', () => {
+  it('renames existing person without touching mention counters', async () => {
+    const { service, store } = await makeService();
+    const a = await service.observePerson('onebot', 'u1', 'Alice');
+    expect(a.mentionCount).toBe(1);
+
+    await new Promise(r => setTimeout(r, 2));
+    const changed = await service.syncDisplayName('onebot', 'u1', 'Alicia');
+    expect(changed).toBe(true);
+
+    const after = await store.getPerson('onebot', 'u1');
+    expect(after?.displayName).toBe('Alicia');
+    expect(after?.mentionCount).toBe(1); // 未递增
+    expect(after?.firstSeenAt).toBe(a.firstSeenAt); // 保留
+    expect(after?.lastSeenAt).toBeGreaterThanOrEqual(a.lastSeenAt);
+  });
+
+  it('no-op when displayName unchanged', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'u1', 'Alice');
+    const changed = await service.syncDisplayName('onebot', 'u1', 'Alice');
+    expect(changed).toBe(false);
+  });
+
+  it('does not create a new person if missing (avoid lurker ghosts)', async () => {
+    const { service, store } = await makeService();
+    const changed = await service.syncDisplayName('onebot', 'u-never-seen', 'Ghost');
+    expect(changed).toBe(false);
+    const got = await store.getPerson('onebot', 'u-never-seen');
+    expect(got).toBeUndefined();
+  });
+});
+
 describe('plugin-user-relation: event lifecycle', () => {
   it('createEvent + reinforceEvent merges evidence and updates fields', async () => {
     const { service } = await makeService();
