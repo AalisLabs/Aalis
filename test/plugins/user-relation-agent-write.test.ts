@@ -102,6 +102,62 @@ describe('user-relation: event sessionScope 隔离', () => {
   });
 });
 
+describe('user-relation: event-event is-alias-of 跨 sessionScope 防护', () => {
+  it('两个属于不同 session 的同名事件被 LLM 标 is-alias-of → 降级为 related，不合并', async () => {
+    const { service, store } = await makeService();
+    const a = await service.createEvent({ title: '聊三角洲', evidence: [ev({ sessionId: 'group:A' })] });
+    const b = await service.createEvent({ title: '聊三角洲', evidence: [ev({ sessionId: 'group:B' })] });
+    expect(a.id).not.toBe(b.id);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const edge = await service.addEventEventEdge({
+      fromEventId: a.id,
+      toEventId: b.id,
+      relationType: 'is-alias-of',
+      evidence: [ev({ sessionId: 'group:A' })],
+    });
+    // 边被降级
+    expect(edge.relationType).toBe('related');
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+    // 两个 event 仍独立存在（未被 mergeAlias 吞掉）
+    expect(await store.getEvent(a.id)).toBeDefined();
+    expect(await store.getEvent(b.id)).toBeDefined();
+  });
+
+  it('同 session 的两事件 is-alias-of 仍可正常合并', async () => {
+    const { service, store } = await makeService();
+    const a = await service.createEvent({ title: '约定聚餐', evidence: [ev({ sessionId: 'group:A' })] });
+    const b = await service.createEvent({ title: '约定吃饭', evidence: [ev({ sessionId: 'group:A' })] });
+    expect(a.id).not.toBe(b.id);
+    const edge = await service.addEventEventEdge({
+      fromEventId: a.id,
+      toEventId: b.id,
+      relationType: 'is-alias-of',
+      evidence: [ev({ sessionId: 'group:A' })],
+    });
+    expect(edge.relationType).toBe('is-alias-of');
+    // mergeAlias 已被触发：alias 端的非 alias 边被改写到 canonical
+    expect(await store.getEvent(b.id)).toBeDefined();
+  });
+
+  it('global hub 与 specific scope event 的 is-alias-of 允许（global 表示已显式跨会话）', async () => {
+    const { service } = await makeService();
+    const hub = await service.createEvent({
+      title: '三角洲赛季',
+      sessionScope: 'global',
+      evidence: [ev({ sessionId: 'group:A' })],
+    });
+    const child = await service.createEvent({ title: '三角洲赛季', evidence: [ev({ sessionId: 'group:B' })] });
+    const edge = await service.addEventEventEdge({
+      fromEventId: child.id,
+      toEventId: hub.id,
+      relationType: 'is-alias-of',
+      evidence: [ev({ sessionId: 'group:B' })],
+    });
+    expect(edge.relationType).toBe('is-alias-of');
+  });
+});
+
 describe('user-relation: deleteNode 守门', () => {
   it('person 节点禁止删除（id 含冒号）', async () => {
     const { service } = await makeService();
