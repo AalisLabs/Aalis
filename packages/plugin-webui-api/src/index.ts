@@ -58,6 +58,10 @@ export interface WebuiTableComponent {
   }>;
   actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>;
   refresh?: number;
+  /** 启用前端本地文本搜索（空格分隔多关键词，AND 语义，对所有列值做不区分大小写子串匹配） */
+  searchable?: boolean;
+  /** 搜索框 placeholder（searchable=true 时生效） */
+  searchPlaceholder?: string;
 }
 
 /** 配置表单（复用 ConfigSchema） */

@@ -280,6 +280,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   // 关闭（✕）按钮仍然 = 退出焦点 + 清卡片，与之前一致。
   const [detailCollapsed, setDetailCollapsed] = useState(false);
 
+  // hover tooltip：鼠标悬停节点 / 边时浮出，显示更完整的标题 / 摘要 / 所属会话等。
+  // canvas 没有原生 title，所以用容器内 absolute 定位的 div 渲染。
+  const [hoverTip, setHoverTip] = useState<{ x: number; y: number; lines: string[] } | null>(null);
+
   // 布局密度（≈ fcose idealEdgeLength px），影响节点排布稀疏程度。
   //   优先级：localStorage（本机用户偏好） > 服务端 webui-server.relationGraphDefaultSpacing > 内置 120
   //   规则：UI 滑动时只更新 draft（即时显示数字），松手才 commit 到 spacing 触发 layout 重跑（动画过渡）
@@ -433,6 +437,53 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         setFocusId(edgeId);
       }
     });
+
+    // hover tooltip：节点/边的更完整信息（canvas 无原生 title，自己渲染）
+    const buildTipLines = (data: Record<string, unknown>, isEdge: boolean): string[] => {
+      const lines: string[] = [];
+      const get = (k: string): string => {
+        const v = data[k];
+        return v == null ? '' : String(v);
+      };
+      if (isEdge) {
+        const label = get('label');
+        const role = get('role');
+        const rel = get('relationType');
+        if (label) lines.push(label);
+        else if (role) lines.push(role);
+        else if (rel) lines.push(rel);
+        const desc = get('description');
+        if (desc) lines.push(desc);
+        const w = data.weight;
+        if (typeof w === 'number') lines.push(`合并强度 ${w.toFixed(2)}`);
+      } else {
+        const kind = get('kind');
+        const title = get('title') || get('name') || get('displayName') || get('label');
+        if (title) lines.push(title);
+        const cat = get('category') || get('entityKind');
+        if (cat) lines.push(`类型：${cat}`);
+        if (kind === 'event') {
+          const scope = get('sessionScope');
+          if (scope) lines.push(`会话：${scope}`);
+        }
+        const summary = get('summary');
+        if (summary) lines.push(summary);
+      }
+      return lines;
+    };
+    const updateTipFromEvent = (e: EventObject, isEdge: boolean) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const data = e.target.data() as Record<string, unknown>;
+      const lines = buildTipLines(data, isEdge);
+      if (lines.length === 0 || !rect) return;
+      const px = e.renderedPosition?.x ?? 0;
+      const py = e.renderedPosition?.y ?? 0;
+      setHoverTip({ x: px + 12, y: py + 12, lines });
+    };
+    cy.on('mouseover', 'node', e => updateTipFromEvent(e, false));
+    cy.on('mouseover', 'edge', e => updateTipFromEvent(e, true));
+    cy.on('mouseout', 'node', () => setHoverTip(null));
+    cy.on('mouseout', 'edge', () => setHoverTip(null));
     // 注意：故意不监听「点击空白处」清焦点，避免：
     // (1) 误点空白导致全图强制刷新丢失布局；
     // (2) 焦点态下拖拽画布时被识别为 tap 触发清焦点。
@@ -564,6 +615,11 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         String(n.data('kind') ?? ''), // person / event / entity
         String(n.data('entityKind') ?? ''), // work / place / ...
         String(n.data('category') ?? ''), // event category
+        String(n.data('title') ?? ''), // 事件完整标题
+        String(n.data('name') ?? ''), // 实体完整名
+        String(n.data('displayName') ?? ''), // person 显示名
+        String(n.data('summary') ?? ''), // 摘要（事件/实体）
+        String(n.data('sessionScope') ?? ''), // 会话归属
       ].map(s => s.toLowerCase());
       return tokens.every(t => fields.some(f => f.includes(t)));
     });
@@ -840,6 +896,32 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       <div style={{ display: 'flex' }}>
         <div style={{ position: 'relative', flex: 1 }}>
           <div ref={containerRef} style={canvasStyle} />
+          {hoverTip ? (
+            <div
+              style={{
+                position: 'absolute',
+                left: Math.min(hoverTip.x, 600),
+                top: hoverTip.y,
+                maxWidth: 320,
+                padding: '6px 8px',
+                background: 'rgba(28, 28, 40, 0.96)',
+                color: TEXT_COLOR,
+                border: '1px solid rgba(120,140,200,0.5)',
+                borderRadius: 4,
+                fontSize: 11,
+                lineHeight: 1.5,
+                pointerEvents: 'none',
+                zIndex: 6,
+                boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {hoverTip.lines.map((line, i) => (
+                <div key={i} style={i === 0 ? { fontWeight: 600 } : { color: 'var(--text-muted)' }}>{line}</div>
+              ))}
+            </div>
+          ) : null}
           {(selectedNode || (focusId && payload?.focusEdge)) ? (
             <div
               style={{
