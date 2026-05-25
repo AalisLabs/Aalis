@@ -5,15 +5,19 @@
  * - 关系图的「新建 / 强化 / 删除」由 extractor 单线程被动归纳，agent **不能** 直接写或删。
  * - agent 暴露的工具全部 **只读**；纠错走 `/relation cleanup` slash 命令。
  *
- * 这套 8 个工具覆盖 6 类边、3 类节点的检索/分析需求：
- *   resolve_node   —— 由关键词跨类解析节点 ID
- *   expand_node    —— 以任意节点为中心 BFS 子图（替代旧 expand_person）
- *   find_path      —— 任意节点 ↔ 任意节点 最短路径（替代旧 find_path 的 person 限制）
- *   search_persons —— 按 platform/关键词列人
- *   search_entities—— 按 kind/关键词列实体
- *   search_events  —— 按关键词/天数列事件
- *   list_edges     —— 多条件过滤边（kind/relationType/role/from/to/days）
- *   timeline       —— 给定节点的时间线（按事件 lastReinforcedAt 倒序）
+ * 这套工具覆盖 6 类边、3 类节点的检索/分析需求：
+ *   resolve_node       —— 由关键词跨类解析节点 ID
+ *   expand_node        —— 以任意节点为中心 BFS 子图（可限定 session_scope）
+ *   find_path          —— 任意节点 ↔ 任意节点 最短路径
+ *   score              —— 双节点联系分数（Katz + AA）
+ *   recommend_persons  —— 给 person 推荐 top-K “想认识”的人（一步达成，避免多次 score）
+ *   gossip             —— 某会话最近的“瓜”（事件热度榜）
+ *   shared             —— 两节点共同邻居（共同兴趣/事件/朋友）
+ *   search_persons     —— 按 platform/关键词列人
+ *   search_entities    —— 按 kind/关键词列实体
+ *   search_events      —— 按关键词/天数列事件（可限定 session_scope）
+ *   list_edges         —— 多条件过滤边
+ *   timeline           —— 节点时间线（可限定 session_scope）
  *
  * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
@@ -163,6 +167,11 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
               type: 'number',
               description: `单节点展开邻居上限（按 weight 降序）。默认 ${cfg.defaultMaxBreadth}，硬上限 ${cfg.hardMaxBreadth}`,
             },
+            session_scope: {
+              type: 'string',
+              description:
+                '仅保留属于该会话作用域的事件（例 onebot_xxx_group_yyy 或 "global"）。不传=不过滤。重要：你要讨论“某群内”的事勿忘传，否则跨群事件会被当成证据。',
+            },
           },
           required: ['node_id'],
           additionalProperties: false,
@@ -175,12 +184,14 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       if (!nodeId) return JSON.stringify({ error: 'node_id 不能为空' });
       const depth = clampNum(args.max_depth, cfg.defaultMaxDepth, 0, cfg.hardMaxDepth);
       const breadth = clampNum(args.max_breadth, cfg.defaultMaxBreadth, 1, cfg.hardMaxBreadth);
+      const scope =
+        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
       const sub = await service.traverseSubgraph({
         startNodeIds: [nodeId],
         maxDepth: depth,
         maxBreadth: breadth,
       });
-      return JSON.stringify(serializeSubgraph(sub), null, 2);
+      return JSON.stringify(serializeSubgraph(filterSubgraphByScope(sub, scope)), null, 2);
     },
   });
 
@@ -402,6 +413,10 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
               type: 'number',
               description: `结果上限。默认 ${cfg.searchEventsDefaultLimit}，硬上限 ${cfg.searchEventsHardMaxLimit}`,
             },
+            session_scope: {
+              type: 'string',
+              description: '仅保留属于该会话作用域的事件；不传=不过滤。',
+            },
           },
           additionalProperties: false,
         },
@@ -412,8 +427,13 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
       const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit, 1, cfg.searchEventsHardMaxLimit);
-      const events = await service.searchEvents({ keyword, days, limit });
-      return JSON.stringify({ count: events.length, events: events.map(serializeEventForSearch) }, null, 2);
+      const scope =
+        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const events = (await service.searchEvents({ keyword, days, limit: scope ? limit * 3 : limit })).filter(e =>
+        inScope(scope, e.sessionScope),
+      );
+      const sliced = events.slice(0, limit);
+      return JSON.stringify({ count: sliced.length, events: sliced.map(serializeEventForSearch) }, null, 2);
     },
   });
 
@@ -508,6 +528,10 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
               type: 'number',
               description: `结果上限。默认 ${cfg.searchEventsDefaultLimit * 2}，硬上限 ${cfg.searchEventsHardMaxLimit * 2}`,
             },
+            session_scope: {
+              type: 'string',
+              description: '仅保留属于该会话作用域的事件；不传=不过滤。',
+            },
           },
           required: ['node_id'],
           additionalProperties: false,
@@ -520,13 +544,259 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       if (!nodeId) return JSON.stringify({ error: 'node_id 不能为空' });
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
       const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit * 2, 1, cfg.searchEventsHardMaxLimit * 2);
-      const items = await service.getTimeline({ nodeId, days, limit });
+      const scope =
+        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const itemsAll = await service.getTimeline({ nodeId, days, limit: scope ? limit * 3 : limit });
+      const items = itemsAll.filter(it => inScope(scope, it.event.sessionScope)).slice(0, limit);
       return JSON.stringify(
         {
           count: items.length,
           items: items.map(it => ({
             event: serializeEventForSearch(it.event),
             viaEdge: serializeEdge(it.viaEdge),
+          })),
+        },
+        null,
+        2,
+      );
+    },
+  });
+
+  // ───────────────────────────── recommend_persons ────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_recommend_persons',
+        description: [
+          '给定一个 person，一步返回 top-K 「潜在想认识 / 该多互动」的人。',
+          '算法：BFS 取 1~2 跳人物候选 → 排除已直接声明 person-person 关系的 → 对每个候选跑 scoreBetween → 按 score 降序。',
+          '每个候选返回 score + 共同邻居（事件/兴趣实体）+ 最强 1 条解释路径，agent 无须再多次 score 手算。',
+          '典型场景："时空小沫想认识谁"、"该撮合 A 和谁多聊"、"在 X 群里给 P 推荐能聊得来的人"。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            node_id: { type: 'string', description: 'person 节点 ID（platform:userId）' },
+            limit: { type: 'number', description: '返回 top-K，默认 5，硬上限 15' },
+            candidate_pool: {
+              type: 'number',
+              description: '候选池大小（2 跳邻居截断，决定要打分的候选数）。默认 20，硬上限 50，越大越慢',
+            },
+            max_depth: { type: 'number', description: 'scoreBetween 路径深度，默认 3，硬上限 5' },
+            session_scope: {
+              type: 'string',
+              description:
+                '仅在该会话作用域内做推荐：候选池只走该 scope 下的事件相连节点，且解释路径过滤掉跨会话事件。不传=全图。',
+            },
+          },
+          required: ['node_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const nodeId = String(args.node_id ?? '').trim();
+      if (!nodeId || !nodeId.includes(':')) {
+        return JSON.stringify({ error: 'node_id 必须是 person（platform:userId）' });
+      }
+      const limit = clampNum(args.limit, 5, 1, 15);
+      const poolSize = clampNum(args.candidate_pool, 20, 1, 50);
+      const depth = clampNum(args.max_depth, 3, 1, 5);
+      const scope =
+        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+
+      // 1) 拿 2 跳子图作为候选池
+      const subRaw = await service.traverseSubgraph({
+        startNodeIds: [nodeId],
+        maxDepth: 2,
+        maxBreadth: poolSize,
+      });
+      const sub = filterSubgraphByScope(subRaw, scope);
+
+      // 2) 排除自身 + 已 person-person 直连
+      const directLinked = new Set<string>();
+      for (const e of sub.edges) {
+        if (e.kind !== 'person-person') continue;
+        const pp = e as PersonPersonEdge;
+        if (pp.fromPersonId === nodeId) directLinked.add(pp.toPersonId);
+        if (pp.toPersonId === nodeId) directLinked.add(pp.fromPersonId);
+      }
+      const candidates = sub.persons.filter(p => p.id !== nodeId && !directLinked.has(p.id)).slice(0, poolSize);
+
+      // 3) 对每个候选打分
+      const scored: Array<{
+        person: ReturnType<typeof serializePerson>;
+        score: number;
+        common_neighbors_score: number;
+        katz_score: number;
+        top_path?: ReturnType<typeof serializeNode>[] extends never
+          ? never
+          : { length: number; nodes: ReturnType<typeof serializeNode>[]; edges: ReturnType<typeof serializeEdge>[] };
+        common_neighbors: Array<{ degree: number; aa_contribution: number; node: ReturnType<typeof serializeNode> }>;
+      }> = [];
+      for (const cand of candidates) {
+        try {
+          const r = await service.scoreBetween(nodeId, cand.id, { maxDepth: depth, topPaths: 3, mode: 'symmetric' });
+          if (r.score <= 0) continue;
+          // 路径若含跨 scope 事件，从展示里剔除（不影响 score 数值）
+          const visiblePaths = r.topPaths.filter(p =>
+            scope
+              ? p.nodes.every(
+                  n =>
+                    !('title' in n && !('platform' in n) && !('entityKind' in n)) ||
+                    inScope(scope, (n as EventNode).sessionScope),
+                )
+              : true,
+          );
+          const top = visiblePaths[0];
+          scored.push({
+            person: serializePerson(cand),
+            score: Number(r.score.toFixed(4)),
+            common_neighbors_score: Number(r.commonNeighborsScore.toFixed(4)),
+            katz_score: Number(r.katzScore.toFixed(4)),
+            top_path: top
+              ? {
+                  length: top.length,
+                  nodes: top.nodes.map(n => serializeNode(n)),
+                  edges: top.edges.map(e => serializeEdge(e)),
+                }
+              : undefined,
+            common_neighbors: r.commonNeighbors.slice(0, 3).map(c => ({
+              degree: c.degree,
+              aa_contribution: Number(c.aaContribution.toFixed(4)),
+              node: serializeNode(c.node),
+            })),
+          });
+        } catch {
+          // 单个候选打分失败不影响整体
+        }
+      }
+      scored.sort((a, b) => b.score - a.score);
+      const top = scored.slice(0, limit);
+      return JSON.stringify(
+        {
+          from_id: nodeId,
+          session_scope: scope ?? null,
+          count: top.length,
+          candidates_considered: candidates.length,
+          recommendations: top,
+        },
+        null,
+        2,
+      );
+    },
+  });
+
+  // ───────────────────────────── gossip ────────────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_gossip',
+        description: [
+          '一步返回某会话/群最近的「瓜」：按热度（weight × evidenceCount × recency）排序的事件清单。',
+          '典型场景："这群最近在聊啥"、"X 群最近一周有什么瓜"。',
+          '比 search_events 适合"想看群里热闹"的开放式查询；search_events 适合"找某个具体话题"。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            session_scope: {
+              type: 'string',
+              description: '会话作用域；不传=全图。强烈建议传，否则会把所有群/私聊的事件混在一起。',
+            },
+            days: { type: 'number', description: '仅看最近 N 天；默认 7，0=不限' },
+            limit: { type: 'number', description: '返回上限，默认 8，硬上限 30' },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const scope =
+        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const days = typeof args.days === 'number' && args.days >= 0 ? args.days : 7;
+      const limit = clampNum(args.limit, 8, 1, 30);
+      const pool = await service.searchEvents({ days: days > 0 ? days : undefined, limit: 200 });
+      const filtered = pool.filter(e => inScope(scope, e.sessionScope));
+      const now = Date.now();
+      const scored = filtered.map(e => {
+        const ageDays = Math.max(0, (now - e.lastReinforcedAt) / 86400_000);
+        const recency = 0.5 ** (ageDays / 14); // 14 天半衰
+        const heat = (e.weight ?? 0.5) * (1 + Math.log1p(e.evidence.length)) * recency;
+        return { e, heat };
+      });
+      scored.sort((a, b) => b.heat - a.heat);
+      const top = scored.slice(0, limit);
+      return JSON.stringify(
+        {
+          session_scope: scope ?? null,
+          days,
+          count: top.length,
+          events: top.map(s => ({ ...serializeEventForSearch(s.e), heat: Number(s.heat.toFixed(3)) })),
+        },
+        null,
+        2,
+      );
+    },
+  });
+
+  // ───────────────────────────── shared_neighbors ──────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_shared',
+        description: [
+          '一步返回两个节点的共同邻居（共同兴趣实体 / 共同参与的事件 / 共同认识的人），按 Adamic-Adar 贡献度排序。',
+          '典型场景："A 和 B 有啥共同点能撮合"、"他们俩是怎么搭上的"、"找开场话题"。',
+          '只是 score 工具 common_neighbors 段的便捷直达版本，省去跑全套 Katz 路径累加。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            a_id: { type: 'string', description: '节点 A id' },
+            b_id: { type: 'string', description: '节点 B id' },
+            kind: {
+              type: 'string',
+              enum: ['person', 'event', 'entity', 'any'],
+              description: '仅返回该类型的共同邻居；默认 any',
+            },
+            limit: { type: 'number', description: '返回上限，默认 10，硬上限 30' },
+          },
+          required: ['a_id', 'b_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const a = String(args.a_id ?? '').trim();
+      const b = String(args.b_id ?? '').trim();
+      if (!a || !b) return JSON.stringify({ error: 'a_id / b_id 不能为空' });
+      const kind = typeof args.kind === 'string' ? args.kind : 'any';
+      const limit = clampNum(args.limit, 10, 1, 30);
+      const r = await service.scoreBetween(a, b, { maxDepth: 2, topPaths: 1, mode: 'symmetric' });
+      const filtered = r.commonNeighbors.filter(c => {
+        if (kind === 'any') return true;
+        if (kind === 'person') return 'platform' in c.node;
+        if (kind === 'entity') return 'entityKind' in c.node;
+        if (kind === 'event') return !('platform' in c.node) && !('entityKind' in c.node);
+        return true;
+      });
+      const top = filtered.slice(0, limit);
+      return JSON.stringify(
+        {
+          a_id: a,
+          b_id: b,
+          count: top.length,
+          shared: top.map(c => ({
+            degree: c.degree,
+            aa_contribution: Number(c.aaContribution.toFixed(4)),
+            node: serializeNode(c.node),
           })),
         },
         null,
@@ -899,7 +1169,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   if (cfg.debug) {
     ctx.logger.debug(
-      `[user-relation] 已注册 15 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / node_score）`,
+      `[user-relation] 已注册 19 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / node_score）`,
     );
   }
 }
@@ -909,6 +1179,36 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 function clampNum(raw: unknown, fallback: number, min: number, max: number): number {
   const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
   return Math.max(min, Math.min(max, Math.round(v)));
+}
+
+/** 事件 sessionScope 与调用者传入 scope 是否匹配。`scope` 未传 = 不过滤；event 无 sessionScope 视为 'global'。 */
+function inScope(scope: string | undefined, evScope: string | undefined): boolean {
+  if (!scope) return true;
+  return (evScope ?? 'global') === scope;
+}
+
+/** 取边上所有事件节点引用 id（用于按 event 集合过滤边）。 */
+function getEventIdsFromEdge(e: RelationEdge): string[] {
+  if (e.kind === 'person-event') return [(e as PersonEventEdge).toEventId];
+  if (e.kind === 'event-event') return [(e as EventEventEdge).fromEventId, (e as EventEventEdge).toEventId];
+  if (e.kind === 'event-entity') return [(e as EventEntityEdge).fromEventId];
+  return [];
+}
+
+/** 按 sessionScope 过滤子图：退出限定会话外的 events，连带过滤所有引用这些 event 的边。Person/Entity 节点保留。 */
+function filterSubgraphByScope<
+  T extends { persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] },
+>(sub: T, scope: string | undefined): T {
+  if (!scope) return sub;
+  const keepEvIds = new Set(sub.events.filter(e => inScope(scope, e.sessionScope)).map(e => e.id));
+  return {
+    ...sub,
+    events: sub.events.filter(e => keepEvIds.has(e.id)),
+    edges: sub.edges.filter(e => {
+      const refs = getEventIdsFromEdge(e);
+      return refs.every(id => keepEvIds.has(id));
+    }),
+  };
 }
 
 function serializeSubgraph(sub: {
