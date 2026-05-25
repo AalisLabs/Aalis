@@ -14,6 +14,7 @@ import type { CLIService } from './types.js';
 export type { CLIService } from './types.js';
 
 import { LogHub } from '@aalis/core';
+import { readLogFileTail } from './log-file.js';
 
 // ===== 插件元数据 =====
 
@@ -103,8 +104,40 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     tui?.applyStreamChunk(chunk);
   });
 
-  ctx.on('app:started', () => {
-    tui = new CliTui(ctx, cliConfig, sessionId);
+  // 临时缓冲：plugin apply 早于 app:started，但晚于 bootstrap-buffer.dispose()；
+  // 我们订阅一个 onEntry 把这段窗口的实时 entry 留住，并在 app:started 时合并
+  // data/latest.log 尾部（覆盖 plugin apply 之前的早期 boot 日志）。
+  const liveBuffer: LogEntry[] = [];
+  let liveBufferActive = true;
+  const stopLiveBuffer = LogHub.default.onEntry(entry => {
+    if (liveBufferActive) liveBuffer.push(entry);
+  });
+
+  ctx.on('app:started', async () => {
+    let initial: LogEntry[] = [];
+    try {
+      initial = await readLogFileTail(2000);
+    } catch {
+      // 文件未就绪可忽略——只是无早期历史
+    }
+    // 合并：file tail 与 live buffer 都可能含同一 seq，按 seq 去重排序
+    const seen = new Set<number>();
+    const merged: LogEntry[] = [];
+    for (const e of initial) {
+      if (seen.has(e.seq)) continue;
+      seen.add(e.seq);
+      merged.push(e);
+    }
+    for (const e of liveBuffer) {
+      if (seen.has(e.seq)) continue;
+      seen.add(e.seq);
+      merged.push(e);
+    }
+    merged.sort((a, b) => a.seq - b.seq);
+    liveBufferActive = false;
+    stopLiveBuffer();
+
+    tui = new CliTui(ctx, cliConfig, sessionId, merged);
     tui.start();
   });
 }
@@ -151,11 +184,12 @@ class CliTui {
     private ctx: Context,
     private config: CLIConfig,
     private sessionId: string,
+    initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    // LogHub 不再缓存 buffer——CLI 启动时日志区域为空，之后通过 onEntry 实时累积。
-    // 需要查看更早的历史日志可使用 webui（文件分页 API）。
-    this.logLines = [];
+    // 启动期日志由 apply() 通过尾读 data/latest.log + 实时 buffer 合并后注入，
+    // 之后通过 LogHub.onEntry 实时累积；按 seq 单调，下方 onEntry 用 lastSeq 去重避免与 initial 重复。
+    this.logLines = initialEntries.slice();
   }
 
   isRunning(): boolean {
@@ -182,9 +216,16 @@ class CliTui {
     input.on('data', this.handleData);
     process.once('exit', this.restoreOnExit);
 
+    // 已注入 initialEntries 中最大的 seq；onEntry 收到 seq <= 此值的视为重复跳过
+    let lastSeq = this.logLines.length > 0 ? this.logLines[this.logLines.length - 1].seq : -1;
     this.removeLogListener = LogHub.default.onEntry(entry => {
+      if (entry.seq <= lastSeq) return;
+      lastSeq = entry.seq;
       // 不限长——启动期起累积，渲染仅访问可见窗口，内存价格可接受
       this.logLines.push(entry);
+      // 用户已主动向上滚（logScroll > 0）时，新日志到来应保持视图锚定在原历史位置，
+      // 而非随 raw.length 增长把旧内容挤出可见区。logScroll === 0 表示跟随底部。
+      if (this.view === 'logs' && this.logScroll > 0) this.logScroll += 1;
       if (this.view === 'logs') this.queueRender();
     });
 
