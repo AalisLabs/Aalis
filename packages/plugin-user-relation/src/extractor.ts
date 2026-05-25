@@ -21,6 +21,7 @@ import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '
 import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
+import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import type { RelationService } from './service.js';
 import type {
   EntityKind,
@@ -407,12 +408,35 @@ export class RelationExtractor {
       );
 
       const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
-      const result = parseExtraction(raw);
+      let result = parseExtraction(raw);
       if (result.kind === 'parse-error') {
+        // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 多半是
+        // 模型彻底跑题（写了纯文本/markdown 段落）。给模型一次明确反馈再来一次，
+        // 避免一窗对话因为一次输出失败而完全丢失关系信号。
         this.ctx.logger.warn(
-          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.contextId}）: ${raw.slice(0, 200)}`,
+          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.contextId}），尝试重试一次。原文前 200 字：${raw.slice(0, 200)}`,
         );
-        return;
+        const retryMessages: Message[] = [
+          ...promptMessages,
+          { role: 'assistant', content: raw } as Message,
+          {
+            role: 'user',
+            content:
+              '你上一条输出无法被 JSON.parse（很可能是包了 markdown 代码块、夹杂解释文字、或被截断）。' +
+              '请只输出**一个**合法的 JSON 对象，第一个字符必须是 `{`、最后一个字符必须是 `}`，' +
+              '禁止 ```json 围栏、禁止任何解释、禁止 markdown。如果实在没有可提取的内容，' +
+              '就输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[],"eventEntityEdges":[],"entityEntityEdges":[]}`。',
+          } as Message,
+        ];
+        const rawRetry = await callLLM(modelEntry.instance, retryMessages, this.cfg.disableThinking);
+        result = parseExtraction(rawRetry);
+        if (result.kind === 'parse-error') {
+          this.ctx.logger.warn(
+            `[user-relation] LLM 重试后仍无法解析 JSON（model=${modelEntry.contextId}），放弃本批次。重试原文前 200 字：${rawRetry.slice(0, 200)}`,
+          );
+          return;
+        }
+        this.ctx.logger.debug(`[user-relation] LLM 重试后解析成功（model=${modelEntry.contextId}）`);
       }
       if (result.kind === 'empty') {
         if (this.cfg.debug) {
@@ -1292,29 +1316,13 @@ export function parseExtraction(text: string): ParseResult {
   if (!text) return { kind: 'parse-error' };
   const trimmed = text.trim();
   if (!trimmed) return { kind: 'parse-error' };
-  const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
 
-  const tryParse = (s: string): unknown => {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return undefined;
-    }
-  };
+  // 走共享 util：剥 ```json fence、配平 {}、修字符串内裸引号、补尾部 } / ] 等。
+  const { parsed } = parseLLMJsonObject(trimmed);
+  if (!parsed) return { kind: 'parse-error' };
 
-  let parsed: unknown = tryParse(cleaned);
-  if (parsed === undefined) {
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start >= 0 && end > start) parsed = tryParse(cleaned.slice(start, end + 1));
-  }
-  if (parsed === undefined) return { kind: 'parse-error' };
-
-  // null / 非对象 / 数组 → empty（LLM 明确表达无可提取）
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { kind: 'empty' };
-  }
-  const obj = parsed as LLMExtraction;
+  // 共享 util 已保证 parsed 是非空对象（非数组、非 null、非原始值）。
+  const obj = parsed as unknown as LLMExtraction;
   const totalCount =
     (obj.persons?.length ?? 0) +
     (obj.events?.length ?? 0) +

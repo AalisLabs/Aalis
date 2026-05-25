@@ -78,6 +78,8 @@ export interface MediaConfigResolved {
   animatedImage: { maxFrames: number };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
   contextHistory: { enabled: boolean; maxMessages: number };
+  /** vision 上下文中是否注入发送者画像（user-profile 摘要等先验信息） */
+  senderContext: { enabled: boolean; profileMaxChars: number };
 }
 
 export class MediaServiceImpl implements MediaService {
@@ -219,7 +221,13 @@ export class MediaServiceImpl implements MediaService {
     // 多模态上下文：在进入任何 processor 调用前构造一次，后续复用。
     const ctxText =
       this.cfg.contextHistory.enabled && attachments.length > 0
-        ? await safeBuildContext(this.ctx, msg, this.cfg.contextHistory.maxMessages, this.logger)
+        ? await safeBuildContext(
+            this.ctx,
+            msg,
+            this.cfg.contextHistory.maxMessages,
+            this.cfg.senderContext,
+            this.logger,
+          )
         : undefined;
 
     const descriptions: Array<string | undefined> = new Array(attachments.length).fill(undefined);
@@ -414,7 +422,7 @@ export class MediaServiceImpl implements MediaService {
   }
 
   async buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string> {
-    return buildIncomingImageContext(this.ctx, msg, opts?.beforeLimit);
+    return buildIncomingImageContext(this.ctx, msg, opts?.beforeLimit, this.cfg.senderContext);
   }
 
   /**
@@ -503,10 +511,11 @@ async function safeBuildContext(
   ctx: Context,
   msg: IncomingMessage,
   beforeLimit: number,
+  senderCfg: { enabled: boolean; profileMaxChars: number } | undefined,
   logger: Logger,
 ): Promise<string | undefined> {
   try {
-    const text = await buildIncomingImageContext(ctx, msg, beforeLimit);
+    const text = await buildIncomingImageContext(ctx, msg, beforeLimit, senderCfg);
     return text && text.trim().length > 0 ? text : undefined;
   } catch (err) {
     logger.debug(`buildContext 失败，跳过: ${err instanceof Error ? err.message : err}`);
