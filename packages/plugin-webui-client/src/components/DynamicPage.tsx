@@ -103,6 +103,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [search, setSearch] = useState('');
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -141,13 +142,50 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
     return s;
   };
 
+  // 本地文本搜索（searchable=true 时启用）：空格分隔多 token，AND 语义，
+  // 对所有 column key 对应的字段值做不区分大小写子串匹配。不联网、不重拉，纯前端过滤。
+  const filteredRows = (() => {
+    if (!comp.searchable) return rows;
+    const tokens = search.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return rows;
+    return rows.filter(row => {
+      const haystack = comp.columns.map(c => String(row[c.key] ?? '')).join(' ').toLowerCase();
+      return tokens.every(t => haystack.includes(t));
+    });
+  })();
+
   return (
     <div className="dyn-table-block">
       {comp.label && <h3 className="dyn-section-title">{comp.label}</h3>}
+      {comp.searchable ? (
+        <div style={{ marginBottom: 6 }}>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={comp.searchPlaceholder ?? '搜索（空格分隔多个关键词，AND 语义）'}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              padding: '4px 8px',
+              fontSize: 12,
+              border: '1px solid var(--border-color, #ddd)',
+              borderRadius: 4,
+              background: 'transparent',
+              color: 'inherit',
+            }}
+          />
+          {search ? (
+            <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+              {filteredRows.length}/{rows.length}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {loading && rows.length === 0 ? (
         <div className="empty-hint">加载中...</div>
-      ) : rows.length === 0 ? (
-        <div className="empty-hint">暂无数据</div>
+      ) : filteredRows.length === 0 ? (
+        <div className="empty-hint">{search ? '无匹配' : '暂无数据'}</div>
       ) : (
         <div className="dyn-table-scroll">
         <table className="dyn-table">
@@ -166,7 +204,7 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
+            {filteredRows.map((row, i) => (
               <tr key={i}>
                 {comp.columns.map(col => (
                   <td
