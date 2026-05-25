@@ -577,7 +577,21 @@ class SessionManager implements SessionManagerService {
     if (updates.metadata !== undefined) session.metadata = { ...session.metadata, ...updates.metadata };
     if (updates.config !== undefined) {
       // 合并配置而不是替换
-      session.config = { ...session.config, ...updates.config };
+      const merged = { ...session.config, ...updates.config } as Record<string, unknown>;
+      // 兼容性归一化：早期 WebUI 写入过 flat `model: string` / `llmProvider: string`
+      // 字段（见 2026-05 修复 commit），agent 实际只读 `llm: {provider,model}`，
+      // 导致用户在 UI 选择的模型被静默丢弃。这里把任何遗留 flat 字段折叠进 llm
+      // 后剥离，避免脏数据继续传播。
+      const legacyModel = typeof merged.model === 'string' ? merged.model : undefined;
+      const legacyProvider = typeof merged.llmProvider === 'string' ? merged.llmProvider : undefined;
+      if (legacyModel || legacyProvider) {
+        this.ctx.logger?.warn(
+          `[session ${id}] 收到过期 LLM 字段 model=${legacyModel ?? '?'} provider=${legacyProvider ?? '?'}，已忽略并清理（请改用 config.llm）`,
+        );
+        delete merged.model;
+        delete merged.llmProvider;
+      }
+      session.config = merged as typeof session.config;
     }
     session.updatedAt = Date.now();
 
