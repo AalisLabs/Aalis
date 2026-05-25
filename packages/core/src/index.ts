@@ -25,7 +25,7 @@ export { EventBus } from './events.js';
 export { HookRegistry } from './hooks.js';
 // ----- 运行时基础类型 -----
 export type { LogEntry, LogLevel } from './logger.js';
-export { DEFAULT_LOG_BUFFER_MAX, Logger, LogHub } from './logger.js';
+export { Logger, LogHub } from './logger.js';
 // ----- 插件系统类型 -----
 export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
 export { PluginManager, parseInstanceId } from './plugin.js';

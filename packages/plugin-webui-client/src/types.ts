@@ -35,6 +35,8 @@ export interface ChatMessage {
 }
 
 export interface LogEntry {
+  /** 后端进程内单调递增序号；前端用作 React key 与分页 cursor。 */
+  seq: number;
   timestamp: string;
   level: string;
   scope: string;

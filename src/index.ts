@@ -1,9 +1,14 @@
 import { App } from '@aalis/core';
+import { installBootstrapBuffer } from './runtime/bootstrap-buffer.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './runtime/console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './runtime/file-logger.js';
 import { createFsPluginLoader, createFsYamlConfigProvider, createProcessRespawnStrategy } from './runtime/providers.js';
 import { tryDispatchSubcommand } from './runtime/subcommand.js';
 import { installTerminalStateRestorer } from './runtime/terminal.js';
+
+// 必须在任何会产生日志的代码之前安装：sink 装载完成后会从 bootstrap buffer 取
+// 启动期 entries 作为初始内容（文件覆盖 / stdout 冲洗）。
+const bootstrap = installBootstrapBuffer();
 
 installTerminalStateRestorer();
 const consoleSink: ConsoleSinkHandle = installConsoleSink();
@@ -36,6 +41,8 @@ process.on('unhandledRejection', reason => {
 async function main() {
   const activeFileLogger = await setupFileLogger();
   fileLogger = activeFileLogger;
+  // sink 全部装好；bootstrap buffer 完成使命，解除订阅并释放内存。
+  bootstrap.dispose();
 
   // 宿主层组装：从 YAML 加载配置、扫描 packages/ 加载插件、用 spawn 重启
   const { config, provider: configProvider, dataDir } = createFsYamlConfigProvider();
