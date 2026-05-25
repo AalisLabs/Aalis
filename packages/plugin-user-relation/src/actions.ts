@@ -10,6 +10,7 @@
  */
 import type { Context, PluginModule } from '@aalis/core';
 import type { RelationService } from './service.js';
+import { scoreToTier } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
 /** 关系类型 → 中文显示（WebUI 渲染用；不影响存储里的英文 key） */
@@ -174,10 +175,12 @@ export const actions: PluginModule['actions'] = {
     let edges: RelationEdge[];
     let focusEdge: RelationEdge | undefined;
 
+    // 全图 snapshot：用于给每个返回节点附 compositeScore + tier（基于全图位置而非子图）。
+    const fullSnap = await s.loadAll();
+
     if (focusId) {
       // 先检测 focusId 是否为某条边的 id：若是 → 取边两端点作为起点 + 1 跳邻域
-      const snap = await s.loadAll();
-      const edgeMatch = snap.edges.find(e => e.id === focusId);
+      const edgeMatch = fullSnap.edges.find(e => e.id === focusId);
       if (edgeMatch) {
         focusEdge = edgeMatch;
         const endpointIds = edgeEndpointIds(edgeMatch);
@@ -199,15 +202,46 @@ export const actions: PluginModule['actions'] = {
       // 历史上这里做过「按 lastSeenAt 截断 + 过滤未触达事件/实体」的优化，
       // 但会导致「person A 在图里但其关系对端 B 被截断 → A 看似孤儿」的视觉错觉
       // （真正的孤儿在压缩阶段已由 pruneOrphans 删除）。压缩流程已收紧，全图直出更诚实。
-      const snap = await s.loadAll();
-      persons = snap.persons;
-      events = snap.events;
-      entities = snap.entities;
-      edges = snap.edges;
+      persons = fullSnap.persons;
+      events = fullSnap.events;
+      entities = fullSnap.entities;
+      edges = fullSnap.edges;
     }
 
     const personLabel = (p: PersonNode): string => p.displayName?.trim() || p.userId;
     const truncate = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+
+    // 给每个返回节点附 compositeScore + tier：用全图位置计算百分位，避免子图局部错觉。
+    const scoreOf = (id: string) => s._computeSingleNodeScore(id, fullSnap);
+    const allScored: { id: string; kind: 'person' | 'event' | 'entity'; score: number }[] = [];
+    for (const p of fullSnap.persons) {
+      const sc = scoreOf(p.id);
+      if (sc) allScored.push({ id: p.id, kind: 'person', score: sc.compositeScore });
+    }
+    for (const e of fullSnap.events) {
+      const sc = scoreOf(e.id);
+      if (sc) allScored.push({ id: e.id, kind: 'event', score: sc.compositeScore });
+    }
+    for (const e of fullSnap.entities) {
+      const sc = scoreOf(e.id);
+      if (sc) allScored.push({ id: e.id, kind: 'entity', score: sc.compositeScore });
+    }
+    const tierByNodeId = new Map<string, { compositeScore: number; tier: 'core' | 'active' | 'normal' | 'edge' }>();
+    for (const kind of ['person', 'event', 'entity'] as const) {
+      const sameKind = allScored.filter(s => s.kind === kind).sort((a, b) => b.score - a.score);
+      for (let i = 0; i < sameKind.length; i++) {
+        const rank = i + 1;
+        const percentile = sameKind.length > 1 ? (sameKind.length - rank) / (sameKind.length - 1) : 1;
+        tierByNodeId.set(sameKind[i].id, {
+          compositeScore: sameKind[i].score,
+          tier: scoreToTier(sameKind[i].score, percentile),
+        });
+      }
+    }
+    const getScoreFields = (id: string) => {
+      const t = tierByNodeId.get(id);
+      return t ? { compositeScore: t.compositeScore, tier: t.tier } : { compositeScore: undefined, tier: undefined };
+    };
 
     return {
       focusId,
@@ -249,6 +283,7 @@ export const actions: PluginModule['actions'] = {
             userId: p.userId,
             displayName: p.displayName,
             lastPageRank: p.lastPageRank,
+            ...getScoreFields(p.id),
           },
         })),
         ...events.map(e => ({
@@ -259,6 +294,7 @@ export const actions: PluginModule['actions'] = {
             category: e.category,
             title: e.title,
             lastPageRank: e.lastPageRank,
+            ...getScoreFields(e.id),
           },
         })),
         ...entities.map(e => ({
@@ -269,6 +305,7 @@ export const actions: PluginModule['actions'] = {
             entityKind: e.entityKind,
             name: e.name,
             lastPageRank: e.lastPageRank,
+            ...getScoreFields(e.id),
           },
         })),
       ],
