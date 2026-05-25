@@ -56,7 +56,24 @@ function SessionConfigEditor({ config, options, onSave, onCancel }: {
   onSave: (config: SessionConfigData) => void;
   onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState<SessionConfigData>({ ...config });
+  // 初始化 draft 时做一次「legacy → llm」折叠：
+  //   早期版本把用户选择的模型写到 `config.model: string`（flat 字段），后期
+  //   修复改用 `config.llm`。DB 中可能两个字段并存且不一致——此时 legacy
+  //   字段代表用户更晚的 UI 修改意图，应该覆盖 llm（与 scripts/migrate-session-llm.mjs
+  //   一致）。这里在 UI 层做一次幂等折叠，让用户看到的选择就是他当初点的那个。
+  const initialDraft: SessionConfigData = { ...config };
+  const legacyRaw = config as unknown as { model?: unknown; llmProvider?: unknown };
+  const legacyModel = typeof legacyRaw.model === 'string' ? legacyRaw.model : undefined;
+  const legacyProvider = typeof legacyRaw.llmProvider === 'string' ? legacyRaw.llmProvider : undefined;
+  if (legacyModel) {
+    // provider 优先用 legacy，其次沿用现 llm.provider（迁移脚本同样的退化策略）
+    const provider = legacyProvider ?? config.llm?.provider;
+    if (provider) initialDraft.llm = { provider, model: legacyModel };
+  }
+  // 删除可能被 spread 进来的 legacy key，避免 onSave 时回传
+  delete (initialDraft as Record<string, unknown>).model;
+  delete (initialDraft as Record<string, unknown>).llmProvider;
+  const [draft, setDraft] = useState<SessionConfigData>(initialDraft);
 
   const update = <K extends keyof SessionConfigData>(key: K, value: SessionConfigData[K]) => {
     setDraft(prev => ({ ...prev, [key]: value }));
