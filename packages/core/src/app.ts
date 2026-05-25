@@ -2,7 +2,7 @@ import { type AalisConfig, ConfigManager } from './config.js';
 import { Context } from './context.js';
 import { EventBus } from './events.js';
 import { HookRegistry } from './hooks.js';
-import { Logger, type LogLevel } from './logger.js';
+import { Logger, LogHub, type LogLevel } from './logger.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
 import type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 import { ServiceContainer } from './service.js';
@@ -44,6 +44,12 @@ export interface AppOptions {
   services?: ServiceContainer;
   /** 注入自定义钩子注册表 */
   hooks?: HookRegistry;
+  /**
+   * 注入自定义 LogHub。多 App 沙盒 / 集成测试 / 嵌入多实例场景下
+   * 可以传入 `new LogHub()`使每个 App 拥有独立的日志通道，不互相串台。
+   * 缺省 = `LogHub.default`（进程级共享，runtime sink 默认订阅的也是它）。
+   */
+  logHub?: LogHub;
   /**
    * 必需服务列表——这些服务必须至少有一个提供者在运行。
    * 默认 `[]`，core 不假设任何具体服务存在。
@@ -115,7 +121,7 @@ export class App {
     this.events.markSticky('app:started');
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
-    this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
+    this.logger = new Logger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default);
     this.pluginLoader = options.pluginLoader;
     this.restartStrategy = options.restartStrategy;
 
