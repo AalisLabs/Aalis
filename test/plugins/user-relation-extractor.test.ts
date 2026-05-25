@@ -12,6 +12,7 @@ import { RelationStore } from '../../packages/plugin-user-relation/src/store.js'
 /** ExtractorConfig 中测试用例普遍不关心的字段，统一提供默认值以满足 strict 类型。 */
 const EXTRACTOR_DEFAULTS = {
   evictionEnabled: false,
+  maxPersons: 0,
   maxEvents: 0,
   maxEntities: 0,
   maxEdges: 0,
