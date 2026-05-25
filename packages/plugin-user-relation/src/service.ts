@@ -3120,15 +3120,17 @@ export class RelationService {
   }
 
   /**
-   * 计算单个节点的「综合活跃度评分」，供 agent 快速判断节点的结构性重要性。
+   * 计算单个节点的「综合活跃度评分 + 排名 + 分级」，供 agent 快速判断节点份量。
    *
-   * 返回字段语义（取值范围请见 _legend）：
-   *   - relatedPeople / relatedEvents / relatedEntities: 通过任意边连接的不同邻居计数
-   *   - maxIncomingEdgeWeight / avgIncomingEdgeWeight: 入边权重分布（0..1）
-   *   - pagerank: 最近一次 eviction 算出来的 PageRank 快照（0..0.1 量级，越高越中心）
-   *   - evidenceCount: 节点 evidence 总条数
-   *   - daysSinceLastReinforced: 距上次强化天数
+   * 返回字段语义：
    *   - compositeScore: 0..1 综合分（pagerank 0.4 + edgeWeight 0.3 + recency 0.2 + degree 0.1）
+   *   - tier: 'core' | 'active' | 'normal' | 'edge'，绝对分 + 同 kind 百分位双门槛分级
+   *   - rankInKind / rankInGlobal: 'k/N' 字符串，按 compositeScore 降序，1=最高
+   *   - percentileInKind / percentileInGlobal: 0..1，0.95=前 5%，越大越中心
+   *   - pagerankFresh: false=节点从未参与过 PR 计算（lastPageRankAt=0），pagerank=0 不代表"边缘"
+   *   - 其它字段：相关邻居计数 / 入边权 / pagerank 快照 / evidence 数 / 距上次强化天数
+   *
+   * 复杂度：O(N) 全图扫描，N=节点总数（几百到几千可接受；如果发现卡顿可加节点缓存）。
    */
   async computeNodeScore(nodeId: string): Promise<{
     nodeId: string;
@@ -3140,16 +3142,81 @@ export class RelationService {
     maxIncomingEdgeWeight: number;
     avgIncomingEdgeWeight: number;
     pagerank: number;
+    pagerankFresh: boolean;
     evidenceCount: number;
     daysSinceLastReinforced: number;
     compositeScore: number;
+    tier: 'core' | 'active' | 'normal' | 'edge';
+    rankInKind: string;
+    rankInGlobal: string;
+    percentileInKind: number;
+    percentileInGlobal: number;
   } | null> {
     const snap = await this.store.loadAll();
+    const target = this._computeSingleNodeScore(nodeId, snap);
+    if (!target) return null;
+
+    // 全图排名：对每个节点算一次 compositeScore 并按 kind/全局排序。
+    const allScores: { id: string; kind: 'person' | 'event' | 'entity'; score: number }[] = [];
+    for (const p of snap.persons) {
+      const s = this._computeSingleNodeScore(p.id, snap);
+      if (s) allScores.push({ id: p.id, kind: 'person', score: s.compositeScore });
+    }
+    for (const e of snap.events) {
+      const s = this._computeSingleNodeScore(e.id, snap);
+      if (s) allScores.push({ id: e.id, kind: 'event', score: s.compositeScore });
+    }
+    for (const e of snap.entities) {
+      const s = this._computeSingleNodeScore(e.id, snap);
+      if (s) allScores.push({ id: e.id, kind: 'entity', score: s.compositeScore });
+    }
+    const sameKind = allScores.filter(s => s.kind === target.kind).sort((a, b) => b.score - a.score);
+    const global = [...allScores].sort((a, b) => b.score - a.score);
+    const rankK = sameKind.findIndex(s => s.id === nodeId) + 1;
+    const rankG = global.findIndex(s => s.id === nodeId) + 1;
+    const percentileInKind =
+      sameKind.length > 1 ? Number(((sameKind.length - rankK) / (sameKind.length - 1)).toFixed(4)) : 1;
+    const percentileInGlobal =
+      global.length > 1 ? Number(((global.length - rankG) / (global.length - 1)).toFixed(4)) : 1;
+    const tier = scoreToTier(target.compositeScore, percentileInKind);
+
+    return {
+      ...target,
+      tier,
+      rankInKind: `${rankK}/${sameKind.length}`,
+      rankInGlobal: `${rankG}/${global.length}`,
+      percentileInKind,
+      percentileInGlobal,
+    };
+  }
+
+  /**
+   * 内部：单节点综合分计算（不含排名）。抽出复用：computeNodeScore 与 actions graph_data。
+   */
+  _computeSingleNodeScore(
+    nodeId: string,
+    snap: { persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] },
+  ): {
+    nodeId: string;
+    kind: 'person' | 'event' | 'entity';
+    name: string;
+    relatedPeople: number;
+    relatedEvents: number;
+    relatedEntities: number;
+    maxIncomingEdgeWeight: number;
+    avgIncomingEdgeWeight: number;
+    pagerank: number;
+    pagerankFresh: boolean;
+    evidenceCount: number;
+    daysSinceLastReinforced: number;
+    compositeScore: number;
+  } | null {
     let kind: 'person' | 'event' | 'entity' | null = null;
     let name = '';
     let evidenceCount = 0;
     let lastReinforcedAt = 0;
     let pagerank = 0;
+    let pagerankAt = 0;
 
     const person = snap.persons.find(p => p.id === nodeId);
     if (person) {
@@ -3158,6 +3225,7 @@ export class RelationService {
       evidenceCount = 0;
       lastReinforcedAt = person.lastSeenAt ?? person.firstSeenAt ?? 0;
       pagerank = person.lastPageRank ?? 0;
+      pagerankAt = person.lastPageRankAt ?? 0;
     } else {
       const event = snap.events.find(e => e.id === nodeId);
       if (event) {
@@ -3166,6 +3234,7 @@ export class RelationService {
         evidenceCount = event.evidence?.length ?? 0;
         lastReinforcedAt = event.lastReinforcedAt;
         pagerank = event.lastPageRank ?? 0;
+        pagerankAt = event.lastPageRankAt ?? 0;
       } else {
         const entity = snap.entities.find(e => e.id === nodeId);
         if (entity) {
@@ -3174,6 +3243,7 @@ export class RelationService {
           evidenceCount = entity.evidence?.length ?? 0;
           lastReinforcedAt = entity.lastReinforcedAt;
           pagerank = entity.lastPageRank ?? 0;
+          pagerankAt = entity.lastPageRankAt ?? 0;
         }
       }
     }
@@ -3189,7 +3259,6 @@ export class RelationService {
     const isPersonId = (id: string) => id.includes(':');
     for (const e of snap.edges) {
       if (!edgeReferences(e, nodeId)) continue;
-      // 入边：to 是当前节点
       const toId = (e as { to?: string; toId?: string }).to ?? (e as { toId?: string }).toId ?? '';
       const fromId = (e as { from?: string; fromId?: string }).from ?? (e as { fromId?: string }).fromId ?? '';
       const otherId = fromId === nodeId ? toId : fromId;
@@ -3210,7 +3279,6 @@ export class RelationService {
     const daysSinceLastReinforced = lastReinforcedAt
       ? Math.max(0, (Date.now() - lastReinforcedAt) / 86400_000)
       : Number.POSITIVE_INFINITY;
-    // 综合分：pagerank 归一到 0..1（实测 pagerank 多在 0..0.1），衰减按 30 天半衰
     const prNorm = Math.min(1, pagerank * 10);
     const wNorm = Math.min(1, maxIncomingEdgeWeight);
     const recency = Number.isFinite(daysSinceLastReinforced) ? Math.exp(-daysSinceLastReinforced / 30) : 0;
@@ -3227,6 +3295,7 @@ export class RelationService {
       maxIncomingEdgeWeight: Number(maxIncomingEdgeWeight.toFixed(4)),
       avgIncomingEdgeWeight: Number(avgIncomingEdgeWeight.toFixed(4)),
       pagerank: Number(pagerank.toFixed(6)),
+      pagerankFresh: pagerankAt > 0,
       evidenceCount,
       daysSinceLastReinforced: Number.isFinite(daysSinceLastReinforced)
         ? Number(daysSinceLastReinforced.toFixed(1))
@@ -3234,4 +3303,15 @@ export class RelationService {
       compositeScore: Number(compositeScore.toFixed(4)),
     };
   }
+}
+
+/**
+ * compositeScore + 同 kind 百分位双门槛分级。绝对分给"够亮"的小图节点保底，
+ * 百分位给"大图但绝对分都低"的相对核心节点保底。
+ */
+export function scoreToTier(score: number, percentile: number): 'core' | 'active' | 'normal' | 'edge' {
+  if (score >= 0.6 || percentile >= 0.9) return 'core';
+  if (score >= 0.4 || percentile >= 0.7) return 'active';
+  if (score >= 0.2 || percentile >= 0.4) return 'normal';
+  return 'edge';
 }

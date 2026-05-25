@@ -26,11 +26,12 @@ async function runMiddleware(
     triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
     initialMessages?: Message[];
     groupOnly?: boolean;
+    maxDepth?: number;
   },
 ): Promise<Message[]> {
   registerRelationMiddleware(app.ctx, service, {
     enabled: true,
-    maxDepth: 1,
+    maxDepth: opts.maxDepth ?? 1,
     maxBreadth: 5,
     maxEvents: 5,
     maxRelations: 5,
@@ -132,5 +133,93 @@ describe('plugin-user-relation: middleware', () => {
       ],
     });
     expect(messages.some(m => m.metadata?.source === 'user-relation')).toBe(false);
+  });
+
+  it('实体别名 → 注入显示「（别名: …）」', async () => {
+    const { app, service } = await setup();
+    await service.observePerson('onebot', 'u1', 'Alice');
+    const ent = await service.createEntity({
+      entityKind: 'work',
+      name: '文明6',
+      aliases: ['Civ6', 'civ6'],
+      evidence: [],
+    });
+    await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u1',
+      toEntityId: ent.id,
+      relationType: 'interested-in',
+    });
+    const messages = await runMiddleware(app, service, {
+      userId: 'u1',
+      platform: 'onebot',
+      triggerType: 'direct',
+    });
+    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const content = typeof injected?.content === 'string' ? injected.content : '';
+    expect(content).toContain('别名:');
+    expect(content).toContain('Civ6');
+  });
+
+  it('event part-of global hub → 注入「所属跨会话话题」', async () => {
+    const { app, service } = await setup();
+    await service.observePerson('onebot', 'u1', 'Alice');
+    const child = await service.createEvent({ title: '群1 聊直播', evidence: [] });
+    const hub = await service.createEvent({
+      title: '直播相关讨论',
+      sessionScope: 'global',
+      evidence: [],
+    });
+    await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: child.id, role: 'participant' });
+    await service.addEventEventEdge({
+      fromEventId: child.id,
+      toEventId: hub.id,
+      relationType: 'part-of',
+    });
+    const messages = await runMiddleware(app, service, {
+      userId: 'u1',
+      platform: 'onebot',
+      triggerType: 'direct',
+      maxDepth: 2,
+    });
+    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const content = typeof injected?.content === 'string' ? injected.content : '';
+    expect(content).toContain('所属跨会话话题');
+    expect(content).toContain('直播相关讨论');
+  });
+
+  it('共现伙伴附「共同关注」实体', async () => {
+    const { app, service } = await setup();
+    await service.observePerson('onebot', 'u1', 'Alice');
+    await service.observePerson('onebot', 'u2', 'Bob');
+    const ent = await service.createEntity({ entityKind: 'work', name: '文明6', evidence: [] });
+    // 双方都关注同一 entity（关系不能是 mentioned）
+    await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u1',
+      toEntityId: ent.id,
+      role: 'enthusiast',
+    });
+    await service.addPersonEntityEdge({
+      fromPersonId: 'onebot:u2',
+      toEntityId: ent.id,
+      role: 'enthusiast',
+    });
+    // 通过事件共现：u1 + u2 一起参加两次同样事件（共现需≥2）
+    const ev1 = await service.createEvent({ title: '一起开黑', evidence: [] });
+    const ev2 = await service.createEvent({ title: '一起复盘', evidence: [] });
+    for (const ev of [ev1, ev2]) {
+      await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: ev.id, role: 'participant' });
+      await service.addPersonEventEdge({ fromPersonId: 'onebot:u2', toEventId: ev.id, role: 'participant' });
+    }
+
+    const messages = await runMiddleware(app, service, {
+      userId: 'u1',
+      platform: 'onebot',
+      triggerType: 'direct',
+      maxDepth: 2,
+    });
+    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const content = typeof injected?.content === 'string' ? injected.content : '';
+    expect(content).toContain('共同关注');
+    expect(content).toContain('文明6');
   });
 });
