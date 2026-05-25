@@ -26,14 +26,35 @@ export function resolveConsolidateModel(ctx: Context, cfg: ConsolidateLLMConfig 
 /**
  * (A) 判断两个实体是否为同一实体。LLM 输出 JSON：{"isSame": boolean, "reason": string}
  * 解析失败或 LLM 表示不是 → 返回 false。
+ *
+ * F2：可选 context 给 LLM 喂"上下文证据"——每边 ≤3 条 evidence 片段 + 邻居人数/事件数。
+ * 提供后 LLM 判断更稳（能识别同名异物——例如同名不同游戏角色，邻居完全不重叠）。
  */
+interface AliasPairContext {
+  /** A 节点 ≤3 条 evidence 文本片段（已截断） */
+  aEvidenceQuotes?: string[];
+  /** B 节点 ≤3 条 evidence 文本片段 */
+  bEvidenceQuotes?: string[];
+  /** A 节点邻居人数 / 事件数 / 实体数（来自 snapshot 统计） */
+  aNeighbors?: { people: number; events: number; entities: number };
+  /** B 节点邻居人数 / 事件数 / 实体数 */
+  bNeighbors?: { people: number; events: number; entities: number };
+}
+
 export async function verifyAliasPair(
   _ctx: Context,
   model: LLMModel,
   a: EntityNode,
   b: EntityNode,
   disableThinking = true,
+  context?: AliasPairContext,
 ): Promise<{ isSame: boolean; reason: string }> {
+  const fmtNeighbors = (n?: { people: number; events: number; entities: number }): string =>
+    n ? `邻居：人物 ${n.people} / 事件 ${n.events} / 实体 ${n.entities}` : '';
+  const fmtEvidence = (qs?: string[]): string => {
+    if (!qs || qs.length === 0) return '';
+    return `近期证据片段：\n${qs.map(q => `  · ${q}`).join('\n')}`;
+  };
   const prompt = [
     {
       role: 'system' as const,
@@ -50,14 +71,22 @@ export async function verifyAliasPair(
         `类型: ${a.entityKind}`,
         a.aliases?.length ? `别名: ${a.aliases.join(', ')}` : '',
         a.summary ? `摘要: ${a.summary}` : '',
+        fmtNeighbors(context?.aNeighbors),
+        fmtEvidence(context?.aEvidenceQuotes),
         '',
         '【B】',
         `名称: ${b.name}`,
         `类型: ${b.entityKind}`,
         b.aliases?.length ? `别名: ${b.aliases.join(', ')}` : '',
         b.summary ? `摘要: ${b.summary}` : '',
+        fmtNeighbors(context?.bNeighbors),
+        fmtEvidence(context?.bEvidenceQuotes),
         '',
-        '注意：名称相同未必同一对象（例如同名的不同游戏角色）；类型不同时几乎不可能为同一对象。',
+        '判定要点：',
+        '- 名称相同未必同一对象（例如同名的不同游戏角色、不同公司同名项目）；',
+        '- 类型不同时几乎不可能为同一对象；',
+        '- 若两侧的邻居（关联人物/事件/实体）完全没有重叠，且证据片段的上下文话题截然不同，倾向判否；',
+        '- 若证据片段中出现"A 又叫 B / B 即 A / 两者通用"等明示同一性的表达，倾向判是。',
       ]
         .filter(Boolean)
         .join('\n'),
