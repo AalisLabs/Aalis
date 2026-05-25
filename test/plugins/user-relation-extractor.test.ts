@@ -454,4 +454,53 @@ describe('plugin-user-relation: extractor', () => {
     // 只剩 alice 的那条 person-entity 边
     expect(snap.edges.filter(e => e.kind === 'person-entity')).toHaveLength(1);
   });
+
+  it('跨会话 hub 建模：readScope=same-platform 时，prompt 含 hub 规则段 + candidate 含 scope 标签 + 消息行带 [sid:] 前缀', async () => {
+    // 用空 LLM 输出（不落任何节点），只断言 prompt 内容
+    const { app, mem, service, calls } = await setup('{}');
+    // 先在 sessA 写一条消息触发自动建一个 current 事件
+    await mem.saveMessage('sessA', mkUserMsg('mA1', 'a', 'A 群约工会战', 'Alice'));
+    // 手动建一个 sessA 的 current event 作为已有候选
+    await service.createEvent({
+      title: 'A群工会战集结',
+      sessionScope: 'sessA',
+      evidence: [{ sessionId: 'sessA', messageIds: ['mA1'], quote: 'A 群约工会战', extractedAt: Date.now() }],
+    });
+    // sessB 写消息，准备从 sessB 触发跨会话提取
+    await mem.saveMessage('sessB', mkUserMsg('mB1', 'b', 'B 群也聊工会战', 'Bob'));
+
+    // 跨平台拉取的 extractor
+    const xExtractor = new RelationExtractor(app.ctx, service, {
+      ...EXTRACTOR_DEFAULTS,
+      triggerEveryNMessages: 999,
+      readWindowSize: 10,
+      mode: 'incremental',
+      allNewMaxMessages: 200,
+      candidateEventDays: 7,
+      candidateEventLimit: 20,
+      senderNeighborhoodEdgeLimit: 0,
+      disableThinking: true,
+      strictSelfAssertion: false,
+      debug: false,
+      readScope: 'same-platform',
+      crossSessionMaxAgeMinutes: 0,
+    });
+
+    const res = await xExtractor.triggerNow('sessB');
+    expect(res.status).toBe('ok');
+    expect(calls).toHaveLength(1);
+
+    const userMsg = calls[0].messages.find(m => m.role === 'user');
+    expect(userMsg, 'user prompt 存在').toBeTruthy();
+    const userContent = typeof userMsg!.content === 'string' ? userMsg!.content : JSON.stringify(userMsg!.content);
+
+    // 1. hub 规则段被注入
+    expect(userContent).toContain('跨会话 hub 建模规则');
+    expect(userContent).toContain('part-of');
+    // 2. candidate 行带 scope 标签（sessA 事件相对 sessB 是 other）
+    expect(userContent).toMatch(/A群工会战集结.*scope=other:sessA/);
+    // 3. 消息行带 [sid:] 前缀（两个 session 都拉到了）
+    expect(userContent).toContain('[sid:sessA]');
+    expect(userContent).toContain('[sid:sessB]');
+  });
 });
