@@ -72,6 +72,8 @@ export interface ExtractorConfig {
   strictSelfAssertion: boolean;
   /** 自动老化：每次写入完成后扫一遍并按 quota 删除（profile 风格，不开调度器）。默认 true。 */
   evictionEnabled: boolean;
+  /** 人物节点总数上限；超过则按 (age/mentionCount/PR) 排序删除老旧低活跃节点。0=不限。 */
+  maxPersons: number;
   /** 事件节点总数上限；超过则按 (age/weight) 排序删除老旧低权重节点。0=不限。 */
   maxEvents: number;
   /** 实体节点总数上限。0=不限。 */
@@ -897,7 +899,8 @@ export class RelationExtractor {
     // 孤儿清理与配额无关——总是顺手扫一遍。注意：evictByQuota 内部已自带孤儿清理，
     // 配了配额时不要重复调用 pruneOrphans。
     const hasQuota =
-      this.cfg.evictionEnabled && (this.cfg.maxEvents > 0 || this.cfg.maxEntities > 0 || this.cfg.maxEdges > 0);
+      this.cfg.evictionEnabled &&
+      (this.cfg.maxPersons > 0 || this.cfg.maxEvents > 0 || this.cfg.maxEntities > 0 || this.cfg.maxEdges > 0);
     if (this.cfg.evictionEnabled && !hasQuota) {
       try {
         const orphans = await this.service.pruneOrphans();
@@ -913,6 +916,7 @@ export class RelationExtractor {
     if (hasQuota) {
       try {
         const evicted = await this.service.evictByQuota({
+          maxPersons: this.cfg.maxPersons,
           maxEvents: this.cfg.maxEvents,
           maxEntities: this.cfg.maxEntities,
           maxEdges: this.cfg.maxEdges,

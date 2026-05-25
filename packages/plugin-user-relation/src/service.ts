@@ -1077,10 +1077,12 @@ export class RelationService {
    * 优先级（每次仅在超额时执行）：
    *   1. **孤儿节点**先删（无任何边引用的 person / event / entity；委托 `pruneOrphans()`）。
    *      孤儿清理与配额无关，旧账噪声任何时候都清。
-   *   2. 仍超额时按 `(now - lastReinforcedAt) / (max(weight,0.05) · max(PR,ε))` **降序**删；
+   *   2. 仍超额时按 `(now - lastReinforcedAt) / (max(effW,0.05) · max(PR,ε))` **降序**删；
    *      即"老旧 + 低权重 + 在 PageRank 上无人指向"的优先丢。
-   *   3. **保护节点**（evidence.length ≥ 3 或 weight ≥ 0.8）在配额阶段跳过删除，
-   *      避免误删活跃节点。该保护**仅作用于配额阶段**，不影响孤儿清理。
+   *   3. **不再有硬豁免**（evidence≥3 / effW≥0.8）：避免老节点永久占住名额。
+   *      重要性完全由 effW + PageRank 表达：高 evidence/weight 节点自然在打分尾部，
+   *      并且随时间衰减后仍可以让出名额。Person 节点同样进入排序，
+   *      依靠 PR 个性化向量的人偶偏置（person seed=2 / entity=1.5 / event=1）自然偏保护。
    *   4. **滞回（hysteresis）**：仅当 count > quota·(1+hysteresisPct) 时才触发，
    *      触发后一次性裁到 floor(quota·targetPct)。默认 hysteresis=0.2, target=0.8 ——
    *      quota=500 时会在 600 触发并裁到 400，相当于一次清理 ~200 条；不会每写一条就裁。
@@ -1095,11 +1097,11 @@ export class RelationService {
    * 返回各类删除计数，便于日志/测试断言。
    */
   async evictByQuota(quota: {
+    /** 人物节点总数上限。0 = 不限（允许人物无限增长）。 */
+    maxPersons?: number;
     maxEvents: number;
     maxEntities: number;
     maxEdges: number;
-    protectEvidenceCount?: number;
-    protectWeight?: number;
     /** PageRank 阻尼，默认 0.85 */
     pagerankDamping?: number;
     /** PageRank 最大迭代次数，默认 20 */
@@ -1110,7 +1112,7 @@ export class RelationService {
     hysteresisPct?: number;
     /** 触发后裁到 floor(quota·targetPct)。默认 0.8 */
     targetPct?: number;
-    /** PageRank 个性化向量种子权（人/物/事），默认 3/2/1 */
+    /** PageRank 个性化向量种子权（人/物/事），默认 2/1.5/1 */
     personSeed?: number;
     entitySeed?: number;
     eventSeed?: number;
@@ -1124,29 +1126,19 @@ export class RelationService {
     /** 孤儿阶段被删的 id 列表（前 50 个），便于日志/诊断 */
     orphanSamples: { persons: string[]; events: string[]; entities: string[] };
   }> {
-    const protectEv = quota.protectEvidenceCount ?? 3;
-    const protectW = quota.protectWeight ?? 0.8;
     const damping = quota.pagerankDamping ?? 0.85;
     const maxIter = quota.pagerankIterations ?? 20;
     const epsilon = quota.pagerankEpsilon ?? 1e-4;
     const hysteresisPct = Math.max(quota.hysteresisPct ?? 0.2, 0);
     const targetPct = Math.min(Math.max(quota.targetPct ?? 0.8, 0.1), 1);
-    const personSeed = quota.personSeed ?? 3;
-    const entitySeed = quota.entitySeed ?? 2;
+    const personSeed = quota.personSeed ?? 2;
+    const entitySeed = quota.entitySeed ?? 1.5;
     const eventSeed = quota.eventSeed ?? 1;
     const decayCfg: WeightDecayCfg = quota.decay ?? { halfLifeDays: 0, floor: 0.3 };
     let deletedPersons = 0;
     let deletedEvents = 0;
     let deletedEntities = 0;
     let deletedEdges = 0;
-
-    // 节点豁免：evidence 充分（人工/反复确认）始终豁免；weight 豁免改用 effectiveWeight，
-    // 避免"老高 weight"永久占住保护名额。
-    const isProtected = (n: EventNode | EntityNode): boolean => {
-      if ((n.evidence?.length ?? 0) >= protectEv) return true;
-      const effW = effectiveWeight(n.weight, n.lastReinforcedAt, Date.now(), decayCfg);
-      return effW >= protectW;
-    };
 
     // 1) 先做孤儿清理（与配额无关，旧账噪声总是清；person / event / entity 一视同仁）
     const orphanResult = await this.pruneOrphans();
@@ -1172,9 +1164,21 @@ export class RelationService {
     const ageScore = (n: EventNode | EntityNode): number => {
       // 使用 effectiveWeight：raw weight 经过时间衰减后，老节点的"分母"自动变小，
       // 让 ageScore 进一步抬高、更早进入淘汰候选；新被强化过的节点 effW 接近 raw，被保护。
+      // evidence count 作为软加权：证据越多越不易淘汰，但不是硬豁免。
+      const evBoost = 1 + Math.log1p(n.evidence?.length ?? 0);
       const w = Math.max(effectiveWeight(n.weight ?? 0.5, n.lastReinforcedAt, now, decayCfg), 0.05);
       const p = Math.max(pr.get(n.id) ?? 0, 1e-6);
-      return (now - n.lastReinforcedAt) / (w * p);
+      return (now - n.lastReinforcedAt) / (w * p * evBoost);
+    };
+
+    // Person 的 ageScore：无 weight/evidence，依靠 mentionCount / lastSeenAt / PR。
+    // PR 种子权 person seed=2 会让人在排序里自然偏位保护，但不豁免。
+    const personAgeScore = (p: PersonNode): number => {
+      const lastActive = p.lastMentionedAt ?? p.lastSeenAt;
+      // mentionCount 起到"软 weight"作用；未被提及过的人仅留一个底值。
+      const mc = Math.max(p.mentionCount ?? 0, 1);
+      const pr0 = Math.max(pr.get(p.id) ?? 0, 1e-6);
+      return (now - lastActive) / (mc * pr0);
     };
 
     // ─── 裸 event 加权：无 part-of 实体锚 且 其参与人之间无 person-person 边 → 优先淘汰
@@ -1216,8 +1220,22 @@ export class RelationService {
     const triggerCount = (cap: number): number => Math.ceil(cap * (1 + hysteresisPct));
     const targetCount = (cap: number): number => Math.floor(cap * targetPct);
 
+    const maxPersons = quota.maxPersons ?? 0;
+    if (maxPersons > 0) {
+      const remainingPersons = (await this.store.loadAll()).persons;
+      if (remainingPersons.length >= triggerCount(maxPersons)) {
+        const toDelete = remainingPersons.length - targetCount(maxPersons);
+        if (toDelete > 0) {
+          const sorted = [...remainingPersons].sort((a, b) => personAgeScore(b) - personAgeScore(a));
+          for (const p of sorted.slice(0, toDelete)) {
+            await this.store.deletePersonCascade(p.platform, p.userId);
+            deletedPersons++;
+          }
+        }
+      }
+    }
     if (quota.maxEvents > 0) {
-      const remainingEvents = (await this.store.loadAll()).events.filter(e => !isProtected(e));
+      const remainingEvents = (await this.store.loadAll()).events;
       if (remainingEvents.length >= triggerCount(quota.maxEvents)) {
         const toDelete = remainingEvents.length - targetCount(quota.maxEvents);
         if (toDelete > 0) {
@@ -1230,7 +1248,7 @@ export class RelationService {
       }
     }
     if (quota.maxEntities > 0) {
-      const remainingEntities = (await this.store.loadAll()).entities.filter(e => !isProtected(e));
+      const remainingEntities = (await this.store.loadAll()).entities;
       if (remainingEntities.length >= triggerCount(quota.maxEntities)) {
         const toDelete = remainingEntities.length - targetCount(quota.maxEntities);
         if (toDelete > 0) {
@@ -2585,12 +2603,16 @@ export class RelationService {
       eventEdgesNormalized++; // 共用计数（含人-实体折叠）
     }
 
-    // ─── (3c) EventEntityEdge 旧账整理：同一 (event,entity) 若有 about + 非 about 并存 → 驱逐 about
-    //   语义：about = "顺带提及"，是所有 relationType 中最弱的标注。
+    // ─── (3c) EventEntityEdge 旧账整理：同一 (event,entity) 仅保留最强关系
+    //   语义强度排序：part-of > related > about
+    //     · part-of = "属于/承载该实体"，是最强的结构性绑定
+    //     · related = "围绕/相关"，中等
+    //     · about   = "顺带提及"，最弱
     //   规则：
-    //     · 若同一 (event,entity) 存在任何非 about 边 → 删除全部 about 边，evidence 合并到权重最高的非 about 边。
-    //     · 非 about 边之间（part-of / related / involves 等）可以共存，不做折叠。
-    //     · 若全为 about → 只保留 weight 最高的一条，合并 evidence。
+    //     · 同一 (event,entity) 下不应同时存在多种关系标注（"属于"已经包含了"关于"）
+    //     · 取强度最高的一条作为 keep，其它边的 evidence 合并进来后删除
+    //     · 若同强度有多条 → 取 weight 最大者
+    //     · weight 取所有被合并边的最大值（保留强化记录）
     const eePairs = new Map<string, EventEntityEdge[]>();
     for (const e of snapshot.edges) {
       if (e.kind !== 'event-entity') continue;
@@ -2598,67 +2620,43 @@ export class RelationService {
       if (!eePairs.has(k)) eePairs.set(k, []);
       eePairs.get(k)!.push(e);
     }
+    const eeStrength: Record<string, number> = { 'part-of': 3, related: 2, about: 1 };
     for (const [, list] of eePairs.entries()) {
       if (list.length < 2) continue;
-      const nonAbout = list.filter(e => e.relationType !== 'about');
-      const aboutEdges = list.filter(e => e.relationType === 'about');
-
-      if (nonAbout.length > 0 && aboutEdges.length > 0) {
-        // 有非 about → about 全部被驱逐，evidence 合并到权重最高的非 about 边
-        const target = nonAbout.reduce((a, b) => ((b.weight ?? 0) > (a.weight ?? 0) ? b : a));
-        const seenMsgKey = new Set<string>(
-          target.evidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
-        );
-        const extraEvidence: EvidenceRef[] = [];
-        for (const ab of aboutEdges) {
-          for (const ev of ab.evidence ?? []) {
-            const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
-            if (!seenMsgKey.has(mk)) {
-              seenMsgKey.add(mk);
-              extraEvidence.push(ev);
-            }
+      // 选 keep：先按强度降序，强度相同按 weight 降序
+      const sorted = [...list].sort((a, b) => {
+        const sa = eeStrength[a.relationType] ?? 0;
+        const sb = eeStrength[b.relationType] ?? 0;
+        if (sa !== sb) return sb - sa;
+        return (b.weight ?? 0) - (a.weight ?? 0);
+      });
+      const keep = sorted[0];
+      const drop = sorted.slice(1);
+      const seenMsgKey = new Set<string>(
+        keep.evidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
+      );
+      const mergedEvidence = [...keep.evidence];
+      let maxWeight = keep.weight ?? 0;
+      for (const dup of drop) {
+        for (const ev of dup.evidence ?? []) {
+          const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
+          if (!seenMsgKey.has(mk)) {
+            seenMsgKey.add(mk);
+            mergedEvidence.push(ev);
           }
-          await this.store.deleteEdge(ab.id);
         }
-        if (extraEvidence.length > 0) {
-          await this.store.upsertEdge({
-            ...target,
-            evidence: trimEvidence([...extraEvidence, ...target.evidence]),
-            lastReinforcedAt: Date.now(),
-          });
-        }
-        eventEdgesNormalized++;
-      } else if (nonAbout.length === 0 && aboutEdges.length > 1) {
-        // 全为 about → 保留 weight 最高的一条，合并 evidence
-        const sorted = [...aboutEdges].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
-        const keep = sorted[0];
-        const mergedEvidence = [...keep.evidence];
-        const seenMsgKey = new Set<string>(
-          mergedEvidence.map(ev => `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`),
-        );
-        let maxWeight = keep.weight ?? 0;
-        for (const dup of sorted.slice(1)) {
-          for (const ev of dup.evidence ?? []) {
-            const mk = `${ev.sessionId}|${[...(ev.messageIds ?? [])].sort().join(',')}`;
-            if (!seenMsgKey.has(mk)) {
-              seenMsgKey.add(mk);
-              mergedEvidence.push(ev);
-            }
-          }
-          if ((dup.weight ?? 0) > maxWeight) maxWeight = dup.weight ?? 0;
-          await this.store.deleteEdge(dup.id);
-        }
-        if (mergedEvidence.length !== keep.evidence.length || maxWeight !== keep.weight) {
-          await this.store.upsertEdge({
-            ...keep,
-            evidence: mergedEvidence,
-            weight: maxWeight,
-            lastReinforcedAt: Date.now(),
-          });
-        }
-        eventEdgesNormalized++;
+        if ((dup.weight ?? 0) > maxWeight) maxWeight = dup.weight ?? 0;
+        await this.store.deleteEdge(dup.id);
       }
-      // nonAbout.length > 1 && aboutEdges.length === 0：多条非 about → 全部保留，无需处理
+      if (mergedEvidence.length !== keep.evidence.length || maxWeight !== (keep.weight ?? 0)) {
+        await this.store.upsertEdge({
+          ...keep,
+          evidence: trimEvidence(mergedEvidence),
+          weight: maxWeight,
+          lastReinforcedAt: Date.now(),
+        });
+      }
+      eventEdgesNormalized++;
     }
 
     // (B) 合并后摘要重写：基于最新 snapshot 收集 canonical 的别名/相关事件/相关人物
