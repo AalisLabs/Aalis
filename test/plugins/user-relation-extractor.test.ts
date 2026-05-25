@@ -20,9 +20,13 @@ const EXTRACTOR_DEFAULTS = {
   pagerankEpsilon: 1e-4,
   evictHysteresisPct: 0.2,
   evictTargetPct: 0.8,
+  weightDecayHalfLifeDays: 180,
+  weightDecayFloor: 0.3,
   consolidateAfterEviction: false,
   consolidateLLMDisableThinking: true,
   consolidateAutoLink: false,
+  consolidateSkipLowScorePairs: false,
+  consolidateLowScoreThreshold: 0,
 } satisfies Partial<ExtractorConfig>;
 
 /** 构造可注入的 fake LLM model。chat() 返回 cannedResponse；记录最后一次请求供断言 */
