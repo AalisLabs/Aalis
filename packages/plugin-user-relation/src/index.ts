@@ -223,6 +223,19 @@ export const configSchema: ConfigSchema = {
       '触发后裁到 floor(quota·该值)；配合 hysteresisPct=0.2 与该值=0.8，单次裁 ~40% quota（quota=500 → 一次裁 ~200 条）。',
     default: 0.8,
   },
+  weightDecayHalfLifeDays: {
+    type: 'number',
+    label: 'Weight 时间衰减半衰期（天）',
+    description:
+      '淘汰/排序时把 weight 按半衰期折算：effW = raw × max(0.5^(天数/halfLife), floor)。让长期不被强化的"老高 weight"自动让出保护名额。0 = 关闭衰减。',
+    default: 180,
+  },
+  weightDecayFloor: {
+    type: 'number',
+    label: 'Weight 衰减下限因子 (0~1)',
+    description: 'effW 不会低于 raw × 该值。保留"老朋友"底色，避免完全失忆。默认 0.3。',
+    default: 0.3,
+  },
   // ────── Middleware 注入侧 ──────
   agentInjection: {
     type: 'boolean',
@@ -395,6 +408,7 @@ const webuiPages: WebuiPage[] = [
               {
                 type: 'table',
                 source: 'listPersons',
+                searchable: true,
                 columns: [
                   { key: 'id', label: 'ID', nowrap: true },
                   { key: 'platform', label: '平台', nowrap: true },
@@ -417,9 +431,11 @@ const webuiPages: WebuiPage[] = [
               {
                 type: 'table',
                 source: 'listEvents',
+                searchable: true,
                 columns: [
                   { key: 'title', label: '标题', minWidth: 160 },
                   { key: 'category', label: '类别', nowrap: true },
+                  { key: 'sessionScope', label: '会话', nowrap: true },
                   { key: 'summary', label: '摘要', minWidth: 200, maxWidth: 360, render: 'expandable-text' },
                   { key: 'preview', label: '最新证据', minWidth: 160, render: 'expandable-text' },
                   { key: 'evidenceCount', label: '证据数', nowrap: true },
@@ -439,6 +455,7 @@ const webuiPages: WebuiPage[] = [
               {
                 type: 'table',
                 source: 'listEntities',
+                searchable: true,
                 columns: [
                   { key: 'name', label: '名称', minWidth: 140 },
                   { key: 'entityKind', label: '类型', nowrap: true },
@@ -505,6 +522,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
       evictHysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
       evictTargetPct: numCfg(config.evictTargetPct, 0.8),
+      weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
+      weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
       consolidateAfterEviction: config.consolidateAfterEviction !== false,
       consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
       consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
@@ -576,6 +595,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
         hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
         targetPct: numCfg(config.evictTargetPct, 0.8),
+        weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
+        weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
       },
       consolidateAutoLink: config.consolidationAutoLink === true,
       consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,

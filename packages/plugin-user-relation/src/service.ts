@@ -52,6 +52,7 @@ import {
   edgeDedupKey,
   edgeInvolvesBoth,
   edgeReferences,
+  effectiveWeight,
   flipDirectedEdge,
   isAliasEdgeDirectionCorrect,
   isAliasMarkerEdge,
@@ -70,6 +71,7 @@ import {
   roleDefaultWeight,
   trimDescription,
   trimEvidence,
+  type WeightDecayCfg,
 } from './utils.js';
 
 export type TriggerExtractionFn = (
@@ -1032,6 +1034,8 @@ export class RelationService {
     personSeed?: number;
     entitySeed?: number;
     eventSeed?: number;
+    /** 时间衰减配置：用于把 raw weight 折算成有效 weight。halfLifeDays<=0 时退化为原 raw 行为。 */
+    decay?: WeightDecayCfg;
   }): Promise<{
     deletedPersons: number;
     deletedEvents: number;
@@ -1050,13 +1054,19 @@ export class RelationService {
     const personSeed = quota.personSeed ?? 3;
     const entitySeed = quota.entitySeed ?? 2;
     const eventSeed = quota.eventSeed ?? 1;
+    const decayCfg: WeightDecayCfg = quota.decay ?? { halfLifeDays: 0, floor: 0.3 };
     let deletedPersons = 0;
     let deletedEvents = 0;
     let deletedEntities = 0;
     let deletedEdges = 0;
 
-    const isProtected = (n: EventNode | EntityNode): boolean =>
-      (n.evidence?.length ?? 0) >= protectEv || (n.weight ?? 0.5) >= protectW;
+    // 节点豁免：evidence 充分（人工/反复确认）始终豁免；weight 豁免改用 effectiveWeight，
+    // 避免"老高 weight"永久占住保护名额。
+    const isProtected = (n: EventNode | EntityNode): boolean => {
+      if ((n.evidence?.length ?? 0) >= protectEv) return true;
+      const effW = effectiveWeight(n.weight, n.lastReinforcedAt, Date.now(), decayCfg);
+      return effW >= protectW;
+    };
 
     // 1) 先做孤儿清理（与配额无关，旧账噪声总是清；person / event / entity 一视同仁）
     const orphanResult = await this.pruneOrphans();
@@ -1080,7 +1090,9 @@ export class RelationService {
       eventSeed,
     });
     const ageScore = (n: EventNode | EntityNode): number => {
-      const w = Math.max(n.weight ?? 0.5, 0.05);
+      // 使用 effectiveWeight：raw weight 经过时间衰减后，老节点的"分母"自动变小，
+      // 让 ageScore 进一步抬高、更早进入淘汰候选；新被强化过的节点 effW 接近 raw，被保护。
+      const w = Math.max(effectiveWeight(n.weight ?? 0.5, n.lastReinforcedAt, now, decayCfg), 0.05);
       const p = Math.max(pr.get(n.id) ?? 0, 1e-6);
       return (now - n.lastReinforcedAt) / (w * p);
     };
@@ -1176,7 +1188,9 @@ export class RelationService {
           const edgeScore = (e: RelationEdge): number => {
             const [a, b] = edgeEndpoints(e);
             const prAvg = ((pr.get(a) ?? 0) + (pr.get(b) ?? 0)) / 2;
-            return (e.weight ?? 0) * Math.max(prAvg, 1e-6);
+            // 边的 lastReinforcedAt 与节点同理；effW 反映"近期强度"，老边自然向尾部沉淀
+            const effW = effectiveWeight(e.weight, e.lastReinforcedAt, now, decayCfg);
+            return effW * Math.max(prAvg, 1e-6);
           };
           const sorted = [...refreshed.edges].sort((a, b) => edgeScore(a) - edgeScore(b));
           for (const e of sorted.slice(0, toDelete)) {
