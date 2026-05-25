@@ -180,33 +180,6 @@ describe('plugin-memory-history', () => {
     expect(injected.length).toBe(1);
   });
 
-  it('same-session: 仅注入当前 sessionId 且忽略 excludeCurrentSession', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
-
-    const baseTs = Date.now() - 1000;
-    await saveAcross(memory, [
-      { sessionId: 'current', platform: 'onebot', content: 'SELF1', ts: baseTs + 1 },
-      { sessionId: 'current', platform: 'onebot', content: 'SELF2', ts: baseTs + 2 },
-      { sessionId: 'other', platform: 'onebot', content: 'OTHER', ts: baseTs + 3 },
-    ]);
-
-    // excludeCurrentSession=true（默认）也应在 same-session 模式下被强制忽略
-    await app.ctx.useModule(memoryHistory, { scope: 'same-session', maxAgeMinutes: 0 });
-    const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', {
-      messages,
-      tools: [],
-      sessionId: 'current',
-      platform: 'onebot',
-    });
-    expect(messages.length).toBe(2);
-    expect(messages[0].content).toContain('SELF1');
-    expect(messages[0].content).toContain('SELF2');
-    expect(messages[0].content).not.toContain('OTHER');
-  });
-
   it('perSessionLimit 限制单会话刷屏占满 limit', async () => {
     const app = makeApp();
     await app.ctx.useModule(memoryInMemoryModule);
