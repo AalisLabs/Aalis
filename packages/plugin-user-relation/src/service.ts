@@ -165,6 +165,27 @@ export class RelationService {
     return this.store.deletePersonCascade(platform, userId);
   }
 
+  /**
+   * 统一节点查找入口：给定任意节点 ID（person `<platform>:<userId>` 或 event/entity UUID）
+   * 返回 { kind, name }；不存在返回 null。供 tools 层做存在性校验+友好报错使用。
+   */
+  async findNodeById(id: string): Promise<{ kind: 'person' | 'event' | 'entity'; name: string } | null> {
+    if (!id) return null;
+    if (id.includes(':')) {
+      const idx = id.indexOf(':');
+      const platform = id.slice(0, idx);
+      const userId = id.slice(idx + 1);
+      const p = await this.store.getPerson(platform, userId);
+      if (p) return { kind: 'person', name: p.displayName ?? p.id };
+      return null;
+    }
+    const ev = await this.store.getEvent(id);
+    if (ev) return { kind: 'event', name: ev.title };
+    const ent = await this.store.getEntity(id);
+    if (ent) return { kind: 'entity', name: ent.name };
+    return null;
+  }
+
   // ----- Event -----
 
   /**
