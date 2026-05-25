@@ -982,7 +982,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(msgIds).toContain('a2');
   });
 
-  it('(3c) part-of + related 同一 (event,entity) → 两者共存不折叠', async () => {
+  it('(3c) part-of + related 同一 (event,entity) → 折叠保留 part-of（属于包含关于）', async () => {
     const { service } = await makeService();
     const event = await service.createEvent({ title: 'test-ev-3c3', evidence: [] });
     const entity = await service.createEntity({ name: 'test-ent-3c3', entityKind: 'topic', evidence: [] });
@@ -1007,9 +1007,11 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     const edges = snap.edges.filter(
       e => e.kind === 'event-entity' && e.fromEventId === event.id && e.toEntityId === entity.id,
     ) as EventEntityEdge[];
-    expect(edges).toHaveLength(2);
-    const types = edges.map(e => e.relationType).sort();
-    expect(types).toEqual(['part-of', 'related']);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].relationType).toBe('part-of');
+    const msgIds = edges[0].evidence.flatMap(e => e.messageIds ?? []);
+    expect(msgIds).toContain('b1');
+    expect(msgIds).toContain('b2');
   });
 
   it('(3d) entity 名称包含关系 → autoLink 无 LLM 建 entity-entity part-of 边', async () => {
