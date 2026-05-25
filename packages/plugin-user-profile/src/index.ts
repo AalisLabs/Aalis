@@ -3,6 +3,7 @@ import { useCommandService } from '@aalis/plugin-commands-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-commands-api';
 
@@ -225,16 +226,6 @@ function genFactId(existing: Set<string>): string {
   }
   // 极端兜底：加时间戳后缀
   return `f${Date.now().toString(36).slice(-5)}`;
-}
-
-/** 从形如 ```json ... ``` 的文本里抠出 JSON 子串 */
-function extractJsonBlock(text: string): string {
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch) return fenceMatch[1].trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start >= 0 && end > start) return text.slice(start, end + 1);
-  return text.trim();
 }
 
 function decimalPlaces(value: number): number {
@@ -512,21 +503,53 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const extractLlm = entry.instance;
 
     try {
+      const baseMessages: Message[] = [
+        { role: 'system', content: sys },
+        { role: 'user', content: user },
+      ];
       const resp = await extractLlm.chat({
-        messages: [
-          { role: 'system', content: sys },
-          { role: 'user', content: user },
-        ],
+        messages: baseMessages,
         temperature: 0.2,
         maxTokens: 800,
         think: false,
       });
-      const text = (resp.content ?? '').trim();
+      let text = (resp.content ?? '').trim();
       if (!text) return empty;
-      const jsonStr = extractJsonBlock(text);
-      const parsed = JSON.parse(jsonStr) as { add?: unknown; update?: unknown; remove?: unknown };
-      const add: ExtractAddItem[] = Array.isArray(parsed.add)
-        ? (parsed.add as unknown[]).flatMap(x => {
+      let { parsed } = parseLLMJsonObject(text);
+      if (!parsed) {
+        // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 模型多半
+        // 写成了纯文本/markdown。给一次显式反馈再来一次，避免一次失败丢失整批事实。
+        ctx.logger.warn(`[user-profile] LLM 输出无法解析为 JSON，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
+        const retryResp = await extractLlm.chat({
+          messages: [
+            ...baseMessages,
+            { role: 'assistant', content: text },
+            {
+              role: 'user',
+              content:
+                '你上一条输出无法被 JSON.parse（很可能是包了 markdown 代码块、夹杂解释文字、或被截断）。' +
+                '请只输出**一个**合法的 JSON 对象，第一个字符必须是 `{`、最后一个字符必须是 `}`，' +
+                '禁止 ```json 围栏、禁止任何解释、禁止 markdown。如果实在没有可写入的事实，' +
+                '就输出 `{"add":[],"update":[],"remove":[]}`。',
+            },
+          ],
+          temperature: 0.2,
+          maxTokens: 800,
+          think: false,
+        });
+        text = (retryResp.content ?? '').trim();
+        ({ parsed } = parseLLMJsonObject(text));
+        if (!parsed) {
+          ctx.logger.warn(
+            `[user-profile] LLM 重试后仍无法解析 JSON，放弃本批次。重试原文前 200 字：${text.slice(0, 200)}`,
+          );
+          return empty;
+        }
+        ctx.logger.debug('[user-profile] LLM 重试后解析成功');
+      }
+      const parsedObj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
+      const add: ExtractAddItem[] = Array.isArray(parsedObj.add)
+        ? (parsedObj.add as unknown[]).flatMap(x => {
             if (!x || typeof x !== 'object') return [];
             const o = x as Record<string, unknown>;
             const t = typeof o.text === 'string' ? o.text.trim() : '';
@@ -544,8 +567,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             ];
           })
         : [];
-      const update: ExtractUpdateItem[] = Array.isArray(parsed.update)
-        ? (parsed.update as unknown[]).flatMap(x => {
+      const update: ExtractUpdateItem[] = Array.isArray(parsedObj.update)
+        ? (parsedObj.update as unknown[]).flatMap(x => {
             if (!x || typeof x !== 'object') return [];
             const o = x as Record<string, unknown>;
             const id = typeof o.id === 'string' ? o.id.trim() : '';
@@ -565,8 +588,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             ];
           })
         : [];
-      const remove: string[] = Array.isArray(parsed.remove)
-        ? (parsed.remove as unknown[])
+      const remove: string[] = Array.isArray(parsedObj.remove)
+        ? (parsedObj.remove as unknown[])
             .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
             .map(s => s.trim())
         : [];
