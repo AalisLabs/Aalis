@@ -923,6 +923,7 @@ function serializeSubgraph(sub: {
       id: e.id,
       title: e.title,
       category: e.category,
+      sessionScope: e.sessionScope ?? 'global',
       summary: e.summary,
       lastReinforcedAt: e.lastReinforcedAt,
     })),
@@ -961,7 +962,7 @@ function serializeNode(n: PersonNode | EventNode | EntityNode) {
   if ('entityKind' in n) {
     return { kind: 'entity', id: n.id, entityKind: n.entityKind, name: n.name };
   }
-  return { kind: 'event', id: n.id, title: n.title, category: n.category };
+  return { kind: 'event', id: n.id, title: n.title, category: n.category, sessionScope: n.sessionScope ?? 'global' };
 }
 
 function serializeEdge(e: RelationEdge) {
@@ -1054,6 +1055,7 @@ function serializeEventForSearch(e: EventNode) {
     id: e.id,
     title: e.title,
     category: e.category,
+    sessionScope: e.sessionScope ?? 'global',
     summary: e.summary,
     lastReinforcedAt: e.lastReinforcedAt,
     evidenceCount: e.evidence.length,
