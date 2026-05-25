@@ -105,7 +105,7 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
               onClick={() => toggleExpand(entry.seq)}
               style={{ contentVisibility: 'auto', containIntrinsicSize: '28px' } as React.CSSProperties}
             >
-              <span className="log-time">{entry.timestamp}</span>
+              <span className="log-time" title={entry.timestamp}>{entry.timestamp.slice(11, 23)}</span>
               <span className={`log-level ${entry.level}`}>{entry.level.toUpperCase().padEnd(5)}</span>
               <span className="log-scope">{entry.scope}</span>
               <span className="log-msg" title={isExpanded ? '' : entry.message}>{entry.message}</span>

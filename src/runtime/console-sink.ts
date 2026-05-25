@@ -65,7 +65,10 @@ const accent = COLORIZE ? chalk.magenta : IDENTITY;
 
 function formatEntry(entry: LogEntry): string {
   const colorFn = LEVEL_COLORS[entry.level];
-  const prefix = `${dim(entry.timestamp)} ${colorFn(entry.level.toUpperCase().padEnd(5))} ${accent(entry.scope)}`;
+  // LogEntry.timestamp 是完整 ISO（YYYY-MM-DDTHH:mm:ss.sssZ）；stdout 只看当前运行，
+  // 取 HH:mm:ss.sss 部分即可（与原有显示一致），完整日期保留在 file/webui。
+  const shortTs = entry.timestamp.slice(11, 23);
+  const prefix = `${dim(shortTs)} ${colorFn(entry.level.toUpperCase().padEnd(5))} ${accent(entry.scope)}`;
   return `${prefix} ${entry.message}`;
 }
 
