@@ -1924,6 +1924,14 @@ export class RelationService {
       /** 调用来源标识，仅用于 getLastConsolidateInfo() 报告。默认 api。 */
       triggerSource?: 'manual' | 'eviction' | 'api';
       /**
+       * (1.5) 宽召回 LLM 性能优化：
+       * - skipLowScorePairs：若 true，pair 双方 compositeScore 均 < lowScoreThreshold 时跳过 LLM 核验
+       *   （两端都是 edge tier，合并价值低，不值得花 LLM 调用），默认 true。
+       * - lowScoreThreshold：阈值，默认 0.2（与 scoreToTier 的 edge 边界一致）。设 0 = 不跳过。
+       */
+      skipLowScorePairs?: boolean;
+      lowScoreThreshold?: number;
+      /**
        * 可选 ctx。若传入则 consolidate 会顺带做一次「伪 person 自动清理」：
        * platform 不在 `getPlatformNames(ctx)` 运行时白名单内（或 userId 命中
        * 通用占位 self/me/bot/assistant）的 person，连同级联边一起删除。
@@ -2107,9 +2115,11 @@ export class RelationService {
         entitiesByKind.get(k)!.push(e);
       }
 
-      // 收集所有 LLM 判 yes 的 pair，连同各自 reason；之后按 entityKind 分簇合并
-      type YesPair = { aId: string; bId: string; reason: string };
-      const yesPairs: YesPair[] = [];
+      // ─── F3 候选预收集：先把召回条件命中的 pair 全捞出来，不立刻调 LLM ───
+      // 目的：拿到全集后才能按 compositeScore 排序、按低权阈值跳过，
+      //      避免无脑顺序跑 LLM 把预算花在两端都很 edge 的低价值候选上。
+      type Candidate = { a: EntityNode; b: EntityNode; reason: string; pairKey: string };
+      const candidates: Candidate[] = [];
 
       for (const list of entitiesByKind.values()) {
         for (let i = 0; i < list.length; i++) {
@@ -2138,21 +2148,72 @@ export class RelationService {
 
             const reason = substring ? `名称子串包含：${a.name} ↔ ${b.name}` : `别名/名互覆盖：${a.name} ↔ ${b.name}`;
             aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
-
-            const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
-            if (!v.isSame) {
-              llmRejected++;
-              if (opts.llm.ctx.logger) {
-                opts.llm.ctx.logger.info(
-                  `[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`,
-                );
-              }
-              continue;
-            }
-            llmVerified++;
-            yesPairs.push({ aId: a.id, bId: b.id, reason });
+            candidates.push({ a, b, reason, pairKey: k });
           }
         }
+      }
+
+      // 给候选里出现过的每个 entity 算一次 compositeScore（snapshot 已固定，避免重复扫边）
+      const scoreCache = new Map<string, number>();
+      const scoreOf = (id: string): number => {
+        const cached = scoreCache.get(id);
+        if (cached !== undefined) return cached;
+        const s = this._computeSingleNodeScore(id, snapshot);
+        const v = s?.compositeScore ?? 0;
+        scoreCache.set(id, v);
+        return v;
+      };
+
+      // F3 排序：按 max(scoreA, scoreB) 倒序——优先把"至少一端重要"的候选送给 LLM；
+      // 平局时按 pairKey 字典序，保证可复现。
+      candidates.sort((x, y) => {
+        const sx = Math.max(scoreOf(x.a.id), scoreOf(x.b.id));
+        const sy = Math.max(scoreOf(y.a.id), scoreOf(y.b.id));
+        if (sx !== sy) return sy - sx;
+        return x.pairKey < y.pairKey ? -1 : 1;
+      });
+
+      // F3 阈值跳过：双方都很 edge（compositeScore < threshold）→ 不调 LLM。
+      // 默认 threshold=0.2 与 scoreToTier 的 edge 边界一致；设 0 则全部送 LLM。
+      const skipLowScore = opts.skipLowScorePairs !== false;
+      const lowScoreThreshold = opts.lowScoreThreshold ?? 0.2;
+
+      // 收集所有 LLM 判 yes 的 pair，连同各自 reason；之后按 entityKind 分簇合并
+      type YesPair = { aId: string; bId: string; reason: string };
+      const yesPairs: YesPair[] = [];
+      let lowScoreSkipped = 0;
+
+      for (const cand of candidates) {
+        const { a, b, reason } = cand;
+        const sA = scoreOf(a.id);
+        const sB = scoreOf(b.id);
+        if (skipLowScore && lowScoreThreshold > 0 && sA < lowScoreThreshold && sB < lowScoreThreshold) {
+          lowScoreSkipped++;
+          if (opts.llm.ctx.logger) {
+            opts.llm.ctx.logger.debug(
+              `[user-relation] consolidate 跳过低权候选 ${a.id}(${sA.toFixed(2)}) ↔ ${b.id}(${sB.toFixed(2)})：双方都低于 ${lowScoreThreshold}`,
+            );
+          }
+          continue;
+        }
+        const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
+        if (!v.isSame) {
+          llmRejected++;
+          if (opts.llm.ctx.logger) {
+            opts.llm.ctx.logger.info(
+              `[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`,
+            );
+          }
+          continue;
+        }
+        llmVerified++;
+        yesPairs.push({ aId: a.id, bId: b.id, reason });
+      }
+
+      if (lowScoreSkipped > 0 && opts.llm.ctx.logger) {
+        opts.llm.ctx.logger.info(
+          `[user-relation] consolidate F3 低权阈值跳过 ${lowScoreSkipped} 个 pair（阈值 ${lowScoreThreshold}）`,
+        );
       }
 
       // ─── 并查集分簇 + 簇内挑 canonical + 统一合并 ───

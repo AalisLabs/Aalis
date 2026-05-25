@@ -144,6 +144,20 @@ export const configSchema: ConfigSchema = {
       '为 true 时自动合并别名实体、建层级边（结合 consolidationModel 可由 LLM 核验）；false 仅打印候选不动数据。',
     default: false,
   },
+  consolidationSkipLowScorePairs: {
+    type: 'boolean',
+    label: 'Consolidate：跳过低权候选 pair',
+    description:
+      '启用后，宽召回阶段双方 compositeScore 均低于阈值的候选不送 LLM 核验（两端都是 edge tier，合并价值低）。默认启用以节省 LLM 调用。',
+    default: true,
+  },
+  consolidationLowScoreThreshold: {
+    type: 'number',
+    label: 'Consolidate：低权阈值',
+    description:
+      'compositeScore 阈值（0~1，与 scoreToTier 的 edge 边界一致，默认 0.2）。设 0 等同关闭跳过；仅在 consolidationSkipLowScorePairs=true 时生效。',
+    default: 0.2,
+  },
   consolidateAfterEviction: {
     type: 'boolean',
     label: '淘汰后自动 consolidate',
@@ -495,6 +509,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
       consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
       consolidateAutoLink: config.consolidationAutoLink === true,
+      consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
+      consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
       debug,
     });
     extractor.start();
@@ -562,6 +578,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         targetPct: numCfg(config.evictTargetPct, 0.8),
       },
       consolidateAutoLink: config.consolidationAutoLink === true,
+      consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
+      consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
     });
   }
 
