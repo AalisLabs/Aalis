@@ -37,6 +37,10 @@ function parseForwardConfig(config: Record<string, unknown>): ForwardConfig {
     maxNodesPerLevel:
       typeof fwdRaw.maxNodesPerLevel === 'number' ? Math.max(1, Math.floor(fwdRaw.maxNodesPerLevel)) : 30,
     imageRecognition: fwdRaw.imageRecognition !== false,
+    imageRecognitionConcurrency:
+      typeof fwdRaw.imageRecognitionConcurrency === 'number'
+        ? Math.max(1, Math.floor(fwdRaw.imageRecognitionConcurrency))
+        : 8,
     summarize: fwdRaw.summarize !== false,
     summaryLLM:
       fwdRaw.summaryLLM &&
@@ -158,6 +162,12 @@ export const configSchema: ConfigSchema = {
         default: true,
         description: '把转发内的图片送入 media 服务转写为文字描述。需要该服务可用。',
       },
+      imageRecognitionConcurrency: {
+        type: 'number',
+        label: '图片识别并发上限',
+        default: 8,
+        description: '同一条合并转发内允许同时进行的图片识别任务数。过高可能压垮上游模型；过低会拖慢长转发展开。',
+      },
       summarize: {
         type: 'boolean',
         label: '生成摘要',
@@ -230,6 +240,7 @@ export const defaultConfig = {
     maxDepth: 3,
     maxNodesPerLevel: 30,
     imageRecognition: true,
+    imageRecognitionConcurrency: 8,
     summarize: true,
     summaryMaxChars: 600,
     summaryPrompt: '',

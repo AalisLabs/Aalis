@@ -39,6 +39,8 @@ export interface ForwardConfig {
   maxDepth: number;
   maxNodesPerLevel: number;
   imageRecognition: boolean;
+  /** 同一条合并转发内图片识别并发上限。默认 8。 */
+  imageRecognitionConcurrency: number;
   summarize: boolean;
   summaryLLM?: { provider: string; model: string };
   summaryMaxChars: number;
@@ -67,6 +69,43 @@ export interface ForwardExpander<TState> {
 
 const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
 const FORWARD_METADATA_NS = 'onebot:forward';
+
+/**
+ * 把一个异步函数包成"同时最多 N 路"的并发受限版本。
+ * 用于合并转发内大量图片识别请求时削峰，避免压垮上游 / 触发限流。
+ */
+function createConcurrencyLimited<TArg, TRet>(
+  fn: (arg: TArg) => Promise<TRet>,
+  limit: number,
+): (arg: TArg) => Promise<TRet> {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const acquire = (): Promise<void> => {
+    if (active < limit) {
+      active++;
+      return Promise.resolve();
+    }
+    return new Promise<void>(resolve => {
+      queue.push(() => {
+        active++;
+        resolve();
+      });
+    });
+  };
+  const release = (): void => {
+    active--;
+    const next = queue.shift();
+    if (next) next();
+  };
+  return async (arg: TArg) => {
+    await acquire();
+    try {
+      return await fn(arg);
+    } finally {
+      release();
+    }
+  };
+}
 
 /**
  * 合并转发展开器工厂。
@@ -220,7 +259,11 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     if (ids.size === 0) return text;
 
     const mediaSvc = forwardCfg.imageRecognition ? ctx.getService<MediaService>('media') : undefined;
-    const recognizeImage = mediaSvc?.describeImage ? (src: string) => mediaSvc.describeImage(src) : undefined;
+    const rawRecognize = mediaSvc?.describeImage ? (src: string) => mediaSvc.describeImage(src) : undefined;
+    // 用一个简单 semaphore 限制单次展开内的图片识别并发，避免 OOM/触发上游限流
+    const recognizeImage = rawRecognize
+      ? createConcurrencyLimited(rawRecognize, Math.max(1, forwardCfg.imageRecognitionConcurrency))
+      : undefined;
 
     const envelopeMap = new Map<string, string>();
     for (const id of ids) {
