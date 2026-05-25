@@ -73,11 +73,12 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       '- 评估"联系紧密度"用 user_relation_score 的 mode="symmetric"（默认）；评估"A 主动关心了谁/A 的影响波及谁"用 mode="directed"。',
       '',
       '📊 分数语义（所有工具返回值通用）：',
-      '- weight（边权重）∈ [0, 1]：每次被强化 +0.3 累加封顶。典型值 0.3=偶发提及 / 0.5=多次共现 / 0.7=反复强化 / ≥0.8=高频强关系（受保护，agent 不能直接删）。',
-      '- node.weight（节点权重）∈ [0, 1]：同语义。',
+      '- weight（边权重 / node.weight）∈ [0, 1]：每次被强化 +0.3 累加封顶。≥0.8 视为强边/强节点，受保护 agent 不能直接删。',
       '- evidence.length（证据条数）≥ 5 视为强证据，禁删；< 5 可由 agent 触发删除/合并。',
-      '- pagerank（结构性中心度）实测多在 [0, 0.1]，越大越中心；0 表示从未跑过淘汰；compositeScore 已把它归一到 [0, 1]。',
-      '- compositeScore（user_relation_node_score 返回）∈ [0, 1]：综合 pagerank/edgeWeight/recency/degree，典型 0.1=边缘节点 / 0.3=普通 / 0.5=活跃 / >0.7=核心。',
+      '- pagerank（结构性中心度）∈ [0, ~0.1]：值越大越中心。**0 不一定代表边缘** —— 也可能节点从未参与过 PR 计算，看 pagerankFresh 字段；compositeScore 已把它归一到 [0, 1]。',
+      '- compositeScore + tier + rankInKind/Global + percentileInKind/Global（user_relation_node_score 返回）：',
+      '  · 判断节点份量优先看 **tier**（core/active/normal/edge）与 **percentile**（0.9=top10%），它们已结合绝对分与图内相对位置，比裸 compositeScore 更鲁棒。',
+      '  · rankInKind="2/14" = 同类型 14 个节点里排第 2；rankInGlobal="30/120" = 全图 120 个节点里排第 30。',
       '- daysSinceLastReinforced：天，-1=无数据/从未强化。',
       '',
       '⚠️ Agent 写工具（rename / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind）',
@@ -867,8 +868,9 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       function: {
         name: 'user_relation_node_score',
         description: [
-          '计算任意节点（person / event / entity）的综合活跃度评分，供 agent 快速判断节点的结构性重要性。',
-          '返回字段及取值范围请参见本组顶部「📊 分数语义」段落；compositeScore ∈ [0,1] 是最直观的「这个人/事/物在图里有多重要」的总分。',
+          '计算任意节点（person / event / entity）的综合活跃度评分 + 同 kind / 全图排名 + 分级（tier）。',
+          '返回字段及取值范围请参见本组顶部「📊 分数语义」段落。优先看 **tier**（core/active/normal/edge）+ **percentileInKind**（0..1，越大越中心）+ **rankInKind**（"2/14"），它们已经把绝对分与图内相对位置都考虑了，比裸 compositeScore 更直观。',
+          '注意 **pagerankFresh** 字段：false 表示节点从未参与过 PageRank 计算，此时 pagerank=0 不代表"边缘"，请用 tier/percentile 判断。',
           '使用场景：判断"是否应该深挖这个节点"、"这个节点是否值得清理"、"用户提到的人在图里有多大份量"。',
         ].join('\n'),
         parameters: {

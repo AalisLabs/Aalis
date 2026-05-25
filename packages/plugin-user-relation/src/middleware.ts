@@ -14,7 +14,15 @@ import type { Context } from '@aalis/core';
 import '@aalis/plugin-agent-api'; // declaration merging：注册 'agent:llm:before' HookContextMap
 import type { Message } from '@aalis/plugin-message-api';
 import type { RelationService } from './service.js';
-import type { EventNode, PersonEntityEdge, PersonEventEdge, PersonNode, PersonPersonEdge } from './types.js';
+import type {
+  EntityNode,
+  EventEventEdge,
+  EventNode,
+  PersonEntityEdge,
+  PersonEventEdge,
+  PersonNode,
+  PersonPersonEdge,
+} from './types.js';
 
 interface MiddlewareConfig {
   enabled: boolean;
@@ -98,9 +106,11 @@ async function buildBlock(
 
   const personById = new Map(subgraph.persons.map(p => [p.id, p]));
   const entityById = new Map(subgraph.entities.map(e => [e.id, e]));
+  const eventById = new Map(subgraph.events.map(e => [e.id, e]));
   const personEventEdges = subgraph.edges.filter((e): e is PersonEventEdge => e.kind === 'person-event');
   const personPersonEdges = subgraph.edges.filter((e): e is PersonPersonEdge => e.kind === 'person-person');
   const personEntityEdges = subgraph.edges.filter((e): e is PersonEntityEdge => e.kind === 'person-entity');
+  const eventEventEdges = subgraph.edges.filter((e): e is EventEventEdge => e.kind === 'event-event');
 
   // 自己参与的事件（用于"近期事件"小节）
   const selfEventEdges = personEventEdges.filter(e => e.fromPersonId === personId);
@@ -139,7 +149,10 @@ async function buildBlock(
       const sentiment = r?.sentiment ? ` / ${r.sentiment}` : '';
       const category = ev.category ? ` [${ev.category}]` : '';
       const summary = ev.summary ? `：${truncate(ev.summary, 60)}` : '';
-      lines.push(`- ${ev.title}${category} — ${role}${sentiment}${summary}`);
+      const tier = quickTier(ev.lastPageRank, ev.lastPageRankAt, ev.weight, ev.lastReinforcedAt);
+      const tierTag = tierToTag(tier);
+      const aliasTag = ev.aliases && ev.aliases.length > 0 ? `（别名: ${ev.aliases.slice(0, 2).join('/')}）` : '';
+      lines.push(`- ${ev.title}${aliasTag}${category}${tierTag} — ${role}${sentiment}${summary}`);
       // 其他参与者
       const others = personEventEdges
         .filter(e => e.toEventId === ev.id && e.fromPersonId !== personId)
@@ -156,6 +169,19 @@ async function buildBlock(
         const tail = overflow > 0 ? ` +${overflow} 人` : '';
         lines.push(`  └ 参与者: ${parts.join(', ')}${tail}`);
       }
+      // Hub 事件：该事件 part-of 一个 global hub → 暴露 hub 与其他兄弟子事件
+      const partOfEdges = eventEventEdges.filter(e => e.fromEventId === ev.id && e.relationType === 'part-of');
+      for (const pe of partOfEdges) {
+        const hub = eventById.get(pe.toEventId);
+        if (!hub || hub.sessionScope !== 'global') continue;
+        const siblings = eventEventEdges
+          .filter(e => e.toEventId === hub.id && e.relationType === 'part-of' && e.fromEventId !== ev.id)
+          .map(e => eventById.get(e.fromEventId))
+          .filter((x): x is EventNode => !!x)
+          .slice(0, 3);
+        const siblingTxt = siblings.length > 0 ? `；兄弟会话事件: ${siblings.map(s => s.title).join('、')}` : '';
+        lines.push(`  └ 所属跨会话话题: ${hub.title}${siblingTxt}`);
+      }
     }
     lines.push('');
   }
@@ -168,7 +194,10 @@ async function buildBlock(
       const otherId = edge.fromPersonId === personId ? edge.toPersonId : edge.fromPersonId;
       const other = personById.get(otherId);
       const label = displayLabel(other, otherId);
-      lines.push(`- ${formatDirection(edge, personId)} ${edge.relationType} → ${label}`);
+      const otherTier = other
+        ? quickTier(other.lastPageRank, other.lastPageRankAt, undefined, other.lastSeenAt)
+        : 'normal';
+      lines.push(`- ${formatDirection(edge, personId)} ${edge.relationType} → ${label}${tierToTag(otherTier)}`);
     }
     lines.push('');
   }
@@ -181,7 +210,9 @@ async function buildBlock(
       const ent = entityById.get(edge.toEntityId);
       if (!ent) continue;
       const s = edge.sentiment ? ` / ${edge.sentiment}` : '';
-      lines.push(`- ${ent.name} [${ent.entityKind}] — ${edge.role}${s}`);
+      const tier = quickTier(ent.lastPageRank, ent.lastPageRankAt, ent.weight, ent.lastReinforcedAt);
+      const aliasTag = ent.aliases && ent.aliases.length > 0 ? `（别名: ${ent.aliases.slice(0, 2).join('/')}）` : '';
+      lines.push(`- ${ent.name}${aliasTag} [${ent.entityKind}]${tierToTag(tier)} — ${edge.role}${s}`);
     }
     lines.push('');
   }
@@ -189,7 +220,6 @@ async function buildBlock(
   // ---- 高频共现伙伴（基于事件桥的隐式二跳） ----
   if (cfg.maxCooccurrencePartners > 0) {
     const cooccurrence = new Map<string, { count: number; lastTs: number; eventTitles: string[] }>();
-    const eventById = new Map(subgraph.events.map(e => [e.id, e]));
     const directRelated = new Set<string>(
       selfPpEdges.map(e => (e.fromPersonId === personId ? e.toPersonId : e.fromPersonId)),
     );
@@ -214,7 +244,17 @@ async function buildBlock(
       for (const [otherId, v] of ranked) {
         const label = displayLabel(personById.get(otherId), otherId);
         const sampleTitles = v.eventTitles.slice(0, 2).join('、');
-        lines.push(`- ${label} 共现 ${v.count} 次（如：${sampleTitles}）`);
+        // 共同关注的实体：自己 & 对方都 person-entity 指向的实体（除去 mentioned 仅提及）
+        const selfEntIds = new Set(
+          personEntityEdges.filter(e => e.fromPersonId === personId && e.role !== 'mentioned').map(e => e.toEntityId),
+        );
+        const sharedEntities = personEntityEdges
+          .filter(e => e.fromPersonId === otherId && e.role !== 'mentioned' && selfEntIds.has(e.toEntityId))
+          .map(e => entityById.get(e.toEntityId))
+          .filter((x): x is EntityNode => !!x)
+          .slice(0, 3);
+        const sharedTxt = sharedEntities.length > 0 ? `；共同关注: ${sharedEntities.map(s => s.name).join('、')}` : '';
+        lines.push(`- ${label} 共现 ${v.count} 次（如：${sampleTitles}）${sharedTxt}`);
       }
     }
   }
@@ -260,8 +300,40 @@ function formatDirection(edge: PersonPersonEdge, self: string): string {
 }
 
 function displayLabel(person: PersonNode | undefined, fallbackId: string): string {
-  if (person?.displayName) return `${person.displayName}(${person.userId})`;
-  return fallbackId.split(':')[1] ?? fallbackId;
+  const base = person?.displayName
+    ? `${person.displayName}(${person.userId})`
+    : (fallbackId.split(':')[1] ?? fallbackId);
+  return base;
+}
+
+/**
+ * 中间件本地快速分级（不调 service.computeNodeScore 避免 O(N) 全图扫描）。
+ *
+ * 启发式：优先看 lastPageRank（如果 PR 计算过），否则用 weight + 最近活跃度兜底。
+ * 只返 'core' / 'active'，'normal' 与 'edge' 都返 'normal'——middleware 标签只标"亮点"，避免冗杂。
+ */
+function quickTier(
+  lastPageRank: number | undefined,
+  lastPageRankAt: number | undefined,
+  weight: number | undefined,
+  lastActiveAt: number | undefined,
+): 'core' | 'active' | 'normal' {
+  const prFresh = (lastPageRankAt ?? 0) > 0;
+  const pr = lastPageRank ?? 0;
+  const w = weight ?? 0;
+  const daysSince = lastActiveAt ? Math.max(0, (Date.now() - lastActiveAt) / 86400_000) : Number.POSITIVE_INFINITY;
+  const recent = Number.isFinite(daysSince) && daysSince <= 7;
+  if (prFresh && pr >= 0.05) return 'core';
+  if (w >= 0.8) return 'core';
+  if (prFresh && pr >= 0.02) return 'active';
+  if (w >= 0.5 && recent) return 'active';
+  return 'normal';
+}
+
+function tierToTag(tier: 'core' | 'active' | 'normal'): string {
+  if (tier === 'core') return ' [核心]';
+  if (tier === 'active') return ' [活跃]';
+  return '';
 }
 
 function shortSentiment(s: string): string {
