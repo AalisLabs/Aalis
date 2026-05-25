@@ -18,7 +18,7 @@
  */
 import type { Context } from '@aalis/core';
 import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
 import type { RelationService } from './service.js';
@@ -41,11 +41,23 @@ import {
   RecommendedPersonRelationTypes,
 } from './types.js';
 
+export type ExtractorReadScope = 'same-session' | 'same-platform' | 'cross-platform';
+
 export interface ExtractorConfig {
   triggerEveryNMessages: number;
   readWindowSize: number;
   mode: 'incremental' | 'all-new';
   allNewMaxMessages: number;
+  /**
+   * 提取窗口的会话范围：
+   * - same-session（默认）：仅当前 sessionId（同群聊 / 同私聊）。
+   * - same-platform：同 platform 下所有会话合并送 LLM（每条标注 [sid]），用于识别跨群共享事件。
+   * - cross-platform：跨所有平台聚合（同上）。
+   * 跨会话模式下，evidence.sessionId 按每条消息真实来源记录，event.sessionScope 仍由 LLM 输出（current=来源 session / global=显式跨会话）决定。
+   */
+  readScope: ExtractorReadScope;
+  /** 跨会话拉取时仅取最近 N 分钟内的消息；0=不限。仅在 readScope!=same-session 时生效。默认 60。 */
+  crossSessionMaxAgeMinutes: number;
   /** 提取时把"最近 N 天的活跃事件"作为候选清单交给 LLM 复用 */
   candidateEventDays: number;
   candidateEventLimit: number;
@@ -284,17 +296,20 @@ export class RelationExtractor {
   }
 
   /** 手动触发某 session 的提取（用于 page-action 的"立即提取"按钮） */
-  async triggerNow(sessionId: string): Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }> {
+  async triggerNow(
+    sessionId: string,
+    opts?: { readScope?: ExtractorReadScope },
+  ): Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }> {
     if (this.inFlight.has(sessionId)) return { status: 'skipped', reason: 'in-flight' };
     try {
-      await this.extractSession(sessionId);
+      await this.extractSession(sessionId, opts?.readScope);
       return { status: 'ok' };
     } catch (err) {
       return { status: 'error', reason: stringifyErr(err) };
     }
   }
 
-  private async extractSession(sessionId: string): Promise<void> {
+  private async extractSession(sessionId: string, readScopeOverride?: ExtractorReadScope): Promise<void> {
     if (this.inFlight.has(sessionId)) return;
     this.inFlight.add(sessionId);
     try {
@@ -304,7 +319,57 @@ export class RelationExtractor {
         return;
       }
       const limit = this.cfg.mode === 'all-new' ? this.cfg.allNewMaxMessages : this.cfg.readWindowSize;
-      const history = await memory.getHistory(sessionId, limit);
+      const readScope = readScopeOverride ?? this.cfg.readScope ?? 'same-session';
+      // history: Message[] 数组（用于 LLM prompt 渲染 + validMessageIds 校验）；
+      // messageIdToSessionId: messageId -> 来源 sessionId（跨会话模式下，evidence.sessionId 据此回写真实来源）
+      // crossSession=true 时渲染层会自动给每条消息加 [sid] 前缀帮助 LLM 区分来源
+      let history: Message[];
+      let messageIdToSessionId: Map<string, string>;
+      const crossSession = readScope !== 'same-session';
+      if (!crossSession) {
+        const raw = await memory.getHistory(sessionId, limit);
+        history = raw;
+        messageIdToSessionId = new Map();
+        for (const m of raw) {
+          const meta = (m.metadata as { messageId?: string } | undefined) ?? {};
+          if (meta.messageId) messageIdToSessionId.set(meta.messageId, sessionId);
+        }
+      } else {
+        if (!memory.getRecentMessagesAcrossSessions) {
+          if (this.cfg.debug)
+            this.ctx.logger.debug(
+              `[user-relation] readScope=${readScope} 但 memory 后端不支持 getRecentMessagesAcrossSessions，降级到 same-session`,
+            );
+          history = await memory.getHistory(sessionId, limit);
+          messageIdToSessionId = new Map();
+          for (const m of history) {
+            const meta = (m.metadata as { messageId?: string } | undefined) ?? {};
+            if (meta.messageId) messageIdToSessionId.set(meta.messageId, sessionId);
+          }
+        } else {
+          // 推断当前 sessionId 的 platform：从首条带 platform 的 message 推；否则不限平台
+          const peek = await memory.getHistory(sessionId, 3).catch(() => [] as Message[]);
+          const currentPlatform = inferPlatform(peek);
+          const maxAge = Math.max(0, this.cfg.crossSessionMaxAgeMinutes ?? 60);
+          const sinceTs = maxAge > 0 ? Date.now() - maxAge * 60_000 : undefined;
+          const records: RecentMessageRecord[] = await memory.getRecentMessagesAcrossSessions({
+            limit,
+            sinceTs,
+            platform: readScope === 'same-platform' ? currentPlatform : undefined,
+            roles: ['user', 'assistant'],
+          });
+          messageIdToSessionId = new Map();
+          // 把 sessionId 注入到 message.metadata.__extractorSessionId（运行时临时字段，仅用于渲染/反查）
+          history = records.map(r => {
+            const meta = (r.message.metadata as Record<string, unknown> | undefined) ?? {};
+            if (typeof meta.messageId === 'string') messageIdToSessionId.set(meta.messageId, r.sessionId);
+            return {
+              ...r.message,
+              metadata: { ...meta, __extractorSessionId: r.sessionId },
+            };
+          });
+        }
+      }
       const userMsgs = history.filter(m => m.role === 'user' && hasMessageId(m));
       if (userMsgs.length === 0) {
         if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] ${sessionId} 窗口内无可提取消息`);
@@ -326,6 +391,7 @@ export class RelationExtractor {
         candidateEvents,
         candidateEntities,
         senderNeighbors,
+        { crossSession },
       );
 
       const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
@@ -343,7 +409,7 @@ export class RelationExtractor {
         return;
       }
 
-      await this.applyExtraction(result.value, { sessionId, platform, history });
+      await this.applyExtraction(result.value, { sessionId, platform, history, messageIdToSessionId });
     } finally {
       this.inFlight.delete(sessionId);
     }
@@ -417,7 +483,13 @@ export class RelationExtractor {
   /** 把 LLM 输出落到关系图中 */
   private async applyExtraction(
     parsed: LLMExtraction,
-    ctxInfo: { sessionId: string; platform: string; history: Message[] },
+    ctxInfo: {
+      sessionId: string;
+      platform: string;
+      history: Message[];
+      /** messageId -> 真实来源 sessionId（跨会话模式下每条 evidence 据此回写来源） */
+      messageIdToSessionId?: Map<string, string>;
+    },
   ): Promise<void> {
     const validMessageIds = new Set<string>();
     const contentBySid = new Map<string, string>();
@@ -503,7 +575,7 @@ export class RelationExtractor {
         if (!ok) return null;
       }
       return {
-        sessionId: ctxInfo.sessionId,
+        sessionId: ctxInfo.messageIdToSessionId?.get(ids[0]) ?? ctxInfo.sessionId,
         messageIds: ids,
         quote,
         extractedAt: now,
@@ -880,28 +952,25 @@ function stringifyErr(err: unknown): string {
 }
 
 /** 渲染窗口内每条消息为 LLM 可读行：`[mid] (sender) content` */
-function renderHistoryForLLM(history: Message[]): string {
+function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean }): string {
   const lines: string[] = [];
   for (const m of history) {
     if (m.role !== 'user' && m.role !== 'assistant') continue;
-    const meta = (m.metadata as { messageId?: string; userId?: string; nickname?: string } | undefined) ?? {};
-    // assistant 消息同样按真实元数据 (Aalis 自身在该平台上的 selfId) 渲染——
-    // 历史 hack `aalis(我)` 会让 LLM 把它当占位符 person 抽出 `aalis:aalis`，故移除。
-    // 若元数据完整：渲染成与用户消息同格式 `nickname(userId)`，LLM 抽到的是真实 personId（如 onebot:10000），合理；
-    // 若元数据缺失（旧消息 / 历史未注入身份）：仅写 `Aalis(self)`，并在 prompt 里要求 LLM 不要给这种"裸 self" 创建 person。
+    const meta =
+      (m.metadata as
+        | { messageId?: string; userId?: string; nickname?: string; __extractorSessionId?: string }
+        | undefined) ?? {};
     let sender: string;
     if (m.role === 'assistant') {
-      // 关键：fallback **不能**长成 `nickname(userId)` 的 ASCII 圆括号形态，否则 LLM 会原样拆成 person id
-      // （历史上 `Aalis(self)` 被抽成 `platform=aalis, userId=self`）。
-      // 真元数据：仍用 `nickname(userId)` 同用户消息格式（id 是真实 selfId，可被抽取）。
-      // 缺元数据：用 CJK 全角括号 + 中文标签，与 user 行明显不同，且即便误抽 userId='本机器人' 也会被守卫黑名单拦掉。
       sender = meta.userId ? `${meta.nickname ?? 'Aalis'}(${meta.userId})` : 'Aalis（本机器人）';
     } else {
       sender = `${meta.nickname ?? '匿名'}(${meta.userId ?? '?'})`;
     }
     const mid = meta.messageId ?? '-';
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-    lines.push(`[${mid}] (${sender}) ${content.replace(/\n+/g, ' ').slice(0, 400)}`);
+    // 跨会话模式下，[sid] 前缀帮 LLM 区分同名事件来自哪个群/会话
+    const sidPrefix = opts?.crossSession && meta.__extractorSessionId ? `[sid:${meta.__extractorSessionId}] ` : '';
+    lines.push(`${sidPrefix}[${mid}] (${sender}) ${content.replace(/\n+/g, ' ').slice(0, 400)}`);
   }
   return lines.join('\n');
 }
@@ -912,8 +981,9 @@ function buildExtractionPrompt(
   candidateEvents: EventNode[],
   candidateEntities: EntityNode[],
   senderNeighbors: SenderNeighborhood[],
+  opts?: { crossSession?: boolean },
 ): Message[] {
-  const rendered = renderHistoryForLLM(history);
+  const rendered = renderHistoryForLLM(history, opts);
   const evtList =
     candidateEvents.length === 0 ? '（无）' : candidateEvents.map(e => `- id=${e.id} title=${e.title}`).join('\n');
   const entList =
@@ -1099,6 +1169,9 @@ function buildExtractionPrompt(
       neighborBlock,
       '',
       '== 消息窗口（按时间升序，[mid] = 平台消息 ID）==',
+      opts?.crossSession
+        ? '【跨会话模式】下方消息聚合了多个会话（群聊/私聊/平台），每行行首 `[sid:xxx]` 标注来源会话 id。请把不同 sid 之间**默认视为彼此独立的语境**，除非证据明确表明同一对象/事件被跨会话讨论才把 event.scope 标为 `global`；person / entity 节点天然全局共享，可正常跨 sid 累计证据。'
+        : '',
       rendered,
       '',
       '请直接输出 JSON 对象。',
