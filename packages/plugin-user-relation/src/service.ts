@@ -25,6 +25,7 @@ import type { RelationStore } from './store.js';
 import type {
   EdgeWeightAudit,
   EntityEntityEdge,
+  EntityKind,
   EntityNode,
   EventEntityEdge,
   EventEventEdge,
@@ -81,7 +82,17 @@ export class RelationService {
   /** 最近一次 consolidate() 的触发来源：manual | eviction | api */
   private _lastConsolidateTrigger?: 'manual' | 'eviction' | 'api';
 
-  constructor(private readonly store: RelationStore) {}
+  constructor(
+    private readonly store: RelationStore,
+    /** 可选 ctx：仅用于写 logger 审计（deleteNode / mergeNodes / changeEntityKind 等 agent 写入路径）。测试不传则 fallback 到 console。 */
+    private readonly ctx?: Context,
+  ) {}
+
+  /** 写 audit 日志；ctx 存在走 logger.warn，否则 fallback console.warn（主要照顾单元测试）。 */
+  private _audit(msg: string): void {
+    if (this.ctx) this.ctx.logger.warn(msg);
+    else console.warn(msg);
+  }
 
   /** 查询最近一次 consolidation 运行时间、触发源与结果摘要 */
   getLastConsolidateInfo(): {
@@ -157,12 +168,16 @@ export class RelationService {
    */
   async createEvent(input: Omit<EventNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EventNode> {
     const now = Date.now();
-    const dup = await this.findEventByTitle(input.title);
+    // sessionScope 优先取显式传入，其次从 evidence[0].sessionId 推断。
+    const scope = input.sessionScope ?? input.evidence?.[0]?.sessionId;
+    const dup = await this.findEventByTitle(input.title, scope);
     if (dup) {
       const merged: EventNode = {
         ...dup,
         summary: input.summary ?? dup.summary,
         category: input.category ?? dup.category,
+        // 只在原节点 scope 为空时才回填，避免覆盖已有隔离。
+        sessionScope: dup.sessionScope ?? scope,
         lastReinforcedAt: now,
         lastMentionedAt: now,
         mentionCount: (dup.mentionCount ?? 0) + 1,
@@ -178,6 +193,7 @@ export class RelationService {
       title: input.title,
       summary: input.summary,
       category: input.category,
+      sessionScope: scope,
       firstSeenAt: now,
       lastReinforcedAt: now,
       lastMentionedAt: now,
@@ -193,12 +209,21 @@ export class RelationService {
   /**
    * 按 normalized title 精确匹配（不区分大小写、压缩空白）查找已有事件。
    * 用于 createEvent 入口去重。
+   *
+   * 若传入 scope：遵循「同名 + 同 scope 才是同事件」原则；只接受
+   *   (a) 两者 scope 相同，或 (b) 旧节点 scope 为 undefined（老数据通配）。
+   * 不传 scope：只看 title，保留老行为（供手动调用 / 测试 / 迁移）。
    */
-  async findEventByTitle(title: string): Promise<EventNode | undefined> {
+  async findEventByTitle(title: string, scope?: string): Promise<EventNode | undefined> {
     const target = normalizeName(title);
     if (!target) return undefined;
     const snap = await this.store.loadAll();
-    return snap.events.find(e => normalizeName(e.title) === target);
+    return snap.events.find(e => {
+      if (normalizeName(e.title) !== target) return false;
+      if (scope === undefined) return true;
+      // 新数据需严格隔离；旧节点 scope=undefined 视为通配。
+      return e.sessionScope === undefined || e.sessionScope === scope;
+    });
   }
 
   /**
@@ -2887,6 +2912,320 @@ export class RelationService {
       edgesMerged,
       edgesDeleted,
       swapped,
+    };
+  }
+
+  // ============================================================
+  //  Agent 写工具：deleteNode / deleteEdge / mergeNodes / changeEntityKind
+  //  设计要点（与 correctEdge / renameNode 对称）：
+  //    - Person 节点禁止 agent 物理删除（platform 身份只能由 user-profile 同步）
+  //    - 阶梯保护：weight ≥ 0.8 或 evidence ≥ 5 视为强节点 / 强边 → 拒绝
+  //    - alias 边（is-alias-of / alt-account-of）禁删（破坏身份合并）
+  //    - 全部 logger.warn 记审计（含 by / reason / 影响范围）
+  // ============================================================
+
+  /**
+   * 物理删除 event / entity 节点（级联删边）。Person 节点禁用。
+   * 保护门：weight ≥ 0.8 或 evidence.length ≥ 5 直接拒绝。
+   */
+  async deleteNode(opts: {
+    kind: 'event' | 'entity';
+    id: string;
+    reason: string;
+    by?: string;
+  }): Promise<{ kind: 'event' | 'entity'; id: string; deletedEdges: number }> {
+    const reason = opts.reason?.trim().slice(0, 120);
+    if (!reason) throw new Error('deleteNode: reason 必填');
+    const by = opts.by ?? 'manual';
+
+    if (opts.kind === 'event') {
+      const node = await this.store.getEvent(opts.id);
+      if (!node) throw new Error(`deleteNode: event ${opts.id} 不存在`);
+      this._assertNodeDeletable(node.weight ?? 0.5, node.evidence?.length ?? 0, node.title);
+      const { deletedEdges } = await this.store.deleteEventCascade(opts.id);
+      this._audit(
+        `[user-relation][AUDIT] deleteNode event id=${opts.id} title="${node.title}" by=${by} reason="${reason}" edges=${deletedEdges}`,
+      );
+      return { kind: 'event', id: opts.id, deletedEdges };
+    }
+    const node = await this.store.getEntity(opts.id);
+    if (!node) throw new Error(`deleteNode: entity ${opts.id} 不存在`);
+    this._assertNodeDeletable(node.weight ?? 0.5, node.evidence?.length ?? 0, node.name);
+    const { deletedEdges } = await this.store.deleteEntityCascade(opts.id);
+    this._audit(
+      `[user-relation][AUDIT] deleteNode entity id=${opts.id} name="${node.name}" by=${by} reason="${reason}" edges=${deletedEdges}`,
+    );
+    return { kind: 'entity', id: opts.id, deletedEdges };
+  }
+
+  private _assertNodeDeletable(weight: number, evidenceCount: number, nameForErr: string): void {
+    if (weight >= 0.8) {
+      throw new Error(
+        `节点 "${nameForErr}" 权重 ${weight.toFixed(2)} ≥ 0.8（强节点保护）。请先通过 correctEdge 或多次 cleanup 自然淡化，或走 /relation cleanup 人工命令。`,
+      );
+    }
+    if (evidenceCount >= 5) {
+      throw new Error(
+        `节点 "${nameForErr}" evidence ${evidenceCount} ≥ 5（强节点保护）。证据充足的节点不允许 agent 直接删除。`,
+      );
+    }
+  }
+
+  /**
+   * 物理删除一条边（带保护门，供 agent 调用）。alias 边（is-alias-of / alt-account-of）禁删；
+   * weight ≥ 0.8 或 evidence ≥ 5 拒绝（请先 correctEdge weaken）。
+   *
+   * 注：与旧 deleteEdge(edgeId)（无保护，供 consolidate 内部使用）区别开。
+   */
+  async deleteEdgeWithGuard(opts: {
+    edgeId: string;
+    reason: string;
+    by?: string;
+  }): Promise<{ edgeId: string; kind: string; relationType: string; weight: number }> {
+    const reason = opts.reason?.trim().slice(0, 120);
+    if (!reason) throw new Error('deleteEdgeWithGuard: reason 必填');
+    const by = opts.by ?? 'manual';
+    const edge = await this.store.getEdge(opts.edgeId);
+    if (!edge) throw new Error(`deleteEdgeWithGuard: edge ${opts.edgeId} 不存在`);
+    const rt = String((edge as { relationType?: string }).relationType ?? '');
+    if (rt === 'is-alias-of' || rt === 'alt-account-of') {
+      throw new Error(`alias 边（${rt}）禁止删除——会破坏身份合并。请走 /relation cleanup 人工命令。`);
+    }
+    if ((edge.weight ?? 0) >= 0.8) {
+      throw new Error(`边权重 ${(edge.weight ?? 0).toFixed(2)} ≥ 0.8（强边保护）。请先用 correctEdge weaken 衰减。`);
+    }
+    if ((edge.evidence?.length ?? 0) >= 5) {
+      throw new Error(`边 evidence ${edge.evidence?.length ?? 0} ≥ 5（强边保护）。证据充足的边不允许直接删除。`);
+    }
+    await this.store.deleteEdge(opts.edgeId);
+    this._audit(
+      `[user-relation][AUDIT] deleteEdge id=${opts.edgeId} kind=${edge.kind} relationType=${rt} weight=${edge.weight} by=${by} reason="${reason}"`,
+    );
+    return { edgeId: opts.edgeId, kind: edge.kind, relationType: rt, weight: edge.weight ?? 0 };
+  }
+
+  /**
+   * 物理合并：把 aliasIds 全部并入 canonicalId，并物理删除 aliasIds。
+   * 仅支持 event / entity（person 合并请走 mergeAlias，保留 alias 标记边）。
+   *
+   * 内部分两步：
+   *  1) 复用 mergeAlias 把每个 alias 的边改写到 canonical（保留同名 alias 标记边以便回溯）；
+   *  2) 物理删除 alias 节点本身（cascade 顺手清理残留的 alias 标记边）。
+   */
+  async mergeNodes(opts: {
+    kind: 'event' | 'entity';
+    canonicalId: string;
+    aliasIds: string[];
+    reason: string;
+    by?: string;
+  }): Promise<{
+    canonicalId: string;
+    mergedAliasIds: string[];
+    totalEdgesRewritten: number;
+    totalEdgesMerged: number;
+    totalEdgesDeleted: number;
+  }> {
+    const reason = opts.reason?.trim().slice(0, 120);
+    if (!reason) throw new Error('mergeNodes: reason 必填');
+    const by = opts.by ?? 'manual';
+    const aliasIds = Array.from(new Set(opts.aliasIds ?? [])).filter(id => id && id !== opts.canonicalId);
+    if (aliasIds.length === 0) throw new Error('mergeNodes: aliasIds 至少 1 个且不可等于 canonicalId');
+
+    // 校验 canonical 存在
+    const canonical =
+      opts.kind === 'event'
+        ? await this.store.getEvent(opts.canonicalId)
+        : await this.store.getEntity(opts.canonicalId);
+    if (!canonical) throw new Error(`mergeNodes: canonical ${opts.kind} ${opts.canonicalId} 不存在`);
+
+    let totalEdgesRewritten = 0;
+    let totalEdgesMerged = 0;
+    let totalEdgesDeleted = 0;
+    const mergedAliasIds: string[] = [];
+
+    for (const aliasId of aliasIds) {
+      // alias 节点也要存在 & 与 canonical 同类
+      const aliasNode =
+        opts.kind === 'event' ? await this.store.getEvent(aliasId) : await this.store.getEntity(aliasId);
+      if (!aliasNode) {
+        this._audit(`[user-relation] mergeNodes 跳过不存在的 alias ${aliasId}`);
+        continue;
+      }
+      // 不做删除保护（合并是「保留语义」而非「丢失」），但仍记审计
+      const r = await this.mergeAlias({
+        aliasId,
+        canonicalId: opts.canonicalId,
+        kind: opts.kind,
+        noCanonicalCorrection: true,
+      });
+      totalEdgesRewritten += r.edgesRewritten;
+      totalEdgesMerged += r.edgesMerged;
+      totalEdgesDeleted += r.edgesDeleted;
+
+      // 物理删除 alias 节点（级联清掉残留的 alias 标记边自身）
+      if (opts.kind === 'event') {
+        const { deletedEdges } = await this.store.deleteEventCascade(aliasId);
+        totalEdgesDeleted += deletedEdges;
+      } else {
+        const { deletedEdges } = await this.store.deleteEntityCascade(aliasId);
+        totalEdgesDeleted += deletedEdges;
+      }
+      mergedAliasIds.push(aliasId);
+    }
+
+    this._audit(
+      `[user-relation][AUDIT] mergeNodes kind=${opts.kind} canonical=${opts.canonicalId} aliases=[${mergedAliasIds.join(',')}] by=${by} reason="${reason}" edges(rewritten=${totalEdgesRewritten} merged=${totalEdgesMerged} deleted=${totalEdgesDeleted})`,
+    );
+    return {
+      canonicalId: opts.canonicalId,
+      mergedAliasIds,
+      totalEdgesRewritten,
+      totalEdgesMerged,
+      totalEdgesDeleted,
+    };
+  }
+
+  /**
+   * 修改 entity 的 kind（topic/place/thing/work）。轻量操作，仅写入字段 + audit。
+   * 不变更 id，所有引用边 0 风险。
+   */
+  async changeEntityKind(opts: {
+    entityId: string;
+    newKind: EntityKind;
+    reason: string;
+    by?: string;
+  }): Promise<{ entityId: string; from: EntityKind; to: EntityKind }> {
+    const reason = opts.reason?.trim().slice(0, 120);
+    if (!reason) throw new Error('changeEntityKind: reason 必填');
+    const by = opts.by ?? 'manual';
+    const valid: EntityKind[] = ['topic', 'place', 'thing', 'work'];
+    if (!valid.includes(opts.newKind)) {
+      throw new Error(`changeEntityKind: newKind 必须是 ${valid.join('/')}`);
+    }
+    const node = await this.store.getEntity(opts.entityId);
+    if (!node) throw new Error(`changeEntityKind: entity ${opts.entityId} 不存在`);
+    const from = node.entityKind;
+    if (from === opts.newKind) return { entityId: opts.entityId, from, to: opts.newKind };
+    await this.store.upsertEntity({ ...node, entityKind: opts.newKind, lastReinforcedAt: Date.now() });
+    this._audit(
+      `[user-relation][AUDIT] changeEntityKind id=${opts.entityId} name="${node.name}" ${from}→${opts.newKind} by=${by} reason="${reason}"`,
+    );
+    return { entityId: opts.entityId, from, to: opts.newKind };
+  }
+
+  /**
+   * 计算单个节点的「综合活跃度评分」，供 agent 快速判断节点的结构性重要性。
+   *
+   * 返回字段语义（取值范围请见 _legend）：
+   *   - relatedPeople / relatedEvents / relatedEntities: 通过任意边连接的不同邻居计数
+   *   - maxIncomingEdgeWeight / avgIncomingEdgeWeight: 入边权重分布（0..1）
+   *   - pagerank: 最近一次 eviction 算出来的 PageRank 快照（0..0.1 量级，越高越中心）
+   *   - evidenceCount: 节点 evidence 总条数
+   *   - daysSinceLastReinforced: 距上次强化天数
+   *   - compositeScore: 0..1 综合分（pagerank 0.4 + edgeWeight 0.3 + recency 0.2 + degree 0.1）
+   */
+  async computeNodeScore(nodeId: string): Promise<{
+    nodeId: string;
+    kind: 'person' | 'event' | 'entity';
+    name: string;
+    relatedPeople: number;
+    relatedEvents: number;
+    relatedEntities: number;
+    maxIncomingEdgeWeight: number;
+    avgIncomingEdgeWeight: number;
+    pagerank: number;
+    evidenceCount: number;
+    daysSinceLastReinforced: number;
+    compositeScore: number;
+  } | null> {
+    const snap = await this.store.loadAll();
+    let kind: 'person' | 'event' | 'entity' | null = null;
+    let name = '';
+    let evidenceCount = 0;
+    let lastReinforcedAt = 0;
+    let pagerank = 0;
+
+    const person = snap.persons.find(p => p.id === nodeId);
+    if (person) {
+      kind = 'person';
+      name = person.displayName ?? person.id;
+      evidenceCount = 0;
+      lastReinforcedAt = person.lastSeenAt ?? person.firstSeenAt ?? 0;
+      pagerank = person.lastPageRank ?? 0;
+    } else {
+      const event = snap.events.find(e => e.id === nodeId);
+      if (event) {
+        kind = 'event';
+        name = event.title;
+        evidenceCount = event.evidence?.length ?? 0;
+        lastReinforcedAt = event.lastReinforcedAt;
+        pagerank = event.lastPageRank ?? 0;
+      } else {
+        const entity = snap.entities.find(e => e.id === nodeId);
+        if (entity) {
+          kind = 'entity';
+          name = entity.name;
+          evidenceCount = entity.evidence?.length ?? 0;
+          lastReinforcedAt = entity.lastReinforcedAt;
+          pagerank = entity.lastPageRank ?? 0;
+        }
+      }
+    }
+    if (!kind) return null;
+
+    const peopleSet = new Set<string>();
+    const eventSet = new Set<string>();
+    const entitySet = new Set<string>();
+    let maxIncomingEdgeWeight = 0;
+    let sumIncomingEdgeWeight = 0;
+    let inEdgeCount = 0;
+
+    const isPersonId = (id: string) => id.includes(':');
+    for (const e of snap.edges) {
+      if (!edgeReferences(e, nodeId)) continue;
+      // 入边：to 是当前节点
+      const toId = (e as { to?: string; toId?: string }).to ?? (e as { toId?: string }).toId ?? '';
+      const fromId = (e as { from?: string; fromId?: string }).from ?? (e as { fromId?: string }).fromId ?? '';
+      const otherId = fromId === nodeId ? toId : fromId;
+      if (!otherId || otherId === nodeId) continue;
+      if (isPersonId(otherId)) peopleSet.add(otherId);
+      else if (snap.events.some(ev => ev.id === otherId)) eventSet.add(otherId);
+      else if (snap.entities.some(et => et.id === otherId)) entitySet.add(otherId);
+      if (toId === nodeId) {
+        const w = e.weight ?? 0;
+        if (w > maxIncomingEdgeWeight) maxIncomingEdgeWeight = w;
+        sumIncomingEdgeWeight += w;
+        inEdgeCount++;
+      }
+    }
+
+    const avgIncomingEdgeWeight = inEdgeCount > 0 ? sumIncomingEdgeWeight / inEdgeCount : 0;
+    const totalDegree = peopleSet.size + eventSet.size + entitySet.size;
+    const daysSinceLastReinforced = lastReinforcedAt
+      ? Math.max(0, (Date.now() - lastReinforcedAt) / 86400_000)
+      : Number.POSITIVE_INFINITY;
+    // 综合分：pagerank 归一到 0..1（实测 pagerank 多在 0..0.1），衰减按 30 天半衰
+    const prNorm = Math.min(1, pagerank * 10);
+    const wNorm = Math.min(1, maxIncomingEdgeWeight);
+    const recency = Number.isFinite(daysSinceLastReinforced) ? Math.exp(-daysSinceLastReinforced / 30) : 0;
+    const degreeNorm = Math.min(1, totalDegree / 20);
+    const compositeScore = Math.min(1, prNorm * 0.4 + wNorm * 0.3 + recency * 0.2 + degreeNorm * 0.1);
+
+    return {
+      nodeId,
+      kind,
+      name,
+      relatedPeople: peopleSet.size,
+      relatedEvents: eventSet.size,
+      relatedEntities: entitySet.size,
+      maxIncomingEdgeWeight: Number(maxIncomingEdgeWeight.toFixed(4)),
+      avgIncomingEdgeWeight: Number(avgIncomingEdgeWeight.toFixed(4)),
+      pagerank: Number(pagerank.toFixed(6)),
+      evidenceCount,
+      daysSinceLastReinforced: Number.isFinite(daysSinceLastReinforced)
+        ? Number(daysSinceLastReinforced.toFixed(1))
+        : -1,
+      compositeScore: Number(compositeScore.toFixed(4)),
     };
   }
 }
