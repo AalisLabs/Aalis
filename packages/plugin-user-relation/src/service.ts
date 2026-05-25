@@ -2154,15 +2154,28 @@ export class RelationService {
       }
 
       // 给候选里出现过的每个 entity 算一次 compositeScore（snapshot 已固定，避免重复扫边）
-      const scoreCache = new Map<string, number>();
-      const scoreOf = (id: string): number => {
-        const cached = scoreCache.get(id);
-        if (cached !== undefined) return cached;
+      // F2：缓存完整 score 对象（含 relatedPeople/Events/Entities），用于喂给 verifyAliasPair 的上下文。
+      const scoreCache = new Map<
+        string,
+        { compositeScore: number; relatedPeople: number; relatedEvents: number; relatedEntities: number } | null
+      >();
+      const getScoreInfo = (
+        id: string,
+      ): { compositeScore: number; relatedPeople: number; relatedEvents: number; relatedEntities: number } | null => {
+        if (scoreCache.has(id)) return scoreCache.get(id) ?? null;
         const s = this._computeSingleNodeScore(id, snapshot);
-        const v = s?.compositeScore ?? 0;
+        const v = s
+          ? {
+              compositeScore: s.compositeScore,
+              relatedPeople: s.relatedPeople,
+              relatedEvents: s.relatedEvents,
+              relatedEntities: s.relatedEntities,
+            }
+          : null;
         scoreCache.set(id, v);
         return v;
       };
+      const scoreOf = (id: string): number => getScoreInfo(id)?.compositeScore ?? 0;
 
       // F3 排序：按 max(scoreA, scoreB) 倒序——优先把"至少一端重要"的候选送给 LLM；
       // 平局时按 pairKey 字典序，保证可复现。
@@ -2196,7 +2209,28 @@ export class RelationService {
           }
           continue;
         }
-        const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
+        const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking, {
+          aEvidenceQuotes: (a.evidence ?? [])
+            .slice(-3)
+            .map(ev => (ev.quote ?? '').trim())
+            .filter(Boolean),
+          bEvidenceQuotes: (b.evidence ?? [])
+            .slice(-3)
+            .map(ev => (ev.quote ?? '').trim())
+            .filter(Boolean),
+          aNeighbors: (() => {
+            const info = getScoreInfo(a.id);
+            return info
+              ? { people: info.relatedPeople, events: info.relatedEvents, entities: info.relatedEntities }
+              : { people: 0, events: 0, entities: 0 };
+          })(),
+          bNeighbors: (() => {
+            const info = getScoreInfo(b.id);
+            return info
+              ? { people: info.relatedPeople, events: info.relatedEvents, entities: info.relatedEntities }
+              : { people: 0, events: 0, entities: 0 };
+          })(),
+        });
         if (!v.isSame) {
           llmRejected++;
           if (opts.llm.ctx.logger) {
