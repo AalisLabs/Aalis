@@ -675,12 +675,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     useAgent(ctx).registerPreprocessor('file-reader', preprocessFiles);
   }
 
-  // ===== 历史文件提示注入（agent:llm:before） =====
-  // 仅在「会话有历史文件」且「本轮没有新上传」时注入一条 system 提示，提醒模型
-  // 可用 list_uploaded_files / read_uploaded_file 复用历史文件，避免「上传完下一
-  // 轮就忘」。判定「本轮无新上传」：扫描最后一条 user message content 是否出现
-  // 由 preprocessFiles 生成的 `[文件:` 前缀；若有说明本轮 user message 已经把
-  // 新文件描述带上了，无需重复注入。
+  // ===== 历史 / 本轮新上传文件清单注入（agent:llm:before） =====
+  // 两种场景，互斥注入一条 system 提示，避免「上传完下一轮就忘」 或「本轮新文件
+  // 与历史文件混淆」：
+  //   - 本轮**无**新上传 + 会话有历史文件 → 注入「历史文件清单」（原行为）
+  //   - 本轮**有**新上传                  → 注入「⭐ 本轮新上传 N 个文件 + 历史
+  //                                          还有 M 个可用」清单，让 LLM 一眼区
+  //                                          分本轮 vs 历史
+  // 判定「本轮无新上传」：扫描最后一条 user message content 是否出现由
+  // preprocessFiles 生成的 `[文件:` 前缀；若有说明本轮 user message 已经把
+  // 新文件描述带上了。本轮新上传的 ID 用正则 `\(ID:\s*([0-9a-fA-F]+)` 从这条
+  // user message 中提取（兼容 `(ID: xxx)` 和 `(ID: xxx，N KB)` 两种格式）。
   if (historyHintEnabled) {
     ctx.middleware('agent:llm:before', async (data, next) => {
       if (!data.sessionId) {
@@ -699,7 +704,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         await next();
         return;
       }
-      // 本轮是否有新上传：最后一条 user message 是否含 `[文件:` 标记
+      // 取最后一条 user message
       let lastUserContent = '';
       for (let i = data.messages.length - 1; i >= 0; i--) {
         if (data.messages[i].role === 'user') {
@@ -708,15 +713,45 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           break;
         }
       }
-      if (lastUserContent.includes('[文件:')) {
-        await next();
-        return;
+      const hasNewUpload = lastUserContent.includes('[文件:');
+      let block: string;
+      if (hasNewUpload) {
+        // 提取本轮新上传文件 ID
+        const turnIds = new Set<string>();
+        const idRegex = /\(ID:\s*([0-9a-fA-F]+)/g;
+        let m: RegExpExecArray | null = idRegex.exec(lastUserContent);
+        while (m !== null) {
+          turnIds.add(m[1]);
+          m = idRegex.exec(lastUserContent);
+        }
+        const turnFiles = files.filter(f => turnIds.has(f.id));
+        if (turnFiles.length === 0) {
+          // user message 含 `[文件:` 但提不出已知 ID（异常情况）→ 退回旧行为
+          await next();
+          return;
+        }
+        const turnLines = turnFiles.map(
+          f =>
+            `- ${f.name} (ID: ${f.id}, ${f.mimeType}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
+        );
+        const histFiles = files.filter(f => !turnIds.has(f.id));
+        let histPart = '';
+        if (histFiles.length > 0) {
+          const histLines = histFiles.map(
+            f =>
+              `- ${f.name} (ID: ${f.id}, ${f.mimeType}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
+          );
+          histPart = `\n\n📂 历史还有 ${histFiles.length} 个文件可用（往轮上传）：\n${histLines.join('\n')}`;
+        }
+        block = `⭐ 本轮用户新上传了 ${turnFiles.length} 个文件（请优先关注，本轮提问大概率与之相关）：\n${turnLines.join('\n')}${histPart}\n\n如需引用内容请调用 ${TOOL_READ}(fileId="...")，列出请用 ${TOOL_LIST}。`;
+      } else {
+        // 本轮无新上传 → 历史清单（原行为）
+        const lines = files.map(
+          f =>
+            `- ${f.name} (ID: ${f.id}, ${f.mimeType}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
+        );
+        block = `📎 本会话历史上传文件 (${files.length} 个，当前轮次未新上传)：\n${lines.join('\n')}\n\n如需引用上述文件内容，请调用 ${TOOL_READ}(fileId="...") 读取；列出请用 ${TOOL_LIST}。`;
       }
-      const lines = files.map(
-        f =>
-          `- ${f.name} (ID: ${f.id}, ${f.mimeType}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
-      );
-      const block = `📎 本会话历史上传文件 (${files.length} 个，当前轮次未新上传)：\n${lines.join('\n')}\n\n如需引用上述文件内容，请调用 ${TOOL_READ}(fileId="...") 读取；列出请用 ${TOOL_LIST}。`;
       const idx = data.messages.findIndex(m => m.role !== 'system');
       const insertIdx = idx === -1 ? data.messages.length : idx;
       data.messages.splice(insertIdx, 0, {
@@ -724,7 +759,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         content: block,
         metadata: { source: HISTORY_HINT_SOURCE },
       });
-      ctx.logger.debug(`file-reader: 已注入历史文件提示 (${files.length} 个, session=${data.sessionId})`);
+      ctx.logger.debug(
+        `file-reader: 已注入文件清单 (${hasNewUpload ? '本轮新上传' : '历史'}, session=${data.sessionId})`,
+      );
       await next();
     });
   }
