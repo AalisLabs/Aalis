@@ -36,7 +36,7 @@ export const inject = {
 
 // ===== 配置 schema =====
 
-export type HistoryScope = 'same-platform' | 'cross-platform';
+export type HistoryScope = 'same-session' | 'same-platform' | 'cross-platform';
 
 export const configSchema: ConfigSchema = {
   injectEnabled: {
@@ -51,6 +51,7 @@ export const configSchema: ConfigSchema = {
     label: '查询作用域（被动注入 + 工具默认）',
     default: 'same-platform',
     options: [
+      { label: '仅当前会话（同群聊/私聊）', value: 'same-session' },
       { label: '同平台跨会话聚合', value: 'same-platform' },
       { label: '跨平台全部聚合', value: 'cross-platform' },
     ],
@@ -139,7 +140,8 @@ function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
   // 向后兼容：旧配置 scope='off' = 关闭被动注入 + scope 回退为 same-platform
   const scopeRaw = (raw.scope as string) ?? 'same-platform';
   const legacyOff = scopeRaw === 'off';
-  const scope: HistoryScope = scopeRaw === 'cross-platform' ? 'cross-platform' : 'same-platform';
+  const scope: HistoryScope =
+    scopeRaw === 'cross-platform' ? 'cross-platform' : scopeRaw === 'same-session' ? 'same-session' : 'same-platform';
   const injectEnabled = legacyOff ? false : raw.injectEnabled !== false;
   return {
     injectEnabled,
@@ -206,8 +208,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     const limit = Math.max(1, opts.limit ?? cfg.limit);
     const maxAge = opts.maxAgeMinutes ?? cfg.maxAgeMinutes;
     const sinceTs = maxAge > 0 ? Date.now() - maxAge * 60_000 : undefined;
-    const platform = scope === 'same-platform' ? opts.currentPlatform : undefined;
-    const excludeSessionIds = cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
+    // same-session 限定到当前 sessionId 且不再排除当前会话；其余 scope 沿用 excludeCurrentSession 配置
+    const platform = scope === 'cross-platform' ? undefined : opts.currentPlatform;
+    const sameSessionMode = scope === 'same-session';
+    const includeSessionIds = sameSessionMode && opts.currentSessionId ? [opts.currentSessionId] : undefined;
+    const excludeSessionIds =
+      !sameSessionMode && cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
 
     // 若启用 per-session cap，需要向 backend overscan；上限按 limit * 10 与 1000 取小，
     // 既能覆盖单会话刷屏场景，又避免极端情况下拉太多。
@@ -222,14 +228,17 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       roles: ['user', 'assistant'],
     });
 
-    if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
+    // same-session 模式：backend 不支持 includeSessionIds 白名单，这里 client 端按 sessionId 过滤
+    const filtered = includeSessionIds ? raw.filter(r => includeSessionIds.includes(r.sessionId)) : raw;
+
+    if (perSessionLimit <= 0 || filtered.length <= limit) return filtered.slice(-limit);
 
     // raw 是时间升序；为做 per-session cap 时优先保留每会话最新若干条，
     // 先反转为降序遍历，命中即累计；累计到 limit 或扫完为止；最后再反转回升序。
     const perSessionCount = new Map<string, number>();
     const picked: RecentMessageRecord[] = [];
-    for (let i = raw.length - 1; i >= 0 && picked.length < limit; i--) {
-      const rec = raw[i];
+    for (let i = filtered.length - 1; i >= 0 && picked.length < limit; i--) {
+      const rec = filtered[i];
       const cnt = perSessionCount.get(rec.sessionId) ?? 0;
       if (cnt >= perSessionLimit) continue;
       perSessionCount.set(rec.sessionId, cnt + 1);
@@ -304,8 +313,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
             properties: {
               scope: {
                 type: 'string',
-                enum: ['same-platform', 'cross-platform'],
-                description: `same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。`,
+                enum: ['same-session', 'same-platform', 'cross-platform'],
+                description: `same-session = 仅当前会话（同群聊/同私聊）的近期消息；same-platform = 与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。`,
               },
               limit: {
                 type: 'number',
@@ -325,7 +334,10 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         },
       },
       handler: async (args, callCtx) => {
-        const scope = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : undefined;
+        const scope =
+          args.scope === 'same-session' || args.scope === 'same-platform' || args.scope === 'cross-platform'
+            ? args.scope
+            : undefined;
         const records = await queryRecent({
           scope,
           currentPlatform: callCtx.platform,
