@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Square, Zap, Archive, AlertTriangle, History, FolderOpen } from 'lucide-react';
+import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Zap, Archive, AlertTriangle, History, FolderOpen } from 'lucide-react';
 import { pageAction, getSessionId, proxiedMediaUrl } from '../api';
 import ReactMarkdown from 'react-markdown';
 import 'katex/dist/katex.min.css';
@@ -10,6 +10,7 @@ import { preprocessLaTeX } from '../preprocessLaTeX';
 import { formatChatTime } from '../utils/dateFormat';
 import { REMARK_PLUGINS, REHYPE_PLUGINS, MARKDOWN_COMPONENTS } from '../components/markdownConfig';
 import { UploadedFilesDrawer } from '../components/UploadedFilesDrawer';
+import { ChatInput, type ChatInputHandle } from '../components/ChatInput';
 
 /** 工具调用实时计时器 */
 function ToolCallTimer({ startTime, endTime }: { startTime?: number; endTime?: number }) {
@@ -60,16 +61,6 @@ function ToolCallBlock({ seg, index }: { seg: Extract<ContentSegment, { type: 't
       </div>
     </details>
   );
-}
-
-/** 将 File 转为 base64 data URL */
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 /** 支持的文档文件扩展名 */
@@ -695,11 +686,10 @@ export function ChatPanel({
   /** 手动压缩回调 */
   onCompress?: () => void;
 }) {
-  // ──────── 输入区本地状态（不再上浮到 App，避免 App 因输入抖动整树重渲染）────────
-  const [input, setInput] = useState('');
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
-  const [pendingFiles, setPendingFiles] = useState<Array<{ name: string; data: string; mimeType?: string }>>([]); 
-  const attachmentOrderRef = useRef<Array<'image' | 'file'>>([]);
+  // ──────── 输入区抽取到 ChatInput 子组件 ────────
+  // input / pendingImages / pendingFiles / textareaRef 等局部 state 全部下沉到
+  // ChatInput，避免顶层 setState 触发 messages 列表与 Drawer 重渲染。
+  const chatInputRef = useRef<ChatInputHandle>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
@@ -810,8 +800,6 @@ export function ChatPanel({
   /** 用户正在主动滚动（防止 auto-scroll 与用户手势冲突） */
   const userScrollingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUserScrolling = useRef(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const [showTokenPanel, setShowTokenPanel] = useState(false);
@@ -825,16 +813,6 @@ export function ChatPanel({
   const canUploadFile = uploadCaps?.file ?? false;
   const canUpload = canUploadImage || canUploadFile;
   const acceptAttr = computeAccept(uploadCaps);
-
-  const autoResize = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, []);
-
-  // input 被外部清空（发送后）时重置高度
-  useEffect(() => { autoResize(); }, [input, autoResize]);
 
   // 跟踪压缩计时
   useEffect(() => {
@@ -884,81 +862,16 @@ export function ChatPanel({
     }
   }, [messages]);
 
-  /** 发送动作：将本地输入/附件状态传给 App.tsx 的 handleSend，成功后清空本地状态 */
-  const handleSendAction = useCallback(async () => {
-    await onSend(input, pendingFiles, pendingImages, attachmentOrderRef.current);
-    setInput('');
-    setPendingImages([]);
-    setPendingFiles([]);
-    attachmentOrderRef.current = [];
-    // 重置 textarea 高度
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-  }, [input, pendingFiles, pendingImages, onSend]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void handleSendAction();
-    }
-  };
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    const newImages: string[] = [];
-    const newFiles: Array<{ name: string; data: string; mimeType?: string }> = [];
-    const orderEntries: Array<'image' | 'file'> = [];
-    for (const file of Array.from(files)) {
-      if (file.type.startsWith('image/') && canUploadImage) {
-        // 图片文件 → 图片队列
-        if (file.size > 10 * 1024 * 1024) continue;
-        const dataUrl = await fileToDataUrl(file);
-        newImages.push(dataUrl);
-        orderEntries.push('image');
-      } else if (canUploadFile) {
-        // 非图片文件 → 文件队列
-        if (file.size > 20 * 1024 * 1024) continue;
-        const dataUrl = await fileToDataUrl(file);
-        newFiles.push({ name: file.name, data: dataUrl, mimeType: file.type || undefined });
-        orderEntries.push('file');
-      }
-    }
-    if (newImages.length > 0) {
-      setPendingImages(prev => [...prev, ...newImages]);
-    }
-    if (newFiles.length > 0) {
-      setPendingFiles(prev => [...prev, ...newFiles]);
-    }
-    if (orderEntries.length > 0) {
-      attachmentOrderRef.current = [...attachmentOrderRef.current, ...orderEntries];
-    }
-    e.target.value = '';
-  };
-
-  /** 处理拖拽上传的文件 */
-  const processDroppedFiles = async (fileList: FileList) => {
-    const newImages: string[] = [];
-    const newFiles: Array<{ name: string; data: string; mimeType?: string }> = [];
-    const orderEntries: Array<'image' | 'file'> = [];
-    for (const file of Array.from(fileList)) {
-      if (file.type.startsWith('image/') && canUploadImage) {
-        if (file.size > 10 * 1024 * 1024) continue;
-        const dataUrl = await fileToDataUrl(file);
-        newImages.push(dataUrl);
-        orderEntries.push('image');
-      } else if (canUploadFile) {
-        if (file.size > 20 * 1024 * 1024) continue;
-        const dataUrl = await fileToDataUrl(file);
-        newFiles.push({ name: file.name, data: dataUrl, mimeType: file.type || undefined });
-        orderEntries.push('file');
-      }
-    }
-    if (newImages.length > 0) setPendingImages(prev => [...prev, ...newImages]);
-    if (newFiles.length > 0) setPendingFiles(prev => [...prev, ...newFiles]);
-    if (orderEntries.length > 0) attachmentOrderRef.current = [...attachmentOrderRef.current, ...orderEntries];
-  };
+  /** 发送动作：转发到 ChatInput 内部 state；ChatInput 在 send 后自行清空 */
+  const handleSendFromInput = useCallback(
+    (
+      content: string,
+      pendingFiles: Array<{ name: string; data: string; mimeType?: string }>,
+      pendingImages: string[],
+      order: Array<'image' | 'file'>,
+    ) => onSend(content, pendingFiles, pendingImages, order),
+    [onSend],
+  );
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -979,52 +892,7 @@ export function ChatPanel({
     dragCounter.current = 0;
     setIsDragging(false);
     if (!canUpload || !e.dataTransfer.files.length) return;
-    await processDroppedFiles(e.dataTransfer.files);
-  };
-
-  const handlePaste = async (e: React.ClipboardEvent) => {
-    if (!canUploadImage) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const newImages: string[] = [];
-    for (const item of Array.from(items)) {
-      if (!item.type.startsWith('image/')) continue;
-      const file = item.getAsFile();
-      if (!file) continue;
-      const dataUrl = await fileToDataUrl(file);
-      newImages.push(dataUrl);
-    }
-    if (newImages.length > 0) {
-      setPendingImages(prev => [...prev, ...newImages]);
-      attachmentOrderRef.current = [...attachmentOrderRef.current, ...newImages.map(() => 'image' as const)];
-    }
-  };
-
-  const removeImage = (index: number) => {
-    setPendingImages(prev => prev.filter((_, i) => i !== index));
-    // 从 attachmentOrder 中移除第 (index+1) 个 'image'
-    const order = [...attachmentOrderRef.current];
-    let count = 0;
-    for (let i = 0; i < order.length; i++) {
-      if (order[i] === 'image') {
-        if (count === index) { order.splice(i, 1); break; }
-        count++;
-      }
-    }
-    attachmentOrderRef.current = order;
-  };
-
-  const removeFile = (index: number) => {
-    setPendingFiles(prev => prev.filter((_, i) => i !== index));
-    const order = [...attachmentOrderRef.current];
-    let count = 0;
-    for (let i = 0; i < order.length; i++) {
-      if (order[i] === 'file') {
-        if (count === index) { order.splice(i, 1); break; }
-        count++;
-      }
-    }
-    attachmentOrderRef.current = order;
+    await chatInputRef.current?.addFiles(e.dataTransfer.files);
   };
 
   /** 检查最后一条消息是否正在生成（用于放置停止按钮） */
@@ -1260,110 +1128,22 @@ export function ChatPanel({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 图片预览区域 */}
-      {pendingImages.length > 0 && (
-        <div className="pending-images">
-          {pendingImages.map((img, i) => {
-            // 计算该图片在 attachmentOrder 中的全局序号
-            const order = attachmentOrderRef.current;
-            let imgIdx = 0, globalPos = 0;
-            for (let k = 0; k < order.length; k++) {
-              if (order[k] === 'image') {
-                if (imgIdx === i) { globalPos = k + 1; break; }
-                imgIdx++;
-              }
-            }
-            return (
-              <div key={i} className="pending-image-item">
-                <img src={img} alt={`pending-${i}`} />
-                <button className="pending-image-remove" onClick={() => removeImage(i)}>×</button>
-                {globalPos > 0 && <span className="pending-order-badge">#{globalPos}</span>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 文件预览区域 */}
-      {pendingFiles.length > 0 && (
-        <div className="pending-files">
-          {pendingFiles.map((file, i) => {
-            const order = attachmentOrderRef.current;
-            let fileIdx = 0, globalPos = 0;
-            for (let k = 0; k < order.length; k++) {
-              if (order[k] === 'file') {
-                if (fileIdx === i) { globalPos = k + 1; break; }
-                fileIdx++;
-              }
-            }
-            return (
-              <div key={i} className="pending-file-item">
-                {globalPos > 0 && <span className="pending-file-order">#{globalPos}</span>}
-                <span className="pending-file-icon"><FileText size={14} /></span>
-                <span className="pending-file-name">{file.name}</span>
-                <button className="pending-file-remove" onClick={() => removeFile(i)}>×</button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {/* 任务计划栏 */}
       {todoItems && todoItems.length > 0 && onClearTodos && (
         <TodoBar items={todoItems} onClear={onClearTodos} loading={loading} />
       )}
 
-      <div className="input-area">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={acceptAttr}
-          multiple
-          style={{ display: 'none' }}
-          onChange={handleFileSelect}
-        />
-        {canUpload && (
-          <button
-            className="upload-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!connected}
-            title={canUploadImage && canUploadFile ? '上传图片或文件' : canUploadImage ? '上传图片' : '上传文件'}
-          >
-            <Paperclip size={18} />
-          </button>
-        )}
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={e => { setInput(e.target.value); autoResize(); }}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
-          disabled={!connected}
-          rows={1}
-        />
-        {(() => {
-          const hasContent = !!(input.trim() || pendingImages.length > 0 || pendingFiles.length > 0);
-          const showStop = loading && !hasContent;
-          return showStop ? (
-            <button
-              className="send-btn stop-mode"
-              onClick={onAbort}
-              title="停止生成"
-            >
-              <Square size={16} />
-            </button>
-          ) : (
-            <button
-              className="send-btn"
-              onClick={() => { void handleSendAction(); }}
-              disabled={!connected || !hasContent}
-            >
-              ↑
-            </button>
-          );
-        })()}
-      </div>
+      <ChatInput
+        ref={chatInputRef}
+        loading={loading}
+        connected={connected}
+        canUpload={canUpload}
+        canUploadImage={canUploadImage}
+        canUploadFile={canUploadFile}
+        acceptAttr={acceptAttr}
+        onSend={handleSendFromInput}
+        onAbort={onAbort}
+      />
     </div>
   );
 }
