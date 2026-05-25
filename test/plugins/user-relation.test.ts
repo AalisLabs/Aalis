@@ -266,6 +266,55 @@ describe('plugin-user-relation: person-person edges', () => {
       }),
     ).rejects.toThrow(/不存在/);
   });
+
+  it('familiar placeholder is auto-superseded by any identity relation (same dyad)', async () => {
+    // familiar 是行为观察占位标签；当同一对人之间出现 friend/cp/mentor 等身份关系时，
+    // 旧 familiar 边应被自动删除，避免视觉冗余。
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
+    const fam = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'familiar',
+    });
+    // 反方向也建一条 familiar，验证两个方向都会被废除
+    const famRev = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:b',
+      toPersonId: 'onebot:a',
+      relationType: 'familiar',
+    });
+    const friend = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'friend',
+    });
+    const snap = await service.loadAll();
+    const ids = snap.edges.map(e => e.id);
+    expect(ids).not.toContain(fam.id);
+    expect(ids).not.toContain(famRev.id);
+    expect(ids).toContain(friend.id);
+  });
+
+  it('does NOT remove familiar between OTHER dyads (only same pair is affected)', async () => {
+    // 防回归：familiar 占位废除应仅对**同一对人**生效，不能误伤其他对人的 familiar。
+    const { service } = await makeService();
+    await service.observePerson('onebot', 'a');
+    await service.observePerson('onebot', 'b');
+    await service.observePerson('onebot', 'c');
+    const famAC = await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:c',
+      relationType: 'familiar',
+    });
+    await service.addPersonPersonEdge({
+      fromPersonId: 'onebot:a',
+      toPersonId: 'onebot:b',
+      relationType: 'friend',
+    });
+    const snap = await service.loadAll();
+    expect(snap.edges.some(e => e.id === famAC.id)).toBe(true);
+  });
 });
 
 describe('plugin-user-relation: cascade delete', () => {

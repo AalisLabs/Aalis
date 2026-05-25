@@ -900,6 +900,22 @@ export class RelationService {
 
     const existing = await this.findPersonPersonEdge(input.fromPersonId, input.toPersonId, normalizedType, directed);
     const now = Date.now();
+    // ── familiar 占位自动废除 ──
+    // 'familiar' 是行为观察兜底标签（"两人常一起说话但不知道具体关系"）；
+    // 一旦同一对人之间出现任何**身份性**关系（friend/cp/mentor/colleague/rival/...），
+    // familiar 就不再有信息量。在新建或加强非 familiar 关系时顺手删除同对的 familiar 边，
+    // 避免视觉冗余。不动 is-alias-of / alt-account-of（别名声明正交于亲密度）。
+    if (normalizedType !== 'familiar' && normalizedType !== 'is-alias-of' && normalizedType !== 'alt-account-of') {
+      for (const e of snapshot.edges) {
+        if (e.kind !== 'person-person') continue;
+        if (e.relationType !== 'familiar') continue;
+        const sameDyad =
+          (e.fromPersonId === input.fromPersonId && e.toPersonId === input.toPersonId) ||
+          (e.fromPersonId === input.toPersonId && e.toPersonId === input.fromPersonId);
+        if (!sameDyad) continue;
+        await this.store.deleteEdge(e.id);
+      }
+    }
     if (existing) {
       if (isEvidenceFullyCovered(input.evidence ?? [], existing.evidence) && !input.description) return existing;
       const merged: PersonPersonEdge = {
