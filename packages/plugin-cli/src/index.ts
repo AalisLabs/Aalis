@@ -168,7 +168,9 @@ class CliTui {
     private sessionId: string,
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    this.logLines = LogHub.default.getBuffer().slice(-config.logLines);
+    // LogHub 不再缓存 buffer——CLI 启动时日志区域为空，之后通过 onEntry 实时累积。
+    // 需要查看更早的历史日志可使用 webui（文件分页 API）。
+    this.logLines = [];
   }
 
   isRunning(): boolean {

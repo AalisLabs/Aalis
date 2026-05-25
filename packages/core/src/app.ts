@@ -2,7 +2,7 @@ import { type AalisConfig, ConfigManager } from './config.js';
 import { Context } from './context.js';
 import { EventBus } from './events.js';
 import { HookRegistry } from './hooks.js';
-import { Logger, LogHub, type LogLevel } from './logger.js';
+import { Logger, type LogLevel } from './logger.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
 import type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 import { ServiceContainer } from './service.js';
@@ -115,12 +115,6 @@ export class App {
     this.events.markSticky('app:started');
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
-    // 应用 logBufferSize 配置到进程级日志中枢（需在创建 Logger 之前，
-    // 避免启动期日志被默认容量遮蔽。仅在配置中显式声明时生效）
-    const cfgBufSize = config.get('logBufferSize');
-    if (typeof cfgBufSize === 'number' && cfgBufSize > 0) {
-      LogHub.default.setBufferMax(cfgBufSize);
-    }
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel);
     this.pluginLoader = options.pluginLoader;
     this.restartStrategy = options.restartStrategy;

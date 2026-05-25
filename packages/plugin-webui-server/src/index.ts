@@ -3,10 +3,11 @@
 
 import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
+import type { AppService, ConfigSchema, Context, LogEntry, LogLevel, PluginManagerService } from '@aalis/core';
 import { LogHub } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
@@ -218,6 +219,56 @@ interface WSOutgoing {
   };
 }
 
+// ===== 日志文件读取（与 src/runtime/file-logger.ts 的格式对偶）=====
+// 文件格式：`seq|timestamp|level|scope|message\n`，message 内 `\n` 转义为 `\\n`。
+// 历史日志的单一数据源是 data/latest.log（每次启动覆盖）；webui 通过尾读 + cursor
+// 分页拿到任意范围。LogHub 不再缓存任何 buffer。
+
+const LOG_FILE_PATH = resolve(process.cwd(), 'data/latest.log');
+
+function parseLogLine(line: string): LogEntry | null {
+  const i1 = line.indexOf('|');
+  if (i1 < 0) return null;
+  const i2 = line.indexOf('|', i1 + 1);
+  if (i2 < 0) return null;
+  const i3 = line.indexOf('|', i2 + 1);
+  if (i3 < 0) return null;
+  const i4 = line.indexOf('|', i3 + 1);
+  if (i4 < 0) return null;
+  const seq = Number(line.slice(0, i1));
+  if (!Number.isFinite(seq)) return null;
+  return {
+    seq,
+    timestamp: line.slice(i1 + 1, i2),
+    level: line.slice(i2 + 1, i3) as LogLevel,
+    scope: line.slice(i3 + 1, i4),
+    message: line.slice(i4 + 1).replace(/\\n/g, '\n'),
+  };
+}
+
+async function readAllLogEntries(): Promise<LogEntry[]> {
+  if (!existsSync(LOG_FILE_PATH)) return [];
+  const raw = await readFile(LOG_FILE_PATH, 'utf8');
+  const out: LogEntry[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    const entry = parseLogLine(line);
+    if (entry) out.push(entry);
+  }
+  return out;
+}
+
+async function readLogFileTail(limit: number): Promise<LogEntry[]> {
+  const all = await readAllLogEntries();
+  return all.slice(-limit);
+}
+
+async function readLogFileBefore(beforeSeq: number, limit: number): Promise<LogEntry[]> {
+  const all = await readAllLogEntries();
+  const filtered = all.filter(e => e.seq < beforeSeq);
+  return filtered.slice(-limit);
+}
+
 // ===== 插件入口 =====
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
@@ -414,9 +465,40 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // ---------- 插件管理 + 全局配置 ----------
   registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr);
 
-  // 获取历史日志
-  expressApp.get('/api/logs', (_req, res) => {
-    res.json(LogHub.default.getBuffer());
+  // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
+  // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
+  expressApp.get('/api/logs', async (_req, res) => {
+    try {
+      const entries = await readLogFileTail(200);
+      res.json(entries);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // 尾部 N 条（首屏 / 显式刷新）
+  expressApp.get('/api/logs/tail', async (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
+    try {
+      res.json(await readLogFileTail(limit));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // 历史分页：返回 seq < before 的最近 limit 条（向上滚动加载更早）
+  expressApp.get('/api/logs/range', async (req, res) => {
+    const before = Number(req.query.before);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
+    if (!Number.isFinite(before)) {
+      res.status(400).json({ error: 'before query param required' });
+      return;
+    }
+    try {
+      res.json(await readLogFileBefore(before, limit));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // 获取服务列表（含提供者信息）

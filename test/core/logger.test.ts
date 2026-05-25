@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LOG_BUFFER_MAX, Logger, LogHub } from '../../packages/core/src/index.js';
+import { Logger, LogHub } from '../../packages/core/src/index.js';
 
 describe('LogHub', () => {
   it('Logger 写入 → LogHub.push → 触发 onEntry 监听器', () => {
@@ -34,40 +34,25 @@ describe('LogHub', () => {
     expect(seen).toEqual(['warn', 'error']);
   });
 
-  it('buffer 默认上限 DEFAULT_LOG_BUFFER_MAX 条，循环覆盖', () => {
+  it('每个 LogHub 实例独立分配 seq（从 0 起单调递增）', () => {
     const hub = new LogHub();
+    const seen: number[] = [];
+    hub.onEntry(e => seen.push(e.seq));
     const log = new Logger('t', 'debug', hub);
-    const cap = DEFAULT_LOG_BUFFER_MAX;
-    const overflow = 100;
-    for (let i = 0; i < cap + overflow; i++) log.info(`msg-${i}`);
-    const buf = hub.getBuffer();
-    expect(buf.length).toBe(cap);
-    expect(buf[0].message).toBe(`msg-${overflow}`);
-    expect(buf[cap - 1].message).toBe(`msg-${cap + overflow - 1}`);
+    log.info('a');
+    log.info('b');
+    log.info('c');
+    expect(seen).toEqual([0, 1, 2]);
   });
 
-  it('bufferMax 可构造指定 + setBufferMax 动态调整', () => {
-    const hub = new LogHub(10);
-    const log = new Logger('t', 'debug', hub);
-    for (let i = 0; i < 15; i++) log.info(`m-${i}`);
-    expect(hub.getBuffer().length).toBe(10);
-    expect(hub.getBuffer()[0].message).toBe('m-5');
-    // 缩小后立刻丢弃多余旧条目
-    hub.setBufferMax(3);
-    expect(hub.getBuffer().length).toBe(3);
-    expect(hub.getBuffer()[0].message).toBe('m-12');
-  });
-
-  it('getBuffer() 返回副本，外部修改不污染内部环形 buffer', () => {
+  it('allocSeq() 与 Logger.log 共用同一计数器', () => {
     const hub = new LogHub();
-    new Logger('t', 'debug', hub).info('a');
-    const snap = hub.getBuffer();
-    snap.length = 0;
-    snap.push({ timestamp: 'x', level: 'info', scope: 'fake', message: 'evil' });
-    // 内部 buffer 不受外部 splice/push 影响
-    const fresh = hub.getBuffer();
-    expect(fresh).toHaveLength(1);
-    expect(fresh[0].message).toBe('a');
+    expect(hub.allocSeq()).toBe(0);
+    const seen: number[] = [];
+    hub.onEntry(e => seen.push(e.seq));
+    new Logger('t', 'debug', hub).info('x');
+    expect(seen).toEqual([1]);
+    expect(hub.allocSeq()).toBe(2);
   });
 
   it('onEntry 返回 dispose 函数解除订阅', () => {

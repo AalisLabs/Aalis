@@ -3,8 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Logger } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  __resetBootstrapBufferForTests,
+  getBootstrapBuffer,
+  installBootstrapBuffer,
+} from '../../src/runtime/bootstrap-buffer.js';
 import { installConsoleSink } from '../../src/runtime/console-sink.js';
-import { appendCrashLog, setupFileLogger } from '../../src/runtime/file-logger.js';
+import { appendCrashLog, parseEntry, setupFileLogger } from '../../src/runtime/file-logger.js';
 
 /**
  * runtime/console-sink + file-logger 集成测试
@@ -44,14 +49,58 @@ describe('runtime console-sink', () => {
     expect(captured.some(line => line.includes('should-not-appear'))).toBe(false);
   });
 
-  it('启动前缓冲会被冲洗', () => {
-    new Logger('preboot').info('msg-before-sink');
-    const handle = installConsoleSink();
+  it('启动前缓冲会被冲洗（依赖 bootstrap-buffer）', () => {
+    installBootstrapBuffer();
     try {
-      expect(captured.some(line => line.includes('msg-before-sink'))).toBe(true);
+      new Logger('preboot').info('msg-before-sink');
+      const handle = installConsoleSink();
+      try {
+        expect(captured.some(line => line.includes('msg-before-sink'))).toBe(true);
+      } finally {
+        handle.dispose();
+      }
     } finally {
-      handle.dispose();
+      __resetBootstrapBufferForTests();
     }
+  });
+});
+
+describe('runtime bootstrap-buffer', () => {
+  afterEach(() => {
+    __resetBootstrapBufferForTests();
+  });
+
+  it('snapshot 多次可重复读取，互相独立副本', () => {
+    const handle = installBootstrapBuffer();
+    new Logger('boot').info('first');
+    const s1 = handle.snapshot();
+    new Logger('boot').info('second');
+    const s2 = handle.snapshot();
+    expect(s1.map(e => e.message)).toEqual(['first']);
+    expect(s2.map(e => e.message)).toEqual(['first', 'second']);
+    // s1 与 s2 是不同数组（副本语义）
+    expect(s1).not.toBe(s2);
+  });
+
+  it('dispose 后不再收集新条目', () => {
+    const handle = installBootstrapBuffer();
+    new Logger('boot').info('before-dispose');
+    handle.dispose();
+    new Logger('boot').info('after-dispose');
+    // dispose 后 snapshot 已清空
+    expect(handle.snapshot()).toEqual([]);
+  });
+
+  it('未安装时 getBootstrapBuffer 返回空 stub（不抛错）', () => {
+    const stub = getBootstrapBuffer();
+    expect(stub.snapshot()).toEqual([]);
+    expect(() => stub.dispose()).not.toThrow();
+  });
+
+  it('重复 install 返回同一实例（幂等）', () => {
+    const a = installBootstrapBuffer();
+    const b = installBootstrapBuffer();
+    expect(a).toBe(b);
   });
 });
 
@@ -110,5 +159,24 @@ describe('runtime file-logger', () => {
     const content = readFileSync(file, 'utf-8');
     expect(content).toContain('plain-string');
     expect(content).toContain('"code":42');
+  });
+
+  it('文件行格式包含递增 seq 前缀，可被 parseEntry 反解', async () => {
+    const handle = await setupFileLogger(logFile);
+    new Logger('flog').info('alpha');
+    new Logger('flog').warn('beta');
+    await handle.flush();
+    await new Promise(r => setImmediate(r));
+    await handle.flush();
+    const lines = readFileSync(logFile, 'utf-8').split('\n').filter(Boolean);
+    const entries = lines.map(parseEntry).filter((e): e is NonNullable<ReturnType<typeof parseEntry>> => e !== null);
+    expect(entries.length).toBeGreaterThanOrEqual(2);
+    const a = entries.find(e => e.message === 'alpha');
+    const b = entries.find(e => e.message === 'beta');
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(b!.seq).toBeGreaterThan(a!.seq);
+    expect(a!.level).toBe('info');
+    expect(b!.level).toBe('warn');
   });
 });
