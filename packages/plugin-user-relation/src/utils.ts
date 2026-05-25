@@ -8,6 +8,7 @@
  */
 import type {
   EntityEntityEdge,
+  EntityNode,
   EventEntityEdge,
   EventEventEdge,
   EvidenceRef,
@@ -693,4 +694,142 @@ export function computePageRank(
     if (delta < opts.epsilon) break;
   }
   return pr;
+}
+
+// ─── 别名簇并查集 + canonical 挑选（consolidate 宽召回 P1 范式） ───
+
+/**
+ * 把若干个"语义同一对象"的 pair 按并查集合并成簇。
+ *
+ * 输入：LLM 已判 yes 的 pair 列表（{aId, bId}）。
+ * 输出：`Map<rootId, Set<memberId>>`；同一 root 下所有 id 在同一簇。
+ *
+ * 自然解决传递闭包：A↔B yes & B↔C yes ⇒ {A,B,C} 一簇。
+ * size<2 的簇（孤立 id）也会出现（如果某 id 只出现在自身），调用方按需过滤。
+ *
+ * 实现：路径压缩 + 按 rank 启发式合并，O(α(n)) 近似常数。
+ */
+export function clusterEntitiesByPairs(
+  yesPairs: ReadonlyArray<{ aId: string; bId: string }>,
+): Map<string, Set<string>> {
+  const parent = new Map<string, string>();
+  const rank = new Map<string, number>();
+  const find = (x: string): string => {
+    let cur = x;
+    while ((parent.get(cur) ?? cur) !== cur) cur = parent.get(cur)!;
+    // 路径压缩
+    let p = x;
+    while ((parent.get(p) ?? p) !== cur) {
+      const next = parent.get(p) ?? p;
+      parent.set(p, cur);
+      p = next;
+    }
+    return cur;
+  };
+  const union = (x: string, y: string) => {
+    const rx = find(x);
+    const ry = find(y);
+    if (rx === ry) return;
+    const ra = rank.get(rx) ?? 0;
+    const rb = rank.get(ry) ?? 0;
+    if (ra < rb) parent.set(rx, ry);
+    else if (ra > rb) parent.set(ry, rx);
+    else {
+      parent.set(ry, rx);
+      rank.set(rx, ra + 1);
+    }
+  };
+  for (const p of yesPairs) {
+    if (!parent.has(p.aId)) parent.set(p.aId, p.aId);
+    if (!parent.has(p.bId)) parent.set(p.bId, p.bId);
+    union(p.aId, p.bId);
+  }
+  const clusters = new Map<string, Set<string>>();
+  for (const id of parent.keys()) {
+    const r = find(id);
+    if (!clusters.has(r)) clusters.set(r, new Set());
+    clusters.get(r)!.add(id);
+  }
+  return clusters;
+}
+
+/**
+ * 在一个簇内挑选 canonical（合并后保留的代表）。
+ *
+ * 打分公式（"合并专用"，**不复用 compositeScore**，因为后者含 recency 偏向新节点）：
+ *   `mergeScore = 0.5·weightSum + 0.3·edgeCount + 0.2·evidenceCount`，
+ *   三项各自按"簇内 max"归一化到 [0,1]。
+ *
+ * 语义：信息越丰富（关系密、权值高、evidence 多）越当代表。
+ * 平局规则：分数并列时取 id 字典序最小者（稳定可复现）。
+ *
+ * @param members 簇内成员 id 集合
+ * @param entityById 实体 id → EntityNode 映射（用于查 evidence 数量）
+ * @param edgeStats 实体 id → {weightSum, edgeCount}（由调用方一次扫边表得到）
+ * @returns canonical 的 id；簇为空时返回 ''（调用方应过滤 size<2 簇，不应触发）
+ */
+export function pickCanonicalByMergeScore(
+  members: ReadonlySet<string>,
+  entityById: ReadonlyMap<string, EntityNode>,
+  edgeStats: ReadonlyMap<string, { weightSum: number; edgeCount: number }>,
+): string {
+  if (members.size === 0) return '';
+  // 簇内 max 归一化基准
+  let maxW = 0;
+  let maxE = 0;
+  let maxEv = 0;
+  for (const id of members) {
+    const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
+    const node = entityById.get(id);
+    const evCount = node?.evidence?.length ?? 0;
+    if (stat.weightSum > maxW) maxW = stat.weightSum;
+    if (stat.edgeCount > maxE) maxE = stat.edgeCount;
+    if (evCount > maxEv) maxEv = evCount;
+  }
+  let canonicalId = '';
+  let bestScore = -Infinity;
+  for (const id of members) {
+    const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
+    const node = entityById.get(id);
+    const evCount = node?.evidence?.length ?? 0;
+    const wN = maxW > 0 ? stat.weightSum / maxW : 0;
+    const eN = maxE > 0 ? stat.edgeCount / maxE : 0;
+    const vN = maxEv > 0 ? evCount / maxEv : 0;
+    const score = wN * 0.5 + eN * 0.3 + vN * 0.2;
+    if (score > bestScore || (score === bestScore && (canonicalId === '' || id < canonicalId))) {
+      bestScore = score;
+      canonicalId = id;
+    }
+  }
+  return canonicalId;
+}
+
+/**
+ * 一次扫边表，为每个 entity 节点聚合 weightSum + edgeCount，供 pickCanonicalByMergeScore 使用。
+ *
+ * 统计范围：所有涉及 entity 的边（entity-entity 两端均计入；person-entity / event-entity 的 entity 端计入）。
+ * Person/event 节点不需要聚合（不会作为合并 canonical 候选）。
+ */
+export function computeEntityEdgeStats(
+  edges: ReadonlyArray<RelationEdge>,
+): Map<string, { weightSum: number; edgeCount: number }> {
+  const stats = new Map<string, { weightSum: number; edgeCount: number }>();
+  const bump = (id: string, w: number) => {
+    const cur = stats.get(id) ?? { weightSum: 0, edgeCount: 0 };
+    cur.weightSum += w;
+    cur.edgeCount += 1;
+    stats.set(id, cur);
+  };
+  for (const e of edges) {
+    const w = typeof e.weight === 'number' ? e.weight : 0;
+    if (e.kind === 'entity-entity') {
+      bump(e.fromEntityId, w);
+      bump(e.toEntityId, w);
+    } else if (e.kind === 'person-entity') {
+      bump(e.toEntityId, w);
+    } else if (e.kind === 'event-entity') {
+      bump(e.toEntityId, w);
+    }
+  }
+  return stats;
 }
