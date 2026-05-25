@@ -240,6 +240,11 @@ export class RelationService {
 
   /**
    * 强化已有事件：追加 evidence、更新 lastReinforcedAt，可选更新 summary/title/category。
+   *
+   * 跨 sessionScope 软护栏：如果新 evidence 全部来自与 existing.sessionScope 不同的会话，
+   * 且 existing 既不是 'global' 也不是未限定 scope，则记录审计但**继续执行**（warn 不阻断）。
+   * 与 addEventEventEdge 的 is-alias-of 跨 scope 硬阻断对应——reinforce 走 warn，
+   * 因为它在不少正常路径（如 entity 共现、is-alias-of 后回写）也会自然跨 scope 触发。
    */
   async reinforceEvent(
     eventId: string,
@@ -247,6 +252,19 @@ export class RelationService {
   ): Promise<EventNode | undefined> {
     const existing = await this.store.getEvent(eventId);
     if (!existing) return undefined;
+
+    const existingScope = existing.sessionScope;
+    const isScopedEvent = existingScope && existingScope !== 'global';
+    if (isScopedEvent && patch.evidence && patch.evidence.length > 0) {
+      const newSessionIds = new Set(patch.evidence.map(e => e.sessionId).filter((s): s is string => Boolean(s)));
+      const allCross = newSessionIds.size > 0 && !newSessionIds.has(existingScope);
+      if (allCross) {
+        this._audit(
+          `[user-relation] reinforceEvent 跨 sessionScope 警告：event=${eventId} scope="${existingScope}" 收到来自 [${[...newSessionIds].join(',')}] 的 evidence，已继续合并；如非预期请核查 LLM 抽取或 alias 合并路径`,
+        );
+      }
+    }
+
     const merged: EventNode = {
       ...existing,
       title: patch.title ?? existing.title,
