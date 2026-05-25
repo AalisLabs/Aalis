@@ -470,7 +470,29 @@ export class RelationService {
     description?: string;
     evidence?: EvidenceRef[];
   }): Promise<EventEventEdge> {
-    const normalizedType = input.relationType.trim().toLowerCase().replace(/\s+/g, '-');
+    let normalizedType = input.relationType.trim().toLowerCase().replace(/\s+/g, '-');
+    // 跨 sessionScope 的 event 严禁通过 is-alias-of 合并：例如「群A 聊三角洲」与「群B 聊三角洲」
+    // 标题撞车不代表是同一件事。允许 global hub 与任意 scope 别名挂接（global 表示已显式跨会话）。
+    // 触发条件：两端 scope 都已知 / 都非 global / 且不相等 → 降级为 'related'（弱关联仍保留）+ 审计。
+    if (normalizedType === 'is-alias-of') {
+      const fromEv = await this.store.getEvent(input.fromEventId);
+      const toEv = await this.store.getEvent(input.toEventId);
+      const fromScope = fromEv?.sessionScope;
+      const toScope = toEv?.sessionScope;
+      const isCrossScope =
+        fromScope !== undefined &&
+        toScope !== undefined &&
+        fromScope !== 'global' &&
+        toScope !== 'global' &&
+        fromScope !== toScope;
+      if (isCrossScope) {
+        this._audit(
+          `[user-relation] 拒绝跨 sessionScope 的 event is-alias-of 合并：` +
+            `${input.fromEventId}(scope=${fromScope}) ↔ ${input.toEventId}(scope=${toScope})，已降级为 'related'`,
+        );
+        normalizedType = 'related';
+      }
+    }
     const directed = input.directed ?? isDirectedEventEventRelation(normalizedType);
     const existing = await this.findEventEventEdge(input.fromEventId, input.toEventId, normalizedType, directed);
     const now = Date.now();
