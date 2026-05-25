@@ -74,6 +74,24 @@ export const configSchema: ConfigSchema = {
     description: '仅 mode=all-new 时生效；硬上限以防 context 溢出',
     default: 200,
   },
+  readScope: {
+    type: 'select',
+    label: '提取读取范围',
+    description:
+      '决定每次提取从哪些会话拉取消息送给 LLM：\n- same-session（默认）：只读当前 sessionId（同群/同私聊），证据 100% 在原 session 内；\n- same-platform：把同 platform 下所有会话最近消息合并送 LLM，每行带 [sid:xxx] 前缀，evidence 按真实来源记录；适合识别跨群共享话题；\n- cross-platform：跨所有平台聚合（同上），适合识别跨平台同一用户/同一事件。\n跨会话模式仅在 memory 后端实现 getRecentMessagesAcrossSessions 时生效，否则自动降级到 same-session。',
+    options: [
+      { value: 'same-session', label: '仅当前会话（默认）' },
+      { value: 'same-platform', label: '同平台跨会话' },
+      { value: 'cross-platform', label: '全平台跨会话' },
+    ],
+    default: 'same-session',
+  },
+  crossSessionMaxAgeMinutes: {
+    type: 'number',
+    label: '跨会话拉取最大时间窗口（分钟）',
+    description: '仅 readScope!=same-session 时生效；只取最近 N 分钟内的消息。0=不限',
+    default: 60,
+  },
   candidateEventDays: {
     type: 'number',
     label: '候选事件回溯天数',
@@ -451,6 +469,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       readWindowSize: numCfg(config.readWindowSize, 30),
       mode: config.mode === 'all-new' ? 'all-new' : 'incremental',
       allNewMaxMessages: numCfg(config.allNewMaxMessages, 200),
+      readScope:
+        config.readScope === 'cross-platform'
+          ? 'cross-platform'
+          : config.readScope === 'same-platform'
+            ? 'same-platform'
+            : 'same-session',
+      crossSessionMaxAgeMinutes: numCfg(config.crossSessionMaxAgeMinutes, 60),
       candidateEventDays: numCfg(config.candidateEventDays, 7),
       candidateEventLimit: numCfg(config.candidateEventLimit, 20),
       senderNeighborhoodEdgeLimit: numCfg(config.senderNeighborhoodEdgeLimit, 8),
