@@ -248,6 +248,127 @@ describe('user-relation: computeNodeScore', () => {
   });
 });
 
+describe('user-relation: computeDirectionalDegree', () => {
+  it('不存在节点返回 null', async () => {
+    const { service } = await makeService();
+    expect(await service.computeDirectionalDegree('nope:nope')).toBeNull();
+  });
+
+  it('admirer 入度多 → fan-idol verdict = idol-leaning, dominance=incoming', async () => {
+    const { service } = await makeService();
+    const idol = await service.observePerson('pf', 'star');
+    const fan1 = await service.observePerson('pf', 'f1');
+    const fan2 = await service.observePerson('pf', 'f2');
+    const fan3 = await service.observePerson('pf', 'f3');
+    for (const f of [fan1, fan2, fan3]) {
+      await service.addPersonPersonEdge({
+        fromPersonId: f.id,
+        toPersonId: idol.id,
+        relationType: 'admirer',
+        evidence: [ev()],
+      });
+    }
+    const r = await service.computeDirectionalDegree(idol.id);
+    expect(r).not.toBeNull();
+    expect(r?.kind).toBe('person');
+    expect(r?.inTotal).toBe(3);
+    expect(r?.outTotal).toBe(0);
+    expect(r?.inByType.admirer?.count).toBe(3);
+    expect(r?.dominance).toBe('incoming');
+    expect(r?.fanIdolHint.fansCount).toBe(3);
+    expect(r?.fanIdolHint.idolsCount).toBe(0);
+    expect(r?.fanIdolHint.verdict).toBe('idol-leaning');
+  });
+
+  it('admirer 出度多 → verdict = fan-leaning, dominance=outgoing', async () => {
+    const { service } = await makeService();
+    const fan = await service.observePerson('pf', 'fan');
+    const idolA = await service.observePerson('pf', 'idolA');
+    const idolB = await service.observePerson('pf', 'idolB');
+    const idolC = await service.observePerson('pf', 'idolC');
+    for (const i of [idolA, idolB, idolC]) {
+      await service.addPersonPersonEdge({
+        fromPersonId: fan.id,
+        toPersonId: i.id,
+        relationType: 'admirer',
+        evidence: [ev()],
+      });
+    }
+    const r = await service.computeDirectionalDegree(fan.id);
+    expect(r?.outTotal).toBe(3);
+    expect(r?.inTotal).toBe(0);
+    expect(r?.dominance).toBe('outgoing');
+    expect(r?.fanIdolHint.idolsCount).toBe(3);
+    expect(r?.fanIdolHint.verdict).toBe('fan-leaning');
+  });
+
+  it('对称无向边（friend directed=false）不计入 in/out 剖面', async () => {
+    const { service } = await makeService();
+    const a = await service.observePerson('pf', 'a');
+    const b = await service.observePerson('pf', 'b');
+    await service.addPersonPersonEdge({
+      fromPersonId: a.id,
+      toPersonId: b.id,
+      relationType: 'friend',
+      directed: false,
+      evidence: [ev()],
+    });
+    const r = await service.computeDirectionalDegree(a.id);
+    expect(r?.outTotal).toBe(0);
+    expect(r?.inTotal).toBe(0);
+    expect(r?.dominance).toBe('balanced');
+    expect(r?.fanIdolHint.verdict).toBe('none');
+  });
+
+  it('桥型边（person-event）不计入有向剖面', async () => {
+    const { service } = await makeService();
+    const p = await service.observePerson('pf', 'p');
+    const e1 = await service.createEvent({ title: '事件1', evidence: [ev()] });
+    await service.addPersonEventEdge({
+      fromPersonId: p.id,
+      toEventId: e1.id,
+      role: 'initiator',
+      evidence: [ev()],
+    });
+    const r = await service.computeDirectionalDegree(p.id);
+    expect(r?.outTotal).toBe(0);
+    expect(r?.inTotal).toBe(0);
+  });
+
+  it('event 节点：caused-by 入度反映 sink 性质', async () => {
+    const { service } = await makeService();
+    const cause = await service.createEvent({ title: '起因事件', evidence: [ev()] });
+    const sink = await service.createEvent({ title: '结果事件', evidence: [ev()] });
+    await service.addEventEventEdge({
+      fromEventId: cause.id,
+      toEventId: sink.id,
+      relationType: 'caused-by',
+      evidence: [ev()],
+    });
+    const r = await service.computeDirectionalDegree(sink.id);
+    expect(r?.kind).toBe('event');
+    expect(r?.inByType['caused-by']?.count).toBe(1);
+    expect(r?.inByType['caused-by']?.top[0]?.otherId).toBe(cause.id);
+  });
+
+  it('top_per_type 控制返回 top-K', async () => {
+    const { service } = await makeService();
+    const idol = await service.observePerson('pf', 'i');
+    for (let i = 0; i < 5; i++) {
+      const f = await service.observePerson('pf', `fan${i}`);
+      await service.addPersonPersonEdge({
+        fromPersonId: f.id,
+        toPersonId: idol.id,
+        relationType: 'admirer',
+        evidence: [ev()],
+      });
+    }
+    const r = await service.computeDirectionalDegree(idol.id, { topPerType: 2 });
+    expect(r?.inByType.admirer?.count).toBe(5);
+    expect(r?.inByType.admirer?.top.length).toBe(2);
+  });
+});
+
 describe('user-relation: 首次建边默认权按 role/relationType 区分', () => {
   it('person-entity: enthusiast 起始 0.55，mentioned 起始 0.1', async () => {
     const { service } = await makeService();
