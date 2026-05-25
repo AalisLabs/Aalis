@@ -446,3 +446,47 @@ describe('user-relation: 首次建边默认权按 role/relationType 区分', () 
     expect(e1.weight).toBeCloseTo(0.9, 5);
   });
 });
+
+describe('user-relation: findNodeById（节点存在性统一查找，给工具层做 friendly error 用）', () => {
+  it('person 全格式 `<platform>:<userId>` 命中', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', '12345', '阿巴');
+    const r = await service.findNodeById('onebot:12345');
+    expect(r).toEqual({ kind: 'person', name: '阿巴' });
+  });
+
+  it('裸 userId 不命中（LLM 常犯：忘加 platform 前缀）', async () => {
+    const { service } = await makeService();
+    await service.observePerson('onebot', '12345', '阿巴');
+    expect(await service.findNodeById('12345')).toBeNull();
+  });
+
+  it('event UUID 命中', async () => {
+    const { service } = await makeService();
+    const e = await service.createEvent({ title: '会议', evidence: [ev()] });
+    const r = await service.findNodeById(e.id);
+    expect(r).toEqual({ kind: 'event', name: '会议' });
+  });
+
+  it('entity UUID 命中', async () => {
+    const { service } = await makeService();
+    const ent = await service.createEntity({ name: '咖啡', entityKind: 'thing', evidence: [ev()] });
+    const r = await service.findNodeById(ent.id);
+    expect(r).toEqual({ kind: 'entity', name: '咖啡' });
+  });
+
+  it('未知 UUID 返回 null', async () => {
+    const { service } = await makeService();
+    expect(await service.findNodeById('00000000-0000-0000-0000-000000000000')).toBeNull();
+  });
+
+  it('未知 platform:userId 返回 null', async () => {
+    const { service } = await makeService();
+    expect(await service.findNodeById('onebot:nope')).toBeNull();
+  });
+
+  it('空串返回 null', async () => {
+    const { service } = await makeService();
+    expect(await service.findNodeById('')).toBeNull();
+  });
+});

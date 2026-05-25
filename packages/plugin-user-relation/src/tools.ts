@@ -69,6 +69,22 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     description: [
       '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。只读，纠错走 /relation cleanup。',
       '',
+      '🔑 节点 ID 格式（**所有 node_id / from_node_id / to_node_id 参数都按此约定**）：',
+      '- person 节点 ID：必须是 `<platform>:<userId>` 完整格式，例如 `onebot:10001`，**不能只填裸 userId**。',
+      '- event / entity 节点 ID：UUID 字符串（不含冒号）。',
+      '- 只知道名字 / 不确定 ID 时，**先调 user_relation_resolve_node** 把关键词解析成 ID 再传给其它工具。',
+      '- 工具收到不存在的 ID 会返回 `{ "error": "节点 "xxx" 不存在", "hint": ... }`；看到这种返回**就是 ID 错了**，不是系统问题，请改用 resolve_node / search_persons 重新拿 ID，不要继续猜参数。',
+      '',
+      '🧭 常见任务 → 推荐工具（避免选错）：',
+      '- "查 A 与 B 关系紧密 / 是否认识" → 先 `user_relation_resolve_node`（拿到完整 ID）→ `user_relation_score`（**两节点之间** Katz+AA 联系分）',
+      '- "A 在群里有多重要 / 谁是核心" → `user_relation_node_score`（**单节点**份量/tier/排名；与 score 不同，不要传两个 ID）',
+      '- "A 主动关心谁 / 谁在追 A" → `user_relation_directional_degree`（**单节点**入出度剖面 + fan/idol 提示）',
+      '- "A 和 B 有什么共同点（朋友/兴趣/事件）" → `user_relation_shared`',
+      '- "A 经历过什么 / 最近发生啥" → `user_relation_timeline`（限定 session_scope）',
+      '- "群里最近的瓜" → `user_relation_gossip`',
+      '- "A 的关系网长什么样" → `user_relation_expand_node`（BFS 子图，注意 max_depth/max_breadth）',
+      '- "给 A 推荐想认识的人" → `user_relation_recommend_persons`（一次出 top-K，**不要**手撕循环调 score）',
+      '',
       '⚠️ 方向语义（写边时必须遵守，本组工具与写边工具共用此约定）：',
       '- person-person 边一律是「主动声明」：必须从主动方写到被动方。',
       '  · admirer/follower/student：粉丝→偶像、关注者→被关注者、学生→老师；禁止反向声明。',
@@ -181,7 +197,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     groups: [groupName],
     handler: async args => {
       const nodeId = String(args.node_id ?? '').trim();
-      if (!nodeId) return JSON.stringify({ error: 'node_id 不能为空' });
+      const err = await validateNodeId(service, nodeId, 'node_id');
+      if (err) return err;
       const depth = clampNum(args.max_depth, cfg.defaultMaxDepth, 0, cfg.hardMaxDepth);
       const breadth = clampNum(args.max_breadth, cfg.defaultMaxBreadth, 1, cfg.hardMaxBreadth);
       const scope =
@@ -202,12 +219,19 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       function: {
         name: 'user_relation_find_path',
         description:
-          '在任意两个节点之间寻找最短关系链（可经过事件 / 实体作为桥）。两端节点可以是人 / 事件 / 实体的任意组合。找不到返回 found=false。',
+          '在任意两个节点之间寻找最短关系链（可经过事件 / 实体作为桥）。两端节点可以是人 / 事件 / 实体的任意组合。找不到返回 found=false。🔑 person 节点 ID 必须是 `<platform>:<userId>`；不确定先用 user_relation_resolve_node。',
         parameters: {
           type: 'object',
           properties: {
-            from_node_id: { type: 'string', description: '起点节点 ID' },
-            to_node_id: { type: 'string', description: '终点节点 ID' },
+            from_node_id: {
+              type: 'string',
+              description:
+                '起点节点 ID。person 形如 `<platform>:<userId>`（如 `onebot:10001`），event/entity 是 UUID。',
+            },
+            to_node_id: {
+              type: 'string',
+              description: '终点节点 ID。格式同 from_node_id。',
+            },
             max_depth: {
               type: 'number',
               description: `最大边数（路径长度上限）。默认 ${cfg.findPathDefaultMaxDepth}，硬上限 ${cfg.findPathHardMaxDepth}`,
@@ -223,6 +247,10 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       const from = String(args.from_node_id ?? '').trim();
       const to = String(args.to_node_id ?? '').trim();
       if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
+      const fromErr = await validateNodeId(service, from, 'from_node_id');
+      if (fromErr) return fromErr;
+      const toErr = await validateNodeId(service, to, 'to_node_id');
+      if (toErr) return toErr;
       const depth = clampNum(args.max_depth, cfg.findPathDefaultMaxDepth, 1, cfg.findPathHardMaxDepth);
       const path = await service.findPath(from, to, depth);
       if (!path) return JSON.stringify({ found: false });
@@ -246,7 +274,11 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       function: {
         name: 'user_relation_score',
         description: [
-          '计算两节点间的联系分数（0~1，tanh 归一化），方向感知。融合 4 类信号：',
+          '**两节点之间**的联系紧密度（0~1，tanh 归一化）。**不是**单节点份量——后者请用 `user_relation_node_score`。',
+          '',
+          '🔑 调用前提：两端 ID 都要存在。person 节点 ID 必须是 `<platform>:<userId>`（如 `onebot:10001`），裸 userId 会被判为节点不存在并报错。如果只知道名字，先调 `user_relation_resolve_node`。',
+          '',
+          '算法融合 4 类信号：',
           '1) Katz 限深简单路径累加：贡献 = β^长度 × ∏(边权 × kindMultiplier)；',
           '2) 边类型权重 kindMultiplier：person-person=1.0, person-event=0.8, person-entity=0.5, event-event/event-entity=0.4, entity-entity=0.3（数值待数据反馈调整）；',
           '3) 直接连接 boost：长度=1 路径额外 ×1.5；',
@@ -260,13 +292,20 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           '- mode="directed"（「关注/影响传播度」）：只跑 from_node_id→to_node_id 一次。适用于"A 主动关心了谁 / A 的影响能波及谁"。',
           '  例：A admirer B（A 是粉丝，B 是偶像），mode=directed 时 score(A,B)>0 但 score(B,A)=0（B 不一定认识 A）；mode=symmetric 时两者相等且 > 0。',
           '',
-          '返回 top_paths（含 direction 字段）+ common_neighbors 作为可解释证据。',
+          '返回 top_paths（含 direction 字段）+ common_neighbors 作为可解释证据。如果返回 `score=0` 且 `shortest_length=null`，先检查两端 ID 是否拼错（最常见原因），别误判为系统问题。',
         ].join('\n'),
         parameters: {
           type: 'object',
           properties: {
-            from_node_id: { type: 'string', description: '起点节点 ID' },
-            to_node_id: { type: 'string', description: '终点节点 ID' },
+            from_node_id: {
+              type: 'string',
+              description:
+                '起点节点 ID。person 必须是 `<platform>:<userId>` 完整格式（如 `onebot:10001`），event/entity 是 UUID。不确定先用 user_relation_resolve_node。',
+            },
+            to_node_id: {
+              type: 'string',
+              description: '终点节点 ID。格式同 from_node_id。',
+            },
             mode: {
               type: 'string',
               enum: ['symmetric', 'directed'],
@@ -292,6 +331,10 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       const from = String(args.from_node_id ?? '').trim();
       const to = String(args.to_node_id ?? '').trim();
       if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
+      const fromErr = await validateNodeId(service, from, 'from_node_id');
+      if (fromErr) return fromErr;
+      const toErr = await validateNodeId(service, to, 'to_node_id');
+      if (toErr) return toErr;
       const maxDepth = clampNum(args.max_depth, 4, 1, 6);
       const topPaths = clampNum(args.top_paths, 3, 1, 20);
       const rawMode = String(args.mode ?? 'symmetric').trim();
@@ -522,7 +565,11 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
         parameters: {
           type: 'object',
           properties: {
-            node_id: { type: 'string', description: '节点 ID' },
+            node_id: {
+              type: 'string',
+              description:
+                '节点 ID。person 形如 `<platform>:<userId>`，event/entity 是 UUID。不确定先用 user_relation_resolve_node。',
+            },
             days: { type: 'number', description: '仅返回最近 N 天内强化过的；0 / 不传 = 不限' },
             limit: {
               type: 'number',
@@ -541,7 +588,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     groups: [groupName],
     handler: async args => {
       const nodeId = String(args.node_id ?? '').trim();
-      if (!nodeId) return JSON.stringify({ error: 'node_id 不能为空' });
+      const err = await validateNodeId(service, nodeId, 'node_id');
+      if (err) return err;
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
       const limit = clampNum(args.limit, cfg.searchEventsDefaultLimit * 2, 1, cfg.searchEventsHardMaxLimit * 2);
       const scope =
@@ -1138,7 +1186,10 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       function: {
         name: 'user_relation_node_score',
         description: [
-          '计算任意节点（person / event / entity）的综合活跃度评分 + 同 kind / 全图排名 + 分级（tier）。',
+          '**单节点**的综合活跃度评分 + 同 kind / 全图排名 + 分级（tier）。**不是**两节点关系紧密度——后者用 `user_relation_score`。',
+          '',
+          '🔑 person 节点 ID 必须是 `<platform>:<userId>`（如 `onebot:10001`），裸 userId 会返回“节点不存在”错误。不确定先调 `user_relation_resolve_node`。',
+          '',
           '返回字段及取值范围请参见本组顶部「📊 分数语义」段落。优先看 **tier**（core/active/normal/edge）+ **percentileInKind**（0..1，越大越中心）+ **rankInKind**（"2/14"），它们已经把绝对分与图内相对位置都考虑了，比裸 compositeScore 更直观。',
           '注意 **pagerankFresh** 字段：false 表示节点从未参与过 PageRank 计算，此时 pagerank=0 不代表"边缘"，请用 tier/percentile 判断。',
           '使用场景：判断"是否应该深挖这个节点"、"这个节点是否值得清理"、"用户提到的人在图里有多大份量"。',
@@ -1146,7 +1197,11 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
         parameters: {
           type: 'object',
           properties: {
-            node_id: { type: 'string', description: '节点 ID（person id 含冒号；event/entity 为 UUID）' },
+            node_id: {
+              type: 'string',
+              description:
+                '节点 ID。person 形如 `<platform>:<userId>`（如 `onebot:10001`）；event/entity 为 UUID。不确定先用 user_relation_resolve_node。',
+            },
           },
           required: ['node_id'],
           additionalProperties: false,
@@ -1156,7 +1211,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     groups: [groupName],
     handler: async args => {
       const id = String(args.node_id ?? '').trim();
-      if (!id) return JSON.stringify({ error: 'node_id 不能为空' });
+      const err = await validateNodeId(service, id, 'node_id');
+      if (err) return err;
       try {
         const score = await service.computeNodeScore(id);
         if (!score) return JSON.stringify({ error: `节点 ${id} 不存在` });
@@ -1187,7 +1243,11 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
         parameters: {
           type: 'object',
           properties: {
-            node_id: { type: 'string', description: '节点 ID（person 形如 platform:userId；event/entity 是 UUID）' },
+            node_id: {
+              type: 'string',
+              description:
+                '节点 ID。person 形如 `<platform>:<userId>`（如 `onebot:10001`）；event/entity 是 UUID。不确定先用 user_relation_resolve_node。',
+            },
             top_per_type: {
               type: 'number',
               description: '每个 relationType 下返回的 top-K 对端节点（按 weight 降序）。默认 5，范围 1~20',
@@ -1201,7 +1261,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     groups: [groupName],
     handler: async args => {
       const id = String(args.node_id ?? '').trim();
-      if (!id) return JSON.stringify({ error: 'node_id 不能为空' });
+      const err = await validateNodeId(service, id, 'node_id');
+      if (err) return err;
       const topPerType = clampNum(args.top_per_type, 5, 1, 20);
       try {
         const r = await service.computeDirectionalDegree(id, { topPerType });
@@ -1225,6 +1286,22 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 function clampNum(raw: unknown, fallback: number, min: number, max: number): number {
   const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
   return Math.max(min, Math.min(max, Math.round(v)));
+}
+
+/**
+ * 校验节点 ID 是否存在；不存在则返回 friendly JSON 错误串，存在则返回 null。
+ * 主要解决 LLM 把 person 裸 userId（如 "123456"）当成完整 node_id 用导致后续接口
+ * 沉默返回空结果的问题——把"节点不存在"显式抛回去，并提示先调 resolve_node。
+ */
+async function validateNodeId(service: RelationService, id: string, paramName = 'node_id'): Promise<string | null> {
+  if (!id) return JSON.stringify({ error: `${paramName} 不能为空` });
+  const hit = await service.findNodeById(id);
+  if (hit) return null;
+  const hasColon = id.includes(':');
+  const hint = hasColon
+    ? '该 ID 在图中不存在。检查拼写；person 节点请用 user_relation_resolve_node 或 user_relation_search_persons 按名字/userId 查到正确 ID 再调用。'
+    : '该 ID 在图中不存在。person 节点 ID 必须是 `<platform>:<userId>` 完整格式（如 `onebot:123456`），不能只填 userId。若不确定 platform 或想由名字反查，先调 user_relation_resolve_node。';
+  return JSON.stringify({ error: `节点 "${id}" 不存在`, hint });
 }
 
 /** 事件 sessionScope 与调用者传入 scope 是否匹配。`scope` 未传 = 不过滤；event 无 sessionScope 视为 'global'。 */
