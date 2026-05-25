@@ -33,6 +33,10 @@ export function registerRelationCommands(
     };
     /** consolidate 是否默认开 autoLink（/relation maintain 需要） */
     consolidateAutoLink?: boolean;
+    /** F3：宽召回低权 pair 跳过 LLM 核验 */
+    consolidateSkipLowScorePairs?: boolean;
+    /** F3：低权阈值（默认 0.2，0 = 不跳过） */
+    consolidateLowScoreThreshold?: number;
   },
 ): void {
   const cmds = useCommandService(ctx);
@@ -267,6 +271,12 @@ export function registerRelationCommands(
         autoLink,
         triggerSource: 'manual',
         ctx,
+        ...(options?.consolidateSkipLowScorePairs !== undefined
+          ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
+          : {}),
+        ...(options?.consolidateLowScoreThreshold !== undefined
+          ? { lowScoreThreshold: options.consolidateLowScoreThreshold }
+          : {}),
         ...(useLlm && options?.consolidateLLM
           ? {
               llm: {
@@ -403,6 +413,12 @@ export function registerRelationCommands(
         autoLink,
         triggerSource: 'manual',
         ctx,
+        ...(options?.consolidateSkipLowScorePairs !== undefined
+          ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
+          : {}),
+        ...(options?.consolidateLowScoreThreshold !== undefined
+          ? { lowScoreThreshold: options.consolidateLowScoreThreshold }
+          : {}),
         ...(useLlm && options?.consolidateLLM
           ? {
               llm: {
