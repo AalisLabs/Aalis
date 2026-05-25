@@ -3516,6 +3516,194 @@ export class RelationService {
       compositeScore: Number(compositeScore.toFixed(4)),
     };
   }
+
+  /**
+   * 计算节点的「有向出/入度剖面」，用于刻画粉丝/偶像、师徒上下游、因果 source/sink、part-of 上下游等
+   * 单向语义信号。
+   *
+   * 仅统计 **有向的主体边**（person-person / event-event / entity-entity 且 directed=true）。
+   * 桥型边（person-event / person-entity / event-entity）按设计天然双向，是"参与"不是"指代"，
+   * 不计入此剖面。
+   *
+   * 返回的 `outByType` 含义：节点作为 from 端发出的边（"我主动指向谁"），按 relationType 分桶；
+   * `inByType`：节点作为 to 端接收的边（"谁指向我"）。每个桶含 count / totalWeight / top-K 对端节点。
+   *
+   * `dominance` 启发式判断：
+   * - outTotal - inTotal >= 2 且 outTotal/inTotal >= 1.5 → 'outgoing'（更偏向"主动方"，如典型粉丝/学生）
+   * - inTotal - outTotal >= 2 且 inTotal/outTotal >= 1.5 → 'incoming'（更偏向"被指方"，如典型偶像/导师）
+   * - 否则 'balanced'
+   *
+   * `fanIdolHint` 专门拎出 admirer 关系：fansCount = 入度 admirer（多少人 admire 我），
+   * idolsCount = 出度 admirer（我 admire 多少人）。verdict 给出粗判。
+   */
+  async computeDirectionalDegree(
+    nodeId: string,
+    options: { topPerType?: number } = {},
+  ): Promise<{
+    nodeId: string;
+    kind: 'person' | 'event' | 'entity';
+    name: string;
+    outTotal: number;
+    inTotal: number;
+    outByType: Record<
+      string,
+      {
+        count: number;
+        totalWeight: number;
+        top: Array<{ otherId: string; otherName: string; weight: number; kind: 'person' | 'event' | 'entity' }>;
+      }
+    >;
+    inByType: Record<
+      string,
+      {
+        count: number;
+        totalWeight: number;
+        top: Array<{ otherId: string; otherName: string; weight: number; kind: 'person' | 'event' | 'entity' }>;
+      }
+    >;
+    dominance: 'outgoing' | 'incoming' | 'balanced';
+    fanIdolHint: { fansCount: number; idolsCount: number; verdict: 'idol-leaning' | 'fan-leaning' | 'mutual' | 'none' };
+  } | null> {
+    const topPerType = Math.max(1, Math.min(20, options.topPerType ?? 5));
+    const snap = await this.store.loadAll();
+
+    let kind: 'person' | 'event' | 'entity' | null = null;
+    let name = '';
+    const person = snap.persons.find(p => p.id === nodeId);
+    if (person) {
+      kind = 'person';
+      name = person.displayName ?? person.id;
+    } else {
+      const ev = snap.events.find(e => e.id === nodeId);
+      if (ev) {
+        kind = 'event';
+        name = ev.title;
+      } else {
+        const ent = snap.entities.find(e => e.id === nodeId);
+        if (ent) {
+          kind = 'entity';
+          name = ent.name;
+        }
+      }
+    }
+    if (!kind) return null;
+
+    const nodeKindOf = (id: string): 'person' | 'event' | 'entity' | null => {
+      if (id.includes(':')) return snap.persons.some(p => p.id === id) ? 'person' : null;
+      if (snap.events.some(e => e.id === id)) return 'event';
+      if (snap.entities.some(e => e.id === id)) return 'entity';
+      return null;
+    };
+    const nodeNameOf = (id: string, k: 'person' | 'event' | 'entity'): string => {
+      if (k === 'person') return snap.persons.find(p => p.id === id)?.displayName ?? id;
+      if (k === 'event') return snap.events.find(e => e.id === id)?.title ?? id;
+      return snap.entities.find(e => e.id === id)?.name ?? id;
+    };
+
+    type Bucket = Map<
+      string,
+      { count: number; totalWeight: number; items: Array<{ otherId: string; weight: number }> }
+    >;
+    const outBuckets: Bucket = new Map();
+    const inBuckets: Bucket = new Map();
+
+    const add = (bucket: Bucket, relType: string, otherId: string, weight: number): void => {
+      let b = bucket.get(relType);
+      if (!b) {
+        b = { count: 0, totalWeight: 0, items: [] };
+        bucket.set(relType, b);
+      }
+      b.count += 1;
+      b.totalWeight += weight;
+      b.items.push({ otherId, weight });
+    };
+
+    for (const e of snap.edges) {
+      // 仅有向的主体边
+      if (e.kind === 'person-person' && e.directed) {
+        if (e.fromPersonId === nodeId) add(outBuckets, e.relationType, e.toPersonId, e.weight ?? 0);
+        else if (e.toPersonId === nodeId) add(inBuckets, e.relationType, e.fromPersonId, e.weight ?? 0);
+      } else if (e.kind === 'event-event' && e.directed) {
+        if (e.fromEventId === nodeId) add(outBuckets, e.relationType, e.toEventId, e.weight ?? 0);
+        else if (e.toEventId === nodeId) add(inBuckets, e.relationType, e.fromEventId, e.weight ?? 0);
+      } else if (e.kind === 'entity-entity' && e.directed) {
+        if (e.fromEntityId === nodeId) add(outBuckets, e.relationType, e.toEntityId, e.weight ?? 0);
+        else if (e.toEntityId === nodeId) add(inBuckets, e.relationType, e.fromEntityId, e.weight ?? 0);
+      }
+    }
+
+    const serialize = (
+      bucket: Bucket,
+    ): Record<
+      string,
+      {
+        count: number;
+        totalWeight: number;
+        top: Array<{ otherId: string; otherName: string; weight: number; kind: 'person' | 'event' | 'entity' }>;
+      }
+    > => {
+      const out: Record<
+        string,
+        {
+          count: number;
+          totalWeight: number;
+          top: Array<{ otherId: string; otherName: string; weight: number; kind: 'person' | 'event' | 'entity' }>;
+        }
+      > = {};
+      for (const [relType, b] of bucket) {
+        const sorted = b.items
+          .slice()
+          .sort((a, c) => c.weight - a.weight)
+          .slice(0, topPerType);
+        out[relType] = {
+          count: b.count,
+          totalWeight: Number(b.totalWeight.toFixed(4)),
+          top: sorted
+            .map(it => {
+              const k = nodeKindOf(it.otherId);
+              if (!k) return null;
+              return {
+                otherId: it.otherId,
+                otherName: nodeNameOf(it.otherId, k),
+                weight: Number(it.weight.toFixed(4)),
+                kind: k,
+              };
+            })
+            .filter((x): x is NonNullable<typeof x> => x !== null),
+        };
+      }
+      return out;
+    };
+
+    let outTotal = 0;
+    let inTotal = 0;
+    for (const b of outBuckets.values()) outTotal += b.count;
+    for (const b of inBuckets.values()) inTotal += b.count;
+
+    let dominance: 'outgoing' | 'incoming' | 'balanced' = 'balanced';
+    if (outTotal - inTotal >= 2 && outTotal >= 1.5 * Math.max(1, inTotal)) dominance = 'outgoing';
+    else if (inTotal - outTotal >= 2 && inTotal >= 1.5 * Math.max(1, outTotal)) dominance = 'incoming';
+
+    const fansCount = inBuckets.get('admirer')?.count ?? 0;
+    const idolsCount = outBuckets.get('admirer')?.count ?? 0;
+    let verdict: 'idol-leaning' | 'fan-leaning' | 'mutual' | 'none' = 'none';
+    if (fansCount === 0 && idolsCount === 0) verdict = 'none';
+    else if (fansCount >= idolsCount + 2) verdict = 'idol-leaning';
+    else if (idolsCount >= fansCount + 2) verdict = 'fan-leaning';
+    else verdict = 'mutual';
+
+    return {
+      nodeId,
+      kind,
+      name,
+      outTotal,
+      inTotal,
+      outByType: serialize(outBuckets),
+      inByType: serialize(inBuckets),
+      dominance,
+      fanIdolHint: { fansCount, idolsCount, verdict },
+    };
+  }
 }
 
 /**
