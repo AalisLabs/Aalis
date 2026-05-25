@@ -46,6 +46,119 @@ export const PERSON_ENTITY_ROLE_RANK: Record<PersonEntityEdge['role'], number> =
   mentioned: 0,
 };
 
+/**
+ * 各类边的"按 role / relationType 区分"的首次建边默认权重表（保守档）。
+ *
+ * 设计意图：
+ *  - 边语义有强弱（initiator 比 witness 重，enthusiast 比 mentioned 重，
+ *    is-alias-of 是强声明），第一条 evidence 进来时就该体现差异，
+ *    不要全部 0.5 一刀切。
+ *  - 数值整体偏保守，给后续 `reinforceWeight(prev, 0.1)` 累积留出空间，
+ *    避免高初始权 + 频繁 reinforce 把上限榨干（误差被反复放大）。
+ *  - **仅作用于"首次建边"**。`reinforce` / agent `correctEdge` 路径不变。
+ *  - LLM / agent 仍可显式传 `input.weight` 覆盖默认值；表只在 `?? fallback` 处生效。
+ *
+ * 未列举的自创 relationType（LLM 可能造词）走 `default`。
+ *
+ * 当前仅作为 `roleDefaultWeight()` 的内部查表，不对外 export；
+ * 若将来需要让 agent 查"系统默认权是多少"，再考虑改 export。
+ */
+const ROLE_DEFAULT_WEIGHT = {
+  /** person-event：发起 > 参与 ≈ 被指向 > 转述 > 旁观 */
+  personEvent: {
+    initiator: 0.5,
+    participant: 0.4,
+    target: 0.4,
+    reporter: 0.25,
+    witness: 0.15,
+  } as Record<PersonEventEdge['role'], number>,
+  /** person-entity：热爱 > 创作 > 拥有 > 批评 > 参与 > 访问 > 仅提及 */
+  personEntity: {
+    enthusiast: 0.55,
+    creator: 0.5,
+    owner: 0.45,
+    critic: 0.4,
+    participant: 0.3,
+    visitor: 0.2,
+    mentioned: 0.1,
+  } as Record<PersonEntityEdge['role'], number>,
+  /** person-person：is-alias-of/alt-account-of 是强声明；friend/cp/mentor 是稳态关系 */
+  personPerson: {
+    'is-alias-of': 0.7,
+    'alt-account-of': 0.7,
+    friend: 0.5,
+    cp: 0.5,
+    mentor: 0.5,
+    colleague: 0.4,
+    rival: 0.4,
+    familiar: 0.35,
+    admirer: 0.35,
+    antagonist: 0.35,
+    default: 0.4,
+  } as Record<string, number>,
+  /** event-event：part-of 是结构性，caused-by 是因果，其他弱 */
+  eventEvent: {
+    'part-of': 0.5,
+    'caused-by': 0.45,
+    default: 0.3,
+  } as Record<string, number>,
+  /** event-entity：part-of 强 > about > related */
+  eventEntity: {
+    'part-of': 0.5,
+    about: 0.35,
+    related: 0.25,
+    default: 0.3,
+  } as Record<string, number>,
+  /** entity-entity：is-alias-of 强声明 > part-of 结构 > 其他 */
+  entityEntity: {
+    'is-alias-of': 0.6,
+    'part-of': 0.45,
+    default: 0.3,
+  } as Record<string, number>,
+} as const;
+
+/**
+ * 给定边类型 + role/relationType，返回首次建边的默认权重。
+ * 未命中 → 走该 kind 的 `default`；person-event/person-entity 没有 default，
+ * 因为 role 是闭合枚举（按 RANK 已穷举），未命中说明上游类型错误，安全兜底 0.3。
+ */
+export function roleDefaultWeight(kind: 'person-event', role: PersonEventEdge['role']): number;
+export function roleDefaultWeight(kind: 'person-entity', role: PersonEntityEdge['role']): number;
+export function roleDefaultWeight(
+  kind: 'person-person' | 'event-event' | 'event-entity' | 'entity-entity',
+  relationType: string,
+): number;
+export function roleDefaultWeight(kind: string, key: string): number {
+  switch (kind) {
+    case 'person-event': {
+      const v = ROLE_DEFAULT_WEIGHT.personEvent[key as PersonEventEdge['role']];
+      return typeof v === 'number' ? v : 0.3;
+    }
+    case 'person-entity': {
+      const v = ROLE_DEFAULT_WEIGHT.personEntity[key as PersonEntityEdge['role']];
+      return typeof v === 'number' ? v : 0.3;
+    }
+    case 'person-person': {
+      const t = ROLE_DEFAULT_WEIGHT.personPerson;
+      return t[key] ?? t.default;
+    }
+    case 'event-event': {
+      const t = ROLE_DEFAULT_WEIGHT.eventEvent;
+      return t[key] ?? t.default;
+    }
+    case 'event-entity': {
+      const t = ROLE_DEFAULT_WEIGHT.eventEntity;
+      return t[key] ?? t.default;
+    }
+    case 'entity-entity': {
+      const t = ROLE_DEFAULT_WEIGHT.entityEntity;
+      return t[key] ?? t.default;
+    }
+    default:
+      return 0.3;
+  }
+}
+
 /** 边邻接索引：供 BFS 复用，避免每次扫全表 */
 export function buildAdjacency(edges: RelationEdge[]) {
   const peByPerson = new Map<string, PersonEventEdge[]>();
