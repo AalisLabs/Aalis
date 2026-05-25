@@ -45,7 +45,9 @@ import {
   buildAdjacency,
   chooseCanonicalDirection,
   clamp01,
+  clusterEntitiesByPairs,
   commonPrefix,
+  computeEntityEdgeStats,
   computePageRank,
   edgeDedupKey,
   edgeInvolvesBoth,
@@ -62,6 +64,7 @@ import {
   normalizeRelationType,
   PERSON_ENTITY_ROLE_RANK,
   PERSON_EVENT_ROLE_RANK,
+  pickCanonicalByMergeScore,
   reinforceWeight,
   rewriteEdgeIds,
   roleDefaultWeight,
@@ -2083,7 +2086,18 @@ export class RelationService {
     //   召回路径（同 entityKind 内）：
     //     (a) name 子串包含（短名 ⊂ 长名，且短名长度 ≥ 2）
     //     (b) 一方的某个 alias 与另一方的 name 归一相等
-    //   严判：交给 verifyAliasPair LLM，否决就不合并。
+    //
+    //   ── 决策范式 (2026-05 P1)：批量决策 → 并查集分簇 → 一次合并 ──
+    //     1) 召回所有 pair 候选
+    //     2) 对每个候选跑 verifyAliasPair（只记结果，不立即合并）
+    //     3) 把所有 LLM 判 yes 的候选丢进并查集 (union-find)，
+    //        自然处理传递闭包：A↔B yes & B↔C yes ⇒ {A,B,C} 一簇
+    //     4) 每个 size≥2 的簇内按 mergeScore 选 canonical
+    //        (mergeScore = 0.5·weightSum + 0.3·edgeCount + 0.2·evidenceCount，
+    //         不含 recency；与 compositeScore 解耦，专为"挑代表"语义)，
+    //        把其它成员逐个 mergeAlias 到 canonical
+    //   动机：旧逻辑是"判一对合一对"，snapshot 不刷新会出现悬空合并 / 漏传递闭包。
+    //         本范式让决策与应用分离，所有 LLM 判定基于同一份 snapshot，行为可预测。
     //   未启用 LLM 时跳过本段（保持原算法的零误合并保证）。
     if (opts.autoLink && llmModel && opts.llm) {
       const entitiesByKind = new Map<string, EntityNode[]>();
@@ -2092,6 +2106,11 @@ export class RelationService {
         if (!entitiesByKind.has(k)) entitiesByKind.set(k, []);
         entitiesByKind.get(k)!.push(e);
       }
+
+      // 收集所有 LLM 判 yes 的 pair，连同各自 reason；之后按 entityKind 分簇合并
+      type YesPair = { aId: string; bId: string; reason: string };
+      const yesPairs: YesPair[] = [];
+
       for (const list of entitiesByKind.values()) {
         for (let i = 0; i < list.length; i++) {
           for (let j = i + 1; j < list.length; j++) {
@@ -2131,20 +2150,60 @@ export class RelationService {
               continue;
             }
             llmVerified++;
+            yesPairs.push({ aId: a.id, bId: b.id, reason });
+          }
+        }
+      }
+
+      // ─── 并查集分簇 + 簇内挑 canonical + 统一合并 ───
+      if (yesPairs.length > 0) {
+        // 节点边/权聚合：供 mergeScore 使用。一次性扫边表，避免 O(N·E)。
+        const entityEdgeStats = computeEntityEdgeStats(snapshot.edges);
+        const entityById = new Map(snapshot.entities.map(e => [e.id, e] as const));
+
+        // 并查集分簇：自然处理传递闭包 (A↔B yes & B↔C yes ⇒ {A,B,C} 一簇)
+        const clusters = clusterEntitiesByPairs(yesPairs);
+
+        // 候选合并时优先 reason 字典——非 canonical 成员要找到与 canonical 之间的召回 reason 作为 is-alias-of 边的 description
+        // 若簇大小 >2，可能某对没有直接召回 reason（靠传递闭包入簇），fallback：用簇内"语义同一对象（传递闭包）"。
+        const reasonLookup = new Map<string, string>();
+        for (const p of yesPairs) {
+          const k1 = `${p.aId}|${p.bId}`;
+          const k2 = `${p.bId}|${p.aId}`;
+          reasonLookup.set(k1, p.reason);
+          reasonLookup.set(k2, p.reason);
+        }
+
+        for (const [, members] of clusters) {
+          if (members.size < 2) continue;
+          // 簇内 mergeScore 最高者当 canonical
+          const canonicalId = pickCanonicalByMergeScore(members, entityById, entityEdgeStats);
+          if (!canonicalId) continue;
+
+          // 把其他成员逐个合并到 canonical
+          for (const memberId of members) {
+            if (memberId === canonicalId) continue;
+            // 重新校验 canonical 仍存在（safety）
+            const stillExists = snapshot.entities.some(e => e.id === canonicalId);
+            if (!stillExists) break;
+            const reason =
+              reasonLookup.get(`${memberId}|${canonicalId}`) ??
+              `consolidate 簇内传递闭包：${entityById.get(memberId)?.name ?? memberId} ↔ ${entityById.get(canonicalId)?.name ?? canonicalId}`;
+            // is-alias-of 边可能已存在（之前轮已建过），先查
             const exists = snapshot.edges.some(
               e =>
                 e.kind === 'entity-entity' &&
                 e.relationType === 'is-alias-of' &&
-                ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
-                  (e.fromEntityId === b.id && e.toEntityId === a.id)),
+                ((e.fromEntityId === memberId && e.toEntityId === canonicalId) ||
+                  (e.fromEntityId === canonicalId && e.toEntityId === memberId)),
             );
             if (!exists) {
               const now = Date.now();
               await this.store.upsertEdge({
                 id: globalThis.crypto.randomUUID(),
                 kind: 'entity-entity',
-                fromEntityId: a.id,
-                toEntityId: b.id,
+                fromEntityId: memberId,
+                toEntityId: canonicalId,
                 relationType: 'is-alias-of',
                 directed: true,
                 weight: 0.7,
@@ -2154,9 +2213,13 @@ export class RelationService {
                 evidence: [],
               });
               aliasEdgesCreated++;
-              const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
-              mergedCanonicals.add(mergeResult.effectiveCanonicalId);
             }
+            const mergeResult = await this.mergeAlias({
+              aliasId: memberId,
+              canonicalId,
+              kind: 'entity',
+            });
+            mergedCanonicals.add(mergeResult.effectiveCanonicalId);
           }
         }
       }

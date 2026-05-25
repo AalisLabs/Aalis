@@ -13,9 +13,12 @@ import {
 import { edgeKey, eventKey, personKey, RELATION_NAMESPACE } from '../../packages/plugin-user-relation/src/store.js';
 import {
   clamp01,
+  clusterEntitiesByPairs,
+  computeEntityEdgeStats,
   isEvidenceFullyCovered,
   isSymmetricRelation,
   normalizeRelationType,
+  pickCanonicalByMergeScore,
   reinforceWeight,
   trimEvidence,
 } from '../../packages/plugin-user-relation/src/utils.js';
@@ -401,6 +404,155 @@ describe('plugin-user-relation: helpers', () => {
     );
     // 同 quote 但 messageIds 完全不相交 → 不算覆盖（可能是不同时段的独立陈述）
     expect(isEvidenceFullyCovered([ev({ sessionId: 's1', messageIds: ['m9'], quote: 'a' })], existing)).toBe(false);
+  });
+});
+
+describe('plugin-user-relation: clusterEntitiesByPairs', () => {
+  it('合并传递闭包：A↔B, B↔C → 一簇 {A,B,C}', () => {
+    const clusters = clusterEntitiesByPairs([
+      { aId: 'A', bId: 'B' },
+      { aId: 'B', bId: 'C' },
+    ]);
+    expect(clusters.size).toBe(1);
+    const members = [...clusters.values()][0];
+    expect(members).toEqual(new Set(['A', 'B', 'C']));
+  });
+
+  it('独立 pair 不合并：A↔B, C↔D → 两簇', () => {
+    const clusters = clusterEntitiesByPairs([
+      { aId: 'A', bId: 'B' },
+      { aId: 'C', bId: 'D' },
+    ]);
+    expect(clusters.size).toBe(2);
+    const setsBySize = [...clusters.values()].map(s => [...s].sort().join(','));
+    expect(setsBySize.sort()).toEqual(['A,B', 'C,D']);
+  });
+
+  it('空输入 → 空 Map', () => {
+    expect(clusterEntitiesByPairs([]).size).toBe(0);
+  });
+
+  it('幂等：重复 pair 不影响簇结构', () => {
+    const clusters = clusterEntitiesByPairs([
+      { aId: 'A', bId: 'B' },
+      { aId: 'A', bId: 'B' },
+      { aId: 'B', bId: 'A' },
+    ]);
+    expect(clusters.size).toBe(1);
+    expect([...clusters.values()][0]).toEqual(new Set(['A', 'B']));
+  });
+});
+
+describe('plugin-user-relation: pickCanonicalByMergeScore', () => {
+  const mkNode = (id: string, evidenceCount = 0) => ({
+    id,
+    entityKind: 'topic' as const,
+    name: id,
+    firstSeenAt: 0,
+    lastReinforcedAt: 0,
+    evidence: Array.from({ length: evidenceCount }, () => ev({})),
+  });
+
+  it('挑边/权信息更丰富者：weight 更高的胜出', () => {
+    const members = new Set(['A', 'B']);
+    const nodes = new Map([
+      ['A', mkNode('A')],
+      ['B', mkNode('B')],
+    ]);
+    const stats = new Map([
+      ['A', { weightSum: 0.2, edgeCount: 1 }],
+      ['B', { weightSum: 0.9, edgeCount: 1 }],
+    ]);
+    expect(pickCanonicalByMergeScore(members, nodes, stats)).toBe('B');
+  });
+
+  it('edge 数更多者胜（权相同）', () => {
+    const members = new Set(['A', 'B']);
+    const nodes = new Map([
+      ['A', mkNode('A')],
+      ['B', mkNode('B')],
+    ]);
+    const stats = new Map([
+      ['A', { weightSum: 0.5, edgeCount: 1 }],
+      ['B', { weightSum: 0.5, edgeCount: 5 }],
+    ]);
+    expect(pickCanonicalByMergeScore(members, nodes, stats)).toBe('B');
+  });
+
+  it('evidence 多者胜（权/边均相同）', () => {
+    const members = new Set(['A', 'B']);
+    const nodes = new Map([
+      ['A', mkNode('A', 1)],
+      ['B', mkNode('B', 10)],
+    ]);
+    const stats = new Map([
+      ['A', { weightSum: 0.5, edgeCount: 2 }],
+      ['B', { weightSum: 0.5, edgeCount: 2 }],
+    ]);
+    expect(pickCanonicalByMergeScore(members, nodes, stats)).toBe('B');
+  });
+
+  it('完全平局：取 id 字典序最小者', () => {
+    const members = new Set(['zeta', 'alpha', 'mid']);
+    const nodes = new Map([
+      ['zeta', mkNode('zeta')],
+      ['alpha', mkNode('alpha')],
+      ['mid', mkNode('mid')],
+    ]);
+    const stats = new Map<string, { weightSum: number; edgeCount: number }>();
+    expect(pickCanonicalByMergeScore(members, nodes, stats)).toBe('alpha');
+  });
+
+  it('空簇 → 返回空串（safety）', () => {
+    expect(pickCanonicalByMergeScore(new Set(), new Map(), new Map())).toBe('');
+  });
+});
+
+describe('plugin-user-relation: computeEntityEdgeStats', () => {
+  it('entity-entity 边两端均计入；person-entity / event-entity 只 entity 端计入', () => {
+    const now = Date.now();
+    const stats = computeEntityEdgeStats([
+      {
+        id: 'e1',
+        kind: 'entity-entity',
+        fromEntityId: 'A',
+        toEntityId: 'B',
+        relationType: 'related',
+        directed: false,
+        weight: 0.4,
+        firstSeenAt: now,
+        lastReinforcedAt: now,
+        evidence: [],
+      },
+      {
+        id: 'e2',
+        kind: 'person-entity',
+        fromPersonId: 'p1',
+        toEntityId: 'A',
+        role: 'mentioned',
+        weight: 0.3,
+        firstSeenAt: now,
+        lastReinforcedAt: now,
+        evidence: [],
+      },
+      {
+        id: 'e3',
+        kind: 'event-entity',
+        fromEventId: 'ev1',
+        toEntityId: 'B',
+        relationType: 'related',
+        directed: true,
+        weight: 0.5,
+        firstSeenAt: now,
+        lastReinforcedAt: now,
+        evidence: [],
+      },
+    ]);
+    expect(stats.get('A')).toEqual({ weightSum: 0.7, edgeCount: 2 }); // entity-entity 0.4 + person-entity 0.3
+    expect(stats.get('B')).toEqual({ weightSum: 0.9, edgeCount: 2 }); // entity-entity 0.4 + event-entity 0.5
+    // person/event 节点不计入
+    expect(stats.has('p1')).toBe(false);
+    expect(stats.has('ev1')).toBe(false);
   });
 });
 
