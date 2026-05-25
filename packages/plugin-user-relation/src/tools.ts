@@ -1167,9 +1167,55 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
+  // ───────────────────────────── directional_degree ───────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_directional_degree',
+        description: [
+          '统计节点的「有向出/入度剖面」，刻画单向语义信号——典型用途：',
+          '- 粉丝/偶像分析：fanIdolHint.verdict + inByType.admirer / outByType.admirer 的 count（"被多少人 admire" vs "admire 多少人"）',
+          '- 师徒上下游：inByType.mentor（"谁的徒弟/学生指向我"）vs outByType.mentor（"我指向谁当师父"）',
+          '- 因果/时序 source/sink（event 节点）：inByType."caused-by" vs outByType."caused-by"',
+          '- part-of 上下游（event/entity 节点）：inByType."part-of" 即"被谁包含为部分"，outByType."part-of" 即"作为部分指向谁"',
+          '⚠️ 仅统计 directed=true 的主体边（person-person / event-event / entity-entity）。',
+          '桥型边（person-event/person-entity/event-entity）按设计总是双向，是"参与"不是"指代"，故不计入本剖面；',
+          '若需"该人参与了几件事"等参与度信号，用 expand_node / timeline / node_score。',
+          '返回 dominance：outgoing=偏主动方（粉丝/学生型），incoming=偏被指方（偶像/导师型），balanced=平衡。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            node_id: { type: 'string', description: '节点 ID（person 形如 platform:userId；event/entity 是 UUID）' },
+            top_per_type: {
+              type: 'number',
+              description: '每个 relationType 下返回的 top-K 对端节点（按 weight 降序）。默认 5，范围 1~20',
+            },
+          },
+          required: ['node_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const id = String(args.node_id ?? '').trim();
+      if (!id) return JSON.stringify({ error: 'node_id 不能为空' });
+      const topPerType = clampNum(args.top_per_type, 5, 1, 20);
+      try {
+        const r = await service.computeDirectionalDegree(id, { topPerType });
+        if (!r) return JSON.stringify({ error: `节点 ${id} 不存在` });
+        return JSON.stringify(r, null, 2);
+      } catch (err) {
+        return JSON.stringify({ error: (err as Error).message });
+      }
+    },
+  });
+
   if (cfg.debug) {
     ctx.logger.debug(
-      `[user-relation] 已注册 19 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / node_score）`,
+      `[user-relation] 已注册 20 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / node_score / directional_degree）`,
     );
   }
 }
