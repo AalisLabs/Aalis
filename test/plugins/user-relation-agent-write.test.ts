@@ -173,4 +173,21 @@ describe('user-relation: computeNodeScore', () => {
     expect(typeof s?.compositeScore).toBe('number');
     expect(s?.evidenceCount).toBeGreaterThanOrEqual(1);
   });
+
+  it('返回 rank / percentile / tier / pagerankFresh', async () => {
+    const { service } = await makeService();
+    const e1 = await service.createEvent({ title: '事件A', evidence: [ev()] });
+    await service.createEvent({ title: '事件B', evidence: [ev()] });
+    await service.createEvent({ title: '事件C', evidence: [ev()] });
+    const s = await service.computeNodeScore(e1.id);
+    expect(s).not.toBeNull();
+    // rank 字符串形如 "k/N"，同 kind 共 3 个 event
+    expect(s?.rankInKind).toMatch(/^[1-3]\/3$/);
+    expect(s?.rankInGlobal).toMatch(/^[1-3]\/3$/);
+    expect(s?.percentileInKind).toBeGreaterThanOrEqual(0);
+    expect(s?.percentileInKind).toBeLessThanOrEqual(1);
+    expect(['core', 'active', 'normal', 'edge']).toContain(s?.tier);
+    // 从未跑过 PR job → pagerankFresh=false
+    expect(s?.pagerankFresh).toBe(false);
+  });
 });
