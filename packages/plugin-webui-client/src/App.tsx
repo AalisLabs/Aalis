@@ -252,10 +252,32 @@ export function App() {
 
   const handleLog = useCallback((entry: LogEntry) => {
     setLogs(prev => {
-      const next = [...prev, entry];
-      return next.length > 500 ? next.slice(-500) : next;
+      // 去重（极少情况下 WS 推送可能与首屏拉取重叠）：seq 作为 PK
+      if (prev.length > 0 && prev[prev.length - 1].seq >= entry.seq) {
+        if (prev.some(e => e.seq === entry.seq)) return prev;
+      }
+      // 不再做硬上限——上限管理交给 LogPage 的虚拟化 + 滚动加载
+      return [...prev, entry];
     });
   }, []);
+
+  const loadOlderLogs = useCallback(async (): Promise<number> => {
+    const oldest = logs[0];
+    if (!oldest) return 0;
+    try {
+      const older = await api<LogEntry[]>(`/api/logs/range?before=${oldest.seq}&limit=200`);
+      if (!older || older.length === 0) return 0;
+      setLogs(prev => {
+        // 已存在的 seq 跳过
+        const have = new Set(prev.map(e => e.seq));
+        const fresh = older.filter(e => !have.has(e.seq));
+        return [...fresh, ...prev];
+      });
+      return older.length;
+    } catch {
+      return 0;
+    }
+  }, [logs]);
 
   const handleToolCall = useCallback((toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => {
     // 先把挂起的文本 delta 刷入，确保 tool_call 按真实到达顺序插入
@@ -498,7 +520,7 @@ export function App() {
     refreshServices();
     refreshPages();
     session.refresh();
-    api<LogEntry[]>('/api/logs').then(setLogs).catch(() => {});
+    api<LogEntry[]>('/api/logs/tail?limit=200').then(setLogs).catch(() => {});
   }, [refreshPlugins, refreshConfig, refreshServices, refreshPages, session.refresh]);
 
   // 会话切换时加载 todo 列表
@@ -675,7 +697,7 @@ export function App() {
       case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={refreshConfig} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
       case 'platforms': return <PlatformPage />;
       case 'authority': return <AuthorityPage />;
-      case 'logs': return <LogPage logs={logs} />;
+      case 'logs': return <LogPage logs={logs} onLoadOlder={loadOlderLogs} />;
       case 'files': return <FilesPage />;
       case 'sessions': return <SessionsPage pluginName={pluginName} activeSessionId={session.activeSessionId} onSwitchSession={(id) => { session.switchSession(id); }} onStartNewChat={() => session.startNewChat()} refreshSignal={sessionsRefreshSignal} />;
       default: return null;
