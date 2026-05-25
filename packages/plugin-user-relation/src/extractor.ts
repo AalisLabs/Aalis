@@ -98,6 +98,10 @@ export interface ExtractorConfig {
   consolidateLLMDisableThinking: boolean;
   /** consolidation 是否自动建别名/层级边（对应 consolidate({ autoLink }) 参数） */
   consolidateAutoLink: boolean;
+  /** F3：宽召回阶段双方低权 entity 是否跳过 LLM 核验 */
+  consolidateSkipLowScorePairs: boolean;
+  /** F3：低权阈值（compositeScore < 该值视为低权） */
+  consolidateLowScoreThreshold: number;
   /** debug 日志 */
   debug: boolean;
 }
@@ -907,6 +911,8 @@ export class RelationExtractor {
               autoLink: this.cfg.consolidateAutoLink,
               triggerSource: 'eviction',
               ctx: this.ctx,
+              skipLowScorePairs: this.cfg.consolidateSkipLowScorePairs,
+              lowScoreThreshold: this.cfg.consolidateLowScoreThreshold,
               ...(this.cfg.consolidateLLMModelRef
                 ? {
                     llm: {
