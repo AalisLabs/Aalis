@@ -39,12 +39,6 @@ export const configSchema: ConfigSchema = {
       { label: '状态', value: 'status' },
     ],
   },
-  logLines: {
-    type: 'number',
-    label: '日志行数',
-    default: 200,
-    description: 'CLI 日志视图保留的最近日志条数。0 = 不限（仅受 core 环形缓冲 500 条限制）',
-  },
 };
 
 export const defaultConfig = {
@@ -52,7 +46,6 @@ export const defaultConfig = {
   sessionId: 'cli-default',
   startupView: 'last',
   lastView: 'chat',
-  logLines: 200,
 };
 
 type CLIView = 'chat' | 'logs' | 'status' | 'help';
@@ -62,7 +55,6 @@ interface CLIConfig {
   sessionId: string;
   startupView: 'last' | CLIView;
   lastView: CLIView;
-  logLines: number;
 }
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -71,13 +63,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
     startupView: parseStartupView(config.startupView),
     lastView: parseView(config.lastView, 'chat'),
-    logLines: (() => {
-      const v = Number(config.logLines ?? defaultConfig.logLines);
-      if (!Number.isFinite(v) || v < 0) return defaultConfig.logLines;
-      // 0 = 不限，使用 core 环形缓冲的上限（500）代替
-      if (v === 0) return Number.MAX_SAFE_INTEGER;
-      return Math.max(50, v);
-    })(),
   };
 
   const sessionId = cliConfig.sessionId;
@@ -198,8 +183,8 @@ class CliTui {
     process.once('exit', this.restoreOnExit);
 
     this.removeLogListener = LogHub.default.onEntry(entry => {
+      // 不限长——启动期起累积，渲染仅访问可见窗口，内存价格可接受
       this.logLines.push(entry);
-      if (this.logLines.length > this.config.logLines) this.logLines.shift();
       if (this.view === 'logs') this.queueRender();
     });
 
@@ -704,7 +689,8 @@ class CliTui {
     // 与 console 输出格式保持一致：ts LEVEL scope message
     const lines: string[] = [];
     for (const entry of this.logLines) {
-      const ts = chalk.gray(entry.timestamp);
+      // LogEntry.timestamp 是完整 ISO，CLI 只需 HH:mm:ss.sss
+      const ts = chalk.gray(entry.timestamp.slice(11, 23));
       const level = LEVEL_TAG[entry.level];
       const scope = chalk.magenta(entry.scope);
       const head = `${ts} ${level} ${scope} `;
@@ -751,7 +737,7 @@ class CliTui {
     out.push(sec('运行时'));
     out.push(kv('persona', persona));
     out.push(kv('cli session', this.sessionId));
-    out.push(kv('log buffer', `${this.logLines.length} / ${this.config.logLines}`));
+    out.push(kv('log buffer', `${this.logLines.length} 条`));
     out.push('');
     out.push(sec(`服务 (${services.length})`));
     for (const s of services) out.push(`    ${chalk.green('●')} ${s}`);

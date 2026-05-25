@@ -3,6 +3,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface LogEntry {
   /** 进程内单调递增的稳定序号（每个 LogHub 实例独立计数）。用作下游 React/UI key 与分页 cursor。 */
   seq: number;
+  /** 完整 ISO-8601 时间戳（`new Date().toISOString()`，含日期）。sink 按需截取显示。 */
   timestamp: string;
   level: LogLevel;
   scope: string;
@@ -48,7 +49,7 @@ export class LogHub {
   }
 
   /** 接收一条日志（Logger 内部调用） */
-  push(entry: LogEntry, _args: unknown[]): void {
+  push(entry: LogEntry): void {
     for (const fn of this.listeners) fn(entry);
   }
 }
@@ -99,7 +100,9 @@ export class Logger {
   private log(level: LogLevel, message: string, ...args: unknown[]): void {
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
 
-    const timestamp = new Date().toISOString().slice(11, 23);
+    // 完整 ISO 时间戳（YYYY-MM-DDTHH:mm:ss.sssZ）——信息保真。
+    // sink（console / CLI / WebUI）按显示需求自行截取，不在源头丢日期。
+    const timestamp = new Date().toISOString();
     // 将额外参数（错误对象 / 上下文等）序列化并拼到 message 末尾，
     // 避免 sink 只读 message 时丢失错误细节。**保持运行时中立**：只用纯 ES
     // 原语，不依赖 node:util / window 等任何宿主 API。
@@ -111,7 +114,7 @@ export class Logger {
       scope: this.scope,
       message: `${message}${tail}`,
     };
-    this.hub.push(entry, args);
+    this.hub.push(entry);
   }
 }
 
