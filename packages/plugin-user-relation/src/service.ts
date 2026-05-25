@@ -168,15 +168,21 @@ export class RelationService {
    */
   async createEvent(input: Omit<EventNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EventNode> {
     const now = Date.now();
-    // sessionScope 优先取显式传入，其次从 evidence[0].sessionId 推断。
-    const scope = input.sessionScope ?? input.evidence?.[0]?.sessionId;
+    // sessionScope 优先取显式传入；其次从 evidence[0].sessionId 推断；最终兜底 'global'。
+    // 'global' 哨兵表示「显式跨会话事件」，与"老数据 undefined"区分开（后者表示来源不明）。
+    // 若调用方真的没法给出 scope（如批处理脚本），落 'global' 并 audit warn 以便排查。
+    let scope = input.sessionScope ?? input.evidence?.[0]?.sessionId;
+    if (scope === undefined) {
+      scope = 'global';
+      this._audit(`[user-relation] createEvent 缺失 sessionScope，回落 'global'；title="${input.title}"`);
+    }
     const dup = await this.findEventByTitle(input.title, scope);
     if (dup) {
       const merged: EventNode = {
         ...dup,
         summary: input.summary ?? dup.summary,
         category: input.category ?? dup.category,
-        // 只在原节点 scope 为空时才回填，避免覆盖已有隔离。
+        // 只在原节点 scope 为空（老数据）时才回填新 scope，避免覆盖已有隔离。
         sessionScope: dup.sessionScope ?? scope,
         lastReinforcedAt: now,
         lastMentionedAt: now,

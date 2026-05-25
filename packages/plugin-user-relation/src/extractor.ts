@@ -120,6 +120,8 @@ interface LLMExtraction {
     title: string;
     summary?: string;
     category?: string;
+    /** 'current' = 当前会话内事件（默认）；'global' = 显式跨会话事件 */
+    scope?: string;
     evidence?: { messageIds?: string[]; quote?: string };
   }>;
   entities?: Array<{
@@ -576,6 +578,8 @@ export class RelationExtractor {
       const category = VALID_CATEGORIES.includes(e.category as EventCategory)
         ? (e.category as EventCategory)
         : undefined;
+      // scope：'global' = LLM 主动声明跨会话；其它（含缺省/'current'）→ 走 evidence[0].sessionId（即当前会话）
+      const sessionScope: string | undefined = e.scope === 'global' ? 'global' : undefined;
       let eventId: string | undefined;
       if (e.existingEventId) {
         const reinforced = await this.service.reinforceEvent(e.existingEventId, {
@@ -591,6 +595,7 @@ export class RelationExtractor {
           title: e.title,
           summary: e.summary,
           category,
+          sessionScope,
           evidence: ev ? [ev] : [],
         });
         eventId = created.id;
@@ -962,7 +967,7 @@ function buildExtractionPrompt(
       '严格输出**单个 JSON 对象**（不要任何解释文字、不要 ```json 包裹），结构如下：',
       '{',
       '  "persons": [{ "platform": str, "userId": str, "displayName"?: str }],',
-      '  "events": [{ "refKey": str, "existingEventId"?: str|null, "title": str(<=30字), "summary"?: str(<=80字), "category"?: "discussion"|"conflict"|"collaboration"|"incident"|"milestone"|"other", "evidence": { "messageIds": str[], "quote": str } }],',
+      '  "events": [{ "refKey": str, "existingEventId"?: str|null, "title": str(<=30字), "summary"?: str(<=80字), "category"?: "discussion"|"conflict"|"collaboration"|"incident"|"milestone"|"other", "scope"?: "current"|"global", "evidence": { "messageIds": str[], "quote": str } }],',
       '  "entities": [{ "refKey": str, "existingEntityId"?: str|null, "name": str(<=20字), "aliases"?: str[], "summary"?: str(<=80字), "entityKind": "topic"|"place"|"thing"|"work", "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEventEdges": [{ "personPlatform": str, "personUserId": str, "eventRefKey": str, "role": "initiator"|"participant"|"witness"|"target"|"reporter", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEntityEdges": [{ "personPlatform": str, "personUserId": str, "entityRefKey": str, "role": "enthusiast"|"participant"|"owner"|"creator"|"critic"|"visitor"|"mentioned", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
@@ -981,6 +986,7 @@ function buildExtractionPrompt(
       '- 优先记录：有**可识别动作**（开黑/争吵/比赛/发布/相遇/讨论某话题…）且**多人参与或多条消息支撑**的事。',
       '- 「X 和 Y 讨论 Z」「群里围绕 Z 聊了一阵」这类**多人对话事件**值得记 —— 只要 evidence.messageIds ≥ 2 条且至少 2 人发言，可以建。后端会按 weight 老化，不必过度自我审查。',
       '- 完全单条、零回应的随口提及不建；问候/客套/单字回应不建（见下方负面清单）。',
+      '- **事件 scope 字段**：默认 `current`（= 当前会话内的事，如某群约局、某私聊吵架）。仅当事件**显式跨会话/跨平台**（如双十一、世界杯、某社会热点新闻被多个群讨论）时填 `global`。填错 `global` 会导致两个群里其实独立的"约定下周聚餐"被错误合并；不确定就保持默认。',
       '- **事件锚定原则（与 hub-first 配合）**：建一个 event 时先问自己——',
       '  · 「它围绕什么具名对象？」→ 有 → 必须按第 1/2 步抽 entity 并输出 part-of 边（首选路径）。',
       '  · 「它是纯人际事件？」（如 A 与 B 吵架/告白/和好/绝交/退群/相遇，无任何具名对象）→ 允许独立 event，但**必须配合至少一条 personEventEdge 把所有相关方挂上 + 一条 personPersonEdge 表达关系性质**（如 conflict/friend/hostile/reconciled）。否则该事件会沦为孤立浮岛。',

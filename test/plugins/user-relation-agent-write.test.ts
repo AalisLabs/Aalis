@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -55,6 +55,50 @@ describe('user-relation: event sessionScope 隔离', () => {
     expect(b.id).toBe(a.id);
     // 回填了新 scope
     expect(b.sessionScope).toBe('group:2');
+  });
+
+  it("显式 sessionScope='global' 跨 session 合并", async () => {
+    const { service } = await makeService();
+    const a = await service.createEvent({
+      title: '双十一',
+      sessionScope: 'global',
+      evidence: [ev({ sessionId: 'group:1' })],
+    });
+    const b = await service.createEvent({
+      title: '双十一',
+      sessionScope: 'global',
+      evidence: [ev({ sessionId: 'group:2' })],
+    });
+    expect(b.id).toBe(a.id);
+    expect(a.sessionScope).toBe('global');
+  });
+
+  it("'global' 与具体 sessionId 不合并", async () => {
+    const { service } = await makeService();
+    const a = await service.createEvent({
+      title: '热点',
+      sessionScope: 'global',
+      evidence: [ev({ sessionId: 'group:1' })],
+    });
+    const b = await service.createEvent({
+      title: '热点',
+      evidence: [ev({ sessionId: 'group:1' })],
+    });
+    expect(a.id).not.toBe(b.id);
+    expect(a.sessionScope).toBe('global');
+    expect(b.sessionScope).toBe('group:1');
+  });
+
+  it("createEvent 未传 sessionScope 且无 evidence sessionId → 回落 'global' + audit", async () => {
+    const { service } = await makeService();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = await service.createEvent({
+      title: '裸事件',
+      evidence: [],
+    });
+    expect(a.sessionScope).toBe('global');
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
 
