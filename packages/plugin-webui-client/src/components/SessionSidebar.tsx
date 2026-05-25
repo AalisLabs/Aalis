@@ -20,8 +20,9 @@ export interface SessionItem {
 }
 
 interface SessionConfigData {
-  model?: string;
-  llmProvider?: string;
+  /** 会话使用的 LLM 模型引用：`{ provider, model }` 二元组。
+   *  与 `@aalis/plugin-session-manager-api` 的 `SessionConfig.llm` 字段同义。 */
+  llm?: { provider: string; model: string };
   persona?: string;
   enabledToolGroups?: string[];
   systemPromptExtra?: string;
@@ -73,14 +74,49 @@ function SessionConfigEditor({ config, options, onSave, onCancel }: {
     return <div className="session-config-editor"><span className="session-config-loading">加载配置选项…</span></div>;
   }
 
+  // 当前选中态用 `${provider}/${model}` 唯一编码（空 ref → ''）
+  const selectedLlmKey = draft.llm?.provider && draft.llm?.model
+    ? `${draft.llm.provider}/${draft.llm.model}`
+    : '';
+  // 摊平：跨 provider 一级列表。option.value = `${provider}/${model}`，便于反查
+  // provider+model 二元组，避免旧版「只保存 model id 丢失 provider」的 bug 重现。
+  const flatLlmOptions = options.models
+    .filter(m => !!m.provider)
+    .map(m => ({
+      key: `${m.provider}/${m.id}`,
+      provider: m.provider as string,
+      model: m.id,
+      label: `${m.provider} / ${m.id}${m.capabilities.length > 0 ? `  [${m.capabilities.join(',')}]` : ''}`,
+    }));
+  // 旧 ref 不在当前 entries 中（provider 未启动 / model 已下线）→ 顶部插一条占位
+  if (selectedLlmKey && !flatLlmOptions.some(o => o.key === selectedLlmKey)) {
+    flatLlmOptions.unshift({
+      key: selectedLlmKey,
+      provider: draft.llm!.provider,
+      model: draft.llm!.model,
+      label: `${draft.llm!.provider} / ${draft.llm!.model}  (已离线)`,
+    });
+  }
+
   return (
     <div className="session-config-editor" onClick={e => e.stopPropagation()}>
-      {/* 模型 */}
+      {/* 模型（单级摊平 select：跨 provider 列出每个具体 entry） */}
       <label className="session-config-field">
         <span>模型</span>
-        <select value={draft.model || ''} onChange={e => update('model', e.target.value || undefined)}>
+        <select
+          value={selectedLlmKey}
+          onChange={e => {
+            const key = e.target.value;
+            if (!key) {
+              update('llm', undefined);
+              return;
+            }
+            const opt = flatLlmOptions.find(o => o.key === key);
+            if (opt) update('llm', { provider: opt.provider, model: opt.model });
+          }}
+        >
           <option value="">继承默认</option>
-          {options.models.map(m => <option key={`${m.contextId ?? ''}:${m.id}`} value={m.id}>{m.provider ? `${m.provider} / ${m.id}` : m.id}</option>)}
+          {flatLlmOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
       </label>
 
