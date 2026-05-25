@@ -66,6 +66,14 @@ export interface EventNode {
   id: string;
   /** 事件简称（LLM 提取生成，限长，便于图上显示） */
   title: string;
+  /**
+   * 会话作用域。取值 = evidence[0].sessionId（首次出现的会话）。
+   * 作用：同名事件去重 / 强化匹配时的「硬隔离」键——
+   * - 同 title + 同 scope → 强化（同一件事）
+   * - 同 title + 不同 scope → 独立节点（避免「约定下周活动」跨群串线）
+   * - undefined 视为通配（老节点 / 手动创建），允许与有 scope 的同名节点合并。
+   */
+  sessionScope?: string;
   /** 别名 / 历史 title，rename 时原 title 自动落到此处供检索 */
   aliases?: string[];
   /** 一两句话的事件摘要 */

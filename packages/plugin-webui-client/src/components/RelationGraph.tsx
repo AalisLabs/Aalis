@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react';
+import { createPortal } from 'react-dom';
 import cytoscape, { type Core, type ElementDefinition, type EventObject } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { api, pageAction } from '../api';
@@ -1192,6 +1193,9 @@ function FieldGlossary(): JSX.Element {
 }
 
 function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
+  // 用 React Portal 渲染到 document.body，绕开任何父容器的 transform / overflow:hidden / contain
+  // 形成的 stacking context（这是之前「顶部 / 右侧被遮挡 + 调不出」的根因）。
+  // 同时顶部提供「查看完整文档」外链提示，避免某些环境下 modal 仍被裁剪。
   // 简易模态：固定全屏遮罩 + 居中卡片。点遮罩 / Esc / ✕ 都能关。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -1202,7 +1206,9 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
   }, [onClose]);
   const row: CSSProperties = { display: 'grid', gridTemplateColumns: '120px 1fr', columnGap: 12, rowGap: 4, fontSize: 12 };
   const h: CSSProperties = { margin: '12px 0 4px', fontSize: 13, color: 'var(--text-primary, #e4e4ef)' };
-  return (
+  // README 路径：优先服务器静态托管（如果部署有），否则 fallback 到仓库相对路径提示。
+  const docPath = '/docs/plugins/user-relation-graph.md';
+  const body = (
     <div
       onClick={onClose}
       style={{
@@ -1318,11 +1324,23 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
         </div>
 
         <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-muted)' }}>
-          完整文档：<code>docs/plugins/user-relation-graph.md</code>
+          完整文档：
+          <a
+            href={docPath}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--text-link, #8ab4f8)', marginLeft: 4 }}
+            title="在新标签页打开文档"
+          >
+            docs/plugins/user-relation-graph.md ↗
+          </a>
         </div>
       </div>
     </div>
   );
+  // Portal 到 document.body：避免父容器 transform / overflow:hidden / contain 形成的 stacking context 裁剪 modal。
+  if (typeof document === 'undefined') return body;
+  return createPortal(body, document.body);
 }
 function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: NodeDetailCardProps): JSX.Element {
   const kind = node.data.kind;

@@ -435,7 +435,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   const store = new RelationStore(memory);
-  const service = new RelationService(store);
+  const service = new RelationService(store, ctx);
   ctx.provide('user-relation', service);
 
   const debug = config.debug === true;
