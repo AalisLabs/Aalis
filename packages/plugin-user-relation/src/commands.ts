@@ -22,6 +22,7 @@ export function registerRelationCommands(
     consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking?: boolean };
     /** 淘汰配置；/relation compress 与 /relation maintain 会使用 */
     eviction?: {
+      maxPersons: number;
       maxEvents: number;
       maxEntities: number;
       maxEdges: number;
@@ -326,9 +327,10 @@ export function registerRelationCommands(
       let deletedEvents = 0;
       let deletedEntities = 0;
       let deletedEdges = 0;
-      if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+      if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
         // evictByQuota 内部已经先做 pruneOrphans，再做配额淘汰；不要在外面重复调
         const r = await service.evictByQuota({
+          maxPersons: ev.maxPersons,
           maxEvents: ev.maxEvents,
           maxEntities: ev.maxEntities,
           maxEdges: ev.maxEdges,
@@ -388,9 +390,10 @@ export function registerRelationCommands(
       let dEvents = 0;
       let dEntities = 0;
       let dEdges = 0;
-      if (ev && (ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+      if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
         // evictByQuota 自带孤儿清理，不重复调
         const r = await service.evictByQuota({
+          maxPersons: ev.maxPersons,
           maxEvents: ev.maxEvents,
           maxEntities: ev.maxEntities,
           maxEdges: ev.maxEdges,
