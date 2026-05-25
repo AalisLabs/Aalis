@@ -137,9 +137,16 @@ export interface LLMProviderEntry {
 }
 
 /**
- * llm-ref 字段渲染：两个联动 select（provider → model）。
- * value 形如 `{ provider: string; model: string }`，缺失字段以空串保存。
- * 用户填写的 provider/model 即便不在列表中（provider 暂未注册等）也会被保留显示。
+ * llm-ref 字段渲染：单级 select，跨 provider 摊平所有已注册 model entries。
+ *
+ * 设计动机（2026-05 重构）：原先「先选 provider 再选 model」两级 select 在用户视角
+ * 引入了 plugin 与 model 的虚假绑定（用户并不关心 model 由哪个 plugin 注册），且
+ * 容易在切换 provider 时把 model 重置为空字符串而不自知。改为单级摊平后，每个 option
+ * 直接对应一个具体 entry，避免歧义。
+ *
+ * value 形如 `{ provider: string; model: string }`，保持兼容 `resolveLLMModel`
+ * 的 Case 1 严格匹配（entryId = `${provider}/${model}`）。未注册但已被存档的旧 ref
+ * 会原样保留并加上 `(已离线)` 提示，便于用户辨识并切换。
  */
 function LLMRefField({
   value,
@@ -159,6 +166,8 @@ function LLMRefField({
   const ref = (value && typeof value === 'object') ? (value as { provider?: string; model?: string }) : {};
   const provider = ref.provider ?? '';
   const model = ref.model ?? '';
+  // 选中态用 `${provider}/${model}` 唯一编码（空 ref → ''）
+  const selectedKey = provider && model ? `${provider}/${model}` : '';
 
   const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
   const [refreshMsg, setRefreshMsg] = useState<string>('');
@@ -187,47 +196,49 @@ function LLMRefField({
     }
   };
 
-  const providers = llmProviders ?? [];
-  const providerOptions = providers.map(p => ({
-    value: p.contextId,
-    label: p.label ? `${p.label} (${p.contextId})` : p.contextId,
-  }));
-  if (provider && !providerOptions.some(o => o.value === provider)) {
-    providerOptions.unshift({ value: provider, label: provider });
+  // 摊平：跨 provider 列出每个 entry。option label 形如 `<providerLabel> / <modelId>  [caps]`
+  const flatOptions: Array<{ key: string; provider: string; model: string; label: string }> = [];
+  for (const p of llmProviders ?? []) {
+    const providerLabel = p.label ?? p.contextId;
+    for (const m of p.models) {
+      const caps = m.capabilities.length > 0 ? `  [${m.capabilities.join(',')}]` : '';
+      flatOptions.push({
+        key: `${p.contextId}/${m.id}`,
+        provider: p.contextId,
+        model: m.id,
+        label: `${providerLabel} / ${m.id}${caps}`,
+      });
+    }
   }
-
-  const currentProvider = providers.find(p => p.contextId === provider);
-  const modelOptions = (currentProvider?.models ?? []).map(m => ({
-    value: m.id,
-    label: m.capabilities.length > 0 ? `${m.id}  [${m.capabilities.join(',')}]` : m.id,
-  }));
-  if (model && !modelOptions.some(o => o.value === model)) {
-    modelOptions.unshift({ value: model, label: model });
+  // 旧 ref 不在列表中（provider 未启动或 model 已下线）→ 顶部插入「(已离线)」占位
+  if (selectedKey && !flatOptions.some(o => o.key === selectedKey)) {
+    flatOptions.unshift({
+      key: selectedKey,
+      provider,
+      model,
+      label: `${provider} / ${model}  (已离线)`,
+    });
   }
 
   return (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
       <select
         className="config-edit-input"
-        style={{ flex: '1 1 200px', minWidth: 0 }}
-        value={provider}
-        onChange={e => onChange({ provider: e.target.value, model: '' })}
+        style={{ flex: '1 1 320px', minWidth: 0 }}
+        value={selectedKey}
+        onChange={e => {
+          const key = e.target.value;
+          if (!key) {
+            onChange(undefined);
+            return;
+          }
+          const opt = flatOptions.find(o => o.key === key);
+          if (opt) onChange({ provider: opt.provider, model: opt.model });
+        }}
       >
-        <option value="">— 选择提供者 —</option>
-        {providerOptions.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      <select
-        className="config-edit-input"
-        style={{ flex: '1 1 200px', minWidth: 0 }}
-        value={model}
-        onChange={e => onChange({ provider, model: e.target.value })}
-        disabled={!provider}
-      >
-        <option value="">{provider ? '— 选择模型 —' : '先选提供者'}</option>
-        {modelOptions.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
+        <option value="">— 继承默认 —</option>
+        {flatOptions.map(o => (
+          <option key={o.key} value={o.key}>{o.label}</option>
         ))}
       </select>
       <button
@@ -236,7 +247,7 @@ function LLMRefField({
         style={{ fontSize: 11, padding: '2px 8px' }}
         onClick={handleRefresh}
         disabled={!provider || refreshState === 'loading'}
-        title={provider ? `重新探测 ${provider} 的远端模型列表（仅对动态发现型 provider 如 Ollama 生效）` : '先选提供者'}
+        title={provider ? `重新探测 ${provider} 的远端模型列表（仅对动态发现型 provider 如 Ollama 生效）` : '先选模型后才能刷新对应 provider'}
       >
         {refreshState === 'loading' ? '⟳' : '⟳ 刷新'}
       </button>
