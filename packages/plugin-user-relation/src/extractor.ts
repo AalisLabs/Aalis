@@ -55,9 +55,9 @@ export interface ExtractorConfig {
    * - cross-platform：跨所有平台聚合（同上）。
    * 跨会话模式下，evidence.sessionId 按每条消息真实来源记录，event.sessionScope 仍由 LLM 输出（current=来源 session / global=显式跨会话）决定。
    */
-  readScope: ExtractorReadScope;
+  readScope?: ExtractorReadScope;
   /** 跨会话拉取时仅取最近 N 分钟内的消息；0=不限。仅在 readScope!=same-session 时生效。默认 60。 */
-  crossSessionMaxAgeMinutes: number;
+  crossSessionMaxAgeMinutes?: number;
   /** 提取时把"最近 N 天的活跃事件"作为候选清单交给 LLM 复用 */
   candidateEventDays: number;
   candidateEventLimit: number;
@@ -391,7 +391,7 @@ export class RelationExtractor {
         candidateEvents,
         candidateEntities,
         senderNeighbors,
-        { crossSession },
+        { crossSession, currentSessionId: sessionId },
       );
 
       const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
@@ -981,11 +981,25 @@ function buildExtractionPrompt(
   candidateEvents: EventNode[],
   candidateEntities: EntityNode[],
   senderNeighbors: SenderNeighborhood[],
-  opts?: { crossSession?: boolean },
+  opts?: { crossSession?: boolean; currentSessionId?: string },
 ): Message[] {
   const rendered = renderHistoryForLLM(history, opts);
+  const ownSid = opts?.currentSessionId;
+  // candidate event 暴露 sessionScope 标签，便于 LLM 决策"reinforce 本会话 / 复用 global hub / 新建 hub"：
+  // - scope=global → 显式跨会话 hub event，可被任何 session 复用强化
+  // - scope=other:<sid 简写> → 其他 session 的 current 事件，**禁止**直接 reinforce（不同 sessionScope 不能合并），
+  //   但可在跨会话提取模式下输出 eventEventEdge part-of 把它挂到一个新建/已有的 global hub 下
+  // - scope 与当前 session 相同 → 省略标签（默认即"自家事件"）
+  const scopeTag = (e: EventNode): string => {
+    const s = e.sessionScope;
+    if (!s || s === ownSid) return '';
+    if (s === 'global') return ' scope=global';
+    return ` scope=other:${s.slice(0, 12)}`;
+  };
   const evtList =
-    candidateEvents.length === 0 ? '（无）' : candidateEvents.map(e => `- id=${e.id} title=${e.title}`).join('\n');
+    candidateEvents.length === 0
+      ? '（无）'
+      : candidateEvents.map(e => `- id=${e.id} title=${e.title}${scopeTag(e)}`).join('\n');
   const entList =
     candidateEntities.length === 0
       ? '（无）'
@@ -1170,7 +1184,12 @@ function buildExtractionPrompt(
       '',
       '== 消息窗口（按时间升序，[mid] = 平台消息 ID）==',
       opts?.crossSession
-        ? '【跨会话模式】下方消息聚合了多个会话（群聊/私聊/平台），每行行首 `[sid:xxx]` 标注来源会话 id。请把不同 sid 之间**默认视为彼此独立的语境**，除非证据明确表明同一对象/事件被跨会话讨论才把 event.scope 标为 `global`；person / entity 节点天然全局共享，可正常跨 sid 累计证据。'
+        ? '【跨会话模式】下方消息聚合了多个会话（群聊/私聊/平台），每行行首 `[sid:xxx]` 标注来源会话 id。请把不同 sid 之间**默认视为彼此独立的语境**，除非证据明确表明同一对象/事件被跨会话讨论才把 event.scope 标为 `global`；person / entity 节点天然全局共享，可正常跨 sid 累计证据。\n' +
+          '【跨会话 hub 建模规则】当本窗口出现 ≥2 个不同 sid 都在围绕同一抽象主题（如"工会战""周末聚餐计划""某游戏开黑"）展开各自的讨论/约局/吐槽时：\n' +
+          '- 为该共同主题建一个 `scope=global` 的 **hub event**（title 取主题本身，如"工会战"），并为每个 sid 各自建一个 `scope=current`（默认）的**子事件**（title 带 sid 语境，如"A群工会战集结(2025-05-20)"）。\n' +
+          '- 通过 `eventEventEdges` `relationType="part-of"` 把每个子事件挂到 hub event 下，directed=true（from=子, to=hub）。\n' +
+          '- candidates 中标有 `scope=global` 的事件**可直接复用为 hub**（existingEventId 填它的 id）；标有 `scope=other:xxx` 的事件**不要直接 reinforce**（不同 session 隔离），但可以输出 part-of 边把它和你新建的 hub 挂在一起。\n' +
+          '- 当各 sid 只是恰好提到同一个具名对象但无共同事件主线时，**不要建 hub event**，按现有规则用 entity + personEntityEdge 关联即可。'
         : '',
       rendered,
       '',
