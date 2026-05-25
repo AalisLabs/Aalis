@@ -88,6 +88,14 @@ export interface ExtractorConfig {
   /** 触发后裁到 floor(quota·pct)。默认 0.8，配合 hysteresis=0.2 → 单次清理 ~40% quota */
   evictTargetPct: number;
   /**
+   * Weight 时间衰减半衰期（天）。effW = raw × max(0.5^(days/halfLife), floor)。
+   * 用于"老高 weight 节点不再被反复强化时自动让出淘汰保护名额"。
+   * 0 或负值 = 关闭衰减（行为向后兼容）。默认 180 天。
+   */
+  weightDecayHalfLifeDays: number;
+  /** Weight 衰减下限因子，effW 不会低于 raw × floor。保留"老朋友"底色。默认 0.3 */
+  weightDecayFloor: number;
+  /**
    * 淘汰完成后自动运行一次 consolidate（去重/整理/层级推断）。
    * 仅在实际发生淘汰（deletedEvents/Entities/Edges > 0）时触发。默认 true。
    */
@@ -889,6 +897,10 @@ export class RelationExtractor {
           pagerankEpsilon: this.cfg.pagerankEpsilon,
           hysteresisPct: this.cfg.evictHysteresisPct,
           targetPct: this.cfg.evictTargetPct,
+          decay: {
+            halfLifeDays: this.cfg.weightDecayHalfLifeDays,
+            floor: this.cfg.weightDecayFloor,
+          },
         });
         if (
           this.cfg.debug &&

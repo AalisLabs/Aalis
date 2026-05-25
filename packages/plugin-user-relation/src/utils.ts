@@ -255,6 +255,45 @@ export function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
+/**
+ * 时间衰减配置：用于把"原始 weight"换算成"当前有效 weight"。
+ *
+ * 设计动机：reinforceWeight 让 weight 单调累积（0.5→0.65→...→1.0），
+ * 多轮老化后图里会沉淀一批"高 weight 老节点 / 强边"占满配额、永不淘汰。
+ * 加上时间衰减让 weight 自然回退，反复被提及的关系靠新的强化撑起来，
+ * 而不再被提及的关系会逐渐退出 top-N / 淘汰受保护范围。
+ *
+ * Lazy 模式：weight 字段本身不写回，所有 scoring / sorting / eviction
+ * 通过 `effectiveWeight(raw, lastReinforcedAt, now, cfg)` 计算"当下值"。
+ *
+ * - `halfLifeDays <= 0`：不衰减（向后兼容）
+ * - `halfLifeDays > 0`：half-life 后 effW = raw × 0.5，half-life × log2(1/floor) 后达到 floor 不再衰减
+ * - `floor`：衰减下限因子（默认 0.3），保护"老朋友"——再久不联系也保留 30% 强度
+ */
+export interface WeightDecayCfg {
+  halfLifeDays: number;
+  floor: number;
+}
+
+/**
+ * 计算"当前有效 weight"：raw × max(0.5^(days/halfLife), floor)。
+ *
+ * - halfLifeDays<=0：直接返回 raw（向后兼容）
+ * - 使用 max(factor, floor)：衰减不会无限趋近 0，保留长期关系底色
+ */
+export function effectiveWeight(
+  raw: number | undefined,
+  lastReinforcedAt: number,
+  now: number,
+  cfg: WeightDecayCfg,
+): number {
+  const w = raw ?? 0;
+  if (cfg.halfLifeDays <= 0) return w;
+  const days = Math.max(0, (now - lastReinforcedAt) / 86400000);
+  const factor = Math.max(cfg.floor, 0.5 ** (days / cfg.halfLifeDays));
+  return clamp01(w * factor);
+}
+
 /** 单实体保留最近 N 条 evidence（按 extractedAt DESC 截断 + 同 key 去重）
  *  去重双键：
  *    1) `sessionId|sorted(messageIds).join(',')` — 精确判同：同会话同批 messageIds 视为重复。
