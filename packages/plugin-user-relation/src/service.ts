@@ -2317,14 +2317,16 @@ export class RelationService {
                 evidence: [],
               });
               aliasEdgesCreated++;
-              // 立即触发真合并（rewire 边 + 合并 aliases + 删 alias 壳子）
-              const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
-              mergedCanonicals.add(mergeResult.effectiveCanonicalId);
-              if (mergeResult.aliasDeleted && this.ctx?.logger) {
-                this.ctx.logger.info(
-                  `[user-relation] consolidate strict-equiv 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
-                );
-              }
+            }
+            // 无条件触发真合并：即便 alias 边已存在（如老版本"路由+壳子"残留的
+            // 半合并状态），也要把 alias 节点真正合并掉，确保收敛。mergeAlias 幂等：
+            // alias 节点已不存在 → 直接 no-op；还在 → 正常合并。
+            const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
+            mergedCanonicals.add(mergeResult.effectiveCanonicalId);
+            if (mergeResult.aliasDeleted && this.ctx?.logger) {
+              this.ctx.logger.info(
+                `[user-relation] consolidate strict-equiv 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
+              );
             }
           }
         }
