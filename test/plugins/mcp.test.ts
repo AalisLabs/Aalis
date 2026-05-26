@@ -142,7 +142,6 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
     });
 
     const server = buildMcpServer(makeFakeCtx(tools), tools, {
-      enabled: true,
       port: 0,
       bind: '127.0.0.1',
       toolGroups: [],
