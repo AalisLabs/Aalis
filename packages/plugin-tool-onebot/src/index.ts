@@ -1056,14 +1056,14 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       function: {
         name: 'onebot_get_group_member_list',
         description:
-          '查询群的成员列表，支持按昵称/群名片/QQ号关键词搜索、按角色筛选、分页返回。大群（数百上千人）务必使用 keyword 或 role 过滤，避免一次拉取过多数据。可传 group_id 跨群查询。',
+          '查询群的成员列表，支持按昵称/群名片/QQ号关键词搜索、按角色筛选、分页返回。大群（数百上千人）务必使用 keyword 或 role 过滤，避免一次拉取过多数据。可传 group_id 跨群查询。翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
         parameters: {
           type: 'object',
           properties: {
             keyword: { type: 'string', description: '可选：按昵称、群名片或 QQ 号子串模糊匹配（不区分大小写）' },
             role: { type: 'string', enum: ['owner', 'admin', 'member'], description: '可选：按成员角色筛选' },
-            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-            pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定，请根据需要的数据量方式判断）' },
+            limit: { type: 'number', description: '本页最多返回条数，默认 30' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
           },
           required: [],
@@ -1079,8 +1079,8 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const roleFilter = typeof args.role === 'string' ? args.role : '';
-      const page = Math.max(1, Math.floor(Number(args.page) || 1));
-      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
 
       // 精简 + 过滤
       const all = list.map((m: Record<string, unknown>) => ({
@@ -1099,18 +1099,15 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       });
 
       const total = filtered.length;
-      const totalPages = Math.max(1, Math.ceil(total / pageSize));
-      const curPage = Math.min(page, totalPages);
-      const start = (curPage - 1) * pageSize;
-      const items = filtered.slice(start, start + pageSize);
+      const items = filtered.slice(offset, offset + limit);
 
       return JSON.stringify({
         groupTotal: all.length,
         matched: total,
-        page: curPage,
-        pageSize,
-        totalPages,
-        hasMore: curPage < totalPages,
+        limit,
+        offset,
+        returned: items.length,
+        has_more: offset + items.length < total,
         ...(keyword ? { keyword } : {}),
         ...(roleFilter ? { role: roleFilter } : {}),
         members: items,
@@ -1316,13 +1313,14 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
         description:
           '获取机器人加入的所有群列表（OneBot v11: get_group_list）。' +
           '支持按群名/群号关键词搜索、分页返回。' +
-          '可在任何会话调用（包括私聊），用于查询「我在哪些群」。',
+          '可在任何会话调用（包括私聊），用于查询「我在哪些群」。' +
+          '翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
         parameters: {
           type: 'object',
           properties: {
             keyword: { type: 'string', description: '可选：按群名或群号子串模糊匹配（不区分大小写）' },
-            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-            pageSize: { type: 'number', description: '每页条数，默认 30' },
+            limit: { type: 'number', description: '本页最多返回条数，默认 30' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
           },
           required: [],
         },
@@ -1334,8 +1332,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
-      const page = Math.max(1, Math.floor(Number(args.page) || 1));
-      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
 
       const all = list.map(g => ({
         group_id: g.group_id,
@@ -1346,18 +1344,15 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       const filtered = keyword ? all.filter(g => `${g.group_id} ${g.group_name}`.toLowerCase().includes(keyword)) : all;
 
       const total = filtered.length;
-      const totalPages = Math.max(1, Math.ceil(total / pageSize));
-      const curPage = Math.min(page, totalPages);
-      const start = (curPage - 1) * pageSize;
-      const items = filtered.slice(start, start + pageSize);
+      const items = filtered.slice(offset, offset + limit);
 
       return JSON.stringify({
         accountTotal: all.length,
         matched: total,
-        page: curPage,
-        pageSize,
-        totalPages,
-        hasMore: curPage < totalPages,
+        limit,
+        offset,
+        returned: items.length,
+        has_more: offset + items.length < total,
         ...(keyword ? { keyword } : {}),
         groups: items,
       });
@@ -1371,13 +1366,15 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       function: {
         name: 'onebot_get_friend_list',
         description:
-          '获取机器人的好友列表（OneBot v11: get_friend_list）。' + '支持按昵称/备注/QQ号关键词搜索、分页返回。',
+          '获取机器人的好友列表（OneBot v11: get_friend_list）。' +
+          '支持按昵称/备注/QQ号关键词搜索、分页返回。' +
+          '翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
         parameters: {
           type: 'object',
           properties: {
             keyword: { type: 'string', description: '可选：按昵称、备注或 QQ 号子串模糊匹配（不区分大小写）' },
-            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-            pageSize: { type: 'number', description: '每页条数，默认 30' },
+            limit: { type: 'number', description: '本页最多返回条数，默认 30' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
           },
           required: [],
         },
@@ -1389,8 +1386,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
-      const page = Math.max(1, Math.floor(Number(args.page) || 1));
-      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
 
       const all = list.map(f => ({
         user_id: f.user_id,
@@ -1402,18 +1399,15 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
         : all;
 
       const total = filtered.length;
-      const totalPages = Math.max(1, Math.ceil(total / pageSize));
-      const curPage = Math.min(page, totalPages);
-      const start = (curPage - 1) * pageSize;
-      const items = filtered.slice(start, start + pageSize);
+      const items = filtered.slice(offset, offset + limit);
 
       return JSON.stringify({
         accountTotal: all.length,
         matched: total,
-        page: curPage,
-        pageSize,
-        totalPages,
-        hasMore: curPage < totalPages,
+        limit,
+        offset,
+        returned: items.length,
+        has_more: offset + items.length < total,
         ...(keyword ? { keyword } : {}),
         friends: items,
       });
