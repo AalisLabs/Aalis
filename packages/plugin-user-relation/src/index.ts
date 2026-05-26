@@ -222,10 +222,11 @@ export const configSchema: ConfigSchema = {
     type: 'select',
     label: '社群发现默认算法',
     description:
-      'evictByQuota 之后顺手跑的社群发现算法。louvain=经典快；leiden=实用简化版（Louvain + 连通性 refinement），保证社群内部连通但耗时略增。agent 调 community_* 工具时可临时指定 algorithm 参数覆盖此默认。',
+      'evictByQuota 之后顺手跑的社群发现算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_* 工具时可临时指定 algorithm 参数覆盖此默认。',
     options: [
-      { value: 'louvain', label: 'Louvain（默认，快）' },
-      { value: 'leiden', label: 'Leiden-lite（保证内部连通）' },
+      { value: 'louvain', label: 'Louvain（默认，快，硬划分）' },
+      { value: 'leiden', label: 'Leiden-lite（硬划分，保证内部连通）' },
+      { value: 'slpa', label: 'SLPA（原生重叠社区，软划分）' },
     ],
     default: 'louvain',
   },
@@ -548,8 +549,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       evictTargetPct: numCfg(config.evictTargetPct, 0.8),
       weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
       weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-      communityAlgorithm:
-        (config.communityAlgorithm as 'louvain' | 'leiden' | undefined) === 'leiden' ? 'leiden' : 'louvain',
+      communityAlgorithm: (() => {
+        const raw = config.communityAlgorithm as string | undefined;
+        return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
+      })(),
       consolidateAfterEviction: config.consolidateAfterEviction !== false,
       consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
       consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
@@ -624,8 +627,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         targetPct: numCfg(config.evictTargetPct, 0.8),
         weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
         weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-        communityAlgorithm:
-          (config.communityAlgorithm as 'louvain' | 'leiden' | undefined) === 'leiden' ? 'leiden' : 'louvain',
+        communityAlgorithm: (() => {
+          const raw = config.communityAlgorithm as string | undefined;
+          return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
+        })(),
       },
       consolidateAutoLink: config.consolidationAutoLink === true,
       consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
