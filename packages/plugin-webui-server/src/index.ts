@@ -678,17 +678,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         models: Array<{ id: string; capabilities: string[]; contextLength?: number }>;
       };
       const byProvider = new Map<string, ProvAgg>();
+      // entry.label 形如 "Ollama (localhost:11434) / qwen3.6:35b-mlx"；
+      // 取第一个 " / " 之前的部分作为 providerLabel（避免把 model id 也带进去）。
+      const extractProviderLabel = (raw?: string): string | undefined => {
+        if (!raw) return undefined;
+        const slash = raw.indexOf(' / ');
+        return slash > 0 ? raw.slice(0, slash) : raw;
+      };
       for (const e of entries) {
         const providerId = e.instance.providerId;
         let agg = byProvider.get(providerId);
         if (!agg) {
-          agg = { contextId: providerId, label: e.label, models: [] };
+          agg = { contextId: providerId, label: extractProviderLabel(e.label), models: [] };
           byProvider.set(providerId, agg);
-        }
-        // entry.label 形如 "OpenAI / gpt-4o" 或仅 model id；提取 provider 部分
-        if (!agg.label && e.label) {
-          const slash = e.label.indexOf(' / ');
-          agg.label = slash > 0 ? e.label.slice(0, slash) : undefined;
+        } else if (!agg.label) {
+          agg.label = extractProviderLabel(e.label);
         }
         agg.models.push({
           id: e.instance.id,
