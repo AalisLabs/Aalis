@@ -562,8 +562,17 @@ export class RelationExtractor {
     const knownPlatforms = getKnownPlatformsLower(this.ctx);
     const isPlaceholderSelfId = (platform?: string, userId?: string): boolean =>
       isPlaceholderSelfPersonId(platform, userId, knownPlatforms);
+    // 聚合 dropself：LLM 一次输出常含 N 个占位 person + N 条占位边，逐条 debug 会刷屏。
+    // 改为按类型计数 + 最多 2 个样本，整体一行 warn（首次提醒用户改 prompt/换模型）+ debug 列详情。
+    const dropCounts: Record<string, { count: number; samples: string[] }> = {};
     const dropSelf = (label: string, pid: string): void => {
-      if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] 丢弃 self 占位 ${label}: ${pid}`);
+      let bucket = dropCounts[label];
+      if (!bucket) {
+        bucket = { count: 0, samples: [] };
+        dropCounts[label] = bucket;
+      }
+      bucket.count++;
+      if (bucket.samples.length < 2) bucket.samples.push(pid);
     };
     if (parsed.persons?.length) {
       parsed.persons = parsed.persons.filter(p => {
@@ -600,6 +609,18 @@ export class RelationExtractor {
         }
         return true;
       });
+    }
+    const dropEntries = Object.entries(dropCounts);
+    if (dropEntries.length > 0) {
+      const total = dropEntries.reduce((s, [, v]) => s + v.count, 0);
+      const summary = dropEntries.map(([k, v]) => `${k}×${v.count}`).join(' + ');
+      this.ctx.logger.debug(
+        `[user-relation] LLM 输出含 ${total} 个 self/占位字段，已丢弃 (${summary})。` +
+          `典型示例: ${dropEntries
+            .flatMap(([k, v]) => v.samples.map(s => `${k}=${s}`))
+            .slice(0, 3)
+            .join(', ')}`,
+      );
     }
     const mkEvidence = (raw?: { messageIds?: string[]; quote?: string }): EvidenceRef | null => {
       if (!raw) return null;
@@ -1113,6 +1134,7 @@ function buildExtractionPrompt(
       '## 关于「Aalis 自己」（机器人本体）',
       '- 窗口里 assistant 消息会被渲染为 `(nickname(userId))` 同用户消息一样的格式，其中 userId 是 **Aalis 在该平台上真实的 selfId**（如 `(Aalis(10000))`）。这时你**可以**把它当成一个普通 person 抽出来（用真实 personPlatform / personUserId），让 Aalis 与人的互动也能进入关系图。',
       '- **绝不要凭空生成占位符**：当 assistant 行渲染成 `Aalis（本机器人）`（CJK 全角括号 = 元数据缺失）时，**禁止**给它任何 person 字段；也**禁止**自己编 `platform="aalis"` 或 `userId ∈ {aalis, self, me, bot, assistant, 本机器人}` 这种伪 id —— 后端会一律剔除。这一轮就当 Aalis 没出现，跳过。',
+      '- **绝对禁止使用 `undefined` / `unknown` / `null` / `none` / `n/a` / 空字符串作为 platform 或 userId 的值**（无论是字符串字面量还是 JSON null）。如果你不知道某个 person 的确切 platform/userId，**就不要把这个人写进 persons 数组、也不要在任何边里引用 ta**。宁可漏抽一个人，也不要造伪 id（造了也会被后端丢弃，纯粹浪费 token）。',
       '- 这条规则比 hub-first 优先：宁可少抽，也不要造假 id。',
       '',
       '## 输出格式（严格 JSON）',

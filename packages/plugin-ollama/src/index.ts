@@ -754,6 +754,18 @@ class OllamaClient {
     if (!resp.ok) {
       const errText = await resp.text();
       this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${errText}`);
+      // 诊断提示：ollama runner 把 input_audio 当 image 解码失败时报 "image: unknown format"，
+      // 99% 是模型本身不支持 audio modality（如 Nemotron-3 是纯文本/纯推理，
+      // 多模态版 Nemotron-Nano-VL 也只有 vision）。提示用户换 gemma3n / qwen2.5-omni
+      // 等明确支持 audio 的多模态模型。
+      const lowerErr = errText.toLowerCase();
+      if (lowerErr.includes('image: unknown format') || lowerErr.includes('unknown format')) {
+        throw new Error(
+          `Ollama /v1/chat/completions 错误 (${resp.status}): ${errText}\n` +
+            `[诊断] 模型 "${model}" 很可能不支持 audio modality（ollama runner 把 input_audio 当 image 解码失败）。` +
+            `请改用明确支持音频的模型（如 gemma3n、qwen2.5-omni）。`,
+        );
+      }
       throw new Error(`Ollama /v1/chat/completions 错误 (${resp.status}): ${errText}`);
     }
     const data = (await resp.json()) as {
