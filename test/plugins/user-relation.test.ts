@@ -11,10 +11,12 @@ import {
   RelationStore,
 } from '../../packages/plugin-user-relation/src/index.js';
 import { edgeKey, eventKey, personKey, RELATION_NAMESPACE } from '../../packages/plugin-user-relation/src/store.js';
+import type { RelationGraphSnapshot } from '../../packages/plugin-user-relation/src/types.js';
 import {
   clamp01,
   clusterEntitiesByPairs,
   computeEntityEdgeStats,
+  computePageRank,
   isEvidenceFullyCovered,
   isSymmetricRelation,
   normalizeRelationType,
@@ -1328,5 +1330,237 @@ describe('plugin-user-relation: renameNode', () => {
     await expect(service.renameNode({ kind: 'entity', id: 'missing', newName: 'x', reason: 'r' })).rejects.toThrow(
       /不存在/,
     );
+  });
+});
+
+describe('plugin-user-relation: computePageRank component-size scaling', () => {
+  // 构造图：主连通分量 (5 person + 5 event + 1 entity，相互 person-event/event-entity)
+  //         + 孤立三角 (1 person + 1 event + 1 entity 闭环)
+  // 期望：componentScale=true 时孤立节点 PR 显著低于 false 时。
+  function buildSnap(): RelationGraphSnapshot {
+    // biome-ignore lint/suspicious/noExplicitAny: 测试构造图节点，字段全部手填即可
+    const persons: any[] = [];
+    // biome-ignore lint/suspicious/noExplicitAny: 同上
+    const events: any[] = [];
+    // biome-ignore lint/suspicious/noExplicitAny: 同上
+    const entities: any[] = [];
+    // biome-ignore lint/suspicious/noExplicitAny: 同上
+    const edges: any[] = [];
+    for (let i = 0; i < 5; i++) {
+      persons.push({
+        id: `pM${i}`,
+        displayName: `MainP${i}`,
+        platformIds: [],
+        mentionCount: 1,
+        lastSeenAt: 0,
+        aliases: [],
+        nameHistory: [],
+      });
+      events.push({
+        id: `eM${i}`,
+        title: `MainE${i}`,
+        weight: 0.5,
+        evidence: [],
+        lastReinforcedAt: 0,
+        aliases: [],
+        nameHistory: [],
+      });
+    }
+    entities.push({
+      id: 'enM0',
+      name: 'MainEnt',
+      weight: 0.5,
+      evidence: [],
+      lastReinforcedAt: 0,
+      aliases: [],
+      nameHistory: [],
+    });
+    // 每个主 person 连每个主 event
+    for (const p of persons) {
+      for (const e of events) {
+        edges.push({
+          kind: 'person-event',
+          fromPersonId: p.id,
+          toEventId: e.id,
+          role: 'participant',
+          weight: 0.5,
+          evidence: [],
+          createdAt: 0,
+          lastReinforcedAt: 0,
+        });
+      }
+    }
+    // 主 event ↔ 主 entity
+    for (const e of events) {
+      edges.push({
+        kind: 'event-entity',
+        fromEventId: e.id,
+        toEntityId: 'enM0',
+        relationType: 'mentions',
+        directed: true,
+        weight: 0.5,
+        evidence: [],
+        createdAt: 0,
+        lastReinforcedAt: 0,
+      });
+    }
+    // 孤立三角
+    persons.push({
+      id: 'pIso',
+      displayName: 'IsoP',
+      platformIds: [],
+      mentionCount: 1,
+      lastSeenAt: 0,
+      aliases: [],
+      nameHistory: [],
+    });
+    events.push({
+      id: 'eIso',
+      title: 'IsoE',
+      weight: 0.5,
+      evidence: [],
+      lastReinforcedAt: 0,
+      aliases: [],
+      nameHistory: [],
+    });
+    entities.push({
+      id: 'enIso',
+      name: 'IsoEnt',
+      weight: 0.5,
+      evidence: [],
+      lastReinforcedAt: 0,
+      aliases: [],
+      nameHistory: [],
+    });
+    edges.push({
+      kind: 'person-event',
+      fromPersonId: 'pIso',
+      toEventId: 'eIso',
+      role: 'participant',
+      weight: 0.5,
+      evidence: [],
+      createdAt: 0,
+      lastReinforcedAt: 0,
+    });
+    edges.push({
+      kind: 'event-entity',
+      fromEventId: 'eIso',
+      toEntityId: 'enIso',
+      relationType: 'mentions',
+      directed: true,
+      weight: 0.5,
+      evidence: [],
+      createdAt: 0,
+      lastReinforcedAt: 0,
+    });
+    return { persons, events, entities, edges } as RelationGraphSnapshot;
+  }
+
+  it('开启 componentScale 后孤立小子图节点 PR 显著降低', () => {
+    const snap = buildSnap();
+    const opts = {
+      damping: 0.85,
+      maxIter: 30,
+      epsilon: 1e-5,
+      personSeed: 2,
+      entitySeed: 1.5,
+      eventSeed: 1,
+      reverseEdgeFactor: 0.5,
+    };
+    const prRaw = computePageRank(snap, { ...opts, componentScale: false });
+    const prScaled = computePageRank(snap, { ...opts, componentScale: true });
+
+    const isoP_raw = prRaw.get('pIso') ?? 0;
+    const isoP_scaled = prScaled.get('pIso') ?? 0;
+    const mainP_raw = prRaw.get('pM0') ?? 0;
+    const mainP_scaled = prScaled.get('pM0') ?? 0;
+
+    // 缩放后孤立人节点 PR 至少跌一半，且主分量人节点 PR 反而抬升（占比变大）
+    expect(isoP_scaled).toBeLessThan(isoP_raw * 0.6);
+    expect(mainP_scaled).toBeGreaterThan(mainP_raw);
+
+    // 归一化恒等
+    const sum = Array.from(prScaled.values()).reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(1, 4);
+
+    // 主分量 person PR 应当 > 孤立 person PR（缩放后语义直观）
+    expect(mainP_scaled).toBeGreaterThan(isoP_scaled);
+  });
+
+  it('componentScale 默认为 true（不传等于 true）', () => {
+    const snap = buildSnap();
+    const opts = {
+      damping: 0.85,
+      maxIter: 30,
+      epsilon: 1e-5,
+      personSeed: 2,
+      entitySeed: 1.5,
+      eventSeed: 1,
+      reverseEdgeFactor: 0.5,
+    };
+    const prDefault = computePageRank(snap, opts);
+    const prExplicit = computePageRank(snap, { ...opts, componentScale: true });
+    expect(prDefault.get('pIso')).toBeCloseTo(prExplicit.get('pIso') ?? 0, 6);
+    expect(prDefault.get('pM0')).toBeCloseTo(prExplicit.get('pM0') ?? 0, 6);
+  });
+});
+
+describe('plugin-user-relation: getCommunityOverview per-community 自适应 topN', () => {
+  it('不传 top_n 时大社群展示更多核心成员、小社群展示更少；传 top_n>0 一刀切', async () => {
+    const { service } = await makeService();
+    // 大社群：12 个 person + 共同 event "bigE"
+    const bigPersonIds: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const p = await service.observePerson('onebot', `big-${i}`, `Big${i}`);
+      bigPersonIds.push(p.id);
+    }
+    const bigE = await service.createEvent({ title: 'BigEvent', evidence: [ev()] });
+    for (const pid of bigPersonIds) {
+      await service.addPersonEventEdge({
+        fromPersonId: pid,
+        toEventId: bigE.id,
+        role: 'participant',
+        evidence: [ev()],
+      });
+    }
+    // 小社群：3 个 person + 共同 event
+    const smallPersonIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const p = await service.observePerson('onebot', `small-${i}`, `Small${i}`);
+      smallPersonIds.push(p.id);
+    }
+    const smallE = await service.createEvent({ title: 'SmallEvent', evidence: [ev()] });
+    for (const pid of smallPersonIds) {
+      await service.addPersonEventEdge({
+        fromPersonId: pid,
+        toEventId: smallE.id,
+        role: 'participant',
+        evidence: [ev()],
+      });
+    }
+
+    const adaptive = await service.getCommunityOverview({});
+    expect(adaptive.communities.length).toBeGreaterThanOrEqual(2);
+    const big = adaptive.communities.find(c => c.size >= 10);
+    const small = adaptive.communities.find(c => c.size === 3);
+    expect(big).toBeTruthy();
+    expect(small).toBeTruthy();
+    // 大社群核心展示数 ≥ 小社群（自适应 sqrt(comTotal)*1.5）
+    expect(big!.topMembers.length).toBeGreaterThanOrEqual(small!.topMembers.length);
+    // 小社群也保底 ≥ 3 条（但不会超过其实际成员数）
+    expect(small!.topMembers.length).toBeGreaterThanOrEqual(Math.min(3, small!.size));
+    // 大社群至少展示 ceil(sqrt(13)*1.5) = 6 个成员
+    expect(big!.topMembers.length).toBeGreaterThanOrEqual(6);
+
+    // 一刀切：传 top_n=2 → 所有社群最多 2 条
+    const fixed = await service.getCommunityOverview({ topN: 2 });
+    for (const c of fixed.communities) {
+      expect(c.topMembers.length).toBeLessThanOrEqual(2);
+    }
+
+    // top_n=0 → 不限
+    const unlimited = await service.getCommunityOverview({ topN: 0 });
+    const bigUnlim = unlimited.communities.find(c => c.size >= 10);
+    expect(bigUnlim!.topMembers.length).toBe(bigUnlim!.size);
   });
 });
