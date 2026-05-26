@@ -506,6 +506,17 @@ class DefaultAgent implements AgentService {
         );
 
         const t0 = Date.now();
+        // 本轮初始时间与累加用量，用于最终 assistant 消息的 modelInfo 元数据。
+        const turnStartTs = t0;
+        const turnUsageAcc = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        const accUsage = (
+          u: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined,
+        ) => {
+          if (!u) return;
+          turnUsageAcc.promptTokens += u.promptTokens ?? 0;
+          turnUsageAcc.completionTokens += u.completionTokens ?? 0;
+          turnUsageAcc.totalTokens += u.totalTokens ?? 0;
+        };
         const firstResult = await this.consumeStream(
           llm,
           {
@@ -518,6 +529,7 @@ class DefaultAgent implements AgentService {
           incoming.platform,
           signal,
         );
+        accUsage(firstResult.usage);
 
         // 维护本轮（一次完整对话回合）的统一时间线 segments：
         // 多次 LLM 调用 + 工具执行的输出按到达顺序拼接，保留模型原本的"思考/回答/工具/思考/回答"交错。
@@ -703,6 +715,7 @@ class DefaultAgent implements AgentService {
           );
           turnSegments.push(...nextResult.segments);
           response = nextResult;
+          accUsage(response.usage);
 
           this.debugLogResponse(response, Date.now() - tN, iterations);
 
@@ -775,6 +788,7 @@ class DefaultAgent implements AgentService {
           );
           turnSegments.push(...retryResult.segments);
           response = retryResult;
+          accUsage(response.usage);
           rawLlmContent = response.content ?? '';
           if (response.reasoningContent) allReasoning.push(response.reasoningContent);
 
@@ -810,6 +824,20 @@ class DefaultAgent implements AgentService {
         } else {
           const combinedReasoning = allReasoning.length > 0 ? allReasoning.join('\n\n---\n\n') : undefined;
 
+          // 在 assistant 最终持久化时记录 modelInfo：前端从消息历史可还原 "这条回复
+          // 由哪个 model 生成、用了多少 token、耗时多久"，方便用户验证模型切换是否生效。
+          const finalAssistantMetadata: Record<string, unknown> = {
+            ...(assistantMetadata ?? {}),
+            modelInfo: {
+              provider: llm.providerId,
+              model: llm.id,
+              promptTokens: turnUsageAcc.promptTokens || undefined,
+              completionTokens: turnUsageAcc.completionTokens || undefined,
+              totalTokens: turnUsageAcc.totalTokens || undefined,
+              elapsedMs: Date.now() - turnStartTs,
+            },
+          };
+
           // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
           // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
           await this.saveToMemory(incoming.sessionId, {
@@ -817,7 +845,7 @@ class DefaultAgent implements AgentService {
             content: archiveContent,
             reasoningContent: response.reasoningContent,
             timestamp: Date.now(),
-            metadata: assistantMetadata,
+            metadata: finalAssistantMetadata,
             segments: turnSegments.length > 0 ? turnSegments : undefined,
           });
 
