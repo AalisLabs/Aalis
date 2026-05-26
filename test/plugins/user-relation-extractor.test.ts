@@ -5,30 +5,28 @@ import type { MemoryService } from '../../packages/plugin-memory-api/src/index.j
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/plugin-message-api/src/index.js';
 import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
-import { RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';
+import { EXTRACTOR_CONFIG_DEFAULTS, RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 
-/** ExtractorConfig 中测试用例普遍不关心的字段，统一提供默认值以满足 strict 类型。 */
+/**
+ * ExtractorConfig 中测试用例普遍不关心的字段，统一从 extractor.ts 导出的单一真源
+ * `EXTRACTOR_CONFIG_DEFAULTS` 继承。新增字段时只需改 extractor.ts，TS 编译期会拦下遗漏。
+ *
+ * 此处仅按测试惯例覆写少数关键开关（关闭淘汰/quota，避免误触发清理逻辑干扰断言）。
+ */
 const EXTRACTOR_DEFAULTS = {
+  ...EXTRACTOR_CONFIG_DEFAULTS,
   evictionEnabled: false,
   maxPersons: 0,
   maxEvents: 0,
   maxEntities: 0,
   maxEdges: 0,
-  pagerankDamping: 0.85,
-  pagerankIterations: 20,
-  pagerankEpsilon: 1e-4,
-  evictHysteresisPct: 0.2,
-  evictTargetPct: 0.8,
-  weightDecayHalfLifeDays: 180,
-  weightDecayFloor: 0.3,
   consolidateAfterEviction: false,
-  consolidateLLMDisableThinking: true,
   consolidateAutoLink: false,
   consolidateSkipLowScorePairs: false,
   consolidateLowScoreThreshold: 0,
-} satisfies Partial<ExtractorConfig>;
+} satisfies ExtractorConfig;
 
 /** 构造可注入的 fake LLM model。chat() 返回 cannedResponse；记录最后一次请求供断言 */
 function makeFakeLLM(cannedResponse: string): { model: LLMModel; calls: ChatModelRequest[] } {
