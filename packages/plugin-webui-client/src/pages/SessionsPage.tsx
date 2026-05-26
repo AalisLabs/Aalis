@@ -950,7 +950,7 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
       {fallbackThinking}
       <div className="detail-msg-content detail-msg-md">
         <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
-          {msg.content}
+          {preprocessLaTeX(msg.content)}
         </ReactMarkdown>
       </div>
       {msg.timestamp > 0 && (
