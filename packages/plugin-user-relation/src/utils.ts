@@ -282,31 +282,22 @@ export function clamp01(x: number): number {
  * 加上时间衰减让 weight 自然回退，反复被提及的关系靠新的强化撑起来，
  * 而不再被提及的关系会逐渐退出 top-N / 淘汰受保护范围。
  *
- * Lazy 模式：weight 字段本身不写回，所有 scoring / sorting / eviction
- * 通过 `effectiveWeight(raw, lastReinforcedAt, now, cfg)` 计算"当下值"。
+ * Eager 模式（当前选择）：每次 `evictByQuota` 入口先调用
+ * `RelationService.rewriteWeights`，把所有 event/entity/edge 的 raw `weight`
+ * 物理改写为 `effectiveWeight`、并把 `lastReinforcedAt` 推到 now（作为新的衰减基准）。
+ * 优点：
+ *   - DB 字段始终反映"当下真实强度"，便于调试 / 观察 / WebUI 展示
+ *   - reinforceWeight 从已衰减的 raw 出发渐进恢复（0.3 → 0.37 → 0.43…），
+ *     不像 lazy 模式 raw 卡死在 1.0 时 reinforceWeight(1.0, δ)=1.0、effW 离散跳跃
+ *   - "淘汰排序"与 lazy 等价（都按 effectiveWeight），无策略回退
  *
- * ─────────────────────────────────────────────────────────────
- * 为什么不在压缩时把 effectiveWeight 物理回写到 DB？（lazy vs eager）
+ * Lazy 备选（已弃）：DB 存 raw 累积值，effectiveWeight 仅查询时算。
+ *   缺点：raw 卡死高位时 reinforce 无渐进感、跨时间快照难比较实际强度。
  *
- *   两种方案在"淘汰排序"上**完全等价**（都是按 effectiveWeight 排），
- *   差别只在"强节点保护门 ≥0.8" 的语义和 reinforceWeight 的起点：
+ * `effectiveWeight()` 仍是核心函数：rewriteWeights 调用它做回写、
+ * scoring / sorting / eviction 在两次 rewrite 之间也照常调用它做"实时校正"。
  *
- *   ✔ 当前 lazy（DB 存 raw，查询时算）：
- *     - DB 字段含义恒定，跨时间快照可比，便于调试 / 迁移
- *     - 强保护看 raw → "**曾经强**的关系（如配偶/挚友）长期受保护"
- *       即便几年没强化也不会被一次淘汰删掉
- *     - reinforceWeight 曲线连续平滑
- *
- *   ✘ 假设 eager（每次压缩把 raw 改写为 effectiveWeight + 重置 lastReinforcedAt）：
- *     - DB 字段每次压缩都漂移变小，无法跨时间比较
- *     - 强保护看当下值 → "当前还强"的关系才受保护，老朋友失保护被删
- *     - reinforceWeight 起点跳跃，老节点重提一次升幅远大于新节点
- *     - 多一次全量写盘开销，零额外收益
- *
- *   故保持 lazy。物理回写不是 bug 修复，是设计降级。
- * ─────────────────────────────────────────────────────────────
- *
- * - `halfLifeDays <= 0`：不衰减（向后兼容）
+ * - `halfLifeDays <= 0`：不衰减（向后兼容；rewriteWeights 也会 short-circuit）
  * - `halfLifeDays > 0`：half-life 后 effW = raw × 0.5，half-life × log2(1/floor) 后达到 floor 不再衰减
  * - `floor`：衰减下限因子（默认 0.3），保护"老朋友"——再久不联系也保留 30% 强度
  */
