@@ -254,7 +254,9 @@ export function registerRelationCommands(
    * - 失败静默（CLI 会话没有 platform adapter 会抛错，不影响主流程）
    * - 不 await 完成，纯并发
    */
-  function ackBackground(sessionId: string, text: string): void {
+  function ackBackground(sessionId: string, platform: string, text: string): void {
+    // internal 平台（scheduler / workflow 等系统触发）没有真实用户等待，跳过推送
+    if (platform === 'internal') return;
     void sendPlatformMessage(ctx, sessionId, text).catch(err => {
       ctx.logger?.debug?.(`[user-relation] 立即反馈推送失败（可忽略）：${(err as Error).message}`);
     });
@@ -272,6 +274,7 @@ export function registerRelationCommands(
       const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
       ackBackground(
         argv.session.sessionId,
+        argv.session.platform,
         `⏳ 正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
       );
       const r = await service.consolidate({
@@ -323,7 +326,11 @@ export function registerRelationCommands(
     })
     .action(async argv => {
       const ev = options?.eviction;
-      ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
+      ackBackground(
+        argv.session.sessionId,
+        argv.session.platform,
+        '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…',
+      );
       const before = await service.loadAll();
       let deletedPersons = 0;
       let deletedEvents = 0;
@@ -385,6 +392,7 @@ export function registerRelationCommands(
       const autoLink = argv.options['no-auto-link'] !== true && (options?.consolidateAutoLink ?? true);
       ackBackground(
         argv.session.sessionId,
+        argv.session.platform,
         `⏳ 正在体检关系图：先压缩再整理（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
       );
       const lines: string[] = ['✓ 关系图体检完成：'];
