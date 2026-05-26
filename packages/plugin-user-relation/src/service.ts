@@ -2317,9 +2317,14 @@ export class RelationService {
                 evidence: [],
               });
               aliasEdgesCreated++;
-              // 立即触发合并（A 方案：路由+壳子）
+              // 立即触发真合并（rewire 边 + 合并 aliases + 删 alias 壳子）
               const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
               mergedCanonicals.add(mergeResult.effectiveCanonicalId);
+              if (mergeResult.aliasDeleted && this.ctx?.logger) {
+                this.ctx.logger.info(
+                  `[user-relation] consolidate strict-equiv 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
+                );
+              }
             }
           }
         }
@@ -2585,6 +2590,11 @@ export class RelationService {
               kind: 'entity',
             });
             mergedCanonicals.add(mergeResult.effectiveCanonicalId);
+            if (mergeResult.aliasDeleted && this.ctx?.logger) {
+              this.ctx.logger.info(
+                `[user-relation] consolidate wide-recall 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
+              );
+            }
           }
         }
       }
@@ -3230,12 +3240,16 @@ export class RelationService {
   }
 
   // ============================================================
-  //  Alias merging（方案 A：路由 + 壳子）
+  //  Alias merging（真合并：rewire 边 + 合并 aliases + 删 alias 节点）
   //  is-alias-of / alt-account-of 边写入后立即触发：
   //    - 按启发式校正 canonical 方向（name 较长 / aliases 较多 / 总 evidence 较多）
   //    - 将所有引用 aliasId 的其它边重写为指向 canonicalId
   //    - 同 dedup key 冲突时合并 evidence/weight 并删除冗余
-  //    - alias 节点保留，仅保留指向 canonical 的 alias 标记边
+  //    - 合并 alias 的 name + aliases 到 canonical.aliases（仅 entity/event；
+  //      PersonNode 无 aliases 字段，留作未来扩展点）
+  //    - 级联删除 alias 节点本身（含 alias↔canonical 的 is-alias-of 标记边，
+  //      由 cascade 自动清掉）
+  //  设计对齐：docs/plugins/user-relation.md §3 合并语义
   // ============================================================
   async mergeAlias(opts: {
     aliasId: string;
@@ -3250,6 +3264,8 @@ export class RelationService {
     edgesMerged: number;
     edgesDeleted: number;
     swapped: boolean;
+    /** alias 节点是否被物理删除（即"真合并"是否完成）。person 当前总为 true（无 aliases 字段需合并） */
+    aliasDeleted: boolean;
   }> {
     let aliasId = opts.aliasId;
     let canonicalId = opts.canonicalId;
@@ -3263,6 +3279,7 @@ export class RelationService {
         edgesMerged: 0,
         edgesDeleted: 0,
         swapped,
+        aliasDeleted: false,
       };
     }
 
@@ -3327,6 +3344,62 @@ export class RelationService {
     // 清理涉及 aliasId 的 mergeReject 缓存：alias id 即将被吸收，旧缓存对未来无意义
     await this.store.deleteMergeRejectsByNode(aliasId);
 
+    // ─── 真合并：合并 aliases + 级联删除 alias 节点 ───
+    //  说明：mergeAlias 自身只 rewire 边，不能依赖此时的 snapshot 看到 canonical 节点最新状态
+    //  （上面已对 store 做了若干 upsertEdge / deleteEdge）。重新 loadAll 以拿到最新 nodes。
+    //  Person 节点目前没有 aliases 字段（PersonNode 见 types.ts L45），只删壳子。
+    //  Entity/Event 节点把 alias.name(或 title) + alias.aliases 并入 canonical.aliases。
+    let aliasDeleted = false;
+    try {
+      const fresh = await this.store.loadAll();
+      if (opts.kind === 'entity') {
+        const aliasNode = fresh.entities.find(e => e.id === aliasId);
+        const canonicalNode = fresh.entities.find(e => e.id === canonicalId);
+        if (aliasNode && canonicalNode) {
+          const merged = Array.from(
+            new Set([...(canonicalNode.aliases ?? []), aliasNode.name, ...(aliasNode.aliases ?? [])]),
+          ).filter(s => !!s && s !== canonicalNode.name);
+          if (merged.length !== (canonicalNode.aliases?.length ?? 0)) {
+            await this.store.upsertEntity({ ...canonicalNode, aliases: merged });
+          }
+          await this.store.deleteEntityCascade(aliasId);
+          aliasDeleted = true;
+        }
+      } else if (opts.kind === 'event') {
+        const aliasNode = fresh.events.find(e => e.id === aliasId);
+        const canonicalNode = fresh.events.find(e => e.id === canonicalId);
+        if (aliasNode && canonicalNode) {
+          const merged = Array.from(
+            new Set([...(canonicalNode.aliases ?? []), aliasNode.title, ...(aliasNode.aliases ?? [])]),
+          ).filter(s => !!s && s !== canonicalNode.title);
+          if (merged.length !== (canonicalNode.aliases?.length ?? 0)) {
+            await this.store.upsertEvent({ ...canonicalNode, aliases: merged });
+          }
+          await this.store.deleteEventCascade(aliasId);
+          aliasDeleted = true;
+        }
+      } else {
+        // person：复合 id `${platform}:${userId}`
+        const idx = aliasId.indexOf(':');
+        if (idx > 0) {
+          const platform = aliasId.slice(0, idx);
+          const userId = aliasId.slice(idx + 1);
+          const aliasNode = fresh.persons.find(p => p.id === aliasId);
+          if (aliasNode) {
+            await this.store.deletePersonCascade(platform, userId);
+            aliasDeleted = true;
+          }
+        }
+      }
+    } catch (err) {
+      // 真合并失败不应阻塞调用链（边已经 rewire 成功，最差情况退化为旧的"路由+壳子"行为）
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[user-relation] mergeAlias: 删除 alias 壳子失败 alias=${aliasId} canonical=${canonicalId} kind=${opts.kind}`,
+        err,
+      );
+    }
+
     return {
       effectiveCanonicalId: canonicalId,
       effectiveAliasId: aliasId,
@@ -3334,6 +3407,7 @@ export class RelationService {
       edgesMerged,
       edgesDeleted,
       swapped,
+      aliasDeleted,
     };
   }
 
