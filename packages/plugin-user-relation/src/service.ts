@@ -3317,9 +3317,9 @@ export class RelationService {
     // ─── (3) Event 重复合并 ─────────────────────────────────────────
     //   触发：autoLink && LLM 已配置（与 entity wide-recall 同口径）
     //   边界：sessionScope 相同 或 双方均 'global' —— 跨 scope 由 mergeAlias 硬护栏（L537）兜底
-    //   召回：每个 scope 池内 O(N²) pair；
-    //     有 embedding 服务：fused = 0.3·cos + 0.7·struct ≥ fusedThreshold
-    //     无 embedding 服务：jaccard(chars) ≥ 0.4 或 struct ≥ 0.5
+    //   召回：每个 scope 池内 O(N²) pair；任一阈值达成即进 LLM 评审（OR 关系）：
+    //     有 embedding 服务：fused = 0.7·cos + 0.3·struct ≥ fusedThreshold（文本为主、结构为辅）
+    //     OR jaccard(chars) ≥ 0.4 OR struct ≥ 0.5（无 embedding 或孤立事件的兜底）
     //   终判：verifyEventPair（必经 LLM；mergeReject 缓存命中跳过）
     //   合并：并查集 → pickCanonicalForEvents → mergeAlias(kind:'event')
     //   注：本段以前面 entity 合并后的最新 snapshot 为准（重新 loadAll）。
@@ -3381,10 +3381,14 @@ export class RelationService {
   /**
    * 内部入口：执行一次 event 重复检测；可选 dryRun 仅返回候选不合并。
    *
-   * 召回融合公式（前提条件）：
-   *  - 有 embedding 时：fused = 0.3·cos + 0.7·struct，阈值 fusedThreshold（默认 0.7）；
-   *    任一端有 embedding 失败 → 该 pair fallback 到 jaccard 分支
-   *  - 无 embedding 时：jaccard(chars) ≥ jaccardThreshold(默认 0.4) **或** struct ≥ structuralThreshold(默认 0.5)
+   * 召回融合公式（任一阈值达成即进 LLM，OR 关系）：
+   *  - 有 embedding 时：fused = 0.7·cos + 0.3·struct ≥ fusedThreshold（默认 0.7）；
+   *    任一端 embedding 失败 → 该项不参与 fused，仅看 jaccard / struct
+   *  - 永远兜底：jaccard(chars) ≥ jaccardThreshold(默认 0.4) **或** struct ≥ structuralThreshold(默认 0.5)
+   *
+   *  cos 与 struct 权重对换的原因：标题/语义高度相似但孤立（无共邻边）的事件对在旧公式
+   *  0.3·cos+0.7·struct 下永远 fused≈0 → 阈值不达 → 不进 LLM。文本相似度才是 event 同一性
+   *  的主要信号，结构作为加成。
    *
    * sessionScope 隔离：
    *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」、「都 undefined → 兜底当 'global'」）；
@@ -3557,13 +3561,22 @@ export class RelationService {
             }
           }
           let fusedScore: number | null = null;
-          let isCandidate = false;
           if (cosineScore !== null) {
-            fusedScore = 0.3 * cosineScore + 0.7 * structuralScore;
-            isCandidate = fusedScore >= fusedThreshold;
-          } else {
-            isCandidate = jaccardScore >= jaccardThreshold || structuralScore >= structuralThreshold;
+            // 2026-05 修：把 cos 与 struct 权重对换为 0.7·cos + 0.3·struct。
+            // 原 0.3·cos + 0.7·struct 让"标题/语义高度相似但孤立（无共邻边）"的事件对永远
+            // fused≈0 → 默认阈值 0.7 永远不达 → 永远不进 LLM（如「缸中之脑技术的讨论」与
+            // 「缸中之脑的讨论」）。文本语义本身就是 event 相似度更稳定的信号，结构相似只在
+            // 已经连接到共同实体/人物的场景下才能加成；这里以文本为主、结构为辅。
+            fusedScore = 0.7 * cosineScore + 0.3 * structuralScore;
           }
+          // 候选判定：fused 或 jaccard 或 struct 任一达阈即可（OR 兜底）。
+          // 此前 embedding 可用时完全忽略 jaccard，导致高 cos 高 jaccard 但 struct=0 的孤立
+          // 事件对被丢弃；现把 jaccard/struct 兜底显式纳入候选判定，让 LLM 仍有机会评审。
+          const hasEmbed = cosineScore !== null;
+          const isCandidate =
+            (hasEmbed && (fusedScore as number) >= fusedThreshold) ||
+            jaccardScore >= jaccardThreshold ||
+            structuralScore >= structuralThreshold;
           if (!isCandidate) continue;
           candidates.push({ a, b, sessionScope: scope, cosineScore, jaccardScore, structuralScore, fusedScore });
         }
