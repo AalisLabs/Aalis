@@ -25,6 +25,7 @@ const PERSON_PREFIX = 'person:';
 const EVENT_PREFIX = 'event:';
 const ENTITY_PREFIX = 'entity:';
 const EDGE_PREFIX = 'edge:';
+const MERGE_REJECT_PREFIX = 'merge-reject:';
 
 /** key 编码 / 解码 */
 export function personKey(platform: string, userId: string): string {
@@ -38,6 +39,34 @@ function entityKey(entityId: string): string {
 }
 export function edgeKey(edgeId: string): string {
   return `${EDGE_PREFIX}${edgeId}`;
+}
+/**
+ * mergeReject 持久化缓存的 key：把两端 id 排序，得到对称稳定键。
+ * 用于 consolidate LLM 否决合并的去重缓存——下次 maintain 时若双方 lastReinforcedAt 都没变，可跳过 LLM。
+ */
+function mergeRejectKey(aId: string, bId: string): string {
+  const [x, y] = aId < bId ? [aId, bId] : [bId, aId];
+  return `${MERGE_REJECT_PREFIX}${x}|${y}`;
+}
+
+/** consolidate LLM 否决合并的缓存记录。 */
+interface MergeRejectRecord {
+  /** 排序后的较小 id */
+  aId: string;
+  /** 排序后的较大 id */
+  bId: string;
+  /** 决策时 a 节点的 lastReinforcedAt；任何一方变化即失效 */
+  aReinforcedAt: number;
+  /** 决策时 b 节点的 lastReinforcedAt */
+  bReinforcedAt: number;
+  /** LLM 给出的理由 */
+  reason: string;
+  /** 决策时间戳 */
+  decidedAt: number;
+  /** 决策来源：strict-equiv（严格等价路径）/ wide-recall（宽召回路径） */
+  decidedBy: 'strict-equiv' | 'wide-recall';
+  /** 决策时节点的种类（entity / event / person），主要为调试与未来扩展用 */
+  kind: 'entity' | 'event' | 'person';
 }
 
 /** Memory 后端不支持 metadata 时使用的 NoOp 实现 —— 抛错而非静默吞掉，避免数据丢失被忽略 */
@@ -129,6 +158,50 @@ export class RelationStore {
 
   async deleteEdge(edgeId: string): Promise<void> {
     await this.memory.deleteMetadata!(RELATION_NAMESPACE, edgeKey(edgeId));
+  }
+
+  // ----- MergeReject 缓存（consolidate LLM 否决合并的持久化去重） -----
+
+  async getMergeReject(aId: string, bId: string): Promise<MergeRejectRecord | undefined> {
+    const data = await this.memory.getMetadata!(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+    return data as MergeRejectRecord | undefined;
+  }
+
+  async saveMergeReject(record: MergeRejectRecord): Promise<void> {
+    await this.memory.saveMetadata!(
+      RELATION_NAMESPACE,
+      mergeRejectKey(record.aId, record.bId),
+      record as unknown as Record<string, unknown>,
+    );
+  }
+
+  async deleteMergeReject(aId: string, bId: string): Promise<void> {
+    await this.memory.deleteMetadata!(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+  }
+
+  /** 列出全部 MergeReject 记录（webui / debug 用，体量预计 < 候选数）。 */
+  async listMergeRejects(): Promise<MergeRejectRecord[]> {
+    const entries = await this.memory.listMetadata!(RELATION_NAMESPACE);
+    const out: MergeRejectRecord[] = [];
+    for (const { key, data } of entries) {
+      if (key.startsWith(MERGE_REJECT_PREFIX)) out.push(data as unknown as MergeRejectRecord);
+    }
+    return out;
+  }
+
+  /** 当某个节点被合并/删除时，清理所有涉及它的 MergeReject 缓存（旧 id 不再有效）。 */
+  async deleteMergeRejectsByNode(nodeId: string): Promise<number> {
+    const entries = await this.memory.listMetadata!(RELATION_NAMESPACE);
+    let deleted = 0;
+    for (const { key, data } of entries) {
+      if (!key.startsWith(MERGE_REJECT_PREFIX)) continue;
+      const r = data as unknown as MergeRejectRecord;
+      if (r.aId === nodeId || r.bId === nodeId) {
+        await this.memory.deleteMetadata!(RELATION_NAMESPACE, key);
+        deleted++;
+      }
+    }
+    return deleted;
   }
 
   // ----- 全量加载（webui / 注入用） -----
