@@ -397,13 +397,13 @@ export function registerRelationCommands(
       );
       const lines: string[] = ['✓ 关系图体检完成：'];
       const before = await service.loadAll();
-      let dPersons = 0;
-      let dEvents = 0;
-      let dEntities = 0;
-      let dEdges = 0;
+      // 是否走完整淘汰还是只清孤儿—先记录模式，最终统计推迟到 consolidate 后用真实
+      // before/after 差值，避免压缩行漏算 consolidate 合并删掉的 alias 节点/边。
+      let evictionMode: 'quota' | 'orphans-only' = 'orphans-only';
       if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+        evictionMode = 'quota';
         // evictByQuota 自带孤儿清理，不重复调
-        const r = await service.evictByQuota({
+        await service.evictByQuota({
           maxPersons: ev.maxPersons,
           maxEvents: ev.maxEvents,
           maxEntities: ev.maxEntities,
@@ -419,21 +419,8 @@ export function registerRelationCommands(
           },
           communityAlgorithm: ev.communityAlgorithm,
         });
-        dPersons = r.deletedPersons;
-        dEvents = r.deletedEvents;
-        dEntities = r.deletedEntities;
-        dEdges = r.deletedEdges;
-        lines.push(
-          `[1/2] 压缩：人物 ${before.persons.length}→${before.persons.length - dPersons}，事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}，边 ${before.edges.length}→${before.edges.length - dEdges}`,
-        );
       } else {
-        const orphans = await service.pruneOrphans();
-        dPersons = orphans.deletedPersons;
-        dEvents = orphans.deletedEvents;
-        dEntities = orphans.deletedEntities;
-        lines.push(
-          `[1/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${before.persons.length}→${before.persons.length - dPersons}，事件 ${before.events.length}→${before.events.length - dEvents}，实体 ${before.entities.length}→${before.entities.length - dEntities}`,
-        );
+        await service.pruneOrphans();
       }
       // step 2: consolidate
       const cr = await service.consolidate({
@@ -465,6 +452,14 @@ export function registerRelationCommands(
             ? `，LLM 通过 ${cr.llmVerified ?? 0} 否决 ${cr.llmRejected ?? 0} 摘要重写 ${cr.summariesRewritten ?? 0}`
             : ''),
       );
+      // 现在统一以"真实 before vs after"输出压缩行，让 consolidate 阶段合并掉的
+      // alias 节点/边也能体现（修复 bug：日志曾出现"实体 87→87"但下一轮变 85→85）。
+      const after = await service.loadAll();
+      const compressLine =
+        evictionMode === 'quota'
+          ? `[1/2] 压缩：人物 ${before.persons.length}→${after.persons.length}，事件 ${before.events.length}→${after.events.length}，实体 ${before.entities.length}→${after.entities.length}，边 ${before.edges.length}→${after.edges.length}`
+          : `[1/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${before.persons.length}→${after.persons.length}，事件 ${before.events.length}→${after.events.length}，实体 ${before.entities.length}→${after.entities.length}，边 ${before.edges.length}→${after.edges.length}`;
+      lines.splice(1, 0, compressLine);
       return lines.join('\n');
     });
 
