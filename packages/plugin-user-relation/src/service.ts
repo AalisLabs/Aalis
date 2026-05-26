@@ -1107,8 +1107,10 @@ export class RelationService {
    * 副作用：每次调用都会把 PageRank 写回三类节点的 `lastPageRank` / `lastPageRankAt`，
    * 用于 WebUI 展示"图重要性"。
    *
-   * PageRank 个性化向量按 kind 加权（人=3，物=2，事=1），从而"重要性 人>物>事"
+   * PageRank 个性化向量按 kind 加权（默认 person=2 / entity=1.5 / event=1），从而"重要性 人>物>事"
    * 直接体现为分数偏置：人物附近的事件/实体更难被淘汰。
+   * 另外 utils.computePageRank 在 person→event / person→entity 单向边上加了半权反向虚拟边（系数 0.5），
+   * 让"参与重要事件 / 关注热门实体"的人 PR 能拉开差距，避免无 person-person 边的人退化到 seed 常数。
    *
    * 返回各类删除计数，便于日志/测试断言。
    */
@@ -2192,6 +2194,9 @@ export class RelationService {
                 const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
                 if (v.isSame) {
                   llmVerified++;
+                  if (opts.llm.ctx.logger) {
+                    opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 同意合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
+                  }
                   // 之前否决但本次同意 → 清掉缓存（节点已演化）
                   if (cached) await this.store.deleteMergeReject(a.id, b.id);
                 } else {
@@ -2428,6 +2433,9 @@ export class RelationService {
           continue;
         }
         llmVerified++;
+        if (opts.llm.ctx.logger) {
+          opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 同意合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`);
+        }
         // 之前否决但本次同意 → 清掉旧缓存
         if (cached) await this.store.deleteMergeReject(a.id, b.id);
         yesPairs.push({ aId: a.id, bId: b.id, reason });
