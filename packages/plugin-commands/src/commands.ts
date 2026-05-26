@@ -303,7 +303,7 @@ export class CommandRegistry implements CommandService {
     const parsed = this.parseArgs(cmd, resolved.remaining);
     if (typeof parsed === 'string') return parsed;
 
-    if (this._guard) {
+    if (this._guard && !input.bypassGuard) {
       const rejection = await this._guard({
         name: cmd.name,
         type: 'command',
