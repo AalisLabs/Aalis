@@ -27,7 +27,11 @@ interface SessionInfo {
 }
 
 interface SessionConfigData {
+  /** 新版字段：会话级 LLM 覆盖。SessionsPage 编辑器只读写此字段，不再发 legacy model/llmProvider。 */
+  llm?: { provider: string; model: string };
+  /** @deprecated legacy: 旧版 SessionsPage 编辑器写过的 flat 字段；保留仅用于读旧数据并折叠到 llm。 */
   model?: string;
+  /** @deprecated legacy */
   llmProvider?: string;
   persona?: string;
   enabledToolGroups?: string[];
@@ -100,8 +104,20 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
   onSave: (config: SessionConfigData) => void;
   onCancel: () => void;
 }) {
-  // draft 始终基于会话自身 config（非 resolved），保证保存时只写覆盖值
-  const [draft, setDraft] = useState<SessionConfigData>({ ...config });
+  // draft 始终基于会话自身 config（非 resolved），保证保存时只写覆盖值。
+  // 同时做一次「legacy → llm」折叠（与 SessionSidebar 保持一致逻辑）：DB 中可能
+  // 残留早期版本写入的 `config.model` flat 字段，需要在 UI 层把它折叠进 llm，
+  // 否则用户看到的选择不会反映他当初的真实意图，保存时还会被后端剥离。
+  const initialDraft: SessionConfigData = { ...config };
+  const legacyModel = typeof config.model === 'string' ? config.model : undefined;
+  const legacyProvider = typeof config.llmProvider === 'string' ? config.llmProvider : undefined;
+  if (legacyModel) {
+    const provider = legacyProvider ?? config.llm?.provider;
+    if (provider) initialDraft.llm = { provider, model: legacyModel };
+  }
+  delete (initialDraft as Record<string, unknown>).model;
+  delete (initialDraft as Record<string, unknown>).llmProvider;
+  const [draft, setDraft] = useState<SessionConfigData>(initialDraft);
   // resolved 用于 checkbox 默认勾选（当前生效值，含 session 自身覆盖）
   const resolved = resolvedConfig || {};
   // inherited = platform profile + 父 sessionDefaults（不含 session 自身），用于「继承 (xxx)」提示
@@ -146,20 +162,45 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
   const inheritLabel = (field: keyof SessionConfigData, inheritedVal: unknown) =>
     !draft[field] && inheritedVal ? ` (继承: ${inheritedVal})` : '';
 
-  /** 查找模型的 provider 前缀显示名 */
-  const modelDisplayName = (modelId: string | undefined) => {
-    if (!modelId) return undefined;
-    const found = options?.models.find(m => m.id === modelId);
-    return found?.provider ? `${found.provider} / ${modelId}` : modelId;
-  };
+  // === 模型 select（单级摊平：跨 provider 一级列表，value=`${provider}/${model}`）===
+  const selectedLlmKey = draft.llm?.provider && draft.llm?.model
+    ? `${draft.llm.provider}/${draft.llm.model}`
+    : '';
+  const flatLlmOptions = options.models
+    .filter(m => !!m.provider)
+    .map(m => ({
+      key: `${m.provider}/${m.id}`,
+      provider: m.provider as string,
+      model: m.id,
+      label: `${m.provider} / ${m.id}${m.capabilities.length > 0 ? `  [${m.capabilities.join(',')}]` : ''}`,
+    }));
+  if (selectedLlmKey && !flatLlmOptions.some(o => o.key === selectedLlmKey)) {
+    flatLlmOptions.unshift({
+      key: selectedLlmKey,
+      provider: draft.llm!.provider,
+      model: draft.llm!.model,
+      label: `${draft.llm!.provider} / ${draft.llm!.model}  (已离线)`,
+    });
+  }
+  const inheritedLlmLabel = inherited.llm
+    ? `${inherited.llm.provider} / ${inherited.llm.model}`
+    : undefined;
 
   return (
     <div className="session-config-editor" onClick={e => e.stopPropagation()}>
       <label className="session-config-field">
-        <span>模型{inheritLabel('model', inherited.model)}</span>
-        <select value={draft.model || ''} onChange={e => update('model', e.target.value || undefined)}>
-          <option value="">{inherited.model ? `继承 (${modelDisplayName(inherited.model)})` : '继承默认'}</option>
-          {options.models.map(m => <option key={`${m.contextId ?? ''}:${m.id}`} value={m.id}>{m.provider ? `${m.provider} / ${m.id}` : m.id}</option>)}
+        <span>模型{!draft.llm && inheritedLlmLabel ? ` (继承: ${inheritedLlmLabel})` : ''}</span>
+        <select
+          value={selectedLlmKey}
+          onChange={e => {
+            const key = e.target.value;
+            if (!key) { update('llm', undefined); return; }
+            const opt = flatLlmOptions.find(o => o.key === key);
+            if (opt) update('llm', { provider: opt.provider, model: opt.model });
+          }}
+        >
+          <option value="">{inheritedLlmLabel ? `继承 (${inheritedLlmLabel})` : '继承默认'}</option>
+          {flatLlmOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
       </label>
       <label className="session-config-field">
@@ -360,8 +401,12 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     try {
       await pageAction(pluginName, 'updateSessionConfig', { id, config });
       fetchTree();
-    } catch { /* ignore */ }
-    setConfigEditingId(null);
+      setConfigEditingId(null);
+    } catch (err) {
+      // 不再静默：用户切换模型失败必须能感知。保持编辑面板打开，方便重试。
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`保存会话配置失败：${msg}`);
+    }
   };
 
   // ---- 批量操作 ----
