@@ -1557,6 +1557,26 @@ export function computeEventEmbeddingHash(title: string, summary?: string): stri
 }
 
 /**
+ * 计算 EntityNode embedding 的指纹（entityKind + name + summary 的 fnv1a+djb2 32 hex）。
+ * 当 entityKind / name / summary 任一变化时，hash 自动变 → consolidate 阶段触发重新 embed。
+ * entityKind 加入 hash 是有意为之：同名跨 kind 视为不同实体，各自独立 embed。
+ */
+export function computeEntityEmbeddingHash(name: string, summary?: string, entityKind?: string): string {
+  const input = `${entityKind ?? ''}\n${(name || '').trim()}\n${(summary || '').trim()}`;
+  let h1 = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    h1 ^= BigInt(input.charCodeAt(i));
+    h1 = (h1 * prime) & 0xffffffffffffffffn;
+  }
+  let h2 = 5381n;
+  for (let i = 0; i < input.length; i++) {
+    h2 = ((h2 << 5n) + h2 + BigInt(input.charCodeAt(i))) & 0xffffffffffffffffn;
+  }
+  return h1.toString(16).padStart(16, '0') + h2.toString(16).padStart(16, '0');
+}
+
+/**
  * 一次扫边表，为每个 event 节点聚合 weightSum + edgeCount，供 pickCanonicalForEvents 使用。
  * 统计范围：所有涉及 event 的边（event-event 两端均计入；person-event / event-entity 的 event 端计入）。
  */
