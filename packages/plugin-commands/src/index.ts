@@ -169,6 +169,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 不应被 authority guard 卡住（否则 authority>1 的指令永远跑不起来）。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。
+  //
+  // DANGER — 临时方案，存在安全漏洞
+  // ──────────────────────────────────────
+  // 下方 isSystemTrigger=true 时会传 bypassGuard=true，完全绕过权限系统。
+  // 当前靠"只有 message.source 在此集合内才算受信任"来防止滥用，但 message.source
+  // 字段是字符串，没有加密签名，理论上可伪造（取决于消息总线的隔离边界）。
+  //
+  // TODO: 重新设计——参见 ExecutionInput.bypassGuard 注释（plugin-commands-api）。
+  // 在重新设计完成前，不要随意扩大此集合，也不要在其他代码路径中传 bypassGuard=true。
   const TRUSTED_SYSTEM_SOURCES = new Set(['scheduler', 'workflow', 'system']);
 
   ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
