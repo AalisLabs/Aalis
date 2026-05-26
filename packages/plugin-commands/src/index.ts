@@ -163,6 +163,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 历史上 OneBot 适配器内联拦截命令；现已迁移到 inbound:command 命名相位，
   // 所有平台共享同一套命令解析路径。
   // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 flow / trigger 之前。
+  //
+  // 受信任系统源：scheduler / workflow / system 等内部触发器写入 message.source。
+  // 这些来源没有真实 userId，但调度内容本身就是 owner 写在配置文件里的，
+  // 不应被 authority guard 卡住（否则 authority>1 的指令永远跑不起来）。
+  // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
+  // 因此结果不走 outbound 而是写日志，避免发到虚空。
+  const TRUSTED_SYSTEM_SOURCES = new Set(['scheduler', 'workflow', 'system']);
+
   ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
     // 内部触发（idle-trigger 等无 userId）不参与命令解析
@@ -175,6 +183,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // （归档、trigger、agent 等下游相位继续工作），避免对错字/打字噪音回显"未知指令"。
     if (!commands.hasMatch(parsed.name, parsed.args)) return next();
 
+    const isSystemTrigger = !!message.source && TRUSTED_SYSTEM_SOURCES.has(message.source);
+
     try {
       const result = await commands.execute(parsed.name, {
         sessionId: message.sessionId,
@@ -182,19 +192,28 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         userId: message.userId,
         args: parsed.args,
         raw: parsed.raw,
+        bypassGuard: isSystemTrigger,
+        skipSafetyCheck: isSystemTrigger,
       });
       if (result) {
-        const gateway = ctx.getService<GatewayService>('gateway');
-        const reply = {
-          content: result,
-          sessionId: message.sessionId,
-          platform: message.platform,
-          source: 'command' as const,
-        };
-        if (gateway) {
-          await gateway.dispatchOutbound(reply);
+        if (isSystemTrigger) {
+          // 系统触发器（scheduler/workflow）的 sessionId 通常是 internal 虚拟 session，
+          // 走 outbound 也无人接收；直接写日志便于排查。
+          const preview = result.length > 500 ? `${result.slice(0, 500)}…` : result;
+          ctx.logger.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
         } else {
-          await ctx.emit('outbound:message', reply);
+          const gateway = ctx.getService<GatewayService>('gateway');
+          const reply = {
+            content: result,
+            sessionId: message.sessionId,
+            platform: message.platform,
+            source: 'command' as const,
+          };
+          if (gateway) {
+            await gateway.dispatchOutbound(reply);
+          } else {
+            await ctx.emit('outbound:message', reply);
+          }
         }
       }
     } catch (err) {
