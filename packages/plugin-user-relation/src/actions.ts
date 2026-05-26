@@ -288,6 +288,36 @@ export const actions: PluginModule['actions'] = {
       }
     }
 
+    // 防御：过滤掉引用了缺失节点的“幽灵边”——避免前端 cytoscape 抛
+    // “Can not create edge with nonexistent source/target”导致整个图黑屏。
+    // 历史上某些级联删除/合并路径可能漏清边；这里只做防御性兜底，不修复存储。
+    {
+      const validNodeIds = new Set<string>();
+      for (const p of persons) validNodeIds.add(p.id);
+      for (const e of events) validNodeIds.add(e.id);
+      for (const e of entities) validNodeIds.add(e.id);
+      const before = edges.length;
+      const kept: RelationEdge[] = [];
+      const danglingPairs: string[] = [];
+      for (const e of edges) {
+        const [src, tgt] = edgeEndpointIds(e);
+        if (validNodeIds.has(src) && validNodeIds.has(tgt)) {
+          kept.push(e);
+        } else {
+          danglingPairs.push(`${e.id}(${src}→${tgt})`);
+        }
+      }
+      if (danglingPairs.length > 0) {
+        const logger = (ctx as unknown as { logger?: { warn: (msg: string) => void } }).logger;
+        const sample = danglingPairs.slice(0, 5).join(', ');
+        const more = danglingPairs.length > 5 ? `，… 共 ${danglingPairs.length} 条` : '';
+        logger?.warn(
+          `[user-relation] getRelationGraph: 跳过 ${danglingPairs.length}/${before} 条幽灵边（节点缺失）: ${sample}${more}`,
+        );
+      }
+      edges = kept;
+    }
+
     return {
       focusId,
       focusEdge: focusEdge
