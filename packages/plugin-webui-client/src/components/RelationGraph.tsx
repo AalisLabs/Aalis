@@ -13,6 +13,23 @@ function ensureFcose(): void {
   _fcoseRegistered = true;
 }
 
+/**
+ * 自适应 PageRank 显示：
+ * - PageRank 是「概率分布」，节点越多每个节点的值越小。100 个节点时人 PR 普遍在
+ *   2e-3 ~ 5e-3 量级，差异落在第 5 位之后；用 toFixed(4) 会让所有节点都显示成
+ *   "0.0021" 看起来一样，但实际节点尺寸/排序用的是完整精度可以正常区分。
+ * - 这里用 toPrecision(3) + 移除尾零：0.0021345 → "0.00213"，0.045 → "0.045"。
+ *   既能区分小差异，又不会出现 "0.045000"。
+ */
+function formatPR(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  // toPrecision 在 |n| < 1e-6 时会自动切到科学计数法，保留 3 位有效数字够看
+  const s = n.toPrecision(3);
+  // 去掉小数点后尾零（"0.00210" → "0.0021"），保留科学计数法形式
+  if (s.includes('e') || s.includes('E')) return s;
+  return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
+}
+
 interface GraphNode {
   data: {
     id: string;
@@ -1083,14 +1100,14 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                       {fe.sentiment ? (<><span>sentiment</span><span>{bilingual(fe.sentiment, SENTIMENT_ZH)}</span></>) : null}
                       {typeof fe.weight === 'number' ? (
                         <>
-                          <span title="边按 (kind, source, target[, role/relation]) 重复合并的累计强度：0.5 起步，每次合并 +0.3 → 0.65 → 0.755 → … (clamp 1.0)。语义=被强化次数，不是重要性。" style={{ cursor: 'help' }}>合并强度</span>
+                          <span title="边按 (kind, source, target[, role/relation]) 重复合并的累计强度：0.5 起步，每次合并 +(1−prev)·delta（默认 delta=0.1，由 LLM/工具调用传入）→ 0.55 → 0.595 → 0.636 → … (clamp 1.0)。语义=被强化次数，不是重要性。" style={{ cursor: 'help' }}>合并强度</span>
                           <span>{fe.weight.toFixed(2)}</span>
                         </>
                       ) : null}
                       {typeof evictionScore === 'number' ? (
                         <>
                           <span title="边淘汰分 = 合并强度 × 端点 PR 平均。配额淘汰时按此升序删——分越低越先删。让「弱权但连接重要节点」的边受保护。" style={{ cursor: 'help' }}>边淘汰分</span>
-                          <span>{evictionScore.toFixed(5)} <span style={{ opacity: 0.6 }}>= {fe.weight!.toFixed(2)} × {avgPR!.toFixed(4)}</span></span>
+                          <span>{evictionScore.toFixed(5)} <span style={{ opacity: 0.6 }}>= {fe.weight!.toFixed(2)} × {formatPR(avgPR!)}</span></span>
                         </>
                       ) : null}
                       <span>first</span><span>{fmt(fe.firstSeenAt)}</span>
@@ -1101,7 +1118,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                         <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>端点</div>
                         {endpoints.map(eid => {
                           const n = nodeOf(eid);
-                          const pr = typeof n?.lastPageRank === 'number' ? ` · PR ${n.lastPageRank.toFixed(4)}` : '';
+                          const pr = typeof n?.lastPageRank === 'number' ? ` · PR ${formatPR(n.lastPageRank)}` : '';
                           return (
                             <div key={eid} style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-secondary)' }}>
                               {n?.label ?? eid} <span style={{ opacity: 0.6 }}>[{String(n?.kind ?? '?')}]{pr}</span>
@@ -1403,8 +1420,8 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
 
         <div style={h}>三个数值指标</div>
         <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          <div><b>合并强度</b>（weight, 0~1）：节点 / 边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1-prev)·0.3</code> → 0.65 → 0.755 → 0.829 → … (clamp 1.0)。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
-          <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress | maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权（人 3 · 物 2 · 事 1）。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。</div>
+          <div><b>合并强度</b>（weight, 0~1）：节点 / 边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1−prev)·delta</code>（默认 delta=0.1，可由 LLM/工具调用传入；person 别名合并是直接 <code>+0.3</code> 的特殊情况）→ 0.55 → 0.595 → 0.636 → … (clamp 1.0)。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
+          <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress | maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权（人 2 · 物 1.5 · 事 1，可配置）。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。注：节点越多，每个 PR 值越小（PR 是归一化概率分布，总和为 1），UI 用 3 位有效数字显示。</div>
           <div style={{ marginTop: 3 }}><b>边淘汰分</b>（仅边详情）：<code>合并强度 × ((PR_from + PR_to) / 2)</code>。配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
         </div>
 
@@ -1515,8 +1532,8 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
       ['提及次数', asNum(p.mentionCount)],
       [
         '图重要性',
-        typeof p.lastPageRank === 'number' ? (p.lastPageRank as number).toFixed(4) : undefined,
-        '最近一次 evictByQuota 计算的全图 PageRank 分数。人/物/事 个性化种子 3:2:1；该节点越靠近「核心人物 · 热门事件」越高。未跑过压缩时为空。',
+        typeof p.lastPageRank === 'number' ? formatPR(p.lastPageRank as number) : undefined,
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。人/物/事 个性化种子 2:1.5:1（默认，可配置）；该节点越靠近「核心人物 · 热门事件」越高。PR 是归一化概率分布（总和=1），节点越多每个值越小；UI 用 3 位有效数字显示。未跑过压缩时为空。',
       ],
       ['首次出现', pickText(p, 'firstSeenAt')],
       ['最近出现', pickText(p, 'lastSeenAt')],
@@ -1570,11 +1587,11 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
       [
         '合并强度',
         typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined,
-        '按 title 重复合并的累计强度：0.5 起步，每次合并 +0.3 (clamp 1.0)。语义 = 被强化次数，不是重要性。',
+        '按 title 重复合并的累计强度：0.5 起步，每次合并 +(1−prev)·delta（默认 delta=0.1）。语义 = 被强化次数，不是重要性。',
       ],
       [
         '图重要性',
-        typeof detail.lastPageRank === 'number' ? (detail.lastPageRank as number).toFixed(4) : undefined,
+        typeof detail.lastPageRank === 'number' ? formatPR(detail.lastPageRank as number) : undefined,
         '最近一次 evictByQuota 计算的全图 PageRank 分数。反映"被重要节点引用"的结构性重要性；与合并强度独立。',
       ],
       ['首次出现', pickText(detail, 'firstSeenAt')],
@@ -1596,11 +1613,11 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus }: Nod
       [
         '合并强度',
         typeof detail.weight === 'number' ? (detail.weight as number).toFixed(2) : undefined,
-        '按 (kind, name) 重复合并的累计强度：0.5 起步，每次合并 +0.3 (clamp 1.0)。语义 = 被强化次数，不是重要性。',
+        '按 (kind, name) 重复合并的累计强度：0.5 起步，每次合并 +(1−prev)·delta（默认 delta=0.1）。语义 = 被强化次数，不是重要性。',
       ],
       [
         '图重要性',
-        typeof detail.lastPageRank === 'number' ? (detail.lastPageRank as number).toFixed(4) : undefined,
+        typeof detail.lastPageRank === 'number' ? formatPR(detail.lastPageRank as number) : undefined,
         '最近一次 evictByQuota 计算的全图 PageRank 分数。多人共同指向的实体一般分数更高。',
       ],
       ['首次出现', pickText(detail, 'firstSeenAt')],
