@@ -35,6 +35,10 @@ export interface CheckpointService {
   rollback(sessionId: string, turnId: string): Promise<RollbackResult>;
   /** 回滚某回合并同步删除本轮对话消息与向量条目 */
   rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult>;
+  /** 清除某会话的所有 checkpoint（/clear 与 deleteSession 调用）。幂等；不存在也返回 0。 */
+  clearSession(sessionId: string): Promise<number>;
+  /** 清除全部 checkpoint（/clear all 调用）。幂等。 */
+  clearAll(): Promise<number>;
 }
 
 export interface CheckpointFileRecord {
@@ -416,6 +420,43 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   private turnDir(sessionId: string, turnId: string): string {
     return joinUri(this.cfg.rootUri, encodeSegment(sessionId) + '/' + encodeSegment(turnId));
+  }
+
+  // ──────────── 会话级清理 ────────────
+  // 与 plugin-commands / plugin-session-manager 的 memory:clear 调度对齐，
+  // 避免 /clear 与 deleteSession 后 checkpoint 目录泄露。
+  async clearSession(sessionId: string): Promise<number> {
+    const sessionDir = joinUri(this.cfg.rootUri, encodeSegment(sessionId));
+    try {
+      const listed = await this.storage.list(sessionDir);
+      const count = listed.entries.filter(e => e.isDirectory).length;
+      await this.storage.delete(sessionDir);
+      if (count > 0) this.logger.info(`checkpoint 清理 session=${sessionId} 共 ${count} 个 turn`);
+      return count;
+    } catch (err) {
+      // 目录不存在是正常情况
+      this.logger.debug(`checkpoint clearSession ${sessionId} 跳过: ${(err as Error).message}`);
+      return 0;
+    }
+  }
+
+  async clearAll(): Promise<number> {
+    try {
+      const listed = await this.storage.list(this.cfg.rootUri);
+      const sessions = listed.entries.filter(e => e.isDirectory);
+      for (const item of sessions) {
+        try {
+          await this.storage.delete(item.uri);
+        } catch (err) {
+          this.logger.warn(`checkpoint clearAll 删 ${item.name} 失败: ${(err as Error).message}`);
+        }
+      }
+      if (sessions.length > 0) this.logger.info(`checkpoint 全量清理：${sessions.length} 个 session`);
+      return sessions.length;
+    } catch (err) {
+      this.logger.debug(`checkpoint clearAll 跳过: ${(err as Error).message}`);
+      return 0;
+    }
   }
 }
 
