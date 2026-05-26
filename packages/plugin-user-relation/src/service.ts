@@ -23,6 +23,7 @@ import {
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationStore } from './store.js';
 import type {
+  CommunityMembership,
   EdgeWeightAudit,
   EntityEntityEdge,
   EntityKind,
@@ -52,6 +53,7 @@ import {
   computeLouvain,
   computeModularity,
   computePageRank,
+  computeSlpa,
   edgeDedupKey,
   edgeInvolvesBoth,
   edgeReferences,
@@ -1150,8 +1152,13 @@ export class RelationService {
     pagerankComponentScale?: boolean;
     /** 时间衰减配置：用于把 raw weight 折算成有效 weight。halfLifeDays<=0 时退化为原 raw 行为。 */
     decay?: WeightDecayCfg;
-    /** 社群发现算法；默认 'louvain'。可在配置或调用时切换 'leiden'。 */
-    communityAlgorithm?: 'louvain' | 'leiden';
+    /**
+     * 社群发现算法；默认 'louvain'。
+     * - 'louvain'：标准硬划分，快、主社群清晰；每人恒为 1 个社群。
+     * - 'leiden'：Louvain + 内部连通性 refinement；修复 Louvain 社区内部可能不连通的问题。
+     * - 'slpa'：Speaker-Listener Label Propagation，**原生重叠社区**；跨群人物能获得多个社群隶属度。
+     */
+    communityAlgorithm?: 'louvain' | 'leiden' | 'slpa';
   }): Promise<{
     deletedPersons: number;
     deletedEvents: number;
@@ -1338,45 +1345,64 @@ export class RelationService {
     }
 
     // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"；
-    //    顺手跑社群发现（Louvain / Leiden 可切换），把 communityId 一并写回（同一批 snapshot 保证可比）。
+    //    顺手跑社群发现（Louvain / Leiden / SLPA 可切换），把 communityId + communityMemberships 一并写回（同一批 snapshot 保证可比）。
+    //    存储 schema 统一：louvain/leiden 永远写单元素 memberships=[{id, weight:1}]，slpa 写全多元素；
+    //    communityId 始终等于 memberships[0].id（主社群，向下兼容旧消费方）。
     {
       const after = await this.store.loadAll();
-      const alg: 'louvain' | 'leiden' = quota.communityAlgorithm ?? 'louvain';
-      const com = alg === 'leiden' ? computeLeiden(after) : computeLouvain(after);
-      // 算 modularity 给运维一个"社群质量分"——Q>0.3 通常算清晰，Q<0.1 接近随机。
-      const q = computeModularity(after, com);
-      const numCommunities = new Set(com.values()).size;
+      const alg: 'louvain' | 'leiden' | 'slpa' = quota.communityAlgorithm ?? 'louvain';
+      // 统一到 Map<nodeId, CommunityMembership[]>。
+      let memberships: Map<string, CommunityMembership[]>;
+      if (alg === 'slpa') {
+        memberships = computeSlpa(after);
+      } else {
+        const com = alg === 'leiden' ? computeLeiden(after) : computeLouvain(after);
+        memberships = new Map();
+        for (const [id, cid] of com) memberships.set(id, [{ id: cid, weight: 1 }]);
+      }
+      // 取主社群 id（memberships[0].id）做 modularity 与社群计数。
+      // modularity 只在硬划分算法下有标准定义；SLPA 用主社群作为近似参考值（仅诊断不作质量裁决）。
+      const primary = new Map<string, string>();
+      const allCommIds = new Set<string>();
+      for (const [id, list] of memberships) {
+        if (list.length > 0) primary.set(id, list[0].id);
+        for (const m of list) allCommIds.add(m.id);
+      }
+      const q = computeModularity(after, primary);
       this.ctx?.logger?.info(
-        `[user-relation] community algorithm=${alg} Q=${q.toFixed(4)} communities=${numCommunities} (nodes=${after.persons.length + after.events.length + after.entities.length})`,
+        `[user-relation] community algorithm=${alg} Q=${q.toFixed(4)} communities=${allCommIds.size} (nodes=${after.persons.length + after.events.length + after.entities.length})`,
       );
       for (const p of after.persons) {
         const score = pr.get(p.id);
-        const cid = com.get(p.id);
+        const list = memberships.get(p.id);
+        const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
         await this.store.upsertPerson({
           ...p,
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
-          ...(cid !== undefined ? { communityId: cid, communityIdAt: now } : {}),
+          ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),
         });
       }
       for (const ev of after.events) {
         const score = pr.get(ev.id);
-        const cid = com.get(ev.id);
+        const list = memberships.get(ev.id);
+        const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
         await this.store.upsertEvent({
           ...ev,
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
-          ...(cid !== undefined ? { communityId: cid, communityIdAt: now } : {}),
+          ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),
         });
       }
       for (const en of after.entities) {
         const score = pr.get(en.id);
-        const cid = com.get(en.id);
+        const list = memberships.get(en.id);
+        const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
         await this.store.upsertEntity({
           ...en,
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
-          ...(cid !== undefined ? { communityId: cid, communityIdAt: now } : {}),
+          ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),
         });
       }
     }
@@ -3961,35 +3987,38 @@ export class RelationService {
    * 全图社群概览：按 community 分组，每组列 top 成员/话题/事件，再算 modularity Q 和"桥梁人"。
    *
    * 设计要点：
-   * - `algorithm` 不传默认实时跑一遍 Louvain；传 'leiden' 则跑 Leiden-lite。**不读节点上的 communityId 缓存**，
-   *   保证每次调用结果与当前快照严格一致（即使 evictByQuota 还没跑）。
+   * - `algorithm` 不传默认实时跑一遍 Louvain；传 'leiden' 跑 Leiden-lite；传 'slpa' 跑 SLPA（原生重叠）。
+   *   **不读节点上的 communityId 缓存**，保证每次调用结果与当前快照严格一致（即使 evictByQuota 还没跑）。
    * - `sessionScope` 是**后过滤**：先在全图上跑社群算法（保证社群划分准确），再只统计 evidence 含该 scope
-   *   的节点，避免把"跨群关系"切断。events 看 `sessionScope` 字段；persons/entities 看 evidence 数组中
-   *   是否有 sessionId === scope 的条目。
-   * - `topN`：每个社群展示的成员/话题/事件条数。默认动态：`clamp(round(max(persons/50, edges/100)), 3, 20)`；
-   *   传 0 = 不限（同等价于 Number.MAX_SAFE_INTEGER）。
-   * - `bridges`：跨社群邻居数最多的 top-K person 节点，K 同样用 topN。
-   *   计算方式：对每个 person 统计其邻居（直接 person-person + 通过 event/entity 二跳）中
-   *   不在自己社群的不同社群个数。
+   *   的节点，避免把"跨群关系"切断。
+   * - 每个节点的**分组归属**始终按"主社群"（memberships[0].id，即 SLPA 下 weight 最高的 label）；
+   *   保持 topMembers/Topics/Events 语义清晰，避免一个节点在多社群重复出现稀释 LLM 注意力。
+   * - `topN`：每个社群展示的成员/话题/事件条数。默认动态：log2 自适应。传 0 = 不限。
+   * - `bridges`：跨社群联系最广的 top-K person。`crossCommunityDegree` = 邻居中不在该 person 自身**任一**社群
+   *   隶属里的"外社群"个数（SLPA 下自然把跨群人物的多归属考虑进去）；`communityWeights` 给出按"外社群"分组的
+   *   邻居边权累计（边越重 / 邻居越多 → weight 越大），供 LLM 判断该桥梁人物的跨群强度分布。
    *
    * Q（modularity）值粗判：Q > 0.3 = 圈子分明；0.1 ~ 0.3 = 一般；< 0.1 = 接近随机划分。
+   * SLPA 下 Q 用"主社群"作为硬划分近似计算，仅作参考——重叠社区没有标准 modularity 定义。
    */
   async getCommunityOverview(opts?: {
     sessionScope?: string;
     /** 0 = 不限 */
     topN?: number;
-    /** 不传则跑 louvain；可临时切 leiden */
-    algorithm?: 'louvain' | 'leiden';
+    /** 不传则跑 louvain；可临时切 leiden 或 slpa */
+    algorithm?: 'louvain' | 'leiden' | 'slpa';
     /**
      * Louvain/Leiden 分辨率 γ：默认 1.0（标准模块度）。
      * - γ > 1：划得更细 → 社群数变多、单社群更小
      * - γ < 1：划得更粗 → 社群数变少、单社群更大
      * 常用范围 0.5 ~ 3.0。超出 [0.01, 100] 会被夹紧。
+     * **SLPA 不使用该参数**（SLPA 的粒度由阈值 r 控制，本服务暂不暴露）。
      */
     resolution?: number;
   }): Promise<{
-    algorithm: 'louvain' | 'leiden';
+    algorithm: 'louvain' | 'leiden' | 'slpa';
     numCommunities: number;
+    /** SLPA 下基于主社群的硬划分近似 modularity，仅供参考。 */
     modularity: number;
     totalPersonsInScope: number;
     totalEventsInScope: number;
@@ -4004,25 +4033,39 @@ export class RelationService {
     bridges: Array<{
       id: string;
       displayName: string;
+      /** 该 person 自身的主社群（SLPA 下即权重最高的 label） */
       communityId: string;
+      /** SLPA 下该 person 的全部社群隶属度（按 weight 降序）；louvain/leiden 永远单元素 */
+      communityMemberships: CommunityMembership[];
+      /** 邻居中不在自身任一社群隶属里的"外社群"个数（向下兼容老消费方） */
       crossCommunityDegree: number;
+      /**
+       * 按"外社群"分组的邻居边权累计（按 weight 降序）。weight = ∑(邻居边权 × 邻居在该外社群的隶属度)。
+       * 用这个字段判断桥梁人物在每个跨群方向上的强度分布；degree 只告诉数量，weights 告诉力度。
+       */
+      communityWeights: Array<{ communityId: string; weight: number }>;
     }>;
   }> {
     const snap = await this.store.loadAll();
-    const alg: 'louvain' | 'leiden' = opts?.algorithm ?? 'louvain';
+    const alg: 'louvain' | 'leiden' | 'slpa' = opts?.algorithm ?? 'louvain';
     const resolution = opts?.resolution;
-    const com = alg === 'leiden' ? computeLeiden(snap, { resolution }) : computeLouvain(snap, { resolution });
-    const modularity = computeModularity(snap, com);
+    // 统一到 Map<nodeId, CommunityMembership[]>（按 weight 降序，memberships[0] = 主社群）
+    let memberships: Map<string, CommunityMembership[]>;
+    if (alg === 'slpa') {
+      memberships = computeSlpa(snap);
+    } else {
+      const com = alg === 'leiden' ? computeLeiden(snap, { resolution }) : computeLouvain(snap, { resolution });
+      memberships = new Map();
+      for (const [id, cid] of com) memberships.set(id, [{ id: cid, weight: 1 }]);
+    }
+    // 主社群映射（用于分组与 modularity 近似计算）
+    const primary = new Map<string, string>();
+    for (const [id, list] of memberships) {
+      if (list.length > 0) primary.set(id, list[0].id);
+    }
+    const modularity = computeModularity(snap, primary);
 
-    // topN 解析：
-    // - opts.topN 未传：per-community 自适应，按各社群规模独立计算
-    //     perComTopN(size) = max(3, ceil(log2(size + 1)))
-    //     bridgesTopN     = max(3, ceil(log2(personsInScope + 1)))
-    //   动机：用 log 而非 sqrt——展示量随社群规模增长得更平缓，避免"30 节点小社群也返 12 条/类"
-    //   的虚胖；社群越大 LLM 也只需要 7-14 个最关键代表，更多反而稀释注意力。
-    //   典型：comTotal=5→3, 30→5, 100→7, 1000→10, 10000→14。
-    // - opts.topN === 0：不限（全部展示）
-    // - opts.topN > 0：一刀切覆盖所有 community / bridges
+    // topN 解析（保持原逻辑）
     const rawTopN = opts?.topN;
     const useAdaptive = rawTopN === undefined;
     const fixedCap =
@@ -4034,9 +4077,6 @@ export class RelationService {
     const adaptiveTopN = (size: number) => Math.max(3, Math.ceil(Math.log2(Math.max(size, 1) + 1)));
 
     // sessionScope 后过滤
-    // - events: 看 sessionScope 字段
-    // - entities: 看 evidence 中是否有该 sessionId
-    // - persons: PersonNode 无 evidence —— 改为「参与过 scope 内 event 的人才算 in-scope」
     const scope = opts?.sessionScope;
     const inScopeEvent = (ev: (typeof snap.events)[number]): boolean => {
       if (!scope) return true;
@@ -4066,30 +4106,29 @@ export class RelationService {
       return personsInScope.includes(p);
     };
 
-    // 按 community 分组
+    // 按 community 分组（用 primary 主社群，避免一节点重复列在多社群）
     const personsByCom = new Map<string, typeof personsInScope>();
     const eventsByCom = new Map<string, typeof eventsInScope>();
     const entitiesByCom = new Map<string, typeof entitiesInScope>();
     for (const p of personsInScope) {
-      const c = com.get(p.id);
+      const c = primary.get(p.id);
       if (!c) continue;
       if (!personsByCom.has(c)) personsByCom.set(c, []);
       personsByCom.get(c)!.push(p);
     }
     for (const ev of eventsInScope) {
-      const c = com.get(ev.id);
+      const c = primary.get(ev.id);
       if (!c) continue;
       if (!eventsByCom.has(c)) eventsByCom.set(c, []);
       eventsByCom.get(c)!.push(ev);
     }
     for (const en of entitiesInScope) {
-      const c = com.get(en.id);
+      const c = primary.get(en.id);
       if (!c) continue;
       if (!entitiesByCom.has(c)) entitiesByCom.set(c, []);
       entitiesByCom.get(c)!.push(en);
     }
 
-    // 按 community size 排序（最大社群在前）
     const allCommunityIds = Array.from(
       new Set<string>([...personsByCom.keys(), ...eventsByCom.keys(), ...entitiesByCom.keys()]),
     );
@@ -4103,7 +4142,6 @@ export class RelationService {
         .slice()
         .sort((a, b) => (b.lastPageRank ?? 0) - (a.lastPageRank ?? 0));
       const events = (eventsByCom.get(cid) ?? []).slice().sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
-      // per-community 自适应限额：按本社群"人 + 物 + 事"总规模决定单项展示条数。
       const comTotal = members.length + topics.length + events.length;
       const perComTopN = useAdaptive ? adaptiveTopN(comTotal) : fixedCap;
       return {
@@ -4128,69 +4166,114 @@ export class RelationService {
       };
     });
 
-    // bridges：person 节点，统计其邻居中不在自身社群的"其他社群"个数
-    // 用 person→event/entity/person 邻接，二跳到其他 person（事件作中介）
-    const personNeighborCom = new Map<string, Set<string>>(); // personId → set<otherComId>
-    const ensure = (id: string) => {
-      if (!personNeighborCom.has(id)) personNeighborCom.set(id, new Set());
+    // bridges：对每个 person，累计"邻居外社群"的边权
+    //   外社群定义：邻居的某社群隶属 ∉ 该 person 自身的 memberships id 集合
+    //   weight = ∑(edge_weight × 邻居在该外社群的隶属度)
+    //   - louvain/leiden 下邻居隶属永远 1，退化为"邻居的边权 × 1"，等价于老语义但带权重
+    //   - SLPA 下能反映邻居的多重身份对该 person 跨群强度的真实贡献
+    // 邻接：person-person 直接 + person-event-person 二跳 + person-entity-person 二跳（与原实现一致，仅升级权重）
+    type PersonNbrs = Map<string, number>; // otherPersonId → 累计边权（无向）
+    const personNbrs = new Map<string, PersonNbrs>();
+    const ensureNbrs = (id: string): PersonNbrs => {
+      let m = personNbrs.get(id);
+      if (!m) {
+        m = new Map();
+        personNbrs.set(id, m);
+      }
+      return m;
     };
-    // 直接邻居（person-person）
+    const addNbr = (a: string, b: string, w: number) => {
+      if (a === b) return;
+      const ma = ensureNbrs(a);
+      ma.set(b, (ma.get(b) ?? 0) + w);
+      const mb = ensureNbrs(b);
+      mb.set(a, (mb.get(a) ?? 0) + w);
+    };
+    // 直连 person-person
     for (const e of snap.edges) {
       if (e.kind === 'person-person') {
-        const ca = com.get(e.fromPersonId);
-        const cb = com.get(e.toPersonId);
-        if (ca && cb && ca !== cb) {
-          ensure(e.fromPersonId);
-          personNeighborCom.get(e.fromPersonId)!.add(cb);
-          ensure(e.toPersonId);
-          personNeighborCom.get(e.toPersonId)!.add(ca);
-        }
+        addNbr(e.fromPersonId, e.toPersonId, Math.max(e.weight ?? 0.5, 0.05));
       }
     }
-    // 通过 event 桥：同 event 下的不同 person
-    const personsByEvent = new Map<string, string[]>();
+    // 通过 event 二跳：同 event 下任意两人配对
+    const personsByEvent = new Map<string, Array<{ id: string; w: number }>>();
     for (const e of snap.edges) {
       if (e.kind === 'person-event') {
-        if (!personsByEvent.has(e.toEventId)) personsByEvent.set(e.toEventId, []);
-        personsByEvent.get(e.toEventId)!.push(e.fromPersonId);
+        const arr = personsByEvent.get(e.toEventId) ?? [];
+        arr.push({ id: e.fromPersonId, w: Math.max(e.weight ?? 0.5, 0.05) });
+        personsByEvent.set(e.toEventId, arr);
       }
     }
     for (const arr of personsByEvent.values()) {
       for (let i = 0; i < arr.length; i++) {
         for (let j = i + 1; j < arr.length; j++) {
-          const ca = com.get(arr[i]);
-          const cb = com.get(arr[j]);
-          if (ca && cb && ca !== cb) {
-            ensure(arr[i]);
-            personNeighborCom.get(arr[i])!.add(cb);
-            ensure(arr[j]);
-            personNeighborCom.get(arr[j])!.add(ca);
-          }
+          // 二跳边权取两端 min（更保守，避免热点事件把边权放大）
+          addNbr(arr[i].id, arr[j].id, Math.min(arr[i].w, arr[j].w));
         }
       }
     }
+    // 通过 entity 二跳：同 entity 下任意两人配对
+    const personsByEntity = new Map<string, Array<{ id: string; w: number }>>();
+    for (const e of snap.edges) {
+      if (e.kind === 'person-entity') {
+        const arr = personsByEntity.get(e.toEntityId) ?? [];
+        arr.push({ id: e.fromPersonId, w: Math.max(e.weight ?? 0.5, 0.05) });
+        personsByEntity.set(e.toEntityId, arr);
+      }
+    }
+    for (const arr of personsByEntity.values()) {
+      for (let i = 0; i < arr.length; i++) {
+        for (let j = i + 1; j < arr.length; j++) {
+          addNbr(arr[i].id, arr[j].id, Math.min(arr[i].w, arr[j].w));
+        }
+      }
+    }
+
+    const personById = new Map(snap.persons.map(p => [p.id, p]));
     const bridgeArr: Array<{
       id: string;
       displayName: string;
       communityId: string;
+      communityMemberships: CommunityMembership[];
       crossCommunityDegree: number;
+      communityWeights: Array<{ communityId: string; weight: number }>;
     }> = [];
-    const personById = new Map(snap.persons.map(p => [p.id, p]));
-    for (const [pid, others] of personNeighborCom) {
-      if (others.size === 0) continue;
+    for (const [pid, nbrs] of personNbrs) {
       const p = personById.get(pid);
-      const cid = com.get(pid);
-      if (!p || !cid) continue;
-      // scope 过滤
+      if (!p) continue;
       if (scope && !inScopePerson(p)) continue;
+      const myList = memberships.get(pid) ?? [];
+      if (myList.length === 0) continue;
+      const myCom = new Set(myList.map(m => m.id));
+      // 累计邻居外社群的加权得分
+      const weightByCom = new Map<string, number>();
+      for (const [nbId, edgeW] of nbrs) {
+        const nbList = memberships.get(nbId);
+        if (!nbList || nbList.length === 0) continue;
+        for (const m of nbList) {
+          if (myCom.has(m.id)) continue; // 跳过自身社群
+          weightByCom.set(m.id, (weightByCom.get(m.id) ?? 0) + edgeW * m.weight);
+        }
+      }
+      if (weightByCom.size === 0) continue;
+      const communityWeights = [...weightByCom.entries()]
+        .map(([communityId, weight]) => ({ communityId, weight: Number(weight.toFixed(4)) }))
+        .sort((a, b) => b.weight - a.weight);
       bridgeArr.push({
         id: pid,
         displayName: p.displayName ?? pid,
-        communityId: cid,
-        crossCommunityDegree: others.size,
+        communityId: myList[0].id,
+        communityMemberships: myList,
+        crossCommunityDegree: communityWeights.length,
+        communityWeights,
       });
     }
-    bridgeArr.sort((a, b) => b.crossCommunityDegree - a.crossCommunityDegree);
+    // 按"跨群总权重"降序排（不再只看 degree 数量，权重更能反映强度）
+    bridgeArr.sort((a, b) => {
+      const sa = a.communityWeights.reduce((s, w) => s + w.weight, 0);
+      const sb = b.communityWeights.reduce((s, w) => s + w.weight, 0);
+      return sb - sa;
+    });
 
     const bridgesTopN = useAdaptive
       ? Math.max(3, Math.ceil(Math.log2(Math.max(personsInScope.length, 1) + 1)))
