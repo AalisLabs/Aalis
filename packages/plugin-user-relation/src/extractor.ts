@@ -123,6 +123,50 @@ export interface ExtractorConfig {
   debug: boolean;
 }
 
+/**
+ * `ExtractorConfig` 的单一默认值真源。
+ *
+ * 用途：
+ * - 测试构造 extractor 时直接 spread，避免每次新增字段都要在多份 fixture 里手补默认值；
+ * - `index.ts` apply() 的 `numCfg(config.x, DEFAULT)` 默认值也应优先从此处取（人工同步即可，因为 apply 路径有 string→number 解析需求）。
+ *
+ * **约束**：必须包含 `ExtractorConfig` 所有必填字段。`satisfies` 在编译期保证遗漏即报错——
+ * 给 `ExtractorConfig` 加新必填字段时，TS 会直接拒绝编译，倒逼此处同步，根治"测试 / 运行时
+ * 默认值漂移"问题。
+ *
+ * 可选字段（`?:`）默认留空（运行时按需启用）。
+ */
+export const EXTRACTOR_CONFIG_DEFAULTS = {
+  triggerEveryNMessages: 20,
+  readWindowSize: 30,
+  mode: 'incremental',
+  allNewMaxMessages: 200,
+  candidateEventDays: 7,
+  candidateEventLimit: 20,
+  senderNeighborhoodEdgeLimit: 8,
+  disableThinking: true,
+  strictSelfAssertion: true,
+  evictionEnabled: true,
+  maxPersons: 1500,
+  maxEvents: 2500,
+  maxEntities: 1500,
+  maxEdges: 10000,
+  pagerankDamping: 0.85,
+  pagerankIterations: 20,
+  pagerankEpsilon: 1e-4,
+  evictHysteresisPct: 0.2,
+  evictTargetPct: 0.8,
+  weightDecayHalfLifeDays: 180,
+  weightDecayFloor: 0.3,
+  communityAlgorithm: 'louvain',
+  consolidateAfterEviction: true,
+  consolidateLLMDisableThinking: true,
+  consolidateAutoLink: false,
+  consolidateSkipLowScorePairs: true,
+  consolidateLowScoreThreshold: 0.2,
+  debug: false,
+} as const satisfies ExtractorConfig;
+
 interface ArchivedEventData {
   sessionId: string;
   incoming: {
