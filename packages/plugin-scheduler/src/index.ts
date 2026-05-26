@@ -799,7 +799,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       function: {
         name: 'scheduler_list_jobs',
         description:
-          '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或分页避免返回过多数据。',
+          '列出计划任务及其状态，支持按名称关键词、启用状态过滤与分页。任务多时务必使用 keyword 或翻页（offset+limit）避免返回过多数据。翻页：下次调用传 offset = 上次 offset + limit，直到返回的 has_more=false。',
         parameters: {
           type: 'object',
           properties: {
@@ -809,8 +809,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
               enum: ['enabled', 'disabled', 'paused', 'running', 'all'],
               description: '可选：按状态过滤，默认 all',
             },
-            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-            pageSize: { type: 'number', description: '每页条数，默认 30（可自行设定）' },
+            limit: { type: 'number', description: '本页最多返回条数，默认 30' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
           },
         },
       },
@@ -836,22 +836,20 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         if (status === 'running' && !j.running) return false;
         return true;
       });
-      const page = Math.max(1, Math.floor(Number(args.page) || 1));
-      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
+      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
       const matched = filtered.length;
-      const totalPages = Math.max(1, Math.ceil(matched / pageSize));
-      const curPage = Math.min(page, totalPages);
-      const start = (curPage - 1) * pageSize;
+      const jobs = filtered.slice(offset, offset + limit);
       return JSON.stringify({
         total: all.length,
         matched,
-        page: curPage,
-        pageSize,
-        totalPages,
-        hasMore: curPage < totalPages,
+        limit,
+        offset,
+        returned: jobs.length,
+        has_more: offset + jobs.length < matched,
         ...(keyword ? { keyword } : {}),
         ...(status !== 'all' ? { status } : {}),
-        jobs: filtered.slice(start, start + pageSize),
+        jobs,
       });
     },
   });
