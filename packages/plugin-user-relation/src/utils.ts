@@ -64,6 +64,24 @@ export const PERSON_ENTITY_ROLE_RANK: Record<PersonEntityEdge['role'], number> =
  *
  * 当前仅作为 `roleDefaultWeight()` 的内部查表，不对外 export；
  * 若将来需要让 agent 查"系统默认权是多少"，再考虑改 export。
+ *
+ * ─────────────────────────────────────────────────────────────
+ * ⚠️ weight 字段的**双重语义**（**有意妥协**，非 bug）：
+ *
+ *   最终 weight = 初始 role 默认权（语义强弱 / 亲密度档位）
+ *              ⊕ reinforceWeight 累积（频次：被反复提及的次数）
+ *
+ *   这意味着：一条初始 `mentioned`(0.1) 的边被频繁提及后，
+ *   weight 可能累积到 0.95，超过一条初始 `friend`(0.5) 但只被提一次的边。
+ *   此时按 weight 排序 ≠ 按"亲密度"排序，而是 ≈ "亲密度 × 关注度" 的混合。
+ *
+ *   为什么不拆？淘汰评分、强节点保护、相似度评分都需要的是这个混合量
+ *   （"既亲又频"的关系才该保护，"虽亲但久不提"和"虽频但浅"都该降权），
+ *   单独的 baseStrength 字段没有独立消费方，YAGNI。
+ *
+ *   消费方注意：**weight ≠ 纯亲密度**。如果要"按关系亲密度"分类，
+ *   应该按 role/relationType（如 friend/cp/mentor）筛，**不要**按 weight 阈值切。
+ * ─────────────────────────────────────────────────────────────
  */
 const ROLE_DEFAULT_WEIGHT = {
   /** person-event：发起 > 参与 ≈ 被指向 > 转述 > 旁观 */
@@ -266,6 +284,27 @@ export function clamp01(x: number): number {
  *
  * Lazy 模式：weight 字段本身不写回，所有 scoring / sorting / eviction
  * 通过 `effectiveWeight(raw, lastReinforcedAt, now, cfg)` 计算"当下值"。
+ *
+ * ─────────────────────────────────────────────────────────────
+ * 为什么不在压缩时把 effectiveWeight 物理回写到 DB？（lazy vs eager）
+ *
+ *   两种方案在"淘汰排序"上**完全等价**（都是按 effectiveWeight 排），
+ *   差别只在"强节点保护门 ≥0.8" 的语义和 reinforceWeight 的起点：
+ *
+ *   ✔ 当前 lazy（DB 存 raw，查询时算）：
+ *     - DB 字段含义恒定，跨时间快照可比，便于调试 / 迁移
+ *     - 强保护看 raw → "**曾经强**的关系（如配偶/挚友）长期受保护"
+ *       即便几年没强化也不会被一次淘汰删掉
+ *     - reinforceWeight 曲线连续平滑
+ *
+ *   ✘ 假设 eager（每次压缩把 raw 改写为 effectiveWeight + 重置 lastReinforcedAt）：
+ *     - DB 字段每次压缩都漂移变小，无法跨时间比较
+ *     - 强保护看当下值 → "当前还强"的关系才受保护，老朋友失保护被删
+ *     - reinforceWeight 起点跳跃，老节点重提一次升幅远大于新节点
+ *     - 多一次全量写盘开销，零额外收益
+ *
+ *   故保持 lazy。物理回写不是 bug 修复，是设计降级。
+ * ─────────────────────────────────────────────────────────────
  *
  * - `halfLifeDays <= 0`：不衰减（向后兼容）
  * - `halfLifeDays > 0`：half-life 后 effW = raw × 0.5，half-life × log2(1/floor) 后达到 floor 不再衰减
