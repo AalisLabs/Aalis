@@ -12,6 +12,7 @@ import type {
   EntityNode,
   EventEntityEdge,
   EventEventEdge,
+  EventNode,
   EvidenceRef,
   PersonEntityEdge,
   PersonEventEdge,
@@ -1468,4 +1469,132 @@ export function computeEntityEdgeStats(
     }
   }
   return stats;
+}
+
+/**
+ * 余弦相似度。两个向量长度必须一致，返回 [-1, 1]；任一为 0 向量返回 0。
+ * consolidate event 阶段用于 embedding-based 文本相似度。
+ */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (!a || !b || a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+/**
+ * 字符级 Jaccard：以 Unicode 字符（非字节）建集合，返回 |A∩B| / |A∪B|。
+ * 用于无 embedding 服务时的 fallback 文本相似度（对中文友好，比 token 化更稳）。
+ * 自动 normalizeName（去空白/小写/全半角合并），空串返回 0。
+ */
+export function jaccardChars(a: string, b: string): number {
+  const sa = normalizeName(a || '');
+  const sb = normalizeName(b || '');
+  if (!sa || !sb) return 0;
+  const setA = new Set(Array.from(sa));
+  const setB = new Set(Array.from(sb));
+  let inter = 0;
+  for (const c of setA) if (setB.has(c)) inter++;
+  const uni = setA.size + setB.size - inter;
+  if (uni === 0) return 0;
+  return inter / uni;
+}
+
+/**
+ * 计算 EventNode embedding 的指纹（title + summary 的 sha1 前 16 hex）。
+ * 当节点的 title/summary 发生变化时，hash 自动变 → consolidate 阶段触发重新 embed。
+ * 使用 fnv1a + djb2 组合的 64bit 简化版（避免在浏览器/node 都依赖 crypto）。
+ */
+export function computeEventEmbeddingHash(title: string, summary?: string): string {
+  const input = `${(title || '').trim()}\n${(summary || '').trim()}`;
+  // fnv1a-64
+  let h1 = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    h1 ^= BigInt(input.charCodeAt(i));
+    h1 = (h1 * prime) & 0xffffffffffffffffn;
+  }
+  // djb2-mix as second half for collision robustness
+  let h2 = 5381n;
+  for (let i = 0; i < input.length; i++) {
+    h2 = ((h2 << 5n) + h2 + BigInt(input.charCodeAt(i))) & 0xffffffffffffffffn;
+  }
+  return h1.toString(16).padStart(16, '0') + h2.toString(16).padStart(16, '0');
+}
+
+/**
+ * 一次扫边表，为每个 event 节点聚合 weightSum + edgeCount，供 pickCanonicalForEvents 使用。
+ * 统计范围：所有涉及 event 的边（event-event 两端均计入；person-event / event-entity 的 event 端计入）。
+ */
+export function computeEventEdgeStats(
+  edges: ReadonlyArray<RelationEdge>,
+): Map<string, { weightSum: number; edgeCount: number }> {
+  const stats = new Map<string, { weightSum: number; edgeCount: number }>();
+  const bump = (id: string, w: number) => {
+    const cur = stats.get(id) ?? { weightSum: 0, edgeCount: 0 };
+    cur.weightSum += w;
+    cur.edgeCount += 1;
+    stats.set(id, cur);
+  };
+  for (const e of edges) {
+    const w = typeof e.weight === 'number' ? e.weight : 0;
+    if (e.kind === 'event-event') {
+      bump(e.fromEventId, w);
+      bump(e.toEventId, w);
+    } else if (e.kind === 'person-event') {
+      bump(e.toEventId, w);
+    } else if (e.kind === 'event-entity') {
+      bump(e.fromEventId, w);
+    }
+  }
+  return stats;
+}
+
+/**
+ * 在一个 event 簇内挑选 canonical（合并后保留的代表）。
+ * 算法与 pickCanonicalByMergeScore 一致：mergeScore = 0.5·weightSum + 0.3·edgeCount + 0.2·evidenceCount。
+ * 平局取 id 字典序最小者。
+ */
+export function pickCanonicalForEvents(
+  members: ReadonlySet<string>,
+  eventById: ReadonlyMap<string, EventNode>,
+  edgeStats: ReadonlyMap<string, { weightSum: number; edgeCount: number }>,
+): string {
+  if (members.size === 0) return '';
+  let maxW = 0;
+  let maxE = 0;
+  let maxEv = 0;
+  for (const id of members) {
+    const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
+    const node = eventById.get(id);
+    const evCount = node?.evidence?.length ?? 0;
+    if (stat.weightSum > maxW) maxW = stat.weightSum;
+    if (stat.edgeCount > maxE) maxE = stat.edgeCount;
+    if (evCount > maxEv) maxEv = evCount;
+  }
+  let canonicalId = '';
+  let bestScore = -Infinity;
+  for (const id of members) {
+    const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
+    const node = eventById.get(id);
+    const evCount = node?.evidence?.length ?? 0;
+    const wN = maxW > 0 ? stat.weightSum / maxW : 0;
+    const eN = maxE > 0 ? stat.edgeCount / maxE : 0;
+    const vN = maxEv > 0 ? evCount / maxEv : 0;
+    const score = wN * 0.5 + eN * 0.3 + vN * 0.2;
+    if (score > bestScore || (score === bestScore && (canonicalId === '' || id < canonicalId))) {
+      bestScore = score;
+      canonicalId = id;
+    }
+  }
+  return canonicalId;
 }

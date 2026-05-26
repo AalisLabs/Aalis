@@ -33,7 +33,7 @@ export const subsystem = 'memory';
 export const provides = ['user-relation'];
 export const inject = {
   required: ['memory'],
-  optional: ['llm', 'webui-server', 'agent', 'tools'],
+  optional: ['llm', 'webui-server', 'agent', 'tools', 'embedding'],
 };
 
 export const configSchema: ConfigSchema = {
