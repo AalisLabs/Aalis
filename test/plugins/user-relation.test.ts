@@ -16,11 +16,16 @@ import {
   clamp01,
   clusterEntitiesByPairs,
   computeEntityEdgeStats,
+  computeEventEdgeStats,
+  computeEventEmbeddingHash,
   computePageRank,
+  cosineSimilarity,
   isEvidenceFullyCovered,
   isSymmetricRelation,
+  jaccardChars,
   normalizeRelationType,
   pickCanonicalByMergeScore,
+  pickCanonicalForEvents,
   reinforceWeight,
   trimEvidence,
 } from '../../packages/plugin-user-relation/src/utils.js';
@@ -1736,5 +1741,280 @@ describe('plugin-user-relation: getCommunityOverview SLPA 原生重叠社区', (
     expect(r2.numCommunities).toBe(r1.numCommunities);
     expect(r2.modularity).toBeCloseTo(r1.modularity, 8);
     expect(r2.bridges.length).toBe(r1.bridges.length);
+  });
+});
+
+// ============================================================
+//  event duplicate consolidation （三段式：embedding + jaccard + LLM）
+// ============================================================
+describe('plugin-user-relation: event duplicate utils (pure)', () => {
+  it('cosineSimilarity: 相等向量=1，正交=0，长度不一致=0', () => {
+    expect(cosineSimilarity([1, 2, 3], [1, 2, 3])).toBeCloseTo(1, 6);
+    expect(cosineSimilarity([1, 0], [0, 1])).toBeCloseTo(0, 6);
+    expect(cosineSimilarity([1, 2, 3], [1, 2])).toBe(0);
+    expect(cosineSimilarity([], [])).toBe(0);
+  });
+
+  it('jaccardChars: 完全相同=1，不相交=0，中文相似词高分', () => {
+    expect(jaccardChars('abc', 'abc')).toBeCloseTo(1, 6);
+    expect(jaccardChars('abc', 'xyz')).toBe(0);
+    // {夏,天,炎,热} vs {夏,季,炎,热}：∩=3, ∪=5
+    expect(jaccardChars('夏天炎热', '夏季炎热')).toBeCloseTo(0.6, 6);
+  });
+
+  it('computeEventEmbeddingHash: 相同输入相同 hash，不同输入不同 hash，含 summary 差异', () => {
+    const h1 = computeEventEmbeddingHash('夏天炎热');
+    const h2 = computeEventEmbeddingHash('夏天炎热');
+    const h3 = computeEventEmbeddingHash('夏天凉爽');
+    const h4 = computeEventEmbeddingHash('夏天炎热', 'extra');
+    expect(h1).toBe(h2);
+    expect(h1).not.toBe(h3);
+    expect(h1).not.toBe(h4);
+    expect(typeof h1).toBe('string');
+    expect(h1.length).toBeGreaterThan(0);
+  });
+
+  it('computeEventEdgeStats: 三种 event 边 weightSum/edgeCount 正确累加', () => {
+    const stats = computeEventEdgeStats([
+      {
+        id: 'e1',
+        kind: 'event-event',
+        fromEventId: 'A',
+        toEventId: 'B',
+        relationType: 'related',
+        directed: false,
+        weight: 0.4,
+        firstSeenAt: 0,
+        lastReinforcedAt: 0,
+        evidence: [],
+      },
+      {
+        id: 'e2',
+        kind: 'person-event',
+        fromPersonId: 'p1',
+        toEventId: 'A',
+        role: 'participant',
+        weight: 0.6,
+        firstSeenAt: 0,
+        lastReinforcedAt: 0,
+        evidence: [],
+      },
+      {
+        id: 'e3',
+        kind: 'event-entity',
+        fromEventId: 'A',
+        toEntityId: 'x1',
+        relationType: 'related',
+        directed: false,
+        weight: 0.2,
+        firstSeenAt: 0,
+        lastReinforcedAt: 0,
+        evidence: [],
+      },
+    ] as unknown as Parameters<typeof computeEventEdgeStats>[0]);
+    expect(stats.get('A')).toEqual({ weightSum: 0.4 + 0.6 + 0.2, edgeCount: 3 });
+    expect(stats.get('B')).toEqual({ weightSum: 0.4, edgeCount: 1 });
+  });
+
+  it('pickCanonicalForEvents: 选 mergeScore 最高，平局取 id 字典序最小', () => {
+    const eventById = new Map([
+      ['ev-a', { id: 'ev-a', title: 'a', evidence: [{}, {}, {}] }],
+      ['ev-b', { id: 'ev-b', title: 'b', evidence: [{}] }],
+      ['ev-c', { id: 'ev-c', title: 'c', evidence: [] }],
+    ] as unknown as [string, import('../../packages/plugin-user-relation/src/types.js').EventNode][]);
+    const stats = new Map([
+      ['ev-a', { weightSum: 1, edgeCount: 2 }],
+      ['ev-b', { weightSum: 1, edgeCount: 2 }],
+      ['ev-c', { weightSum: 0, edgeCount: 0 }],
+    ]);
+    // ev-a 多 evidence → 0.5*1 + 0.3*1 + 0.2*(3/3) = 1.0；ev-b = 0.5+0.3+0.2*1/3 ≈ 0.867
+    expect(pickCanonicalForEvents(new Set(['ev-a', 'ev-b', 'ev-c']), eventById, stats)).toBe('ev-a');
+    // 完全平局时取字典序最小
+    const equalStats = new Map([
+      ['z', { weightSum: 1, edgeCount: 1 }],
+      ['a', { weightSum: 1, edgeCount: 1 }],
+    ]);
+    const equalEventById = new Map([
+      ['z', { id: 'z', title: 'z', evidence: [{}] }],
+      ['a', { id: 'a', title: 'a', evidence: [{}] }],
+    ] as unknown as [string, import('../../packages/plugin-user-relation/src/types.js').EventNode][]);
+    expect(pickCanonicalForEvents(new Set(['z', 'a']), equalEventById, equalStats)).toBe('a');
+  });
+});
+
+describe('plugin-user-relation: event duplicate consolidation', () => {
+  type LLMVerdict = { isSame: boolean; reason: string };
+  function mockLLM(verdict: LLMVerdict | ((aTitle: string, bTitle: string) => LLMVerdict)) {
+    const calls: Array<{ aTitle: string; bTitle: string }> = [];
+    const model = {
+      id: 'mock',
+      providerId: 'mock',
+      contextLength: 4096,
+      async chat(req: { messages: Array<{ role: string; content: string }> }) {
+        // 解析 user 消息中的标题（粗暴拿前两行 '标题:' 之后）
+        const user = req.messages.find(m => m.role === 'user')?.content ?? '';
+        const titles = Array.from(user.matchAll(/标题:\s*([^\n]+)/g)).map(m => m[1].trim());
+        const v = typeof verdict === 'function' ? verdict(titles[0] ?? '', titles[1] ?? '') : verdict;
+        calls.push({ aTitle: titles[0] ?? '', bTitle: titles[1] ?? '' });
+        return { content: JSON.stringify(v), done: true };
+      },
+    };
+    return { model, calls };
+  }
+
+  it('降级路径：无 embedding + jaccard 高 → LLM 同意 → 真合并', async () => {
+    const { service, store } = await makeService();
+    const a = await service.createEvent({
+      title: '夏天炎热',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1', quote: '今天太热了' })],
+    });
+    const b = await service.createEvent({
+      title: '夏季炎热',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1', quote: '夏天热到不行' })],
+    });
+    expect(a.id).not.toBe(b.id);
+    const { model, calls } = mockLLM({ isSame: true, reason: '同一话题' });
+    // biome-ignore lint/suspicious/noExplicitAny: 访问 private _consolidateEventDuplicates 用于单测
+    const r = await (service as any)._consolidateEventDuplicates({
+      llmModel: model,
+      // biome-ignore lint/suspicious/noExplicitAny: 仅为日志接口
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding: undefined,
+      dryRun: false,
+    });
+    expect(calls.length).toBe(1);
+    expect(r.llmVerified).toBe(1);
+    expect(r.merged).toBe(1);
+    // canonical 留下一个 event
+    const remaining = await store.loadAll();
+    expect(remaining.events.length).toBe(1);
+  });
+
+  it('LLM 否决 → 写 mergeReject 缓存 → 再次运行命中缓存不再调 LLM', async () => {
+    const { service } = await makeService();
+    await service.createEvent({
+      title: '夏天炎热',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    await service.createEvent({
+      title: '夏季炎热',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    const { model: m1, calls: c1 } = mockLLM({ isSame: false, reason: '不同次发生' });
+    // biome-ignore lint/suspicious/noExplicitAny: private 调用
+    const r1 = await (service as any)._consolidateEventDuplicates({
+      llmModel: m1,
+      // biome-ignore lint/suspicious/noExplicitAny: logger
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding: undefined,
+      dryRun: false,
+    });
+    expect(c1.length).toBe(1);
+    expect(r1.llmRejected).toBe(1);
+    expect(r1.merged).toBe(0);
+
+    const { model: m2, calls: c2 } = mockLLM({ isSame: true, reason: 'never called' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r2 = await (service as any)._consolidateEventDuplicates({
+      llmModel: m2,
+      // biome-ignore lint/suspicious/noExplicitAny: logger
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding: undefined,
+      dryRun: false,
+    });
+    expect(c2.length).toBe(0); // 缓存命中，未调 LLM
+    expect(r2.llmRejectCacheHits).toBe(1);
+    expect(r2.merged).toBe(0);
+  });
+
+  it('sessionScope 隔离：相同 title 跨 scope 不进同一池 → 无候选', async () => {
+    const { service } = await makeService();
+    await service.createEvent({
+      title: '炎热天气',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    await service.createEvent({
+      title: '炎热天气',
+      sessionScope: 'S2',
+      evidence: [ev({ sessionId: 'S2' })],
+    });
+    const { model, calls } = mockLLM({ isSame: true, reason: 'should not be called' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r = await (service as any)._consolidateEventDuplicates({
+      llmModel: model,
+      // biome-ignore lint/suspicious/noExplicitAny: logger
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding: undefined,
+      dryRun: false,
+    });
+    expect(calls.length).toBe(0);
+    expect(r.candidates.length).toBe(0);
+    expect(r.merged).toBe(0);
+  });
+
+  it('dryRun=true：候选可见但不真合并', async () => {
+    const { service, store } = await makeService();
+    await service.createEvent({
+      title: '夏天炎热',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    await service.createEvent({
+      title: '夏季炎热',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    const { model } = mockLLM({ isSame: true, reason: 'yes' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r = await (service as any)._consolidateEventDuplicates({
+      llmModel: model,
+      // biome-ignore lint/suspicious/noExplicitAny: logger
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding: undefined,
+      dryRun: true,
+    });
+    expect(r.candidates.length).toBe(1);
+    expect(r.llmVerified).toBe(1);
+    expect(r.merged).toBe(0);
+    const remaining = await store.loadAll();
+    expect(remaining.events.length).toBe(2);
+  });
+
+  it('embedding 路径：cos+struct 融合达阈值 → 合并', async () => {
+    const { service } = await makeService();
+    // 注意：title 差异较大让 jaccard 不直接达 0.4，必须靠 embedding cos 达 fused≥0.7
+    await service.createEvent({
+      title: 'A 事件',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    await service.createEvent({
+      title: 'B 事件',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    const embedding = {
+      // 所有文本映射到同一向量 → cos=1 → fused ≥ 0.7
+      async embed(_t: string) {
+        return [1, 0, 0];
+      },
+    };
+    const { model, calls } = mockLLM({ isSame: true, reason: '同事件' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r = await (service as any)._consolidateEventDuplicates({
+      llmModel: model,
+      // biome-ignore lint/suspicious/noExplicitAny: logger
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding,
+      dryRun: false,
+    });
+    expect(calls.length).toBe(1);
+    expect(r.llmVerified).toBe(1);
+    expect(r.merged).toBe(1);
   });
 });

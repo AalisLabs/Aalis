@@ -104,6 +104,92 @@ export async function verifyAliasPair(
 }
 
 /**
+ * (A2) 判断两个事件是否为同一事件。LLM 输出 JSON：{"isSame": boolean, "reason": string}
+ * 类比 verifyAliasPair，针对 EventNode 字段（title/summary/category/aliases）。
+ *
+ * 调用方应已经过结构相似 + 文本相似双向过滤（避免对全图 N² 个 pair 调 LLM）。
+ * 解析失败 / 异常 → 视为 false（保守不合并）。
+ *
+ * context.aEvidenceQuotes 给 LLM 提供原文上下文（每边 ≤3 条 evidence 截断），
+ * 有助于区分「同一事件多次描述」vs「不同次发生的同类事件」。
+ */
+interface EventPairContext {
+  aEvidenceQuotes?: string[];
+  bEvidenceQuotes?: string[];
+  /** 结构相似（Katz + AA 融合）分数，供 LLM 参考 */
+  structuralScore?: number;
+  /** 文本相似（cos 或 jaccard）分数 */
+  textualScore?: number;
+}
+
+export async function verifyEventPair(
+  _ctx: Context,
+  model: LLMModel,
+  a: EventNode,
+  b: EventNode,
+  disableThinking = true,
+  context?: EventPairContext,
+): Promise<{ isSame: boolean; reason: string }> {
+  const fmtEvidence = (qs?: string[]): string => {
+    if (!qs || qs.length === 0) return '';
+    return `近期证据片段：\n${qs.map(q => `  · ${q}`).join('\n')}`;
+  };
+  const fmtSim = (): string => {
+    const parts: string[] = [];
+    if (typeof context?.structuralScore === 'number') parts.push(`结构相似 ${context.structuralScore.toFixed(2)}`);
+    if (typeof context?.textualScore === 'number') parts.push(`文本相似 ${context.textualScore.toFixed(2)}`);
+    return parts.length ? `相似度信号：${parts.join(' / ')}` : '';
+  };
+  const prompt = [
+    {
+      role: 'system' as const,
+      content:
+        '你是一个事件消歧助手。你只输出 JSON，不要带 markdown 代码块。输出格式：{"isSame": true|false, "reason": "简短说明"}。' +
+        '事件是「发生过一次的事 / 一个话题段落」，若两条记录描述同一桩事 / 同一段持续讨论的话题，则视为同一事件。',
+    },
+    {
+      role: 'user' as const,
+      content: [
+        '判断以下两个事件是否为同一事件：',
+        '',
+        '【A】',
+        `标题: ${a.title}`,
+        a.category ? `类别: ${a.category}` : '',
+        a.aliases?.length ? `别名: ${a.aliases.join(', ')}` : '',
+        a.summary ? `摘要: ${a.summary}` : '',
+        fmtEvidence(context?.aEvidenceQuotes),
+        '',
+        '【B】',
+        `标题: ${b.title}`,
+        b.category ? `类别: ${b.category}` : '',
+        b.aliases?.length ? `别名: ${b.aliases.join(', ')}` : '',
+        b.summary ? `摘要: ${b.summary}` : '',
+        fmtEvidence(context?.bEvidenceQuotes),
+        '',
+        fmtSim(),
+        '',
+        '判定要点：',
+        '- 同一话题在短时间内被多次提及（例如「讨论夏天炎热」「讨论夏季发热」）→ 同一事件；',
+        '- 同一事件被不同视角 / 不同人复述（标题/摘要差异大但内核一致）→ 同一事件；',
+        '- 不同次独立发生的同类事件（如两次不同的雷雨）→ 不同事件；',
+        '- 类别差异大、证据上下文话题截然不同 → 倾向判否。',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    },
+  ];
+  try {
+    const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
+    const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
+    const parsed = tryParseJson(raw) as { isSame?: unknown; reason?: unknown } | undefined;
+    if (!parsed || typeof parsed.isSame !== 'boolean') return { isSame: false, reason: 'LLM 输出无法解析' };
+    return { isSame: parsed.isSame, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
+  } catch (err) {
+    return { isSame: false, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
  * (B) 合并后重写 canonical 实体摘要。
  * 失败返回 undefined（保留原 summary）。
  */

@@ -11,7 +11,10 @@
  * - WebUI 端点 → M4 的 actions
  */
 import type { Context } from '@aalis/core';
-import type { ModelRef } from '@aalis/plugin-llm-api';
+// type-only import：触发 declare module '@aalis/core' 合并，使 ctx.getService<'embedding'> 可用。
+// 运行时通过 ctx.getService 注入，无需把 @aalis/plugin-embedding-api 列入 dependencies。
+import type { EmbeddingService } from '@aalis/plugin-embedding-api';
+import type { LLMModel, ModelRef } from '@aalis/plugin-llm-api';
 
 import {
   inferEntityHierarchy,
@@ -19,6 +22,7 @@ import {
   resolveConsolidateModel,
   rewriteEntitySummary,
   verifyAliasPair,
+  verifyEventPair,
 } from './consolidate-llm.js';
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationStore } from './store.js';
@@ -49,11 +53,14 @@ import {
   clusterEntitiesByPairs,
   commonPrefix,
   computeEntityEdgeStats,
+  computeEventEdgeStats,
+  computeEventEmbeddingHash,
   computeLeiden,
   computeLouvain,
   computeModularity,
   computePageRank,
   computeSlpa,
+  cosineSimilarity,
   edgeDedupKey,
   edgeInvolvesBoth,
   edgeReferences,
@@ -65,12 +72,14 @@ import {
   isDirectedEventEventRelation,
   isEdgeSelfLoop,
   isEvidenceFullyCovered,
+  jaccardChars,
   mergeTwoEdges,
   normalizeName,
   normalizeRelationType,
   PERSON_ENTITY_ROLE_RANK,
   PERSON_EVENT_ROLE_RANK,
   pickCanonicalByMergeScore,
+  pickCanonicalForEvents,
   reinforceWeight,
   rewriteEdgeIds,
   roleDefaultWeight,
@@ -2285,6 +2294,10 @@ export class RelationService {
     fakePersonsDeleted: number;
     /** 自动清理时级联删的 person-* 边总数。 */
     fakePersonEdgesDeleted: number;
+    /** event 重复合并：召回候选数（pair 数，dry-run 报告用） */
+    eventDuplicateCandidates: number;
+    /** event 重复合并：实际合并的 event 数（被合并到 canonical 的别名 event 数） */
+    eventDuplicatesMerged: number;
   }> {
     // ─── (0) 伪 person 自动清理：与 extractor 落库守卫共用同一谓词。
     //   仅在 opts.ctx 传入且 `getPlatformNames(ctx)` 非空时启用 platform-whitelist
@@ -3176,6 +3189,32 @@ export class RelationService {
       }
     }
 
+    // ─── (3) Event 重复合并 ─────────────────────────────────────────
+    //   触发：autoLink && LLM 已配置（与 entity wide-recall 同口径）
+    //   边界：sessionScope 相同 或 双方均 'global' —— 跨 scope 由 mergeAlias 硬护栏（L537）兜底
+    //   召回：每个 scope 池内 O(N²) pair；
+    //     有 embedding 服务：fused = 0.7·cos + 0.3·struct ≥ fusedThreshold
+    //     无 embedding 服务：jaccard(chars) ≥ 0.4 或 struct ≥ 0.5
+    //   终判：verifyEventPair（必经 LLM；mergeReject 缓存命中跳过）
+    //   合并：并查集 → pickCanonicalForEvents → mergeAlias(kind:'event')
+    //   注：本段以前面 entity 合并后的最新 snapshot 为准（重新 loadAll）。
+    let eventDuplicateCandidates = 0;
+    let eventDuplicatesMerged = 0;
+    if (opts.autoLink && llmModel && opts.llm) {
+      const r = await this._consolidateEventDuplicates({
+        llmModel,
+        llmCtx: opts.llm.ctx,
+        disableThinking: llmDisableThinking,
+        embedding: this.ctx?.getService<EmbeddingService>('embedding'),
+        dryRun: false,
+      });
+      eventDuplicateCandidates = r.candidates.length;
+      eventDuplicatesMerged = r.merged;
+      llmVerified += r.llmVerified;
+      llmRejected += r.llmRejected;
+      llmRejectCacheHits += r.llmRejectCacheHits;
+    }
+
     const consolidateResult = {
       aliasCandidates,
       aliasEdgesCreated,
@@ -3188,6 +3227,8 @@ export class RelationService {
       lateralEdgesCreated,
       fakePersonsDeleted,
       fakePersonEdgesDeleted,
+      eventDuplicateCandidates,
+      eventDuplicatesMerged,
       ...(opts.llm ? { llmVerified, llmRejected, llmRejectCacheHits, summariesRewritten } : {}),
     };
     this._lastConsolidateAt = Date.now();
@@ -3197,12 +3238,354 @@ export class RelationService {
       `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
       `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
       (fakePersonsDeleted > 0 ? `，伪 person 清理 ${fakePersonsDeleted}（级联边 ${fakePersonEdgesDeleted}）` : '') +
+      (eventDuplicateCandidates > 0
+        ? `，event 重复候选 ${eventDuplicateCandidates}（合并 ${eventDuplicatesMerged}）`
+        : '') +
       (opts.llm
         ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected}` +
           (llmRejectCacheHits > 0 ? `（缓存命中 ${llmRejectCacheHits}）` : '') +
           ` 摘要重写 ${summariesRewritten}`
         : '');
     return consolidateResult;
+  }
+
+  // ============================================================
+  //  Event 重复合并：consolidate (3) 段提取出的可复用实现 + dry-run API
+  // ============================================================
+
+  /**
+   * 内部入口：执行一次 event 重复检测；可选 dryRun 仅返回候选不合并。
+   *
+   * 召回融合公式（前提条件）：
+   *  - 有 embedding 时：fused = 0.7·cos + 0.3·struct，阈值 fusedThreshold（默认 0.7）；
+   *    任一端有 embedding 失败 → 该 pair fallback 到 jaccard 分支
+   *  - 无 embedding 时：jaccard(chars) ≥ jaccardThreshold(默认 0.4) **或** struct ≥ structuralThreshold(默认 0.5)
+   *
+   * sessionScope 隔离：
+   *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」、「都 undefined → 兜底当 'global'」）；
+   *  - 跨 scope 永不比对，与 L537 mergeAlias 硬护栏一致
+   *
+   * Lazy embed：当 EventNode.embeddingHash !== computeEventEmbeddingHash(title, summary) 时，
+   *  实时调 embedding.embed() 并写回（持久化），下次 consolidate 复用。
+   */
+  private async _consolidateEventDuplicates(opts: {
+    llmModel?: LLMModel;
+    llmCtx?: Context;
+    embedding?: EmbeddingService;
+    disableThinking?: boolean;
+    /** dryRun=true: 仅返回候选 + LLM 终判结果，不执行 mergeAlias */
+    dryRun?: boolean;
+    fusedThreshold?: number;
+    jaccardThreshold?: number;
+    structuralThreshold?: number;
+  }): Promise<{
+    /** 进入 LLM 终判前的所有候选 pair（包含相似度信号，便于 dry-run 报告） */
+    candidates: Array<{
+      aId: string;
+      bId: string;
+      aTitle: string;
+      bTitle: string;
+      sessionScope: string;
+      cosineScore: number | null;
+      jaccardScore: number;
+      structuralScore: number;
+      fusedScore: number | null;
+      llmVerdict?: { isSame: boolean; reason: string };
+      cacheHit?: boolean;
+    }>;
+    llmVerified: number;
+    llmRejected: number;
+    llmRejectCacheHits: number;
+    /** 实际合并的别名 event 数（dryRun=true 时为 0） */
+    merged: number;
+  }> {
+    const fusedThreshold = opts.fusedThreshold ?? 0.7;
+    const jaccardThreshold = opts.jaccardThreshold ?? 0.4;
+    const structuralThreshold = opts.structuralThreshold ?? 0.5;
+    const logger = opts.llmCtx?.logger ?? this.ctx?.logger;
+
+    const snapshot = await this.store.loadAll();
+    const events = snapshot.events;
+
+    // 按 sessionScope 分组：undefined → 'global'（与硬护栏 L537 兼容）
+    const scopeOf = (e: EventNode): string => e.sessionScope ?? 'global';
+    const pools = new Map<string, EventNode[]>();
+    for (const ev of events) {
+      const s = scopeOf(ev);
+      if (!pools.has(s)) pools.set(s, []);
+      pools.get(s)!.push(ev);
+    }
+
+    // Lazy embed：把所有需要 embed 的 event 一次性扫出，按需算
+    const ensureEmbedding = async (ev: EventNode): Promise<number[] | null> => {
+      if (!opts.embedding) return null;
+      const expectedHash = computeEventEmbeddingHash(ev.title, ev.summary);
+      if (ev.embeddingHash === expectedHash && Array.isArray(ev.embeddingVector) && ev.embeddingVector.length > 0) {
+        return ev.embeddingVector;
+      }
+      // 需要 embed
+      const text = `${(ev.title || '').trim()}\n${(ev.summary || '').trim()}`.trim();
+      if (!text) return null;
+      try {
+        const vec = await opts.embedding.embed(text);
+        if (!Array.isArray(vec) || vec.length === 0) return null;
+        // 写回持久化
+        await this.store.upsertEvent({ ...ev, embeddingVector: vec, embeddingHash: expectedHash });
+        // 同步缓存到本地副本（snapshot 不会再 reload）
+        ev.embeddingVector = vec;
+        ev.embeddingHash = expectedHash;
+        return vec;
+      } catch (err) {
+        logger?.warn(
+          `[user-relation] consolidate event embed 失败 ${ev.id} (${ev.title.slice(0, 20)}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      }
+    };
+
+    type Candidate = {
+      a: EventNode;
+      b: EventNode;
+      sessionScope: string;
+      cosineScore: number | null;
+      jaccardScore: number;
+      structuralScore: number;
+      fusedScore: number | null;
+    };
+
+    const candidates: Candidate[] = [];
+
+    for (const [scope, list] of pools.entries()) {
+      if (list.length < 2) continue;
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i];
+          const b = list[j];
+          // 标题完全相同的硬合并候选不在本段处理（extractor 阶段就强化了），跳过避免重复
+          // 但若 sessionScope 相同 + title 相同 + 仍是两个节点 → 通常是异常，让 wide-recall 接住
+          // 这里允许 title 相等的也进 LLM
+          const cosA = await ensureEmbedding(a);
+          const cosB = await ensureEmbedding(b);
+          let cosineScore: number | null = null;
+          if (cosA && cosB && cosA.length === cosB.length) {
+            cosineScore = cosineSimilarity(cosA, cosB);
+          }
+          const jaccardScore = jaccardChars(`${a.title} ${a.summary ?? ''}`, `${b.title} ${b.summary ?? ''}`);
+          // 结构相似（Katz + AA）：可能较慢，仅在文本相似度已经达到门槛时才算
+          // 预过滤：cosineScore >= 0.5 或 jaccard >= 0.3 才值得算 struct
+          const preTextual = (cosineScore ?? 0) >= 0.5 || jaccardScore >= 0.3;
+          let structuralScore = 0;
+          if (preTextual) {
+            try {
+              const sb = await this.scoreBetween(a.id, b.id, { maxDepth: 3, topPaths: 1 });
+              structuralScore = sb.score;
+            } catch {
+              structuralScore = 0;
+            }
+          }
+          let fusedScore: number | null = null;
+          let isCandidate = false;
+          if (cosineScore !== null) {
+            fusedScore = 0.7 * cosineScore + 0.3 * structuralScore;
+            isCandidate = fusedScore >= fusedThreshold;
+          } else {
+            isCandidate = jaccardScore >= jaccardThreshold || structuralScore >= structuralThreshold;
+          }
+          if (!isCandidate) continue;
+          candidates.push({ a, b, sessionScope: scope, cosineScore, jaccardScore, structuralScore, fusedScore });
+        }
+      }
+    }
+
+    // 按融合分倒序 / jaccard 倒序，优先把高置信送 LLM
+    candidates.sort((x, y) => {
+      const sx = x.fusedScore ?? x.jaccardScore;
+      const sy = y.fusedScore ?? y.jaccardScore;
+      return sy - sx;
+    });
+
+    const report: Array<{
+      aId: string;
+      bId: string;
+      aTitle: string;
+      bTitle: string;
+      sessionScope: string;
+      cosineScore: number | null;
+      jaccardScore: number;
+      structuralScore: number;
+      fusedScore: number | null;
+      llmVerdict?: { isSame: boolean; reason: string };
+      cacheHit?: boolean;
+    }> = [];
+
+    let llmVerified = 0;
+    let llmRejected = 0;
+    let llmRejectCacheHits = 0;
+    const yesPairs: Array<{ aId: string; bId: string; reason: string }> = [];
+
+    for (const cand of candidates) {
+      const { a, b } = cand;
+      const reportEntry = {
+        aId: a.id,
+        bId: b.id,
+        aTitle: a.title,
+        bTitle: b.title,
+        sessionScope: cand.sessionScope,
+        cosineScore: cand.cosineScore,
+        jaccardScore: cand.jaccardScore,
+        structuralScore: cand.structuralScore,
+        fusedScore: cand.fusedScore,
+      } as (typeof report)[number];
+
+      if (!opts.llmModel || !opts.llmCtx) {
+        // dryRun 但没传 LLM —— 直接收集候选不判定
+        report.push(reportEntry);
+        continue;
+      }
+
+      const cached = await this.store.getMergeReject(a.id, b.id);
+      if (
+        cached &&
+        cached.aReinforcedAt === (a.lastReinforcedAt ?? 0) &&
+        cached.bReinforcedAt === (b.lastReinforcedAt ?? 0)
+      ) {
+        llmRejectCacheHits++;
+        reportEntry.cacheHit = true;
+        reportEntry.llmVerdict = { isSame: false, reason: `mergeReject 缓存：${cached.reason}` };
+        report.push(reportEntry);
+        continue;
+      }
+
+      const verdict = await verifyEventPair(opts.llmCtx, opts.llmModel, a, b, opts.disableThinking ?? true, {
+        aEvidenceQuotes: (a.evidence ?? [])
+          .slice(-3)
+          .map(ev => (ev.quote ?? '').trim())
+          .filter(Boolean),
+        bEvidenceQuotes: (b.evidence ?? [])
+          .slice(-3)
+          .map(ev => (ev.quote ?? '').trim())
+          .filter(Boolean),
+        structuralScore: cand.structuralScore,
+        textualScore: cand.fusedScore ?? cand.jaccardScore,
+      });
+      reportEntry.llmVerdict = verdict;
+      report.push(reportEntry);
+
+      if (!verdict.isSame) {
+        llmRejected++;
+        const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+        await this.store.saveMergeReject({
+          aId: smaller.id,
+          bId: larger.id,
+          aReinforcedAt: smaller.lastReinforcedAt ?? 0,
+          bReinforcedAt: larger.lastReinforcedAt ?? 0,
+          reason: verdict.reason,
+          decidedAt: Date.now(),
+          decidedBy: 'wide-recall',
+          kind: 'event',
+        });
+        logger?.info(
+          `[user-relation] consolidate event LLM 否决 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
+        );
+        continue;
+      }
+      llmVerified++;
+      if (cached) await this.store.deleteMergeReject(a.id, b.id);
+      const reason =
+        cand.fusedScore !== null
+          ? `fused ${cand.fusedScore.toFixed(2)} (cos ${cand.cosineScore?.toFixed(2)}, struct ${cand.structuralScore.toFixed(2)})`
+          : `jaccard ${cand.jaccardScore.toFixed(2)} / struct ${cand.structuralScore.toFixed(2)}`;
+      yesPairs.push({ aId: a.id, bId: b.id, reason });
+      logger?.info(
+        `[user-relation] consolidate event LLM 同意合并 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
+      );
+    }
+
+    // dryRun 不合并
+    let merged = 0;
+    if (!opts.dryRun && yesPairs.length > 0) {
+      const eventEdgeStats = computeEventEdgeStats(snapshot.edges);
+      const eventById = new Map(snapshot.events.map(e => [e.id, e] as const));
+      const clusters = clusterEntitiesByPairs(yesPairs);
+      for (const [, members] of clusters) {
+        if (members.size < 2) continue;
+        const canonicalId = pickCanonicalForEvents(members, eventById, eventEdgeStats);
+        if (!canonicalId) continue;
+        for (const memberId of members) {
+          if (memberId === canonicalId) continue;
+          // mergeAlias 内部有跨 sessionScope 硬护栏，重复保险
+          try {
+            const r = await this.mergeAlias({ aliasId: memberId, canonicalId, kind: 'event' });
+            if (r.aliasDeleted) {
+              merged++;
+              logger?.info(
+                `[user-relation] consolidate event 真合并：${r.effectiveAliasId} → ${r.effectiveCanonicalId}`,
+              );
+            }
+          } catch (err) {
+            logger?.warn(
+              `[user-relation] consolidate event 合并失败 ${memberId} → ${canonicalId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
+    }
+
+    return { candidates: report, llmVerified, llmRejected, llmRejectCacheHits, merged };
+  }
+
+  /**
+   * 公开 API：dry-run 查找 event 重复（不执行任何合并）。
+   * 给 `/relation event-duplicates` 命令 / webui 调用使用。
+   *
+   * 与 consolidate 行为口径完全一致：sessionScope 同池 + 加权融合阈值 + mergeReject 缓存复用 + LLM 终判。
+   * 但不写图，仅返回候选 + LLM 判定。
+   */
+  async findEventDuplicates(
+    opts: {
+      llm?: { ctx: Context; modelRef: ModelRef; disableThinking?: boolean };
+      fusedThreshold?: number;
+      jaccardThreshold?: number;
+      structuralThreshold?: number;
+    } = {},
+  ): Promise<{
+    candidates: Array<{
+      aId: string;
+      bId: string;
+      aTitle: string;
+      bTitle: string;
+      sessionScope: string;
+      cosineScore: number | null;
+      jaccardScore: number;
+      structuralScore: number;
+      fusedScore: number | null;
+      llmVerdict?: { isSame: boolean; reason: string };
+      cacheHit?: boolean;
+    }>;
+    llmVerified: number;
+    llmRejected: number;
+    llmRejectCacheHits: number;
+    embeddingAvailable: boolean;
+  }> {
+    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.ctx, { modelRef: opts.llm.modelRef }) : undefined;
+    const embedding = this.ctx?.getService<EmbeddingService>('embedding');
+    const r = await this._consolidateEventDuplicates({
+      llmModel,
+      llmCtx: opts.llm?.ctx,
+      disableThinking: opts.llm?.disableThinking ?? true,
+      embedding,
+      dryRun: true,
+      fusedThreshold: opts.fusedThreshold,
+      jaccardThreshold: opts.jaccardThreshold,
+      structuralThreshold: opts.structuralThreshold,
+    });
+    return {
+      candidates: r.candidates,
+      llmVerified: r.llmVerified,
+      llmRejected: r.llmRejected,
+      llmRejectCacheHits: r.llmRejectCacheHits,
+      embeddingAvailable: !!embedding,
+    };
   }
 
   // ============================================================

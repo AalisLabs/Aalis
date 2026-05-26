@@ -141,6 +141,14 @@ export interface EventNode {
   communityIdAt?: number;
   /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
   communityMemberships?: CommunityMembership[];
+  /**
+   * 由 consolidate event 合并阶段填充：title+summary 的 embedding 向量。
+   * 命中 `embeddingHash` 哈希一致时复用，避免每次 consolidate 重算。
+   * 缺失（老数据 / 无 embedding 服务）→ consolidate 时自动按需补全。
+   */
+  embeddingVector?: number[];
+  /** sha1(title + '\n' + summary) 截前 16 字节 hex；title/summary 变更后值变 → 触发重 embed。 */
+  embeddingHash?: string;
 }
 
 /**
