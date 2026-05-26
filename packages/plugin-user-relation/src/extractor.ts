@@ -100,9 +100,10 @@ export interface ExtractorConfig {
   weightDecayFloor: number;
   /**
    * evictByQuota 之后顺手跑的社群发现算法。默认 'louvain'。
-   * 'leiden'=Leiden-lite（Louvain + 连通性 refinement），保证社群内部连通。
+   * - 'louvain' / 'leiden'：硬划分，每个节点恰好属于一个社群（leiden 额外保证社群内部连通）
+   * - 'slpa'：Speaker-Listener Label Propagation，原生重叠社区；跨群人物能获得多个社群隶属度
    */
-  communityAlgorithm: 'louvain' | 'leiden';
+  communityAlgorithm: 'louvain' | 'leiden' | 'slpa';
   /**
    * 淘汰完成后自动运行一次 consolidate（去重/整理/层级推断）。
    * 仅在实际发生淘汰（deletedEvents/Entities/Edges > 0）时触发。默认 true。

@@ -982,21 +982,23 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           '【全局】社群发现概览：把所有人按"圈子"分组，列出每个社群的核心成员/话题/事件，并标出"桥梁人"。',
           '典型场景："这群里有几个圈子"、"哪几个人是连接不同圈子的桥梁"、"X 这个 session 里都聊什么"。',
           '参数说明：',
-          '- algorithm：可选 "louvain" / "leiden"。不传则用插件默认（一般 louvain）。',
-          '  · louvain = 经典快速；leiden = 简化版 Leiden（保证社群内部连通，稍慢质量略高）。',
-          '  · 当 louvain 划分明显把两群没交集的人塞一起时，可换 leiden 重跑。',
+          '- algorithm：可选 "louvain" / "leiden" / "slpa"。不传则用插件默认（一般 louvain）。',
+          '  · louvain = 经典快速、硬划分（每人恰好属于一个社群）。',
+          '  · leiden = 简化版 Leiden（同硬划分，但保证社群内部连通，稍慢质量略高）；当 louvain 把两群没交集的人塞一起时换它重跑。',
+          '  · slpa = Speaker-Listener Label Propagation，原生**重叠社区**算法；一个人可同时属于多个社群（如同时混在 c2 和 c4），bridges 返回的 communityMemberships 字段会展示其多归属。',
+          '  · 选择建议：分析"圈子结构清晰度"用 louvain/leiden；分析"跨圈人物 / 多重身份"或 louvain 出来的 bridges 太少时换 slpa。',
           '- session_scope：可选。只统计 evidence 含该 session 的节点（events 看 sessionScope；persons 看是否参与过 scope 内 event；entities 看 evidence）。',
           '  · 注意：社群划分仍在全图上跑，scope 只是后过滤展示，避免切断跨群关系。',
           '- top_n：每个社群展示的成员/话题/事件条数。',
           '  · 不传：per-community 自适应，按各社群规模独立计算 max(3, ceil(log2(comSize+1)))，大社群展示多、小社群展示少，无硬上限。',
           '  · 传 0：不限（全部展示）。',
           '  · 传 >0 整数：一刀切覆盖所有 community / bridges。',
-          '- resolution：Louvain/Leiden 分辨率 γ，默认 1.0。',
+          '- resolution：Louvain/Leiden 分辨率 γ，默认 1.0（**SLPA 不使用该参数**）。',
           '  · γ > 1（如 1.5 / 2.0 / 3.0）：划得**更细更碎**——社群数变多、单社群更小。',
           '  · γ < 1（如 0.7 / 0.5）：划得**更粗**——社群数变少、单社群更大。',
           '  · 当前划分太松散（社群太多/碎片化）就降到 0.5~0.8；太粗（两群被合一起）就升到 1.5~2.5。建议从 0.5/1.0/1.5/2.0 几个挡位试，配合 modularity Q 看哪个最高。',
           '  · 该参数只影响本次返回；不会污染节点缓存里的 communityId（缓存恒为 γ=1.0 基准）。',
-          '返回字段：modularity (Q ∈ [-0.5, 1], >0.3 圈子分明)、communities[]、bridges[] (跨社群邻居最多的 top-N 人)。',
+          '返回字段：modularity (Q ∈ [-0.5, 1], >0.3 圈子分明；SLPA 下为基于主社群的近似值，仅供参考)、communities[]、bridges[] (跨社群联系最广的 top-N 人；含 communityMemberships 多归属 + communityWeights 外社群权重分布)。',
           '注意：本工具实时跑算法，不依赖节点上的 communityId 缓存——即使 evictByQuota 还没跑也能用。',
         ].join('\n'),
         parameters: {
@@ -1004,8 +1006,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           properties: {
             algorithm: {
               type: 'string',
-              enum: ['louvain', 'leiden'],
-              description: '社群发现算法；不传走插件默认配置',
+              enum: ['louvain', 'leiden', 'slpa'],
+              description: '社群发现算法；不传走插件默认配置。louvain/leiden=硬划分；slpa=原生重叠社区（一人多社群）',
             },
             session_scope: {
               type: 'string',
@@ -1028,8 +1030,8 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     groups: [groupName],
     handler: async args => {
       const algorithm =
-        args.algorithm === 'leiden' || args.algorithm === 'louvain'
-          ? (args.algorithm as 'louvain' | 'leiden')
+        args.algorithm === 'leiden' || args.algorithm === 'louvain' || args.algorithm === 'slpa'
+          ? (args.algorithm as 'louvain' | 'leiden' | 'slpa')
           : undefined;
       const sessionScope =
         typeof args.session_scope === 'string' && args.session_scope.trim().length > 0
