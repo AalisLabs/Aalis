@@ -287,17 +287,22 @@ function buildTargetUserCorpus(history: Message[], userId: string, platform: str
  */
 function renderHistoryForExtract(history: Message[], userId: string, platform: string): string {
   return history
-    .filter(m => m.role === 'user' && m.content)
+    .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
     .map(m => {
       const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
+      const content = (m.content ?? '').trim();
+      if (!content) return '';
+      if (m.role === 'assistant') {
+        // Aalis 的回复：加标签让 LLM 知道用户是在跟谁互动，用于判断「对 Aalis 的行为」
+        return `[${time}] [Aalis]: ${content}`;
+      }
       const nickname = metadataString(m, 'nickname');
       const msgUserId = getMessageUserId(m) ?? '';
       const msgPlatform = metadataString(m, 'platform');
       const isTarget = msgUserId === userId && (!msgPlatform || !platform || msgPlatform === platform);
       const label = nickname ? `${nickname}(${msgUserId || '?'})` : msgUserId || '?';
       const tag = isTarget ? '目标用户' : '其他用户';
-      const content = (m.content ?? '').trim();
-      return content ? `[${time}] [${tag} ${label}]: ${content}` : '';
+      return `[${time}] [${tag} ${label}]: ${content}`;
     })
     .filter(Boolean)
     .join('\n');
@@ -465,7 +470,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const sys =
       '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：' +
-      '`[目标用户 X(uid)]` 或 `[其他用户 Y(uid)]`。上下文仅供消歧，' +
+      '`[目标用户 X(uid)]`、`[其他用户 Y(uid)]` 或 `[Aalis]`。上下文仅供消歧，' +
       '**只允许根据「目标用户」自己的发言写入事实**，不能根据其他用户、Aalis 的猜测或提问写入事实。' +
       '\n\n你可以执行三种操作（在一次输出里组合）：' +
       '\n- add: 添加新事实，需指定 text、category、sourceQuote' +
@@ -478,6 +483,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       '\n   - 是认真陈述，还是反讽/否定/假设/角色扮演？（"我可不喜欢爵士" → 否定，不写；跑团扮演 NPC 的台词 → 不写）' +
       '\n   - 如果原始依据来自「其他用户」的发言，即使在说目标用户，也不允许写入（他人可能记错、说反话）' +
       '\n   **拿不准就不写。profile 漏几条没关系，写错才麻烦。**' +
+      '\n   ⚠️ 例外——`人际关系` 类：除上述通用规则外，该类还允许记录目标用户**对 Aalis 的可观察行为与态度**，' +
+      '例如：是否是 Aalis 的部署/维护者、经常向 Aalis 提功能需求、曾表达过对 Aalis 的感谢或不满、帮助测试过 Aalis 等。' +
+      '这类事实依据必须是「目标用户」发言中**可直接推断的行为**（不能凭空猜测），sourceQuote 取目标用户发言原话。' +
+      '示例 text：「是 Aalis 的开发维护者」「经常向 Aalis 提交功能建议」「曾帮助排查 Aalis 的故障」「曾对 Aalis 表达不满」。' +
       '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写' +
       '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条' +
       '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除' +
