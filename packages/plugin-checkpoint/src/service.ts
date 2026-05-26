@@ -217,7 +217,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     // 情况 4：正常快照
     const blobName = `${this.blobIndex++}.bin`;
     const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
-    await this.storage.writeFile(joinUri(turnDir, 'blobs/' + blobName), original.data);
+    await this.storage.writeFile(joinUri(turnDir, `blobs/${blobName}`), original.data);
 
     this.current.files.push({
       uri,
@@ -291,7 +291,7 @@ export class CheckpointServiceImpl implements CheckpointService {
           // 跳过快照的，无法恢复
           result.errors.push({ uri: file.uri, reason: file.skipped });
         } else if (file.blob) {
-          const data = await this.storage.readFile(joinUri(turnDir, 'blobs/' + file.blob));
+          const data = await this.storage.readFile(joinUri(turnDir, `blobs/${file.blob}`));
           await this._backendWrite(file.uri, Buffer.from(data as Uint8Array));
           result.restored.push(file.uri);
         }
@@ -419,7 +419,7 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 
   private turnDir(sessionId: string, turnId: string): string {
-    return joinUri(this.cfg.rootUri, encodeSegment(sessionId) + '/' + encodeSegment(turnId));
+    return joinUri(this.cfg.rootUri, `${encodeSegment(sessionId)}/${encodeSegment(turnId)}`);
   }
 
   // ──────────── 会话级清理 ────────────

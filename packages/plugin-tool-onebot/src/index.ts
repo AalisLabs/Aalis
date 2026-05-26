@@ -180,7 +180,7 @@ function resolveGroupTarget(
 /**
  * 解析"目标用户"：args.user_id 优先；否则当前会话必须是 OneBot 私聊。
  */
-function resolveUserTarget(
+function _resolveUserTarget(
   ctx: Context,
   callCtx: ToolCallContext,
   args: Record<string, unknown>,

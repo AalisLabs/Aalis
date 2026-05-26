@@ -692,7 +692,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     groups: [groupName],
     handler: async args => {
       const nodeId = String(args.node_id ?? '').trim();
-      if (!nodeId || !nodeId.includes(':')) {
+      if (!nodeId?.includes(':')) {
         return JSON.stringify({ error: 'node_id 必须是 person（platform:userId）' });
       }
       const poolSize = clampNum(args.candidate_pool, 20, 1, 50);
