@@ -262,6 +262,25 @@ export function registerRelationCommands(
     });
   }
 
+  /**
+   * 进程内 per-command mutex：避免用户连按两次 /relation maintain 等长任务命令时
+   * 后台叠加两份相同写流程（PageRank / consolidate LLM 都很贵且会改图，并发跑会
+   * 互相覆盖统计、白白浪费 token）。第二次调用立即返回 ack 文本，不阻塞 commands
+   * 路由。锁的粒度是**命令名**，跨命令仍可并发（与原有行为一致）。
+   */
+  const runningCommands = new Map<string, number>(); // commandName → startedAt epoch ms
+  function tryAcquireCommand(name: string): { ok: true } | { ok: false; elapsedSec: number } {
+    const startedAt = runningCommands.get(name);
+    if (startedAt !== undefined) {
+      return { ok: false, elapsedSec: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) };
+    }
+    runningCommands.set(name, Date.now());
+    return { ok: true };
+  }
+  function releaseCommand(name: string): void {
+    runningCommands.delete(name);
+  }
+
   // ---- consolidate（整理：别名候选 / 自动 part-of / 旧账去重） ----
   cmds
     .command('relation.consolidate', '整理关系图：扫描别名候选、自动 part-of、规范化 PersonEventEdge', {
@@ -270,53 +289,59 @@ export function registerRelationCommands(
     .option('auto-link', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
     .option('no-llm', '--no-llm', { description: '跳过 consolidationModel 配置的 LLM 增强（A 核验 + B 摘要重写）' })
     .action(async argv => {
-      const autoLink = argv.options['auto-link'] === true;
-      const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
-      ackBackground(
-        argv.session.sessionId,
-        argv.session.platform,
-        `⏳ 正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
-      );
-      const r = await service.consolidate({
-        autoLink,
-        triggerSource: 'manual',
-        ctx,
-        ...(options?.consolidateSkipLowScorePairs !== undefined
-          ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
-          : {}),
-        ...(options?.consolidateLowScoreThreshold !== undefined
-          ? { lowScoreThreshold: options.consolidateLowScoreThreshold }
-          : {}),
-        ...(useLlm && options?.consolidateLLM
-          ? {
-              llm: {
-                ctx,
-                modelRef: options.consolidateLLM.modelRef,
-                disableThinking: options.consolidateLLM.disableThinking ?? true,
-              },
-            }
-          : {}),
-      });
-      const lines = [
-        '关系图整理完成：',
-        `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
-        `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
-        `- EventEntityEdge 去重：${r.eventEdgesNormalized} 组重整`,
-        `- 实体层级候选：${r.entityHierarchyCandidates} 对，新增 ${r.entityHierarchyEdgesCreated} 条 entity-entity[part-of] 边`,
-        `- 侧向父候选：${r.lateralParentCandidates} 簇，新建父实体 ${r.lateralParentsCreated} 个，新增 ${r.lateralEdgesCreated} 条侧向 part-of 边`,
-      ];
-      if (useLlm) {
-        lines.push(
-          `- LLM 核验：通过 ${r.llmVerified ?? 0}，否决 ${r.llmRejected ?? 0}；摘要重写 ${r.summariesRewritten ?? 0} 条`,
+      const gate = tryAcquireCommand('relation.consolidate');
+      if (!gate.ok) return `⏳ 上一次 /relation consolidate 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      try {
+        const autoLink = argv.options['auto-link'] === true;
+        const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
+        ackBackground(
+          argv.session.sessionId,
+          argv.session.platform,
+          `⏳ 正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
         );
-      }
-      if (r.aliasCandidates.length > 0) {
-        lines.push('', '别名候选（前 10 条）：');
-        for (const c of r.aliasCandidates.slice(0, 10)) {
-          lines.push(`  · [${c.aKind}] ${c.aId}  ↔  [${c.bKind}] ${c.bId}  —  ${c.reason}`);
+        const r = await service.consolidate({
+          autoLink,
+          triggerSource: 'manual',
+          ctx,
+          ...(options?.consolidateSkipLowScorePairs !== undefined
+            ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
+            : {}),
+          ...(options?.consolidateLowScoreThreshold !== undefined
+            ? { lowScoreThreshold: options.consolidateLowScoreThreshold }
+            : {}),
+          ...(useLlm && options?.consolidateLLM
+            ? {
+                llm: {
+                  ctx,
+                  modelRef: options.consolidateLLM.modelRef,
+                  disableThinking: options.consolidateLLM.disableThinking ?? true,
+                },
+              }
+            : {}),
+        });
+        const lines = [
+          '关系图整理完成：',
+          `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
+          `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
+          `- EventEntityEdge 去重：${r.eventEdgesNormalized} 组重整`,
+          `- 实体层级候选：${r.entityHierarchyCandidates} 对，新增 ${r.entityHierarchyEdgesCreated} 条 entity-entity[part-of] 边`,
+          `- 侧向父候选：${r.lateralParentCandidates} 簇，新建父实体 ${r.lateralParentsCreated} 个，新增 ${r.lateralEdgesCreated} 条侧向 part-of 边`,
+        ];
+        if (useLlm) {
+          lines.push(
+            `- LLM 核验：通过 ${r.llmVerified ?? 0}，否决 ${r.llmRejected ?? 0}；摘要重写 ${r.summariesRewritten ?? 0} 条`,
+          );
         }
+        if (r.aliasCandidates.length > 0) {
+          lines.push('', '别名候选（前 10 条）：');
+          for (const c of r.aliasCandidates.slice(0, 10)) {
+            lines.push(`  · [${c.aKind}] ${c.aId}  ↔  [${c.bKind}] ${c.bId}  —  ${c.reason}`);
+          }
+        }
+        return lines.join('\n');
+      } finally {
+        releaseCommand('relation.consolidate');
       }
-      return lines.join('\n');
     });
 
   // ---- rewrite-weights（手动触发 eager 时间衰减回写） ----
@@ -327,28 +352,34 @@ export function registerRelationCommands(
       { authority: 3 },
     )
     .action(async argv => {
-      const ev = options?.eviction;
-      const halfLifeDays = ev?.weightDecayHalfLifeDays ?? 180;
-      const floor = ev?.weightDecayFloor ?? 0.3;
-      if (halfLifeDays <= 0) {
-        return `weight 衰减未启用（halfLifeDays=${halfLifeDays}），无需回写。`;
+      const gate = tryAcquireCommand('relation.rewrite-weights');
+      if (!gate.ok) return `⏳ 上一次 /relation rewrite-weights 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      try {
+        const ev = options?.eviction;
+        const halfLifeDays = ev?.weightDecayHalfLifeDays ?? 180;
+        const floor = ev?.weightDecayFloor ?? 0.3;
+        if (halfLifeDays <= 0) {
+          return `weight 衰减未启用（halfLifeDays=${halfLifeDays}），无需回写。`;
+        }
+        ackBackground(
+          argv.session.sessionId,
+          argv.session.platform,
+          `⏳ 正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
+        );
+        const r = await service.rewriteWeights({ halfLifeDays, floor });
+        if (r.skipped) {
+          return 'weight 衰减未启用，已跳过。';
+        }
+        return [
+          '✓ weight 时间衰减回写完成：',
+          `- 事件：写回 ${r.events} 条`,
+          `- 实体：写回 ${r.entities} 条`,
+          `- 边：  写回 ${r.edges} 条`,
+          `（参数：halfLifeDays=${halfLifeDays}, floor=${floor}）`,
+        ].join('\n');
+      } finally {
+        releaseCommand('relation.rewrite-weights');
       }
-      ackBackground(
-        argv.session.sessionId,
-        argv.session.platform,
-        `⏳ 正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
-      );
-      const r = await service.rewriteWeights({ halfLifeDays, floor });
-      if (r.skipped) {
-        return 'weight 衰减未启用，已跳过。';
-      }
-      return [
-        '✓ weight 时间衰减回写完成：',
-        `- 事件：写回 ${r.events} 条`,
-        `- 实体：写回 ${r.entities} 条`,
-        `- 边：  写回 ${r.edges} 条`,
-        `（参数：halfLifeDays=${halfLifeDays}, floor=${floor}）`,
-      ].join('\n');
     });
 
   // ---- event-duplicates（dry-run：列出 event 重复合并候选，不实际合并） ----
@@ -359,47 +390,53 @@ export function registerRelationCommands(
       { authority: 3 },
     )
     .action(async argv => {
-      ackBackground(
-        argv.session.sessionId,
-        argv.session.platform,
-        '⏳ 正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…',
-      );
-      const useLlm = !!options?.consolidateLLM;
-      const r = await service.findEventDuplicates({
-        ...(useLlm && options?.consolidateLLM
-          ? {
-              llm: {
-                ctx,
-                modelRef: options.consolidateLLM.modelRef,
-                disableThinking: options.consolidateLLM.disableThinking ?? true,
-              },
-            }
-          : {}),
-      });
-      const lines: string[] = [];
-      lines.push(`✓ event 重复扫描完成（embedding ${r.embeddingAvailable ? '可用' : '不可用，降级 jaccard'}）`);
-      lines.push(
-        `候选 ${r.candidates.length} 对，LLM 通过 ${r.llmVerified}，LLM 否决 ${r.llmRejected}，缓存命中 ${r.llmRejectCacheHits}`,
-      );
-      if (r.candidates.length > 0) {
-        lines.push('--- 候选明细（前 20 条）---');
-        for (const c of r.candidates.slice(0, 20)) {
-          const sims =
-            c.fusedScore !== null
-              ? `fused=${c.fusedScore.toFixed(2)} (cos=${c.cosineScore?.toFixed(2)}, struct=${c.structuralScore.toFixed(2)})`
-              : `jac=${c.jaccardScore.toFixed(2)}, struct=${c.structuralScore.toFixed(2)}`;
-          const verdict = c.llmVerdict
-            ? `[${c.cacheHit ? '缓存' : c.llmVerdict.isSame ? '✓' : '✗'}] ${c.llmVerdict.reason}`
-            : '[未判]';
-          lines.push(
-            `  · [${c.sessionScope}] ${c.aTitle.slice(0, 18)} ↔ ${c.bTitle.slice(0, 18)}  ${sims}  ${verdict}`,
-          );
+      const gate = tryAcquireCommand('relation.event-duplicates');
+      if (!gate.ok) return `⏳ 上一次 /relation event-duplicates 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      try {
+        ackBackground(
+          argv.session.sessionId,
+          argv.session.platform,
+          '⏳ 正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…',
+        );
+        const useLlm = !!options?.consolidateLLM;
+        const r = await service.findEventDuplicates({
+          ...(useLlm && options?.consolidateLLM
+            ? {
+                llm: {
+                  ctx,
+                  modelRef: options.consolidateLLM.modelRef,
+                  disableThinking: options.consolidateLLM.disableThinking ?? true,
+                },
+              }
+            : {}),
+        });
+        const lines: string[] = [];
+        lines.push(`✓ event 重复扫描完成（embedding ${r.embeddingAvailable ? '可用' : '不可用，降级 jaccard'}）`);
+        lines.push(
+          `候选 ${r.candidates.length} 对，LLM 通过 ${r.llmVerified}，LLM 否决 ${r.llmRejected}，缓存命中 ${r.llmRejectCacheHits}`,
+        );
+        if (r.candidates.length > 0) {
+          lines.push('--- 候选明细（前 20 条）---');
+          for (const c of r.candidates.slice(0, 20)) {
+            const sims =
+              c.fusedScore !== null
+                ? `fused=${c.fusedScore.toFixed(2)} (cos=${c.cosineScore?.toFixed(2)}, struct=${c.structuralScore.toFixed(2)})`
+                : `jac=${c.jaccardScore.toFixed(2)}, struct=${c.structuralScore.toFixed(2)}`;
+            const verdict = c.llmVerdict
+              ? `[${c.cacheHit ? '缓存' : c.llmVerdict.isSame ? '✓' : '✗'}] ${c.llmVerdict.reason}`
+              : '[未判]';
+            lines.push(
+              `  · [${c.sessionScope}] ${c.aTitle.slice(0, 18)} ↔ ${c.bTitle.slice(0, 18)}  ${sims}  ${verdict}`,
+            );
+          }
+          if (r.candidates.length > 20) {
+            lines.push(`  …省略 ${r.candidates.length - 20} 条`);
+          }
         }
-        if (r.candidates.length > 20) {
-          lines.push(`  …省略 ${r.candidates.length - 20} 条`);
-        }
+        return lines.join('\n');
+      } finally {
+        releaseCommand('relation.event-duplicates');
       }
-      return lines.join('\n');
     });
 
   // ---- compress（仅跳出一次容量淘汰 + 伤亡报告） ----
@@ -408,142 +445,159 @@ export function registerRelationCommands(
       authority: 3,
     })
     .action(async argv => {
-      const ev = options?.eviction;
-      ackBackground(
-        argv.session.sessionId,
-        argv.session.platform,
-        '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…',
-      );
-      const before = await service.loadAll();
-      let deletedPersons = 0;
-      let deletedEvents = 0;
-      let deletedEntities = 0;
-      let deletedEdges = 0;
-      if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
-        // evictByQuota 内部已经先做 pruneOrphans，再做配额淘汰；不要在外面重复调
-        const r = await service.evictByQuota({
-          maxPersons: ev.maxPersons,
-          maxEvents: ev.maxEvents,
-          maxEntities: ev.maxEntities,
-          maxEdges: ev.maxEdges,
-          pagerankDamping: ev.pagerankDamping,
-          pagerankIterations: ev.pagerankIterations,
-          pagerankEpsilon: ev.pagerankEpsilon,
-          hysteresisPct: ev.hysteresisPct,
-          targetPct: ev.targetPct,
-          decay: {
-            halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
-            floor: ev.weightDecayFloor ?? 0.3,
-          },
-          communityAlgorithm: ev.communityAlgorithm,
-        });
-        deletedPersons = r.deletedPersons;
-        deletedEvents = r.deletedEvents;
-        deletedEntities = r.deletedEntities;
-        deletedEdges = r.deletedEdges;
-      } else {
-        // 没配置配额：只清孤儿
-        const orphans = await service.pruneOrphans();
-        deletedPersons = orphans.deletedPersons;
-        deletedEvents = orphans.deletedEvents;
-        deletedEntities = orphans.deletedEntities;
+      const gate = tryAcquireCommand('relation.compress');
+      if (!gate.ok) return `⏳ 上一次 /relation compress 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      try {
+        const ev = options?.eviction;
+        ackBackground(
+          argv.session.sessionId,
+          argv.session.platform,
+          '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…',
+        );
+        const before = await service.loadAll();
+        let deletedPersons = 0;
+        let deletedEvents = 0;
+        let deletedEntities = 0;
+        let deletedEdges = 0;
+        if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+          // evictByQuota 内部已经先做 pruneOrphans，再做配额淘汰；不要在外面重复调
+          const r = await service.evictByQuota({
+            maxPersons: ev.maxPersons,
+            maxEvents: ev.maxEvents,
+            maxEntities: ev.maxEntities,
+            maxEdges: ev.maxEdges,
+            pagerankDamping: ev.pagerankDamping,
+            pagerankIterations: ev.pagerankIterations,
+            pagerankEpsilon: ev.pagerankEpsilon,
+            hysteresisPct: ev.hysteresisPct,
+            targetPct: ev.targetPct,
+            decay: {
+              halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
+              floor: ev.weightDecayFloor ?? 0.3,
+            },
+            communityAlgorithm: ev.communityAlgorithm,
+          });
+          deletedPersons = r.deletedPersons;
+          deletedEvents = r.deletedEvents;
+          deletedEntities = r.deletedEntities;
+          deletedEdges = r.deletedEdges;
+        } else {
+          // 没配置配额：只清孤儿
+          const orphans = await service.pruneOrphans();
+          deletedPersons = orphans.deletedPersons;
+          deletedEvents = orphans.deletedEvents;
+          deletedEntities = orphans.deletedEntities;
+        }
+        const eventCap = ev?.maxEvents ?? 0;
+        const entityCap = ev?.maxEntities ?? 0;
+        const edgeCap = ev?.maxEdges ?? 0;
+        return [
+          '✓ 关系图压缩完成：',
+          `- 人物：${before.persons.length} → ${before.persons.length - deletedPersons}（删 ${deletedPersons} 个孤儿）`,
+          `- 事件：${before.events.length} → ${before.events.length - deletedEvents}（删 ${deletedEvents}，阈 ${eventCap}）`,
+          `- 实体：${before.entities.length} → ${before.entities.length - deletedEntities}（删 ${deletedEntities}，阈 ${entityCap}）`,
+          `- 边：  ${before.edges.length} → ${before.edges.length - deletedEdges}（删 ${deletedEdges}，阈 ${edgeCap}）`,
+        ].join('\n');
+      } finally {
+        releaseCommand('relation.compress');
       }
-      const eventCap = ev?.maxEvents ?? 0;
-      const entityCap = ev?.maxEntities ?? 0;
-      const edgeCap = ev?.maxEdges ?? 0;
-      return [
-        '✓ 关系图压缩完成：',
-        `- 人物：${before.persons.length} → ${before.persons.length - deletedPersons}（删 ${deletedPersons} 个孤儿）`,
-        `- 事件：${before.events.length} → ${before.events.length - deletedEvents}（删 ${deletedEvents}，阈 ${eventCap}）`,
-        `- 实体：${before.entities.length} → ${before.entities.length - deletedEntities}（删 ${deletedEntities}，阈 ${entityCap}）`,
-        `- 边：  ${before.edges.length} → ${before.edges.length - deletedEdges}（删 ${deletedEdges}，阈 ${edgeCap}）`,
-      ].join('\n');
     });
 
-  // ---- maintain（压缩 + 整理 一步完成） ----
+  // ---- maintain（整理 + 压缩 一步完成） ----
   cmds
     .command(
       'relation.maintain',
-      '关系图体检：先压缩（容量淘汰），再整理（别名 / part-of / 层级 / 侧向父），全过程报告',
+      '关系图体检：先整理（别名 / part-of / 层级 / 侧向父），再压缩（容量淘汰），全过程报告',
       { authority: 3 },
     )
     .option('no-llm', '--no-llm', { description: '跳过 consolidate 阶段的 LLM 增强' })
     .option('no-auto-link', '--no-auto-link', { description: '取消 consolidate 阶段的 autoLink' })
     .action(async argv => {
-      const ev = options?.eviction;
-      const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
-      const autoLink = argv.options['no-auto-link'] !== true && (options?.consolidateAutoLink ?? true);
-      ackBackground(
-        argv.session.sessionId,
-        argv.session.platform,
-        `⏳ 正在体检关系图：先压缩再整理（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
-      );
-      const lines: string[] = ['✓ 关系图体检完成：'];
-      const before = await service.loadAll();
-      // 是否走完整淘汰还是只清孤儿—先记录模式，最终统计推迟到 consolidate 后用真实
-      // before/after 差值，避免压缩行漏算 consolidate 合并删掉的 alias 节点/边。
-      let evictionMode: 'quota' | 'orphans-only' = 'orphans-only';
-      if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
-        evictionMode = 'quota';
-        // evictByQuota 自带孤儿清理，不重复调
-        await service.evictByQuota({
-          maxPersons: ev.maxPersons,
-          maxEvents: ev.maxEvents,
-          maxEntities: ev.maxEntities,
-          maxEdges: ev.maxEdges,
-          pagerankDamping: ev.pagerankDamping,
-          pagerankIterations: ev.pagerankIterations,
-          pagerankEpsilon: ev.pagerankEpsilon,
-          hysteresisPct: ev.hysteresisPct,
-          targetPct: ev.targetPct,
-          decay: {
-            halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
-            floor: ev.weightDecayFloor ?? 0.3,
-          },
-          communityAlgorithm: ev.communityAlgorithm,
+      const gate = tryAcquireCommand('relation.maintain');
+      if (!gate.ok) return `⏳ 上一次 /relation maintain 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      try {
+        const ev = options?.eviction;
+        const useLlm = argv.options['no-llm'] !== true && !!options?.consolidateLLM;
+        const autoLink = argv.options['no-auto-link'] !== true && (options?.consolidateAutoLink ?? true);
+        ackBackground(
+          argv.session.sessionId,
+          argv.session.platform,
+          `⏳ 正在体检关系图：先整理再压缩（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+        );
+
+        // 顺序：先 consolidate（在原图上合并别名/层级/事件去重）→ 再 evict（在去重后的图上
+        // 跑 PageRank 淘汰），这样 PageRank 看到的入出度更完整、淘汰决策更稳，且每个阶段的
+        // 节点/边减量都可以独立精确计数（s0 → s1 为整理，s1 → s2 为压缩），不会再像之前
+        // "实体 87→87 但下一轮变 85→85" 那样把 consolidate 删的 alias 节点漏算到压缩行。
+        const s0 = await service.loadAll();
+
+        // step 1: consolidate
+        const cr = await service.consolidate({
+          autoLink,
+          triggerSource: 'manual',
+          ctx,
+          ...(options?.consolidateSkipLowScorePairs !== undefined
+            ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
+            : {}),
+          ...(options?.consolidateLowScoreThreshold !== undefined
+            ? { lowScoreThreshold: options.consolidateLowScoreThreshold }
+            : {}),
+          ...(useLlm && options?.consolidateLLM
+            ? {
+                llm: {
+                  ctx,
+                  modelRef: options.consolidateLLM.modelRef,
+                  disableThinking: options.consolidateLLM.disableThinking ?? true,
+                },
+              }
+            : {}),
         });
-      } else {
-        await service.pruneOrphans();
-      }
-      // step 2: consolidate
-      const cr = await service.consolidate({
-        autoLink,
-        triggerSource: 'manual',
-        ctx,
-        ...(options?.consolidateSkipLowScorePairs !== undefined
-          ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
-          : {}),
-        ...(options?.consolidateLowScoreThreshold !== undefined
-          ? { lowScoreThreshold: options.consolidateLowScoreThreshold }
-          : {}),
-        ...(useLlm && options?.consolidateLLM
-          ? {
-              llm: {
-                ctx,
-                modelRef: options.consolidateLLM.modelRef,
-                disableThinking: options.consolidateLLM.disableThinking ?? true,
-              },
-            }
-          : {}),
-      });
-      lines.push(
-        `[2/2] 整理：别名 ${cr.aliasCandidates.length} 候选/${cr.aliasEdgesCreated} 边，` +
+        const s1 = await service.loadAll();
+
+        // step 2: compress
+        let evictionMode: 'quota' | 'orphans-only' = 'orphans-only';
+        if (ev && (ev.maxPersons > 0 || ev.maxEvents > 0 || ev.maxEntities > 0 || ev.maxEdges > 0)) {
+          evictionMode = 'quota';
+          await service.evictByQuota({
+            maxPersons: ev.maxPersons,
+            maxEvents: ev.maxEvents,
+            maxEntities: ev.maxEntities,
+            maxEdges: ev.maxEdges,
+            pagerankDamping: ev.pagerankDamping,
+            pagerankIterations: ev.pagerankIterations,
+            pagerankEpsilon: ev.pagerankEpsilon,
+            hysteresisPct: ev.hysteresisPct,
+            targetPct: ev.targetPct,
+            decay: {
+              halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
+              floor: ev.weightDecayFloor ?? 0.3,
+            },
+            communityAlgorithm: ev.communityAlgorithm,
+          });
+        } else {
+          await service.pruneOrphans();
+        }
+        const s2 = await service.loadAll();
+
+        // 报告：先整理后压缩，每行只反映本阶段的真实减量
+        const consolidateLine =
+          `[1/2] 整理：人物 ${s0.persons.length}→${s1.persons.length}，事件 ${s0.events.length}→${s1.events.length}，` +
+          `实体 ${s0.entities.length}→${s1.entities.length}，边 ${s0.edges.length}→${s1.edges.length}；` +
+          `别名 ${cr.aliasCandidates.length} 候选/${cr.aliasEdgesCreated} 边，` +
           `part-of 新增 ${cr.partOfEdgesCreated}，事件边重整 ${cr.eventEdgesNormalized}，` +
           `层级 ${cr.entityHierarchyCandidates} 候选/${cr.entityHierarchyEdgesCreated} 边，` +
           `侧向父 ${cr.lateralParentCandidates} 簇/新建 ${cr.lateralParentsCreated}/边 ${cr.lateralEdgesCreated}` +
           (useLlm
             ? `，LLM 通过 ${cr.llmVerified ?? 0} 否决 ${cr.llmRejected ?? 0} 摘要重写 ${cr.summariesRewritten ?? 0}`
-            : ''),
-      );
-      // 现在统一以"真实 before vs after"输出压缩行，让 consolidate 阶段合并掉的
-      // alias 节点/边也能体现（修复 bug：日志曾出现"实体 87→87"但下一轮变 85→85）。
-      const after = await service.loadAll();
-      const compressLine =
-        evictionMode === 'quota'
-          ? `[1/2] 压缩：人物 ${before.persons.length}→${after.persons.length}，事件 ${before.events.length}→${after.events.length}，实体 ${before.entities.length}→${after.entities.length}，边 ${before.edges.length}→${after.edges.length}`
-          : `[1/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${before.persons.length}→${after.persons.length}，事件 ${before.events.length}→${after.events.length}，实体 ${before.entities.length}→${after.entities.length}，边 ${before.edges.length}→${after.edges.length}`;
-      lines.splice(1, 0, compressLine);
-      return lines.join('\n');
+            : '');
+        const compressLine =
+          evictionMode === 'quota'
+            ? `[2/2] 压缩：人物 ${s1.persons.length}→${s2.persons.length}，事件 ${s1.events.length}→${s2.events.length}，实体 ${s1.entities.length}→${s2.entities.length}，边 ${s1.edges.length}→${s2.edges.length}`
+            : `[2/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${s1.persons.length}→${s2.persons.length}，事件 ${s1.events.length}→${s2.events.length}，实体 ${s1.entities.length}→${s2.entities.length}，边 ${s1.edges.length}→${s2.edges.length}`;
+        return ['✓ 关系图体检完成：', consolidateLine, compressLine].join('\n');
+      } finally {
+        releaseCommand('relation.maintain');
+      }
     });
 
   // ---- consolidation-status（查询最近一次 consolidate 运行情况） ----
