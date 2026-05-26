@@ -67,6 +67,7 @@ import {
   edgeInvolvesBoth,
   edgeReferences,
   effectiveWeight,
+  eventPairJaccard,
   flipDirectedEdge,
   isAliasEdgeDirectionCorrect,
   isAliasMarkerEdge,
@@ -74,7 +75,6 @@ import {
   isDirectedEventEventRelation,
   isEdgeSelfLoop,
   isEvidenceFullyCovered,
-  jaccardChars,
   mergeTwoEdges,
   normalizeName,
   normalizeRelationType,
@@ -3434,8 +3434,56 @@ export class RelationService {
 
     // 按 sessionScope 分组：undefined → 'global'（与硬护栏 L537 兼容）
     const scopeOf = (e: EventNode): string => e.sessionScope ?? 'global';
+
+    // 跨 scope 同名预合并（不需 LLM）：global hub event 与其他 pool 中 normalizeName 完全相同的
+    // session-scoped event 直接合并（保留 global 为 canonical）。修复两个问题：
+    //   (1) LLM 在会话内外重复创建同名事件（会话版 + global hub 版并存）
+    //   (2) reinforceEvent 不支持 sessionScope 升级，造成"老存量"无法被后期 LLM 拼接为 hub
+    // 仅在 非 dryRun 且 events 可能出现 cross-scope 同名时走这条路径。
+    let crossScopeMerged = 0;
+    if (!opts.dryRun) {
+      const globalEvents = events.filter(e => scopeOf(e) === 'global');
+      if (globalEvents.length > 0) {
+        const globalByTitle = new Map<string, EventNode>();
+        for (const g of globalEvents) {
+          const norm = normalizeName(g.title);
+          if (norm) globalByTitle.set(norm, g);
+        }
+        if (globalByTitle.size > 0) {
+          for (const ev of events) {
+            if (scopeOf(ev) === 'global') continue;
+            const norm = normalizeName(ev.title);
+            if (!norm) continue;
+            const hub = globalByTitle.get(norm);
+            if (!hub || hub.id === ev.id) continue;
+            try {
+              const r = await this.mergeAlias({
+                aliasId: ev.id,
+                canonicalId: hub.id,
+                kind: 'event',
+                noCanonicalCorrection: true, // 强制 global hub 为 canonical
+              });
+              if (r.aliasDeleted) {
+                crossScopeMerged++;
+                logger?.info(
+                  `[user-relation] consolidate cross-scope 同名合并：${ev.id}(scope=${scopeOf(ev)}) → ${hub.id}(global) "${hub.title}"`,
+                );
+              }
+            } catch (err) {
+              logger?.warn(
+                `[user-relation] consolidate cross-scope 合并失败 ${ev.id} → ${hub.id}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // 若跨 scope 预合并动了图，重取 snapshot.events 以保证后续 pool 内 LLM 评估基于最新状态。
+    const workingEvents = crossScopeMerged > 0 ? (await this.store.loadAll()).events : events;
+
     const pools = new Map<string, EventNode[]>();
-    for (const ev of events) {
+    for (const ev of workingEvents) {
       const s = scopeOf(ev);
       if (!pools.has(s)) pools.set(s, []);
       pools.get(s)!.push(ev);
@@ -3495,7 +3543,7 @@ export class RelationService {
           if (cosA && cosB && cosA.length === cosB.length) {
             cosineScore = cosineSimilarity(cosA, cosB);
           }
-          const jaccardScore = jaccardChars(`${a.title} ${a.summary ?? ''}`, `${b.title} ${b.summary ?? ''}`);
+          const jaccardScore = eventPairJaccard(a, b);
           // 结构相似（Katz + AA）：可能较慢，仅在文本相似度已经达到门槛时才算
           // 预过滤：cosineScore >= 0.5 或 jaccard >= 0.3 才值得算 struct
           const preTextual = (cosineScore ?? 0) >= 0.5 || jaccardScore >= 0.3;
@@ -3656,7 +3704,7 @@ export class RelationService {
       }
     }
 
-    return { candidates: report, llmVerified, llmRejected, llmRejectCacheHits, merged };
+    return { candidates: report, llmVerified, llmRejected, llmRejectCacheHits, merged: merged + crossScopeMerged };
   }
 
   /**
