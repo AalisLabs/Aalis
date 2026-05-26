@@ -303,6 +303,9 @@ export class CommandRegistry implements CommandService {
     const parsed = this.parseArgs(cmd, resolved.remaining);
     if (typeof parsed === 'string') return parsed;
 
+    // DANGER(临时方案): bypassGuard=true 时完全跳过守卫——这是为了让 scheduler 等
+    // 系统源能调度 authority>1 的指令而引入的权宜之计，存在安全漏洞，待重新设计。
+    // 详见 ExecutionInput.bypassGuard 的注释说明（plugin-commands-api/src/index.ts）。
     if (this._guard && !input.bypassGuard) {
       const rejection = await this._guard({
         name: cmd.name,
