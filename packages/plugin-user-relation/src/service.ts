@@ -48,6 +48,9 @@ import {
   clusterEntitiesByPairs,
   commonPrefix,
   computeEntityEdgeStats,
+  computeLeiden,
+  computeLouvain,
+  computeModularity,
   computePageRank,
   edgeDedupKey,
   edgeInvolvesBoth,
@@ -1141,6 +1144,8 @@ export class RelationService {
     reverseEdgeFactor?: number;
     /** 时间衰减配置：用于把 raw weight 折算成有效 weight。halfLifeDays<=0 时退化为原 raw 行为。 */
     decay?: WeightDecayCfg;
+    /** 社群发现算法；默认 'louvain'。可在配置或调用时切换 'leiden'。 */
+    communityAlgorithm?: 'louvain' | 'leiden';
   }): Promise<{
     deletedPersons: number;
     deletedEvents: number;
@@ -1324,20 +1329,47 @@ export class RelationService {
       }
     }
 
-    // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"
+    // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"；
+    //    顺手跑社群发现（Louvain / Leiden 可切换），把 communityId 一并写回（同一批 snapshot 保证可比）。
     {
       const after = await this.store.loadAll();
+      const alg: 'louvain' | 'leiden' = quota.communityAlgorithm ?? 'louvain';
+      const com = alg === 'leiden' ? computeLeiden(after) : computeLouvain(after);
+      // 算 modularity 给运维一个"社群质量分"——Q>0.3 通常算清晰，Q<0.1 接近随机。
+      const q = computeModularity(after, com);
+      const numCommunities = new Set(com.values()).size;
+      this.ctx?.logger?.info(
+        `[user-relation] community algorithm=${alg} Q=${q.toFixed(4)} communities=${numCommunities} (nodes=${after.persons.length + after.events.length + after.entities.length})`,
+      );
       for (const p of after.persons) {
         const score = pr.get(p.id);
-        if (score !== undefined) await this.store.upsertPerson({ ...p, lastPageRank: score, lastPageRankAt: now });
+        const cid = com.get(p.id);
+        if (score === undefined && cid === undefined) continue;
+        await this.store.upsertPerson({
+          ...p,
+          ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
+          ...(cid !== undefined ? { communityId: cid, communityIdAt: now } : {}),
+        });
       }
       for (const ev of after.events) {
         const score = pr.get(ev.id);
-        if (score !== undefined) await this.store.upsertEvent({ ...ev, lastPageRank: score, lastPageRankAt: now });
+        const cid = com.get(ev.id);
+        if (score === undefined && cid === undefined) continue;
+        await this.store.upsertEvent({
+          ...ev,
+          ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
+          ...(cid !== undefined ? { communityId: cid, communityIdAt: now } : {}),
+        });
       }
       for (const en of after.entities) {
         const score = pr.get(en.id);
-        if (score !== undefined) await this.store.upsertEntity({ ...en, lastPageRank: score, lastPageRankAt: now });
+        const cid = com.get(en.id);
+        if (score === undefined && cid === undefined) continue;
+        await this.store.upsertEntity({
+          ...en,
+          ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
+          ...(cid !== undefined ? { communityId: cid, communityIdAt: now } : {}),
+        });
       }
     }
 
@@ -3839,6 +3871,306 @@ export class RelationService {
       inByType: serialize(inBuckets),
       dominance,
       fanIdolHint: { fansCount, idolsCount, verdict },
+    };
+  }
+
+  /**
+   * 同社群活跃成员（Louvain 社群标签由 evictByQuota 写入；未跑过则返回空）。
+   *
+   * 用途：profile 注入 / agent 工具——「跟 X 同一个圈子的高活跃成员是谁」。
+   *
+   * - personId 必须是 `<platform>:<userId>` 完整 ID；
+   * - 仅返回 person 类型的同社群成员（事件/实体也有 communityId 但用户视角无意义）；
+   * - 按 lastPageRank desc 排序，截断到 limit；
+   * - 自己不会出现在结果里；
+   * - 如果 personId 没有 communityId（节点太新或从未跑过 evict）→ communitySize=0、peers=[]。
+   */
+  async getCommunityPeers(
+    personId: string,
+    limit = 5,
+  ): Promise<{
+    personId: string;
+    communityId: string | null;
+    communitySize: number;
+    peers: Array<{ id: string; displayName: string; pagerank: number; communityId: string }>;
+  }> {
+    const snap = await this.store.loadAll();
+    const me = snap.persons.find(p => p.id === personId);
+    if (!me || !me.communityId) {
+      return { personId, communityId: me?.communityId ?? null, communitySize: 0, peers: [] };
+    }
+    const cid = me.communityId;
+    const same = snap.persons.filter(p => p.communityId === cid && p.id !== personId);
+    const ranked = same.slice().sort((a, b) => (b.lastPageRank ?? 0) - (a.lastPageRank ?? 0));
+    const peers = ranked.slice(0, Math.max(1, Math.min(limit, 20))).map(p => ({
+      id: p.id,
+      displayName: p.displayName ?? p.id,
+      pagerank: Number((p.lastPageRank ?? 0).toFixed(6)),
+      communityId: cid,
+    }));
+    // communitySize 含自己
+    return { personId, communityId: cid, communitySize: same.length + 1, peers };
+  }
+
+  /**
+   * 两人是否同社群 + 各自社群信息（agent 工具 community_bridge 用）。
+   *
+   * 不算路径——find_path 已有同等能力，重复实现徒增维护。
+   */
+  async getCommunityBridge(
+    personAId: string,
+    personBId: string,
+  ): Promise<{
+    a: { id: string; displayName: string; communityId: string | null; communitySize: number };
+    b: { id: string; displayName: string; communityId: string | null; communitySize: number };
+    sameCommunity: boolean;
+  }> {
+    const snap = await this.store.loadAll();
+    const pa = snap.persons.find(p => p.id === personAId);
+    const pb = snap.persons.find(p => p.id === personBId);
+    const sizeOf = (cid: string | null | undefined): number => {
+      if (!cid) return 0;
+      return snap.persons.filter(p => p.communityId === cid).length;
+    };
+    return {
+      a: {
+        id: personAId,
+        displayName: pa?.displayName ?? personAId,
+        communityId: pa?.communityId ?? null,
+        communitySize: sizeOf(pa?.communityId),
+      },
+      b: {
+        id: personBId,
+        displayName: pb?.displayName ?? personBId,
+        communityId: pb?.communityId ?? null,
+        communitySize: sizeOf(pb?.communityId),
+      },
+      sameCommunity: !!pa?.communityId && pa.communityId === pb?.communityId,
+    };
+  }
+
+  /**
+   * 全图社群概览：按 community 分组，每组列 top 成员/话题/事件，再算 modularity Q 和"桥梁人"。
+   *
+   * 设计要点：
+   * - `algorithm` 不传默认实时跑一遍 Louvain；传 'leiden' 则跑 Leiden-lite。**不读节点上的 communityId 缓存**，
+   *   保证每次调用结果与当前快照严格一致（即使 evictByQuota 还没跑）。
+   * - `sessionScope` 是**后过滤**：先在全图上跑社群算法（保证社群划分准确），再只统计 evidence 含该 scope
+   *   的节点，避免把"跨群关系"切断。events 看 `sessionScope` 字段；persons/entities 看 evidence 数组中
+   *   是否有 sessionId === scope 的条目。
+   * - `topN`：每个社群展示的成员/话题/事件条数。默认动态：`clamp(round(max(persons/50, edges/100)), 3, 20)`；
+   *   传 0 = 不限（同等价于 Number.MAX_SAFE_INTEGER）。
+   * - `bridges`：跨社群邻居数最多的 top-K person 节点，K 同样用 topN。
+   *   计算方式：对每个 person 统计其邻居（直接 person-person + 通过 event/entity 二跳）中
+   *   不在自己社群的不同社群个数。
+   *
+   * Q（modularity）值粗判：Q > 0.3 = 圈子分明；0.1 ~ 0.3 = 一般；< 0.1 = 接近随机划分。
+   */
+  async getCommunityOverview(opts?: {
+    sessionScope?: string;
+    /** 0 = 不限 */
+    topN?: number;
+    /** 不传则跑 louvain；可临时切 leiden */
+    algorithm?: 'louvain' | 'leiden';
+  }): Promise<{
+    algorithm: 'louvain' | 'leiden';
+    numCommunities: number;
+    modularity: number;
+    totalPersonsInScope: number;
+    totalEventsInScope: number;
+    totalEntitiesInScope: number;
+    communities: Array<{
+      communityId: string;
+      size: number;
+      topMembers: Array<{ id: string; displayName: string; pagerank: number }>;
+      topTopics: Array<{ id: string; name: string; pagerank: number }>;
+      topEvents: Array<{ id: string; title: string; weight: number; sessionScope?: string }>;
+    }>;
+    bridges: Array<{
+      id: string;
+      displayName: string;
+      communityId: string;
+      crossCommunityDegree: number;
+    }>;
+  }> {
+    const snap = await this.store.loadAll();
+    const alg: 'louvain' | 'leiden' = opts?.algorithm ?? 'louvain';
+    const com = alg === 'leiden' ? computeLeiden(snap) : computeLouvain(snap);
+    const modularity = computeModularity(snap, com);
+
+    // 动态默认 topN
+    const dynDefault = Math.max(
+      3,
+      Math.min(20, Math.round(Math.max(snap.persons.length / 50, snap.edges.length / 100))),
+    );
+    const rawTopN = opts?.topN;
+    const topN = rawTopN === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(rawTopN ?? dynDefault, 200));
+
+    // sessionScope 后过滤
+    // - events: 看 sessionScope 字段
+    // - entities: 看 evidence 中是否有该 sessionId
+    // - persons: PersonNode 无 evidence —— 改为「参与过 scope 内 event 的人才算 in-scope」
+    const scope = opts?.sessionScope;
+    const inScopeEvent = (ev: (typeof snap.events)[number]): boolean => {
+      if (!scope) return true;
+      return ev.sessionScope === scope;
+    };
+    const inScopeEntity = (en: (typeof snap.entities)[number]): boolean => {
+      if (!scope) return true;
+      return en.evidence.some(e => e.sessionId === scope);
+    };
+    const eventsInScope = snap.events.filter(inScopeEvent);
+    const entitiesInScope = snap.entities.filter(inScopeEntity);
+    let personsInScope: typeof snap.persons;
+    if (!scope) {
+      personsInScope = snap.persons;
+    } else {
+      const scopeEventIds = new Set(eventsInScope.map(e => e.id));
+      const scopePersonIds = new Set<string>();
+      for (const e of snap.edges) {
+        if (e.kind === 'person-event' && scopeEventIds.has(e.toEventId)) {
+          scopePersonIds.add(e.fromPersonId);
+        }
+      }
+      personsInScope = snap.persons.filter(p => scopePersonIds.has(p.id));
+    }
+    const inScopePerson = (p: (typeof snap.persons)[number]): boolean => {
+      if (!scope) return true;
+      return personsInScope.includes(p);
+    };
+
+    // 按 community 分组
+    const personsByCom = new Map<string, typeof personsInScope>();
+    const eventsByCom = new Map<string, typeof eventsInScope>();
+    const entitiesByCom = new Map<string, typeof entitiesInScope>();
+    for (const p of personsInScope) {
+      const c = com.get(p.id);
+      if (!c) continue;
+      if (!personsByCom.has(c)) personsByCom.set(c, []);
+      personsByCom.get(c)!.push(p);
+    }
+    for (const ev of eventsInScope) {
+      const c = com.get(ev.id);
+      if (!c) continue;
+      if (!eventsByCom.has(c)) eventsByCom.set(c, []);
+      eventsByCom.get(c)!.push(ev);
+    }
+    for (const en of entitiesInScope) {
+      const c = com.get(en.id);
+      if (!c) continue;
+      if (!entitiesByCom.has(c)) entitiesByCom.set(c, []);
+      entitiesByCom.get(c)!.push(en);
+    }
+
+    // 按 community size 排序（最大社群在前）
+    const allCommunityIds = Array.from(
+      new Set<string>([...personsByCom.keys(), ...eventsByCom.keys(), ...entitiesByCom.keys()]),
+    );
+    allCommunityIds.sort((a, b) => (personsByCom.get(b)?.length ?? 0) - (personsByCom.get(a)?.length ?? 0));
+
+    const communities = allCommunityIds.map(cid => {
+      const members = (personsByCom.get(cid) ?? [])
+        .slice()
+        .sort((a, b) => (b.lastPageRank ?? 0) - (a.lastPageRank ?? 0));
+      const topics = (entitiesByCom.get(cid) ?? [])
+        .slice()
+        .sort((a, b) => (b.lastPageRank ?? 0) - (a.lastPageRank ?? 0));
+      const events = (eventsByCom.get(cid) ?? []).slice().sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+      return {
+        communityId: cid,
+        size: members.length,
+        topMembers: members.slice(0, topN).map(p => ({
+          id: p.id,
+          displayName: p.displayName ?? p.id,
+          pagerank: Number((p.lastPageRank ?? 0).toFixed(6)),
+        })),
+        topTopics: topics.slice(0, topN).map(en => ({
+          id: en.id,
+          name: en.name,
+          pagerank: Number((en.lastPageRank ?? 0).toFixed(6)),
+        })),
+        topEvents: events.slice(0, topN).map(ev => ({
+          id: ev.id,
+          title: ev.title ?? ev.id,
+          weight: Number((ev.weight ?? 0).toFixed(4)),
+          ...(ev.sessionScope ? { sessionScope: ev.sessionScope } : {}),
+        })),
+      };
+    });
+
+    // bridges：person 节点，统计其邻居中不在自身社群的"其他社群"个数
+    // 用 person→event/entity/person 邻接，二跳到其他 person（事件作中介）
+    const personNeighborCom = new Map<string, Set<string>>(); // personId → set<otherComId>
+    const ensure = (id: string) => {
+      if (!personNeighborCom.has(id)) personNeighborCom.set(id, new Set());
+    };
+    // 直接邻居（person-person）
+    for (const e of snap.edges) {
+      if (e.kind === 'person-person') {
+        const ca = com.get(e.fromPersonId);
+        const cb = com.get(e.toPersonId);
+        if (ca && cb && ca !== cb) {
+          ensure(e.fromPersonId);
+          personNeighborCom.get(e.fromPersonId)!.add(cb);
+          ensure(e.toPersonId);
+          personNeighborCom.get(e.toPersonId)!.add(ca);
+        }
+      }
+    }
+    // 通过 event 桥：同 event 下的不同 person
+    const personsByEvent = new Map<string, string[]>();
+    for (const e of snap.edges) {
+      if (e.kind === 'person-event') {
+        if (!personsByEvent.has(e.toEventId)) personsByEvent.set(e.toEventId, []);
+        personsByEvent.get(e.toEventId)!.push(e.fromPersonId);
+      }
+    }
+    for (const arr of personsByEvent.values()) {
+      for (let i = 0; i < arr.length; i++) {
+        for (let j = i + 1; j < arr.length; j++) {
+          const ca = com.get(arr[i]);
+          const cb = com.get(arr[j]);
+          if (ca && cb && ca !== cb) {
+            ensure(arr[i]);
+            personNeighborCom.get(arr[i])!.add(cb);
+            ensure(arr[j]);
+            personNeighborCom.get(arr[j])!.add(ca);
+          }
+        }
+      }
+    }
+    const bridgeArr: Array<{
+      id: string;
+      displayName: string;
+      communityId: string;
+      crossCommunityDegree: number;
+    }> = [];
+    const personById = new Map(snap.persons.map(p => [p.id, p]));
+    for (const [pid, others] of personNeighborCom) {
+      if (others.size === 0) continue;
+      const p = personById.get(pid);
+      const cid = com.get(pid);
+      if (!p || !cid) continue;
+      // scope 过滤
+      if (scope && !inScopePerson(p)) continue;
+      bridgeArr.push({
+        id: pid,
+        displayName: p.displayName ?? pid,
+        communityId: cid,
+        crossCommunityDegree: others.size,
+      });
+    }
+    bridgeArr.sort((a, b) => b.crossCommunityDegree - a.crossCommunityDegree);
+
+    return {
+      algorithm: alg,
+      numCommunities: allCommunityIds.length,
+      modularity: Number(modularity.toFixed(4)),
+      totalPersonsInScope: personsInScope.length,
+      totalEventsInScope: eventsInScope.length,
+      totalEntitiesInScope: entitiesInScope.length,
+      communities,
+      bridges: bridgeArr.slice(0, topN),
     };
   }
 }

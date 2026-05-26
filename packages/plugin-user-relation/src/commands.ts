@@ -35,6 +35,8 @@ export function registerRelationCommands(
       weightDecayHalfLifeDays?: number;
       /** Weight 衰减下限因子。默认 0.3 */
       weightDecayFloor?: number;
+      /** 社群发现算法；默认 'louvain'。 */
+      communityAlgorithm?: 'louvain' | 'leiden';
     };
     /** consolidate 是否默认开 autoLink（/relation maintain 需要） */
     consolidateAutoLink?: boolean;
@@ -343,6 +345,7 @@ export function registerRelationCommands(
             halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
             floor: ev.weightDecayFloor ?? 0.3,
           },
+          communityAlgorithm: ev.communityAlgorithm,
         });
         deletedPersons = r.deletedPersons;
         deletedEvents = r.deletedEvents;
@@ -406,6 +409,7 @@ export function registerRelationCommands(
             halfLifeDays: ev.weightDecayHalfLifeDays ?? 180,
             floor: ev.weightDecayFloor ?? 0.3,
           },
+          communityAlgorithm: ev.communityAlgorithm,
         });
         dPersons = r.deletedPersons;
         dEvents = r.deletedEvents;
