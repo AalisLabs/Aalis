@@ -1454,6 +1454,18 @@ body.is-dragging-chat .nav-rail:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.message-model-badge {
+  font-weight: 400;
+  font-size: 0.66rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2, rgba(120, 120, 140, 0.12));
+  color: var(--text-secondary, #888);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  cursor: help;
+}
+
 .message-bubble {
   padding: 10px 14px;
   border-radius: var(--radius-lg);

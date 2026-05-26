@@ -31,6 +31,15 @@ export interface ChatMessage {
   fileNames?: string[];
   /** 助手附件（agent 通过 send_image 等工具产生的图片/媒体）。 */
   attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>;
+  /** 仅 assistant 消息：本轮使用的 LLM 元数据（用户用于验证切换是否生效）。 */
+  modelInfo?: {
+    provider?: string;
+    model?: string;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    elapsedMs?: number;
+  };
   timestamp: number;
 }
 

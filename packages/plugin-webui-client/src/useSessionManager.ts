@@ -120,9 +120,17 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
       let finalContent = '';
       // 新格式：若任意一条 assistant 已带 segments，则采用该完整时间线（覆盖之前老路径累积）
       let anyTimelineSegments = false;
+      // 收集本组内 assistant.metadata.modelInfo：仅最后一条最终 assistant 才带；
+      // 中间 tool-call assistant 通常不带，所以取「最后非 undefined 的那条」。
+      let groupModelInfo: ChatMessage['modelInfo'] | undefined;
 
       while (i < raw.length && (raw[i].role === 'assistant' || raw[i].role === 'tool')) {
         const cur = raw[i];
+        // 提取 modelInfo（任意 assistant 上都可能存在，取最后一条）
+        if (cur.role === 'assistant') {
+          const mi = (cur.metadata as { modelInfo?: ChatMessage['modelInfo'] } | undefined)?.modelInfo;
+          if (mi) groupModelInfo = mi;
+        }
 
         if (cur.role === 'assistant' && cur.segments && cur.segments.length > 0) {
           // 新格式：assistant 自带统一时间线 segments，是整轮（含所有中间工具迭代）的规范权威时间线。
@@ -214,6 +222,7 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
         segments: timeline.length > 0 ? timeline : undefined,
         reasoningContent: mirrorReasoning || undefined,
         timestamp: lastTimestamp,
+        modelInfo: groupModelInfo,
       });
       continue;
     }
