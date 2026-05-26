@@ -112,6 +112,52 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 注册服务
   ctx.provide('commands', commands);
 
+  // ===== 统一 memory:clear 中间件：图片缓存清理 =====
+  //
+  // 之前图片缓存清理只内联在 /clear 的 runClear 路径里，导致 deleteSession
+  // 触发的 memory:clear 不会清图片，文件泄漏。改为独立 middleware 后，
+  // /clear 与 deleteSession 走同一处理路径。
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+        rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+      },
+      next,
+    ) => {
+      if (data.types && !data.types.includes('image')) {
+        await next();
+        return;
+      }
+      try {
+        if (data.scope === 'all') {
+          const removed = await removeDirCounted(storage, 'data:/images');
+          data.results.push({
+            source: 'image-cache',
+            success: true,
+            message: removed >= 0 ? `所有图片缓存已清空（${removed} 个会话目录）` : '图片缓存目录不存在，无需清空',
+          });
+        } else if (data.sessionId) {
+          const safeSessionId = data.sessionId.replace(/[:/\\]/g, '_');
+          const removed = await removeDirCounted(storage, `data:/images/${safeSessionId}`);
+          data.results.push({
+            source: 'image-cache',
+            success: true,
+            message: removed >= 0 ? `当前会话图片缓存已清空（${removed} 张）` : '当前会话无图片缓存',
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'image-cache', success: false, message: `图片缓存清空失败: ${msg}` });
+      }
+      await next();
+    },
+  );
+
   // ===== inbound:command 相位：命令命中则执行并中断后续相位 =====
   //
   // 历史上 OneBot 适配器内联拦截命令；现已迁移到 inbound:command 命名相位，
@@ -257,32 +303,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
 
-      // 图片缓存清除：与 plugin-adapter-onebot 的目录约定保持一致 data/images/{safeSessionId}/
-      if (!types || types.includes('image')) {
-        try {
-          if (isGlobal) {
-            const dirUri = 'data:/images';
-            const removed = await removeDirCounted(storage, dirUri);
-            clearData.results.push({
-              source: 'image-cache',
-              success: true,
-              message: removed >= 0 ? `所有图片缓存已清空（${removed} 个会话目录）` : '图片缓存目录不存在，无需清空',
-            });
-          } else {
-            const safeSessionId = cmdCtx.sessionId.replace(/[:/\\]/g, '_');
-            const dirUri = `data:/images/${safeSessionId}`;
-            const removed = await removeDirCounted(storage, dirUri);
-            clearData.results.push({
-              source: 'image-cache',
-              success: true,
-              message: removed >= 0 ? `当前会话图片缓存已清空（${removed} 张）` : '当前会话无图片缓存',
-            });
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          clearData.results.push({ source: 'image-cache', success: false, message: `图片缓存清空失败: ${msg}` });
-        }
-      }
+      // 图片缓存与 vectorstore/persona/user-profile 等子系统的清理
+      // 现在统一由各自的 memory:clear middleware 处理（见 apply() 末尾的
+      // image-cache middleware）。runClear 仅负责调度 hook 与处理 memory 主体。
     });
 
     const hasFailure = clearData.results.some(r => !r.success);
