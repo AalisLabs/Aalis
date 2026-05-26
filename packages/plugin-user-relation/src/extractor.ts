@@ -709,8 +709,9 @@ export class RelationExtractor {
       const category = VALID_CATEGORIES.includes(e.category as EventCategory)
         ? (e.category as EventCategory)
         : undefined;
-      // scope：'global' = LLM 主动声明跨会话；其它（含缺省/'current'）→ 走 evidence[0].sessionId（即当前会话）
-      const sessionScope: string | undefined = e.scope === 'global' ? 'global' : undefined;
+      // scope：'global' = LLM 主动声明跨会话；其它（缺省/未识别）→ 直接落当前会话 sessionId。
+      // 不再依赖 createEvent 内部 evidence[0].sessionId fallback（mkEvidence 校验失败时会返回 null 导致回落 'global'）。
+      const sessionScope: string = e.scope === 'global' ? 'global' : ctxInfo.sessionId;
       let eventId: string | undefined;
       if (e.existingEventId) {
         const reinforced = await this.service.reinforceEvent(e.existingEventId, {
@@ -1141,7 +1142,7 @@ function buildExtractionPrompt(
       '严格输出**单个 JSON 对象**（不要任何解释文字、不要 ```json 包裹），结构如下：',
       '{',
       '  "persons": [{ "platform": str, "userId": str, "displayName"?: str }],',
-      '  "events": [{ "refKey": str, "existingEventId"?: str|null, "title": str(<=30字), "summary"?: str(<=80字), "category"?: "discussion"|"conflict"|"collaboration"|"incident"|"milestone"|"other", "scope"?: "current"|"global", "evidence": { "messageIds": str[], "quote": str } }],',
+      '  "events": [{ "refKey": str, "existingEventId"?: str|null, "title": str(<=30字), "summary"?: str(<=80字), "category"?: "discussion"|"conflict"|"collaboration"|"incident"|"milestone"|"other", "scope"?: "global", "evidence": { "messageIds": str[], "quote": str } }],',
       '  "entities": [{ "refKey": str, "existingEntityId"?: str|null, "name": str(<=20字), "aliases"?: str[], "summary"?: str(<=80字), "entityKind": "topic"|"place"|"thing"|"work", "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEventEdges": [{ "personPlatform": str, "personUserId": str, "eventRefKey": str, "role": "initiator"|"participant"|"witness"|"target"|"reporter", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
       '  "personEntityEdges": [{ "personPlatform": str, "personUserId": str, "entityRefKey": str, "role": "enthusiast"|"participant"|"owner"|"creator"|"critic"|"visitor"|"mentioned", "sentiment"?: "positive"|"negative"|"neutral"|"mixed", "description"?: str(<=40字), "evidence": { "messageIds": str[], "quote": str } }],',
@@ -1160,7 +1161,7 @@ function buildExtractionPrompt(
       '- 优先记录：有**可识别动作**（开黑/争吵/比赛/发布/相遇/讨论某话题…）且**多人参与或多条消息支撑**的事。',
       '- 「X 和 Y 讨论 Z」「群里围绕 Z 聊了一阵」这类**多人对话事件**值得记 —— 只要 evidence.messageIds ≥ 2 条且至少 2 人发言，可以建。后端会按 weight 老化，不必过度自我审查。',
       '- 完全单条、零回应的随口提及不建；问候/客套/单字回应不建（见下方负面清单）。',
-      '- **事件 scope 字段**：默认 `current`（= 当前会话内的事，如某群约局、某私聊吵架）。仅当事件**显式跨会话/跨平台**（如双十一、世界杯、某社会热点新闻被多个群讨论）时填 `global`。填错 `global` 会导致两个群里其实独立的"约定下周聚餐"被错误合并；不确定就保持默认。',
+      '- **事件 scope 字段**：**缺省即可**（= 当前会话内的事，如某群约局、某私聊吵架，后端自动绑定当前 sessionId）。**仅当**事件**显式跨会话/跨平台**（如双十一、世界杯、某社会热点新闻被多个群讨论）时填 `"global"`。填错 `global` 会导致两个群里其实独立的"约定下周聚餐"被错误合并；不确定就**不要写** scope 字段。',
       '- **事件锚定原则（与 hub-first 配合）**：建一个 event 时先问自己——',
       '  · 「它围绕什么具名对象？」→ 有 → 必须按第 1/2 步抽 entity 并输出 part-of 边（首选路径）。',
       '  · 「它是纯人际事件？」（如 A 与 B 吵架/告白/和好/绝交/退群/相遇，无任何具名对象）→ 允许独立 event，但**必须配合至少一条 personEventEdge 把所有相关方挂上 + 一条 personPersonEdge 表达关系性质**（如 conflict/friend/hostile/reconciled）。否则该事件会沦为孤立浮岛。',
@@ -1286,7 +1287,7 @@ function buildExtractionPrompt(
       opts?.crossSession
         ? '【跨会话模式】下方消息聚合了多个会话（群聊/私聊/平台），每行行首 `[sid:xxx]` 标注来源会话 id。请把不同 sid 之间**默认视为彼此独立的语境**，除非证据明确表明同一对象/事件被跨会话讨论才把 event.scope 标为 `global`；person / entity 节点天然全局共享，可正常跨 sid 累计证据。\n' +
           '【跨会话 hub 建模规则】当本窗口出现 ≥2 个不同 sid 都在围绕同一抽象主题（如"工会战""周末聚餐计划""某游戏开黑"）展开各自的讨论/约局/吐槽时：\n' +
-          '- 为该共同主题建一个 `scope=global` 的 **hub event**（title 取主题本身，如"工会战"），并为每个 sid 各自建一个 `scope=current`（默认）的**子事件**（title 带 sid 语境，如"A群工会战集结(2025-05-20)"）。\n' +
+          '- 为该共同主题建一个 `scope=global` 的 **hub event**（title 取主题本身，如"工会战"），并为每个 sid 各自建一个**缺省 scope**（即不写 scope 字段）的**子事件**（title 带 sid 语境，如"A群工会战集结(2025-05-20)"）。\n' +
           '- 通过 `eventEventEdges` `relationType="part-of"` 把每个子事件挂到 hub event 下，directed=true（from=子, to=hub）。\n' +
           '- candidates 中标有 `scope=global` 的事件**可直接复用为 hub**（existingEventId 填它的 id）；标有 `scope=other:xxx` 的事件**不要直接 reinforce**（不同 session 隔离），但可以输出 part-of 边把它和你新建的 hub 挂在一起。\n' +
           '- 当各 sid 只是恰好提到同一个具名对象但无共同事件主线时，**不要建 hub event**，按现有规则用 entity + personEntityEdge 关联即可。'
