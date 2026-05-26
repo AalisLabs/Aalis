@@ -628,7 +628,7 @@ export function computePageRank(
      * person→event / person→entity 单向边反向虚拟边的权重系数。
      * 0 = 不加反向边（无 person-person 边的人 PR 退化到 seed 常数）。
      * 默认 0.5：让“参与重要事件 / 关注热门实体”的人 PR 拉开差距，
-     * 同时避免事件 hub 过度反哺导致 PR 被少数枚红人物卸偦。
+     * 同时避免事件 hub 过度反哺导致 PR 被少数几个红人垄断。
      */
     reverseEdgeFactor?: number;
   },
