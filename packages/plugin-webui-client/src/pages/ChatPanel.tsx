@@ -417,6 +417,23 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
             {formatChatTime(msg.timestamp)}
           </span>
         ) : null}
+        {/* assistant 角标：显示本回复用的 model / token / 耗时，便于用户验证模型切换是否生效 */}
+        {msg.role === 'assistant' && msg.modelInfo && (msg.modelInfo.model || msg.modelInfo.totalTokens) ? (
+          <span
+            className="message-model-badge"
+            title={[
+              msg.modelInfo.provider && msg.modelInfo.model ? `${msg.modelInfo.provider} / ${msg.modelInfo.model}` : msg.modelInfo.model,
+              msg.modelInfo.promptTokens != null ? `输入 ${msg.modelInfo.promptTokens} tok` : null,
+              msg.modelInfo.completionTokens != null ? `输出 ${msg.modelInfo.completionTokens} tok` : null,
+              msg.modelInfo.totalTokens != null ? `总计 ${msg.modelInfo.totalTokens} tok` : null,
+              msg.modelInfo.elapsedMs != null ? `耗时 ${(msg.modelInfo.elapsedMs / 1000).toFixed(1)}s` : null,
+            ].filter(Boolean).join(' · ')}
+          >
+            {msg.modelInfo.model ?? ''}
+            {msg.modelInfo.totalTokens != null ? ` · ${(msg.modelInfo.totalTokens / 1000).toFixed(1)}k` : ''}
+            {msg.modelInfo.elapsedMs != null ? ` · ${(msg.modelInfo.elapsedMs / 1000).toFixed(1)}s` : ''}
+          </span>
+        ) : null}
       </div>
       {/* 用户消息中的图片 */}
       {msg.role === 'user' && msg.images && msg.images.length > 0 && (
