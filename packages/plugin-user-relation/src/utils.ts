@@ -1535,6 +1535,28 @@ export function jaccardChars(a: string, b: string): number {
 }
 
 /**
+ * 计算两个 event 的字符级 Jaccard。专用于 consolidate 候选评估：
+ * - title 必算（normalize 后通常很短，含义稳定）；
+ * - summary 仅在**两边都有**时参与加权：fused = 0.6·titleJac + 0.4·summaryJac；
+ * - 任一方缺 summary → 退化为 titleJac，避免"一方有长 summary、一方空"导致并集被
+ *   单侧 token 拉大、相似度被人为压低（这是历史上同会话同主题事件未被合并的主因）。
+ *
+ * 这里把 title/summary 分开算，比 `jaccardChars('${title} ${summary}', '${title} ${summary}')`
+ * 更稳定：原写法把 title 字符稀释到 summary 池里，标题完全相同时也会被低估。
+ */
+export function eventPairJaccard(
+  a: { title: string; summary?: string },
+  b: { title: string; summary?: string },
+): number {
+  const titleJac = jaccardChars(a.title, b.title);
+  const aSum = (a.summary ?? '').trim();
+  const bSum = (b.summary ?? '').trim();
+  if (!aSum || !bSum) return titleJac;
+  const sumJac = jaccardChars(aSum, bSum);
+  return 0.6 * titleJac + 0.4 * sumJac;
+}
+
+/**
  * 计算 EventNode embedding 的指纹（title + summary 的 sha1 前 16 hex）。
  * 当节点的 title/summary 发生变化时，hash 自动变 → consolidate 阶段触发重新 embed。
  * 使用 fnv1a + djb2 组合的 64bit 简化版（避免在浏览器/node 都依赖 crypto）。

@@ -497,7 +497,7 @@ export class RelationExtractor {
         return;
       }
 
-      await this.applyExtraction(result.value, { sessionId, platform, history, messageIdToSessionId });
+      await this.applyExtraction(result.value, { sessionId, platform, history, messageIdToSessionId, crossSession });
     } finally {
       this.inFlight.delete(sessionId);
     }
@@ -577,6 +577,9 @@ export class RelationExtractor {
       history: Message[];
       /** messageId -> 真实来源 sessionId（跨会话模式下每条 evidence 据此回写来源） */
       messageIdToSessionId?: Map<string, string>;
+      /** 本轮提取是否跨会话窗口（readScope !== 'same-session'）。
+       *  scope=global 防御要用：单会话提取不允许出现 global 标记。 */
+      crossSession?: boolean;
     },
   ): Promise<void> {
     const validMessageIds = new Set<string>();
@@ -759,9 +762,29 @@ export class RelationExtractor {
       const category = VALID_CATEGORIES.includes(e.category as EventCategory)
         ? (e.category as EventCategory)
         : undefined;
-      // scope：'global' = LLM 主动声明跨会话；其它（缺省/未识别）→ 直接落当前会话 sessionId。
-      // 不再依赖 createEvent 内部 evidence[0].sessionId fallback（mkEvidence 校验失败时会返回 null 导致回落 'global'）。
-      const sessionScope: string = e.scope === 'global' ? 'global' : ctxInfo.sessionId;
+      // scope 防御：'global' = LLM 主动声明跨会话事件。但 LLM 经常在单会话场景下
+      // **误标** scope=global，导致同一话题既建了 sessionScope=sid 的版本、又建了 global 版本。
+      // 两道闸：
+      //   (1) 若本轮提取窗口本身就不是跨会话（crossSession=false）→ 任何 global 都视为误标，剥离
+      //   (2) 即便跨会话窗口，若 evidence 的 sessionId 实际只指向当前 ctxInfo.sessionId
+      //       （没有任何跨 sid 信号），也强制剥离
+      // 真正合法的 global 应该有 evidence 来源跨 ≥2 个 sid 才说得通。
+      let sessionScope: string;
+      if (e.scope === 'global') {
+        const evSid = ev?.sessionId;
+        const reallyCross = ctxInfo.crossSession === true && evSid !== undefined && evSid !== ctxInfo.sessionId;
+        if (reallyCross) {
+          sessionScope = 'global';
+        } else {
+          sessionScope = ctxInfo.sessionId;
+          this.ctx.logger.debug(
+            `[user-relation] 剥离 event "${e.title}" 的 scope=global 标签 ` +
+              `(crossSession=${ctxInfo.crossSession === true}, evSid=${evSid ?? '?'}, current=${ctxInfo.sessionId})`,
+          );
+        }
+      } else {
+        sessionScope = ctxInfo.sessionId;
+      }
       let eventId: string | undefined;
       if (e.existingEventId) {
         const reinforced = await this.service.reinforceEvent(e.existingEventId, {
@@ -1228,7 +1251,22 @@ function buildExtractionPrompt(
       '- 优先记录：有**可识别动作**（开黑/争吵/比赛/发布/相遇/讨论某话题…）且**多人参与或多条消息支撑**的事。',
       '- 「X 和 Y 讨论 Z」「群里围绕 Z 聊了一阵」这类**多人对话事件**值得记 —— 只要 evidence.messageIds ≥ 2 条且至少 2 人发言，可以建。后端会按 weight 老化，不必过度自我审查。',
       '- 完全单条、零回应的随口提及不建；问候/客套/单字回应不建（见下方负面清单）。',
-      '- **事件 scope 字段**：**缺省即可**（= 当前会话内的事，如某群约局、某私聊吵架，后端自动绑定当前 sessionId）。**仅当**事件**显式跨会话/跨平台**（如双十一、世界杯、某社会热点新闻被多个群讨论）时填 `"global"`。填错 `global` 会导致两个群里其实独立的"约定下周聚餐"被错误合并；不确定就**不要写** scope 字段。',
+      '- **事件 category 选择指南（不要全部塞 discussion）**：',
+      '  · `collaboration` —— 多人共同推进/参与/约定一件具体行为：开黑、组队、合奏、合写文档、约局、合作直播…（**优先级最高**，只要"多人协作做某事"就用这个）',
+      '  · `conflict` —— 争吵 / 对立 / 拉黑 / 退群 / 翻脸 / 公开撕逼 / 互相 diss。',
+      '  · `incident` —— 突发负面事件：bug / 事故 / 翻车 / 服务器崩 / 设备坏 / 被骗。',
+      '  · `milestone` —— 标志性进展：发布、上线、签约、获奖、毕业、退役、达成成就、生日纪念日。',
+      '  · `discussion` —— **兜底类别**：单纯围绕某话题"聊一聊、讨论、安利、吐槽、复盘"，没有协作行为/冲突/事故/里程碑。**能选上面四个就不要用 discussion**。把所有事件都标 discussion 会让类别失去区分度。',
+      '  · `other` —— 极少用，仅在以上五类都套不上时（如纯仪式性问候活动）才考虑。',
+      '- **事件 scope 字段（决策极简版）**：',
+      '  · **同时满足两条**才能填 `"global"`：(a) 当前是【跨会话模式】窗口（消息行首带 `[sid:xxx]` 前缀），**且** (b) 该事件 evidence 引用了**至少 2 个不同 sid** 的消息。',
+      '  · **任意一条不满足都不要写 scope 字段**：单会话窗口（无 [sid] 前缀）一律不写；跨会话窗口里若 evidence 只来自一个 sid，也不写。',
+      '  · 后端会自动给"省略 scope"的事件绑定当前 sessionId；填错 global 会被自动剥离并 audit log。',
+      '  · 简单记法：**有 [sid:] 前缀的窗口 + evidence 跨 ≥2 个 sid → global；其余 → 留空**。',
+      '- **严禁重复创建同名事件**：在你下笔写 `events` 前，**先逐条扫描"已有候选事件"清单**，若某个新事件的 title 与候选清单中任一项 normalize 后相同（去标点、空白、连接符后字符等价），**必须**用 `existingEventId` 复用旧节点，**绝不能**新建。复用规则：',
+      '  · 候选项**无 scope 标签**（即当前 session 自家事件）→ 直接 `existingEventId=<旧 id>`，不写 scope。',
+      '  · 候选项标 `scope=global`（hub）→ 直接 `existingEventId=<旧 id>`，**也不要写 scope=global**（hub 已是 global，复用即可）。',
+      '  · 候选项标 `scope=other:xxx`（其他 session 的同名事件）→ **不要 reinforce**；按本轮真实场景决定：单会话窗口下建你自己的新事件即可（后端按 scope 隔离）。',
       '- **事件锚定原则（与 hub-first 配合）**：建一个 event 时先问自己——',
       '  · 「它围绕什么具名对象？」→ 有 → 必须按第 1/2 步抽 entity 并输出 part-of 边（首选路径）。',
       '  · 「它是纯人际事件？」（如 A 与 B 吵架/告白/和好/绝交/退群/相遇，无任何具名对象）→ 允许独立 event，但**必须配合至少一条 personEventEdge 把所有相关方挂上 + 一条 personPersonEdge 表达关系性质**（如 conflict/friend/hostile/reconciled）。否则该事件会沦为孤立浮岛。',
