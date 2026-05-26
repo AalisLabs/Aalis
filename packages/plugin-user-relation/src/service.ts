@@ -54,6 +54,7 @@ import {
   commonPrefix,
   computeAdaptiveResolution,
   computeEntityEdgeStats,
+  computeEntityEmbeddingHash,
   computeEventEdgeStats,
   computeEventEmbeddingHash,
   computeLeiden,
@@ -2261,6 +2262,12 @@ export class RelationService {
       skipLowScorePairs?: boolean;
       lowScoreThreshold?: number;
       /**
+       * Entity 宽召回的 embedding cos 阈值，默认 0.86。
+       * 仅在 `ctx.getService('embedding')` 可用时生效；name+summary embed 后 cos≥该值即作为额外候选。
+       * 设 0 = 关闭（依然走 substring/alias 路径）。
+       */
+      entityCosThreshold?: number;
+      /**
        * 可选 ctx。若传入则 consolidate 会顺带做一次「伪 person 自动清理」：
        * platform 不在 `getPlatformNames(ctx)` 运行时白名单内（或 userId 命中
        * 通用占位 self/me/bot/assistant）的 person，连同级联边一起删除。
@@ -2379,13 +2386,13 @@ export class RelationService {
             // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
             let shouldMerge = true;
             if (llmModel && opts.llm) {
-              // negativeCache：双方 lastReinforcedAt 都未变 → 跳过 LLM，复用上次否决结论
+              // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
+              // （evidence.length 在新关系/新提及时才增长，与衰减回写解耦，是稳定的"无新关系"信号）
+              const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+              const sCount = smaller.evidence?.length ?? 0;
+              const lCount = larger.evidence?.length ?? 0;
               const cached = await this.store.getMergeReject(a.id, b.id);
-              if (
-                cached &&
-                cached.aReinforcedAt === (a.lastReinforcedAt ?? 0) &&
-                cached.bReinforcedAt === (b.lastReinforcedAt ?? 0)
-              ) {
+              if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
                 llmRejectCacheHits++;
                 shouldMerge = false;
                 if (opts.llm.ctx.logger) {
@@ -2409,12 +2416,13 @@ export class RelationService {
                     opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
                   }
                   // 落 negativeCache，避免下次 maintain 重复送 LLM
-                  const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
                   await this.store.saveMergeReject({
                     aId: smaller.id,
                     bId: larger.id,
                     aReinforcedAt: smaller.lastReinforcedAt ?? 0,
                     bReinforcedAt: larger.lastReinforcedAt ?? 0,
+                    aEvidenceCount: sCount,
+                    bEvidenceCount: lCount,
                     reason: v.reason,
                     decidedAt: Date.now(),
                     decidedBy: 'strict-equiv',
@@ -2490,6 +2498,46 @@ export class RelationService {
         entitiesByKind.get(k)!.push(e);
       }
 
+      // ─── Entity embedding 召回支持（lazy embed + 持久化复用）─────────────
+      // 设计与 event ensureEmbedding 完全对称：当 EntityNode.embeddingHash 与
+      // computeEntityEmbeddingHash(name, summary, entityKind) 不一致或缺失时，
+      // 调 embed 服务一次，写回 store + 同步本地副本。embedding 服务缺失则全部 skip。
+      const embedding = this.ctx?.getService<EmbeddingService>('embedding');
+      const entityCosThreshold = opts.entityCosThreshold ?? 0.86;
+      const embedCache = new Map<string, number[] | null>();
+      const ensureEntityEmbedding = async (en: EntityNode): Promise<number[] | null> => {
+        if (!embedding) return null;
+        if (embedCache.has(en.id)) return embedCache.get(en.id) ?? null;
+        const expectedHash = computeEntityEmbeddingHash(en.name, en.summary, en.entityKind);
+        if (en.embeddingHash === expectedHash && Array.isArray(en.embeddingVector) && en.embeddingVector.length > 0) {
+          embedCache.set(en.id, en.embeddingVector);
+          return en.embeddingVector;
+        }
+        const text = `${(en.name || '').trim()}\n${(en.summary || '').trim()}`.trim();
+        if (!text) {
+          embedCache.set(en.id, null);
+          return null;
+        }
+        try {
+          const vec = await embedding.embed(text);
+          if (!Array.isArray(vec) || vec.length === 0) {
+            embedCache.set(en.id, null);
+            return null;
+          }
+          await this.store.upsertEntity({ ...en, embeddingVector: vec, embeddingHash: expectedHash });
+          en.embeddingVector = vec;
+          en.embeddingHash = expectedHash;
+          embedCache.set(en.id, vec);
+          return vec;
+        } catch (err) {
+          opts.llm?.ctx?.logger?.warn(
+            `[user-relation] consolidate entity embed 失败 ${en.id} (${en.name.slice(0, 20)}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          embedCache.set(en.id, null);
+          return null;
+        }
+      };
+
       // ─── F3 候选预收集：先把召回条件命中的 pair 全捞出来，不立刻调 LLM ───
       // 目的：拿到全集后才能按 compositeScore 排序、按低权阈值跳过，
       //      避免无脑顺序跑 LLM 把预算花在两端都很 edge 的低价值候选上。
@@ -2518,12 +2566,61 @@ export class RelationService {
             const aliasCover =
               aAliasNorms.includes(bn) || bAliasNorms.includes(an) || aAliasNorms.some(x => bAliasNorms.includes(x));
 
-            if (!substring && !aliasCover) continue;
+            // (c) 文本召回未命中时，尝试 embedding 召回：name+summary cos >= 阈值
+            //     仅在 embedding 服务可用时计算；任一端 embed 失败则跳过本路径。
+            let embedHit = false;
+            let embedCos: number | null = null;
+            if (!substring && !aliasCover && embedding) {
+              const va = await ensureEntityEmbedding(a);
+              const vb = await ensureEntityEmbedding(b);
+              if (va && vb && va.length === vb.length) {
+                embedCos = cosineSimilarity(va, vb);
+                if (embedCos >= entityCosThreshold) embedHit = true;
+              }
+            }
+
+            if (!substring && !aliasCover && !embedHit) continue;
             reportedEntityPairs.add(k);
 
-            const reason = substring ? `名称子串包含：${a.name} ↔ ${b.name}` : `别名/名互覆盖：${a.name} ↔ ${b.name}`;
+            const reason = substring
+              ? `名称子串包含：${a.name} ↔ ${b.name}`
+              : aliasCover
+                ? `别名/名互覆盖：${a.name} ↔ ${b.name}`
+                : `embedding 相似（cos=${(embedCos ?? 0).toFixed(2)}）：${a.name} ↔ ${b.name}`;
             aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
             candidates.push({ a, b, reason, pairKey: k });
+          }
+        }
+      }
+
+      // ─── 跨 entityKind 同名召回（解决 extractor 把同概念抽成不同 kind 的 case）─
+      // 例：游戏卡牌"认知偏差" → thing；同名抽象概念 → topic。LLM 旧 prompt 直接因
+      // "类型不同"硬否决；现在召回交给 LLM 终判（prompt 已放宽，允许跨 kind 合并）。
+      // 召回条件：normalize(name) 完全相等且 entityKind 不同；不走 substring/alias 路径。
+      {
+        const byNorm = new Map<string, EntityNode[]>();
+        for (const e of snapshot.entities) {
+          const n = normalizeName(e.name);
+          if (!n) continue;
+          if (!byNorm.has(n)) byNorm.set(n, []);
+          byNorm.get(n)!.push(e);
+        }
+        for (const list of byNorm.values()) {
+          if (list.length < 2) continue;
+          for (let i = 0; i < list.length; i++) {
+            for (let j = i + 1; j < list.length; j++) {
+              const a = list[i];
+              const b = list[j];
+              const ak = a.entityKind ?? 'topic';
+              const bk = b.entityKind ?? 'topic';
+              if (ak === bk) continue; // 同 kind 同名走 strict-equiv 段
+              const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+              if (reportedEntityPairs.has(k)) continue;
+              reportedEntityPairs.add(k);
+              const reason = `跨 kind 同名候选（${ak} vs ${bk}，疑似上游识别误判）：${a.name} ↔ ${b.name}`;
+              aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
+              candidates.push({ a, b, reason, pairKey: k });
+            }
           }
         }
       }
@@ -2584,13 +2681,13 @@ export class RelationService {
           }
           continue;
         }
-        // negativeCache：双方 lastReinforcedAt 都未变 → 跳过 LLM，复用上次否决结论
+        // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
+        // （evidence.length 在新关系/新提及时才增长，与 evictByQuota 的衰减回写解耦）
+        const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+        const sCount = smaller.evidence?.length ?? 0;
+        const lCount = larger.evidence?.length ?? 0;
         const cached = await this.store.getMergeReject(a.id, b.id);
-        if (
-          cached &&
-          cached.aReinforcedAt === (a.lastReinforcedAt ?? 0) &&
-          cached.bReinforcedAt === (b.lastReinforcedAt ?? 0)
-        ) {
+        if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
           llmRejectCacheHits++;
           if (opts.llm.ctx.logger) {
             opts.llm.ctx.logger.debug(
@@ -2629,12 +2726,13 @@ export class RelationService {
             );
           }
           // 落 negativeCache，下次扫描双方未变就跳过
-          const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
           await this.store.saveMergeReject({
             aId: smaller.id,
             bId: larger.id,
             aReinforcedAt: smaller.lastReinforcedAt ?? 0,
             bReinforcedAt: larger.lastReinforcedAt ?? 0,
+            aEvidenceCount: sCount,
+            bEvidenceCount: lCount,
             reason: v.reason,
             decidedAt: Date.now(),
             decidedBy: 'wide-recall',
@@ -3444,12 +3542,11 @@ export class RelationService {
         continue;
       }
 
+      const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+      const sCount = smaller.evidence?.length ?? 0;
+      const lCount = larger.evidence?.length ?? 0;
       const cached = await this.store.getMergeReject(a.id, b.id);
-      if (
-        cached &&
-        cached.aReinforcedAt === (a.lastReinforcedAt ?? 0) &&
-        cached.bReinforcedAt === (b.lastReinforcedAt ?? 0)
-      ) {
+      if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
         llmRejectCacheHits++;
         reportEntry.cacheHit = true;
         reportEntry.llmVerdict = { isSame: false, reason: `mergeReject 缓存：${cached.reason}` };
@@ -3474,12 +3571,13 @@ export class RelationService {
 
       if (!verdict.isSame) {
         llmRejected++;
-        const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
         await this.store.saveMergeReject({
           aId: smaller.id,
           bId: larger.id,
           aReinforcedAt: smaller.lastReinforcedAt ?? 0,
           bReinforcedAt: larger.lastReinforcedAt ?? 0,
+          aEvidenceCount: sCount,
+          bEvidenceCount: lCount,
           reason: verdict.reason,
           decidedAt: Date.now(),
           decidedBy: 'wide-recall',
