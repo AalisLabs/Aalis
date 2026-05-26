@@ -1028,8 +1028,42 @@ export class RelationService {
     deletedPersonIds: string[];
     deletedEventIds: string[];
     deletedEntityIds: string[];
+    deletedDanglingEdges: number;
   }> {
     const snap = await this.store.loadAll();
+    // 先建节点 id 集合（用于悬空边检测）
+    const personIdSet = new Set(snap.persons.map(p => p.id));
+    const eventIdSet = new Set(snap.events.map(e => e.id));
+    const entityIdSet = new Set(snap.entities.map(e => e.id));
+    // 清理悬空边：端点指向不存在节点的边（节点被绕过 cascade 删除时可能残留）
+    let deletedDanglingEdges = 0;
+    for (const e of snap.edges) {
+      let dangling = false;
+      switch (e.kind) {
+        case 'person-event':
+          dangling = !personIdSet.has(e.fromPersonId) || !eventIdSet.has(e.toEventId);
+          break;
+        case 'person-entity':
+          dangling = !personIdSet.has(e.fromPersonId) || !entityIdSet.has(e.toEntityId);
+          break;
+        case 'person-person':
+          dangling = !personIdSet.has(e.fromPersonId) || !personIdSet.has(e.toPersonId);
+          break;
+        case 'event-event':
+          dangling = !eventIdSet.has(e.fromEventId) || !eventIdSet.has(e.toEventId);
+          break;
+        case 'event-entity':
+          dangling = !eventIdSet.has(e.fromEventId) || !entityIdSet.has(e.toEntityId);
+          break;
+        case 'entity-entity':
+          dangling = !entityIdSet.has(e.fromEntityId) || !entityIdSet.has(e.toEntityId);
+          break;
+      }
+      if (dangling) {
+        await this.store.deleteEdge(e.id);
+        deletedDanglingEdges++;
+      }
+    }
     const referencedPersonIds = new Set<string>();
     const referencedEventIds = new Set<string>();
     const referencedEntityIds = new Set<string>();
@@ -1089,6 +1123,7 @@ export class RelationService {
       deletedPersonIds,
       deletedEventIds,
       deletedEntityIds,
+      deletedDanglingEdges,
     };
   }
 

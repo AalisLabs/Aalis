@@ -932,9 +932,12 @@ export class RelationExtractor {
     if (this.cfg.evictionEnabled && !hasQuota) {
       try {
         const orphans = await this.service.pruneOrphans();
-        if (this.cfg.debug && (orphans.deletedPersons || orphans.deletedEvents || orphans.deletedEntities)) {
+        if (
+          this.cfg.debug &&
+          (orphans.deletedPersons || orphans.deletedEvents || orphans.deletedEntities || orphans.deletedDanglingEdges)
+        ) {
           this.ctx.logger.debug(
-            `[user-relation] 自动孤儿清理: persons=${orphans.deletedPersons} events=${orphans.deletedEvents} entities=${orphans.deletedEntities}`,
+            `[user-relation] 自动孤儿清理: persons=${orphans.deletedPersons} events=${orphans.deletedEvents} entities=${orphans.deletedEntities} dangling_edges=${orphans.deletedDanglingEdges}`,
           );
         }
       } catch (err) {
