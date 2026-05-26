@@ -32,6 +32,20 @@ export function preprocessLaTeX(content: string): string {
       return `\n\n$$\n${trimmed}\n$$\n\n`;
     });
 
+    // 流式输出时末尾尚未闭合的跨行 $$ 块（closing $$ 尚未到达）：
+    // 若 $$ 出现奇数次，说明最后一个未配对；找到它并补上 closing 以避免 remark-math
+    // 把整段内容当裸文本渲染（streaming 期间 \begin{aligned}... 等复杂公式会裸露）。
+    const dollarCount = (part.match(/\$\$/g) ?? []).length;
+    if (dollarCount % 2 === 1) {
+      // 找最后一个 $$ 后不再含 $$ 的片段直到字符串末尾
+      part = part.replace(/\$\$((?:(?!\$\$)[\s\S])+)$/, (_, math: string) => {
+        const trimmed = math.replace(/^[ \t]*\n?/, '').replace(/\n?[ \t]*$/, '');
+        // 空内容或单行（如 closing $$ 后跟换行）：原样还原，不误伤
+        if (!trimmed || !math.includes('\n')) return `$$${math}`;
+        return `\n\n$$\n${trimmed}\n$$\n\n`;
+      });
+    }
+
     return part;
   }).join('');
 }
