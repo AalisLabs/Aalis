@@ -244,6 +244,50 @@ export const actions: PluginModule['actions'] = {
       return t ? { compositeScore: t.compositeScore, tier: t.tier } : { compositeScore: undefined, tier: undefined };
     };
 
+    /**
+     * 全库 PageRank 排名表（基于 fullSnap，零额外开销）。
+     * 前端 NodeDetailCard 把"图重要性"展开为「子图排名 + 全库排名」两组。
+     * 只统计有 lastPageRank 的节点（未跑过 evictByQuota 的节点不入榜）。
+     */
+    type PrRankInfo = { kindRank: number; kindTotal: number; globalRank: number; globalTotal: number };
+    const globalPrRanks: Record<string, PrRankInfo> = {};
+    {
+      const prEntries: Array<{ id: string; kind: 'person' | 'event' | 'entity'; pr: number }> = [];
+      for (const p of fullSnap.persons) {
+        if (typeof p.lastPageRank === 'number' && Number.isFinite(p.lastPageRank))
+          prEntries.push({ id: p.id, kind: 'person', pr: p.lastPageRank });
+      }
+      for (const e of fullSnap.events) {
+        if (typeof e.lastPageRank === 'number' && Number.isFinite(e.lastPageRank))
+          prEntries.push({ id: e.id, kind: 'event', pr: e.lastPageRank });
+      }
+      for (const e of fullSnap.entities) {
+        if (typeof e.lastPageRank === 'number' && Number.isFinite(e.lastPageRank))
+          prEntries.push({ id: e.id, kind: 'entity', pr: e.lastPageRank });
+      }
+      const globalSorted = [...prEntries].sort((a, b) => b.pr - a.pr);
+      const globalTotal = globalSorted.length;
+      const globalRankById = new Map<string, number>();
+      for (let i = 0; i < globalSorted.length; i++) globalRankById.set(globalSorted[i].id, i + 1);
+      const byKind = new Map<'person' | 'event' | 'entity', typeof prEntries>();
+      for (const e of prEntries) {
+        const arr = byKind.get(e.kind) ?? [];
+        arr.push(e);
+        byKind.set(e.kind, arr);
+      }
+      for (const [, arr] of byKind) {
+        arr.sort((a, b) => b.pr - a.pr);
+        for (let i = 0; i < arr.length; i++) {
+          globalPrRanks[arr[i].id] = {
+            kindRank: i + 1,
+            kindTotal: arr.length,
+            globalRank: globalRankById.get(arr[i].id) ?? 0,
+            globalTotal,
+          };
+        }
+      }
+    }
+
     return {
       focusId,
       focusEdge: focusEdge
@@ -274,6 +318,7 @@ export const actions: PluginModule['actions'] = {
         entities: entities.length,
         edges: edges.length,
       },
+      globalPrRanks,
       nodes: [
         ...persons.map(p => ({
           data: {
