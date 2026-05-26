@@ -1545,12 +1545,12 @@ describe('plugin-user-relation: getCommunityOverview per-community 自适应 top
     const small = adaptive.communities.find(c => c.size === 3);
     expect(big).toBeTruthy();
     expect(small).toBeTruthy();
-    // 大社群核心展示数 ≥ 小社群（自适应 sqrt(comTotal)*1.5）
+    // 大社群核心展示数 ≥ 小社群（自适应 log2(comTotal+1)）
     expect(big!.topMembers.length).toBeGreaterThanOrEqual(small!.topMembers.length);
     // 小社群也保底 ≥ 3 条（但不会超过其实际成员数）
     expect(small!.topMembers.length).toBeGreaterThanOrEqual(Math.min(3, small!.size));
-    // 大社群至少展示 ceil(sqrt(13)*1.5) = 6 个成员
-    expect(big!.topMembers.length).toBeGreaterThanOrEqual(6);
+    // 大社群 comTotal ≥ 13 → ceil(log2(14))=4，至少 4 个成员
+    expect(big!.topMembers.length).toBeGreaterThanOrEqual(4);
 
     // 一刀切：传 top_n=2 → 所有社群最多 2 条
     const fixed = await service.getCommunityOverview({ topN: 2 });
