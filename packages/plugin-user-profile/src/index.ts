@@ -36,6 +36,7 @@ export const displayName = '用户事实档案';
 export const subsystem = 'memory';
 export const inject = {
   required: ['memory', 'llm'],
+  optional: ['user-relation'],
 };
 
 const PROFILE_NS = 'user:profile';
@@ -483,10 +484,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       '\n   - 是认真陈述，还是反讽/否定/假设/角色扮演？（"我可不喜欢爵士" → 否定，不写；跑团扮演 NPC 的台词 → 不写）' +
       '\n   - 如果原始依据来自「其他用户」的发言，即使在说目标用户，也不允许写入（他人可能记错、说反话）' +
       '\n   **拿不准就不写。profile 漏几条没关系，写错才麻烦。**' +
-      '\n   ⚠️ 例外——`人际关系` 类：除上述通用规则外，该类还允许记录目标用户**对 Aalis 的可观察行为与态度**，' +
-      '例如：是否是 Aalis 的部署/维护者、经常向 Aalis 提功能需求、曾表达过对 Aalis 的感谢或不满、帮助测试过 Aalis 等。' +
-      '这类事实依据必须是「目标用户」发言中**可直接推断的行为**（不能凭空猜测），sourceQuote 取目标用户发言原话。' +
-      '示例 text：「是 Aalis 的开发维护者」「经常向 Aalis 提交功能建议」「曾帮助排查 Aalis 的故障」「曾对 Aalis 表达不满」。' +
+      '\n   ⚠️ 例外——`人际关系` 类：除上述通用规则外，该类还允许记录目标用户**与 Aalis 之间长期可观察的关系模式**，' +
+      '包含两种情况：' +
+      '\n   (a) 行为身份类：用户在 Aalis 项目中扮演的角色或长期重复的行为' +
+      '（示例 text：「是 Aalis 的开发维护者」「经常向 Aalis 提交功能建议」「常帮助测试和排查 Aalis 的故障」）' +
+      '\n   (b) 长期情感模式类：用户对 Aalis 表现出的**反复出现的态度倾向**（不是单次情绪）' +
+      '（示例 text：「常对 Aalis 表达依赖与喜爱」「习惯把日常烦恼向 Aalis 倾诉」「喜欢调侃 Aalis」）' +
+      '\n   ❌ 严禁仅凭单次发言推断情感事实：一次抱怨/一次感谢/一次撒娇都不算"模式"，不写。' +
+      '必须是已有事实佐证 + 本轮再次出现的同类行为才允许 update 强化，或会话历史多处反复出现才允许 add。' +
+      '依据必须是「目标用户」发言中可直接推断的内容，sourceQuote 取目标用户发言原话。' +
       '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写' +
       '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条' +
       '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除' +
@@ -961,13 +967,39 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (profile?.facts.some(isFactActive)) {
           const body = renderProfileBlock(profile.facts, data.userId, false);
           const relationLine = renderRelationLine(profile);
+          // 可选：从 user-relation 服务取「同社群活跃成员」（Louvain 标签 + PageRank 排序）。
+          // 服务不存在 / 节点没社群标签 / 报错都静默跳过；该字段是锦上添花，不破坏档案主体。
+          let communityLine = '';
+          try {
+            const relation = ctx.getService<{
+              getCommunityPeers: (
+                id: string,
+                limit?: number,
+              ) => Promise<{
+                communityId: string | null;
+                communitySize: number;
+                peers: Array<{ id: string; displayName: string }>;
+              }>;
+            }>('user-relation');
+            if (relation?.getCommunityPeers) {
+              const r = await relation.getCommunityPeers(userKey, 5);
+              if (r.peers.length > 0) {
+                const names = r.peers.map(p => p.displayName).join('、');
+                communityLine = `同社群活跃成员（共 ${r.communitySize} 人）：${names}。`;
+              }
+            }
+          } catch (err) {
+            ctx.logger.debug(`读取 community peers 失败: ${err instanceof Error ? err.message : String(err)}`);
+          }
           const block =
             `# 关于当前对话者（${data.userId}）的已知事实\n` +
             '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。' +
             '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择。' +
             '这些事实来自零散对话的推断，未必完全准确；也不要把它们与对话历史片段拼接成新的强陈述，' +
             '若用户否认应坦然接受、不要硬撑：\n\n' +
-            (relationLine ? `${relationLine}\n\n` : '') +
+            (relationLine ? `${relationLine}\n` : '') +
+            (communityLine ? `${communityLine}\n` : '') +
+            (relationLine || communityLine ? '\n' : '') +
             body;
           blocksToInsert.push(block);
         }

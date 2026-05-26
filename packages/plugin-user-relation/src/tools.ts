@@ -84,6 +84,9 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
       '- "群里最近的瓜" → `user_relation_gossip`',
       '- "A 的关系网长什么样" → `user_relation_expand_node`（BFS 子图，注意 max_depth/max_breadth）',
       '- "给 A 推荐想认识的人" → `user_relation_recommend_persons`（一次出 top-K，**不要**手撕循环调 score）',
+      '- "A 平时跟谁混 / A 在哪个圈子" → `user_relation_community_peers`（同社群活跃成员；Louvain）',
+      '- "A 和 B 是不是同一拨人" → `user_relation_community_bridge`（同社群判断 + 各自社群规模）',
+      '- "这群里有几个圈子 / 谁是桥梁人" → `user_relation_community_overview`（全局社群概览 + modularity Q + bridges；支持 algorithm=louvain|leiden 切换）',
       '',
       '⚠️ 方向语义（写边时必须遵守，本组工具与写边工具共用此约定）：',
       '- person-person 边一律是「主动声明」：必须从主动方写到被动方。',
@@ -850,6 +853,137 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
         null,
         2,
       );
+    },
+  });
+
+  // ───────────────────────── community_peers ─────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_community_peers',
+        description: [
+          '查"某人所在小圈子里其他活跃成员是谁"。基于 Louvain 社群发现 + PageRank 排序。',
+          '典型场景："X 平时跟谁混"、"X 的核心朋友圈"、"找跟 X 同圈子的 KOL"。',
+          '注意：',
+          '- 社群标签由 evictByQuota 周期性写入，新人/冷门人可能还没有标签，此时返回 communitySize=0、peers=[]。',
+          '- communityId 是不透明字符串（c0/c1/...），**仅在同一批次内可比**，不要持久化使用。',
+          '- 只返回 person 类型成员；事件/实体也有 communityId 但用户视角无意义。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            person_id: {
+              type: 'string',
+              description: 'person 节点 ID，必须是 `<platform>:<userId>` 完整格式，例如 `onebot:10001`。',
+            },
+            limit: { type: 'number', description: '返回上限，默认 5，硬上限 20' },
+          },
+          required: ['person_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const id = String(args.person_id ?? '').trim();
+      const err = await validateNodeId(service, id, 'person_id');
+      if (err) return err;
+      const limit = clampNum(args.limit, 5, 1, 20);
+      const r = await service.getCommunityPeers(id, limit);
+      return JSON.stringify(r, null, 2);
+    },
+  });
+
+  // ───────────────────────── community_bridge ─────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_community_bridge',
+        description: [
+          '判断两人是否同社群 + 各自社群规模。同社群 = 在 Louvain 标签上一致。',
+          '典型场景："X 和 Y 是同一波人吗"、"他俩跨圈了吗"。',
+          '想要具体最短路径请改用 user_relation_find_path；本工具只回答"圈层归属"。',
+          '注意：未跑过 evictByQuota 的节点 communityId 为 null。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            person_a_id: { type: 'string', description: 'person A 节点 ID（完整 platform:userId）' },
+            person_b_id: { type: 'string', description: 'person B 节点 ID（完整 platform:userId）' },
+          },
+          required: ['person_a_id', 'person_b_id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const a = String(args.person_a_id ?? '').trim();
+      const b = String(args.person_b_id ?? '').trim();
+      const ea = await validateNodeId(service, a, 'person_a_id');
+      if (ea) return ea;
+      const eb = await validateNodeId(service, b, 'person_b_id');
+      if (eb) return eb;
+      const r = await service.getCommunityBridge(a, b);
+      return JSON.stringify(r, null, 2);
+    },
+  });
+
+  // ───────────────────────── community_overview ─────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_community_overview',
+        description: [
+          '【全局】社群发现概览：把所有人按"圈子"分组，列出每个社群的核心成员/话题/事件，并标出"桥梁人"。',
+          '典型场景："这群里有几个圈子"、"哪几个人是连接不同圈子的桥梁"、"X 这个 session 里都聊什么"。',
+          '参数说明：',
+          '- algorithm：可选 "louvain" / "leiden"。不传则用插件默认（一般 louvain）。',
+          '  · louvain = 经典快速；leiden = 简化版 Leiden（保证社群内部连通，稍慢质量略高）。',
+          '  · 当 louvain 划分明显把两群没交集的人塞一起时，可换 leiden 重跑。',
+          '- session_scope：可选。只统计 evidence 含该 session 的节点（events 看 sessionScope；persons 看是否参与过 scope 内 event；entities 看 evidence）。',
+          '  · 注意：社群划分仍在全图上跑，scope 只是后过滤展示，避免切断跨群关系。',
+          '- top_n：每个社群展示的成员/话题/事件条数。不传走动态默认（节点数/50 与边数/100 的较大者，clamp 到 3~20）。传 0 = 不限。',
+          '返回字段：modularity (Q ∈ [-0.5, 1], >0.3 圈子分明)、communities[]、bridges[] (跨社群邻居最多的 top-N 人)。',
+          '注意：本工具实时跑算法，不依赖节点上的 communityId 缓存——即使 evictByQuota 还没跑也能用。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            algorithm: {
+              type: 'string',
+              enum: ['louvain', 'leiden'],
+              description: '社群发现算法；不传走插件默认配置',
+            },
+            session_scope: {
+              type: 'string',
+              description: '只统计该 sessionId 内的节点；不传 = 全图',
+            },
+            top_n: {
+              type: 'number',
+              description: '每社群展示 top N 条；不传 = 动态默认；0 = 不限',
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const algorithm =
+        args.algorithm === 'leiden' || args.algorithm === 'louvain'
+          ? (args.algorithm as 'louvain' | 'leiden')
+          : undefined;
+      const sessionScope =
+        typeof args.session_scope === 'string' && args.session_scope.trim().length > 0
+          ? String(args.session_scope).trim()
+          : undefined;
+      const topN = typeof args.top_n === 'number' ? args.top_n : undefined;
+      const r = await service.getCommunityOverview({ algorithm, sessionScope, topN });
+      return JSON.stringify(r, null, 2);
     },
   });
 

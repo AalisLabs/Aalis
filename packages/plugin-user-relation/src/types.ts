@@ -49,6 +49,14 @@ export interface PersonNode {
   lastPageRank?: number;
   /** lastPageRank 的写入时间戳 */
   lastPageRankAt?: number;
+  /**
+   * 最近一次 Louvain 社群发现得到的社群标签（字符串 id，跨重算不稳定，只在同一批节点间可比）。
+   * 由 `evictByQuota` 跑完 PageRank 后顺手计算并写入；用于「同一圈子的活跃成员」推断。
+   * 未跑过的实例为 undefined。
+   */
+  communityId?: string;
+  /** communityId 写入时间戳 */
+  communityIdAt?: number;
 }
 
 /** 事件类别（粗分类，仅供 UI 上色与过滤） */
@@ -104,6 +112,9 @@ export interface EventNode {
   /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
   lastPageRank?: number;
   lastPageRankAt?: number;
+  /** 最近一次 Louvain 社群标签（同批可比，跨重算不稳定）。 */
+  communityId?: string;
+  communityIdAt?: number;
 }
 
 /**
@@ -143,6 +154,9 @@ export interface EntityNode {
   /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
   lastPageRank?: number;
   lastPageRankAt?: number;
+  /** 最近一次 Louvain 社群标签。 */
+  communityId?: string;
+  communityIdAt?: number;
   /** 最近一次在对话窗口中被提及的时间 */
   lastMentionedAt?: number;
   /** 总共被提及次数 */
