@@ -3980,6 +3980,13 @@ export class RelationService {
     topN?: number;
     /** 不传则跑 louvain；可临时切 leiden */
     algorithm?: 'louvain' | 'leiden';
+    /**
+     * Louvain/Leiden 分辨率 γ：默认 1.0（标准模块度）。
+     * - γ > 1：划得更细 → 社群数变多、单社群更小
+     * - γ < 1：划得更粗 → 社群数变少、单社群更大
+     * 常用范围 0.5 ~ 3.0。超出 [0.01, 100] 会被夹紧。
+     */
+    resolution?: number;
   }): Promise<{
     algorithm: 'louvain' | 'leiden';
     numCommunities: number;
@@ -4003,7 +4010,8 @@ export class RelationService {
   }> {
     const snap = await this.store.loadAll();
     const alg: 'louvain' | 'leiden' = opts?.algorithm ?? 'louvain';
-    const com = alg === 'leiden' ? computeLeiden(snap) : computeLouvain(snap);
+    const resolution = opts?.resolution;
+    const com = alg === 'leiden' ? computeLeiden(snap, { resolution }) : computeLouvain(snap, { resolution });
     const modularity = computeModularity(snap, com);
 
     // topN 解析：

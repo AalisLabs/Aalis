@@ -937,14 +937,22 @@ export function computeModularity(snap: RelationGraphSnapshot, communityMap: Map
  *
  * 不做：
  * - 不返回 modularity 值（请用独立的 computeModularity）
- * - 不暴露 resolution 参数（默认 1.0 已足够；社群过多/过少时再加）
+ * - resolution（γ）参数：默认 1.0（标准 Louvain）；> 1 → 划得更细更多社群；< 1 → 划得更粗更少社群。
+ *   实现：把 ΔQ 公式里的 `kii * sigmaTot(C) / 2m` 项乘以 γ（标准做法，对应 RB 多分辨率模块度）。
+ *   常用范围：0.5 ~ 3.0。极端值（< 0.1 / > 10）会导致全图一个社群 / 每节点自成社群。
  */
 export function computeLouvain(
   snap: RelationGraphSnapshot,
-  opts?: { maxIterPerPass?: number; minImprovement?: number },
+  opts?: { maxIterPerPass?: number; minImprovement?: number; resolution?: number },
 ): Map<string, string> {
   const maxIter = opts?.maxIterPerPass ?? 10;
   const minImp = opts?.minImprovement ?? 1e-6;
+  // resolution：clamp 到合理范围避免数值溢出 / 全图坍缩；超出仍允许但提示
+  const gamma = (() => {
+    const raw = opts?.resolution ?? 1.0;
+    if (!Number.isFinite(raw) || raw <= 0) return 1.0;
+    return Math.max(0.01, Math.min(raw, 100));
+  })();
 
   const adj = buildUndirectedAdj(snap);
   type AdjList = LouvainAdj;
@@ -993,13 +1001,15 @@ export function computeLouvain(
         // 把 i 移出 ci
         const wToCi = neighborWeightToCom.get(ci) ?? 0;
         comTotalK.set(ci, (comTotalK.get(ci) ?? 0) - kii);
-        // 计算移入每个候选社群的 ΔQ：2*(wToC - ki * sigma_tot(C) / 2m)
-        // 等价比较：argmax_c { wToC - ki * sigma_tot(C) / 2m }
+        // 计算移入每个候选社群的 ΔQ：2*(wToC - γ * ki * sigma_tot(C) / 2m)
+        // 等价比较：argmax_c { wToC - γ * ki * sigma_tot(C) / 2m }
+        // γ > 1：放大对 sigma_tot 大社群的惩罚 → 倾向多个小社群
+        // γ < 1：缩小惩罚 → 倾向少数大社群
         let bestCom = ci;
-        let bestGain = wToCi - (kii * (comTotalK.get(ci) ?? 0)) / twoM;
+        let bestGain = wToCi - (gamma * (kii * (comTotalK.get(ci) ?? 0))) / twoM;
         for (const [c, wToC] of neighborWeightToCom) {
           if (c === ci) continue;
-          const gain = wToC - (kii * (comTotalK.get(c) ?? 0)) / twoM;
+          const gain = wToC - (gamma * (kii * (comTotalK.get(c) ?? 0))) / twoM;
           if (gain > bestGain + minImp) {
             bestGain = gain;
             bestCom = c;
@@ -1078,7 +1088,7 @@ export function computeLouvain(
  */
 export function computeLeiden(
   snap: RelationGraphSnapshot,
-  opts?: { maxIterPerPass?: number; minImprovement?: number },
+  opts?: { maxIterPerPass?: number; minImprovement?: number; resolution?: number },
 ): Map<string, string> {
   // Step 1: 先跑 Louvain
   const louvain = computeLouvain(snap, opts);
