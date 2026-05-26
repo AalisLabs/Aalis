@@ -1020,7 +1020,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
             resolution: {
               type: 'number',
               description:
-                '分辨率 γ，默认 1.0；>1 划得更细更碎（更多小社群），<1 划得更粗（更少大社群）。范围 0.01~100；常用 0.5~3。',
+                '分辨率 γ，>1 划得更细更碎（更多小社群），<1 划得更粗（更少大社群）。范围 0.01~100；常用 0.5~3。**不传 = auto 自适应**：γ = clamp(0.6, 2.5, 0.5 + log10(n / 30))，按当前图节点数自动选择，适合大多数场景；只有想强制特定粒度时才显式传数值。',
             },
           },
           additionalProperties: false,
@@ -1038,12 +1038,15 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           ? String(args.session_scope).trim()
           : undefined;
       const topN = typeof args.top_n === 'number' ? args.top_n : undefined;
-      const resolution =
+      const explicitResolution =
         typeof args.resolution === 'number' && Number.isFinite(args.resolution) && args.resolution > 0
           ? args.resolution
           : undefined;
+      // 不传 = 'auto'：service 内部按图规模计算 γ。
+      const resolution: number | 'auto' = explicitResolution ?? 'auto';
       const r = await service.getCommunityOverview({ algorithm, sessionScope, topN, resolution });
-      return JSON.stringify({ resolution: resolution ?? 1.0, ...r }, null, 2);
+      // service 已在返回里带 effectiveResolution / resolutionMode，原样转发即可。
+      return JSON.stringify(r, null, 2);
     },
   });
 
