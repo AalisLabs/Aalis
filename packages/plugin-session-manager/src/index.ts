@@ -578,16 +578,36 @@ class SessionManager implements SessionManagerService {
     if (updates.config !== undefined) {
       // 合并配置而不是替换
       const merged = { ...session.config, ...updates.config } as Record<string, unknown>;
-      // 兼容性归一化：早期 WebUI 写入过 flat `model: string` / `llmProvider: string`
-      // 字段（见 2026-05 修复 commit），agent 实际只读 `llm: {provider,model}`，
-      // 导致用户在 UI 选择的模型被静默丢弃。这里把任何遗留 flat 字段折叠进 llm
-      // 后剥离，避免脏数据继续传播。
+      // 兼容性归一化：早期 WebUI（SessionsPage 老版编辑器）只发 flat `model: string`
+      // 而不发 provider；agent 只读 `llm: {provider,model}`。这里**真折叠**——
+      // 若 legacyProvider 缺失，用 ctx 已注册的 llm entries 反查 model.id 推断
+      // provider。**legacy 字段代表用户最近一次的 UI 意图**，应覆盖 merged.llm。
+      // （之前曾在此 delete 但不折叠，导致用户切模型 100% 静默失败。）
       const legacyModel = typeof merged.model === 'string' ? merged.model : undefined;
       const legacyProvider = typeof merged.llmProvider === 'string' ? merged.llmProvider : undefined;
       if (legacyModel || legacyProvider) {
-        this.ctx.logger?.warn(
-          `[session ${id}] 收到过期 LLM 字段 model=${legacyModel ?? '?'} provider=${legacyProvider ?? '?'}，已忽略并清理（请改用 config.llm）`,
-        );
+        let provider = legacyProvider;
+        if (!provider && legacyModel) {
+          const candidates = this.ctx.getAllServices<LLMModel>('llm').filter(e => e.instance.id === legacyModel);
+          if (candidates.length === 1) {
+            provider = candidates[0].instance.providerId;
+          } else if (candidates.length > 1) {
+            const existing = (merged.llm as { provider?: string } | undefined)?.provider;
+            const hit = existing ? candidates.find(c => c.instance.providerId === existing) : undefined;
+            provider = (hit ?? candidates[0]).instance.providerId;
+            this.ctx.logger?.warn(
+              `[session ${id}] legacy model=${legacyModel} 在 ${candidates.length} 个 provider 下同名，回退选择 ${provider}`,
+            );
+          }
+        }
+        if (legacyModel && provider) {
+          merged.llm = { provider, model: legacyModel };
+          this.ctx.logger?.info(`[session ${id}] 折叠 legacy 字段 → llm={${provider}, ${legacyModel}}`);
+        } else {
+          this.ctx.logger?.warn(
+            `[session ${id}] 无法折叠 legacy 字段 model=${legacyModel ?? '?'} provider=${legacyProvider ?? '?'}：未找到匹配 LLM provider`,
+          );
+        }
         delete merged.model;
         delete merged.llmProvider;
       }
