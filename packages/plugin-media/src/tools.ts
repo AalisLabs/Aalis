@@ -16,6 +16,35 @@ import {
 } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import { fileToDataUri } from './ffmpeg.js';
+import { getMediaRuntime } from './runtime.js';
+
+/**
+ * 把 agent 传入的图片路径规整为 storage URI。
+ *
+ * 支持：
+ * - 已是 storage URI：`workspace:/foo`、`data:/images/x.jpg` — 原样返回
+ * - 裸名以已知 storage root 开头：`data/images/x.jpg`、`tmp/y.png` —
+ *   按首段路由到对应根（修复了 agent 传 `data/images/...` 被错误塞进 workspace 的问题）
+ * - 其它相对路径：归到 `workspace:/`（默认）
+ */
+function resolveImageStorageUri(input: string): string {
+  const cleaned = input.replace(/^\.?\/+/, '');
+  if (cleaned.includes(':/')) return cleaned;
+  const firstSeg = cleaned.split('/', 1)[0];
+  if (firstSeg) {
+    try {
+      const { storage } = getMediaRuntime();
+      const rootNames = new Set(storage.listRoots().map(r => r.name));
+      if (rootNames.has(firstSeg)) {
+        const rest = cleaned.slice(firstSeg.length + 1);
+        return `${firstSeg}:/${rest}`;
+      }
+    } catch {
+      // runtime 未注入 / listRoots 报错时回退到 workspace 默认
+    }
+  }
+  return `workspace:/${cleaned}`;
+}
 
 function normalizeImageRef(input: string): string {
   return input.trim().replace(/^ref:/, '');
@@ -49,7 +78,10 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
           properties: {
             image: {
               type: 'string',
-              description: '图片来源：本地文件路径（如 workspace/.tmp/screenshots/xxx.png）或网络 URL',
+              description:
+                '图片来源：本地路径（如 workspace/.tmp/screenshots/xxx.png、data/images/onebot_xxx/xxx.jpg）、' +
+                'storage URI（如 data:/images/...、workspace:/.tmp/x.png）或网络 URL。' +
+                '裸相对路径会按首段匹配 storage 根（如 data/、workspace/、tmp/），未命中时归到 workspace:/ 下。',
             },
             prompt: { type: 'string', description: '分析提示词（可选）。' },
             task: { type: 'string', description: '本次分析需求（可选）。' },
@@ -79,9 +111,7 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         if (imageInput.startsWith('http://') || imageInput.startsWith('https://') || imageInput.startsWith('data:')) {
           imageUrl = imageInput;
         } else {
-          // 兼容裸名/相对路径：转为 storage URI（默认 workspace:/）→ 直接读成 data URI
-          const cleaned = imageInput.replace(/^\.?\/+/, '');
-          const uri = cleaned.includes(':/') ? cleaned : `workspace:/${cleaned}`;
+          const uri = resolveImageStorageUri(imageInput);
           imageUrl = await fileToDataUri(uri);
         }
 
