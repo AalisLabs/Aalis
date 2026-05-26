@@ -777,6 +777,24 @@ describe('plugin-user-relation: node dedup on create', () => {
     expect((await service.findEntityByKindAndName('work', '《绝航》'))?.id).toBe(a.id);
     expect((await service.findEntityByKindAndName('work', '绝航'))?.id).toBe(a.id);
   });
+
+  it('normalizeName: 中文场景下内部空格也被剥离（"吐槽 API 调用限流" ≡ "吐槽API调用限流"）', async () => {
+    const { service } = await makeService();
+    const a = await service.createEvent({
+      title: '吐槽 API 调用限流',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    const b = await service.createEvent({
+      title: '吐槽API调用限流',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    // 第二次 createEvent 应命中已有事件而非新建
+    expect(b.id).toBe(a.id);
+    // findEventByTitle 也按归一查找，全角空格/多空格都能命中
+    expect((await service.findEventByTitle('吐槽　API　调用限流', 'S1'))?.id).toBe(a.id);
+  });
 });
 
 describe('plugin-user-relation: evictByQuota', () => {
@@ -2002,7 +2020,7 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
   it('embedding 路径：cos+struct 融合达阈值 → 合并', async () => {
     const { service } = await makeService();
     // 注意：title 差异较大让 jaccard 不直接达 0.4；
-    // fused = 0.3·cos + 0.7·struct，两事件刚建立无连接边 struct≈0，
+    // fused = 0.7·cos + 0.3·struct，两事件刚建立无连接边 struct≈0，
     // 所以传 fusedThreshold:0.3 让 cos=1 单独达标验证 embedding 路径可用。
     await service.createEvent({
       title: 'A 事件',
@@ -2029,6 +2047,43 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
       embedding,
       dryRun: false,
       fusedThreshold: 0.3,
+    });
+    expect(calls.length).toBe(1);
+    expect(r.llmVerified).toBe(1);
+    expect(r.merged).toBe(1);
+  });
+
+  it('embedding 路径：fused 不达阈但 jaccard 兜底仍进 LLM 评审（修「缸中之脑」类孤立漏并）', async () => {
+    const { service } = await makeService();
+    // 模拟「缸中之脑技术的讨论」vs「缸中之脑的讨论」：标题字符高度重叠（jaccard ≥ 0.4），
+    // 两事件孤立无共邻 → struct=0；即使 cos≈0.9，新公式 fused=0.7·0.9+0.3·0=0.63 仍 < 默认 0.7。
+    // 旧实现 embedding 可用时完全忽略 jaccard → 漏并；新实现 jaccard 兜底应让它进 LLM。
+    await service.createEvent({
+      title: '缸中之脑技术的讨论',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    await service.createEvent({
+      title: '缸中之脑的讨论',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    // mock embedding 返回略有差异的向量（cos≈0.9 < fusedThreshold/0.7=1.0）
+    const embedding = {
+      async embed(t: string) {
+        // 两文本映射到几乎同向但非全等的向量
+        return t.includes('技术') ? [1, 0.2, 0] : [1, 0, 0];
+      },
+    };
+    const { model, calls } = mockLLM({ isSame: true, reason: '同事件' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r = await (service as any)._consolidateEventDuplicates({
+      llmModel: model,
+      // biome-ignore lint/suspicious/noExplicitAny: logger
+      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
+      embedding,
+      dryRun: false,
+      // 默认 fusedThreshold=0.7、jaccardThreshold=0.4；不覆盖
     });
     expect(calls.length).toBe(1);
     expect(r.llmVerified).toBe(1);
