@@ -188,6 +188,49 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     await next();
   });
 
+  // ──────────── 参与统一的 memory:clear ────────────
+  // /clear 与 session-manager.deleteSession 都通过 memory:clear hook 编排，
+  // 之前 checkpoint 没监听，导致 checkpoint 目录无人清理，长期泄漏。
+  ctx.middleware(
+    'memory:clear',
+    async (
+      data: {
+        scope: 'session' | 'all';
+        types?: string[];
+        sessionId?: string;
+        results: Array<{ source: string; success: boolean; message: string }>;
+        rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
+      },
+      next,
+    ) => {
+      if (data.types && !data.types.includes('checkpoint')) {
+        await next();
+        return;
+      }
+      try {
+        if (data.scope === 'all') {
+          const n = await service.clearAll();
+          data.results.push({
+            source: 'checkpoint',
+            success: true,
+            message: `所有 checkpoint 已清空（${n} 个 session）`,
+          });
+        } else if (data.sessionId) {
+          const n = await service.clearSession(data.sessionId);
+          data.results.push({
+            source: 'checkpoint',
+            success: true,
+            message: n > 0 ? `当前会话 checkpoint 已清空（${n} 个 turn）` : '当前会话无 checkpoint',
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: 'checkpoint', success: false, message: `checkpoint 清空失败: ${msg}` });
+      }
+      await next();
+    },
+  );
+
   logger.info(
     `checkpoint 服务就绪 rootUri=${config.rootUri} maxFileSize=${config.maxFileSize} scopes=${config.scopes.join('|') || '<空>'}`,
   );
