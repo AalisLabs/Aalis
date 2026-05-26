@@ -552,7 +552,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         name: 'file_list',
         description:
           '列出受控存储目录中的文件和子目录，支持关键词过滤、类型过滤与分页。' +
-          '不传 path 默认列出当前 cwd；要查看有哪些 storage 根，调 cwd 工具获得完整根清单。',
+          '不传 path 默认列出当前 cwd；要查看有哪些 storage 根，调 cwd 工具获得完整根清单。' +
+          '翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
         parameters: {
           type: 'object',
           properties: {
@@ -563,8 +564,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
             showHidden: { type: 'boolean', description: '是否显示隐藏文件（默认 false）' },
             keyword: { type: 'string', description: '按名称子串模糊匹配（不区分大小写）' },
             type: { type: 'string', enum: ['file', 'directory'], description: '只返回指定类型' },
-            page: { type: 'number', description: '页码，从 1 开始，默认 1' },
-            pageSize: { type: 'number', description: '每页条数，默认 50' },
+            limit: { type: 'number', description: '本页最多返回条数，默认 50' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
           },
           required: [],
           additionalProperties: false,
@@ -589,12 +590,9 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
           if (keyword && !entry.name.toLowerCase().includes(keyword)) return false;
           return true;
         });
-        const page = Math.max(1, Math.floor(Number(args.page) || 1));
-        const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 50));
-        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-        const curPage = Math.min(page, totalPages);
-        const start = (curPage - 1) * pageSize;
-        const pageItems = filtered.slice(start, start + pageSize).map(entry => ({
+        const limit = Math.max(1, Math.floor(Number(args.limit) || 50));
+        const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+        const pageItems = filtered.slice(offset, offset + limit).map(entry => ({
           name: entry.name,
           uri: entry.uri,
           path: entry.path,
@@ -609,10 +607,10 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
           path: result.path,
           total: result.entries.length,
           matched: filtered.length,
-          page: curPage,
-          pageSize,
-          totalPages,
-          hasMore: curPage < totalPages,
+          limit,
+          offset,
+          returned: pageItems.length,
+          has_more: offset + pageItems.length < filtered.length,
           ...(keyword ? { keyword } : {}),
           ...(typeFilter ? { type: typeFilter } : {}),
           entries: pageItems,

@@ -835,13 +835,14 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'list_skills',
-        description: '列出可用 skills（受角色卡白名单过滤后），可按关键词模糊匹配 name/description。',
+        description:
+          '列出可用 skills（受角色卡白名单过滤后），可按关键词模糊匹配 name/description。翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
         parameters: {
           type: 'object',
           properties: {
             keyword: { type: 'string', description: '可选：name/description 子串模糊匹配（不区分大小写）' },
-            page: { type: 'number', description: '页码，从 1 开始' },
-            pageSize: { type: 'number', description: '每页条数，默认 30' },
+            limit: { type: 'number', description: '本页最多返回条数，默认 30' },
+            offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
           },
         },
       },
@@ -855,19 +856,17 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         if (!keyword) return true;
         return `${s.name} ${s.description}`.toLowerCase().includes(keyword);
       });
-      const page = Math.max(1, Math.floor(Number(args.page) || 1));
-      const pageSize = Math.max(1, Math.floor(Number(args.pageSize) || 30));
-      const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-      const curPage = Math.min(page, totalPages);
-      const start = (curPage - 1) * pageSize;
+      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+      const page = filtered.slice(offset, offset + limit);
       return JSON.stringify({
         total: visible.length,
         matched: filtered.length,
-        page: curPage,
-        pageSize,
-        totalPages,
-        hasMore: curPage < totalPages,
-        skills: filtered.slice(start, start + pageSize).map(s => ({
+        limit,
+        offset,
+        returned: page.length,
+        has_more: offset + page.length < filtered.length,
+        skills: page.map(s => ({
           name: s.name,
           description: s.description,
           hasTriggers: !!(s.triggers && s.triggers.length > 0),
