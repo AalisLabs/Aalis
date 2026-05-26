@@ -42,7 +42,13 @@ export function edgeKey(edgeId: string): string {
 }
 /**
  * mergeReject 持久化缓存的 key：把两端 id 排序，得到对称稳定键。
- * 用于 consolidate LLM 否决合并的去重缓存——下次 maintain 时若双方 lastReinforcedAt 都没变，可跳过 LLM。
+ * 用于 consolidate LLM 否决合并的去重缓存——下次 maintain 时若双方"真新关系"指标未变即可跳过 LLM。
+ *
+ * **失效信号（2026-05 改造）**：采用 `evidence.length` 作为"是否有新关系/新提及"的稳定信号。
+ * 旧版用 `lastReinforcedAt`，但该字段会被 evictByQuota → rewriteWeights 的衰减回写批量刷新，
+ * 导致缓存全量失效、连续 maintain 重复调 LLM。evidence.length 仅在节点真新增 evidence 时增长，
+ * 与衰减回写解耦，是更稳定的"分别没有新关系产生"指标。
+ * 旧字段 aReinforcedAt/bReinforcedAt 保留作为兼容信息，但**不再参与判断**。
  */
 function mergeRejectKey(aId: string, bId: string): string {
   const [x, y] = aId < bId ? [aId, bId] : [bId, aId];
@@ -55,16 +61,23 @@ interface MergeRejectRecord {
   aId: string;
   /** 排序后的较大 id */
   bId: string;
-  /** 决策时 a 节点的 lastReinforcedAt；任何一方变化即失效 */
+  /** 决策时 a 节点的 lastReinforcedAt；保留作为审计信息，不参与失效判断 */
   aReinforcedAt: number;
-  /** 决策时 b 节点的 lastReinforcedAt */
+  /** 决策时 b 节点的 lastReinforcedAt；保留作为审计信息，不参与失效判断 */
   bReinforcedAt: number;
+  /**
+   * 决策时 a 节点的 evidence 数量。当前值改变 → 节点产生了新关系/新提及 → 缓存失效需重判。
+   * 老数据无此字段时回退为"必失效"（一次性影响，下次写入即恢复）。
+   */
+  aEvidenceCount?: number;
+  /** 决策时 b 节点的 evidence 数量；与 aEvidenceCount 同语义。 */
+  bEvidenceCount?: number;
   /** LLM 给出的理由 */
   reason: string;
   /** 决策时间戳 */
   decidedAt: number;
-  /** 决策来源：strict-equiv（严格等价路径）/ wide-recall（宽召回路径） */
-  decidedBy: 'strict-equiv' | 'wide-recall';
+  /** 决策来源：strict-equiv（严格等价路径）/ wide-recall（宽召回路径）/ cross-kind（跨 kind 同名召回） */
+  decidedBy: 'strict-equiv' | 'wide-recall' | 'cross-kind';
   /** 决策时节点的种类（entity / event / person），主要为调试与未来扩展用 */
   kind: 'entity' | 'event' | 'person';
 }

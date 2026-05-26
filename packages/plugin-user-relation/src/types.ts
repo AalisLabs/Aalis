@@ -199,6 +199,14 @@ export interface EntityNode {
   mentionCount?: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
+  /**
+   * 由 consolidate entity 合并阶段填充：name+summary 的 embedding 向量。
+   * 命中 `embeddingHash` 哈希一致时复用，避免每次 consolidate 重算。
+   * 缺失（老数据 / 无 embedding 服务）→ consolidate 时自动按需补全。
+   */
+  embeddingVector?: number[];
+  /** sha1(entityKind + '\n' + name + '\n' + (summary ?? '')) 截前 16 字节 hex；任一变更后值变 → 触发重 embed。 */
+  embeddingHash?: string;
 }
 
 /**
