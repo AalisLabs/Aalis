@@ -952,6 +952,31 @@ export function computeModularity(snap: RelationGraphSnapshot, communityMap: Map
 }
 
 /**
+ * 按图规模自适应推导 Louvain/Leiden 的分辨率 γ。
+ *
+ * 公式：γ = clamp(0.6, 2.5, 0.5 + log10(n / 30))，其中 n = snap.persons.length。
+ * - n ≤ 30 → 0.6（地板，小图保持粗粒度，避免每人一个社群）
+ * - n = 100 → ≈1.02（接近标准 Louvain）
+ * - n = 150 → ≈1.20（解决我们当前 36 人巨型社群被过度合并的问题）
+ * - n = 500 → ≈1.72
+ * - n ≥ 750 → 2.5（天花板，避免极细碎导致 c0~c100 难以消费）
+ *
+ * 背景：标准 Louvain（γ=1）存在 "resolution limit"（Fortunato & Barthélemy 2007）——
+ * 节点数越多越倾向于把小社群合并成超级社群。让 γ 随 n 单调微增是文献推荐做法。
+ *
+ * 不依赖边数 / 平均度：实现简单、可解释，对当前 < 1000 节点的图足够；如果后续图规模或密度
+ * 差异显著（比如某 scope 节点很少但边很密），再升级到 sqrt(2m/(n·d_target)) 的密度感知公式。
+ *
+ * persons 为空 → 返回 1.0（标准默认，安全兜底）。
+ */
+export function computeAdaptiveResolution(snap: RelationGraphSnapshot): number {
+  const n = snap.persons?.length ?? 0;
+  if (n <= 0) return 1.0;
+  const raw = 0.5 + Math.log10(n / 30);
+  return Math.max(0.6, Math.min(2.5, raw));
+}
+
+/**
  * Louvain 社群发现（无向加权图，单次 coarsening）。
  *
  * 适用场景：在 PageRank 算完后顺手把节点聚类成"小圈子"——
