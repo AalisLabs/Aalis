@@ -1142,6 +1142,12 @@ export class RelationService {
      * 0 = 不加反向边；默认 0.5。
      */
     reverseEdgeFactor?: number;
+    /**
+     * 是否启用 component-size 缩放（Component-weighted Personalized PageRank）：
+     * 孤立小连通分量节点 PR 按 sqrt(componentSize/n) 压低，避免
+     * "1人1物1事" 这种三角小环被反向虚拟边 + dangling 重分布抬高。默认 true。
+     */
+    pagerankComponentScale?: boolean;
     /** 时间衰减配置：用于把 raw weight 折算成有效 weight。halfLifeDays<=0 时退化为原 raw 行为。 */
     decay?: WeightDecayCfg;
     /** 社群发现算法；默认 'louvain'。可在配置或调用时切换 'leiden'。 */
@@ -1163,6 +1169,7 @@ export class RelationService {
     const entitySeed = quota.entitySeed ?? 1.5;
     const eventSeed = quota.eventSeed ?? 1;
     const reverseEdgeFactor = quota.reverseEdgeFactor ?? 0.5;
+    const pagerankComponentScale = quota.pagerankComponentScale ?? true;
     const decayCfg: WeightDecayCfg = quota.decay ?? { halfLifeDays: 0, floor: 0.3 };
     let deletedPersons = 0;
     let deletedEvents = 0;
@@ -1190,6 +1197,7 @@ export class RelationService {
       entitySeed,
       eventSeed,
       reverseEdgeFactor,
+      componentScale: pagerankComponentScale,
     });
     const ageScore = (n: EventNode | EntityNode): number => {
       // 使用 effectiveWeight：raw weight 经过时间衰减后，老节点的"分母"自动变小，
@@ -3998,13 +4006,23 @@ export class RelationService {
     const com = alg === 'leiden' ? computeLeiden(snap) : computeLouvain(snap);
     const modularity = computeModularity(snap, com);
 
-    // 动态默认 topN
-    const dynDefault = Math.max(
-      3,
-      Math.min(20, Math.round(Math.max(snap.persons.length / 50, snap.edges.length / 100))),
-    );
+    // topN 解析：
+    // - opts.topN 未传：per-community 自适应，按各社群规模独立计算
+    //     perComTopN(size) = max(3, ceil(sqrt(size) * 1.5))
+    //     bridgesTopN     = max(3, round(sqrt(personsInScope) * 0.8))
+    //   动机：规模变大常常是单个社群在扩张而非社群数量增多，所以"每社群展示量"应随社群规模
+    //   以亚线性方式增长，无硬上限。
+    // - opts.topN === 0：不限（全部展示）
+    // - opts.topN > 0：一刀切覆盖所有 community / bridges
     const rawTopN = opts?.topN;
-    const topN = rawTopN === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(rawTopN ?? dynDefault, 200));
+    const useAdaptive = rawTopN === undefined;
+    const fixedCap =
+      rawTopN === 0
+        ? Number.MAX_SAFE_INTEGER
+        : rawTopN !== undefined
+          ? Math.max(1, Math.min(rawTopN, 2000))
+          : Number.MAX_SAFE_INTEGER;
+    const adaptiveTopN = (size: number) => Math.max(3, Math.ceil(Math.sqrt(Math.max(size, 1)) * 1.5));
 
     // sessionScope 后过滤
     // - events: 看 sessionScope 字段
@@ -4076,20 +4094,23 @@ export class RelationService {
         .slice()
         .sort((a, b) => (b.lastPageRank ?? 0) - (a.lastPageRank ?? 0));
       const events = (eventsByCom.get(cid) ?? []).slice().sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+      // per-community 自适应限额：按本社群"人 + 物 + 事"总规模决定单项展示条数。
+      const comTotal = members.length + topics.length + events.length;
+      const perComTopN = useAdaptive ? adaptiveTopN(comTotal) : fixedCap;
       return {
         communityId: cid,
         size: members.length,
-        topMembers: members.slice(0, topN).map(p => ({
+        topMembers: members.slice(0, perComTopN).map(p => ({
           id: p.id,
           displayName: p.displayName ?? p.id,
           pagerank: Number((p.lastPageRank ?? 0).toFixed(6)),
         })),
-        topTopics: topics.slice(0, topN).map(en => ({
+        topTopics: topics.slice(0, perComTopN).map(en => ({
           id: en.id,
           name: en.name,
           pagerank: Number((en.lastPageRank ?? 0).toFixed(6)),
         })),
-        topEvents: events.slice(0, topN).map(ev => ({
+        topEvents: events.slice(0, perComTopN).map(ev => ({
           id: ev.id,
           title: ev.title ?? ev.id,
           weight: Number((ev.weight ?? 0).toFixed(4)),
@@ -4162,6 +4183,10 @@ export class RelationService {
     }
     bridgeArr.sort((a, b) => b.crossCommunityDegree - a.crossCommunityDegree);
 
+    const bridgesTopN = useAdaptive
+      ? Math.max(3, Math.round(Math.sqrt(Math.max(personsInScope.length, 1)) * 0.8))
+      : fixedCap;
+
     return {
       algorithm: alg,
       numCommunities: allCommunityIds.length,
@@ -4170,7 +4195,7 @@ export class RelationService {
       totalEventsInScope: eventsInScope.length,
       totalEntitiesInScope: entitiesInScope.length,
       communities,
-      bridges: bridgeArr.slice(0, topN),
+      bridges: bridgeArr.slice(0, bridgesTopN),
     };
   }
 }

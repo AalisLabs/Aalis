@@ -631,6 +631,19 @@ export function computePageRank(
      * 同时避免事件 hub 过度反哺导致 PR 被少数几个红人垄断。
      */
     reverseEdgeFactor?: number;
+    /**
+     * 是否启用 component-size 缩放（Component-weighted Personalized PageRank）：
+     * PR_final[i] = PR_raw[i] * sqrt(componentSize[i] / n)，再重新归一化。
+     * 默认 true。
+     *
+     * 动机：反向虚拟边 + 闭环让"1 人 1 物 1 事"这类孤立小子图（如三角）
+     * 在 PR 上被相对高估——三个节点 mass 内循环、外面没有大节点稀释。
+     * 在淘汰打分 / profile 注入排序场景里，这种小圈子不应被高估为重要节点。
+     *
+     * 缩放只改变 component 之间的相对权重，component 内部的 PR 比例完全保留。
+     * 关闭则退化为标准 Personalized PageRank。
+     */
+    componentScale?: boolean;
   },
 ): Map<string, number> {
   const allIds: string[] = [];
@@ -746,6 +759,48 @@ export function computePageRank(
     pr = next;
     if (delta < opts.epsilon) break;
   }
+
+  // Component-weighted Personalized PageRank 后处理。
+  // 在无向连通分量内 BFS 求 size，每个节点 PR *= sqrt(componentSize / n)，再归一化 sum=1。
+  // 关闭则跳过（用于希望保留纯 PR 语义的场景或单元测试）。
+  if ((opts.componentScale ?? true) !== false) {
+    const undirAdj = buildUndirectedAdj(snap);
+    const compSize = new Map<string, number>();
+    const visited = new Set<string>();
+    for (const start of allIds) {
+      if (visited.has(start)) continue;
+      const queue: string[] = [start];
+      visited.add(start);
+      const members: string[] = [];
+      while (queue.length > 0) {
+        const u = queue.shift() as string;
+        members.push(u);
+        const nbrs = undirAdj.get(u);
+        if (!nbrs) continue;
+        for (const v of nbrs.keys()) {
+          if (!visited.has(v)) {
+            visited.add(v);
+            queue.push(v);
+          }
+        }
+      }
+      const size = members.length;
+      for (const m of members) compSize.set(m, size);
+    }
+    let scaledSum = 0;
+    const scaled = new Map<string, number>();
+    for (const id of allIds) {
+      const s = compSize.get(id) ?? 1;
+      const v = (pr.get(id) ?? 0) * Math.sqrt(s / n);
+      scaled.set(id, v);
+      scaledSum += v;
+    }
+    if (scaledSum > 0) {
+      for (const id of allIds) scaled.set(id, (scaled.get(id) ?? 0) / scaledSum);
+      pr = scaled;
+    }
+  }
+
   return pr;
 }
 
