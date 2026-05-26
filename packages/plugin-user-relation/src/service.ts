@@ -1128,6 +1128,80 @@ export class RelationService {
   }
 
   /**
+   * Eager 时间衰减回写：把所有 event/entity 节点与所有边的 `weight` 字段
+   * 物理改写为当前 `effectiveWeight`，并把 `lastReinforcedAt` 重置为 now
+   * （作为"新的衰减基准"——否则下次 rewrite 会基于同一基准再次衰减，
+   * raw 被反复折半到 0）。
+   *
+   * 设计动机（lazy → eager 切换）：
+   * - 原 lazy 模式 DB 永远存 raw 累积值，effectiveWeight 仅查询时实时算。
+   *   问题：raw=1.0 的边被衰减到 effW=0.3 后再次 reinforce 一次，
+   *   `reinforceWeight(1.0, 0.1) = 1.0`——**永远卡死在 1**，effW 从 0.3
+   *   瞬间跳回 1.0，离散跳跃，不符合"老朋友重逢慢慢回温"的人类直觉。
+   * - Eager 回写后：raw 物理变成 0.3，下次 reinforce 从 0.3 出发 → 0.37 →
+   *   0.43 …**渐进恢复**，活跃关系靠持续 reinforce 维持高位、长期不活跃的
+   *   关系自然回落到 floor 附近。每日压缩前调用一次，DB 字段就能反映
+   *   "当下真实强度"，便于调试 / 观察 / 跨时间快照对比。
+   *
+   * 语义合并（务实简化，避免新增 `lastDecayedAt` 字段）：
+   * - `lastReinforcedAt` 在 eager 模式下含义统一为"上次 weight 字段被更新的
+   *   时间"——reinforce* 方法与 rewriteWeights 都写它。物理上是衰减基准。
+   * - 调用方应理解：稳态下"长期不活跃节点"的 lastReinforcedAt 会被每日
+   *   rewrite 推到最近一次压缩时间，age 分子≈0；但它们的 effW 已收敛到 floor，
+   *   ageScore 排序退化为 `1 / (floor × PR)`——PR 边缘的依旧最先被淘汰。
+   *
+   * 副作用与正交性：
+   * - Person 节点不参与（无 weight 字段，由 mentionCount / lastSeenAt 表达活跃度）。
+   * - `halfLifeDays <= 0`（衰减关闭）时 short-circuit 返回，零写盘开销；
+   *   单测默认配置 `{ halfLifeDays: 0 }` 走此路径，**不影响现有测试行为**。
+   * - 增量阈值 `|new - raw| < 1e-6` 跳过，避免对几乎无变化的节点做无谓写盘
+   *   （也保证幂等：rewrite 后第二次立即调用本方法所有节点都命中阈值跳过）。
+   * - 活跃节点保护：被 reinforce 过的节点 lastReinforcedAt > 上次 rewrite 时间，
+   *   age 更小受保护——"最近活跃的更新鲜，更应保留"。
+   *
+   * 调用方：
+   * - `evictByQuota` 入口自动调用一次（与每日 scheduler 压缩对齐）。
+   * - `/relation rewrite-weights` 手动命令。
+   *
+   * 返回各类写回计数，便于日志 / 测试断言。
+   */
+  async rewriteWeights(
+    decay: WeightDecayCfg,
+    opts: { now?: number } = {},
+  ): Promise<{ events: number; entities: number; edges: number; skipped: boolean }> {
+    if (decay.halfLifeDays <= 0) {
+      return { events: 0, entities: 0, edges: 0, skipped: true };
+    }
+    const now = opts.now ?? Date.now();
+    const snap = await this.store.loadAll();
+    let events = 0;
+    let entities = 0;
+    let edges = 0;
+    const EPS = 1e-6;
+    for (const ev of snap.events) {
+      const raw = ev.weight ?? 0.5;
+      const newW = effectiveWeight(raw, ev.lastReinforcedAt, now, decay);
+      if (Math.abs(newW - raw) < EPS) continue;
+      await this.store.upsertEvent({ ...ev, weight: newW, lastReinforcedAt: now });
+      events++;
+    }
+    for (const en of snap.entities) {
+      const raw = en.weight ?? 0.5;
+      const newW = effectiveWeight(raw, en.lastReinforcedAt, now, decay);
+      if (Math.abs(newW - raw) < EPS) continue;
+      await this.store.upsertEntity({ ...en, weight: newW, lastReinforcedAt: now });
+      entities++;
+    }
+    for (const e of snap.edges) {
+      const newW = effectiveWeight(e.weight, e.lastReinforcedAt, now, decay);
+      if (Math.abs(newW - e.weight) < EPS) continue;
+      await this.store.upsertEdge({ ...e, weight: newW, lastReinforcedAt: now });
+      edges++;
+    }
+    return { events, entities, edges, skipped: false };
+  }
+
+  /**
    * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后顺手扫"风格，不开独立调度器。
    *
    * 优先级（每次仅在超额时执行）：
@@ -1217,6 +1291,13 @@ export class RelationService {
     let deletedEvents = 0;
     let deletedEntities = 0;
     let deletedEdges = 0;
+
+    // 0) Eager 时间衰减回写：把 raw weight 折算成"当下真实强度"再做后续淘汰。
+    //    halfLifeDays<=0 时 rewriteWeights 内部 short-circuit，零写盘开销。
+    //    与 ageScore 公式正交：rewrite 后未活跃节点共享同一 lastReinforcedAt 基线（分子≈0、相互按 weight 排），
+    //    被 reinforce 过的节点 lastReinforcedAt > rewrite 时间，age 更小受保护——
+    //    "最近活跃的更新鲜，更应保留"。详见 rewriteWeights 注释。
+    await this.rewriteWeights(decayCfg);
 
     // 1) 先做孤儿清理（与配额无关，旧账噪声总是清；person / event / entity 一视同仁）
     const orphanResult = await this.pruneOrphans();
