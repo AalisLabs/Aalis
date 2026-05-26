@@ -36,7 +36,7 @@ export function registerRelationCommands(
       /** Weight 衰减下限因子。默认 0.3 */
       weightDecayFloor?: number;
       /** 社群发现算法；默认 'louvain'。 */
-      communityAlgorithm?: 'louvain' | 'leiden';
+      communityAlgorithm?: 'louvain' | 'leiden' | 'slpa';
     };
     /** consolidate 是否默认开 autoLink（/relation maintain 需要） */
     consolidateAutoLink?: boolean;
