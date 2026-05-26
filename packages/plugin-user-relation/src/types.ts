@@ -11,6 +11,22 @@
  * - 所有边都带 evidence[]：sourceQuote + messageIds，用于 webui 溯源与未来审计。
  */
 
+/**
+ * 社群隶属度条目（支持重叠社区）。
+ *
+ * 一个节点可属于多个社群，每个隶属度 ∈ (0, 1]：
+ * - louvain / leiden（硬划分算法）：始终单元素 `[{id: communityId, weight: 1.0}]`
+ * - slpa（原生重叠算法）：可多元素，weight = 该 label 在 SLPA memory 中的相对频率
+ *
+ * 不变式：weight 之和 = 1.0；按 weight 降序排列；`memberships[0].id === communityId`（向下兼容）。
+ */
+export interface CommunityMembership {
+  /** 社群标签 id（c0, c1, ...）；与同批 `communityId` 同源，跨重算不稳定。 */
+  id: string;
+  /** 隶属度权重 ∈ (0, 1]。 */
+  weight: number;
+}
+
 /** 通用：可溯源的证据条目 */
 export interface EvidenceRef {
   /** 来源会话 ID */
@@ -50,13 +66,21 @@ export interface PersonNode {
   /** lastPageRank 的写入时间戳 */
   lastPageRankAt?: number;
   /**
-   * 最近一次 Louvain 社群发现得到的社群标签（字符串 id，跨重算不稳定，只在同一批节点间可比）。
-   * 由 `evictByQuota` 跑完 PageRank 后顺手计算并写入；用于「同一圈子的活跃成员」推断。
+   * 最近一次社群发现得到的**主社群**标签（字符串 id，跨重算不稳定，只在同一批节点间可比）。
+   * 由 `evictByQuota` 跑完 PageRank 后顺手计算并写入；等同于 `communityMemberships[0].id`。
+   * 保留此字段是为了向下兼容旧消费方；新代码请优先读 `communityMemberships`。
    * 未跑过的实例为 undefined。
    */
   communityId?: string;
   /** communityId 写入时间戳 */
   communityIdAt?: number;
+  /**
+   * 完整的社群隶属度列表（支持重叠社区）。
+   * - louvain/leiden：单元素 `[{id: communityId, weight: 1}]`
+   * - slpa：可多元素，按 weight 降序
+   * 与 `communityId` 同时写入；老快照可能为 undefined。
+   */
+  communityMemberships?: CommunityMembership[];
 }
 
 /** 事件类别（粗分类，仅供 UI 上色与过滤） */
@@ -112,9 +136,11 @@ export interface EventNode {
   /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
   lastPageRank?: number;
   lastPageRankAt?: number;
-  /** 最近一次 Louvain 社群标签（同批可比，跨重算不稳定）。 */
+  /** 最近一次社群发现的主社群标签（同批可比，跨重算不稳定）。等同于 `communityMemberships[0].id`。 */
   communityId?: string;
   communityIdAt?: number;
+  /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
+  communityMemberships?: CommunityMembership[];
 }
 
 /**
@@ -154,9 +180,11 @@ export interface EntityNode {
   /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
   lastPageRank?: number;
   lastPageRankAt?: number;
-  /** 最近一次 Louvain 社群标签。 */
+  /** 最近一次社群发现的主社群标签。等同于 `communityMemberships[0].id`。 */
   communityId?: string;
   communityIdAt?: number;
+  /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
+  communityMemberships?: CommunityMembership[];
   /** 最近一次在对话窗口中被提及的时间 */
   lastMentionedAt?: number;
   /** 总共被提及次数 */
