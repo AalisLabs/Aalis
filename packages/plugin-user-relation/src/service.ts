@@ -1019,6 +1019,32 @@ export class RelationService {
   }
 
   /**
+   * 廉价预判：图中任一类节点 / 边的当前数量是否已达到 `evictByQuota` 的滞回触发阈值
+   * （`count >= ceil(cap · (1 + hysteresisPct))`），即下一次 `evictByQuota` **真的会删东西**。
+   *
+   * 用于 extractor 的"写后顺手老化"路径节流：避免每次提取都跑 PageRank / consolidate。
+   * 公式与 {@link evictByQuota} 内部判定一致；任一类超阈即返回 true（与 evict 的分类独立判定对齐）。
+   *
+   * `cap <= 0` 的类视为不限，跳过检查；`evictionEnabled` 由调用方负责。
+   */
+  async isOverQuota(quota: {
+    maxPersons?: number;
+    maxEvents?: number;
+    maxEntities?: number;
+    maxEdges?: number;
+    hysteresisPct?: number;
+  }): Promise<boolean> {
+    const hysteresisPct = Math.max(quota.hysteresisPct ?? 0.2, 0);
+    const trigger = (cap: number): number => Math.ceil(cap * (1 + hysteresisPct));
+    const snap = await this.store.loadAll();
+    if ((quota.maxPersons ?? 0) > 0 && snap.persons.length >= trigger(quota.maxPersons!)) return true;
+    if ((quota.maxEvents ?? 0) > 0 && snap.events.length >= trigger(quota.maxEvents!)) return true;
+    if ((quota.maxEntities ?? 0) > 0 && snap.entities.length >= trigger(quota.maxEntities!)) return true;
+    if ((quota.maxEdges ?? 0) > 0 && snap.edges.length >= trigger(quota.maxEdges!)) return true;
+    return false;
+  }
+
+  /**
    * 清理孤儿节点：删除所有"没有任何边引用"的 person / event / entity。
    *
    * 设计原则（v3，最简）：

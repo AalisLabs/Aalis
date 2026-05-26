@@ -989,39 +989,26 @@ export class RelationExtractor {
       }
     }
     if (hasQuota) {
+      // 节流：仅在「下一次 evictByQuota 真的会删东西」时才走 consolidate → evict 双步。
+      // - isOverQuota 与 evictByQuota 共用滞回公式（count >= ceil(cap·(1+hysteresisPct))），
+      //   不会和 evict 的内部判定漂移。
+      // - 顺序与 /relation maintain 一致：先 consolidate（合并别名/层级/事件去重）→ 再 evict
+      //   （在去重后的图上跑 PageRank 淘汰），使 PageRank 入出度更完整、决策更稳。
+      // - 配额未超时直接跳过，避免每次提取都跑 PageRank / consolidate。
+      let overQuota = false;
       try {
-        const evicted = await this.service.evictByQuota({
+        overQuota = await this.service.isOverQuota({
           maxPersons: this.cfg.maxPersons,
           maxEvents: this.cfg.maxEvents,
           maxEntities: this.cfg.maxEntities,
           maxEdges: this.cfg.maxEdges,
-          pagerankDamping: this.cfg.pagerankDamping,
-          pagerankIterations: this.cfg.pagerankIterations,
-          pagerankEpsilon: this.cfg.pagerankEpsilon,
           hysteresisPct: this.cfg.evictHysteresisPct,
-          targetPct: this.cfg.evictTargetPct,
-          decay: {
-            halfLifeDays: this.cfg.weightDecayHalfLifeDays,
-            floor: this.cfg.weightDecayFloor,
-          },
-          communityAlgorithm: this.cfg.communityAlgorithm,
         });
-        if (
-          this.cfg.debug &&
-          (evicted.deletedPersons || evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)
-        ) {
-          this.ctx.logger.debug(
-            `[user-relation] 自动老化: 删除 persons=${evicted.deletedPersons} events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
-          );
-        }
-        // 淘汰后自动 consolidate（仅在实际发生淘汰时触发）
-        if (
-          this.cfg.consolidateAfterEviction &&
-          (evicted.deletedPersons > 0 ||
-            evicted.deletedEvents > 0 ||
-            evicted.deletedEntities > 0 ||
-            evicted.deletedEdges > 0)
-        ) {
+      } catch (err) {
+        if (this.cfg.debug) this.ctx.logger.debug(`[user-relation] isOverQuota 检查失败: ${stringifyErr(err)}`);
+      }
+      if (overQuota) {
+        if (this.cfg.consolidateAfterEviction) {
           try {
             const cr = await this.service.consolidate({
               autoLink: this.cfg.consolidateAutoLink,
@@ -1041,15 +1028,41 @@ export class RelationExtractor {
             });
             if (this.cfg.debug) {
               this.ctx.logger.debug(
-                `[user-relation] 淘汰后 consolidate 完成: 事件边整理=${cr.eventEdgesNormalized} 层级候选=${cr.entityHierarchyCandidates} 层级边=${cr.entityHierarchyEdgesCreated}`,
+                `[user-relation] 淘汰前 consolidate 完成: 事件边整理=${cr.eventEdgesNormalized} 层级候选=${cr.entityHierarchyCandidates} 层级边=${cr.entityHierarchyEdgesCreated}`,
               );
             }
           } catch (err) {
-            this.ctx.logger.warn(`[user-relation] 淘汰后 consolidate 失败: ${(err as Error).message}`);
+            this.ctx.logger.warn(`[user-relation] 淘汰前 consolidate 失败: ${(err as Error).message}`);
           }
         }
-      } catch (err) {
-        this.ctx.logger.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
+        try {
+          const evicted = await this.service.evictByQuota({
+            maxPersons: this.cfg.maxPersons,
+            maxEvents: this.cfg.maxEvents,
+            maxEntities: this.cfg.maxEntities,
+            maxEdges: this.cfg.maxEdges,
+            pagerankDamping: this.cfg.pagerankDamping,
+            pagerankIterations: this.cfg.pagerankIterations,
+            pagerankEpsilon: this.cfg.pagerankEpsilon,
+            hysteresisPct: this.cfg.evictHysteresisPct,
+            targetPct: this.cfg.evictTargetPct,
+            decay: {
+              halfLifeDays: this.cfg.weightDecayHalfLifeDays,
+              floor: this.cfg.weightDecayFloor,
+            },
+            communityAlgorithm: this.cfg.communityAlgorithm,
+          });
+          if (
+            this.cfg.debug &&
+            (evicted.deletedPersons || evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)
+          ) {
+            this.ctx.logger.debug(
+              `[user-relation] 自动老化: 删除 persons=${evicted.deletedPersons} events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
+            );
+          }
+        } catch (err) {
+          this.ctx.logger.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
+        }
       }
     }
   }

@@ -755,12 +755,21 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   // ── 导出 PNG ──────────────────────────────────────────────
   const exportPng = useCallback(() => {
     const cy = cyRef.current;
-    if (!cy) return;
-    const dataUrl = cy.png({ full: true, scale: 2, bg: CANVAS_BG });
+    if (!cy || cy.elements().length === 0) return;
+    // cy.png() 使用 drawElements 直接渲染到临时 canvas，而不是从屏幕 canvas 复制，
+    // 因此 scale 会叠加 pxRatio（Retina 设备为 ×2），导致导出 canvas 尺寸翻倍。
+    // 通过 maxWidth 传入任意值可令 specdMaxDims=true，从而跳过 pxRatio 乘法，
+    // 使导出 scale 保持在 ×2 而非 ×4，避免大图超出浏览器 canvas 面积限制（尤其 Safari）。
+    const dataUrl = cy.png({ full: true, scale: 2, bg: CANVAS_BG, maxWidth: Infinity });
+    if (!dataUrl || dataUrl === 'data:,') return;
     const a = document.createElement('a');
     a.href = dataUrl;
     a.download = `relation-graph-${Date.now()}.png`;
+    // Firefox / Safari 需要 <a> 附加到 DOM 才能触发 download 属性的文件保存行为；
+    // 不附加时 Safari 会直接在标签页打开 data URL 而非下载。
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
   }, []);
 
   // ── 操作按钮 ──────────────────────────────────────────────
