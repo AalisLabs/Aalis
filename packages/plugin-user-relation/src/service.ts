@@ -4008,10 +4008,11 @@ export class RelationService {
 
     // topN 解析：
     // - opts.topN 未传：per-community 自适应，按各社群规模独立计算
-    //     perComTopN(size) = max(3, ceil(sqrt(size) * 1.5))
-    //     bridgesTopN     = max(3, round(sqrt(personsInScope) * 0.8))
-    //   动机：规模变大常常是单个社群在扩张而非社群数量增多，所以"每社群展示量"应随社群规模
-    //   以亚线性方式增长，无硬上限。
+    //     perComTopN(size) = max(3, ceil(log2(size + 1)))
+    //     bridgesTopN     = max(3, ceil(log2(personsInScope + 1)))
+    //   动机：用 log 而非 sqrt——展示量随社群规模增长得更平缓，避免"30 节点小社群也返 12 条/类"
+    //   的虚胖；社群越大 LLM 也只需要 7-14 个最关键代表，更多反而稀释注意力。
+    //   典型：comTotal=5→3, 30→5, 100→7, 1000→10, 10000→14。
     // - opts.topN === 0：不限（全部展示）
     // - opts.topN > 0：一刀切覆盖所有 community / bridges
     const rawTopN = opts?.topN;
@@ -4022,7 +4023,7 @@ export class RelationService {
         : rawTopN !== undefined
           ? Math.max(1, Math.min(rawTopN, 2000))
           : Number.MAX_SAFE_INTEGER;
-    const adaptiveTopN = (size: number) => Math.max(3, Math.ceil(Math.sqrt(Math.max(size, 1)) * 1.5));
+    const adaptiveTopN = (size: number) => Math.max(3, Math.ceil(Math.log2(Math.max(size, 1) + 1)));
 
     // sessionScope 后过滤
     // - events: 看 sessionScope 字段
@@ -4184,7 +4185,7 @@ export class RelationService {
     bridgeArr.sort((a, b) => b.crossCommunityDegree - a.crossCommunityDegree);
 
     const bridgesTopN = useAdaptive
-      ? Math.max(3, Math.round(Math.sqrt(Math.max(personsInScope.length, 1)) * 0.8))
+      ? Math.max(3, Math.ceil(Math.log2(Math.max(personsInScope.length, 1) + 1)))
       : fixedCap;
 
     return {
