@@ -511,12 +511,24 @@ describe('plugin-user-relation: 多层遍历', () => {
       const svc = await setup();
       await svc.observePerson('onebot', 'a');
       await svc.observePerson('onebot', 'b');
-      const e = await svc.addPersonPersonEdge({
+      // 直接绕过 addPersonPersonEdge（会触发 mergeAlias 把 alias 边一并 cascade 删掉），
+      // 用 store.upsertEdge 直接落一条 alias 边来测 correctEdge 的拒绝路径。
+      // biome-ignore lint/suspicious/noExplicitAny: 测试中直接访问私有 store
+      const store = (svc as any).store as RelationStore;
+      const now = Date.now();
+      const e = {
+        id: globalThis.crypto.randomUUID(),
+        kind: 'person-person' as const,
         fromPersonId: 'onebot:a',
         toPersonId: 'onebot:b',
-        relationType: 'is-alias-of',
+        relationType: 'is-alias-of' as const,
+        directed: true,
         weight: 0.2,
-      });
+        firstSeenAt: now,
+        lastReinforcedAt: now,
+        evidence: [],
+      };
+      await store.upsertEdge(e);
       await expect(svc.correctEdge({ edgeId: e.id, action: 'weaken', reason: 'x' })).rejects.toThrow(/alias/);
     });
 
