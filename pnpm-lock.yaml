@@ -1759,6 +1759,9 @@ importers:
         specifier: workspace:*
         version: link:../util-json-repair
     devDependencies:
+      '@aalis/plugin-embedding-api':
+        specifier: workspace:*
+        version: link:../plugin-embedding-api
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
