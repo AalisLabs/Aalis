@@ -104,7 +104,6 @@ interface PersonaCard {
 class PersonaServiceImpl implements PersonaService {
   private card: PersonaCard;
   private _outputFormat?: OutputFormat;
-  private searchUris: string[];
   private fileName: string;
   private statePersistence: boolean;
   private timeInjection: boolean;
@@ -145,12 +144,11 @@ class PersonaServiceImpl implements PersonaService {
 
   constructor(
     card: PersonaCard,
-    searchUris: string[],
+    _searchUris: string[],
     fileName: string,
     options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
   ) {
     this.card = card;
-    this.searchUris = searchUris;
     this.fileName = fileName;
     this.statePersistence = options.statePersistence;
     this.timeInjection = options.timeInjection;
