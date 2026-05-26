@@ -351,6 +351,57 @@ export function registerRelationCommands(
       ].join('\n');
     });
 
+  // ---- event-duplicates（dry-run：列出 event 重复合并候选，不实际合并） ----
+  cmds
+    .command(
+      'relation.event-duplicates',
+      '关系图：扫描事件节点重复合并候选（dry-run，不修改图）。三段式：embedding/jaccard + 结构相似 + LLM 终判',
+      { authority: 3 },
+    )
+    .action(async argv => {
+      ackBackground(
+        argv.session.sessionId,
+        argv.session.platform,
+        '⏳ 正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…',
+      );
+      const useLlm = !!options?.consolidateLLM;
+      const r = await service.findEventDuplicates({
+        ...(useLlm && options?.consolidateLLM
+          ? {
+              llm: {
+                ctx,
+                modelRef: options.consolidateLLM.modelRef,
+                disableThinking: options.consolidateLLM.disableThinking ?? true,
+              },
+            }
+          : {}),
+      });
+      const lines: string[] = [];
+      lines.push(`✓ event 重复扫描完成（embedding ${r.embeddingAvailable ? '可用' : '不可用，降级 jaccard'}）`);
+      lines.push(
+        `候选 ${r.candidates.length} 对，LLM 通过 ${r.llmVerified}，LLM 否决 ${r.llmRejected}，缓存命中 ${r.llmRejectCacheHits}`,
+      );
+      if (r.candidates.length > 0) {
+        lines.push('--- 候选明细（前 20 条）---');
+        for (const c of r.candidates.slice(0, 20)) {
+          const sims =
+            c.fusedScore !== null
+              ? `fused=${c.fusedScore.toFixed(2)} (cos=${c.cosineScore?.toFixed(2)}, struct=${c.structuralScore.toFixed(2)})`
+              : `jac=${c.jaccardScore.toFixed(2)}, struct=${c.structuralScore.toFixed(2)}`;
+          const verdict = c.llmVerdict
+            ? `[${c.cacheHit ? '缓存' : c.llmVerdict.isSame ? '✓' : '✗'}] ${c.llmVerdict.reason}`
+            : '[未判]';
+          lines.push(
+            `  · [${c.sessionScope}] ${c.aTitle.slice(0, 18)} ↔ ${c.bTitle.slice(0, 18)}  ${sims}  ${verdict}`,
+          );
+        }
+        if (r.candidates.length > 20) {
+          lines.push(`  …省略 ${r.candidates.length - 20} 条`);
+        }
+      }
+      return lines.join('\n');
+    });
+
   // ---- compress（仅跳出一次容量淘汰 + 伤亡报告） ----
   cmds
     .command('relation.compress', '关系图压缩：手动触发容量淘汰（PageRank 低分 → 删 events/entities/edges）', {
