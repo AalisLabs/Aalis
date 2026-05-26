@@ -417,6 +417,8 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
           focusId: res.focusId,
           focusEdge: res.focusEdge,
           stats: res.stats,
+          // 全库 PR 排名表（服务端基于 fullSnap 计算）；漏了会让 NodeDetailCard 永久走"全库排名暂缺"兜底。
+          globalPrRanks: res.globalPrRanks,
         });
       }
     } catch (e) {
