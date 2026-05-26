@@ -690,7 +690,16 @@ export function computePageRank(
         break;
     }
     addOut(from, to, w);
-    if (!directed) addOut(to, from, w);
+    if (!directed) {
+      addOut(to, from, w);
+    } else if (e.kind === 'person-event' || e.kind === 'person-entity') {
+      // 反向虚拟边（半权）：让事件/实体的 PR 反哺参与者，避免人节点 PR 退化为种子常数。
+      // 背景：person-event/person-entity 都被建为单向 person→event/entity，导致没有
+      // person-person 边的人是"纯 source"，PR 退化到 personSeed/seedTotal（同 kind 全相同）。
+      // 加半权反向边后，"参与重要事件 / 关注热门实体"的人 PR 才能区分开。系数 0.5 避免
+      // 事件 hub 过度反哺导致 PR 被少数几个枢纽人物垄断。
+      addOut(to, from, w * 0.5);
+    }
   }
 
   // 个性化向量（归一化）
