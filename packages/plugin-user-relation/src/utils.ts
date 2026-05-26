@@ -241,6 +241,8 @@ export function buildAdjacency(edges: RelationEdge[]) {
  *    - 小写化（英文）
  *    - 去除外层装饰符号：中英文书名号《》「」『』【】〈〉、引号""''""''、括号（）()[]、空格
  *      （这些只是"装饰"，不改变指代——「《绝航》」与「绝航」是同一对象）
+ *    - 内部空格也一并删除：中文为主的场景里 "吐槽 API 调用限流" 与 "吐槽API调用限流"
+ *      显然指同一事件；纯英文短语 "open ai" 与 "openai" 也合并到同一节点（影响有限）。
  *  注意：不做后缀剥离（如「OL/手游/PC版」），那种语义合并交给 LLM verifyAliasPair。
  */
 export function normalizeName(name: string): string {
@@ -252,8 +254,8 @@ export function normalizeName(name: string): string {
       // 连接符 / 下划线 / 中点 视为「装饰」去除：
       //   「三角洲-行动」/「三角洲_行动」/「三角洲·行动」 ≡ 「三角洲行动」
       .replace(/[-_·]/g, '')
-      .trim()
-      .replace(/\s+/g, ' ')
+      // 所有空白字符（含 trim/内部空格/全角空格 \u3000 等）一并删除
+      .replace(/\s+/g, '')
   );
 }
 
