@@ -240,6 +240,8 @@ export class RelationStore {
       }
     }
     await this.deletePerson(platform, userId);
+    // 顺手清掉这个人的 mergeReject 缓存（pair metadata 会变孤儿）
+    await this.deleteMergeRejectsByNode(id);
     return { deletedEdges };
   }
 
@@ -258,6 +260,7 @@ export class RelationStore {
       }
     }
     await this.deleteEvent(eventId);
+    await this.deleteMergeRejectsByNode(eventId);
     return { deletedEdges };
   }
 
@@ -276,6 +279,7 @@ export class RelationStore {
       }
     }
     await this.deleteEntity(entityId);
+    await this.deleteMergeRejectsByNode(entityId);
     return { deletedEdges };
   }
 }
