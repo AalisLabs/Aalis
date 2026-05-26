@@ -52,6 +52,7 @@ import {
   clamp01,
   clusterEntitiesByPairs,
   commonPrefix,
+  computeAdaptiveResolution,
   computeEntityEdgeStats,
   computeEventEdgeStats,
   computeEventEmbeddingHash,
@@ -4588,10 +4589,20 @@ export class RelationService {
      * - γ < 1：划得更粗 → 社群数变少、单社群更大
      * 常用范围 0.5 ~ 3.0。超出 [0.01, 100] 会被夹紧。
      * **SLPA 不使用该参数**（SLPA 的粒度由阈值 r 控制，本服务暂不暴露）。
+     *
+     * 传 `'auto'` 启用图规模自适应（推荐）：γ = clamp(0.6, 2.5, 0.5 + log10(n / 30))。
+     * 详见 `computeAdaptiveResolution`。数值默认仍为 1.0，向后兼容。
      */
-    resolution?: number;
+    resolution?: number | 'auto';
   }): Promise<{
     algorithm: 'louvain' | 'leiden' | 'slpa';
+    /**
+     * 本次实际生效的 γ。SLPA 下为 `null`（不使用）。
+     * `resolutionMode='auto'` 时为 `computeAdaptiveResolution(snap)` 的输出；
+     * `'explicit'` 时为调用方传入的数值；`'default'` 时为 1.0。
+     */
+    effectiveResolution: number | null;
+    resolutionMode: 'auto' | 'explicit' | 'default';
     numCommunities: number;
     /** SLPA 下基于主社群的硬划分近似 modularity，仅供参考。 */
     modularity: number;
@@ -4623,7 +4634,10 @@ export class RelationService {
   }> {
     const snap = await this.store.loadAll();
     const alg: 'louvain' | 'leiden' | 'slpa' = opts?.algorithm ?? 'louvain';
-    const resolution = opts?.resolution;
+    const resolutionMode: 'auto' | 'explicit' | 'default' =
+      opts?.resolution === 'auto' ? 'auto' : opts?.resolution !== undefined ? 'explicit' : 'default';
+    const resolution = opts?.resolution === 'auto' ? computeAdaptiveResolution(snap) : opts?.resolution;
+    const effectiveResolution: number | null = alg === 'slpa' ? null : (resolution ?? 1.0);
     // 统一到 Map<nodeId, CommunityMembership[]>（按 weight 降序，memberships[0] = 主社群）
     let memberships: Map<string, CommunityMembership[]>;
     if (alg === 'slpa') {
@@ -4856,6 +4870,8 @@ export class RelationService {
 
     return {
       algorithm: alg,
+      effectiveResolution,
+      resolutionMode,
       numCommunities: allCommunityIds.length,
       modularity: Number(modularity.toFixed(4)),
       totalPersonsInScope: personsInScope.length,
