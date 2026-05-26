@@ -3904,7 +3904,7 @@ export class RelationService {
   }> {
     const snap = await this.store.loadAll();
     const me = snap.persons.find(p => p.id === personId);
-    if (!me || !me.communityId) {
+    if (!me?.communityId) {
       return { personId, communityId: me?.communityId ?? null, communitySize: 0, peers: [] };
     }
     const cid = me.communityId;
