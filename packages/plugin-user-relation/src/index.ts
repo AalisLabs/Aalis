@@ -161,9 +161,9 @@ export const configSchema: ConfigSchema = {
   },
   consolidateAfterEviction: {
     type: 'boolean',
-    label: '淘汰后自动 consolidate',
+    label: '淘汰时自动 consolidate',
     description:
-      '每次发生容量淘汰后自动运行一次 consolidate（去重 / 整理 / 层级推断）。取代旧的定时 consolidate 调度器。',
+      '每次触发容量淘汰时，先自动运行一次 consolidate（去重 / 整理 / 层级推断），再执行淘汰。与 /relation maintain 顺序一致，使 PageRank 入出度更完整。',
     default: true,
   },
 
