@@ -22,7 +22,11 @@ const REHYPE_KATEX_OPTIONS = {
   errorColor: 'inherit',
   output: 'htmlAndMathml' as const,
 };
-export const REHYPE_PLUGINS = [rehypeHighlight, [rehypeKatex, REHYPE_KATEX_OPTIONS]];
+export const REHYPE_PLUGINS = [
+  rehypeHighlight,
+  // 显式 tuple 类型标注：避免 TypeScript 把 [plugin, options] 推断为 union 数组而非 PluginTuple
+  [rehypeKatex, REHYPE_KATEX_OPTIONS] as [typeof rehypeKatex, typeof REHYPE_KATEX_OPTIONS],
+];
 
 function CodeRenderer({
   className,

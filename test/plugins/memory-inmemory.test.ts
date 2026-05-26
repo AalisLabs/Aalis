@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { App, type Message } from '../../packages/core/src/index.js';
+import { App } from '../../packages/core/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import type { Message } from '../../packages/plugin-message-api/src/index.js';
 
 function makeApp() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
@@ -19,7 +20,8 @@ describe('plugin-memory-inmemory', () => {
   let mem: MemoryService;
   beforeEach(async () => {
     env = makeApp();
-    await env.app.ctx.useModule(memoryInMemoryModule);
+    // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
+    await env.app.ctx.useModule(memoryInMemoryModule as any);
     const m = env.app.ctx.getService<MemoryService>('memory');
     if (!m) throw new Error('memory service missing');
     mem = m;
