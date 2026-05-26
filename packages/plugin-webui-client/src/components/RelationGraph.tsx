@@ -1582,10 +1582,17 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
   /**
    * PR 数值 + 两组排名：顶行数值，下面 4 行排名（子图同类 / 子图全部 / 全库同类 / 全库全部）。
    * 子图排名 ≈ 当前可见视图内的相对位置（受 focusId/depth/breadth 限定）；全库排名 = fullSnap 全体节点位置。
-   * 未跑过 evictByQuota 的节点 lastPageRank 为空 → 不入任何一组排名。
+   * 未跑过 evictByQuota 的节点 lastPageRank 为空 → 返回提示行（— · 未跑过压缩），让用户知道是"还没算"而不是"加载失败"。
+   * 兜底：lastPageRank 存在但 globalPrRanks 缺失（旧服务端 / 服务未重启）→ 显示"全库排名暂缺，请重启 aalis 服务"提示行。
    */
-  const formatPRWithRank = (pr: number | undefined): React.ReactNode | undefined => {
-    if (typeof pr !== 'number' || !Number.isFinite(pr)) return undefined;
+  const formatPRWithRank = (pr: number | undefined): React.ReactNode => {
+    if (typeof pr !== 'number' || !Number.isFinite(pr)) {
+      return (
+        <span style={{ opacity: 0.6 }}>
+          — <span style={{ fontSize: 10 }}>（未跑过压缩，下次 evictByQuota 时计算）</span>
+        </span>
+      );
+    }
     const base = formatPR(pr);
     const sub = prRank?.sub;
     const glb = prRank?.global;
@@ -1604,7 +1611,9 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
             <span style={{ opacity: 0.75 }}>全库 #{glb.kindRank}/{glb.kindTotal} 同类</span>
             <span style={{ opacity: 0.75 }}>全库 #{glb.globalRank}/{glb.globalTotal} 全部</span>
           </>
-        ) : null}
+        ) : (
+          <span style={{ opacity: 0.6, fontSize: 10 }}>（全库排名暂缺：服务端未返回 globalPrRanks，可能需重启 aalis）</span>
+        )}
       </span>
     );
   };
