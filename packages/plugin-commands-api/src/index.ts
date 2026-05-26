@@ -128,6 +128,18 @@ export interface ExecutionInput {
   args: string[];
   raw: string;
   skipSafetyCheck?: boolean;
+  /**
+   * 受信任系统源（如 scheduler / workflow / 内部任务）调用时设为 true，
+   * 完全跳过 authority/permission/safety 守卫。
+   *
+   * 风险与约束：
+   * - 仅 inbound middleware（plugin-commands）在判定 message.source 属于
+   *   受信任系统源（scheduler/workflow/system）后才允许置 true；外部输入
+   *   永远不应该传 true。
+   * - 与 skipSafetyCheck 的区别：skipSafetyCheck 只跳过 dangerous 确认弹窗，
+   *   仍受 authority + permissionPolicy 约束；bypassGuard 是完全绕过。
+   */
+  bypassGuard?: boolean;
 }
 
 // ===== Builder =====
