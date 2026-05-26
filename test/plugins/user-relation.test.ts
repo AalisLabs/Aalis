@@ -1564,3 +1564,76 @@ describe('plugin-user-relation: getCommunityOverview per-community 自适应 top
     expect(bigUnlim!.topMembers.length).toBe(bigUnlim!.size);
   });
 });
+
+describe('plugin-user-relation: getCommunityOverview resolution (γ) 调节社群粒度', () => {
+  it('γ 越大社群数单调不降；γ 越小社群数单调不增；默认 γ=1.0 行为不变', async () => {
+    const { service } = await makeService();
+    // 构造 3 个 5 人子团：每团内部共享一个团内 event，再加一个"全员共享 event"作为弱跨团桥。
+    // 这样 γ 小 → 倾向把所有人合并成一两个大社群；γ 大 → 强行切出每个子团。
+    const numGroups = 3;
+    const perGroup = 5;
+    const allIds: string[] = [];
+    for (let g = 0; g < numGroups; g++) {
+      const ids: string[] = [];
+      for (let i = 0; i < perGroup; i++) {
+        const p = await service.observePerson('onebot', `g${g}-p${i}`, `G${g}P${i}`);
+        ids.push(p.id);
+        allIds.push(p.id);
+      }
+      // 团内事件：高权重把团内人紧密绑定
+      const inner = await service.createEvent({ title: `G${g}Ev`, evidence: [ev()] });
+      for (const pid of ids) {
+        await service.addPersonEventEdge({
+          fromPersonId: pid,
+          toEventId: inner.id,
+          role: 'participant',
+          evidence: [ev()],
+        });
+      }
+    }
+    // 跨团桥事件：所有人都参与（构成弱跨团连接，让 γ 有发挥空间）
+    const bridge = await service.createEvent({ title: 'BridgeEv', evidence: [ev()] });
+    for (const pid of allIds) {
+      await service.addPersonEventEdge({
+        fromPersonId: pid,
+        toEventId: bridge.id,
+        role: 'participant',
+        evidence: [ev()],
+      });
+    }
+
+    const baseline = await service.getCommunityOverview({});
+    const baselineDefault = await service.getCommunityOverview({ resolution: 1.0 });
+    // 默认与显式 1.0 完全一致
+    expect(baselineDefault.numCommunities).toBe(baseline.numCommunities);
+    expect(baselineDefault.modularity).toBeCloseTo(baseline.modularity, 8);
+
+    const coarse = await service.getCommunityOverview({ resolution: 0.2 });
+    const fine = await service.getCommunityOverview({ resolution: 5.0 });
+
+    // 单调性：γ↓ 社群数不增；γ↑ 社群数不减
+    expect(coarse.numCommunities).toBeLessThanOrEqual(baseline.numCommunities);
+    expect(fine.numCommunities).toBeGreaterThanOrEqual(baseline.numCommunities);
+    // γ 必须真正能区分粗细：fine > coarse
+    expect(fine.numCommunities).toBeGreaterThan(coarse.numCommunities);
+  });
+
+  it('非法 resolution（<=0 / NaN / Infinity）退回默认 1.0', async () => {
+    const { service } = await makeService();
+    for (let i = 0; i < 4; i++) {
+      const p = await service.observePerson('onebot', `x-${i}`, `X${i}`);
+      const e = await service.createEvent({ title: `Ev${i}`, evidence: [ev()] });
+      await service.addPersonEventEdge({
+        fromPersonId: p.id,
+        toEventId: e.id,
+        role: 'participant',
+        evidence: [ev()],
+      });
+    }
+    const def = await service.getCommunityOverview({});
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const r = await service.getCommunityOverview({ resolution: bad });
+      expect(r.numCommunities).toBe(def.numCommunities);
+    }
+  });
+});

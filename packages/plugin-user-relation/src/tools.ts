@@ -988,9 +988,14 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           '- session_scope：可选。只统计 evidence 含该 session 的节点（events 看 sessionScope；persons 看是否参与过 scope 内 event；entities 看 evidence）。',
           '  · 注意：社群划分仍在全图上跑，scope 只是后过滤展示，避免切断跨群关系。',
           '- top_n：每个社群展示的成员/话题/事件条数。',
-          '  · 不传：per-community 自适应，按各社群规模独立计算 max(3, ceil(sqrt(comSize)*1.5))，大社群展示多、小社群展示少，无硬上限。',
+          '  · 不传：per-community 自适应，按各社群规模独立计算 max(3, ceil(log2(comSize+1)))，大社群展示多、小社群展示少，无硬上限。',
           '  · 传 0：不限（全部展示）。',
           '  · 传 >0 整数：一刀切覆盖所有 community / bridges。',
+          '- resolution：Louvain/Leiden 分辨率 γ，默认 1.0。',
+          '  · γ > 1（如 1.5 / 2.0 / 3.0）：划得**更细更碎**——社群数变多、单社群更小。',
+          '  · γ < 1（如 0.7 / 0.5）：划得**更粗**——社群数变少、单社群更大。',
+          '  · 当前划分太松散（社群太多/碎片化）就降到 0.5~0.8；太粗（两群被合一起）就升到 1.5~2.5。建议从 0.5/1.0/1.5/2.0 几个挡位试，配合 modularity Q 看哪个最高。',
+          '  · 该参数只影响本次返回；不会污染节点缓存里的 communityId（缓存恒为 γ=1.0 基准）。',
           '返回字段：modularity (Q ∈ [-0.5, 1], >0.3 圈子分明)、communities[]、bridges[] (跨社群邻居最多的 top-N 人)。',
           '注意：本工具实时跑算法，不依赖节点上的 communityId 缓存——即使 evictByQuota 还没跑也能用。',
         ].join('\n'),
@@ -1008,7 +1013,12 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
             },
             top_n: {
               type: 'number',
-              description: '不传 = per-community 自适应 sqrt(comSize)*1.5；0 = 不限；>0 = 一刀切覆盖。',
+              description: '不传 = per-community 自适应 log2(comSize+1)；0 = 不限；>0 = 一刀切覆盖。',
+            },
+            resolution: {
+              type: 'number',
+              description:
+                '分辨率 γ，默认 1.0；>1 划得更细更碎（更多小社群），<1 划得更粗（更少大社群）。范围 0.01~100；常用 0.5~3。',
             },
           },
           additionalProperties: false,
@@ -1026,8 +1036,12 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
           ? String(args.session_scope).trim()
           : undefined;
       const topN = typeof args.top_n === 'number' ? args.top_n : undefined;
-      const r = await service.getCommunityOverview({ algorithm, sessionScope, topN });
-      return JSON.stringify(r, null, 2);
+      const resolution =
+        typeof args.resolution === 'number' && Number.isFinite(args.resolution) && args.resolution > 0
+          ? args.resolution
+          : undefined;
+      const r = await service.getCommunityOverview({ algorithm, sessionScope, topN, resolution });
+      return JSON.stringify({ resolution: resolution ?? 1.0, ...r }, null, 2);
     },
   });
 
