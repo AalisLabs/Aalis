@@ -1987,7 +1987,9 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
 
   it('embedding 路径：cos+struct 融合达阈值 → 合并', async () => {
     const { service } = await makeService();
-    // 注意：title 差异较大让 jaccard 不直接达 0.4，必须靠 embedding cos 达 fused≥0.7
+    // 注意：title 差异较大让 jaccard 不直接达 0.4；
+    // fused = 0.3·cos + 0.7·struct，两事件刚建立无连接边 struct≈0，
+    // 所以传 fusedThreshold:0.3 让 cos=1 单独达标验证 embedding 路径可用。
     await service.createEvent({
       title: 'A 事件',
       sessionScope: 'S1',
@@ -1999,7 +2001,7 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
       evidence: [ev({ sessionId: 'S1' })],
     });
     const embedding = {
-      // 所有文本映射到同一向量 → cos=1 → fused ≥ 0.7
+      // 所有文本映射到同一向量 → cos=1
       async embed(_t: string) {
         return [1, 0, 0];
       },
@@ -2012,6 +2014,7 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
       llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding,
       dryRun: false,
+      fusedThreshold: 0.3,
     });
     expect(calls.length).toBe(1);
     expect(r.llmVerified).toBe(1);

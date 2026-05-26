@@ -3194,7 +3194,7 @@ export class RelationService {
     //   触发：autoLink && LLM 已配置（与 entity wide-recall 同口径）
     //   边界：sessionScope 相同 或 双方均 'global' —— 跨 scope 由 mergeAlias 硬护栏（L537）兜底
     //   召回：每个 scope 池内 O(N²) pair；
-    //     有 embedding 服务：fused = 0.7·cos + 0.3·struct ≥ fusedThreshold
+    //     有 embedding 服务：fused = 0.3·cos + 0.7·struct ≥ fusedThreshold
     //     无 embedding 服务：jaccard(chars) ≥ 0.4 或 struct ≥ 0.5
     //   终判：verifyEventPair（必经 LLM；mergeReject 缓存命中跳过）
     //   合并：并查集 → pickCanonicalForEvents → mergeAlias(kind:'event')
@@ -3258,7 +3258,7 @@ export class RelationService {
    * 内部入口：执行一次 event 重复检测；可选 dryRun 仅返回候选不合并。
    *
    * 召回融合公式（前提条件）：
-   *  - 有 embedding 时：fused = 0.7·cos + 0.3·struct，阈值 fusedThreshold（默认 0.7）；
+   *  - 有 embedding 时：fused = 0.3·cos + 0.7·struct，阈值 fusedThreshold（默认 0.7）；
    *    任一端有 embedding 失败 → 该 pair fallback 到 jaccard 分支
    *  - 无 embedding 时：jaccard(chars) ≥ jaccardThreshold(默认 0.4) **或** struct ≥ structuralThreshold(默认 0.5)
    *
@@ -3387,7 +3387,7 @@ export class RelationService {
           let fusedScore: number | null = null;
           let isCandidate = false;
           if (cosineScore !== null) {
-            fusedScore = 0.7 * cosineScore + 0.3 * structuralScore;
+            fusedScore = 0.3 * cosineScore + 0.7 * structuralScore;
             isCandidate = fusedScore >= fusedThreshold;
           } else {
             isCandidate = jaccardScore >= jaccardThreshold || structuralScore >= structuralThreshold;
