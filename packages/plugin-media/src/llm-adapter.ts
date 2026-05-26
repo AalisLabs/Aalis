@@ -135,6 +135,32 @@ async function imageToBase64DataUrl(data: string, mimeType?: string): Promise<st
   }
 }
 
+/**
+ * 将 fmt（detectAudioFormat 输出）映射为 audio/* mime 子类型。
+ * 注意 mp3 → audio/mpeg（IANA 标准），其余直接同名。
+ */
+function fmtToMime(fmt: string): string {
+  if (fmt === 'mp3') return 'audio/mpeg';
+  if (fmt === 'wav') return 'audio/wav';
+  if (fmt === 'ogg') return 'audio/ogg';
+  if (fmt === 'm4a') return 'audio/mp4';
+  if (fmt === 'flac') return 'audio/flac';
+  return 'audio/wav'; // 转码兜底永远是 WAV
+}
+
+/**
+ * 把 audio attachment.data 解析为 **带 mime 前缀的 data URL**，供 LLM provider 直接使用。
+ *
+ * 历史 bug（修复 2026-05）：以前返回纯 base64，下游 ollama 的
+ * `decodeAudioForOpenAI` 因为拿不到 mime 信息只能 fallback 到 `format=wav`；
+ * 而 `extractAudioTrack` 输出的实际是 mp3 → ollama runner 把 mp3 字节当 wav
+ * 解析失败，报 "image: unknown format"。
+ *
+ * 现在统一返回 `data:audio/{mime};base64,...`：
+ * - `decodeAudioForOpenAI` 能精确推断 format
+ * - `stripAudioDataPrefix`（/api/chat 路径）能正确剥前缀
+ * - 兼容性：Message.audios 字段就是 string[]，data URL 仍然合法
+ */
 async function audioToBase64(data: string): Promise<string> {
   const mat = await materializeAttachment(data);
   if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
@@ -149,7 +175,7 @@ async function audioToBase64(data: string): Promise<string> {
 
     // 主流格式：多模态 LLM 与 Whisper 都能直接解码，无需转码
     if (fmt === 'mp3' || fmt === 'wav' || fmt === 'ogg' || fmt === 'm4a' || fmt === 'flac') {
-      return buf.toString('base64');
+      return `data:${fmtToMime(fmt)};base64,${buf.toString('base64')}`;
     }
 
     // 其它格式（amr / silk / unknown / 裸 PCM 等）一律走 ffmpeg 转 WAV
@@ -160,7 +186,7 @@ async function audioToBase64(data: string): Promise<string> {
           '请检查 OneBot 实现端 get_record 是否真正执行了 silk→mp3 转码',
       );
     }
-    return wav;
+    return `data:audio/wav;base64,${wav}`;
   } finally {
     await mat.cleanup();
   }
