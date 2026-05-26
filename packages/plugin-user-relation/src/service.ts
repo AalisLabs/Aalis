@@ -2132,6 +2132,8 @@ export class RelationService {
     let entityHierarchyEdgesCreated = 0;
     let llmVerified = 0;
     let llmRejected = 0;
+    /** consolidate 命中持久化 negativeCache 而省下的 LLM 调用次数。 */
+    let llmRejectCacheHits = 0;
     let summariesRewritten = 0;
 
     // 解析可选 LLM 模型（A: 别名核验；B: 合并后摘要重写）
@@ -2172,14 +2174,44 @@ export class RelationService {
             // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
             let shouldMerge = true;
             if (llmModel && opts.llm) {
-              const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
-              if (v.isSame) {
-                llmVerified++;
-              } else {
-                llmRejected++;
+              // negativeCache：双方 lastReinforcedAt 都未变 → 跳过 LLM，复用上次否决结论
+              const cached = await this.store.getMergeReject(a.id, b.id);
+              if (
+                cached &&
+                cached.aReinforcedAt === (a.lastReinforcedAt ?? 0) &&
+                cached.bReinforcedAt === (b.lastReinforcedAt ?? 0)
+              ) {
+                llmRejectCacheHits++;
                 shouldMerge = false;
                 if (opts.llm.ctx.logger) {
-                  opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
+                  opts.llm.ctx.logger.debug(
+                    `[user-relation] consolidate 命中 mergeReject 缓存 ${a.id} ↔ ${b.id}（${cached.decidedBy}）：${cached.reason}`,
+                  );
+                }
+              } else {
+                const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
+                if (v.isSame) {
+                  llmVerified++;
+                  // 之前否决但本次同意 → 清掉缓存（节点已演化）
+                  if (cached) await this.store.deleteMergeReject(a.id, b.id);
+                } else {
+                  llmRejected++;
+                  shouldMerge = false;
+                  if (opts.llm.ctx.logger) {
+                    opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
+                  }
+                  // 落 negativeCache，避免下次 maintain 重复送 LLM
+                  const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+                  await this.store.saveMergeReject({
+                    aId: smaller.id,
+                    bId: larger.id,
+                    aReinforcedAt: smaller.lastReinforcedAt ?? 0,
+                    bReinforcedAt: larger.lastReinforcedAt ?? 0,
+                    reason: v.reason,
+                    decidedAt: Date.now(),
+                    decidedBy: 'strict-equiv',
+                    kind: 'entity',
+                  });
                 }
               }
             }
@@ -2337,6 +2369,21 @@ export class RelationService {
           }
           continue;
         }
+        // negativeCache：双方 lastReinforcedAt 都未变 → 跳过 LLM，复用上次否决结论
+        const cached = await this.store.getMergeReject(a.id, b.id);
+        if (
+          cached &&
+          cached.aReinforcedAt === (a.lastReinforcedAt ?? 0) &&
+          cached.bReinforcedAt === (b.lastReinforcedAt ?? 0)
+        ) {
+          llmRejectCacheHits++;
+          if (opts.llm.ctx.logger) {
+            opts.llm.ctx.logger.debug(
+              `[user-relation] consolidate 命中 mergeReject 缓存（宽召回）${a.id} ↔ ${b.id}：${cached.reason}`,
+            );
+          }
+          continue;
+        }
         const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking, {
           aEvidenceQuotes: (a.evidence ?? [])
             .slice(-3)
@@ -2366,9 +2413,23 @@ export class RelationService {
               `[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`,
             );
           }
+          // 落 negativeCache，下次扫描双方未变就跳过
+          const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+          await this.store.saveMergeReject({
+            aId: smaller.id,
+            bId: larger.id,
+            aReinforcedAt: smaller.lastReinforcedAt ?? 0,
+            bReinforcedAt: larger.lastReinforcedAt ?? 0,
+            reason: v.reason,
+            decidedAt: Date.now(),
+            decidedBy: 'wide-recall',
+            kind: 'entity',
+          });
           continue;
         }
         llmVerified++;
+        // 之前否决但本次同意 → 清掉旧缓存
+        if (cached) await this.store.deleteMergeReject(a.id, b.id);
         yesPairs.push({ aId: a.id, bId: b.id, reason });
       }
 
@@ -2918,7 +2979,7 @@ export class RelationService {
       lateralEdgesCreated,
       fakePersonsDeleted,
       fakePersonEdgesDeleted,
-      ...(opts.llm ? { llmVerified, llmRejected, summariesRewritten } : {}),
+      ...(opts.llm ? { llmVerified, llmRejected, llmRejectCacheHits, summariesRewritten } : {}),
     };
     this._lastConsolidateAt = Date.now();
     this._lastConsolidateTrigger = opts.triggerSource ?? 'api';
@@ -2927,7 +2988,11 @@ export class RelationService {
       `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
       `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
       (fakePersonsDeleted > 0 ? `，伪 person 清理 ${fakePersonsDeleted}（级联边 ${fakePersonEdgesDeleted}）` : '') +
-      (opts.llm ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected} 摘要重写 ${summariesRewritten}` : '');
+      (opts.llm
+        ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected}` +
+          (llmRejectCacheHits > 0 ? `（缓存命中 ${llmRejectCacheHits}）` : '') +
+          ` 摘要重写 ${summariesRewritten}`
+        : '');
     return consolidateResult;
   }
 
@@ -3177,6 +3242,9 @@ export class RelationService {
         edgesRewritten++;
       }
     }
+
+    // 清理涉及 aliasId 的 mergeReject 缓存：alias id 即将被吸收，旧缓存对未来无意义
+    await this.store.deleteMergeRejectsByNode(aliasId);
 
     return {
       effectiveCanonicalId: canonicalId,
