@@ -16,6 +16,7 @@ import {
   clamp01,
   clusterEntitiesByPairs,
   computeEntityEdgeStats,
+  computeEntityEmbeddingHash,
   computeEventEdgeStats,
   computeEventEmbeddingHash,
   computePageRank,
@@ -1771,6 +1772,19 @@ describe('plugin-user-relation: event duplicate utils (pure)', () => {
     expect(h1).not.toBe(h3);
     expect(h1).not.toBe(h4);
     expect(typeof h1).toBe('string');
+    expect(h1.length).toBeGreaterThan(0);
+  });
+
+  it('computeEntityEmbeddingHash: name/summary/entityKind 任一变化 hash 改变；同输入稳定', () => {
+    const h1 = computeEntityEmbeddingHash('认知偏差', '一种心理学概念', 'topic');
+    const h2 = computeEntityEmbeddingHash('认知偏差', '一种心理学概念', 'topic');
+    const h3 = computeEntityEmbeddingHash('认知偏差', '一种心理学概念', 'thing');
+    const h4 = computeEntityEmbeddingHash('认知偏差', '修改了摘要', 'topic');
+    const h5 = computeEntityEmbeddingHash('不同名字', '一种心理学概念', 'topic');
+    expect(h1).toBe(h2);
+    expect(h1).not.toBe(h3); // entityKind 不同 → hash 不同（同名跨 kind 独立 embed）
+    expect(h1).not.toBe(h4);
+    expect(h1).not.toBe(h5);
     expect(h1.length).toBeGreaterThan(0);
   });
 
