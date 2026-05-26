@@ -99,6 +99,11 @@ export interface ExtractorConfig {
   /** Weight 衰减下限因子，effW 不会低于 raw × floor。保留"老朋友"底色。默认 0.3 */
   weightDecayFloor: number;
   /**
+   * evictByQuota 之后顺手跑的社群发现算法。默认 'louvain'。
+   * 'leiden'=Leiden-lite（Louvain + 连通性 refinement），保证社群内部连通。
+   */
+  communityAlgorithm: 'louvain' | 'leiden';
+  /**
    * 淘汰完成后自动运行一次 consolidate（去重/整理/层级推断）。
    * 仅在实际发生淘汰（deletedEvents/Entities/Edges > 0）时触发。默认 true。
    */
@@ -951,6 +956,7 @@ export class RelationExtractor {
             halfLifeDays: this.cfg.weightDecayHalfLifeDays,
             floor: this.cfg.weightDecayFloor,
           },
+          communityAlgorithm: this.cfg.communityAlgorithm,
         });
         if (
           this.cfg.debug &&
