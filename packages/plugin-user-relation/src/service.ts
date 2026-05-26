@@ -1134,6 +1134,11 @@ export class RelationService {
     personSeed?: number;
     entitySeed?: number;
     eventSeed?: number;
+    /**
+     * person→event / person→entity 单向边反向虚拟边权重系数。
+     * 0 = 不加反向边；默认 0.5。
+     */
+    reverseEdgeFactor?: number;
     /** 时间衰减配置：用于把 raw weight 折算成有效 weight。halfLifeDays<=0 时退化为原 raw 行为。 */
     decay?: WeightDecayCfg;
   }): Promise<{
@@ -1152,6 +1157,7 @@ export class RelationService {
     const personSeed = quota.personSeed ?? 2;
     const entitySeed = quota.entitySeed ?? 1.5;
     const eventSeed = quota.eventSeed ?? 1;
+    const reverseEdgeFactor = quota.reverseEdgeFactor ?? 0.5;
     const decayCfg: WeightDecayCfg = quota.decay ?? { halfLifeDays: 0, floor: 0.3 };
     let deletedPersons = 0;
     let deletedEvents = 0;
@@ -1178,6 +1184,7 @@ export class RelationService {
       personSeed,
       entitySeed,
       eventSeed,
+      reverseEdgeFactor,
     });
     const ageScore = (n: EventNode | EntityNode): number => {
       // 使用 effectiveWeight：raw weight 经过时间衰减后，老节点的"分母"自动变小，
