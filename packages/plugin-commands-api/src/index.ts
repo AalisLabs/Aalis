@@ -132,10 +132,34 @@ export interface ExecutionInput {
    * 受信任系统源（如 scheduler / workflow / 内部任务）调用时设为 true，
    * 完全跳过 authority/permission/safety 守卫。
    *
-   * 风险与约束：
+   * ⚠️  DANGER — 临时方案，存在安全漏洞，待重新设计
+   * ─────────────────────────────────────────────────
+   * 当前问题：
+   * 这一字段允许调用方完全绕过权限系统。虽然目前只有 inbound middleware
+   * 在判定 message.source 受信任后才传 true，但这是靠约定维护的，并非
+   * 架构层面的强保证。未来如果有人在别处传 true（或者 source 字段被伪造），
+   * 权限系统形同虚设。
+   *
+   * 根本原因：
+   * scheduler/workflow 等系统源没有对应的 userId，authority guard 因此
+   * 拿不到有效的 authority 值（默认 1），无法执行 authority>=2 的指令。
+   * 临时解法是整体绕过；正确解法是建立"系统身份（system identity）"概念。
+   *
+   * TODO: 重新设计
+   * 方向一（推荐）：
+   *   在 ExecutionContext / CommandArgv 中增加 `caller` 字段，取值如
+   *   { type: 'user', userId } | { type: 'system', source, trustLevel }。
+   *   authority guard 收到 type='system' 时走专门的系统 authority 评估逻辑
+   *   （如 scheduler 默认 authority=5），而不是读 userId 对应的用户 authority。
+   *
+   * 方向二（备选）：
+   *   为 scheduler/workflow 创建虚拟 userId（如 "__system_scheduler"），在
+   *   authority 存储里赋予足够高的等级，这样 guard 不需要特殊分支。
+   *
+   * 当前约束（在重新设计前必须遵守）：
    * - 仅 inbound middleware（plugin-commands）在判定 message.source 属于
-   *   受信任系统源（scheduler/workflow/system）后才允许置 true；外部输入
-   *   永远不应该传 true。
+   *   受信任系统源（TRUSTED_SYSTEM_SOURCES）后才允许置 true；
+   * - 任何暴露给外部输入/用户的路径永远不应传 true；
    * - 与 skipSafetyCheck 的区别：skipSafetyCheck 只跳过 dangerous 确认弹窗，
    *   仍受 authority + permissionPolicy 约束；bypassGuard 是完全绕过。
    */
