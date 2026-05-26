@@ -319,6 +319,38 @@ export function registerRelationCommands(
       return lines.join('\n');
     });
 
+  // ---- rewrite-weights（手动触发 eager 时间衰减回写） ----
+  cmds
+    .command(
+      'relation.rewrite-weights',
+      '关系图：把 event/entity/edge 的 weight 字段物理回写为当前 effectiveWeight（时间衰减落地）',
+      { authority: 3 },
+    )
+    .action(async argv => {
+      const ev = options?.eviction;
+      const halfLifeDays = ev?.weightDecayHalfLifeDays ?? 180;
+      const floor = ev?.weightDecayFloor ?? 0.3;
+      if (halfLifeDays <= 0) {
+        return `weight 衰减未启用（halfLifeDays=${halfLifeDays}），无需回写。`;
+      }
+      ackBackground(
+        argv.session.sessionId,
+        argv.session.platform,
+        `⏳ 正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
+      );
+      const r = await service.rewriteWeights({ halfLifeDays, floor });
+      if (r.skipped) {
+        return 'weight 衰减未启用，已跳过。';
+      }
+      return [
+        '✓ weight 时间衰减回写完成：',
+        `- 事件：写回 ${r.events} 条`,
+        `- 实体：写回 ${r.entities} 条`,
+        `- 边：  写回 ${r.edges} 条`,
+        `（参数：halfLifeDays=${halfLifeDays}, floor=${floor}）`,
+      ].join('\n');
+    });
+
   // ---- compress（仅跳出一次容量淘汰 + 伤亡报告） ----
   cmds
     .command('relation.compress', '关系图压缩：手动触发容量淘汰（PageRank 低分 → 删 events/entities/edges）', {
