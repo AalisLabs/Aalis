@@ -218,6 +218,17 @@ export const configSchema: ConfigSchema = {
     description: 'L1 误差小于该值即提前停止迭代。',
     default: 0.0001,
   },
+  communityAlgorithm: {
+    type: 'select',
+    label: '社群发现默认算法',
+    description:
+      'evictByQuota 之后顺手跑的社群发现算法。louvain=经典快；leiden=实用简化版（Louvain + 连通性 refinement），保证社群内部连通但耗时略增。agent 调 community_* 工具时可临时指定 algorithm 参数覆盖此默认。',
+    options: [
+      { value: 'louvain', label: 'Louvain（默认，快）' },
+      { value: 'leiden', label: 'Leiden-lite（保证内部连通）' },
+    ],
+    default: 'louvain',
+  },
   evictHysteresisPct: {
     type: 'number',
     label: '淘汰滞回 (0~1)',
@@ -537,6 +548,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       evictTargetPct: numCfg(config.evictTargetPct, 0.8),
       weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
       weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
+      communityAlgorithm:
+        (config.communityAlgorithm as 'louvain' | 'leiden' | undefined) === 'leiden' ? 'leiden' : 'louvain',
       consolidateAfterEviction: config.consolidateAfterEviction !== false,
       consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
       consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
@@ -611,6 +624,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         targetPct: numCfg(config.evictTargetPct, 0.8),
         weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
         weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
+        communityAlgorithm:
+          (config.communityAlgorithm as 'louvain' | 'leiden' | undefined) === 'leiden' ? 'leiden' : 'louvain',
       },
       consolidateAutoLink: config.consolidationAutoLink === true,
       consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
