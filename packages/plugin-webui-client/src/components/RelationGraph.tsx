@@ -42,6 +42,7 @@ interface GraphNode {
 interface GraphEdge {
   data: { id: string; source: string; target: string; label?: string; relationType?: string; [k: string]: unknown };
 }
+interface PrRankInfo { kindRank: number; kindTotal: number; globalRank: number; globalTotal: number }
 interface GraphPayload {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -61,6 +62,8 @@ interface GraphPayload {
     directed?: boolean;
   };
   stats?: Record<string, number | string>;
+  /** 全库 PageRank 排名表（基于服务端 fullSnap，与当前可见子图无关）。 */
+  globalPrRanks?: Record<string, PrRankInfo>;
 }
 
 // 深色主题硬编码（与 App.css 中 --bg/--surface 对齐）
@@ -787,13 +790,13 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   }, [payload, stats]);
 
   /**
-   * 节点 PR 排名查询表：每节点附 kindRank（同类内 1=最高） + globalRank（全图 1=最高）+ 总数。
-   * NodeDetailCard 与边端点详情会基于此把"图重要性"那行扩成 `0.00207 · #3/91 同类 · #7/1036 全局`。
-   * 缺失 lastPageRank 的节点直接不参与排名（不会出现在 Map 里）。
+   * 子图 PR 排名查询表：仅基于当前可见 payload.nodes 计算（视图相对位置）。
+   * 用户从某个 focusId+depth+breadth 进来时，子图节点可能远少于全库。
+   * 与 `globalPrRanksByNodeId`（来自 payload.globalPrRanks，全库口径）配对展示。
+   * 缺失 lastPageRank 的节点不入榜（未跑过 evictByQuota）。
    */
-  const prRanksByNodeId = useMemo(() => {
-    type RankInfo = { kindRank: number; kindTotal: number; globalRank: number; globalTotal: number };
-    const m = new Map<string, RankInfo>();
+  const subgraphPrRanks = useMemo(() => {
+    const m = new Map<string, PrRankInfo>();
     if (!payload) return m;
     type Entry = { id: string; kind: string; pr: number };
     const entries: Entry[] = [];
@@ -802,12 +805,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       if (typeof pr !== 'number' || !Number.isFinite(pr)) continue;
       entries.push({ id: String(n.data.id), kind: String(n.data.kind ?? 'person'), pr });
     }
-    // 全局降序
     const globalSorted = [...entries].sort((a, b) => b.pr - a.pr);
     const globalTotal = globalSorted.length;
     const globalRankById = new Map<string, number>();
     for (let i = 0; i < globalSorted.length; i++) globalRankById.set(globalSorted[i].id, i + 1);
-    // 同类降序
     const byKind = new Map<string, Entry[]>();
     for (const e of entries) {
       if (!byKind.has(e.kind)) byKind.set(e.kind, []);
@@ -824,6 +825,13 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
         });
       }
     }
+    return m;
+  }, [payload]);
+  /** 全库 PR 排名查询表：直接读 payload.globalPrRanks（服务端 fullSnap 算好）。 */
+  const globalPrRanksByNodeId = useMemo(() => {
+    const m = new Map<string, PrRankInfo>();
+    if (!payload?.globalPrRanks) return m;
+    for (const [id, info] of Object.entries(payload.globalPrRanks)) m.set(id, info);
     return m;
   }, [payload]);
 
@@ -1106,7 +1114,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                   loading={detailLoading}
                   hasDetailSource={Boolean(comp.detailSource)}
                   isFocus={focusId === selectedNode.data.id}
-                  prRank={prRanksByNodeId.get(String(selectedNode.data.id))}
+                  prRank={{
+                    sub: subgraphPrRanks.get(String(selectedNode.data.id)),
+                    global: globalPrRanksByNodeId.get(String(selectedNode.data.id)),
+                  }}
                 />
               ) : payload?.focusEdge ? (() => {
                 const fe = payload.focusEdge;
@@ -1160,18 +1171,20 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
                         <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>端点</div>
                         {endpoints.map(eid => {
                           const n = nodeOf(eid);
-                          const rank = prRanksByNodeId.get(eid);
-                          const prText =
-                            typeof n?.lastPageRank === 'number'
-                              ? ` · PR ${formatPR(n.lastPageRank)}${
-                                  rank
-                                    ? ` · #${rank.kindRank}/${rank.kindTotal} 同类 · #${rank.globalRank}/${rank.globalTotal} 全局`
-                                    : ''
-                                }`
-                              : '';
+                          const sub = subgraphPrRanks.get(eid);
+                          const glb = globalPrRanksByNodeId.get(eid);
+                          const hasPR = typeof n?.lastPageRank === 'number';
                           return (
-                            <div key={eid} style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-secondary)' }}>
-                              {n?.label ?? eid} <span style={{ opacity: 0.6 }}>[{String(n?.kind ?? '?')}]{prText}</span>
+                            <div key={eid} style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-secondary)', marginBottom: 3 }}>
+                              <div>
+                                {n?.label ?? eid} <span style={{ opacity: 0.6 }}>[{String(n?.kind ?? '?')}]{hasPR ? ` · PR ${formatPR(n!.lastPageRank!)}` : ''}</span>
+                              </div>
+                              {hasPR && sub ? (
+                                <div style={{ opacity: 0.6, paddingLeft: 8 }}>子图 #{sub.kindRank}/{sub.kindTotal} 同类 · #{sub.globalRank}/{sub.globalTotal} 全部</div>
+                              ) : null}
+                              {hasPR && glb ? (
+                                <div style={{ opacity: 0.6, paddingLeft: 8 }}>全库 #{glb.kindRank}/{glb.kindTotal} 同类 · #{glb.globalRank}/{glb.globalTotal} 全部</div>
+                              ) : null}
                             </div>
                           );
                         })}
@@ -1318,7 +1331,8 @@ function asNum(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
-interface FieldGridProps { rows: Array<[string, string | number | undefined | null] | [string, string | number | undefined | null, string]>; }
+type FieldValue = string | number | undefined | null | React.ReactNode;
+interface FieldGridProps { rows: Array<[string, FieldValue] | [string, FieldValue, string]>; }
 function FieldGrid({ rows }: FieldGridProps): JSX.Element {
   const visible = rows.filter(([, v]) => v !== undefined && v !== null && v !== '');
   if (visible.length === 0) return <></>;
@@ -1326,10 +1340,11 @@ function FieldGrid({ rows }: FieldGridProps): JSX.Element {
     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, rowGap: 3, color: 'var(--text-secondary)', marginBottom: 8 }}>
       {visible.map(row => {
         const [k, v, tip] = row;
+        const rendered = (typeof v === 'string' || typeof v === 'number') ? String(v) : v;
         return (
           <React.Fragment key={k}>
             <span style={{ color: 'var(--text-muted)', cursor: tip ? 'help' : undefined }} title={tip}>{k}</span>
-            <span style={{ color: 'var(--text)', wordBreak: 'break-word' }}>{String(v)}</span>
+            <span style={{ color: 'var(--text)', wordBreak: 'break-word' }}>{rendered}</span>
           </React.Fragment>
         );
       })}
@@ -1372,8 +1387,11 @@ interface NodeDetailCardProps {
   loading: boolean;
   hasDetailSource: boolean;
   isFocus: boolean;
-  /** PR 排名信息（同类 + 全局），缺失时只显示 PR 数值不附排名。 */
-  prRank?: { kindRank: number; kindTotal: number; globalRank: number; globalTotal: number };
+  /** PR 排名信息：子图 / 全库两组，缺失时只显示其中一组或仅 PR 数值。 */
+  prRank?: {
+    sub?: { kindRank: number; kindTotal: number; globalRank: number; globalTotal: number };
+    global?: { kindRank: number; kindTotal: number; globalRank: number; globalTotal: number };
+  };
 }
 /**
  * 字段含义入口：点击弹出 modal，内含三大数值指标解释 + 六类边 / 角色 / 关系
@@ -1473,7 +1491,7 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
         <div style={h}>三个数值指标</div>
         <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           <div><b>合并强度</b>（weight, 0~1）：节点 / 边被重复合并的累计程度。0.5 起步，每次合并 <code>+(1−prev)·delta</code>（默认 delta=0.1，可由 LLM/工具调用传入；person 别名合并是直接 <code>+0.3</code> 的特殊情况）→ 0.55 → 0.595 → 0.636 → … (clamp 1.0)。<u>语义 = 被强化次数，<b>不是</b>重要性</u>。</div>
-          <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress | maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权（人 2 · 物 1.5 · 事 1，可配置）。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。注：节点越多，每个 PR 值越小（PR 是归一化概率分布，总和为 1），UI 在 |n| &lt; 0.01 时切换科学计数法（如 <code>2.07e-3</code>），否则保留 3 位有效数字小数；同时附"#同类排名/同类总数 · #全局排名/全局总数"便于含义判读。</div>
+          <div style={{ marginTop: 3 }}><b>图重要性</b>（lastPageRank）：最近一次 <code>/relation compress | maintain</code> 计算的全图 PageRank。个性化种子按 kind 加权（人 2 · 物 1.5 · 事 1，可配置）。越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。注：节点越多，每个 PR 值越小（PR 是归一化概率分布，总和为 1），UI 在 |n| &lt; 0.01 时切换科学计数法（如 <code>2.07e-3</code>），否则保留 3 位有效数字小数；同时附「子图同类/全部 + 全库同类/全部」四档排名（子图=当前 focusId/depth/breadth 限定的可见视图；全库=fullSnap 全体节点）便于判读位置。</div>
           <div style={{ marginTop: 3 }}><b>边淘汰分</b>（仅边详情）：<code>合并强度 × ((PR_from + PR_to) / 2)</code>。配额淘汰时按此<u>升序</u>删——分越低越先删，让"弱权但连接重要节点"的边受保护。</div>
         </div>
 
@@ -1561,12 +1579,34 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
 }
 function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRank }: NodeDetailCardProps): JSX.Element {
   const kind = node.data.kind;
-  /** PR 数值 + 排名拼接：`0.00207 · #3/91 同类 · #7/1036 全局`；无排名时只返回数值。 */
-  const formatPRWithRank = (pr: number | undefined): string | undefined => {
+  /**
+   * PR 数值 + 两组排名：顶行数值，下面 4 行排名（子图同类 / 子图全部 / 全库同类 / 全库全部）。
+   * 子图排名 ≈ 当前可见视图内的相对位置（受 focusId/depth/breadth 限定）；全库排名 = fullSnap 全体节点位置。
+   * 未跑过 evictByQuota 的节点 lastPageRank 为空 → 不入任何一组排名。
+   */
+  const formatPRWithRank = (pr: number | undefined): React.ReactNode | undefined => {
     if (typeof pr !== 'number' || !Number.isFinite(pr)) return undefined;
     const base = formatPR(pr);
-    if (!prRank) return base;
-    return `${base} · #${prRank.kindRank}/${prRank.kindTotal} 同类 · #${prRank.globalRank}/${prRank.globalTotal} 全局`;
+    const sub = prRank?.sub;
+    const glb = prRank?.global;
+    if (!sub && !glb) return base;
+    return (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1 }}>
+        <span>{base}</span>
+        {sub ? (
+          <>
+            <span style={{ opacity: 0.75 }}>子图 #{sub.kindRank}/{sub.kindTotal} 同类</span>
+            <span style={{ opacity: 0.75 }}>子图 #{sub.globalRank}/{sub.globalTotal} 全部</span>
+          </>
+        ) : null}
+        {glb ? (
+          <>
+            <span style={{ opacity: 0.75 }}>全库 #{glb.kindRank}/{glb.kindTotal} 同类</span>
+            <span style={{ opacity: 0.75 }}>全库 #{glb.globalRank}/{glb.globalTotal} 全部</span>
+          </>
+        ) : null}
+      </span>
+    );
   };
   const headerMeta = (
     <div style={{ color: 'var(--text-secondary)', marginBottom: 8, fontSize: 10 }}>
@@ -1584,7 +1624,7 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
   // 人物
   if (kind === 'person' && detail.person && typeof detail.person === 'object') {
     const p = detail.person as DetailRecord;
-    const rows: Array<[string, string | number | undefined] | [string, string | number | undefined, string]> = [
+    const rows: Array<[string, FieldValue] | [string, FieldValue, string]> = [
       ['昵称', asStr(p.displayName)],
       ['平台', asStr(p.platform)],
       ['用户 ID', asStr(p.userId)],
@@ -1592,7 +1632,7 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
       [
         '图重要性',
         formatPRWithRank(typeof p.lastPageRank === 'number' ? (p.lastPageRank as number) : undefined),
-        '最近一次 evictByQuota 计算的全图 PageRank 分数。人/物/事 个性化种子 2:1.5:1（默认，可配置）；该节点越靠近「核心人物 · 热门事件」越高。后拼接 “同类排名/总数 · 全局排名/总数”便于含义判读。未跑过压缩时为空。',
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。人/物/事 个性化种子 2:1.5:1（默认，可配置）；该节点越靠近「核心人物 · 热门事件」越高。下方附「子图同类/全部 + 全库同类/全部」四档排名便于判读位置。未跑过压缩时为空。',
       ],
       ['首次出现', pickText(p, 'firstSeenAt')],
       ['最近出现', pickText(p, 'lastSeenAt')],
@@ -1638,7 +1678,7 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
 
   // 事件
   if (kind === 'event') {
-    const rows: Array<[string, string | number | undefined] | [string, string | number | undefined, string]> = [
+    const rows: Array<[string, FieldValue] | [string, FieldValue, string]> = [
       ['标题', asStr(detail.title)],
       ['类别', asStr(detail.category)],
       ['摘要', asStr(detail.summary)],
@@ -1651,7 +1691,7 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
       [
         '图重要性',
         formatPRWithRank(typeof detail.lastPageRank === 'number' ? (detail.lastPageRank as number) : undefined),
-        '最近一次 evictByQuota 计算的全图 PageRank 分数。反映"被重要节点引用"的结构性重要性；与合并强度独立。后拼接 “同类排名/总数 · 全局排名/总数”便于含义判读。',
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。反映"被重要节点引用"的结构性重要性；与合并强度独立。下方附「子图同类/全部 + 全库同类/全部」四档排名便于判读位置。',
       ],
       ['首次出现', pickText(detail, 'firstSeenAt')],
       ['最近强化', pickText(detail, 'lastReinforcedAt')],
@@ -1664,7 +1704,7 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
   // 实体
   if (kind === 'entity') {
     const aliases = Array.isArray(detail.aliases) ? (detail.aliases as unknown[]).filter(x => typeof x === 'string').join(' / ') : undefined;
-    const rows: Array<[string, string | number | undefined] | [string, string | number | undefined, string]> = [
+    const rows: Array<[string, FieldValue] | [string, FieldValue, string]> = [
       ['名称', asStr(detail.name)],
       ['类型', asStr(detail.entityKind)],
       ['别名', aliases || undefined],
@@ -1677,7 +1717,7 @@ function NodeDetailCard({ node, detail, loading, hasDetailSource, isFocus, prRan
       [
         '图重要性',
         formatPRWithRank(typeof detail.lastPageRank === 'number' ? (detail.lastPageRank as number) : undefined),
-        '最近一次 evictByQuota 计算的全图 PageRank 分数。多人共同指向的实体一般分数更高。后拼接 “同类排名/总数 · 全局排名/总数”便于含义判读。',
+        '最近一次 evictByQuota 计算的全图 PageRank 分数。多人共同指向的实体一般分数更高。下方附「子图同类/全部 + 全库同类/全部」四档排名便于判读位置。',
       ],
       ['首次出现', pickText(detail, 'firstSeenAt')],
       ['最近强化', pickText(detail, 'lastReinforcedAt')],
