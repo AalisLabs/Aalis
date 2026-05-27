@@ -28,6 +28,7 @@ import {
 } from './ffmpeg.js';
 import {
   DEFAULT_VISION_DETAILED_PROMPT,
+  DEFAULT_VISION_PROFESSIONAL_PROMPT,
   DEFAULT_VISION_PROMPT,
   scanLLMProcessors,
   VISION_CLASSIFY_PROMPT,
@@ -501,6 +502,8 @@ export class MediaServiceImpl implements MediaService {
         basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
       } else if (detailLevel === 'detailed') {
         basePrompt = DEFAULT_VISION_DETAILED_PROMPT;
+      } else if (detailLevel === 'professional') {
+        basePrompt = DEFAULT_VISION_PROFESSIONAL_PROMPT;
       } else {
         // auto：调一次轻量分类（耗时 ~1-2s）
         basePrompt = await this.classifyAndPickPrompt(proc, imageUrl);
@@ -546,7 +549,10 @@ export class MediaServiceImpl implements MediaService {
       );
       const label = (r.descriptions[0] ?? '').toLowerCase().trim();
       this.logger.debug(`[vision.classify] ${Date.now() - t0}ms label="${label}"`);
-      // 精确匹配 casual 才走简洁；其余一律按详细处理（fallback 友好）
+      // 4 标签匹配：professional → 专业题目；casual → 简洁；其余（document/mixed/unknown）→ detailed
+      if (label === 'professional' || label.startsWith('professional')) {
+        return DEFAULT_VISION_PROFESSIONAL_PROMPT;
+      }
       if (label === 'casual' || label.startsWith('casual')) {
         return this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
       }
