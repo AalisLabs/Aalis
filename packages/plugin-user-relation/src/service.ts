@@ -19,6 +19,7 @@ import type { LLMModel, ModelRef } from '@aalis/plugin-llm-api';
 import {
   inferEntityHierarchy,
   inferMissingParent,
+  type PairNeighborProfile,
   resolveConsolidateModel,
   rewriteEntitySummary,
   verifyAliasPair,
@@ -69,6 +70,7 @@ import {
   effectiveWeight,
   eventPairJaccard,
   flipDirectedEdge,
+  getEdgeOtherEnd,
   isAliasEdgeDirectionCorrect,
   isAliasMarkerEdge,
   isDirectedEntityEntityRelation,
@@ -2578,8 +2580,41 @@ export class RelationService {
       // ─── F3 候选预收集：先把召回条件命中的 pair 全捞出来，不立刻调 LLM ───
       // 目的：拿到全集后才能按 compositeScore 排序、按低权阈值跳过，
       //      避免无脑顺序跑 LLM 把预算花在两端都很 edge 的低价值候选上。
-      type Candidate = { a: EntityNode; b: EntityNode; reason: string; pairKey: string };
+      type Candidate = {
+        a: EntityNode;
+        b: EntityNode;
+        reason: string;
+        pairKey: string;
+        /** embedding 余弦相似（仅 embed-hit 路径有；其它路径为 null） */
+        cosineScore: number | null;
+        /** 名称 + 别名集合的 Jaccard 相似（轻量，所有路径都算） */
+        jaccardScore: number;
+      };
       const candidates: Candidate[] = [];
+
+      // 轻量 Jaccard：对 normalize(name) 与 normalize(aliases) 合并的字符串集合做交并比。
+      // 用于给 verifyAliasPair 提供"名字层文本相似度"信号，不引入额外开销。
+      const computeEntityJaccard = (a: EntityNode, b: EntityNode): number => {
+        const tokensA = new Set<string>();
+        const tokensB = new Set<string>();
+        const an = normalizeName(a.name);
+        const bn = normalizeName(b.name);
+        if (an) tokensA.add(an);
+        if (bn) tokensB.add(bn);
+        for (const x of a.aliases ?? []) {
+          const n = normalizeName(x);
+          if (n) tokensA.add(n);
+        }
+        for (const x of b.aliases ?? []) {
+          const n = normalizeName(x);
+          if (n) tokensB.add(n);
+        }
+        if (tokensA.size === 0 || tokensB.size === 0) return 0;
+        let inter = 0;
+        for (const t of tokensA) if (tokensB.has(t)) inter++;
+        const union = tokensA.size + tokensB.size - inter;
+        return union > 0 ? inter / union : 0;
+      };
 
       for (const list of entitiesByKind.values()) {
         for (let i = 0; i < list.length; i++) {
@@ -2625,7 +2660,14 @@ export class RelationService {
                 ? `别名/名互覆盖：${a.name} ↔ ${b.name}`
                 : `embedding 相似（cos=${(embedCos ?? 0).toFixed(2)}）：${a.name} ↔ ${b.name}`;
             aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
-            candidates.push({ a, b, reason, pairKey: k });
+            candidates.push({
+              a,
+              b,
+              reason,
+              pairKey: k,
+              cosineScore: embedCos,
+              jaccardScore: computeEntityJaccard(a, b),
+            });
           }
         }
       }
@@ -2656,29 +2698,29 @@ export class RelationService {
               reportedEntityPairs.add(k);
               const reason = `跨 kind 同名候选（${ak} vs ${bk}，疑似上游识别误判）：${a.name} ↔ ${b.name}`;
               aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
-              candidates.push({ a, b, reason, pairKey: k });
+              candidates.push({
+                a,
+                b,
+                reason,
+                pairKey: k,
+                cosineScore: null,
+                jaccardScore: computeEntityJaccard(a, b),
+              });
             }
           }
         }
       }
 
       // 给候选里出现过的每个 entity 算一次 compositeScore（snapshot 已固定，避免重复扫边）
-      // F2：缓存完整 score 对象（含 relatedPeople/Events/Entities），用于喂给 verifyAliasPair 的上下文。
-      const scoreCache = new Map<
-        string,
-        { compositeScore: number; relatedPeople: number; relatedEvents: number; relatedEntities: number } | null
-      >();
-      const getScoreInfo = (
-        id: string,
-      ): { compositeScore: number; relatedPeople: number; relatedEvents: number; relatedEntities: number } | null => {
+      // F2：缓存完整 score 对象（含 compositeScore + 邻居剖面），用于喂给 verifyAliasPair 的上下文。
+      const scoreCache = new Map<string, { compositeScore: number; neighbor: PairNeighborProfile } | null>();
+      const getScoreInfo = (id: string): { compositeScore: number; neighbor: PairNeighborProfile } | null => {
         if (scoreCache.has(id)) return scoreCache.get(id) ?? null;
         const s = this._computeSingleNodeScore(id, snapshot);
         const v = s
           ? {
               compositeScore: s.compositeScore,
-              relatedPeople: s.relatedPeople,
-              relatedEvents: s.relatedEvents,
-              relatedEntities: s.relatedEntities,
+              neighbor: this._computeNeighborProfile(id, snapshot, 5),
             }
           : null;
         scoreCache.set(id, v);
@@ -2742,18 +2784,12 @@ export class RelationService {
             .slice(-3)
             .map(ev => (ev.quote ?? '').trim())
             .filter(Boolean),
-          aNeighbors: (() => {
-            const info = getScoreInfo(a.id);
-            return info
-              ? { people: info.relatedPeople, events: info.relatedEvents, entities: info.relatedEntities }
-              : { people: 0, events: 0, entities: 0 };
-          })(),
-          bNeighbors: (() => {
-            const info = getScoreInfo(b.id);
-            return info
-              ? { people: info.relatedPeople, events: info.relatedEvents, entities: info.relatedEntities }
-              : { people: 0, events: 0, entities: 0 };
-          })(),
+          aNeighbors: getScoreInfo(a.id)?.neighbor,
+          bNeighbors: getScoreInfo(b.id)?.neighbor,
+          scores: {
+            ...(cand.cosineScore !== null ? { cosineScore: cand.cosineScore } : {}),
+            jaccardScore: cand.jaccardScore,
+          },
         });
         if (!v.isSame) {
           llmRejected++;
@@ -3594,8 +3630,14 @@ export class RelationService {
           .slice(-3)
           .map(ev => (ev.quote ?? '').trim())
           .filter(Boolean),
-        structuralScore: cand.structuralScore,
-        textualScore: cand.fusedScore ?? cand.jaccardScore,
+        aNeighbors: this._computeNeighborProfile(a.id, workingSnapshot, 5),
+        bNeighbors: this._computeNeighborProfile(b.id, workingSnapshot, 5),
+        scores: {
+          ...(cand.cosineScore !== null ? { cosineScore: cand.cosineScore } : {}),
+          jaccardScore: cand.jaccardScore,
+          structuralScore: cand.structuralScore,
+          ...(cand.fusedScore !== null ? { fusedScore: cand.fusedScore } : {}),
+        },
       });
       reportEntry.llmVerdict = verdict;
       report.push(reportEntry);
@@ -4377,17 +4419,15 @@ export class RelationService {
     let sumIncomingEdgeWeight = 0;
     let inEdgeCount = 0;
 
-    const isPersonId = (id: string) => id.includes(':');
     for (const e of snap.edges) {
-      if (!edgeReferences(e, nodeId)) continue;
-      const toId = (e as { to?: string; toId?: string }).to ?? (e as { toId?: string }).toId ?? '';
-      const fromId = (e as { from?: string; fromId?: string }).from ?? (e as { fromId?: string }).fromId ?? '';
-      const otherId = fromId === nodeId ? toId : fromId;
+      const ends = getEdgeOtherEnd(e, nodeId);
+      if (!ends) continue;
+      const { otherId, otherKind, isIncoming } = ends;
       if (!otherId || otherId === nodeId) continue;
-      if (isPersonId(otherId)) peopleSet.add(otherId);
-      else if (snap.events.some(ev => ev.id === otherId)) eventSet.add(otherId);
-      else if (snap.entities.some(et => et.id === otherId)) entitySet.add(otherId);
-      if (toId === nodeId) {
+      if (otherKind === 'person') peopleSet.add(otherId);
+      else if (otherKind === 'event') eventSet.add(otherId);
+      else entitySet.add(otherId);
+      if (isIncoming) {
         const w = e.weight ?? 0;
         if (w > maxIncomingEdgeWeight) maxIncomingEdgeWeight = w;
         sumIncomingEdgeWeight += w;
@@ -4426,8 +4466,71 @@ export class RelationService {
   }
 
   /**
-   * 计算节点的「有向出/入度剖面」，用于刻画粉丝/偶像、师徒上下游、因果 source/sink、part-of 上下游等
-   * 单向语义信号。
+   * 计算节点的「邻居剖面」：返回每类邻居 (人/事件/实体) 的 **总数 + top-K {name, weight}**。
+   * 用于 consolidate verifyAliasPair / verifyEventPair 给 LLM 提供更丰富的邻居证据。
+   *
+   * - weight 取节点对之间所有边的 weight 之和（同一对实体可能既是 mentioned 又是 enthusiast）
+   * - 排序：weight 倒序；同权按 name 升序保证可复现
+   * - 名字截断到 24 字以控制 prompt 体积
+   * - 命中不存在的 otherId（被删/孤立）→ 跳过
+   */
+  _computeNeighborProfile(
+    nodeId: string,
+    snap: { persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] },
+    topK = 5,
+  ): {
+    peopleCount: number;
+    eventCount: number;
+    entityCount: number;
+    topPeople: Array<{ name: string; weight: number }>;
+    topEvents: Array<{ name: string; weight: number }>;
+    topEntities: Array<{ name: string; weight: number }>;
+  } {
+    const personMap = new Map(snap.persons.map(p => [p.id, p] as const));
+    const eventMap = new Map(snap.events.map(e => [e.id, e] as const));
+    const entityMap = new Map(snap.entities.map(e => [e.id, e] as const));
+
+    const peopleAgg = new Map<string, number>();
+    const eventAgg = new Map<string, number>();
+    const entityAgg = new Map<string, number>();
+
+    for (const e of snap.edges) {
+      const ends = getEdgeOtherEnd(e, nodeId);
+      if (!ends) continue;
+      const { otherId, otherKind } = ends;
+      if (!otherId || otherId === nodeId) continue;
+      const w = e.weight ?? 0;
+      const bucket = otherKind === 'person' ? peopleAgg : otherKind === 'event' ? eventAgg : entityAgg;
+      bucket.set(otherId, (bucket.get(otherId) ?? 0) + w);
+    }
+
+    const trim = (s: string): string => (s.length > 24 ? `${s.slice(0, 23)}…` : s);
+    const toTopK = (
+      agg: Map<string, number>,
+      nameOf: (id: string) => string | undefined,
+    ): Array<{ name: string; weight: number }> => {
+      const arr: Array<{ name: string; weight: number }> = [];
+      for (const [id, w] of agg.entries()) {
+        const n = nameOf(id);
+        if (!n) continue;
+        arr.push({ name: trim(n), weight: Number(w.toFixed(2)) });
+      }
+      arr.sort((a, b) => (b.weight !== a.weight ? b.weight - a.weight : a.name.localeCompare(b.name)));
+      return arr.slice(0, topK);
+    };
+
+    return {
+      peopleCount: peopleAgg.size,
+      eventCount: eventAgg.size,
+      entityCount: entityAgg.size,
+      topPeople: toTopK(peopleAgg, id => personMap.get(id)?.displayName ?? id),
+      topEvents: toTopK(eventAgg, id => eventMap.get(id)?.title),
+      topEntities: toTopK(entityAgg, id => entityMap.get(id)?.name),
+    };
+  }
+
+  /**
+   * 计算节点的「方向性出入度剖面」：返回 outByType / inByType / dominance / fanIdolHint。
    *
    * 仅统计 **有向的主体边**（person-person / event-event / entity-entity 且 directed=true）。
    * 桥型边（person-event / person-entity / event-entity）按设计天然双向，是"参与"不是"指代"，
