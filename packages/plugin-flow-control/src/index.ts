@@ -12,6 +12,7 @@ import {
   defaultFlowControlConfig,
   type FlowControlConfig,
   isScopeEnabled,
+  resolveEffectiveConfig,
   resolveFlowControlConfig,
 } from './config.js';
 import { clearSessionIdle, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
@@ -107,6 +108,43 @@ export const configSchema: ConfigSchema = {
   },
   idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动', default: defaultFlowControlConfig.idleTriggerJitter },
   idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示', default: defaultFlowControlConfig.idleTriggerPrompt },
+  overrides: {
+    type: 'array',
+    label: '分作用域覆盖',
+    description:
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；未列字段穿透到上方默认。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却。',
+    default: [],
+    items: {
+      scope: {
+        type: 'string',
+        label: '作用域',
+        description: '格式 platform:sessionType[:targetId]，支持 *',
+        required: true,
+      },
+      fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）' },
+      activityScoreLower: { type: 'number', label: '活跃指数下限' },
+      activityScoreUpper: { type: 'number', label: '活跃指数上限' },
+      activityDecayMinutes: { type: 'number', label: '阈值衰减分钟' },
+      scoreDecayMinutes: { type: 'number', label: '评分衰减分钟' },
+      cooldownSeconds: { type: 'number', label: '回复后冷却（秒）' },
+      muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）' },
+      rateLimitWindow: { type: 'number', label: '限速窗口（秒）' },
+      rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数' },
+      idleTriggerScope: {
+        type: 'select',
+        label: '闲置触发范围',
+        options: [
+          { label: 'off', value: 'off' },
+          { label: 'session', value: 'session' },
+          { label: 'platform', value: 'platform' },
+        ],
+      },
+      idleTriggerMinutes: { type: 'number', label: '闲置触发分钟' },
+      idleTriggerMaxMinutes: { type: 'number', label: '闲置触发上限分钟' },
+      idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动' },
+      idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示' },
+    },
+  },
 };
 
 export const defaultConfig = defaultFlowControlConfig;
@@ -168,22 +206,38 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
 
   await loadMuteState();
 
-  function getOrCreate(sessionId: string, platform: string): MutableFlowSessionState {
+  /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
+  function extractTargetId(message: import('@aalis/plugin-message-api').IncomingMessage): string {
+    if (message.sessionType === 'group') return message.groupId ?? '';
+    if (message.sessionType === 'private') return message.userId ?? '';
+    return '';
+  }
+
+  function getOrCreate(sessionId: string, platform: string, sessionType = '', targetId = ''): MutableFlowSessionState {
     let s = states.get(sessionId);
     if (!s) {
-      s = createState(platform);
+      s = createState(platform, sessionType, targetId);
       states.set(sessionId, s);
-    } else if (!s.platform && platform) {
-      s.platform = platform;
+    } else {
+      if (!s.platform && platform) s.platform = platform;
+      if (!s.sessionType && sessionType) s.sessionType = sessionType;
+      if (!s.targetId && targetId) s.targetId = targetId;
     }
     return s;
   }
 
+  /** 按 state 上下文解析生效 cfg（应用 overrides） */
+  function eff(s: MutableFlowSessionState | undefined): FlowControlConfig {
+    if (!s) return cfg;
+    return resolveEffectiveConfig(cfg, s.platform, s.sessionType, s.targetId);
+  }
+
   function logStatus(sessionId: string, s: MutableFlowSessionState, label: string): void {
-    const threshold = getCurrentThreshold(s, cfg);
+    const e = eff(s);
+    const threshold = getCurrentThreshold(s, e);
     ctx.logger.debug(
       `[flow] ${label} | session=${sessionId} | ` +
-        `计数=${s.messageCount}/${cfg.fixedInterval} | ` +
+        `计数=${s.messageCount}/${e.fixedInterval} | ` +
         `指数=${s.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)})`,
     );
   }
@@ -202,24 +256,25 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   // ===== Service 实现 =====
 
   const service: FlowControlService = {
-    ensureState(sessionId, platform) {
-      getOrCreate(sessionId, platform);
+    ensureState(sessionId, platform, sessionType, targetId) {
+      getOrCreate(sessionId, platform, sessionType, targetId);
     },
     getStateSnapshot(sessionId): FlowSessionStateSnapshot | undefined {
       const s = states.get(sessionId);
-      return s ? snapshot(s, cfg) : undefined;
+      return s ? snapshot(s, eff(s)) : undefined;
     },
-    recordIncoming(sessionId, platform, userId) {
-      const s = getOrCreate(sessionId, platform);
+    recordIncoming(sessionId, platform, userId, sessionType, targetId) {
+      const s = getOrCreate(sessionId, platform, sessionType, targetId);
+      const e = eff(s);
       const now = Date.now();
-      applyScoreDecay(s, cfg);
+      applyScoreDecay(s, e);
       if (userId) {
         const prev = s.userInteractions.get(userId) ?? { count: 0, lastTime: 0 };
         s.userInteractions.set(userId, { count: prev.count + 1, lastTime: now });
       }
       s.lastMessageTime = now;
       s.messageCount++;
-      s.activityScore += calculateScoreIncrement(s, cfg, userId);
+      s.activityScore += calculateScoreIncrement(s, e, userId);
     },
     recordTriggered(sessionId) {
       const s = states.get(sessionId);
@@ -231,8 +286,9 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
     },
     recordReply(sessionId, platform) {
       const s = getOrCreate(sessionId, platform);
-      if (cfg.cooldownSeconds > 0) {
-        s.cooldownUntil = Date.now() + cfg.cooldownSeconds * 1000;
+      const e = eff(s);
+      if (e.cooldownSeconds > 0) {
+        s.cooldownUntil = Date.now() + e.cooldownSeconds * 1000;
       }
       s.idleBackoff = 1;
       s.replyTimestamps.push(Date.now());
@@ -249,8 +305,9 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
     isRateLimited(sessionId) {
       const s = states.get(sessionId);
       if (!s) return false;
-      if (cfg.rateLimitWindow <= 0 || cfg.rateLimitMaxReplies <= 0) return false;
-      return rateLimitUsedNow(s, cfg) >= cfg.rateLimitMaxReplies;
+      const e = eff(s);
+      if (e.rateLimitWindow <= 0 || e.rateLimitMaxReplies <= 0) return false;
+      return rateLimitUsedNow(s, e) >= e.rateLimitMaxReplies;
     },
     setMuted(sessionId, durationSec, platform) {
       let s = states.get(sessionId);
@@ -273,12 +330,13 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
     },
     getThreshold(sessionId) {
       const s = states.get(sessionId);
-      return s ? getCurrentThreshold(s, cfg) : cfg.activityScoreLower;
+      if (!s) return cfg.activityScoreLower;
+      return getCurrentThreshold(s, eff(s));
     },
     rescheduleIdle(sessionId, platform) {
       const s = states.get(sessionId);
       if (!s) return;
-      scheduleSessionIdle(ctx, cfg, s, sessionId, platform, () => this.rescheduleIdle(sessionId, platform));
+      scheduleSessionIdle(ctx, eff(s), s, sessionId, platform, () => this.rescheduleIdle(sessionId, platform));
     },
   };
 
@@ -287,20 +345,22 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   ctx.logger.info(
     `[flow] 已启用 (固定间隔=${cfg.fixedInterval}, 阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, ` +
       `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
-      `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'})`,
+      `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'}, ` +
+      `overrides=${cfg.overrides.length})`,
   );
 
   // ===== inbound:flow 相位：流控前置闸门 =====
   // 由 plugin-gateway 在 inbound:command 之后、inbound:trigger 之前触发。
-  // 设计取舍：流控默认只对群会话（sessionTypes=['group']）生效，
-  // 与历史 OneBot ChatFlow 行为一致；可通过配置扩展到 channel/guild 等。
+  // 默认 scopes=['*:group'] 与历史 OneBot ChatFlow 行为一致；
+  // overrides 中任一 scope 命中也视为启用（用于 *:private 等单独覆盖场景）。
   ctx.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) return next();
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType, extractTargetId(message))) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
 
-    service.ensureState(message.sessionId, message.platform);
-    service.recordIncoming(message.sessionId, message.platform, message.userId);
+    const targetId = extractTargetId(message);
+    service.ensureState(message.sessionId, message.platform, message.sessionType, targetId);
+    service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType, targetId);
 
     const s = states.get(message.sessionId)!;
 

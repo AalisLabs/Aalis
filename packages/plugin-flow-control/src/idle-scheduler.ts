@@ -6,7 +6,7 @@
 import type { Context } from '@aalis/core';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
-import type { FlowControlConfig } from './config.js';
+import { type FlowControlConfig, resolveEffectiveConfig } from './config.js';
 import type { MutableFlowSessionState } from './state.js';
 
 const DEFAULT_PROMPT =
@@ -121,10 +121,11 @@ export class PlatformIdleScheduler {
     for (const [sid, s] of this.states) {
       if (s.mutedUntil > now) continue;
       if (s.cooldownUntil > now) continue;
-      if (this.cfg.rateLimitWindow > 0 && this.cfg.rateLimitMaxReplies > 0) {
-        const windowStart = now - this.cfg.rateLimitWindow * 1000;
+      const e = resolveEffectiveConfig(this.cfg, s.platform, s.sessionType, s.targetId);
+      if (e.rateLimitWindow > 0 && e.rateLimitMaxReplies > 0) {
+        const windowStart = now - e.rateLimitWindow * 1000;
         const used = s.replyTimestamps.filter(t => t > windowStart).length;
-        if (used >= this.cfg.rateLimitMaxReplies) continue;
+        if (used >= e.rateLimitMaxReplies) continue;
       }
       const lastActivity = Math.max(s.lastMessageTime, s.lastReplyTime);
       if (!best || lastActivity < best.lastActivity) {
