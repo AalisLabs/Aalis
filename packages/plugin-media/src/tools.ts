@@ -72,7 +72,16 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         description:
           '分析一张图片或动图/视频的内容，返回文字描述。\n' +
           '可以分析截图文件（如 screen_capture 返回的路径）、本地图片文件或网络图片 URL。\n' +
-          '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。',
+          '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。\n' +
+          '\n' +
+          '**关于 detail_level（详略级别）**：\n' +
+          '- `auto`（默认）：自动判断图片类型选择详略，未知类一律按详细处理\n' +
+          '- `casual`：简洁日常描述（200 字以内、识别梗/游戏标志），适合聊天截图、表情包、生活照\n' +
+          '- `detailed`：详细 OCR 描述（不限字数、逐项列出、含 LaTeX 公式），**强烈建议数学题/物理题/代码截图/表格/试卷/PPT/含密集文字的图片显式传 detailed**\n' +
+          '\n' +
+          '**关于 prompt（自定义提示词）**：\n' +
+          '对数学/代码/文档/表格类图片，建议你的 prompt 明确写「请逐题列出每道题与所有选项」「请用 LaTeX 抄录所有公式」' +
+          '「请逐行抄录代码并保留缩进」「请把表格按 Markdown 格式列出」等具体要求，避免笼统的「分析这张图」。',
         parameters: {
           type: 'object',
           properties: {
@@ -83,9 +92,15 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
                 'storage URI（如 data:/images/...、workspace:/.tmp/x.png）或网络 URL。' +
                 '裸相对路径会按首段匹配 storage 根（如 data/、workspace/、tmp/），未命中时归到 workspace:/ 下。',
             },
-            prompt: { type: 'string', description: '分析提示词（可选）。' },
+            prompt: { type: 'string', description: '分析提示词（可选）。数学/代码/表格类务必写明具体要求。' },
             task: { type: 'string', description: '本次分析需求（可选）。' },
             context: { type: 'string', description: '补充上下文（可选）。' },
+            detail_level: {
+              type: 'string',
+              enum: ['auto', 'casual', 'detailed'],
+              description:
+                '详略级别。默认 auto（自动判断）；对试卷/数学题/代码/表格/PPT/含密集文字的图片，显式传 detailed 以确保信息完整。',
+            },
           },
           required: ['image'],
         },
@@ -98,6 +113,11 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         const customPrompt = (args.prompt as string) || undefined;
         const task = (args.task as string) || undefined;
         const extraContext = (args.context as string) || undefined;
+        const detailLevelRaw = (args.detail_level as string) || undefined;
+        const detailLevel: 'auto' | 'casual' | 'detailed' | undefined =
+          detailLevelRaw === 'casual' || detailLevelRaw === 'detailed' || detailLevelRaw === 'auto'
+            ? detailLevelRaw
+            : undefined;
         const hint = [
           task ? `用户需求: ${task}` : '',
           !task && customPrompt ? `分析提示词: ${customPrompt}` : '',
@@ -115,7 +135,7 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
           imageUrl = await fileToDataUri(uri);
         }
 
-        const desc = await svc.describeImage(imageUrl, { hint, localPath });
+        const desc = await svc.describeImage(imageUrl, { hint, localPath, detailLevel });
         return JSON.stringify(desc ? { description: desc } : { error: '没有可用的视觉模型或识别失败' });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
