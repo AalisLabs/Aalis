@@ -112,6 +112,17 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
       continue;
     }
 
+    if (msg.role === 'notice') {
+      // 平台事件（禁言/撤回/进出群/poke 等）→ 复用 system 分隔条样式渲染
+      result.push({
+        role: 'system',
+        content: msg.content ?? '',
+        timestamp: msg.timestamp ?? 0,
+      });
+      i++;
+      continue;
+    }
+
     if (msg.role === 'assistant') {
       // 收集连续的 assistant + tool 消息组成一个 ChatMessage
       const segments: ContentSegment[] = [];
