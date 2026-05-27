@@ -9,7 +9,7 @@
  *
  * 注入策略：
  *   - 监听 `agent:llm:before`，按 scope 决定是否过滤 platform。
- *   - 通过 metadata.source 标记排重，避免被多次插入。
+ *   - 通过 metadata.injector 标记排重，避免被多次插入。
  *   - 同步注册 `recent_messages` 工具供 agent 主动查询。
  *
  * 与 agent.historyLimit 的关系：
