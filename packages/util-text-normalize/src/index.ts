@@ -177,8 +177,10 @@ export function stripLeakedSpecialTokens(content: string): {
 }
 
 /**
- * @deprecated 已重命名为 {@link stripLeakedSpecialTokens}（去除厂商前缀，
- * 因实现本身是通用的）。下个大版本移除。
+ * @deprecated 旧名，保留为向后兼容别名。请改用 {@link stripLeakedSpecialTokens}。
+ *
+ * 原命名带有 DeepSeek 厂商前缀，但实际能力对所有"用特殊 token 表达内部协议、
+ * 偶发解析失败导致裸标记落入 content"的模型通用，因此函数已重命名。
  */
 export const stripDeepSeekSpecialTokens = stripLeakedSpecialTokens;
 
