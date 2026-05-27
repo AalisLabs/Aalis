@@ -113,10 +113,15 @@ export function fixGfmTables(content: string): string {
 }
 
 /**
- * 剥离 DeepSeek 系列模型泄漏到 `content` 的 DSML (DeepSeek Markup Language) 标记。
+ * 剥离 LLM 输出 `content` 字段中泄漏的"特殊 token 标记"残渣。
  *
- * 背景：DeepSeek V3.2/V4 系列使用内部 DSML 协议表达 tool_calls，
- * 标记形如：
+ * 适用范围（通用）：任何使用 `<...特殊字符...keyword...特殊字符...>` 形式
+ * special token 表达内部协议、且服务端解析器偶发匹配失败导致裸标记落到
+ * content 的场景。当前已知典型 case 是 DeepSeek 的 DSML：
+ *
+ * ## DSML 背景
+ * DeepSeek V3.2/V4 系列使用内部 DSML (DeepSeek Markup Language) 协议表达
+ * tool_calls，标记形如：
  * ```
  * <｜DSML｜tool_calls><｜DSML｜invoke name="X">
  *   <｜DSML｜parameter name="Y" string="true">VALUE</｜DSML｜parameter>
@@ -125,19 +130,25 @@ export function fixGfmTables(content: string): string {
  * （`｜` 为 U+FF5C 全角竖线）
  *
  * 已知 bug：模型会输出**畸形变体**（多一对竖线，如 `<｜｜DSML｜｜...>`），
- * 服务端按 `｜DSML｜` 严格匹配的 tool_call_parser 失败，整段以裸文本形式留在 `content` 里，
- * 直接发给用户/入库。参见：
+ * 服务端按 `｜DSML｜` 严格匹配的 tool_call_parser 失败，整段以裸文本形式
+ * 留在 `content` 里。参见：
  * - https://huggingface.co/deepseek-ai/DeepSeek-V3.2/discussions/29
  * - https://forums.developer.nvidia.com/t/367901
  *
- * 本函数作为最后一道防线：
+ * ## 本函数策略
+ * 作为最后一道防线：
  * - 优先剥离整段 `<...DSML...>...</...DSML...>`
  * - 兜底剥离零散残留的 `<...DSML...>` 单 token（跨 chunk 边界泄漏的碎片）
  * - 不尝试反解为 tool_calls（避免触发未授权副作用，且畸形变体解析风险大）
  *
+ * 命名上不带厂商前缀（"Leaked Special Tokens"），意图是当未来其他模型出现
+ * 同类问题时（例如 Qwen 漏 `<|im_xxx|>`、Llama 漏 `<|python_tag|>`），可以
+ * 直接扩展本函数的 regex，而非新开 `stripQwenTokens` / `stripLlamaTokens`
+ * 等并列函数造成上游调用方的认知碎片化。
+ *
  * @returns 净化后的内容 + 是否发生过泄漏（供调用方告警/遥测）
  */
-export function stripDeepSeekSpecialTokens(content: string): {
+export function stripLeakedSpecialTokens(content: string): {
   sanitized: string;
   hadLeak: boolean;
 } {
@@ -166,11 +177,17 @@ export function stripDeepSeekSpecialTokens(content: string): {
 }
 
 /**
+ * @deprecated 已重命名为 {@link stripLeakedSpecialTokens}（去除厂商前缀，
+ * 因实现本身是通用的）。下个大版本移除。
+ */
+export const stripDeepSeekSpecialTokens = stripLeakedSpecialTokens;
+
+/**
  * 一次性应用所有对话内容净化规则。
  * 顺序：先剥离结构性泄漏（DSML 等特殊 token），再修复 GFM 表格渲染问题。
  */
 export function normalizeAssistantContent(content: string): string {
   if (!content) return content;
-  const { sanitized } = stripDeepSeekSpecialTokens(content);
+  const { sanitized } = stripLeakedSpecialTokens(content);
   return fixGfmTables(sanitized);
 }
