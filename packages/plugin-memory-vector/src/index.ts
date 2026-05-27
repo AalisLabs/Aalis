@@ -685,6 +685,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                 `默认沿用插件配置（当前=${cfg.crossSessionMode}）。` +
                 '为安全起见，scope 只能比插件配置更窄，不能更宽。',
             },
+            contextWindow: {
+              type: 'number',
+              description:
+                `命中后是否再取该消息在原会话中前后 N 条相邻消息（含 user/assistant/system/tool）还原情景。` +
+                `0 = 仅命中本身。建议 2~5。负数会报错。` +
+                `默认沿用插件配置（当前=${cfg.contextExpand.window}），且最终值不会超过插件上限。`,
+            },
+            crossSession: {
+              type: 'boolean',
+              description:
+                '若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文。' +
+                `默认沿用插件配置（当前=${cfg.contextExpand.crossSession}）；若插件已禁用则本参数传 true 也无效。`,
+            },
           },
           required: ['query'],
         },
@@ -696,6 +709,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       const requestedTopK = Math.min(15, Math.max(1, Number(args.topK) || cfg.search.topK));
       const requestedScope = args.scope as 'session' | 'platform' | 'all' | undefined;
+
+      // contextWindow：默认沿用插件配置；提供时校验非负整数，取 min(cfg, requested)
+      let effectiveWindow = cfg.contextExpand.window;
+      if (args.contextWindow !== undefined && args.contextWindow !== null) {
+        const w = Number(args.contextWindow);
+        if (!Number.isFinite(w) || w < 0 || !Number.isInteger(w)) {
+          return JSON.stringify({ error: 'contextWindow 必须是非负整数（0 表示仅命中本身）' });
+        }
+        effectiveWindow = Math.min(cfg.contextExpand.window, Math.floor(w));
+      }
+      // crossSession：取 cfg AND requested（任一为 false 都收紧到 false）
+      const effectiveCrossSession =
+        cfg.contextExpand.crossSession && (args.crossSession === undefined ? true : Boolean(args.crossSession));
 
       // scope 收紧规则：插件配置 isolated 时强制 session；否则取插件配置和请求的较严者
       const modeRank: Record<CrossSessionMode | 'session', number> = {
@@ -750,6 +776,58 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           return JSON.stringify({ ok: true, query, results: [], message: '无命中' });
         }
 
+        // 为每个命中按 sessionId 取 ±W 条相邻消息（情景扩展）
+        // 仅当 effectiveWindow > 0 且 memory 服务支持范围查询时启用
+        type CtxEntry = { ts: number; role: string; text: string };
+        const contextBySessionPivot = new Map<string, CtxEntry[]>(); // key = `${sid}|${ts}`
+        if (effectiveWindow > 0 && hasRangeQuery && memory?.getMessagesBySessionRange) {
+          // 按 sessionId 聚合 pivots
+          const sessionPivots = new Map<string, number[]>();
+          for (const r of top) {
+            const sid = r.metadata.sessionId as string | undefined;
+            const ts = r.metadata.timestamp as number | undefined;
+            if (!sid || ts === undefined) continue;
+            if (!effectiveCrossSession && sid !== curSessionId) continue;
+            const arr = sessionPivots.get(sid) ?? [];
+            arr.push(ts);
+            sessionPivots.set(sid, arr);
+          }
+
+          for (const [sid, pivots] of sessionPivots) {
+            const minTs = Math.min(...pivots);
+            const maxTs = Math.max(...pivots);
+            const bufferMs = 4 * 60 * 60 * 1000; // 4h 缓冲，足以覆盖 W=10 邻居
+            try {
+              const all = await memory.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
+              const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+              for (const pivotTs of pivots) {
+                const pivotIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
+                const idx = pivotIdx >= 0 ? pivotIdx : sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs);
+                if (idx < 0) continue;
+                const start = Math.max(0, idx - effectiveWindow);
+                const end = Math.min(sorted.length, idx + effectiveWindow + 1);
+                const ctxArr: CtxEntry[] = [];
+                for (let i = start; i < end; i++) {
+                  if (i === idx) continue; // 命中本身不重复
+                  const m = sorted[i];
+                  if (!m.content) continue;
+                  if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
+                  ctxArr.push({
+                    ts: m.timestamp ?? 0,
+                    role: m.role,
+                    text: renderMemoryEntry(m, cfg.search.perItemMaxChars),
+                  });
+                }
+                if (ctxArr.length > 0) contextBySessionPivot.set(`${sid}|${pivotTs}`, ctxArr);
+              }
+            } catch (err) {
+              ctx.logger.warn(
+                `memory_recall 上下文扩展失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
+
         const results = top.map(r => {
           const m: Message = {
             role: 'user',
@@ -758,17 +836,26 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             name: r.metadata.userId as string | undefined,
             metadata: r.metadata,
           };
-          return {
+          const sid = r.metadata.sessionId as string;
+          const ts = (r.metadata.timestamp as number) ?? 0;
+          const ctxArr = contextBySessionPivot.get(`${sid}|${ts}`);
+          const base: Record<string, unknown> = {
             score: Number(r.finalScore.toFixed(4)),
             text: renderMemoryEntry(m, cfg.search.perItemMaxChars),
-            sessionId: r.metadata.sessionId,
+            sessionId: sid,
           };
+          if (ctxArr && ctxArr.length > 0) {
+            base.context = ctxArr.map(c => ({ role: c.role, text: c.text }));
+          }
+          return base;
         });
 
         return JSON.stringify({
           ok: true,
           query,
           scope: effectiveScope,
+          contextWindow: effectiveWindow,
+          crossSession: effectiveCrossSession,
           count: results.length,
           results,
         });
