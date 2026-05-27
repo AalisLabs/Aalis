@@ -3,6 +3,7 @@ import {
   fixGfmTables,
   normalizeAssistantContent,
   stripDeepSeekSpecialTokens,
+  stripLeakedSpecialTokens,
 } from '../../packages/util-text-normalize/src/index.js';
 
 describe('fixGfmTables', () => {
@@ -84,56 +85,60 @@ describe('fixGfmTables', () => {
   });
 });
 
-describe('stripDeepSeekSpecialTokens', () => {
+describe('stripLeakedSpecialTokens', () => {
   // 全角竖线 U+FF5C
   const FW = '｜';
 
   it('strips standard single-pipe DSML block', () => {
     const input = `${''}回答前缀<${FW}DSML${FW}tool_calls><${FW}DSML${FW}invoke name="web_search"><${FW}DSML${FW}parameter name="query" string="true">x</${FW}DSML${FW}parameter></${FW}DSML${FW}invoke></${FW}DSML${FW}tool_calls>`;
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(input);
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(input);
     expect(hadLeak).toBe(true);
     expect(sanitized).toBe('回答前缀');
   });
 
   it('strips double-pipe malformed DSML block (observed leak variant)', () => {
     const input = `<${FW}${FW}DSML${FW}${FW}tool_calls><${FW}${FW}DSML${FW}${FW}invoke name="web_search"><${FW}${FW}DSML${FW}${FW}parameter name="query" string="true">狗屁通 梗</${FW}${FW}DSML${FW}${FW}parameter></${FW}${FW}DSML${FW}${FW}invoke></${FW}${FW}DSML${FW}${FW}tool_calls>`;
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(input);
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(input);
     expect(hadLeak).toBe(true);
     expect(sanitized).toBe('');
   });
 
   it('strips half-width pipe variant', () => {
     const input = `prefix<|DSML|tool_calls>blah</|DSML|tool_calls>suffix`;
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(input);
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(input);
     expect(hadLeak).toBe(true);
     expect(sanitized).toBe('prefixsuffix');
   });
 
   it('strips dangling closing token only (cross-chunk fragment)', () => {
     const input = `已经发出的正文</${FW}${FW}DSML${FW}${FW}tool_calls>`;
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(input);
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(input);
     expect(hadLeak).toBe(true);
     expect(sanitized).toBe('已经发出的正文');
   });
 
   it('strips partial unclosed DSML opening (truncated stream)', () => {
     const input = `text<${FW}${FW}DSML${FW}${FW}tool_calls`;
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(input);
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(input);
     expect(hadLeak).toBe(true);
     expect(sanitized).toBe('text');
   });
 
   it('returns content unchanged when no DSML present', () => {
     const input = '普通回答，含 < 和 > 符号，以及 | 表格 |';
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(input);
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(input);
     expect(hadLeak).toBe(false);
     expect(sanitized).toBe(input);
   });
 
   it('handles empty input', () => {
-    const { sanitized, hadLeak } = stripDeepSeekSpecialTokens('');
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens('');
     expect(hadLeak).toBe(false);
     expect(sanitized).toBe('');
+  });
+
+  it('deprecated alias stripDeepSeekSpecialTokens still points to stripLeakedSpecialTokens', () => {
+    expect(stripDeepSeekSpecialTokens).toBe(stripLeakedSpecialTokens);
   });
 });
 
