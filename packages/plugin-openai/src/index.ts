@@ -2,7 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
-import { toLLMRole } from '@aalis/plugin-message-api';
+import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -189,7 +189,7 @@ class OpenAIClient {
   }
 
   async chat(model: string, request: ChatModelRequest): Promise<ChatResponse> {
-    const messages = request.messages.map(m => this.toAPIMessage(m));
+    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -254,7 +254,7 @@ class OpenAIClient {
   }
 
   async *chatStream(model: string, request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
-    const messages = request.messages.map(m => this.toAPIMessage(m));
+    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -405,15 +405,12 @@ class OpenAIClient {
   }
 
   private toAPIMessage(msg: Message): APIMessage {
-    const llmRole = toLLMRole(msg.role);
-    // 自定义 role（如 notice）需要给文本加上类型前缀，确保 LLM 能区分它来自系统观察而非 persona 指令
-    const content =
-      llmRole !== msg.role && typeof msg.content === 'string' && msg.content.length > 0
-        ? `[系统通知] ${msg.content}`
-        : msg.content;
+    // 调用方已经 prepareLLMMessages 处理过：role 已是 WellKnownRole，
+    // 自定义 role / kind 的前缀（[系统通知] / [跨会话委派] 等）已拼接进 content。
+    // 这里只需透传。toLLMRole 作为防御性幂等调用。
     const apiMsg: APIMessage = {
-      role: llmRole,
-      content,
+      role: toLLMRole(msg.role),
+      content: msg.content,
     };
 
     // 多模态：如果消息包含图片，构造 content 数组

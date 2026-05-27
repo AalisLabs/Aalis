@@ -3,7 +3,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
-import { getMessageName, getSenderLabel, prefixSender } from '@aalis/plugin-message-api';
+import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/plugin-message-api';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { MessageArchiveCapabilities } from '@aalis/plugin-message-archive-api';
 
@@ -160,7 +160,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       const message: Message = {
         role: isProactive ? 'notice' : 'user',
-        kind: isProactive ? 'cross-session-delegation' : undefined,
+        kind: isProactive ? WellKnownKinds.CrossSessionDelegation : undefined,
         content,
         name: isProactive ? undefined : getMessageName(working.userId),
         timestamp: Date.now(),

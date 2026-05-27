@@ -1,5 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { Message } from '@aalis/plugin-message-api';
+import { WellKnownKinds } from '@aalis/plugin-message-api';
 import '@aalis/plugin-agent-api';
 import type { LLMModel } from '@aalis/plugin-llm-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
@@ -348,7 +349,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         if (archive)
           await archive.saveMessage(sessionId, {
             role: 'system',
-            kind: 'event-marker',
+            kind: WellKnownKinds.EventMarker,
             content: '对话已压缩',
             timestamp: summaryTs,
           });
@@ -562,7 +563,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           if (archive)
             await archive.saveMessage(data.sessionId, {
               role: 'system',
-              kind: 'event-marker',
+              kind: WellKnownKinds.EventMarker,
               content: '对话已压缩',
               timestamp: summaryTs,
             });
