@@ -13,6 +13,16 @@ export interface RecentMessagesAcrossSessionsQuery {
   excludeSessionIds?: string[];
   /** 角色过滤；省略时默认为 ['user', 'assistant']（system / tool 不会出现在跨会话注入里） */
   roles?: Array<Message['role']>;
+  /**
+   * Kind 白名单：仅返回 `message.kind ∈ kinds` 的条目；省略=不限。
+   * 与 `roles` 配合用作"role + kind"双维度细筛（例如 `roles:['notice'], kinds:['cross-session-delegation']`）。
+   */
+  kinds?: string[];
+  /**
+   * Kind 黑名单：排除 `message.kind ∈ excludeKinds` 的条目（即使在 `kinds` 白名单内也排除）。
+   * 典型用法：`excludeKinds: ['event-marker', 'cross-session-delegation']` 屏蔽控制类与委派类。
+   */
+  excludeKinds?: string[];
 }
 
 /** 跨会话查询结果条目 */
@@ -34,12 +44,17 @@ export interface MemoryService {
 
   // ----- 范围查询（供向量检索的上下文窗口扩展使用） -----
 
-  /** 范围查询：取指定会话内 [fromTs, toTs] 区间的消息（按时间升序，可按 role 过滤） */
+  /**
+   * 范围查询：取指定会话内 [fromTs, toTs] 区间的消息（按时间升序）。
+   * - `roles`：role 白名单，省略=不限。
+   * - `excludeKinds`：kind 黑名单（典型："event-marker" 等控制类标记），省略=不排除。
+   */
   getMessagesBySessionRange?(
     sessionId: string,
     fromTs: number,
     toTs: number,
     roles?: Array<Message['role']>,
+    excludeKinds?: string[],
   ): Promise<Message[]>;
 
   /**

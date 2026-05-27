@@ -1015,7 +1015,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const memory = ctx.getService<MemoryService>('memory');
     try {
       if (!memory?.getHistory) return;
-      const history = await memory.getHistory(sessionId, cfg.historyForExtraction);
+      const rawHistory = await memory.getHistory(sessionId, cfg.historyForExtraction);
+      // 跨会话委派是另一个 agent 实例发出的指令·不是该用户发言，不能作为他的用户存档提取语料
+      const history = rawHistory.filter(m => m.kind !== 'cross-session-delegation');
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
       const profile = (await loadProfile(userKey)) ?? {
@@ -1200,7 +1202,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.getHistory) return;
-      const history = await memory.getHistory(sessionId, cfg.selfReflectHistory);
+      const rawHistory = await memory.getHistory(sessionId, cfg.selfReflectHistory);
+      const history = rawHistory.filter(m => m.kind !== 'cross-session-delegation');
       // 至少需要一些 assistant 发言作为"自反思"的材料
       if (!history.some(m => m.role === 'assistant' && m.content)) return;
       const selfKey = getSelfKey();
@@ -1376,7 +1379,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
       next,
     ) => {
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'user-profile')) {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'user-profile')) {
         await next();
         return;
       }
@@ -1568,7 +1571,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           ...blocksToInsert.map(content => ({
             role: 'system' as const,
             content,
-            metadata: { source: 'user-profile' },
+            metadata: { injector: 'user-profile' },
           })),
         );
       }

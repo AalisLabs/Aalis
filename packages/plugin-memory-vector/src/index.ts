@@ -464,7 +464,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
       next: MiddlewareNext,
     ) => {
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-vector')) {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'memory-vector')) {
         await next();
         return;
       }
@@ -592,7 +592,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                 for (let i = start; i < end; i++) {
                   const m = sorted[i];
                   if (!m.content) continue;
-                  if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
+                  if (m.kind === 'event-marker') continue;
                   if (currentContents.has((m.content ?? '').trim())) continue;
                   const key = messageKey(sid, m);
                   if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: m });
@@ -642,7 +642,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         data.messages.splice(insertIdx, 0, {
           role: 'system',
           content: contextBlock,
-          metadata: { source: 'memory-vector' },
+          metadata: { injector: 'memory-vector' },
         });
       } catch (err) {
         ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
@@ -811,7 +811,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                   if (i === idx) continue; // 命中本身不重复
                   const m = sorted[i];
                   if (!m.content) continue;
-                  if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
+                  if (m.kind === 'event-marker') continue;
                   ctxArr.push({
                     ts: m.timestamp ?? 0,
                     role: m.role,

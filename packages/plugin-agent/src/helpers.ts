@@ -76,7 +76,7 @@ export function buildFocusGuidance(incoming: IncomingMessage): Message | null {
       '行为、观点），你的回应应当针对"被指向的对象"，而不是把"陈述者本人"当成评价主体。',
       '群里前面其他成员的长篇陈述只是背景上下文，不是焦点。',
     ].join('\n'),
-    metadata: { source: 'focus-guidance' },
+    metadata: { injector: 'focus-guidance' },
   };
 }
 
