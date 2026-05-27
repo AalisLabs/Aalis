@@ -12,6 +12,7 @@
 import type { Context } from '@aalis/core';
 import {
   type CronEngine,
+  type CronSubscribeOptions,
   matchesCron,
   normalizeCronExpr,
   type ValidateResult,
@@ -27,6 +28,8 @@ interface CronSubscription {
   id: number;
   normalized: string; // 5 字段标准 cron
   handler: () => void | Promise<void>;
+  /** 可选 IANA 时区；未设 = 进程本地 */
+  timeZone?: string;
 }
 
 interface IntervalSubscription {
@@ -58,7 +61,7 @@ export function apply(ctx: Context): void {
     const now = new Date();
     now.setSeconds(0, 0);
     for (const sub of cronSubs.values()) {
-      if (matchesCron(sub.normalized, now)) {
+      if (matchesCron(sub.normalized, now, sub.timeZone)) {
         try {
           const r = sub.handler();
           if (r instanceof Promise) {
@@ -72,7 +75,7 @@ export function apply(ctx: Context): void {
   }
 
   const service: CronEngine = {
-    subscribe(expr, handler) {
+    subscribe(expr, handler, options?: CronSubscribeOptions) {
       const v = validateCronExpr(expr);
       if (!v.ok) throw new Error(v.reason);
       const id = nextId++;
@@ -99,7 +102,16 @@ export function apply(ctx: Context): void {
       // cron
       const normalized = normalizeCronExpr(expr);
       if (!normalized) throw new Error(`非法 cron 表达式: ${expr}`);
-      cronSubs.set(id, { id, normalized, handler });
+      const tz = options?.timeZone?.trim() || undefined;
+      // 提前验证 tz 可用，薄弱文本验证会静默接受乱填、到了分钟才报
+      if (tz) {
+        try {
+          new Intl.DateTimeFormat('en-US', { timeZone: tz });
+        } catch {
+          throw new Error(`非法时区: ${tz}`);
+        }
+      }
+      cronSubs.set(id, { id, normalized, handler, timeZone: tz });
       ensureCronLoop();
       return () => {
         cronSubs.delete(id);
@@ -110,18 +122,19 @@ export function apply(ctx: Context): void {
       return validateCronExpr(expr);
     },
 
-    nextFireTime(expr, from = new Date(), lookaheadMinutes = 366 * 24 * 60) {
+    nextFireTime(expr, from = new Date(), lookaheadMinutes = 366 * 24 * 60, options?: CronSubscribeOptions) {
       const v = validateCronExpr(expr);
       if (!v.ok) return null;
       if (v.kind === 'interval') {
         return from.getTime() + (v.intervalSeconds ?? 0) * 1000;
       }
+      const tz = options?.timeZone?.trim() || undefined;
       const start = new Date(from);
       start.setSeconds(0, 0);
       start.setMinutes(start.getMinutes() + 1); // 下一整分钟起
       for (let i = 0; i < lookaheadMinutes; i++) {
         const candidate = new Date(start.getTime() + i * 60_000);
-        if (matchesCron(v.normalized, candidate)) return candidate.getTime();
+        if (matchesCron(v.normalized, candidate, tz)) return candidate.getTime();
       }
       return null;
     },
