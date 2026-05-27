@@ -403,6 +403,12 @@ class DeepSeekClient {
     /** 流式累积内容，用于检测 DSML 泄漏 */
     let accContent = '';
     let dsmlDetected = false;
+    /**
+     * 跨 chunk 尾缓冲：当当前 delta 末尾形如未闭合的 special token 起始片段
+     * （`<` 或 `<｜...` 等），暂存到下一帧再判定，避免半截 DSML 起始已经
+     * emit 给下游、等下一帧匹配上完整 DSML 时已经收不回来。
+     */
+    let pendingTail = '';
 
     if (!response.body) {
       throw new Error('DeepSeek API 返回了空的响应体，无法进行流式读取');
@@ -438,6 +444,12 @@ class DeepSeekClient {
           if (!trimmed?.startsWith('data: ')) continue;
           const payload = trimmed.slice(6);
           if (payload === '[DONE]') {
+            // Flush 残留尾缓冲：流结束后 pendingTail 已不可能是 DSML 起始
+            // （DSML 都没等到下一帧），按合法字符 emit 出去
+            if (pendingTail && !dsmlDetected) {
+              yield { contentDelta: pendingTail };
+              pendingTail = '';
+            }
             const toolCalls: ToolCall[] = [];
             for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
               toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
@@ -454,6 +466,8 @@ class DeepSeekClient {
             const chunk: ChatStreamChunk = {};
             if (delta.content) {
               if (!dsmlDetected) {
+                // 合并尾缓冲 + 本次 delta 作为本帧候选 emit 内容
+                const candidate = pendingTail + delta.content;
                 accContent += delta.content;
                 // 检测 DSML 起始标记。已知变体：
                 //   - 单竖线（标准）：<｜DSML｜tool_calls>
@@ -468,11 +482,25 @@ class DeepSeekClient {
                   );
                   // 输出 DSML 之前的部分（如果有）
                   const cleanPart = accContent.slice(0, dsmlIdx);
-                  const prevLen = accContent.length - delta.content.length;
-                  const cleanDelta = cleanPart.slice(prevLen);
+                  // 已发字节数 = accContent.length - candidate.length（candidate 即"本帧合并后待 emit"）
+                  const prevEmitted = accContent.length - candidate.length;
+                  const cleanDelta = cleanPart.slice(prevEmitted);
                   if (cleanDelta) chunk.contentDelta = cleanDelta;
+                  pendingTail = '';
                 } else {
-                  chunk.contentDelta = delta.content;
+                  // 未检测到完整 DSML：识别 candidate 尾部是否是"可能的 special token 起始"
+                  // - 形如 `<` 单独
+                  // - 形如 `<｜...` 或 `<|...`（即 special token 前缀，还未闭合 `>`）
+                  // 命中则把这段尾部留到下一帧再判，避免漏出半截 `<｜｜DS` 这种碎片
+                  const tailMatch = candidate.match(/<$|<[｜|]+[^<>]{0,20}$/);
+                  if (tailMatch) {
+                    pendingTail = tailMatch[0];
+                    const emitPart = candidate.slice(0, candidate.length - pendingTail.length);
+                    if (emitPart) chunk.contentDelta = emitPart;
+                  } else {
+                    pendingTail = '';
+                    chunk.contentDelta = candidate;
+                  }
                 }
               }
               // dsmlDetected = true 时不再 emit content
@@ -520,6 +548,11 @@ class DeepSeekClient {
       reader.releaseLock();
     }
 
+    // 流意外结束（未见 [DONE]）也要 flush 尾缓冲
+    if (pendingTail && !dsmlDetected) {
+      yield { contentDelta: pendingTail };
+      pendingTail = '';
+    }
     const toolCalls: ToolCall[] = [];
     for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
       toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
