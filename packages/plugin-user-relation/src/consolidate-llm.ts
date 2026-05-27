@@ -27,18 +27,78 @@ export function resolveConsolidateModel(ctx: Context, cfg: ConsolidateLLMConfig 
  * (A) 判断两个实体是否为同一实体。LLM 输出 JSON：{"isSame": boolean, "reason": string}
  * 解析失败或 LLM 表示不是 → 返回 false。
  *
- * F2：可选 context 给 LLM 喂"上下文证据"——每边 ≤3 条 evidence 片段 + 邻居人数/事件数。
- * 提供后 LLM 判断更稳（能识别同名异物——例如同名不同游戏角色，邻居完全不重叠）。
+ * F2 / 统一改造：给 LLM 喂"对称且丰富"的上下文，便于科学判断是否合并：
+ *   - 双方 ≤3 条 evidence 文本片段
+ *   - 双方邻居 **总数 + top-K {name,weight}**（按 weight 倒序）
+ *   - 可用的相似度分数（cosine / jaccard / structural / fused，任意子集）
+ * 与 verifyEventPair 共用 PairNeighborProfile / PairScores 形态。
  */
+
+/** 邻居剖面：人/事件/实体三类，各含总数 + top-K (name, weight) */
+export interface PairNeighborProfile {
+  peopleCount: number;
+  eventCount: number;
+  entityCount: number;
+  topPeople: Array<{ name: string; weight: number }>;
+  topEvents: Array<{ name: string; weight: number }>;
+  topEntities: Array<{ name: string; weight: number }>;
+}
+
+/** 候选对相似度分数（各项独立可选；缺失字段不渲染） */
+interface PairScores {
+  /** 余弦相似（embedding 向量内积）0..1 */
+  cosineScore?: number;
+  /** 文本/集合 Jaccard 相似 0..1（事件用 title+aliases token；实体用 name+aliases） */
+  jaccardScore?: number;
+  /** 结构相似（Katz + AA 等图相似度融合）0..1 */
+  structuralScore?: number;
+  /** 综合分（例如 0.7·cos + 0.3·struct）0..1 */
+  fusedScore?: number;
+}
+
 interface AliasPairContext {
   /** A 节点 ≤3 条 evidence 文本片段（已截断） */
   aEvidenceQuotes?: string[];
   /** B 节点 ≤3 条 evidence 文本片段 */
   bEvidenceQuotes?: string[];
-  /** A 节点邻居人数 / 事件数 / 实体数（来自 snapshot 统计） */
-  aNeighbors?: { people: number; events: number; entities: number };
-  /** B 节点邻居人数 / 事件数 / 实体数 */
-  bNeighbors?: { people: number; events: number; entities: number };
+  /** A 节点邻居剖面（计数 + top-K 名字+权重） */
+  aNeighbors?: PairNeighborProfile;
+  /** B 节点邻居剖面 */
+  bNeighbors?: PairNeighborProfile;
+  /** 候选对相似度分数（可选子集） */
+  scores?: PairScores;
+}
+
+/** 渲染相似度分数行（仅渲染已提供的字段） */
+function fmtScores(s?: PairScores): string {
+  if (!s) return '';
+  const parts: string[] = [];
+  if (typeof s.cosineScore === 'number') parts.push(`cos ${s.cosineScore.toFixed(2)}`);
+  if (typeof s.jaccardScore === 'number') parts.push(`jaccard ${s.jaccardScore.toFixed(2)}`);
+  if (typeof s.structuralScore === 'number') parts.push(`struct ${s.structuralScore.toFixed(2)}`);
+  if (typeof s.fusedScore === 'number') parts.push(`fused ${s.fusedScore.toFixed(2)}`);
+  return parts.length ? `相似度信号：${parts.join(' / ')}` : '';
+}
+
+/** 渲染邻居剖面：保留"邻居：人物 N / 事件 M / 实体 K"计数行 + 新增 top-K 名字+权重 */
+function fmtNeighborProfile(n?: PairNeighborProfile): string {
+  if (!n) return '';
+  const lines: string[] = [];
+  lines.push(`邻居：人物 ${n.peopleCount} / 事件 ${n.eventCount} / 实体 ${n.entityCount}`);
+  const renderTop = (label: string, list: Array<{ name: string; weight: number }>): string | null =>
+    list.length === 0 ? null : `  ${label}: ${list.map(x => `${x.name}(${x.weight.toFixed(2)})`).join('、')}`;
+  const tp = renderTop('top 人物', n.topPeople);
+  const te = renderTop('top 事件', n.topEvents);
+  const tn = renderTop('top 实体', n.topEntities);
+  if (tp) lines.push(tp);
+  if (te) lines.push(te);
+  if (tn) lines.push(tn);
+  return lines.join('\n');
+}
+
+function fmtEvidence(qs?: string[]): string {
+  if (!qs || qs.length === 0) return '';
+  return `近期证据片段：\n${qs.map(q => `  · ${q}`).join('\n')}`;
 }
 
 export async function verifyAliasPair(
@@ -49,12 +109,6 @@ export async function verifyAliasPair(
   disableThinking = true,
   context?: AliasPairContext,
 ): Promise<{ isSame: boolean; reason: string }> {
-  const fmtNeighbors = (n?: { people: number; events: number; entities: number }): string =>
-    n ? `邻居：人物 ${n.people} / 事件 ${n.events} / 实体 ${n.entities}` : '';
-  const fmtEvidence = (qs?: string[]): string => {
-    if (!qs || qs.length === 0) return '';
-    return `近期证据片段：\n${qs.map(q => `  · ${q}`).join('\n')}`;
-  };
   const prompt = [
     {
       role: 'system' as const,
@@ -71,7 +125,7 @@ export async function verifyAliasPair(
         `类型: ${a.entityKind}`,
         a.aliases?.length ? `别名: ${a.aliases.join(', ')}` : '',
         a.summary ? `摘要: ${a.summary}` : '',
-        fmtNeighbors(context?.aNeighbors),
+        fmtNeighborProfile(context?.aNeighbors),
         fmtEvidence(context?.aEvidenceQuotes),
         '',
         '【B】',
@@ -79,14 +133,18 @@ export async function verifyAliasPair(
         `类型: ${b.entityKind}`,
         b.aliases?.length ? `别名: ${b.aliases.join(', ')}` : '',
         b.summary ? `摘要: ${b.summary}` : '',
-        fmtNeighbors(context?.bNeighbors),
+        fmtNeighborProfile(context?.bNeighbors),
         fmtEvidence(context?.bEvidenceQuotes),
+        '',
+        fmtScores(context?.scores),
         '',
         '判定要点：',
         '- 名称相同未必同一对象（例如同名的不同游戏角色、不同公司同名项目）；',
         '- 类型不同时仍可能为同一对象——上游抽取可能把同一概念识别为不同 kind（如把游戏卡牌 "X" 既抽成 thing、又把同名概念抽成 topic；把同名作品既抽成 work 又抽成 thing），此时若名称完全相同、证据上下文相互兼容，倾向判是（合并后系统会保留更优 kind 与摘要）；',
         '- 但若类型完全不可调和（如 person vs work / place vs topic）且证据上下文截然不同，仍应判否；',
-        '- 若两侧的邻居（关联人物/事件/实体）完全没有重叠，且证据片段的上下文话题截然不同，倾向判否；',
+        '- 邻居重叠是强证据：若双方 top 人物/事件/实体出现明显同名重合（即便权重不同），强烈倾向判是；',
+        '- 若两侧的邻居完全没有重叠，且证据片段的上下文话题截然不同，倾向判否；',
+        '- 相似度分数（若提供）：cos/jaccard ≥ 0.85 是强信号，0.6~0.85 中等，< 0.6 仅作辅助；',
         '- 若证据片段中出现"A 又叫 B / B 即 A / 两者通用"等明示同一性的表达，倾向判是。',
       ]
         .filter(Boolean)
@@ -111,16 +169,17 @@ export async function verifyAliasPair(
  * 调用方应已经过结构相似 + 文本相似双向过滤（避免对全图 N² 个 pair 调 LLM）。
  * 解析失败 / 异常 → 视为 false（保守不合并）。
  *
- * context.aEvidenceQuotes 给 LLM 提供原文上下文（每边 ≤3 条 evidence 截断），
- * 有助于区分「同一事件多次描述」vs「不同次发生的同类事件」。
+ * 统一改造：与 verifyAliasPair 对称，同时接收邻居剖面（计数 + top-K 名字+权重）+ 多维相似度分数。
  */
 interface EventPairContext {
   aEvidenceQuotes?: string[];
   bEvidenceQuotes?: string[];
-  /** 结构相似（Katz + AA 融合）分数，供 LLM 参考 */
-  structuralScore?: number;
-  /** 文本相似（cos 或 jaccard）分数 */
-  textualScore?: number;
+  /** A 事件邻居剖面（计数 + top-K 名字+权重） */
+  aNeighbors?: PairNeighborProfile;
+  /** B 事件邻居剖面 */
+  bNeighbors?: PairNeighborProfile;
+  /** 候选对相似度分数 */
+  scores?: PairScores;
 }
 
 export async function verifyEventPair(
@@ -131,16 +190,6 @@ export async function verifyEventPair(
   disableThinking = true,
   context?: EventPairContext,
 ): Promise<{ isSame: boolean; reason: string }> {
-  const fmtEvidence = (qs?: string[]): string => {
-    if (!qs || qs.length === 0) return '';
-    return `近期证据片段：\n${qs.map(q => `  · ${q}`).join('\n')}`;
-  };
-  const fmtSim = (): string => {
-    const parts: string[] = [];
-    if (typeof context?.structuralScore === 'number') parts.push(`结构相似 ${context.structuralScore.toFixed(2)}`);
-    if (typeof context?.textualScore === 'number') parts.push(`文本相似 ${context.textualScore.toFixed(2)}`);
-    return parts.length ? `相似度信号：${parts.join(' / ')}` : '';
-  };
   const prompt = [
     {
       role: 'system' as const,
@@ -158,6 +207,7 @@ export async function verifyEventPair(
         a.category ? `类别: ${a.category}` : '',
         a.aliases?.length ? `别名: ${a.aliases.join(', ')}` : '',
         a.summary ? `摘要: ${a.summary}` : '',
+        fmtNeighborProfile(context?.aNeighbors),
         fmtEvidence(context?.aEvidenceQuotes),
         '',
         '【B】',
@@ -165,15 +215,18 @@ export async function verifyEventPair(
         b.category ? `类别: ${b.category}` : '',
         b.aliases?.length ? `别名: ${b.aliases.join(', ')}` : '',
         b.summary ? `摘要: ${b.summary}` : '',
+        fmtNeighborProfile(context?.bNeighbors),
         fmtEvidence(context?.bEvidenceQuotes),
         '',
-        fmtSim(),
+        fmtScores(context?.scores),
         '',
         '判定要点：',
         '- 同一话题在短时间内被多次提及（例如「讨论夏天炎热」「讨论夏季发热」）→ 同一事件；',
         '- 同一事件被不同视角 / 不同人复述（标题/摘要差异大但内核一致）→ 同一事件；',
+        '- 邻居重叠是强证据：若双方 top 人物/实体出现明显同名重合，强烈倾向判是；',
         '- 不同次独立发生的同类事件（如两次不同的雷雨）→ 不同事件；',
-        '- 类别差异大、证据上下文话题截然不同 → 倾向判否。',
+        '- 相似度分数（若提供）：cos/fused ≥ 0.85 是强信号，0.6~0.85 中等，< 0.6 仅作辅助；struct 主要反映共邻边重叠；',
+        '- 类别差异大、邻居完全无重叠、证据上下文话题截然不同 → 倾向判否。',
       ]
         .filter(Boolean)
         .join('\n'),
