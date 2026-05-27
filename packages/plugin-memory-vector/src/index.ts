@@ -2,7 +2,7 @@ import type { ConfigSchema, Context, MiddlewareNext } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
-import { prefixSender } from '@aalis/plugin-message-api';
+import { prefixSender, WellKnownKinds } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import '@aalis/plugin-agent-api';
@@ -464,7 +464,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
       next: MiddlewareNext,
     ) => {
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === 'memory-vector')) {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'memory-vector')) {
         await next();
         return;
       }
@@ -592,7 +592,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                 for (let i = start; i < end; i++) {
                   const m = sorted[i];
                   if (!m.content) continue;
-                  if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
+                  if (m.kind === WellKnownKinds.EventMarker) continue;
                   if (currentContents.has((m.content ?? '').trim())) continue;
                   const key = messageKey(sid, m);
                   if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: m });
@@ -609,7 +609,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           const sid = r.metadata.sessionId as string | undefined;
           const ts = r.metadata.timestamp as number | undefined;
           if (!sid || ts === undefined) continue;
-          if (r.metadata.content === '对话已压缩') continue;
+          // 注：indexUserMessage 仅索引 user IncomingMessage，不会写入 event-marker / 压缩标记。
+          // 这里无需额外过滤「对话已压缩」这类控制消息。
           const fakeMsg: Message = {
             role: 'user',
             content: (r.metadata.content as string) ?? '',
@@ -642,7 +643,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         data.messages.splice(insertIdx, 0, {
           role: 'system',
           content: contextBlock,
-          metadata: { source: 'memory-vector' },
+          metadata: { injector: 'memory-vector' },
         });
       } catch (err) {
         ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
@@ -811,7 +812,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                   if (i === idx) continue; // 命中本身不重复
                   const m = sorted[i];
                   if (!m.content) continue;
-                  if (m.role === 'system' && m.name === 'system-event' && m.content === '对话已压缩') continue;
+                  if (m.kind === WellKnownKinds.EventMarker) continue;
                   ctxArr.push({
                     ts: m.timestamp ?? 0,
                     role: m.role,

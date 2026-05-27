@@ -509,7 +509,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   if (config.discoveryEnabled) {
     ctx.middleware('agent:llm:before', async (data, next) => {
       // 防重：同一 messages 数组中已有 discovery system 块就跳过
-      const hasDiscovery = data.messages.some(m => m.role === 'system' && m.metadata?.source === DISCOVERY_SOURCE);
+      const hasDiscovery = data.messages.some(m => m.role === 'system' && m.metadata?.injector === DISCOVERY_SOURCE);
       const visible = getAllowedSkills();
       if (!hasDiscovery && visible.length > 0) {
         const lines = visible.map(s => `- ${s.name}: ${s.description}`);
@@ -521,7 +521,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         data.messages.splice(insertIdx, 0, {
           role: 'system',
           content: block,
-          metadata: { source: DISCOVERY_SOURCE },
+          metadata: { injector: DISCOVERY_SOURCE },
         });
       }
 
@@ -531,7 +531,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         if (loaded && loaded.size > 0) {
           for (const skillName of loaded) {
             const sourceTag = ACTIVATION_SOURCE_PREFIX + skillName;
-            const already = data.messages.some(m => m.role === 'system' && m.metadata?.source === sourceTag);
+            const already = data.messages.some(m => m.role === 'system' && m.metadata?.injector === sourceTag);
             if (already) continue;
             const skill = skillsCache.get(skillName);
             if (!skill) continue;
@@ -549,7 +549,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
             data.messages.splice(insertIdx, 0, {
               role: 'system',
               content: block,
-              metadata: { source: sourceTag },
+              metadata: { injector: sourceTag },
             });
           }
         }
