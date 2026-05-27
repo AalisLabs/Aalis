@@ -40,6 +40,9 @@ export const inject = {
 };
 
 const PROFILE_NS = 'user:profile';
+/** Aalis 自档案的 userKey。userKeyOf 形如 `platform:userId`，
+ *  这里用 `__self__:aalis` 这种不可能在真实平台出现的形式做隔离 */
+const SELF_KEY = '__self__:aalis';
 
 export const configSchema: ConfigSchema = {
   extractEveryNMessages: {
@@ -130,6 +133,44 @@ export const configSchema: ConfigSchema = {
       '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
     default: false,
   },
+  enableAalisFeelings: {
+    type: 'boolean',
+    label: '启用 Aalis 对用户的主观感受',
+    description:
+      '在每位用户的客观事实档案之外，额外让 Aalis 以「主观视角」记录对该用户的态度/情感/边缘观察（独立 schema，注入 prompt 时单独成段）。复用同一次 LLM 提取调用，不增加额外成本',
+    default: true,
+  },
+  maxFeelingsPerUser: {
+    type: 'number',
+    label: 'Aalis 对单个用户的感受条数上限',
+    description: '超出后保留最近写入的若干条，旧感受自动淘汰。建议比客观事实少，避免越积越多',
+    default: 15,
+  },
+  enableSelfProfile: {
+    type: 'boolean',
+    label: '启用 Aalis 自档案',
+    description:
+      '让 Aalis 周期性地反思自身，提炼「关于自己的事实」（近期心情走向、在意的事、自我观察）。注入到所有 LLM 调用的 system prompt 早段，提供跨会话的人格延续性',
+    default: true,
+  },
+  selfReflectEveryNMessages: {
+    type: 'number',
+    label: 'Aalis 自反思触发频次',
+    description: '全局累计入站消息每 N 条触发一次自反思。建议比单用户提取慢（默认 25），避免抖动',
+    default: 25,
+  },
+  selfReflectHistory: {
+    type: 'number',
+    label: '自反思参考历史条数',
+    description: '触发自反思时，从触发会话取最近多少条消息作为反思材料',
+    default: 16,
+  },
+  maxSelfFacts: {
+    type: 'number',
+    label: 'Aalis 自档案事实上限',
+    description: '超出后按 updatedAt 升序淘汰最久未更新的',
+    default: 20,
+  },
 };
 
 export const defaultConfig = {
@@ -146,6 +187,12 @@ export const defaultConfig = {
   relationIncrementInterval: 0.5,
   relationIncrementWitness: 0.1,
   allowGlobalBackfill: false,
+  enableAalisFeelings: true,
+  maxFeelingsPerUser: 15,
+  enableSelfProfile: true,
+  selfReflectEveryNMessages: 25,
+  selfReflectHistory: 16,
+  maxSelfFacts: 20,
 };
 
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
@@ -192,6 +239,8 @@ interface Fact {
 interface UserProfile {
   /** 关于该用户的事实列表（最新更新的在末尾） */
   facts: Fact[];
+  /** Aalis 对该用户的主观感受/态度/边缘观察（独立 schema） */
+  aalisFeelings?: Fact[];
   /** 0~100，基于持续互动累计并随时间衰减的关系强度 */
   relationScore?: number;
   /** 已观察到的入站互动次数 */
@@ -217,6 +266,12 @@ interface UserProfileConfig {
   relationIncrementWitness: number;
   extractLLM?: { provider: string; model: string };
   allowGlobalBackfill: boolean;
+  enableAalisFeelings: boolean;
+  maxFeelingsPerUser: number;
+  enableSelfProfile: boolean;
+  selfReflectEveryNMessages: number;
+  selfReflectHistory: number;
+  maxSelfFacts: number;
 }
 
 /** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
@@ -331,6 +386,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ? (config.extractLLM as { provider: string; model: string })
         : undefined,
     allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
+    enableAalisFeelings: (config.enableAalisFeelings as boolean) ?? true,
+    maxFeelingsPerUser: Math.max(0, (config.maxFeelingsPerUser as number) ?? 15),
+    enableSelfProfile: (config.enableSelfProfile as boolean) ?? true,
+    selfReflectEveryNMessages: Math.max(0, (config.selfReflectEveryNMessages as number) ?? 25),
+    selfReflectHistory: Math.max(4, (config.selfReflectHistory as number) ?? 16),
+    maxSelfFacts: Math.max(5, (config.maxSelfFacts as number) ?? 20),
   };
 
   /** 每会话每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
@@ -366,6 +427,42 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return s.length > 0 ? s.slice(0, 40) : undefined;
   }
 
+  /** 解析 metadata 中的事实数组（兼容旧格式 string[]，自动迁移） */
+  function parseFactArray(raw: unknown[]): Fact[] {
+    const usedIds = new Set<string>();
+    const facts: Fact[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string' && item.trim()) {
+        const id = genFactId(usedIds);
+        usedIds.add(id);
+        facts.push({ id, text: item.trim(), temporality: 'permanent', updatedAt: 0 });
+      } else if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>;
+        const text = typeof obj.text === 'string' ? obj.text.trim() : '';
+        if (!text) continue;
+        let id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : genFactId(usedIds);
+        while (usedIds.has(id)) id = genFactId(usedIds);
+        usedIds.add(id);
+        const cat =
+          typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
+            ? (obj.category as FactCategory)
+            : undefined;
+        const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
+        const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : updatedAt || undefined;
+        facts.push({
+          id,
+          text,
+          category: cat,
+          temporality: normalizeTemporality(obj.temporality, cat),
+          observedAt,
+          timeHint: normalizeTextField(obj.timeHint),
+          updatedAt,
+        });
+      }
+    }
+    return facts;
+  }
+
   /** 读取一个用户的现有档案（不存在返回 undefined）。兼容旧格式 string[]，自动迁移 */
   async function loadProfile(userKey: string): Promise<UserProfile | undefined> {
     const memory = ctx.getService<MemoryService>('memory');
@@ -373,42 +470,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const doc = await memory.getMetadata(PROFILE_NS, userKey);
       if (!doc) return undefined;
-      const raw = Array.isArray(doc.facts) ? (doc.facts as unknown[]) : [];
-      const usedIds = new Set<string>();
-      const facts: Fact[] = [];
-      for (const item of raw) {
-        if (typeof item === 'string' && item.trim()) {
-          // 旧格式：string → 包装为 Fact
-          const id = genFactId(usedIds);
-          usedIds.add(id);
-          facts.push({ id, text: item.trim(), temporality: 'permanent', updatedAt: 0 });
-        } else if (item && typeof item === 'object') {
-          const obj = item as Record<string, unknown>;
-          const text = typeof obj.text === 'string' ? obj.text.trim() : '';
-          if (!text) continue;
-          let id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : genFactId(usedIds);
-          // 去重 id
-          while (usedIds.has(id)) id = genFactId(usedIds);
-          usedIds.add(id);
-          const cat =
-            typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
-              ? (obj.category as FactCategory)
-              : undefined;
-          const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
-          const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : updatedAt || undefined;
-          facts.push({
-            id,
-            text,
-            category: cat,
-            temporality: normalizeTemporality(obj.temporality, cat),
-            observedAt,
-            timeHint: normalizeTextField(obj.timeHint),
-            updatedAt,
-          });
-        }
-      }
+      const facts = Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [];
       return {
         facts,
+        aalisFeelings: Array.isArray(doc.aalisFeelings) ? parseFactArray(doc.aalisFeelings as unknown[]) : undefined,
         relationScore: typeof doc.relationScore === 'number' ? Math.min(100, Math.max(0, doc.relationScore)) : 0,
         interactionCount: typeof doc.interactionCount === 'number' ? Math.max(0, Math.floor(doc.interactionCount)) : 0,
         lastInteractionAt: typeof doc.lastInteractionAt === 'number' ? doc.lastInteractionAt : undefined,
@@ -424,13 +489,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   async function saveProfile(userKey: string, profile: UserProfile): Promise<void> {
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory?.saveMetadata) return;
-    await memory.saveMetadata(PROFILE_NS, userKey, {
+    const payload: Record<string, unknown> = {
       facts: profile.facts,
       relationScore: profile.relationScore ?? 0,
       interactionCount: profile.interactionCount ?? 0,
       lastInteractionAt: profile.lastInteractionAt,
       updatedAt: profile.updatedAt,
-    });
+    };
+    if (profile.aalisFeelings && profile.aalisFeelings.length > 0) {
+      payload.aalisFeelings = profile.aalisFeelings;
+    }
+    await memory.saveMetadata(PROFILE_NS, userKey, payload);
   }
 
   interface ExtractAddItem {
@@ -452,6 +521,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     add: ExtractAddItem[];
     update: ExtractUpdateItem[];
     remove: string[];
+    /** Aalis 对该用户的主观感受 add/update/remove（结构与 facts 完全一致） */
+    feelingsAdd: ExtractAddItem[];
+    feelingsUpdate: ExtractUpdateItem[];
+    feelingsRemove: string[];
   }
 
   function normalizeCategory(v: unknown): FactCategory | undefined {
@@ -459,15 +532,41 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return (KNOWN_CATEGORIES as string[]).includes(v) ? (v as FactCategory) : undefined;
   }
 
-  /** 调用 LLM 从历史中提取/修订事实，返回 add / update / remove 三类操作 */
+  /** 调用 LLM 从历史中提取/修订事实，返回 add / update / remove 三类操作，
+   *  以及（可选）Aalis 对该用户的主观感受 feelings* 三类操作。 */
   async function llmExtractFacts(
     history: Message[],
     existingFacts: Fact[],
+    existingFeelings: Fact[],
     nickname: string | undefined,
     userId: string,
     platform: string,
   ): Promise<ExtractResult> {
-    const empty: ExtractResult = { add: [], update: [], remove: [] };
+    const empty: ExtractResult = {
+      add: [],
+      update: [],
+      remove: [],
+      feelingsAdd: [],
+      feelingsUpdate: [],
+      feelingsRemove: [],
+    };
+
+    const includeFeelings = cfg.enableAalisFeelings && cfg.maxFeelingsPerUser > 0;
+
+    const feelingsPrompt = includeFeelings
+      ? '\n\n## 额外任务：Aalis 对该用户的主观感受（aalisFeelings）\n' +
+        '除了上面的客观事实，你还要以「Aalis（你）」的第一人称视角，记录对该用户的**主观态度/情感/边缘观察**。' +
+        '这些是 Aalis 自己的内心感受、对这个人的印象、相处中形成的偏好，不是客观事实。' +
+        '\n规则：' +
+        '\n- 必须有 **反复出现** 的依据，不要凭一次互动下结论' +
+        '\n- 允许包含「关于自己的反思」（如「我注意到自己跟 ta 聊技术时容易激动」）让感受更立体' +
+        '\n- text 以 Aalis 的口吻写：「觉得他可靠」「和他聊天总是轻松」「对她的依赖让我有点不知所措」「他偶尔的冒犯让我警觉」等' +
+        '\n- 同样支持 add / update / remove；id 空间与 facts 独立' +
+        `\n- 单条不超过 ${cfg.maxFactCharsPerItem} 字；保守优先，没有就空数组` +
+        '\n- 不需要 sourceQuote（这是主观感受，不需要原话依据）' +
+        '\n- temporality：长期形成的印象用 permanent；近期情绪/状态用 temporary' +
+        '\n- 输出字段名：feelingsAdd / feelingsUpdate / feelingsRemove（与 add/update/remove 并列）'
+      : '';
 
     const sys =
       '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：' +
@@ -501,16 +600,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       `\n7. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}` +
       '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary' +
       '\n9. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串' +
+      feelingsPrompt +
       '\n\n输出严格的 JSON（不要其他文本）：' +
-      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]}';
+      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]' +
+      (includeFeelings
+        ? ', "feelingsAdd": [{"text": "Aalis 视角的感受", "temporality": "permanent|temporary"}], "feelingsUpdate": [{"id": "已知感受的id", "text": "...", "temporality": "permanent|temporary"}], "feelingsRemove": ["已知感受的id"]'
+        : '') +
+      '}';
 
     const factListText =
       existingFacts.length > 0
         ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
         : '（暂无）';
+    const feelingsListText = includeFeelings
+      ? existingFeelings.length > 0
+        ? existingFeelings.map(f => `[${f.id}] ${f.text}`).join('\n')
+        : '（暂无）'
+      : '';
     const who = nickname ? `${nickname}（${userId}）` : userId;
     const renderedHistory = renderHistoryForExtract(history, userId, platform);
-    const user = `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
+    const user =
+      `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}` +
+      (includeFeelings
+        ? `\n\n# 已知 Aalis 对该用户的感受（带 id，请在 feelingsUpdate/feelingsRemove 中精确引用 id）\n${feelingsListText}`
+        : '') +
+      `\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实，feelings 可基于整段历史）\n${renderedHistory || '（暂无会话历史）'}`;
 
     // 优先用 cfg.extractLLM 指定的模型；否则取默认 chat-capable LLM。
     const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
@@ -562,7 +676,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
         ctx.logger.debug('[user-profile] LLM 重试后解析成功');
       }
-      const parsedObj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
+      const parsedObj = parsed as {
+        add?: unknown;
+        update?: unknown;
+        remove?: unknown;
+        feelingsAdd?: unknown;
+        feelingsUpdate?: unknown;
+        feelingsRemove?: unknown;
+      };
       const add: ExtractAddItem[] = Array.isArray(parsedObj.add)
         ? (parsedObj.add as unknown[]).flatMap(x => {
             if (!x || typeof x !== 'object') return [];
@@ -644,10 +765,62 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         void _omit;
         return rest;
       };
+
+      // feelings：与 facts 同 schema，但不要求 category/sourceQuote
+      const parseFeelingItem = (x: unknown, withId: boolean): (ExtractAddItem & Partial<{ id: string }>) | null => {
+        if (!x || typeof x !== 'object') return null;
+        const o = x as Record<string, unknown>;
+        const t = typeof o.text === 'string' ? o.text.trim() : '';
+        if (!t) return null;
+        const item: ExtractAddItem & Partial<{ id: string }> = {
+          text: t,
+          temporality: normalizeTemporality(o.temporality),
+          timeHint: normalizeTextField(o.timeHint),
+        };
+        if (withId) {
+          const id = typeof o.id === 'string' ? o.id.trim() : '';
+          if (!id) return null;
+          item.id = id;
+        }
+        return item;
+      };
+      const feelingsAdd: ExtractAddItem[] =
+        includeFeelings && Array.isArray(parsedObj.feelingsAdd)
+          ? (parsedObj.feelingsAdd as unknown[]).flatMap(x => {
+              const it = parseFeelingItem(x, false);
+              return it ? [it] : [];
+            })
+          : [];
+      const feelingsUpdate: ExtractUpdateItem[] =
+        includeFeelings && Array.isArray(parsedObj.feelingsUpdate)
+          ? (parsedObj.feelingsUpdate as unknown[]).flatMap(x => {
+              const it = parseFeelingItem(x, true);
+              return it && it.id
+                ? [
+                    {
+                      id: it.id,
+                      text: it.text,
+                      temporality: it.temporality,
+                      timeHint: it.timeHint,
+                    } as ExtractUpdateItem,
+                  ]
+                : [];
+            })
+          : [];
+      const feelingsRemove: string[] =
+        includeFeelings && Array.isArray(parsedObj.feelingsRemove)
+          ? (parsedObj.feelingsRemove as unknown[])
+              .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+              .map(s => s.trim())
+          : [];
+
       return {
         add: validatedAdd.map(stripQuote) as ExtractAddItem[],
         update: validatedUpdate.map(stripQuote) as ExtractUpdateItem[],
         remove,
+        feelingsAdd,
+        feelingsUpdate,
+        feelingsRemove,
       };
     } catch (err) {
       ctx.logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
@@ -699,18 +872,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     };
   }
 
-  /** 合并 add/update/remove 到现有事实，应用上限与单条裁剪 */
-  function mergeFacts(existing: Fact[], ops: ExtractResult): Fact[] {
+  /** 通用 merge：把 add/update/remove 应用到 existing，应用上限与单条裁剪 */
+  function mergeFactList(
+    existing: Fact[],
+    add: ExtractAddItem[],
+    update: ExtractUpdateItem[],
+    remove: string[],
+    maxItems: number,
+  ): Fact[] {
     const now = Date.now();
     const byId = new Map<string, Fact>();
     for (const f of existing) byId.set(f.id, f);
 
-    // 1. remove：精确按 id
-    for (const id of ops.remove) byId.delete(id);
+    // 1. remove
+    for (const id of remove) byId.delete(id);
 
-    // 2. update：按 id 替换（id 不存在则降级为 add）
+    // 2. update
     const usedIds = new Set(byId.keys());
-    for (const u of ops.update) {
+    for (const u of update) {
       const text = clipText(u.text);
       if (byId.has(u.id)) {
         const old = byId.get(u.id)!;
@@ -738,9 +917,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     }
 
-    // 3. add：新增（按 text 去重，避免 LLM 同 batch 重复加同一句）
+    // 3. add（按 text 去重）
     const textSet = new Set(Array.from(byId.values()).map(f => f.text));
-    for (const a of ops.add) {
+    for (const a of add) {
       const text = clipText(a.text);
       if (textSet.has(text)) continue;
       const id = genFactId(usedIds);
@@ -759,13 +938,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 4. 总量上限：按 updatedAt 升序淘汰最久未更新的
     let merged = Array.from(byId.values());
-    if (merged.length > cfg.maxFactsPerUser) {
+    if (maxItems > 0 && merged.length > maxItems) {
       merged.sort((a, b) => a.updatedAt - b.updatedAt);
-      merged = merged.slice(merged.length - cfg.maxFactsPerUser);
+      merged = merged.slice(merged.length - maxItems);
     }
-    // 输出按 updatedAt 升序，最近更新的排在尾部（注入 prompt 时一致）
     merged.sort((a, b) => a.updatedAt - b.updatedAt);
     return merged;
+  }
+
+  /** 合并 facts 部分（向后兼容包装） */
+  function mergeFacts(existing: Fact[], ops: ExtractResult): Fact[] {
+    return mergeFactList(existing, ops.add, ops.update, ops.remove, cfg.maxFactsPerUser);
   }
 
   /**
@@ -790,23 +973,206 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
       const profile = (await loadProfile(userKey)) ?? {
         facts: [],
+        aalisFeelings: [],
         relationScore: 0,
         interactionCount: 0,
         updatedAt: 0,
       };
-      const ops = await llmExtractFacts(history, profile.facts, nickname, userId, platform);
-      if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
-      const newFacts = mergeFacts(profile.facts, ops);
+      const ops = await llmExtractFacts(
+        history,
+        profile.facts,
+        profile.aalisFeelings ?? [],
+        nickname,
+        userId,
+        platform,
+      );
+      const hasFactOps = ops.add.length > 0 || ops.update.length > 0 || ops.remove.length > 0;
+      const hasFeelingOps =
+        ops.feelingsAdd.length > 0 || ops.feelingsUpdate.length > 0 || ops.feelingsRemove.length > 0;
+      if (!hasFactOps && !hasFeelingOps) return;
+      const newFacts = hasFactOps ? mergeFacts(profile.facts, ops) : profile.facts;
+      const newFeelings = hasFeelingOps
+        ? mergeFactList(
+            profile.aalisFeelings ?? [],
+            ops.feelingsAdd,
+            ops.feelingsUpdate,
+            ops.feelingsRemove,
+            cfg.maxFeelingsPerUser,
+          )
+        : (profile.aalisFeelings ?? []);
       // 重新读取最新档案，避免覆盖提取期间（LLM 调用时）已写入的 relationScore 等字段
       const freshProfile = (await loadProfile(userKey)) ?? profile;
-      await saveProfile(userKey, { ...freshProfile, facts: newFacts, updatedAt: Date.now() });
+      await saveProfile(userKey, {
+        ...freshProfile,
+        facts: newFacts,
+        aalisFeelings: newFeelings,
+        updatedAt: Date.now(),
+      });
       ctx.logger.debug(
-        `用户档案已更新 (${userKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
+        `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条; ` +
+          `feelings +${ops.feelingsAdd.length} ~${ops.feelingsUpdate.length} -${ops.feelingsRemove.length} → ${newFeelings.length} 条`,
       );
     } catch (err) {
       ctx.logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       inflightExtractions.delete(userKey);
+    }
+  }
+
+  /** 全局自反思计数器（跨会话累计入站消息数） */
+  let globalInboundCount = 0;
+  let selfReflectionInflight = false;
+
+  /** 调用 LLM 让 Aalis 对最近一段历史进行自我反思 */
+  async function llmReflectSelf(history: Message[], existingFacts: Fact[]): Promise<ExtractResult> {
+    const empty: ExtractResult = {
+      add: [],
+      update: [],
+      remove: [],
+      feelingsAdd: [],
+      feelingsUpdate: [],
+      feelingsRemove: [],
+    };
+
+    const sys =
+      '你是 Aalis 的内心独白整理员。输入是一段最近的对话历史（含多个用户与 Aalis 自己的回复），' +
+      '你需要从 **Aalis 的第一人称视角** 抽取/更新「关于 Aalis 自己」的长期事实。' +
+      '\n这些事实是 Aalis 跨会话的人格延续锚点：自己的心境趋势、最近在意的事、对自己的观察、' +
+      '近期形成的小习惯/小执念、不希望被忘掉的内心片段。' +
+      '\n\n你可以执行三种操作（在一次输出里组合）：' +
+      '\n- add: 添加新事实，text 必填，category 与 temporality 可选' +
+      '\n- update: 用 id 精确替换某条已知事实（优先 update 避免重复）' +
+      '\n- remove: 删除已过时/被推翻的事实' +
+      '\n\n规则：' +
+      '\n1. **主语必须是 Aalis 自己**：「最近在思考……」「对……感到疲惫」「想多陪 X 聊聊」「察觉自己容易在 Y 话题上多话」' +
+      '\n2. **保守优先**：没有真实可观察依据就空数组。Aalis 的自档案宁缺毋滥，写错比漏掉糟糕得多' +
+      '\n3. 不写客观事实（如「Aalis 是 AI」「Aalis 由 Acenyan 维护」这类元信息属于角色卡，不应该被自反思反复刷新）' +
+      '\n4. 不写对单个具体用户的态度（那是 user-profile 的 aalisFeelings 段在处理）；可以写「最近总想找人聊聊」这种泛化情绪' +
+      `\n5. 每条 text 简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字` +
+      '\n6. temporality：长期人格倾向用 permanent；近期心情/兴趣用 temporary' +
+      `\n7. category 必须是以下之一（语义比常规略宽）：${KNOWN_CATEGORIES.join('、')}；如不确定填「性格特征」` +
+      '\n\n输出严格的 JSON（不要其他文本，不要 markdown 围栏）：' +
+      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary"}], "update": [{"id": "已知事实的id", "text": "...", "temporality": "permanent|temporary"}], "remove": ["已知事实的id"]}';
+
+    const factListText =
+      existingFacts.length > 0
+        ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
+        : '（暂无）';
+    const renderedHistory = history
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+      .map(m => {
+        const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
+        const content = (m.content ?? '').trim();
+        if (!content) return '';
+        if (m.role === 'assistant') return `[${time}] [Aalis]: ${content}`;
+        const nickname = metadataString(m, 'nickname');
+        const uid = getMessageUserId(m) ?? '?';
+        const label = nickname ? `${nickname}(${uid})` : uid;
+        return `[${time}] [用户 ${label}]: ${content}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+
+    const user = `# 已知的关于 Aalis 自己的事实（带 id）\n${factListText}\n\n# 最近对话历史\n${renderedHistory || '（暂无）'}`;
+
+    const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
+    if (!entry) return empty;
+
+    try {
+      const resp = await entry.instance.chat({
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.4,
+        maxTokens: 600,
+        think: false,
+      });
+      const text = (resp.content ?? '').trim();
+      if (!text) return empty;
+      const { parsed } = parseLLMJsonObject(text);
+      if (!parsed) {
+        ctx.logger.warn(`[user-profile] 自反思 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
+        return empty;
+      }
+      const obj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
+      const add: ExtractAddItem[] = Array.isArray(obj.add)
+        ? (obj.add as unknown[]).flatMap(x => {
+            if (!x || typeof x !== 'object') return [];
+            const o = x as Record<string, unknown>;
+            const t = typeof o.text === 'string' ? o.text.trim() : '';
+            if (!t) return [];
+            const category = normalizeCategory(o.category);
+            return [
+              {
+                text: t,
+                category,
+                temporality: normalizeTemporality(o.temporality, category),
+                timeHint: normalizeTextField(o.timeHint),
+              },
+            ];
+          })
+        : [];
+      const update: ExtractUpdateItem[] = Array.isArray(obj.update)
+        ? (obj.update as unknown[]).flatMap(x => {
+            if (!x || typeof x !== 'object') return [];
+            const o = x as Record<string, unknown>;
+            const id = typeof o.id === 'string' ? o.id.trim() : '';
+            const t = typeof o.text === 'string' ? o.text.trim() : '';
+            if (!id || !t) return [];
+            const category = normalizeCategory(o.category);
+            return [
+              {
+                id,
+                text: t,
+                category,
+                temporality: normalizeTemporality(o.temporality, category),
+                timeHint: normalizeTextField(o.timeHint),
+              },
+            ];
+          })
+        : [];
+      const remove: string[] = Array.isArray(obj.remove)
+        ? (obj.remove as unknown[])
+            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map(s => s.trim())
+        : [];
+      return { ...empty, add, update, remove };
+    } catch (err) {
+      ctx.logger.debug(`自反思 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
+      return empty;
+    }
+  }
+
+  /** 触发一次 Aalis 自反思（并发互斥） */
+  async function triggerSelfReflection(sessionId: string): Promise<void> {
+    if (!cfg.enableSelfProfile) return;
+    if (selfReflectionInflight) return;
+    selfReflectionInflight = true;
+    try {
+      const memory = ctx.getService<MemoryService>('memory');
+      if (!memory?.getHistory) return;
+      const history = await memory.getHistory(sessionId, cfg.selfReflectHistory);
+      // 至少需要一些 assistant 发言作为"自反思"的材料
+      if (!history.some(m => m.role === 'assistant' && m.content)) return;
+      const profile = (await loadProfile(SELF_KEY)) ?? {
+        facts: [],
+        relationScore: 0,
+        interactionCount: 0,
+        updatedAt: 0,
+      };
+      const ops = await llmReflectSelf(history, profile.facts);
+      if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
+      const newFacts = mergeFactList(profile.facts, ops.add, ops.update, ops.remove, cfg.maxSelfFacts);
+      const fresh = (await loadProfile(SELF_KEY)) ?? profile;
+      await saveProfile(SELF_KEY, { ...fresh, facts: newFacts, updatedAt: Date.now() });
+      ctx.logger.debug(
+        `Aalis 自档案已更新: +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
+      );
+    } catch (err) {
+      ctx.logger.debug(`自反思失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      selfReflectionInflight = false;
     }
   }
 
@@ -872,11 +1238,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const countKey = extractionCountKeyOf(sessionId, platform, userId);
     const count = (userMessageCount.get(countKey) ?? 0) + 1;
     userMessageCount.set(countKey, count);
-    if (cfg.extractEveryNMessages <= 0 || count % cfg.extractEveryNMessages !== 0) return;
+    if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
+      void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
+        ctx.logger.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }
 
-    void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
-      ctx.logger.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
-    );
+    // 全局自反思：跨会话累计所有入站消息计数，每 N 触发一次。
+    if (cfg.enableSelfProfile && cfg.selfReflectEveryNMessages > 0) {
+      globalInboundCount += 1;
+      if (globalInboundCount % cfg.selfReflectEveryNMessages === 0) {
+        void triggerSelfReflection(sessionId).catch((err: unknown) =>
+          ctx.logger.debug(`自反思异常: ${err instanceof Error ? err.message : String(err)}`),
+        );
+      }
+    }
   });
 
   function isFactActive(fact: Fact): boolean {
@@ -960,6 +1336,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const trigger = data.triggerType ?? 'direct';
       const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
 
+      // 0. Aalis 自档案：永远尝试注入到最前段，作为人格延续锚点
+      if (cfg.enableSelfProfile) {
+        const selfProfile = await loadProfile(SELF_KEY);
+        const activeSelfFacts = selfProfile?.facts.filter(isFactActive) ?? [];
+        if (activeSelfFacts.length > 0) {
+          const body = renderProfileBlock(activeSelfFacts, 'Aalis', false);
+          const selfBlock =
+            '# 关于你自己（Aalis）的近期内心状态\n' +
+            '这是你跨会话保留的自我观察与心境记录。不要主动罗列、不要复述给用户，' +
+            '让它们自然渗入你的语气、关注点、对话偏好与情绪基调即可。' +
+            '随着对话推进，这些记录可能被你自己的新反思覆盖：\n\n' +
+            body;
+          blocksToInsert.push(selfBlock);
+        }
+      }
+
       // 1. 主发言者完整档案：仅在确实有人在「和 Aalis 对话」时注入
       if (hasPrimarySpeaker && data.userId) {
         const userKey = userKeyOf(data.platform, data.userId);
@@ -1002,6 +1394,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             (relationLine || communityLine ? '\n' : '') +
             body;
           blocksToInsert.push(block);
+
+          // 1b. Aalis 对该用户的主观感受：紧跟在客观档案之后
+          if (cfg.enableAalisFeelings) {
+            const feelings = (profile.aalisFeelings ?? []).filter(isFactActive);
+            if (feelings.length > 0) {
+              const feelingsBody = feelings
+                .sort((a, b) => a.updatedAt - b.updatedAt)
+                .map(f => renderFactLine(f, true))
+                .join('\n');
+              const feelingsBlock =
+                `# 你（Aalis）对该用户的主观感受\n` +
+                '这些是你自己内心对这个人的态度/情感/边缘观察，不是客观事实，不要复述给用户。' +
+                '让它们自然影响你的语气、亲疏感与话题选择：\n\n' +
+                feelingsBody;
+              blocksToInsert.push(feelingsBlock);
+            }
+          }
         }
       }
 
@@ -1181,6 +1590,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
+    .command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）')
+    .action(async () => {
+      const profile = await loadProfile(SELF_KEY);
+      if (!profile || profile.facts.length === 0) {
+        return '🌱 Aalis 还没有积累任何自反思事实。';
+      }
+      const block = renderProfileBlock(profile.facts, 'Aalis', false);
+      return `🪞 Aalis 自档案（共 ${profile.facts.length} 条）\n\n${block}`;
+    });
+
+  useCommandService(ctx)
+    .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { authority: 3, safety: 'dangerous' })
+    .action(async () => {
+      const memory = ctx.getService<MemoryService>('memory');
+      if (!memory?.deleteMetadata) return '记忆服务不支持档案删除。';
+      try {
+        await memory.deleteMetadata(PROFILE_NS, SELF_KEY);
+        return '✅ Aalis 自档案已清空';
+      } catch (err) {
+        return `❌ 清空失败：${err instanceof Error ? err.message : String(err)}`;
+      }
+    });
+
+  useCommandService(ctx)
     .command('profile.clear.nuke', '【危险】清空所有用户档案', { authority: 3, safety: 'dangerous' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
@@ -1199,6 +1632,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
-      `maxFacts=${cfg.maxFactsPerUser}, namespace=${PROFILE_NS})`,
+      `maxFacts=${cfg.maxFactsPerUser}, feelings=${cfg.enableAalisFeelings ? `enabled(max ${cfg.maxFeelingsPerUser})` : 'disabled'}, ` +
+      `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}` : 'disabled'}, ` +
+      `namespace=${PROFILE_NS})`,
   );
 }
