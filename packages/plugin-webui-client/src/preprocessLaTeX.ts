@@ -1,3 +1,5 @@
+import { fixGfmTables } from '@aalis/util-text-normalize';
+
 /**
  * 预处理 LaTeX 内容，使 remark-math 能正确识别：
  * 1. 将 \(...\) 转为 $...$，\[...\] 转为 $$...$$（remark-math 仅支持 $ 分隔符）
@@ -5,8 +7,12 @@
  * 3. 跨行的 `$$...$$` 数学块开闭标记强制独占一行（前后空行隔离）；
  *    避免 LLM 常写 `$$A = \begin{bmatrix} ... \end{bmatrix}$$` 被 remark-math 6.x
  *    误判为 inline 数学并解析失败、导致开头一段被 KaTeX 吞掉、后续行裸露源码。
+ * 4. 修复 GFM 表格分隔行列数与表头不一致（LLM 常见错误，复用 @aalis/util-text-normalize）
  */
 export function preprocessLaTeX(content: string): string {
+  // 先做一次表格归一化（agent 侧若已修复则等价于 no-op；保留此处兼容历史会话与未走 agent 通道的内容）
+  content = fixGfmTables(content);
+
   // 按代码块和行内代码拆分，跳过代码区域
   const parts = content.split(/(```[\s\S]*?```|`[^`]*`)/g);
 

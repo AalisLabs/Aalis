@@ -1,0 +1,121 @@
+/**
+ * @aalis/util-text-normalize
+ *
+ * 对话内容净化工具集：处理 LLM 输出的自然语言 Markdown 中常见错误，
+ * 让下游渲染器（remark-gfm / KaTeX 等）能正确解析。
+ *
+ * 设计原则：
+ * - 纯函数、无副作用；可在 agent 端、webui 端、其它前端复用
+ * - 只修复**明确错误**的格式问题；不做风格改写
+ * - 跳过代码块（``` 与 inline `）以避免误改示例代码
+ *
+ * 与 `@aalis/util-json-repair` 的边界：
+ * - util-json-repair：处理"被 prompt 要求输出 JSON 的 LLM 响应"的解析问题
+ *   （结构化数据通道，调用者主动调用）
+ * - util-text-normalize：处理"自然语言对话 content"的渲染层问题
+ *   （在 agent 拿到完整响应后统一调用一次）
+ */
+
+/**
+ * 统计 GFM 表格行的列数（兼容有无首尾竖线两种写法）。
+ *
+ * 示例：
+ * - `| a | b | c |`  → 3
+ * - `a | b | c`      → 3
+ * - `|:--|:--|`      → 2
+ */
+function countGfmCols(line: string): number {
+  const t = line.trim();
+  const parts = t.split('|');
+  const start = parts[0].trim() === '' ? 1 : 0;
+  const end = parts[parts.length - 1].trim() === '' ? parts.length - 1 : parts.length;
+  return Math.max(0, end - start);
+}
+
+/**
+ * 将分隔行的列数规范为 targetCols：多裁少补，保留原始对齐符号（`:--`、`--:`、`:--:`）。
+ */
+function normalizeSepRow(sepLine: string, targetCols: number): string {
+  const t = sepLine.trim();
+  const lead = t.startsWith('|') ? '|' : '';
+  const trail = t.endsWith('|') ? '|' : '';
+  const inner = t.slice(lead.length, trail ? t.length - 1 : undefined);
+  // 只保留合法对齐符号；过滤掉空段（例如末尾多余的 `|` 造成的空 cell）
+  const cells = inner
+    .split('|')
+    .map(c => c.trim())
+    .filter(c => /^:?-+:?$/.test(c));
+  while (cells.length < targetCols) cells.push('---');
+  cells.length = targetCols;
+  return lead + cells.join('|') + trail;
+}
+
+/**
+ * 判断某行是否符合 GFM 表格的"分隔行"特征
+ * （仅由 `|`, `-`, `:`, 空白 组成，且至少含一个 `-`）。
+ */
+function isSeparatorRow(line: string): boolean {
+  return /^\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?\s*$/.test(line);
+}
+
+/**
+ * 修复 GFM 表格分隔行与表头列数不一致的问题。
+ *
+ * 背景：`micromark-extension-gfm-table` v2 严格要求表头列数 === 分隔行列数，
+ * 否则整个表格退化为纯文本（用户在 UI 上看到的就是裸露的 `|...|...|` 字符串）。
+ *
+ * 典型 LLM 错误：
+ * ```
+ * | A | B |          ← 2 列
+ * |:--|:--|:--|      ← 3 列（多打了一个 |）
+ * | x | y |
+ * ```
+ *
+ * 修复后：
+ * ```
+ * | A | B |
+ * |:--|:--|
+ * | x | y |
+ * ```
+ *
+ * 实现要点：
+ * - 跳过 ``` fenced code blocks 与 `inline code`，避免误改示例
+ * - 仅当上一行包含 `|` 且非空时才认为是表头
+ * - 列数双向修复：分隔行多 → 截断；少 → 补 `---`
+ */
+export function fixGfmTables(content: string): string {
+  if (!content) return content;
+  // 先按代码区域拆分，奇数索引为代码内容，保持原样
+  const parts = content.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
+  return parts
+    .map((part, i) => {
+      if (i % 2 === 1) return part;
+      const lines = part.split('\n');
+      const out: string[] = [];
+      for (let j = 0; j < lines.length; j++) {
+        const line = lines[j];
+        if (j > 0 && isSeparatorRow(line)) {
+          const prev = lines[j - 1];
+          if (prev.includes('|') && prev.trim()) {
+            const hCols = countGfmCols(prev);
+            const sCols = countGfmCols(line);
+            if (hCols > 0 && sCols > 0 && hCols !== sCols) {
+              out.push(normalizeSepRow(line, hCols));
+              continue;
+            }
+          }
+        }
+        out.push(line);
+      }
+      return out.join('\n');
+    })
+    .join('');
+}
+
+/**
+ * 一次性应用所有对话内容净化规则。
+ * 当前等同于 `fixGfmTables`，预留为未来扩展点（脱敏 / 长链折叠 / 等）。
+ */
+export function normalizeAssistantContent(content: string): string {
+  return fixGfmTables(content);
+}
