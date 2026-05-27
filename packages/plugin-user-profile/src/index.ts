@@ -1058,9 +1058,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         aalisFeelings: newFeelings,
         updatedAt: Date.now(),
       });
+      const feelingsLog = cfg.enableAalisFeelings
+        ? `; feelings +${ops.feelingsAdd.length} ~${ops.feelingsUpdate.length} -${ops.feelingsRemove.length} → ${newFeelings.length} 条`
+        : '';
       ctx.logger.debug(
-        `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条; ` +
-          `feelings +${ops.feelingsAdd.length} ~${ops.feelingsUpdate.length} -${ops.feelingsRemove.length} → ${newFeelings.length} 条`,
+        `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条${feelingsLog}`,
       );
     } catch (err) {
       ctx.logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
