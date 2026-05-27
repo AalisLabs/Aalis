@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { extractJsonCandidate } from '../../packages/util-json-repair/src/index.js';
 
 describe('extractJsonCandidate', () => {
@@ -19,8 +19,7 @@ describe('extractJsonCandidate', () => {
 
   it('文本中含数学集合符号 {2,4,6,7,8} + 末尾真正 JSON — 应返回 JSON 而非集合', () => {
     const raw =
-      '补集是{2,4,6,7,8}共5个元素，选C\n' +
-      '{"mood":"认真","state":"做题","desire":70,"message":"前五题搞定了"}';
+      '补集是{2,4,6,7,8}共5个元素，选C\n' + '{"mood":"认真","state":"做题","desire":70,"message":"前五题搞定了"}';
     const result = extractJsonCandidate(raw);
     expect(result).toContain('"mood"');
     expect(result).toBe('{"mood":"认真","state":"做题","desire":70,"message":"前五题搞定了"}');
@@ -51,11 +50,14 @@ describe('extractJsonCandidate', () => {
     expect(extractJsonCandidate(raw)).toBe('hello world');
   });
 
-  it('推理块含 {key:val} + 末尾 persona JSON', () => {
-    const raw =
-      '第1题：$b=\\sqrt{7}a$，离心率 $e=2\\sqrt{2}$\n' +
-      '{"mood":"专注","state":"解题中","desire":80,"message":"第3题答D"}';
+  it('含嵌套对象的大 JSON — 应返回完整外层对象而非内层片段', () => {
+    const raw = '{"persons":[{"platform":"onebot","userId":"a"},{"platform":"onebot","userId":"b"}],"events":[]}';
+    expect(extractJsonCandidate(raw)).toBe(raw);
+  });
+
+  it('前缀集合符号 + 含嵌套 JSON — 返回完整外层 JSON', () => {
+    const raw = '集合 {1,2,3} 之后是 {"mood":"happy","nested":{"key":"val"},"message":"ok"}';
     const result = extractJsonCandidate(raw);
-    expect(result).toBe('{"mood":"专注","state":"解题中","desire":80,"message":"第3题答D"}');
+    expect(result).toBe('{"mood":"happy","nested":{"key":"val"},"message":"ok"}');
   });
 });
