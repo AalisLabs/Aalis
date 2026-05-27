@@ -4,6 +4,7 @@ import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
 import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
+import { stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
 import { parseDsmlToolCalls } from './dsml-parser.js';
 
 // ===== 插件元数据 =====
@@ -16,17 +17,6 @@ const CONTENT_FILTER_PATTERNS = [
   'sensitive content',
   'risk control',
 ];
-
-/**
- * 剥离 DeepSeek 模型泄漏的 DSML（DeepSeek Markup Language）标记
- *
- * 思考模型有时会在 content 中直接输出 <｜DSML｜function_calls>...</｜DSML｜function_calls> 标记
- * 而非正确走 API 的 tool_calls 通道，导致 JSON 解析失败。
- */
-const DSML_PATTERN = /<[｜|]DSML[｜|][\s\S]*$/;
-function stripDSML(content: string): string {
-  return content.replace(DSML_PATTERN, '').trimEnd();
-}
 
 /** 解析 API 错误，对内容审查类错误返回友好提示 */
 function parseApiError(provider: string, status: number, body: string): string {
@@ -304,8 +294,39 @@ class DeepSeekClient {
       throw new Error('DeepSeek 返回了空的 choices');
     }
 
+    // DSML 泄漏处理（与流式分支对齐）：
+    // 1) 用统一的 stripLeakedSpecialTokens 检测+剥离 DSML 文本（覆盖单/双竖线变体）
+    // 2) 若服务端 tool_calls 为空但 content 含 DSML，调 parseDsmlToolCalls 本地恢复
+    //    避免非流式路径下工具调用信息无声丢失
+    let cleanContent: string | null = choice.message.content;
+    let recoveredToolCalls: ToolCall[] | undefined;
+    if (cleanContent) {
+      const { sanitized, hadLeak } = stripLeakedSpecialTokens(cleanContent);
+      if (hadLeak) {
+        const hasServerToolCalls = !!(choice.message.tool_calls && choice.message.tool_calls.length > 0);
+        if (!hasServerToolCalls) {
+          const dsmlCalls = parseDsmlToolCalls(cleanContent);
+          if (dsmlCalls.length > 0) {
+            this.logger.info(
+              `DeepSeek DSML 本地解析成功（非流式），恢复 ${dsmlCalls.length} 个 tool_call：${dsmlCalls.map(c => c.function.name).join(', ')}`,
+            );
+            recoveredToolCalls = dsmlCalls;
+          } else {
+            this.logger.warn(
+              `DeepSeek DSML 本地解析未识别出完整 invoke 块（非流式），content 长度=${cleanContent.length}`,
+            );
+          }
+        } else {
+          this.logger.warn(
+            `DeepSeek content 检测到 DSML 泄漏但服务端已返回 tool_calls，仅剥离文本（原长=${cleanContent.length} 净化后=${sanitized.length}）`,
+          );
+        }
+      }
+      cleanContent = sanitized;
+    }
+
     const result: ChatResponse = {
-      content: choice.message.content ? stripDSML(choice.message.content) : choice.message.content,
+      content: cleanContent,
       reasoningContent: choice.message.reasoning_content ?? undefined,
     };
 
@@ -318,6 +339,8 @@ class DeepSeekClient {
           arguments: tc.function.arguments,
         },
       }));
+    } else if (recoveredToolCalls) {
+      result.toolCalls = recoveredToolCalls;
     }
 
     if (data.usage) {
