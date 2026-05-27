@@ -174,9 +174,10 @@ function findBalancedJsonObjectEnd(s: string, start: number): number {
 /**
  * 从模型原始输出里提取 JSON 子串。
  * - 去掉 ```json / ``` 围栏
- * - 从第一个 '{' 开始，取第一个配平的顶层对象
- * - 允许对象后面追加说明/推理/多余文本；这些尾巴会被忽略
- * - 若找不到配平对象，则返回 trim 后的候选文本，交给后续修复步骤处理
+ * - 扫描所有顶层 '{' 候选，取**最后一个**包含 ':' 的配平对象
+ *   （有 ':' 才是真正的 key:value JSON 对象，数学集合符号如 {1,2,3} 不含 ':' 会被跳过）
+ * - 模型通常先输出推理/自由文本，最后才输出 JSON payload，因此优先取最后一个候选
+ * - 若无合格候选则退化为原行为：从第一个 '{' 取配平或截断片段
  */
 export function extractJsonCandidate(raw: string): string {
   const trimmed = raw.trim();
@@ -186,11 +187,36 @@ export function extractJsonCandidate(raw: string): string {
     .replace(/^```(?:json)?\s*\n?/i, '')
     .replace(/\n?```\s*$/i, '')
     .trim();
+
+  // 遍历所有 '{' 位置，收集平衡且含 ':' 的对象候选，记录最后一个。
+  let lastObjectStart = -1;
+  let lastObjectEnd = -1;
+  let searchFrom = 0;
+
+  while (searchFrom < unfenced.length) {
+    const brace = unfenced.indexOf('{', searchFrom);
+    if (brace < 0) break;
+    const end = findBalancedJsonObjectEnd(unfenced, brace);
+    if (end > brace) {
+      const candidate = unfenced.slice(brace, end + 1);
+      // 真正的 JSON 对象必须含 ':'；纯集合/枚举写法 {A,B,C} 没有 ':' 故排除
+      if (candidate.includes(':')) {
+        lastObjectStart = brace;
+        lastObjectEnd = end;
+      }
+    }
+    searchFrom = brace + 1;
+  }
+
+  if (lastObjectStart >= 0) {
+    return unfenced.slice(lastObjectStart, lastObjectEnd + 1);
+  }
+
+  // 降级回原行为：从第一个 '{' 开始，配平或截断
   const firstBrace = unfenced.indexOf('{');
   if (firstBrace < 0) return unfenced;
-
-  const end = findBalancedJsonObjectEnd(unfenced, firstBrace);
-  return end >= firstBrace ? unfenced.slice(firstBrace, end + 1) : unfenced.slice(firstBrace);
+  const endFb = findBalancedJsonObjectEnd(unfenced, firstBrace);
+  return endFb >= firstBrace ? unfenced.slice(firstBrace, endFb + 1) : unfenced.slice(firstBrace);
 }
 
 export interface RepairResult {
