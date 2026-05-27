@@ -424,6 +424,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/util-text-normalize':
+        specifier: workspace:*
+        version: link:../util-text-normalize
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
