@@ -45,7 +45,7 @@ const PROFILE_NS = 'user:profile';
  *  按 persona name 分堆：同名 persona（如 onebot 上的 aalis 与 webui 上的 aalis-webui两张卡都叫 Aalis）共享内心；
  *  不同 persona（如 Babel）各自独立。 */
 const SELF_KEY_PREFIX = '__self__:';
-const DEFAULT_PERSONA_NAME = 'aalis';
+const DEFAULT_PERSONA_NAME = 'Aalis';
 
 export const configSchema: ConfigSchema = {
   extractEveryNMessages: {
