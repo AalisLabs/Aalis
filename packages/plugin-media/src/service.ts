@@ -26,7 +26,12 @@ import {
   materializeAttachment,
   selectFrameIndices,
 } from './ffmpeg.js';
-import { DEFAULT_VISION_PROMPT, scanLLMProcessors } from './llm-adapter.js';
+import {
+  DEFAULT_VISION_DETAILED_PROMPT,
+  DEFAULT_VISION_PROMPT,
+  scanLLMProcessors,
+  VISION_CLASSIFY_PROMPT,
+} from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
 
 export interface MediaConfigResolved {
@@ -489,12 +494,23 @@ export class MediaServiceImpl implements MediaService {
         }
       }
     } else {
+      // detailLevel 决策：auto 走两阶段（分类→选 prompt）；casual/detailed 直接选定
+      const detailLevel = opts.detailLevel ?? 'auto';
+      let basePrompt: string;
+      if (detailLevel === 'casual') {
+        basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
+      } else if (detailLevel === 'detailed') {
+        basePrompt = DEFAULT_VISION_DETAILED_PROMPT;
+      } else {
+        // auto：调一次轻量分类（耗时 ~1-2s）
+        basePrompt = await this.classifyAndPickPrompt(proc, imageUrl);
+      }
       const r = await proc.describe(
         {
           attachments: [{ kind: 'image', data: imageUrl }],
           mode: 'single',
           maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-          hint: buildVisionPrompt(this.cfg.vision.prompt || DEFAULT_VISION_PROMPT, opts.hint),
+          hint: buildVisionPrompt(basePrompt, opts.hint),
         },
         this.ctx,
       );
@@ -503,6 +519,42 @@ export class MediaServiceImpl implements MediaService {
 
     if (!noCache && !opts.hint && result) rememberDescription(imageUrl, result);
     return result;
+  }
+
+  /**
+   * 两阶段第一步：用极简 prompt 让 vision 模型分类图片，返回对应的二阶 base prompt。
+   *
+   * 设计：
+   * - 分类输出只有 3 个有效标签（document/casual/mixed），其他任何输出都按 detailed 处理
+   * - mixed 类也用 detailed prompt（"宁详勿略"原则）
+   * - 任何异常（超时/网络/模型拒绝）→ fallback 到 detailed prompt，保证不漏信息
+   * - 不计入描述缓存（hint 不同，缓存键也不会重复）
+   */
+  private async classifyAndPickPrompt(proc: MediaProcessor, imageUrl: string): Promise<string> {
+    if (!proc.describe) return DEFAULT_VISION_DETAILED_PROMPT;
+    const t0 = Date.now();
+    try {
+      const r = await proc.describe(
+        {
+          attachments: [{ kind: 'image', data: imageUrl }],
+          mode: 'single',
+          // 分类输出极短，给 32 token 即可（容纳标签 + 可能的多余空白）
+          maxTokens: 32,
+          hint: VISION_CLASSIFY_PROMPT,
+        },
+        this.ctx,
+      );
+      const label = (r.descriptions[0] ?? '').toLowerCase().trim();
+      this.logger.debug(`[vision.classify] ${Date.now() - t0}ms label="${label}"`);
+      // 精确匹配 casual 才走简洁；其余一律按详细处理（fallback 友好）
+      if (label === 'casual' || label.startsWith('casual')) {
+        return this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
+      }
+      return DEFAULT_VISION_DETAILED_PROMPT;
+    } catch (err) {
+      this.logger.debug(`[vision.classify] 失败，fallback 到 detailed: ${err instanceof Error ? err.message : err}`);
+      return DEFAULT_VISION_DETAILED_PROMPT;
+    }
   }
 }
 
