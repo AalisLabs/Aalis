@@ -250,7 +250,10 @@ function parseOverrides(raw: unknown): ScopeOverride[] {
       if (typeof obj[k] === 'number') (o as unknown as Record<string, unknown>)[k] = obj[k];
     }
     if (typeof obj.idleTriggerJitter === 'boolean') o.idleTriggerJitter = obj.idleTriggerJitter;
-    if (typeof obj.idleTriggerPrompt === 'string') o.idleTriggerPrompt = obj.idleTriggerPrompt;
+    // 字符串字段：仅在非空时视为覆盖；空串/未填 → 穿透到顶层默认
+    if (typeof obj.idleTriggerPrompt === 'string' && obj.idleTriggerPrompt !== '') {
+      o.idleTriggerPrompt = obj.idleTriggerPrompt;
+    }
     const sScope = obj.idleTriggerScope;
     if (sScope === 'off' || sScope === 'session' || sScope === 'platform') o.idleTriggerScope = sScope;
     const sStrat = obj.idleTriggerStrategy;
