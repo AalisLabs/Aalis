@@ -207,7 +207,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (opts.data) Object.assign(metadata, opts.data);
 
       const message: Message = {
-        role: 'system',
+        role: 'notice',
         content: text,
         timestamp: opts.timestamp ?? Date.now(),
         metadata,

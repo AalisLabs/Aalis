@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
+import { toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -526,9 +527,14 @@ class DeepSeekClient {
    * 但历史消息（从 memory 加载）不含 reasoning_content
    */
   private toAPIMessage(msg: Message): APIMessage {
+    const llmRole = toLLMRole(msg.role);
+    const content =
+      llmRole !== msg.role && typeof msg.content === 'string' && msg.content.length > 0
+        ? `[系统通知] ${msg.content}`
+        : (msg.content ?? null);
     const apiMsg: APIMessage = {
-      role: msg.role,
-      content: msg.content ?? null,
+      role: llmRole,
+      content,
     };
 
     // DeepSeek API 不支持 image_url content 类型
