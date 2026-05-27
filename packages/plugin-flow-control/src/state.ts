@@ -17,9 +17,13 @@ export interface MutableFlowSessionState {
   replyTimestamps: number[];
   /** 该 session 所属 platform（首次记录时设置；用于 idle 调度找回） */
   platform: string;
+  /** 该 session 的 sessionType（如 group/private/channel）；用于 per-scope 覆盖匹配 */
+  sessionType: string;
+  /** 该 session 的目标 id（群号/用户号/频道号）；用于 per-scope 覆盖匹配 */
+  targetId: string;
 }
 
-export function createState(platform: string): MutableFlowSessionState {
+export function createState(platform: string, sessionType = '', targetId = ''): MutableFlowSessionState {
   return {
     messageCount: 0,
     lastReplyTime: 0,
@@ -32,6 +36,8 @@ export function createState(platform: string): MutableFlowSessionState {
     userInteractions: new Map(),
     replyTimestamps: [],
     platform,
+    sessionType,
+    targetId,
   };
 }
 
