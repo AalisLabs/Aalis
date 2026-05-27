@@ -65,7 +65,8 @@ export const configSchema: ConfigSchema = {
   maxFactsPerUser: {
     type: 'number',
     label: '单用户事实上限',
-    description: '超出后保留最近写入的若干条，旧事实自动淘汰',
+    description:
+      '超出后按 updatedAt 升序淘汰最久未更新的，旧事实自动淘汰。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用提取；若要禁用提取请将 extractEveryNMessages 设为 0',
     default: 30,
   },
   maxFactCharsPerItem: {
@@ -188,7 +189,8 @@ export const configSchema: ConfigSchema = {
   maxSelfFacts: {
     type: 'number',
     label: 'Aalis 自档案事实上限',
-    description: '超出后按 updatedAt 升序淘汰最久未更新的',
+    description:
+      '超出后按 updatedAt 升序淘汰最久未更新的。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用；若要禁用自反思请关闭 enableSelfProfile',
     default: 20,
   },
 };
