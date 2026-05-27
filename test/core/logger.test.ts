@@ -73,4 +73,19 @@ describe('LogHub', () => {
     off();
     expect(seen).toContain('default-test');
   });
+
+  it('timestamp 是带本地时区偏移的 ISO-8601（非裸 Z），且可被 Date 解析回相同瞬间', () => {
+    const hub = new LogHub();
+    const captured: string[] = [];
+    hub.onEntry(e => captured.push(e.timestamp));
+    new Logger('tz', 'debug', hub).info('x');
+    expect(captured).toHaveLength(1);
+    const ts = captured[0];
+    // 形如 2026-05-27T09:09:16.028+01:00 或 ...Z（偏移为 0 时）
+    expect(ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})$/);
+    // 解析回 Date 后毫秒级别接近 now（差距 < 1s）
+    const parsed = Date.parse(ts);
+    expect(Number.isFinite(parsed)).toBe(true);
+    expect(Math.abs(parsed - Date.now())).toBeLessThan(1000);
+  });
 });
