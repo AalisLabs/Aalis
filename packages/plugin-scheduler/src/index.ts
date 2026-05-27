@@ -34,6 +34,12 @@ interface SchedulerJobConfig {
   enabled: boolean;
   /** 是否处于暂停状态（运行时态，但需要随动态任务持久化，避免重启后自动恢复） */
   paused?: boolean;
+  /**
+   * cron 求值所用的 IANA 时区（如 `Asia/Shanghai`、`Europe/London`）。
+   * 空串或未设 = 使用进程本地时区（与历史行为兼容）。仅对 cron 类任务生效；
+   * interval/runAt 与时区无关（runAt 直接解析 ISO 字符串里自带的偏移）。
+   */
+  timeZone?: string;
 }
 
 interface SchedulerConfig {
@@ -154,6 +160,11 @@ export const configSchema: ConfigSchema = {
         description: '发送给 Agent 的指令/提示内容。',
       },
       enabled: { type: 'boolean', label: '启用', default: true },
+      timeZone: {
+        type: 'string',
+        label: '时区 (IANA)',
+        description: 'cron 求值所用时区，如 Asia/Shanghai、Europe/London。留空 = 进程本地时区。仅对 cron 类任务生效。',
+      },
     },
     default: [],
   },
@@ -483,7 +494,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       return (lastRun || Date.now()) + job.interval * 1000;
     }
     if (job.cron) {
-      return cronEngine.nextFireTime(job.cron) ?? 0;
+      const tz = job.timeZone?.trim() || undefined;
+      return cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0;
     }
     return 0;
   }
@@ -529,11 +541,16 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     // cron 任务：订阅到共享 cron-engine
     if (jobCfg.cron && jobCfg.enabled) {
       try {
-        rt.cronDispose = cronEngine.subscribe(jobCfg.cron, () => {
-          if (rt.paused || !rt.config.enabled) return;
-          executeJob(rt);
-          rt.nextRun = estimateNextRun(rt.config, rt.lastRun);
-        });
+        const tz = jobCfg.timeZone?.trim() || undefined;
+        rt.cronDispose = cronEngine.subscribe(
+          jobCfg.cron,
+          () => {
+            if (rt.paused || !rt.config.enabled) return;
+            executeJob(rt);
+            rt.nextRun = estimateNextRun(rt.config, rt.lastRun);
+          },
+          tz ? { timeZone: tz } : undefined,
+        );
       } catch (err) {
         logger.warn(`任务 ${jobCfg.name} cron 订阅失败: ${err instanceof Error ? err.message : err}`);
       }
