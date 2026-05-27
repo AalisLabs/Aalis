@@ -1715,6 +1715,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:*
+        version: link:../plugin-tools-api
       '@aalis/util-json-repair':
         specifier: workspace:*
         version: link:../util-json-repair

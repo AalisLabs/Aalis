@@ -16,6 +16,7 @@
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:*",
     "@aalis/util-json-repair": "workspace:*"
   },
   "devDependencies": {
