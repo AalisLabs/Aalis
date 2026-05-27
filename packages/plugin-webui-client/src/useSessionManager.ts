@@ -15,6 +15,8 @@ function makeSessionName(): string {
 
 export interface RawMessage {
   role: string;
+  /** Message.kind（与 role 正交的子分类，如 'event-marker' / 'cross-session-delegation' / 'outbound-image' / 'poke' 等） */
+  kind?: string;
   content: string | null;
   toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
   toolCallId?: string;
@@ -100,7 +102,7 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
 
     if (msg.role === 'system') {
       // 系统事件消息（如压缩记录）→ 渲染为分隔线
-      if (msg.name === 'system-event') {
+      if (msg.kind === 'event-marker') {
         result.push({
           role: 'system',
           content: msg.content ?? '',
