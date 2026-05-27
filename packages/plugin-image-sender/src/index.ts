@@ -20,6 +20,7 @@ import {
   type Message,
   type MessageAttachment,
   type OutgoingMessage,
+  WellKnownKinds,
 } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
@@ -262,7 +263,7 @@ async function archiveOutboundImage(
   const tag = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: description, ref: refStr });
   const message: Message = {
     role: 'assistant',
-    kind: 'outbound-image',
+    kind: WellKnownKinds.OutboundImage,
     content: tag,
     timestamp: Date.now(),
     metadata: { source: 'image-sender', ref: refStr },

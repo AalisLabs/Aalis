@@ -2,7 +2,7 @@ import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
-import { toLLMRole } from '@aalis/plugin-message-api';
+import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
@@ -331,7 +331,7 @@ class OllamaClient {
       };
       return;
     }
-    const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
+    const messages = await Promise.all(prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
@@ -624,14 +624,11 @@ class OllamaClient {
    * 工具调用结果通过 role: tool 传递
    */
   private async toOllamaMessage(msg: Message): Promise<OllamaMessage> {
-    const llmRole = toLLMRole(msg.role);
-    const content =
-      llmRole !== msg.role && typeof msg.content === 'string' && msg.content.length > 0
-        ? `[系统通知] ${msg.content}`
-        : (msg.content ?? '');
+    // 调用方已经 prepareLLMMessages 处理过：role 已是 WellKnownRole，自定义 role / kind
+    // 对应的前缀已拼接进 content。这里只需透传。
     const ollamaMsg: OllamaMessage = {
-      role: llmRole,
-      content,
+      role: toLLMRole(msg.role),
+      content: msg.content ?? '',
     };
 
     // 传递思考内容（用于历史上下文）
@@ -684,9 +681,8 @@ class OllamaClient {
   async chatOpenAIWithAudio(model: string, request: ChatModelRequest): Promise<ChatResponse> {
     // 将 Aalis Message 转为 OpenAI multimodal content blocks
     const oaiMessages = await Promise.all(
-      request.messages.map(async m => {
+      prepareLLMMessages(request.messages).map(async m => {
         const role = toLLMRole(m.role);
-        const noticePrefix = role !== m.role && typeof m.content === 'string' && m.content.length > 0;
         const blocks: Array<Record<string, unknown>> = [];
         // Modality order：Ollama 官方 best practice 要求 image/audio content
         // 必须在 text 之前。参见 /memories/repo/aalis-ollama-gemma4-audio.md
@@ -707,8 +703,7 @@ class OllamaClient {
           }
         }
         if (m.content) {
-          const txt = noticePrefix ? `[系统通知] ${m.content}` : m.content;
-          blocks.push({ type: 'text', text: txt });
+          blocks.push({ type: 'text', text: m.content });
         }
         // 纯文本 → string；有多模态 → array
         const content = blocks.length === 1 && blocks[0].type === 'text' ? blocks[0].text : blocks;
