@@ -13,6 +13,7 @@ import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
+import { fixGfmTables } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
   estimateMsgTokens,
@@ -261,7 +262,7 @@ class DefaultAgent implements AgentService {
     }
 
     return {
-      content,
+      content: content ? fixGfmTables(content) : content,
       reasoningContent: reasoningContent || undefined,
       toolCalls,
       usage,
