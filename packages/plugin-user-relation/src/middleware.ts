@@ -67,7 +67,7 @@ export function registerRelationMiddleware(ctx: Context, service: RelationServic
         data.messages.splice(insertAt, 0, {
           role: 'system',
           content: block,
-          metadata: { source: 'user-relation' },
+          metadata: { injector: 'user-relation' },
         });
       }
     } catch (err) {

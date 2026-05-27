@@ -59,7 +59,7 @@ describe('plugin-user-relation: middleware', () => {
   it('无 userId / platform → 不注入', async () => {
     const { app, service } = await setup();
     const messages = await runMiddleware(app, service, { triggerType: 'direct' });
-    expect(messages.some(m => m.metadata?.source === 'user-relation')).toBe(false);
+    expect(messages.some(m => m.metadata?.injector === 'user-relation')).toBe(false);
   });
 
   it('triggerType=interval → 不注入（focus 不在该用户）', async () => {
@@ -71,7 +71,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'interval',
     });
-    expect(messages.some(m => m.metadata?.source === 'user-relation')).toBe(false);
+    expect(messages.some(m => m.metadata?.injector === 'user-relation')).toBe(false);
   });
 
   it('用户在关系图中有事件 → 注入摘要 system 块', async () => {
@@ -89,7 +89,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'direct',
     });
-    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
     expect(injected).toBeDefined();
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('讨论直播');
@@ -110,7 +110,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'immediate',
     });
-    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
     expect(injected).toBeDefined();
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('friend');
@@ -132,7 +132,7 @@ describe('plugin-user-relation: middleware', () => {
         { role: 'user', content: '你好' }, // 无 groupId
       ],
     });
-    expect(messages.some(m => m.metadata?.source === 'user-relation')).toBe(false);
+    expect(messages.some(m => m.metadata?.injector === 'user-relation')).toBe(false);
   });
 
   it('实体别名 → 注入显示「（别名: …）」', async () => {
@@ -154,7 +154,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'direct',
     });
-    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('别名:');
     expect(content).toContain('Civ6');
@@ -181,7 +181,7 @@ describe('plugin-user-relation: middleware', () => {
       triggerType: 'direct',
       maxDepth: 2,
     });
-    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('所属跨会话话题');
     expect(content).toContain('直播相关讨论');
@@ -217,7 +217,7 @@ describe('plugin-user-relation: middleware', () => {
       triggerType: 'direct',
       maxDepth: 2,
     });
-    const injected = messages.find(m => m.metadata?.source === 'user-relation');
+    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('共同关注');
     expect(content).toContain('文明6');

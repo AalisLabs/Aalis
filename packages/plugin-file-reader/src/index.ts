@@ -693,7 +693,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         return;
       }
       // 防止多轮 tool-call 中重复注入
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.source === HISTORY_HINT_SOURCE)) {
+      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === HISTORY_HINT_SOURCE)) {
         await next();
         return;
       }
@@ -757,7 +757,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       data.messages.splice(insertIdx, 0, {
         role: 'system',
         content: block,
-        metadata: { source: HISTORY_HINT_SOURCE },
+        metadata: { injector: HISTORY_HINT_SOURCE },
       });
       ctx.logger.debug(
         `file-reader: 已注入文件清单 (${hasNewUpload ? '本轮新上传' : '历史'}, session=${data.sessionId})`,
