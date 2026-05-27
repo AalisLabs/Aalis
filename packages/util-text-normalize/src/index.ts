@@ -177,14 +177,6 @@ export function stripLeakedSpecialTokens(content: string): {
 }
 
 /**
- * @deprecated 旧名，保留为向后兼容别名。请改用 {@link stripLeakedSpecialTokens}。
- *
- * 原命名带有 DeepSeek 厂商前缀，但实际能力对所有"用特殊 token 表达内部协议、
- * 偶发解析失败导致裸标记落入 content"的模型通用，因此函数已重命名。
- */
-export const stripDeepSeekSpecialTokens = stripLeakedSpecialTokens;
-
-/**
  * 一次性应用所有对话内容净化规则。
  * 顺序：先剥离结构性泄漏（DSML 等特殊 token），再修复 GFM 表格渲染问题。
  */
