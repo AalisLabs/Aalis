@@ -83,4 +83,25 @@ describe('trigger-policy resolveEffectiveConfig', () => {
     expect(eff.triggerOnAt).toBe(false);
     expect(eff.muteTimeSeconds).toBe(60);
   });
+
+  it('字符串字段留空（空串/未填）应穿透，不被覆盖为空数组', () => {
+    const c = resolveTriggerPolicyConfig({
+      triggerNames: 'aalis,bot',
+      muteKeywords: 'mute',
+      overrides: [
+        {
+          scope: '*:private',
+          triggerOnAt: false,
+          triggerNames: '', // 空串 → 不覆盖
+          muteKeywords: undefined, // undefined → 不覆盖
+        },
+      ],
+    });
+    expect(c.overrides[0].triggerNames).toBeUndefined();
+    expect(c.overrides[0].muteKeywords).toBeUndefined();
+    const eff = resolveEffectiveConfig(c, 'onebot', 'private');
+    expect(eff.triggerOnAt).toBe(false); // 覆盖生效
+    expect(eff.triggerNames).toEqual(['aalis', 'bot']); // 穿透
+    expect(eff.muteKeywords).toEqual(['mute']); // 穿透
+  });
 });

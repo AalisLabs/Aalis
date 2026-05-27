@@ -120,4 +120,28 @@ describe('resolveEffectiveConfig', () => {
     expect(resolveEffectiveConfig(c, 'onebot', 'private').cooldownSeconds).toBe(10);
     expect(resolveEffectiveConfig(c, 'onebot', 'group').cooldownSeconds).toBe(0);
   });
+
+  it('留空字段穿透：override 只填部分字段，未填字段沿用顶层默认（不被覆盖为 0/空）', () => {
+    const c = resolveFlowControlConfig({
+      cooldownSeconds: 5,
+      rateLimitWindow: 60,
+      rateLimitMaxReplies: 3,
+      idleTriggerPrompt: 'top-default-prompt',
+      overrides: [
+        {
+          scope: '*:private',
+          cooldownSeconds: 10,
+          // 其他字段全留空 / 显式空串 / undefined → 应沿用顶层
+          rateLimitWindow: undefined,
+          rateLimitMaxReplies: null,
+          idleTriggerPrompt: '',
+        },
+      ],
+    });
+    const eff = resolveEffectiveConfig(c, 'onebot', 'private');
+    expect(eff.cooldownSeconds).toBe(10); // override 生效
+    expect(eff.rateLimitWindow).toBe(60); // 穿透
+    expect(eff.rateLimitMaxReplies).toBe(3); // 穿透
+    expect(eff.idleTriggerPrompt).toBe('top-default-prompt'); // 空串也穿透
+  });
 });

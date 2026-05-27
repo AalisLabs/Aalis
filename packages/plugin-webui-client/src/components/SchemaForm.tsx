@@ -508,9 +508,17 @@ export function SchemaForm({
           }
 
           const addItem = () => {
+            // 仅给 required 字段或显式声明了 default 的字段预填值；其余字段留空，
+            // 避免数字字段被默认填 0 而误把"未填"变成"覆盖为 0"。
+            // 后端 parse 只接受类型正确的值，undefined/'' 都会自动穿透到顶层默认。
             const newItem: Record<string, unknown> = {};
             for (const [fk, field] of Object.entries(items)) {
-              newItem[fk] = field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : '');
+              if (field.default !== undefined) {
+                newItem[fk] = field.default;
+              } else if (field.required) {
+                newItem[fk] = field.type === 'number' ? 0 : field.type === 'boolean' ? false : '';
+              }
+              // 其他字段保持 undefined → 输入框渲染为空 → 不参与覆盖
             }
             updateArr([...arr, newItem]);
           };
