@@ -18,11 +18,16 @@ import type { Message } from '@aalis/plugin-message-api';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 
 export const DEFAULT_VISION_PROMPT =
-  '请像有经验的朋友一样看这张图，用自然中文描述。先抓 1–2 个最值得注意的核心元素（数量异常多/反常的物体、' +
-  '醒目的文字或表情包文案、明显的游戏/二次元/网络梗标志），再补充主体、场景、人物动作与表情、整体氛围。' +
+  '请像有经验的朋友一样看这张图，用自然中文客观描述实际可见的内容。' +
+  '先抓 1–2 个最值得注意的视觉重点——优先选「视觉意外/反常之处」：信息密度异常集中的区域、' +
+  '数量反常多或反常少的物体、与画面其他部分明显冲突的颜色或元素、不该出现却出现的东西、' +
+  '醒目的文字或表情包文案、明显的游戏/二次元/网络梗标志，再补充主体、场景、人物动作与表情、整体氛围。' +
   '如果画面是某游戏、动画、网络梗的标志性元素，请直接点名识别（例如 Minecraft 的草方块/羊驼/红石/刷怪塔/' +
-  'iron farm、原神角色、明日方舟干员、知名表情包模板等），不要只说"一些方块"。' +
-  '同时简短推测发送者意图（炫耀、求助、吐槽、玩梗、分享、单纯展示等）。' +
+  'iron farm、原神角色、明日方舟干员、知名表情包模板等），不要只说"一些方块"。\n\n' +
+  '**严格约束**：只描述图片本身可见的内容；不要主动推测发送者的情绪、动机、意图或心理状态，' +
+  '也不要把上下文/对话历史里提到但图片中不可见的人物、事件、动机写进描述。' +
+  '只有当图中文字、表情包文案、画面元素自身明确表达了某种情绪或动作意图（例如表情包模板自带语义、' +
+  '画面里有醒目的「求助」/「炫耀」文字等）时，才可以简短指出该信号。\n\n' +
   '控制在 200 字以内，不要 markdown，不要按 1)2)3) 列点，写成 1–2 段连贯文字。';
 
 /**
@@ -275,7 +280,14 @@ function wrapLLMAsProcessor(
         cap === 'vision' && input.attachments.length > 1
           ? (opts.batchPrompt ?? opts.prompt ?? DEFAULT_VISION_BATCH_PROMPT)
           : (opts.prompt ?? defaultPromptFor(cap, input.attachments.length));
-      const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
+      // 上下文仅作背景参考，必须显式防止"上下文污染描述"：模型容易把对话历史里出现、
+      // 但图片中并不可见的人物/事件/情绪写进描述，导致"夸张"或事实捏造。
+      const ctxBlock = input.context
+        ? `\n\n上下文/最近对话（仅供理解参考，禁止写入描述）:\n${input.context}\n\n` +
+          '⚠️ 严格要求：上下文只用于辅助理解图片含义（如对话谈到的话题可能与图片相关），' +
+          '描述本身必须只包含图片中实际可见的内容。禁止把上下文里提及但图片中不可见的' +
+          '人物、地点、事件、情绪、动机写进描述。'
+        : '';
       const hintBlock = input.hint ? `\n\n额外要求：${input.hint}` : '';
       const prompt = `${base}${ctxBlock}${hintBlock}`;
       // audio 默认更大：e4b thinking enabled 时全能 prompt 消耗 ~600-900 token
