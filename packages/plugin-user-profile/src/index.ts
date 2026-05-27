@@ -86,6 +86,19 @@ export const configSchema: ConfigSchema = {
     description: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
     default: 5,
   },
+  injectFeelingsForOthers: {
+    type: 'boolean',
+    label: '群聊副档案注入 Aalis 感受',
+    description:
+      '在群聊其他参与者的 compact 档案后，附带 Aalis 对该用户的主观感受（与主发言者档案逻辑相同，但条数受 maxFeelingsForOthers 限制）。默认关闭以保持原有 prompt 体积',
+    default: false,
+  },
+  maxFeelingsForOthers: {
+    type: 'number',
+    label: '其他参与者感受条数上限',
+    description: '当 injectFeelingsForOthers 开启时，每位群聊背景参与者最多注入多少条 Aalis 感受',
+    default: 3,
+  },
   temporaryFactMaxAgeDays: {
     type: 'number',
     label: '临时事实保留天数',
@@ -147,7 +160,10 @@ export const configSchema: ConfigSchema = {
   maxFeelingsPerUser: {
     type: 'number',
     label: 'Aalis 对单个用户的感受条数上限',
-    description: '超出后保留最近写入的若干条，旧感受自动淘汰。建议比客观事实少，避免越积越多',
+    description:
+      '超出后按 updatedAt 升序淘汰最久未更新的，旧感受自动淘汰。建议比客观事实少。' +
+      '特殊值：设为 0 等于「只看不写」——不再让 LLM 提取新感受，但已存在的旧感受仍保留在档案中、仍会被注入 prompt（持久冻结）。' +
+      '若要彻底关闭注入，请关闭上方的「启用 Aalis 对用户的主观感受」总开关',
     default: 15,
   },
   enableSelfProfile: {
@@ -184,6 +200,8 @@ export const defaultConfig = {
   maxFactCharsPerItem: 80,
   maxOtherParticipants: 3,
   maxFactsForOthers: 5,
+  injectFeelingsForOthers: false,
+  maxFeelingsForOthers: 3,
   temporaryFactMaxAgeDays: 90,
   relationScoreDecayPerDay: 0.5,
   relationIncrementDirect: 1,
@@ -262,6 +280,8 @@ interface UserProfileConfig {
   maxFactCharsPerItem: number;
   maxOtherParticipants: number;
   maxFactsForOthers: number;
+  injectFeelingsForOthers: boolean;
+  maxFeelingsForOthers: number;
   temporaryFactMaxAgeDays: number;
   relationScoreDecayPerDay: number;
   relationIncrementDirect: number;
@@ -376,6 +396,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
     maxOtherParticipants: Math.max(0, (config.maxOtherParticipants as number) ?? 3),
     maxFactsForOthers: Math.max(1, (config.maxFactsForOthers as number) ?? 5),
+    injectFeelingsForOthers: (config.injectFeelingsForOthers as boolean) ?? false,
+    maxFeelingsForOthers: Math.max(1, (config.maxFeelingsForOthers as number) ?? 3),
     temporaryFactMaxAgeDays: Math.max(0, (config.temporaryFactMaxAgeDays as number) ?? 90),
     relationScoreDecayPerDay: Math.max(0, (config.relationScoreDecayPerDay as number) ?? 0.5),
     relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
@@ -1500,7 +1522,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             if (!profile?.facts.some(isFactActive)) continue;
             const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
             const relationLine = renderRelationLine(profile);
-            snippets.push(renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : ''));
+            let snippet = renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : '');
+            // 可选：在 compact 客观档案后追加 Aalis 对该用户的主观感受（受 injectFeelingsForOthers + enableAalisFeelings 双开关控制）
+            if (cfg.injectFeelingsForOthers && cfg.enableAalisFeelings) {
+              const othersFeelings = (profile.aalisFeelings ?? [])
+                .filter(isFactActive)
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .slice(0, cfg.maxFeelingsForOthers);
+              if (othersFeelings.length > 0) {
+                const feelingsBody = othersFeelings
+                  .sort((a, b) => a.updatedAt - b.updatedAt)
+                  .map(f => renderFactLine(f, false))
+                  .join('\n');
+                snippet += `\n#### 你对 ta 的感受\n${feelingsBody}`;
+              }
+            }
+            snippets.push(snippet);
             if (snippets.length >= cfg.maxOtherParticipants) break;
           }
           if (snippets.length > 0) {
@@ -1763,7 +1800,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
-      `maxFacts=${cfg.maxFactsPerUser}, feelings=${cfg.enableAalisFeelings ? `enabled(max ${cfg.maxFeelingsPerUser})` : 'disabled'}, ` +
+      `maxFacts=${cfg.maxFactsPerUser}, feelings=${cfg.enableAalisFeelings ? `enabled(max ${cfg.maxFeelingsPerUser}${cfg.injectFeelingsForOthers ? `, others max ${cfg.maxFeelingsForOthers}` : ''})` : 'disabled'}, ` +
       `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}, key=${getSelfKey()}` : 'disabled'}, ` +
       `namespace=${PROFILE_NS})`,
   );
