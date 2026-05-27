@@ -226,6 +226,15 @@ export interface OutgoingMessage {
   attachments?: MessageAttachment[];
   /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
   source?: 'agent' | 'system' | 'command';
+  /** 本条回复的 LLM 元数据（供 webui 实时展示，不需持久化）。 */
+  modelInfo?: {
+    provider?: string;
+    model?: string;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    elapsedMs?: number;
+  };
 }
 
 // ----- 流式片段 -----
