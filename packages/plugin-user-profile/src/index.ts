@@ -3,6 +3,7 @@ import { useCommandService } from '@aalis/plugin-commands-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-commands-api';
@@ -36,7 +37,7 @@ export const displayName = '用户事实档案';
 export const subsystem = 'memory';
 export const inject = {
   required: ['memory', 'llm'],
-  optional: ['user-relation'],
+  optional: ['user-relation', 'tools'],
 };
 
 const PROFILE_NS = 'user:profile';
@@ -1569,6 +1570,115 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       await next();
     },
   );
+
+  // ─── 工具：user_profile_lookup ───
+  // 让 Agent 在对话中主动查询任意用户（或 Aalis 自己）的事实档案。
+  // 设计要点：
+  // - 全局可查（用户决定 C）：跨平台/跨群均可，含 __self__ 自档案
+  // - 三种调用方式：① user_key 直传；② platform+user_id 组合；③ self=true（查当前 persona 自档案）
+  // - aalisFeelings 仅在 include_feelings=true 时返回，并打"内心独白"标记，提示 LLM 禁止复述
+  useToolService(ctx).registerGroup({
+    name: 'user-profile',
+    label: '用户档案',
+    description: '查询 Aalis 已经积累的某人事实档案（包括自档案）。',
+  });
+  useToolService(ctx).register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_profile_lookup',
+        description:
+          '查询 Aalis 已积累的某个用户的事实档案。当对话中提到某人、或你想回忆已知信息时使用。' +
+          '可通过 user_key（"<platform>:<userId>"）直查，或用 platform + user_id 组合，或 self=true 查自档案。' +
+          'include_feelings=true 会附带"内心独白"（你对该用户的私人感受），仅供你自己参考，绝不要复述给对方或第三方。',
+        parameters: {
+          type: 'object',
+          properties: {
+            user_key: {
+              type: 'string',
+              description: '完整的 userKey，例如 "onebot:123456789" 或 "__self__:Aalis"。优先级最高。',
+            },
+            platform: {
+              type: 'string',
+              description: '平台名（如 onebot/webui）。与 user_id 搭配使用。',
+            },
+            user_id: {
+              type: 'string',
+              description: '平台用户 ID。与 platform 搭配使用。',
+            },
+            self: {
+              type: 'boolean',
+              description: '为 true 时查询当前 persona 的自档案（__self__:<persona>）。',
+            },
+            include_feelings: {
+              type: 'boolean',
+              description: '是否返回 Aalis 对该用户的内心独白 (aalisFeelings)。默认 false。',
+            },
+          },
+        },
+      },
+    },
+    groups: ['user-profile'],
+    handler: async args => {
+      const a = args as {
+        user_key?: string;
+        platform?: string;
+        user_id?: string;
+        self?: boolean;
+        include_feelings?: boolean;
+      };
+      let userKey = '';
+      if (a.user_key && typeof a.user_key === 'string') {
+        userKey = a.user_key.trim();
+      } else if (a.self === true) {
+        userKey = getSelfKey();
+      } else if (a.platform && a.user_id) {
+        userKey = userKeyOf(String(a.platform), String(a.user_id));
+      }
+      if (!userKey) {
+        return JSON.stringify({
+          ok: false,
+          error: '需提供 user_key 或 (platform + user_id) 或 self=true。',
+        });
+      }
+      const profile = await loadProfile(userKey);
+      if (!profile || profile.facts.length === 0) {
+        return JSON.stringify({ ok: true, userKey, found: false, message: '该用户暂无档案数据。' });
+      }
+      const isSelf = userKey.startsWith(SELF_KEY_PREFIX);
+      const label = isSelf ? userKey.slice(SELF_KEY_PREFIX.length) || getCurrentPersonaName() : userKey;
+      const factsBlock = renderProfileBlock(profile.facts, label, false);
+      const relationLine = renderRelationLine(profile);
+      const result: Record<string, unknown> = {
+        ok: true,
+        userKey,
+        found: true,
+        isSelf,
+        factCount: profile.facts.length,
+        relationScore: profile.relationScore ?? 0,
+        interactionCount: profile.interactionCount ?? 0,
+        lastInteractionAt: profile.lastInteractionAt ?? null,
+        facts: factsBlock,
+      };
+      if (relationLine) result.relationSummary = relationLine;
+      if (a.include_feelings === true && profile.aalisFeelings && profile.aalisFeelings.length > 0) {
+        const activeFeelings = profile.aalisFeelings.filter(isFactActive);
+        if (activeFeelings.length > 0) {
+          result.aalisFeelings = {
+            __warning: '🔒 内心独白：这是你对该用户的私人感受。仅供你自己参考，绝对不要复述、不要拼接进对话。',
+            count: activeFeelings.length,
+            items: activeFeelings.map(f => ({
+              text: f.text,
+              category: f.category,
+              temporality: f.temporality,
+              updatedAt: f.updatedAt,
+            })),
+          };
+        }
+      }
+      return JSON.stringify(result);
+    },
+  });
 
   // ─── /profile 指令族 ───
   // /profile              查看自己的档案
