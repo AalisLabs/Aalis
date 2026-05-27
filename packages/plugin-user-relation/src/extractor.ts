@@ -20,6 +20,7 @@ import type { Context } from '@aalis/core';
 import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { WellKnownKinds } from '@aalis/plugin-message-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import type { RelationService } from './service.js';
@@ -392,7 +393,9 @@ export class RelationExtractor {
       let messageIdToSessionId: Map<string, string>;
       const crossSession = readScope !== 'same-session';
       if (!crossSession) {
-        const raw = (await memory.getHistory(sessionId, limit)).filter(m => m.kind !== 'cross-session-delegation');
+        const raw = (await memory.getHistory(sessionId, limit)).filter(
+          m => m.kind !== WellKnownKinds.CrossSessionDelegation,
+        );
         history = raw;
         messageIdToSessionId = new Map();
         for (const m of raw) {
@@ -405,7 +408,9 @@ export class RelationExtractor {
             this.ctx.logger.debug(
               `[user-relation] readScope=${readScope} 但 memory 后端不支持 getRecentMessagesAcrossSessions，降级到 same-session`,
             );
-          history = (await memory.getHistory(sessionId, limit)).filter(m => m.kind !== 'cross-session-delegation');
+          history = (await memory.getHistory(sessionId, limit)).filter(
+            m => m.kind !== WellKnownKinds.CrossSessionDelegation,
+          );
           messageIdToSessionId = new Map();
           for (const m of history) {
             const meta = (m.metadata as { messageId?: string } | undefined) ?? {};
@@ -422,7 +427,7 @@ export class RelationExtractor {
             sinceTs,
             platform: readScope === 'same-platform' ? currentPlatform : undefined,
             roles: ['user', 'assistant', 'notice'],
-            excludeKinds: ['cross-session-delegation'],
+            excludeKinds: [WellKnownKinds.CrossSessionDelegation],
           });
           messageIdToSessionId = new Map();
           // 把 sessionId 注入到 message.metadata.__extractorSessionId（运行时临时字段，仅用于渲染/反查）
