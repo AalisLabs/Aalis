@@ -65,7 +65,7 @@ describe('checkImmediateMention (@ 检测)', () => {
   it('CQ 码 [CQ:at,qq=...]', () => {
     expect(checkImmediateMention('[CQ:at,qq=12345] 你好')).toBe(true);
   });
-  it('普通 @nickname 已不再命中（须由 checkNameMention 兜底）', () => {
+  it('普通文本 @nickname 不再视作 @ 提及（避免 @他人 误触发）', () => {
     expect(checkImmediateMention('hi @aalis 帮我')).toBe(false);
   });
   it('无 @ 不命中', () => {
@@ -109,9 +109,13 @@ describe('checkImmediateTrigger', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: false, triggerNames: [] };
     expect(checkImmediateTrigger(fakeCtx(), cfg, '@aalis hi')).toBe(false);
   });
-  it('triggerOnAt 开启时响应 OneBot <at self>', () => {
+  it('triggerOnAt 开启但仅纯文本 @ 时不命中（由名字检测兜底）', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: true, triggerNames: [] };
-    expect(checkImmediateTrigger(fakeCtx(), cfg, '<at self>1</at> hi')).toBe(true);
+    expect(checkImmediateTrigger(fakeCtx(), cfg, '@aalis hi')).toBe(false);
+  });
+  it('triggerOnAt 开启且为 CQ:at 时命中', () => {
+    const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: true, triggerNames: [] };
+    expect(checkImmediateTrigger(fakeCtx(), cfg, '[CQ:at,qq=123] hi')).toBe(true);
   });
   it('名字匹配也命中', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: false, triggerNames: ['aalis'] };

@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
+import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -243,7 +244,7 @@ class DeepSeekClient {
   }
 
   async chat(model: string, request: ChatModelRequest, enableThinking: boolean): Promise<ChatResponse> {
-    const messages = request.messages.map(m => this.toAPIMessage(m));
+    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -330,7 +331,7 @@ class DeepSeekClient {
   }
 
   async *chatStream(model: string, request: ChatModelRequest, enableThinking: boolean): AsyncIterable<ChatStreamChunk> {
-    const messages = request.messages.map(m => this.toAPIMessage(m));
+    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -526,8 +527,10 @@ class DeepSeekClient {
    * 但历史消息（从 memory 加载）不含 reasoning_content
    */
   private toAPIMessage(msg: Message): APIMessage {
+    // 调用方已经 prepareLLMMessages 处理过：role 已是 WellKnownRole，自定义 role / kind
+    // 对应的前缀已拼接进 content。这里只需透传。
     const apiMsg: APIMessage = {
-      role: msg.role,
+      role: toLLMRole(msg.role),
       content: msg.content ?? null,
     };
 
