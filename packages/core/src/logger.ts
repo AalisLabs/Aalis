@@ -3,7 +3,8 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface LogEntry {
   /** 进程内单调递增的稳定序号（每个 LogHub 实例独立计数）。用作下游 React/UI key 与分页 cursor。 */
   seq: number;
-  /** 完整 ISO-8601 时间戳（`new Date().toISOString()`，含日期）。sink 按需截取显示。 */
+  /** 本地时区 ISO-8601 时间戳（如 `2026-05-27T09:09:16.028+01:00`）。
+   *  保留完整日期与偏移，便于人读与机器解析；sink 按需截取显示。 */
   timestamp: string;
   level: LogLevel;
   scope: string;
@@ -100,9 +101,9 @@ export class Logger {
   private log(level: LogLevel, message: string, ...args: unknown[]): void {
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
 
-    // 完整 ISO 时间戳（YYYY-MM-DDTHH:mm:ss.sssZ）——信息保真。
+    // 本地时区 ISO 时间戳（YYYY-MM-DDTHH:mm:ss.sss±HH:mm）——信息保真且贴近人读。
     // sink（console / CLI / WebUI）按显示需求自行截取，不在源头丢日期。
-    const timestamp = new Date().toISOString();
+    const timestamp = formatLocalIso(new Date());
     // 将额外参数（错误对象 / 上下文等）序列化并拼到 message 末尾，
     // 避免 sink 只读 message 时丢失错误细节。**保持运行时中立**：只用纯 ES
     // 原语，不依赖 node:util / window 等任何宿主 API。
@@ -131,6 +132,28 @@ export class Logger {
  * - 普通对象 / 数组：尝试 `JSON.stringify`，遇到循环引用或不可序列化值时退化
  *   为 `String(v)`（一般得到 `[object Object]`，但至少不会抛）
  */
+
+/**
+ * 把 `Date` 渲染成本地时区 ISO-8601（带显式偏移），如：
+ *   `2026-05-27T09:09:16.028+01:00` / `2026-05-27T00:09:16.028Z`（UTC）
+ *
+ * 设计：日志默认以"运维所在地"读，避免把伦敦同事的 09:00 印成 08:00；
+ * 偏移段保证仍是合法 ISO-8601，下游解析器 (`new Date(...)`) 也能精确还原。
+ * 偏移 0 时输出 `Z` 以贴近通用习惯。零运行时依赖。
+ */
+function formatLocalIso(d: Date): string {
+  const pad = (n: number, w = 2): string => String(n).padStart(w, '0');
+  const offMin = -d.getTimezoneOffset();
+  const sign = offMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offMin);
+  const offStr = offMin === 0 ? 'Z' : `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}` +
+    offStr
+  );
+}
+
 function stringifyArg(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return String(value);
