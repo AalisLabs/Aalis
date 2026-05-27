@@ -111,7 +111,7 @@ describe('buildFocusGuidance', () => {
     expect(msg?.role).toBe('system');
     expect(msg?.content).toContain('【当前焦点】');
     expect(msg?.content).toContain('焦点消息');
-    expect(msg?.metadata?.source).toBe('focus-guidance');
+    expect(msg?.metadata?.injector).toBe('focus-guidance');
   });
 
   it('群聊 + direct（直接对话）→ 返回 system 焦点指引', () => {

@@ -69,15 +69,18 @@ class InMemoryFallbackService implements MemoryService {
     fromTs: number,
     toTs: number,
     roles?: Array<Message['role']>,
+    excludeKinds?: string[],
   ): Promise<Message[]> {
     const archived = this.archivedSessions.get(sessionId) ?? [];
     const active = this.sessions.get(sessionId) ?? [];
     const all = [...archived, ...active];
+    const excludeKindSet = excludeKinds && excludeKinds.length > 0 ? new Set(excludeKinds) : null;
     return all
       .filter(m => {
         const ts = m.timestamp ?? 0;
         if (ts < fromTs || ts > toTs) return false;
         if (roles && roles.length > 0 && !roles.includes(m.role)) return false;
+        if (excludeKindSet && m.kind && excludeKindSet.has(m.kind)) return false;
         return true;
       })
       .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
@@ -89,12 +92,16 @@ class InMemoryFallbackService implements MemoryService {
     const roleSet = new Set(roles);
     const excludeSet =
       query.excludeSessionIds && query.excludeSessionIds.length > 0 ? new Set(query.excludeSessionIds) : null;
+    const kindSet = query.kinds && query.kinds.length > 0 ? new Set(query.kinds) : null;
+    const excludeKindSet = query.excludeKinds && query.excludeKinds.length > 0 ? new Set(query.excludeKinds) : null;
 
     const all: RecentMessageRecord[] = [];
     for (const [sessionId, msgs] of this.sessions) {
       if (excludeSet?.has(sessionId)) continue;
       for (const m of msgs) {
         if (!roleSet.has(m.role)) continue;
+        if (kindSet && (!m.kind || !kindSet.has(m.kind))) continue;
+        if (excludeKindSet && m.kind && excludeKindSet.has(m.kind)) continue;
         const ts = m.timestamp ?? 0;
         if (typeof query.sinceTs === 'number' && ts < query.sinceTs) continue;
         if (typeof query.platform === 'string') {
