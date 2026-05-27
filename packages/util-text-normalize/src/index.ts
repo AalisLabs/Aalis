@@ -113,9 +113,64 @@ export function fixGfmTables(content: string): string {
 }
 
 /**
+ * 剥离 DeepSeek 系列模型泄漏到 `content` 的 DSML (DeepSeek Markup Language) 标记。
+ *
+ * 背景：DeepSeek V3.2/V4 系列使用内部 DSML 协议表达 tool_calls，
+ * 标记形如：
+ * ```
+ * <｜DSML｜tool_calls><｜DSML｜invoke name="X">
+ *   <｜DSML｜parameter name="Y" string="true">VALUE</｜DSML｜parameter>
+ * </｜DSML｜invoke></｜DSML｜tool_calls>
+ * ```
+ * （`｜` 为 U+FF5C 全角竖线）
+ *
+ * 已知 bug：模型会输出**畸形变体**（多一对竖线，如 `<｜｜DSML｜｜...>`），
+ * 服务端按 `｜DSML｜` 严格匹配的 tool_call_parser 失败，整段以裸文本形式留在 `content` 里，
+ * 直接发给用户/入库。参见：
+ * - https://huggingface.co/deepseek-ai/DeepSeek-V3.2/discussions/29
+ * - https://forums.developer.nvidia.com/t/367901
+ *
+ * 本函数作为最后一道防线：
+ * - 优先剥离整段 `<...DSML...>...</...DSML...>`
+ * - 兜底剥离零散残留的 `<...DSML...>` 单 token（跨 chunk 边界泄漏的碎片）
+ * - 不尝试反解为 tool_calls（避免触发未授权副作用，且畸形变体解析风险大）
+ *
+ * @returns 净化后的内容 + 是否发生过泄漏（供调用方告警/遥测）
+ */
+export function stripDeepSeekSpecialTokens(content: string): {
+  sanitized: string;
+  hadLeak: boolean;
+} {
+  if (!content) return { sanitized: content, hadLeak: false };
+  let sanitized = content;
+  let hadLeak = false;
+  // 1) 整段成对 block：<...DSML...>...</...DSML...>（贪婪到最近的闭合）
+  const blockRe = /<[｜|]+[^<>]*DSML[^<>]*?[｜|]+[^<>]*>[\s\S]*?<\/[｜|]+[^<>]*DSML[^<>]*?[｜|]+[^<>]*>/g;
+  if (blockRe.test(sanitized)) {
+    hadLeak = true;
+    sanitized = sanitized.replace(blockRe, '');
+  }
+  // 2) 残留单 token：开/闭标签碎片
+  const tokenRe = /<\/?[｜|]+[^<>]*DSML[^<>]*?[｜|]+[^<>]*>/g;
+  if (tokenRe.test(sanitized)) {
+    hadLeak = true;
+    sanitized = sanitized.replace(tokenRe, '');
+  }
+  // 3) 极端兜底：未闭合的 DSML 起始片段（例如 `<｜｜DSML｜｜tool_calls`，缺末尾 `>`）
+  const partialRe = /<\/?[｜|]+[^<>]*DSML[^<>]*/g;
+  if (partialRe.test(sanitized)) {
+    hadLeak = true;
+    sanitized = sanitized.replace(partialRe, '');
+  }
+  return { sanitized: hadLeak ? sanitized.trim() : sanitized, hadLeak };
+}
+
+/**
  * 一次性应用所有对话内容净化规则。
- * 当前等同于 `fixGfmTables`，预留为未来扩展点（脱敏 / 长链折叠 / 等）。
+ * 顺序：先剥离结构性泄漏（DSML 等特殊 token），再修复 GFM 表格渲染问题。
  */
 export function normalizeAssistantContent(content: string): string {
-  return fixGfmTables(content);
+  if (!content) return content;
+  const { sanitized } = stripDeepSeekSpecialTokens(content);
+  return fixGfmTables(sanitized);
 }
