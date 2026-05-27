@@ -262,9 +262,10 @@ async function archiveOutboundImage(
   const tag = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: description, ref: refStr });
   const message: Message = {
     role: 'assistant',
+    kind: 'outbound-image',
     content: tag,
     timestamp: Date.now(),
-    metadata: { source: 'image-sender', kind: 'outbound-image', ref: refStr },
+    metadata: { source: 'image-sender', ref: refStr },
   };
   try {
     await archive.saveMessage(sessionId, message, { debugLabel: '[image-sender] 已入档发送的图片' });
