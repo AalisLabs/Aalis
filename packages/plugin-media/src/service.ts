@@ -270,12 +270,16 @@ export class MediaServiceImpl implements MediaService {
               item.cap = 'vision';
               item.processor = proc?.name;
               if (proc?.describe) {
+                // 自动归档路径也走双重识别：用户未显式覆盖 cfg.vision.prompt 时，
+                // 先调一次轻量分类挑专业/详细/简洁 prompt，避免所有图都吃 casual prompt。
+                // 显式覆盖的 vision.prompt 视为用户强意图，直接尊重不再分类。
+                const hint = this.cfg.vision.prompt ?? (await this.classifyAndPickPrompt(proc, att.data));
                 const r = await proc.describe(
                   {
                     attachments: [att],
                     mode: 'single',
                     maxTokens: this.cfg.vision.maxTokens,
-                    hint: this.cfg.vision.prompt,
+                    hint,
                     context: ctxText,
                   },
                   this.ctx,
