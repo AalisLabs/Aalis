@@ -193,6 +193,15 @@ interface WSOutgoing {
     name?: string;
   }>;
   todoItems?: unknown[];
+  /** 仅 message 类型携带：本轮 LLM 元数据，实时展示模型名/token 用量/耗时 */
+  modelInfo?: {
+    provider?: string;
+    model?: string;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    elapsedMs?: number;
+  };
   /** page_refresh：通知前端某个插件相关的动态页面刷新数据源。pluginName 缺省 = 全部。 */
   pluginName?: string;
   // token_usage 字段
@@ -1240,6 +1249,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             name: a.name,
           }))
         : undefined,
+      modelInfo: msg.modelInfo,
     };
     const json = JSON.stringify(payload);
 

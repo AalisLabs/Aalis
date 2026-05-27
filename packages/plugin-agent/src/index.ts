@@ -827,16 +827,17 @@ class DefaultAgent implements AgentService {
 
           // 在 assistant 最终持久化时记录 modelInfo：前端从消息历史可还原 "这条回复
           // 由哪个 model 生成、用了多少 token、耗时多久"，方便用户验证模型切换是否生效。
+          const turnModelInfo = {
+            provider: llm.providerId,
+            model: llm.id,
+            promptTokens: turnUsageAcc.promptTokens || undefined,
+            completionTokens: turnUsageAcc.completionTokens || undefined,
+            totalTokens: turnUsageAcc.totalTokens || undefined,
+            elapsedMs: Date.now() - turnStartTs,
+          };
           const finalAssistantMetadata: Record<string, unknown> = {
             ...(assistantMetadata ?? {}),
-            modelInfo: {
-              provider: llm.providerId,
-              model: llm.id,
-              promptTokens: turnUsageAcc.promptTokens || undefined,
-              completionTokens: turnUsageAcc.completionTokens || undefined,
-              totalTokens: turnUsageAcc.totalTokens || undefined,
-              elapsedMs: Date.now() - turnStartTs,
-            },
+            modelInfo: turnModelInfo,
           };
 
           // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
@@ -858,6 +859,7 @@ class DefaultAgent implements AgentService {
             reasoningContent: combinedReasoning,
             source: 'agent',
             segments: turnSegments.length > 0 ? turnSegments : undefined,
+            modelInfo: turnModelInfo,
           });
         }
 
