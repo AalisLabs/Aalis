@@ -455,10 +455,17 @@ class DeepSeekClient {
             if (delta.content) {
               if (!dsmlDetected) {
                 accContent += delta.content;
-                // 检测 DSML 起始标记（全角或半角 | 前缀）
-                const dsmlIdx = accContent.search(/<[｜|]DSML/);
+                // 检测 DSML 起始标记。已知变体：
+                //   - 单竖线（标准）：<｜DSML｜tool_calls>
+                //   - 双竖线（畸形泄漏）：<｜｜DSML｜｜tool_calls>
+                //   - 半角变体：<|DSML|...>
+                // 使用 [｜|]+ 兼容任意数量的竖线
+                const dsmlIdx = accContent.search(/<[｜|]+\s*DSML/);
                 if (dsmlIdx !== -1) {
                   dsmlDetected = true;
+                  this.logger.warn(
+                    `DeepSeek 检测到 DSML 标记泄漏，模型 ${model} 输出原生 tool_call 标记到 content（服务端解析失败），已剥离`,
+                  );
                   // 输出 DSML 之前的部分（如果有）
                   const cleanPart = accContent.slice(0, dsmlIdx);
                   const prevLen = accContent.length - delta.content.length;
