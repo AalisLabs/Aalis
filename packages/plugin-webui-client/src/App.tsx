@@ -138,6 +138,7 @@ export function App() {
     reasoningContent?: string,
     serverSegments?: ContentSegment[],
     attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>,
+    modelInfo?: { provider?: string; model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; elapsedMs?: number },
   ) => {
     // 取消 handleStream 尚未执行的 RAF，防止它在 streamingRef 已置 false 后
     // 创建重复的 assistant 消息（竞态：RAF 回调晚于 handleIncoming 执行）
@@ -165,6 +166,7 @@ export function App() {
           reasoningContent: reasoningContent ?? last.reasoningContent,
           segments: finalSegments,
           attachments: attachments ?? last.attachments,
+          modelInfo: modelInfo ?? last.modelInfo,
         }];
       }
       streamingRef.current = false;
@@ -174,6 +176,7 @@ export function App() {
         reasoningContent,
         segments: finalSegments,
         attachments,
+        modelInfo,
         timestamp: Date.now(),
       }];
     });

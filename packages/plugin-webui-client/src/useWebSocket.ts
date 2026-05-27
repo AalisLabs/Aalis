@@ -30,6 +30,7 @@ export function useWebSocket(
     reasoningContent?: string,
     segments?: ContentSegment[],
     attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>,
+    modelInfo?: { provider?: string; model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; elapsedMs?: number },
   ) => void,
   onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void,
   onLog: (entry: LogEntry) => void,
@@ -98,7 +99,7 @@ export function useWebSocket(
               onToolCallProgressClear?.();
             }
           } else if (data.type === 'message' && (data.content || data.attachments?.length)) {
-            onMessage(data.content ?? '', data.reasoningContent, data.segments, data.attachments);
+            onMessage(data.content ?? '', data.reasoningContent, data.segments, data.attachments, data.modelInfo);
           } else if (data.type === 'tool_call' && data.toolName) {
             onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {
