@@ -22,6 +22,45 @@ import type {
 } from './types.js';
 
 const MAX_EVIDENCE_PER_ENTITY = 10; // 单实体保留的 evidence 上限，更早的会被裁掉
+const MAX_ALIASES_PER_ENTITY = 20; // 单实体保留的 aliases 上限，防 prompt 注入塞爆
+
+/**
+ * 合并实体别名：
+ * - 入参中空串/全空白/与 name 等价的项一律剔除（按 normalizeName 比较）
+ * - 与已有 alias 也按 normalizeName 去重（大小写、全半角、标点都标准化后比较，保留首次写法）
+ * - 总长度截断到 MAX_ALIASES_PER_ENTITY；超出部分**优先丢弃 incoming 里靠后的新加项**，
+ *   保留稳定的旧别名顺序，避免 LLM 反复输出新别名挤掉真有用的旧别名
+ *
+ * 若 incoming 为 undefined：返回 existing 的去重 + 截断版（顺手清掉历史脏数据）。
+ * 返回值长度为 0 时返回 undefined（避免落库一个空数组）。
+ */
+export function mergeAliases(
+  existing: string[] | undefined,
+  incoming: string[] | undefined,
+  primaryName?: string,
+): string[] | undefined {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const primaryKey = primaryName ? normalizeName(primaryName) : '';
+  const tryPush = (raw: string | undefined): void => {
+    if (!raw) return;
+    const trimmed = String(raw).trim();
+    if (!trimmed) return;
+    const key = normalizeName(trimmed);
+    if (!key) return;
+    if (primaryKey && key === primaryKey) return; // 别名 == name 直接丢
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(trimmed);
+  };
+  for (const a of existing ?? []) tryPush(a);
+  for (const a of incoming ?? []) {
+    if (out.length >= MAX_ALIASES_PER_ENTITY) break;
+    tryPush(a);
+  }
+  if (out.length === 0) return undefined;
+  return out.slice(0, MAX_ALIASES_PER_ENTITY);
+}
 
 /**
  * 人-事件角色优先级。同一 (person, event) 只保留最强角色的一条边：
