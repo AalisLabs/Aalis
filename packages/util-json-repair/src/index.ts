@@ -188,7 +188,9 @@ export function extractJsonCandidate(raw: string): string {
     .replace(/\n?```\s*$/i, '')
     .trim();
 
-  // 遍历所有 '{' 位置，收集平衡且含 ':' 的对象候选，记录最后一个。
+  // 遍历所有顶层 '{' 位置，收集平衡且含 ':' 的对象候选，记录最后一个。
+  // 关键：找到平衡对象后跳到 end+1，跳过该对象的全部内容，只扫顶层对象，
+  // 避免把嵌套的内层 {} 误当成候选。
   let lastObjectStart = -1;
   let lastObjectEnd = -1;
   let searchFrom = 0;
@@ -204,8 +206,11 @@ export function extractJsonCandidate(raw: string): string {
         lastObjectStart = brace;
         lastObjectEnd = end;
       }
+      // 跳过整个对象（含其内部的所有嵌套 '{'），只扫顶层
+      searchFrom = end + 1;
+    } else {
+      searchFrom = brace + 1;
     }
-    searchFrom = brace + 1;
   }
 
   if (lastObjectStart >= 0) {
