@@ -1845,6 +1845,12 @@ export class RelationService {
       topPaths?: number;
       /** 'symmetric'（默认）= 联系紧密度；'directed' = 关注/影响传播度 */
       mode?: ScoreMode;
+      /**
+       * 内部优化：复用调用方已加载的 snapshot，跳过本函数内的 `store.loadAll()`。
+       * 仅在 consolidate 等批量场景使用——上层保证 snapshot 在批处理期间不变。
+       * 公共 API 调用者不要传，让本函数自己加载以获取最新数据。
+       */
+      _snapshot?: RelationGraphSnapshot;
     } = {},
   ): Promise<{
     fromId: string;
@@ -1879,7 +1885,7 @@ export class RelationService {
     const beta = Math.max(0.05, Math.min(1, opts.beta ?? 0.5));
     const topK = Math.max(1, Math.min(20, opts.topPaths ?? 3));
 
-    const snapshot = await this.store.loadAll();
+    const snapshot = opts._snapshot ?? (await this.store.loadAll());
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
@@ -2268,9 +2274,14 @@ export class RelationService {
 
   // 1) 别名候选发现：人物 displayName 与 实体 name/aliases 的高相似对，给出候选
   //    （不自动合并，只输出报告供用户决定；若 confidence 极高且开启 autoLink，则建 is-alias-of 边）
-  // 2) 自动 part-of：实体 name 出现在事件 title 中 → 建 event-entity[relationType=part-of]
-  // 3) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
-  // 4) 报告：返回结构化结果，调用方按需展示
+  // 2) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
+  // 3) 报告：返回结构化结果，调用方按需展示
+  //
+  // 注：曾有「自动 part-of」步骤（实体名是事件标题子串时自动建边），已移除。
+  //   原因：consolidate 在初始 snapshot 上运行，无法感知本轮 event 合并后的 rewire 结果，
+  //   导致别名事件的 about 边 rewire 到 canonical 后与 consolidate 新建的 part-of 并存，
+  //   形成同一 (event,entity) 对同时存在两种边类型的脏数据。
+  //   part-of 边应由 extractor LLM 在提取阶段负责建立。
   // ────────────────────────────────────────────────────────────────
   async consolidate(
     opts: {
@@ -2364,7 +2375,7 @@ export class RelationService {
       reason: string;
     }> = [];
     let aliasEdgesCreated = 0;
-    let partOfEdgesCreated = 0;
+    const partOfEdgesCreated = 0;
     let eventEdgesNormalized = 0;
     let entityHierarchyCandidates = 0;
     let entityHierarchyEdgesCreated = 0;
@@ -2853,107 +2864,6 @@ export class RelationService {
             }
           }
         }
-      }
-    }
-
-    // ─── (2) 自动 part-of：实体 name 是事件 title 子串（强化版）
-    //   规则演进（防误锚 "绝航" ⊂ "绝航刀皮"）：
-    //   (a) kind 偏置：仅 work / place / thing 参与（topic/泛人物概念易撞名）
-    //   (b) 最短长度 2，覆盖 "原神" "PS5" "BWS" 等真实短名
-    //   (c) 最长候选优先：同一 event 命中多个 entity 时，
-    //         若 entity A 的归一化名是 entity B 的归一化名的子串 → 剔除 A，
-    //         避免 "绝航" 在已有 "绝航刀皮" 实体时被同时锚定
-    //   (d) part-of 链祖先剔除：若 candidate 之间已有 entity-entity[part-of] 链
-    //         传递关系，剔除上游（最深子已经能通过 hierarchy 传递语义到父）
-    //   （中文无 word boundary，靠 (c)(d) 双策略而非字符级边界判断 ——
-    //    若临时缺更深子实体导致父被误锚，待 extractor 抽到子实体并建好
-    //    entity-entity 链后，下一轮 consolidate 会自动修正。）
-    const minNameLen = 2;
-    const allowedKinds: ReadonlySet<string> = new Set(['work', 'place', 'thing']);
-
-    // 预构建 entity-entity[part-of] 祖先映射（child → set<ancestor>）
-    const partOfAncestors = new Map<string, Set<string>>();
-    {
-      const directParents = new Map<string, Set<string>>();
-      for (const e of snapshot.edges) {
-        if (e.kind === 'entity-entity' && e.relationType === 'part-of') {
-          if (!directParents.has(e.fromEntityId)) directParents.set(e.fromEntityId, new Set());
-          directParents.get(e.fromEntityId)!.add(e.toEntityId);
-        }
-      }
-      const walk = (id: string, acc: Set<string>, depth: number): void => {
-        if (depth > 8) return;
-        for (const p of directParents.get(id) ?? []) {
-          if (acc.has(p)) continue;
-          acc.add(p);
-          walk(p, acc, depth + 1);
-        }
-      };
-      for (const child of directParents.keys()) {
-        const acc = new Set<string>();
-        walk(child, acc, 0);
-        partOfAncestors.set(child, acc);
-      }
-    }
-
-    // 第一遍：收集每个 event 的「candidate entity 列表」
-    const eventCandidates = new Map<string, EntityNode[]>();
-    for (const ent of snapshot.entities) {
-      const nm = ent.name.trim();
-      if (nm.length < minNameLen) continue;
-      if (!allowedKinds.has(ent.entityKind)) continue;
-      for (const ev of snapshot.events) {
-        if (!ev.title.includes(nm)) continue;
-        if (!eventCandidates.has(ev.id)) eventCandidates.set(ev.id, []);
-        eventCandidates.get(ev.id)!.push(ent);
-      }
-    }
-
-    // 第二遍：应用「最长候选优先 + 祖先剔除」
-    for (const [eventId, candidates] of eventCandidates.entries()) {
-      const ev = snapshot.events.find(e => e.id === eventId);
-      if (!ev) continue;
-      const dropIds = new Set<string>();
-      // 规则 (c)：A.name ⊊ B.name → 剔除 A
-      for (const a of candidates) {
-        for (const b of candidates) {
-          if (a.id === b.id) continue;
-          const an = a.name.trim();
-          const bn = b.name.trim();
-          if (an.length < bn.length && bn.includes(an)) {
-            dropIds.add(a.id);
-          }
-        }
-      }
-      // 规则 (d)：candidate 间的祖先剔除
-      for (const c of candidates) {
-        const anc = partOfAncestors.get(c.id);
-        if (!anc) continue;
-        for (const a of anc) {
-          if (candidates.some(x => x.id === a)) dropIds.add(a);
-        }
-      }
-      const finalists = candidates.filter(c => !dropIds.has(c.id));
-      for (const ent of finalists) {
-        const exists = snapshot.edges.some(
-          e => e.kind === 'event-entity' && e.fromEventId === ev.id && e.toEntityId === ent.id,
-        );
-        if (exists) continue;
-        const now = Date.now();
-        await this.store.upsertEdge({
-          id: globalThis.crypto.randomUUID(),
-          kind: 'event-entity',
-          fromEventId: ev.id,
-          toEntityId: ent.id,
-          relationType: 'part-of',
-          directed: true,
-          weight: 0.6,
-          description: `consolidate 自动识别：事件标题包含实体名 "${ent.name.trim()}"`,
-          firstSeenAt: now,
-          lastReinforcedAt: now,
-          evidence: [],
-        });
-        partOfEdgesCreated++;
       }
     }
 
@@ -3483,8 +3393,10 @@ export class RelationService {
       }
     }
 
-    // 若跨 scope 预合并动了图，重取 snapshot.events 以保证后续 pool 内 LLM 评估基于最新状态。
-    const workingEvents = crossScopeMerged > 0 ? (await this.store.loadAll()).events : events;
+    // 若跨 scope 预合并动了图，重取完整 snapshot（含最新边表），保证后续 pool 内 LLM 评估
+    // 和 scoreBetween 的结构分都基于最新状态。
+    const workingSnapshot = crossScopeMerged > 0 ? await this.store.loadAll() : snapshot;
+    const workingEvents = workingSnapshot.events;
 
     const pools = new Map<string, EventNode[]>();
     for (const ev of workingEvents) {
@@ -3520,6 +3432,30 @@ export class RelationService {
       }
     };
 
+    // 预热：在进入 O(N²) 循环前，并发批量计算所有 event 的 embedding，
+    // 避免在双重循环里串行发起 N 次 Ollama 调用（每次 0.5-2s → N=300 时阻塞数分钟）。
+    // 注：必须用 workingEvents（cross-scope 预合并后的最新列表）；若用顶部 snapshot.events
+    // 会对已被 mergeAlias 删除的 alias event 调 upsertEvent，把死节点"复活"。
+    if (opts.embedding) {
+      const EMBED_CONCURRENCY = 8;
+      const needEmbed = workingEvents.filter(ev => {
+        const expectedHash = computeEventEmbeddingHash(ev.title, ev.summary);
+        return !(
+          ev.embeddingHash === expectedHash &&
+          Array.isArray(ev.embeddingVector) &&
+          ev.embeddingVector.length > 0
+        );
+      });
+      if (needEmbed.length > 0) {
+        logger?.info(
+          `[user-relation] consolidate event 预热 embedding：${needEmbed.length} / ${workingEvents.length} 个事件需要重算`,
+        );
+        for (let start = 0; start < needEmbed.length; start += EMBED_CONCURRENCY) {
+          await Promise.all(needEmbed.slice(start, start + EMBED_CONCURRENCY).map(ev => ensureEmbedding(ev)));
+        }
+      }
+    }
+
     type Candidate = {
       a: EventNode;
       b: EventNode;
@@ -3554,7 +3490,9 @@ export class RelationService {
           let structuralScore = 0;
           if (preTextual) {
             try {
-              const sb = await this.scoreBetween(a.id, b.id, { maxDepth: 3, topPaths: 1 });
+              // 复用本函数顶部已加载的 snapshot，避免 scoreBetween 内部对每个 pair 重新
+              // store.loadAll()——N=300 时这一步会从 ~10s 膨胀到 ~100s。
+              const sb = await this.scoreBetween(a.id, b.id, { maxDepth: 3, topPaths: 1, _snapshot: workingSnapshot });
               structuralScore = sb.score;
             } catch {
               structuralScore = 0;
@@ -3589,6 +3527,9 @@ export class RelationService {
       const sy = y.fusedScore ?? y.jaccardScore;
       return sy - sx;
     });
+    logger?.info(
+      `[user-relation] consolidate event 候选生成完成：events=${events.length}，candidates=${candidates.length}`,
+    );
 
     const report: Array<{
       aId: string;
@@ -3637,6 +3578,9 @@ export class RelationService {
         llmRejectCacheHits++;
         reportEntry.cacheHit = true;
         reportEntry.llmVerdict = { isSame: false, reason: `mergeReject 缓存：${cached.reason}` };
+        logger?.debug(
+          `[user-relation] consolidate event 命中 mergeReject 缓存 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)})：${cached.reason}`,
+        );
         report.push(reportEntry);
         continue;
       }
