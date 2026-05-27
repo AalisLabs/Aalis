@@ -6,7 +6,7 @@ import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@a
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
-import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
+import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
@@ -931,7 +931,7 @@ class DefaultAgent implements AgentService {
 
     // 1. 系统提示
     const systemPrompt = this.buildSystemPrompt(personaOpts);
-    messages.push({ role: 'system', content: systemPrompt, metadata: { source: 'persona' } });
+    messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
     // 2. 历史消息
     const memory = this.ctx.getService<MemoryService>('memory');
@@ -944,7 +944,7 @@ class DefaultAgent implements AgentService {
         const now = Date.now();
         for (const m of history) {
           if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
-          if (m.role === 'system' && m.name === 'system-event') continue;
+          if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
           // 为用户消息注入时间标注，帮助 LLM 理解时间先后
           if (m.role === 'user' && m.timestamp && m.content) {
             const timeLabel = formatTimeLabel(m.timestamp, now);
@@ -996,7 +996,7 @@ class DefaultAgent implements AgentService {
           `说明: 这是你（作为同一 agent 在另一会话的实例）派发给本会话的任务指令，` +
           `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n` +
           hintLine,
-        metadata: { source: 'cross-session-delegation', sourceSessionId },
+        metadata: { injector: WellKnownKinds.CrossSessionDelegation, sourceSessionId },
       });
       return messages;
     }
@@ -1011,7 +1011,7 @@ class DefaultAgent implements AgentService {
           '用户消息中包含系统预处理的附件描述（图片识别结果和/或文件内容提取）。' +
           '请将这些信息作为参考上下文，结合用户的文字，给出一个自然、连贯的统一回复。' +
           '不要将分析结果逐项列出或分成单独的字段，直接在回复中融合所有信息。',
-        metadata: { source: 'system-other' },
+        metadata: { injector: 'system-other' },
       });
     }
 
@@ -1086,7 +1086,7 @@ class DefaultAgent implements AgentService {
     for (const msg of messages) {
       const t = estimateMsgTokens(msg);
       if (msg.role === 'system') {
-        const source = msg.metadata?.source as string | undefined;
+        const source = msg.metadata?.injector as string | undefined;
         const contributions = msg.metadata?._tokenContributions as Record<string, number> | undefined;
 
         if (source === 'memory-summary') {
@@ -1396,7 +1396,7 @@ class DefaultAgent implements AgentService {
         role: 'system',
         content:
           '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。如果你之前有正在执行的多步骤任务或计划，请查看对话摘要和 todo-list 工具确认当前进度，然后继续未完成的步骤。',
-        metadata: { source: 'system-other' },
+        metadata: { injector: 'system-other' },
       };
       // 插入到最后一条 user 消息之后（如果有），否则插到末尾前
       let insertIdx = result.length - 1;
@@ -1774,12 +1774,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 系统提示
       const systemPrompt = agent.buildSystemPrompt();
-      messages.push({ role: 'system', content: systemPrompt, metadata: { source: 'persona' } });
+      messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
       // 历史消息
       if (memory) {
         const history = await memory.getHistory(data.sessionId, agent.historyLimit);
-        messages.push(...history.filter(m => !(m.role === 'system' && m.name === 'system-event')));
+        messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
       }
 
       // 运行 agent:llm:before 中间件以获取注入的 system 消息（摘要、向量记忆等）+ 工具搜索层过滤

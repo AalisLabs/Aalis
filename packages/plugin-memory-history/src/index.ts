@@ -9,7 +9,7 @@
  *
  * 注入策略：
  *   - 监听 `agent:llm:before`，按 scope 决定是否过滤 platform。
- *   - 通过 metadata.source 标记排重，避免被多次插入。
+ *   - 通过 metadata.injector 标记排重，避免被多次插入。
  *   - 同步注册 `recent_messages` 工具供 agent 主动查询。
  *
  * 与 agent.historyLimit 的关系：
@@ -177,9 +177,13 @@ function formatRecords(records: RecentMessageRecord[]): string {
       const platform = asString(meta.platform) ?? 'unknown';
       const senderName = asString(meta.nickname);
       const groupName = asString(meta.groupName);
+      const group = groupName ? `@${groupName}` : '';
+      // notice 作为独立角色渲染为 [Notice]，后面不跟 sender（由 content 本身描述事件）
+      if (message.role === 'notice') {
+        return `[${formatTimestamp(message.timestamp ?? 0)}][${platform}/${shortSession(sessionId)}${group}][Notice] ${message.content ?? ''}`;
+      }
       const role = message.role === 'assistant' ? 'Assistant' : 'User';
       const sender = senderName ? `/${senderName}` : '';
-      const group = groupName ? `@${groupName}` : '';
       return `[${formatTimestamp(message.timestamp ?? 0)}][${platform}/${shortSession(sessionId)}${group}][${role}${sender}] ${message.content ?? ''}`;
     })
     .join('\n');
@@ -219,7 +223,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       sinceTs,
       platform,
       excludeSessionIds,
-      roles: ['user', 'assistant'],
+      roles: ['user', 'assistant', 'notice'],
     });
 
     if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
@@ -246,7 +250,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       await next();
       return;
     }
-    if (data.messages.some(m => m.role === 'system' && m.metadata?.source === cfg.injectMetadataSource)) {
+    if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === cfg.injectMetadataSource)) {
       await next();
       return;
     }
@@ -273,7 +277,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     const injectMsg: Message = {
       role: 'system',
       content: block,
-      metadata: { source: cfg.injectMetadataSource },
+      metadata: { injector: cfg.injectMetadataSource },
     };
     const idx = data.messages.findIndex(m => m.role !== 'system');
     const insertIdx = idx === -1 ? data.messages.length : idx;

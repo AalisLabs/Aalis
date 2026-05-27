@@ -56,7 +56,7 @@ describe('plugin-memory-history', () => {
     expect(messages.length).toBe(3);
     expect(messages[0].role).toBe('system');
     expect(messages[1].role).toBe('system');
-    expect(messages[1].metadata?.source).toBe('memory-history');
+    expect(messages[1].metadata?.injector).toBe('memory-history');
     expect(messages[1].content).toContain('[TEST-HEADER]');
     expect(messages[1].content).toContain('A1');
     expect(messages[1].content).toContain('B1');
@@ -176,7 +176,7 @@ describe('plugin-memory-history', () => {
     const messages: Message[] = [{ role: 'user', content: 'now' }];
     await app.ctx.hooks.run('agent:llm:before', { messages, tools: [], sessionId: 'current', platform: 'onebot' });
     await app.ctx.hooks.run('agent:llm:before', { messages, tools: [], sessionId: 'current', platform: 'onebot' });
-    const injected = messages.filter(m => m.metadata?.source === 'memory-history');
+    const injected = messages.filter(m => m.metadata?.injector === 'memory-history');
     expect(injected.length).toBe(1);
   });
 
