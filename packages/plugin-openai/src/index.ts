@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
+import { toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -404,9 +405,15 @@ class OpenAIClient {
   }
 
   private toAPIMessage(msg: Message): APIMessage {
+    const llmRole = toLLMRole(msg.role);
+    // 自定义 role（如 notice）需要给文本加上类型前缀，确保 LLM 能区分它来自系统观察而非 persona 指令
+    const content =
+      llmRole !== msg.role && typeof msg.content === 'string' && msg.content.length > 0
+        ? `[系统通知] ${msg.content}`
+        : msg.content;
     const apiMsg: APIMessage = {
-      role: msg.role,
-      content: msg.content,
+      role: llmRole,
+      content,
     };
 
     // 多模态：如果消息包含图片，构造 content 数组
