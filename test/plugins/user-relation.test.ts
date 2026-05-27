@@ -1123,28 +1123,28 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(snap.entities.find(e => e.name === '三角洲行动')).toBeUndefined();
   });
 
-  it('(3f) part-of auto-link: 严格边界匹配，"绝航" 不应锚到 "讨论绝航刀皮"（已有更长的"绝航刀皮"实体）', async () => {
+  // 「事件标题包含实体名 → 自动建 event-entity[part-of]」功能已从 consolidate 中移除，
+  // 原因见 service.ts 注释：consolidate 在初始 snapshot 运行，无法感知本轮 event 合并后的 rewire，
+  // 导致脱名事件的 about 边 rewire 与新建 part-of 并存。part-of 边由 extractor LLM 在提取阶段负责。
+  // 下面三个测试验证：autoLink=true 下事件标题包含实体名仅此一原因，不会自动产生 event-entity[part-of] 边。
+  it('(3f) part-of auto-link 已移除：事件标题包含实体名不再自动建 part-of（不论长子还是短父）', async () => {
     const { service } = await makeService();
-    // 创建父子实体（先建立 entity-entity part-of 链）
     const parent = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
     const child = await service.createEntity({ name: '绝航刀皮', entityKind: 'thing', evidence: [] });
-    // 事件标题含"绝航刀皮"（自然也含"绝航"）
     const evNode = await service.createEvent({ title: '讨论绝航刀皮的属性', evidence: [] });
 
-    // 第一次 consolidate：「最长候选优先」规则在 candidate 列表里就剔除"绝航"
-    // （即使尚未建 entity-entity part-of 链），只保留"绝航刀皮"
     await service.consolidate({ autoLink: true });
 
     const snap = await service.loadAll();
     const peoEdges = snap.edges.filter(
       e => e.kind === 'event-entity' && e.fromEventId === evNode.id && e.relationType === 'part-of',
     ) as EventEntityEdge[];
-    const targetIds = new Set(peoEdges.map(e => e.toEntityId));
-    expect(targetIds.has(child.id)).toBe(true);
-    expect(targetIds.has(parent.id)).toBe(false); // 父被「最长候选优先」剔除
+    expect(peoEdges).toHaveLength(0);
+    void parent;
+    void child;
   });
 
-  it('(3f) part-of auto-link: 仅 work/place/thing 参与，topic 实体不参与 part-of 锚定', async () => {
+  it('(3f) part-of auto-link 已移除：topic 实体同样不被自动锚定', async () => {
     const { service } = await makeService();
     const topic = await service.createEntity({ name: '健康', entityKind: 'topic', evidence: [] });
     const evNode = await service.createEvent({ title: '聊聊健康话题', evidence: [] });
@@ -1154,16 +1154,14 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     const edge = snap.edges.find(
       e => e.kind === 'event-entity' && e.fromEventId === evNode.id && e.toEntityId === topic.id,
     );
-    expect(edge).toBeUndefined(); // topic 跳过
+    expect(edge).toBeUndefined();
   });
 
-  it('(3f) part-of auto-link: entity-entity part-of 链祖先剔除（间接父也不锚）', async () => {
+  it('(3f) part-of auto-link 已移除：hierarchy 链上的 leaf 也不再被自动锚定', async () => {
     const { service } = await makeService();
-    // 三级链：刀皮纹理 part-of 绝航刀皮 part-of 绝航
     const grand = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
     const mid = await service.createEntity({ name: '绝航刀皮', entityKind: 'thing', evidence: [] });
     const leaf = await service.createEntity({ name: '刀皮纹理', entityKind: 'thing', evidence: [] });
-    // 手动建链（绕过名称包含规则）
     await service.addEntityEntityEdge({
       fromEntityId: mid.id,
       toEntityId: grand.id,
@@ -1176,7 +1174,6 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
       relationType: 'part-of',
       evidence: [],
     });
-    // 事件标题同时含三个名字
     const evNode = await service.createEvent({ title: '绝航绝航刀皮刀皮纹理调研', evidence: [] });
 
     await service.consolidate({ autoLink: true });
@@ -1184,13 +1181,13 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     const peoEdges = snap.edges.filter(
       e => e.kind === 'event-entity' && e.fromEventId === evNode.id && e.relationType === 'part-of',
     ) as EventEntityEdge[];
-    const targetIds = new Set(peoEdges.map(e => e.toEntityId));
-    expect(targetIds.has(leaf.id)).toBe(true);
-    expect(targetIds.has(mid.id)).toBe(false); // 直接父被剔除
-    expect(targetIds.has(grand.id)).toBe(false); // 间接祖先也被剔除
+    expect(peoEdges).toHaveLength(0);
+    void grand;
+    void mid;
+    void leaf;
   });
 
-  it('(3f) part-of auto-link: 短名 "PS5" 在事件标题中正常锚定', async () => {
+  it('(3f) part-of auto-link 已移除：短名 PS5 也不再自动锚到事件（需由 extractor 负责）', async () => {
     const { service } = await makeService();
     const ps5 = await service.createEntity({ name: 'PS5', entityKind: 'thing', evidence: [] });
     const evNode = await service.createEvent({ title: '聊 PS5 的体验', evidence: [] });
@@ -1204,7 +1201,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
         e.toEntityId === ps5.id &&
         e.relationType === 'part-of',
     );
-    expect(edge).toBeDefined();
+    expect(edge).toBeUndefined();
   });
 
   it('normalizeName: 连接符/下划线/中点 视为装饰，「三角洲-行动」≡「三角洲行动」', async () => {
