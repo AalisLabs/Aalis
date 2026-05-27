@@ -170,8 +170,17 @@ function parseOverrides(raw: unknown): TriggerScopeOverride[] {
     const mode = obj.intervalMode;
     if (mode === 'fixed' || mode === 'dynamic' || mode === 'both') o.intervalMode = mode;
     if (typeof obj.triggerOnAt === 'boolean') o.triggerOnAt = obj.triggerOnAt;
-    if (obj.triggerNames !== undefined) o.triggerNames = parseStringList(obj.triggerNames);
-    if (obj.muteKeywords !== undefined) o.muteKeywords = parseStringList(obj.muteKeywords);
+    // 字符串字段：仅在非空时视为覆盖；空串/未填 → 穿透到顶层默认
+    if (typeof obj.triggerNames === 'string' && obj.triggerNames.trim() !== '') {
+      o.triggerNames = parseStringList(obj.triggerNames);
+    } else if (Array.isArray(obj.triggerNames) && obj.triggerNames.length > 0) {
+      o.triggerNames = parseStringList(obj.triggerNames);
+    }
+    if (typeof obj.muteKeywords === 'string' && obj.muteKeywords.trim() !== '') {
+      o.muteKeywords = parseStringList(obj.muteKeywords);
+    } else if (Array.isArray(obj.muteKeywords) && obj.muteKeywords.length > 0) {
+      o.muteKeywords = parseStringList(obj.muteKeywords);
+    }
     if (typeof obj.muteTimeSeconds === 'number' && obj.muteTimeSeconds > 0) {
       o.muteTimeSeconds = Math.floor(obj.muteTimeSeconds);
     }
