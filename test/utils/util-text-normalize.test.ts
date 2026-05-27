@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   fixGfmTables,
   normalizeAssistantContent,
-  stripDeepSeekSpecialTokens,
   stripLeakedSpecialTokens,
 } from '../../packages/util-text-normalize/src/index.js';
 
@@ -135,10 +134,6 @@ describe('stripLeakedSpecialTokens', () => {
     const { sanitized, hadLeak } = stripLeakedSpecialTokens('');
     expect(hadLeak).toBe(false);
     expect(sanitized).toBe('');
-  });
-
-  it('deprecated alias stripDeepSeekSpecialTokens still points to stripLeakedSpecialTokens', () => {
-    expect(stripDeepSeekSpecialTokens).toBe(stripLeakedSpecialTokens);
   });
 });
 
