@@ -40,9 +40,12 @@ export const inject = {
 };
 
 const PROFILE_NS = 'user:profile';
-/** Aalis 自档案的 userKey。userKeyOf 形如 `platform:userId`，
- *  这里用 `__self__:aalis` 这种不可能在真实平台出现的形式做隔离 */
-const SELF_KEY = '__self__:aalis';
+/** Aalis 自档案的 userKey 前缀。userKeyOf 形如 `platform:userId`，
+ *  这里用 `__self__:<personaName>` 这种不可能在真实平台出现的形式做隔离。
+ *  按 persona name 分堆：同名 persona（如 onebot 上的 aalis 与 webui 上的 aalis-webui两张卡都叫 Aalis）共享内心；
+ *  不同 persona（如 Babel）各自独立。 */
+const SELF_KEY_PREFIX = '__self__:';
+const DEFAULT_PERSONA_NAME = 'aalis';
 
 export const configSchema: ConfigSchema = {
   extractEveryNMessages: {
@@ -414,6 +417,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   function extractionCountKeyOf(sessionId: string, platform: string | undefined, userId: string): string {
     return `${sessionId}:${userKeyOf(platform, userId)}`;
+  }
+
+  /** 返回当前活跃 persona 的 self key（运行时解析，跟随 persona 切换）。
+   *  若 persona 服务不可用或未配 name，回退到默认 `aalis`。 */
+  function getCurrentPersonaName(): string {
+    try {
+      const persona = ctx.getService<{ getPersonaName?: () => string }>('persona');
+      const name = persona?.getPersonaName?.()?.trim();
+      return name && name.length > 0 ? name : DEFAULT_PERSONA_NAME;
+    } catch {
+      return DEFAULT_PERSONA_NAME;
+    }
+  }
+  function getSelfKey(): string {
+    return `${SELF_KEY_PREFIX}${getCurrentPersonaName()}`;
   }
 
   function normalizeTemporality(v: unknown, category?: FactCategory): FactTemporality {
@@ -1155,7 +1173,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const history = await memory.getHistory(sessionId, cfg.selfReflectHistory);
       // 至少需要一些 assistant 发言作为"自反思"的材料
       if (!history.some(m => m.role === 'assistant' && m.content)) return;
-      const profile = (await loadProfile(SELF_KEY)) ?? {
+      const selfKey = getSelfKey();
+      const profile = (await loadProfile(selfKey)) ?? {
         facts: [],
         relationScore: 0,
         interactionCount: 0,
@@ -1164,10 +1183,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const ops = await llmReflectSelf(history, profile.facts);
       if (ops.add.length === 0 && ops.update.length === 0 && ops.remove.length === 0) return;
       const newFacts = mergeFactList(profile.facts, ops.add, ops.update, ops.remove, cfg.maxSelfFacts);
-      const fresh = (await loadProfile(SELF_KEY)) ?? profile;
-      await saveProfile(SELF_KEY, { ...fresh, facts: newFacts, updatedAt: Date.now() });
+      const fresh = (await loadProfile(selfKey)) ?? profile;
+      await saveProfile(selfKey, { ...fresh, facts: newFacts, updatedAt: Date.now() });
       ctx.logger.debug(
-        `Aalis 自档案已更新: +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
+        `Aalis 自档案已更新 (${selfKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
     } catch (err) {
       ctx.logger.debug(`自反思失败：${err instanceof Error ? err.message : String(err)}`);
@@ -1338,7 +1357,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 0. Aalis 自档案：永远尝试注入到最前段，作为人格延续锚点
       if (cfg.enableSelfProfile) {
-        const selfProfile = await loadProfile(SELF_KEY);
+        const selfProfile = await loadProfile(getSelfKey());
         const activeSelfFacts = selfProfile?.facts.filter(isFactActive) ?? [];
         if (activeSelfFacts.length > 0) {
           const body = renderProfileBlock(activeSelfFacts, 'Aalis', false);
@@ -1592,12 +1611,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   useCommandService(ctx)
     .command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）')
     .action(async () => {
-      const profile = await loadProfile(SELF_KEY);
+      const selfKey = getSelfKey();
+      const profile = await loadProfile(selfKey);
       if (!profile || profile.facts.length === 0) {
-        return '🌱 Aalis 还没有积累任何自反思事实。';
+        return `🌱 ${getCurrentPersonaName()} 还没有积累任何自反思事实。（key=${selfKey}）`;
       }
-      const block = renderProfileBlock(profile.facts, 'Aalis', false);
-      return `🪞 Aalis 自档案（共 ${profile.facts.length} 条）\n\n${block}`;
+      const block = renderProfileBlock(profile.facts, getCurrentPersonaName(), false);
+      return `🪞 ${getCurrentPersonaName()} 自档案（共 ${profile.facts.length} 条，key=${selfKey}）\n\n${block}`;
     });
 
   useCommandService(ctx)
@@ -1605,9 +1625,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.deleteMetadata) return '记忆服务不支持档案删除。';
+      const selfKey = getSelfKey();
       try {
-        await memory.deleteMetadata(PROFILE_NS, SELF_KEY);
-        return '✅ Aalis 自档案已清空';
+        await memory.deleteMetadata(PROFILE_NS, selfKey);
+        return `✅ ${getCurrentPersonaName()} 自档案已清空（key=${selfKey}）`;
       } catch (err) {
         return `❌ 清空失败：${err instanceof Error ? err.message : String(err)}`;
       }
@@ -1633,7 +1654,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
       `maxFacts=${cfg.maxFactsPerUser}, feelings=${cfg.enableAalisFeelings ? `enabled(max ${cfg.maxFeelingsPerUser})` : 'disabled'}, ` +
-      `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}` : 'disabled'}, ` +
+      `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}, key=${getSelfKey()}` : 'disabled'}, ` +
       `namespace=${PROFILE_NS})`,
   );
 }
