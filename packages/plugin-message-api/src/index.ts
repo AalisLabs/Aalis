@@ -62,8 +62,25 @@ export type ContentSegment =
       endTime?: number;
     };
 
+/**
+ * 标准 LLM role（OpenAI / DeepSeek / Ollama 等 chat 协议直接接受的四种）。
+ * 出口适配器只看到这四种；任何 WellKnownRole 以外的扩展 role 需在出口转译为其中之一。
+ */
+export type WellKnownRole = 'system' | 'user' | 'assistant' | 'tool';
+
+/**
+ * 消息 role：标准四种 + 任意扩展字符串。
+ *
+ * 设计：使用 `WellKnownRole | (string & {})` 模式既保留四种标准 role 的字面量自动补全/收窄，
+ * 又允许任意自定义 role（如 `'notice'`、未来可能的 `'event'` / `'observation'` 等）。
+ *
+ * 约束：自定义 role 仅用于 Aalis 内部存储/检索/渲染；调用 LLM 前必须由 provider 适配器
+ * 转译为 WellKnownRole 之一（典型做法：notice → system，并在 content 前加 `[系统通知]` 前缀）。
+ */
+export type MessageRole = WellKnownRole | (string & {});
+
 export interface Message {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: MessageRole;
   content: string | null;
   toolCalls?: ToolCall[];
   toolCallId?: string;
@@ -240,6 +257,49 @@ declare module '@aalis/core' {
 
 // 防止 "未使用导入" 警告（Message 在 declaration merging 中引用）
 export type _MessageRef = Message;
+
+// ============================================================
+// LLM 出口工具：自定义 role → WellKnownRole 转译
+// ============================================================
+
+/** 自定义 role 转译为 LLM 接受的 WellKnownRole 的默认映射。 */
+const CUSTOM_ROLE_MAP: Record<string, WellKnownRole> = {
+  notice: 'system',
+};
+
+/** 自定义 role 在 LLM 视角下的内容前缀（仅当转译为 system 时使用）。 */
+const CUSTOM_ROLE_PREFIX: Record<string, string> = {
+  notice: '[系统通知]',
+};
+
+/**
+ * 把 Aalis 内部 role 转译为 LLM 协议接受的 WellKnownRole。
+ * 未知 role 一律回落为 'system'，避免任何漏网造成 provider 报错。
+ */
+export function toLLMRole(role: MessageRole): WellKnownRole {
+  if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') {
+    return role as WellKnownRole;
+  }
+  return CUSTOM_ROLE_MAP[role as string] ?? 'system';
+}
+
+/**
+ * 准备发往 LLM provider 的消息：把所有自定义 role 转译为 WellKnownRole，
+ * 同时给 content 加上可读前缀（如 notice → `[系统通知] ...`）。
+ * provider 适配器应在序列化前调用该函数，确保协议合法。
+ *
+ * 不修改原对象；返回浅拷贝数组与必要时的消息浅拷贝。
+ */
+export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content'>>(messages: T[]): T[] {
+  return messages.map(m => {
+    const llmRole = toLLMRole(m.role);
+    if (llmRole === m.role) return m;
+    const prefix = CUSTOM_ROLE_PREFIX[m.role];
+    const newContent =
+      prefix && typeof m.content === 'string' && m.content.length > 0 ? `${prefix} ${m.content}` : (m.content ?? null);
+    return { ...m, role: llmRole, content: newContent } as T;
+  });
+}
 
 export {
   type AttachmentRef,

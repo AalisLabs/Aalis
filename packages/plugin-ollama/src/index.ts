@@ -2,6 +2,7 @@ import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message } from '@aalis/plugin-message-api';
+import { toLLMRole } from '@aalis/plugin-message-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
@@ -623,9 +624,14 @@ class OllamaClient {
    * 工具调用结果通过 role: tool 传递
    */
   private async toOllamaMessage(msg: Message): Promise<OllamaMessage> {
+    const llmRole = toLLMRole(msg.role);
+    const content =
+      llmRole !== msg.role && typeof msg.content === 'string' && msg.content.length > 0
+        ? `[系统通知] ${msg.content}`
+        : (msg.content ?? '');
     const ollamaMsg: OllamaMessage = {
-      role: msg.role === 'tool' ? 'tool' : msg.role,
-      content: msg.content ?? '',
+      role: llmRole,
+      content,
     };
 
     // 传递思考内容（用于历史上下文）
@@ -679,7 +685,8 @@ class OllamaClient {
     // 将 Aalis Message 转为 OpenAI multimodal content blocks
     const oaiMessages = await Promise.all(
       request.messages.map(async m => {
-        const role = m.role === 'tool' ? 'tool' : m.role;
+        const role = toLLMRole(m.role);
+        const noticePrefix = role !== m.role && typeof m.content === 'string' && m.content.length > 0;
         const blocks: Array<Record<string, unknown>> = [];
         // Modality order：Ollama 官方 best practice 要求 image/audio content
         // 必须在 text 之前。参见 /memories/repo/aalis-ollama-gemma4-audio.md
@@ -699,7 +706,10 @@ class OllamaClient {
             blocks.push({ type: 'input_audio', input_audio: { data, format } });
           }
         }
-        if (m.content) blocks.push({ type: 'text', text: m.content });
+        if (m.content) {
+          const txt = noticePrefix ? `[系统通知] ${m.content}` : m.content;
+          blocks.push({ type: 'text', text: txt });
+        }
         // 纯文本 → string；有多模态 → array
         const content = blocks.length === 1 && blocks[0].type === 'text' ? blocks[0].text : blocks;
         return { role, content };

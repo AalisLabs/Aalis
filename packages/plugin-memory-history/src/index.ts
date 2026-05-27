@@ -177,9 +177,13 @@ function formatRecords(records: RecentMessageRecord[]): string {
       const platform = asString(meta.platform) ?? 'unknown';
       const senderName = asString(meta.nickname);
       const groupName = asString(meta.groupName);
+      const group = groupName ? `@${groupName}` : '';
+      // notice 作为独立角色渲染为 [Notice]，后面不跟 sender（由 content 本身描述事件）
+      if (message.role === 'notice') {
+        return `[${formatTimestamp(message.timestamp ?? 0)}][${platform}/${shortSession(sessionId)}${group}][Notice] ${message.content ?? ''}`;
+      }
       const role = message.role === 'assistant' ? 'Assistant' : 'User';
       const sender = senderName ? `/${senderName}` : '';
-      const group = groupName ? `@${groupName}` : '';
       return `[${formatTimestamp(message.timestamp ?? 0)}][${platform}/${shortSession(sessionId)}${group}][${role}${sender}] ${message.content ?? ''}`;
     })
     .join('\n');
@@ -219,7 +223,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       sinceTs,
       platform,
       excludeSessionIds,
-      roles: ['user', 'assistant'],
+      roles: ['user', 'assistant', 'notice'],
     });
 
     if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);

@@ -369,7 +369,7 @@ function buildTargetUserCorpus(history: Message[], userId: string, platform: str
  */
 function renderHistoryForExtract(history: Message[], userId: string, platform: string): string {
   return history
-    .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+    .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'notice') && m.content)
     .map(m => {
       const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
       const content = (m.content ?? '').trim();
@@ -377,6 +377,10 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
       if (m.role === 'assistant') {
         // Aalis 的回复：加标签让 LLM 知道用户是在跟谁互动，用于判断「对 Aalis 的行为」
         return `[${time}] [Aalis]: ${content}`;
+      }
+      if (m.role === 'notice') {
+        // 平台事件（群禁言 / 撤回 / 成员进出 / poke 等），供提取判断「用户被谁怎么了」之类上下文
+        return `[${time}] [系统通知]: ${content}`;
       }
       const nickname = metadataString(m, 'nickname');
       const msgUserId = getMessageUserId(m) ?? '';
@@ -1102,12 +1106,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
         : '（暂无）';
     const renderedHistory = history
-      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+      .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'notice') && m.content)
       .map(m => {
         const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN', { hour12: false }) : '';
         const content = (m.content ?? '').trim();
         if (!content) return '';
         if (m.role === 'assistant') return `[${time}] [Aalis]: ${content}`;
+        if (m.role === 'notice') return `[${time}] [系统通知]: ${content}`;
         const nickname = metadataString(m, 'nickname');
         const uid = getMessageUserId(m) ?? '?';
         const label = nickname ? `${nickname}(${uid})` : uid;

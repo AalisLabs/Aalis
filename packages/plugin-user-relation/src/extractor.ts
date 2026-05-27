@@ -421,7 +421,7 @@ export class RelationExtractor {
             limit,
             sinceTs,
             platform: readScope === 'same-platform' ? currentPlatform : undefined,
-            roles: ['user', 'assistant'],
+            roles: ['user', 'assistant', 'notice'],
           });
           messageIdToSessionId = new Map();
           // 把 sessionId 注入到 message.metadata.__extractorSessionId（运行时临时字段，仅用于渲染/反查）
@@ -1113,7 +1113,7 @@ function stringifyErr(err: unknown): string {
 function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean }): string {
   const lines: string[] = [];
   for (const m of history) {
-    if (m.role !== 'user' && m.role !== 'assistant') continue;
+    if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'notice') continue;
     const meta =
       (m.metadata as
         | { messageId?: string; userId?: string; nickname?: string; __extractorSessionId?: string }
@@ -1121,6 +1121,8 @@ function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean
     let sender: string;
     if (m.role === 'assistant') {
       sender = meta.userId ? `${meta.nickname ?? 'Aalis'}(${meta.userId})` : 'Aalis（本机器人）';
+    } else if (m.role === 'notice') {
+      sender = '系统通知';
     } else {
       sender = `${meta.nickname ?? '匿名'}(${meta.userId ?? '?'})`;
     }
