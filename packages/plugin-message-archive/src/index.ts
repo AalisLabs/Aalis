@@ -153,15 +153,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
-      // proactive 跨会话委派消息：作为 system 角色落盘（而非 user），
+      // proactive 跨会话委派消息：作为 notice 角色 + kind='cross-session-delegation' 落盘，
       // 与 plugin-agent 的 buildMessages 保持一致，避免 B 下次回看历史时
       // 把派发任务误读为「曾经有用户说过这个」。
       const isProactive = working.triggerType === 'proactive';
 
       const message: Message = {
-        role: isProactive ? 'system' : 'user',
+        role: isProactive ? 'notice' : 'user',
+        kind: isProactive ? 'cross-session-delegation' : undefined,
         content,
-        name: isProactive ? 'cross-session-delegation' : getMessageName(working.userId),
+        name: isProactive ? undefined : getMessageName(working.userId),
         timestamp: Date.now(),
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
@@ -194,10 +195,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const text = (opts.content ?? '').trim();
       if (!text) return null;
 
-      const metadata: Record<string, unknown> = {
-        kind: 'notice',
-        noticeType: opts.noticeType,
-      };
+      const metadata: Record<string, unknown> = {};
       if (opts.subType) metadata.subType = opts.subType;
       if (opts.platform) metadata.platform = opts.platform;
       if (opts.userId) metadata.userId = opts.userId;
@@ -208,9 +206,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       const message: Message = {
         role: 'notice',
+        kind: opts.noticeType,
         content: text,
         timestamp: opts.timestamp ?? Date.now(),
-        metadata,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
 
       await getMemory().saveMessage(opts.sessionId, message);

@@ -467,11 +467,10 @@ export function App() {
     if (sessionId === getSessionId()) {
       setCompressingStatus(status as 'start' | 'done' | 'error');
       if (status === 'done') {
-        // 插入永久的系统消息，与从数据库加载的 system-event 一致
+        // 插入永久的系统消息，与从数据库加载的 event-marker 一致
         setMessages(prev => [...prev, {
           role: 'system' as const,
           content: '对话已压缩',
-          name: 'system-event',
           timestamp: Date.now(),
         }]);
         // 短暂延迟后清除临时计时器状态

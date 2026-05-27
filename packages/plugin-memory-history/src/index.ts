@@ -250,7 +250,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       await next();
       return;
     }
-    if (data.messages.some(m => m.role === 'system' && m.metadata?.source === cfg.injectMetadataSource)) {
+    if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === cfg.injectMetadataSource)) {
       await next();
       return;
     }
@@ -277,7 +277,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     const injectMsg: Message = {
       role: 'system',
       content: block,
-      metadata: { source: cfg.injectMetadataSource },
+      metadata: { injector: cfg.injectMetadataSource },
     };
     const idx = data.messages.findIndex(m => m.role !== 'system');
     const insertIdx = idx === -1 ? data.messages.length : idx;

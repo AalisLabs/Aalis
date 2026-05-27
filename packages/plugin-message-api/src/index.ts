@@ -85,6 +85,20 @@ export interface Message {
   toolCalls?: ToolCall[];
   toolCallId?: string;
   name?: string;
+  /**
+   * 子分类（与 role 正交的语义维度）。设计目标：
+   * - 让所有 role 共用同一个子类入口，避免 system.name / notice.metadata.noticeType / assistant.metadata.kind 三套互不相通的"伪子分类"。
+   * - 统一过滤/渲染判断：`m.kind === 'event-marker'` 这种写法跨 role 通用。
+   *
+   * 约定的语义类（详见 `WELL_KNOWN_KINDS` / `CONTROL_KINDS`）：
+   * - `'event-marker'`              ：system 控制类标记（如压缩分隔条），不应进入 LLM 上下文。
+   * - `'cross-session-delegation'`  ：notice 子类——来自另一会话的 agent 委派任务。
+   * - `'outbound-image'`            ：assistant 子类——agent 已发出的图片。
+   * - notice 的平台事件类型         ：`'poke' | 'group_recall' | 'group_increase' | ...`（取自 OneBot 等适配器）。
+   *
+   * 第三方插件可定义自己的 kind 字符串，但请避开 `WELL_KNOWN_KINDS` 中已有的语义。
+   */
+  kind?: string;
   timestamp?: number;
   reasoningContent?: string | null;
   /**
@@ -262,6 +276,27 @@ export type _MessageRef = Message;
 // LLM 出口工具：自定义 role → WellKnownRole 转译
 // ============================================================
 
+/**
+ * 已知的 Message.kind 语义常量。第三方插件可使用新值；本表仅作为框架内的契约。
+ *
+ * - `EventMarker`：纯 UI/控制标记（如对话压缩分隔条）。LLM 出口与抽取均应排除。
+ * - `CrossSessionDelegation`：跨会话委派——另一 agent 通过工具向本会话派发任务。
+ * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
+ */
+export const WellKnownKinds = {
+  EventMarker: 'event-marker',
+  CrossSessionDelegation: 'cross-session-delegation',
+  OutboundImage: 'outbound-image',
+} as const;
+
+export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
+
+/**
+ * 控制类 kind 集合：这些消息不携带可供模型理解或抽取的语义内容，
+ * 仅用于 UI / 内部状态。LLM 出口、信息抽取等流程默认应排除。
+ */
+export const CONTROL_KINDS: ReadonlyArray<string> = [WellKnownKinds.EventMarker];
+
 /** 自定义 role 转译为 LLM 接受的 WellKnownRole 的默认映射。 */
 const CUSTOM_ROLE_MAP: Record<string, WellKnownRole> = {
   notice: 'system',
@@ -270,6 +305,14 @@ const CUSTOM_ROLE_MAP: Record<string, WellKnownRole> = {
 /** 自定义 role 在 LLM 视角下的内容前缀（仅当转译为 system 时使用）。 */
 const CUSTOM_ROLE_PREFIX: Record<string, string> = {
   notice: '[系统通知]',
+};
+
+/**
+ * Kind 级别的内容前缀（优先级高于 role 前缀）。当 message.kind 命中时，
+ * 用此前缀替换 role 前缀，从而精确表达子语义（例如「跨会话委派」与普通通知区分）。
+ */
+const KIND_PREFIX: Record<string, string> = {
+  [WellKnownKinds.CrossSessionDelegation]: '[跨会话委派]',
 };
 
 /**
@@ -285,18 +328,19 @@ export function toLLMRole(role: MessageRole): WellKnownRole {
 
 /**
  * 准备发往 LLM provider 的消息：把所有自定义 role 转译为 WellKnownRole，
- * 同时给 content 加上可读前缀（如 notice → `[系统通知] ...`）。
+ * 同时给 content 加上可读前缀（kind 优先，其次 role）。
  * provider 适配器应在序列化前调用该函数，确保协议合法。
  *
  * 不修改原对象；返回浅拷贝数组与必要时的消息浅拷贝。
  */
-export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content'>>(messages: T[]): T[] {
+export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content' | 'kind'>>(messages: T[]): T[] {
   return messages.map(m => {
     const llmRole = toLLMRole(m.role);
-    if (llmRole === m.role) return m;
-    const prefix = CUSTOM_ROLE_PREFIX[m.role];
-    const newContent =
-      prefix && typeof m.content === 'string' && m.content.length > 0 ? `${prefix} ${m.content}` : (m.content ?? null);
+    const prefix = (m.kind && KIND_PREFIX[m.kind]) ?? CUSTOM_ROLE_PREFIX[m.role as string];
+    const needsRoleRewrite = llmRole !== m.role;
+    const needsPrefix = !!prefix && typeof m.content === 'string' && m.content.length > 0;
+    if (!needsRoleRewrite && !needsPrefix) return m;
+    const newContent = needsPrefix ? `${prefix} ${m.content}` : (m.content ?? null);
     return { ...m, role: llmRole, content: newContent } as T;
   });
 }

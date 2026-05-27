@@ -50,6 +50,8 @@ interface MongoMemoryConfig {
 interface MessageDocument {
   sessionId: string;
   role: string;
+  /** Message.kind（与 role 正交的子分类，如 'event-marker' / 'cross-session-delegation' / 'outbound-image' / 'poke' 等） */
+  kind?: string;
   content: string | null;
   toolCalls?: unknown[];
   toolCallId?: string;
@@ -84,6 +86,7 @@ class MongoMemoryService implements MemoryService {
     await this.collection.insertOne({
       sessionId,
       role: message.role,
+      kind: message.kind,
       content: message.content,
       toolCalls: message.toolCalls,
       toolCallId: message.toolCallId,
@@ -96,6 +99,21 @@ class MongoMemoryService implements MemoryService {
     });
   }
 
+  private docToMessage(doc: MessageDocument): Message {
+    return {
+      role: doc.role as Message['role'],
+      kind: doc.kind,
+      content: doc.content,
+      toolCalls: doc.toolCalls as Message['toolCalls'],
+      toolCallId: doc.toolCallId,
+      name: doc.name,
+      timestamp: doc.timestamp,
+      reasoningContent: doc.reasoningContent ?? undefined,
+      segments: doc.segments as Message['segments'],
+      metadata: doc.metadata,
+    };
+  }
+
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const docs = await this.collection
       .find({ sessionId, archived: { $ne: true } })
@@ -103,35 +121,13 @@ class MongoMemoryService implements MemoryService {
       .limit(limit)
       .toArray();
     docs.reverse();
-
-    return docs.map(doc => ({
-      role: doc.role as Message['role'],
-      content: doc.content,
-      toolCalls: doc.toolCalls as Message['toolCalls'],
-      toolCallId: doc.toolCallId,
-      name: doc.name,
-      timestamp: doc.timestamp,
-      reasoningContent: doc.reasoningContent ?? undefined,
-      segments: doc.segments as Message['segments'],
-      metadata: doc.metadata,
-    }));
+    return docs.map(doc => this.docToMessage(doc));
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
     const docs = await this.collection.find({ sessionId }).sort({ timestamp: -1 }).limit(limit).toArray();
     docs.reverse();
-
-    return docs.map(doc => ({
-      role: doc.role as Message['role'],
-      content: doc.content,
-      toolCalls: doc.toolCalls as Message['toolCalls'],
-      toolCallId: doc.toolCallId,
-      name: doc.name,
-      timestamp: doc.timestamp,
-      reasoningContent: doc.reasoningContent ?? undefined,
-      segments: doc.segments as Message['segments'],
-      metadata: doc.metadata,
-    }));
+    return docs.map(doc => this.docToMessage(doc));
   }
 
   async clearSession(sessionId: string): Promise<void> {
@@ -143,21 +139,13 @@ class MongoMemoryService implements MemoryService {
     fromTs: number,
     toTs: number,
     roles?: Array<Message['role']>,
+    excludeKinds?: string[],
   ): Promise<Message[]> {
     const filter: Record<string, unknown> = { sessionId, timestamp: { $gte: fromTs, $lte: toTs } };
     if (roles && roles.length > 0) filter.role = { $in: roles };
+    if (excludeKinds && excludeKinds.length > 0) filter.kind = { $nin: excludeKinds };
     const docs = await this.collection.find(filter).sort({ timestamp: 1 }).limit(500).toArray();
-    return docs.map(d => ({
-      role: d.role as Message['role'],
-      content: d.content,
-      toolCalls: d.toolCalls as Message['toolCalls'],
-      toolCallId: d.toolCallId,
-      name: d.name,
-      timestamp: d.timestamp,
-      reasoningContent: d.reasoningContent ?? undefined,
-      segments: d.segments as Message['segments'],
-      metadata: d.metadata,
-    }));
+    return docs.map(doc => this.docToMessage(doc));
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
@@ -167,6 +155,11 @@ class MongoMemoryService implements MemoryService {
       archived: { $ne: true },
       role: { $in: roles },
     };
+    if (query.kinds && query.kinds.length > 0) filter.kind = { $in: query.kinds };
+    if (query.excludeKinds && query.excludeKinds.length > 0) {
+      // 与已有 kind 条件 AND：MongoDB 注意 $nin 不排除不存在 kind 的文档，恢复性友好。
+      filter.kind = { ...(filter.kind as Record<string, unknown> | undefined), $nin: query.excludeKinds };
+    }
     if (typeof query.sinceTs === 'number') {
       filter.timestamp = { $gte: query.sinceTs };
     }
@@ -182,17 +175,7 @@ class MongoMemoryService implements MemoryService {
 
     return docs.map(d => ({
       sessionId: d.sessionId,
-      message: {
-        role: d.role as Message['role'],
-        content: d.content,
-        toolCalls: d.toolCalls as Message['toolCalls'],
-        toolCallId: d.toolCallId,
-        name: d.name,
-        timestamp: d.timestamp,
-        reasoningContent: d.reasoningContent ?? undefined,
-        segments: d.segments as Message['segments'],
-        metadata: d.metadata,
-      },
+      message: this.docToMessage(d),
     }));
   }
 
