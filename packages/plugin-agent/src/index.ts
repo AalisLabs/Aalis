@@ -13,7 +13,7 @@ import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
-import { normalizeAssistantContent, stripDeepSeekSpecialTokens } from '@aalis/util-text-normalize';
+import { normalizeAssistantContent, stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
   estimateMsgTokens,
@@ -264,7 +264,7 @@ class DefaultAgent implements AgentService {
     let finalContent = content;
     if (content) {
       // 兜底剥离 LLM 端漏出的特殊 token 残渣（DSML 等），同时修复 GFM 表格
-      const { sanitized, hadLeak } = stripDeepSeekSpecialTokens(content);
+      const { sanitized, hadLeak } = stripLeakedSpecialTokens(content);
       if (hadLeak) {
         this.ctx.logger.warn(
           `agent: 检测到 LLM 内容残留 DSML 标记，已剥离（session=${sessionId} platform=${platform} 原长=${content.length} 净化后=${sanitized.length}）`,
