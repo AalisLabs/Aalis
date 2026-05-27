@@ -4,6 +4,7 @@ import { LLMCapabilities } from '@aalis/plugin-llm-api';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
 import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
+import { parseDsmlToolCalls } from './dsml-parser.js';
 
 // ===== 插件元数据 =====
 
@@ -454,6 +455,21 @@ class DeepSeekClient {
             for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
               toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
             }
+            // DSML 泄漏 best-effort 恢复：如果服务端未返回 tool_calls（解析失败）但
+            // accContent 里有 DSML 文本，本地解析补上，让 agent 走正常工具调用流程
+            if (dsmlDetected && toolCalls.length === 0) {
+              const dsmlCalls = parseDsmlToolCalls(accContent);
+              if (dsmlCalls.length > 0) {
+                this.logger.info(
+                  `DeepSeek DSML 本地解析成功，恢复 ${dsmlCalls.length} 个 tool_call：${dsmlCalls.map(c => c.function.name).join(', ')}`,
+                );
+                toolCalls.push(...dsmlCalls);
+              } else {
+                this.logger.warn(
+                  `DeepSeek DSML 本地解析未识别出完整 invoke 块，accContent 长度=${accContent.length}，上游将收到空回复`,
+                );
+              }
+            }
             yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
             return;
           }
@@ -465,10 +481,13 @@ class DeepSeekClient {
 
             const chunk: ChatStreamChunk = {};
             if (delta.content) {
+              // 无论是否检测到 DSML，都要累积原始 content：
+              // - 未检测时：用于 DSML 起始位置定位
+              // - 已检测后：DSML 主体 + 闭合标记累积完成，[DONE] 时用于 best-effort 解析为 tool_calls
+              accContent += delta.content;
               if (!dsmlDetected) {
                 // 合并尾缓冲 + 本次 delta 作为本帧候选 emit 内容
                 const candidate = pendingTail + delta.content;
-                accContent += delta.content;
                 // 检测 DSML 起始标记。已知变体：
                 //   - 单竖线（标准）：<｜DSML｜tool_calls>
                 //   - 双竖线（畸形泄漏）：<｜｜DSML｜｜tool_calls>
@@ -478,7 +497,7 @@ class DeepSeekClient {
                 if (dsmlIdx !== -1) {
                   dsmlDetected = true;
                   this.logger.warn(
-                    `DeepSeek 检测到 DSML 标记泄漏，模型 ${model} 输出原生 tool_call 标记到 content（服务端解析失败），已剥离`,
+                    `DeepSeek 检测到 DSML 标记泄漏，模型 ${model} 输出原生 tool_call 标记到 content（服务端解析失败），将在流结束后尝试本地解析`,
                   );
                   // 输出 DSML 之前的部分（如果有）
                   const cleanPart = accContent.slice(0, dsmlIdx);
@@ -503,7 +522,7 @@ class DeepSeekClient {
                   }
                 }
               }
-              // dsmlDetected = true 时不再 emit content
+              // dsmlDetected = true 时不再 emit content，但 accContent 继续累积供后续解析
             }
             if (delta.reasoning_content) chunk.reasoningDelta = delta.reasoning_content;
 
@@ -556,6 +575,14 @@ class DeepSeekClient {
     const toolCalls: ToolCall[] = [];
     for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
       toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
+    }
+    // 同 [DONE] 分支：DSML 泄漏 best-effort 恢复
+    if (dsmlDetected && toolCalls.length === 0) {
+      const dsmlCalls = parseDsmlToolCalls(accContent);
+      if (dsmlCalls.length > 0) {
+        this.logger.info(`DeepSeek DSML 本地解析成功（流意外结束分支），恢复 ${dsmlCalls.length} 个 tool_call`);
+        toolCalls.push(...dsmlCalls);
+      }
     }
 
     yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
