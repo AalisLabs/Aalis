@@ -149,6 +149,13 @@ export interface DescribeImageOptions {
   noCache?: boolean;
   /** 最大输出 token */
   maxTokens?: number;
+  /**
+   * 描述详略级别（默认 'auto'）：
+   * - `'casual'`：简洁日常描述（200 字以内、识别梗/游戏标志、不列点），用于聊天截图/表情包/生活照
+   * - `'detailed'`：详细 OCR 风格描述（不限字数、逐项列出、含 LaTeX/代码/表格），用于试卷/文档/代码/表格
+   * - `'auto'`：先做轻量分类后选择 casual 或 detailed；分类失败 fallback 到 detailed（保守起见）
+   */
+  detailLevel?: 'auto' | 'casual' | 'detailed';
 }
 
 export interface BuildContextOptions {
