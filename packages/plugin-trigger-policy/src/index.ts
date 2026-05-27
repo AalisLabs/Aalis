@@ -11,6 +11,7 @@ import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import {
   defaultTriggerPolicyConfig,
   isScopeEnabled,
+  resolveEffectiveConfig,
   resolveTriggerPolicyConfig,
   type TriggerPolicyConfig,
 } from './config.js';
@@ -54,6 +55,34 @@ export const configSchema: ConfigSchema = {
     label: '禁言关键词命中时长（秒）',
     default: defaultTriggerPolicyConfig.muteTimeSeconds,
   },
+  overrides: {
+    type: 'array',
+    label: '分作用域覆盖',
+    description:
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；未列字段穿透到上方默认。写一条 override 自动启用该 scope。',
+    default: [],
+    items: {
+      scope: {
+        type: 'string',
+        label: '作用域',
+        description: '格式 platform:sessionType[:targetId]，支持 *',
+        required: true,
+      },
+      intervalMode: {
+        type: 'select',
+        label: '间隔模式',
+        options: [
+          { label: 'fixed', value: 'fixed' },
+          { label: 'dynamic', value: 'dynamic' },
+          { label: 'both', value: 'both' },
+        ],
+      },
+      triggerOnAt: { type: 'boolean', label: '检测 @ 提及' },
+      triggerNames: { type: 'string', label: '触发名别名（逗号分隔）' },
+      muteKeywords: { type: 'string', label: '禁言关键词（逗号分隔）' },
+      muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）' },
+    },
+  },
 };
 
 export const defaultConfig = defaultTriggerPolicyConfig;
@@ -62,6 +91,13 @@ export const defaultConfig = defaultTriggerPolicyConfig;
 
 export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const cfg = resolveTriggerPolicyConfig(raw);
+
+  /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
+  function extractTargetId(message: IncomingMessage): string {
+    if (message.sessionType === 'group') return message.groupId ?? '';
+    if (message.sessionType === 'private') return message.userId ?? '';
+    return '';
+  }
 
   /** 把"被策略吞掉"的入站消息归档（与 flow-control 的 shadow 归档对齐） */
   async function shadowArchive(message: IncomingMessage): Promise<void> {
@@ -76,18 +112,20 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   const service: TriggerPolicyService = {
     decide(message): TriggerDecision {
-      if (!isScopeEnabled(cfg, message.platform, message.sessionType)) {
+      const tid = extractTargetId(message);
+      if (!isScopeEnabled(cfg, message.platform, message.sessionType, tid)) {
         return {
           kind: 'direct',
           reason: `scope 不在触发策略名单内 (${message.platform ?? '?'}:${message.sessionType ?? '?'})`,
         };
       }
+      const eff = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
       // 特殊通知事件（poke 等）视同 @ 直触发：能进到这里说明 adapter 已经判断过
       // 目标是 bot（私聊 poke 全部回复 / 群聊 poke 仅在 target=self 时才转成 inbound）。
       if (message.noticeType === 'poke') {
         return { kind: 'immediate', reason: 'poke notice' };
       }
-      if (checkImmediateTrigger(ctx, cfg, message.content)) {
+      if (checkImmediateTrigger(ctx, eff, message.content)) {
         return { kind: 'immediate', reason: '@/name match' };
       }
       const flow = ctx.getService<FlowControlService>('flow-control');
@@ -98,7 +136,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       const fixedOk = snap.messageCount >= snap.fixedInterval;
       const dynamicOk = snap.activityScore >= (flow?.getThreshold(message.sessionId) ?? 0);
       let trigger = false;
-      switch (cfg.intervalMode) {
+      switch (eff.intervalMode) {
         case 'fixed':
           trigger = fixedOk;
           break;
@@ -110,7 +148,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
           break;
       }
       return trigger
-        ? { kind: 'interval', reason: `interval-mode=${cfg.intervalMode}` }
+        ? { kind: 'interval', reason: `interval-mode=${eff.intervalMode}` }
         : { kind: 'swallow', reason: 'below threshold' };
     },
     getBotNames() {
@@ -126,7 +164,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   ctx.logger.info(
     `[trigger] 已启用 (模式=${cfg.intervalMode}, @提及=${cfg.triggerOnAt}, ` +
       `别名=${cfg.triggerNames.length}, mute关键词=${cfg.muteKeywords.length}, ` +
-      `mute时长=${cfg.muteTimeSeconds}s, scopes=${cfg.scopes.join('|') || '<空>'})`,
+      `mute时长=${cfg.muteTimeSeconds}s, scopes=${cfg.scopes.join('|') || '<空>'}, ` +
+      `overrides=${cfg.overrides.length})`,
   );
 
   // ===== inbound:trigger 相位：触发判定 =====
@@ -137,17 +176,19 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     if (message.source === 'idle-trigger') return next(); // 内部注入跳过策略
 
     const flow = ctx.getService<FlowControlService>('flow-control');
+    const tid = extractTargetId(message);
 
     // 不在触发策略作用域内（默认 *:group）：直接放行。
     // 必须在 mute 检查之前进行，否则 QQ 群的 mute 关键词会泄漏到 WebUI/私聊等不在 scope 内的会话。
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType)) {
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType, tid)) {
       return next();
     }
+    const eff = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
 
     // mute 关键词命中：设置自禁言并 swallow
-    if (checkMuteKeyword(ctx, cfg, message.content)) {
-      ctx.logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${message.sessionId}`);
-      flow?.setMuted(message.sessionId, cfg.muteTimeSeconds);
+    if (checkMuteKeyword(ctx, eff, message.content)) {
+      ctx.logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${eff.muteTimeSeconds}s): ${message.sessionId}`);
+      flow?.setMuted(message.sessionId, eff.muteTimeSeconds);
       // 与 dev OneBot ChatFlow 一致：设置自禁言后调度一次 idle，
       // 让禁言结束附近能正常进入「长期静默→主动招呼」路径。
       flow?.rescheduleIdle(message.sessionId, message.platform);

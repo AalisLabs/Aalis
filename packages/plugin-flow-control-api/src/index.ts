@@ -35,13 +35,13 @@ export interface FlowSessionStateSnapshot {
 }
 
 export interface FlowControlService {
-  /** 获取或创建 session 状态（首次访问会初始化） */
-  ensureState(sessionId: string, platform: string): void;
+  /** 获取或创建 session 状态（首次访问会初始化）。可选 sessionType / targetId 用于 per-scope 覆盖匹配。 */
+  ensureState(sessionId: string, platform: string, sessionType?: string, targetId?: string): void;
   /** 只读快照（trigger-policy 用） */
   getStateSnapshot(sessionId: string): FlowSessionStateSnapshot | undefined;
 
   /** 入站消息累加（messageCount, activityScore, lastMessageTime, userInteractions, 应用衰减） */
-  recordIncoming(sessionId: string, platform: string, userId?: string): void;
+  recordIncoming(sessionId: string, platform: string, userId?: string, sessionType?: string, targetId?: string): void;
 
   /** 触发后重置（messageCount=0, activityScore=0, lastReplyTime=now, idleBackoff=1） */
   recordTriggered(sessionId: string): void;
