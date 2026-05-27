@@ -42,6 +42,7 @@ import {
   RecommendedEventEventRelationTypes,
   RecommendedPersonRelationTypes,
 } from './types.js';
+import { normalizeName } from './utils.js';
 
 export type ExtractorReadScope = 'same-session' | 'same-platform' | 'cross-platform';
 
@@ -454,7 +455,7 @@ export class RelationExtractor {
       }
 
       const platform = inferPlatform(userMsgs);
-      const { candidateEvents, candidateEntities } = await this.pickCandidates();
+      const { candidateEvents, candidateEntities } = await this.pickCandidates(userMsgs);
       const senderNeighbors = await this.pickSenderNeighbors(userMsgs);
       const promptMessages = buildExtractionPrompt(
         history,
@@ -509,20 +510,57 @@ export class RelationExtractor {
     }
   }
 
-  /** 拉取近 N 天活跃事件 + 实体作为候选清单（缩短 LLM 上下文，避免重复创建） */
-  private async pickCandidates(): Promise<{ candidateEvents: EventNode[]; candidateEntities: EntityNode[] }> {
+  /**
+   * 拉取候选事件 / 实体清单（缩短 LLM 上下文，避免重复创建）。
+   *
+   * **事件**：近 N 天活跃 → 按 lastReinforcedAt desc 取前 `candidateEventLimit`。
+   *
+   * **实体**：在事件策略基础上再叠加一层"名字命中"召回，解决"窗口里又提了某个老实体（已过 7 天活跃窗口）
+   * 而 LLM 看不到候选 → 重新建一份同名 entity 导致重复"的问题：
+   * 1. 近 N 天活跃 entity（与原行为一致，按 lastReinforcedAt desc，取 `candidateEventLimit * 2`）
+   * 2. 在当前消息窗口文本里以子串方式出现 normalize 后 name 或 aliases 的全库 entity（O(n) 扫描，
+   *    n ≤ maxEntities ≈ 250，可忽略）。只对 normalize 长度 ≥2 的名字/别名做匹配，避免单字撞名。
+   * 两路按 id 去重后总长度截断到 `candidateEventLimit * 4`，避免 token 爆掉。
+   * 注：名字命中路径**带 id 一起塞**，保证 LLM 能直接填 `existingEntityId` 复用。
+   */
+  private async pickCandidates(
+    userMsgs: Message[] = [],
+  ): Promise<{ candidateEvents: EventNode[]; candidateEntities: EntityNode[] }> {
     const snap = await this.service.loadAll();
     const cutoff = Date.now() - this.cfg.candidateEventDays * 86_400_000;
     const candidateEvents = snap.events
       .filter(e => e.lastReinforcedAt >= cutoff)
       .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
       .slice(0, this.cfg.candidateEventLimit);
-    // entities 复用同一份天数 / 上限 —— 实体一般比事件更长寿，给一倍 limit 上限
-    const candidateEntities = snap.entities
+
+    const recentEntities = snap.entities
       .filter(e => e.lastReinforcedAt >= cutoff)
       .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
       .slice(0, this.cfg.candidateEventLimit * 2);
-    return { candidateEvents, candidateEntities };
+
+    // 名字命中召回：把当前窗口里所有 user 消息文本拼成一段 normalize 后的"窗口文本"，
+    // 再对全库 entity 做 substring 命中（防止"老实体超过 7 天活跃窗口"导致 LLM 看不到 → 重复创建）。
+    const recentIds = new Set(recentEntities.map(e => e.id));
+    const windowText = userMsgs
+      .map(m => (typeof m.content === 'string' ? m.content : ''))
+      .filter(Boolean)
+      .map(t => normalizeName(t))
+      .join('\n');
+    const nameMatched: EntityNode[] = [];
+    if (windowText) {
+      for (const e of snap.entities) {
+        if (recentIds.has(e.id)) continue;
+        const candidates = [e.name, ...(e.aliases ?? [])].map(s => normalizeName(s)).filter(s => s.length >= 2); // 单字撞名风险太大，跳过
+        if (candidates.some(k => windowText.includes(k))) {
+          nameMatched.push(e);
+        }
+      }
+      // 命中项按 lastReinforcedAt desc 排序，让"近期被强化过"的老节点优先进入候选
+      nameMatched.sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt);
+    }
+
+    const merged = [...recentEntities, ...nameMatched].slice(0, this.cfg.candidateEventLimit * 4);
+    return { candidateEvents, candidateEntities: merged };
   }
 
   /**
@@ -1141,6 +1179,53 @@ function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean
   return lines.join('\n');
 }
 
+/**
+ * 渲染候选实体清单。在普通列表前会**先**列出"同 normalize name 但 kind 不同"的冲突组
+ * （⚠ 区块），强制提醒 LLM：要么从冲突候选里挑一项填 existingEntityId 复用、要么
+ * 加限定词避免新建出第三份重名异 kind 节点。
+ *
+ * 解决"同名实体跨 kind 重复"问题（如 topic "三角洲行动" vs work "三角洲行动"）。
+ */
+function renderEntityCandidates(candidateEntities: EntityNode[]): string {
+  if (candidateEntities.length === 0) return '（无）';
+  const fmt = (e: EntityNode): string =>
+    `- id=${e.id} kind=${e.entityKind} name=${e.name}${e.aliases?.length ? ` aka=${e.aliases.join('|')}` : ''}`;
+
+  // 按 normalize(name) 分组，找出 kind 数 >1 的冲突组
+  const byKey = new Map<string, EntityNode[]>();
+  for (const e of candidateEntities) {
+    const k = normalizeName(e.name);
+    if (!k) continue;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k)?.push(e);
+  }
+  const collisions: EntityNode[][] = [];
+  for (const group of byKey.values()) {
+    const kinds = new Set(group.map(e => e.entityKind));
+    if (kinds.size > 1) collisions.push(group);
+  }
+
+  if (collisions.length === 0) {
+    return candidateEntities.map(fmt).join('\n');
+  }
+
+  const collisionIds = new Set(collisions.flat().map(e => e.id));
+  const sections: string[] = [];
+  sections.push(
+    '⚠ 同名跨 kind 冲突候选（务必从下方组里挑一项填 existingEntityId 复用，禁止再创建同 normalize-name 的新实体；如新对象与下面任一都不同，请加限定词让 name 明显有别）：',
+  );
+  for (const group of collisions) {
+    for (const e of group) sections.push(fmt(e));
+    sections.push(''); // 空行分隔不同冲突组
+  }
+  const rest = candidateEntities.filter(e => !collisionIds.has(e.id));
+  if (rest.length > 0) {
+    sections.push('-- 其余候选 --');
+    for (const e of rest) sections.push(fmt(e));
+  }
+  return sections.join('\n');
+}
+
 function buildExtractionPrompt(
   history: Message[],
   userMsgs: Message[],
@@ -1166,15 +1251,7 @@ function buildExtractionPrompt(
     candidateEvents.length === 0
       ? '（无）'
       : candidateEvents.map(e => `- id=${e.id} title=${e.title}${scopeTag(e)}`).join('\n');
-  const entList =
-    candidateEntities.length === 0
-      ? '（无）'
-      : candidateEntities
-          .map(
-            e =>
-              `- id=${e.id} kind=${e.entityKind} name=${e.name}${e.aliases?.length ? ` aka=${e.aliases.join('|')}` : ''}`,
-          )
-          .join('\n');
+  const entList = renderEntityCandidates(candidateEntities);
   const senderList = collectSenderList(userMsgs);
   const neighborBlock = renderSenderNeighbors(senderNeighbors);
   const system: Message = {
@@ -1376,6 +1453,10 @@ function buildExtractionPrompt(
       '- **歧义实体必须带限定词（重要）**：后端按 (entityKind, name) 强制合并同名实体。对于跨作品/跨场景容易撞名的「通用词」——例如「月卡 / 年卡 / 会员 / 公会 / 副本 / 装备 / 皮肤 / boss / npc / 主线 / 支线」等——**name 字段必须带上限定的母实体名**，形如「洛克王国月卡」「原神月卡」「《三角洲》公会」，而不是裸的「月卡」。若上下文无法确定母实体，则宁可不建该实体（建 event 描述即可），避免错误合并到无关游戏。',
       '  · 同理：人物绰号/角色名若可能撞名（如多个作品的「林黛玉」），name 也要带作品限定。',
       '  · 真正全局唯一的专有名词（如「PS5」「北京」「奥本海默」）不需要加限定词。',
+      '- **同名跨 kind 必须复用候选（关键反幻觉规则）**：候选实体清单顶部若出现「⚠ 同名跨 kind 冲突候选」区块，意味着库里已存在 normalize 后**同名但 kind 不同**的多份实体（如 topic="三角洲行动" 与 work="三角洲行动" 并存）。处理规则：',
+      '  · 你**默认必须**从该冲突组里挑一项填 `existingEntityId` 复用旧节点，并继承其原有 kind（**不要**写新的 kind 试图"覆盖"——后端 reinforceEntity 已禁止改 kind，传入也会被忽略并留 audit 警告）。',
+      '  · 若本轮证据确认该对象的真实 kind 与你想用的某项候选不符，**首选**：复用语义更准的那一项（如对象是游戏本体 → 选 work 那一份）。如果冲突组里**没有**真正语义对得上的项，请加限定词写新 name（例如「三角洲行动(梗)」），避免再造一份同 normalize-name 的"第三份重复"。',
+      '  · **绝不能**忽略警告直接新建 `existingEntityId=null` 且 normalize(name) 与冲突项相同的新实体。',
       '- existingEventId / existingEntityId：若新条目与候选清单中某项实质相同，请填该 id（让旧节点被强化而非重复创建）。',
       '- 当窗口里没有可靠信号时，对应数组返回空 [] 即可，绝对不要编造。',
       '- **绝不输出裸 `null`、裸字符串或其他非对象 JSON**；完全无可提取时请输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[],"eventEntityEdges":[],"entityEntityEdges":[]}`。',

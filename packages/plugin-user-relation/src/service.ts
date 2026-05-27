@@ -77,6 +77,7 @@ import {
   isDirectedEventEventRelation,
   isEdgeSelfLoop,
   isEvidenceFullyCovered,
+  mergeAliases,
   mergeTwoEdges,
   normalizeName,
   normalizeRelationType,
@@ -323,9 +324,18 @@ export class RelationService {
       }
     }
 
+    // P4: title 改动留 audit（不阻断，事件标题本来就比较模糊；但要可追溯）
+    const patchTitle = patch.title?.trim();
+    if (patchTitle && patchTitle !== existing.title) {
+      this._audit(
+        `[user-relation] reinforceEvent 改写 title：event=${eventId} ` +
+          `existing.title="${existing.title}" → new.title="${patchTitle}"`,
+      );
+    }
+
     const merged: EventNode = {
       ...existing,
-      title: patch.title ?? existing.title,
+      title: patchTitle || existing.title,
       summary: patch.summary ?? existing.summary,
       category: patch.category ?? existing.category,
       lastReinforcedAt: Date.now(),
@@ -353,12 +363,9 @@ export class RelationService {
     const now = Date.now();
     const dup = await this.findEntityByKindAndName(input.entityKind, input.name);
     if (dup) {
-      const mergedAliases = input.aliases
-        ? Array.from(new Set([...(dup.aliases ?? []), ...input.aliases]))
-        : dup.aliases;
       const merged: EntityNode = {
         ...dup,
-        aliases: mergedAliases,
+        aliases: mergeAliases(dup.aliases, input.aliases, dup.name),
         summary: input.summary ?? dup.summary,
         lastReinforcedAt: now,
         lastMentionedAt: now,
@@ -373,7 +380,7 @@ export class RelationService {
       id: globalThis.crypto.randomUUID(),
       entityKind: input.entityKind,
       name: input.name,
-      aliases: input.aliases,
+      aliases: mergeAliases(undefined, input.aliases, input.name),
       summary: input.summary,
       firstSeenAt: now,
       lastReinforcedAt: now,
@@ -388,28 +395,64 @@ export class RelationService {
 
   /**
    * 强化已有实体：追加 evidence、更新 lastReinforcedAt，可选更新字段。
+   *
+   * **静默改 kind / 改 name 已被禁用**（详见 patch 字段注释），LLM 反复输出"重名异 kind"
+   * 时不会把已有节点偷偷翻转身份，只会留下 audit 日志。如确需 rename/换 kind，请走
+   * rename-watcher / consolidate verify / 显式 merge 工具。
    */
   async reinforceEntity(
     entityId: string,
     patch: {
+      /**
+       * 仅作 audit 比对；reinforceEntity **不会**通过此字段改名。传入与 existing.name normalize
+       * 后等价时，允许把 display 写法换成 patch 写法（洗写法）；不等价则记审计后保留 existing.name。
+       */
       name?: string;
       aliases?: string[];
       summary?: string;
+      /**
+       * 仅作 audit 比对；reinforceEntity **不会**通过此字段改 kind。
+       * topic/work/place/thing 是底层分类，改 kind 等于换实体，必须走 consolidate verify
+       * 或显式管理工具。
+       */
       entityKind?: EntityNode['entityKind'];
       evidence?: EvidenceRef[];
     },
   ): Promise<EntityNode | undefined> {
     const existing = await this.store.getEntity(entityId);
     if (!existing) return undefined;
-    const mergedAliases = patch.aliases
-      ? Array.from(new Set([...(existing.aliases ?? []), ...patch.aliases]))
-      : existing.aliases;
+
+    // P1: 锁 entityKind —— LLM 传不同 kind 时 audit 后忽略
+    if (patch.entityKind && patch.entityKind !== existing.entityKind) {
+      this._audit(
+        `[user-relation] reinforceEntity 忽略 entityKind 改动：entity=${entityId} name="${existing.name}" ` +
+          `existing.kind="${existing.entityKind}" 收到 patch.kind="${patch.entityKind}"；kind 静默翻转已被禁止，` +
+          `请走 consolidate verify 或 merge tools`,
+      );
+    }
+
+    // P2: 锁 name —— normalize 等价允许覆写 display 写法；不等价记审计后保留 existing.name
+    let finalName = existing.name;
+    if (patch.name) {
+      const trimmedPatch = patch.name.trim();
+      if (trimmedPatch) {
+        if (normalizeName(trimmedPatch) === normalizeName(existing.name)) {
+          finalName = trimmedPatch; // 只是换写法，允许更新 display
+        } else {
+          this._audit(
+            `[user-relation] reinforceEntity 忽略 name 改动：entity=${entityId} kind="${existing.entityKind}" ` +
+              `existing.name="${existing.name}" 收到 patch.name="${trimmedPatch}"；rename 请走 rename-watcher / merge tools`,
+          );
+        }
+      }
+    }
+
     const merged: EntityNode = {
       ...existing,
-      name: patch.name ?? existing.name,
-      aliases: mergedAliases,
+      name: finalName,
+      aliases: mergeAliases(existing.aliases, patch.aliases, finalName),
       summary: patch.summary ?? existing.summary,
-      entityKind: patch.entityKind ?? existing.entityKind,
+      // entityKind 锁死：无视 patch.entityKind
       lastReinforcedAt: Date.now(),
       evidence: trimEvidence([...(patch.evidence ?? []), ...existing.evidence]),
     };
