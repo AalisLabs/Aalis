@@ -6,7 +6,7 @@ import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@a
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
-import { getMessageName, getSenderLabel } from '@aalis/plugin-message-api';
+import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
@@ -944,7 +944,7 @@ class DefaultAgent implements AgentService {
         const now = Date.now();
         for (const m of history) {
           if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
-          if (m.kind === 'event-marker') continue;
+          if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
           // 为用户消息注入时间标注，帮助 LLM 理解时间先后
           if (m.role === 'user' && m.timestamp && m.content) {
             const timeLabel = formatTimeLabel(m.timestamp, now);
@@ -996,7 +996,7 @@ class DefaultAgent implements AgentService {
           `说明: 这是你（作为同一 agent 在另一会话的实例）派发给本会话的任务指令，` +
           `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n` +
           hintLine,
-        metadata: { injector: 'cross-session-delegation', sourceSessionId },
+        metadata: { injector: WellKnownKinds.CrossSessionDelegation, sourceSessionId },
       });
       return messages;
     }
@@ -1779,7 +1779,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 历史消息
       if (memory) {
         const history = await memory.getHistory(data.sessionId, agent.historyLimit);
-        messages.push(...history.filter(m => m.kind !== 'event-marker'));
+        messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
       }
 
       // 运行 agent:llm:before 中间件以获取注入的 system 消息（摘要、向量记忆等）+ 工具搜索层过滤
