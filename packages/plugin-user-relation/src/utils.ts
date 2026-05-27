@@ -519,6 +519,46 @@ export function edgeInvolvesBoth(e: RelationEdge, a: string, b: string): boolean
   return edgeReferences(e, a) && edgeReferences(e, b);
 }
 
+/**
+ * 给定一条边和"我方 nodeId"，解析出"对端 id + 对端 kind + 我方是否为 to 端（incoming）"。
+ * 不匹配（边不引用 nodeId）时返回 null。
+ *
+ * 用途：聚合邻居（区分人物/事件/实体）、计算入边权重时复用统一逻辑，
+ * 避免各处用 `(e as any).to ?? (e as any).toId` 这类基于"虚构字段名"的脆弱访问
+ * （RelationEdge 的字段都有 kind 后缀，如 fromPersonId/toEventId，没有裸 to/from/toId/fromId）。
+ */
+export function getEdgeOtherEnd(
+  e: RelationEdge,
+  nodeId: string,
+): { otherId: string; otherKind: 'person' | 'event' | 'entity'; isIncoming: boolean } | null {
+  switch (e.kind) {
+    case 'person-event':
+      if (e.fromPersonId === nodeId) return { otherId: e.toEventId, otherKind: 'event', isIncoming: false };
+      if (e.toEventId === nodeId) return { otherId: e.fromPersonId, otherKind: 'person', isIncoming: true };
+      return null;
+    case 'person-person':
+      if (e.fromPersonId === nodeId) return { otherId: e.toPersonId, otherKind: 'person', isIncoming: false };
+      if (e.toPersonId === nodeId) return { otherId: e.fromPersonId, otherKind: 'person', isIncoming: true };
+      return null;
+    case 'person-entity':
+      if (e.fromPersonId === nodeId) return { otherId: e.toEntityId, otherKind: 'entity', isIncoming: false };
+      if (e.toEntityId === nodeId) return { otherId: e.fromPersonId, otherKind: 'person', isIncoming: true };
+      return null;
+    case 'event-event':
+      if (e.fromEventId === nodeId) return { otherId: e.toEventId, otherKind: 'event', isIncoming: false };
+      if (e.toEventId === nodeId) return { otherId: e.fromEventId, otherKind: 'event', isIncoming: true };
+      return null;
+    case 'event-entity':
+      if (e.fromEventId === nodeId) return { otherId: e.toEntityId, otherKind: 'entity', isIncoming: false };
+      if (e.toEntityId === nodeId) return { otherId: e.fromEventId, otherKind: 'event', isIncoming: true };
+      return null;
+    case 'entity-entity':
+      if (e.fromEntityId === nodeId) return { otherId: e.toEntityId, otherKind: 'entity', isIncoming: false };
+      if (e.toEntityId === nodeId) return { otherId: e.fromEntityId, otherKind: 'entity', isIncoming: true };
+      return null;
+  }
+}
+
 export function isAliasEdgeDirectionCorrect(e: RelationEdge, aliasId: string, canonicalId: string): boolean {
   if (e.kind === 'entity-entity') return e.fromEntityId === aliasId && e.toEntityId === canonicalId;
   if (e.kind === 'person-person') return e.fromPersonId === aliasId && e.toPersonId === canonicalId;
