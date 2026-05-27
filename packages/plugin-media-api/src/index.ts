@@ -152,10 +152,11 @@ export interface DescribeImageOptions {
   /**
    * 描述详略级别（默认 'auto'）：
    * - `'casual'`：简洁日常描述（200 字以内、识别梗/游戏标志、不列点），用于聊天截图/表情包/生活照
-   * - `'detailed'`：详细 OCR 风格描述（不限字数、逐项列出、含 LaTeX/代码/表格），用于试卷/文档/代码/表格
-   * - `'auto'`：先做轻量分类后选择 casual 或 detailed；分类失败 fallback 到 detailed（保守起见）
+   * - `'detailed'`：详细图像识别（不限字数、聚焦图像整体详情/网络梗/代码/表格），用于一般信息密度高的图
+   * - `'professional'`：专业学科题目识别（严格 LaTeX、几何坐标识别、几何形状反幻觉），用于数学/物理/化学题
+   * - `'auto'`：先做轻量 4 标签分类（professional/document/casual/mixed）后选择对应档位；分类失败 fallback 到 detailed
    */
-  detailLevel?: 'auto' | 'casual' | 'detailed';
+  detailLevel?: 'auto' | 'casual' | 'detailed' | 'professional';
 }
 
 export interface BuildContextOptions {
