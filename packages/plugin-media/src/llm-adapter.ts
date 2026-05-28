@@ -359,10 +359,27 @@ function wrapLLMAsProcessor(
       const resp = await llm.chat({ messages, maxTokens, think });
       const rawLen = resp.content?.length ?? 0;
       const text = (resp.content ?? '').trim();
-      _ctx.logger.info(
-        `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${resp.usage?.totalTokens ?? '?'}` +
-          (rawLen > 0 ? `, 内容="${(resp.content ?? '').replace(/\n/g, ' ')}"` : ' [空响应——模型未返回任何内容]'),
-      );
+      const usedTokens = resp.usage?.totalTokens;
+      if (rawLen === 0) {
+        // 空响应通常不是“非语音”——而是 maxTokens 不足 / prompt+音频 token 占用过高 / 模型超时。
+        // 把可能原因都打出来，便于排查 nemotron/gemma 等模型的资源不足情况。
+        const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
+        _ctx.logger.warn(
+          `[audio.transcribe] ${llm.id} 空响应：${Date.now() - t0}ms, sizeKB=${sizeKB}, prompt=${prompt.length}字, ` +
+            `tokens=${usedTokens ?? '?'}/${maxTokens}` +
+            (usedPct >= 80
+              ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空，建议调高 audio.maxTokens 到 2048+）`
+              : usedPct >= 0
+                ? `（占用 ${usedPct}%）`
+                : '') +
+            `, think=${think}`,
+        );
+      } else {
+        _ctx.logger.info(
+          `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}, ` +
+            `内容="${(resp.content ?? '').replace(/\n/g, ' ')}"`,
+        );
+      }
       return {
         text,
         language: input.language,
