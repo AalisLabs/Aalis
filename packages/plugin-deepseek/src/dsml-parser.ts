@@ -37,7 +37,7 @@ import type { ToolCall } from '@aalis/plugin-message-api';
  * - **去重**：同名同参的 invoke 只保留一次（避免重复触发）。
  */
 export function parseDsmlToolCalls(text: string): ToolCall[] {
-  if (!text || !text.includes('DSML')) return [];
+  if (!text?.includes('DSML')) return [];
 
   // 匹配每个 invoke 块。竖线类用 [｜|]+ 兼容变体。
   // [\s\S] 非贪婪匹配任意字符（包括换行）。

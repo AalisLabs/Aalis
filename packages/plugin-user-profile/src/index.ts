@@ -1124,7 +1124,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         includeFeelings && Array.isArray(parsedObj.feelingsUpdate)
           ? (parsedObj.feelingsUpdate as unknown[]).flatMap(x => {
               const it = parseFeelingItem(x, true);
-              return it && it.id
+              return it?.id
                 ? [
                     {
                       id: it.id,
