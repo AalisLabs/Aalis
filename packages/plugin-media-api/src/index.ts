@@ -51,7 +51,19 @@ export interface MediaProcessor {
 export interface DescribeInput {
   /** 待描述的附件（同一 batch 内 mime/kind 由调用方保证一致） */
   attachments: MessageAttachment[];
-  /** 上下文提示（可选）：例如 "请详细描述这些图片中的人物表情" */
+  /**
+   * 主提示词覆盖（可选）：调用方决定本次 describe 用哪段 prompt 时，
+   * 应该传 basePrompt 而非 hint —— adapter 会用 basePrompt 完全替换默认 base，
+   * 不会让默认 prompt 和调用方 prompt 同时存在产生指令冲突。
+   * 留空则 adapter 使用 wrap 时注入的默认 prompt（即 config 里的 vision.prompt）
+   * 或内置 DEFAULT_VISION_PROMPT。
+   */
+  basePrompt?: string;
+  /**
+   * 追加约束提示（可选）：在 base prompt 与 context 之后追加，
+   * 语义是"再加一条要求"，例如 "请重点描述左上角"。
+   * ⚠️ 不要把另一段完整 prompt 塞进 hint，会与 base 冲突；那种场景请用 basePrompt。
+   */
   hint?: string;
   /**
    * 对话上下文文本（可选）：plugin-media 从近期聊天历史构建，
