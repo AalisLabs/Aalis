@@ -97,7 +97,7 @@ chunk 到来
   │
   ├─ accContent += delta.content
   │
-  ├─ [｜|]+ 检测到 DSML 起始] → dsmlDetected = true
+  ├─ [｜|]+ 检测到 DSML 起始 → dsmlDetected = true
   │   ├─ 输出 DSML 之前的 cleanPart（如有）
   │   └─ 后续 chunk 只累积 accContent，不 emit
   │
