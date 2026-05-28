@@ -36,13 +36,6 @@ function compactText(input: string | null | undefined, maxLength = 500): string 
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
-/** 将基础提示词与上下文拼接成最终 vision 提示词。 */
-export function buildVisionPrompt(basePrompt: string, context?: string): string {
-  const trimmedContext = compactText(context, 1200);
-  if (!trimmedContext) return basePrompt;
-  return `${basePrompt}\n\n上下文/用户需求：\n${trimmedContext}\n\n请把上下文作为理解图片重点的线索，优先回应其中的问题、引用和近期话题；但不要让上下文覆盖图片本身可见事实。如果上下文不足，再给出客观描述。`;
-}
-
 /**
  * 读取发送者的 user-profile 摘要（仅事实文本列表，以 "；" 分隔）。
  * 任何失败都返回空串，调用方原样跳过。

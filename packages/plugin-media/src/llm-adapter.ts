@@ -276,10 +276,15 @@ function wrapLLMAsProcessor(
     displayName: `${entry.label ?? entry.contextId} (${capShortName(cap)})`,
     priority: 0,
     async describe(input: DescribeInput, _ctx: Context): Promise<DescribeResult> {
+      // base 优先级：调用方显式 basePrompt > wrap 时注入的 opts.prompt > 内置默认
+      // 调用方需要切换 prompt（如分类/详细/专业模式）时必须传 input.basePrompt，
+      // 不要塞进 hint —— 否则会和默认 base 同时存在产生指令冲突。
+      const explicitBase = input.basePrompt;
       const base =
-        cap === 'vision' && input.attachments.length > 1
+        explicitBase ??
+        (cap === 'vision' && input.attachments.length > 1
           ? (opts.batchPrompt ?? opts.prompt ?? DEFAULT_VISION_BATCH_PROMPT)
-          : (opts.prompt ?? defaultPromptFor(cap, input.attachments.length));
+          : (opts.prompt ?? defaultPromptFor(cap, input.attachments.length)));
       // 上下文仅作背景参考，必须显式防止"上下文污染描述"：模型容易把对话历史里出现、
       // 但图片中并不可见的人物/事件/情绪写进描述，导致"夸张"或事实捏造。
       const ctxBlock = input.context
