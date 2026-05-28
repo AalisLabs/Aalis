@@ -1542,6 +1542,12 @@ export class RelationService {
       }
     }
 
+    // 3.5) cascade 删节点会把关联边一并移除，但边另一端的节点不会连带删；
+    //      直接 deleteEdge（edge 配额）更是只删边不删端点。
+    //      因此步骤 2-3 结束后必然残留新孤儿，在 PageRank 写回前清理，
+    //      使写回阶段的 loadAll() 快照干净，避免对孤儿节点做无用写回。
+    await this.pruneOrphans();
+
     // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"；
     //    顺手跑社群发现（Louvain / Leiden / SLPA 可切换），把 communityId + communityMemberships 一并写回（同一批 snapshot 保证可比）。
     //    存储 schema 统一：louvain/leiden 永远写单元素 memberships=[{id, weight:1}]，slpa 写全多元素；
