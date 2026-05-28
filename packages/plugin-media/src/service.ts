@@ -275,7 +275,19 @@ export class MediaServiceImpl implements MediaService {
                 // 显式覆盖的 vision.prompt 视为用户强意图，直接尊重不再分类。
                 // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
                 // 避免两段 prompt 同时存在产生指令冲突。
-                const basePrompt = this.cfg.vision.prompt ?? (await this.classifyAndPickPrompt(proc, att.data));
+                let basePrompt: string;
+                let tier: 'override' | 'casual' | 'detailed' | 'professional';
+                if (this.cfg.vision.prompt) {
+                  basePrompt = this.cfg.vision.prompt;
+                  tier = 'override';
+                } else {
+                  const picked = await this.classifyAndPickPrompt(proc, att.data);
+                  basePrompt = picked.prompt;
+                  tier = picked.tier;
+                }
+                this.logger.info(
+                  `[vision.describe] source=auto tier=${tier} promptChars=${basePrompt.length} (session=${msg.sessionId})`,
+                );
                 const r = await proc.describe(
                   {
                     attachments: [att],
@@ -299,7 +311,9 @@ export class MediaServiceImpl implements MediaService {
           if (this.cfg.audio.mode === 'enabled') {
             const text = await this.transcribe(att, { context: ctxText });
             item.cap = 'audio';
-            item.description = text ? `[音频] ${text}` : '[音频] 无法识别（可能为非语音或听不清）';
+            // 空响应不应该被歸因为“非语音”——模型可能是 maxTokens 不足 / 上下文超限 / 超时，
+            // 详细原因看 llm-adapter 里的 warn 日志（含 raw 长度、tokens 资源占用比）。
+            item.description = text ? `[音频] ${text}` : '[音频] 识别失败（模型未返回内容，详见日志）';
             descriptions[i] = item.description;
           }
         } else if (att.kind === 'video') {
@@ -502,16 +516,23 @@ export class MediaServiceImpl implements MediaService {
       // detailLevel 决策：auto 走两阶段（分类→选 prompt）；casual/detailed 直接选定
       const detailLevel = opts.detailLevel ?? 'auto';
       let basePrompt: string;
+      let chosenTier: 'casual' | 'detailed' | 'professional';
       if (detailLevel === 'casual') {
         basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
+        chosenTier = 'casual';
       } else if (detailLevel === 'detailed') {
         basePrompt = DEFAULT_VISION_DETAILED_PROMPT;
-      } else if (detailLevel === 'professional') {
-        basePrompt = DEFAULT_VISION_PROFESSIONAL_PROMPT;
+        chosenTier = 'detailed';
+        chosenTier = 'professional';
       } else {
         // auto：调一次轻量分类（耗时 ~1-2s）
-        basePrompt = await this.classifyAndPickPrompt(proc, imageUrl);
+        const picked = await this.classifyAndPickPrompt(proc, imageUrl);
+        basePrompt = picked.prompt;
+        chosenTier = picked.tier;
       }
+      this.logger.info(
+        `[vision.describe] source=tool tier=${chosenTier} (detailLevel=${detailLevel}) promptChars=${basePrompt.length}`,
+      );
       const r = await proc.describe(
         {
           attachments: [{ kind: 'image', data: imageUrl }],
@@ -538,8 +559,11 @@ export class MediaServiceImpl implements MediaService {
    * - 任何异常（超时/网络/模型拒绝）→ fallback 到 detailed prompt，保证不漏信息
    * - 不计入描述缓存（hint 不同，缓存键也不会重复）
    */
-  private async classifyAndPickPrompt(proc: MediaProcessor, imageUrl: string): Promise<string> {
-    if (!proc.describe) return DEFAULT_VISION_DETAILED_PROMPT;
+  private async classifyAndPickPrompt(
+    proc: MediaProcessor,
+    imageUrl: string,
+  ): Promise<{ prompt: string; tier: 'casual' | 'detailed' | 'professional' }> {
+    if (!proc.describe) return { prompt: DEFAULT_VISION_DETAILED_PROMPT, tier: 'detailed' };
     const t0 = Date.now();
     try {
       const r = await proc.describe(
@@ -554,18 +578,26 @@ export class MediaServiceImpl implements MediaService {
         this.ctx,
       );
       const label = (r.descriptions[0] ?? '').toLowerCase().trim();
-      this.logger.debug(`[vision.classify] ${Date.now() - t0}ms label="${label}"`);
       // 4 标签匹配：professional → 专业题目；casual → 简洁；其余（document/mixed/unknown）→ detailed
+      let tier: 'casual' | 'detailed' | 'professional';
+      let prompt: string;
       if (label === 'professional' || label.startsWith('professional')) {
-        return DEFAULT_VISION_PROFESSIONAL_PROMPT;
+        tier = 'professional';
+        prompt = DEFAULT_VISION_PROFESSIONAL_PROMPT;
+      } else if (label === 'casual' || label.startsWith('casual')) {
+        tier = 'casual';
+        prompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
+      } else {
+        tier = 'detailed';
+        prompt = DEFAULT_VISION_DETAILED_PROMPT;
       }
-      if (label === 'casual' || label.startsWith('casual')) {
-        return this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
-      }
-      return DEFAULT_VISION_DETAILED_PROMPT;
+      this.logger.info(
+        `[vision.classify] ${Date.now() - t0}ms label="${label}" → tier=${tier} (prompt ${prompt.length}字)`,
+      );
+      return { prompt, tier };
     } catch (err) {
-      this.logger.debug(`[vision.classify] 失败，fallback 到 detailed: ${err instanceof Error ? err.message : err}`);
-      return DEFAULT_VISION_DETAILED_PROMPT;
+      this.logger.warn(`[vision.classify] 失败，fallback 到 detailed: ${err instanceof Error ? err.message : err}`);
+      return { prompt: DEFAULT_VISION_DETAILED_PROMPT, tier: 'detailed' };
     }
   }
 }
