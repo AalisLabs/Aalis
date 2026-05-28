@@ -395,12 +395,6 @@ const webuiPages: WebuiPage[] = [
     order: 58,
     content: [
       {
-        type: 'stat',
-        label: '关系图规模',
-        source: 'getStats',
-        icon: 'memory',
-      },
-      {
         type: 'graph',
         label: '关系图（点击节点查看详情；可设置焦点重做子图）',
         source: 'getRelationGraph',
