@@ -2715,41 +2715,60 @@ export class RelationService {
         }
       }
 
-      // ─── 跨 entityKind 同名召回（解决 extractor 把同概念抽成不同 kind 的 case）─
-      // 例：游戏卡牌"认知偏差" → thing；同名抽象概念 → topic。LLM 旧 prompt 直接因
-      // "类型不同"硬否决；现在召回交给 LLM 终判（prompt 已放宽，允许跨 kind 合并）。
-      // 召回条件：normalize(name) 完全相等且 entityKind 不同；不走 substring/alias 路径。
+      // ─── 跨 entityKind 宽召回（substring + embedding）────────────────────────────────
+      // 注：跨 kind 同名（精确相等）的情况已由 step (1) entitiesByNormName 覆盖并加入
+      //     reportedEntityPairs，本段只补 step (1) 之外的"名字不完全等价"盲区。
+      //   补充上方"跨 kind 同名"段的盲区：名字不完全相等但子串包含或 embedding 相似的跨 kind 对。
+      //   典型场景：extractor 把「绝航」抽为 thing，把「绝航号行动」抽为 topic → 子串命中。
+      //   阈值比同 kind 更保守（substring ≥ 3，cos ≥ 0.90 vs 0.86），最终仍需 LLM 终判。
+      //   embedCache 与同 kind 段共享（Map 引用），已算过的向量直接复用，不重复调 embedding 服务。
       {
-        const byNorm = new Map<string, EntityNode[]>();
-        for (const e of snapshot.entities) {
-          const n = normalizeName(e.name);
-          if (!n) continue;
-          if (!byNorm.has(n)) byNorm.set(n, []);
-          byNorm.get(n)!.push(e);
-        }
-        for (const list of byNorm.values()) {
-          if (list.length < 2) continue;
-          for (let i = 0; i < list.length; i++) {
-            for (let j = i + 1; j < list.length; j++) {
-              const a = list[i];
-              const b = list[j];
-              const ak = a.entityKind ?? 'topic';
-              const bk = b.entityKind ?? 'topic';
-              if (ak === bk) continue; // 同 kind 同名走 strict-equiv 段
-              const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
-              if (reportedEntityPairs.has(k)) continue;
-              reportedEntityPairs.add(k);
-              const reason = `跨 kind 同名候选（${ak} vs ${bk}，疑似上游识别误判）：${a.name} ↔ ${b.name}`;
-              aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
-              candidates.push({
-                a,
-                b,
-                reason,
-                pairKey: k,
-                cosineScore: null,
-                jaccardScore: computeEntityJaccard(a, b),
-              });
+        const crossKindCosThreshold = 0.9;
+        const allEntities = snapshot.entities;
+        for (let i = 0; i < allEntities.length; i++) {
+          for (let j = i + 1; j < allEntities.length; j++) {
+            const a = allEntities[i];
+            const b = allEntities[j];
+            if ((a.entityKind ?? 'topic') === (b.entityKind ?? 'topic')) continue; // 同 kind 已被上方循环处理
+            const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+            if (reportedEntityPairs.has(k)) continue; // 精确同名段已覆盖
+
+            const an = normalizeName(a.name);
+            const bn = normalizeName(b.name);
+            if (!an || !bn) continue;
+
+            // 子串包含（保守：最短串 ≥ 3，比同 kind 的 ≥ 2 更严格）
+            const substring = (an.length >= 3 && bn.includes(an)) || (bn.length >= 3 && an.includes(bn));
+
+            // embedding 召回（fallback；阈值更高）
+            let embedHit = false;
+            let embedCos: number | null = null;
+            if (!substring && embedding) {
+              const va = await ensureEntityEmbedding(a);
+              const vb = await ensureEntityEmbedding(b);
+              if (va && vb && va.length === vb.length) {
+                embedCos = cosineSimilarity(va, vb);
+                embedHit = embedCos >= crossKindCosThreshold;
+              }
             }
+
+            if (!substring && !embedHit) continue;
+            reportedEntityPairs.add(k);
+
+            const ak = a.entityKind ?? 'topic';
+            const bk = b.entityKind ?? 'topic';
+            const reason = substring
+              ? `跨 kind 子串包含（${ak}↔${bk}）：${a.name} ↔ ${b.name}`
+              : `跨 kind embedding 相似（${ak}↔${bk}，cos=${(embedCos ?? 0).toFixed(2)}）：${a.name} ↔ ${b.name}`;
+            aliasCandidates.push({ aId: a.id, bId: b.id, aKind: 'entity', bKind: 'entity', reason });
+            candidates.push({
+              a,
+              b,
+              reason,
+              pairKey: k,
+              cosineScore: embedCos,
+              jaccardScore: computeEntityJaccard(a, b),
+            });
           }
         }
       }
