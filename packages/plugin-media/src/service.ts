@@ -359,6 +359,8 @@ export class MediaServiceImpl implements MediaService {
         ? '[视频] 无法下载或读取视频文件内容（URL 不可访问或解码失败）'
         : '[视频] OneBot 服务端未提供视频文件 URL，无法获取内容';
     }
+    const t0 = Date.now();
+    this.logger.info(`[video] 开始处理 sourceKind=${sourceKind} mode=${this.cfg.video.mode} path=${local.path}`);
     try {
       const frameTexts: string[] = [];
       const totalFrames = await getFrameCount(local.path);
@@ -366,6 +368,7 @@ export class MediaServiceImpl implements MediaService {
         const maxFrames = sourceKind === 'animated' ? this.cfg.animatedImage.maxFrames : this.cfg.video.maxFrames;
         const indices = selectFrameIndices(totalFrames, maxFrames);
         const frames = await extractFrames(local.path, indices);
+        this.logger.info(`[video] 抽帧 total=${totalFrames} → 采样 ${frames.length}/${maxFrames} 帧（实际抽出/期望）`);
         if (frames.length > 0) {
           const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
           if (proc?.describe) {
@@ -381,9 +384,19 @@ export class MediaServiceImpl implements MediaService {
               this.ctx,
             );
             const text = r.descriptions[0];
-            if (text) frameTexts.push(`${this.cfg.video.framePrefix}${text}`);
+            if (text) {
+              frameTexts.push(`${this.cfg.video.framePrefix}${text}`);
+            } else {
+              this.logger.warn(
+                `[video] vision 综合描述返回空：${frames.length} 帧未产出文本（详见上方 vision.describe 日志）`,
+              );
+            }
+          } else {
+            this.logger.warn('[video] 无可用 vision processor，跳过帧描述');
           }
         }
+      } else {
+        this.logger.warn(`[video] getFrameCount=0，可能 ffprobe 失败或非视频容器；path=${local.path}`);
       }
 
       if (this.cfg.video.mode === 'frames+asr' && this.cfg.audio.mode === 'enabled') {
@@ -393,10 +406,17 @@ export class MediaServiceImpl implements MediaService {
             { kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' },
             { context: contextText },
           );
-          if (text) frameTexts.push(`${this.cfg.video.audioTrackPrefix}${text}`);
+          if (text) {
+            frameTexts.push(`${this.cfg.video.audioTrackPrefix}${text}`);
+          } else {
+            this.logger.info('[video] 音轨抽取成功但转写为空（无人声或转写失败，详见 audio.transcribe 日志）');
+          }
+        } else {
+          this.logger.info('[video] extractAudioTrack 返回空，无可用音轨');
         }
       }
 
+      this.logger.info(`[video] 完成 ${Date.now() - t0}ms：产出 ${frameTexts.length} 段（帧综合 + 音轨转写）`);
       if (frameTexts.length === 0)
         return '[视频] 已收到视频文件但未能抽取关键帧或音轨（可能缺少 ffmpeg/ffprobe，或视频解码失败）';
       return frameTexts.join('\n');
