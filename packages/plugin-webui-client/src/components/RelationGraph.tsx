@@ -794,10 +794,16 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   // ── UI ────────────────────────────────────────────────────
   const stats = payload?.stats ?? {};
   const statsText = useMemo(() => {
-    const parts: string[] = [];
-    if (payload) parts.push(`节点 ${payload.nodes.length}`, `边 ${payload.edges.length}`);
-    for (const [k, v] of Object.entries(stats)) parts.push(`${k}=${v}`);
-    return parts.join(' · ');
+    if (!payload) return '';
+    const labelMap: Record<string, string> = { persons: '人物', events: '事件', entities: '实体' };
+    const viewParts = [`节点 ${payload.nodes.length}`, `边 ${payload.edges.length}`];
+    const dbParts: string[] = [];
+    for (const [k, v] of Object.entries(stats)) {
+      if (k === 'edges') continue; // edges 与视图边重复，跳过
+      dbParts.push(`${labelMap[k] ?? k} ${v}`);
+    }
+    const dbStr = dbParts.length ? `全库: ${dbParts.join(' · ')}` : '';
+    return [...viewParts, ...(dbStr ? [dbStr] : [])].join('  |  ');
   }, [payload, stats]);
 
   /**
