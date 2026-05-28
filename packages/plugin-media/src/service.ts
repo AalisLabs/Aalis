@@ -16,7 +16,7 @@ import type {
 } from '@aalis/plugin-media-api';
 import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
 import { lookupCachedDescription, rememberDescription } from './cache.js';
-import { buildIncomingImageContext, buildVisionPrompt } from './context.js';
+import { buildIncomingImageContext } from './context.js';
 import {
   downloadToTemp,
   extractAudioTrack,
@@ -273,13 +273,15 @@ export class MediaServiceImpl implements MediaService {
                 // 自动归档路径也走双重识别：用户未显式覆盖 cfg.vision.prompt 时，
                 // 先调一次轻量分类挑专业/详细/简洁 prompt，避免所有图都吃 casual prompt。
                 // 显式覆盖的 vision.prompt 视为用户强意图，直接尊重不再分类。
-                const hint = this.cfg.vision.prompt ?? (await this.classifyAndPickPrompt(proc, att.data));
+                // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
+                // 避免两段 prompt 同时存在产生指令冲突。
+                const basePrompt = this.cfg.vision.prompt ?? (await this.classifyAndPickPrompt(proc, att.data));
                 const r = await proc.describe(
                   {
                     attachments: [att],
                     mode: 'single',
                     maxTokens: this.cfg.vision.maxTokens,
-                    hint,
+                    basePrompt,
                     context: ctxText,
                   },
                   this.ctx,
@@ -484,10 +486,8 @@ export class MediaServiceImpl implements MediaService {
                   attachments: frameAtts,
                   mode: 'combined',
                   maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-                  hint: buildVisionPrompt(
-                    this.cfg.vision.prompt ?? this.cfg.video.animatedPrompt ?? '描述这个动图/视频。',
-                    opts.hint,
-                  ),
+                  basePrompt: this.cfg.vision.prompt ?? this.cfg.video.animatedPrompt ?? '描述这个动图/视频。',
+                  hint: opts.hint,
                 },
                 this.ctx,
               );
@@ -517,7 +517,8 @@ export class MediaServiceImpl implements MediaService {
           attachments: [{ kind: 'image', data: imageUrl }],
           mode: 'single',
           maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-          hint: buildVisionPrompt(basePrompt, opts.hint),
+          basePrompt,
+          hint: opts.hint,
         },
         this.ctx,
       );
@@ -547,7 +548,8 @@ export class MediaServiceImpl implements MediaService {
           mode: 'single',
           // 分类输出极短，给 32 token 即可（容纳标签 + 可能的多余空白）
           maxTokens: 32,
-          hint: VISION_CLASSIFY_PROMPT,
+          // 用 basePrompt 完全替换默认 base，避免 casual 描述 prompt 与分类指令冲突
+          basePrompt: VISION_CLASSIFY_PROMPT,
         },
         this.ctx,
       );
