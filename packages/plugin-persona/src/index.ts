@@ -91,6 +91,8 @@ interface PersonaCard {
    *  字段 schema 仍由插件根据 outputFormat.fields 自动渲染并附在文本之后。
    *  仅在 outputFormat 存在时生效。 */
   outputFormatPrompt?: string;
+  /** outputFormat 校验失败时允许重试的最大次数（不含首次）。缺省 1。 */
+  outputFormatRetries?: number;
   nick_name?: string[];
   /** JSON 内容由客户端渲染，服务端不提取回复字段 */
   clientSideJsonRendering?: boolean;
@@ -156,7 +158,7 @@ class PersonaServiceImpl implements PersonaService {
 
     // 解析基础 outputFormat
     if (card.outputFormat) {
-      this._outputFormat = PersonaServiceImpl.parseRawOutputFormat(card.outputFormat);
+      this._outputFormat = PersonaServiceImpl.parseRawOutputFormat(card.outputFormat, card.outputFormatRetries);
     }
   }
 
@@ -184,7 +186,7 @@ class PersonaServiceImpl implements PersonaService {
     if (refreshed) {
       this.card = refreshed;
       this._outputFormat = refreshed.outputFormat
-        ? PersonaServiceImpl.parseRawOutputFormat(refreshed.outputFormat)
+        ? PersonaServiceImpl.parseRawOutputFormat(refreshed.outputFormat, refreshed.outputFormatRetries)
         : undefined;
     }
   }
@@ -196,6 +198,7 @@ class PersonaServiceImpl implements PersonaService {
   /** 解析原始 outputFormat 定义 → OutputFormat 结构 */
   private static parseRawOutputFormat(
     raw: Record<string, { description: string; reply?: boolean; type?: string }>,
+    retries?: number,
   ): OutputFormat | undefined {
     const fields: Record<string, OutputFormatField> = {};
     let replyField: string | undefined;
@@ -207,7 +210,9 @@ class PersonaServiceImpl implements PersonaService {
       fields[key] = { description: def.description, type, reply: def.reply };
       if (def.reply) replyField = key;
     }
-    return replyField ? { fields, replyField } : undefined;
+    if (!replyField) return undefined;
+    const normalizedRetries = Number.isFinite(retries) && (retries as number) >= 0 ? Math.floor(retries as number) : 1;
+    return { fields, replyField, retries: normalizedRetries };
   }
 
   /** 保存会话状态 */
@@ -250,7 +255,9 @@ class PersonaServiceImpl implements PersonaService {
     if (card === this.card) return this._outputFormat;
     const key = card.name || '??';
     if (this.formatCache.has(key)) return this.formatCache.get(key) ?? undefined;
-    const fmt = card.outputFormat ? PersonaServiceImpl.parseRawOutputFormat(card.outputFormat) : undefined;
+    const fmt = card.outputFormat
+      ? PersonaServiceImpl.parseRawOutputFormat(card.outputFormat, card.outputFormatRetries)
+      : undefined;
     this.formatCache.set(key, fmt ?? null);
     return fmt;
   }
@@ -830,27 +837,44 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         );
       }
     } catch (err) {
-      // 解析失败时保留原始内容，不影响正常流程；带上原因方便定位下一条修复规则。
       const message = err instanceof Error ? err.message : String(err);
       const preview = jsonStr.length > 300 ? `${jsonStr.slice(0, 300)}...` : jsonStr;
-      ctx.logger.debug(`outputFormat 解码失败，保留原始回复：${message}; json=${preview}`);
 
-      // 触发 agent 单次重试：要求模型严格按照 outputFormat 重新输出 JSON。
-      // 这样可以避免失败的纯文本进入 archive 后形成自我强化循环。
-      const fieldSpec = Object.entries(outputFormat.fields)
-        .map(
-          ([k, v]) =>
-            `  - "${k}"（${v.description ?? ''}${k === outputFormat.replyField ? '；最终回复内容写在这里' : ''}）`,
-        )
-        .join('\n');
-      data.retryRequested = true;
-      data.retryFeedback =
-        '你的上一条回复没有按照规定的 JSON 输出格式返回（解析失败原因：' +
-        message +
-        '）。请严格按照以下字段输出一个合法 JSON 对象（不要包 markdown 代码块，所有声明的字段都必须出现，缺一不可）：\n' +
-        fieldSpec +
-        '\n请勿输出任何 JSON 之外的文本。' +
-        '\n注意：如果你的本意只是"汇报已完成 / 不想再对外发送新内容"，请把回复字段留空（空字符串），仅用其他状态字段说明情况——不要省略任何字段，也不要在回复字段里写汇报性文字，否则会被当作新消息发送到对方平台。';
+      const maxRetries = outputFormat.retries;
+      const attempt = data.attempt ?? 0;
+      // 把允许的重试次数透给 agent，agent 据此决定循环次数
+      data.maxRetries = maxRetries;
+
+      if (attempt < maxRetries) {
+        // 还有重试名额：要求模型严格按照 outputFormat 重新输出 JSON
+        ctx.logger.debug(
+          `outputFormat 解码失败 (attempt=${attempt}/${maxRetries})，请求重试：${message}; json=${preview}`,
+        );
+        const fieldSpec = Object.entries(outputFormat.fields)
+          .map(
+            ([k, v]) =>
+              `  - "${k}"（${v.description ?? ''}${k === outputFormat.replyField ? '；最终回复内容写在这里' : ''}）`,
+          )
+          .join('\n');
+        data.retryRequested = true;
+        data.retryFeedback =
+          '你的上一条回复没有按照规定的 JSON 输出格式返回（解析失败原因：' +
+          message +
+          '）。请严格按照以下字段输出一个合法 JSON 对象（不要包 markdown 代码块，所有声明的字段都必须出现，缺一不可）：\n' +
+          fieldSpec +
+          '\n请勿输出任何 JSON 之外的文本。' +
+          '\n注意：如果你的本意只是"汇报已完成 / 不想再对外发送新内容"，请把回复字段留空（空字符串），仅用其他状态字段说明情况——不要省略任何字段，也不要在回复字段里写汇报性文字，否则会被当作新消息发送到对方平台。';
+      } else {
+        // 重试用尽：静默丢弃（避免原始 JSON 被当成回复发出）
+        // 同时通过 archiveContent 写入一条"系统提醒"，让下一轮 LLM 看到自己上次因格式不符被丢弃
+        ctx.logger.warn(
+          `outputFormat 解码连续 ${attempt + 1} 次失败（已用尽 ${maxRetries} 次重试），静默丢弃回复：${message}; json=${preview}`,
+        );
+        data.retryRequested = false;
+        data.retryFeedback = undefined;
+        data.content = '';
+        data.archiveContent = `（系统提示：上一条回复因不符合 outputFormat 规定被丢弃，原因：${message}。下次回复请严格按照 system prompt 中规定的 JSON 格式输出，所有声明的字段都必须出现。）`;
+      }
     }
   });
 }

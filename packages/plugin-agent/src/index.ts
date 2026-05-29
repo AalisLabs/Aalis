@@ -762,6 +762,8 @@ class DefaultAgent implements AgentService {
           triggerType?: typeof incoming.triggerType;
           retryRequested?: boolean;
           retryFeedback?: string;
+          attempt?: number;
+          maxRetries?: number;
         };
         const responseData: ReplyHookData = {
           content: replyContent,
@@ -769,15 +771,19 @@ class DefaultAgent implements AgentService {
           platform: incoming.platform,
           userId: incoming.userId,
           triggerType: incoming.triggerType,
+          attempt: 0,
         };
         await this.ctx.hooks.run('agent:reply:before', responseData);
 
-        // 重试机制：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
-        // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求一次 LLM。
-        // 仅允许 1 次重试，避免无限循环。
-        if (responseData.retryRequested && rawLlmContent.length > 0) {
+        // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
+        // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
+        // maxRetries 由 hook 端写入（plugin-persona 从 outputFormat.retries 读取，默认 1）。
+        const maxRetries = Math.max(0, responseData.maxRetries ?? 0);
+        let attempt = 0;
+        while (responseData.retryRequested && attempt < maxRetries && rawLlmContent.length > 0) {
+          attempt++;
           this.logger.debug(
-            `agent:reply:before 请求重试 (session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
+            `agent:reply:before 请求重试 (attempt=${attempt}/${maxRetries}, session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
           );
           llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
           llmBeforeData.messages.push({
@@ -804,12 +810,23 @@ class DefaultAgent implements AgentService {
           rawLlmContent = response.content ?? '';
           if (response.reasoningContent) allReasoning.push(response.reasoningContent);
 
-          // 用新输出再次跑一遍 hook，但已不允许再次重试
+          // 用新输出再次跑 hook；hook 端根据 attempt 决定继续重试或走兜底（静默丢弃）
           responseData.content = rawLlmContent;
           responseData.archiveContent = undefined;
           responseData.retryRequested = false;
           responseData.retryFeedback = undefined;
+          responseData.attempt = attempt;
           await this.ctx.hooks.run('agent:reply:before', responseData);
+        }
+
+        // 双保险：循环结束后若 hook 仍标记 retryRequested（理论上 persona 已在用尽时自动走兜底），
+        // 强制把 content 置空，避免原始未校验内容被外发。
+        if (responseData.retryRequested) {
+          this.logger.warn(
+            `agent:reply:before 重试用尽但 retryRequested 仍为 true，强制丢弃回复内容 (session=${incoming.sessionId})`,
+          );
+          responseData.content = '';
+          responseData.retryRequested = false;
         }
 
         replyContent = responseData.content;
