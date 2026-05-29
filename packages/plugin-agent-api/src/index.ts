@@ -100,7 +100,8 @@ declare module '@aalis/core' {
       triggerType?: IncomingMessage['triggerType'];
       /**
        * 当中间件检测到回复无法满足约束（如 outputFormat 解析失败）时，
-       * 可将其置为 true 触发 agent 单次重试（agent 端会自动限制最多重试一次）。
+       * 可将其置为 true 触发 agent 重试。agent 会按 `maxRetries` 循环重试，
+       * 用尽次数后若仍 true，会强制把 content 置空以避免错误内容外发。
        */
       retryRequested?: boolean;
       /**
@@ -108,6 +109,16 @@ declare module '@aalis/core' {
        * 仅在 retryRequested === true 时生效。
        */
       retryFeedback?: string;
+      /**
+       * 当前已重试的次数（首次进入 hook 时为 0；agent 每次重试后递增）。
+       * 中间件用此判断「这是第几次解析这一轮的回复」。
+       */
+      attempt?: number;
+      /**
+       * 中间件期望的最大重试次数。第一次进入 hook 时由中间件写入，agent 据此决定循环次数。
+       * 缺省视为 0（不重试）。
+       */
+      maxRetries?: number;
     };
     'agent:llm:before': {
       messages: Message[];
