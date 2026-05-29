@@ -20,6 +20,11 @@ export interface OutputFormat {
   fields: Record<string, OutputFormatField>;
   /** 回复字段名（自动推断，取 reply: true 的那个 key） */
   replyField: string;
+  /**
+   * 格式校验失败时允许的最大重试次数（额外向 LLM 请求的次数，不含首次）。
+   * 缺省为 1。设为 0 时不重试，第一次失败即静默丢弃。
+   */
+  retries: number;
 }
 
 /**
