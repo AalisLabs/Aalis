@@ -1124,12 +1124,13 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
       aliases: ['三角洲行动'], // 注：与 parent.name 等价
       evidence: [],
     });
-    // 预置 part-of 边：child part-of parent
+    // 预置 part-of 边：child part-of parent（带 evidence，模拟真实层级关系；
+    // evidence=0 的 part-of 多为 LLM 抽取幻觉，不再用于守门）
     await service.addEntityEntityEdge({
       fromEntityId: child.id,
       toEntityId: parent.id,
       relationType: 'part-of',
-      evidence: [],
+      evidence: [{ messageIds: ['m-hier-1'], quotes: ['绝密航天 是 三角洲行动 的玩法'] }],
     });
 
     await service.consolidate({ autoLink: true });

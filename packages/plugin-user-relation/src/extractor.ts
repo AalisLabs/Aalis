@@ -936,6 +936,11 @@ export class RelationExtractor {
     }
 
     // 4) person-person edges
+    // 构建 personId → displayName 索引，便于严格自证丢弃日志输出可读姓名
+    const personIdToName = new Map<string, string>();
+    for (const p of parsed.persons ?? []) {
+      if (p.platform && p.userId) personIdToName.set(`${p.platform}:${p.userId}`, p.displayName ?? '');
+    }
     for (const pp of parsed.personPersonEdges ?? []) {
       if (!pp.fromPlatform || !pp.fromUserId || !pp.toPlatform || !pp.toUserId || !pp.relationType) continue;
       if (pp.fromPlatform === pp.toPlatform && pp.fromUserId === pp.toUserId) continue; // 自环
@@ -943,7 +948,20 @@ export class RelationExtractor {
       const fromPersonId = `${pp.fromPlatform}:${pp.fromUserId}`;
       const toPersonId = `${pp.toPlatform}:${pp.toUserId}`;
       if (strict && !isSelfAsserted(fromPersonId, ev)) {
-        debugSkip('person-person', `from=${fromPersonId} 无本人 evidence`);
+        // 升级到 info 级 + 结构化上下文：from/to 姓名、关系类型、evidence 来源
+        const fromName = personIdToName.get(fromPersonId) || '?';
+        const toName = personIdToName.get(toPersonId) || '?';
+        const evSummary = ev
+          ? ev.messageIds
+              .slice(0, 2)
+              .map(mid => `${mid.slice(0, 8)}(sender=${senderBySid.get(mid) ?? 'unknown'})`)
+              .join(',') + (ev.messageIds.length > 2 ? `,+${ev.messageIds.length - 2}` : '')
+          : '无 evidence';
+        this.ctx.logger.info(
+          `[user-relation] 严格自证丢弃 person-person ${fromName}(${fromPersonId})→${toName}(${toPersonId}) ` +
+            `${pp.relationType}${pp.directed === false ? ' (undirected)' : ''}: ` +
+            `evidence 中无 from 方发言（evidence=${evSummary}）`,
+        );
         continue;
       }
       try {

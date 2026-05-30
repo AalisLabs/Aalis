@@ -2473,12 +2473,16 @@ export class RelationService {
           if (opts.autoLink) {
             // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
             let shouldMerge = true;
-            // hierarchy 守门（与 LLM 无关也生效）：若 a/b 之间已存在 part-of/contains 边
-            // → 视为已知层级，禁止 alias 合并。母概念被并入子概念是本守门要拦截的核心场景。
+            // hierarchy 守门：若 a/b 之间已存在**有证据**的 part-of/contains 边
+            // → 视为已知层级，禁止 alias 合并。
+            // 注意：旧版无视 evidence 数，但 LLM 抽取阶段会产出大量 evidence=0 的幻觉层级边，
+            // 把这道安全网污染了（如 APEX ↔ 《Apex英雄》被锁住无法合并）。
+            // 改为只信任 evidence≥1 的层级边：幻觉边不再阻塞合并，真实层级仍守门。
             const knownHierarchyEdge = snapshot.edges.some(
               e =>
                 e.kind === 'entity-entity' &&
                 (e.relationType === 'part-of' || e.relationType === 'contains') &&
+                (e.evidence?.length ?? 0) >= 1 &&
                 ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
                   (e.fromEntityId === b.id && e.toEntityId === a.id)),
             );
@@ -2486,11 +2490,11 @@ export class RelationService {
               shouldMerge = false;
               if (opts.llm?.ctx.logger) {
                 opts.llm.ctx.logger.info(
-                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边`,
+                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
                 );
               } else if (this.ctx?.logger) {
                 this.ctx.logger.info(
-                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边`,
+                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
                 );
               }
             }
@@ -2863,17 +2867,18 @@ export class RelationService {
           }
           continue;
         }
-        // hierarchy 守门：若 a/b 之间已存在 part-of/contains 边 → 已知层级，跳过 alias 合并候选
+        // hierarchy 守门（同严格等价段）：仅信任 evidence≥1 的真实层级边，幻觉边不再阻塞。
         const knownHierarchy = snapshot.edges.some(
           e =>
             e.kind === 'entity-entity' &&
             (e.relationType === 'part-of' || e.relationType === 'contains') &&
+            (e.evidence?.length ?? 0) >= 1 &&
             ((e.fromEntityId === a.id && e.toEntityId === b.id) || (e.fromEntityId === b.id && e.toEntityId === a.id)),
         );
         if (knownHierarchy) {
           if (opts.llm.ctx.logger) {
             opts.llm.ctx.logger.info(
-              `[user-relation] consolidate 跳过宽召回候选 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（层级关系优先）`,
+              `[user-relation] consolidate 跳过宽召回候选 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1，层级关系优先）`,
             );
           }
           continue;
