@@ -207,6 +207,22 @@ export interface IncomingMessage {
    * 未设置时下游插件按 'direct' 兼容处理。
    */
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
+  /**
+   * 代理身份（与 platform/userId 解耦）：当本条消息并非由人类直接发送，而是由 scheduler、
+   * idle-trigger、proactive 委派等系统侧触发器投递时，记录"AI 应代谁执行"。
+   *
+   * 与 platform/userId 的区别：
+   * - platform/userId 表示消息的物理来源（路由+发言者标识），写归档、做用户档案/关系；
+   * - actor 表示授权身份，agent 构造 ToolCallContext 时优先使用 actor，
+   *   从而让 authority 守卫按 actor 的 (platform, userId) 查权限等级。
+   *
+   * 触发器（如 scheduler）应在创建任务时 snapshot 调用者身份，触发时回填此字段；
+   * 不能由 LLM/AI 在工具入参中自由指定，避免提权。
+   */
+  actor?: {
+    platform: string;
+    userId: string;
+  };
 }
 
 // ----- 出站消息 -----
