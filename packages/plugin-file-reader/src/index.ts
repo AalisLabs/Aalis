@@ -339,8 +339,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   async function storeFile(name: string, data: Buffer, mimeType: string, sessionId: string): Promise<FileEntry> {
     const id = await hashId(data);
     // 已存在则直接复用（同一内容，仅刷新 uploadedAt）
+    // 防御：若磁盘 data 文件已被外部清理（restoreIndex 恢复了 meta 但数据丢失），
+    // 必须重写一遍 data，否则后续 extractText 会 ENOENT 失败。
     const existing = index.get(id);
     if (existing && existing.sessionId === sessionId) {
+      let dataOk = true;
+      try {
+        await storage.stat(existing.dataUri);
+      } catch {
+        dataOk = false;
+      }
+      if (!dataOk) {
+        await storage.writeFile(existing.dataUri, data);
+      }
       existing.uploadedAt = Date.now();
       await storage
         .writeFile(existing.metaUri, JSON.stringify({ ...existing, dataUri: undefined, metaUri: undefined }, null, 2))
@@ -606,15 +617,30 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (att.kind !== 'file') continue;
       const fileName = att.name ?? `file-${i}`;
       try {
-        // 复用已存的：data 字段若是 aalis-file:// 引用，则直接拿 index 里的条目
+        // 幂等：data 字段是 aalis-file:// 引用 ⇒ 此前已处理；绝不再走 dataUrlToBuffer，
+        // 否则会抛 "Invalid data URL" 把上次成功生成的描述覆盖成「处理失败」。
         if (att.data.startsWith('aalis-file://')) {
           const id = att.data.slice('aalis-file://'.length);
-          const entry = index.get(id);
+          let entry = index.get(id);
+          // 索引缺失时尝试从磁盘恢复一次（restoreIndex 后插件实例 swap、index 重建等场景）
+          if (!entry) {
+            const ext = path.extname(fileName) || '';
+            const probe = await loadMeta(metaUri(msg.sessionId, id));
+            if (probe) {
+              entry = {
+                ...probe,
+                dataUri: dataUri(probe.sessionId, probe.id, ext),
+                metaUri: metaUri(probe.sessionId, probe.id),
+              };
+              index.set(entry.id, entry);
+            }
+          }
           if (entry) {
             attDescs[i] = await buildAttachmentDesc(entry);
             touched = true;
-            continue;
           }
+          // entry 仍缺失：保留上一次的描述，不覆盖、不报错
+          continue;
         }
 
         const { buffer, mimeType: dataMime } = dataUrlToBuffer(att.data);
@@ -665,6 +691,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   // ===== 注册到 agent =====
+  // 关键：注册返回的 dispose 必须挂到 ctx.onDispose，否则插件 bounce/reload 时
+  // 旧 preprocessor 中间件会残留在 agent.ctx 上，造成下一轮重复执行（同名 dedupe
+  // 只在新实例及时 register 时才生效；若 file-reader 卸载而未立即重载，便会泄漏）。
 
   const agent = ctx.getService<AgentService>('agent');
   if (agent && !agent.registerPreprocessor) {
@@ -672,7 +701,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       await preprocessFiles(data.message, next);
     });
   } else {
-    useAgent(ctx).registerPreprocessor('file-reader', preprocessFiles);
+    const disposePreproc = useAgent(ctx).registerPreprocessor('file-reader', preprocessFiles);
+    ctx.onDispose(disposePreproc);
   }
 
   // ===== 历史 / 本轮新上传文件清单注入（agent:llm:before） =====
