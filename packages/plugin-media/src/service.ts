@@ -29,6 +29,7 @@ import {
   selectFrameIndices,
 } from './ffmpeg.js';
 import {
+  DEFAULT_VISION_BATCH_PROMPT,
   DEFAULT_VISION_DETAILED_PROMPT,
   DEFAULT_VISION_PROFESSIONAL_PROMPT,
   DEFAULT_VISION_PROMPT,
@@ -577,7 +578,7 @@ export class MediaServiceImpl implements MediaService {
                   attachments: frameAtts,
                   mode: 'combined',
                   maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-                  basePrompt: this.cfg.vision.prompt ?? this.cfg.video.animatedPrompt ?? '描述这个动图/视频。',
+                  basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
                   hint: opts.hint,
                 },
                 this.ctx,
