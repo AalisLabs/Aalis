@@ -28,11 +28,18 @@ function toBase64Uri(buf: Buffer): string {
   return `base64://${buf.toString('base64')}`;
 }
 
-/** 简易判定：形如 <root>:/<path>，且 root 非 http/https/data/file。 */
+/** 简易判定：形如 <root>:/<path>，且 root 非 http/https/file。
+ * 注意："data:/path" 是 storage 根路径（storage URI），
+ * "data:image/png;base64,..." 是标准 data URI（非 storage）——
+ * 区分依据：storage URI 的冒号后紧跟 '/'，标准 data URI 后跟 MIME type。 */
 function isStorageUri(s: string): boolean {
   if (!/^[a-z][a-z0-9_-]*:\//.test(s)) return false;
-  const scheme = s.slice(0, s.indexOf(':')).toLowerCase();
-  return scheme !== 'http' && scheme !== 'https' && scheme !== 'data' && scheme !== 'file';
+  const colonIdx = s.indexOf(':');
+  const scheme = s.slice(0, colonIdx).toLowerCase();
+  if (scheme === 'http' || scheme === 'https' || scheme === 'file') return false;
+  // data:/ → storage root；data:mime/type;base64,... → 标准 data URI → 非 storage
+  if (scheme === 'data') return s[colonIdx + 1] === '/';
+  return true;
 }
 
 /**
