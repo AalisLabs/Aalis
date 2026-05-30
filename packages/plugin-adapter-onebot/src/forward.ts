@@ -49,12 +49,64 @@ export interface ForwardExpandOptions {
   fetchForward: (id: string) => Promise<unknown | null>;
   /** 把图片源转为文字描述（不可用则可返回 undefined） */
   recognizeImage?: (source: string) => Promise<string | undefined>;
+  /** 把音频源（record 段）转为文字（转写或描述） */
+  recognizeAudio?: (source: string) => Promise<string | undefined>;
+  /** 把视频源转为文字描述（抽帧+音轨综合） */
+  recognizeVideo?: (source: string) => Promise<string | undefined>;
   /** 嵌套展开深度上限（顶层为 1） */
   maxDepth: number;
   /** 单层节点数上限 */
   maxNodesPerLevel: number;
   /** 是否启用图片识别 */
   imageRecognitionEnabled: boolean;
+  /** 是否启用音频识别（默认随 recognizeAudio 是否提供） */
+  audioRecognitionEnabled?: boolean;
+  /** 是否启用视频识别（默认随 recognizeVideo 是否提供） */
+  videoRecognitionEnabled?: boolean;
+}
+
+/**
+ * 把 CQ 字符串里 [CQ:<kind>,...] 段替换为识别结果（或 fallback 占位）。
+ */
+async function replaceCqWithRecognizer(
+  text: string,
+  kind: string,
+  fallback: string,
+  successPrefix: string,
+  successSuffix: string,
+  recognizer: ((src: string) => Promise<string | undefined>) | undefined,
+): Promise<string> {
+  const re = new RegExp(`\\[CQ:${kind}(,[^\\]]+)?\\]`, 'g');
+  if (!recognizer) return text.replace(re, fallback);
+  const matches = [...text.matchAll(re)];
+  if (matches.length === 0) return text;
+  const replacements = await Promise.all(
+    matches.map(async m => {
+      const params: Record<string, string> = {};
+      const body = m[1] ?? '';
+      for (const part of body.replace(/^,/, '').split(',')) {
+        const eq = part.indexOf('=');
+        if (eq <= 0) continue;
+        params[part.slice(0, eq)] = part
+          .slice(eq + 1)
+          .replace(/&amp;/g, '&')
+          .replace(/&#91;/g, '[')
+          .replace(/&#93;/g, ']')
+          .replace(/&#44;/g, ',');
+      }
+      const src = params.url || params.file;
+      if (!src) return { raw: m[0], rendered: fallback };
+      try {
+        const desc = await recognizer(src);
+        return { raw: m[0], rendered: desc ? `${successPrefix}${desc}${successSuffix}` : fallback };
+      } catch {
+        return { raw: m[0], rendered: fallback };
+      }
+    }),
+  );
+  let out = text;
+  for (const r of replacements) out = out.replace(r.raw, r.rendered);
+  return out;
 }
 
 /** 渲染一个节点 content（消息段数组或 CQ 字符串）为纯文本，并把图片换成识别后描述。 */
@@ -92,6 +144,23 @@ async function renderNodeContent(content: unknown, opts: ForwardExpandOptions): 
     } else {
       out = out.replace(/\[CQ:image[^\]]*\]/g, '[图片]');
     }
+    // record / video CQ 段：参数里取 url/file，调对应识别回调
+    out = await replaceCqWithRecognizer(
+      out,
+      'record',
+      '[语音]',
+      '[语音: ',
+      ']',
+      opts.audioRecognitionEnabled !== false ? opts.recognizeAudio : undefined,
+    );
+    out = await replaceCqWithRecognizer(
+      out,
+      'video',
+      '[视频]',
+      '[视频: ',
+      ']',
+      opts.videoRecognitionEnabled !== false ? opts.recognizeVideo : undefined,
+    );
     return out
       .replace(/\[CQ:face,[^\]]*id=(\d+)[^\]]*\]/g, '[表情:$1]')
       .replace(/\[CQ:at,[^\]]*qq=([^,\]]+)[^\]]*\]/g, '<at id="$1">$1</at>')
@@ -138,12 +207,34 @@ async function renderNodeContent(content: unknown, opts: ForwardExpandOptions): 
         // 嵌套占位符，递归展开会在外层处理；这里先放标记，外层 expand 用 inline content 优先
         parts.push(data.id ? `<<<NESTED_FORWARD:${String(data.id)}>>>` : '[合并转发]');
         break;
-      case 'record':
-        parts.push('[语音]');
+      case 'record': {
+        const src = (data.url ?? data.file) as string | undefined;
+        if (opts.audioRecognitionEnabled !== false && opts.recognizeAudio && src) {
+          try {
+            const text = await opts.recognizeAudio(src);
+            parts.push(text ? `[语音: ${text}]` : '[语音]');
+          } catch {
+            parts.push('[语音]');
+          }
+        } else {
+          parts.push('[语音]');
+        }
         break;
-      case 'video':
-        parts.push('[视频]');
+      }
+      case 'video': {
+        const src = (data.url ?? data.file) as string | undefined;
+        if (opts.videoRecognitionEnabled !== false && opts.recognizeVideo && src) {
+          try {
+            const text = await opts.recognizeVideo(src);
+            parts.push(text ? `[视频: ${text}]` : '[视频]');
+          } catch {
+            parts.push('[视频]');
+          }
+        } else {
+          parts.push('[视频]');
+        }
         break;
+      }
       case 'share':
         parts.push(`[分享:${String(data.title ?? '')}]`);
         break;
