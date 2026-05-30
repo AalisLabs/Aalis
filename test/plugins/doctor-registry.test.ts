@@ -63,7 +63,12 @@ function makeFullCtx(captured: Captured): Context {
     getService<T>(name: string): T | undefined {
       return baseProvideMap.get(name) as T | undefined;
     },
-    whenService: () => () => undefined,
+    whenService<T>(name: string, cb: (svc: T) => undefined | (() => void)): () => void {
+      const svc = baseProvideMap.get(name);
+      if (svc === undefined) return () => undefined;
+      const cleanup = cb(svc as T);
+      return () => cleanup?.();
+    },
     onDispose: () => undefined,
     emit: async () => undefined,
     on: () => () => undefined,

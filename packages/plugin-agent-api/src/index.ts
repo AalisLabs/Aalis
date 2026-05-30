@@ -155,19 +155,9 @@ export interface ScopedAgentService {
 export function useAgent(ctx: Context): ScopedAgentService {
   return {
     registerPreprocessor(name: string, handler: PreprocessorFn): () => void {
-      const svc = ctx.getService<AgentService>('agent');
-      if (svc?.registerPreprocessor) return svc.registerPreprocessor(name, handler);
-      let disposed = false;
-      let disposeInner: (() => void) | undefined;
-      ctx.whenService<AgentService>('agent', s => {
-        if (disposed) return undefined;
-        disposeInner = s.registerPreprocessor?.(name, handler);
-        return disposeInner;
-      });
-      return () => {
-        disposed = true;
-        disposeInner?.();
-      };
+      // 持续订阅 'agent'：服务每次上线都尝试挂上 preprocessor；若 service 没实现
+      // registerPreprocessor 则本次注册为 no-op，bounce 到新提供者时再尝试一次。
+      return ctx.whenService<AgentService>('agent', s => s.registerPreprocessor?.(name, handler));
     },
     get raw() {
       return ctx.getService<AgentService>('agent');
