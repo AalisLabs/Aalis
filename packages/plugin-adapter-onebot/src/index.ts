@@ -2172,7 +2172,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               ctx.logger,
             );
             if (local) {
-              att.data = local;
+              // cacheAttachmentBuffer 返回相对路径 "data/images/..."，
+              // 转为 storage URI "data:/images/..."，让 renderAttachmentsAsContentMarkers
+              // 走 storage.readFile 读回 buffer，而非兜底成无法访问的相对 file://
+              att.data = local.replace(/^([^/]+)\//, '$1:/');
               if (att.kind === 'audio') att.mimeType = 'audio/wav';
             }
           } catch (err) {
