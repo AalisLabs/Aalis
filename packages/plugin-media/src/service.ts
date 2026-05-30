@@ -8,6 +8,7 @@ import type {
   BuildContextOptions,
   DescribeImageOptions,
   DescribeOptions,
+  DescribeVideoOptions,
   MediaCapability,
   MediaProcessor,
   MediaProcessReport,
@@ -626,6 +627,24 @@ export class MediaServiceImpl implements MediaService {
     return result;
   }
 
+  /**
+   * 按 URL（或本地路径）描述单个视频。复用 processVideo 私有路径，
+   * 走帧抽样 + 可选音轨转写，结果命中视图描述缓存。
+   */
+  async describeVideo(videoUrl: string, opts: DescribeVideoOptions = {}): Promise<string> {
+    if (!videoUrl) return '';
+    const cached = lookupCachedDescription(videoUrl);
+    if (cached) return cached;
+    const att: MessageAttachment = { kind: 'video', data: opts.localPath ?? videoUrl };
+    try {
+      const text = await this.processVideo(att, opts.hint);
+      if (text) rememberDescription(videoUrl, text);
+      return text ?? '';
+    } catch (err) {
+      this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
+      return '';
+    }
+  }
   /**
    * 两阶段第一步：用极简 prompt 让 vision 模型分类图片，返回对应的二阶 base prompt。
    *

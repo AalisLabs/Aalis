@@ -139,6 +139,12 @@ export interface MediaService {
    */
   describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>;
 
+  /**
+   * 主动描述单个视频（按 URL 或本地路径）。抽帧 + 可选音轨转写，失败返回空串。
+   * 与 `describe([videoAttachment])` 等价但更适合按 URL 直接调用的工具/适配器场景。
+   */
+  describeVideo(videoUrl: string, opts?: DescribeVideoOptions): Promise<string>;
+
   /** 查描述缓存（不触发识别）。未命中返回 null。 */
   lookupDescription(imageUrl: string): string | null;
 
@@ -169,6 +175,15 @@ export interface DescribeImageOptions {
    * - `'auto'`：先做轻量 4 标签分类（professional/document/casual/mixed）后选择对应档位；分类失败 fallback 到 detailed
    */
   detailLevel?: 'auto' | 'casual' | 'detailed' | 'professional';
+}
+
+export interface DescribeVideoOptions {
+  /** 用户意图 / 上下文（如 "提取视频中出现的所有人名"） */
+  hint?: string;
+  /** 本地缓存路径（避免重新下载） */
+  localPath?: string;
+  /** 最大输出 token */
+  maxTokens?: number;
 }
 
 export interface BuildContextOptions {
