@@ -258,11 +258,17 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     }
     if (ids.size === 0) return text;
 
-    const mediaSvc = forwardCfg.imageRecognition ? ctx.getService<MediaService>('media') : undefined;
-    const rawRecognize = mediaSvc?.describeImage ? (src: string) => mediaSvc.describeImage(src) : undefined;
-    // 用一个简单 semaphore 限制单次展开内的图片识别并发，避免 OOM/触发上游限流
-    const recognizeImage = rawRecognize
-      ? createConcurrencyLimited(rawRecognize, Math.max(1, forwardCfg.imageRecognitionConcurrency))
+    const mediaSvc = ctx.getService<MediaService>('media');
+    const rawRecognize =
+      forwardCfg.imageRecognition && mediaSvc?.describeImage ? (src: string) => mediaSvc.describeImage(src) : undefined;
+    const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
+    // 用一个简单 semaphore 限制单次展开内的图片/音频/视频识别并发，避免 OOM/触发上游限流
+    const recognizeImage = rawRecognize ? createConcurrencyLimited(rawRecognize, concurrency) : undefined;
+    const recognizeAudio = mediaSvc?.transcribe
+      ? createConcurrencyLimited((src: string) => mediaSvc.transcribe({ kind: 'audio', data: src }), concurrency)
+      : undefined;
+    const recognizeVideo = mediaSvc?.describeVideo
+      ? createConcurrencyLimited(async (src: string) => (await mediaSvc.describeVideo(src)) || undefined, concurrency)
       : undefined;
 
     const envelopeMap = new Map<string, string>();
@@ -297,6 +303,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
           fetchForward: (childId: string) => fetchForwardOnce(state, childId),
           recognizeImage,
+          recognizeAudio,
+          recognizeVideo,
           maxDepth: forwardCfg.maxDepth,
           maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
           imageRecognitionEnabled: forwardCfg.imageRecognition,
