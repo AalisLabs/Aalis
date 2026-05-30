@@ -101,25 +101,9 @@ export function useDoctorService(ctx: Context): ScopedDoctorService {
   return {
     registerCheck(spec: CheckSpec): () => void {
       const filledSpec: CheckSpec = { pluginName: ctx.id ?? spec.pluginName, ...spec };
-      // 已就绪：直接注册，返回的 dispose 即 service 自身给出的解注册函数
-      const ready = ctx.getService<DoctorService>('doctor');
-      if (ready) return ready.registerCheck(filledSpec);
-
-      // 未就绪：通过 whenService 延后；doctor 上线时才真正 register。
-      // 为了让外部 dispose() 既能取消挂起订阅、又能在已注册后解注册，使用 mutable refs。
-      let serviceDispose: (() => void) | undefined;
-      const cancelWhen = ctx.whenService<DoctorService>('doctor', svc => {
-        serviceDispose = svc.registerCheck(filledSpec);
-        return () => {
-          serviceDispose?.();
-          serviceDispose = undefined;
-        };
-      });
-      return () => {
-        cancelWhen();
-        serviceDispose?.();
-        serviceDispose = undefined;
-      };
+      // 持续订阅 'doctor'：服务每次上线都重新挂 check；下线/dispose 时 whenService
+      // 自动调用上次 cb 返回的解注册函数。
+      return ctx.whenService<DoctorService>('doctor', svc => svc.registerCheck(filledSpec));
     },
   };
 }
