@@ -234,14 +234,14 @@ export interface ScopedCommandService {
 }
 
 export function useCommandService(ctx: Context): ScopedCommandService {
-  const svc = ctx.getService<CommandService>('commands');
   const pluginName = ctx.id;
   return {
     command(name, description, meta) {
-      if (svc) return svc.command(name, description, { ...meta, pluginName });
-      return makeDeferredBuilder(ctx, name, description, { ...meta, pluginName });
+      return makeBuilder(ctx, name, description, { ...meta, pluginName });
     },
-    raw: svc,
+    get raw() {
+      return ctx.getService<CommandService>('commands');
+    },
   };
 }
 
@@ -252,43 +252,59 @@ type DeferredCall =
   | { kind: 'usage'; text: string }
   | { kind: 'example'; line: string };
 
-function makeDeferredBuilder(
+/**
+ * 同时支持热转发与 bounce 重放的 builder：
+ * - calls[] 是权威源：provider 每次上线的 cb 里重新创建 real builder 并重放。
+ * - 同时保留 realBuilder 引用：有值时同步转发调用，与原快路径语义一致。
+ */
+function makeBuilder(
   ctx: Context,
   name: string,
   description: string | undefined,
   meta: InternalCommandMeta,
 ): CommandBuilder {
   const calls: DeferredCall[] = [];
+  let realBuilder: CommandBuilder | undefined;
+
   ctx.whenService<CommandService>('commands', svc => {
-    const builder = svc.command(name, description, meta);
+    realBuilder = svc.command(name, description, meta);
     for (const c of calls) {
-      if (c.kind === 'alias') builder.alias(c.name);
-      else if (c.kind === 'option') builder.option(c.name, c.syntax, c.opts);
-      else if (c.kind === 'action') builder.action(c.handler);
-      else if (c.kind === 'usage') builder.usage(c.text);
-      else if (c.kind === 'example') builder.example(c.line);
+      if (c.kind === 'alias') realBuilder.alias(c.name);
+      else if (c.kind === 'option') realBuilder.option(c.name, c.syntax, c.opts);
+      else if (c.kind === 'action') realBuilder.action(c.handler);
+      else if (c.kind === 'usage') realBuilder.usage(c.text);
+      else if (c.kind === 'example') realBuilder.example(c.line);
     }
-    return () => svc.unregister(name);
+    return () => {
+      svc.unregister(name);
+      realBuilder = undefined;
+    };
   });
+
   const self: CommandBuilder = {
     alias(n) {
       calls.push({ kind: 'alias', name: n });
+      realBuilder?.alias(n);
       return self;
     },
     option(n, syntax, opts) {
       calls.push({ kind: 'option', name: n, syntax, opts });
+      realBuilder?.option(n, syntax, opts);
       return self;
     },
     action(handler) {
       calls.push({ kind: 'action', handler });
+      realBuilder?.action(handler);
       return self;
     },
     usage(text) {
       calls.push({ kind: 'usage', text });
+      realBuilder?.usage(text);
       return self;
     },
     example(line) {
       calls.push({ kind: 'example', line });
+      realBuilder?.example(line);
       return self;
     },
   };

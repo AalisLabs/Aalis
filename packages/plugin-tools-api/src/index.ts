@@ -195,7 +195,6 @@ export interface ScopedToolService {
 }
 
 export function useToolService(ctx: Context): ScopedToolService {
-  const svc = ctx.getService<ToolService>('tools');
   const pluginName = ctx.id;
 
   /** 用于读 API：服务未就绪时抛错。 */
@@ -210,19 +209,17 @@ export function useToolService(ctx: Context): ScopedToolService {
   }
 
   return {
-    register: tool =>
-      svc ? svc.register(tool, pluginName) : ctx.whenService<ToolService>('tools', s => s.register(tool, pluginName)),
-    registerGroup: group =>
-      svc
-        ? svc.registerGroup(group, pluginName)
-        : ctx.whenService<ToolService>('tools', s => s.registerGroup(group, pluginName)),
+    register: tool => ctx.whenService<ToolService>('tools', s => s.register(tool, pluginName)),
+    registerGroup: group => ctx.whenService<ToolService>('tools', s => s.registerGroup(group, pluginName)),
     getDefinitions: (...args) => need().getDefinitions(...args),
     getSummaries: (...args) => need().getSummaries(...args),
     getAll: (...args) => need().getAll(...args),
     getGroups: (...args) => need().getGroups(...args),
     execute: (...args) => need().execute(...args),
     setExecutionGuard: (...args) => need().setExecutionGuard(...args),
-    raw: svc,
+    get raw() {
+      return ctx.getService<ToolService>('tools');
+    },
   };
 }
 
