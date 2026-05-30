@@ -33,6 +33,8 @@ export const inject = { optional: ['memory', 'media', 'message-archive'] };
 
 /** 单张图描述同步等待上限。超时不阻塞发送，只是 description 字段为空。 */
 const DESCRIBE_TIMEOUT_MS = 8_000;
+/** 视频描述同步等待上限（视频需抽帧+ASR，耗时远高于图片）。 */
+const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
 
@@ -228,7 +230,58 @@ export function apply(ctx: Context): void {
     },
   });
 
-  ctx.logger.info('[image-sender] 工具 send_image / preview_image 已注册');
+  // ── send_video ────────────────────────────────────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'send_video',
+        description:
+          '主动向当前会话发送一个视频（仅视频，不带文字）。\n' +
+          '注意：仅支持 http/https URL，不支持本地文件（出于安全考虑，避免泄漏本地路径内容）。\n' +
+          '建议先用 preview_image 或其他手段确认视频内容后再发送。\n' +
+          '视频描述需要抽帧分析，耗时较长（最多 30 秒），发送动作不会等待描述完成。',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: '视频 URL（http/https）。' },
+          },
+          required: ['url'],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const url = (args.url as string)?.trim();
+      if (!url) return JSON.stringify({ error: '必须提供 url' });
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        return JSON.stringify({ error: 'url 必须是 http/https 开头' });
+      }
+
+      try {
+        const attachment: MessageAttachment = { kind: 'video', data: url };
+        const outgoing: OutgoingMessage = {
+          sessionId: callCtx.sessionId,
+          content: '',
+          attachments: [attachment],
+          source: 'agent',
+        };
+        ctx.emit('outbound:message', outgoing);
+
+        // 视频描述异步触发，超时不阻塞发送结果
+        const description = await safeDescribeVideo(ctx, url);
+        await archiveOutboundAttachment(ctx, callCtx.sessionId, url, description, 'video');
+
+        return JSON.stringify({
+          ok: true,
+          sent: { kind: 'video', url, description: description || null },
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  });
+
+  ctx.logger.info('[image-sender] 工具 send_image / preview_image / send_video 已注册');
 }
 
 /** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
@@ -249,6 +302,24 @@ async function safeDescribe(ctx: Context, imageData: string): Promise<string> {
   }
 }
 
+/** 调 media.describeVideo，超时或失败返回空串（视频抽帧耗时长，用更宽松的超时）。 */
+async function safeDescribeVideo(ctx: Context, videoUrl: string): Promise<string> {
+  const media = ctx.getService<MediaService>('media');
+  if (!media?.describeVideo) return '';
+  try {
+    const desc = await Promise.race([
+      media.describeVideo(videoUrl),
+      new Promise<string>((_resolve, reject) =>
+        setTimeout(() => reject(new Error('video 描述超时')), VIDEO_DESCRIBE_TIMEOUT_MS),
+      ),
+    ]);
+    return (desc ?? '').trim();
+  } catch (err) {
+    ctx.logger.debug(`[image-sender] video 描述失败，跳过: ${err instanceof Error ? err.message : err}`);
+    return '';
+  }
+}
+
 /** 把 AI 自己发出的图入档为一条 assistant 消息，让 memory_recall 能找到。 */
 async function archiveOutboundImage(
   ctx: Context,
@@ -257,19 +328,33 @@ async function archiveOutboundImage(
   description: string,
   imageData: string,
 ): Promise<void> {
+  return archiveOutboundAttachment(ctx, sessionId, ref ?? imageData, description, 'image');
+}
+
+/** 把 AI 自己发出的图/视频入档为一条 assistant 消息，让 memory_recall 能找到。 */
+async function archiveOutboundAttachment(
+  ctx: Context,
+  sessionId: string,
+  ref: string,
+  description: string,
+  kind: 'image' | 'video',
+): Promise<void> {
   const archive = ctx.getService<MessageArchiveService>('message-archive');
   if (!archive?.saveMessage) return;
-  const refStr = ref ?? imageData;
-  const tag = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: description, ref: refStr });
+  const attachKind = kind === 'video' ? AttachmentRefKind.Video : AttachmentRefKind.Image;
+  const msgKind = kind === 'video' ? WellKnownKinds.OutboundVideo : WellKnownKinds.OutboundImage;
+  const tag = formatAttachmentRef({ kind: attachKind, desc: description, ref });
   const message: Message = {
     role: 'assistant',
-    kind: WellKnownKinds.OutboundImage,
+    kind: msgKind,
     content: tag,
     timestamp: Date.now(),
-    metadata: { source: 'image-sender', ref: refStr },
+    metadata: { source: 'image-sender', ref },
   };
   try {
-    await archive.saveMessage(sessionId, message, { debugLabel: '[image-sender] 已入档发送的图片' });
+    await archive.saveMessage(sessionId, message, {
+      debugLabel: `[image-sender] 已入档发送的${kind === 'video' ? '视频' : '图片'}`,
+    });
   } catch (err) {
     ctx.logger.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
   }
