@@ -22,12 +22,16 @@ import { getMediaRuntime } from './runtime.js';
  * 把 agent 传入的图片路径规整为 storage URI。
  *
  * 支持：
+ * - `[图片: desc | ref:xxx]` 占位符 — 提取 ref 后递归解析
  * - 已是 storage URI：`workspace:/foo`、`data:/images/x.jpg` — 原样返回
  * - 裸名以已知 storage root 开头：`data/images/x.jpg`、`tmp/y.png` —
  *   按首段路由到对应根（修复了 agent 传 `data/images/...` 被错误塞进 workspace 的问题）
  * - 其它相对路径：归到 `workspace:/`（默认）
  */
 function resolveImageStorageUri(input: string): string {
+  // [图片(: desc)? | ref:xxx] 占位符 → 提取 ref 后递归
+  const refMatch = input.match(/\|\s*ref:([^\]\n]+)\]/);
+  if (refMatch) return resolveImageStorageUri(refMatch[1].trim());
   const cleaned = input.replace(/^\.?\/+/, '');
   if (cleaned.includes(':/')) return cleaned;
   const firstSeg = cleaned.split('/', 1)[0];

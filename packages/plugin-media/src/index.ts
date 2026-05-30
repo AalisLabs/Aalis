@@ -78,7 +78,8 @@ export const configSchema: ConfigSchema = {
         type: 'select',
         label: '模式',
         options: [
-          { label: '启用', value: 'enabled' },
+          { label: '启用（转写后注入上下文）', value: 'enabled' },
+          { label: '直通：原始音频交给主模型（需主模型有 audio 能力）', value: 'passthrough' },
           { label: '禁用', value: 'disabled' },
         ],
         default: 'enabled',
@@ -268,7 +269,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
       batchPrompt: (vision.batchPrompt as string) || undefined,
     },
     audio: {
-      mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'disabled',
+      mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'passthrough' | 'disabled',
       prefer: (audio.prefer as string) || undefined,
       language: (audio.language as string) || undefined,
       maxTokens: (audio.maxTokens as number) ?? 1024,
