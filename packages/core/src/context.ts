@@ -348,62 +348,84 @@ export class Context {
   }
 
   /**
-   * 当服务就绪时执行回调。若已就绪则立即调用；否则订阅 `service:registered`
-   * 事件并在匹配名称时调用一次。
+   * 持续订阅一个服务：每当 provider 上线就调一次 `cb(svc)`，下线则自动执行
+   * 上一次 cb 返回的 cleanup。
    *
-   * 回调可返回清理函数，将在 `ctx.dispose()` 时自动调用。
+   * 适用场景：把"向某个 hub 服务注册副作用"封装成一行；当 hub 服务被 bounce
+   * 或换提供者时，下游注册会自动重挂——无需作者自己监听 service:registered。
    *
-   * 返回的 dispose 函数：调用即移除监听并执行已注册的清理函数（若有）。
-   * 多用于把"对服务的注册"行为缓冲到服务就绪后：
+   * 语义细则：
+   * - 调用时若服务已就绪，立即触发首次 `cb`。
+   * - provider 重新 provide（unregister → register）会先调上次 cleanup、
+   *   再用新 svc 调一次 cb；保证不持有失效引用。
+   * - `cb` 可返回 cleanup 函数；返回的 dispose 与 `ctx.dispose()` 都会调它。
+   * - 返回的 dispose 函数 idempotent，可手动调（多次安全）。
+   * - 同名 provider 仅取 `getService(name)` 的胜者，多 entry 并存场景按容器优先级。
    *
-   * @example
-   * ctx.whenService('tools', svc => {
-   *   const off = svc.register(myTool, ctx.id);
-   *   return off; // 自动纳入 dispose 链
+   * @example 注册到 hub 服务：
+   * ctx.whenService('tools', svc => svc.register(myTool, ctx.id));
+   *
+   * @example 监听 provider 切换：
+   * ctx.whenService('llm', llm => {
+   *   const handle = llm.onModelChange(updateUI);
+   *   return () => handle.dispose();
    * });
    */
   whenService<TName extends keyof ServiceTypeMap>(
     name: TName,
-    cb: (svc: ServiceTypeMap[TName]) => undefined | (() => void),
+    // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
+    cb: (svc: ServiceTypeMap[TName]) => void | (() => void),
   ): () => void;
-  whenService<T = unknown>(name: string, cb: (svc: T) => undefined | (() => void)): () => void;
-  whenService<T>(name: string, cb: (svc: T) => undefined | (() => void)): () => void {
+  // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
+  whenService<T = unknown>(name: string, cb: (svc: T) => void | (() => void)): () => void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
+  whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
     let cleanup: (() => void) | undefined;
-    let invoked = false;
-    let offSubscription: (() => void) | null = null;
+    let disposed = false;
 
-    const run = (svc: T): void => {
-      if (invoked) return;
-      invoked = true;
-      offSubscription?.();
-      offSubscription = null;
-      cleanup = cb(svc);
-      if (typeof cleanup === 'function') this._disposables.push(cleanup);
-    };
-
-    const existing = this._services.get<T>(name);
-    if (existing !== undefined) {
-      run(existing);
-    } else {
-      offSubscription = this.on('service:registered', (svcName: string) => {
-        if (svcName !== name) return;
-        const svc = this._services.get<T>(name);
-        if (svc !== undefined) run(svc);
-      });
-    }
-
-    return () => {
-      offSubscription?.();
-      offSubscription = null;
-      if (typeof cleanup === 'function') {
-        try {
-          cleanup();
-        } catch (err) {
-          this.logger.warn('whenService cleanup 异常:', err);
-        }
-        cleanup = undefined;
+    const runCleanup = (): void => {
+      if (!cleanup) return;
+      try {
+        cleanup();
+      } catch (err) {
+        this.logger.warn(`whenService('${name}') cleanup 抛错（已忽略）:`, err);
       }
+      cleanup = undefined;
     };
+
+    const attach = (svc: T): void => {
+      if (disposed) return;
+      // 重挂前先释放上次 cleanup，避免持有已失效的 svc 引用。
+      runCleanup();
+      const ret = cb(svc);
+      if (typeof ret === 'function') cleanup = ret;
+    };
+
+    // 持续订阅 provider 上下线（不退订），ctx.dispose 时由 disposable 链清理。
+    const offReg = this.on('service:registered', (svcName: string) => {
+      if (disposed || svcName !== name) return;
+      const svc = this._services.get<T>(name);
+      if (svc !== undefined) attach(svc);
+    });
+    const offUnreg = this.on('service:unregistered', (svcName: string) => {
+      if (disposed || svcName !== name) return;
+      runCleanup();
+    });
+
+    // 立即检查：若已就绪则首挂。
+    const existing = this._services.get<T>(name);
+    if (existing !== undefined) attach(existing);
+
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      offReg();
+      offUnreg();
+      runCleanup();
+    };
+
+    this._disposables.push(dispose);
+    return dispose;
   }
 
   // ---- 中间件/钩子 ----
