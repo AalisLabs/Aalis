@@ -312,6 +312,7 @@ export const WellKnownKinds = {
   EventMarker: 'event-marker',
   CrossSessionDelegation: 'cross-session-delegation',
   OutboundImage: 'outbound-image',
+  OutboundVideo: 'outbound-video',
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];

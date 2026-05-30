@@ -120,6 +120,34 @@ export async function renderAttachmentsAsContentMarkers(
       logger?.debug?.(`OneBot 跳过 ${att.kind} 附件（暂未支持非图像/视频结构化发送）`);
       continue;
     }
+
+    if (att.kind === 'video') {
+      // 视频不做 base64 内联（文件通常过大）。
+      // http(s) URL 直接透传让 NapCat daemon 自行下载；file:// 原样传出（需 daemon 可访问）。
+      const data = att.data;
+      if (!data) {
+        logger?.warn?.('OneBot 跳过空 video 附件');
+        continue;
+      }
+      let videoUri: string;
+      if (data.startsWith('http://') || data.startsWith('https://') || data.startsWith('file://')) {
+        videoUri = data;
+      } else if (isStorageUri(data)) {
+        try {
+          const local = await storage.resolveLocalPath?.(data, 'read');
+          videoUri = local ? `file://${local}` : data;
+        } catch {
+          logger?.warn?.(`OneBot video storage URI 无法解析为本地路径: ${data.slice(0, 80)}`);
+          continue;
+        }
+      } else {
+        videoUri = `file://${data}`;
+      }
+      parts.push(`<video url="${videoUri}"/>`);
+      continue;
+    }
+
+    // kind === 'image'
     try {
       const uri = await attachmentToOneBotFile(att, storage, logger);
       parts.push(`<image url="${uri}"/>`);
