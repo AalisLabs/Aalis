@@ -104,7 +104,11 @@ function makeFakeCtx(toolService: FakeToolService): Context {
     id: 'test-mcp-client',
     logger,
     getService: <T>(name: string): T | undefined => (name === 'tools' ? (toolService as unknown as T) : undefined),
-    whenService: () => () => undefined,
+    whenService: <T>(name: string, cb: (svc: T) => undefined | (() => void)): (() => void) => {
+      if (name !== 'tools') return () => undefined;
+      const cleanup = cb(toolService as unknown as T);
+      return () => cleanup?.();
+    },
     onDispose: () => {
       /* noop */
     },
