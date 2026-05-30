@@ -2473,7 +2473,28 @@ export class RelationService {
           if (opts.autoLink) {
             // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
             let shouldMerge = true;
-            if (llmModel && opts.llm) {
+            // hierarchy 守门（与 LLM 无关也生效）：若 a/b 之间已存在 part-of/contains 边
+            // → 视为已知层级，禁止 alias 合并。母概念被并入子概念是本守门要拦截的核心场景。
+            const knownHierarchyEdge = snapshot.edges.some(
+              e =>
+                e.kind === 'entity-entity' &&
+                (e.relationType === 'part-of' || e.relationType === 'contains') &&
+                ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
+                  (e.fromEntityId === b.id && e.toEntityId === a.id)),
+            );
+            if (knownHierarchyEdge) {
+              shouldMerge = false;
+              if (opts.llm?.ctx.logger) {
+                opts.llm.ctx.logger.info(
+                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边`,
+                );
+              } else if (this.ctx?.logger) {
+                this.ctx.logger.info(
+                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边`,
+                );
+              }
+            }
+            if (shouldMerge && llmModel && opts.llm) {
               // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
               // （evidence.length 在新关系/新提及时才增长，与衰减回写解耦，是稳定的"无新关系"信号）
               const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
@@ -2500,10 +2521,24 @@ export class RelationService {
                 } else {
                   llmRejected++;
                   shouldMerge = false;
-                  if (opts.llm.ctx.logger) {
+                  if (v.hierarchy) {
+                    const { parentId, childId } = v.hierarchy;
+                    const partOfBuilt = await this._upsertPartOfEdgeIfAbsent(
+                      snapshot.edges,
+                      childId,
+                      parentId,
+                      `consolidate LLM 判定 hierarchy：${v.reason}`,
+                    );
+                    if (opts.llm.ctx.logger) {
+                      opts.llm.ctx.logger.info(
+                        `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}` +
+                          `${partOfBuilt ? '（已新建 part-of 边）' : '（part-of 边已存在）'}`,
+                      );
+                    }
+                  } else if (opts.llm.ctx.logger) {
                     opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
                   }
-                  // 落 negativeCache，避免下次 maintain 重复送 LLM
+                  // 落 negativeCache，避免下次 maintain 重复送 LLM（hierarchy 与 different 都阻断合并）
                   await this.store.saveMergeReject({
                     aId: smaller.id,
                     bId: larger.id,
@@ -2511,7 +2546,7 @@ export class RelationService {
                     bReinforcedAt: larger.lastReinforcedAt ?? 0,
                     aEvidenceCount: sCount,
                     bEvidenceCount: lCount,
-                    reason: v.reason,
+                    reason: v.hierarchy ? `hierarchy: ${v.reason}` : v.reason,
                     decidedAt: Date.now(),
                     decidedBy: 'strict-equiv',
                     kind: 'entity',
@@ -2828,6 +2863,21 @@ export class RelationService {
           }
           continue;
         }
+        // hierarchy 守门：若 a/b 之间已存在 part-of/contains 边 → 已知层级，跳过 alias 合并候选
+        const knownHierarchy = snapshot.edges.some(
+          e =>
+            e.kind === 'entity-entity' &&
+            (e.relationType === 'part-of' || e.relationType === 'contains') &&
+            ((e.fromEntityId === a.id && e.toEntityId === b.id) || (e.fromEntityId === b.id && e.toEntityId === a.id)),
+        );
+        if (knownHierarchy) {
+          if (opts.llm.ctx.logger) {
+            opts.llm.ctx.logger.info(
+              `[user-relation] consolidate 跳过宽召回候选 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（层级关系优先）`,
+            );
+          }
+          continue;
+        }
         // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
         // （evidence.length 在新关系/新提及时才增长，与 evictByQuota 的衰减回写解耦）
         const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
@@ -2861,12 +2911,28 @@ export class RelationService {
         });
         if (!v.isSame) {
           llmRejected++;
-          if (opts.llm.ctx.logger) {
+          // hierarchy 三态：LLM 判定为 part-of 关系 → **不合并**，改建 entity-entity[part-of] 边
+          // 避免母概念（如「三角洲行动」）被并入子概念（如「三角洲行动·绝密航天」）。
+          if (v.hierarchy) {
+            const { parentId, childId } = v.hierarchy;
+            const partOfBuilt = await this._upsertPartOfEdgeIfAbsent(
+              snapshot.edges,
+              childId,
+              parentId,
+              `consolidate LLM 判定 hierarchy：${v.reason}`,
+            );
+            if (opts.llm.ctx.logger) {
+              opts.llm.ctx.logger.info(
+                `[user-relation] consolidate LLM 判定 hierarchy（宽召回）${childId} part-of ${parentId}: ${v.reason}` +
+                  `${partOfBuilt ? '（已新建 part-of 边）' : '（part-of 边已存在）'}`,
+              );
+            }
+          } else if (opts.llm.ctx.logger) {
             opts.llm.ctx.logger.info(
               `[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`,
             );
           }
-          // 落 negativeCache，下次扫描双方未变就跳过
+          // 落 negativeCache，下次扫描双方未变就跳过（hierarchy 与 different 都阻断合并，复用同一缓存）
           await this.store.saveMergeReject({
             aId: smaller.id,
             bId: larger.id,
@@ -2874,7 +2940,7 @@ export class RelationService {
             bReinforcedAt: larger.lastReinforcedAt ?? 0,
             aEvidenceCount: sCount,
             bEvidenceCount: lCount,
-            reason: v.reason,
+            reason: v.hierarchy ? `hierarchy: ${v.reason}` : v.reason,
             decidedAt: Date.now(),
             decidedBy: 'wide-recall',
             kind: 'entity',
@@ -4209,6 +4275,43 @@ export class RelationService {
   }
 
   /**
+   * consolidate hierarchy 守门用：若 child→parent 的 entity-entity[part-of] 边缺失则新建；
+   * 已存在（任一方向：part-of 或反向 contains）则跳过，返回 false。
+   * 不强化既有边、不做证据合并——hierarchy 守门只负责"不被错误地 alias-merge 掉"，
+   * 后续走正规 inferEntityHierarchy / extractor 写边路径补全/强化。
+   */
+  private async _upsertPartOfEdgeIfAbsent(
+    edgesSnapshot: readonly RelationEdge[],
+    childId: string,
+    parentId: string,
+    description: string,
+  ): Promise<boolean> {
+    const existing = edgesSnapshot.some(
+      e =>
+        e.kind === 'entity-entity' &&
+        (e.relationType === 'part-of' || e.relationType === 'contains') &&
+        ((e.fromEntityId === childId && e.toEntityId === parentId) ||
+          (e.fromEntityId === parentId && e.toEntityId === childId)),
+    );
+    if (existing) return false;
+    const now = Date.now();
+    await this.store.upsertEdge({
+      id: globalThis.crypto.randomUUID(),
+      kind: 'entity-entity',
+      fromEntityId: childId,
+      toEntityId: parentId,
+      relationType: 'part-of',
+      directed: true,
+      weight: 0.6,
+      description: description.slice(0, 80),
+      firstSeenAt: now,
+      lastReinforcedAt: now,
+      evidence: [],
+    });
+    return true;
+  }
+
+  /**
    * 物理删除一条边（带保护门，供 agent 调用）。alias 边（is-alias-of / alt-account-of）禁删；
    * weight ≥ 0.8 或 evidence ≥ 5 拒绝（请先 correctEdge weaken）。
    *
@@ -4348,6 +4451,49 @@ export class RelationService {
       `[user-relation][AUDIT] changeEntityKind id=${opts.entityId} name="${node.name}" ${from}→${opts.newKind} by=${by} reason="${reason}"`,
     );
     return { entityId: opts.entityId, from, to: opts.newKind };
+  }
+
+  /**
+   * 从 entity 的 aliases[] 中剥离一个错误绑定的别名（轻量纠错）。
+   *
+   * 使用场景：consolidate 把一个不该并入 canonical 的别名错误合并了，
+   * 导致 canonical 的 aliases 里出现了一个本不属于它的名字（如把母概念错并入子概念，
+   * 母概念的名字残留为子概念的 alias）。本方法只把该名字从 aliases 中移除——
+   * **不会**重建出当初被合并掉的 entity 节点（那个节点已被物理删除，证据已迁移）。
+   * 之后 extractor 在新对话中再次看到该名字时，会自然地新建一个新 entity 节点。
+   *
+   * 不变更：name / 边 / evidence / nameHistory（不动 nameHistory：renameNode 才追写）。
+   * 别名匹配按 trim 后字符串等价（不区分大小写不在此处处理；如有需要由调用方先归一）。
+   */
+  async splitAlias(opts: {
+    entityId: string;
+    aliasName: string;
+    reason: string;
+    by?: string;
+  }): Promise<{ entityId: string; removed: string; remainingAliases: string[] }> {
+    const reason = opts.reason?.trim().slice(0, 120);
+    if (!reason) throw new Error('splitAlias: reason 必填');
+    const aliasName = opts.aliasName?.trim();
+    if (!aliasName) throw new Error('splitAlias: aliasName 不能为空');
+    const by = opts.by ?? 'manual';
+    const node = await this.store.getEntity(opts.entityId);
+    if (!node) throw new Error(`splitAlias: entity ${opts.entityId} 不存在`);
+    if (aliasName === node.name.trim()) {
+      throw new Error(`splitAlias: aliasName "${aliasName}" 与 entity.name 相同；如需改名请用 renameNode`);
+    }
+    const current = node.aliases ?? [];
+    const target = current.find(a => a.trim() === aliasName);
+    if (!target) {
+      throw new Error(
+        `splitAlias: aliasName "${aliasName}" 不在 entity "${node.name}" 的 aliases 中（现有：${current.join(', ') || '无'}）`,
+      );
+    }
+    const remaining = current.filter(a => a !== target);
+    await this.store.upsertEntity({ ...node, aliases: remaining, lastReinforcedAt: Date.now() });
+    this._audit(
+      `[user-relation][AUDIT] splitAlias id=${opts.entityId} name="${node.name}" removed="${target}" by=${by} reason="${reason}" remaining=${remaining.length}`,
+    );
+    return { entityId: opts.entityId, removed: target, remainingAliases: remaining };
   }
 
   /**

@@ -1109,6 +1109,46 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(edge).toBeDefined();
   });
 
+  it('(3d-guard) 已存在 part-of 边的两实体 → 即便 name/alias 严格等价也不会被 alias-merge', async () => {
+    const { service, store } = await makeService();
+    // 母概念
+    const parent = await service.createEntity({
+      name: '三角洲行动',
+      entityKind: 'work',
+      evidence: [],
+    });
+    // 子概念：通过 aliases 让两者在 normalizeName 下进入同一桶（触发严格等价候选）
+    const child = await service.createEntity({
+      name: '三角洲行动·绝密航天',
+      entityKind: 'work',
+      aliases: ['三角洲行动'], // 注：与 parent.name 等价
+      evidence: [],
+    });
+    // 预置 part-of 边：child part-of parent
+    await service.addEntityEntityEdge({
+      fromEntityId: child.id,
+      toEntityId: parent.id,
+      relationType: 'part-of',
+      evidence: [],
+    });
+
+    await service.consolidate({ autoLink: true });
+
+    // 守门生效：两节点都还在，没有被 alias-merge
+    expect(await store.getEntity(parent.id)).toBeDefined();
+    expect(await store.getEntity(child.id)).toBeDefined();
+    // 没有生成 is-alias-of 边
+    const snap = await service.loadAll();
+    const aliasEdge = snap.edges.find(
+      e =>
+        e.kind === 'entity-entity' &&
+        e.relationType === 'is-alias-of' &&
+        ((e.fromEntityId === parent.id && e.toEntityId === child.id) ||
+          (e.fromEntityId === child.id && e.toEntityId === parent.id)),
+    );
+    expect(aliasEdge).toBeUndefined();
+  });
+
   it('(3e) 兄弟实体无 LLM → 仅计数候选，不创建父实体', async () => {
     const { service } = await makeService();
     await service.createEntity({ name: '三角洲行动刀皮', entityKind: 'thing', evidence: [] });
