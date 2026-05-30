@@ -478,8 +478,10 @@ class DefaultAgent implements AgentService {
             ?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
-          userId: incoming.userId,
-          platform: incoming.platform,
+          // 优先用 actor（系统触发器注入的代理身份），其次 fallback 到消息原始 userId/platform。
+          // 这样 scheduler/idle/proactive 等触发的 AI 走的是创建者的 authority，而非匿名 defaultAuthority。
+          userId: incoming.actor?.userId ?? incoming.userId,
+          platform: incoming.actor?.platform ?? incoming.platform,
           enabledGroups,
         };
 
