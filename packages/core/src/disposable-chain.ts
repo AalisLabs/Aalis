@@ -38,11 +38,6 @@ export class DisposableChain {
     return true;
   }
 
-  /** 已登记的清理函数数量（主要用于测试/诊断） */
-  get size(): number {
-    return this._items.length;
-  }
-
   get disposed(): boolean {
     return this._disposed;
   }

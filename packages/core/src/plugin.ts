@@ -295,7 +295,7 @@ export class PluginManager {
   }
 
   /**
-   * 全局停机：按依赖拓扑逆序 dispose 所有 active 插件。
+   * 在运行时基于 reusable 模块新增一个实例（写入配置 + 触发激活）。
    *
    * @param moduleName 原始模块名（如 `@aalis/plugin-openai`）
    * @param suffix     实例后缀（如 `vision`），将生成 instanceId `moduleName:suffix`
