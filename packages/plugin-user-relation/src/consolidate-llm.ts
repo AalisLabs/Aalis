@@ -101,6 +101,19 @@ function fmtEvidence(qs?: string[]): string {
   return `近期证据片段：\n${qs.map(q => `  · ${q}`).join('\n')}`;
 }
 
+/**
+ * verifyAliasPair 三态返回：
+ * - isSame=true：两实体指代同一对象，调用方应执行 alias-merge
+ * - isSame=false, hierarchy=undefined：两实体不相关或冲突，调用方应记 mergeReject
+ * - isSame=false, hierarchy={parentId,childId}：两实体存在 part-of 关系（父子/包含），
+ *   调用方应**拒绝合并**，改建 entity-entity[part-of] 边，避免父概念被并入子概念（或反之）。
+ */
+interface AliasPairResult {
+  isSame: boolean;
+  reason: string;
+  hierarchy?: { parentId: string; childId: string };
+}
+
 export async function verifyAliasPair(
   _ctx: Context,
   model: LLMModel,
@@ -108,17 +121,20 @@ export async function verifyAliasPair(
   b: EntityNode,
   disableThinking = true,
   context?: AliasPairContext,
-): Promise<{ isSame: boolean; reason: string }> {
+): Promise<AliasPairResult> {
   const prompt = [
     {
       role: 'system' as const,
       content:
-        '你是一个实体消歧助手。你只输出 JSON，不要带 markdown 代码块。输出格式：{"isSame": true|false, "reason": "简短说明"}。',
+        '你是一个实体消歧助手。你只输出 JSON，不要带 markdown 代码块。输出三选一格式：\n' +
+        '{"verdict": "same", "reason": "..."}                            // A 与 B 指代同一对象\n' +
+        '{"verdict": "hierarchy", "parent": "A"|"B", "reason": "..."}   // 一方是另一方的子集/子部分/子模式/具体版本（part-of）\n' +
+        '{"verdict": "different", "reason": "..."}                       // 其它（不同对象 / 仅松散关联）',
     },
     {
       role: 'user' as const,
       content: [
-        '判断以下两个实体是否指代同一个现实对象：',
+        '判断以下两个实体的关系：',
         '',
         '【A】',
         `名称: ${a.name}`,
@@ -140,12 +156,21 @@ export async function verifyAliasPair(
         '',
         '判定要点：',
         '- 名称相同未必同一对象（例如同名的不同游戏角色、不同公司同名项目）；',
-        '- 类型不同时仍可能为同一对象——上游抽取可能把同一概念识别为不同 kind（如把游戏卡牌 "X" 既抽成 thing、又把同名概念抽成 topic；把同名作品既抽成 work 又抽成 thing），此时若名称完全相同、证据上下文相互兼容，倾向判是（合并后系统会保留更优 kind 与摘要）；',
-        '- 但若类型完全不可调和（如 person vs work / place vs topic）且证据上下文截然不同，仍应判否；',
-        '- 邻居重叠是强证据：若双方 top 人物/事件/实体出现明显同名重合（即便权重不同），强烈倾向判是；',
-        '- 若两侧的邻居完全没有重叠，且证据片段的上下文话题截然不同，倾向判否；',
+        '- 类型不同时仍可能为同一对象——上游抽取可能把同一概念识别为不同 kind（如把游戏卡牌 "X" 既抽成 thing、又把同名概念抽成 topic；把同名作品既抽成 work 又抽成 thing），此时若名称完全相同、证据上下文相互兼容，倾向判 same；',
+        '- 但若类型完全不可调和（如 person vs work / place vs topic）且证据上下文截然不同，应判 different；',
+        '- 邻居重叠是强证据：若双方 top 人物/事件/实体出现明显同名重合（即便权重不同），强烈倾向判 same；',
+        '- 若两侧的邻居完全没有重叠，且证据片段的上下文话题截然不同，倾向判 different；',
         '- 相似度分数（若提供）：cos/jaccard ≥ 0.85 是强信号，0.6~0.85 中等，< 0.6 仅作辅助；',
-        '- 若证据片段中出现"A 又叫 B / B 即 A / 两者通用"等明示同一性的表达，倾向判是。',
+        '- 若证据片段中出现"A 又叫 B / B 即 A / 两者通用"等明示同一性的表达，倾向判 same。',
+        '',
+        '**hierarchy 判定要点（关键，避免父概念被并入子概念）**：',
+        '- 一方是另一方的「子模式 / 子地图 / 子关卡 / 子版本 / 子系列 / 子章节 / 子组件」，明显是包含关系而非同一对象，应判 hierarchy；',
+        '  · 例：「三角洲行动·绝密航天」(B) part-of「三角洲行动」(A) — A 是母游戏，B 是其中一个模式',
+        '  · 例：「红警 3·起义时刻」(B) part-of「红警 3」(A)',
+        '  · 例：「Honkai: Star Rail·罗浮章节」(B) part-of「Honkai: Star Rail」(A)',
+        '- 当判 hierarchy 时，必须在 "parent" 字段明确指出哪一方是父（"A" 或 "B"）。父=更宽泛的、被包含的；子=更具体的、包含父名的；',
+        '- 当人们在聊天中把子模式名缩略为父名（如"今晚打三角洲" 实际在玩绝密航天），不要把此当成"别名"——这是缩略指代，子和父仍是不同对象；',
+        '- 若两者只是松散相关（如同一游戏厂商的不同作品、同一公司的不同产品），既不是 same 也不是 hierarchy，判 different。',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -154,9 +179,24 @@ export async function verifyAliasPair(
   try {
     const resp = await model.chat({ messages: prompt, temperature: 0, ...(disableThinking ? { think: false } : {}) });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
-    const parsed = tryParseJson(raw) as { isSame?: unknown; reason?: unknown } | undefined;
-    if (!parsed || typeof parsed.isSame !== 'boolean') return { isSame: false, reason: 'LLM 输出无法解析' };
-    return { isSame: parsed.isSame, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
+    const parsed = tryParseJson(raw) as { verdict?: unknown; reason?: unknown; parent?: unknown } | undefined;
+    if (!parsed) return { isSame: false, reason: 'LLM 输出无法解析' };
+    const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
+    // 向后兼容：若 LLM 仍按老格式返回 {isSame}，做一次映射
+    const legacy = parsed as { isSame?: unknown };
+    if (typeof legacy.isSame === 'boolean' && typeof parsed.verdict !== 'string') {
+      return { isSame: legacy.isSame, reason };
+    }
+    if (parsed.verdict === 'same') return { isSame: true, reason };
+    if (parsed.verdict === 'hierarchy') {
+      const parent = parsed.parent === 'A' || parsed.parent === 'B' ? parsed.parent : null;
+      if (!parent) return { isSame: false, reason: `${reason}（hierarchy 但 parent 字段缺失，按 different 处理）` };
+      const parentId = parent === 'A' ? a.id : b.id;
+      const childId = parent === 'A' ? b.id : a.id;
+      return { isSame: false, reason, hierarchy: { parentId, childId } };
+    }
+    if (parsed.verdict === 'different') return { isSame: false, reason };
+    return { isSame: false, reason: `LLM verdict 字段非法："${String(parsed.verdict)}"` };
   } catch (err) {
     return { isSame: false, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
   }
