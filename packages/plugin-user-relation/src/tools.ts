@@ -1376,6 +1376,53 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
     },
   });
 
+  // ───────────────────────────── split_alias ──────────────────────────────
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'user_relation_split_alias',
+        description: [
+          '从 entity 的 aliases[] 中剥离一个错误绑定的别名（轻量纠错）。',
+          '',
+          '使用场景：consolidate / 历史合并把不该是别名的名字错绑到 canonical 的 aliases 里。',
+          '典型例子：',
+          '- "三角洲行动" 作为母游戏被错误合并进 "三角洲行动·绝密航天"（子模式）的 aliases—— 剥离 "三角洲行动"',
+          '- 角色名 "红狼" 被错绑到 "三角洲行动" 的 aliases—— 剥离 "红狼"',
+          '',
+          '语义：仅从 aliases 数组移除该字符串，不动 name / 边 / evidence。',
+          '**不会**重建出原 entity（已被物理合并）。下次 extractor 在新消息中看到该名字会自然新建。',
+          '若该别名 = entity.name 本身，请改用 rename_node。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            entity_id: { type: 'string', description: '当前承载该别名的 entity ID（UUID）' },
+            alias_name: { type: 'string', description: '要从 aliases[] 中剥离的字符串（必须已存在于 aliases 中）' },
+            reason: { type: 'string', description: '剥离理由（≤120 字）' },
+          },
+          required: ['entity_id', 'alias_name', 'reason'],
+          additionalProperties: false,
+        },
+      },
+    },
+    groups: [groupName],
+    handler: async args => {
+      const entityId = String(args.entity_id ?? '').trim();
+      const aliasName = String(args.alias_name ?? '').trim();
+      const reason = String(args.reason ?? '').trim();
+      if (!entityId) return JSON.stringify({ error: 'entity_id 不能为空' });
+      if (!aliasName) return JSON.stringify({ error: 'alias_name 不能为空' });
+      if (!reason) return JSON.stringify({ error: 'reason 必填' });
+      try {
+        const result = await service.splitAlias({ entityId, aliasName, reason, by: 'llm' });
+        return JSON.stringify({ ok: true, ...result }, null, 2);
+      } catch (err) {
+        return JSON.stringify({ error: (err as Error).message });
+      }
+    },
+  });
+
   // ───────────────────────────── node_score ───────────────────────────────
   tools.register({
     definition: {
@@ -1473,7 +1520,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   if (cfg.debug) {
     ctx.logger.debug(
-      `[user-relation] 已注册 20 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / node_score / directional_degree）`,
+      `[user-relation] 已注册 21 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias / node_score / directional_degree）`,
     );
   }
 }
