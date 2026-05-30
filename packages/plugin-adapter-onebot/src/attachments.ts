@@ -54,7 +54,8 @@ async function attachmentToOneBotFile(
   if (!data) throw new Error('attachment.data is empty');
 
   // data:image/...;base64,xxx → base64://xxx
-  if (data.startsWith('data:')) {
+  // 注意：data[5] === '/' 时是 storage URI（data:/images/...），不是 data URI
+  if (data.startsWith('data:') && data[5] !== '/') {
     const m = data.match(/^data:[^;]+;base64,(.+)$/);
     if (!m) throw new Error('invalid data URI');
     const buf = Buffer.from(m[1], 'base64');
