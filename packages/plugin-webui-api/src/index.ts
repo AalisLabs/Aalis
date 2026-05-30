@@ -196,25 +196,48 @@ export interface ScopedWebuiService {
 }
 
 /**
- * 获取 ScopedWebuiService。调用 register 时若 'webui' 服务尚未就绪，
- * 会通过 `ctx.whenService` 自动延迟到服务提供后执行。
+ * 获取 ScopedWebuiService。
+ *
+ * 关键：`registerPage` 必须在 webui-server **每一次** provide 时都重新注册，
+ * 而不是只在调用时刻注册一次：
+ *
+ * - 旧实现：fast-path 直接 `svc.registerPage(...)`，回退时用一次性的
+ *   `whenService`。webui-server bounce/reload 后，新 service 实例的 pages 表
+ *   是空的，导致页面"消失"。
+ * - 新实现：保留 fast-path（首次注册无延迟），同时**始终**订阅
+ *   `service:registered`，每次新实例上线都重新调用 registerPage 把页面挂回去。
+ *
+ * 调用者拿到的 dispose 会同时撤销监听与当前 service 上的注册。
  */
 export function useWebuiService(ctx: Context): ScopedWebuiService {
   const pluginName = ctx.id || 'unknown';
   return {
     registerPage(page: WebuiPage): () => void {
-      const svc = ctx.getService<WebUIService>('webui-server');
-      if (svc) return svc.registerPage(page, pluginName);
       let disposed = false;
       let disposeInner: (() => void) | undefined;
-      ctx.whenService<WebUIService>('webui-server', s => {
-        if (disposed) return undefined;
-        disposeInner = s.registerPage(page, pluginName);
-        return disposeInner;
+
+      const attach = (svc: WebUIService): void => {
+        if (disposed) return;
+        disposeInner?.();
+        disposeInner = svc.registerPage(page, pluginName);
+      };
+
+      // 跨 bounce 重新挂载：webui-server 每次 provide 都触发
+      const offSub = ctx.on('service:registered', (svcName: string) => {
+        if (svcName !== 'webui-server') return;
+        const svc = ctx.getService<WebUIService>('webui-server');
+        if (svc) attach(svc);
       });
+
+      // 立即注册（如果当前已就绪）
+      const current = ctx.getService<WebUIService>('webui-server');
+      if (current) attach(current);
+
       return () => {
         disposed = true;
+        offSub();
         disposeInner?.();
+        disposeInner = undefined;
       };
     },
     get raw() {
