@@ -20,8 +20,8 @@ export class EventBus {
    * 当前标记为 sticky 的事件：'ready'、'app:started'。
    *
    * - 注册：`markSticky(event)` 由 App 在构造时调用
-   * - 清除：`clearSticky(event)` 供 App 在进程内完整重启时调用（目前未使用，
-   *   因为 restartStrategy 采用 spawn 新进程方案，App 实例不会复用）
+   * - 清除：`clearSticky(event)` 由 App.restart()/stop() 在复用实例时调用，
+   *   避免下一轮启动时被旧的 sticky 参数误触发
    */
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   private stickyArgs = new Map<string, any[]>();
