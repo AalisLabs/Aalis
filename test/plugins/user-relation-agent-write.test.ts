@@ -214,6 +214,68 @@ describe('user-relation: changeEntityKind', () => {
   });
 });
 
+describe('user-relation: splitAlias', () => {
+  it('从 aliases[] 中剥离指定别名', async () => {
+    const { service, store } = await makeService();
+    const ent = await service.createEntity({
+      name: '三角洲行动·绝密航天',
+      entityKind: 'work',
+      aliases: ['绝航', '三角洲行动', '绝密航天'],
+      evidence: [ev()],
+    });
+    const res = await service.splitAlias({
+      entityId: ent.id,
+      aliasName: '三角洲行动',
+      reason: '母游戏被错并入子模式，剥离',
+      by: 'agent',
+    });
+    expect(res.removed).toBe('三角洲行动');
+    expect(res.remainingAliases).toEqual(['绝航', '绝密航天']);
+    const after = await store.getEntity(ent.id);
+    expect(after?.aliases).toEqual(['绝航', '绝密航天']);
+    expect(after?.name).toBe('三角洲行动·绝密航天'); // name 不变
+  });
+
+  it('aliasName 不在 aliases 中 → 抛错', async () => {
+    const { service } = await makeService();
+    const ent = await service.createEntity({
+      name: 'X',
+      entityKind: 'thing',
+      aliases: ['a', 'b'],
+      evidence: [ev()],
+    });
+    await expect(service.splitAlias({ entityId: ent.id, aliasName: 'c', reason: 'r', by: 'agent' })).rejects.toThrow(
+      /不在.*aliases/,
+    );
+  });
+
+  it('aliasName == entity.name → 抛错（提示走 renameNode）', async () => {
+    const { service } = await makeService();
+    const ent = await service.createEntity({
+      name: 'X',
+      entityKind: 'thing',
+      aliases: ['a'],
+      evidence: [ev()],
+    });
+    await expect(service.splitAlias({ entityId: ent.id, aliasName: 'X', reason: 'r', by: 'agent' })).rejects.toThrow(
+      /renameNode/,
+    );
+  });
+
+  it('reason 必填', async () => {
+    const { service } = await makeService();
+    const ent = await service.createEntity({
+      name: 'X',
+      entityKind: 'thing',
+      aliases: ['a'],
+      evidence: [ev()],
+    });
+    await expect(service.splitAlias({ entityId: ent.id, aliasName: 'a', reason: '', by: 'agent' })).rejects.toThrow(
+      /reason/,
+    );
+  });
+});
+
 describe('user-relation: computeNodeScore', () => {
   it('不存在节点返回 null', async () => {
     const { service } = await makeService();
