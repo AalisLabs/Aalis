@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*",
     "@aalis/plugin-agent": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-storage-api": "workspace:*",
@@ -20,7 +20,7 @@
     "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   }
 }
