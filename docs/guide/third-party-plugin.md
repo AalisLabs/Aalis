@@ -47,7 +47,9 @@ import type { Context, PluginModule, LLMService } from '@aalis/llm-api';
 export default {
   name: '@your-scope/plugin-x',
   apply(ctx: Context) {
-    ctx.whenService<LLMService>('llm', ['chat']).then(llm => {
+    ctx.whenService<LLMService>('llm', llm => {
+      // provider 就绪时同步调用；provider bounce 后自动重新调用一次。
+      // 可选返回清理函数：会在 provider 下线或 ctx dispose 时执行。
       // llm.chat(...)
     });
   },

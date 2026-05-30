@@ -59,6 +59,69 @@ describe('Context.whenService', () => {
     await Promise.resolve();
     expect(received).toEqual({ v: 42 });
   });
+
+  it('provider 下线时自动调用上次 cb 返回的 cleanup', async () => {
+    const ctx = makeContext();
+    const cleaned: string[] = [];
+    const disposeSvc = ctx.provide('__hub', { mark: 'a' });
+    ctx.whenService<{ mark: string }>('__hub', svc => {
+      return () => cleaned.push(`cleanup-${svc.mark}`);
+    });
+    await Promise.resolve();
+    expect(cleaned).toEqual([]);
+    disposeSvc();
+    await Promise.resolve();
+    expect(cleaned).toEqual(['cleanup-a']);
+  });
+
+  it('provider 重新 provide 触发重挂：旧 cleanup 先调，新 cb 再触发', async () => {
+    const ctx = makeContext();
+    const attached: string[] = [];
+    const cleaned: string[] = [];
+    ctx.whenService<{ id: string }>('__hub', svc => {
+      attached.push(svc.id);
+      return () => cleaned.push(svc.id);
+    });
+
+    const dispose1 = ctx.provide('__hub', { id: 'v1' });
+    await Promise.resolve();
+    expect(attached).toEqual(['v1']);
+    expect(cleaned).toEqual([]);
+
+    dispose1();
+    await Promise.resolve();
+    expect(cleaned).toEqual(['v1']);
+
+    ctx.provide('__hub', { id: 'v2' });
+    await Promise.resolve();
+    expect(attached).toEqual(['v1', 'v2']);
+    expect(cleaned).toEqual(['v1']);
+  });
+
+  it('手动 dispose 后 provider 上下线不再触发 cb', async () => {
+    const ctx = makeContext();
+    let callCount = 0;
+    const off = ctx.whenService<{ v: number }>('__hub', _svc => {
+      callCount++;
+      return undefined;
+    });
+    off();
+    ctx.provide('__hub', { v: 1 });
+    await Promise.resolve();
+    expect(callCount).toBe(0);
+  });
+
+  it('ctx.dispose 触发上次 cleanup', async () => {
+    const ctx = makeContext();
+    let cleaned = false;
+    ctx.provide('__hub', { v: 1 });
+    ctx.whenService<{ v: number }>('__hub', _svc => () => {
+      cleaned = true;
+    });
+    await Promise.resolve();
+    await ctx.dispose();
+    expect(cleaned).toBe(true);
+  });
 });
 
 describe('Context fork / dispose', () => {
