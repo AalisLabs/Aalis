@@ -321,11 +321,14 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   }
 
   // 注册 preprocessor（agent 不一定可用，可选 inject）
+  // dispose 必须挂 onDispose：插件 bounce/reload 时旧 preprocessor 中间件不会被
+  // 自动清理（注册在 agent.ctx 而非自身 ctx 上）。
   try {
-    useAgent(ctx).registerPreprocessor(
+    const disposePreproc = useAgent(ctx).registerPreprocessor(
       'media',
       buildPreprocessor(ctx, () => svc),
     );
+    ctx.onDispose(disposePreproc);
     logger.info(`媒体识别预处理器已注册 (vision=${cfg.vision.mode}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`);
   } catch (err) {
     logger.debug(`预处理器注册跳过: ${err instanceof Error ? err.message : err}`);
