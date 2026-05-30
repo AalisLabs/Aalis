@@ -15,6 +15,7 @@ import type {
   TranscribeOptions,
 } from '@aalis/plugin-media-api';
 import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
+import { AttachmentRefKind, formatAttachmentRef } from '@aalis/plugin-message-api';
 import { lookupCachedDescription, rememberDescription } from './cache.js';
 import { buildIncomingImageContext } from './context.js';
 import {
@@ -34,6 +35,7 @@ import {
   VISION_CLASSIFY_PROMPT,
 } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
+import { getMediaRuntime } from './runtime.js';
 
 export interface MediaConfigResolved {
   vision: {
@@ -51,7 +53,7 @@ export interface MediaConfigResolved {
    * - Whisper 类 ASR：仅转写语音，非语音输出为空（service 会补充占位描述）。
    */
   audio: {
-    mode: 'enabled' | 'disabled';
+    mode: 'enabled' | 'passthrough' | 'disabled';
     prefer?: string;
     language?: string;
     /** 默认最大 output tokens。e4b thinking enabled 时全能 prompt 需要 ≥1024 */
@@ -219,6 +221,50 @@ export class MediaServiceImpl implements MediaService {
     }
   }
 
+  /**
+   * 对入站附件图片进行落盘，返回可写入 AttachmentRef 的相对路径。
+   *
+   * - `data:` URI（WebUI base64）→ 解码后写入 `data:/images/{session}/{hash}.{ext}`，
+   *   返回 `data/images/{session}/{hash}.{ext}`（历史相对路径格式）。
+   * - `http(s)://` URL → 直接返回原 URL（analyze_image 可直接处理）。
+   * - 已是 storage URI（如 `data:/images/...`，OneBot 已落盘）→ 转换为相对路径。
+   * - 其它无法处理的格式 → 返回 null（描述仍写入，不含 ref）。
+   */
+  private async cacheImageRef(att: MessageAttachment, sessionId: string): Promise<string | null> {
+    const data = att.data;
+    if (typeof data !== 'string' || !data) return null;
+    if (data.startsWith('http://') || data.startsWith('https://')) return data;
+    // 已是 storage URI（scheme 非 http/https/data/file）→ 转为相对路径
+    const storagePrefixMatch = data.match(/^([a-z][a-z0-9_-]*):\/(.+)$/);
+    if (storagePrefixMatch) {
+      const scheme = storagePrefixMatch[1].toLowerCase();
+      if (scheme !== 'http' && scheme !== 'https' && scheme !== 'data' && scheme !== 'file') {
+        return `${scheme}/${storagePrefixMatch[2]}`;
+      }
+    }
+    // base64 data URI（WebUI 上传的原始图片）
+    if (!data.startsWith('data:')) return null;
+    try {
+      const m = data.match(/^data:([^;]+);base64,(.*)$/);
+      if (!m) return null;
+      const mimeType = m[1];
+      const rawExt = mimeType.split('/')[1] ?? 'bin';
+      const ext = rawExt === 'jpeg' ? 'jpg' : rawExt === 'svg+xml' ? 'svg' : rawExt;
+      const buf = Buffer.from(m[2], 'base64');
+      const digest = await crypto.subtle.digest('SHA-256', buf);
+      const hash = Buffer.from(digest).toString('hex').slice(0, 16);
+      const safeSession = sessionId.replace(/[:/\\]/g, '_');
+      const dirRel = `images/${safeSession}`;
+      const filename = `${hash}.${ext}`;
+      const { storage } = getMediaRuntime();
+      await storage.writeFile(`data:/${dirRel}/${filename}`, buf);
+      return `data/${dirRel}/${filename}`;
+    } catch (err) {
+      this.logger.debug(`图片落盘失败，将不含 ref: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
   async processMessage(msg: IncomingMessage): Promise<MediaProcessReport> {
     const attachments = normalizeAttachments(msg);
     const report: MediaProcessReport = { total: attachments.length, successCount: 0, items: [] };
@@ -288,27 +334,37 @@ export class MediaServiceImpl implements MediaService {
                 this.logger.info(
                   `[vision.describe] source=auto tier=${tier} promptChars=${basePrompt.length} (session=${msg.sessionId})`,
                 );
-                const r = await proc.describe(
-                  {
-                    attachments: [att],
-                    mode: 'single',
-                    maxTokens: this.cfg.vision.maxTokens,
-                    basePrompt,
-                    context: ctxText,
-                  },
-                  this.ctx,
-                );
+                const [r, ref] = await Promise.all([
+                  proc.describe(
+                    {
+                      attachments: [att],
+                      mode: 'single',
+                      maxTokens: this.cfg.vision.maxTokens,
+                      basePrompt,
+                      context: ctxText,
+                    },
+                    this.ctx,
+                  ),
+                  this.cacheImageRef(att, msg.sessionId),
+                ]);
                 const raw = r.descriptions[0];
-                item.description = raw ? `[图片描述] ${raw}` : undefined;
-                descriptions[i] = item.description;
-                if (item.description) rememberDescription(att.data, item.description);
+                if (raw) {
+                  item.description = ref
+                    ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: raw, ref })
+                    : `[图片描述] ${raw}`;
+                  descriptions[i] = item.description;
+                  rememberDescription(att.data, item.description);
+                }
               }
             }
           }
         } else if (att.kind === 'audio') {
           // 统一音频识别：LLM-as-audio 返回转写或描述，Whisper 仅返回转写。
           // 空串补上占位让主 LLM 知情有附件但未能识别，避免幻觉。
-          if (this.cfg.audio.mode === 'enabled') {
+          if (this.cfg.audio.mode === 'passthrough') {
+            // passthrough：不转写，attachment 原样保留，由主模型直接理解（需主模型有 audio 能力）
+            item.description = undefined;
+          } else if (this.cfg.audio.mode === 'enabled') {
             const text = await this.transcribe(att, { context: ctxText });
             item.cap = 'audio';
             // 空响应不应该被歸因为“非语音”——模型可能是 maxTokens 不足 / 上下文超限 / 超时，
