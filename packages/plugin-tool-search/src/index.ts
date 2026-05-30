@@ -82,7 +82,13 @@ function buildSearchToolDef(toolNames?: string[]): ToolDefinition {
     '\n能直接回答的简单问题无需调用工具；需要工具时，先搜索再直接调用即可。';
 
   if (toolNames && toolNames.length > 0) {
-    description += `\n\n当前可用工具列表:\n${toolNames.map(n => `- ${n}`).join('\n')}`;
+    description +=
+      '\n\n下方"可用工具名清单"仅用于让你知道哪些功能存在，' +
+      '便于你想出合适的搜索关键词。' +
+      '\n**严禁**仅凭名字直接调用清单里的工具——它们的参数 schema 你并不知道，' +
+      '凭名字直接调用会产生参数幻觉、危险副作用或意外失败。' +
+      '\n要使用清单中的任何工具，必须先调用 search_tools 拿到完整 parameters 定义后再调用。' +
+      `\n\n当前可用工具名清单（仅供搜索参考，禁止直接调用）:\n${toolNames.map(n => `- ${n}`).join('\n')}`;
   }
 
   return {
