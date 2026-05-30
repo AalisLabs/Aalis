@@ -198,47 +198,15 @@ export interface ScopedWebuiService {
 /**
  * 获取 ScopedWebuiService。
  *
- * 关键：`registerPage` 必须在 webui-server **每一次** provide 时都重新注册，
- * 而不是只在调用时刻注册一次：
- *
- * - 旧实现：fast-path 直接 `svc.registerPage(...)`，回退时用一次性的
- *   `whenService`。webui-server bounce/reload 后，新 service 实例的 pages 表
- *   是空的，导致页面"消失"。
- * - 新实现：保留 fast-path（首次注册无延迟），同时**始终**订阅
- *   `service:registered`，每次新实例上线都重新调用 registerPage 把页面挂回去。
- *
- * 调用者拿到的 dispose 会同时撤销监听与当前 service 上的注册。
+ * 实现委托给 `ctx.whenService('webui-server', ...)`：每次 webui-server
+ * 重新 provide（bounce/replace）都会重新调用 `registerPage`，让插件页面
+ * 自动重挂；上次注册的 cleanup 在 provider 下线时自动释放。
  */
 export function useWebuiService(ctx: Context): ScopedWebuiService {
   const pluginName = ctx.id || 'unknown';
   return {
     registerPage(page: WebuiPage): () => void {
-      let disposed = false;
-      let disposeInner: (() => void) | undefined;
-
-      const attach = (svc: WebUIService): void => {
-        if (disposed) return;
-        disposeInner?.();
-        disposeInner = svc.registerPage(page, pluginName);
-      };
-
-      // 跨 bounce 重新挂载：webui-server 每次 provide 都触发
-      const offSub = ctx.on('service:registered', (svcName: string) => {
-        if (svcName !== 'webui-server') return;
-        const svc = ctx.getService<WebUIService>('webui-server');
-        if (svc) attach(svc);
-      });
-
-      // 立即注册（如果当前已就绪）
-      const current = ctx.getService<WebUIService>('webui-server');
-      if (current) attach(current);
-
-      return () => {
-        disposed = true;
-        offSub();
-        disposeInner?.();
-        disposeInner = undefined;
-      };
+      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, pluginName));
     },
     get raw() {
       return ctx.getService<WebUIService>('webui-server');

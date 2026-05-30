@@ -335,35 +335,24 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     return null;
   };
 
-  // 注入到已有的 commands/tools 服务
-  const injectGuard = (svcName: string) => {
-    if (svcName === 'commands') {
-      const svc = ctx.getService<CommandService>(svcName);
-      if (svc?.setExecutionGuard) {
-        svc.setExecutionGuard(guard);
-        ctx.logger.debug(`权限守卫已注入: ${svcName}`);
-      }
-    } else if (svcName === 'tools') {
-      const svc = ctx.getService<ToolService>(svcName);
-      if (svc?.setExecutionGuard) {
-        svc.setExecutionGuard(guard);
-        ctx.logger.debug(`权限守卫已注入: ${svcName}`);
-      }
-      // 加载 tool overrides（与 commandOverrides 对称；tool 注册可能晚于 authority apply
-      // 时刻，但 setOverride 保存的是名字 → override 的映射，后注册的工具拿到时也能匹配）
-      const toolOvr = ctx.config.get('toolOverrides');
-      if (toolOvr && svc?.loadOverrides) {
-        svc.loadOverrides(toolOvr as Record<string, { authority?: number; safety?: SafetyLevel }>);
-      }
+  // 注入到 commands / tools 服务。whenService 会在 provider 上线（含 bounce 后
+  // 重新 provide）时各调一次，自动覆盖"authority 早于 provider"和"provider 重启"两种场景。
+  ctx.whenService<CommandService>('commands', svc => {
+    if (svc.setExecutionGuard) {
+      svc.setExecutionGuard(guard);
+      ctx.logger.debug('权限守卫已注入: commands');
     }
-  };
-
-  // 当前已注册的服务立即注入
-  injectGuard('tools');
-  injectGuard('commands');
-
-  // 未来注册的服务也注入（处理 authority 先于 commands 加载的情况）
-  ctx.on('service:registered', (name: string) => injectGuard(name));
+  });
+  ctx.whenService<ToolService>('tools', svc => {
+    if (svc.setExecutionGuard) {
+      svc.setExecutionGuard(guard);
+      ctx.logger.debug('权限守卫已注入: tools');
+    }
+    const toolOvr = ctx.config.get('toolOverrides');
+    if (toolOvr && svc.loadOverrides) {
+      svc.loadOverrides(toolOvr as Record<string, { authority?: number; safety?: SafetyLevel }>);
+    }
+  });
 
   // ===== 应用停止时保存 =====
   ctx.on('app:stopping', () => {
