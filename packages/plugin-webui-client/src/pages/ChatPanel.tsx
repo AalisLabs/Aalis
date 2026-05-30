@@ -383,6 +383,13 @@ interface CheckpointTurnSummary {
   filesPreview: string[];
 }
 
+/** Lightbox 跨组件通信：MessageItem 点图触发，ChatPanel 监听后弹出。
+ *  用 window CustomEvent 而不是 prop 透传，避免 memoized MessageItem 重渲染。 */
+const LIGHTBOX_EVENT = 'aalis:open-lightbox';
+function openLightbox(src: string): void {
+  window.dispatchEvent(new CustomEvent(LIGHTBOX_EVENT, { detail: src }));
+}
+
 /** 单条消息渲染（memoized，避免全量重绘） */
 const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGenerating, onAbort, checkpoint, rolledBack, onRollback, onRollbackWithChat, toolCallsProgress }: {
   msg: ChatMessage;
@@ -440,7 +447,12 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
         <div className="message-images">
           {msg.images.map((img, j) => (
             <div key={j} className="message-image-wrap">
-              <img src={proxiedMediaUrl(img)} alt={`attached-${j}`} className="message-image" />
+              <img
+                src={proxiedMediaUrl(img)}
+                alt={`attached-${j}`}
+                className="message-image"
+                onClick={() => openLightbox(proxiedMediaUrl(img))}
+              />
             </div>
           ))}
         </div>
@@ -462,7 +474,12 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
             if (att.kind === 'image') {
               return (
                 <div key={`a-${j}`} className="message-image-wrap">
-                  <img src={proxiedMediaUrl(att.data)} alt={att.name ?? `attachment-${j}`} className="message-image" />
+                  <img
+                    src={proxiedMediaUrl(att.data)}
+                    alt={att.name ?? `attachment-${j}`}
+                    className="message-image"
+                    onClick={() => openLightbox(proxiedMediaUrl(att.data))}
+                  />
                 </div>
               );
             }
@@ -821,8 +838,26 @@ export function ChatPanel({
   const dragCounter = useRef(0);
   const [showTokenPanel, setShowTokenPanel] = useState(false);
   const [showUploadedFiles, setShowUploadedFiles] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const compressStartTime = useRef(0);
   const compressEndTime = useRef(0);
+
+  // Lightbox：监听全局事件 + Esc 关闭
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (typeof detail === 'string') setLightboxSrc(detail);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxSrc(null);
+    };
+    window.addEventListener(LIGHTBOX_EVENT, onOpen);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener(LIGHTBOX_EVENT, onOpen);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
 
   // 上传能力
   const uploadCaps = status?.uploadCapabilities;
@@ -1161,6 +1196,15 @@ export function ChatPanel({
         onSend={handleSendFromInput}
         onAbort={onAbort}
       />
+
+      {lightboxSrc && (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: 全局 Esc 已在 useEffect 中处理
+        // biome-ignore lint/a11y/noStaticElementInteractions: 容器仅承载点击-关闭遮罩
+        <div className="image-lightbox" onClick={() => setLightboxSrc(null)}>
+          <img src={lightboxSrc} alt="预览" className="image-lightbox-content" onClick={e => e.stopPropagation()} />
+          <button type="button" className="image-lightbox-close" onClick={() => setLightboxSrc(null)} aria-label="关闭">×</button>
+        </div>
+      )}
     </div>
   );
 }
