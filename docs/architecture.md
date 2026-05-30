@@ -248,7 +248,7 @@ Aalis 提供两种隔离粒度：
   - 沙盒内 `ctx.provide(...)` / `ctx.config.set(...)` 隔离 ✓
   - 沙盒内 `ctx.on(event, ...)` / `ctx.middleware(hook, ...)` 仍**全局生效**，dispose 时由 `contextId` 反查清理
   - ⚠️ 沙盒应避免注册"产生跨作用域副作用"的全局事件（如 `service:registered`），可能干扰主进程逻辑
-  - 🧪 **状态：实验性**。当前生产代码里 `createScope` / `useModule({ scoped: true })` 没有任何插件直接消费，仅 `test/core/sandbox.test.ts` 自测；接口语义稳定可用，但若长期未消费可能在未来版本被精简。`whenService(name, cb)` 同样属于实验性 API，常规场景请用 `ctx.on('service:registered', ...) + ctx.hasService()` 替代。
+  - 🧪 **状态：实验性**。当前生产代码里 `createScope` / `useModule({ scoped: true })` 没有任何插件直接消费，仅 `test/core/sandbox.test.ts` 自测；接口语义稳定可用，但若长期未消费可能在未来版本被精简。`whenService(name, cb)` 是**稳定 API**：每次 provider 上线都调一次 `cb`，下线/ctx dispose 自动调上次返回的 cleanup，跨 bounce 自动重挂——是消费 hub 型服务的推荐入口（参见 [docs/core/context.md](core/context.md)）。
 - **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp({ events, services, hooks, ... })` 创建新的 `App` 实例。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
 
 #### Context dispose 推荐 API
