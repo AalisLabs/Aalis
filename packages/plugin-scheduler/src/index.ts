@@ -28,6 +28,16 @@ interface SchedulerJobConfig {
   sessionId: string;
   /** 目标平台标识 */
   platform: string;
+  /**
+   * 代理身份的 platform（authority 查表用），与 `platform` 解耦。
+   * 由创建路径 snapshot 真实调用者身份；触发时回填到 IncomingMessage.actor.platform。
+   * - WebUI/CLI/AI 调用工具创建：来自调用者 callCtx
+   * - 静态 yaml jobs 缺省：webui（视作 owner 级，因为编辑配置文件本身就是 owner 行为）
+   * - 老 dynamic jobs 缺省：webui（带启动 warning，便于审计）
+   */
+  actorPlatform?: string;
+  /** 代理身份的 userId（authority 查表用）。规则同 actorPlatform，缺省 'console'。 */
+  actorUserId?: string;
   /** 发送给 Agent 的消息内容 */
   content: string;
   /** 是否启用 */
@@ -150,8 +160,21 @@ export const configSchema: ConfigSchema = {
         type: 'string',
         label: '目标平台',
         required: true,
-        description: '任务消息的平台标识（如 internal、webui、onebot）。',
+        description: '任务消息的平台标识（如 internal、webui、onebot）。仅用于消息路由。',
         default: 'internal',
+      },
+      actorPlatform: {
+        type: 'string',
+        label: '执行身份-平台',
+        description:
+          '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合查权限等级。留空 = webui。',
+        default: 'webui',
+      },
+      actorUserId: {
+        type: 'string',
+        label: '执行身份-用户 ID',
+        description: '代理身份的 userId。留空 = console（与 actorPlatform=webui 组合可获得 ownerAuthority）。',
+        default: 'console',
       },
       content: {
         type: 'string',
@@ -327,6 +350,8 @@ export const actions: PluginModule['actions'] = {
     const content = String(args.content ?? '').trim();
     if (!content) return { ok: false, error: 'content 不能为空' };
     try {
+      // WebUI 上下文默认 webui:console（owner 级），与 authority 插件的 hardcode 行为对齐。
+      // 注意：actor 不从 args 读取，避免 WebUI 调用方伪造他人身份。
       svc.setJob({
         name,
         cron,
@@ -334,6 +359,8 @@ export const actions: PluginModule['actions'] = {
         runAt,
         sessionId,
         platform: String(args.platform ?? 'internal'),
+        actorPlatform: 'webui',
+        actorUserId: 'console',
         content,
         enabled: args.enabled !== false,
       });
@@ -385,17 +412,33 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       const data = JSON.parse(raw);
       if (!Array.isArray(data)) return [];
       // biome-ignore lint/suspicious/noExplicitAny: 从 JSON 文件反序列化的原始字段，手动校验转型
-      return data.map((j: any) => ({
-        name: String(j.name ?? 'unnamed'),
-        cron: j.cron as string | undefined,
-        interval: j.interval as number | undefined,
-        runAt: j.runAt as string | undefined,
-        sessionId: String(j.sessionId ?? 'internal'),
-        platform: String(j.platform ?? 'internal'),
-        content: String(j.content ?? ''),
-        enabled: j.enabled !== false,
-        paused: j.paused === true,
-      }));
+      return data.map((j: any) => {
+        const hasActor =
+          typeof j.actorPlatform === 'string' &&
+          j.actorPlatform.trim().length > 0 &&
+          typeof j.actorUserId === 'string' &&
+          j.actorUserId.trim().length > 0;
+        if (!hasActor) {
+          // 兼容老的持久化 jobs（升级前没有 actor 字段）：默认 webui:console（owner 级）。
+          // 与 WebUI 新建任务默认值一致，因为这些 dynamic jobs 历史上都是从 WebUI 创建的。
+          logger.warn(
+            `持久化任务 "${j.name}" 缺少 actor 身份，已补全为 webui:console；如需限制权限请在 WebUI 中显式修改`,
+          );
+        }
+        return {
+          name: String(j.name ?? 'unnamed'),
+          cron: j.cron as string | undefined,
+          interval: j.interval as number | undefined,
+          runAt: j.runAt as string | undefined,
+          sessionId: String(j.sessionId ?? 'internal'),
+          platform: String(j.platform ?? 'internal'),
+          actorPlatform: hasActor ? String(j.actorPlatform).trim() : 'webui',
+          actorUserId: hasActor ? String(j.actorUserId).trim() : 'console',
+          content: String(j.content ?? ''),
+          enabled: j.enabled !== false,
+          paused: j.paused === true,
+        };
+      });
     } catch (err) {
       logger.warn(`加载持久化任务失败: ${err}`);
       return [];
@@ -463,6 +506,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         platform: rt.config.platform,
         source: 'scheduler',
       };
+      // 注入代理身份：authority 守卫优先读 actor 而非 platform/userId，
+      // 从而让 scheduler 触发的 AI 走创建者的权限等级（而非匿名 defaultAuthority）。
+      // actorPlatform/actorUserId 在 setJob 时已固化为创建者身份，AI 无法绕过。
+      if (rt.config.actorPlatform && rt.config.actorUserId) {
+        message.actor = { platform: rt.config.actorPlatform, userId: rt.config.actorUserId };
+      }
 
       await ctx.emit('inbound:message', message);
 
@@ -790,6 +839,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         runAt,
         sessionId: (args.sessionId as string) || callCtx.sessionId,
         platform: (args.platform as string) || callCtx.platform || 'internal',
+        // 安全关键：actor 强制从 callCtx snapshot，不从 args 读取。
+        // 这样即使 LLM 在 prompt 中尝试伪造身份，也会被忽略——它只能以当前调用者的身份创建任务。
+        // callCtx.userId 可能为 undefined（如父任务也是匿名触发），此时子任务也匿名（defaultAuthority），
+        // 实现权限的自然传递与不可提升。
+        actorPlatform: callCtx.platform,
+        actorUserId: callCtx.userId,
         content: args.content as string,
         enabled: true,
       };
