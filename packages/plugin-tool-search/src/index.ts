@@ -304,7 +304,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           : {}),
         hint:
           paged.length > 0
-            ? '以上工具已激活。搜索结果已包含完整参数定义（parameters），你现在可以直接调用，无需再次搜索。' +
+            ? '你搜索到的工具已激活。搜索结果已包含完整参数定义（parameters），你现在可以直接调用，无需再次搜索。这并不代表同组工具都已激活，也不代表相关或类似的工具都已激活，对于其他工具你仍然需要使用 search_tools 激活。' +
               (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
             : '未找到匹配的工具，请尝试其他关键词。',
       });
