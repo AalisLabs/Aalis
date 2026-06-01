@@ -159,9 +159,33 @@ export class ToolRegistry implements ToolService {
     return Object.fromEntries(this.overrides);
   }
 
+  /** 工具名未命中时，按下划线分词的 token 交集 + 子串关系给出近似建议（最多 3 个）。 */
+  private suggestToolNames(query: string): string[] {
+    const q = query.toLowerCase();
+    const qTokens = new Set(q.split(/[_\s-]+/).filter(Boolean));
+    const scored: Array<{ name: string; score: number }> = [];
+    for (const name of this.tools.keys()) {
+      const n = name.toLowerCase();
+      let score = 0;
+      if (n.includes(q) || q.includes(n)) score += 2;
+      for (const t of n.split(/[_\s-]+/)) if (t && qTokens.has(t)) score += 1;
+      if (score > 0) scored.push({ name, score });
+    }
+    return scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(s => s.name);
+  }
+
   async execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> {
     const tool = this.tools.get(toolName);
-    if (!tool) return JSON.stringify({ error: `工具 "${toolName}" 未找到` });
+    if (!tool) {
+      // LLM 常臆造工具名（如把 send_attachment 叫成 send_image）。给出近似名建议，
+      // 让模型本轮直接纠正调用，而不是再花一轮 search_tools 找正确名字。
+      const suggestions = this.suggestToolNames(toolName);
+      const hint = suggestions.length > 0 ? `，你是否想用：${suggestions.join(' / ')}` : '';
+      return JSON.stringify({ error: `工具 "${toolName}" 未找到${hint}` });
+    }
 
     // 参数 schema 校验：检测缺失必填项 / 多余未知键（LLM 写错参数名时给出明确提示）
     const schemaError = validateToolArgs(toolName, tool.definition, args);
