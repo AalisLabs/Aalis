@@ -302,9 +302,6 @@ importers:
       '@aalis/plugin-authority-api':
         specifier: workspace:*
         version: link:../plugin-authority-api
-      '@aalis/plugin-commands-api':
-        specifier: workspace:*
-        version: link:../plugin-commands-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
@@ -581,6 +578,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-flow-control-api:
+    dependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
