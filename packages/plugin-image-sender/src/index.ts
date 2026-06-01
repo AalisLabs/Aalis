@@ -35,9 +35,12 @@ export const inject = { optional: ['memory', 'media', 'message-archive'] };
 /** 可发送的附件类型。 */
 type MediaKind = 'image' | 'audio' | 'video';
 
-/** 单张图描述同步等待上限。超时不阻塞发送，只是 description 字段为空。 */
-const DESCRIBE_TIMEOUT_MS = 8_000;
-/** 视频描述同步等待上限（视频需抽帧+ASR，耗时远高于图片）。 */
+/** preview_image 单张候选识别等待上限。preview 的目的就是"看清"图，
+ *  本地视觉模型（如 33B）单图常需 15-25s，必须给足预算，否则必然超时使 preview 形同虚设。 */
+const PREVIEW_TIMEOUT_MS = 25_000;
+/** 出站归档描述等待上限。该描述在后台计算、不阻塞发送，可放宽。 */
+const ARCHIVE_DESCRIBE_TIMEOUT_MS = 25_000;
+/** 视频描述等待上限（视频需抽帧+ASR，耗时远高于图片）。 */
 const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
@@ -102,28 +105,33 @@ export function apply(ctx: Context): void {
         return JSON.stringify({ error: '未启用 media 服务，无法识别图片' });
       }
 
-      const results = await Promise.all(
-        urls.map(async (url, index) => {
-          const trimmed = url.trim();
-          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-            return { index, url: trimmed, ok: false, error: 'url 必须是 http/https' };
-          }
-          try {
-            const desc = await Promise.race([
-              media.describeImage(trimmed, { hint }),
-              new Promise<string>((_resolve, reject) =>
-                setTimeout(() => reject(new Error('vision 超时')), DESCRIBE_TIMEOUT_MS),
-              ),
-            ]);
-            const description = (desc ?? '').trim();
-            return description
+      // 顺序识别（非并发）：本地视觉模型通常单实例串行处理，并发只会让多个请求
+      // 互相排队、共同超时；逐张识别配合宽松超时，命中率远高于并发。
+      // detailLevel='casual'：preview 只为"挑图"，跳过 auto 的分类阶段、用短 prompt，更快。
+      const results: Array<Record<string, unknown>> = [];
+      for (let index = 0; index < urls.length; index++) {
+        const trimmed = urls[index].trim();
+        if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+          results.push({ index, url: trimmed, ok: false, error: 'url 必须是 http/https' });
+          continue;
+        }
+        try {
+          const desc = await Promise.race([
+            media.describeImage(trimmed, { hint, detailLevel: 'casual' }),
+            new Promise<string>((_resolve, reject) =>
+              setTimeout(() => reject(new Error('vision 超时')), PREVIEW_TIMEOUT_MS),
+            ),
+          ]);
+          const description = (desc ?? '').trim();
+          results.push(
+            description
               ? { index, url: trimmed, ok: true, description }
-              : { index, url: trimmed, ok: false, error: 'vision 返回空' };
-          } catch (err) {
-            return { index, url: trimmed, ok: false, error: err instanceof Error ? err.message : String(err) };
-          }
-        }),
-      );
+              : { index, url: trimmed, ok: false, error: 'vision 返回空' },
+          );
+        } catch (err) {
+          results.push({ index, url: trimmed, ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
 
       return JSON.stringify({ ok: true, count: results.length, results });
     },
@@ -202,21 +210,16 @@ export function apply(ctx: Context): void {
           return JSON.stringify({ error: '必须提供 url / storage_uri / history_ref 之一' });
         }
 
-        // 同步描述：让 LLM 在 tool result 里立刻看到自己发了什么；
-        // 也让档案里的标记格式（[图片: desc | ref:xxx]）能被后续 memory_recall 命中。
-        // history_ref 复用历史已有描述，跳过二次识别；audio 暂无描述能力。
-        let description = '';
-        if (via !== 'history_ref') {
-          description = await safeDescribeMedia(ctx, kind, data);
-        }
-
+        // 不在发送路径上同步做 vision 描述：本地视觉模型单图常需 15-25s，
+        // 而 emit 串行 await 各监听器，同步等待会直接拖慢真正的出站（onebot/webui 发送）。
+        // 描述改由全局出站归档监听器在后台计算（见 apply 内 outbound:message 监听），
+        // 不阻塞发送，且用稳定 ref 规避平台落盘改写 data 的竞态。
         const attachment: MessageAttachment = {
           kind,
           data,
-          // 归档承载：ref/description 随事件携带，由全局出站归档统一入档（见 apply 内 outbound:message 监听）。
+          // 归档承载：ref 随事件携带，由全局出站归档统一入档（见 apply 内 outbound:message 监听）。
           // history_ref 重发标记 skipArchive，避免重复入档 / 向量库膨胀。
           ref: refTag ?? data,
-          description: description || undefined,
           skipArchive: via === 'history_ref',
         };
         const outgoing: OutgoingMessage = {
@@ -227,10 +230,7 @@ export function apply(ctx: Context): void {
         };
         ctx.emit('outbound:message', outgoing);
 
-        return JSON.stringify({
-          ok: true,
-          sent: { kind, via, ref: refTag, description: description || null },
-        });
+        return JSON.stringify({ ok: true, sent: { kind, via, ref: refTag } });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }
@@ -244,36 +244,51 @@ export function apply(ctx: Context): void {
   // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
   // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
   // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过 history_ref 重发。
-  ctx.on('outbound:message', async msg => {
+  ctx.on('outbound:message', msg => {
     if (msg.source !== 'agent' || !msg.attachments?.length) return;
     const archive = ctx.getService<MessageArchiveService>('message-archive');
     if (!archive?.saveMessage) return;
     for (const att of msg.attachments) {
       if (att.skipArchive) continue;
       if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') continue;
-      await archiveOutboundAttachment(ctx, msg.sessionId, att.ref ?? att.data, att.description ?? '', att.kind);
+      // 用稳定 ref（生产者声明）而非 att.data：避免 onebot 等适配器落盘后改写 data。
+      const ref = att.ref ?? att.data;
+      const kind = att.kind;
+      const carried = att.description ?? '';
+      // 后台异步：监听器同步返回，避免阻塞出站事件链（emit 串行 await，阻塞会拖慢 onebot/webui 发送）。
+      // 描述用宽松超时在背景补齐，让档案 [图片: desc | ref] 能被 memory_recall 命中。
+      void (async () => {
+        let desc = carried;
+        if (!desc && (kind === 'image' || kind === 'video') && /^https?:\/\//i.test(ref)) {
+          desc = await safeDescribeMedia(ctx, kind, ref, ARCHIVE_DESCRIBE_TIMEOUT_MS);
+        }
+        await archiveOutboundAttachment(ctx, msg.sessionId, ref, desc, kind);
+      })();
     }
   });
 }
 
 /** 按 kind 调用对应的 media 描述能力，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribeMedia(ctx: Context, kind: MediaKind, data: string): Promise<string> {
-  if (kind === 'image') return safeDescribe(ctx, data);
+async function safeDescribeMedia(
+  ctx: Context,
+  kind: MediaKind,
+  data: string,
+  timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS,
+): Promise<string> {
+  if (kind === 'image') return safeDescribe(ctx, data, timeoutMs);
   if (kind === 'video') return safeDescribeVideo(ctx, data);
   // audio 暂无描述能力
   return '';
 }
 
 /** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribe(ctx: Context, imageData: string): Promise<string> {
+async function safeDescribe(ctx: Context, imageData: string, timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS): Promise<string> {
   const media = ctx.getService<MediaService>('media');
   if (!media?.describeImage) return '';
   try {
     const desc = await Promise.race([
       media.describeImage(imageData),
-      new Promise<string>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('vision 超时')), DESCRIBE_TIMEOUT_MS),
-      ),
+      new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error('vision 超时')), timeoutMs)),
     ]);
     return (desc ?? '').trim();
   } catch (err) {
