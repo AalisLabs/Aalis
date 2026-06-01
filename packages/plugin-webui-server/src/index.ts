@@ -874,21 +874,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // ---------- 斜杠命令处理 (通过指令注册表) ----------
-
-  async function handleCommand(ctx: Context, input: string, sessionId: string): Promise<string | undefined> {
-    const parsed = ctx.getService<CommandService>('commands')?.parseCommand(input);
-    if (!parsed) return undefined;
-
-    return ctx.getService<CommandService>('commands')!.execute(parsed.name, {
-      sessionId,
-      platform: 'webui',
-      userId: 'console',
-      args: parsed.args,
-      raw: parsed.raw,
-    });
-  }
-
   // ---------- 高危操作交互式确认（内联对话式） ----------
 
   const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
@@ -1068,19 +1053,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           return;
         }
 
-        // 指令处理
-        const cmdResult = await handleCommand(ctx, trimmed, sessionId);
-        if (cmdResult !== undefined) {
-          const reply: WSOutgoing = {
-            type: 'message',
-            content: cmdResult,
-            sessionId,
-          };
-          ws.send(JSON.stringify(reply));
-          return;
-        }
-
-        // 客户端只通过 attachments 发送多模态内容
+        // 指令解析已统一到全局 inbound:command 相位（plugin-commands 注册）。
+        // 适配器不再内联解析命令——未注册的命令会被该相位放行为普通消息进入
+        // agent，命中的命令由该相位执行并经 outbound:message 回送，与 onebot
+        // 平台行为完全一致。客户端只通过 attachments 发送多模态内容。
         await ctx.emit('inbound:message', {
           content: trimmed,
           sessionId,
