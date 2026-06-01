@@ -210,7 +210,15 @@ export function apply(ctx: Context): void {
           description = await safeDescribeMedia(ctx, kind, data);
         }
 
-        const attachment: MessageAttachment = { kind, data };
+        const attachment: MessageAttachment = {
+          kind,
+          data,
+          // 归档承载：ref/description 随事件携带，由全局出站归档统一入档（见 apply 内 outbound:message 监听）。
+          // history_ref 重发标记 skipArchive，避免重复入档 / 向量库膨胀。
+          ref: refTag ?? data,
+          description: description || undefined,
+          skipArchive: via === 'history_ref',
+        };
         const outgoing: OutgoingMessage = {
           sessionId: callCtx.sessionId,
           content: '',
@@ -218,13 +226,6 @@ export function apply(ctx: Context): void {
           source: 'agent',
         };
         ctx.emit('outbound:message', outgoing);
-
-        // 入档：assistant 角色，content 用统一的 [类型: desc | ref:xxx] 格式；
-        // plugin-memory-vector 会自动 embed 此条，未来 memory_recall 能召回。
-        // history_ref 跳过入档（同一媒体重发，避免向量库膨胀）。
-        if (via !== 'history_ref') {
-          await archiveOutboundAttachment(ctx, callCtx.sessionId, refTag ?? data, description, kind);
-        }
 
         return JSON.stringify({
           ok: true,
@@ -237,6 +238,22 @@ export function apply(ctx: Context): void {
   });
 
   ctx.logger.info('[image-sender] 工具 send_attachment / preview_image 已注册');
+
+  // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
+  // 监听唯一出站汇聚点 outbound:message，对所有 agent 出站附件统一入档，
+  // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
+  // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
+  // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过 history_ref 重发。
+  ctx.on('outbound:message', async msg => {
+    if (msg.source !== 'agent' || !msg.attachments?.length) return;
+    const archive = ctx.getService<MessageArchiveService>('message-archive');
+    if (!archive?.saveMessage) return;
+    for (const att of msg.attachments) {
+      if (att.skipArchive) continue;
+      if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') continue;
+      await archiveOutboundAttachment(ctx, msg.sessionId, att.ref ?? att.data, att.description ?? '', att.kind);
+    }
+  });
 }
 
 /** 按 kind 调用对应的 media 描述能力，超时或失败返回空串（不阻塞发送）。 */

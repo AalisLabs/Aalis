@@ -141,6 +141,21 @@ export interface MessageAttachment {
   byteSize?: number;
   /** 时长秒（仅音视频，如已知） */
   durationSec?: number;
+  /**
+   * 出站附件：文本描述（vision/asr 结果）。由生产者（如 send_attachment）填充，
+   * 供全局出站归档写入 `[类型: desc | ref:xxx]` 标记，让 memory_recall 能命中。
+   */
+  description?: string;
+  /**
+   * 出站附件：稳定引用标识（http(s) url / storage uri）。用于出站归档与历史回放；
+   * 缺省时全局归档回退用 data。与平台落盘后改写的 data 解耦，避免归档到临时/不可访问路径。
+   */
+  ref?: string;
+  /**
+   * 出站附件：跳过全局归档。用于 history_ref 重发等场景（同一媒体已在档，
+   * 避免向量库膨胀与重复入档）。缺省 false。
+   */
+  skipArchive?: boolean;
 }
 
 export interface IncomingMessage {
