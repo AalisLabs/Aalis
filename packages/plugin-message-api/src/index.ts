@@ -307,11 +307,14 @@ export type _MessageRef = Message;
  * - `EventMarker`：纯 UI/控制标记（如对话压缩分隔条）。LLM 出口与抽取均应排除。
  * - `CrossSessionDelegation`：跨会话委派——另一 agent 通过工具向本会话派发任务。
  * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
+ * - `OutboundAudio`：assistant 已发出的语音占位。
+ * - `OutboundVideo`：assistant 已发出的视频占位。
  */
 export const WellKnownKinds = {
   EventMarker: 'event-marker',
   CrossSessionDelegation: 'cross-session-delegation',
   OutboundImage: 'outbound-image',
+  OutboundAudio: 'outbound-audio',
   OutboundVideo: 'outbound-video',
 } as const;
 

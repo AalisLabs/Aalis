@@ -188,7 +188,7 @@ interface WSOutgoing {
         endTime?: number;
       }
   >;
-  /** assistant 消息附件（agent 通过 send_image 等工具产生的图片/媒体） */
+  /** assistant 消息附件（agent 通过 send_attachment 等工具产生的图片/媒体） */
   attachments?: Array<{
     kind: 'image' | 'audio' | 'video' | 'file';
     data: string;
@@ -1232,7 +1232,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (!sockets) return;
 
     // 仅信任 msg 本身携带的 segments。不要回退到 buf?.segments：
-    // 工具循环中 agent tool（如 send_image / commands 回复）会直接 emit 'outbound:message'，
+    // 工具循环中 agent tool（如 send_attachment / commands 回复）会直接 emit 'outbound:message'，
     // 但 streamBuffers[sid].segments 累积的是当前回合的完整时间线（含本工具之前的 reasoning/tool_call）。
     // 若回退使用 buf，会把整条时间线"借尸还魂"挂到工具消息上 → 前端 REPLACE 当前 assistant 后，
     // 真正的 agent final outbound:message 再到达时被识别为新消息 APPEND，导致整条时间线渲染两遍。
