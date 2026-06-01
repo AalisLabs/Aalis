@@ -1,12 +1,13 @@
 // ============================================================
-// @aalis/plugin-image-sender — 让 agent 主动发图
+// @aalis/plugin-image-sender — 让 agent 主动发送图片/语音/视频
 //
 // 工具：
-//   1. preview_image —— 在选图前用 vision 看清候选图（搜索结果标题常误导）
-//   2. send_image    —— 真正把图发出去；同步描述并入档，让"AI 之前发过的图"
-//                       能被 memory_recall 召回
+//   1. preview_image    —— 在选图前用 vision 看清候选图（搜索结果标题常误导）
+//   2. send_attachment  —— 统一的出站附件接口：把 image/audio/video 发出去；
+//                          同步描述并入档，让"AI 之前发过的图/视频"能被
+//                          memory_recall 召回
 //
-// send_image 来源：url / file_path / history_ref
+// send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
@@ -31,6 +32,9 @@ export const displayName = '图片发送';
 export const subsystem = 'tools';
 export const inject = { optional: ['memory', 'media', 'message-archive'] };
 
+/** 可发送的附件类型。 */
+type MediaKind = 'image' | 'audio' | 'video';
+
 /** 单张图描述同步等待上限。超时不阻塞发送，只是 description 字段为空。 */
 const DESCRIBE_TIMEOUT_MS = 8_000;
 /** 视频描述同步等待上限（视频需抽帧+ASR，耗时远高于图片）。 */
@@ -42,28 +46,19 @@ export function apply(ctx: Context): void {
   const tools = useToolService(ctx);
   const storage = createStorageGateway(ctx);
 
-  // 尝试将任意输入 路径 解析为 发送可用的描述。
-  // - storage URI 形式（含 ':/'）→ stat 验证 + resolveLocalPath（如可用）转 file://
-  // - file://开头 → 原样传递
-  // - 其它本地路径 → 拼为 file:// （仅作为后续 adapter 提示，不做存在性预检）
-  async function resolveImagePath(
+  // 把 storage URI（含 ':/'）解析为发送可用的数据串：
+  // - stat 验证存在性
+  // - 可解析本地路径时转 file://（供 daemon 直链），否则保留原 URI
+  async function resolveStorageUri(
     input: string,
-  ): Promise<{ ok: true; data: string; abs: string } | { ok: false; error: string }> {
-    if (input.startsWith('file://')) return { ok: true, data: input, abs: input.slice(7) };
-    if (input.includes(':/')) {
-      try {
-        await storage.stat(input);
-      } catch {
-        return { ok: false, error: `存储资源不存在: ${input}` };
-      }
-      const local = await tryResolveLocal(storage, input);
-      if (local) return { ok: true, data: `file://${local}`, abs: local };
-      // 无本地路径退路时直接使用 URI。
-      return { ok: true, data: input, abs: input };
+  ): Promise<{ ok: true; data: string; ref: string } | { ok: false; error: string }> {
+    try {
+      await storage.stat(input);
+    } catch {
+      return { ok: false, error: `存储资源不存在: ${input}` };
     }
-    // 裸路径：交由下游处理，不做 fs 检查。
-    const file = input.startsWith('/') ? input : input;
-    return { ok: true, data: `file://${file}`, abs: file };
+    const local = await tryResolveLocal(storage, input);
+    return { ok: true, data: local ? `file://${local}` : input, ref: input };
   }
 
   // ── preview_image ─────────────────────────────────────────────────────────
@@ -75,7 +70,7 @@ export function apply(ctx: Context): void {
         description:
           '在真正发送前，先让自己"看见"候选图片的实际内容（vision 模型识别）。' +
           '适用场景：search_images 返回了若干 URL，但标题常常误导/含糊，' +
-          '你想从中挑出最符合语境的一张再 send_image 发出。' +
+          '你想从中挑出最符合语境的一张再 send_attachment 发出。' +
           '本工具不发送任何消息，只返回每张图的描述。',
         parameters: {
           type: 'object',
@@ -134,77 +129,88 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // ── send_image ────────────────────────────────────────────────────────────
+  // ── send_attachment ───────────────────────────────────────────────────────
   tools.register({
     definition: {
       type: 'function',
       function: {
-        name: 'send_image',
+        name: 'send_attachment',
         description:
-          '主动向当前会话发送一张图片（仅图片，不带文字）。可以从 URL、本地文件、或历史消息中已识别的图片引用发出。\n' +
-          '使用场景：用户请求"发个表情包"、"发刚才那张图给我"、"在网上找张猫的图"等。\n' +
-          '建议流程：search_images 拿到候选 URL → preview_image 看清内容 → send_image 选其一发出。\n' +
-          '若想"重发自己之前发过的图"，先用 memory_recall 按描述检索历史，' +
-          '从命中消息里找到 [图片: ... | ref:xxx]，把 xxx 传给 history_ref。\n' +
+          '主动向当前会话发送一个附件（图片 / 语音 / 视频，仅附件本身，不带文字）。\n' +
+          '使用场景：用户请求"发个表情包"、"发刚才那张图/那段语音给我"、"在网上找张猫的图"等。\n' +
+          'kind 必填，指定附件类型；来源三选一：\n' +
+          '  - url：网络资源 URL（http/https）。\n' +
+          '  - storage_uri：存储库内的资源 URI（如 data:/images/xxx）。\n' +
+          '  - history_ref：历史消息中已识别的引用（[图片/语音/视频: ... | ref:xxx] 中 xxx 部分），\n' +
+          '    用于"把之前那条媒体重发/转发回去"。\n' +
+          '建议流程（图片）：search_images 拿候选 URL → preview_image 看清内容 → send_attachment 选其一发出。\n' +
+          '若想重发自己之前发过的媒体，先用 memory_recall 按描述检索历史，从命中消息里找到 ref 再传 history_ref。\n' +
           '注意：本工具不发送任何文字。如需配文，请把文字写在你本轮最终输出的 message 字段里——' +
-          '不要在 message 中重复图片描述，也不要试图把文字混进图片里。',
+          '不要在 message 中重复媒体描述。',
         parameters: {
           type: 'object',
           properties: {
-            url: { type: 'string', description: '网络图片 URL（http/https）。' },
-            file_path: { type: 'string', description: '本地图片路径（绝对或相对工程根）。' },
+            kind: {
+              type: 'string',
+              enum: ['image', 'audio', 'video'],
+              description: '附件类型：image=图片，audio=语音，video=视频。',
+            },
+            url: { type: 'string', description: '网络资源 URL（http/https）。' },
+            storage_uri: { type: 'string', description: '存储库内资源 URI（如 data:/images/xxx）。' },
             history_ref: {
               type: 'string',
-              description: '历史消息中的图片引用路径（[图片 | ref:xxx] 中 xxx 部分）。',
+              description: '历史消息中的引用路径（[... | ref:xxx] 中 xxx 部分）。',
             },
           },
+          required: ['kind'],
         },
       },
     },
     handler: async (args, callCtx) => {
+      const kind = (args.kind as string)?.trim() as MediaKind;
+      if (kind !== 'image' && kind !== 'audio' && kind !== 'video') {
+        return JSON.stringify({ error: 'kind 必须是 image / audio / video 之一' });
+      }
       const url = (args.url as string)?.trim();
-      const filePath = (args.file_path as string)?.trim();
+      const storageUri = (args.storage_uri as string)?.trim();
       const historyRef = (args.history_ref as string)?.trim();
 
-      let imageData: string | null = null;
+      let data: string | null = null;
       let refTag: string | null = null;
-      let via: 'url' | 'file_path' | 'history_ref' = 'url';
+      let via: 'url' | 'storage_uri' | 'history_ref' = 'url';
       try {
         if (url) {
           if (!url.startsWith('http://') && !url.startsWith('https://')) {
             return JSON.stringify({ error: 'url 必须是 http/https 开头' });
           }
-          imageData = url;
+          data = url;
           refTag = url;
           via = 'url';
-        } else if (filePath) {
-          const resolved = await resolveImagePath(filePath);
+        } else if (storageUri) {
+          const resolved = await resolveStorageUri(storageUri);
           if (!resolved.ok) return JSON.stringify({ error: resolved.error });
-          imageData = resolved.data;
-          refTag = resolved.abs;
-          via = 'file_path';
+          data = resolved.data;
+          refTag = resolved.ref;
+          via = 'storage_uri';
         } else if (historyRef) {
           const found = await resolveHistoryRef(ctx, storage, callCtx.sessionId, historyRef);
           if (!found) return JSON.stringify({ error: `未在历史中找到引用: ${historyRef}` });
-          imageData = found;
+          data = found;
           refTag = historyRef.replace(/^ref:/, '').trim();
           via = 'history_ref';
         } else {
-          return JSON.stringify({ error: '必须提供 url / file_path / history_ref 之一' });
+          return JSON.stringify({ error: '必须提供 url / storage_uri / history_ref 之一' });
         }
 
         // 同步描述：让 LLM 在 tool result 里立刻看到自己发了什么；
         // 也让档案里的标记格式（[图片: desc | ref:xxx]）能被后续 memory_recall 命中。
-        // history_ref 复用已有描述（历史里已经有），跳过二次识别。
+        // history_ref 复用历史已有描述，跳过二次识别；audio 暂无描述能力。
         let description = '';
         if (via !== 'history_ref') {
-          description = await safeDescribe(ctx, imageData);
+          description = await safeDescribeMedia(ctx, kind, data);
         }
 
-        const attachment: MessageAttachment = {
-          kind: 'image',
-          data: imageData,
-        };
+        const attachment: MessageAttachment = { kind, data };
         const outgoing: OutgoingMessage = {
           sessionId: callCtx.sessionId,
           content: '',
@@ -213,16 +219,16 @@ export function apply(ctx: Context): void {
         };
         ctx.emit('outbound:message', outgoing);
 
-        // 入档：assistant 角色，content 用统一的 [图片: desc | ref:xxx] 格式；
+        // 入档：assistant 角色，content 用统一的 [类型: desc | ref:xxx] 格式；
         // plugin-memory-vector 会自动 embed 此条，未来 memory_recall 能召回。
-        // history_ref 跳过入档（同一张图重发，避免向量库膨胀）。
+        // history_ref 跳过入档（同一媒体重发，避免向量库膨胀）。
         if (via !== 'history_ref') {
-          await archiveOutboundImage(ctx, callCtx.sessionId, refTag, description, imageData);
+          await archiveOutboundAttachment(ctx, callCtx.sessionId, refTag ?? data, description, kind);
         }
 
         return JSON.stringify({
           ok: true,
-          sent: { kind: 'image', via, ref: refTag, description: description || null },
+          sent: { kind, via, ref: refTag, description: description || null },
         });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -230,58 +236,15 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // ── send_video ────────────────────────────────────────────────────────────
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'send_video',
-        description:
-          '主动向当前会话发送一个视频（仅视频，不带文字）。\n' +
-          '注意：仅支持 http/https URL，不支持本地文件（出于安全考虑，避免泄漏本地路径内容）。\n' +
-          '建议先用 preview_image 或其他手段确认视频内容后再发送。\n' +
-          '视频描述需要抽帧分析，耗时较长（最多 30 秒），发送动作不会等待描述完成。',
-        parameters: {
-          type: 'object',
-          properties: {
-            url: { type: 'string', description: '视频 URL（http/https）。' },
-          },
-          required: ['url'],
-        },
-      },
-    },
-    handler: async (args, callCtx) => {
-      const url = (args.url as string)?.trim();
-      if (!url) return JSON.stringify({ error: '必须提供 url' });
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        return JSON.stringify({ error: 'url 必须是 http/https 开头' });
-      }
+  ctx.logger.info('[image-sender] 工具 send_attachment / preview_image 已注册');
+}
 
-      try {
-        const attachment: MessageAttachment = { kind: 'video', data: url };
-        const outgoing: OutgoingMessage = {
-          sessionId: callCtx.sessionId,
-          content: '',
-          attachments: [attachment],
-          source: 'agent',
-        };
-        ctx.emit('outbound:message', outgoing);
-
-        // 视频描述异步触发，超时不阻塞发送结果
-        const description = await safeDescribeVideo(ctx, url);
-        await archiveOutboundAttachment(ctx, callCtx.sessionId, url, description, 'video');
-
-        return JSON.stringify({
-          ok: true,
-          sent: { kind: 'video', url, description: description || null },
-        });
-      } catch (err) {
-        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
-      }
-    },
-  });
-
-  ctx.logger.info('[image-sender] 工具 send_image / preview_image / send_video 已注册');
+/** 按 kind 调用对应的 media 描述能力，超时或失败返回空串（不阻塞发送）。 */
+async function safeDescribeMedia(ctx: Context, kind: MediaKind, data: string): Promise<string> {
+  if (kind === 'image') return safeDescribe(ctx, data);
+  if (kind === 'video') return safeDescribeVideo(ctx, data);
+  // audio 暂无描述能力
+  return '';
 }
 
 /** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
@@ -320,29 +283,25 @@ async function safeDescribeVideo(ctx: Context, videoUrl: string): Promise<string
   }
 }
 
-/** 把 AI 自己发出的图入档为一条 assistant 消息，让 memory_recall 能找到。 */
-async function archiveOutboundImage(
-  ctx: Context,
-  sessionId: string,
-  ref: string | null,
-  description: string,
-  imageData: string,
-): Promise<void> {
-  return archiveOutboundAttachment(ctx, sessionId, ref ?? imageData, description, 'image');
-}
-
-/** 把 AI 自己发出的图/视频入档为一条 assistant 消息，让 memory_recall 能找到。 */
+/** 把 AI 自己发出的图/语音/视频入档为一条 assistant 消息，让 memory_recall 能找到。 */
 async function archiveOutboundAttachment(
   ctx: Context,
   sessionId: string,
   ref: string,
   description: string,
-  kind: 'image' | 'video',
+  kind: MediaKind,
 ): Promise<void> {
   const archive = ctx.getService<MessageArchiveService>('message-archive');
   if (!archive?.saveMessage) return;
-  const attachKind = kind === 'video' ? AttachmentRefKind.Video : AttachmentRefKind.Image;
-  const msgKind = kind === 'video' ? WellKnownKinds.OutboundVideo : WellKnownKinds.OutboundImage;
+  const attachKind =
+    kind === 'video' ? AttachmentRefKind.Video : kind === 'audio' ? AttachmentRefKind.Audio : AttachmentRefKind.Image;
+  const msgKind =
+    kind === 'video'
+      ? WellKnownKinds.OutboundVideo
+      : kind === 'audio'
+        ? WellKnownKinds.OutboundAudio
+        : WellKnownKinds.OutboundImage;
+  const label = kind === 'video' ? '视频' : kind === 'audio' ? '语音' : '图片';
   const tag = formatAttachmentRef({ kind: attachKind, desc: description, ref });
   const message: Message = {
     role: 'assistant',
@@ -353,7 +312,7 @@ async function archiveOutboundAttachment(
   };
   try {
     await archive.saveMessage(sessionId, message, {
-      debugLabel: `[image-sender] 已入档发送的${kind === 'video' ? '视频' : '图片'}`,
+      debugLabel: `[image-sender] 已入档发送的${label}`,
     });
   } catch (err) {
     ctx.logger.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
