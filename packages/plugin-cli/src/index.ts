@@ -2,7 +2,6 @@ import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
 import type { AppService, ConfigSchema, Context, LogEntry } from '@aalis/core';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
-import type { CommandService } from '@aalis/plugin-commands-api';
 import type { StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
@@ -341,14 +340,6 @@ class CliTui {
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
 
-  private appendSystemLines(content: string): void {
-    const firstHead = this.formatHead(chalk.yellow('◆ System'));
-    const contHead = this.formatCont();
-    for (const [i, line] of content.split('\n').entries()) {
-      this.chatLines.push((i === 0 ? firstHead : contHead) + line);
-    }
-  }
-
   /** SGR 鼠标事件：\x1b[<button;col;row(M|m)。仅处理滚轮（button 64=up, 65=down，加 4/8/16 表示 Shift/Alt/Ctrl）；
    *  其它按键 (0/1/2 = 左/中/右) 一律丢弃，避免抢走原生选择/复制。 */
   private handleData = (chunk: Buffer | string): void => {
@@ -562,22 +553,10 @@ class CliTui {
     }
     this.trimChat();
 
-    const parsed = this.ctx.getService<CommandService>('commands')?.parseCommand(text);
-    if (parsed) {
-      const result = await this.ctx.getService<CommandService>('commands')!.execute(parsed.name, {
-        sessionId: this.sessionId,
-        platform: 'cli',
-        userId: 'console',
-        args: parsed.args,
-        raw: parsed.raw,
-      });
-      if (result) this.appendSystemLines(result);
-      this.trimChat();
-      this.queueRender();
-      if (parsed.name === 'shutdown' || parsed.name === 'restart') this.stop();
-      return;
-    }
-
+    // 指令解析已统一到全局 inbound:command 相位（plugin-commands）。
+    // 适配器不再内联解析：未注册命令被放行为普通消息进入 agent，命中命令
+    // 由该相位执行并经 outbound:message 回送渲染到 TUI，与 onebot/webui 一致。
+    // shutdown/restart 的 TUI 清理由 ctx.onDispose(() => this.stop()) 兜底。
     await this.ctx.emit('inbound:message', { content: text, sessionId: this.sessionId, platform: 'cli' });
   }
 
