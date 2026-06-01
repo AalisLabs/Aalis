@@ -377,7 +377,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
-  // 图片搜索工具：返回候选图片 URL 列表，配合 send_image 使用
+  // 图片搜索工具：返回候选图片 URL 列表，配合 send_attachment 使用
   useToolService(ctx).register({
     groups: ['search'],
     definition: {
@@ -385,8 +385,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       function: {
         name: 'search_images',
         description:
-          '搜索互联网图片，返回候选图片 URL 列表。常与 send_image 配合：' +
-          '先 search_images 拿候选 → 评估缩略图 → 调 send_image(url) 发出。' +
+          '搜索互联网图片，返回候选图片 URL 列表。常与 send_attachment 配合：' +
+          '先 search_images 拿候选 → 评估缩略图 → 调 send_attachment(kind="image", url) 发出。' +
           '适用场景：用户要求"发个 xxx 表情包"、"找张 xxx 的图发我"。',
         parameters: {
           type: 'object',

@@ -104,8 +104,10 @@ async function attachmentToOneBotFile(
 }
 
 /**
- * 把 attachments[] 渲染为可拼接到 content 的 `<image url="..."/>` 标记串。
- * - 仅渲染 image / video（其余 kind 由后续扩展或忽略）
+ * 把 attachments[] 渲染为可拼接到 content 的标记串。
+ * - image / audio：base64 内联（走 WS 隧道，Docker 部署最稳）→ `<image>` / `<record>`
+ * - video：通常过大，不内联，http/file URL 透传 → `<video>`
+ * - 其余 kind（file 等）暂未支持，debug 后跳过
  * - 失败的附件 warn 后跳过
  */
 export async function renderAttachmentsAsContentMarkers(
@@ -116,8 +118,8 @@ export async function renderAttachmentsAsContentMarkers(
   if (!attachments?.length) return '';
   const parts: string[] = [];
   for (const att of attachments) {
-    if (att.kind !== 'image' && att.kind !== 'video') {
-      logger?.debug?.(`OneBot 跳过 ${att.kind} 附件（暂未支持非图像/视频结构化发送）`);
+    if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') {
+      logger?.debug?.(`OneBot 跳过 ${att.kind} 附件（暂未支持该结构化发送）`);
       continue;
     }
 
@@ -144,6 +146,17 @@ export async function renderAttachmentsAsContentMarkers(
         videoUri = `file://${data}`;
       }
       parts.push(`<video url="${videoUri}"/>`);
+      continue;
+    }
+
+    if (att.kind === 'audio') {
+      // 语音文件通常较小，与 image 一致走 base64 内联。
+      try {
+        const uri = await attachmentToOneBotFile(att, storage, logger);
+        parts.push(`<record url="${uri}"/>`);
+      } catch (err) {
+        logger?.warn?.(`OneBot 语音附件物化失败: ${err instanceof Error ? err.message : err}`);
+      }
       continue;
     }
 

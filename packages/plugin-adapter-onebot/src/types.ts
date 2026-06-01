@@ -234,7 +234,7 @@ export function segmentsToText(
 
 /** 抽象消息段（协议无关） */
 export interface ParsedSegment {
-  type: 'text' | 'at' | 'face' | 'image' | 'reply' | 'video';
+  type: 'text' | 'at' | 'face' | 'image' | 'audio' | 'reply' | 'video';
   data: Record<string, unknown>;
 }
 
@@ -374,14 +374,15 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
  * - `<at>QQ</at>` / `<at self>QQ</at>` → @提及（旧格式/无昵称兼容）
  * - `<face id="N"/>` → QQ 表情
  * - `<image url="..."/>` → 图片
+ * - `<record url="..."/>` → 语音
  * - `<video url="..."/>` → 视频
  * - `<reply id="..."/>` → 引用回复
  */
 export function parseContentToSegments(content: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
-  // 匹配新旧两种 at 格式 + face/image/video/reply
+  // 匹配新旧两种 at 格式 + face/image/record/video/reply
   const regex =
-    /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>|<video\s+url=["']([^"']*)["']\s*\/>/g;
+    /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>|<video\s+url=["']([^"']*)["']\s*\/>|<record\s+url=["']([^"']*)["']\s*\/>/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null = regex.exec(content);
@@ -402,6 +403,8 @@ export function parseContentToSegments(content: string): ParsedSegment[] {
       segments.push({ type: 'reply', data: { id: match[5] } });
     } else if (match[6] !== undefined) {
       segments.push({ type: 'video', data: { url: match[6] } });
+    } else if (match[7] !== undefined) {
+      segments.push({ type: 'audio', data: { url: match[7] } });
     }
     lastIndex = match.index + match[0].length;
     match = regex.exec(content);
@@ -431,6 +434,9 @@ export function toV11Segments(segments: ParsedSegment[]): OneBotMessageSegment[]
         break;
       case 'image':
         result.push({ type: 'image', data: { file: seg.data.url } });
+        break;
+      case 'audio':
+        result.push({ type: 'record', data: { file: seg.data.url } });
         break;
       case 'video':
         result.push({ type: 'video', data: { file: seg.data.url } });
@@ -464,6 +470,9 @@ export function toV12Segments(segments: ParsedSegment[]): OneBotMessageSegment[]
         break;
       case 'image':
         result.push({ type: 'image', data: { file_id: String(seg.data.url) } });
+        break;
+      case 'audio':
+        result.push({ type: 'voice', data: { file_id: String(seg.data.url) } });
         break;
       case 'video':
         result.push({ type: 'video', data: { file_id: String(seg.data.url) } });
