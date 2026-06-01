@@ -429,10 +429,3 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
 
 // 重新导出配置类型，方便其他插件使用
 export type { FlowControlConfig };
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'flow-control': import('./types.js').FlowControlService;
-  }
-}
