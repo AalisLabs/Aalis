@@ -1,5 +1,17 @@
-/** 当前活跃会话 ID（可动态切换） */
-let _activeSessionId = '__new_chat__';
+/** 当前活跃会话 ID（可动态切换）。
+ *  持久化到 localStorage，使每个浏览器/客户端各自记住自己的会话，刷新后保持，
+ *  且与其他客户端互不干扰（多人隔离）。'__new_chat__' 表示未选中任何会话。 */
+const SESSION_STORAGE_KEY = 'aalis:activeSessionId';
+
+function loadInitialSessionId(): string {
+  try {
+    return window.localStorage.getItem(SESSION_STORAGE_KEY) || '__new_chat__';
+  } catch {
+    return '__new_chat__';
+  }
+}
+
+let _activeSessionId = loadInitialSessionId();
 
 /** 会话切换监听器 */
 const _sessionListeners = new Set<(id: string) => void>();
@@ -11,6 +23,11 @@ export function getSessionId(): string {
 export function setSessionId(id: string): void {
   if (_activeSessionId === id) return;
   _activeSessionId = id;
+  try {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, id);
+  } catch {
+    /* quota / 隐私模式：退化为内存态 */
+  }
   for (const fn of _sessionListeners) fn(id);
 }
 
