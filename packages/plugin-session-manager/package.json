@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
     "@aalis/plugin-persona-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",

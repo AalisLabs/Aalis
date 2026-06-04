@@ -1281,9 +1281,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       }
     } else {
-      // done：清空所有 tool 进度
+      // done：回合终态收口。无论本回合是正常完成、空回复、还是被用户中止，
+      // agent 都会发一次 outbound:stream{done:true}（见 plugin-agent 的成功/中止/未处理三条路径）。
+      // 这里必须把 generating 翻 false 并安排清理，否则刷新后 subscribe_session 仍读到
+      // generating=true 的残留 buffer → 回 stream_resume{done:false} → 前端永远显示"可停止"。
+      // （正常路径的 outbound:message 也会做同样的事；此处补全保证中止/静默路径对称。）
       const buf = streamBuffers.get(chunk.sessionId);
-      if (buf) buf.toolCallsProgress.clear();
+      if (buf) {
+        buf.toolCallsProgress.clear();
+        buf.generating = false;
+        setTimeout(() => streamBuffers.delete(chunk.sessionId), 10_000);
+      }
     }
     const sockets = sessions.get(chunk.sessionId);
     if (!sockets) return;
