@@ -484,7 +484,24 @@ export function App() {
     }
   }, []);
 
-  const { send, sendRaw, connected } = useWebSocket(handleIncoming, handleStream, handleLog, handleToolCall, handleStateChanged, handleRestarting, handleReload, session.handleSessionSwitched, handleSessionsChanged, handleTodoUpdated, handleStreamResume, handleConfirm, handleTokenUsage, handleCompressing, session.handleHistoryChanged, handleToolCallProgress, handleToolCallProgressClear);
+  const { send, sendRaw, connected } = useWebSocket({
+    onMessage: handleIncoming,
+    onStream: handleStream,
+    onLog: handleLog,
+    onToolCall: handleToolCall,
+    onStateChanged: handleStateChanged,
+    onRestarting: handleRestarting,
+    onReload: handleReload,
+    onSessionsChanged: handleSessionsChanged,
+    onTodoUpdated: handleTodoUpdated,
+    onStreamResume: handleStreamResume,
+    onConfirm: handleConfirm,
+    onTokenUsage: handleTokenUsage,
+    onCompressing: handleCompressing,
+    onHistoryChanged: session.handleHistoryChanged,
+    onToolCallProgress: handleToolCallProgress,
+    onToolCallProgressClear: handleToolCallProgressClear,
+  });
 
   /** 手动触发压缩 */
   const handleCompress = useCallback(() => {

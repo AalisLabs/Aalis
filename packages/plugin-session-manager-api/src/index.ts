@@ -125,12 +125,10 @@ export interface SessionManagerService {
   /** 删除会话（同时清理其消息历史） */
   deleteSession(id: string): Promise<void>;
 
-  // ---- 活跃会话（WebUI） ----
+  // ---- 活跃会话 ----
 
-  /** 获取当前活跃会话 ID */
+  /** 获取系统默认会话 ID（持久化恢复 / isActive 标记用；webui 各客户端的活跃会话由前端自持） */
   getActiveSessionId(): string;
-  /** 切换活跃会话 */
-  setActiveSessionId(id: string): void;
 
   // ---- 树形操作 ----
 
@@ -218,7 +216,6 @@ declare module '@aalis/core' {
     'session:updated': [session: SessionInfo];
     'session:completed': [session: SessionInfo];
     'session:deleted': [sessionId: string];
-    'session:switched': [sessionId: string];
   }
 }
 
