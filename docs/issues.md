@@ -7,7 +7,7 @@
 4. 当前PDF解析器有问题，对于科学文档（LATEX转译）似乎有识别问题，考虑更新识别库
 5. 当前webui多人使用时，会因为其他人新开会话/在别的会话聊天，而切换上一个人当前的会话窗口，或许做一下隔离？
 6. ~~通过左侧会话管理新建会话方式，会导致新建的会话都是永远的进行中，直到发生对话并完成；同时会话中途中断agent，也是永远的进行中~~ ✅ 已修复：同根因。①新建空会话初始状态由 `active`(进行中) 改为 `waiting`(等待中)；②agent 现在在中止/异常路径也发 `agent:turn:after`(outcome=aborted/error)，session-manager 新增该钩子的生命周期收口，把根会话从 `active` 收口为 `completed`（与 `outbound:message` 幂等互补），覆盖中止/静默两种无 outbound 的终态。附带修复 checkpoint 中止后回合不关闭的泄漏。
-7. 检查是否还有对存储的裸读取
+7. ~~检查是否还有对存储的裸读取~~ ✅ 已审查：所有 storage 托管数据（权限用户表/人设/调度任务/向量库/上传文件/token/todo/file 工具等）均已走 storage 网关，无不当裸读取。仅剩的直接 `fs` 读取均为合法豁免：bootstrap 配置加载(storage 插件尚未起)、运行时日志文件 `data/latest.log`、storage-local 后端自身、`readExternalFile` 显式外部逃生口、浏览器二进制探测、前端 dist 静态托管。附带收口：日志单行序列化契约(`formatLogLine`/`parseLogLine`)原本在 runtime/cli/webui-server **各抄一份**(file-logger 虽导出 `parseEntry` 但下游未复用，因 `src/runtime` 非可导入包)，现统一收口到 `@aalis/core`(纯函数零 I/O，与 LogHub 同层)，三处复用同一权威，杜绝格式漂移。
 
 - 新功能计划
 1. 考虑开始兴建 scoped/app 沙盒，为不同scope的webUI提供不同的权限等级与可见性/乃至引入登录界面，可以作为类似chatGPT/claude分发
