@@ -267,7 +267,6 @@ export interface SessionManager {
   /** 确保有活跃会话（无会话时自动新建），返回会话 ID */
   ensureSession: () => Promise<string>;
   switchSession: (newId: string) => void;
-  handleSessionSwitched: (sessionId: string) => void;
   loading: boolean;
   setLoading: React.Dispatch<React.SetStateAction<boolean>>;
   streamingRef: React.MutableRefObject<boolean>;
@@ -451,12 +450,6 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     refresh();
   }, [fetchAndSetMessages, refresh]);
 
-  const handleSessionSwitched = useCallback((sessionId: string) => {
-    if (sessionId !== activeIdRef.current) {
-      switchSession(sessionId);
-    }
-  }, [switchSession]);
-
   /** 处理服务端推送的 history_changed：当前会话历史已变化（如回滚整轮对话），重新拉取消息 */
   const handleHistoryChanged = useCallback((sessionId: string) => {
     if (sessionId !== activeIdRef.current) return;
@@ -498,7 +491,6 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     createSession,
     ensureSession,
     switchSession,
-    handleSessionSwitched,
     handleHistoryChanged,
     loading,
     setLoading,

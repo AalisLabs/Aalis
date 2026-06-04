@@ -24,39 +24,49 @@ export interface TokenUsageData {
   };
 }
 
-export function useWebSocket(
+/**
+ * WebSocket 消息回调集合。
+ *
+ * 用单一对象（而非一长串位置参数）传入，避免「漏传/错位某个回调」的脆弱性；
+ * 内部存入 ref，使底层连接只在挂载时建立一次，回调更新不会触发重连。
+ */
+interface WebSocketHandlers {
   onMessage: (
     content: string,
     reasoningContent?: string,
     segments?: ContentSegment[],
     attachments?: Array<{ kind: 'image' | 'audio' | 'video' | 'file'; data: string; mimeType?: string; name?: string }>,
     modelInfo?: { provider?: string; model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; elapsedMs?: number },
-  ) => void,
-  onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void,
-  onLog: (entry: LogEntry) => void,
-  onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void,
-  onStateChanged?: () => void,
-  onRestarting?: () => void,
-  onReload?: () => void,
-  onSessionSwitched?: (sessionId: string) => void,
-  onSessionsChanged?: () => void,
-  onTodoUpdated?: (items: unknown[]) => void,
+  ) => void;
+  onStream: (contentDelta?: string, reasoningDelta?: string, done?: boolean, toolLimitReached?: boolean) => void;
+  onLog: (entry: LogEntry) => void;
+  onToolCall: (toolName: string, toolArgs: Record<string, unknown>, toolPhase: 'start' | 'end', toolResult?: string) => void;
+  onStateChanged?: () => void;
+  onRestarting?: () => void;
+  onReload?: () => void;
+  onSessionsChanged?: () => void;
+  onTodoUpdated?: (items: unknown[]) => void;
   onStreamResume?: (
     content: string,
     reasoningContent: string,
     segments: ContentSegment[],
     done: boolean,
     toolCallsProgress?: Array<{ index: number; name: string; charsAccumulated: number; startedAt: number }>,
-  ) => void,
-  onConfirm?: (content: string) => void,
-  onTokenUsage?: (usage: TokenUsageData) => void,
-  onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void,
-  onHistoryChanged?: (sessionId: string) => void,
+  ) => void;
+  onConfirm?: (content: string) => void;
+  onTokenUsage?: (usage: TokenUsageData) => void;
+  onCompressing?: (sessionId: string, status: 'start' | 'done' | 'error') => void;
+  onHistoryChanged?: (sessionId: string) => void;
   /** 单条增量更新；done=true 时调用 onToolCallProgressClear */
-  onToolCallProgress?: (progress: { index: number; name: string; charsAccumulated: number }) => void,
+  onToolCallProgress?: (progress: { index: number; name: string; charsAccumulated: number }) => void;
   /** 清空所有生成中进度（stream done / 各类重置） */
-  onToolCallProgressClear?: () => void,
-) {
+  onToolCallProgressClear?: () => void;
+}
+
+export function useWebSocket(handlers: WebSocketHandlers) {
+  // 回调集合存入 ref：底层 WS 只在挂载时连接一次，回调引用变化不触发重连。
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   /** 当前已订阅的 sessionId */
@@ -90,44 +100,42 @@ export function useWebSocket(
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          const h = handlersRef.current;
           if (data.type === 'stream') {
-            onStream(data.contentDelta, data.reasoningDelta, data.done, data.toolLimitReached);
+            h.onStream(data.contentDelta, data.reasoningDelta, data.done, data.toolLimitReached);
             if (data.toolCallProgress) {
-              onToolCallProgress?.(data.toolCallProgress);
+              h.onToolCallProgress?.(data.toolCallProgress);
             }
             if (data.done) {
-              onToolCallProgressClear?.();
+              h.onToolCallProgressClear?.();
             }
           } else if (data.type === 'message' && (data.content || data.attachments?.length)) {
-            onMessage(data.content ?? '', data.reasoningContent, data.segments, data.attachments, data.modelInfo);
+            h.onMessage(data.content ?? '', data.reasoningContent, data.segments, data.attachments, data.modelInfo);
           } else if (data.type === 'tool_call' && data.toolName) {
-            onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
+            h.onToolCall(data.toolName, data.toolArgs ?? {}, data.toolPhase, data.toolResult);
           } else if (data.type === 'log' && data.log) {
-            onLog(data.log);
+            h.onLog(data.log);
           } else if (data.type === 'state_changed') {
-            onStateChanged?.();
+            h.onStateChanged?.();
           } else if (data.type === 'restarting') {
-            onRestarting?.();
+            h.onRestarting?.();
           } else if (data.type === 'reload') {
-            onReload?.();
-          } else if (data.type === 'session_switched') {
-            // 服务端广播的会话切换通知
-            onSessionSwitched?.(data.sessionId);
+            h.onReload?.();
           } else if (data.type === 'sessions_changed') {
             // 会话列表变更（创建/更新/删除/完成）
-            onSessionsChanged?.();
+            h.onSessionsChanged?.();
           } else if (data.type === 'todo_updated' && data.todoItems) {
-            onTodoUpdated?.(data.todoItems);
+            h.onTodoUpdated?.(data.todoItems);
           } else if (data.type === 'stream_resume') {
-            onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', data.segments ?? [], !!data.done, data.toolCallsProgress);
+            h.onStreamResume?.(data.content ?? '', data.reasoningContent ?? '', data.segments ?? [], !!data.done, data.toolCallsProgress);
           } else if (data.type === 'confirm' && data.content) {
-            onConfirm?.(data.content);
+            h.onConfirm?.(data.content);
           } else if (data.type === 'token_usage' && data.tokenUsage) {
-            onTokenUsage?.(data.tokenUsage);
+            h.onTokenUsage?.(data.tokenUsage);
           } else if (data.type === 'compressing' && data.sessionId) {
-            onCompressing?.(data.sessionId, data.content ?? 'start');
+            h.onCompressing?.(data.sessionId, data.content ?? 'start');
           } else if (data.type === 'history_changed' && data.sessionId) {
-            onHistoryChanged?.(data.sessionId);
+            h.onHistoryChanged?.(data.sessionId);
           } else if (data.type === 'page_refresh') {
             // 通知 DynamicPage 之类的订阅者重新拉数据。pluginName 缺省 = 全部。
             window.dispatchEvent(new CustomEvent('aalis:page-refresh', { detail: { pluginName: data.pluginName } }));
@@ -142,7 +150,7 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [onMessage, onStream, onLog, onToolCall, onStateChanged, onRestarting, onReload, onSessionSwitched, onSessionsChanged, onTodoUpdated, onStreamResume, onConfirm, onTokenUsage, onCompressing, onHistoryChanged, onToolCallProgress, onToolCallProgressClear]);
+  }, []);
 
   // 监听 sessionId 变化，动态切换 WS 订阅
   useEffect(() => {
