@@ -314,9 +314,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   async function extractPdf(buffer: Buffer): Promise<string> {
     try {
-      const pdfParse = (await import('pdf-parse')).default;
-      const result = await pdfParse(buffer);
-      return result.text || '[PDF 无文本内容]';
+      // unpdf：维护中的 pdf.js 封装，带版面重建，科学/LaTeX 文档文本质量优于旧 pdf-parse，
+      // 且自带 serverless 构建（可移植到 worker 环境）。mergePages 把多页合并为单串。
+      const { extractText, getDocumentProxy } = await import('unpdf');
+      const pdf = await getDocumentProxy(new Uint8Array(buffer));
+      const { text } = await extractText(pdf, { mergePages: true });
+      return text.trim() || '[PDF 无文本内容]';
     } catch (err) {
       ctx.logger.warn('PDF 解析失败:', err);
       return '[PDF 解析失败]';

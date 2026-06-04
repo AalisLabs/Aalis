@@ -17,7 +17,7 @@
     "@aalis/plugin-storage-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "mammoth": "^1.8.0",
-    "pdf-parse": "^1.1.1"
+    "unpdf": "^0.12.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
