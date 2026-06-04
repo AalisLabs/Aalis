@@ -93,8 +93,7 @@ function storagePermission(
 ): string[] {
   const uri = toStorageUri(args.path as string | undefined, config, ctx?.sessionId);
   const root = rootOf(uri);
-  // 额外产出路径级权限标识，供 authority 按具体文件动态提权（如 data:/users.json）。
-  return [`storage:${op}`, `storage:${root}:${op}`, `storage:path:${uri}:${op}`];
+  return [`storage:${op}`, `storage:${root}:${op}`];
 }
 
 function requireStorage(config: FileConfig): StorageService {
