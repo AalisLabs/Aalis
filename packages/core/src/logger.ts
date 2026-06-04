@@ -18,6 +18,44 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3,
 };
 
+// ════════════════════════════════════════════════════════════
+// 单行日志序列化契约（format ↔ parse 对偶）
+//
+// 行格式：`seq|timestamp|level|scope|message\n`
+//   - message 内部换行被转义为字面 `\n`，保证「一行一条」可逐行解析
+//   - 与 LogHub 一样零 I/O 知识：纯字符串变换，不感知文件/路径/编码
+//
+// 唯一权威：runtime 的 file-logger 写、webui-server / cli 读历史，全部复用这一对函数，
+// 避免格式契约在多个插件里各抄一份后悄然漂移。
+// ════════════════════════════════════════════════════════════
+
+/** 把一条 LogEntry 序列化为单行文本（含结尾换行）。 */
+export function formatLogLine(entry: LogEntry): string {
+  const safeMsg = entry.message.replace(/\r?\n/g, '\\n');
+  return `${entry.seq}|${entry.timestamp}|${entry.level}|${entry.scope}|${safeMsg}\n`;
+}
+
+/** 反向解析单行日志；格式错乱时返回 null。与 {@link formatLogLine} 对偶。 */
+export function parseLogLine(line: string): LogEntry | null {
+  const i1 = line.indexOf('|');
+  if (i1 < 0) return null;
+  const i2 = line.indexOf('|', i1 + 1);
+  if (i2 < 0) return null;
+  const i3 = line.indexOf('|', i2 + 1);
+  if (i3 < 0) return null;
+  const i4 = line.indexOf('|', i3 + 1);
+  if (i4 < 0) return null;
+  const seq = Number(line.slice(0, i1));
+  if (!Number.isFinite(seq)) return null;
+  return {
+    seq,
+    timestamp: line.slice(i1 + 1, i2),
+    level: line.slice(i2 + 1, i3) as LogLevel,
+    scope: line.slice(i3 + 1, i4),
+    message: line.slice(i4 + 1).replace(/\\n/g, '\n'),
+  };
+}
+
 /**
  * 日志中枢：纯 pub-sub 通道。
  *

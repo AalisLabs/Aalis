@@ -4,29 +4,9 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { LogEntry, LogLevel } from '@aalis/core';
+import { type LogEntry, parseLogLine } from '@aalis/core';
 
 const LOG_FILE_PATH = resolve(process.cwd(), 'data/latest.log');
-
-function parseLogLine(line: string): LogEntry | null {
-  const i1 = line.indexOf('|');
-  if (i1 < 0) return null;
-  const i2 = line.indexOf('|', i1 + 1);
-  if (i2 < 0) return null;
-  const i3 = line.indexOf('|', i2 + 1);
-  if (i3 < 0) return null;
-  const i4 = line.indexOf('|', i3 + 1);
-  if (i4 < 0) return null;
-  const seq = Number(line.slice(0, i1));
-  if (!Number.isFinite(seq)) return null;
-  return {
-    seq,
-    timestamp: line.slice(i1 + 1, i2),
-    level: line.slice(i2 + 1, i3) as LogLevel,
-    scope: line.slice(i3 + 1, i4),
-    message: line.slice(i4 + 1).replace(/\\n/g, '\n'),
-  };
-}
 
 export async function readLogFileTail(limit: number): Promise<LogEntry[]> {
   if (!existsSync(LOG_FILE_PATH)) return [];

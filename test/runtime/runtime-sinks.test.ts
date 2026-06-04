@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Logger } from '@aalis/core';
+import { Logger, parseLogLine } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetBootstrapBufferForTests,
@@ -9,7 +9,7 @@ import {
   installBootstrapBuffer,
 } from '../../src/runtime/bootstrap-buffer.js';
 import { installConsoleSink } from '../../src/runtime/console-sink.js';
-import { appendCrashLog, parseEntry, setupFileLogger } from '../../src/runtime/file-logger.js';
+import { appendCrashLog, setupFileLogger } from '../../src/runtime/file-logger.js';
 
 /**
  * runtime/console-sink + file-logger 集成测试
@@ -161,7 +161,7 @@ describe('runtime file-logger', () => {
     expect(content).toContain('"code":42');
   });
 
-  it('文件行格式包含递增 seq 前缀，可被 parseEntry 反解', async () => {
+  it('文件行格式包含递增 seq 前缀，可被 parseLogLine 反解', async () => {
     const handle = await setupFileLogger(logFile);
     new Logger('flog').info('alpha');
     new Logger('flog').warn('beta');
@@ -169,7 +169,9 @@ describe('runtime file-logger', () => {
     await new Promise(r => setImmediate(r));
     await handle.flush();
     const lines = readFileSync(logFile, 'utf-8').split('\n').filter(Boolean);
-    const entries = lines.map(parseEntry).filter((e): e is NonNullable<ReturnType<typeof parseEntry>> => e !== null);
+    const entries = lines
+      .map(parseLogLine)
+      .filter((e): e is NonNullable<ReturnType<typeof parseLogLine>> => e !== null);
     expect(entries.length).toBeGreaterThanOrEqual(2);
     const a = entries.find(e => e.message === 'alpha');
     const b = entries.find(e => e.message === 'beta');

@@ -7,8 +7,8 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AppService, ConfigSchema, Context, LogEntry, LogLevel, PluginManagerService } from '@aalis/core';
-import { LogHub } from '@aalis/core';
+import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
+import { LogHub, parseLogLine } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
@@ -232,31 +232,10 @@ interface WSOutgoing {
 }
 
 // ===== 日志文件读取（与 src/runtime/file-logger.ts 的格式对偶）=====
-// 文件格式：`seq|timestamp|level|scope|message\n`，message 内 `\n` 转义为 `\\n`。
-// 历史日志的单一数据源是 data/latest.log（每次启动覆盖）；webui 通过尾读 + cursor
-// 分页拿到任意范围。LogHub 不再缓存任何 buffer。
+// 行格式契约（format ↔ parse）由 @aalis/core 的 parseLogLine 唯一持有，此处只负责
+// 读取 data/latest.log（启动覆盖的单一历史源）并按 cursor 尾读分页。
 
 const LOG_FILE_PATH = resolve(process.cwd(), 'data/latest.log');
-
-function parseLogLine(line: string): LogEntry | null {
-  const i1 = line.indexOf('|');
-  if (i1 < 0) return null;
-  const i2 = line.indexOf('|', i1 + 1);
-  if (i2 < 0) return null;
-  const i3 = line.indexOf('|', i2 + 1);
-  if (i3 < 0) return null;
-  const i4 = line.indexOf('|', i3 + 1);
-  if (i4 < 0) return null;
-  const seq = Number(line.slice(0, i1));
-  if (!Number.isFinite(seq)) return null;
-  return {
-    seq,
-    timestamp: line.slice(i1 + 1, i2),
-    level: line.slice(i2 + 1, i3) as LogLevel,
-    scope: line.slice(i3 + 1, i4),
-    message: line.slice(i4 + 1).replace(/\\n/g, '\n'),
-  };
-}
 
 async function readAllLogEntries(): Promise<LogEntry[]> {
   if (!existsSync(LOG_FILE_PATH)) return [];
