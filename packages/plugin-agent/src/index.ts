@@ -527,9 +527,14 @@ class DefaultAgent implements AgentService {
           u: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined,
         ) => {
           if (!u) return;
-          turnUsageAcc.promptTokens += u.promptTokens ?? 0;
+          // promptTokens 语义 = "生成这条回复时的上下文大小"。工具迭代循环里每轮都把同一份
+          // （不断增长的）上下文重新发给模型，若累加会把重复发送的上下文重复计入，导致单条
+          // 回复虚高到几十万 token。故取最后一次调用的 prompt（覆盖而非累加）= 回复定稿时的真实上下文。
+          if (u.promptTokens != null) turnUsageAcc.promptTokens = u.promptTokens;
+          // completionTokens 语义 = "本回合真正新生成的输出"（含中间 reasoning / tool-call 生成
+          // 与最终回复文本），每次调用都是不重复的新输出，故逐次累加。
           turnUsageAcc.completionTokens += u.completionTokens ?? 0;
-          turnUsageAcc.totalTokens += u.totalTokens ?? 0;
+          turnUsageAcc.totalTokens = turnUsageAcc.promptTokens + turnUsageAcc.completionTokens;
         };
         const firstResult = await this.consumeStream(
           llm,
