@@ -651,13 +651,10 @@ class SessionManager implements SessionManagerService {
 
     await this.clearDeletedSessionData(id);
 
-    // 如果删除的是活跃会话，切换到剩余会话
+    // 如果删除的是活跃会话，回退到剩余会话（仅维护内部默认指针；webui 各客户端独立持有自己的活跃会话）
     if (this.activeSessionId === id) {
       const remaining = this.listSessions({ parentId: null });
       this.activeSessionId = remaining[0]?.id || '';
-      if (this.activeSessionId) {
-        await this.ctx.emit('session:switched', this.activeSessionId);
-      }
     }
 
     this.markDirty();
@@ -693,21 +690,11 @@ class SessionManager implements SessionManagerService {
 
   // ---- 活跃会话 ----
 
+  // 系统级「默认会话」指针：用于持久化恢复与 listSessions 的 isActive 标记。
+  // 仅只读对外暴露；webui 各客户端的活跃会话由前端自行持有（localStorage），不经此指针，
+  // 避免多客户端互相切走。
   getActiveSessionId(): string {
     return this.activeSessionId;
-  }
-
-  setActiveSessionId(id: string): void {
-    if (!this.sessions.has(id)) {
-      this.ctx.logger.warn(`尝试切换到不存在的会话: ${id}`);
-      return;
-    }
-    if (this.activeSessionId === id) return;
-
-    this.activeSessionId = id;
-    this.markDirty();
-    this.ctx.emit('session:switched', id).catch(() => {});
-    this.ctx.logger.info(`活跃会话已切换: ${id}`);
   }
 
   // ---- 树形操作 ----
@@ -1030,12 +1017,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.provide('session-manager', manager, {
     capabilities: [SessionManagerCapabilities.SessionCrud, SessionManagerCapabilities.SessionTree],
     label: '会话管理',
-  });
-
-  // 监听 session:switched 事件，通过 WebSocket 广播到客户端
-  ctx.on('session:switched', (sessionId: string) => {
-    // WebUI server 会监听此事件并广播给所有客户端
-    ctx.logger.debug(`广播会话切换: ${sessionId}`);
   });
 
   // ===== 会话状态自治管理 =====
