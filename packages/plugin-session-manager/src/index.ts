@@ -1,4 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
+// 副作用导入：注入 agent:turn:after 等 agent 域钩子到 HookContextMap（declaration merging），
+// 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
+import '@aalis/plugin-agent-api';
 import type { LLMModel } from '@aalis/plugin-llm-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -169,6 +172,9 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
       parentId,
       config,
       createdBy: 'user',
+      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）。
+      // 否则侧栏新建的会话会一直显示"进行中"——直到首条消息触发 inbound→active→turn:after→completed。
+      status: 'waiting',
     });
     return session;
   },
@@ -1046,6 +1052,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 子会话（有 parentId）由 plugin-session-tools 的 agent:turn:after 中间件负责完成并提取 result
     if (session && session.status === 'active' && !session.parentId) {
       manager.updateSession(msg.sessionId, { status: 'completed' }).catch(() => {});
+    }
+  });
+
+  // 回合终态收口：agent 在 replied/silent/aborted/error 四条路径都会发 agent:turn:after。
+  // 上面的 outbound:message 只覆盖"产生了回复"的情形——用户中途停止生成（aborted）或
+  // 空回复（silent）时不发 outbound:message，会话会永远停在 'active'（即"进行中"）。
+  // 这里订阅生命周期钩子作幂等互补，确保任何回合结束都把根会话收口为 'completed'。
+  ctx.middleware('agent:turn:after', async (data, next) => {
+    await next();
+    if (!data.sessionId) return;
+    const session = manager.getSession(data.sessionId);
+    // 子会话由 plugin-session-tools 负责完成并回传 result，这里只收口根会话。
+    if (session && session.status === 'active' && !session.parentId) {
+      manager.updateSession(data.sessionId, { status: 'completed' }).catch(() => {});
     }
   });
 
