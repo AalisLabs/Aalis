@@ -467,20 +467,19 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     fetchAndSetMessages(sessionId, plugin);
   }, [fetchAndSetMessages]);
 
-  // 初始化：获取服务端当前活跃会话并加载历史消息，同时拉取会话列表
+  // 初始化：拉取会话列表，并恢复「本客户端自己持久化的」活跃会话（localStorage）。
+  // 不再读服务端全局活跃会话——每个 webui 客户端各自独立，避免多人互相切走。
   useEffect(() => {
     if (!pluginName) return;
-    // 并行拉取活跃会话和会话列表，确保标题立即可用
     pageAction<SessionItem[]>(pluginName, 'listSessions')
-      .then(list => { if (Array.isArray(list)) setSessionList(list); })
-      .catch(() => {});
-    pageAction<{ sessionId: string }>(pluginName, 'getActiveSession')
-      .then(d => {
-        if (d?.sessionId && d.sessionId !== '__new_chat__') {
-          setActiveSessionId(d.sessionId);
-          setSessionId(d.sessionId);
-          // 加载该会话的历史消息
-          fetchAndSetMessages(d.sessionId, pluginName);
+      .then(list => {
+        if (!Array.isArray(list)) return;
+        setSessionList(list);
+        const persisted = getSessionId();
+        // 仅当持久化的会话仍存在于列表中才恢复其历史；否则保持「新对话」状态。
+        if (persisted && persisted !== '__new_chat__' && list.some(s => s.id === persisted)) {
+          setActiveSessionId(persisted);
+          fetchAndSetMessages(persisted, pluginName);
         }
       })
       .catch(() => {});
