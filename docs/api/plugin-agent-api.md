@@ -59,5 +59,5 @@ const dispose = ctx.useHook('agent:input:before', async (data, next) => {
 ## 相关
 
 - `IncomingMessage` 定义在 [plugin-message-api](./plugin-message-api.md)
-- `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted`
+- `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted | error`（四条退出路径都会触发，供生命周期订阅方收口）
 - token 自检见 [plugin-prompt-budget](../plugins/plugin-prompt-budget.md)
