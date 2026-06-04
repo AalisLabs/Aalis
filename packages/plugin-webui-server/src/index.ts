@@ -1163,15 +1163,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // 会话切换通知：广播给所有客户端
-  ctx.on('session:switched', (sessionId: string) => {
-    const json = JSON.stringify({ type: 'session_switched', sessionId });
-    for (const ws of allClients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-      }
-    }
-  });
+  // 会话切换不再跨客户端广播：每个 webui 客户端独立持有自己的活跃会话（localStorage
+  // 持久化 + 每条消息自带 sessionId），互不干扰。全局 activeSessionId 退化为 CLI 概念，
+  // 不再驱动 webui。这样多人同时使用时，他人新建/切换会话不会把你的窗口切走。
 
   // 监听 AI 回复
   ctx.on('outbound:message', (msg: OutgoingMessage) => {

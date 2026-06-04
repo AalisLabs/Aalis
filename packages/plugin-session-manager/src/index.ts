@@ -193,7 +193,10 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     if (!sm) throw new Error('session-manager 服务不可用');
     const id = args.id as string;
     if (!id) throw new Error('缺少会话 ID');
-    sm.setActiveSessionId(id);
+    // 注：webui 客户端各自独立持有活跃会话（前端 localStorage + 每条消息自带 sessionId），
+    // 不再驱动服务端全局 activeSessionId——否则多客户端会互相把对方切走（多人隔离）。
+    // 全局指针退化为 CLI 概念；此 action 仅作前端切换的幂等确认。
+    if (!sm.getSession(id)) throw new Error(`会话不存在: ${id}`);
     return { success: true, activeSessionId: id };
   },
 
