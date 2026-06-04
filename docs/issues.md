@@ -9,6 +9,7 @@
    - 🎯 重新设计方向：**以插件内的抽象能力(capability)为中心**——敏感操作在操作边界统一 `authority.require(identity, capability)` 检查，任何 surface 进来都过同一闸；`ExecutionGuard` 退化为 tool/command surface 的适配器。前置依赖：身份贯通（每个 surface 携带调用者 platform/userId；WebUI action 当前缺失），与登录/scoped 沙盒(#1)合并设计。
 4. ~~当前PDF解析器有问题，对于科学文档（LATEX转译）似乎有识别问题，考虑更新识别库~~ ✅ 已修复：`plugin-file-reader` 原用 `pdf-parse@1.1.1`(2019 停更，包裹老旧 pdf.js fork，文本拼接朴素无版面重建，import 时还跑测试文件)。换为 `unpdf`(维护中的 pdf.js 封装，带版面重建，科学/LaTeX 文档文本质量更好；自带 serverless 构建可移植到 worker；并提供 `renderPageAsImage` 为后续「PDF 页渲染→视觉模型 OCR」铺路)。改动隔离在单个 `extractPdf` 函数，已用手工 PDF 真实验证提取成功。
 5. ~~当前webui多人使用时，会因为其他人新开会话/在别的会话聊天，而切换上一个人当前的会话窗口，或许做一下隔离？~~ ✅ 已修复：根因是 session-manager 持有**单一全局 `activeSessionId`**，webui 的 `switchSession` 动作会改它并 `emit('session:switched')`，webui-server 再**广播给所有客户端**强制切换。但 webui 入站消息其实自带 sessionId，全局指针根本不参与路由，纯属 CLI 时代遗留。解耦：①webui-server 移除 `session_switched` 跨客户端广播；②`switchSession` action 不再驱动全局指针(降级为幂等确认)；③前端每客户端用 localStorage 持久化自己的活跃会话，init 从 localStorage 恢复而非读服务端全局。现每个 webui 客户端各自独立，多人互不干扰。
+   - 🧹 后续技术债清理（接 #5 解耦）：审查发现解耦后**全局 `activeSessionId` 退化为自我闭环死指针**——写入只剩"从自己保存的 `__active__` 恢复"+"deleteSession 兜底"，没有任何"用户切换会话"的写入入口（`setActiveSessionId` 已删、`switchSession` 不再驱动）；读取方 `listSessions.isActive` 字段（前端 SessionsPage/SessionSidebar 都用自己的 localStorage activeSessionId 重算、不消费）与 `getActiveSession` action（前端零调用）全死；两个真实平台都不依赖它（webui-server 入站用 `msg.sessionId||'webui-default'`、CLI 用固定 `cli-default`）。彻底清理：删除 `activeSessionId` 字段 + `getActiveSessionId()` + `getActiveSession` action + `listSessions.isActive` 字段 + `__active__` 持久化(load 恢复/persist 保存，并让旧残留被自然清理) + deleteSession 兜底 + api 接口声明 + `switchSession` action（前端两处 fire-and-forget 调用同步移除）+ 前端 `SessionItem.isActive` 类型字段。
 6. ~~通过左侧会话管理新建会话方式，会导致新建的会话都是永远的进行中，直到发生对话并完成；同时会话中途中断agent，也是永远的进行中~~ ✅ 已修复：同根因。①新建空会话初始状态由 `active`(进行中) 改为 `waiting`(等待中)；②agent 现在在中止/异常路径也发 `agent:turn:after`(outcome=aborted/error)，session-manager 新增该钩子的生命周期收口，把根会话从 `active` 收口为 `completed`（与 `outbound:message` 幂等互补），覆盖中止/静默两种无 outbound 的终态。附带修复 checkpoint 中止后回合不关闭的泄漏。
 7. ~~检查是否还有对存储的裸读取~~ ✅ 已审查：所有 storage 托管数据（权限用户表/人设/调度任务/向量库/上传文件/token/todo/file 工具等）均已走 storage 网关，无不当裸读取。仅剩的直接 `fs` 读取均为合法豁免：bootstrap 配置加载(storage 插件尚未起)、运行时日志文件 `data/latest.log`、storage-local 后端自身、`readExternalFile` 显式外部逃生口、浏览器二进制探测、前端 dist 静态托管。附带收口：日志单行序列化契约(`formatLogLine`/`parseLogLine`)原本在 runtime/cli/webui-server **各抄一份**(file-logger 虽导出 `parseEntry` 但下游未复用，因 `src/runtime` 非可导入包)，现统一收口到 `@aalis/core`(纯函数零 I/O，与 LogHub 同层)，三处复用同一权威，杜绝格式漂移。
 
@@ -18,6 +19,7 @@
 3. 允许进行文档内图片识别
 4. onebot 信息撤回 / 知道对方信息是否被撤回了？
 5. 按会话/时间/前多少到多少条取最近信息（当前应该有会话没时间限制）
+6. 为了解决权限问题，为指令执行引入容器化（？）
 
 - 考虑对插件重新进行统一安全与漏洞检查，当前各种位置潜在bug很多，考虑制作插件市场并在这个过程中重新审阅每个插件潜在的问题，甚至在这个过程中着手从头重写逻辑
 

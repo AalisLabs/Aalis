@@ -125,11 +125,6 @@ export interface SessionManagerService {
   /** 删除会话（同时清理其消息历史） */
   deleteSession(id: string): Promise<void>;
 
-  // ---- 活跃会话 ----
-
-  /** 获取系统默认会话 ID（持久化恢复 / isActive 标记用；webui 各客户端的活跃会话由前端自持） */
-  getActiveSessionId(): string;
-
   // ---- 树形操作 ----
 
   /** 创建子会话 */

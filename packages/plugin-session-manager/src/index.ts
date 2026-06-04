@@ -139,13 +139,11 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) return [];
     const sessions = sm.listSessions();
-    const activeId = sm.getActiveSessionId();
     return sessions.map(s => ({
       ...s,
       displayTitle: s.title || s.name,
       configSummary: formatConfigSummary(s.config),
       childCount: s.children.length,
-      isActive: s.id === activeId,
     }));
   },
 
@@ -188,18 +186,6 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     return { success: true };
   },
 
-  async switchSession(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    // 注：webui 客户端各自独立持有活跃会话（前端 localStorage + 每条消息自带 sessionId），
-    // 不再驱动服务端全局 activeSessionId——否则多客户端会互相把对方切走（多人隔离）。
-    // 全局指针退化为 CLI 概念；此 action 仅作前端切换的幂等确认。
-    if (!sm.getSession(id)) throw new Error(`会话不存在: ${id}`);
-    return { success: true, activeSessionId: id };
-  },
-
   async updateSessionConfig(ctx, args) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) throw new Error('session-manager 服务不可用');
@@ -219,12 +205,6 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
     const limit = (args.limit as number) || 100;
     const history = await memory.getHistory(sessionId, limit);
     return { sessionId, messages: history };
-  },
-
-  async getActiveSession(ctx) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) return { sessionId: '' };
-    return { sessionId: sm.getActiveSessionId() };
   },
 
   /** 批量归档会话 */
@@ -416,7 +396,6 @@ function formatConfigSummary(config: SessionConfig): string {
 
 class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
-  private activeSessionId: string = '';
   private ctx: Context;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
@@ -454,15 +433,6 @@ class SessionManager implements SessionManagerService {
           this.sessions.set(key, info);
         }
       }
-      // 恢复 activeSessionId
-      const activeMeta = this.memory.getMetadata
-        ? await this.memory.getMetadata(METADATA_NAMESPACE, '__active__')
-        : undefined;
-      if (activeMeta?.sessionId && typeof activeMeta.sessionId === 'string') {
-        if (this.sessions.has(activeMeta.sessionId as string)) {
-          this.activeSessionId = activeMeta.sessionId as string;
-        }
-      }
       this.ctx.logger.info(`已加载 ${this.sessions.size} 个会话`);
     } catch (err) {
       this.ctx.logger.warn('加载会话数据失败:', err);
@@ -489,14 +459,12 @@ class SessionManager implements SessionManagerService {
     for (const [id, info] of this.sessions) {
       await this.memory.saveMetadata(METADATA_NAMESPACE, id, info as unknown as Record<string, unknown>);
     }
-    // 保存活跃会话
-    await this.memory.saveMetadata(METADATA_NAMESPACE, '__active__', { sessionId: this.activeSessionId });
 
-    // 清理已删除的会话（元数据中存在但内存中不存在的）
+    // 清理已删除的会话（元数据中存在但内存中不存在的；含旧版本残留的 __active__ 指针）
     if (this.memory.listMetadata) {
       const existing = await this.memory.listMetadata(METADATA_NAMESPACE);
       for (const { key } of existing) {
-        if (key !== '__active__' && !this.sessions.has(key) && this.memory.deleteMetadata) {
+        if (!this.sessions.has(key) && this.memory.deleteMetadata) {
           await this.memory.deleteMetadata(METADATA_NAMESPACE, key);
         }
       }
@@ -651,12 +619,6 @@ class SessionManager implements SessionManagerService {
 
     await this.clearDeletedSessionData(id);
 
-    // 如果删除的是活跃会话，回退到剩余会话（仅维护内部默认指针；webui 各客户端独立持有自己的活跃会话）
-    if (this.activeSessionId === id) {
-      const remaining = this.listSessions({ parentId: null });
-      this.activeSessionId = remaining[0]?.id || '';
-    }
-
     this.markDirty();
     await this.ctx.emit('session:deleted', id);
     this.ctx.logger.info(`会话删除: ${session.name} (${id})`);
@@ -686,15 +648,6 @@ class SessionManager implements SessionManagerService {
         `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`,
       );
     }
-  }
-
-  // ---- 活跃会话 ----
-
-  // 系统级「默认会话」指针：用于持久化恢复与 listSessions 的 isActive 标记。
-  // 仅只读对外暴露；webui 各客户端的活跃会话由前端自行持有（localStorage），不经此指针，
-  // 避免多客户端互相切走。
-  getActiveSessionId(): string {
-    return this.activeSessionId;
   }
 
   // ---- 树形操作 ----
