@@ -155,6 +155,12 @@ declare module '@aalis/core' {
       allow?: string[];
       deny?: string[];
     };
+    /**
+     * 参数级动态提权：细粒度权限标识（glob）→ 所要求的最低权限等级。
+     * 命中多个模式时取最大值，并与工具/指令声明的 authority 取较大者。
+     * 用于让同一工具按参数要求不同等级（如写 data:/users.json 需 owner 等级）。
+     */
+    permissionAuthority?: Record<string, number>;
     /** 管理员对单条指令的权限/安全等级覆盖 */
     commandOverrides?: Record<string, { authority?: number; safety?: string }>;
   }
