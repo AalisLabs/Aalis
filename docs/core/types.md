@@ -522,7 +522,7 @@ interface HookContextMap {
   'agent:turn:after': {
     message: IncomingMessage;
     reply: string;
-    outcome: 'replied' | 'silent' | 'aborted';
+    outcome: 'replied' | 'silent' | 'aborted' | 'error';
     sessionId: string;
     metadata: Record<string, unknown>;
   };

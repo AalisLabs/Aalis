@@ -407,6 +407,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 每轮对话结束后，异步检查是否需要生成摘要
   ctx.middleware('agent:turn:after', async (data, next) => {
     await next();
+    // 中止/异常回合不触发摘要：本轮没有产生有效新内容（用户停止或报错），
+    // 摘要无意义且浪费算力。turn:after 现已在 aborted/error 路径也触发（生命周期收口），
+    // 故此处需显式跳过这两种 outcome。
+    if (data.outcome === 'aborted' || data.outcome === 'error') return;
     // 异步触发，不阻塞主流程
     generateSummary(data.sessionId).catch(err => {
       ctx.logger.warn('异步摘要生成失败:', err);
