@@ -14,7 +14,6 @@ export interface SessionItem {
   parentId?: string;
   inputContext?: string;
   result?: string;
-  isActive?: boolean;
   createdAt: number;
   config?: SessionConfigData;
 }

@@ -375,8 +375,6 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
       setMessages([]);
       setLoading(false);
       streamingRef.current = false;
-      // 通知服务端切换
-      pageAction(plugin, 'switchSession', { id: newId }).catch(() => {});
       // 后台刷新以同步服务端数据
       pageAction<SessionItem[]>(plugin, 'listSessions')
         .then(list => { if (Array.isArray(list)) setSessionList(list); })
@@ -445,7 +443,6 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     if (!cached && plugin) {
       fetchAndSetMessages(newId, plugin);
     }
-    if (!isSameSession && plugin) pageAction(plugin, 'switchSession', { id: newId }).catch(() => {});
     // 刷新 sessionList，确保新切换的会话能被 isNewChat / activeSessionTitle 正确识别
     refresh();
   }, [fetchAndSetMessages, refresh]);
