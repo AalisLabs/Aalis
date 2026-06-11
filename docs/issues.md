@@ -11,6 +11,15 @@
      3. **拆除 `bypassGuard`**：commands 入站中间件改用 `message.actor`（scheduler 创建时固化的创建者身份）过真实守卫，与 agent→tools 路径同语义；`skipSafetyCheck`（cron 无人确认弹窗）保留。代码中两处 DANGER 临时方案注释随之清除。
    - ⏭️ 剩余（与登录/沙盒 #新1 合并推进）：WebUI 其余 REST 路由（`PUT /api/config` 等）仍默认可信；`code_runner` 图灵完备参数需进程级隔离（容器化 #新6）；登录后为各 action 标注低于 owner 的 `actionsMeta` 等级。
 
+8. core 全文评审（2026-06-12，人工通读 + 18 代理对抗验证）发现的待修缺陷，按危害排序：
+   1. 🔴 `EventBus.emit`（events.ts）串行 await 且无 per-handler 隔离：一个 handler 抛错跳过同事件全部后续 handler 并使 emit reject（已复现）。最坏衍生：`plugin-activation.ts` 的 `plugin:loaded` emit 在激活 try 块**内**——任意旁观插件监听器抛错会把刚激活成功的无辜插件打成 error 终态，归因错位。修法：emit 逐 handler try/catch 聚合 + 该 emit 移出 try。
+   2. 🔴 sticky 事件补发（events.ts `queueMicrotask` 内 `void handler(...)`）无 try/catch：热重载 bounce 后补发 'ready'/'app:started'，handler 同步抛错直达 uncaughtException 崩进程（已复现；同份代码首轮启动抛错只是激活失败，bounce 后却致命）。
+   3. 🟡 `whenService` 多 provider 挂死：任一同名 entry 注销（含败者）→ 无条件 cleanup 且胜者不重发 registered → 订阅永久脱挂；preferService 切偏好也不触发重挂。今天唯一现役用户是单 provider 故潜伏，但 per-model LLM 多 entry 是框架明文设计，按文档用即触发。修法：unregistered 分支 cleanup 后重新 get(name)，仍有胜者则 reattach。
+   4. 🟡 `HookRegistry.run` 持活数组：handler 执行中 dispose（splice）跳过下一个 handler 且误报 reachedEnd=true（已复现）；`unregisterByContext` 换数组后旧 dispose 闭包变 no-op（中间件泄漏）。修法：run 开头快照 + dispose 改查 registry 当前数组。
+   5. 🟡 `ScopedConfigManager`：未覆写的 setPluginEnabled/setServicePreference 等写**穿透到父配置**（快照按引用共享）；save() 抛错/watch() no-op 双向违反基类契约；继承的 syncPluginDefaults 在 scope 实例上有变更即炸。沙盒功能（新 #1）启用 createScope 前必须先修。修法：组合替代继承，显式逐方法委托。
+   6. 🟢 杂项：Context.dispose 的 unregisterByPlugin 只通知胜者 entry（应遍历 getEntries）；recompute 重入保护是丢弃而非排队（lost wakeup）；unload() 不设 reloading 守卫（与 disablePlugin 不对齐）；getStatus 内联类型与 PluginStatusEntry 重复无编译期链接；AalisEvents 索引签名使事件名 typo 不设防（对照 HookContextMap 封闭）；'ready'/'app:started' 语义重叠；clearSticky 不清 'app:started'。
+   - ✅ 已修（d222483）：包根漏导出 `ServiceTypeMap`/`ServiceOf` → 15+ api 包 declaration merging 静默失效，`getService` 字面量强类型从未生效（tsc 双向实证）。
+
 - 新功能计划
 1. 考虑开始兴建 scoped/app 沙盒，为不同scope的webUI提供不同的权限等级与可见性/乃至引入登录界面，可以作为类似chatGPT/claude分发
 2. 商店还没正式开始制作
