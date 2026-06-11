@@ -1,4 +1,4 @@
-import type { AppService, ConfigManager, Context, Logger, SafetyLevel } from '@aalis/core';
+import type { ActionCaller, AppService, ConfigManager, Context, Logger, SafetyLevel } from '@aalis/core';
 import type { ExecutionGuardContext, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
@@ -25,7 +25,7 @@ export type {
 
 // ===== AuthorityManager 实现 =====
 
-class AuthorityManager implements AuthorityService {
+export class AuthorityManager implements AuthorityService {
   private users = new Map<string, number>();
   private config: ConfigManager;
   private logger: Logger;
@@ -123,6 +123,36 @@ class AuthorityManager implements AuthorityService {
       }
     }
     return false;
+  }
+
+  /**
+   * 计算一组细粒度权限所要求的最低权限等级（参数级动态提权）。
+   *
+   * 例如 file_write 写普通文件只需声明的 authority:3，但写 data:/users.json
+   * （用户权限表）或 data:/scheduler-jobs.json（计划任务，可注入 owner 身份的
+   * actor）这类敏感文件、或写 aalis:/ 源码根（重启后即任意代码执行）时要求
+   * owner 等级，防止低权限用户借文件写入自我提权。
+   *
+   * 默认保护清单可被 config.permissionAuthority 覆盖/扩展（同模式取配置值，
+   * 新模式叠加；命中多个模式时取最大要求）。只提高门槛，不降低声明值。
+   */
+  requiredAuthorityFor(permissions: string[]): number {
+    if (permissions.length === 0) return 0;
+    const ownerLevel = this.config.get('ownerAuthority') ?? 5;
+    const map: Record<string, number> = {
+      'storage:path:data:/users.json:write': ownerLevel,
+      'storage:path:data:/users.json:delete': ownerLevel,
+      'storage:path:data:/scheduler-jobs.json:write': ownerLevel,
+      'storage:path:data:/scheduler-jobs.json:delete': ownerLevel,
+      'storage:aalis:write': ownerLevel,
+      'storage:aalis:delete': ownerLevel,
+      ...(this.config.get('permissionAuthority') ?? {}),
+    };
+    let required = 0;
+    for (const [pattern, level] of Object.entries(map)) {
+      if (level > required && this.matchAny([pattern], permissions)) required = level;
+    }
+    return required;
   }
 
   checkPermissionPolicy(permissions: string[]): string | null {
@@ -311,8 +341,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
   const guard = async (guardCtx: ExecutionGuardContext): Promise<string | null> => {
     const userAuth = authority.getAuthority(guardCtx.platform, guardCtx.userId);
-    if (userAuth < guardCtx.authority) {
-      return `权限不足: 指令 "${guardCtx.name}" 需要权限等级 ${guardCtx.authority}，当前用户等级 ${userAuth}`;
+    // 参数级动态提权：某些权限标识（如写 data:/users.json）要求比工具声明更高的等级。
+    const required = Math.max(guardCtx.authority, authority.requiredAuthorityFor(guardCtx.permissions ?? []));
+    if (userAuth < required) {
+      return `权限不足: ${guardCtx.type === 'command' ? '指令' : '工具'} "${guardCtx.name}" 需要权限等级 ${required}，当前用户等级 ${userAuth}`;
     }
     const permissionDenied = authority.checkPermissionPolicy(
       guardCtx.permissions ?? [`${guardCtx.type}:${guardCtx.name}`],
@@ -397,7 +429,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
 // ===== WebUI 操作处理器 =====
 
-export const actions: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+export const actions: Record<
+  string,
+  (ctx: Context, args: Record<string, unknown>, caller?: ActionCaller) => Promise<unknown>
+> = {
   /** 获取权限概览 */
   async getOverview(ctx) {
     const auth = ctx.getService<AuthorityService>('authority');
@@ -464,13 +499,21 @@ export const actions: Record<string, (ctx: Context, args: Record<string, unknown
   },
 
   /** 设置用户权限等级 */
-  async setUser(ctx, args) {
+  async setUser(ctx, args, caller) {
     const { platform, userId, authority } = args;
     if (!platform || !userId || typeof authority !== 'number') {
       throw new Error('platform, userId, authority(number) 必填');
     }
     if (authority < 0) throw new Error('权限等级必须 >= 0');
     const auth = ctx.getService<AuthorityService>('authority');
+    // 与 /grant 指令同语义的防越权检查：不能把任何人设到 >= 自身等级。
+    // 今天 WebUI caller 恒为 owner(5)，仅拦截"设为 5+"；登录上线后按账户等级生效。
+    if (caller && auth) {
+      const callerLevel = auth.getAuthority(caller.platform, caller.userId);
+      if (authority >= callerLevel) {
+        throw new Error(`不能将权限设置为 >= 您自身的等级 (${callerLevel})`);
+      }
+    }
     auth?.setAuthority(platform as string, userId as string, authority);
     auth?.save();
     return { message: `${platform}:${userId} 权限已设为 ${authority}` };
