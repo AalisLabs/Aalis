@@ -164,20 +164,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 所有平台共享同一套命令解析路径。
   // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 flow / trigger 之前。
   //
-  // 受信任系统源：scheduler / workflow / system 等内部触发器写入 message.source。
-  // 这些来源没有真实 userId，但调度内容本身就是 owner 写在配置文件里的，
-  // 不应被 authority guard 卡住（否则 authority>1 的指令永远跑不起来）。
+  // 受信任系统源：scheduler 等内部触发器写入 message.source。
+  // 这些来源的权限身份来自创建时固化的 message.actor（如 scheduler 在 setJob 时
+  // snapshot 创建者身份），守卫按 actor 的真实等级评估——与普通用户走同一闸门，
+  // 不再有任何绕过路径（历史上的 bypassGuard 全绕过已废除）。
+  // skipSafetyCheck 仍然需要：cron 上下文无人可点 dangerous 确认弹窗。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。
-  //
-  // DANGER — 临时方案，存在安全漏洞
-  // ──────────────────────────────────────
-  // 下方 isSystemTrigger=true 时会传 bypassGuard=true，完全绕过权限系统。
-  // 当前靠"只有 message.source 在此集合内才算受信任"来防止滥用，但 message.source
-  // 字段是字符串，没有加密签名，理论上可伪造（取决于消息总线的隔离边界）。
-  //
-  // TODO: 重新设计——参见 ExecutionInput.bypassGuard 注释（plugin-commands-api）。
-  // 在重新设计完成前，不要随意扩大此集合，也不要在其他代码路径中传 bypassGuard=true。
   const TRUSTED_SYSTEM_SOURCES = new Set(['scheduler', 'workflow', 'system']);
 
   ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
@@ -195,13 +188,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const isSystemTrigger = !!message.source && TRUSTED_SYSTEM_SOURCES.has(message.source);
 
     try {
+      // 优先用 actor（系统触发器注入的代理身份），fallback 到消息原始身份。
+      // 与 agent 工具调用路径（plugin-agent resolveToolCallContext）同语义。
       const result = await commands.execute(parsed.name, {
         sessionId: message.sessionId,
-        platform: message.platform,
-        userId: message.userId,
+        platform: message.actor?.platform ?? message.platform,
+        userId: message.actor?.userId ?? message.userId,
         args: parsed.args,
         raw: parsed.raw,
-        bypassGuard: isSystemTrigger,
         skipSafetyCheck: isSystemTrigger,
       });
       if (result) {

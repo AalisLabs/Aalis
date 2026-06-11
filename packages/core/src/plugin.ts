@@ -5,6 +5,7 @@ import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 import { normalizeDependency } from './service.js';
 import type { ConfigSchema } from './types/index.js';
 import {
+  type ActionCaller,
   type PluginEntry,
   type PluginModule,
   type PluginState,
@@ -12,7 +13,7 @@ import {
   type RecomputeReason,
 } from './types/plugin.js';
 
-export type { PluginEntry, PluginModule, PluginState };
+export type { ActionCaller, PluginEntry, PluginModule, PluginState };
 // 类型与纯辅助 re-export，保留同名旧导入路径
 export { parseInstanceId };
 
