@@ -106,6 +106,14 @@ export interface AuthorityService {
   getAuthority(platform: string, userId?: string): number;
   setAuthority(platform: string, userId: string, level: number): void;
   isOwner(platform: string, userId?: string): boolean;
+  /**
+   * 计算一组细粒度权限标识所要求的最低权限等级（参数级动态提权）。
+   *
+   * 与工具/指令声明的静态 authority 取较大值后生效——只会提高门槛，
+   * 永远不会低于声明值（单调提权，防止参数组合降低门槛）。
+   * 内置敏感清单可被 config.permissionAuthority（glob→等级）覆盖/扩展。
+   */
+  requiredAuthorityFor(permissions: string[]): number;
   isDangerousAllowed(name: string, permissions?: string[]): boolean;
   confirmDangerous(request: DangerousConfirmRequest): Promise<boolean>;
   listDangerousGrants(): DangerousGrant[];
@@ -155,6 +163,13 @@ declare module '@aalis/core' {
       allow?: string[];
       deny?: string[];
     };
+    /**
+     * 参数级动态提权：细粒度权限标识（glob）→ 所要求的最低权限等级。
+     * 命中多个模式时取最大值，并与工具/指令声明的 authority 取较大者。
+     * 用于让同一工具按参数要求不同等级（如写 data:/users.json 需 owner 等级）。
+     * 同模式覆盖内置默认清单，新模式叠加。
+     */
+    permissionAuthority?: Record<string, number>;
     /** 管理员对单条指令的权限/安全等级覆盖 */
     commandOverrides?: Record<string, { authority?: number; safety?: string }>;
   }

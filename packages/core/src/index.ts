@@ -27,7 +27,7 @@ export { HookRegistry } from './hooks.js';
 export type { LogEntry, LogLevel } from './logger.js';
 export { formatLogLine, Logger, LogHub, parseLogLine } from './logger.js';
 // ----- 插件系统类型 -----
-export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
+export type { ActionCaller, PluginEntry, PluginModule, PluginState } from './plugin.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
 export type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 export type { NormalizedDependency, ServiceEntry, ServicePriorityValue } from './service.js';
