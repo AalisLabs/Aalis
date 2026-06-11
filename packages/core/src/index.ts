@@ -55,6 +55,8 @@ export type {
   SchemaGroup,
   ServiceCapabilityMap,
   ServiceDependency,
+  ServiceOf,
+  ServiceTypeMap,
 } from './types/index.js';
 // ----- 服务能力声明框架 -----
 export { probeCapability, registerCapabilityProbe } from './types/index.js';
