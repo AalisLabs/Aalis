@@ -122,6 +122,11 @@ export class App {
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
     this.logger = new Logger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default);
+    // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
+    // 外部注入的 bus 若已自带上报器则尊重之（??=）。
+    this.events.onHandlerError ??= (event, err) => {
+      this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离）:`, err);
+    };
     this.pluginLoader = options.pluginLoader;
     this.restartStrategy = options.restartStrategy;
 
@@ -360,10 +365,10 @@ export class App {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
     const strategy = this.restartStrategy;
-    // 防御性清掉 sticky 'ready'：strategy 可能走"快速重启"路径不调 stop()，
-    // 此时新一轮启动期间的早期订阅者会收到上一轮的 sticky ready 信号。
-    // stop() 内部会再清一次，重复调用无副作用。
-    this.events.clearSticky('ready');
+    // 防御性清掉全部 sticky 缓存（'ready' + 'app:started'）：strategy 可能走
+    // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
+    // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
+    this.events.clearSticky();
     this.ctx
       .emit('restarting')
       .then(() => strategy.restart({ stop: () => this.stop() }))
@@ -383,8 +388,9 @@ export class App {
     // 插件的 ctx.onDispose 还能安全访问其依赖的服务。stopAll 会置位 shuttingDown，
     // 屏蔽反应式 service:unregistered 级联，避免无意义 bounce 噪声。
     await this.plugins.stopAll();
-    // 清掉 sticky ready 缓存，防止后续 restart 复用过时的"已 ready"标记
-    this.events.clearSticky('ready');
+    // 清掉全部 sticky 缓存（'ready' + 'app:started'），防止后续 restart
+    // 复用过时的"已启动"标记
+    this.events.clearSticky();
     this.ctx.dispose();
     this.logger.info('已停止');
   }

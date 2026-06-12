@@ -104,6 +104,12 @@ export interface AalisEvents {
   // gateway:phase:done 由 @aalis/plugin-gateway-api 注入（cleanup-7）。
   'service:registered': [name: string, capabilities: string[]];
   'service:unregistered': [name: string];
+  /**
+   * 某服务的偏好 provider 发生切换（preferService / unpreferService）。
+   * 偏好切换会改变 getService(name) 的胜者但不改变 entry 集合，
+   * 因此不能复用 registered/unregistered 语义；whenService 借此事件跟随重挂。
+   */
+  'service:preference-changed': [name: string];
   'plugin:loaded': [name: string];
   'plugin:unloaded': [name: string];
   'plugins:changed': [];
@@ -122,8 +128,6 @@ export interface AalisEvents {
    *    增量重载路径上触发——会造成资源泄漏（旧 ws/db 连接未关闭等）。
    */
   'app:stopping': [];
-  // 允许任意字符串 key 兜底（运行时事件总线开放，但鼓励第三方插件通过 declaration merging 显式声明事件签名以获得类型安全）
-  [key: string]: unknown[];
 }
 
 // ----- 钩子/中间件类型 -----

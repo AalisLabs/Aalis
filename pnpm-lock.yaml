@@ -529,6 +529,9 @@ importers:
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
+      '@aalis/plugin-session-manager-api':
+        specifier: workspace:*
+        version: link:../plugin-session-manager-api
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
@@ -1233,6 +1236,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-agent-api':
+        specifier: workspace:*
+        version: link:../plugin-agent-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
@@ -1952,9 +1958,15 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-doctor-api':
+        specifier: workspace:*
+        version: link:../plugin-doctor-api
       '@aalis/plugin-llm-api':
         specifier: workspace:*
         version: link:../plugin-llm-api
+      '@aalis/plugin-memory-api':
+        specifier: workspace:*
+        version: link:../plugin-memory-api
       '@aalis/plugin-message-api':
         specifier: workspace:*
         version: link:../plugin-message-api
@@ -1976,6 +1988,9 @@ importers:
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
+      '@aalis/plugin-todo-list':
+        specifier: workspace:*
+        version: link:../plugin-todo-list
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
