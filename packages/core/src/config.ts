@@ -66,6 +66,12 @@ export interface ConfigManagerOptions {
    * core 自己不读写它；语义由宿主与插件约定。默认 `'.'`。
    */
   dataDir?: string;
+  /**
+   * `syncPluginDefaults` 是否按 configSchema 裁剪未知字段（默认 `true`）。
+   * 设为 `false` 时保留 schema 外的字段——适合宿主允许手写实验性配置、
+   * 或 schema 滞后于实现的场景。这是政策而非机制，故开放给宿主注入。
+   */
+  trimUnknownFields?: boolean;
 }
 
 /**
@@ -88,6 +94,7 @@ export class ConfigManager {
   private config: AalisConfig;
   private readonly provider?: ConfigProvider;
   private readonly dataDir: string;
+  private readonly trimUnknownFields: boolean;
   private unwatchFn: (() => void) | null = null;
   private onChangeCallback: (() => void) | null = null;
 
@@ -95,6 +102,7 @@ export class ConfigManager {
     this.config = mergeDefaultsConfig(initial);
     this.provider = options?.provider;
     this.dataDir = options?.dataDir ?? '.';
+    this.trimUnknownFields = options?.trimUnknownFields ?? true;
   }
 
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K] {
@@ -149,7 +157,7 @@ export class ConfigManager {
       const fileConfig = this.getPluginConfig(plugin.instanceId);
 
       let merged = deepMergeDefaults(defaults, fileConfig);
-      if (schema && Object.keys(schema).length > 0) {
+      if (this.trimUnknownFields && schema && Object.keys(schema).length > 0) {
         merged = removeExtraFields(merged, schema);
       }
 
