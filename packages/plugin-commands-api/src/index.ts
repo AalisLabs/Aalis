@@ -21,6 +21,8 @@ export interface CommandArgv {
     sessionId: string;
     platform: string;
     userId?: string;
+    /** 会话信道类型（适配器标注；私聊敏感指令如 /bind 据此设防） */
+    sessionType?: 'group' | 'private' | 'channel';
     /** 原始输入文本（含前缀） */
     raw: string;
   };
@@ -125,6 +127,8 @@ export interface ExecutionInput {
   sessionId: string;
   platform: string;
   userId?: string;
+  /** 会话信道类型（透传自 IncomingMessage.sessionType） */
+  sessionType?: 'group' | 'private' | 'channel';
   args: string[];
   raw: string;
   /**

@@ -3736,6 +3736,20 @@ details[open] > .tool-call-summary::before {
   color: var(--text-secondary);
 }
 
+.authority-unlink-btn {
+  margin-left: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.authority-unlink-btn:hover {
+  color: #ff6b6b;
+}
+
 .authority-badge.owner {
   background: rgba(255, 215, 0, 0.15);
   color: #ffd700;

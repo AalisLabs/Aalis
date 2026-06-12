@@ -11,6 +11,10 @@ interface AuthorityUser {
   denies?: string[];
   /** 是否为可登录账户（存在密码凭据） */
   hasPassword?: boolean;
+  /** 本账户绑定的平台身份键（如 onebot:12345） */
+  links?: string[];
+  /** 本身份被绑定到的主账户键（如 webui:alice） */
+  linkedTo?: string;
 }
 
 interface AuthorityOwner {
@@ -97,6 +101,8 @@ export function AuthorityPage() {
   const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grants: string; denies: string } | null>(null);
   /** 密码设置内联编辑 */
   const [editPwd, setEditPwd] = useState<{ platform: string; userId: string; password: string } | null>(null);
+  /** 当前登录账户的待用绑定码（createBindCode 返回） */
+  const [bindCode, setBindCode] = useState<{ code: string; hint: string } | null>(null);
   const [newUser, setNewUser] = useState({ platform: '', userId: '', authority: 1, password: '' });
   const [showAddUser, setShowAddUser] = useState(false);
   const [newOwner, setNewOwner] = useState({ platform: '', userId: '' });
@@ -213,6 +219,25 @@ export function AuthorityPage() {
       });
       flash(`已更新 ${editCaps.platform}:${editCaps.userId} 的授予`);
       setEditCaps(null);
+      refresh();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const generateBindCode = async () => {
+    try {
+      const r = await pageAction<{ code: string; hint: string }>('@aalis/plugin-authority', 'createBindCode');
+      setBindCode(r);
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const unlinkIdentity = async (platform: string, userId: string) => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'unlinkIdentity', { platform, userId });
+      flash(`已解绑 ${platform}:${userId}`);
       refresh();
     } catch (err) {
       flash(err instanceof Error ? err.message : String(err));
@@ -661,10 +686,22 @@ export function AuthorityPage() {
               <button className="btn-sm" onClick={() => setShowAddUser(!showAddUser)}>
                 {showAddUser ? '取消' : '+ 添加用户'}
               </button>
+              <button className="btn-sm" title="为当前登录账户生成跨平台绑定码（绑定 QQ 等外部身份）"
+                onClick={generateBindCode}>绑定平台身份</button>
               <button className="btn-sm" onClick={refresh} disabled={loading}>
                 {loading ? '刷新中...' : '刷新'}
               </button>
             </div>
+            {bindCode && (
+              <div className="authority-user-expand" style={{ borderTop: '1px solid var(--border)' }}>
+                <label>绑定码（5 分钟有效，一次性；重复生成会作废旧码）</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <code style={{ fontSize: 18, letterSpacing: 2 }}>{bindCode.code}</code>
+                  <button className="btn-sm" onClick={() => setBindCode(null)}>关闭</button>
+                </div>
+                <label>{bindCode.hint}</label>
+              </div>
+            )}
             {showAddUser && (
               <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
                 <input className="config-edit-input" placeholder="平台 (如 onebot / webui)"
@@ -716,6 +753,21 @@ export function AuthorityPage() {
                               +{u.grants?.length ?? 0}/−{u.denies?.length ?? 0}
                             </span>
                           ) : null}
+                          {u.linkedTo && (
+                            <span className="authority-user-flag" title={`已绑定到主账户 ${u.linkedTo}：运行时以账户权限为准，本行记录被遮蔽（解绑后还原）；自身 denies 仍生效`}>
+                              → {u.linkedTo}
+                            </span>
+                          )}
+                          {u.links?.map(link => (
+                            <span key={link} className="authority-user-flag" title={`已绑定的平台身份（运行时解析到本账户）`}>
+                              ⇄ {link}
+                              <button className="authority-unlink-btn" title="解绑"
+                                onClick={() => {
+                                  const idx = link.indexOf(':');
+                                  unlinkIdentity(link.slice(0, idx), link.slice(idx + 1));
+                                }}>×</button>
+                            </span>
+                          ))}
                         </span>
                         <span>
                           {isEditing ? (
