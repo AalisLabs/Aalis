@@ -1,5 +1,5 @@
 import { version as nodeVersion, platform } from 'node:process';
-import type { Context, PluginManagerService } from '@aalis/core';
+import type { Context, PluginManagerService, PluginModule } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type {
   CheckCategory,
@@ -130,7 +130,7 @@ const webuiPages: WebuiPage[] = [
 
 // ===== Actions（供 WebUI 调用） =====
 
-export const actions = {
+export const actions: PluginModule['actions'] = {
   async runChecks(ctx: Context): Promise<DoctorReport | undefined> {
     return ctx.getService<DoctorService>('doctor')?.runChecks();
   },

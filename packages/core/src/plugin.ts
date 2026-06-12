@@ -5,7 +5,6 @@ import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 import { normalizeDependency } from './service.js';
 import type { PluginStatusEntry } from './types/index.js';
 import {
-  type ActionCaller,
   type PluginEntry,
   type PluginModule,
   type PluginState,
@@ -13,7 +12,7 @@ import {
   type RecomputeReason,
 } from './types/plugin.js';
 
-export type { ActionCaller, PluginEntry, PluginModule, PluginState };
+export type { PluginEntry, PluginModule, PluginState };
 // 类型与纯辅助 re-export，保留同名旧导入路径
 export { parseInstanceId };
 
@@ -246,7 +245,6 @@ export class PluginManager {
         config: entry.config,
         configSchema: entry.module.configSchema,
         defaultConfig: entry.module.defaultConfig,
-        actionNames: entry.module.actions ? Object.keys(entry.module.actions) : undefined,
         error: entry.error,
       };
     });
