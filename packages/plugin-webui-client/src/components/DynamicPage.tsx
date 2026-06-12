@@ -277,7 +277,6 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const modelCache = useRef<Record<string, Array<{ label: string; value: string }>>>({});
-  const providerCacheRef = useRef<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
   const [llmProviders, setLLMProviders] = useState<LLMProviderEntry[] | undefined>(undefined);
 
   useEffect(() => {
@@ -312,15 +311,6 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
       .catch(() => {});
   };
 
-  const handleFetchProviders = (service: string) => {
-    api<{ services: Record<string, { providers: Array<{ contextId: string; displayName?: string }> }> }>('/api/services')
-      .then(r => {
-        const svc = r.services?.[service];
-        providerCacheRef.current = { ...providerCacheRef.current, [service]: svc?.providers ?? [] };
-      })
-      .catch(() => {});
-  };
-
   const handleFetchLLMProviders = () => {
     if (llmProviders) return;
     api<{ providers: LLMProviderEntry[] }>('/api/llm-providers')
@@ -339,8 +329,6 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
         onChange={setDraft}
         modelCache={modelCache.current}
         onFetchModels={handleFetchModels}
-        providerCache={providerCacheRef.current}
-        onFetchProviders={handleFetchProviders}
         llmProviders={llmProviders}
         onFetchLLMProviders={handleFetchLLMProviders}
       />

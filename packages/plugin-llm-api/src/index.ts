@@ -153,6 +153,15 @@ declare module '@aalis/core' {
   interface ServiceCapabilityMap {
     llm: LLMCapability;
   }
+  interface SchemaFieldTypes {
+    /**
+     * LLM 模型引用：值形如 `{ provider: string; model: string }`，前端渲染为
+     * 联动 select（provider 列表来自 `/api/models/llm` 的 contextId 聚合；
+     * model 列表由所选 provider 决定）。运行时由消费方用
+     * `resolveLLMModel(ctx, value, caps)` 解析。
+     */
+    'llm-ref': true;
+  }
 }
 
 // 注册能力↔方法探测器

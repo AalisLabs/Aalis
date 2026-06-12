@@ -30,6 +30,7 @@ export type {
   SchemaArray,
   SchemaField,
   SchemaFieldType,
+  SchemaFieldTypes,
   SchemaGroup,
   ServiceDependency,
 } from './core.js';

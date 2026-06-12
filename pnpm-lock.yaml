@@ -105,6 +105,9 @@ importers:
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
       ws:
         specifier: ^8.18.0
         version: 8.20.0
@@ -201,6 +204,9 @@ importers:
       '@aalis/plugin-process-api':
         specifier: workspace:*
         version: link:../plugin-process-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -421,6 +427,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
       '@aalis/util-text-normalize':
         specifier: workspace:*
         version: link:../util-text-normalize
@@ -488,6 +497,9 @@ importers:
       '@aalis/plugin-embedding-api':
         specifier: workspace:*
         version: link:../plugin-embedding-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -504,6 +516,9 @@ importers:
       '@aalis/plugin-embedding-api':
         specifier: workspace:*
         version: link:../plugin-embedding-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -572,6 +587,9 @@ importers:
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -701,6 +719,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1071,6 +1092,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1118,6 +1142,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1165,6 +1192,9 @@ importers:
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
       '@aalis/util-json-repair':
         specifier: workspace:*
         version: link:../util-json-repair
@@ -1571,6 +1601,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1643,6 +1676,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1706,6 +1742,9 @@ importers:
       '@aalis/plugin-persona-api':
         specifier: workspace:*
         version: link:../plugin-persona-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1862,6 +1901,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
