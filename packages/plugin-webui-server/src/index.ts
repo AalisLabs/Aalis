@@ -12,7 +12,9 @@ import { LogHub, parseLogLine } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
+import type {} from '@aalis/plugin-doctor-api'; // declaration merging：doctor:updated 事件
 import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
+import type {} from '@aalis/plugin-memory-api'; // declaration merging：history:changed 事件
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import {
@@ -26,6 +28,7 @@ import { createProcessGateway } from '@aalis/plugin-process-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
+import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
 import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';

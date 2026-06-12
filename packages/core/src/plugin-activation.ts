@@ -109,7 +109,6 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
     entry.state = 'active';
     entry.error = undefined;
     logger.info(`插件已激活: ${entry.instanceId}`);
-    await rootCtx.emit('plugin:loaded', entry.instanceId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`插件 "${entry.instanceId}" 激活失败: ${message}`);
@@ -117,7 +116,12 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
     entry.context = undefined;
     entry.state = 'error';
     entry.error = message;
+    return;
   }
+
+  // 激活成败只由 apply/provides 校验决定。emit 放在 try 块外：旁观插件的
+  // 监听器出问题不能把刚激活成功的无辜插件打成 error 终态（归因错位）。
+  await rootCtx.emit('plugin:loaded', entry.instanceId);
 }
 
 /**

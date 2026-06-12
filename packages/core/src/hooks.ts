@@ -47,8 +47,15 @@ export class HookRegistry {
     list.push(entry);
 
     return () => {
-      const idx = list!.indexOf(entry);
-      if (idx >= 0) list!.splice(idx, 1);
+      // 查 registry 当前数组而非闭包捕获的 list：unregisterByContext 会整体
+      // 换数组，捕获旧引用的 dispose 会变 no-op（中间件泄漏）。
+      const current = this.hooks.get(hook);
+      if (!current) return;
+      const idx = current.indexOf(entry);
+      if (idx >= 0) {
+        current.splice(idx, 1);
+        if (current.length === 0) this.hooks.delete(hook);
+      }
     };
   }
 
@@ -71,18 +78,23 @@ export class HookRegistry {
     data: HookContextMap[K],
     defaultAction?: () => Promise<void>,
   ): Promise<boolean> {
-    const list = this.hooks.get(hook) ?? [];
+    // 快照：handler 执行中 register/dispose（splice 活数组）不能扰动本次遍历的
+    // 游标——否则会跳过下一个 handler 或误报 reachedEnd。
+    const snapshot = [...(this.hooks.get(hook) ?? [])];
     let index = 0;
     let reachedEnd = false;
 
     const next: MiddlewareNext = async () => {
-      if (index < list.length) {
-        const entry = list[index++];
+      while (index < snapshot.length) {
+        const entry = snapshot[index++];
+        // 执行前确认 entry 仍在注册表中——运行途中被 dispose 的 handler 跳过
+        const current = this.hooks.get(hook);
+        if (!current?.includes(entry)) continue;
         await entry.fn(data, next);
-      } else {
-        reachedEnd = true;
-        if (defaultAction) await defaultAction();
+        return;
       }
+      reachedEnd = true;
+      if (defaultAction) await defaultAction();
     };
 
     await next();

@@ -181,3 +181,30 @@ declare module '@aalis/core' {
     memory: MemoryService;
   }
 }
+
+// ----- 记忆变更事件契约 -----
+//
+// 发射方：plugin-checkpoint（回滚删除消息时）；
+// 消费方：plugin-memory-vector（清理同时间戳向量）、plugin-webui-server（刷新历史视图）。
+declare module '@aalis/core' {
+  interface AalisEvents {
+    /** 某会话的若干消息被按时间戳删除（回滚等场景），下游存储应同步清理 */
+    'memory:messages-deleted': [payload: { sessionId: string; timestamps: number[] }];
+    /** 某会话的历史发生结构性变化（删除/回滚），前端应重新拉取 */
+    'history:changed': [payload: { sessionId: string }];
+  }
+}
+
+// ----- 会话记忆压缩事件契约 -----
+//
+// 压缩协作：plugin-webui-server（手动触发）/ plugin-memory-summary（usage 超阈值
+// 自动触发）emit 'session:compress'；plugin-memory-summary 执行压缩并以
+// 'session:compressing' 广播进度（webui-server 转发给订阅客户端）。
+declare module '@aalis/core' {
+  interface AalisEvents {
+    /** 请求压缩某会话的记忆。usageRatio 仅 auto 触发时携带 */
+    'session:compress': [req: { sessionId: string; reason: 'manual' | 'auto'; usageRatio?: number }];
+    /** 压缩进度通知 */
+    'session:compressing': [info: { sessionId: string; status: 'start' | 'done' | 'error' }];
+  }
+}
