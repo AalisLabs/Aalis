@@ -6,7 +6,7 @@
  *  2. **bounce-replay**：commands 服务被 unregister → 重新 provide 后，
  *     先前注册的命令自动重挂到新 service 上（含所有 alias/option/action）
  */
-import { ConfigManager, Context, EventBus, HookRegistry, Logger, ServiceContainer } from '@aalis/core';
+import { ConfigManager, Context, DefaultLogger, EventBus, HookRegistry, ServiceContainer } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import {
   type CommandBuilder,
@@ -81,7 +81,7 @@ function rootCtx(): Context {
   const events = new EventBus();
   const services = new ServiceContainer();
   const hooks = new HookRegistry();
-  const logger = new Logger('test');
+  const logger = new DefaultLogger('test');
   const config = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
   return new Context({ id: 'cmd-test', events, services, hooks, logger, config });
 }
