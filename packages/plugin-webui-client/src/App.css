@@ -233,6 +233,23 @@ body.is-dragging-chat .nav-rail:hover {
   color: var(--text-secondary);
 }
 
+/* 顶栏右侧：当前登录身份 + 登出 */
+.content-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.content-user-level {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
 .content-body {
   flex: 1;
   overflow: hidden;
@@ -3691,6 +3708,31 @@ details[open] > .tool-call-summary::before {
   font-weight: 600;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+/* 用户行内联小标记：账户（可登录）/ 授予计数 */
+.authority-user-flag {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 0.66rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+
+/* 用户行下方展开的内联编辑面板（授予 / 密码） */
+.authority-user-expand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.authority-user-expand label {
+  font-size: 0.7rem;
   color: var(--text-secondary);
 }
 

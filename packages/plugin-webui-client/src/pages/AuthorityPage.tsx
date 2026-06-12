@@ -6,6 +6,11 @@ interface AuthorityUser {
   platform: string;
   userId: string;
   authority: number;
+  /** capability 个别授予/拒绝（glob；deny > grant > 等级） */
+  grants?: string[];
+  denies?: string[];
+  /** 是否为可登录账户（存在密码凭据） */
+  hasPassword?: boolean;
 }
 
 interface AuthorityOwner {
@@ -88,7 +93,11 @@ export function AuthorityPage() {
   const [editDangerous, setEditDangerous] = useState(false);
   const [dangerousDraft, setDangerousDraft] = useState({ allow: '', duration: 0 });
   const [editUser, setEditUser] = useState<{ platform: string; userId: string; authority: number } | null>(null);
-  const [newUser, setNewUser] = useState({ platform: '', userId: '', authority: 1 });
+  /** capability 授予内联编辑（grants/denies 为逗号分隔草稿） */
+  const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grants: string; denies: string } | null>(null);
+  /** 密码设置内联编辑 */
+  const [editPwd, setEditPwd] = useState<{ platform: string; userId: string; password: string } | null>(null);
+  const [newUser, setNewUser] = useState({ platform: '', userId: '', authority: 1, password: '' });
   const [showAddUser, setShowAddUser] = useState(false);
   const [newOwner, setNewOwner] = useState({ platform: '', userId: '' });
   const [showAddOwner, setShowAddOwner] = useState(false);
@@ -176,9 +185,52 @@ export function AuthorityPage() {
   };
   const addUser = async () => {
     if (!newUser.platform || !newUser.userId) return;
-    await saveUserAuthority(newUser.platform, newUser.userId, newUser.authority);
-    setNewUser({ platform: '', userId: '', authority: 1 });
-    setShowAddUser(false);
+    try {
+      await pageAction('@aalis/plugin-authority', 'setUser', {
+        platform: newUser.platform, userId: newUser.userId, authority: newUser.authority,
+      });
+      if (newUser.password) {
+        await pageAction('@aalis/plugin-authority', 'setPassword', {
+          platform: newUser.platform, userId: newUser.userId, password: newUser.password,
+        });
+      }
+      flash(`已添加 ${newUser.platform}:${newUser.userId}${newUser.password ? '（含登录密码）' : ''}`);
+      setNewUser({ platform: '', userId: '', authority: 1, password: '' });
+      setShowAddUser(false);
+      refresh();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const saveUserCapabilities = async () => {
+    if (!editCaps) return;
+    const toList = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
+    try {
+      await pageAction('@aalis/plugin-authority', 'setUserCapabilities', {
+        platform: editCaps.platform, userId: editCaps.userId,
+        grants: toList(editCaps.grants), denies: toList(editCaps.denies),
+      });
+      flash(`已更新 ${editCaps.platform}:${editCaps.userId} 的授予`);
+      setEditCaps(null);
+      refresh();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const saveUserPassword = async () => {
+    if (!editPwd) return;
+    try {
+      await pageAction('@aalis/plugin-authority', 'setPassword', {
+        platform: editPwd.platform, userId: editPwd.userId, password: editPwd.password,
+      });
+      flash(`已更新 ${editPwd.platform}:${editPwd.userId} 的密码`);
+      setEditPwd(null);
+      refresh();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const addOwner = async () => {
@@ -615,7 +667,7 @@ export function AuthorityPage() {
             </div>
             {showAddUser && (
               <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
-                <input className="config-edit-input" placeholder="平台 (如 onebot)"
+                <input className="config-edit-input" placeholder="平台 (如 onebot / webui)"
                   list="authority-platforms"
                   value={newUser.platform} onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))} />
                 <input className="config-edit-input" placeholder="用户 ID"
@@ -627,7 +679,12 @@ export function AuthorityPage() {
                     <option key={lv} value={lv}>{lv}{lv === data.defaultAuthority ? ' (默认)' : ''}{lv === data.ownerAuthority ? ' (Owner)' : ''}</option>
                   ))}
                 </select>
-                <button className="btn btn-primary btn-sm" onClick={addUser} disabled={!newUser.platform || !newUser.userId}>确认</button>
+                <input className="config-edit-input" type="password" autoComplete="new-password"
+                  placeholder="登录密码 (可选，≥6 位)"
+                  title="填写后该用户可凭密码登录 WebUI（平台填 webui 时用户 ID 即登录用户名）"
+                  value={newUser.password} onChange={e => setNewUser(v => ({ ...v, password: e.target.value }))} />
+                <button className="btn btn-primary btn-sm" onClick={addUser}
+                  disabled={!newUser.platform || !newUser.userId || (newUser.password.length > 0 && newUser.password.length < 6)}>确认</button>
               </div>
             )}
             {data.users.length === 0 ? (
@@ -645,39 +702,86 @@ export function AuthorityPage() {
                 {data.users.map(u => {
                   const key = `${u.platform}:${u.userId}`;
                   const isEditing = editUser && editUser.platform === u.platform && editUser.userId === u.userId;
+                  const isCapsOpen = editCaps && editCaps.platform === u.platform && editCaps.userId === u.userId;
+                  const isPwdOpen = editPwd && editPwd.platform === u.platform && editPwd.userId === u.userId;
                   return (
-                    <div className="authority-cmd-row authority-user-row" key={key}>
-                      <span className="authority-cell-platform">{u.platform}</span>
-                      <span className="authority-cell-id">{u.userId}</span>
-                      <span>
-                        {isEditing ? (
-                          <select className="config-edit-input authority-inline-input"
-                            value={editUser!.authority}
-                            onChange={e => setEditUser(prev => prev ? { ...prev, authority: parseInt(e.target.value) || 0 } : null)}
-                            autoFocus>
-                            {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
-                              <option key={lv} value={lv}>{lv}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className={`authority-badge ${u.authority >= data.ownerAuthority ? 'owner' : u.authority >= 3 ? 'high' : ''}`}>
-                            {u.authority}
-                          </span>
-                        )}
-                      </span>
-                      <span className="authority-actions">
-                        {isEditing ? (
-                          <>
-                            <button className="btn btn-primary btn-sm" onClick={() => saveUserAuthority(editUser!.platform, editUser!.userId, editUser!.authority)}>保存</button>
-                            <button className="btn btn-sm" onClick={() => setEditUser(null)}>取消</button>
-                          </>
-                        ) : (
-                          <>
-                            <button className="btn btn-sm" onClick={() => setEditUser({ platform: u.platform, userId: u.userId, authority: u.authority })}>编辑</button>
-                            <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>重置</button>
-                          </>
-                        )}
-                      </span>
+                    <div key={key}>
+                      <div className="authority-cmd-row authority-user-row">
+                        <span className="authority-cell-platform">{u.platform}</span>
+                        <span className="authority-cell-id">
+                          {u.userId}
+                          {u.hasPassword && <span className="authority-user-flag" title="可登录账户（已设密码）">账户</span>}
+                          {(u.grants?.length || u.denies?.length) ? (
+                            <span className="authority-user-flag" title={`授予: ${(u.grants ?? []).join(', ') || '无'}\n拒绝: ${(u.denies ?? []).join(', ') || '无'}`}>
+                              +{u.grants?.length ?? 0}/−{u.denies?.length ?? 0}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span>
+                          {isEditing ? (
+                            <select className="config-edit-input authority-inline-input"
+                              value={editUser!.authority}
+                              onChange={e => setEditUser(prev => prev ? { ...prev, authority: parseInt(e.target.value) || 0 } : null)}
+                              autoFocus>
+                              {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
+                                <option key={lv} value={lv}>{lv}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className={`authority-badge ${u.authority >= data.ownerAuthority ? 'owner' : u.authority >= 3 ? 'high' : ''}`}>
+                              {u.authority}
+                            </span>
+                          )}
+                        </span>
+                        <span className="authority-actions">
+                          {isEditing ? (
+                            <>
+                              <button className="btn btn-primary btn-sm" onClick={() => saveUserAuthority(editUser!.platform, editUser!.userId, editUser!.authority)}>保存</button>
+                              <button className="btn btn-sm" onClick={() => setEditUser(null)}>取消</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn btn-sm" onClick={() => setEditUser({ platform: u.platform, userId: u.userId, authority: u.authority })}>编辑</button>
+                              <button className="btn btn-sm" title="capability 个别授予/拒绝（deny > grant > 等级）"
+                                onClick={() => setEditCaps(isCapsOpen ? null : {
+                                  platform: u.platform, userId: u.userId,
+                                  grants: (u.grants ?? []).join(', '), denies: (u.denies ?? []).join(', '),
+                                })}>授予</button>
+                              <button className="btn btn-sm" title={u.hasPassword ? '重置登录密码' : '设置登录密码（platform=webui 时可登录 WebUI）'}
+                                onClick={() => setEditPwd(isPwdOpen ? null : { platform: u.platform, userId: u.userId, password: '' })}>密码</button>
+                              <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>重置</button>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      {isCapsOpen && (
+                        <div className="authority-user-expand">
+                          <label>grants（逗号分隔 glob，命中即无视等级放行）</label>
+                          <input className="config-edit-input" placeholder="如 tool:file.*, action:@aalis/plugin-skills:*"
+                            value={editCaps!.grants}
+                            onChange={e => setEditCaps(prev => prev ? { ...prev, grants: e.target.value } : null)} autoFocus />
+                          <label>denies（命中即拒绝，压过 grant 与等级）</label>
+                          <input className="config-edit-input" placeholder="如 tool:shell.*"
+                            value={editCaps!.denies}
+                            onChange={e => setEditCaps(prev => prev ? { ...prev, denies: e.target.value } : null)} />
+                          <div className="config-edit-actions">
+                            <button className="btn btn-primary btn-sm" onClick={saveUserCapabilities}>保存</button>
+                            <button className="btn btn-sm" onClick={() => setEditCaps(null)}>取消</button>
+                          </div>
+                        </div>
+                      )}
+                      {isPwdOpen && (
+                        <div className="authority-user-expand">
+                          <label>{u.hasPassword ? '重置密码（≥6 位）' : '设置密码（≥6 位；platform=webui 时用户 ID 即登录用户名）'}</label>
+                          <input className="config-edit-input" type="password" autoComplete="new-password"
+                            value={editPwd!.password}
+                            onChange={e => setEditPwd(prev => prev ? { ...prev, password: e.target.value } : null)} autoFocus />
+                          <div className="config-edit-actions">
+                            <button className="btn btn-primary btn-sm" onClick={saveUserPassword} disabled={editPwd!.password.length < 6}>保存</button>
+                            <button className="btn btn-sm" onClick={() => setEditPwd(null)}>取消</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
