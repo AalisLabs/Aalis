@@ -10,17 +10,18 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "ws": "^8.18.0",
-    "@aalis/plugin-message-archive-api": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*",
-    "@aalis/plugin-media-api": "workspace:*",
-    "@aalis/plugin-flow-control-api": "workspace:*",
-    "@aalis/plugin-platform-api": "workspace:*",
-    "@aalis/plugin-llm-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-agent-api": "workspace:*",
+    "@aalis/plugin-flow-control-api": "workspace:*",
+    "@aalis/plugin-llm-api": "workspace:*",
+    "@aalis/plugin-media-api": "workspace:*",
+    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-message-api": "workspace:*",
+    "@aalis/plugin-message-archive-api": "workspace:*",
+    "@aalis/plugin-platform-api": "workspace:*",
     "@aalis/plugin-process-api": "workspace:*",
-    "@aalis/plugin-storage-api": "workspace:*"
+    "@aalis/plugin-storage-api": "workspace:*",
+    "@aalis/plugin-webui-api": "workspace:*",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

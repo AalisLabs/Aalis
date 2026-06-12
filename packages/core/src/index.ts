@@ -50,6 +50,7 @@ export type {
   SchemaArray,
   SchemaField,
   SchemaFieldType,
+  SchemaFieldTypes,
   SchemaGroup,
   ServiceCapabilityMap,
   ServiceDependency,

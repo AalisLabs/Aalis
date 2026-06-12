@@ -6,6 +6,7 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
+import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import WebSocket from 'ws';
 import {
   cacheAttachmentBuffer,

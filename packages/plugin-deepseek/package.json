@@ -13,6 +13,7 @@
     "@aalis/plugin-llm-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
+    "@aalis/plugin-webui-api": "workspace:*",
     "@aalis/util-text-normalize": "workspace:*"
   },
   "devDependencies": {
