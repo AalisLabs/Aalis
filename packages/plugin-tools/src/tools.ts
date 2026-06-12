@@ -1,5 +1,5 @@
-import type { Logger, SafetyLevel } from '@aalis/core';
-import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+import type { Logger } from '@aalis/core';
+import type { ExecutionGuard, SafetyLevel } from '@aalis/plugin-authority-api';
 import type {
   RegisteredTool,
   ToolCallContext,
@@ -89,11 +89,11 @@ export class ToolRegistry implements ToolService {
     description: string;
     pluginName: string;
     authority?: number;
-    safety?: import('@aalis/core').SafetyLevel;
+    safety?: import('@aalis/plugin-authority-api').SafetyLevel;
     permissions?: string[];
     groups?: string[];
     baseAuthority?: number;
-    baseSafety?: import('@aalis/core').SafetyLevel;
+    baseSafety?: import('@aalis/plugin-authority-api').SafetyLevel;
     overridden?: boolean;
   }> {
     return [...this.tools.values()].map(t => {
