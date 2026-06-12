@@ -121,7 +121,9 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 
 ### `ensureServiceProvider(serviceName)`
 
-搜索 pending 插件池，找到能提供该服务的插件并递归激活。
+搜索 pending 插件池，找到能提供该服务的插件并递归激活。被用户禁用的提供者
+默认会被自动启用（"必需服务可用"压过"尊重禁用"）——这是可注入政策，宿主传
+`AppOptions.serviceRecovery = { autoEnableDisabled: false }` 可反转取舍。
 
 ## 反应式监听
 

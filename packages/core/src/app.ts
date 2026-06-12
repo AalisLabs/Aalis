@@ -62,6 +62,17 @@ export interface AppOptions {
    */
   requiredServices?: string[];
   /**
+   * 插件配置同步政策。`trimUnknownFields=false` 时 `syncPluginDefaults`
+   * 保留 configSchema 之外的未知字段（默认 `true`：按 schema 裁剪）。
+   * 仅在传入配置快照时生效；传入现成 ConfigManager 时政策属于该实例自身。
+   */
+  configSync?: { trimUnknownFields?: boolean };
+  /**
+   * 必需服务恢复政策。`autoEnableDisabled=false` 时恢复路径不会自动启用
+   * 被用户禁用的提供者插件（默认 `true`："必需服务可用"压过"尊重禁用"）。
+   */
+  serviceRecovery?: { autoEnableDisabled?: boolean };
+  /**
    * 开发模式开关——传递给根 Context，决定 `provide` 是否跑能力探测。
    * 默认 `true`（dev-safe）；生产宿主应显式传入 `false` 跳过热路径开销。
    * core 不读 `process.env`，完全以宿主传入为准。
@@ -115,6 +126,7 @@ export class App {
         : new ConfigManager(options.config, {
             provider: options.configProvider,
             dataDir: options.dataDir,
+            trimUnknownFields: options.configSync?.trimUnknownFields,
           });
 
     this.events = options.events ?? new EventBus();
@@ -153,6 +165,7 @@ export class App {
     this.plugins = new PluginManager(this.ctx, this.logger);
     this.requiredServices = options.requiredServices ?? [];
     this.plugins.requiredServices = this.requiredServices;
+    this.plugins.recoveryPolicy = { autoEnableDisabled: options.serviceRecovery?.autoEnableDisabled ?? true };
 
     // 4. 注册核心服务
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });

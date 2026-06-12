@@ -65,6 +65,12 @@ export class PluginManager {
    */
   requiredServices: readonly string[] = [];
 
+  /**
+   * 必需服务恢复政策（由 App 从 AppOptions.serviceRecovery 设置）。
+   * autoEnableDisabled=false 时恢复路径不会自动启用被用户禁用的提供者插件。
+   */
+  recoveryPolicy: { autoEnableDisabled: boolean } = { autoEnableDisabled: true };
+
   constructor(rootCtx: Context, logger: Logger) {
     this.rootCtx = rootCtx;
     this.logger = logger.child('plugins');
@@ -563,6 +569,7 @@ export class PluginManager {
           plugins: this.plugins,
           rootCtx: this.rootCtx,
           logger: this.logger,
+          recovery: this.recoveryPolicy,
         });
         if (activated) {
           this.logger.info(`必需服务 "${service}" 已通过插件 "${activated}" 恢复`);
@@ -583,6 +590,11 @@ export class PluginManager {
    * 实际逻辑在 plugin-activation.ts。PluginManager 仅负责注入 plugins/rootCtx/logger。
    */
   async ensureServiceProvider(serviceName: string): Promise<string | undefined> {
-    return ensureServiceProvider(serviceName, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
+    return ensureServiceProvider(serviceName, {
+      plugins: this.plugins,
+      rootCtx: this.rootCtx,
+      logger: this.logger,
+      recovery: this.recoveryPolicy,
+    });
   }
 }
