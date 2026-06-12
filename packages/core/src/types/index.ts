@@ -27,8 +27,6 @@ export type {
   InjectDeclaration,
   MiddlewareFn,
   MiddlewareNext,
-  PermissionId,
-  SafetyLevel,
   SchemaArray,
   SchemaField,
   SchemaFieldType,

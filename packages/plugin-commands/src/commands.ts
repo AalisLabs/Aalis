@@ -1,5 +1,5 @@
-import type { Logger, PermissionId, SafetyLevel } from '@aalis/core';
-import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+import type { Logger } from '@aalis/core';
+import type { ExecutionGuard, PermissionId, SafetyLevel } from '@aalis/plugin-authority-api';
 import type {
   AuthorityOverride,
   Command,

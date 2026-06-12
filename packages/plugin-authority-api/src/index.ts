@@ -4,7 +4,10 @@
 // 都应从本包导入 `ExecutionGuard` / `ExecutionGuardContext`，
 // 任何需要消费权限服务的插件应导入 `AuthorityService` 等接口。
 
-import type { SafetyLevel } from '@aalis/core';
+import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisConfig/ServiceTypeMap 增强）
+
+/** 安全等级：safe=安全操作, dangerous=高危操作（执行前需走危险操作确认/白名单） */
+export type SafetyLevel = 'safe' | 'dangerous';
 
 // ============================================================
 // 执行守卫（跨切面：commands / tools 服务通过 setExecutionGuard 注入）

@@ -1,4 +1,5 @@
-import type { AppService, ConfigSchema, Context, SafetyLevel } from '@aalis/core';
+import type { AppService, ConfigSchema, Context } from '@aalis/core';
+import type { SafetyLevel } from '@aalis/plugin-authority-api';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import { useDoctorService } from '@aalis/plugin-doctor-api';
