@@ -334,7 +334,7 @@ export const actions: PluginModule['actions'] = {
       paused: false,
     };
   },
-  async upsertJob(ctx, args) {
+  async upsertJob(ctx, args, caller) {
     const svc = ctx.getService<SchedulerService>('scheduler');
     if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
     const name = String(args.name ?? '').trim();
@@ -350,8 +350,9 @@ export const actions: PluginModule['actions'] = {
     const content = String(args.content ?? '').trim();
     if (!content) return { ok: false, error: 'content 不能为空' };
     try {
-      // WebUI 上下文默认 webui:console（owner 级），与 authority 插件的 hardcode 行为对齐。
-      // 注意：actor 不从 args 读取，避免 WebUI 调用方伪造他人身份。
+      // actor 从权限闸放行后的 caller 快照（登录账户或单 token 模式的 webui:console），
+      // 不从 args 读取，避免 WebUI 调用方伪造他人身份。
+      const actor = caller ?? { platform: 'webui', userId: 'console' };
       svc.setJob({
         name,
         cron,
@@ -359,8 +360,8 @@ export const actions: PluginModule['actions'] = {
         runAt,
         sessionId,
         platform: String(args.platform ?? 'internal'),
-        actorPlatform: 'webui',
-        actorUserId: 'console',
+        actorPlatform: actor.platform,
+        actorUserId: actor.userId,
         content,
         enabled: args.enabled !== false,
       });

@@ -337,11 +337,31 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   const authToken = await resolveAuthToken();
-  const auth = createAuthSystem(authToken, ctx.logger.child('auth'));
+  // 账户校验惰性委托 authority 服务（可能晚于本插件激活/被热替换），账户即
+  // platform='webui' 且带密码凭据的用户记录。
+  const auth = createAuthSystem(authToken, ctx.logger.child('auth'), {
+    verify: (username, password) =>
+      ctx.getService<AuthorityService>('authority')?.verifyPassword('webui', username, password) ?? false,
+    hasAccounts: () =>
+      (ctx.getService<AuthorityService>('authority')?.listUsers() ?? []).some(
+        u => u.platform === 'webui' && u.hasPassword,
+      ),
+  });
 
   const expressApp = express();
   expressApp.use(express.json({ limit: '10mb' }));
   expressApp.use(auth.middleware);
+
+  // 当前调用者信息（middleware 已拦未认证；identity 必存在）
+  expressApp.get('/api/auth/me', (req, res) => {
+    const identity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
+    const authority = ctx.getService<AuthorityService>('authority');
+    res.json({
+      identity,
+      authority: authority?.getAuthority(identity.platform, identity.userId) ?? null,
+      isOwner: authority?.isOwner(identity.platform, identity.userId) ?? false,
+    });
+  });
   const server = createServer(expressApp);
   const wss = new WebSocketServer({
     server,
@@ -457,7 +477,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // ---------- 插件管理 + 全局配置 ----------
-  registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr);
+  registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify);
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
@@ -918,8 +938,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // ---------- WebSocket ----------
 
-  wss.on('connection', ws => {
-    ctx.logger.debug('WebUI 客户端已连接');
+  wss.on('connection', (ws, req) => {
+    // 连接建立时解析一次调用者身份（cookie 在升级请求里；verifyClient 已保证已认证）
+    const wsIdentity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
+    ctx.logger.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
     allClients.add(ws);
 
     ws.on('message', async data => {
@@ -1042,8 +1064,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         await ctx.emit('inbound:message', {
           content: trimmed,
           sessionId,
-          platform: 'webui',
-          userId: 'console',
+          platform: wsIdentity.platform,
+          userId: wsIdentity.userId,
           nickname: undefined,
           ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
         });
