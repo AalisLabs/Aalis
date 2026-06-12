@@ -195,6 +195,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         sessionId: message.sessionId,
         platform: message.actor?.platform ?? message.platform,
         userId: message.actor?.userId ?? message.userId,
+        sessionType: message.sessionType,
         args: parsed.args,
         raw: parsed.raw,
         skipSafetyCheck: isSystemTrigger,
