@@ -6,6 +6,7 @@ import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api';
 import type express from 'express';
+import type { RouteGate } from '../gate.js';
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
 export function registerPluginRoutes(
@@ -14,9 +15,10 @@ export function registerPluginRoutes(
   getApp: () => AppService | undefined,
   getPluginMgr: () => PluginManagerService | undefined,
   identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
+  gate: RouteGate,
 ): void {
   // 获取插件列表及状态
-  expressApp.get('/api/plugins', (_req, res) => {
+  expressApp.get('/api/plugins', gate('webui:plugins:read', 4), (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
@@ -59,7 +61,7 @@ export function registerPluginRoutes(
   });
 
   // 获取可用的 WebUI 页面（由活跃插件通过 useWebuiService.registerPage 注册）
-  expressApp.get('/api/pages', (_req, res) => {
+  expressApp.get('/api/pages', gate('webui:pages:read', 1), (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
@@ -143,13 +145,13 @@ export function registerPluginRoutes(
   });
 
   // 获取当前全局配置
-  expressApp.get('/api/config', (_req, res) => {
+  expressApp.get('/api/config', gate('webui:config:read', 4), (_req, res) => {
     const allConfig = ctx.config.getAll();
     res.json({ ...allConfig, _schema: CORE_CONFIG_SCHEMA });
   });
 
   // 更新全局配置字段
-  expressApp.put('/api/config', (req, res) => {
+  expressApp.put('/api/config', gate('webui:config:write', 'owner'), (req, res) => {
     const updates = req.body;
     if (!updates || typeof updates !== 'object') {
       res.status(400).json({ error: '请求体必须是对象' });
@@ -189,14 +191,14 @@ export function registerPluginRoutes(
   });
 
   // 获取单个插件的原始配置（未脱敏，给编辑器用）
-  expressApp.get('/api/plugins/:name/config', (req, res) => {
+  expressApp.get('/api/plugins/:name/config', gate('webui:config:read', 4), (req, res) => {
     const pluginName = req.params.name;
     const pluginConfig = ctx.config.getPluginConfig(pluginName);
     res.json({ name: pluginName, config: pluginConfig });
   });
 
   // 更新插件配置
-  expressApp.put('/api/plugins/:name/config', async (req, res) => {
+  expressApp.put('/api/plugins/:name/config', gate('webui:config:write', 'owner'), async (req, res) => {
     const pluginName = req.params.name;
     const newConfig = req.body?.config;
     if (!newConfig || typeof newConfig !== 'object') {
@@ -221,7 +223,7 @@ export function registerPluginRoutes(
   });
 
   // 启用插件
-  expressApp.post('/api/plugins/:name/enable', async (req, res) => {
+  expressApp.post('/api/plugins/:name/enable', gate('webui:plugins:manage', 'owner'), async (req, res) => {
     const pluginName = req.params.name;
     const app = getApp();
     const pm = getPluginMgr();
@@ -239,7 +241,7 @@ export function registerPluginRoutes(
   });
 
   // 禁用插件
-  expressApp.post('/api/plugins/:name/disable', async (req, res) => {
+  expressApp.post('/api/plugins/:name/disable', gate('webui:plugins:manage', 'owner'), async (req, res) => {
     const pluginName = req.params.name;
     const app = getApp();
     const pm = getPluginMgr();
@@ -257,7 +259,7 @@ export function registerPluginRoutes(
   });
 
   // 重新扫描 packages/ 并加载新插件
-  expressApp.post('/api/plugins/scan', async (_req, res) => {
+  expressApp.post('/api/plugins/scan', gate('webui:plugins:manage', 'owner'), async (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
@@ -274,7 +276,7 @@ export function registerPluginRoutes(
   });
 
   // 安装插件（从 npm 下载到 packages/ 并加载）
-  expressApp.post('/api/plugins/install', async (req, res) => {
+  expressApp.post('/api/plugins/install', gate('webui:plugins:manage', 'owner'), async (req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
@@ -305,7 +307,7 @@ export function registerPluginRoutes(
   });
 
   // 卸载插件
-  expressApp.post('/api/plugins/:name/uninstall', async (req, res) => {
+  expressApp.post('/api/plugins/:name/uninstall', gate('webui:plugins:manage', 'owner'), async (req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
@@ -328,7 +330,7 @@ export function registerPluginRoutes(
   });
 
   // 创建插件多实例
-  expressApp.post('/api/plugins/:name/instances', async (req, res) => {
+  expressApp.post('/api/plugins/:name/instances', gate('webui:plugins:manage', 'owner'), async (req, res) => {
     const moduleName = req.params.name;
     const suffix = req.body?.suffix;
     const config = req.body?.config ?? {};
@@ -356,7 +358,7 @@ export function registerPluginRoutes(
   });
 
   // 删除插件多实例
-  expressApp.delete('/api/plugins/:instanceId/instance', async (req, res) => {
+  expressApp.delete('/api/plugins/:instanceId/instance', gate('webui:plugins:manage', 'owner'), async (req, res) => {
     const instanceId = req.params.instanceId;
     const app = getApp();
     const pm = getPluginMgr();
@@ -374,7 +376,7 @@ export function registerPluginRoutes(
   });
 
   // 保存配置到磁盘
-  expressApp.post('/api/config/save', (_req, res) => {
+  expressApp.post('/api/config/save', gate('webui:config:write', 'owner'), (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {

@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type express from 'express';
+import type { RouteGate } from '../gate.js';
 
 /**
  * file-reader 元信息（与 plugin-file-reader 的 FileMeta 保持一致；
@@ -27,6 +28,7 @@ export function registerUploadedFilesRoutes(
   expressApp: express.Express,
   ctx: Context,
   opts: UploadedFilesRoutesOptions,
+  gate: RouteGate,
 ): void {
   const { storage } = opts;
 
@@ -61,7 +63,7 @@ export function registerUploadedFilesRoutes(
   }
 
   /** 列出某 session 下的所有上传文件元信息（不传 sessionId 时列全部 session） */
-  expressApp.get('/api/uploaded-files', async (req, res) => {
+  expressApp.get('/api/uploaded-files', gate('webui:files:read', 4), async (req, res) => {
     const sessionId = req.query.sessionId ? String(req.query.sessionId) : undefined;
     if (sessionId !== undefined && !isSafeSessionId(sessionId)) {
       res.status(400).json({ error: 'sessionId 非法' });
@@ -111,7 +113,7 @@ export function registerUploadedFilesRoutes(
   });
 
   /** 下载文件 */
-  expressApp.get('/api/uploaded-files/download', async (req, res) => {
+  expressApp.get('/api/uploaded-files/download', gate('webui:files:read', 4), async (req, res) => {
     const sessionId = String(req.query.sessionId || '');
     const fileId = String(req.query.fileId || '');
     if (!isSafeSessionId(sessionId) || !isSafeFileId(fileId)) {
@@ -138,7 +140,7 @@ export function registerUploadedFilesRoutes(
   });
 
   /** 删除文件 */
-  expressApp.post('/api/uploaded-files/delete', async (req, res) => {
+  expressApp.post('/api/uploaded-files/delete', gate('webui:files:write', 'owner'), async (req, res) => {
     const body = (req.body ?? {}) as { sessionId?: string; fileId?: string };
     const sessionId = body.sessionId ?? '';
     const fileId = body.fileId ?? '';

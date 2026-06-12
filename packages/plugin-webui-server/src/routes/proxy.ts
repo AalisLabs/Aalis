@@ -1,6 +1,7 @@
 import type { Context } from '@aalis/core';
 import { assertSafeHost } from '@aalis/util-network-guard';
 import type express from 'express';
+import type { RouteGate } from '../gate.js';
 
 /** 单张图最大体积（避免代理被滥用成大文件中转）。 */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -14,8 +15,8 @@ const FETCH_TIMEOUT_MS = 15_000;
  * 仅做透明代理：不缓存到磁盘，不重写 EXIF，纯流式转发。auth 中间件已在外层挂载，
  * 未登录请求拿不到 cookie 自然过不来；这里只关心 SSRF 与体积/超时。
  */
-export function registerProxyRoutes(expressApp: express.Express, ctx: Context): void {
-  expressApp.get('/api/proxy/image', async (req, res) => {
+export function registerProxyRoutes(expressApp: express.Express, ctx: Context, gate: RouteGate): void {
+  expressApp.get('/api/proxy/image', gate('webui:proxy:read', 1), async (req, res) => {
     const raw = req.query.url;
     if (typeof raw !== 'string' || !raw) {
       res.status(400).json({ error: '缺少 url 参数' });
