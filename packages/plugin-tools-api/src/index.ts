@@ -14,8 +14,8 @@
 //
 // 实现见 @aalis/plugin-tool-system。
 
-import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
-import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+import type { Context } from '@aalis/core';
+import type { ExecutionGuard, PermissionId, SafetyLevel } from '@aalis/plugin-authority-api';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
