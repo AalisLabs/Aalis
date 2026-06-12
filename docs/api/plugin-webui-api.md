@@ -94,7 +94,7 @@ interface WebuiPage {
   label: string;
   icon?: string;
   components: WebuiComponent[];
-  permission?: PermissionId;         // 进入页面所需权限
+  permission?: PermissionId;         // 进入页面所需权限（PermissionId 从 @aalis/plugin-authority-api 导入）
 }
 ```
 
