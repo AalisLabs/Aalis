@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import type { AppService, ConfigManager, Context, Logger } from '@aalis/core';
 import type { ExecutionGuardContext, SafetyLevel, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
@@ -33,11 +34,34 @@ export type {
  *
  * - level：角色链等级（缺省回退 defaultAuthority）
  * - grants/denies：capability 个别授予/拒绝（glob），裁决优先级 deny > grant > 角色链
+ * - secret：密码凭据 `pbkdf2:<iterations>:<saltHex>:<hashHex>`（存在即为可登录账户）
  */
 interface UserRecord {
   level?: number;
   grants?: string[];
   denies?: string[];
+  secret?: string;
+}
+
+// 密码哈希：Web Crypto PBKDF2-SHA256（迭代数随凭据存储，便于将来上调不破坏旧凭据）
+const PBKDF2_ITERATIONS = 310_000;
+
+async function deriveHash(password: string, saltHex: string, iterations: number): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.from(saltHex, 'hex'), iterations },
+    key,
+    256,
+  );
+  return Buffer.from(bits).toString('hex');
+}
+
+/** 恒定时间字符串比较（长度不同直接 false；不早退） */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 export class AuthorityManager implements AuthorityService {
@@ -90,6 +114,30 @@ export class AuthorityManager implements AuthorityService {
     }
   }
 
+  async setPassword(platform: string, userId: string, password: string): Promise<void> {
+    if (!password) throw new Error('密码不能为空');
+    const key = `${platform}:${userId}`;
+    const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex');
+    const hash = await deriveHash(password, salt, PBKDF2_ITERATIONS);
+    this.users.set(key, { ...this.users.get(key), secret: `pbkdf2:${PBKDF2_ITERATIONS}:${salt}:${hash}` });
+    this.dirty = true;
+    this.logger.info(`账户密码已更新: ${key}`);
+  }
+
+  async verifyPassword(platform: string, userId: string, password: string): Promise<boolean> {
+    const secret = this.users.get(`${platform}:${userId}`)?.secret;
+    if (!secret || !password) return false;
+    const [scheme, iterStr, salt, hash] = secret.split(':');
+    const iterations = Number(iterStr);
+    if (scheme !== 'pbkdf2' || !Number.isFinite(iterations) || iterations < 1 || !salt || !hash) return false;
+    const actual = await deriveHash(password, salt, iterations);
+    return timingSafeEqualStr(actual, hash);
+  }
+
+  hasPassword(platform: string, userId: string): boolean {
+    return !!this.users.get(`${platform}:${userId}`)?.secret;
+  }
+
   setUserCapabilities(platform: string, userId: string, overrides: UserCapabilityOverrides): void {
     const key = `${platform}:${userId}`;
     const normalize = (list?: string[]): string[] | undefined => {
@@ -101,7 +149,7 @@ export class AuthorityManager implements AuthorityService {
       grants: normalize(overrides.grants),
       denies: normalize(overrides.denies),
     };
-    if (next.level === undefined && !next.grants && !next.denies) {
+    if (next.level === undefined && !next.grants && !next.denies && !next.secret) {
       this.users.delete(key);
     } else {
       this.users.set(key, next);
@@ -342,6 +390,7 @@ export class AuthorityManager implements AuthorityService {
         authority: record.level ?? defaultLevel,
         grants: record.grants,
         denies: record.denies,
+        hasPassword: record.secret ? true : undefined,
       });
     }
     return result;
@@ -632,7 +681,27 @@ export const actions: Record<
     return { message: `${platform}:${userId} 的 capability 授予已更新` };
   },
 
-  /** 删除用户权限记录（等级回退默认，grants/denies 一并清除） */
+  /** 设置/重置账户密码（webui 登录凭据；仅本人或更高等级者可操作） */
+  async setPassword(ctx, args, caller) {
+    const { platform, userId, password } = args;
+    if (!platform || !userId || typeof password !== 'string') throw new Error('platform, userId, password 必填');
+    if (password.length < 6) throw new Error('密码长度至少 6 位');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    if (caller) {
+      const callerLevel = auth.getAuthority(caller.platform, caller.userId);
+      const targetLevel = auth.getAuthority(platform as string, userId as string);
+      const isSelf = caller.platform === platform && caller.userId === userId;
+      if (!isSelf && targetLevel >= callerLevel) {
+        throw new Error(`不能为等级 >= 您自身 (${callerLevel}) 的用户设置密码`);
+      }
+    }
+    await auth.setPassword(platform as string, userId as string, password);
+    auth.save();
+    return { message: `${platform}:${userId} 密码已更新` };
+  },
+
+  /** 删除用户权限记录（等级回退默认，grants/denies/密码一并清除） */
   async deleteUser(ctx, args) {
     const { platform, userId } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');

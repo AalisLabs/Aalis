@@ -13,6 +13,7 @@ export function registerPluginRoutes(
   ctx: Context,
   getApp: () => AppService | undefined,
   getPluginMgr: () => PluginManagerService | undefined,
+  identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
 ): void {
   // 获取插件列表及状态
   expressApp.get('/api/plugins', (_req, res) => {
@@ -113,13 +114,12 @@ export function registerPluginRoutes(
     }
 
     // ===== 权限闸门 + 调用者身份 =====
-    // WebUI 暂无登录，调用者固定解析为 webui:console（owner 级）；登录功能落地后
-    // 改为从会话解析真实用户，本闸门即按账户等级生效。
-    // 未声明 actionsMeta 的 action 默认要求 owner 等级（默认拒绝），插件需显式
-    // 声明才能降低门槛。capability `action:<plugin>:<method>` 走 authorize 统一闸
-    // （支持 per-user grant/deny）。authority 服务缺席时放行（与 tools/commands
-    // 守卫缺席时一致）。
-    const caller: UserIdentity = { platform: 'webui', userId: 'console' };
+    // 调用者从会话解析：账户登录 → webui:<username>，单 token 模式 → webui:console
+    // （owner 级）。未声明 actionsMeta 的 action 默认要求 owner 等级（默认拒绝），
+    // 插件需显式声明才能降低门槛。capability `action:<plugin>:<method>` 走
+    // authorize 统一闸（支持 per-user grant/deny）。authority 服务缺席时放行
+    // （与 tools/commands 守卫缺席时一致）。
+    const caller: UserIdentity = identify(req) ?? { platform: 'webui', userId: 'console' };
     const authority = ctx.getService<AuthorityService>('authority');
     if (authority) {
       const required = entry.module.actionsMeta?.[method]?.authority ?? ctx.config.get('ownerAuthority') ?? 5;
