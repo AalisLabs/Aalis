@@ -16,7 +16,7 @@ interface CommandDefinition {
   description: string;
   authority?: number;                    // 默认 1
   safety?: SafetyLevel;                  // 默认 'safe'
-  permissions?: PermissionId[];
+  permissions?: PermissionId[];  // SafetyLevel / PermissionId 从 @aalis/plugin-authority-api 导入
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   subcommands?: SubcommandDefinition[];  // 子指令递归

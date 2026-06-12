@@ -43,6 +43,7 @@ interface RegisteredTool {
   safety?: SafetyLevel;                   // 默认 'safe'
   permissions?: PermissionId[];           // 静态权限
   resolvePermissions?: (args, ctx) => PermissionId[] | Promise<PermissionId[]>; // 动态权限
+  // 注：SafetyLevel / PermissionId 自 2026-06 起从 @aalis/plugin-authority-api 导入（已迁出 core）
   groups?: string[];                      // 工具分组，未设置时始终可用
 }
 ```

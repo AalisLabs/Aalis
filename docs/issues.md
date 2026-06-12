@@ -49,8 +49,9 @@
   同步覆写，否则 test/core/config.test.ts 的防漂移用例会拦下。
 - `PluginModule.actions/actionsMeta/ActionCaller` 是 host-RPC 形状的槽位，
   纯化决议见 #3 同车项（暂留 core）。
-- scope 的 `syncPluginDefaults` 不继承父 ConfigManager 的 `trimUnknownFields`
-  政策（恒为默认 true）——scope 几乎不会调该方法，暂不为此打通取值链。
+- ~~scope 的 syncPluginDefaults 不继承父配置 trimUnknownFields 政策~~
+  （已修：政策字段公开只读，scope 构造时按值继承；热重载路径同步对齐——
+  handleConfigFileChanged 先过 syncPluginDefaults 再 diff/bounce）。
 
 ## 新功能计划
 
