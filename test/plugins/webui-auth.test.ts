@@ -1,6 +1,8 @@
 import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { AuthorityManager } from '../../packages/plugin-authority/src/index.js';
 import { type AccountVerifier, createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
+import { createRouteGate } from '../../packages/plugin-webui-server/src/gate.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 账户 session + 单 token 双模式
@@ -194,5 +196,48 @@ describe('未认证拦截', () => {
     const { cookie } = await loginAlice(auth);
     const authed = await run(auth, makeReq({ path: '/api/auth/status', cookie }));
     expect(authed.res.jsonBody).toMatchObject({ authed: true, identity: { userId: 'alice' } });
+  });
+});
+
+describe('REST 路由权限闸（gate × authorize）', () => {
+  function makeGate(level: number, grants?: string[]) {
+    const cfgData: Record<string, unknown> = { ownerAuthority: 5, defaultAuthority: 1 };
+    const config = { get: (k: string) => cfgData[k] };
+    const manager = new AuthorityManager(
+      config as never,
+      makeLogger(),
+      {} as ConstructorParameters<typeof AuthorityManager>[2],
+    );
+    manager.setAuthority('webui', 'alice', level);
+    if (grants) manager.setUserCapabilities('webui', 'alice', { grants });
+    const ctx = { getService: (n: string) => (n === 'authority' ? manager : undefined), config } as never;
+    return createRouteGate(ctx, () => ({ platform: 'webui', userId: 'alice' }));
+  }
+
+  function pass(middleware: ReturnType<ReturnType<typeof makeGate>>): { status: number; nexted: boolean } {
+    const res = makeRes();
+    let nexted = false;
+    middleware({ headers: {} }, res, () => {
+      nexted = true;
+    });
+    return { status: res.statusCode, nexted };
+  }
+
+  it('分层缺省：公共读放行低等级账户，管理读与变更档拒绝', () => {
+    const gate = makeGate(1);
+    expect(pass(gate('webui:status:read', 1)).nexted).toBe(true);
+    expect(pass(gate('webui:logs:read', 4)).status).toBe(403);
+    expect(pass(gate('webui:config:write', 'owner')).status).toBe(403);
+  });
+
+  it('per-user grant 可单独放行某条管理路由（不动等级）', () => {
+    const gate = makeGate(1, ['webui:files:read']);
+    expect(pass(gate('webui:files:read', 4)).nexted).toBe(true);
+    expect(pass(gate('webui:files:write', 'owner')).status).toBe(403);
+  });
+
+  it('owner 等级账户全档放行', () => {
+    const gate = makeGate(5);
+    expect(pass(gate('webui:config:write', 'owner')).nexted).toBe(true);
   });
 });

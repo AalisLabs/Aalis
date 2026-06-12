@@ -6,10 +6,14 @@
 
 ## 概述
 
-定义两件事：
+定义三件事：
 
-1. **`ExecutionGuard`** —— 跨切面守卫。`plugin-commands` 与 `plugin-tools` 在执行任何 command/tool 前调用该守卫；任何插件可通过 `setExecutionGuard()` 注入实现，统一拦截规则。
-2. **`AuthorityService`** —— 用户权限等级、危险操作短时授权、平台 confirm 回调注册等。
+1. **`AuthorityService.authorize`** —— capability 统一闸。任何 surface（tool /
+   command / WebUI action / REST / scheduler）的敏感操作在边界过同一裁决：
+   permissionPolicy > 用户 deny > 用户 grant > 角色链等级门槛（per-capability）。
+   模型详见 [docs/core/authority.md](../core/authority.md)。
+2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize，dangerous 确认留在适配层。
+3. **账户与身份** —— `UserIdentity`（全 surface 统一身份类型）、密码凭据（WebUI 登录）、危险操作短时授权、平台 confirm 回调注册。
 
 ## 关键类型
 
@@ -37,15 +41,23 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ```ts
 interface AuthorityService {
+  // capability 统一闸：null 放行 | string 拒绝原因
+  authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
   getAuthority(platform: string, userId?: string): number;
   setAuthority(platform: string, userId: string, level: number): void;
   isOwner(platform: string, userId?: string): boolean;
+  requiredAuthorityFor(permissions: string[]): number;       // 参数级动态提权
+  setUserCapabilities(platform: string, userId: string, o: UserCapabilityOverrides): void;
+  removeUser(platform: string, userId: string): void;
+  setPassword(platform: string, userId: string, password: string): Promise<void>;
+  verifyPassword(platform: string, userId: string, password: string): Promise<boolean>;
+  hasPassword(platform: string, userId: string): boolean;
   isDangerousAllowed(name: string, permissions?: string[]): boolean;
   confirmDangerous(request: DangerousConfirmRequest): Promise<boolean>;
   listDangerousGrants(): DangerousGrant[];
   revokeDangerousGrant(id: string): boolean;
   setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void;
-  listUsers(): Array<{ platform: string; userId: string; authority: number }>;
+  listUsers(): AuthorityUserEntry[]; // { platform, userId, authority, grants?, denies?, hasPassword? }
   save(): void;
 }
 ```
@@ -57,11 +69,13 @@ interface AuthorityService {
 3. `AuthorityService` 调用平台对应的 `DangerousConfirmHandler`（adapter 提供）询问用户
 4. 用户确认后可返回 `{ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }`，授权在该窗口内自动放行同名操作
 
-## PermissionId 命名约定
+## PermissionId（capability）命名约定
 
 - 工具：`tool:<group>.<name>`，例 `tool:file.write`
-- 存储：`storage:<rootName>:<read|write|delete>`，例 `storage:workspace:write`
+- 存储：`storage:<rootName>:<read|write|delete>`；路径级（动态）`storage:path:<uri>:<op>`
 - 指令：默认 `command:<path>`，可在 `permissions` 字段追加业务标识
+- WebUI action：`action:<plugin>:<method>`（page-action 路由自动产出）
+- WebUI REST：`webui:<area>:<op>`（webui-server gate.ts 产出）
 
 ## 实现者
 
@@ -69,5 +83,6 @@ interface AuthorityService {
 
 ## 相关
 
-- 默认权限策略与 owner 名单存于 `data/authority.json`
-- 用户身份模型（`UserIdentity` 等）也在本 api 包中定义
+- 权限数据（等级 / grants / denies / 密码凭据）存于 `data/users.json`（v2 格式）
+- 用户身份模型 `UserIdentity` 在本 api 包中定义，是全 surface 统一的调用者身份类型
+  （WebUI action 的 caller 第三参、scheduler actor 快照等均为该类型）

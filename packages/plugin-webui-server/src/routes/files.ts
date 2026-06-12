@@ -10,6 +10,7 @@ import { basename } from 'node:path';
 import type { Context } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type express from 'express';
+import type { RouteGate } from '../gate.js';
 
 export interface FileRoutesOptions {
   /** storage 服务（必填） */
@@ -19,7 +20,12 @@ export interface FileRoutesOptions {
 }
 
 /** 注册文件管理相关 REST 路由 */
-export function registerFileRoutes(expressApp: express.Express, _ctx: Context, opts: FileRoutesOptions): void {
+export function registerFileRoutes(
+  expressApp: express.Express,
+  _ctx: Context,
+  opts: FileRoutesOptions,
+  gate: RouteGate,
+): void {
   const { storage, fileRoot } = opts;
 
   function storageUri(relPath: string): string {
@@ -59,7 +65,7 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
   }
 
   // 列出目录内容
-  expressApp.get('/api/files', async (req, res) => {
+  expressApp.get('/api/files', gate('webui:files:read', 4), async (req, res) => {
     const dir = String(req.query.path || '');
     if (!guardBrowsable(res)) return;
     try {
@@ -71,7 +77,7 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
   });
 
   // 获取文件/目录详情
-  expressApp.get('/api/files/info', async (req, res) => {
+  expressApp.get('/api/files/info', gate('webui:files:read', 4), async (req, res) => {
     const filePath = String(req.query.path || '');
     if (!guardBrowsable(res)) return;
     try {
@@ -83,7 +89,7 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
   });
 
   // 下载文件
-  expressApp.get('/api/files/download', async (req, res) => {
+  expressApp.get('/api/files/download', gate('webui:files:read', 4), async (req, res) => {
     const filePath = String(req.query.path || '');
     if (!guardBrowsable(res)) return;
     try {
@@ -98,7 +104,7 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
   });
 
   // 重命名
-  expressApp.post('/api/files/rename', async (req, res) => {
+  expressApp.post('/api/files/rename', gate('webui:files:write', 'owner'), async (req, res) => {
     const { path: filePath, newName } = req.body ?? {};
     if (!filePath || !newName) {
       res.status(400).json({ error: '缺少参数' });
@@ -124,7 +130,7 @@ export function registerFileRoutes(expressApp: express.Express, _ctx: Context, o
   });
 
   // 删除
-  expressApp.post('/api/files/delete', async (req, res) => {
+  expressApp.post('/api/files/delete', gate('webui:files:write', 'owner'), async (req, res) => {
     const { path: filePath } = req.body ?? {};
     if (!filePath) {
       res.status(400).json({ error: '缺少参数' });
