@@ -108,8 +108,6 @@ export interface SchemaField {
   secret?: boolean;
   options?: Array<{ label: string; value: string | number }>;
   dynamicOptions?: string;
-  /** select 类型的动态提供者列表：填服务名，获取该服务的所有提供者 */
-  dynamicProviders?: string;
   allowCustom?: boolean;
 }
 

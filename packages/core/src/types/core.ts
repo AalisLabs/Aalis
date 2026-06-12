@@ -25,37 +25,47 @@ export interface InjectDeclaration {
 
 // ----- 配置 Schema  -----
 
-export type SchemaFieldType =
-  | 'string'
-  | 'number'
-  | 'boolean'
-  | 'select'
-  | 'multiselect'
-  | 'textarea'
-  /** LLM 模型引用：值形如 `{ provider: string; model: string }`，由前端渲染为联动 select
-   *  （provider 列表来自 `/api/models/llm` 的 contextId 聚合；model 列表由所选 provider 决定）。
-   *  core 不解释此字段，仅作为 schema 标签；运行时由消费方使用 `resolveLLMModel(ctx, value, caps)` 解析。 */
-  | 'llm-ref';
+/**
+ * Schema 字段类型注册表 —— declaration merging 扩展点。
+ *
+ * core 只内置环境无关的基础类型；带业务/宿主语义的类型由对应 api 包合并声明
+ * （如 `'llm-ref'` 由 @aalis/plugin-llm-api 注入）。key 即类型名，value 恒为 true。
+ *
+ * ```ts
+ * declare module '@aalis/core' {
+ *   interface SchemaFieldTypes {
+ *     'llm-ref': true;
+ *   }
+ * }
+ * ```
+ */
+export interface SchemaFieldTypes {
+  string: true;
+  number: true;
+  boolean: true;
+  select: true;
+  multiselect: true;
+  textarea: true;
+}
 
+export type SchemaFieldType = keyof SchemaFieldTypes & string;
+
+/**
+ * 单个配置字段。
+ *
+ * core 只声明任意宿主都需要的中立字段；渲染/交互相关的扩展属性
+ * （如 `secret` / `dynamicOptions` / `allowCustom`）由消费它们的宿主 api 包
+ * （@aalis/plugin-webui-api）通过 declaration merging 注入——core 不感知
+ * 任何具体宿主的表单语义。
+ */
 export interface SchemaField {
   type: SchemaFieldType;
   label: string;
   description?: string;
   default?: unknown;
   required?: boolean;
-  /** 标记为敏感字段，前端显示时自动遮蔽 */
-  secret?: boolean;
   /** select / multiselect 类型的静态选项 */
   options?: Array<{ label: string; value: string | number }>;
-  /** select / multiselect 动态选项来源：服务名（消费方实现自己的 dynamicOptions 解析器，
-   *  通常约定为运行时调用该服务的 listModels() 或等价方法）。core 不解释此字段语义，
-   *  仅作为透传 hint 给前端/解析器。 */
-  dynamicOptions?: string;
-  /** select 动态选项来源：服务名（解析为该服务的所有提供者列表 contextId + displayName）。
-   *  与 dynamicOptions 一样，core 不解释，由消费方实现。 */
-  dynamicProviders?: string;
-  /** multiselect 是否允许用户手动输入自定义值（不限于选项列表） */
-  allowCustom?: boolean;
 }
 
 export interface SchemaGroup {
