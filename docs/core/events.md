@@ -75,7 +75,25 @@ ctx.on('scheduler:tick', async (jobId) => { ... });
 ctx.emit('scheduler:tick', 'job-1');
 ```
 
-运行时也支持任意字符串 key（`AalisEvents` 有 `[key: string]: unknown[]` 兜底），无需声明即可使用。
+`AalisEvents` 是**类型封闭**的（没有 `[key: string]` 兜底）：对扩展开放、对拼写错误封闭——
+未声明的事件名在 `ctx.on` / `ctx.emit` 处直接编译报错，契约始终可枚举、依赖边在包图中可见。
+
+事件名需要**运行时动态生成**（如按频道/任务 ID 派生）时，官方出路是在自己的命名空间内
+合并一条模板字面量签名（TS 4.4+）：
+
+```typescript
+declare module '@aalis/core' {
+  interface AalisEvents {
+    // 动态事件名族：myplugin:channel: 前缀下的任意后缀都合法，payload 类型统一
+    [k: `myplugin:channel:${string}`]: [payload: ChannelMessage];
+  }
+}
+
+ctx.on(`myplugin:channel:${channelId}`, async (msg) => { ... }); // msg: ChannelMessage
+```
+
+同前缀下更具体的字面量 key 仍可逐条声明（TS 优先匹配字面量）。前缀必须用自己插件的
+命名空间，避免与他人模板签名相互吞并。
 
 ---
 
