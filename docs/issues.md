@@ -32,7 +32,12 @@
 - ⏭️ 剩余工作（与登录/沙盒〔新功能 #1〕合并推进）：
   - WebUI 其余 REST 路由（`PUT /api/config` 等）仍默认可信；
   - `code_runner` 图灵完备参数需进程级隔离（容器化，新功能 #6）；
-  - 登录后为各 action 标注低于 owner 的 `actionsMeta` 等级。
+  - 登录后为各 action 标注低于 owner 的 `actionsMeta` 等级；
+  - 📌 2026-06-12 决议同车项（core 词汇审计 #3 项）：`actions`/`actionsMeta` 经
+    declaration merging 迁出 core 落 webui-api（先例：subsystem/extends）；
+    **`ActionCaller` 与 authority-api 已有的 `UserIdentity` 同构，合并为一个
+    身份类型落 authority-api**；core 的 getStatus 删 `actionNames`（消费方自取
+    `Object.keys(module.actions)`）。capability 闸落地时一并做，避免双倍改动。
 
 ### #9 core 设计层面的已知妥协（低优先级，记录在案）
 
@@ -42,6 +47,10 @@
 - `ScopedConfigManager` 采用「extends + 全量显式覆写 + 反射防漂移单测」而非纯组合
   （纯组合需抽接口，波及 `Context.config` 全链类型）。基类新增公开方法时**必须**
   同步覆写，否则 test/core/config.test.ts 的防漂移用例会拦下。
+- `PluginModule.actions/actionsMeta/ActionCaller` 是 host-RPC 形状的槽位，
+  纯化决议见 #3 同车项（暂留 core）。
+- scope 的 `syncPluginDefaults` 不继承父 ConfigManager 的 `trimUnknownFields`
+  政策（恒为默认 true）——scope 几乎不会调该方法，暂不为此打通取值链。
 
 ## 新功能计划
 
@@ -66,6 +75,15 @@
   一切经 provider 注入）、**抽象化**（IoC + 事件 + 钩子 + 能力声明，不感知业务）、
   **最简化**（不引第三方运行时依赖，API 面最小）、**忒修斯之船**（任何插件可被热替换，
   core 自身各子系统也可经 AppOptions 注入替换）。
+- 📌 2026-06-12 AalisEvents **保持类型封闭**（对扩展开放、对拼写错误封闭）：契约可枚举、
+  依赖边在包图中可见；动态事件名的官方出路是插件在自己命名空间合并模板字面量签名
+  （`` [k: `myns:${string}`]: [payload: T] ``，TS 4.4+）——该模式待写入插件开发文档。
+- 📌 2026-06-12 core **不拆 kernel 包**：包是发布/版本化单位而非模块化单位；拆包在
+  当前（无 kernel 独立消费者）收益为零，且 declaration merging 锚定在 `'@aalis/core'`
+  包名上，拆包=迁移全部插件的 merging 目标。重新评估触发条件：①core 发 npm 且要给
+  基底层单独 1.0 承诺；②出现 kernel-only 真实消费者；③多人协作需要 Conway 边界。
+  内部「基底层（events/hooks/service/context）不得 import 编排层（plugin/app）」的
+  架构测试待补。
 
 ## 已完成归档
 
@@ -100,6 +118,24 @@
    顺手抓获真 bug：plugin-tool-onebot `ctx.on('dispose', ...)` 监听不存在的事件
    （access checker 泄漏）→ 改 `ctx.onDispose`。
    未修而记录在案的两项（语义权衡）移入待办 #9。
+
+### ✅ core 词汇泄漏审计五项（2026-06-12 审计并落地，3a4317b / 4f2af20 / Logger / 政策共 4 commit）
+
+> 审计判据：内核组件合格标准是"是否是让其他一切可被替换的不动点"；
+> 五项均为词汇/政策泄漏而非机制泄漏，修后 core 更小更纯。
+
+1. **ConfigSchema 词汇归位**（4f2af20）：`SchemaFieldType` 改为 SchemaFieldTypes
+   注册表（merging 扩展点），`'llm-ref'` 落 llm-api、`secret/dynamicOptions/allowCustom`
+   落 webui-api 注入，全仓零使用的死字段 `dynamicProviders` 连同前端取数管线删除。
+2. **Logger 接口化**：core 持有 `interface Logger`（四方法+child）+ `DefaultLogger`
+   缺省实现，`AppOptions.logger` 注入点（pino 等适配自此可行）；删除零使用死 API
+   `setLevel`。不能拆成插件——自举悖论：激活第一个插件之前 core 就需要日志。
+3. **actions/actionsMeta/ActionCaller**：决议与 #3 capability 重设计同车（见待办 #3）。
+4. **两处政策开放注入**：`configSync.trimUnknownFields`（schema 外字段裁剪/保留）、
+   `serviceRecovery.autoEnableDisabled`（必需服务恢复是否压过用户禁用），默认值
+   均保持现行为。
+5. **SafetyLevel/PermissionId 迁至 authority-api**（3a4317b）：权限词汇归位，
+   消除 PermissionId 双源定义。
 
 ### ✅ 包根漏导出 ServiceTypeMap/ServiceOf（d222483）
 
