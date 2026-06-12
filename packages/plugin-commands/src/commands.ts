@@ -324,6 +324,7 @@ export class CommandRegistry implements CommandService {
           sessionId: input.sessionId,
           platform: input.platform,
           userId: input.userId,
+          sessionType: input.sessionType,
           raw: input.raw,
         },
         options: parsed.options,
