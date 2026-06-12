@@ -22,6 +22,26 @@ interface WebUIService {
 }
 ```
 
+## PluginModule 注入槽位（declaration merging）
+
+本包向 core 的 `PluginModule` 合并注入以下字段（core 不读取，仅 webui 消费）：
+
+- `subsystem?: string` / `extends?: ExtendDeclaration` —— 纯展示元数据；
+- `actions?: Record<string, (ctx, args, caller?: UserIdentity) => Promise<unknown>>` ——
+  插件 RPC 动作表，webui-server 经 `POST /api/page-action/:plugin/:method` 调起。
+  第三参 caller 为权限闸放行后的调用者身份（登录账户或单 token 模式的
+  `webui:console`），handler 可用它做业务级检查；忽略即向后兼容；
+- `actionsMeta?: Record<string, { authority?: number }>` —— action 所需最低权限等级。
+  **未声明的 action 默认要求 owner（默认拒绝）**；闸的 capability 形状为
+  `action:<plugin>:<method>`，支持 per-user grant/deny（见 plugin-authority-api）。
+
+```ts
+export const actions: PluginModule['actions'] = {
+  async getStats(ctx) { /* ... */ },
+};
+export const actionsMeta = { getStats: { authority: 1 } }; // 显式降门槛才对低等级开放
+```
+
 ## 页面注册 helper
 
 ```ts
