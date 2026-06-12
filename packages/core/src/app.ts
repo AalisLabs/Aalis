@@ -334,6 +334,12 @@ export class App {
   private async handleConfigFileChanged(): Promise<void> {
     this.logger.info('检测到配置变更，正在热重载...');
     try {
+      // 先按与启动路径相同的政策同步一遍（补 defaultConfig 缺失字段 +
+      // 按 trimUnknownFields 裁剪 schema 外字段）——否则热重载读入的
+      // 原始快照会绕过政策，内存态与启动态在字段清理上不一致。
+      const synced = this.ctx.config.syncPluginDefaults(this.plugins.getStatus());
+      for (const id of synced) this.logger.debug(`热重载配置同步: ${id}`);
+
       let changed = false;
       for (const p of this.plugins.getStatus()) {
         const defaults = p.defaultConfig ?? {};

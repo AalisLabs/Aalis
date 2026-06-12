@@ -172,6 +172,19 @@ describe('configSync.trimUnknownFields 政策（#4 政策注入）', () => {
     expect(cfg.getPluginConfig('p1')).toEqual({ known: 1 });
   });
 
+  it('ScopedConfigManager 继承父配置的 trimUnknownFields 政策（评审修复回归）', () => {
+    const parent = new ConfigManager(
+      { name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: 'x' } } },
+      { trimUnknownFields: false },
+    );
+    const scope = new ScopedConfigManager(parent);
+    scope.syncPluginDefaults([
+      { instanceId: 'p1', defaultConfig: { known: 0 }, configSchema: { known: { type: 'number', label: 'K' } } },
+    ]);
+    // 父政策为"保留"，scope 不得用缺省 true 裁掉 unknown
+    expect(scope.getPluginConfig('p1')).toEqual({ known: 1, unknown: 'x' });
+  });
+
   it('trimUnknownFields=false：保留 schema 外字段', () => {
     const cfg = new ConfigManager(
       { name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: 'x' } } },

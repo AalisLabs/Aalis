@@ -95,7 +95,11 @@ export interface PluginInfo {
   error?: string;
 }
 
-// ----- ConfigSchema 类型 (镜像 core) -----
+// ----- ConfigSchema 类型 -----
+// 镜像 server 侧合并后的 SchemaField（core 基础字段 + webui-api 注入的
+// secret/dynamicOptions/allowCustom + llm-api 注入的 'llm-ref' 类型）。
+// 前端有意不依赖任何 @aalis 包，schema 经 JSON 传输后在此用镜像类型接住；
+// server 侧合并声明变更时需手动同步本镜像。
 
 export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea' | 'llm-ref';
 

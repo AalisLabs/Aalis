@@ -94,7 +94,8 @@ export class ConfigManager {
   private config: AalisConfig;
   private readonly provider?: ConfigProvider;
   private readonly dataDir: string;
-  private readonly trimUnknownFields: boolean;
+  /** syncPluginDefaults 的字段裁剪政策（公开只读：scope 继承、宿主可内省） */
+  readonly trimUnknownFields: boolean;
   private unwatchFn: (() => void) | null = null;
   private onChangeCallback: (() => void) | null = null;
 
@@ -219,6 +220,10 @@ export class ConfigManager {
    *
    * 历史上这是"从磁盘 re-read"的入口；现在交由 provider 决定何时
    * 通过 `watch(onChange)` 把新快照推过来；本方法仅供 watch 回调使用。
+   *
+   * 注意：本方法（与 watch 回调）**不应用 trimUnknownFields 政策**——
+   * ConfigManager 不持有插件 schema，裁剪统一发生在 syncPluginDefaults
+   * （App.handleConfigFileChanged 热重载时会重新调用它对齐政策）。
    */
   reloadFrom(next: AalisConfig): AalisConfig {
     this.config = mergeDefaultsConfig(next);
@@ -270,7 +275,9 @@ export class ScopedConfigManager extends ConfigManager {
     // 基类要求一个 initial 快照——传入独立的空白对象占位。绝不可传
     // parent.getAll()：那会把 plugins/disabledPlugins 等容器按引用共享给
     // 基类快照，一旦哪个方法漏覆写，继承实现的写入会穿透进父配置。
-    super({ name: '', logLevel: '', plugins: {} });
+    // 政策字段（trimUnknownFields）按值继承父配置——syncPluginDefaults 经
+    // 虚分派读 this.trimUnknownFields，scope 必须与父同政策。
+    super({ name: '', logLevel: '', plugins: {} }, { trimUnknownFields: parent.trimUnknownFields });
     this.parentConfig = parent;
   }
 

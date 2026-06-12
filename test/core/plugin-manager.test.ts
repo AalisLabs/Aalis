@@ -407,3 +407,36 @@ describe('serviceRecovery.autoEnableDisabled 政策（#4 政策注入）', () =>
     await app.stop();
   });
 });
+
+describe('配置热重载与启动路径同政策（评审修复回归）', () => {
+  it('watch 推送的快照在热重载时按 trimUnknownFields 裁剪 schema 外字段', async () => {
+    let pushSnapshot: ((next: Record<string, unknown>) => void) | undefined;
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1 } } },
+      configProvider: {
+        save: () => {},
+        watch: cb => {
+          pushSnapshot = cb as (next: Record<string, unknown>) => void;
+          return () => {};
+        },
+      },
+    });
+    const mod: PluginModule = {
+      name: 'p1',
+      defaultConfig: { known: 0 },
+      configSchema: { known: { type: 'number', label: 'K' } },
+      apply() {},
+    };
+    await app.plugin(mod);
+    await app.start();
+
+    // 模拟外部把 schema 外字段写进配置文件
+    pushSnapshot?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
+    // 热重载是异步链（watch 回调 → handleConfigFileChanged → bounce）
+    await new Promise(r => setTimeout(r, 20));
+
+    // 政策默认裁剪：sneaky 不应留在内存态
+    expect(app.ctx.config.getPluginConfig('p1')).toEqual({ known: 2 });
+    await app.stop();
+  });
+});
