@@ -12,7 +12,8 @@
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
-import type { AppService, ConfigSchema, Context, PluginManagerService, SafetyLevel } from '@aalis/core';
+import type { AppService, ConfigSchema, Context, PluginManagerService } from '@aalis/core';
+import type { SafetyLevel } from '@aalis/plugin-authority-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-tools-api 触发 declaration merging，使 ctx.registerTool 类型生效

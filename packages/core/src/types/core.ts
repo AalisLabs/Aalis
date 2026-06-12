@@ -1,12 +1,6 @@
 // ===== 核心机制类型 =====
 
-// ----- 安全与权限 -----
-
-/** 安全等级：safe=安全操作, dangerous=高危操作 */
-export type SafetyLevel = 'safe' | 'dangerous';
-
-/** 细粒度权限标识，如 tool:file.write、storage:workspace:read */
-export type PermissionId = string;
+// 注：SafetyLevel / PermissionId 已迁出到 @aalis/plugin-authority-api（权限词汇归位）
 
 // 注：Message / ContentSegment 已迁出到 @aalis/plugin-agent-api（cleanup-N，core 纯通用 IoC 化）
 // 注：ToolCall / ToolDefinition / ToolFunction 已迁出到 @aalis/plugin-tools-api（cleanup-N）

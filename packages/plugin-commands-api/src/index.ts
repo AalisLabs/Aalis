@@ -10,8 +10,8 @@
 //
 // 实现见 @aalis/plugin-commands。
 
-import type { Context, PermissionId, SafetyLevel } from '@aalis/core';
-import type { ExecutionGuard } from '@aalis/plugin-authority-api';
+import type { Context } from '@aalis/core';
+import type { ExecutionGuard, PermissionId, SafetyLevel } from '@aalis/plugin-authority-api';
 
 // ===== handler 接口 =====
 
