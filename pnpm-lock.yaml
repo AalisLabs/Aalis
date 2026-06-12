@@ -714,6 +714,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
