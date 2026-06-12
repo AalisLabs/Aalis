@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DisposableChain, Logger } from '../../packages/core/src/index.js';
+import { DefaultLogger, DisposableChain } from '../../packages/core/src/index.js';
 
 describe('DisposableChain', () => {
   it('逆序执行清理函数', () => {
     const order: number[] = [];
-    const chain = new DisposableChain(new Logger('test'));
+    const chain = new DisposableChain(new DefaultLogger('test'));
     chain.push(() => order.push(1));
     chain.push(() => order.push(2));
     chain.push(() => order.push(3));
@@ -14,7 +14,7 @@ describe('DisposableChain', () => {
 
   it('单个清理函数异常不中断其他（被 swallow）', () => {
     const order: number[] = [];
-    const logger = new Logger('test');
+    const logger = new DefaultLogger('test');
     const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     const chain = new DisposableChain(logger);
     chain.push(() => order.push(1));

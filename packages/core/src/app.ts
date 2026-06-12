@@ -2,7 +2,7 @@ import { type AalisConfig, ConfigManager } from './config.js';
 import { Context } from './context.js';
 import { EventBus } from './events.js';
 import { HookRegistry } from './hooks.js';
-import { Logger, LogHub, type LogLevel } from './logger.js';
+import { DefaultLogger, type Logger, LogHub, type LogLevel } from './logger.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
 import type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 import { ServiceContainer } from './service.js';
@@ -50,6 +50,12 @@ export interface AppOptions {
    * 缺省 = `LogHub.default`（进程级共享，runtime sink 默认订阅的也是它）。
    */
   logHub?: LogHub;
+  /**
+   * 注入自定义 Logger 实现（如 pino/winston 适配对象）。
+   * 注入后 core 不再写 LogHub 管线——runtime 的 console/file/webui sink
+   * 监听的是 LogHub，是否对接由注入方自理。缺省 = DefaultLogger（写入 logHub）。
+   */
+  logger?: Logger;
   /**
    * 必需服务列表——这些服务必须至少有一个提供者在运行。
    * 默认 `[]`，core 不假设任何具体服务存在。
@@ -121,7 +127,9 @@ export class App {
     this.events.markSticky('app:started');
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
-    this.logger = new Logger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default);
+    this.logger =
+      options.logger ??
+      new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default);
     // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
     // 外部注入的 bus 若已自带上报器则尊重之（??=）。
     this.events.onHandlerError ??= (event, err) => {
