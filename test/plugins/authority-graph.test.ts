@@ -162,6 +162,55 @@ describe('用户记录管理（v2）', () => {
   });
 });
 
+describe('账户凭据（密码哈希）', () => {
+  it('setPassword / verifyPassword 往返；错误密码与未知账户为 false', async () => {
+    const m = makeManager();
+    await m.setPassword('webui', 'alice', 'hunter2-secret');
+    expect(await m.verifyPassword('webui', 'alice', 'hunter2-secret')).toBe(true);
+    expect(await m.verifyPassword('webui', 'alice', 'wrong')).toBe(false);
+    expect(await m.verifyPassword('webui', 'nobody', 'hunter2-secret')).toBe(false);
+    expect(await m.verifyPassword('webui', 'alice', '')).toBe(false);
+  });
+
+  it('空密码抛错', async () => {
+    const m = makeManager();
+    await expect(m.setPassword('webui', 'alice', '')).rejects.toThrow(/密码不能为空/);
+  });
+
+  it('listUsers 只暴露 hasPassword 标志，凭据本身永不返回', async () => {
+    const m = makeManager({ defaultAuthority: 1 });
+    await m.setPassword('webui', 'alice', 'hunter2-secret');
+    const entry = m.listUsers().find(u => u.userId === 'alice');
+    expect(entry?.hasPassword).toBe(true);
+    expect(JSON.stringify(entry)).not.toContain('pbkdf2');
+    expect(m.hasPassword('webui', 'alice')).toBe(true);
+    expect(m.hasPassword('webui', 'bob')).toBe(false);
+  });
+
+  it('setUserCapabilities 清空授予不丢凭据', async () => {
+    const m = makeManager();
+    await m.setPassword('webui', 'alice', 'hunter2-secret');
+    m.setUserCapabilities('webui', 'alice', { grants: ['tool:a'] });
+    m.setUserCapabilities('webui', 'alice', { grants: [] });
+    expect(await m.verifyPassword('webui', 'alice', 'hunter2-secret')).toBe(true);
+  });
+
+  it('凭据经 save/init 往返存活', async () => {
+    let written = '';
+    const m = makeManager({}, {
+      writeFile: async (_uri: string, payload: string | Uint8Array) => {
+        written = payload as string;
+      },
+    } as Partial<StorageParam>);
+    await m.setPassword('webui', 'alice', 'hunter2-secret');
+    m.save();
+    await new Promise(r => setTimeout(r, 0));
+    const m2 = makeManager({}, { readFile: async () => written } as Partial<StorageParam>);
+    await m2.init();
+    expect(await m2.verifyPassword('webui', 'alice', 'hunter2-secret')).toBe(true);
+  });
+});
+
 describe('users.json 持久化与 v1 迁移', () => {
   it('v1 平面格式自动迁移，save 写出 v2', async () => {
     let written = '';
