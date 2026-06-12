@@ -567,7 +567,14 @@ class CliTui {
     // 适配器不再内联解析：未注册命令被放行为普通消息进入 agent，命中命令
     // 由该相位执行并经 outbound:message 回送渲染到 TUI，与 onebot/webui 一致。
     // shutdown/restart 的 TUI 清理由 ctx.onDispose(() => this.stop()) 兜底。
-    await this.ctx.emit('inbound:message', { content: text, sessionId: this.sessionId, platform: 'cli' });
+    // userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的
+    // cli:console owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority。
+    await this.ctx.emit('inbound:message', {
+      content: text,
+      sessionId: this.sessionId,
+      platform: 'cli',
+      userId: 'console',
+    });
   }
 
   private recallHistory(delta: -1 | 1): void {
