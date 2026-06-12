@@ -297,3 +297,69 @@ describe('App plugin lifecycle', () => {
     expect(cIdx).toBeLessThan(pIdx);
   });
 });
+
+describe('激活归因与级联（#8.1 / #8.6 回归）', () => {
+  let env: ReturnType<typeof makeApp>;
+  beforeEach(() => {
+    env = makeApp();
+  });
+  afterEach(() => env.cleanup());
+
+  it('旁观插件的 plugin:loaded 监听器抛错，不把刚激活成功的插件打成 error', async () => {
+    const observer: PluginModule = {
+      name: 'observer',
+      apply(ctx) {
+        ctx.on('plugin:loaded', name => {
+          if (name === 'victim') throw new Error('旁观者爆炸');
+        });
+      },
+    };
+    await env.app.plugin(observer);
+    await env.app.plugin(makePlugin('victim', env.state));
+
+    const victim = env.app.plugins.getStatus().find(p => p.name === 'victim');
+    expect(victim?.state).toBe('active');
+    expect(victim?.error).toBeUndefined();
+  });
+
+  it('unload 提供者后，依赖它的下游级联转 pending（不再依赖反应式巧合）', async () => {
+    const provider: PluginModule = {
+      name: 'provider',
+      provides: ['mysvc'],
+      apply(ctx) {
+        ctx.provide('mysvc', { ok: true });
+        env.state.applied.push('provider');
+        ctx.onDispose(() => env.state.disposed.push('provider'));
+      },
+    };
+    const consumer: PluginModule = {
+      name: 'consumer',
+      inject: { required: ['mysvc'] },
+      apply(ctx) {
+        env.state.applied.push('consumer');
+        ctx.onDispose(() => env.state.disposed.push('consumer'));
+      },
+    };
+    await env.app.plugin(provider);
+    await env.app.plugin(consumer);
+    expect(env.app.plugins.getStatus().find(p => p.name === 'consumer')?.state).toBe('active');
+
+    await env.app.plugins.unload('provider');
+    // 等排队的 recompute 与事件微任务清算
+    await new Promise(r => setTimeout(r, 0));
+    expect(env.app.plugins.getStatus().find(p => p.name === 'consumer')?.state).toBe('pending');
+    expect(env.state.disposed).toContain('consumer');
+  });
+
+  it('激活过程中并发注册不丢失（recompute 排队，#8.6 lost wakeup 回归）', async () => {
+    // 两个 register 并发触发：第二个 recompute 落在第一个的在飞窗口内，
+    // 旧实现直接丢弃会让 p2 卡 pending；新实现排队补跑。
+    const p1 = makePlugin('p1', env.state);
+    const p2 = makePlugin('p2', env.state);
+    await Promise.all([env.app.plugin(p1), env.app.plugin(p2)]);
+    await new Promise(r => setTimeout(r, 0));
+    const states = env.app.plugins.getStatus().map(p => [p.name, p.state]);
+    expect(states).toContainEqual(['p1', 'active']);
+    expect(states).toContainEqual(['p2', 'active']);
+  });
+});

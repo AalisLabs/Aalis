@@ -3,7 +3,7 @@ import type { Logger } from './logger.js';
 import { activatePlugin, computeTargetState, ensureServiceProvider } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 import { normalizeDependency } from './service.js';
-import type { ConfigSchema } from './types/index.js';
+import type { PluginStatusEntry } from './types/index.js';
 import {
   type ActionCaller,
   type PluginEntry,
@@ -31,7 +31,21 @@ export class PluginManager {
   private plugins = new Map<string, PluginEntry>();
   private rootCtx: Context;
   private logger: Logger;
+  /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   private reloading = false;
+  /**
+   * 手动 dispose 段标志：disablePlugin / unload / bouncePlugin 在「dispose 旧
+   * ctx → 改 entry.state」这段不可分割的状态变更期间置位。期间 dispose 触发的
+   * service:unregistered 反应式 recompute 会被**排队**（而非立即跑——那会看到
+   * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 softReload 统一消化。
+   */
+  private suspended = false;
+  /**
+   * 被推迟的 recompute 请求（修 lost wakeup：在飞期间到达的请求不再被丢弃）。
+   * 多个请求合并为一——除 shutdown 保留原 reason 外统一退化为
+   * plugin-state-changed（service-up/down 的特殊语义本就只在第一轮生效）。
+   */
+  private queuedReason: RecomputeReason | null = null;
   /**
    * 全局关机标志。app.stop() 在 dispose 前置位，所有反应式级联（service:registered/
    * unregistered → checkPending/Active）都会因此跳过——避免「正在关机还去 bounce
@@ -55,15 +69,14 @@ export class PluginManager {
     this.rootCtx = rootCtx;
     this.logger = logger.child('plugins');
 
-    // 监听服务注册/注销，路由到统一 recompute()。reloading 期间与关机后一律跳过。
+    // 监听服务注册/注销，路由到统一 recompute()。
+    // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
     rootCtx.on('service:registered', name => {
-      if (this.reloading || this.shuttingDown) return;
       this.recompute({ type: 'service-up', service: name }).catch(err => {
         this.logger.error(`recompute(service-up:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`);
       });
     });
     rootCtx.on('service:unregistered', name => {
-      if (this.reloading || this.shuttingDown) return;
       this.recompute({ type: 'service-down', service: name }).catch(err => {
         this.logger.error(`recompute(service-down:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -124,15 +137,26 @@ export class PluginManager {
     const entry = this.plugins.get(name);
     if (!entry) return;
 
-    if (entry.state === 'active' && entry.context) {
-      entry.context.dispose();
-      this.rootCtx.emit('plugin:unloaded', name).catch(err => {
-        this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
-      });
+    // dispose 段守卫（与 disablePlugin 对齐）：dispose 触发的反应式 recompute
+    // 排队到收尾的 softReload，避免在 entry 半卸载态下重算。
+    this.suspended = true;
+    try {
+      if (entry.state === 'active' && entry.context) {
+        entry.context.dispose();
+        entry.context = undefined;
+        this.rootCtx.emit('plugin:unloaded', name).catch(err => {
+          this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
+        });
+      }
+      entry.state = 'disposed';
+      this.plugins.delete(name);
+      this.logger.info(`插件已卸载: ${name}`);
+    } finally {
+      this.suspended = false;
     }
-    entry.state = 'disposed';
-    this.plugins.delete(name);
-    this.logger.info(`插件已卸载: ${name}`);
+
+    // 级联重算：依赖被卸载插件所提供服务的下游需要转 pending
+    await this.softReload();
   }
 
   /**
@@ -165,8 +189,8 @@ export class PluginManager {
 
     if (entry.state === 'disabled') return true; // 已经禁用
 
-    // 设置 reloading 防止 dispose 产生的事件触发重入
-    this.reloading = true;
+    // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
+    this.suspended = true;
     try {
       if (entry.state === 'active' && entry.context) {
         entry.context.dispose();
@@ -180,7 +204,7 @@ export class PluginManager {
       this.rootCtx.config.setPluginEnabled(name, false);
       this.logger.info(`插件已禁用: ${name}`);
     } finally {
-      this.reloading = false;
+      this.suspended = false;
     }
 
     await this.softReload();
@@ -189,23 +213,11 @@ export class PluginManager {
 
   /**
    * 获取所有已注册插件的状态
+   *
+   * 返回类型即 PluginManagerService 接口的 PluginStatusEntry（types/app.ts），
+   * 编译期保证两边不漂移。
    */
-  getStatus(): Array<{
-    name: string;
-    instanceId: string;
-    displayName?: string;
-    subsystem?: string;
-    state: PluginState;
-    provides?: string[];
-    core?: boolean;
-    reusable?: boolean;
-    extends?: unknown;
-    config: Record<string, unknown>;
-    configSchema?: ConfigSchema;
-    defaultConfig?: Record<string, unknown>;
-    actionNames?: string[];
-    error?: string;
-  }> {
+  getStatus(): PluginStatusEntry[] {
     return [...this.plugins.entries()].map(([, entry]) => {
       // subsystem / extends 由 @aalis/plugin-webui-api 通过 declaration merging
       // 注入，core 不感知其语义，仅透传给 listPlugins() 调用方。
@@ -281,16 +293,28 @@ export class PluginManager {
     }
     if (newModule) entry.module = newModule;
 
-    if (entry.state === 'active' && entry.context) {
-      evictDownstreamConsumers({ provider: entry, plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
-      entry.context.dispose();
-      entry.context = undefined;
-      this.rootCtx.emit('plugin:unloaded', name).catch(err => {
-        this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
-      });
+    // dispose 段守卫（与 disablePlugin / unload 对齐）：dispose 触发的反应式
+    // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
+    this.suspended = true;
+    try {
+      if (entry.state === 'active' && entry.context) {
+        evictDownstreamConsumers({
+          provider: entry,
+          plugins: this.plugins,
+          rootCtx: this.rootCtx,
+          logger: this.logger,
+        });
+        entry.context.dispose();
+        entry.context = undefined;
+        this.rootCtx.emit('plugin:unloaded', name).catch(err => {
+          this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
+        });
+      }
+      entry.state = 'pending';
+      entry.error = undefined;
+    } finally {
+      this.suspended = false;
     }
-    entry.state = 'pending';
-    entry.error = undefined;
     await this.softReload();
     return true;
   }
@@ -422,89 +446,111 @@ export class PluginManager {
    * 做判断 —— 表达力等价、复杂度更低。
    */
   async recompute(reason: RecomputeReason): Promise<void> {
-    if (this.shuttingDown && reason.type !== 'shutdown') return;
+    if (this.shuttingDown && reason.type !== 'shutdown') {
+      // 关机已置位时非关机请求无意义；但若队列里躺着一个被挂起的 shutdown
+      // （stop() 与手动 dispose 段竞态），借这次调用把它接过来跑完。
+      if (this.queuedReason?.type !== 'shutdown') return;
+      reason = this.queuedReason;
+      this.queuedReason = null;
+    }
     if (reason.type === 'shutdown') this.shuttingDown = true;
 
-    // 重入保护：上层 reactive 监听器在 reloading=true 时已 skip；这里再加一道兜底。
-    if (this.reloading) return;
+    // 单飞 + 排队（修 lost wakeup）：在飞期间/手动 dispose 段的请求合并排队，
+    // 由在飞 run 收尾时补跑或 dispose 段收尾的 softReload 消化。注意这里必须
+    // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
+    // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
+    if (this.reloading || this.suspended) {
+      this.queuedReason = reason.type === 'shutdown' ? reason : (this.queuedReason ?? { type: 'plugin-state-changed' });
+      return;
+    }
+
     this.reloading = true;
-
     try {
-      let currentReason = reason;
-      let changed = true;
-      let rounds = 0;
-      const maxRounds = 20;
-
-      while (changed && rounds < maxRounds) {
-        changed = false;
-        rounds++;
-
-        const entries = [...this.plugins.values()];
-        const order = topoSortByDeps(entries, this.logger);
-
-        // Phase A: 反向遍历，关掉目标不是 active 的 active entry
-        for (const entry of [...order].reverse()) {
-          if (entry.state !== 'active') continue;
-          const target = computeTargetState(entry, currentReason, this.rootCtx);
-          if (target === 'active') continue;
-
-          // 日志：区分 shutdown / required 不满 / optional bounce
-          if (currentReason.type === 'shutdown') {
-            // 静默
-          } else {
-            const unmet = entry.requiredDeps.find(
-              d => !this.rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
-            );
-            if (unmet) {
-              this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
-            } else if (currentReason.type === 'service-down') {
-              this.logger.info(`服务 "${currentReason.service}" 已替换/撤销，bounce 插件: ${entry.instanceId}`);
-            }
-          }
-
-          if (entry.context) {
-            try {
-              entry.context.dispose();
-            } catch (err) {
-              this.logger.error(
-                `插件 "${entry.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-            entry.context = undefined;
-          }
-          entry.state = currentReason.type === 'shutdown' ? 'disposed' : 'pending';
-          if (currentReason.type !== 'shutdown') {
-            this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(err => {
-              this.logger.warn(`emit plugin:unloaded 失败 (${entry.instanceId}): ${err}`);
-            });
-          }
-          changed = true;
-        }
-
-        // 关机不需要再激活
-        if (currentReason.type === 'shutdown') break;
-
-        // Phase B: 正向遍历，激活目标 active 的 pending entry
-        for (const entry of order) {
-          if (entry.state !== 'pending') continue;
-          const target = computeTargetState(entry, currentReason, this.rootCtx);
-          if (target !== 'active') continue;
-          await activatePlugin(entry, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
-          if ((entry.state as PluginState) === 'active') changed = true;
-        }
-
-        // service-up / service-down 的"特殊语义"只在第一轮生效（避免无限 bounce）；
-        // 第二轮起退化为普通的 plugin-state-changed 重算。
-        if (currentReason.type === 'service-up' || currentReason.type === 'service-down') {
-          currentReason = { type: 'plugin-state-changed' };
-        }
-      }
-
-      if (rounds >= maxRounds) {
-        this.logger.warn('recompute 达到最大迭代次数，可能存在循环依赖');
+      let current: RecomputeReason | null = reason;
+      while (current) {
+        await this.recomputeOnce(current);
+        current = this.queuedReason;
+        this.queuedReason = null;
       }
     } finally {
       this.reloading = false;
+    }
+  }
+
+  /** 单次完整重算：fixed-point 状态转移 + （非关机）必需服务恢复与 plugins:changed 通知 */
+  private async recomputeOnce(reason: RecomputeReason): Promise<void> {
+    let currentReason = reason;
+    let changed = true;
+    let rounds = 0;
+    const maxRounds = 20;
+
+    while (changed && rounds < maxRounds) {
+      changed = false;
+      rounds++;
+
+      const entries = [...this.plugins.values()];
+      const order = topoSortByDeps(entries, this.logger);
+
+      // Phase A: 反向遍历，关掉目标不是 active 的 active entry
+      for (const entry of [...order].reverse()) {
+        if (entry.state !== 'active') continue;
+        const target = computeTargetState(entry, currentReason, this.rootCtx);
+        if (target === 'active') continue;
+
+        // 日志：区分 shutdown / required 不满 / optional bounce
+        if (currentReason.type === 'shutdown') {
+          // 静默
+        } else {
+          const unmet = entry.requiredDeps.find(
+            d => !this.rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
+          );
+          if (unmet) {
+            this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
+          } else if (currentReason.type === 'service-down') {
+            this.logger.info(`服务 "${currentReason.service}" 已替换/撤销，bounce 插件: ${entry.instanceId}`);
+          }
+        }
+
+        if (entry.context) {
+          try {
+            entry.context.dispose();
+          } catch (err) {
+            this.logger.error(
+              `插件 "${entry.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          entry.context = undefined;
+        }
+        entry.state = currentReason.type === 'shutdown' ? 'disposed' : 'pending';
+        if (currentReason.type !== 'shutdown') {
+          this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(err => {
+            this.logger.warn(`emit plugin:unloaded 失败 (${entry.instanceId}): ${err}`);
+          });
+        }
+        changed = true;
+      }
+
+      // 关机不需要再激活
+      if (currentReason.type === 'shutdown') break;
+
+      // Phase B: 正向遍历，激活目标 active 的 pending entry
+      for (const entry of order) {
+        if (entry.state !== 'pending') continue;
+        const target = computeTargetState(entry, currentReason, this.rootCtx);
+        if (target !== 'active') continue;
+        await activatePlugin(entry, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
+        if ((entry.state as PluginState) === 'active') changed = true;
+      }
+
+      // service-up / service-down 的"特殊语义"只在第一轮生效（避免无限 bounce）；
+      // 第二轮起退化为普通的 plugin-state-changed 重算。
+      if (currentReason.type === 'service-up' || currentReason.type === 'service-down') {
+        currentReason = { type: 'plugin-state-changed' };
+      }
+    }
+
+    if (rounds >= maxRounds) {
+      this.logger.warn('recompute 达到最大迭代次数，可能存在循环依赖');
     }
 
     if (reason.type === 'shutdown') return;
