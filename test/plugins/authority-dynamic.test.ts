@@ -1,4 +1,4 @@
-import type { ConfigManager, Logger, StorageService } from '@aalis/core';
+import type { ConfigManager, Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { AuthorityManager } from '../../packages/plugin-authority/src/index.js';
 
@@ -10,7 +10,7 @@ function makeLogger(): Logger {
 
 function makeManager(cfg: Record<string, unknown> = {}): AuthorityManager {
   const config = { get: (k: string) => cfg[k] } as unknown as ConfigManager;
-  const storage = {} as unknown as StorageService;
+  const storage = {} as ConstructorParameters<typeof AuthorityManager>[2];
   return new AuthorityManager(config, makeLogger(), storage);
 }
 

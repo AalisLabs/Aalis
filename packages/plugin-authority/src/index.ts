@@ -8,10 +8,13 @@ import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import type {
   AuthorityService,
+  AuthorityUserEntry,
+  AuthorizeRequest,
   DangerousConfirmHandler,
   DangerousConfirmRequest,
   DangerousConfirmResult,
   DangerousGrant,
+  UserCapabilityOverrides,
 } from './types.js';
 
 export type {
@@ -25,8 +28,20 @@ export type {
 
 // ===== AuthorityManager 实现 =====
 
+/**
+ * users.json 中的单用户记录（v2 格式）。
+ *
+ * - level：角色链等级（缺省回退 defaultAuthority）
+ * - grants/denies：capability 个别授予/拒绝（glob），裁决优先级 deny > grant > 角色链
+ */
+interface UserRecord {
+  level?: number;
+  grants?: string[];
+  denies?: string[];
+}
+
 export class AuthorityManager implements AuthorityService {
-  private users = new Map<string, number>();
+  private users = new Map<string, UserRecord>();
   private config: ConfigManager;
   private logger: Logger;
   private storage: StorageService;
@@ -58,16 +73,73 @@ export class AuthorityManager implements AuthorityService {
     if (owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId)) {
       return this.config.get('ownerAuthority') ?? 5;
     }
-    const key = `${platform}:${userId}`;
-    if (this.users.has(key)) return this.users.get(key)!;
-    return this.config.get('defaultAuthority') ?? 1;
+    return this.users.get(`${platform}:${userId}`)?.level ?? this.config.get('defaultAuthority') ?? 1;
   }
 
   setAuthority(platform: string, userId: string, level: number): void {
     const key = `${platform}:${userId}`;
-    this.users.set(key, level);
+    this.users.set(key, { ...this.users.get(key), level });
     this.dirty = true;
     this.logger.debug(`设置用户权限: ${key} → ${level}`);
+  }
+
+  removeUser(platform: string, userId: string): void {
+    if (this.users.delete(`${platform}:${userId}`)) {
+      this.dirty = true;
+      this.logger.debug(`删除用户权限记录: ${platform}:${userId}`);
+    }
+  }
+
+  setUserCapabilities(platform: string, userId: string, overrides: UserCapabilityOverrides): void {
+    const key = `${platform}:${userId}`;
+    const normalize = (list?: string[]): string[] | undefined => {
+      const cleaned = [...new Set((list ?? []).map(p => p.trim()).filter(Boolean))];
+      return cleaned.length > 0 ? cleaned : undefined;
+    };
+    const next: UserRecord = {
+      ...this.users.get(key),
+      grants: normalize(overrides.grants),
+      denies: normalize(overrides.denies),
+    };
+    if (next.level === undefined && !next.grants && !next.denies) {
+      this.users.delete(key);
+    } else {
+      this.users.set(key, next);
+    }
+    this.dirty = true;
+    this.logger.debug(
+      `设置用户 capability 覆盖: ${key} grants=${next.grants?.length ?? 0} denies=${next.denies?.length ?? 0}`,
+    );
+  }
+
+  /**
+   * capability 中心统一闸。裁决优先级（per-capability）：
+   * 全局 permissionPolicy > 用户 deny > 用户 grant > 角色链等级门槛。
+   *
+   * 等级门槛 = max(declaredAuthority, requiredAuthorityFor([cap]))——
+   * 即"操作声明的基础等级"与"capability 归属角色包"取较高者，只升不降。
+   */
+  authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null {
+    const level = this.getAuthority(identity.platform, identity.userId);
+    const declared = request.declaredAuthority ?? 0;
+    if (request.capabilities.length === 0) {
+      if (level < declared) return `权限不足: 需要权限等级 ${declared}，当前用户等级 ${level}`;
+      return null;
+    }
+    const policyDenied = this.checkPermissionPolicy(request.capabilities);
+    if (policyDenied) return policyDenied;
+    const record = identity.userId ? this.users.get(`${identity.platform}:${identity.userId}`) : undefined;
+    for (const cap of request.capabilities) {
+      if (record?.denies && this.matchAny(record.denies, [cap])) {
+        return `已被禁止: ${cap}`;
+      }
+      if (record?.grants && this.matchAny(record.grants, [cap])) continue;
+      const required = Math.max(declared, this.requiredAuthorityFor([cap]));
+      if (level < required) {
+        return `权限不足: "${cap}" 需要权限等级 ${required}，当前用户等级 ${level}`;
+      }
+    }
+    return null;
   }
 
   isDangerousAllowed(name: string, permissions: string[] = []): boolean {
@@ -259,14 +331,17 @@ export class AuthorityManager implements AuthorityService {
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
   }
 
-  listUsers(): Array<{ platform: string; userId: string; authority: number }> {
-    const result: Array<{ platform: string; userId: string; authority: number }> = [];
-    for (const [key, level] of this.users) {
+  listUsers(): AuthorityUserEntry[] {
+    const result: AuthorityUserEntry[] = [];
+    const defaultLevel = this.config.get('defaultAuthority') ?? 1;
+    for (const [key, record] of this.users) {
       const idx = key.indexOf(':');
       result.push({
         platform: key.slice(0, idx),
         userId: key.slice(idx + 1),
-        authority: level,
+        authority: record.level ?? defaultLevel,
+        grants: record.grants,
+        denies: record.denies,
       });
     }
     return result;
@@ -274,9 +349,9 @@ export class AuthorityManager implements AuthorityService {
 
   save(): void {
     if (!this.dirty) return;
-    const data: Record<string, number> = {};
-    for (const [key, level] of this.users) data[key] = level;
-    const payload = JSON.stringify(data, null, 2);
+    const users: Record<string, UserRecord> = {};
+    for (const [key, record] of this.users) users[key] = record;
+    const payload = JSON.stringify({ version: 2, users }, null, 2);
     this.dirty = false;
     this.saveChain = this.saveChain
       .then(() => this.storage.writeFile(this.fileUri, payload))
@@ -299,9 +374,20 @@ export class AuthorityManager implements AuthorityService {
       } catch {
         return;
       }
-      const data = JSON.parse(raw) as Record<string, number>;
-      for (const [key, level] of Object.entries(data)) {
-        if (typeof level === 'number') this.users.set(key, level);
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      if (data.version === 2 && typeof data.users === 'object' && data.users !== null) {
+        for (const [key, record] of Object.entries(data.users as Record<string, UserRecord>)) {
+          if (record && typeof record === 'object') this.users.set(key, record);
+        }
+      } else {
+        // v1 平面格式（{"platform:userId": level}）：就地迁移，下次 save 写 v2
+        for (const [key, level] of Object.entries(data)) {
+          if (typeof level === 'number') this.users.set(key, { level });
+        }
+        if (this.users.size > 0) {
+          this.dirty = true;
+          this.logger.info(`users.json v1 → v2 迁移：${this.users.size} 条记录`);
+        }
       }
       this.logger.debug(`加载了 ${this.users.size} 条用户权限记录`);
     } catch (err) {
@@ -340,16 +426,15 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   // ===== 向 tools/commands 注入执行守卫 =====
 
   const guard = async (guardCtx: ExecutionGuardContext): Promise<string | null> => {
-    const userAuth = authority.getAuthority(guardCtx.platform, guardCtx.userId);
-    // 参数级动态提权：某些权限标识（如写 data:/users.json）要求比工具声明更高的等级。
-    const required = Math.max(guardCtx.authority, authority.requiredAuthorityFor(guardCtx.permissions ?? []));
-    if (userAuth < required) {
-      return `权限不足: ${guardCtx.type === 'command' ? '指令' : '工具'} "${guardCtx.name}" 需要权限等级 ${required}，当前用户等级 ${userAuth}`;
-    }
-    const permissionDenied = authority.checkPermissionPolicy(
-      guardCtx.permissions ?? [`${guardCtx.type}:${guardCtx.name}`],
+    // ExecutionGuard 是 tool/command surface 的适配器：等级门槛、参数级提权、
+    // 全局策略与用户 grant/deny 全部收进 authorize 统一闸；dangerous 确认是
+    // 交互流程（弹窗/会话授权），保留在适配器层。
+    const capabilities = guardCtx.permissions?.length ? guardCtx.permissions : [`${guardCtx.type}:${guardCtx.name}`];
+    const denied = authority.authorize(
+      { platform: guardCtx.platform, userId: guardCtx.userId },
+      { capabilities, declaredAuthority: guardCtx.authority },
     );
-    if (permissionDenied) return permissionDenied;
+    if (denied) return denied;
     if (guardCtx.safety === 'dangerous' && !guardCtx.skipSafetyCheck) {
       const confirmed = await authority.confirmDangerous({
         name: guardCtx.name,
@@ -519,12 +604,40 @@ export const actions: Record<
     return { message: `${platform}:${userId} 权限已设为 ${authority}` };
   },
 
-  /** 删除用户权限记录（回退到默认等级） */
+  /** 设置用户的 capability 个别授予/拒绝（deny > grant > 角色链） */
+  async setUserCapabilities(ctx, args, caller) {
+    const { platform, userId, grants, denies } = args;
+    if (!platform || !userId) throw new Error('platform, userId 必填');
+    const asList = (v: unknown, label: string): string[] | undefined => {
+      if (v === undefined || v === null) return undefined;
+      if (!Array.isArray(v) || v.some(x => typeof x !== 'string')) throw new Error(`${label} 必须是字符串数组`);
+      return v as string[];
+    };
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    // 防越权：不能改动等级 >= 自身的用户（与 setUser 同思路；改授予=改实际权力）
+    if (caller) {
+      const callerLevel = auth.getAuthority(caller.platform, caller.userId);
+      const targetLevel = auth.getAuthority(platform as string, userId as string);
+      const isSelf = caller.platform === platform && caller.userId === userId;
+      if (!isSelf && targetLevel >= callerLevel) {
+        throw new Error(`不能修改等级 >= 您自身 (${callerLevel}) 的用户的 capability 授予`);
+      }
+    }
+    auth.setUserCapabilities(platform as string, userId as string, {
+      grants: asList(grants, 'grants'),
+      denies: asList(denies, 'denies'),
+    });
+    auth.save();
+    return { message: `${platform}:${userId} 的 capability 授予已更新` };
+  },
+
+  /** 删除用户权限记录（等级回退默认，grants/denies 一并清除） */
   async deleteUser(ctx, args) {
     const { platform, userId } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');
     const auth = ctx.getService<AuthorityService>('authority');
-    auth?.setAuthority(platform as string, userId as string, (ctx.config.get('defaultAuthority') ?? 1) as number);
+    auth?.removeUser(platform as string, userId as string);
     auth?.save();
     return { message: `${platform}:${userId} 权限已重置` };
   },

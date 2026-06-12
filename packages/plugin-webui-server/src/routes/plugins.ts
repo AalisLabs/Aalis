@@ -116,16 +116,19 @@ export function registerPluginRoutes(
     // WebUI 暂无登录，调用者固定解析为 webui:console（owner 级）；登录功能落地后
     // 改为从会话解析真实用户，本闸门即按账户等级生效。
     // 未声明 actionsMeta 的 action 默认要求 owner 等级（默认拒绝），插件需显式
-    // 声明才能降低门槛。authority 服务缺席时放行（与 tools/commands 守卫缺席时一致）。
+    // 声明才能降低门槛。capability `action:<plugin>:<method>` 走 authorize 统一闸
+    // （支持 per-user grant/deny）。authority 服务缺席时放行（与 tools/commands
+    // 守卫缺席时一致）。
     const caller: UserIdentity = { platform: 'webui', userId: 'console' };
     const authority = ctx.getService<AuthorityService>('authority');
     if (authority) {
       const required = entry.module.actionsMeta?.[method]?.authority ?? ctx.config.get('ownerAuthority') ?? 5;
-      const callerLevel = authority.getAuthority(caller.platform, caller.userId);
-      if (callerLevel < required) {
-        res.status(403).json({
-          error: `权限不足: 操作 ${pluginName}/${method} 需要权限等级 ${required}，当前 ${callerLevel}`,
-        });
+      const denied = authority.authorize(caller, {
+        capabilities: [`action:${pluginName}:${method}`],
+        declaredAuthority: required,
+      });
+      if (denied) {
+        res.status(403).json({ error: `操作 ${pluginName}/${method} 被拒: ${denied}` });
         return;
       }
     }
