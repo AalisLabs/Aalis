@@ -93,8 +93,28 @@ export class LogHub {
   }
 }
 
-export class Logger {
-  private minLevel: LogLevel;
+/**
+ * 日志接口 —— core 各子系统与插件持有的最小日志面。
+ *
+ * core 不绑定具体实现：宿主可经 `AppOptions.logger` 注入任意实现
+ * （如 pino/winston 适配对象）；缺省使用 {@link DefaultLogger}（写入
+ * LogHub 管线，runtime 的 console/file/webui sink 监听该管线）。
+ * 注入自定义实现后 LogHub 管线不再由 core 写入，日志后端由注入方自理。
+ */
+export interface Logger {
+  debug(message: string, ...args: unknown[]): void;
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  /** 派生带子作用域的 Logger（Context fork/createScope 时由 core 调用） */
+  child(scope: string): Logger;
+}
+
+/**
+ * 缺省 Logger 实现：按级别过滤后写入 {@link LogHub}。
+ */
+export class DefaultLogger implements Logger {
+  private readonly minLevel: LogLevel;
   private readonly hub: LogHub;
 
   /**
@@ -112,12 +132,8 @@ export class Logger {
     this.hub = hub;
   }
 
-  setLevel(level: LogLevel): void {
-    this.minLevel = level;
-  }
-
   child(scope: string): Logger {
-    return new Logger(`${this.scope}:${scope}`, this.minLevel, this.hub);
+    return new DefaultLogger(`${this.scope}:${scope}`, this.minLevel, this.hub);
   }
 
   debug(message: string, ...args: unknown[]): void {

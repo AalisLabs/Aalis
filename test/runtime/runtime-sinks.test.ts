@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Logger, parseLogLine } from '@aalis/core';
+import { DefaultLogger, parseLogLine } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetBootstrapBufferForTests,
@@ -32,7 +32,7 @@ describe('runtime console-sink', () => {
   it('installConsoleSink 接管输出后 Logger.info 走 console.log', () => {
     const handle = installConsoleSink();
     try {
-      new Logger('runtime-test').info('hello-from-runtime');
+      new DefaultLogger('runtime-test').info('hello-from-runtime');
       expect(captured.some(line => line.includes('hello-from-runtime'))).toBe(true);
       expect(captured.some(line => line.includes('runtime-test'))).toBe(true);
       expect(typeof handle.colorized).toBe('boolean');
@@ -45,14 +45,14 @@ describe('runtime console-sink', () => {
     const handle = installConsoleSink();
     handle.dispose();
     captured.length = 0;
-    new Logger('after-dispose').info('should-not-appear');
+    new DefaultLogger('after-dispose').info('should-not-appear');
     expect(captured.some(line => line.includes('should-not-appear'))).toBe(false);
   });
 
   it('启动前缓冲会被冲洗（依赖 bootstrap-buffer）', () => {
     installBootstrapBuffer();
     try {
-      new Logger('preboot').info('msg-before-sink');
+      new DefaultLogger('preboot').info('msg-before-sink');
       const handle = installConsoleSink();
       try {
         expect(captured.some(line => line.includes('msg-before-sink'))).toBe(true);
@@ -72,9 +72,9 @@ describe('runtime bootstrap-buffer', () => {
 
   it('snapshot 多次可重复读取，互相独立副本', () => {
     const handle = installBootstrapBuffer();
-    new Logger('boot').info('first');
+    new DefaultLogger('boot').info('first');
     const s1 = handle.snapshot();
-    new Logger('boot').info('second');
+    new DefaultLogger('boot').info('second');
     const s2 = handle.snapshot();
     expect(s1.map(e => e.message)).toEqual(['first']);
     expect(s2.map(e => e.message)).toEqual(['first', 'second']);
@@ -84,9 +84,9 @@ describe('runtime bootstrap-buffer', () => {
 
   it('dispose 后不再收集新条目', () => {
     const handle = installBootstrapBuffer();
-    new Logger('boot').info('before-dispose');
+    new DefaultLogger('boot').info('before-dispose');
     handle.dispose();
-    new Logger('boot').info('after-dispose');
+    new DefaultLogger('boot').info('after-dispose');
     // dispose 后 snapshot 已清空
     expect(handle.snapshot()).toEqual([]);
   });
@@ -117,8 +117,8 @@ describe('runtime file-logger', () => {
 
   it('setupFileLogger 记录后续日志到文件', async () => {
     const handle = await setupFileLogger(logFile);
-    new Logger('flog').warn('later-msg');
-    new Logger('flog').info('another');
+    new DefaultLogger('flog').warn('later-msg');
+    new DefaultLogger('flog').info('another');
     await handle.flush();
     // 追加是异步队列，再给一个 microtask 并 flush
     await new Promise(r => setImmediate(r));
@@ -132,7 +132,7 @@ describe('runtime file-logger', () => {
 
   it('换行被转义为字面 \\n', async () => {
     const handle = await setupFileLogger(logFile);
-    new Logger('flog').error('line1\nline2');
+    new DefaultLogger('flog').error('line1\nline2');
     await handle.flush();
     await new Promise(r => setImmediate(r));
     await handle.flush();
@@ -163,8 +163,8 @@ describe('runtime file-logger', () => {
 
   it('文件行格式包含递增 seq 前缀，可被 parseLogLine 反解', async () => {
     const handle = await setupFileLogger(logFile);
-    new Logger('flog').info('alpha');
-    new Logger('flog').warn('beta');
+    new DefaultLogger('flog').info('alpha');
+    new DefaultLogger('flog').warn('beta');
     await handle.flush();
     await new Promise(r => setImmediate(r));
     await handle.flush();

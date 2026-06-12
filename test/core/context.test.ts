@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ConfigManager,
   Context,
+  DefaultLogger,
   EventBus,
   HookRegistry,
-  Logger,
   ServiceContainer,
 } from '../../packages/core/src/index.js';
 
@@ -12,7 +12,7 @@ function makeContext(id = 'root'): Context {
   const events = new EventBus();
   const services = new ServiceContainer();
   const hooks = new HookRegistry();
-  const logger = new Logger('test');
+  const logger = new DefaultLogger('test');
   const config = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
   return new Context({ id, events, services, hooks, logger, config });
 }
