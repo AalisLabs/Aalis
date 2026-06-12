@@ -104,11 +104,71 @@ export interface DangerousGrant {
 /** 确认回调：boolean 为旧格式；对象格式可附带短时 grant */
 export type DangerousConfirmHandler = (request: DangerousConfirmRequest) => Promise<boolean | DangerousConfirmResult>;
 
+// ============================================================
+// capability 统一闸（图为唯一裁决：deny > grant > 角色链）
+// ============================================================
+
+/**
+ * capability 统一闸的请求：一次敏感操作在边界处声明它触达的全部 capability。
+ *
+ * capability 即细粒度权限标识（{@link PermissionId}），现有词汇族：
+ * `tool:<name>`、`command:<name>`、`action:<plugin>:<method>`、
+ * `storage:<op>` / `storage:path:<uri>:<op>`、`system:process.*`、`runtime:*`。
+ */
+export interface AuthorizeRequest {
+  /** 本次操作触达的 capability 集合（含参数级动态产出的路径 capability） */
+  capabilities: PermissionId[];
+  /**
+   * 操作声明的基础等级门槛（surface 适配器传入，如工具/指令/action 声明的
+   * authority）。每个 capability 的实际门槛 = max(该值, capability 自身归属
+   * 的角色等级)。缺省 0。
+   */
+  declaredAuthority?: number;
+}
+
+/**
+ * 用户的 capability 个别授予/拒绝（glob 模式，按 {@link PermissionId} 匹配）。
+ *
+ * 裁决优先级：**deny > grant > 角色链（数字等级）**。
+ * - deny 命中即拒绝（对 owner 同样生效——显式拒绝压过一切，慎用）；
+ * - grant 命中则该 capability 无视等级门槛放行（不影响同操作的其他 capability）；
+ * - 二者皆未命中时回到角色链：用户等级 >= capability 门槛。
+ */
+export interface UserCapabilityOverrides {
+  grants?: string[];
+  denies?: string[];
+}
+
+/** listUsers 返回的用户记录 */
+export interface AuthorityUserEntry {
+  platform: string;
+  userId: string;
+  authority: number;
+  grants?: string[];
+  denies?: string[];
+}
+
 /** 权限服务接口 */
 export interface AuthorityService {
   getAuthority(platform: string, userId?: string): number;
   setAuthority(platform: string, userId: string, level: number): void;
   isOwner(platform: string, userId?: string): boolean;
+  /**
+   * capability 中心统一闸 —— 任何 surface（tool/command/WebUI action/REST/
+   * scheduler）的敏感操作在操作边界调用本方法过同一闸。
+   *
+   * 裁决：对 request 中每个 capability 依次判定 deny > grant > 角色链
+   * （等级门槛 = max(declaredAuthority, capability 归属角色等级)），全部
+   * 通过才放行；capabilities 为空时退化为纯等级门槛检查。
+   * 全局 permissionPolicy（系统级 allow/deny）先于用户裁决生效。
+   *
+   * @returns null 放行；string 为拒绝原因（可直接展示给调用方）
+   */
+  authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
+  /** 设置用户的 capability 个别授予/拒绝（覆盖式写入；两表均空则清除记录） */
+  setUserCapabilities(platform: string, userId: string, overrides: UserCapabilityOverrides): void;
+  /** 删除用户记录（等级回退 defaultAuthority，grants/denies 一并清除） */
+  removeUser(platform: string, userId: string): void;
   /**
    * 计算一组细粒度权限标识所要求的最低权限等级（参数级动态提权）。
    *
@@ -123,7 +183,7 @@ export interface AuthorityService {
   revokeDangerousGrant(id: string): boolean;
   save(): void;
   setConfirmHandler(platform: string, handler: DangerousConfirmHandler): void;
-  listUsers(): Array<{ platform: string; userId: string; authority: number }>;
+  listUsers(): AuthorityUserEntry[];
 }
 
 // ============================================================
