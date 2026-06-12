@@ -146,6 +146,8 @@ export interface AuthorityUserEntry {
   authority: number;
   grants?: string[];
   denies?: string[];
+  /** 是否存在密码凭据（凭据本身永不返回） */
+  hasPassword?: boolean;
 }
 
 /** 权限服务接口 */
@@ -167,8 +169,19 @@ export interface AuthorityService {
   authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
   /** 设置用户的 capability 个别授予/拒绝（覆盖式写入；两表均空则清除记录） */
   setUserCapabilities(platform: string, userId: string, overrides: UserCapabilityOverrides): void;
-  /** 删除用户记录（等级回退 defaultAuthority，grants/denies 一并清除） */
+  /** 删除用户记录（等级回退 defaultAuthority，grants/denies/密码一并清除） */
   removeUser(platform: string, userId: string): void;
+  /**
+   * 设置/更新账户密码（登录凭据，PBKDF2-SHA256 哈希存储于 users.json）。
+   *
+   * 账户即带凭据的用户记录：WebUI 登录账户为 platform='webui' + userId=用户名。
+   * 密码策略（最小长度等）由调用方（action/UI 层）负责，本方法只拒绝空密码。
+   */
+  setPassword(platform: string, userId: string, password: string): Promise<void>;
+  /** 校验账户密码；无凭据记录或不匹配均返回 false（恒定时间比较） */
+  verifyPassword(platform: string, userId: string, password: string): Promise<boolean>;
+  /** 该身份是否存在密码凭据 */
+  hasPassword(platform: string, userId: string): boolean;
   /**
    * 计算一组细粒度权限标识所要求的最低权限等级（参数级动态提权）。
    *
