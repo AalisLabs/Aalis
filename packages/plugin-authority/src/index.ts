@@ -3,6 +3,7 @@ import type { AppService, ConfigManager, Context, Logger, PluginModule } from '@
 import type { ExecutionGuardContext, SafetyLevel, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import { getPlatformNames } from '@aalis/plugin-platform-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
@@ -575,13 +576,18 @@ export const actions: PluginModule['actions'] = {
     const commandPrefix = ctx.getService<CommandService>('commands')?.prefix ?? '/';
     const cmdNames = new Set(cmdNodes.map(n => n.name));
     const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
-    // 当前已注册的平台 contextId 列表（用于 WebUI 下拉选择，避免手写）
-    const platformEntries = ctx.getServiceEntries('platform');
-    const platformsFromServices = platformEntries.map(e => e.contextId);
-    const platformsFromUsers = users.map(u => u.platform);
-    const platformsFromOwners = owners.map(o => o.platform);
+    // 平台候选（WebUI 下拉用）：身份系统的平台名 = 消息上的 platform 字段。
+    // 取 adapter.platform（getPlatformNames）而非服务提供者 contextId——后者是
+    // 插件实例名（如 @aalis/plugin-adapter-onebot），按它设的权限永远不会命中
+    // 任何真实调用者。webui/cli 是内置 surface，无 adapter，显式列入。
     const platforms = Array.from(
-      new Set([...platformsFromServices, ...platformsFromUsers, ...platformsFromOwners]),
+      new Set([
+        ...getPlatformNames(ctx),
+        'webui',
+        'cli',
+        ...users.map(u => u.platform),
+        ...owners.map(o => o.platform),
+      ]),
     ).filter(Boolean);
     return {
       users,
