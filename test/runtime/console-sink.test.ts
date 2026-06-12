@@ -1,4 +1,4 @@
-import { Logger, LogHub } from '@aalis/core';
+import { DefaultLogger, LogHub } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -13,7 +13,7 @@ describe('LogHub 纯 pub-sub', () => {
     const hub = new LogHub();
     const seen: string[] = [];
     hub.onEntry(e => seen.push(e.message));
-    new Logger('t', 'debug', hub).info('hello');
+    new DefaultLogger('t', 'debug', hub).info('hello');
     expect(seen).toEqual(['hello']);
   });
 
@@ -21,7 +21,7 @@ describe('LogHub 纯 pub-sub', () => {
     const hub = new LogHub();
     const captured: Array<{ seq: number; message: string }> = [];
     const off = hub.onEntry(e => captured.push({ seq: e.seq, message: e.message }));
-    const logger = new Logger('sub', 'debug', hub);
+    const logger = new DefaultLogger('sub', 'debug', hub);
     logger.info('m1');
     logger.warn('m2');
     expect(captured.map(c => c.message)).toEqual(['m1', 'm2']);
@@ -36,7 +36,7 @@ describe('LogHub 纯 pub-sub', () => {
     const b: string[] = [];
     hubA.onEntry(e => a.push(e.message));
     hubB.onEntry(e => b.push(e.message));
-    new Logger('a', 'debug', hubA).info('only-a');
+    new DefaultLogger('a', 'debug', hubA).info('only-a');
     expect(a).toEqual(['only-a']);
     expect(b).toEqual([]);
   });
@@ -45,7 +45,7 @@ describe('LogHub 纯 pub-sub', () => {
     const hub = new LogHub();
     const seen: string[] = [];
     hub.onEntry(e => seen.push(e.level));
-    const logger = new Logger('lvl', 'warn', hub);
+    const logger = new DefaultLogger('lvl', 'warn', hub);
     logger.debug('d');
     logger.info('i');
     logger.warn('w');
