@@ -1,4 +1,4 @@
-import type { ActionCaller, AppService, ConfigManager, Context, Logger } from '@aalis/core';
+import type { AppService, ConfigManager, Context, Logger } from '@aalis/core';
 import type { ExecutionGuardContext, SafetyLevel, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
@@ -431,7 +431,7 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
 export const actions: Record<
   string,
-  (ctx: Context, args: Record<string, unknown>, caller?: ActionCaller) => Promise<unknown>
+  (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>
 > = {
   /** 获取权限概览 */
   async getOverview(ctx) {

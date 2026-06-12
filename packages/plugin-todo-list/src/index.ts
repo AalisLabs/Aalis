@@ -1,9 +1,10 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
+import type {} from '@aalis/plugin-webui-api'; // PluginModule.actions 槽位的 merging 可见性
 
 // ===== 插件元数据 =====
 
@@ -65,7 +66,7 @@ declare module '@aalis/core' {
 
 // ===== Actions =====
 
-export const actions: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+export const actions: PluginModule['actions'] = {
   async getTodos(ctx, args) {
     const sessionId = args.sessionId as string;
     if (!sessionId) return [];

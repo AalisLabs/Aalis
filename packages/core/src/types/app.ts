@@ -36,7 +36,6 @@ export interface PluginStatusEntry {
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;
-  actionNames?: string[];
   error?: string;
 }
 

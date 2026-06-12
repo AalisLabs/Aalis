@@ -12,18 +12,6 @@ import type { NormalizedDependency } from './service.js';
 
 // ----- 插件定义格式 -----
 
-/**
- * 插件 RPC 动作（actions）的调用者身份。
- *
- * 由 host（webui-server 等）在路由层解析并传入：当前 WebUI 未引入登录，
- * 固定为 `webui:console`（owner 级）；登录功能落地后由会话解析出真实用户。
- * core 不感知权限语义，仅定义身份的传输形状。
- */
-export interface ActionCaller {
-  platform: string;
-  userId: string;
-}
-
 export interface PluginModule {
   name: string;
   /** 插件的显示名称，用于前端展示 */
@@ -47,27 +35,6 @@ export interface PluginModule {
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
   defaultConfig?: Record<string, unknown>;
   /**
-   * 通用命名的插件 RPC 动作表 —— 供 host （如 WebUI / CLI / IPC 层）远程调用。
-   *
-   * core 不负责调起，仅存为传输插槽；在 listPlugins() 中以 `actionNames`
-   * （顶层 key 列表）导出，供 host 路由。调用方使用 host 提供的
-   * `entry.context` 及 args 调用 handler；core 本身不感知 webui/cli 这样的
-   * 具体消费者。
-   *
-   * 第三参 caller 为 host 路由层解析出的调用者身份，在权限闸门放行后传入；
-   * handler 可用它做业务级检查（如"不能把他人权限设为 >= 自身等级"）。
-   * 旧插件忽略该参数即可，签名向后兼容。
-   */
-  actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: ActionCaller) => Promise<unknown>>;
-  /**
-   * actions 的权限元数据：action 名 → 所需最低权限等级。
-   *
-   * host（如 webui-server）在调用 action 前按调用者身份统一过闸；
-   * **未声明的 action 默认要求 owner 等级**（默认拒绝——插件作者必须显式
-   * 声明才能降低门槛，避免漏标的敏感 action 在登录功能上线后裸奔）。
-   */
-  actionsMeta?: Record<string, { authority?: number }>;
-  /**
    * 逃生舱：声明本插件在依赖的 provider 发生变化（被 dispose / 替换）时
    * 必须由 core 主动级联 dispose + reapply 才能恢复正确状态。
    *
@@ -81,9 +48,9 @@ export interface PluginModule {
    */
   requiresBounceOnDepChange?: boolean;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
-  // 注：subsystem / extends 等纯 WebUI 展示元数据由
-  // @aalis/plugin-webui-api 通过 declaration merging 注入；core 不读取它们，
-  // 仅在 listPlugins() 中以 unknown 类型透传。
+  // 注：subsystem / extends 等纯 WebUI 展示元数据，以及 host-RPC 槽位
+  // actions / actionsMeta（含调用者身份类型），均由 @aalis/plugin-webui-api
+  // 通过 declaration merging 注入；core 不读取它们。
   // webuiPages 已迁移到 useWebuiService(ctx).registerPage()。
 }
 
