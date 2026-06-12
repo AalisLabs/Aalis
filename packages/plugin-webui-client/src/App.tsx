@@ -44,6 +44,12 @@ export function App() {
   }, [availablePages, activeTab]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  /** 当前登录身份（/api/auth/me）：账户登录显示用户名，单 token 模式为 console */
+  const [me, setMe] = useState<{
+    identity: { platform: string; userId: string };
+    authority: number | null;
+    isOwner: boolean;
+  } | null>(null);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [servicesData, setServicesData] = useState<Record<string, ServiceInfo> | null>(null);
@@ -534,6 +540,7 @@ export function App() {
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
+    api<typeof me>('/api/auth/me').then(setMe).catch(() => {});
     refreshConfig();
     refreshPlugins();
     refreshServices();
@@ -755,6 +762,21 @@ export function App() {
           <span className="content-title">
             {tabs.find(t => t.key === activeTab)?.label}
           </span>
+          {me && (
+            <span className="content-user" title={`${me.identity.platform}:${me.identity.userId}`}>
+              {me.identity.userId}
+              {me.authority != null && (
+                <span className="content-user-level">{me.isOwner ? 'owner' : `等级 ${me.authority}`}</span>
+              )}
+              <button
+                className="btn-sm"
+                onClick={async () => {
+                  await fetch('/api/auth/logout', { method: 'POST' });
+                  window.location.reload();
+                }}
+              >登出</button>
+            </span>
+          )}
         </div>
 
         <div className="content-body">
