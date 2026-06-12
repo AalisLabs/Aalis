@@ -371,6 +371,29 @@ declare module '@aalis/core' {
 类似地，`AalisEvents` 和 `HookContextMap` 也是 declaration-merging 扩展点，按同样
 规则使用：契约由 `-api` 包定义，实现包消费。
 
+### `AalisEvents` 是封闭的：动态事件名怎么办？
+
+`AalisEvents` / `HookContextMap` **没有** `[key: string]` 兜底（对扩展开放、对拼写
+错误封闭）：没声明过的事件名会在 `ctx.on` / `ctx.emit` 处直接编译报错。固定事件逐条
+declare 即可；事件名需要**运行时动态生成**（按频道 / 任务 / 会话 ID 派生）时，官方
+出路是在自己命名空间内合并一条**模板字面量签名**（TS 4.4+）：
+
+```typescript
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'myplugin:ready': [];                                  // 固定事件：逐条声明
+    [k: `myplugin:channel:${string}`]: [msg: ChannelMessage]; // 动态事件名族
+  }
+}
+```
+
+两条纪律：
+
+- **前缀必须是自己插件的命名空间**。模板签名会吸收该前缀下的一切事件名，
+  撞了别人的前缀就互相吞类型。
+- **不要把模板签名当万能逃逸口**（如 `` [k: `x:${string}`] ``宽到没有信息量）。
+  能枚举的事件就逐条声明——封闭性的价值正在于契约可枚举。
+
 ---
 
 ## 11. 消费跨插件服务的"心智阶梯"

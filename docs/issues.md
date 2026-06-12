@@ -78,13 +78,14 @@
   core 自身各子系统也可经 AppOptions 注入替换）。
 - 📌 2026-06-12 AalisEvents **保持类型封闭**（对扩展开放、对拼写错误封闭）：契约可枚举、
   依赖边在包图中可见；动态事件名的官方出路是插件在自己命名空间合并模板字面量签名
-  （`` [k: `myns:${string}`]: [payload: T] ``，TS 4.4+）——该模式待写入插件开发文档。
+  （`` [k: `myns:${string}`]: [payload: T] ``，TS 4.4+）——该模式已写入
+  docs/core/events.md 与 docs/plugin-author-guide.md §10。
 - 📌 2026-06-12 core **不拆 kernel 包**：包是发布/版本化单位而非模块化单位；拆包在
   当前（无 kernel 独立消费者）收益为零，且 declaration merging 锚定在 `'@aalis/core'`
   包名上，拆包=迁移全部插件的 merging 目标。重新评估触发条件：①core 发 npm 且要给
   基底层单独 1.0 承诺；②出现 kernel-only 真实消费者；③多人协作需要 Conway 边界。
   内部「基底层（events/hooks/service/context）不得 import 编排层（plugin/app）」的
-  架构测试待补。
+  架构测试已补：test/core/architecture.test.ts（含「新文件必须分层登记」完备性断言）。
 
 ## 已完成归档
 
