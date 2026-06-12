@@ -36,12 +36,33 @@ export type {
  * - level：角色链等级（缺省回退 defaultAuthority）
  * - grants/denies：capability 个别授予/拒绝（glob），裁决优先级 deny > grant > 角色链
  * - secret：密码凭据 `pbkdf2:<iterations>:<saltHex>:<hashHex>`（存在即为可登录账户）
+ * - links：本账户绑定的平台身份键（如 "onebot:12345"；仅主账户有，被绑身份
+ *   的原记录原样留底、运行时被解析遮蔽，解绑即还原）
  */
 interface UserRecord {
   level?: number;
   grants?: string[];
   denies?: string[];
   secret?: string;
+  links?: string[];
+}
+
+/** 待消费的绑定码（内存态，进程重启即失效） */
+interface PendingBindCode {
+  /** 发起账户键（webui:<username>） */
+  account: string;
+  expiresAt: number;
+}
+
+const BIND_CODE_TTL_MS = 5 * 60 * 1000;
+// 8 位、去易混淆字符（0O1IL）的码空间 ≈ 31^8 ≈ 8.5e11，无需额外限流
+const BIND_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+
+function generateBindCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let code = '';
+  for (const b of bytes) code += BIND_CODE_ALPHABET[b % BIND_CODE_ALPHABET.length];
+  return code;
 }
 
 // 密码哈希：Web Crypto PBKDF2-SHA256（迭代数随凭据存储，便于将来上调不破坏旧凭据）
@@ -67,6 +88,10 @@ function timingSafeEqualStr(a: string, b: string): boolean {
 
 export class AuthorityManager implements AuthorityService {
   private users = new Map<string, UserRecord>();
+  /** 反向绑定索引：被绑平台身份键 → 主账户键（从 users[].links 重建） */
+  private linkIndex = new Map<string, string>();
+  /** 待消费绑定码（内存态） */
+  private bindCodes = new Map<string, PendingBindCode>();
   private config: ConfigManager;
   private logger: Logger;
   private storage: StorageService;
@@ -98,6 +123,13 @@ export class AuthorityManager implements AuthorityService {
     if (owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId)) {
       return this.config.get('ownerAuthority') ?? 5;
     }
+    // 被绑身份解析到主账户（零合并单一真源）。递归至多一层：linkIndex 的
+    // 键只会是外部平台身份（consumeBindCode 拒绝 webui/cli），值是 webui 账户。
+    const linked = this.linkIndex.get(`${platform}:${userId}`);
+    if (linked) {
+      const idx = linked.indexOf(':');
+      return this.getAuthority(linked.slice(0, idx), linked.slice(idx + 1));
+    }
     return this.users.get(`${platform}:${userId}`)?.level ?? this.config.get('defaultAuthority') ?? 1;
   }
 
@@ -111,8 +143,86 @@ export class AuthorityManager implements AuthorityService {
   removeUser(platform: string, userId: string): void {
     if (this.users.delete(`${platform}:${userId}`)) {
       this.dirty = true;
+      this.rebuildLinkIndex();
       this.logger.debug(`删除用户权限记录: ${platform}:${userId}`);
     }
+  }
+
+  // ── 跨平台身份绑定 ──────────────────────────────────────
+
+  /** 从 users[].links 重建反向索引（表很小，全量重建即可） */
+  private rebuildLinkIndex(): void {
+    this.linkIndex.clear();
+    for (const [key, record] of this.users) {
+      for (const linked of record.links ?? []) this.linkIndex.set(linked, key);
+    }
+  }
+
+  createBindCode(platform: string, userId: string): { code: string; expiresAt: number } {
+    if (platform !== 'webui') throw new Error('绑定码只能由 WebUI 主账户发起');
+    const account = `${platform}:${userId}`;
+    // 同账户重新生成作废旧码；顺手清理过期码
+    const now = Date.now();
+    for (const [code, pending] of this.bindCodes) {
+      if (pending.account === account || pending.expiresAt <= now) this.bindCodes.delete(code);
+    }
+    const code = generateBindCode();
+    const expiresAt = now + BIND_CODE_TTL_MS;
+    this.bindCodes.set(code, { account, expiresAt });
+    this.logger.info(`生成绑定码: 账户 ${account}（5 分钟有效）`);
+    return { code, expiresAt };
+  }
+
+  consumeBindCode(code: string, identity: UserIdentity): UserIdentity {
+    if (identity.platform === 'webui' || identity.platform === 'cli') {
+      throw new Error('请在外部平台（如 QQ）私聊中向机器人发送绑定码');
+    }
+    const pending = this.bindCodes.get(code);
+    if (!pending || pending.expiresAt <= Date.now()) {
+      this.bindCodes.delete(code);
+      throw new Error('绑定码无效或已过期，请在 WebUI 重新生成');
+    }
+    const identityKey = `${identity.platform}:${identity.userId}`;
+    const existing = this.linkIndex.get(identityKey);
+    if (existing) throw new Error(`该平台身份已绑定到 ${existing}，请先解绑`);
+    this.bindCodes.delete(code); // 一次性
+    const accountRecord: UserRecord = { ...this.users.get(pending.account) };
+    // 绑时一次性合并（运行时零合并的前提）：等级取 max、grants/denies 并集
+    // 写入账户；平台身份原记录原样留底，解绑即还原。
+    const identityRecord = this.users.get(identityKey);
+    if (identityRecord) {
+      if (identityRecord.level !== undefined && identityRecord.level > (accountRecord.level ?? 0)) {
+        accountRecord.level = identityRecord.level;
+      }
+      const union = (a?: string[], b?: string[]): string[] | undefined => {
+        const merged = [...new Set([...(a ?? []), ...(b ?? [])])];
+        return merged.length > 0 ? merged : undefined;
+      };
+      accountRecord.grants = union(accountRecord.grants, identityRecord.grants);
+      accountRecord.denies = union(accountRecord.denies, identityRecord.denies);
+    }
+    accountRecord.links = [...new Set([...(accountRecord.links ?? []), identityKey])];
+    this.users.set(pending.account, accountRecord);
+    this.dirty = true;
+    this.rebuildLinkIndex();
+    const idx = pending.account.indexOf(':');
+    this.logger.info(`身份绑定成功: ${identityKey} → ${pending.account}`);
+    return { platform: pending.account.slice(0, idx), userId: pending.account.slice(idx + 1) };
+  }
+
+  unlinkIdentity(platform: string, userId: string): boolean {
+    const identityKey = `${platform}:${userId}`;
+    const accountKey = this.linkIndex.get(identityKey);
+    if (!accountKey) return false;
+    const record = this.users.get(accountKey);
+    if (record?.links) {
+      const links = record.links.filter(k => k !== identityKey);
+      this.users.set(accountKey, { ...record, links: links.length > 0 ? links : undefined });
+    }
+    this.dirty = true;
+    this.rebuildLinkIndex();
+    this.logger.info(`身份解绑: ${identityKey} ↮ ${accountKey}`);
+    return true;
   }
 
   async setPassword(platform: string, userId: string, password: string): Promise<void> {
@@ -150,7 +260,7 @@ export class AuthorityManager implements AuthorityService {
       grants: normalize(overrides.grants),
       denies: normalize(overrides.denies),
     };
-    if (next.level === undefined && !next.grants && !next.denies && !next.secret) {
+    if (next.level === undefined && !next.grants && !next.denies && !next.secret && !next.links) {
       this.users.delete(key);
     } else {
       this.users.set(key, next);
@@ -177,12 +287,19 @@ export class AuthorityManager implements AuthorityService {
     }
     const policyDenied = this.checkPermissionPolicy(request.capabilities);
     if (policyDenied) return policyDenied;
-    const record = identity.userId ? this.users.get(`${identity.platform}:${identity.userId}`) : undefined;
+    // 被绑身份零合并解析：grants 以主账户为唯一真源；denies 取自身∪账户并集
+    // （自身记录的 deny 在绑定后仍生效——防"绑定洗白封禁"）。
+    const ownKey = identity.userId ? `${identity.platform}:${identity.userId}` : undefined;
+    const ownRecord = ownKey ? this.users.get(ownKey) : undefined;
+    const accountKey = ownKey ? this.linkIndex.get(ownKey) : undefined;
+    const accountRecord = accountKey ? this.users.get(accountKey) : undefined;
+    const grants = accountKey ? accountRecord?.grants : ownRecord?.grants;
+    const denies = [...(ownRecord?.denies ?? []), ...(accountRecord?.denies ?? [])];
     for (const cap of request.capabilities) {
-      if (record?.denies && this.matchAny(record.denies, [cap])) {
+      if (denies.length > 0 && this.matchAny(denies, [cap])) {
         return `已被禁止: ${cap}`;
       }
-      if (record?.grants && this.matchAny(record.grants, [cap])) continue;
+      if (grants && this.matchAny(grants, [cap])) continue;
       const required = Math.max(declared, this.requiredAuthorityFor([cap]));
       if (level < required) {
         return `权限不足: "${cap}" 需要权限等级 ${required}，当前用户等级 ${level}`;
@@ -385,14 +502,28 @@ export class AuthorityManager implements AuthorityService {
     const defaultLevel = this.config.get('defaultAuthority') ?? 1;
     for (const [key, record] of this.users) {
       const idx = key.indexOf(':');
+      const platform = key.slice(0, idx);
+      const userId = key.slice(idx + 1);
+      const linkedTo = this.linkIndex.get(key);
       result.push({
-        platform: key.slice(0, idx),
-        userId: key.slice(idx + 1),
-        authority: record.level ?? defaultLevel,
+        platform,
+        userId,
+        // 被绑身份显示运行时有效等级（解析到主账户）；自身记录被遮蔽留底
+        authority: linkedTo ? this.getAuthority(platform, userId) : (record.level ?? defaultLevel),
         grants: record.grants,
         denies: record.denies,
         hasPassword: record.secret ? true : undefined,
+        links: record.links,
+        linkedTo,
       });
+    }
+    // 无自身记录的被绑身份也要可见（绑定关系本身就是一条用户事实）
+    for (const [identityKey, accountKey] of this.linkIndex) {
+      if (this.users.has(identityKey)) continue;
+      const idx = identityKey.indexOf(':');
+      const platform = identityKey.slice(0, idx);
+      const userId = identityKey.slice(idx + 1);
+      result.push({ platform, userId, authority: this.getAuthority(platform, userId), linkedTo: accountKey });
     }
     return result;
   }
@@ -439,7 +570,8 @@ export class AuthorityManager implements AuthorityService {
           this.logger.info(`users.json v1 → v2 迁移：${this.users.size} 条记录`);
         }
       }
-      this.logger.debug(`加载了 ${this.users.size} 条用户权限记录`);
+      this.rebuildLinkIndex();
+      this.logger.debug(`加载了 ${this.users.size} 条用户权限记录（绑定 ${this.linkIndex.size} 条）`);
     } catch (err) {
       this.logger.warn(`加载用户权限数据失败: ${err}`);
     }
@@ -560,6 +692,30 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     const isOwner = authority.isOwner(argv.session.platform, argv.session.userId);
     return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
   });
+
+  // /bind — 把当前平台账号绑定到 WebUI 主账户（码在 WebUI 权限页生成）。
+  // 仅限私聊：群聊发码会把绑定码暴露给旁观者（Koishi 对公开信道需双 token
+  // 握手，我们直接限定私聊信道，等价其私聊路径）。
+  cmds
+    .command('bind <code:string>', '将当前平台账号绑定到 WebUI 账户', { authority: 1 })
+    .example('/bind AB12CD34')
+    .action(async (argv, code) => {
+      const { platform, userId, sessionType } = argv.session;
+      if (!userId) return '无法识别您的身份，无法绑定。';
+      if (platform === 'webui' || platform === 'cli') {
+        return '请在外部平台（如 QQ）私聊中向机器人发送本指令。';
+      }
+      if (sessionType !== 'private') {
+        return '为防止绑定码泄露，请在私聊中使用本指令。';
+      }
+      try {
+        const account = authority.consumeBindCode(String(code).trim().toUpperCase(), { platform, userId });
+        authority.save();
+        return `绑定成功：${platform}:${userId} ↔ ${account.platform}:${account.userId}。您现在以该账户的权限行事，可在 WebUI 权限页解绑。`;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    });
 }
 
 // ===== WebUI 操作处理器 =====
@@ -704,6 +860,42 @@ export const actions: PluginModule['actions'] = {
     return { message: `${platform}:${userId} 密码已更新` };
   },
 
+  /** 生成跨平台绑定码（绑定到调用者自己的账户；5 分钟内在外部平台私聊发 /bind <码>） */
+  async createBindCode(ctx, _args, caller) {
+    if (!caller) throw new Error('无法识别调用者身份');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    const { code, expiresAt } = auth.createBindCode(caller.platform, caller.userId);
+    const prefix = ctx.getService<CommandService>('commands')?.prefix ?? '/';
+    return {
+      code,
+      expiresAt,
+      hint: `请在 5 分钟内，用要绑定的平台账号（如 QQ）私聊向机器人发送：${prefix}bind ${code}`,
+    };
+  },
+
+  /** 解绑平台身份（owner 或该绑定所属账户本人） */
+  async unlinkIdentity(ctx, args, caller) {
+    const { platform, userId } = args;
+    if (!platform || !userId) throw new Error('platform, userId 必填');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    if (caller) {
+      const identityKey = `${platform}:${userId}`;
+      const ownerLevel: number = ctx.config.get('ownerAuthority') ?? 5;
+      const callerLevel = auth.getAuthority(caller.platform, caller.userId);
+      const owningAccount = auth.listUsers().find(u => u.links?.includes(identityKey));
+      const isSelf =
+        owningAccount && owningAccount.platform === caller.platform && owningAccount.userId === caller.userId;
+      if (!isSelf && callerLevel < ownerLevel) {
+        throw new Error('只有绑定所属账户本人或 owner 可以解绑');
+      }
+    }
+    const ok = auth.unlinkIdentity(platform as string, userId as string);
+    auth.save();
+    return { ok, message: ok ? `${platform}:${userId} 已解绑` : '该身份没有绑定记录' };
+  },
+
   /** 删除用户权限记录（等级回退默认，grants/denies/密码一并清除） */
   async deleteUser(ctx, args) {
     const { platform, userId } = args;
@@ -826,4 +1018,12 @@ export const actions: PluginModule['actions'] = {
     app.saveConfig();
     return { message: `工具 ${name} 覆盖已重置` };
   },
+};
+
+// actions 权限标注：createBindCode / unlinkIdentity 对任何登录账户开放
+// （绑码只能绑到调用者自己；解绑有 handler 内的本人/owner 业务检查）。
+// 其余 action 不声明 → 默认要求 owner（默认拒绝）。
+export const actionsMeta: PluginModule['actionsMeta'] = {
+  createBindCode: { authority: 1 },
+  unlinkIdentity: { authority: 1 },
 };

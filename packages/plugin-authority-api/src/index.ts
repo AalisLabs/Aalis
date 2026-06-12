@@ -148,6 +148,10 @@ export interface AuthorityUserEntry {
   denies?: string[];
   /** 是否存在密码凭据（凭据本身永不返回） */
   hasPassword?: boolean;
+  /** 本账户绑定的平台身份键（如 "onebot:12345"；仅主账户有） */
+  links?: string[];
+  /** 本身份被绑定到的主账户键（如 "webui:alice"；仅被绑平台身份有） */
+  linkedTo?: string;
 }
 
 /** 权限服务接口 */
@@ -190,6 +194,25 @@ export interface AuthorityService {
    * 内置敏感清单可被 config.permissionAuthority（glob→等级）覆盖/扩展。
    */
   requiredAuthorityFor(permissions: string[]): number;
+  // ── 跨平台身份绑定（运行时零合并 + 绑时一次性合并；2026-06-13 调研决议）──
+  //
+  // 模型对齐 Koishi binding：绑定后被绑平台身份在运行时直接解析到主账户记录
+  // （单一真源，零合并），denies 取自身∪账户并集（防"绑定洗白封禁"）；绑定
+  // 时刻做一次性显式合并（等级取 max、grants/denies 并集写入账户），避免
+  // 高等级平台身份绑新账户被降级的惊喜。平台身份原记录原样留底，解绑即还原。
+  /**
+   * 生成跨平台绑定码（一次性、约 5 分钟有效；同账户重新生成会作废旧码）。
+   * 发起者必须是 webui 主账户身份；返回码与过期时间戳。
+   */
+  createBindCode(platform: string, userId: string): { code: string; expiresAt: number };
+  /**
+   * 消费绑定码：把 identity（外部平台身份，拒绝 webui/cli）绑定到码的发起
+   * 账户。一个平台身份至多绑定一个账户。成功返回账户身份；非法时抛 Error
+   * （码无效/过期、已绑定、平台非法等，message 可直接回显给用户）。
+   */
+  consumeBindCode(code: string, identity: UserIdentity): UserIdentity;
+  /** 解绑平台身份（按被绑身份键）；返回是否存在该绑定。解绑后其原记录自动恢复生效 */
+  unlinkIdentity(platform: string, userId: string): boolean;
   isDangerousAllowed(name: string, permissions?: string[]): boolean;
   confirmDangerous(request: DangerousConfirmRequest): Promise<boolean>;
   listDangerousGrants(): DangerousGrant[];

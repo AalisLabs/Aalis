@@ -33,11 +33,14 @@
   authorize 统一闸、users.json v2（per-user grant/deny）、多用户账号密码登录、
   WebUI REST 路由全量过闸、同车项（actions 迁 webui-api / ActionCaller 并入
   UserIdentity / getStatus 删 actionNames）。
+- ✅ 2026-06-13 登录闭环实测 22/22 通过（隔离实例：三档路由/默认拒绝/防自我提权/
+  grant 单点解锁/爆破锁定/users.json v2 落盘全验证）；跨平台身份绑定已落地
+  （调研定型语义，见决议与归档）。
 - ⏭️ 剩余工作：
   - `code_runner` 图灵完备参数需进程级隔离（容器化，新功能 #6）；
-  - 为各插件 action 标注低于 owner 的 `actionsMeta` 等级（登录已上线，当前全部
-    action 默认 owner——按需逐插件降门槛，属渐进式松绑而非阻塞项）；
-  - onebot 平台身份绑定登录（验证码绑定 qq:xxx ↔ webui 账户，待登录实测后做）。
+  - 为各插件 action 标注低于 owner 的 `actionsMeta` 等级（authority 的
+    createBindCode/unlinkIdentity 已开先例 authority:1——按需逐插件降门槛，
+    渐进式松绑非阻塞项）。
 
 ### #9 core 设计层面的已知妥协（低优先级，记录在案）
 
@@ -94,8 +97,30 @@
   （Koishi 同时背 authority 与 permission 两套的混乱为反面教材）；插件 `authority:
   number` 声明照写，语义为"capability 归入 level-N 角色包"。裁决优先级：
   permissionPolicy > 用户 deny > 用户 grant > 角色链门槛（per-capability）。
+- 📌 2026-06-13 多用户设计调研决议（深度调研 22 源、25 论断对抗验证，存档
+  docs/architecture/multiuser-identity-survey.md）：**当前体系不重构**——复杂度
+  介于 bot 框架下界与 LLM 平台上界之间；绑定语义定型为**运行时零合并 + 绑时
+  一次性合并**（吸收 Koishi 指针模型，denies 并集堵其"绑定洗白封禁"漏洞，
+  绑时 max 合并避免其降级惊喜）；参数级提权保留（被调研系统无对应物是因为
+  无"agent 配任意文件写工具"的威胁形态）；将来做 #1 第二期（per-user 视图）
+  时应补"资源默认私有 + 创建者授权"的隔离粒度（Open WebUI/LibreChat 共同底线）。
 
 ## 已完成归档
+
+### ✅ #3/#1 第四版：跨平台身份绑定（2026-06-13，调研定型后实现）
+
+- AuthorityManager：`createBindCode`（8 位去混淆字符、5 分钟、一次性、同账户
+  重生成作废旧码）/ `consumeBindCode`（拒 webui/cli、反向唯一、绑时一次性
+  合并 max 等级 + grants/denies 并集入账户）/ `unlinkIdentity`（原记录留底
+  自动还原）；运行时 getAuthority/authorize 经 linkIndex 解析到主账户
+  （零合并单一真源，denies 自身∪账户并集）。
+- `/bind <码>` 指令（authority:1，**仅限私聊**——sessionType 经
+  commands-api ExecutionInput/CommandArgv 全链贯通）；WebUI 权限页：
+  生成绑定码、已绑身份展示/解绑、被绑行"→ 账户"标记；
+  createBindCode/unlinkIdentity 成为 actionsMeta 降门槛首例（authority:1）。
+- listUsers 输出 links/linkedTo（无自身记录的被绑身份输出合成行）。
+- 新增 test/plugins/authority-bind.test.ts 11 项（绑码生命周期/合并/解析/
+  还原/持久化/级联）。
 
 ### ✅ #3/#1 第三版：capability 图化 + 多用户登录 + 全 surface 收口（2026-06-13，27dfc1b/a9d5c2d/c2c11d6/68e3697 + REST 闸）
 

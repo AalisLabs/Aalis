@@ -52,6 +52,10 @@ interface AuthorityService {
   setPassword(platform: string, userId: string, password: string): Promise<void>;
   verifyPassword(platform: string, userId: string, password: string): Promise<boolean>;
   hasPassword(platform: string, userId: string): boolean;
+  // 跨平台身份绑定（运行时零合并 + 绑时一次性合并，详见 docs/core/authority.md）
+  createBindCode(platform: string, userId: string): { code: string; expiresAt: number };
+  consumeBindCode(code: string, identity: UserIdentity): UserIdentity;
+  unlinkIdentity(platform: string, userId: string): boolean;
   isDangerousAllowed(name: string, permissions?: string[]): boolean;
   confirmDangerous(request: DangerousConfirmRequest): Promise<boolean>;
   listDangerousGrants(): DangerousGrant[];
