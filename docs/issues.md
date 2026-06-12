@@ -29,15 +29,15 @@
      owner（默认拒绝）**；caller 经 handler 第三参下传，`setUser` 补防越权（不能设他人 >= 自身等级）。
   3. **拆除 `bypassGuard`**：commands 入站中间件改用 `message.actor`（scheduler 创建时固化的
      创建者身份）过真实守卫，与 agent→tools 路径同语义；`skipSafetyCheck`（cron 无人确认弹窗）保留。
-- ⏭️ 剩余工作（与登录/沙盒〔新功能 #1〕合并推进）：
-  - WebUI 其余 REST 路由（`PUT /api/config` 等）仍默认可信；
+- ✅ 2026-06-13 第三版已落地（capability 图化 + 登录 + 全 surface 收口，详见归档）：
+  authorize 统一闸、users.json v2（per-user grant/deny）、多用户账号密码登录、
+  WebUI REST 路由全量过闸、同车项（actions 迁 webui-api / ActionCaller 并入
+  UserIdentity / getStatus 删 actionNames）。
+- ⏭️ 剩余工作：
   - `code_runner` 图灵完备参数需进程级隔离（容器化，新功能 #6）；
-  - 登录后为各 action 标注低于 owner 的 `actionsMeta` 等级；
-  - 📌 2026-06-12 决议同车项（core 词汇审计 #3 项）：`actions`/`actionsMeta` 经
-    declaration merging 迁出 core 落 webui-api（先例：subsystem/extends）；
-    **`ActionCaller` 与 authority-api 已有的 `UserIdentity` 同构，合并为一个
-    身份类型落 authority-api**；core 的 getStatus 删 `actionNames`（消费方自取
-    `Object.keys(module.actions)`）。capability 闸落地时一并做，避免双倍改动。
+  - 为各插件 action 标注低于 owner 的 `actionsMeta` 等级（登录已上线，当前全部
+    action 默认 owner——按需逐插件降门槛，属渐进式松绑而非阻塞项）；
+  - onebot 平台身份绑定登录（验证码绑定 qq:xxx ↔ webui 账户，待登录实测后做）。
 
 ### #9 core 设计层面的已知妥协（低优先级，记录在案）
 
@@ -47,17 +47,19 @@
 - `ScopedConfigManager` 采用「extends + 全量显式覆写 + 反射防漂移单测」而非纯组合
   （纯组合需抽接口，波及 `Context.config` 全链类型）。基类新增公开方法时**必须**
   同步覆写，否则 test/core/config.test.ts 的防漂移用例会拦下。
-- `PluginModule.actions/actionsMeta/ActionCaller` 是 host-RPC 形状的槽位，
-  纯化决议见 #3 同车项（暂留 core）。
+- ~~`PluginModule.actions/actionsMeta/ActionCaller` 是 host-RPC 形状的槽位~~
+  （已修：经 declaration merging 迁出 core 落 webui-api，身份并入 authority-api
+  的 UserIdentity，27dfc1b）。
 - ~~scope 的 syncPluginDefaults 不继承父配置 trimUnknownFields 政策~~
   （已修：政策字段公开只读，scope 构造时按值继承；热重载路径同步对齐——
   handleConfigFileChanged 先过 syncPluginDefaults 再 diff/bounce）。
 
 ## 新功能计划
 
-1. scoped/app 沙盒：为不同 scope 的 WebUI 提供不同权限等级与可见性，乃至引入登录界面，
-   可作为类似 ChatGPT/Claude 的分发形态。（与 #3 剩余工作合并设计；core 侧 createScope
-   的配置写穿透缺陷已修，见归档 #8.5）
+1. scoped/app 沙盒（第二期）：登录与身份过闸已落地（2026-06-13，见归档）；剩余为
+   "per-user 受限 WebUI 视图"——按身份裁剪页面/数据可见性，乃至 createScope 级别的
+   运行时视图隔离（需先解决 scope 事件总线不隔离的问题）。core 侧 createScope 的
+   配置写穿透缺陷已修（归档 #8.5）。
 2. 插件市场 / 商店（启动条件见「已决议事项」）
 3. 文档内图片识别
 4. onebot 消息撤回 / 感知对方消息是否被撤回
@@ -87,7 +89,31 @@
   内部「基底层（events/hooks/service/context）不得 import 编排层（plugin/app）」的
   架构测试已补：test/core/architecture.test.ts（含「新文件必须分层登记」完备性断言）。
 
+- 📌 2026-06-13 权限模型定型：**capability 图为唯一裁决机制，数字等级 = 内置角色链
+  的命名**（level-1 ⊂ … ⊂ owner，逐级继承）。明确否决"等级 + 节点图双轨并行"
+  （Koishi 同时背 authority 与 permission 两套的混乱为反面教材）；插件 `authority:
+  number` 声明照写，语义为"capability 归入 level-N 角色包"。裁决优先级：
+  permissionPolicy > 用户 deny > 用户 grant > 角色链门槛（per-capability）。
+
 ## 已完成归档
+
+### ✅ #3/#1 第三版：capability 图化 + 多用户登录 + 全 surface 收口（2026-06-13，27dfc1b/a9d5c2d/c2c11d6/68e3697 + REST 闸）
+
+1. **同车项**（27dfc1b）：actions/actionsMeta 经 declaration merging 迁出 core 落
+   webui-api；ActionCaller 并入 authority-api 的 UserIdentity；getStatus 删
+   actionNames（全仓零消费实证）。
+2. **裁决内核图化**（a9d5c2d）：authority-api 新增 `authorize(identity,
+   {capabilities, declaredAuthority})` 统一闸；users.json v2（level + per-user
+   grants/denies，v1 自动迁移）；ExecutionGuard 退化为 surface 适配器；page-action
+   闸切 authorize（capability 形状 `action:<plugin>:<method>`）。
+3. **多用户登录**（c2c11d6）：authority 账户凭据（PBKDF2-SHA256，凭据永不出 API）；
+   webui-server 双模式（账户 session / 单 token 向后兼容）；page-action、WS 入站、
+   scheduler actor 身份贯通（caller 快照，不可由 args 伪造）；失败锁定。
+4. **WebUI 配套**（68e3697）：顶栏当前身份+登出；AuthorityPage 账户创建、密码、
+   capability 授予管理。
+5. **REST 路由全量过闸**：gate.ts 按 capability（`webui:<area>:<op>`）过 authorize，
+   分层缺省 公共读 1 / 管理读 4 / 变更 owner；可 per-user grant 单独放行。
+   新增 webui-auth（13 项）+ authority-graph（19 项）测试。
 
 ### ✅ #8 core 全文评审缺陷（2026-06-12 发现，254c2c0 全量修复）
 
