@@ -267,8 +267,6 @@ function SchemaFormField({
   onChange,
   modelCache,
   onFetchModels,
-  providerCache,
-  onFetchProviders,
   llmProviders,
   onFetchLLMProviders,
 }: {
@@ -278,8 +276,6 @@ function SchemaFormField({
   onChange: (v: unknown) => void;
   modelCache: Record<string, Array<{ label: string; value: string }>>;
   onFetchModels: (service: string) => void;
-  providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
-  onFetchProviders: (service: string) => void;
   llmProviders: LLMProviderEntry[] | undefined;
   onFetchLLMProviders: () => void;
 }) {
@@ -366,30 +362,20 @@ function SchemaFormField({
     );
   }
 
-  if (field.type === 'select' || (field.type === 'string' && (field.options?.length || field.dynamicOptions || field.dynamicProviders))) {
+  if (field.type === 'select' || (field.type === 'string' && (field.options?.length || field.dynamicOptions))) {
     const dynamicKey = field.dynamicOptions;
     const dynamicModels = dynamicKey ? modelCache[dynamicKey] : undefined;
-    const providerKey = field.dynamicProviders;
-    const dynamicProviders = providerKey ? providerCache[providerKey] : undefined;
 
     useEffect(() => {
       if (dynamicKey && !modelCache[dynamicKey]) {
         onFetchModels(dynamicKey);
       }
-      if (providerKey && !providerCache[providerKey]) {
-        onFetchProviders(providerKey);
-      }
-    }, [dynamicKey, providerKey]);
+    }, [dynamicKey]);
 
     const staticOpts = field.options ?? [];
-    // Provider-based options (contextId as value, displayName or contextId as label)
-    const provOpts = (dynamicProviders ?? []).map(p => ({
-      label: p.displayName ? `[${p.displayName}] ${p.contextId}` : p.contextId,
-      value: p.contextId,
-    }));
     const dynOpts = dynamicModels ?? [];
     const allOptions = [...staticOpts];
-    for (const d of [...provOpts, ...dynOpts]) {
+    for (const d of dynOpts) {
       if (!allOptions.some(o => String(o.value) === String(d.value))) allOptions.push(d);
     }
     const cur = String(value ?? '');
@@ -451,8 +437,6 @@ export function SchemaForm({
   onChange,
   modelCache,
   onFetchModels,
-  providerCache,
-  onFetchProviders,
   llmProviders,
   onFetchLLMProviders,
 }: {
@@ -461,8 +445,6 @@ export function SchemaForm({
   onChange: (newDraft: Record<string, unknown>) => void;
   modelCache: Record<string, Array<{ label: string; value: string }>>;
   onFetchModels: (service: string) => void;
-  providerCache: Record<string, Array<{ contextId: string; displayName?: string }>>;
-  onFetchProviders: (service: string) => void;
   llmProviders?: LLMProviderEntry[];
   onFetchLLMProviders?: () => void;
 }) {
@@ -485,8 +467,6 @@ export function SchemaForm({
                 onChange={v => onChange({ ...draft, [key]: v })}
                 modelCache={modelCache}
                 onFetchModels={onFetchModels}
-                providerCache={providerCache}
-                onFetchProviders={onFetchProviders}
                 llmProviders={llmProviders}
                 onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
               />
@@ -576,8 +556,6 @@ export function SchemaForm({
                         onChange={v => updateItem(idx, fk, v)}
                         modelCache={modelCache}
                         onFetchModels={onFetchModels}
-                        providerCache={providerCache}
-                        onFetchProviders={onFetchProviders}
                         llmProviders={llmProviders}
                         onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
                       />
@@ -613,8 +591,6 @@ export function SchemaForm({
                   onChange={v => onChange({ ...draft, [key]: { ...groupData, [fk]: v } })}
                   modelCache={modelCache}
                   onFetchModels={onFetchModels}
-                  providerCache={providerCache}
-                  onFetchProviders={onFetchProviders}
                   llmProviders={llmProviders}
                   onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
                 />

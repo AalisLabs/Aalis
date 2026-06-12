@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-embedding-api": "workspace:*"
+    "@aalis/plugin-embedding-api": "workspace:*",
+    "@aalis/plugin-webui-api": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
