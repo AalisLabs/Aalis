@@ -19,6 +19,8 @@ interface ActivationDeps {
   plugins: Map<string, PluginEntry>;
   rootCtx: Context;
   logger: Logger;
+  /** 必需服务恢复政策（宿主经 AppOptions.serviceRecovery 注入；缺省允许自动启用 disabled 提供者） */
+  recovery?: { autoEnableDisabled: boolean };
 }
 
 /**
@@ -161,8 +163,18 @@ export async function ensureServiceProvider(
     return undefined;
   }
 
+  // 政策：是否允许为恢复必需服务而自动启用被用户禁用的提供者。
+  // 默认允许（"必需服务可用"压过"尊重禁用"）；宿主可注入 false 反转取舍。
+  const allowAutoEnable = deps.recovery?.autoEnableDisabled ?? true;
+  const disabledCandidates = candidates.filter(e => e.state === 'disabled');
+  if (!allowAutoEnable && disabledCandidates.length > 0) {
+    logger.warn(
+      `必需服务 "${serviceName}" 存在被禁用的提供者 [${disabledCandidates.map(e => e.instanceId).join(', ')}]，` +
+        `但 serviceRecovery.autoEnableDisabled=false，不自动启用`,
+    );
+  }
   const ordered = [
-    ...candidates.filter(e => e.state === 'disabled'),
+    ...(allowAutoEnable ? disabledCandidates : []),
     ...candidates.filter(e => e.state === 'pending' || e.state === 'error'),
   ];
 

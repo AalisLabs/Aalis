@@ -90,5 +90,6 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 
 `App` 在加载插件时自动同步配置：
 - 补填插件 `defaultConfig` 中缺失的字段
-- 删除 `configSchema` 中未定义的多余字段（递归清理）
+- 删除 `configSchema` 中未定义的多余字段（递归清理）——这是可注入政策，
+  宿主传 `AppOptions.configSync = { trimUnknownFields: false }` 可改为保留未知字段
 - 保护环境变量占位符（`${VAR}`）不被覆盖
