@@ -118,7 +118,8 @@ export class Context {
    * - 沙盒内 `ctx.getService('authority')` 仍能 fallback 到全局服务
    * - 沙盒内 `ctx.config.set('logLevel', 'debug')` 仅作用于沙盒
    * - 沙盒内 `ctx.config.setPluginConfig('llm.openai', { ... })` 给当前沙盒一份
-   *   临时 LLM 配置，dispose 后随作用域消失（save() 抛错保证不污染磁盘）
+   *   临时 LLM 配置，dispose 后随作用域消失（写只进 overlay，save() 为内存
+   *   模式 no-op，磁盘不被污染）
    *
    * @example
    * const sandbox = ctx.createScope('sandbox-group-123');
@@ -311,7 +312,12 @@ export class Context {
    */
   preferService(name: string, contextId: string): boolean {
     const ok = this._services.prefer(name, contextId);
-    if (ok) this.logger.debug(`服务偏好已设置: ${name} -> ${contextId}`);
+    if (ok) {
+      this.logger.debug(`服务偏好已设置: ${name} -> ${contextId}`);
+      this._events.emit('service:preference-changed', name).catch(err => {
+        this.logger.warn(`emit service:preference-changed 失败 (${name}): ${err}`);
+      });
+    }
     return ok;
   }
 
@@ -320,7 +326,12 @@ export class Context {
    */
   unpreferService(name: string): boolean {
     const ok = this._services.unprefer(name);
-    if (ok) this.logger.debug(`服务偏好已清除: ${name}`);
+    if (ok) {
+      this.logger.debug(`服务偏好已清除: ${name}`);
+      this._events.emit('service:preference-changed', name).catch(err => {
+        this.logger.warn(`emit service:preference-changed 失败 (${name}): ${err}`);
+      });
+    }
     return ok;
   }
 
@@ -361,6 +372,8 @@ export class Context {
    * - `cb` 可返回 cleanup 函数；返回的 dispose 与 `ctx.dispose()` 都会调它。
    * - 返回的 dispose 函数 idempotent，可手动调（多次安全）。
    * - 同名 provider 仅取 `getService(name)` 的胜者，多 entry 并存场景按容器优先级。
+   *   **胜者不变则不动**：败者 entry 上下线不会触发重挂；胜者换人（含
+   *   `preferService` 偏好切换、胜者注销后由次优顶上）才 cleanup + 重挂。
    *
    * @example 注册到 hub 服务：
    * ctx.whenService('tools', svc => svc.register(myTool, ctx.id));
@@ -382,6 +395,8 @@ export class Context {
   whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
     let cleanup: (() => void) | undefined;
     let disposed = false;
+    /** 当前已挂载的胜者实例；undefined = 未挂载 */
+    let attached: T | undefined;
 
     const runCleanup = (): void => {
       if (!cleanup) return;
@@ -393,35 +408,46 @@ export class Context {
       cleanup = undefined;
     };
 
-    const attach = (svc: T): void => {
+    /**
+     * 对齐到容器当前胜者（核心不变量：attached === getService(name)）：
+     * - 胜者未变（如败者 entry 上下线、同胜者重复事件）→ 不动，避免无谓 bounce
+     * - 胜者变了 → 先 cleanup 再用新实例重挂
+     * - 没有胜者了 → 只 cleanup 脱挂
+     * 不读事件 payload、只看容器当前态，天然对事件乱序/合并免疫。
+     */
+    const sync = (): void => {
       if (disposed) return;
-      // 重挂前先释放上次 cleanup，避免持有已失效的 svc 引用。
+      const winner = this._services.get<T>(name);
+      if (winner === attached) return;
       runCleanup();
-      const ret = cb(svc);
+      attached = winner;
+      if (winner === undefined) return;
+      const ret = cb(winner);
       if (typeof ret === 'function') cleanup = ret;
     };
 
-    // 持续订阅 provider 上下线（不退订），ctx.dispose 时由 disposable 链清理。
+    // 持续订阅 provider 上下线 + 偏好切换（不退订），ctx.dispose 时由 disposable 链清理。
     const offReg = this.on('service:registered', (svcName: string) => {
-      if (disposed || svcName !== name) return;
-      const svc = this._services.get<T>(name);
-      if (svc !== undefined) attach(svc);
+      if (svcName === name) sync();
     });
     const offUnreg = this.on('service:unregistered', (svcName: string) => {
-      if (disposed || svcName !== name) return;
-      runCleanup();
+      if (svcName === name) sync();
+    });
+    const offPref = this.on('service:preference-changed', (svcName: string) => {
+      if (svcName === name) sync();
     });
 
     // 立即检查：若已就绪则首挂。
-    const existing = this._services.get<T>(name);
-    if (existing !== undefined) attach(existing);
+    sync();
 
     const dispose = (): void => {
       if (disposed) return;
       disposed = true;
       offReg();
       offUnreg();
+      offPref();
       runCleanup();
+      attached = undefined;
     };
 
     this._disposables.push(dispose);
@@ -586,12 +612,20 @@ export class Context {
     // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools 的
     // ToolService、plugin-commands 的 CommandService）。
     // core 不再硬编码任何具体服务名。
+    // 遍历该服务名下的**所有** entry 而非只通知胜者——败者实例（低优先级
+    // 并存 provider）也可能持有本上下文注册的条目。同名多 entry 可能指向
+    // 同一实例（per-model 拆粒度），按实例去重避免重复通知。
     for (const name of this._services.getServiceNames()) {
-      const svc = this._services.get(name) as { unregisterByPlugin?: (id: string) => void } | undefined;
-      try {
-        svc?.unregisterByPlugin?.(this.id);
-      } catch (err) {
-        this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err);
+      const seen = new Set<unknown>();
+      for (const entry of this._services.getEntries(name)) {
+        if (seen.has(entry.instance)) continue;
+        seen.add(entry.instance);
+        const svc = entry.instance as { unregisterByPlugin?: (id: string) => void };
+        try {
+          svc?.unregisterByPlugin?.(this.id);
+        } catch (err) {
+          this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err);
+        }
       }
     }
 

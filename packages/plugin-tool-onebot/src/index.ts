@@ -1675,7 +1675,9 @@ function registerOneBotHistoryAccessChecker(ctx: Context, cfg: OneBotSessionHist
       },
     };
     const dispose = historyService.registerAccessChecker(checker);
-    ctx.on('dispose', dispose);
+    // 注意：总线上并不存在 'dispose' 事件——此前 ctx.on('dispose', ...) 永远不会
+    // 触发，access checker 在插件 bounce 后泄漏。正确挂法是 onDispose 清理链。
+    ctx.onDispose(dispose);
     ctx.logger.info('OneBot 会话历史访问规则已注册到 session-history');
   });
 }

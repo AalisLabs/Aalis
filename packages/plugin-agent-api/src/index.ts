@@ -171,3 +171,49 @@ declare module '@aalis/core' {
     agent: AgentService;
   }
 }
+
+// ----- token:usage 事件契约 -----
+
+/** token:usage 事件的 12 桶 prompt 构成明细（单位：token 数） */
+export interface TokenUsageBreakdown {
+  system: number;
+  persona: number;
+  memorySummary: number;
+  memoryVector: number;
+  skills: number;
+  platform: number;
+  subtask: number;
+  systemOther: number;
+  history: number;
+  toolResults: number;
+  toolDefs: number;
+  reservedForReply: number;
+}
+
+/**
+ * agent 每次 LLM 调用后 emit 的 prompt 预算快照。
+ *
+ * 发射方：plugin-agent；已知消费方：plugin-webui-server（面板渲染）、
+ * plugin-memory-summary（预压缩触发）、plugin-prompt-budget（AI 自检工具）。
+ */
+export interface TokenUsageEvent {
+  sessionId: string;
+  platform: string;
+  contextWindow: number;
+  maxTokens: number;
+  tokenBudget: number;
+  used: number;
+  usageRatio: number;
+  breakdown: TokenUsageBreakdown;
+}
+
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'token:usage': [usage: TokenUsageEvent];
+    /**
+     * 请求 agent 重发某会话的最新 token:usage 快照。
+     * 发射方：plugin-webui-server（客户端刷新/重连时）；消费方：plugin-agent。
+     */
+    'token:request': [req: { sessionId: string }];
+  }
+}

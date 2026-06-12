@@ -103,18 +103,62 @@ describe('ScopedConfigManager (沙盒)', () => {
     expect(parent.getPluginConfig('llm').temperature).toBe(0.7);
   });
 
-  it('save() 抛错，保护父级不被沙盒污染', () => {
+  it('save() 是内存模式 no-op：不抛错、不触发父级持久化', () => {
     const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
     try {
       const parent = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
       const scope = new ScopedConfigManager(parent);
-      expect(() => scope.save()).toThrow();
+      scope.set('name', 'Sandbox');
+      // 通用插件代码（如 ensureServiceProvider）在 scope 内调 save() 不应被炸
+      expect(() => scope.save()).not.toThrow();
       // 父级也未触发 save：磁盘内容保持原样
       expect(existsSync(cfg.path)).toBe(true);
       const text = readFileSync(cfg.path, 'utf-8');
       expect(text).toContain('name: T');
+      expect(text).not.toContain('Sandbox');
     } finally {
       cfg.cleanup();
+    }
+  });
+
+  it('setPluginEnabled / setServicePreference 不写穿父配置（#8.5 写穿透回归）', () => {
+    const parent = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
+    parent.setPluginEnabled('shared', false);
+    parent.setServicePreference('llm', 'plugin-a');
+
+    const scope = new ScopedConfigManager(parent);
+    // scope 内启用父级禁用的插件、改偏好、再禁一个新插件
+    scope.setPluginEnabled('shared', true);
+    scope.setPluginEnabled('scope-only', false);
+    scope.setServicePreference('llm', 'plugin-b');
+    scope.removeServicePreference('llm-vision');
+
+    // scope 视角生效
+    expect(scope.isPluginDisabled('shared')).toBe(false);
+    expect(scope.isPluginDisabled('scope-only')).toBe(true);
+    expect(scope.getServicePreferences().llm).toBe('plugin-b');
+
+    // 父级不受影响
+    expect(parent.isPluginDisabled('shared')).toBe(true);
+    expect(parent.isPluginDisabled('scope-only')).toBe(false);
+    expect(parent.getServicePreferences().llm).toBe('plugin-a');
+  });
+
+  it('syncPluginDefaults 在 scope 上合并进 overlay 且不炸（#8.5 回归）', () => {
+    const parent = new ConfigManager({ name: 'T', logLevel: 'error', plugins: { p1: { a: 1 } } });
+    const scope = new ScopedConfigManager(parent);
+    const changed = scope.syncPluginDefaults([{ instanceId: 'p1', defaultConfig: { a: 0, b: 2 } }]);
+    expect(changed).toEqual(['p1']);
+    expect(scope.getPluginConfig('p1')).toEqual({ a: 1, b: 2 });
+    // 父级插件配置未被改写
+    expect(parent.getPluginConfig('p1')).toEqual({ a: 1 });
+  });
+
+  it('覆写了 ConfigManager 全部公开方法（防漂移：新增基类方法必须显式委托）', () => {
+    const baseMethods = Object.getOwnPropertyNames(ConfigManager.prototype).filter(n => n !== 'constructor');
+    const scopedOwn = Object.getOwnPropertyNames(ScopedConfigManager.prototype);
+    for (const m of baseMethods) {
+      expect(scopedOwn, `ScopedConfigManager 未显式覆写基类方法 "${m}"（继承实现会读写无效的基类快照）`).toContain(m);
     }
   });
 });

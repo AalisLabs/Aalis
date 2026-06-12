@@ -231,3 +231,103 @@ describe('Context.getService 即取即用语义（裸实例）', () => {
     expect(h.kind).toBe('fancy');
   });
 });
+
+describe('Context.whenService 多 provider（#8.3）', () => {
+  it('败者 entry 注销不打扰胜者挂载；胜者注销后自动重挂到次优', async () => {
+    const ctx = makeContext();
+    const attached: string[] = [];
+    const cleaned: string[] = [];
+
+    const winner = { id: 'winner' };
+    const loser = { id: 'loser' };
+    const disposeWinner = ctx.provide('__hub', winner, { priority: 50 });
+    const disposeLoser = ctx.provide('__hub', loser, { priority: 0, entryId: 'root/loser' });
+
+    ctx.whenService<{ id: string }>('__hub', svc => {
+      attached.push(svc.id);
+      return () => cleaned.push(svc.id);
+    });
+    await Promise.resolve();
+    expect(attached).toEqual(['winner']);
+
+    // 败者下线：胜者不变 → 不 cleanup、不重挂（旧实现会无条件 cleanup 导致永久脱挂）
+    disposeLoser();
+    await new Promise(r => setTimeout(r, 0));
+    expect(cleaned).toEqual([]);
+    expect(attached).toEqual(['winner']);
+
+    // 重新补一个次优，再撤胜者：应 cleanup 旧挂载并重挂到次优
+    ctx.provide('__hub', loser, { priority: 0, entryId: 'root/loser' });
+    await new Promise(r => setTimeout(r, 0));
+    expect(attached).toEqual(['winner']); // 新败者上线同样不打扰
+
+    // 撤掉胜者 entry（provide 的 dispose 自带 service:unregistered 通知）
+    disposeWinner();
+    await new Promise(r => setTimeout(r, 0));
+    expect(cleaned).toEqual(['winner']);
+    expect(attached).toEqual(['winner', 'loser']);
+  });
+
+  it('preferService 切偏好触发重挂（service:preference-changed）', async () => {
+    const ctx = makeContext();
+    const attached: string[] = [];
+    const cleaned: string[] = [];
+
+    ctx.provide('__llm', { id: 'default' }, { priority: 50 });
+    const child = ctx.fork('plugin-alt');
+    child.provide('__llm', { id: 'alt' }, { priority: 0 });
+
+    ctx.whenService<{ id: string }>('__llm', svc => {
+      attached.push(svc.id);
+      return () => cleaned.push(svc.id);
+    });
+    await Promise.resolve();
+    expect(attached).toEqual(['default']);
+
+    ctx.preferService('__llm', 'plugin-alt');
+    await new Promise(r => setTimeout(r, 0));
+    expect(cleaned).toEqual(['default']);
+    expect(attached).toEqual(['default', 'alt']);
+
+    ctx.unpreferService('__llm');
+    await new Promise(r => setTimeout(r, 0));
+    expect(attached).toEqual(['default', 'alt', 'default']);
+  });
+
+  it('新败者注册（service:registered 但胜者不变）不触发重挂', async () => {
+    const ctx = makeContext();
+    let calls = 0;
+    ctx.provide('__hub', { id: 'top' }, { priority: 100 });
+    ctx.whenService('__hub', () => {
+      calls++;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(calls).toBe(1);
+
+    ctx.provide('__hub', { id: 'low' }, { priority: 0, entryId: 'root/low' });
+    await new Promise(r => setTimeout(r, 0));
+    expect(calls).toBe(1);
+  });
+});
+
+describe('Context.dispose 服务自清理协议（#8.6）', () => {
+  it('unregisterByPlugin 通知同名服务的所有 entry（含败者），而非只通知胜者', async () => {
+    const ctx = makeContext();
+    const notified: string[] = [];
+    const winner = {
+      unregisterByPlugin: (id: string) => notified.push(`winner:${id}`),
+    };
+    const loser = {
+      unregisterByPlugin: (id: string) => notified.push(`loser:${id}`),
+    };
+    ctx.provide('__hub', winner, { priority: 50 });
+    ctx.provide('__hub', loser, { priority: 0, entryId: 'root/loser' });
+
+    const child = ctx.fork('plugin-x');
+    child.dispose();
+
+    expect(notified).toContain('winner:plugin-x');
+    expect(notified).toContain('loser:plugin-x');
+  });
+});

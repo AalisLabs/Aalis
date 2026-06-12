@@ -14,6 +14,24 @@ export class EventBus {
   private handlers = new Map<string, Set<EventHandler<any>>>();
 
   /**
+   * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
+   *
+   * EventBus 自身不依赖 Logger（保持环境无关）；宿主（App）在构造后
+   * 注入一个指向自己 logger 的上报器。未设置时错误被静默丢弃——
+   * 但无论是否设置，单个 handler 抛错都**不会**中断同事件的其余 handler，
+   * 也不会使 emit reject。
+   */
+  onHandlerError?: (event: string, error: unknown) => void;
+
+  private reportHandlerError(event: string, error: unknown): void {
+    try {
+      this.onHandlerError?.(event, error);
+    } catch {
+      /* 上报器自身抛错不再向外传播 */
+    }
+  }
+
+  /**
    * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on/once 监听该事件时
    * 立即用缓存参数同步触发回调。用于"应用生命周期里只发一次的里程碑事件"，
    * 让被热重载的插件在 reactivate 后仍能拿到启动通知。
@@ -58,8 +76,16 @@ export class EventBus {
       const args = this.stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发
-        if (set?.has(handler)) {
-          void handler(...args);
+        if (!set?.has(handler)) return;
+        // 补发没有 emit 调用方兜底——handler 同步抛错会直达 uncaughtException
+        // 崩进程，异步抛错变 unhandledRejection，必须就地捕获。
+        try {
+          const ret = handler(...args);
+          if (ret && typeof (ret as Promise<void>).then === 'function') {
+            (ret as Promise<void>).catch(err => this.reportHandlerError(event, err));
+          }
+        } catch (err) {
+          this.reportHandlerError(event, err);
         }
       });
     }
@@ -83,7 +109,13 @@ export class EventBus {
   }
 
   /**
-   * 触发事件，按注册顺序依次调用，支持异步 handler
+   * 触发事件，按注册顺序依次调用，支持异步 handler。
+   *
+   * Per-handler 隔离：单个 handler 抛错（同步或异步）只影响它自己——
+   * 错误经 {@link onHandlerError} 上报，其余 handler 照常执行，emit 始终 resolve。
+   * 事件是"通知多方"语义，一个旁观者失败不该连坐其他订阅者，更不该
+   * 反向把失败传染给发射方（如 plugin:loaded 的 emit 不能把刚激活成功的
+   * 插件打成 error 终态）。
    */
   async emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
     if (this.stickyEvents.has(event)) {
@@ -91,8 +123,13 @@ export class EventBus {
     }
     const set = this.handlers.get(event);
     if (!set) return;
+    // 直接迭代活 Set：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
     for (const handler of set) {
-      await handler(...args);
+      try {
+        await handler(...args);
+      } catch (err) {
+        this.reportHandlerError(event, err);
+      }
     }
   }
 

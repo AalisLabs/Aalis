@@ -15,6 +15,16 @@ export type { CLIService } from './types.js';
 import { LogHub } from '@aalis/core';
 import { readLogFileTail } from './log-file.js';
 
+// terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
+// console-sink 之间的协调契约：本插件发射，runtime/console-sink.ts 监听
+// （同形声明在彼处亦有一份，接口合并要求两边类型一致）。
+declare module '@aalis/core' {
+  interface AalisEvents {
+    'terminal:claimed': [owner: string];
+    'terminal:released': [owner: string];
+  }
+}
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-cli';

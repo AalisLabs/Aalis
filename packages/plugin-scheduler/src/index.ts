@@ -482,8 +482,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
     try {
       logger.info(`执行任务: ${jobName}`);
-      // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明，运行时调度
-      await ctx.emit('scheduler:job:start' as any, jobName);
+      await ctx.emit('scheduler:job:start', jobName);
 
       // 通用触发事件：供 workflow 等订阅者使用
       // （即使本任务用的是旧版 inbound:message，也同时广播 trigger:fired，
@@ -518,14 +517,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       rt.lastRun = Date.now();
       rt.runCount++;
       rt.lastResult = '成功';
-      // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明
-      await ctx.emit('scheduler:job:done' as any, jobName);
+      await ctx.emit('scheduler:job:done', jobName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       rt.lastResult = `失败: ${msg}`;
       logger.error(`任务 "${jobName}" 执行失败: ${msg}`);
-      // biome-ignore lint/suspicious/noExplicitAny: scheduler:* 事件未在 AalisEvents 中声明
-      await ctx.emit('scheduler:job:error' as any, jobName, msg);
+      await ctx.emit('scheduler:job:error', jobName, msg);
     } finally {
       rt.running = false;
       runningCount--;
@@ -1029,5 +1026,13 @@ function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
 declare module '@aalis/core' {
   interface ServiceTypeMap {
     scheduler: SchedulerService;
+  }
+  interface AalisEvents {
+    /** 任务开始执行 */
+    'scheduler:job:start': [jobName: string];
+    /** 任务执行成功 */
+    'scheduler:job:done': [jobName: string];
+    /** 任务执行失败 */
+    'scheduler:job:error': [jobName: string, message: string];
   }
 }
