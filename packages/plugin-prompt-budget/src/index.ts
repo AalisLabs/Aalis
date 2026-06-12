@@ -11,6 +11,7 @@
  */
 
 import type { Context } from '@aalis/core';
+import type { TokenUsageEvent } from '@aalis/plugin-agent-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
 
@@ -18,30 +19,8 @@ export const name = '@aalis/plugin-prompt-budget';
 export const displayName = 'Prompt 预算自检';
 export const subsystem = 'agent';
 
-interface TokenUsageBreakdown {
-  system: number;
-  persona: number;
-  memorySummary: number;
-  memoryVector: number;
-  skills: number;
-  platform: number;
-  subtask: number;
-  systemOther: number;
-  history: number;
-  toolResults: number;
-  toolDefs: number;
-  reservedForReply: number;
-}
-
-interface TokenUsage {
-  sessionId: string;
-  platform: string;
-  contextWindow: number;
-  maxTokens: number;
-  tokenBudget: number;
-  used: number;
-  usageRatio: number;
-  breakdown: TokenUsageBreakdown;
+/** 事件契约形状来自 @aalis/plugin-agent-api 的 TokenUsageEvent，本插件只追加入库时刻 */
+interface TokenUsage extends TokenUsageEvent {
   /** 本插件追加：记录入库时刻，方便 AI 判断数据新鲜度 */
   observedAt: number;
 }
@@ -51,8 +30,7 @@ export function apply(ctx: Context): void {
   /** sessionId → 最新一次的 token:usage 快照（仅保留最近一次即可） */
   const cache = new Map<string, TokenUsage>();
 
-  ctx.on('token:usage', (...args: unknown[]) => {
-    const u = args[0] as Omit<TokenUsage, 'observedAt'> | undefined;
+  ctx.on('token:usage', u => {
     if (!u || typeof u.sessionId !== 'string') return;
     cache.set(u.sessionId, { ...u, observedAt: Date.now() });
   });

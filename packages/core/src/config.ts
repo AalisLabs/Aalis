@@ -245,29 +245,34 @@ export class ConfigManager {
  *   - `set(key, value)` 仅写入 overlay，不影响父配置
  *   - `getPluginConfig(name)` 返回 `{ ...parent, ...overlay }`（浅合并）
  *   - `setPluginConfig(name, conf)` 完整替换 overlay 中该插件条目
- *   - 不接触任何 provider：`save()` 抛错，`watch()` 为 no-op
+ *   - 不接触任何 provider：`save()` 为 no-op（与基类"无 provider 内存模式"
+ *     同语义——通用插件代码可以照常调 save() 而不被炸），`watch()` 为 no-op
+ *
+ * ⚠️ 实现约定：本类继承 ConfigManager 仅为名义类型兼容（Context.config 等
+ * 处声明为 ConfigManager），**基类内部状态从不读写**——所有公开方法都被
+ * 显式覆写为「overlay 优先，回退 parentConfig」的委托。给基类新增公开方法
+ * 时必须同步在此覆写，否则继承下来的实现会读写无效的基类快照（写穿透 /
+ * 读过期）。test/core/config.test.ts 有反射式防漂移用例兜底。
  */
 export class ScopedConfigManager extends ConfigManager {
   private overlay: Partial<AalisConfig> = {};
   private parentConfig: ConfigManager;
 
   constructor(parent: ConfigManager) {
-    // 父类需要一个 initial 快照——传父配置当前快照（仅用于初始化内部字段；
-    // 所有读写都被下面的 override 接管，父类的内部 state 不会被使用）。
-    super(parent.getAll() as AalisConfig, { dataDir: parent.getConfigDir() });
+    // 基类要求一个 initial 快照——传入独立的空白对象占位。绝不可传
+    // parent.getAll()：那会把 plugins/disabledPlugins 等容器按引用共享给
+    // 基类快照，一旦哪个方法漏覆写，继承实现的写入会穿透进父配置。
+    super({ name: '', logLevel: '', plugins: {} });
     this.parentConfig = parent;
   }
+
+  // ---- 读路径：overlay 优先，回退父配置 ----
 
   override get<K extends keyof AalisConfig>(key: K): AalisConfig[K] {
     if (this.overlay && key in this.overlay) {
       return this.overlay[key] as AalisConfig[K];
     }
     return this.parentConfig.get(key);
-  }
-
-  override set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void {
-    if (!this.overlay) this.overlay = {};
-    this.overlay[key] = value;
   }
 
   override getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(pluginName: string): T {
@@ -277,20 +282,15 @@ export class ScopedConfigManager extends ConfigManager {
     return { ...parentConf, ...ownConf } as T;
   }
 
-  override setPluginConfig(pluginName: string, config: Record<string, unknown>): void {
-    if (!this.overlay.plugins) this.overlay.plugins = {};
-    this.overlay.plugins[pluginName] = config;
-  }
-
-  override removePluginConfig(pluginName: string): void {
-    if (this.overlay.plugins) delete this.overlay.plugins[pluginName];
-  }
-
   override isPluginDisabled(pluginName: string): boolean {
     if (this.overlay.disabledPlugins !== undefined) {
       return this.overlay.disabledPlugins.includes(pluginName);
     }
     return this.parentConfig.isPluginDisabled(pluginName);
+  }
+
+  override getServicePreferences(): Record<string, string> {
+    return (this.overlay.servicePreferences as Record<string, string>) ?? this.parentConfig.getServicePreferences();
   }
 
   override getAll(): Readonly<AalisConfig> {
@@ -312,9 +312,76 @@ export class ScopedConfigManager extends ConfigManager {
     return this.parentConfig.getConfigDir();
   }
 
-  /** 沙盒不持久化 —— save() 直接抛错暴露误用 */
+  // ---- 写路径：只进 overlay，绝不触碰父配置 ----
+
+  override set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void {
+    if (!this.overlay) this.overlay = {};
+    this.overlay[key] = value;
+  }
+
+  override setPluginConfig(pluginName: string, config: Record<string, unknown>): void {
+    if (!this.overlay.plugins) this.overlay.plugins = {};
+    this.overlay.plugins[pluginName] = config;
+  }
+
+  override removePluginConfig(pluginName: string): void {
+    if (this.overlay.plugins) delete this.overlay.plugins[pluginName];
+  }
+
+  override setPluginEnabled(pluginName: string, enabled: boolean): void {
+    // copy-on-write：首写时把父级列表拷一份进 overlay，之后整列表 shadow 父级
+    if (this.overlay.disabledPlugins === undefined) {
+      this.overlay.disabledPlugins = [...((this.parentConfig.get('disabledPlugins') as string[] | undefined) ?? [])];
+    }
+    const list = this.overlay.disabledPlugins;
+    const idx = list.indexOf(pluginName);
+    if (enabled && idx >= 0) {
+      list.splice(idx, 1);
+    } else if (!enabled && idx < 0) {
+      list.push(pluginName);
+    }
+  }
+
+  override setServicePreference(name: string, contextId: string): void {
+    if (!this.overlay.servicePreferences) {
+      this.overlay.servicePreferences = { ...this.parentConfig.getServicePreferences() };
+    }
+    (this.overlay.servicePreferences as Record<string, string>)[name] = contextId;
+  }
+
+  override removeServicePreference(name: string): void {
+    if (!this.overlay.servicePreferences) {
+      this.overlay.servicePreferences = { ...this.parentConfig.getServicePreferences() };
+    }
+    delete (this.overlay.servicePreferences as Record<string, string>)[name];
+  }
+
+  override syncPluginDefaults(
+    plugins: ReadonlyArray<{
+      instanceId: string;
+      defaultConfig?: Record<string, unknown>;
+      configSchema?: Record<string, unknown>;
+    }>,
+  ): string[] {
+    // 基类算法走 this.getPluginConfig / this.setPluginConfig / this.save() 虚分派，
+    // 在本类上即为「合并进 overlay、不落盘」——语义正确，显式声明以防漂移。
+    return super.syncPluginDefaults(plugins);
+  }
+
+  // ---- provider 相关：scope 不持久化、不订阅 ----
+
+  /**
+   * no-op——与基类"无 provider 内存模式 save() 静默忽略"同语义。
+   * 通用插件代码（如 ensureServiceProvider 的 config.save()）在 scope 内
+   * 运行时不应被炸；隔离性由"写只进 overlay"保证，而不是靠 save 抛错。
+   */
   override save(): void {
-    throw new Error('ScopedConfigManager.save() 不可用：scope 配置仅在内存中存在。');
+    /* scope 配置仅存活于内存 */
+  }
+
+  /** scope 没有外部来源，快照重载没有意义；显式拒绝以暴露误用。 */
+  override reloadFrom(): AalisConfig {
+    throw new Error('ScopedConfigManager.reloadFrom() 不可用：scope 配置没有外部来源。');
   }
 
   override watch(): void {

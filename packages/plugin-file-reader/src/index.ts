@@ -4,6 +4,7 @@ import type { AgentService } from '@aalis/plugin-agent-api';
 import { useAgent } from '@aalis/plugin-agent-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type {} from '@aalis/plugin-session-manager-api'; // declaration merging：session:deleted 事件
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
