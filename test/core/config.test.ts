@@ -162,3 +162,24 @@ describe('ScopedConfigManager (沙盒)', () => {
     }
   });
 });
+
+describe('configSync.trimUnknownFields 政策（#4 政策注入）', () => {
+  it('默认（true）：syncPluginDefaults 按 schema 裁剪未知字段', () => {
+    const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: 'x' } } });
+    cfg.syncPluginDefaults([
+      { instanceId: 'p1', defaultConfig: { known: 0 }, configSchema: { known: { type: 'number', label: 'K' } } },
+    ]);
+    expect(cfg.getPluginConfig('p1')).toEqual({ known: 1 });
+  });
+
+  it('trimUnknownFields=false：保留 schema 外字段', () => {
+    const cfg = new ConfigManager(
+      { name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: 'x' } } },
+      { trimUnknownFields: false },
+    );
+    cfg.syncPluginDefaults([
+      { instanceId: 'p1', defaultConfig: { known: 0 }, configSchema: { known: { type: 'number', label: 'K' } } },
+    ]);
+    expect(cfg.getPluginConfig('p1')).toEqual({ known: 1, unknown: 'x' });
+  });
+});
