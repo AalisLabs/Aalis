@@ -602,7 +602,7 @@ export function AuthorityPage() {
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('owners')}>
           <span className="config-block-title">Owner 管理</span>
-          <span className="config-block-hint">Owner 自动获得最高权限等级，WebUI 控制台始终为 Owner</span>
+          <span className="config-block-hint">Owner 自动获得最高权限等级；单 token 模式登录的控制台恒为 Owner，账户登录按各自等级</span>
           <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('owners') && (
