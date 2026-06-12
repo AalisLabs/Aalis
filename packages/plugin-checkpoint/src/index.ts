@@ -3,6 +3,7 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
+import type {} from '@aalis/plugin-webui-api'; // PluginModule.actions 槽位的 merging 可见性
 import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
 
 // ════════════════════════════════════════════════════════════

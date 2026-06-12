@@ -292,6 +292,9 @@ importers:
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1488,6 +1491,9 @@ importers:
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:../plugin-tools-api
+      '@aalis/plugin-webui-api':
+        specifier: workspace:*
+        version: link:../plugin-webui-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1917,6 +1923,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

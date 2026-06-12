@@ -5,6 +5,7 @@
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
 import type { ConfigSchema, Context } from '@aalis/core';
+import type { UserIdentity } from '@aalis/plugin-authority-api';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -164,7 +165,7 @@ export interface WebuiPage {
 
 /**
  * 通过 declaration merging 向 core 的 PluginModule 注入
- * 纯展示元数据字段（subsystem / extends）。
+ * 纯展示元数据字段（subsystem / extends）与 host-RPC 槽位（actions / actionsMeta）。
  *
  * WebuiPage 注册路径为运行时 `useWebuiService(ctx).registerPage(...)`，
  * 不作为静态 module 字段存在。
@@ -180,6 +181,23 @@ declare module '@aalis/core' {
     subsystem?: string;
     /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
     extends?: ExtendDeclaration;
+    /**
+     * 插件 RPC 动作表 —— 供 host（webui-server 等）远程调用。
+     *
+     * core 不感知此字段；host 路由层（POST /api/page-action/:plugin/:method）
+     * 在权限闸门放行后以插件自身的 `entry.context` 调用 handler。
+     * 第三参 caller 为路由层解析出的调用者身份，handler 可用它做业务级
+     * 检查（如"不能把他人权限设为 >= 自身等级"）；忽略该参数即向后兼容。
+     */
+    actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>>;
+    /**
+     * actions 的权限元数据：action 名 → 所需最低权限等级。
+     *
+     * host 在调用 action 前按调用者身份统一过闸；**未声明的 action 默认
+     * 要求 owner 等级**（默认拒绝——插件作者必须显式声明才能降低门槛，
+     * 避免漏标的敏感 action 在登录功能上线后裸奔）。
+     */
+    actionsMeta?: Record<string, { authority?: number }>;
   }
 
   /**
