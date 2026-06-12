@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import type { AppService, ConfigManager, Context, Logger } from '@aalis/core';
+import type { AppService, ConfigManager, Context, Logger, PluginModule } from '@aalis/core';
 import type { ExecutionGuardContext, SafetyLevel, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
@@ -563,10 +563,7 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
 // ===== WebUI 操作处理器 =====
 
-export const actions: Record<
-  string,
-  (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>
-> = {
+export const actions: PluginModule['actions'] = {
   /** 获取权限概览 */
   async getOverview(ctx) {
     const auth = ctx.getService<AuthorityService>('authority');
@@ -640,8 +637,8 @@ export const actions: Record<
     }
     if (authority < 0) throw new Error('权限等级必须 >= 0');
     const auth = ctx.getService<AuthorityService>('authority');
-    // 与 /grant 指令同语义的防越权检查：不能把任何人设到 >= 自身等级。
-    // 今天 WebUI caller 恒为 owner(5)，仅拦截"设为 5+"；登录上线后按账户等级生效。
+    // 与 /grant 指令同语义的防越权检查：不能把任何人设到 >= 自身等级
+    // （caller 为登录账户的真实身份；单 token 模式为 webui:console=owner）。
     if (caller && auth) {
       const callerLevel = auth.getAuthority(caller.platform, caller.userId);
       if (authority >= callerLevel) {
