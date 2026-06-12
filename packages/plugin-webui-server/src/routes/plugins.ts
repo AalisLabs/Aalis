@@ -1,6 +1,6 @@
-import type { ActionCaller, AppService, Context, PluginManagerService } from '@aalis/core';
+import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA } from '@aalis/core';
-import type { AuthorityService } from '@aalis/plugin-authority-api';
+import type { AuthorityService, UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type { ToolService } from '@aalis/plugin-tools-api';
@@ -117,7 +117,7 @@ export function registerPluginRoutes(
     // 改为从会话解析真实用户，本闸门即按账户等级生效。
     // 未声明 actionsMeta 的 action 默认要求 owner 等级（默认拒绝），插件需显式
     // 声明才能降低门槛。authority 服务缺席时放行（与 tools/commands 守卫缺席时一致）。
-    const caller: ActionCaller = { platform: 'webui', userId: 'console' };
+    const caller: UserIdentity = { platform: 'webui', userId: 'console' };
     const authority = ctx.getService<AuthorityService>('authority');
     if (authority) {
       const required = entry.module.actionsMeta?.[method]?.authority ?? ctx.config.get('ownerAuthority') ?? 5;

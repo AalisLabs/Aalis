@@ -1,4 +1,4 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 // 副作用导入：注入 agent:turn:after 等 agent 域钩子到 HookContextMap（declaration merging），
 // 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
 import '@aalis/plugin-agent-api';
@@ -134,7 +134,7 @@ const webuiPages: WebuiPage[] = [
 
 // ===== Actions =====
 
-export const actions: Record<string, (ctx: Context, args: Record<string, unknown>) => Promise<unknown>> = {
+export const actions: PluginModule['actions'] = {
   async listSessions(ctx) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
     if (!sm) return [];
