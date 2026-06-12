@@ -9,6 +9,7 @@ import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
+import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 
 export const name = '@aalis/plugin-asr-openai';
 export const displayName = 'OpenAI Whisper ASR';

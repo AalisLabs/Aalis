@@ -2,6 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
+import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 import '@aalis/plugin-agent-api';

@@ -1,5 +1,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
+import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 
 // ===== 插件元数据 =====
 

@@ -24,7 +24,6 @@ export function PluginConfigPage({
   const [editBuffer, setEditBuffer] = useState<Record<string, string>>({});
   const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>({});
   const [modelCache, setModelCache] = useState<Record<string, Array<{ label: string; value: string }>>>({});
-  const [providerCache, setProviderCache] = useState<Record<string, Array<{ contextId: string; displayName?: string }>>>({});
   const [llmProviders, setLLMProviders] = useState<LLMProviderEntry[] | undefined>(undefined);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -94,20 +93,6 @@ export function PluginConfigPage({
       setModelCache(prev => ({ ...prev, [service]: [] }));
     }
   }, [modelCache]);
-
-  const fetchProviders = useCallback(async (service: string) => {
-    if (providerCache[service]) return;
-    try {
-      const res = await api<{ services: Record<string, ServiceInfo> }>('/api/services');
-      const svc = res.services?.[service];
-      setProviderCache(prev => ({
-        ...prev,
-        [service]: svc?.providers?.map(p => ({ contextId: p.contextId, displayName: p.displayName })) ?? [],
-      }));
-    } catch {
-      setProviderCache(prev => ({ ...prev, [service]: [] }));
-    }
-  }, [providerCache]);
 
   const fetchLLMProviders = useCallback(async () => {
     if (llmProviders) return;
@@ -264,8 +249,6 @@ export function PluginConfigPage({
                 onChange={setGlobalDraft}
                 modelCache={modelCache}
                 onFetchModels={fetchModels}
-                providerCache={providerCache}
-                onFetchProviders={fetchProviders}
                 llmProviders={llmProviders}
                 onFetchLLMProviders={fetchLLMProviders}
               />
@@ -491,8 +474,6 @@ export function PluginConfigPage({
                       onChange={setSchemaDraft}
                       modelCache={modelCache}
                       onFetchModels={fetchModels}
-                      providerCache={providerCache}
-                      onFetchProviders={fetchProviders}
                       llmProviders={llmProviders}
                       onFetchLLMProviders={fetchLLMProviders}
                     />

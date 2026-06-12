@@ -181,6 +181,19 @@ declare module '@aalis/core' {
     /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
     extends?: ExtendDeclaration;
   }
+
+  /**
+   * WebUI 表单交互属性 —— 由本包注入（core 的 SchemaField 只声明环境中立字段）。
+   * 这些属性只被 WebUI 配置表单消费；其他宿主可以忽略。
+   */
+  interface SchemaField {
+    /** 标记为敏感字段，前端显示时自动遮蔽 */
+    secret?: boolean;
+    /** select / multiselect 动态选项来源：服务名（前端经 webui-server 调该服务的 listModels() 或等价方法获取选项） */
+    dynamicOptions?: string;
+    /** multiselect 是否允许用户手动输入自定义值（不限于选项列表） */
+    allowCustom?: boolean;
+  }
 }
 
 // ----- 领域 helper -----

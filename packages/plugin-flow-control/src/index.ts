@@ -3,6 +3,7 @@ import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { OutgoingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
+import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 import '@aalis/plugin-gateway-api';
 
