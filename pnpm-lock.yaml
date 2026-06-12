@@ -248,6 +248,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:*
         version: link:../plugin-commands-api
+      '@aalis/plugin-platform-api':
+        specifier: workspace:*
+        version: link:../plugin-platform-api
       '@aalis/plugin-storage-api':
         specifier: workspace:*
         version: link:../plugin-storage-api
