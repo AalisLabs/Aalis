@@ -43,6 +43,10 @@ authority.authorize(identity, { capabilities, declaredAuthority })  // → null 
 `ExecutionGuard` 仍是 tools/commands surface 的适配器：等级/策略/授予裁决全部委托
 authorize，dangerous 确认（交互流程）留在适配器层。
 
+**可视化**：WebUI「权限图」页（plugin-authority 注册的 graph 页面）以依赖图展示
+用户 → 角色链 ← capability/指令/工具，点击节点看详情；`/authority` 指令输出
+等级 + 个别授予/拒绝 + 绑定关系。
+
 ## 身份与等级
 
 ```
