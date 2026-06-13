@@ -12,17 +12,20 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*",
-    "@aalis/plugin-persona-api": "workspace:*",
-    "@aalis/plugin-platform-api": "workspace:*",
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
     "string-width": "^8.2.0"
   },
   "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*",
+    "@aalis/plugin-message-api": "workspace:*",
+    "@aalis/plugin-persona-api": "workspace:*",
+    "@aalis/plugin-platform-api": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
