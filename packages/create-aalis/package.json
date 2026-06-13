@@ -1,0 +1,23 @@
+{
+  "name": "create-aalis",
+  "version": "0.1.0",
+  "description": "Aalis 快速初始化脚手架：交互式选插件，生成 aalis.config.yaml。",
+  "type": "module",
+  "bin": {
+    "create-aalis": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "aalis": {
+    "tooling": true
+  }
+}
