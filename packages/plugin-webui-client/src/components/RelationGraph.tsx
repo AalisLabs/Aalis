@@ -277,6 +277,41 @@ const stylesheet: cytoscape.StylesheetJson = [
   },
 ];
 
+/**
+ * 内置样式 + 页面声明的自定义类别样式（nodeKinds/edgeKinds，后写覆盖内置）。
+ *
+ * 声明了 nodeKinds 的页面（如权限图）使用自己的 kind 语义，不冒用
+ * 人物关系图的 person/event/entity 三类。
+ */
+function buildStylesheet(
+  nodeKinds?: WebuiGraphComponent['nodeKinds'],
+  edgeKinds?: WebuiGraphComponent['edgeKinds'],
+): cytoscape.StylesheetJson {
+  if (!nodeKinds?.length && !edgeKinds?.length) return stylesheet;
+  const extra: cytoscape.StylesheetJson = [];
+  for (const k of nodeKinds ?? []) {
+    const style: Record<string, unknown> = {};
+    if (k.color) {
+      style['background-color'] = k.color;
+      style['border-color'] = k.color;
+    }
+    if (k.shape) {
+      style.shape = k.shape === 'circle' ? 'ellipse' : k.shape === 'round-rect' ? 'round-rectangle' : 'diamond';
+    }
+    extra.push({ selector: `node[kind = "${k.kind}"]`, style } as cytoscape.StylesheetJson[number]);
+  }
+  for (const e of edgeKinds ?? []) {
+    const style: Record<string, unknown> = {};
+    if (e.color) {
+      style['line-color'] = e.color;
+      style['target-arrow-color'] = e.color;
+    }
+    if (e.dashed) style['line-style'] = 'dashed';
+    extra.push({ selector: `edge[kind = "${e.kind}"]`, style } as cytoscape.StylesheetJson[number]);
+  }
+  return [...stylesheet, ...extra];
+}
+
 interface Props {
   comp: WebuiGraphComponent;
   pluginName: string;
@@ -446,7 +481,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     const cy = cytoscape({
       container: containerRef.current,
       elements: [],
-      style: stylesheet,
+      style: buildStylesheet(comp.nodeKinds, comp.edgeKinds),
       minZoom: 0.2,
       maxZoom: 3,
       wheelSensitivity: 0.2,
@@ -1278,20 +1313,37 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
           borderTop: '1px solid var(--border-color, #2a2a42)',
         }}
       >
-        <LegendItem shape="circle" color={PERSON_COLOR} label="人物" />
-        <LegendItem shape="round-rect" color={EVENT_COLOR} label="事件" />
-        <LegendItem shape="diamond" color={ENTITY_COLORS.topic} label="话题" />
-        <LegendItem shape="diamond" color={ENTITY_COLORS.place} label="地点" />
-        <LegendItem shape="diamond" color={ENTITY_COLORS.thing} label="事物" />
-        <LegendItem shape="diamond" color={ENTITY_COLORS.work} label="作品" />
-        <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
-        <span style={{ width: 1, height: 12, background: 'var(--border-color, #2a2a42)', margin: '0 4px' }} />
-        <LegendEdge color="#f87171" dashStyle="solid" label="人↔人" />
-        <LegendEdge color="#34d399" dashStyle="dashed" label="人→实体" />
-        <LegendEdge color="#fbbf24" dashStyle="dashed" label="人→事" />
-        <LegendEdge color="#a855f7" dashStyle="solid" label="实体↔实体" />
-        <LegendEdge color="#06b6d4" dashStyle="dashed" label="事→实体" />
-        <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
+        {comp.nodeKinds?.length ? (
+          <>
+            {comp.nodeKinds.map(k => (
+              <LegendItem key={k.kind} shape={k.shape ?? 'circle'} color={k.color ?? PERSON_COLOR} label={k.label} />
+            ))}
+            <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
+            {comp.edgeKinds?.length ? (
+              <span style={{ width: 1, height: 12, background: 'var(--border-color, #2a2a42)', margin: '0 4px' }} />
+            ) : null}
+            {(comp.edgeKinds ?? []).map(e => (
+              <LegendEdge key={e.kind} color={e.color ?? '#6b7280'} dashStyle={e.dashed ? 'dashed' : 'solid'} label={e.label} />
+            ))}
+          </>
+        ) : (
+          <>
+            <LegendItem shape="circle" color={PERSON_COLOR} label="人物" />
+            <LegendItem shape="round-rect" color={EVENT_COLOR} label="事件" />
+            <LegendItem shape="diamond" color={ENTITY_COLORS.topic} label="话题" />
+            <LegendItem shape="diamond" color={ENTITY_COLORS.place} label="地点" />
+            <LegendItem shape="diamond" color={ENTITY_COLORS.thing} label="事物" />
+            <LegendItem shape="diamond" color={ENTITY_COLORS.work} label="作品" />
+            <LegendItem shape="circle" color={FOCUS_COLOR} label="焦点" />
+            <span style={{ width: 1, height: 12, background: 'var(--border-color, #2a2a42)', margin: '0 4px' }} />
+            <LegendEdge color="#f87171" dashStyle="solid" label="人↔人" />
+            <LegendEdge color="#34d399" dashStyle="dashed" label="人→实体" />
+            <LegendEdge color="#fbbf24" dashStyle="dashed" label="人→事" />
+            <LegendEdge color="#a855f7" dashStyle="solid" label="实体↔实体" />
+            <LegendEdge color="#06b6d4" dashStyle="dashed" label="事→实体" />
+            <LegendEdge color="#f472b6" dashStyle="solid" label="事→事" />
+          </>
+        )}
         <span style={{ marginLeft: 'auto', opacity: 0.7 }}>点击节点 = 设为焦点 + 显示左上详情卡片；清除焦点请点工具栏「✕ 清除焦点」按钮</span>
       </div>
 
