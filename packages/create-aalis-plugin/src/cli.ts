@@ -118,6 +118,10 @@ function renderPackageJson(a: Answers): string {
     name: a.packageName,
     version: '0.1.0',
     type: 'module',
+    // description / author 供插件市场展示（市场直接读 package.json，不入 PluginModule）
+    description: `${a.displayName} —— Aalis 插件`,
+    // keyword 'aalis-plugin' 是市场发现约定：npm registry 按此 keyword 检索可装插件
+    keywords: ['aalis-plugin'],
     main: 'dist/index.js',
     types: 'dist/index.d.ts',
     scripts: {
