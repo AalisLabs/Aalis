@@ -534,6 +534,26 @@ const res = await llm.chat({
 
 ---
 
+## 发布到插件市场
+
+Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——发现靠 npm registry 的
+keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里：
+
+1. **打 keyword**：`package.json` 的 `keywords` 必须含 `"aalis-plugin"`（`create-aalis-plugin`
+   脚手架已自动产出）。市场按 `npm registry search keywords:aalis-plugin` 发现插件。
+2. **填市场展示字段**（市场直接读 `package.json`，**不要**塞进 `PluginModule`）：
+   - `description`：一句话说明（卡片副标题）
+   - `author` / `license` / `repository`：可选，市场展示与溯源
+   - `version`：npm 标准版本（市场展示 + 安装指定版本）
+3. **能力披露自动生成**：市场在安装前根据你的 `inject.required/optional`（依赖哪些
+   服务 = 粗粒度能力，如 process/storage）向用户披露；装后再按你工具/指令声明的
+   `permissions`（细粒度）细化。**你无需额外声明**——如实写 `inject` 和工具
+   `permissions` 即可，市场会聚合展示给安装者确认。
+4. **发布**：`npm publish`（公开包）。私有/未发布插件仍可走 monorepo 本地安装。
+
+> 安全模型：市场是**透明披露 + 用户知情同意**，不是技术隔离。安装第三方插件
+> 等于授予它声明的能力；真正的执行隔离（如 code_runner 沙箱）由容器化层负责。
+
 ## 相关文档
 
 - [docs/architecture.md](architecture.md) — 整体架构
