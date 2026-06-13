@@ -25,7 +25,12 @@ export class EventBus {
 
   private reportHandlerError(event: string, error: unknown): void {
     try {
-      this.onHandlerError?.(event, error);
+      // onHandlerError 签名为 void，但运行时可能返回 promise（如异步 logger 实现）。
+      // 同步抛错被 catch；异步 rejection 单独吞掉，避免逃逸成 unhandledRejection（审计 #4）。
+      const ret = this.onHandlerError?.(event, error) as unknown;
+      if (ret && typeof (ret as { then?: unknown }).then === 'function') {
+        (ret as Promise<unknown>).catch(() => {});
+      }
     } catch {
       /* 上报器自身抛错不再向外传播 */
     }

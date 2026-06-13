@@ -270,4 +270,13 @@ describe('REST 路由权限闸（gate × authorize）', () => {
     const gate = makeGate(5);
     expect(pass(gate('webui:config:write', 'owner')).nexted).toBe(true);
   });
+
+  it('authority 缺席时 fail-closed：公共读放行，管理读/变更 503（不裸奔）', () => {
+    const config = { get: (k: string) => ({ ownerAuthority: 5, defaultAuthority: 1 })[k] };
+    const ctx = { getService: () => undefined, config } as never;
+    const gate = createRouteGate(ctx, () => ({ platform: 'webui', userId: 'console' }));
+    expect(pass(gate('webui:status:read', 1)).nexted).toBe(true);
+    expect(pass(gate('webui:logs:read', 4)).status).toBe(503);
+    expect(pass(gate('webui:config:write', 'owner')).status).toBe(503);
+  });
 });
