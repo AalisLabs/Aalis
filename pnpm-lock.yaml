@@ -182,19 +182,19 @@ importers:
 
   packages/plugin-agent-api:
     dependencies:
+      '@aalis/plugin-llm-api':
+        specifier: workspace:^
+        version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:^
+        version: link:../plugin-tools-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-llm-api':
-        specifier: workspace:*
-        version: link:../plugin-llm-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -278,11 +278,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-authority-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -385,13 +384,13 @@ importers:
 
   packages/plugin-commands-api:
     dependencies:
+      '@aalis/plugin-authority-api':
+        specifier: workspace:^
+        version: link:../plugin-authority-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-authority-api':
-        specifier: workspace:*
-        version: link:../plugin-authority-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -416,11 +415,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-cron-engine-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -479,11 +477,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-doctor-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -492,11 +489,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-embedding-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -609,11 +605,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-flow-control-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -645,16 +640,16 @@ importers:
 
   packages/plugin-gateway-api:
     dependencies:
+      '@aalis/plugin-agent-api':
+        specifier: workspace:^
+        version: link:../plugin-agent-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-agent-api':
-        specifier: workspace:*
-        version: link:../plugin-agent-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -695,16 +690,16 @@ importers:
 
   packages/plugin-llm-api:
     dependencies:
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+      '@aalis/plugin-tools-api':
+        specifier: workspace:^
+        version: link:../plugin-tools-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -820,16 +815,16 @@ importers:
 
   packages/plugin-media-api:
     dependencies:
+      '@aalis/plugin-llm-api':
+        specifier: workspace:^
+        version: link:../plugin-llm-api
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-llm-api':
-        specifier: workspace:*
-        version: link:../plugin-llm-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -839,13 +834,13 @@ importers:
 
   packages/plugin-memory-api:
     dependencies:
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1007,11 +1002,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-message-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1046,13 +1040,13 @@ importers:
 
   packages/plugin-message-archive-api:
     dependencies:
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -1217,34 +1211,32 @@ importers:
         version: 5.9.3
 
   packages/plugin-persona-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
 
   packages/plugin-platform-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
 
   packages/plugin-process-api:
     dependencies:
+      '@aalis/plugin-storage-api':
+        specifier: workspace:^
+        version: link:../plugin-storage-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-storage-api':
-        specifier: workspace:*
-        version: link:../plugin-storage-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1377,11 +1369,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-session-manager-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1421,11 +1412,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-storage-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1654,13 +1644,13 @@ importers:
 
   packages/plugin-tool-session-api:
     dependencies:
+      '@aalis/plugin-tools-api':
+        specifier: workspace:^
+        version: link:../plugin-tools-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-tools-api':
-        specifier: workspace:*
-        version: link:../plugin-tools-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1717,13 +1707,13 @@ importers:
 
   packages/plugin-tools-api:
     dependencies:
+      '@aalis/plugin-authority-api':
+        specifier: workspace:^
+        version: link:../plugin-authority-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-authority-api':
-        specifier: workspace:*
-        version: link:../plugin-authority-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1840,11 +1830,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-vectorstore-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1923,13 +1912,13 @@ importers:
 
   packages/plugin-webui-api:
     dependencies:
+      '@aalis/plugin-authority-api':
+        specifier: workspace:^
+        version: link:../plugin-authority-api
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/plugin-authority-api':
-        specifier: workspace:*
-        version: link:../plugin-authority-api
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2112,11 +2101,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-workflow-api:
-    dependencies:
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
