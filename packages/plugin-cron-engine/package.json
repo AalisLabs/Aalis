@@ -12,11 +12,14 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-cron-engine-api": "workspace:*"
+    "@aalis/plugin-cron-engine-api": "workspace:^"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
