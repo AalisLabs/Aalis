@@ -58,12 +58,12 @@ export function MarketplacePage({
     [plugins],
   );
 
-  // 搜索防抖：仅在已首次加载后，输入变化 350ms 触发重查（避免每键一次请求）
+  // 进入页面自动加载 + 搜索防抖：search 变化（含 mount 时空串）350ms 触发查询，
+  // 无需手动点"加载市场"。防抖合并连续输入，避免每键一次请求。
   useEffect(() => {
-    if (!searched) return;
-    const t = setTimeout(() => loadRegistry(search), 350);
+    const t = setTimeout(() => loadRegistry(search), search ? 350 : 0);
     return () => clearTimeout(t);
-  }, [search, searched, loadRegistry]);
+  }, [search, loadRegistry]);
 
   const handleInstall = async (name: string, official?: boolean) => {
     // 装前披露：先拉 manifest（aalis.service：需要/提供哪些服务），让 owner 知情同意。
@@ -116,29 +116,21 @@ export function MarketplacePage({
 
       <div className="section-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         插件市场
-        {!searched ? (
-          <button className="btn-sm" onClick={() => loadRegistry('')} disabled={loading}>
-            {loading ? '加载中...' : '加载市场'}
-          </button>
-        ) : (
-          <>
-            <input
-              className="config-edit-input"
-              style={{ flex: 1, maxWidth: 320 }}
-              placeholder="搜索插件（名称 / 关键词）"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-            <button className="btn-sm" onClick={() => loadRegistry(search)} disabled={loading}>
-              {loading ? '加载中...' : '刷新'}
-            </button>
-          </>
-        )}
+        <input
+          className="config-edit-input"
+          style={{ flex: 1, maxWidth: 320 }}
+          placeholder="搜索插件（名称 / 关键词）"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <button className="btn-sm" onClick={() => loadRegistry(search)} disabled={loading}>
+          {loading ? '加载中...' : '刷新'}
+        </button>
       </div>
 
-      {!searched && (
+      {!searched && loading && (
         <div className="empty-hint" style={{ padding: 16 }}>
-          点击"加载市场"从 npm 获取带 <code>aalis-plugin</code> 标签的可安装插件
+          正在从 npm 加载带 <code>aalis-plugin</code> 标签的插件…
         </div>
       )}
 
