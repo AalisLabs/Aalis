@@ -270,6 +270,8 @@ export interface ExtendDeclaration {
   events?: string[];
   /** 该插件新增的自定义钩子名 */
   hooks?: string[];
+  /** 该插件向哪些服务混入了方法（服务名 → 方法名列表），仅用于前端展示。 */
+  mixins?: Record<string, string[]>;
 }
 
 // ----- 子系统展示目录 -----
