@@ -147,13 +147,25 @@ export class Context {
   // ---- 事件 ----
 
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
-    const dispose = this._events.on(event, handler);
-    this._disposables.push(dispose);
-    return dispose;
+    const off = this._events.on(event, handler);
+    return this.trackDisposable(off);
   }
 
   once<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
-    const dispose = this._events.once(event, handler);
+    const off = this._events.once(event, handler);
+    return this.trackDisposable(off);
+  }
+
+  /**
+   * 把一个底层退订原语登记到 disposable 链，并返回**自移除**的退订函数：
+   * 调用方手动退订时，闭包不再滞留 _disposables（否则它持有 handler 引用直到
+   * ctx.dispose——审计 HIGH #2 的同类泄漏，统一所有注册 API 的退订语义）。
+   */
+  private trackDisposable(off: () => void): () => void {
+    const dispose = (): void => {
+      this._disposables.remove(dispose);
+      off();
+    };
     this._disposables.push(dispose);
     return dispose;
   }
@@ -214,6 +226,10 @@ export class Context {
     );
 
     const dispose = () => {
+      // 自移除：调用方手动 dispose 后，闭包不再滞留 _disposables（否则它持有
+      // entry 引用，instance 无法 GC，多实例热替换场景累积僵尸——审计 HIGH #2）。
+      // ctx.dispose 经 DisposableChain.dispose 调用本函数时 remove 返回 false，无害。
+      this._disposables.remove(dispose);
       const removed = this._services.unregisterEntry(name, entry);
       if (removed) {
         this._events.emit('service:unregistered', name).catch(err => {
@@ -423,6 +439,19 @@ export class Context {
       attached = winner;
       if (winner === undefined) return;
       const ret = cb(winner);
+      // cb 执行期间可能同步触发了本 whenService 的 dispose（如 cb 内部链式
+      // 卸载）。此时不能把新 cleanup 挂上去——dispose 已跑过 runCleanup 且
+      // disposed=true，挂上的 cleanup 将永不执行（泄漏）。直接立即执行掉。
+      if (disposed) {
+        if (typeof ret === 'function') {
+          try {
+            ret();
+          } catch (err) {
+            this.logger.warn(`whenService('${name}') cleanup 抛错（dispose 期间，已忽略）:`, err);
+          }
+        }
+        return;
+      }
       if (typeof ret === 'function') cleanup = ret;
     };
 
@@ -443,6 +472,7 @@ export class Context {
     const dispose = (): void => {
       if (disposed) return;
       disposed = true;
+      this._disposables.remove(dispose); // 自移除，不滞留闭包（对称 provide）
       offReg();
       offUnreg();
       offPref();
@@ -477,9 +507,7 @@ export class Context {
    * });
    */
   middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void {
-    const dispose = this.hooks.register(hook, fn, this.id);
-    this._disposables.push(dispose);
-    return dispose;
+    return this.trackDisposable(this.hooks.register(hook, fn, this.id));
   }
 
   // ---- 生命周期 ----
@@ -576,6 +604,11 @@ export class Context {
     };
     this._disposables.push(wrapped);
     return () => this._disposables.remove(wrapped);
+  }
+
+  /** @internal 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。 */
+  get disposableCount(): number {
+    return this._disposables.size;
   }
 
   /**
