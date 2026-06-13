@@ -12,23 +12,26 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*",
-    "@aalis/plugin-flow-control-api": "workspace:*",
-    "@aalis/plugin-llm-api": "workspace:*",
-    "@aalis/plugin-media-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*",
-    "@aalis/plugin-message-archive-api": "workspace:*",
-    "@aalis/plugin-platform-api": "workspace:*",
-    "@aalis/plugin-process-api": "workspace:*",
-    "@aalis/plugin-storage-api": "workspace:*",
-    "@aalis/plugin-webui-api": "workspace:*",
+    "@aalis/plugin-agent-api": "workspace:^",
+    "@aalis/plugin-llm-api": "workspace:^",
+    "@aalis/plugin-message-api": "workspace:^",
+    "@aalis/plugin-process-api": "workspace:^",
+    "@aalis/plugin-storage-api": "workspace:^",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-flow-control-api": "workspace:*",
+    "@aalis/plugin-media-api": "workspace:*",
+    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/plugin-message-archive-api": "workspace:*",
+    "@aalis/plugin-platform-api": "workspace:*",
+    "@aalis/plugin-webui-api": "workspace:*",
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.0"
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
