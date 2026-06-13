@@ -78,7 +78,8 @@
         "packages/plugin-tool-system/src/tools/system.ts",
         "packages/plugin-tool-browser/src/index.ts",
         "packages/plugin-cli/src/log-file.ts",
-        "packages/create-aalis-plugin/src/**"
+        "packages/create-aalis-plugin/src/**",
+        "packages/create-aalis/src/**"
       ],
       "linter": {
         "rules": {
