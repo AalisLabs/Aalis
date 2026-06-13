@@ -213,6 +213,8 @@ export class ServiceContainer {
    * 哪怕它的 priority 数值低于 router 等其他 entry。
    *
    * @returns true 表示偏好已记录（即使目标 entry 当下尚未注册也会接受——一旦注册即生效）
+   * @internal 公开 API 走 `ctx.preferService()`（额外 emit service:preference-changed
+   *   触发 whenService 重挂）；本方法仅供 Context 内部转发，插件勿直接调用。
    */
   prefer(name: string, contextId: string): boolean {
     this.preferences.set(name, contextId);
@@ -221,6 +223,7 @@ export class ServiceContainer {
 
   /**
    * 清除某服务的偏好（恢复 priority + 注册顺序解析）
+   * @internal 公开 API 走 `ctx.unpreferService()`；本方法仅供 Context 内部转发。
    */
   unprefer(name: string): boolean {
     return this.preferences.delete(name);
@@ -228,6 +231,7 @@ export class ServiceContainer {
 
   /**
    * 读取某服务当前的偏好 contextId（无偏好返回 undefined）
+   * @internal 公开 API 走 `ctx.getPreferredService()`；本方法仅供 Context 内部转发。
    */
   getPreferred(name: string): string | undefined {
     return this.preferences.get(name);

@@ -518,7 +518,9 @@ export class PluginManager {
           if (unmet) {
             this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
           } else if (currentReason.type === 'service-down') {
-            this.logger.info(`服务 "${currentReason.service}" 已替换/撤销，bounce 插件: ${entry.instanceId}`);
+            // 被动级联降级（依赖服务下线 → 转 pending 等待重新满足），
+            // 区别于 bouncePlugin() 的主动重载，措辞不混用 bounce。
+            this.logger.info(`依赖服务 "${currentReason.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
           }
         }
 
