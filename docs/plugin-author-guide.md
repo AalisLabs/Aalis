@@ -539,17 +539,29 @@ const res = await llm.chat({
 Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——发现靠 npm registry 的
 keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里：
 
-1. **打 keyword**：`package.json` 的 `keywords` 必须含 `"aalis-plugin"`（`create-aalis-plugin`
-   脚手架已自动产出）。市场按 `npm registry search keywords:aalis-plugin` 发现插件。
-2. **填市场展示字段**（市场直接读 `package.json`，**不要**塞进 `PluginModule`）：
-   - `description`：一句话说明（卡片副标题）
-   - `author` / `license` / `repository`：可选，市场展示与溯源
-   - `version`：npm 标准版本（市场展示 + 安装指定版本）
-3. **能力披露自动生成**：市场在安装前根据你的 `inject.required/optional`（依赖哪些
-   服务 = 粗粒度能力，如 process/storage）向用户披露；装后再按你工具/指令声明的
-   `permissions`（细粒度）细化。**你无需额外声明**——如实写 `inject` 和工具
-   `permissions` 即可，市场会聚合展示给安装者确认。
-4. **发布**：`npm publish`（公开包）。私有/未发布插件仍可走 monorepo 本地安装。
+1. **打 keyword**：`package.json` 的 `keywords` 必须含 `"aalis-plugin"`（脚手架已自动产出）。
+   市场按 `npm registry search keywords:aalis-plugin` 发现插件。**官方插件用 `@aalis/` scope**
+   （市场标"官方"）；社区插件任意包名（标"社区"）。
+2. **依赖正确归类**（决定发布后能否被正确安装——脚手架已产出正确形态）：
+   - `@aalis/core` → **`peerDependencies: "^0.1.0"`**（宿主提供核心，不每插件 bundle 一份）
+     + `devDependencies: workspace:*`（开发期编译）。core 是 0.x 演进线，caret 锁 minor。
+   - 仅 `import type` / declaration merging 的 api 包 → **`devDependencies`**（编译期擦除，
+     运行时不装）。**注意**：若你写的是 `-api` 契约包且其导出类型引用别的包，那些要留
+     `dependencies`（类型会传递给消费方）。
+   - 运行时用到值（`useXxxService`、helper、常量）的 api/util 包 → `dependencies: workspace:^`。
+   - 市场展示字段直接读 `package.json`：`description`/`author`/`license`/`repository`/`version`。
+3. **声明 `aalis.service` 供装前披露**：市场在 npm 上**安装前**只能读 `package.json`
+   （拿不到代码里的 `inject`），所以在 `package.json` 加：
+   ```json
+   "aalis": { "service": { "required": ["llm"], "optional": ["memory"], "provides": ["my-service"] } }
+   ```
+   保持与代码 `inject.required/optional` + `provides` 一致。装后市场仍会按实际 `inject` +
+   工具/指令 `permissions` 聚合细化（双重披露）。
+4. **breaking change 记 changelog**：core/api 是 0.x（caret 锁 minor，`^0.1.0` 只匹配 `0.1.x`），
+   minor 升级可能 break 依赖它的插件——核心/契约包的不兼容变更必须在 `CHANGELOG.md` 记录
+   迁移说明，插件作者据 peerDependencies 范围决定是否跟进。
+5. **发布**：`pnpm publish:all`（仓库根，递归拓扑序发 core→api→util→插件、跳 private、
+   转 workspace 协议）。单插件 `npm publish`。私有/未发布插件仍可走 monorepo 本地安装。
 
 > 安全模型：市场是**透明披露 + 用户知情同意**，不是技术隔离。安装第三方插件
 > 等于授予它声明的能力；真正的执行隔离（如 code_runner 沙箱）由容器化层负责。

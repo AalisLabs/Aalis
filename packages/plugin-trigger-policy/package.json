@@ -29,5 +29,20 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "gateway"
+      ],
+      "optional": [
+        "flow-control",
+        "persona",
+        "message-archive"
+      ],
+      "provides": [
+        "trigger-policy"
+      ]
+    }
   }
 }

@@ -29,5 +29,16 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "optional": [
+        "commands",
+        "tools"
+      ],
+      "provides": [
+        "authority"
+      ]
+    }
   }
 }

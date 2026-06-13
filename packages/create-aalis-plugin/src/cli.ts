@@ -107,14 +107,16 @@ async function generate(dir: string, a: Answers): Promise<void> {
 }
 
 function renderPackageJson(a: Answers): string {
-  const deps: Record<string, string> = {
-    '@aalis/core': 'workspace:*',
-  };
-  if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'workspace:*';
-  if (a.features.command) deps['@aalis/plugin-commands-api'] = 'workspace:*';
-  if (a.features.webui) deps['@aalis/plugin-webui-api'] = 'workspace:*';
+  // 运行时依赖：用了 useXxxService（运行时 helper）的 api 包进 dependencies（workspace:^
+  // 发布转 ^0.1.0）；@aalis/core 是宿主必有的核心，走 peerDependencies + devDep。
+  const deps: Record<string, string> = {};
+  if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'workspace:^';
+  if (a.features.command) deps['@aalis/plugin-commands-api'] = 'workspace:^';
+  if (a.features.webui) deps['@aalis/plugin-webui-api'] = 'workspace:^';
 
-  const json = {
+  // aalis.service：声明运行时服务依赖/提供，供市场装前披露。示例插件无服务依赖，
+  // 留空提示作者按需填（用了 ctx.inject.required / provides 时同步到这里）。
+  const json: Record<string, unknown> = {
     name: a.packageName,
     version: '0.1.0',
     type: 'module',
@@ -124,15 +126,22 @@ function renderPackageJson(a: Answers): string {
     keywords: ['aalis-plugin'],
     main: 'dist/index.js',
     types: 'dist/index.d.ts',
+    files: ['dist'], // 发布包只含编译产物
     scripts: {
       build: 'tsc',
       dev: 'tsc --watch',
     },
-    dependencies: deps,
+    ...(Object.keys(deps).length ? { dependencies: deps } : {}),
+    peerDependencies: {
+      '@aalis/core': '^0.1.0',
+    },
     devDependencies: {
+      '@aalis/core': 'workspace:*',
       typescript: '^5.7.0',
       '@types/node': '^22.0.0',
     },
+    // 有服务依赖/提供时在此声明，市场据此做安装前能力披露：
+    // aalis: { service: { required: ['llm'], optional: ['memory'], provides: ['my-service'] } }
   };
   return `${JSON.stringify(json, null, 2)}\n`;
 }

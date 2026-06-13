@@ -32,5 +32,20 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "process",
+        "storage"
+      ],
+      "optional": [
+        "llm",
+        "agent"
+      ],
+      "provides": [
+        "media"
+      ]
+    }
   }
 }
