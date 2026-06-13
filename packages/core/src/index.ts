@@ -20,7 +20,8 @@ export { App, createApp } from './app.js';
 export type { AalisConfig, ConfigManagerOptions } from './config.js';
 export { CORE_CONFIG_SCHEMA, ConfigManager, ScopedConfigManager } from './config.js';
 export { Context } from './context.js';
-export { DisposableChain } from './disposable-chain.js';
+// 注：DisposableChain 是 Context 的内部清理链实现，不再从包根导出（零外部消费，
+// 避免 semver 负担）。嵌入方如确需独立使用，从 './disposable-chain.js' 直接 import。
 export { EventBus } from './events.js';
 export { HookRegistry } from './hooks.js';
 // ----- 运行时基础类型 -----

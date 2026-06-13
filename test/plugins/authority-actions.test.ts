@@ -114,13 +114,13 @@ describe('权限依赖图（getPermissionGraph / getPermissionNode）', () => {
   it('节点详情：user / role / cap 各返回对应键', async () => {
     const { ctx } = setup();
     const user = (await actions.getPermissionNode(ctx, { nodeId: 'user:qq:alice' })) as Record<string, unknown>;
-    expect(user['有效等级']).toBe(3);
-    expect(user['个别授予']).toBe('tool:file.*');
+    expect(user.有效等级).toBe(3);
+    expect(user.个别授予).toBe('tool:file.*');
     const role = (await actions.getPermissionNode(ctx, { nodeId: 'role:5' })) as Record<string, unknown>;
-    expect(String(role['角色'])).toContain('owner');
+    expect(String(role.角色)).toContain('owner');
     const cap = (await actions.getPermissionNode(ctx, {
       nodeId: 'cap:storage:path:data:/users.json:write',
     })) as Record<string, unknown>;
-    expect(cap['提权要求']).toBe('等级 5');
+    expect(cap.提权要求).toBe('等级 5');
   });
 });
