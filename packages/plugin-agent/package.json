@@ -35,5 +35,19 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "optional": [
+        "llm",
+        "memory",
+        "persona",
+        "message-archive",
+        "platform"
+      ],
+      "provides": [
+        "agent"
+      ]
+    }
   }
 }

@@ -33,5 +33,22 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "memory"
+      ],
+      "optional": [
+        "llm",
+        "webui-server",
+        "agent",
+        "tools",
+        "embedding"
+      ],
+      "provides": [
+        "user-relation"
+      ]
+    }
   }
 }
