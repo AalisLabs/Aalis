@@ -4,15 +4,21 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*"
+    "@aalis/plugin-message-api": "workspace:^"
   },
   "devDependencies": {
+    "@aalis/core": "workspace:*",
     "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
