@@ -249,6 +249,8 @@ export class PluginManager {
         core: entry.module.core,
         reusable: entry.module.reusable,
         extends: m.extends,
+        requiredServices: entry.requiredDeps.length > 0 ? entry.requiredDeps.map(d => d.service) : undefined,
+        optionalServices: entry.optionalDeps.length > 0 ? entry.optionalDeps.map(d => d.service) : undefined,
         config: entry.config,
         configSchema: entry.module.configSchema,
         defaultConfig: entry.module.defaultConfig,

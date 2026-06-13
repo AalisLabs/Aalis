@@ -2872,6 +2872,37 @@ body.is-dragging-chat .nav-rail:hover {
   padding: 0 14px 8px;
 }
 
+/* 能力披露 chips：依赖服务（需/可选）+ 敏感能力 */
+.plugin-card-caps {
+  padding: 0 14px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.cap-chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.cap-chip.dep-required {
+  border-color: #5b8def;
+  color: #5b8def;
+}
+.cap-chip.dep-optional {
+  opacity: 0.75;
+}
+.cap-chip.cap-sensitive {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.cap-chip.cap-danger {
+  border-color: #ef4444;
+  color: #ef4444;
+  font-weight: 600;
+}
+
 .plugin-card-extends {
   padding: 4px 14px 8px;
   display: flex;

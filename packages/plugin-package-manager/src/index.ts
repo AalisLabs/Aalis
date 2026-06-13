@@ -37,6 +37,24 @@ declare module '@aalis/core' {
 
 // ===== 实现 =====
 
+/**
+ * 解析 `npm pack --json` 的输出 → 产物 {filename, name}。
+ * npm pack --json 输出形如 `[{"filename":"scope-foo-1.2.3.tgz","name":"@scope/foo",...}]`。
+ * 部分 npm 版本会在 JSON 前混入 notice，故定位首个 `[` 起截取。纯函数，便于单测。
+ */
+export function parsePackInfo(jsonOut: string): { filename: string; name: string } | undefined {
+  try {
+    const start = jsonOut.indexOf('[');
+    if (start < 0) return undefined;
+    const arr = JSON.parse(jsonOut.slice(start)) as Array<{ filename?: string; name?: string }>;
+    const first = arr?.[0];
+    if (!first?.filename || !first?.name) return undefined;
+    return { filename: first.filename, name: first.name };
+  } catch {
+    return undefined;
+  }
+}
+
 async function execProc(proc: ProcessService, cmd: string, args: string[], cwd: string): Promise<string> {
   try {
     const result: ExecResult = await proc.execFile(cmd, args, { cwd, timeout: 120_000 });
@@ -82,6 +100,39 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     return storage.resolveLocalPath(uri, 'write');
   }
 
+  return createPackageManager({
+    proc,
+    storage,
+    log,
+    packagesUri,
+    packagesLocal,
+    rescanPlugins: () => getApp().rescanPlugins(),
+    // plugins 服务可能未启用：缺席即跳过实例停用（仅删目录）
+    disablePlugin: async name => {
+      const pm = ctx.getService<{ disablePlugin(n: string): Promise<boolean> }>('plugins');
+      if (pm) await pm.disablePlugin(name);
+    },
+  });
+}
+
+/** install/uninstall 的显式依赖（从 ctx/网关解耦，便于集成测试） */
+export interface PackageManagerDeps {
+  proc: ProcessService;
+  storage: Pick<StorageService, 'stat' | 'delete'>;
+  log: { info(msg: string): void; error(msg: string): void };
+  packagesUri(): string;
+  packagesLocal(): Promise<string>;
+  rescanPlugins(): Promise<string[]>;
+  disablePlugin(name: string): Promise<void>;
+}
+
+/**
+ * 包管理核心：install/uninstall 的纯依赖实现（不碰 ctx/网关，可单测）。
+ * ctx 组装层见 createService。
+ */
+export function createPackageManager(deps: PackageManagerDeps): PackageManagerService {
+  const { proc, storage, log } = deps;
+
   async function dirExists(uri: string): Promise<boolean> {
     try {
       await storage.stat(uri);
@@ -93,9 +144,10 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
 
   return {
     async install(npmPkg) {
-      const packagesDir = await packagesLocal();
-      const dirName = npmPkg.replace(/^@[^/]+\//, '');
-      const targetUri = `${packagesUri()}/${dirName}`;
+      const packagesDir = await deps.packagesLocal();
+      // 分离包名与可选版本：@scope/foo@1.2.3 → dirName=foo（去 scope、去版本）
+      const dirName = npmPkg.replace(/^@[^/]+\//, '').replace(/@[^@]+$/, '');
+      const targetUri = `${deps.packagesUri()}/${dirName}`;
       const targetDir = `${packagesDir}/${dirName}`;
 
       if (await dirExists(targetUri)) {
@@ -103,42 +155,45 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
       }
       log.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
 
+      let tgzName: string | undefined;
       try {
-        await execProc(proc, 'npm', ['pack', npmPkg, '--pack-destination', packagesDir], packagesDir);
-        const listing = await storage.list(packagesUri());
-        const tgzEntry = listing.entries.find(
-          e => !e.isDirectory && e.name.endsWith('.tgz') && e.name.includes(dirName),
+        // npm pack --json 精确返回产物 {filename, name}，避免 includes 误匹配
+        // （装 foo 时命中 foo-bar-*.tgz）；name 是精确包名，供 pnpm --filter 用。
+        const packOut = await execProc(
+          proc,
+          'npm',
+          ['pack', npmPkg, '--pack-destination', packagesDir, '--json'],
+          packagesDir,
         );
-        if (!tgzEntry) return { ok: false, message: '下载包失败: 未找到 tgz 文件' };
-        const tgzPath = `${packagesDir}/${tgzEntry.name}`;
+        const packInfo = parsePackInfo(packOut);
+        if (!packInfo) return { ok: false, message: '下载包失败: 未能解析 npm pack 产物' };
+        tgzName = packInfo.filename;
+        const tgzPath = `${packagesDir}/${tgzName}`;
         await execProc(proc, 'mkdir', ['-p', targetDir], packagesDir);
         await execProc(proc, 'tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1'], packagesDir);
-        // 清理 tgz 走 storage 删除
-        try {
-          await storage.delete(`${packagesUri()}/${tgzEntry.name}`);
-        } catch {
-          /* ignore */
-        }
-        await execProc(proc, 'pnpm', ['install', '--filter', npmPkg], process.cwd());
+        await storage.delete(`${deps.packagesUri()}/${tgzName}`).catch(() => {}); // 清理 tgz
+        tgzName = undefined; // 已删，回滚时不再尝试
+        // --filter 用精确包名（npm pack 回报的 name，无版本后缀）链接新 workspace 包
+        await execProc(proc, 'pnpm', ['install', '--filter', packInfo.name], process.cwd());
 
-        const newPlugins = await getApp().rescanPlugins();
+        const newPlugins = await deps.rescanPlugins();
         return newPlugins.length > 0
           ? { ok: true, message: `已安装并加载: ${newPlugins.join(', ')}` }
           : { ok: true, message: `已安装到 packages/${dirName}，但未发现新插件` };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.error(`安装插件 "${npmPkg}" 失败: ${message}`);
+        // 回滚：清理半成品 targetDir 与残留 tgz，避免占位导致下次"目录已存在"
+        await storage.delete(targetUri).catch(() => {});
+        if (tgzName) await storage.delete(`${deps.packagesUri()}/${tgzName}`).catch(() => {});
         return { ok: false, message };
       }
     },
 
     async uninstall(pluginName) {
-      // 先卸载插件实例（通过 plugins 服务）
-      const pm = ctx.getService<{ disablePlugin(name: string): Promise<boolean> }>('plugins');
-      if (pm) await pm.disablePlugin(pluginName);
-
+      await deps.disablePlugin(pluginName); // 先停用实例（plugins 服务缺席则 no-op）
       const dirName = pluginName.replace(/^@[^/]+\//, '');
-      const targetUri = `${packagesUri()}/${dirName}`;
+      const targetUri = `${deps.packagesUri()}/${dirName}`;
       if (!(await dirExists(targetUri))) {
         return { ok: true, message: `插件 ${pluginName} 已卸载（目录不存在）` };
       }

@@ -25,14 +25,23 @@ export function registerPluginRoutes(
       res.json({ plugins: [] });
       return;
     }
-    // 反向索引：pluginName -> tools / commands。
-    // 方便 UI 搜索框命中工具名/指令名时定位到注册插件。
+    // 反向索引：pluginName -> tools / commands（名字列表 + 聚合敏感能力）。
+    // 方便 UI 搜索框命中工具名/指令名时定位到注册插件；能力披露用聚合 capability。
     const toolsByPlugin = new Map<string, string[]>();
+    const capsByPlugin = new Map<string, Set<string>>();
+    const addCaps = (plugin: string, perms?: string[], safety?: string) => {
+      if (!perms?.length && safety !== 'dangerous') return;
+      const set = capsByPlugin.get(plugin) ?? new Set<string>();
+      for (const p of perms ?? []) set.add(p);
+      if (safety === 'dangerous') set.add('safety:dangerous');
+      capsByPlugin.set(plugin, set);
+    };
     const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     for (const t of tools) {
       const list = toolsByPlugin.get(t.pluginName) ?? [];
       list.push(t.name);
       toolsByPlugin.set(t.pluginName, list);
+      addCaps(t.pluginName, t.permissions, t.safety);
     }
     const commandsByPlugin = new Map<string, string[]>();
     const cmds = ctx.getService<CommandService>('commands')?.getAll() ?? [];
@@ -41,6 +50,7 @@ export function registerPluginRoutes(
       const list = commandsByPlugin.get(owner) ?? [];
       list.push(c.name);
       commandsByPlugin.set(owner, list);
+      addCaps(owner, c.permissions, c.safety);
     }
     const plugins = pm.getStatus().map(p => ({
       name: p.name,
@@ -48,6 +58,11 @@ export function registerPluginRoutes(
       displayName: p.displayName,
       state: p.state,
       provides: p.provides ?? [],
+      // 能力披露：该插件「要调用哪些子系统」（inject 依赖）+「触达哪些敏感能力」
+      // （工具/指令声明的 permissions + dangerous 标记），供安装后知情查看。
+      requiredServices: p.requiredServices ?? [],
+      optionalServices: p.optionalServices ?? [],
+      capabilities: [...(capsByPlugin.get(p.name) ?? [])],
       tools: toolsByPlugin.get(p.name) ?? [],
       commands: commandsByPlugin.get(p.name) ?? [],
       core: p.core ?? false,
