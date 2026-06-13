@@ -4,18 +4,22 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
   },
-  "dependencies": {
-    "@aalis/core": "workspace:*"
-  },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   },
   "aalis": {
     "types": true
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
