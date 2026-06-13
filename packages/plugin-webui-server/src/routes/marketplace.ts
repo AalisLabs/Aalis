@@ -10,7 +10,8 @@ import type { RouteGate } from '../gate.js';
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 const AALIS_KEYWORD = 'aalis-plugin';
 const SEARCH_TIMEOUT_MS = 8000;
-const PKG_NAME_RE = /^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+$/i;
+// 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）
+const PKG_NAME_RE = /^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+(@[a-z0-9.-]+)?$/i;
 
 interface MarketplacePackage {
   name: string;

@@ -33,6 +33,10 @@ export interface PluginStatusEntry {
   core?: boolean;
   reusable?: boolean;
   extends?: unknown;
+  /** 必需依赖的服务名（来自 inject.required，能力披露用：该插件「要调用哪些子系统」） */
+  requiredServices?: string[];
+  /** 可选依赖的服务名（来自 inject.optional） */
+  optionalServices?: string[];
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;
