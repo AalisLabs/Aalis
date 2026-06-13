@@ -89,6 +89,11 @@ export interface PluginInfo {
   core: boolean;
   reusable: boolean;
   extends?: ExtendDeclaration;
+  /** 能力披露：该插件依赖的必需/可选服务（要调用哪些子系统） */
+  requiredServices?: string[];
+  optionalServices?: string[];
+  /** 能力披露：该插件触达的敏感能力（工具/指令 permissions + safety:dangerous 标记） */
+  capabilities?: string[];
   config: Record<string, unknown>;
   configSchema?: ConfigSchema;
   defaultConfig?: Record<string, unknown>;

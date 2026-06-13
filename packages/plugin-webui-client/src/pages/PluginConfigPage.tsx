@@ -435,6 +435,34 @@ export function PluginConfigPage({
               </div>
             )}
 
+            {/* 能力披露：该插件依赖哪些子系统 + 触达哪些敏感能力（安装后知情查看） */}
+            {isOpen &&
+              ((p.requiredServices?.length ?? 0) > 0 ||
+                (p.optionalServices?.length ?? 0) > 0 ||
+                (p.capabilities?.length ?? 0) > 0) && (
+                <div className="plugin-card-caps">
+                  {(p.requiredServices ?? []).map(s => (
+                    <span className="cap-chip dep-required" key={`req-${s}`} title="必需依赖的服务">
+                      需 {s}
+                    </span>
+                  ))}
+                  {(p.optionalServices ?? []).map(s => (
+                    <span className="cap-chip dep-optional" key={`opt-${s}`} title="可选依赖的服务">
+                      可选 {s}
+                    </span>
+                  ))}
+                  {(p.capabilities ?? []).map(c => (
+                    <span
+                      className={`cap-chip ${c === 'safety:dangerous' ? 'cap-danger' : 'cap-sensitive'}`}
+                      key={`cap-${c}`}
+                      title="触达的敏感能力"
+                    >
+                      {c === 'safety:dangerous' ? '⚠ 高危操作' : c}
+                    </span>
+                  ))}
+                </div>
+              )}
+
             {isOpen && hasExtends && (
               <div className="plugin-card-extends">
                 <span className="extends-label">扩展 Core:</span>
