@@ -12,8 +12,17 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/plugin-platform-api": "workspace:^",
+    "@aalis/plugin-process-api": "workspace:^",
+    "@aalis/plugin-storage-api": "workspace:^",
+    "@aalis/plugin-webui-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^",
+    "express": "^5.1.0",
+    "ws": "^8.18.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent": "workspace:*",
     "@aalis/plugin-agent-api": "workspace:*",
     "@aalis/plugin-authority-api": "workspace:*",
     "@aalis/plugin-commands-api": "workspace:*",
@@ -23,22 +32,15 @@
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-package-manager": "workspace:*",
     "@aalis/plugin-persona-api": "workspace:*",
-    "@aalis/plugin-platform-api": "workspace:*",
-    "@aalis/plugin-process-api": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
-    "@aalis/plugin-storage-api": "workspace:*",
     "@aalis/plugin-todo-list": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-webui-api": "workspace:*",
-    "@aalis/util-network-guard": "workspace:*",
-    "express": "^5.1.0",
-    "ws": "^8.18.0",
-    "zod": "^3.25.76"
-  },
-  "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
