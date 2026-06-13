@@ -47,6 +47,7 @@ interface AuthorityService {
   setAuthority(platform: string, userId: string, level: number): void;
   isOwner(platform: string, userId?: string): boolean;
   requiredAuthorityFor(permissions: string[]): number;       // 参数级动态提权
+  getEscalationMap(): Record<string, number>;                // 提权完整清单（内置+配置，展示与裁决同源）
   setUserCapabilities(platform: string, userId: string, o: UserCapabilityOverrides): void;
   removeUser(platform: string, userId: string): void;
   setPassword(platform: string, userId: string, password: string): Promise<void>;
