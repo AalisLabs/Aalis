@@ -130,6 +130,15 @@ export interface WebuiGraphComponent {
   refresh?: number;
   /** 顶部右上角额外按钮 */
   actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
+  /**
+   * 自定义节点类别：节点 data.kind → 形状/颜色/图例文本。
+   * 声明后组件据此生成样式与底部图例，**不再使用人物关系图的内置三类**
+   * （person/event/entity）语义——非关系图场景（如权限图）必须声明，
+   * 避免冒用他人图例。
+   */
+  nodeKinds?: Array<{ kind: string; label: string; shape?: 'circle' | 'round-rect' | 'diamond'; color?: string }>;
+  /** 自定义边类别：边 data.kind → 颜色/虚线/图例文本。 */
+  edgeKinds?: Array<{ kind: string; label: string; color?: string; dashed?: boolean }>;
 }
 
 /** 所有声明式页面组件的联合类型 */

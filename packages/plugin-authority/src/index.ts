@@ -608,6 +608,23 @@ const webuiPages: WebuiPage[] = [
         defaultMaxDepth: 2,
         defaultMaxBreadth: 30,
         refresh: 0,
+        // 权限图自有图例（声明后组件不再用人物关系图的 person/event/entity 语义）
+        nodeKinds: [
+          { kind: 'user', label: '用户', shape: 'circle', color: '#60a5fa' },
+          { kind: 'role', label: '角色（等级）', shape: 'round-rect', color: '#f59e0b' },
+          { kind: 'capability', label: 'capability', shape: 'diamond', color: '#34d399' },
+          { kind: 'command', label: '指令', shape: 'round-rect', color: '#a855f7' },
+          { kind: 'tool', label: '工具', shape: 'round-rect', color: '#06b6d4' },
+        ],
+        edgeKinds: [
+          { kind: 'inherit', label: '继承', color: '#f59e0b' },
+          { kind: 'level', label: '等级归属', color: '#60a5fa' },
+          { kind: 'bind', label: '绑定', color: '#f472b6', dashed: true },
+          { kind: 'grant', label: '授予', color: '#34d399', dashed: true },
+          { kind: 'deny', label: '拒绝', color: '#ef4444' },
+          { kind: 'escalation', label: '提权要求', color: '#ef4444', dashed: true },
+          { kind: 'belongs', label: '归入角色包', color: '#6b7280' },
+        ],
       },
     ],
   },
@@ -900,34 +917,41 @@ export const actions: PluginModule['actions'] = {
     const nodes: Array<{ data: Record<string, unknown> }> = [];
     const edges: Array<{ data: Record<string, unknown> }> = [];
 
-    // 角色链（kind=event：圆角矩形；尺寸随等级增大）
+    // 角色链（kind=role：圆角矩形；尺寸随等级增大）
     for (let n = 0; n <= ownerLevel; n++) {
       nodes.push({
         data: {
           id: `role:${n}`,
           label: n === ownerLevel ? `owner (${n})` : `等级 ${n}`,
-          kind: 'event',
+          kind: 'role',
           pageRankScale: 0.35 + (0.65 * n) / ownerLevel,
         },
       });
       if (n > 0) {
         edges.push({
-          data: { id: `inherit:${n}`, source: `role:${n}`, target: `role:${n - 1}`, label: '继承', directed: true },
+          data: {
+            id: `inherit:${n}`,
+            source: `role:${n}`,
+            target: `role:${n - 1}`,
+            label: '继承',
+            kind: 'inherit',
+            directed: true,
+          },
         });
       }
     }
 
-    // capability 节点（kind=entity：菱形），按模式去重
+    // capability 节点（kind=capability：菱形），按模式去重
     const capIds = new Set<string>();
     const capNode = (pattern: string): string => {
       if (!capIds.has(pattern)) {
         capIds.add(pattern);
-        nodes.push({ data: { id: `cap:${pattern}`, label: pattern, kind: 'entity', pageRankScale: 0.3 } });
+        nodes.push({ data: { id: `cap:${pattern}`, label: pattern, kind: 'capability', pageRankScale: 0.3 } });
       }
       return `cap:${pattern}`;
     };
 
-    // 用户（users.json + owners 配置 + 单 token 模式的 console；kind 缺省=圆形）
+    // 用户（users.json + owners 配置 + 单 token 模式的 console）
     const users = auth.listUsers();
     const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
     const userIds = new Set<string>();
@@ -935,7 +959,7 @@ export const actions: PluginModule['actions'] = {
       const key = `${platform}:${userId}`;
       if (!userIds.has(key)) {
         userIds.add(key);
-        nodes.push({ data: { id: `user:${key}`, label: key, pageRankScale: 0.55 } });
+        nodes.push({ data: { id: `user:${key}`, label: key, kind: 'user', pageRankScale: 0.55 } });
       }
       return `user:${key}`;
     };
@@ -950,6 +974,7 @@ export const actions: PluginModule['actions'] = {
             source: id,
             target: userNode(u.linkedTo.slice(0, idx), u.linkedTo.slice(idx + 1)),
             label: '绑定',
+            kind: 'bind',
             directed: true,
           },
         });
@@ -960,6 +985,7 @@ export const actions: PluginModule['actions'] = {
             source: id,
             target: `role:${clamp(u.authority)}`,
             label: '等级',
+            kind: 'level',
             directed: true,
           },
         });
@@ -971,6 +997,7 @@ export const actions: PluginModule['actions'] = {
             source: id,
             target: capNode(g),
             label: '授予',
+            kind: 'grant',
             directed: true,
           },
         });
@@ -982,6 +1009,7 @@ export const actions: PluginModule['actions'] = {
             source: id,
             target: capNode(d),
             label: '拒绝',
+            kind: 'deny',
             directed: true,
           },
         });
@@ -994,6 +1022,7 @@ export const actions: PluginModule['actions'] = {
           source: userNode(o.platform, o.userId),
           target: `role:${ownerLevel}`,
           label: 'owner',
+          kind: 'level',
           directed: true,
         },
       });
@@ -1004,6 +1033,7 @@ export const actions: PluginModule['actions'] = {
         source: userNode('webui', 'console'),
         target: `role:${ownerLevel}`,
         label: '单 token/本地',
+        kind: 'level',
         directed: true,
       },
     });
@@ -1016,20 +1046,20 @@ export const actions: PluginModule['actions'] = {
           source: capNode(pattern),
           target: `role:${clamp(level)}`,
           label: '需等级',
+          kind: 'escalation',
           directed: true,
         },
       });
     }
 
-    // 指令（仅根指令控制规模；entityKind=thing 配色）与工具（entityKind=topic 配色）
+    // 指令与工具（仅根指令控制规模）
     const cmds = (ctx.getService<CommandService>('commands')?.getAll() ?? []).filter(c => !c.name.includes('.'));
     for (const c of cmds) {
       nodes.push({
         data: {
           id: `cmd:${c.name}`,
           label: `/${c.name}${c.safety === 'dangerous' ? ' ⚠' : ''}`,
-          kind: 'entity',
-          entityKind: 'thing',
+          kind: 'command',
           pageRankScale: 0.12,
         },
       });
@@ -1039,6 +1069,7 @@ export const actions: PluginModule['actions'] = {
           source: `cmd:${c.name}`,
           target: `role:${clamp(c.authority ?? 1)}`,
           label: '归入',
+          kind: 'belongs',
           directed: true,
         },
       });
@@ -1049,8 +1080,7 @@ export const actions: PluginModule['actions'] = {
         data: {
           id: `tool:${t.name}`,
           label: `${t.name}${t.safety === 'dangerous' ? ' ⚠' : ''}`,
-          kind: 'entity',
-          entityKind: 'topic',
+          kind: 'tool',
           pageRankScale: 0.12,
         },
       });
@@ -1060,6 +1090,7 @@ export const actions: PluginModule['actions'] = {
           source: `tool:${t.name}`,
           target: `role:${clamp(t.authority ?? 1)}`,
           label: '归入',
+          kind: 'belongs',
           directed: true,
         },
       });
