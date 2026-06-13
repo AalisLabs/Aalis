@@ -70,7 +70,10 @@ WebUI 双模式登录（`plugin-webui-server/src/auth.ts`）：
 
 - **账户登录**：username/password → 内存 session + HttpOnly cookie，身份 `webui:<username>`；
   连续失败 5 次锁定 60s
-- **单 token 模式**（向后兼容）：访问 token → 身份 `webui:console`（owner 级单人语义）
+- **单 token 模式**（向后兼容）：访问 token → 身份 `webui:console`（owner 级单人语义——
+  token 存于服务器磁盘/启动日志，持有 token ≈ 控制服务器 ≈ owner，信任映射诚实）
+- **多用户收口**：`tokenMode: disabled` 时，只要存在任一带密码的 webui 账户，token
+  登录全面失效（cookie / `?token=` / 登录表单均拒）；无账户时 token 仍兜底生效（防锁死）
 
 REST 路由经 `gate.ts` 按 capability 过 authorize 闸，分层缺省：公共读（1）/
 管理读（4，插件清单含原始配置、日志、文件）/ 变更（owner）。可对单个账户

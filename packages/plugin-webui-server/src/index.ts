@@ -87,9 +87,10 @@ export const configSchema: ConfigSchema = {
       { label: '每次启动随机生成（重启即轮换）', value: 'ephemeral' },
       { label: '首次生成后持久化（重启不掉登录）', value: 'persist' },
       { label: '使用下方固定 token', value: 'fixed' },
+      { label: '禁用 token 登录（仅账户密码；无账户时 token 兜底生效）', value: 'disabled' },
     ],
     description:
-      'ephemeral=旧行为；persist=token 写入 data/.webui-token，读取复用；fixed=使用 fixedToken 字段。所有模式下都会同时写出便利文件 data/webui-access.txt 包含访问 URL。',
+      'ephemeral=旧行为；persist=token 写入 data/.webui-token，读取复用；fixed=使用 fixedToken 字段；disabled=多用户部署收口——存在登录账户时 token 全面失效（防 root 后门），无账户时仍以 persist 语义兜底防锁死。所有模式下都会同时写出便利文件 data/webui-access.txt 包含访问 URL。',
   },
   fixedToken: {
     type: 'string',
@@ -123,7 +124,7 @@ interface WebUIConfig {
   host: string;
   fileRoot: string;
   autoOpen: boolean;
-  tokenMode: 'ephemeral' | 'persist' | 'fixed';
+  tokenMode: 'ephemeral' | 'persist' | 'fixed' | 'disabled';
   fixedToken: string;
   relationGraphDefaultSpacing: number;
 }
@@ -272,10 +273,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     host: (config.host as string) ?? '127.0.0.1',
     fileRoot: (config.fileRoot as string) || 'workspace',
     autoOpen: (config.autoOpen as boolean | undefined) ?? true,
-    tokenMode:
-      (config.tokenMode as string) === 'ephemeral' || (config.tokenMode as string) === 'fixed'
-        ? (config.tokenMode as 'ephemeral' | 'fixed')
-        : 'persist',
+    tokenMode: ['ephemeral', 'fixed', 'disabled'].includes(config.tokenMode as string)
+      ? (config.tokenMode as 'ephemeral' | 'fixed' | 'disabled')
+      : 'persist',
     fixedToken: (config.fixedToken as string) ?? '',
     relationGraphDefaultSpacing: (() => {
       const v = Number(config.relationGraphDefaultSpacing);
@@ -298,7 +298,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (uiConfig.tokenMode === 'fixed' && uiConfig.fixedToken.trim()) {
       return uiConfig.fixedToken.trim();
     }
-    if (uiConfig.tokenMode === 'persist' || uiConfig.tokenMode === 'fixed') {
+    // disabled 模式仍按 persist 语义产出 token：无账户时作为兜底登录方式
+    if (uiConfig.tokenMode === 'persist' || uiConfig.tokenMode === 'fixed' || uiConfig.tokenMode === 'disabled') {
       try {
         const raw = await storage.readFile(tokenFileUri, 'utf-8');
         const existing = (typeof raw === 'string' ? raw : raw.toString('utf-8')).trim();
@@ -340,14 +341,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const authToken = await resolveAuthToken();
   // 账户校验惰性委托 authority 服务（可能晚于本插件激活/被热替换），账户即
   // platform='webui' 且带密码凭据的用户记录。
-  const auth = createAuthSystem(authToken, ctx.logger.child('auth'), {
-    verify: (username, password) =>
-      ctx.getService<AuthorityService>('authority')?.verifyPassword('webui', username, password) ?? false,
-    hasAccounts: () =>
-      (ctx.getService<AuthorityService>('authority')?.listUsers() ?? []).some(
-        u => u.platform === 'webui' && u.hasPassword,
-      ),
-  });
+  const auth = createAuthSystem(
+    authToken,
+    ctx.logger.child('auth'),
+    {
+      verify: (username, password) =>
+        ctx.getService<AuthorityService>('authority')?.verifyPassword('webui', username, password) ?? false,
+      hasAccounts: () =>
+        (ctx.getService<AuthorityService>('authority')?.listUsers() ?? []).some(
+          u => u.platform === 'webui' && u.hasPassword,
+        ),
+    },
+    // disabled：存在账户时 token 全面失效（auth 内部留有"无账户兜底"防锁死）
+    () => uiConfig.tokenMode !== 'disabled',
+  );
 
   const expressApp = express();
   expressApp.use(express.json({ limit: '10mb' }));

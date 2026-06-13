@@ -45,6 +45,8 @@ interface AuthorityCommand {
   baseSafety: string;
   overridden: boolean;
   pluginName: string;
+  /** 该指令触达的 capability 清单（与等级一起过 authorize 闸） */
+  permissions?: string[];
 }
 
 interface AuthorityTool {
@@ -57,6 +59,8 @@ interface AuthorityTool {
   baseAuthority?: number;
   baseSafety?: string;
   overridden?: boolean;
+  /** 该工具触达的 capability 清单 */
+  permissions?: string[];
 }
 
 interface AuthorityData {
@@ -76,6 +80,8 @@ interface AuthorityData {
     duration?: number;
     enabledAt?: number;
   };
+  /** 参数级动态提权清单（capability glob → 所需等级；叠加在内置保护清单之上） */
+  permissionAuthority?: Record<string, number>;
 }
 
 export function AuthorityPage() {
@@ -409,6 +415,12 @@ export function AuthorityPage() {
                   <span className="key">ownerAuthority</span>
                   <span className="val">{data.ownerAuthority}</span>
                 </div>
+                <div className="config-item" title="参数级动态提权：命中 glob 的 capability 要求对应等级（与声明等级取较大者）。内置保护：写/删 data:/users.json、data:/scheduler-jobs.json 与 aalis:/ 源码根需 owner 级。">
+                  <span className="key">permissionAuthority</span>
+                  <span className="val">
+                    {Object.entries(data.permissionAuthority ?? {}).map(([k, v]) => `${k} → ${v}`).join('，') || '(仅内置保护清单)'}
+                  </span>
+                </div>
                 <div style={{ padding: '6px 0 2px' }}>
                   <button className="btn-sm" onClick={() => setEditConfig(true)}>编辑</button>
                 </div>
@@ -477,6 +489,11 @@ export function AuthorityPage() {
                           {c.hasSubcommands && !c.hasAction && (
                             <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.55 }}>(分组)</span>
                           )}
+                          {c.permissions?.length ? (
+                            <span className="authority-user-flag" title={`触达的 capability（裁决时与等级一起过 authorize 闸）：\n${c.permissions.join('\n')}`}>
+                              {c.permissions.length} cap
+                            </span>
+                          ) : null}
                         </span>
                         <span className="authority-cmd-plugin">
                           {c.depth === 0 ? c.pluginName : ''}
@@ -564,6 +581,11 @@ export function AuthorityPage() {
                       <span className="authority-cmd-name" title={t.description}>
                         {t.name}
                         {t.overridden && <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: 11 }}>●</span>}
+                        {t.permissions?.length ? (
+                          <span className="authority-user-flag" title={`触达的 capability（含参数级动态产出的路径项不在此列）：\n${t.permissions.join('\n')}`}>
+                            {t.permissions.length} cap
+                          </span>
+                        ) : null}
                       </span>
                       {isEditing ? (
                         <>
