@@ -194,6 +194,8 @@ export interface AuthorityService {
    * 内置敏感清单可被 config.permissionAuthority（glob→等级）覆盖/扩展。
    */
   requiredAuthorityFor(permissions: string[]): number;
+  /** 参数级提权完整清单（内置保护 + config.permissionAuthority 合并；展示与裁决同源） */
+  getEscalationMap(): Record<string, number>;
   // ── 跨平台身份绑定（运行时零合并 + 绑时一次性合并；2026-06-13 调研决议）──
   //
   // 模型对齐 Koishi binding：绑定后被绑平台身份在运行时直接解析到主账户记录

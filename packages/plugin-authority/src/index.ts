@@ -374,10 +374,10 @@ export class AuthorityManager implements AuthorityService {
    * 默认保护清单可被 config.permissionAuthority 覆盖/扩展（同模式取配置值，
    * 新模式叠加；命中多个模式时取最大要求）。只提高门槛，不降低声明值。
    */
-  requiredAuthorityFor(permissions: string[]): number {
-    if (permissions.length === 0) return 0;
+  /** 参数级提权完整清单（内置保护 + config.permissionAuthority 合并后；展示与裁决共用同一真源） */
+  getEscalationMap(): Record<string, number> {
     const ownerLevel = this.config.get('ownerAuthority') ?? 5;
-    const map: Record<string, number> = {
+    return {
       'storage:path:data:/users.json:write': ownerLevel,
       'storage:path:data:/users.json:delete': ownerLevel,
       'storage:path:data:/scheduler-jobs.json:write': ownerLevel,
@@ -386,8 +386,12 @@ export class AuthorityManager implements AuthorityService {
       'storage:aalis:delete': ownerLevel,
       ...(this.config.get('permissionAuthority') ?? {}),
     };
+  }
+
+  requiredAuthorityFor(permissions: string[]): number {
+    if (permissions.length === 0) return 0;
     let required = 0;
-    for (const [pattern, level] of Object.entries(map)) {
+    for (const [pattern, level] of Object.entries(this.getEscalationMap())) {
       if (level > required && this.matchAny([pattern], permissions)) required = level;
     }
     return required;
@@ -590,6 +594,23 @@ export const inject = {
 
 const webuiPages: WebuiPage[] = [
   { key: 'authority', label: '权限管理', icon: 'authority', order: 50, renderer: 'authority' },
+  {
+    key: 'authority-graph',
+    label: '权限图',
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><circle cx="12" cy="10" r="1.6"/><circle cx="8.5" cy="14.5" r="1.3"/><circle cx="15.5" cy="14.5" r="1.3"/><line x1="12" y1="11.5" x2="8.5" y2="13.3"/><line x1="12" y1="11.5" x2="15.5" y2="13.3"/></svg>',
+    order: 51,
+    content: [
+      {
+        type: 'graph',
+        label: '权限依赖图：用户 → 角色链 ← capability / 指令 / 工具（点击节点查看详情）',
+        source: 'getPermissionGraph',
+        detailSource: 'getPermissionNode',
+        defaultMaxDepth: 2,
+        defaultMaxBreadth: 30,
+        refresh: 0,
+      },
+    ],
+  },
 ];
 
 // ===== 插件入口 =====
@@ -870,6 +891,269 @@ export const actions: PluginModule['actions'] = {
     return { message: `${platform}:${userId} 密码已更新` };
   },
 
+  /** 权限依赖图（graph 组件数据源）：用户 → 角色链 ← capability / 指令 / 工具 */
+  async getPermissionGraph(ctx) {
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    const ownerLevel: number = ctx.config.get('ownerAuthority') ?? 5;
+    const clamp = (n: number): number => Math.max(0, Math.min(ownerLevel, Math.round(n)));
+    const nodes: Array<{ data: Record<string, unknown> }> = [];
+    const edges: Array<{ data: Record<string, unknown> }> = [];
+
+    // 角色链（kind=event：圆角矩形；尺寸随等级增大）
+    for (let n = 0; n <= ownerLevel; n++) {
+      nodes.push({
+        data: {
+          id: `role:${n}`,
+          label: n === ownerLevel ? `owner (${n})` : `等级 ${n}`,
+          kind: 'event',
+          pageRankScale: 0.35 + (0.65 * n) / ownerLevel,
+        },
+      });
+      if (n > 0) {
+        edges.push({
+          data: { id: `inherit:${n}`, source: `role:${n}`, target: `role:${n - 1}`, label: '继承', directed: true },
+        });
+      }
+    }
+
+    // capability 节点（kind=entity：菱形），按模式去重
+    const capIds = new Set<string>();
+    const capNode = (pattern: string): string => {
+      if (!capIds.has(pattern)) {
+        capIds.add(pattern);
+        nodes.push({ data: { id: `cap:${pattern}`, label: pattern, kind: 'entity', pageRankScale: 0.3 } });
+      }
+      return `cap:${pattern}`;
+    };
+
+    // 用户（users.json + owners 配置 + 单 token 模式的 console；kind 缺省=圆形）
+    const users = auth.listUsers();
+    const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
+    const userIds = new Set<string>();
+    const userNode = (platform: string, userId: string): string => {
+      const key = `${platform}:${userId}`;
+      if (!userIds.has(key)) {
+        userIds.add(key);
+        nodes.push({ data: { id: `user:${key}`, label: key, pageRankScale: 0.55 } });
+      }
+      return `user:${key}`;
+    };
+    for (const u of users) {
+      const id = userNode(u.platform, u.userId);
+      if (u.linkedTo) {
+        // 被绑身份：权限随主账户走，只画绑定边（等级边由账户承担）
+        const idx = u.linkedTo.indexOf(':');
+        edges.push({
+          data: {
+            id: `bind:${u.platform}:${u.userId}`,
+            source: id,
+            target: userNode(u.linkedTo.slice(0, idx), u.linkedTo.slice(idx + 1)),
+            label: '绑定',
+            directed: true,
+          },
+        });
+      } else {
+        edges.push({
+          data: {
+            id: `lvl:${u.platform}:${u.userId}`,
+            source: id,
+            target: `role:${clamp(u.authority)}`,
+            label: '等级',
+            directed: true,
+          },
+        });
+      }
+      for (const g of u.grants ?? []) {
+        edges.push({
+          data: {
+            id: `grant:${u.platform}:${u.userId}:${g}`,
+            source: id,
+            target: capNode(g),
+            label: '授予',
+            directed: true,
+          },
+        });
+      }
+      for (const d of u.denies ?? []) {
+        edges.push({
+          data: {
+            id: `deny:${u.platform}:${u.userId}:${d}`,
+            source: id,
+            target: capNode(d),
+            label: '拒绝',
+            directed: true,
+          },
+        });
+      }
+    }
+    for (const o of owners) {
+      edges.push({
+        data: {
+          id: `owner:${o.platform}:${o.userId}`,
+          source: userNode(o.platform, o.userId),
+          target: `role:${ownerLevel}`,
+          label: 'owner',
+          directed: true,
+        },
+      });
+    }
+    edges.push({
+      data: {
+        id: 'console-owner',
+        source: userNode('webui', 'console'),
+        target: `role:${ownerLevel}`,
+        label: '单 token/本地',
+        directed: true,
+      },
+    });
+
+    // 参数级提权清单（内置保护 + 配置，与裁决同源）
+    for (const [pattern, level] of Object.entries(auth.getEscalationMap())) {
+      edges.push({
+        data: {
+          id: `esc:${pattern}`,
+          source: capNode(pattern),
+          target: `role:${clamp(level)}`,
+          label: '需等级',
+          directed: true,
+        },
+      });
+    }
+
+    // 指令（仅根指令控制规模；entityKind=thing 配色）与工具（entityKind=topic 配色）
+    const cmds = (ctx.getService<CommandService>('commands')?.getAll() ?? []).filter(c => !c.name.includes('.'));
+    for (const c of cmds) {
+      nodes.push({
+        data: {
+          id: `cmd:${c.name}`,
+          label: `/${c.name}${c.safety === 'dangerous' ? ' ⚠' : ''}`,
+          kind: 'entity',
+          entityKind: 'thing',
+          pageRankScale: 0.12,
+        },
+      });
+      edges.push({
+        data: {
+          id: `cmd-lvl:${c.name}`,
+          source: `cmd:${c.name}`,
+          target: `role:${clamp(c.authority ?? 1)}`,
+          label: '归入',
+          directed: true,
+        },
+      });
+    }
+    const toolDefs = ctx.getService<ToolService>('tools')?.getAll() ?? [];
+    for (const t of toolDefs) {
+      nodes.push({
+        data: {
+          id: `tool:${t.name}`,
+          label: `${t.name}${t.safety === 'dangerous' ? ' ⚠' : ''}`,
+          kind: 'entity',
+          entityKind: 'topic',
+          pageRankScale: 0.12,
+        },
+      });
+      edges.push({
+        data: {
+          id: `tool-lvl:${t.name}`,
+          source: `tool:${t.name}`,
+          target: `role:${clamp(t.authority ?? 1)}`,
+          label: '归入',
+          directed: true,
+        },
+      });
+    }
+
+    return {
+      nodes,
+      edges,
+      stats: {
+        用户: userIds.size,
+        角色: ownerLevel + 1,
+        指令根: cmds.length,
+        工具: toolDefs.length,
+        capability: capIds.size,
+      },
+    };
+  },
+
+  /** 权限图节点详情（graph 组件 detailSource） */
+  async getPermissionNode(ctx, args) {
+    const nodeId = String(args.nodeId ?? '');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (!auth) throw new Error('Authority 服务不可用');
+    const ownerLevel: number = ctx.config.get('ownerAuthority') ?? 5;
+    if (nodeId.startsWith('user:')) {
+      const key = nodeId.slice(5);
+      const idx = key.indexOf(':');
+      const platform = key.slice(0, idx);
+      const userId = key.slice(idx + 1);
+      const entry = auth.listUsers().find(u => u.platform === platform && u.userId === userId);
+      return {
+        身份: key,
+        有效等级: auth.getAuthority(platform, userId),
+        owner: auth.isOwner(platform, userId) || undefined,
+        可登录账户: entry?.hasPassword || undefined,
+        绑定到: entry?.linkedTo,
+        已绑身份: entry?.links?.join(', '),
+        个别授予: entry?.grants?.join(', '),
+        个别拒绝: entry?.denies?.join(', '),
+      };
+    }
+    if (nodeId.startsWith('role:')) {
+      const n = Number(nodeId.slice(5));
+      const holders = auth.listUsers().filter(u => !u.linkedTo && u.authority === n).length;
+      return {
+        角色: n === ownerLevel ? `owner（等级 ${n}）` : `等级 ${n}`,
+        语义: '内置角色链：高等级继承低等级的全部授予；capability 图为唯一裁决',
+        显式持有用户数: holders,
+      };
+    }
+    if (nodeId.startsWith('cap:')) {
+      const pattern = nodeId.slice(4);
+      const escalation = auth.getEscalationMap()[pattern];
+      return {
+        capability: pattern,
+        提权要求: escalation !== undefined ? `等级 ${escalation}` : undefined,
+        说明: 'glob 模式，按 PermissionId 匹配；裁决优先级 deny > grant > 角色链',
+      };
+    }
+    if (nodeId.startsWith('cmd:')) {
+      const cmdName = nodeId.slice(4);
+      const c = ctx
+        .getService<CommandService>('commands')
+        ?.getAll()
+        .find(x => x.name === cmdName);
+      if (!c) return { error: `指令 ${cmdName} 不存在` };
+      return {
+        指令: `/${cmdName}`,
+        描述: c.description,
+        所需等级: c.authority,
+        安全等级: c.safety,
+        capability: c.permissions?.join(', '),
+        来源插件: c.pluginName,
+      };
+    }
+    if (nodeId.startsWith('tool:')) {
+      const toolName = nodeId.slice(5);
+      const t = ctx
+        .getService<ToolService>('tools')
+        ?.getAll()
+        .find(x => x.name === toolName);
+      if (!t) return { error: `工具 ${toolName} 不存在` };
+      return {
+        工具: toolName,
+        描述: t.description,
+        所需等级: t.authority ?? 1,
+        安全等级: t.safety ?? 'safe',
+        capability: t.permissions?.join(', '),
+        来源插件: t.pluginName,
+      };
+    }
+    return { error: `未知节点: ${nodeId}` };
+  },
+
   /** 生成跨平台绑定码（绑定到调用者自己的账户；5 分钟内在外部平台私聊发 /bind <码>） */
   async createBindCode(ctx, _args, caller) {
     if (!caller) throw new Error('无法识别调用者身份');
@@ -1031,9 +1315,12 @@ export const actions: PluginModule['actions'] = {
 };
 
 // actions 权限标注：createBindCode / unlinkIdentity 对任何登录账户开放
-// （绑码只能绑到调用者自己；解绑有 handler 内的本人/owner 业务检查）。
+// （绑码只能绑到调用者自己；解绑有 handler 内的本人/owner 业务检查）；
+// 权限图为管理读档（含用户表信息，与 REST 管理读同档=4）。
 // 其余 action 不声明 → 默认要求 owner（默认拒绝）。
 export const actionsMeta: PluginModule['actionsMeta'] = {
   createBindCode: { authority: 1 },
   unlinkIdentity: { authority: 1 },
+  getPermissionGraph: { authority: 4 },
+  getPermissionNode: { authority: 4 },
 };
