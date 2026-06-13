@@ -163,8 +163,11 @@ export function createAuthSystem(
   }
 
   function newSession(username: string): string {
+    // 顺带清扫过期 session（登录是低频操作，无需独立 timer——审计 MEDIUM #10）
+    const now = Date.now();
+    for (const [id, s] of sessions) if (s.expiresAt <= now) sessions.delete(id);
     const id = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
-    sessions.set(id, { username, expiresAt: Date.now() + cookieMaxAge * 1000 });
+    sessions.set(id, { username, expiresAt: now + cookieMaxAge * 1000 });
     return id;
   }
 
