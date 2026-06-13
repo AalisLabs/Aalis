@@ -12,13 +12,16 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/core": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
+    "@aalis/plugin-tools-api": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.0.4"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
   }
 }
