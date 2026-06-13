@@ -82,11 +82,16 @@ function extractCookie(res: MockRes, name: string): string | undefined {
 
 const TOKEN = 'test-token-abc';
 
-function makeAuth(accounts?: Partial<AccountVerifier>) {
-  return createAuthSystem(TOKEN, makeLogger(), {
-    verify: accounts?.verify ?? ((u, p) => u === 'alice' && p === 'correct-horse'),
-    hasAccounts: accounts?.hasAccounts ?? (() => true),
-  });
+function makeAuth(accounts?: Partial<AccountVerifier>, tokenLogin?: () => boolean) {
+  return createAuthSystem(
+    TOKEN,
+    makeLogger(),
+    {
+      verify: accounts?.verify ?? ((u, p) => u === 'alice' && p === 'correct-horse'),
+      hasAccounts: accounts?.hasAccounts ?? (() => true),
+    },
+    tokenLogin,
+  );
 }
 
 async function run(
@@ -196,6 +201,31 @@ describe('未认证拦截', () => {
     const { cookie } = await loginAlice(auth);
     const authed = await run(auth, makeReq({ path: '/api/auth/status', cookie }));
     expect(authed.res.jsonBody).toMatchObject({ authed: true, identity: { userId: 'alice' } });
+  });
+});
+
+describe('tokenMode=disabled（多用户收口）', () => {
+  it('存在账户时 token 全面失效：登录 401、既有 token cookie 不再识别、登录页隐藏 token 表单', async () => {
+    const auth = makeAuth(undefined, () => false);
+    const login = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
+    expect(login.res.statusCode).toBe(401);
+    expect((login.res.jsonBody as { error?: string }).error).toMatch(/已禁用/);
+    expect(auth.identify({ headers: { cookie: `aalis_webui_token=${TOKEN}` } })).toBeUndefined();
+    const page = await run(auth, makeReq({ path: '/' }));
+    expect(page.res.htmlBody).toContain('用户名');
+    expect(page.res.htmlBody).not.toContain('访问 token');
+    // 账户登录不受影响
+    expect((await loginAlice(auth)).res.statusCode).toBe(200);
+  });
+
+  it('无任何账户时 token 兜底生效（防锁死）', async () => {
+    const auth = makeAuth({ hasAccounts: () => false }, () => false);
+    const login = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
+    expect(login.res.statusCode).toBe(200);
+    expect(auth.identify({ headers: { cookie: `aalis_webui_token=${TOKEN}` } })).toEqual({
+      platform: 'webui',
+      userId: 'console',
+    });
   });
 });
 

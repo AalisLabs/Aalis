@@ -35,19 +35,23 @@ function buildClearCookie(name: string): string {
 /**
  * 登录页：自包含 HTML，不引入外部资源。
  *
- * 存在账户时默认显示「账户登录」表单（用户名+密码），token 登录折叠为次选；
- * 无账户时只显示 token 表单。两种提交都打 POST /api/auth/login。
+ * 存在账户时默认显示「账户登录」表单（用户名+密码），token 登录折叠为次选
+ * （tokenMode=disabled 时整体隐藏）；无账户时只显示 token 表单（兜底，防锁死）。
+ * 两种提交都打 POST /api/auth/login。
  */
-function loginPageHtml(hasAccounts: boolean, reason?: string): string {
+function loginPageHtml(hasAccounts: boolean, showToken: boolean, reason?: string): string {
   const note = reason ? `<p class="note">${escapeHtml(reason)}</p>` : '';
+  const tokenDetails = showToken
+    ? `<details style="margin-top:14px"><summary>使用访问 token 登录</summary>
+<input id="t" type="password" autocomplete="off" placeholder="访问 token" style="margin-top:8px">
+<button type="button" id="tb" style="background:#2a3038">Token 登录</button>
+</details>`
+    : '';
   const accountForm = hasAccounts
     ? `<input id="u" type="text" autocomplete="username" placeholder="用户名" autofocus required>
 <input id="p" type="password" autocomplete="current-password" placeholder="密码" required style="margin-top:8px">
 <button type="submit" id="b">登录</button>
-<details style="margin-top:14px"><summary>使用访问 token 登录</summary>
-<input id="t" type="password" autocomplete="off" placeholder="访问 token" style="margin-top:8px">
-<button type="button" id="tb" style="background:#2a3038">Token 登录</button>
-</details>`
+${tokenDetails}`
     : `<p>请输入启动日志或 data/webui/access.txt 中显示的访问 token。</p>
 <input id="t" type="password" autocomplete="off" placeholder="访问 token" autofocus required>
 <button type="submit" id="b">登录</button>`;
@@ -143,10 +147,20 @@ const LOCK_MS = 60_000;
  * - token 登录（向后兼容的单人模式）→ cookie `aalis_webui_token`，身份 `webui:console`
  * - 两者并存时 session 身份优先
  */
-export function createAuthSystem(token: string, logger: Logger, accounts?: AccountVerifier): AuthSystem {
+export function createAuthSystem(
+  token: string,
+  logger: Logger,
+  accounts?: AccountVerifier,
+  tokenLogin: () => boolean = () => true,
+): AuthSystem {
   const cookieMaxAge = 30 * 24 * 3600; // 30d；进程重启 token 轮换/session 表清空后无效
   const sessions = new Map<string, { username: string; expiresAt: number }>();
   const failures = new Map<string, FailureRecord>();
+
+  /** token 登录是否可用：宿主开关（tokenMode!=disabled）|| 无账户兜底（防锁死） */
+  function tokenAllowed(): boolean {
+    return tokenLogin() || !(accounts?.hasAccounts() ?? false);
+  }
 
   function newSession(username: string): string {
     const id = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
@@ -167,6 +181,7 @@ export function createAuthSystem(token: string, logger: Logger, accounts?: Accou
   }
 
   function tokenAuthed(req: Pick<IncomingMessage, 'headers'>): boolean {
+    if (!tokenAllowed()) return false;
     const cookieToken = parseCookieValue(req.headers.cookie, TOKEN_COOKIE);
     return !!cookieToken && cookieToken === token;
   }
@@ -199,14 +214,17 @@ export function createAuthSystem(token: string, logger: Logger, accounts?: Accou
     const hasAccounts = accounts?.hasAccounts() ?? false;
 
     // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径
-    if (req.method === 'GET' && qToken) {
+    if (req.method === 'GET' && qToken && tokenAllowed()) {
       if (qToken === token) {
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
         res.redirect(302, url);
         return;
       }
       // ?token 错误：落到登录页（不向 next 透）
-      res.status(401).type('html').send(loginPageHtml(hasAccounts, 'URL 中的 token 不正确，请手动输入。'));
+      res
+        .status(401)
+        .type('html')
+        .send(loginPageHtml(hasAccounts, true, 'URL 中的 token 不正确，请手动输入。'));
       return;
     }
 
@@ -230,7 +248,9 @@ export function createAuthSystem(token: string, logger: Logger, accounts?: Accou
         }
         return;
       }
-      if (typeof body.token === 'string' && body.token === token) {
+      if (typeof body.token === 'string' && !tokenAllowed()) {
+        res.status(401).json({ ok: false, error: 'token 登录已禁用，请使用账户密码' });
+      } else if (typeof body.token === 'string' && body.token === token) {
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
         res.json({ ok: true, identity: { platform: 'webui', userId: 'console' } });
       } else {
@@ -269,7 +289,7 @@ export function createAuthSystem(token: string, logger: Logger, accounts?: Accou
 
     // 7. 未认证 GET：返回内联登录页（覆盖 SPA shell，不暴露任何静态资源）
     if (req.method === 'GET') {
-      res.status(401).type('html').send(loginPageHtml(hasAccounts));
+      res.status(401).type('html').send(loginPageHtml(hasAccounts, tokenAllowed()));
       return;
     }
 
