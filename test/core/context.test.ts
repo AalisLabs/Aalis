@@ -331,3 +331,44 @@ describe('Context.dispose 服务自清理协议（#8.6）', () => {
     expect(notified).toContain('loser:plugin-x');
   });
 });
+
+describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
+  function tick(): Promise<void> {
+    return new Promise(r => setTimeout(r, 0));
+  }
+
+  it('provide: 手动 dispose 后闭包从 disposable 链移除（不滞留持有 entry）', () => {
+    const ctx = makeContext();
+    const base = ctx.disposableCount;
+    const dispose = ctx.provide('svc', { v: 1 });
+    expect(ctx.disposableCount).toBe(base + 1);
+    dispose();
+    expect(ctx.disposableCount).toBe(base); // 自移除：闭包不再滞留
+    expect(ctx.getService('svc')).toBeUndefined();
+  });
+
+  it('whenService: 手动 dispose 后闭包自移除（含内部 3 个事件监听）', () => {
+    const ctx = makeContext();
+    const base = ctx.disposableCount;
+    const dispose = ctx.whenService('svc', () => {});
+    expect(ctx.disposableCount).toBeGreaterThan(base); // whenService + 内部 on 监听
+    dispose();
+    expect(ctx.disposableCount).toBe(base); // 全部清理回基线（whenService dispose 自移除 + 退订内部监听）
+  });
+
+  it('whenService: cb 执行期间同步触发自身 dispose 时，新 cleanup 立即执行（不泄漏）', async () => {
+    const ctx = makeContext();
+    let cleanupRan = 0;
+    let dispose: () => void = () => {};
+    // provider 后到：让 sync 由 service:registered 事件触发，此时 dispose 已就绪
+    dispose = ctx.whenService('svc', () => {
+      dispose(); // cb 内同步触发自身 dispose（链式卸载场景）
+      return () => {
+        cleanupRan++;
+      };
+    });
+    ctx.provide('svc', { v: 1 });
+    await tick(); // 等 service:registered 异步派发到 whenService 的 sync
+    expect(cleanupRan).toBe(1); // 新 cleanup 被立即执行，而非挂上后永不触发
+  });
+});
