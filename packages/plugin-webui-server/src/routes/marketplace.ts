@@ -5,7 +5,9 @@ import type { RouteGate } from '../gate.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引（同 koishi 的 koishi-plugin
 // 模式），无自建服务器、无静态索引。分发走 package-manager 的 npm pack。
-const NPM_SEARCH = 'https://registry.npmjs.org/-/v1/search';
+// 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故 registry
+// 基址可配置（marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
+const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 const AALIS_KEYWORD = 'aalis-plugin';
 const SEARCH_TIMEOUT_MS = 8000;
 const PKG_NAME_RE = /^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+$/i;
@@ -41,10 +43,11 @@ export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<st
   }));
 }
 
-/** 构造 npm registry 检索 URL（keyword 约定 + 可选搜索词）。纯函数，便于单测。 */
-export function buildSearchUrl(q: string): string {
+/** 构造 npm registry 检索 URL（keyword 约定 + 可选搜索词 + 可配 registry 基址）。纯函数，便于单测。 */
+export function buildSearchUrl(q: string, registryBase: string = DEFAULT_REGISTRY): string {
   const text = q ? `keywords:${AALIS_KEYWORD} ${q}` : `keywords:${AALIS_KEYWORD}`;
-  return `${NPM_SEARCH}?text=${encodeURIComponent(text)}&size=100`;
+  const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+  return `${base}/-/v1/search?text=${encodeURIComponent(text)}&size=100`;
 }
 
 /** 注册插件市场 REST 路由 */
@@ -53,6 +56,7 @@ export function registerMarketplaceRoutes(
   ctx: Context,
   getPluginMgr: () => PluginManagerService | undefined,
   gate: RouteGate,
+  registryBase: string = DEFAULT_REGISTRY,
 ): void {
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
@@ -60,7 +64,7 @@ export function registerMarketplaceRoutes(
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const installed = new Set((getPluginMgr()?.getStatus() ?? []).map(p => p.name));
     try {
-      const r = await fetch(buildSearchUrl(q), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
+      const r = await fetch(buildSearchUrl(q, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!r.ok) throw new Error(`npm registry 返回 ${r.status}`);
       const data = (await r.json()) as NpmSearchResponse;
       res.json({ packages: toMarketplacePackages(data, installed) });

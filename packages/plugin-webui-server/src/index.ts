@@ -106,6 +106,13 @@ export const configSchema: ConfigSchema = {
     description:
       '关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。',
   },
+  marketplaceRegistry: {
+    type: 'string',
+    label: '插件市场 npm 源',
+    default: 'https://registry.npmjs.org',
+    description:
+      '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置）。',
+  },
 };
 
 export const defaultConfig = {
@@ -116,6 +123,7 @@ export const defaultConfig = {
   tokenMode: 'persist',
   fixedToken: '',
   relationGraphDefaultSpacing: 120,
+  marketplaceRegistry: 'https://registry.npmjs.org',
 };
 
 // ===== 配置 =====
@@ -128,6 +136,7 @@ interface WebUIConfig {
   tokenMode: 'ephemeral' | 'persist' | 'fixed' | 'disabled';
   fixedToken: string;
   relationGraphDefaultSpacing: number;
+  marketplaceRegistry: string;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -282,6 +291,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const v = Number(config.relationGraphDefaultSpacing);
       return Number.isFinite(v) && v > 0 ? v : 120;
     })(),
+    marketplaceRegistry: (config.marketplaceRegistry as string)?.trim() || 'https://registry.npmjs.org',
   };
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
@@ -498,7 +508,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // ---------- 插件管理 + 全局配置 ----------
   registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate);
-  registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate);
+  registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate, uiConfig.marketplaceRegistry);
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
