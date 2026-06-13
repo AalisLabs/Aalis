@@ -33,12 +33,19 @@ export class PluginManager {
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   private reloading = false;
   /**
-   * 手动 dispose 段标志：disablePlugin / unload / bouncePlugin 在「dispose 旧
-   * ctx → 改 entry.state」这段不可分割的状态变更期间置位。期间 dispose 触发的
+   * 手动 dispose 段计数器：disablePlugin / unload / bouncePlugin 在「dispose 旧
+   * ctx → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
    * service:unregistered 反应式 recompute 会被**排队**（而非立即跑——那会看到
    * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 softReload 统一消化。
+   *
+   * 用计数器而非布尔：dispose hook 内可能同步级联调用 disablePlugin/unload（级联
+   * 禁用），嵌套时内层的 finally 若复位布尔会过早解除外层的挂起态——计数器确保
+   * 只有最外层退出（归零）才解除（审计 HIGH #3）。
    */
-  private suspended = false;
+  private suspendDepth = 0;
+  private get suspended(): boolean {
+    return this.suspendDepth > 0;
+  }
   /**
    * 被推迟的 recompute 请求（修 lost wakeup：在飞期间到达的请求不再被丢弃）。
    * 多个请求合并为一——除 shutdown 保留原 reason 外统一退化为
@@ -144,7 +151,7 @@ export class PluginManager {
 
     // dispose 段守卫（与 disablePlugin 对齐）：dispose 触发的反应式 recompute
     // 排队到收尾的 softReload，避免在 entry 半卸载态下重算。
-    this.suspended = true;
+    this.suspendDepth++;
     try {
       if (entry.state === 'active' && entry.context) {
         entry.context.dispose();
@@ -157,7 +164,7 @@ export class PluginManager {
       this.plugins.delete(name);
       this.logger.info(`插件已卸载: ${name}`);
     } finally {
-      this.suspended = false;
+      this.suspendDepth--;
     }
 
     // 级联重算：依赖被卸载插件所提供服务的下游需要转 pending
@@ -195,7 +202,7 @@ export class PluginManager {
     if (entry.state === 'disabled') return true; // 已经禁用
 
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
-    this.suspended = true;
+    this.suspendDepth++;
     try {
       if (entry.state === 'active' && entry.context) {
         entry.context.dispose();
@@ -209,7 +216,7 @@ export class PluginManager {
       this.rootCtx.config.setPluginEnabled(name, false);
       this.logger.info(`插件已禁用: ${name}`);
     } finally {
-      this.suspended = false;
+      this.suspendDepth--;
     }
 
     await this.softReload();
@@ -299,7 +306,7 @@ export class PluginManager {
 
     // dispose 段守卫（与 disablePlugin / unload 对齐）：dispose 触发的反应式
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
-    this.suspended = true;
+    this.suspendDepth++;
     try {
       if (entry.state === 'active' && entry.context) {
         evictDownstreamConsumers({
@@ -317,7 +324,7 @@ export class PluginManager {
       entry.state = 'pending';
       entry.error = undefined;
     } finally {
-      this.suspended = false;
+      this.suspendDepth--;
     }
     await this.softReload();
     return true;
