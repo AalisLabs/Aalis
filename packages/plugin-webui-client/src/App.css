@@ -627,6 +627,52 @@ body.is-dragging-chat .nav-rail:hover {
   align-items: stretch;
 }
 
+/* 市场插件卡片 */
+.marketplace-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.marketplace-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.marketplace-card-name {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.marketplace-card-version {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.marketplace-card-author {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.marketplace-card-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.marketplace-card .btn {
+  align-self: flex-start;
+}
+
 /* ===== 右侧聊天面板 ===== */
 
 .chat-column {

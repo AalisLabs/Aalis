@@ -37,6 +37,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
+import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerPluginRoutes } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
@@ -497,6 +498,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // ---------- 插件管理 + 全局配置 ----------
   registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate);
+  registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate);
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
