@@ -194,6 +194,10 @@ export interface WebuiGraphComponent {
   defaultMaxBreadth?: number;
   refresh?: number;
   actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
+  /** 自定义节点类别（kind → 形状/颜色/图例）；声明后不再用关系图内置三类图例 */
+  nodeKinds?: Array<{ kind: string; label: string; shape?: 'circle' | 'round-rect' | 'diamond'; color?: string }>;
+  /** 自定义边类别（edge data.kind → 颜色/虚线/图例） */
+  edgeKinds?: Array<{ kind: string; label: string; color?: string; dashed?: boolean }>;
 }
 export type WebuiComponent = WebuiStatComponent | WebuiTableComponent | WebuiFormComponent | WebuiActionsComponent | WebuiInfoComponent | WebuiMarkdownComponent | WebuiTabsComponent | WebuiGraphComponent;
 
