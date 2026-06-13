@@ -180,7 +180,11 @@ function renderConfig(all: PluginMeta[], enabled: Set<string>): string {
 }
 
 async function main(): Promise<void> {
-  const skip = argv.includes('--yes') || argv.includes('-y');
+  // --tier <bare|minimal|standard|full>：非交互指定档位（同类适配器取默认），
+  // 利于 CI/脚本化初始化。--yes 等价于 --tier standard。
+  const tierIdx = argv.indexOf('--tier');
+  const tierFlag = tierIdx >= 0 ? argv[tierIdx + 1] : undefined;
+  const skip = argv.includes('--yes') || argv.includes('-y') || tierFlag !== undefined;
   const packagesDir = resolve(cwd(), 'packages');
   if (!existsSync(packagesDir)) {
     console.error(`未找到 packages/ 目录（当前: ${cwd()}）。请在 Aalis 仓库根目录运行 create-aalis。`);
@@ -207,7 +211,7 @@ async function main(): Promise<void> {
     console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 个 LLM+1 个平台+记忆）');
     console.log('  standard  常用全家桶（minimal + WebUI/人设/向量记忆/工具/调度/技能…）');
     console.log('  full      启用全部本地插件（同类适配器一并全装，可能需手动取舍）\n');
-    const tier = (await ask('模板档 [bare/minimal/standard/full]', 'standard')).toLowerCase() as Tier;
+    const tier = (tierFlag ?? (await ask('模板档 [bare/minimal/standard/full]', 'standard'))).toLowerCase() as Tier;
     if (!['bare', 'minimal', 'standard', 'full'].includes(tier)) {
       console.error(`未知模板档: ${tier}`);
       exit(1);
@@ -262,10 +266,18 @@ async function main(): Promise<void> {
 
     const target = resolve(cwd(), CONFIG_FILE);
     if (existsSync(target)) {
-      const ow = await ask(`\n${CONFIG_FILE} 已存在，覆盖？[y/N]`, 'N');
-      if (ow.toLowerCase() !== 'y') {
-        console.log('已取消，未写入。');
-        exit(0);
+      if (skip) {
+        // 非交互模式遇已存在文件：必须 --force 才覆盖，否则明确报错（不静默跳过）
+        if (!argv.includes('--force')) {
+          console.error(`${CONFIG_FILE} 已存在。非交互模式（--tier/--yes）请加 --force 覆盖。`);
+          exit(1);
+        }
+      } else {
+        const ow = await ask(`\n${CONFIG_FILE} 已存在，覆盖？[y/N]`, 'N');
+        if (ow.toLowerCase() !== 'y') {
+          console.log('已取消，未写入。');
+          exit(0);
+        }
       }
     }
     writeFileSync(target, renderConfig(all, enabled), 'utf-8');
