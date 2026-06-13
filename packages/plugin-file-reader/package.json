@@ -31,5 +31,19 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "storage"
+      ],
+      "optional": [
+        "agent",
+        "memory"
+      ],
+      "provides": [
+        "file-reader"
+      ]
+    }
   }
 }
