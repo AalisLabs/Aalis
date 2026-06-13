@@ -2621,6 +2621,16 @@ body.is-dragging-chat .nav-rail:hover {
   color: var(--accent);
 }
 
+/* 市场官方/社区标记（@aalis scope = 官方） */
+.badge.official {
+  background: rgba(91, 141, 239, 0.15);
+  color: #5b8def;
+}
+.badge.community {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
 .badge.pending {
   background: rgba(240, 192, 96, 0.15);
   color: var(--warning);

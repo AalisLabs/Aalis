@@ -20,6 +20,8 @@ interface MarketplacePackage {
   author?: string;
   /** 该插件名是否已在本地激活/注册 */
   installed: boolean;
+  /** @aalis/ scope = 官方插件；其余为社区（npm 自带信号，零额外维护） */
+  official: boolean;
 }
 
 interface NpmSearchResponse {
@@ -33,7 +35,15 @@ interface NpmSearchResponse {
   }>;
 }
 
-/** npm search 响应 → 市场卡片列表（标注哪些已在本地激活）。纯函数，便于单测。 */
+/** 插件能力清单（来自 npm 包 package.json 的 aalis.service，装前披露用） */
+interface PluginManifest {
+  name: string;
+  version: string;
+  description?: string;
+  service?: { required?: string[]; optional?: string[]; provides?: string[] };
+}
+
+/** npm search 响应 → 市场卡片列表（标注已装 + 官方）。纯函数，便于单测。 */
 export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<string>): MarketplacePackage[] {
   return (data.objects ?? []).map(o => ({
     name: o.package.name,
@@ -41,7 +51,19 @@ export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<st
     description: o.package.description ?? '',
     author: o.package.publisher?.username,
     installed: installed.has(o.package.name),
+    official: o.package.name.startsWith('@aalis/'),
   }));
+}
+
+/** npm packument → 装前能力清单（读 latest 版本的 aalis.service）。纯函数，便于单测。 */
+export function toManifest(packument: {
+  'dist-tags'?: { latest?: string };
+  versions?: Record<string, { description?: string; aalis?: { service?: PluginManifest['service'] } }>;
+}): PluginManifest | null {
+  const latest = packument['dist-tags']?.latest;
+  if (!latest) return null;
+  const v = packument.versions?.[latest];
+  return { name: '', version: latest, description: v?.description, service: v?.aalis?.service };
 }
 
 /** 构造 npm registry 检索 URL（keyword 约定 + 可选搜索词 + 可配 registry 基址）。纯函数，便于单测。 */
@@ -73,6 +95,31 @@ export function registerMarketplaceRoutes(
       const msg = err instanceof Error ? err.message : String(err);
       ctx.logger.debug(`market: npm registry 检索失败: ${msg}`);
       res.json({ packages: [], warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件` });
+    }
+  });
+
+  // 装前能力披露：fetch npm packument 读 aalis.service（该插件需要/提供哪些服务）。
+  // 安装前展示给 owner 知情同意。scoped 包名含 /，用 query 传。
+  expressApp.get('/api/marketplace/manifest', gate('webui:marketplace:read', 4), async (req, res) => {
+    const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+    if (!name || !PKG_NAME_RE.test(name)) {
+      res.status(400).json({ error: 'name 必须是合法 npm 包名' });
+      return;
+    }
+    try {
+      const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+      const r = await fetch(`${base}/${name.replace('/', '%2F')}`, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
+      if (!r.ok) throw new Error(`npm registry 返回 ${r.status}`);
+      const manifest = toManifest((await r.json()) as Parameters<typeof toManifest>[0]);
+      if (!manifest) {
+        res.json({ manifest: null, warning: '该包无可解析的版本信息' });
+        return;
+      }
+      res.json({ manifest: { ...manifest, name } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.logger.debug(`market: 拉取 ${name} manifest 失败: ${msg}`);
+      res.json({ manifest: null, warning: `无法拉取插件清单（${msg}）` });
     }
   });
 

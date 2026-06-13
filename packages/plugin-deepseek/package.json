@@ -28,5 +28,12 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
+  },
+  "aalis": {
+    "service": {
+      "provides": [
+        "llm"
+      ]
+    }
   }
 }
