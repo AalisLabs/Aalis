@@ -679,18 +679,26 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       return `已将 ${t} 的权限等级设置为 ${lvl}。`;
     });
 
-  // /authority — 查看当前用户权限等级
-  cmds.command('authority [target:string]', '查看自己或指定用户的权限等级').action(async (argv, target) => {
+  // /authority — 查看权限等级 + 个别授予/拒绝 + 绑定关系
+  const describeIdentity = (platform: string, userId: string | undefined, self: boolean): string => {
+    const level = authority.getAuthority(platform, userId);
+    const isOwner = authority.isOwner(platform, userId);
+    const lines = [`${self ? '您' : `${platform}:${userId}`}的权限等级: ${level}${isOwner ? ' (owner)' : ''}`];
+    const entry = userId ? authority.listUsers().find(u => u.platform === platform && u.userId === userId) : undefined;
+    if (entry?.linkedTo) lines.push(`已绑定到主账户 ${entry.linkedTo}（权限以账户为准）`);
+    if (entry?.links?.length) lines.push(`已绑定身份: ${entry.links.join(', ')}`);
+    if (entry?.grants?.length) lines.push(`个别授予: ${entry.grants.join(', ')}`);
+    if (entry?.denies?.length) lines.push(`个别拒绝: ${entry.denies.join(', ')}`);
+    return lines.join('\n');
+  };
+  cmds.command('authority [target:string]', '查看自己或指定用户的权限等级与授予').action(async (argv, target) => {
     const t = target as string | undefined;
     if (t) {
       const sep = t.indexOf(':');
       if (sep < 1) return '目标格式: <platform:userId>';
-      const level = authority.getAuthority(t.slice(0, sep), t.slice(sep + 1));
-      return `${t} 的权限等级: ${level}`;
+      return describeIdentity(t.slice(0, sep), t.slice(sep + 1), false);
     }
-    const level = authority.getAuthority(argv.session.platform, argv.session.userId);
-    const isOwner = authority.isOwner(argv.session.platform, argv.session.userId);
-    return `您的权限等级: ${level}${isOwner ? ' (owner)' : ''}`;
+    return describeIdentity(argv.session.platform, argv.session.userId, true);
   });
 
   // /bind — 把当前平台账号绑定到 WebUI 主账户（码在 WebUI 权限页生成）。
@@ -753,6 +761,8 @@ export const actions: PluginModule['actions'] = {
       ownerAuthority: ctx.config.get('ownerAuthority') ?? 5,
       dangerousPolicy: ctx.config.get('dangerousPolicy') ?? {},
       permissionPolicy: ctx.config.get('permissionPolicy') ?? {},
+      // 参数级动态提权清单（glob→等级；内置保护清单见 requiredAuthorityFor 文档）
+      permissionAuthority: ctx.config.get('permissionAuthority') ?? {},
       dangerousGrants: auth?.listDangerousGrants() ?? [],
       commandPrefix,
       commands: cmdNodes.map(n => {
