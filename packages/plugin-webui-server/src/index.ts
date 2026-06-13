@@ -411,6 +411,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   >();
 
+  // 延迟清理 streamBuffers：捕获要删的 buf 引用，10s 后仅当 (a) 该 session 仍是
+  // 同一个 buf 且 (b) 未重新进入生成态 时才删——防止 10s 内开始的新一轮生成被旧
+  // 定时器误删（审计 HIGH #8 竞态）。
+  const scheduleBufferCleanup = (sid: string, captured: { generating: boolean }): void => {
+    setTimeout(() => {
+      if (streamBuffers.get(sid) === captured && !captured.generating) streamBuffers.delete(sid);
+    }, 10_000);
+  };
+
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
   const tokenUsageCache = new Map<string, WSOutgoing>();
 
@@ -922,6 +931,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
     if (!sent) return false;
 
+    // 同一 session 已有未决确认时，先取消旧的（清 timer + resolve false），避免新
+    // set 覆盖后旧 Promise 永远 pending 且旧 timer 误删新条目（审计 HIGH #7 竞态）。
+    const stale = pendingSessionConfirms.get(request.sessionId);
+    if (stale) {
+      clearTimeout(stale.timer);
+      pendingSessionConfirms.delete(request.sessionId);
+      stale.resolve(false);
+    }
+
     return new Promise<PendingConfirmResult>(resolve => {
       const timer = setTimeout(() => {
         pendingSessionConfirms.delete(request.sessionId);
@@ -1210,7 +1228,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       buf.generating = false;
       buf.content = msg.content ?? buf.content;
       buf.reasoningContent = msg.reasoningContent ?? buf.reasoningContent;
-      setTimeout(() => streamBuffers.delete(msg.sessionId), 10_000);
+      scheduleBufferCleanup(msg.sessionId, buf);
     }
     const sockets = sessions.get(msg.sessionId);
     if (!sockets) return;
@@ -1298,7 +1316,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (buf) {
         buf.toolCallsProgress.clear();
         buf.generating = false;
-        setTimeout(() => streamBuffers.delete(chunk.sessionId), 10_000);
+        scheduleBufferCleanup(chunk.sessionId, buf);
       }
     }
     const sockets = sessions.get(chunk.sessionId);
