@@ -31,15 +31,25 @@ type GateMiddleware = (req: GateRequest, res: GateResponse, next: () => void) =>
  * authority 服务缺席时放行（与 tools/commands 守卫缺席语义一致）。
  */
 export function createRouteGate(ctx: Context, identify: IdentifyFn) {
+  // 公共读基线：authority 缺席时，门槛 <= 此值的路由仍放行（聊天面板可用即可），
+  // 高于此值的（管理读/变更）一律拒绝——fail-closed，不在权限服务缺位时裸奔。
+  const PUBLIC_BASELINE = 1;
   return (capability: string, declared: number | 'owner'): GateMiddleware =>
     (req, res, next) => {
+      const ownerLevel = ctx.config.get('ownerAuthority') ?? 5;
+      const declaredAuthority = declared === 'owner' ? ownerLevel : declared;
       const authority = ctx.getService<AuthorityService>('authority');
       if (!authority) {
+        // authority 缺席（未配置/启动失败/bounce 窗口期）→ 无法裁决等级。
+        // 公共读放行，其余 503（区别于 403：服务暂不可用，非权限不足）。
+        if (declaredAuthority > PUBLIC_BASELINE) {
+          res.status(503).json({ error: '权限服务不可用，敏感操作暂时被拒绝' });
+          return;
+        }
         next();
         return;
       }
       const caller = identify(req) ?? { platform: 'webui', userId: 'console' };
-      const declaredAuthority = declared === 'owner' ? (ctx.config.get('ownerAuthority') ?? 5) : declared;
       const denied = authority.authorize(caller, { capabilities: [capability], declaredAuthority });
       if (denied) {
         res.status(403).json({ error: denied });

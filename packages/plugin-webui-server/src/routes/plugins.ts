@@ -123,8 +123,8 @@ export function registerPluginRoutes(
     // （与 tools/commands 守卫缺席时一致）。
     const caller: UserIdentity = identify(req) ?? { platform: 'webui', userId: 'console' };
     const authority = ctx.getService<AuthorityService>('authority');
+    const required = entry.module.actionsMeta?.[method]?.authority ?? ctx.config.get('ownerAuthority') ?? 5;
     if (authority) {
-      const required = entry.module.actionsMeta?.[method]?.authority ?? ctx.config.get('ownerAuthority') ?? 5;
       const denied = authority.authorize(caller, {
         capabilities: [`action:${pluginName}:${method}`],
         declaredAuthority: required,
@@ -133,6 +133,12 @@ export function registerPluginRoutes(
         res.status(403).json({ error: `操作 ${pluginName}/${method} 被拒: ${denied}` });
         return;
       }
+    } else if (required > 1) {
+      // fail-closed：authority 缺席（未配置/bounce 窗口期）无法裁决等级。
+      // 未声明 actionsMeta 的 action 默认要求 owner，缺席时一律拒绝；只放行
+      // 显式声明了公共级（<=1）的 action。避免敏感 action 在权限服务缺位时裸奔。
+      res.status(503).json({ error: `权限服务不可用，操作 ${pluginName}/${method} 暂时被拒绝` });
+      return;
     }
 
     try {

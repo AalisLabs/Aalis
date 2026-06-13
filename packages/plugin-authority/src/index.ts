@@ -457,6 +457,8 @@ export class AuthorityManager implements AuthorityService {
   private createDangerousGrant(request: DangerousConfirmRequest, result: DangerousConfirmResult): void {
     const grantRequest = result.grant;
     if (!grantRequest || grantRequest.scope !== 'session') return;
+    // 创建新授权时顺带清扫过期/用尽的（对称 bindCodes 的发码即清扫——审计 MEDIUM #11）
+    this.pruneDangerousGrants();
     const durationSeconds = Math.max(1, Math.min(grantRequest.durationSeconds ?? 600, 3600));
     const grant: DangerousGrant = {
       id: `grant_${Date.now()}_${++this.grantSeq}`,
