@@ -13,6 +13,12 @@ describe('buildSearchUrl（keyword 约定）', () => {
     const url = buildSearchUrl('memory');
     expect(decodeURIComponent(url)).toContain('keywords:aalis-plugin memory');
   });
+  it('可配 registry 基址（去尾斜杠；空值回退官方源）', () => {
+    expect(buildSearchUrl('', 'https://npm.example.com/')).toBe(
+      'https://npm.example.com/-/v1/search?text=keywords%3Aaalis-plugin&size=100',
+    );
+    expect(buildSearchUrl('', '')).toContain('registry.npmjs.org');
+  });
 });
 
 describe('toMarketplacePackages（响应映射 + 已装标注）', () => {
