@@ -1,11 +1,14 @@
-import type { ExecResult, ProcessService } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPackageManager,
   type PackageManagerDeps,
   parsePackInfo,
 } from '../../packages/plugin-package-manager/src/index.js';
+
+// 从被测模块的依赖契约推导类型，避免测试直接 import api 包（knip unlisted-dep）
+type ProcessService = PackageManagerDeps['proc'];
+type StoragePick = PackageManagerDeps['storage'];
+type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 
 // ════════════════════════════════════════════════════════════
 // package-manager — install/uninstall 集成测试（mock proc/storage）
@@ -58,7 +61,7 @@ function makeHarness(
     delete: vi.fn(async (uri: string) => {
       deleted.push(uri);
     }),
-  } as unknown as Pick<StorageService, 'stat' | 'delete'>;
+  } as unknown as StoragePick;
 
   const deps: PackageManagerDeps = {
     proc,
