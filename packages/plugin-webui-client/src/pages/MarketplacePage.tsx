@@ -58,6 +58,15 @@ export function MarketplacePage({
   }, [search, searched, loadRegistry]);
 
   const handleInstall = async (name: string) => {
+    // 安装第三方代码 = 高危操作：装后该插件以你授予的能力运行。owner 二次确认知情同意。
+    // 细粒度能力（依赖服务 / 工具 permissions）在装后于权限页查看（装后披露）。
+    if (
+      !window.confirm(
+        `将从 npm 安装第三方插件「${name}」。\n\n安装后它会以你授予的能力运行（可在权限页查看其依赖与权限）。请确认来源可信。\n\n继续安装？`,
+      )
+    ) {
+      return;
+    }
     setInstalling(name);
     try {
       const res = await api<{ ok?: boolean; error?: string }>('/api/marketplace/install', {
