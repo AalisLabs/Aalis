@@ -7,7 +7,7 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/index.js';
 //
 // 语义：运行时零合并（被绑身份解析到主账户单一真源，denies 取自身∪账户
 // 并集防洗白）+ 绑定时刻一次性合并（等级 max、grants/denies 并集写入账户）。
-// 平台身份原记录原样留底，解绑即还原（对齐 Koishi 的 bid 语义）。
+// 平台身份原记录原样留底，解绑即还原。
 // ════════════════════════════════════════════════════════════
 
 type StorageParam = ConstructorParameters<typeof AuthorityManager>[2];

@@ -19,7 +19,7 @@ function input(args: string[]) {
   return { sessionId: 's', platform: 'test', args, raw: args.join(' ') };
 }
 
-describe('commands v2 — chatluna 风格 builder', () => {
+describe('commands v2 — 链式 builder', () => {
   it('注册顶层命令并执行', async () => {
     const r = new CommandRegistry(makeLogger());
     r.command('hello', '打招呼').action(async () => 'hi');

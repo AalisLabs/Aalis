@@ -3,8 +3,8 @@ import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
-// 纯 npm 路线：npm registry 的 keyword 检索即天然索引（同 koishi 的 koishi-plugin
-// 模式），无自建服务器、无静态索引。分发走 package-manager 的 npm pack。
+// 纯 npm 路线：npm registry 的 keyword 检索即天然索引（约定 keyword aalis-plugin），
+// 无自建服务器、无静态索引。分发走 package-manager 的 npm pack。
 // 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故 registry
 // 基址可配置（marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';

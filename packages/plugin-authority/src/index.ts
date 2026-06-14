@@ -742,8 +742,8 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   });
 
   // /bind — 把当前平台账号绑定到 WebUI 主账户（码在 WebUI 权限页生成）。
-  // 仅限私聊：群聊发码会把绑定码暴露给旁观者（Koishi 对公开信道需双 token
-  // 握手，我们直接限定私聊信道，等价其私聊路径）。
+  // 仅限私聊：群聊发码会把绑定码暴露给旁观者；公开信道（群聊）安全性弱，
+  // 故直接限定私聊信道完成绑定握手。
   cmds
     .command('bind <code:string>', '将当前平台账号绑定到 WebUI 账户', { authority: 1 })
     .example('/bind AB12CD34')

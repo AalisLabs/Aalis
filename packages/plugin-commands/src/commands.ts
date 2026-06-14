@@ -17,7 +17,7 @@ import type {
 } from '@aalis/plugin-commands-api';
 
 // ============================================================================
-// 命令注册表（v2 — chatluna 风格）
+// 命令注册表（v2 — 链式 builder）
 //
 // 契约见 @aalis/plugin-commands-api
 //
