@@ -29,14 +29,12 @@ plugins:
         env:
           GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_xxx"
         enabled: true            # 可省略，默认 true
-        safety: safe             # safe | dangerous（默认 safe）
-        authority: 1             # 0-3，默认 1
+        visibility: public       # public | restricted（默认 public）
 
       - id: fs
         command: npx
         args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
-        safety: dangerous        # 文件系统访问视为高危
-        authority: 3
+        visibility: restricted   # 文件系统访问视为受限，须被 owner/委托授予
 ```
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -46,8 +44,7 @@ plugins:
 | `servers[].args` | string[] | `[]` | 命令参数 |
 | `servers[].env` | Record<string,string> | `{}` | 环境变量（继承当前进程 env） |
 | `servers[].enabled` | boolean | `true` | 是否启动此 server |
-| `servers[].safety` | `'safe' \| 'dangerous'` | `'safe'` | 该 server 所有工具的 safety 等级 |
-| `servers[].authority` | number | `1` | 该 server 所有工具的 authority |
+| `servers[].visibility` | `'public' \| 'restricted'` | `'public'` | 该 server 所有工具的默认可见性（restricted 须授予后才能调用） |
 
 ## 行为
 
@@ -59,9 +56,9 @@ plugins:
 
 ## 安全注意
 
-- 外部 server 是**不受信任的第三方进程**，工具的 `safety`/`authority` 必须显式配置——
-  默认 `safe` 仅适合纯查询类 server（如 GitHub READ）；对接 filesystem / shell / browser 类务必显式设为 `dangerous`。
-- Aalis 自身的 authority guard 仍生效：高危工具被调用时仍走 permissions resolver。
+- 外部 server 是**不受信任的第三方进程**，工具的 `visibility` 必须显式配置——
+  默认 `public` 仅适合纯查询类 server（如 GitHub READ）；对接 filesystem / shell / browser 类务必显式设为 `restricted`。
+- Aalis 自身的能力统一闸仍生效：`restricted` 工具被调用时须 owner 或被委托授予才放行。
 
 ## 依赖
 

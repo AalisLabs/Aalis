@@ -30,10 +30,11 @@ export const provides = ['tools'];
   时按 `pluginName` 自动注销，避免遗留。
 - **分组过滤**：`getDefinitions({ groups })` / `getSummaries({ groups })`
   按分组返回工具；未指定 `groups` 时**只**返回无分组的通用工具。
-- **权限 / 安全覆盖**：`setOverride(name, { authority?, safety? })` 由 WebUI /
-  配置侧覆盖工具默认的权限等级与安全等级。
+- **可见性覆盖**：工具默认可见性（`visibility: 'public' | 'restricted'`）由作者声明，
+  owner 可经 authority 配置 `visibilityOverrides`（操作名 → public/restricted）临时覆盖，
+  无需改插件。
 - **执行守卫**：`setExecutionGuard(guard)` 注入统一钩子（典型为 plugin-authority
-  的高危确认 / 权限检查）；所有 `execute()` 调用前过钩子。
+  的能力统一闸 / 受限能力临时委托确认）；所有 `execute()` 调用前过钩子。
 
 ## 相关插件
 

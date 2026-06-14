@@ -905,7 +905,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // ---------- 高危操作交互式确认（内联对话式） ----------
+  // ---------- 受限操作交互式确认（内联对话式；restricted 能力的临时委托） ----------
 
   const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
   /** 每个 session 最多一个待确认请求 */
@@ -920,7 +920,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', async request => {
     const typeLabel = request.type === 'command' ? '指令' : '工具';
     const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
-    const prompt = `⚠️ ${typeLabel} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 允许本会话 10 分钟；其他任意输入取消。`;
+    const prompt = `⚠️ ${typeLabel} ${nameStr} 是受限操作。回复 Y 仅允许本次；回复 YS 允许本会话 10 分钟；其他任意输入取消。`;
 
     // 以确认消息形式发送（不影响客户端 loading/streaming 状态）
     const payload: WSOutgoing = {
@@ -956,7 +956,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 超时后向会话发送提示
         const timeoutPayload: WSOutgoing = {
           type: 'confirm',
-          content: '⏰ 高危操作确认已超时，已自动取消。',
+          content: '⏰ 受限操作确认已超时，已自动取消。',
           sessionId: request.sessionId,
         };
         const timeoutJson = JSON.stringify(timeoutPayload);
@@ -1080,7 +1080,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
         sessions.get(sessionId)!.add(ws);
 
-        // 检查是否有待确认的高危操作（拦截用户输入作为确认/取消）
+        // 检查是否有待确认的受限操作（拦截用户输入作为确认/取消）
         const pending = pendingSessionConfirms.get(sessionId);
         if (pending) {
           clearTimeout(pending.timer);

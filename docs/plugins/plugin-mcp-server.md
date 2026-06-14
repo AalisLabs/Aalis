@@ -37,7 +37,7 @@ plugins:
     toolGroups:               # 白名单分组（空数组 = 全部允许）
       - websearch
       - memory
-    allowDangerous: false     # dangerous 工具一律拒绝
+    allowRestricted: false    # restricted（受限）工具一律拒绝
 ```
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -45,13 +45,13 @@ plugins:
 | `enabled` | boolean | `true` | 是否启用 |
 | `port` | number | `39870` | 监听端口 |
 | `bind` | string | `127.0.0.1` | 监听地址（**不要随便暴露到公网**） |
-| `toolGroups` | string[] | `[]` | 允许暴露的工具分组（空 = 全部，但仍受 dangerous 约束） |
-| `allowDangerous` | boolean | `false` | 是否允许 `safety='dangerous'` 工具被外部调用 |
+| `toolGroups` | string[] | `[]` | 允许暴露的工具分组（空 = 全部，但仍受 allowRestricted 约束） |
+| `allowRestricted` | boolean | `false` | 是否允许 `visibility='restricted'` 工具被外部调用 |
 
 ## 安全边界
 
-- **`ListTools` 与 `CallTool` 两端都过滤 dangerous**，防止 client 通过 list 看不到却仍能 call 的越界。
-- 工具执行仍走 Aalis 的 `ToolService.execute`，因此 authority guard / permissions resolver 全部生效。
+- **`ListTools` 与 `CallTool` 两端都过滤 restricted**，防止 client 通过 list 看不到却仍能 call 的越界。
+- 工具执行仍走 Aalis 的 `ToolService.execute`，因此 ExecutionGuard / 能力统一闸全部生效。
 - 没有外部 client 鉴权 —— 完全依赖网络层（`127.0.0.1` + 防火墙）做隔离。
 
 ## 外部 client 配置示例
