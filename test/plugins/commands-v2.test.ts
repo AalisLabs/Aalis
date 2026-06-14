@@ -63,7 +63,7 @@ describe('commands v2 — 链式 builder', () => {
   it('dot-path 子命令最长前缀解析 + 自动分组', async () => {
     const r = new CommandRegistry(makeLogger());
     r.command('profile.clear', '清除自己档案').action(async () => 'cleared');
-    r.command('profile.clear.nuke', '清空所有', { authority: 3, safety: 'dangerous' }).action(async () => 'nuked');
+    r.command('profile.clear.nuke', '清空所有', { visibility: 'restricted' }).action(async () => 'nuked');
     // profile 自动成为分组节点
     const profile = r.get('profile')!;
     expect(profile.isGroup).toBe(true);
@@ -73,23 +73,22 @@ describe('commands v2 — 链式 builder', () => {
     expect(await r.execute('profile', input(['clear', 'nuke']))).toBe('nuked');
   });
 
-  it('override 修改 authority/safety；继承到子节点', () => {
+  it('visibility 声明 + 继承到子节点（restricted 父 → restricted 子）', () => {
     const r = new CommandRegistry(makeLogger());
-    r.command('a.b', '', { authority: 2 }).action(async () => 'b');
+    r.command('a.b', '', { visibility: 'restricted' }).action(async () => 'b');
     r.command('a.b.c', '').action(async () => 'c');
-    r.setOverride('a.b', { authority: 4, safety: 'dangerous' });
     const b = r.get('a.b')!;
     const c = r.get('a.b.c')!;
-    expect(b.authority).toBe(4);
-    expect(b.safety).toBe('dangerous');
-    expect(b.overridden).toBe(true);
-    expect(c.authority).toBe(4); // 继承自父
-    expect(c.safety).toBe('dangerous');
+    expect(b.visibility).toBe('restricted');
+    expect(c.visibility).toBe('restricted'); // 继承自父
+    // 默认无声明 → public
+    r.command('x', '').action(async () => 'x');
+    expect(r.get('x')!.visibility).toBe('public');
   });
 
   it('guard 拒绝 → execute 返回拒绝原因', async () => {
     const r = new CommandRegistry(makeLogger());
-    r.command('shutdown', '关机', { authority: 5 }).action(async () => 'bye');
+    r.command('shutdown', '关机', { visibility: 'restricted' }).action(async () => 'bye');
     r.setExecutionGuard(async () => '权限不足');
     expect(await r.execute('shutdown', input([]))).toBe('权限不足');
   });
