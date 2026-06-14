@@ -1,6 +1,15 @@
 import type { ConfigManager, Logger } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
-import { AuthorityManager } from '../../packages/plugin-authority/src/index.js';
+import type { AccessRequest } from '@aalis/plugin-authority-api';
+import { describe, expect, it, vi } from 'vitest';
+import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+
+// ════════════════════════════════════════════════════════════
+// authority — 临时能力委托（restricted 能力的时限/限次放行）
+//
+// 新模型用「临时委托」替代旧的"危险操作确认"：用户触达未授予的 restricted 能力时，
+// 过 requestAccess —— ① restrictedPolicy 白名单（可限时）② 会话内临时授予复用
+// ③ 确认回调（owner 批准，可带 session 范围）。
+// ════════════════════════════════════════════════════════════
 
 function makeLogger(): Logger {
   const noop = () => undefined;
@@ -14,75 +23,106 @@ function makeManager(cfg: Record<string, unknown> = {}): AuthorityManager {
   return new AuthorityManager(config, makeLogger(), storage);
 }
 
-// file_write/file_edit/file_delete 通过 storagePermission 产出的权限形态
-function perms(uri: string, op: 'read' | 'write' | 'delete'): string[] {
-  const root = uri.slice(0, uri.indexOf(':/'));
-  return [`storage:${op}`, `storage:${root}:${op}`, `storage:path:${uri}:${op}`];
-}
+const req = (over: Partial<AccessRequest> = {}): AccessRequest => ({
+  name: 'shell.exec',
+  type: 'tool',
+  capability: 'tool:shell.exec',
+  sessionId: 's1',
+  platform: 'onebot',
+  ...over,
+});
 
-describe('authority — 参数级动态提权 requiredAuthorityFor', () => {
-  it('写普通文件不提权（返回 0）', () => {
+describe('restrictedPolicy 白名单（可限时）', () => {
+  it('无策略 / 空 allow → 不放行；* 全放行；精确/glob 命中', async () => {
+    expect(await makeManager().requestAccess(req())).toBe(false);
+    expect(await makeManager({ restrictedPolicy: { allow: [] } }).requestAccess(req())).toBe(false);
+    expect(await makeManager({ restrictedPolicy: { allow: ['*'] } }).requestAccess(req())).toBe(true);
+    expect(await makeManager({ restrictedPolicy: { allow: ['tool:shell.*'] } }).requestAccess(req())).toBe(true);
+    expect(await makeManager({ restrictedPolicy: { allow: ['tool:other'] } }).requestAccess(req())).toBe(false);
+  });
+
+  it('限时策略：未 markPolicyEnabled 不放行；启用后过期失效', async () => {
+    vi.useFakeTimers();
+    try {
+      const m = makeManager({ restrictedPolicy: { allow: ['*'], duration: 60 } });
+      expect(await m.requestAccess(req())).toBe(false); // 未启用
+      m.markPolicyEnabled();
+      expect(await m.requestAccess(req())).toBe(true);
+      vi.advanceTimersByTime(61_000);
+      expect(await m.requestAccess(req())).toBe(false); // 过期
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('确认回调 + 会话临时授予', () => {
+  it('无 handler → 拒绝；handler 抛错 → 拒绝（吞掉不外抛）', async () => {
     const m = makeManager();
-    expect(m.requiredAuthorityFor(perms('data:/notes/a.md', 'write'))).toBe(0);
-    expect(m.requiredAuthorityFor(perms('workspace:/x.ts', 'write'))).toBe(0);
+    expect(await m.requestAccess(req())).toBe(false);
+    m.setConfirmHandler('onebot', async () => {
+      throw new Error('boom');
+    });
+    expect(await m.requestAccess(req())).toBe(false);
   });
 
-  it('写/删用户权限表要求 owner 等级（默认 5）', () => {
+  it('handler 返回 boolean / 对象', async () => {
     const m = makeManager();
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'write'))).toBe(5);
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'delete'))).toBe(5);
+    m.setConfirmHandler('onebot', async () => true);
+    expect(await m.requestAccess(req())).toBe(true);
+    m.setConfirmHandler('onebot', async () => ({ allowed: false }));
+    expect(await m.requestAccess(req())).toBe(false);
   });
 
-  it('写/删计划任务文件要求 owner 等级（防注入 owner 身份 actor）', () => {
+  it('会话授予：创建 → 同会话同能力复用 → maxUses 用尽失效', async () => {
     const m = makeManager();
-    expect(m.requiredAuthorityFor(perms('data:/scheduler-jobs.json', 'write'))).toBe(5);
-    expect(m.requiredAuthorityFor(perms('data:/scheduler-jobs.json', 'delete'))).toBe(5);
+    let calls = 0;
+    m.setConfirmHandler('onebot', async () => {
+      calls++;
+      return { allowed: true, grant: { scope: 'session', durationSeconds: 600, maxUses: 2 } };
+    });
+    expect(await m.requestAccess(req())).toBe(true); // [1] 创建 grant（used=0 不消费）
+    expect(m.listTemporaryGrants()).toHaveLength(1);
+    expect(await m.requestAccess(req())).toBe(true); // [2] 复用 used→1
+    expect(m.listTemporaryGrants()[0].used).toBe(1);
+    expect(await m.requestAccess(req())).toBe(true); // [3] 复用 used→2（>=maxUses 删）
+    expect(calls).toBe(1); // handler 始终只调一次
+    expect(m.listTemporaryGrants()).toHaveLength(0);
   });
 
-  it('写/删 aalis:/ 源码根要求 owner 等级（写源码=重启后任意代码执行）', () => {
+  it('revokeTemporaryGrant 生效', async () => {
     const m = makeManager();
-    expect(m.requiredAuthorityFor(perms('aalis:/packages/core/src/app.ts', 'write'))).toBe(5);
-    expect(m.requiredAuthorityFor(perms('aalis:/package.json', 'delete'))).toBe(5);
-    // 读源码不提权
-    expect(m.requiredAuthorityFor(perms('aalis:/packages/core/src/app.ts', 'read'))).toBe(0);
+    m.setConfirmHandler('onebot', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
+    await m.requestAccess(req());
+    const id = m.listTemporaryGrants()[0].id;
+    expect(m.revokeTemporaryGrant(id)).toBe(true);
+    expect(m.listTemporaryGrants()).toHaveLength(0);
+    expect(m.revokeTemporaryGrant(id)).toBe(false);
   });
 
-  it('读敏感文件默认不提权（只保护写/删）', () => {
+  it('授予不跨会话/跨能力复用', async () => {
     const m = makeManager();
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'read'))).toBe(0);
+    let calls = 0;
+    m.setConfirmHandler('onebot', async () => {
+      calls++;
+      return { allowed: true, grant: { scope: 'session', durationSeconds: 600 } };
+    });
+    await m.requestAccess(req({ sessionId: 's1', capability: 'tool:a' }));
+    await m.requestAccess(req({ sessionId: 's2', capability: 'tool:a' })); // 不同会话 → 重新确认
+    await m.requestAccess(req({ sessionId: 's1', capability: 'tool:b' })); // 不同能力 → 重新确认
+    expect(calls).toBe(3);
   });
 
-  it('保护等级跟随 ownerAuthority 配置', () => {
-    const m = makeManager({ ownerAuthority: 7 });
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'write'))).toBe(7);
-  });
-
-  it('config.permissionAuthority 可扩展保护清单', () => {
-    const m = makeManager({ permissionAuthority: { 'storage:path:workspace:/secret.txt:write': 4 } });
-    expect(m.requiredAuthorityFor(perms('workspace:/secret.txt', 'write'))).toBe(4);
-    // 默认清单仍生效
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'write'))).toBe(5);
-  });
-
-  it('config.permissionAuthority 可覆盖默认条目', () => {
-    const m = makeManager({ permissionAuthority: { 'storage:path:data:/users.json:write': 3 } });
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'write'))).toBe(3);
-  });
-
-  it('config.permissionAuthority 支持 glob 模式', () => {
-    const m = makeManager({ permissionAuthority: { 'storage:path:data:/secrets/*:write': 4 } });
-    expect(m.requiredAuthorityFor(perms('data:/secrets/token.txt', 'write'))).toBe(4);
-    expect(m.requiredAuthorityFor(perms('data:/public/readme.md', 'write'))).toBe(0);
-  });
-
-  it('命中多个模式时取最大要求', () => {
-    const m = makeManager({ permissionAuthority: { 'storage:data:write': 2 } });
-    // 同时命中 storage:data:write(2) 与 users.json(5) → 取 5
-    expect(m.requiredAuthorityFor(perms('data:/users.json', 'write'))).toBe(5);
-  });
-
-  it('空权限集返回 0', () => {
-    const m = makeManager();
-    expect(m.requiredAuthorityFor([])).toBe(0);
+  it('会话授予过期后不再命中（fake timers）', async () => {
+    vi.useFakeTimers();
+    try {
+      const m = makeManager();
+      m.setConfirmHandler('onebot', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 1 } }));
+      expect(await m.requestAccess(req())).toBe(true);
+      vi.advanceTimersByTime(2_000);
+      expect(m.listTemporaryGrants()).toHaveLength(0); // 过期被剪
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

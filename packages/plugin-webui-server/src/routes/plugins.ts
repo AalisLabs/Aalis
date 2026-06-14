@@ -379,22 +379,26 @@ export function registerPluginRoutes(
   });
 
   // 删除插件多实例
-  expressApp.delete('/api/plugins/:instanceId/instance', gate('webui:plugins:manage', 'restricted'), async (req, res) => {
-    const instanceId = req.params.instanceId;
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    const ok = await pm.removeInstance(instanceId);
-    if (ok) {
-      app.saveConfig();
-      res.json({ ok: true, message: `已删除实例 ${instanceId}` });
-    } else {
-      res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
-    }
-  });
+  expressApp.delete(
+    '/api/plugins/:instanceId/instance',
+    gate('webui:plugins:manage', 'restricted'),
+    async (req, res) => {
+      const instanceId = req.params.instanceId;
+      const app = getApp();
+      const pm = getPluginMgr();
+      if (!app || !pm) {
+        res.status(500).json({ error: 'App 不可用' });
+        return;
+      }
+      const ok = await pm.removeInstance(instanceId);
+      if (ok) {
+        app.saveConfig();
+        res.json({ ok: true, message: `已删除实例 ${instanceId}` });
+      } else {
+        res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
+      }
+    },
+  );
 
   // 保存配置到磁盘
   expressApp.post('/api/config/save', gate('webui:config:write', 'restricted'), (_req, res) => {

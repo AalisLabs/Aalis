@@ -1,6 +1,14 @@
 import type { ConfigManager, Context, Logger, StorageService } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { AuthorityManager, actions } from '../../packages/plugin-authority/src/index.js';
+import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { actions } from '../../packages/plugin-authority/src/index.js';
+
+// ════════════════════════════════════════════════════════════
+// authority actions — WebUI surface（纯能力委托模型）
+//
+// 关键安全性：setUserCapabilities 经 manager 的子集约束防越权——非 owner 授予方
+// 只能委托自己持有的能力。owner / 本人才可改密码、解绑。
+// ════════════════════════════════════════════════════════════
 
 function makeLogger(): Logger {
   const noop = () => undefined;
@@ -9,118 +17,122 @@ function makeLogger(): Logger {
 }
 
 function makeCtx(cfg: Record<string, unknown> = {}): { ctx: Context; manager: AuthorityManager } {
-  const config = { get: (k: string) => cfg[k] } as unknown as ConfigManager;
+  const data: Record<string, unknown> = { ...cfg };
+  const config = {
+    get: (k: string) => data[k],
+    set: (k: string, v: unknown) => {
+      data[k] = v;
+    },
+  } as unknown as ConfigManager;
   const storage = { writeFile: async () => undefined } as unknown as StorageService;
   const manager = new AuthorityManager(config, makeLogger(), storage);
+  const app = { saveConfig: () => undefined };
   const ctx = {
     config,
-    getService: (name: string) => (name === 'authority' ? manager : undefined),
+    getService: (name: string) => (name === 'authority' ? manager : name === 'app' ? app : undefined),
+    getAllServices: () => [],
   } as unknown as Context;
   return { ctx, manager };
 }
 
-describe('authority actions — WebUI surface 防越权', () => {
-  it('setUser: caller 不能把他人权限设为 >= 自身等级（与 /grant 同语义）', async () => {
-    const { ctx } = makeCtx({ ownerAuthority: 5 });
-    const caller = { platform: 'webui', userId: 'console' }; // owner=5
-    await expect(actions.setUser(ctx, { platform: 'onebot', userId: '123', authority: 5 }, caller)).rejects.toThrow(
-      /不能将权限设置为/,
-    );
-    await expect(actions.setUser(ctx, { platform: 'onebot', userId: '123', authority: 6 }, caller)).rejects.toThrow(
-      /不能将权限设置为/,
-    );
+const can = (m: AuthorityManager, platform: string, userId: string, cap: string) =>
+  m.authorize({ platform, userId }, { capability: cap, visibility: 'restricted' }) === null;
+
+describe('setUserCapabilities — 委托子集防越权', () => {
+  it('owner（console）可委托任意能力', async () => {
+    const { ctx, manager } = makeCtx();
+    const owner = { platform: 'webui', userId: 'console' };
+    await actions.setUserCapabilities(ctx, { platform: 'onebot', userId: '123', grant: ['tool:*'] }, owner);
+    expect(can(manager, 'onebot', '123', 'tool:shell.exec')).toBe(true);
   });
 
-  it('setUser: caller 等级内的设置正常生效', async () => {
-    const { ctx, manager } = makeCtx({ ownerAuthority: 5 });
-    const caller = { platform: 'webui', userId: 'console' };
-    const result = await actions.setUser(ctx, { platform: 'onebot', userId: '123', authority: 3 }, caller);
-    expect(result).toMatchObject({ message: expect.stringContaining('权限已设为 3') });
-    expect(manager.getAuthority('onebot', '123')).toBe(3);
+  it('非 owner 授予方只能委托自己持有的能力，越权抛错', async () => {
+    const { ctx, manager } = makeCtx();
+    // 先由 owner 给 alice 授 tool:foo
+    manager.setUserCapabilities(null, { platform: 'webui', userId: 'alice' }, { grant: ['tool:foo'] });
+    const alice = { platform: 'webui', userId: 'alice' };
+    // alice 委托 tool:foo 给 bob → ok
+    await actions.setUserCapabilities(ctx, { platform: 'onebot', userId: 'bob', grant: ['tool:foo'] }, alice);
+    expect(can(manager, 'onebot', 'bob', 'tool:foo')).toBe(true);
+    // alice 想放大成 tool:* → 越权
+    await expect(
+      actions.setUserCapabilities(ctx, { platform: 'onebot', userId: 'bob2', grant: ['tool:*'] }, alice),
+    ).rejects.toThrow(/越权/);
   });
 
-  it('setUser: 低等级 caller 同样被防越权约束', async () => {
-    const { ctx, manager } = makeCtx({ ownerAuthority: 5 });
-    manager.setAuthority('webui', 'alice', 2);
-    const caller = { platform: 'webui', userId: 'alice' };
-    await expect(actions.setUser(ctx, { platform: 'onebot', userId: '123', authority: 2 }, caller)).rejects.toThrow(
-      /不能将权限设置为/,
-    );
-    await actions.setUser(ctx, { platform: 'onebot', userId: '123', authority: 1 }, caller);
-    expect(manager.getAuthority('onebot', '123')).toBe(1);
+  it('记录 grantedBy；listDelegatees 可展开委托树', async () => {
+    const { ctx, manager } = makeCtx({ owners: [{ platform: 'webui', userId: 'boss' }] });
+    const boss = { platform: 'webui', userId: 'boss' };
+    await actions.setUserCapabilities(ctx, { platform: 'onebot', userId: 'kid', grant: ['tool:a'] }, boss);
+    const kids = manager.listDelegatees(boss);
+    expect(kids.some(u => u.userId === 'kid' && u.grantedBy === 'webui:boss')).toBe(true);
   });
 
-  it('setUser: 无 caller（兼容旧调用方）时跳过防越权检查', async () => {
-    const { ctx, manager } = makeCtx({ ownerAuthority: 5 });
-    await actions.setUser(ctx, { platform: 'onebot', userId: '123', authority: 4 });
-    expect(manager.getAuthority('onebot', '123')).toBe(4);
-  });
-
-  it('setUser: 非法入参仍然被拒', async () => {
+  it('缺 platform/userId 抛错', async () => {
     const { ctx } = makeCtx();
-    await expect(actions.setUser(ctx, { platform: 'onebot', authority: 1 })).rejects.toThrow(/必填/);
-    await expect(actions.setUser(ctx, { platform: 'onebot', userId: '1', authority: -1 })).rejects.toThrow(/>= 0/);
+    await expect(actions.setUserCapabilities(ctx, { platform: 'onebot' })).rejects.toThrow(/必填/);
   });
 });
 
-describe('权限依赖图（getPermissionGraph / getPermissionNode）', () => {
-  function setup() {
+describe('getOverview — 总览快照', () => {
+  it('返回 users / owners / 受限清单 / 命令工具可见性', async () => {
     const { ctx, manager } = makeCtx({
-      ownerAuthority: 5,
-      defaultAuthority: 1,
-      owners: [{ platform: 'onebot', userId: '42' }],
+      owners: [{ platform: 'webui', userId: 'boss' }],
+      restrictedCapabilities: ['storage:secret:*'],
     });
-    manager.setAuthority('qq', 'alice', 3);
-    manager.setUserCapabilities('qq', 'alice', { grants: ['tool:file.*'], denies: ['tool:shell.*'] });
-    return { ctx, manager };
-  }
-
-  it('角色链节点与继承边完整；用户/owner/console 各就各位', async () => {
-    const { ctx } = setup();
-    const g = (await actions.getPermissionGraph(ctx, {})) as {
-      nodes: Array<{ data: { id: string } }>;
-      edges: Array<{ data: { id: string; source: string; target: string; label?: string } }>;
-      stats: Record<string, number>;
+    manager.setUserCapabilities(null, { platform: 'onebot', userId: 'a' }, { grant: ['tool:x'] });
+    const ov = (await actions.getOverview(ctx, {})) as {
+      users: Array<{ userId: string }>;
+      owners: unknown[];
+      restrictedCapabilities: string[];
+      commands: unknown[];
+      tools: unknown[];
     };
-    const ids = new Set(g.nodes.map(n => n.data.id));
-    for (let n = 0; n <= 5; n++) expect(ids.has(`role:${n}`)).toBe(true);
-    expect(g.edges.filter(e => e.data.label === '继承')).toHaveLength(5);
-    // alice → role:3；owners 配置 → role:5；console → role:5
-    expect(g.edges.find(e => e.data.source === 'user:qq:alice' && e.data.target === 'role:3')).toBeTruthy();
-    expect(g.edges.find(e => e.data.source === 'user:onebot:42' && e.data.target === 'role:5')).toBeTruthy();
-    expect(g.edges.find(e => e.data.source === 'user:webui:console' && e.data.target === 'role:5')).toBeTruthy();
-    // grant/deny 边指向 capability 节点
-    expect(g.edges.find(e => e.data.label === '授予' && e.data.target === 'cap:tool:file.*')).toBeTruthy();
-    expect(g.edges.find(e => e.data.label === '拒绝' && e.data.target === 'cap:tool:shell.*')).toBeTruthy();
-    // 内置提权清单（6 条）产出 capability → 角色 的"需等级"边
-    expect(g.edges.filter(e => e.data.label === '需等级').length).toBeGreaterThanOrEqual(6);
+    expect(ov.users.some(u => u.userId === 'a')).toBe(true);
+    expect(ov.owners).toEqual([{ platform: 'webui', userId: 'boss' }]);
+    expect(ov.restrictedCapabilities).toContain('storage:secret:*');
+    expect(Array.isArray(ov.commands)).toBe(true);
+    expect(Array.isArray(ov.tools)).toBe(true);
   });
+});
 
-  it('被绑身份只画绑定边（等级随主账户）', async () => {
-    const { ctx, manager } = setup();
-    const { code } = manager.createBindCode('webui', 'boss');
-    manager.consumeBindCode(code, { platform: 'onebot', userId: '777' });
-    const g = (await actions.getPermissionGraph(ctx, {})) as {
-      edges: Array<{ data: { id: string; source: string; target: string; label?: string } }>;
-    };
-    expect(
-      g.edges.find(
-        e => e.data.source === 'user:onebot:777' && e.data.target === 'user:webui:boss' && e.data.label === '绑定',
+describe('密码 / 解绑 — owner 或本人', () => {
+  it('setPassword：本人可设；他人非 owner 被拒；短密码拒', async () => {
+    const { ctx, manager } = makeCtx();
+    const alice = { platform: 'webui', userId: 'alice' };
+    await actions.setPassword(ctx, { platform: 'webui', userId: 'alice', password: 'hunter2' }, alice);
+    expect(await manager.verifyPassword('webui', 'alice', 'hunter2')).toBe(true);
+    // 他人（非 owner）改 alice 密码 → 拒
+    await expect(
+      actions.setPassword(
+        ctx,
+        { platform: 'webui', userId: 'alice', password: 'newpass' },
+        {
+          platform: 'onebot',
+          userId: 'mallory',
+        },
       ),
-    ).toBeTruthy();
-    expect(g.edges.find(e => e.data.source === 'user:onebot:777' && e.data.label === '等级')).toBeUndefined();
+    ).rejects.toThrow(/owner 或本人/);
+    // 短密码
+    await expect(
+      actions.setPassword(ctx, { platform: 'webui', userId: 'alice', password: '123' }, alice),
+    ).rejects.toThrow(/至少 6 位/);
   });
 
-  it('节点详情：user / role / cap 各返回对应键', async () => {
-    const { ctx } = setup();
-    const user = (await actions.getPermissionNode(ctx, { nodeId: 'user:qq:alice' })) as Record<string, unknown>;
-    expect(user.有效等级).toBe(3);
-    expect(user.个别授予).toBe('tool:file.*');
-    const role = (await actions.getPermissionNode(ctx, { nodeId: 'role:5' })) as Record<string, unknown>;
-    expect(String(role.角色)).toContain('owner');
-    const cap = (await actions.getPermissionNode(ctx, {
-      nodeId: 'cap:storage:path:data:/users.json:write',
-    })) as Record<string, unknown>;
-    expect(cap.提权要求).toBe('等级 5');
+  it('deleteUser 删除整条记录', async () => {
+    const { ctx, manager } = makeCtx();
+    manager.setUserCapabilities(null, { platform: 'onebot', userId: 'x' }, { grant: ['tool:a'] });
+    await actions.deleteUser(ctx, { platform: 'onebot', userId: 'x' });
+    expect(manager.listUsers().find(u => u.userId === 'x')).toBeUndefined();
+  });
+});
+
+describe('setVisibilityOverride — owner 调整单操作可见性', () => {
+  it('写入 config.visibilityOverrides；非法值删除条目', async () => {
+    const { ctx } = makeCtx();
+    await actions.setVisibilityOverride(ctx, { name: 'tool:weather', visibility: 'restricted' });
+    expect((ctx.config.get('visibilityOverrides') as Record<string, string>)['tool:weather']).toBe('restricted');
+    await actions.setVisibilityOverride(ctx, { name: 'tool:weather', visibility: 'nonsense' });
+    expect((ctx.config.get('visibilityOverrides') as Record<string, string>)['tool:weather']).toBeUndefined();
   });
 });
