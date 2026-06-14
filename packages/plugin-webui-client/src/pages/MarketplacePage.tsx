@@ -28,13 +28,17 @@ interface PluginManifest {
 }
 
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
+type Source = 'all' | 'official' | 'community';
+type Status = 'all' | 'installed' | 'available';
 
 const SORT_LABELS: Record<SortKey, string> = {
-  relevance: '相关度',
+  relevance: '默认排序',
   downloads: '下载量',
   updated: '最近更新',
   score: '综合评分',
 };
+const SOURCE_LABELS: Record<Source, string> = { all: '全部来源', official: '仅官方', community: '仅社区' };
+const STATUS_LABELS: Record<Status, string> = { all: '全部状态', installed: '已安装', available: '未安装' };
 
 /** 1234 → 1.2k；1200000 → 1.2M */
 function fmtDownloads(n: number): string {
@@ -80,57 +84,65 @@ export function MarketplacePage({
   const [toast, setToast] = useState<string | null>(null);
   const [registry, setRegistry] = useState<MarketPkg[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('relevance');
+  const [source, setSource] = useState<Source>('all');
+  const [status, setStatus] = useState<Status>('all');
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
   };
 
-  const loadRegistry = useCallback(
-    async (q: string) => {
-      setLoading(true);
-      setWarning(null);
-      try {
-        const res = await api<{ packages: MarketPkg[]; warning?: string }>(
-          `/api/marketplace?q=${encodeURIComponent(q)}`,
-        );
-        const installedNames = new Set(plugins.map(p => p.name));
-        setRegistry(
-          (res.packages ?? []).map(p => ({ ...p, installed: p.installed || installedNames.has(p.name) })),
-        );
-        if (res.warning) setWarning(res.warning);
-      } catch {
-        showToast('无法加载插件市场');
-      }
-      setLoading(false);
-      setSearched(true);
-    },
-    [plugins],
-  );
+  // 一次性拉全 aalis-plugin 目录（npm keyword 检索，size=100）。搜索/筛选/排序全在
+  // 前端做（同 koishi：拉一次索引、本地即时过滤），不再每次按键打 npm，既能真正筛选
+  // 又更跟手。安装状态在渲染期按当前 plugins 实时合并，故本函数不依赖 plugins。
+  const loadRegistry = useCallback(async () => {
+    setLoading(true);
+    setWarning(null);
+    try {
+      const res = await api<{ packages: MarketPkg[]; warning?: string }>('/api/marketplace?q=');
+      setRegistry(res.packages ?? []);
+      if (res.warning) setWarning(res.warning);
+    } catch {
+      showToast('无法加载插件市场');
+    }
+    setLoading(false);
+    setLoaded(true);
+  }, []);
 
-  // 进入页面自动加载 + 搜索防抖：search 变化（含 mount 时空串）350ms 触发查询，
-  // 无需手动点“加载市场”。防抖合并连续输入，避免每键一次请求。
   useEffect(() => {
-    const t = setTimeout(() => loadRegistry(search), search ? 350 : 0);
-    return () => clearTimeout(t);
-  }, [search, loadRegistry]);
+    loadRegistry();
+  }, [loadRegistry]);
 
-  // 客户端排序（服务端已 size=100 拉全，纯前端排序无需再请求）。relevance=保留服务端顺序。
-  const sorted = useMemo(() => {
-    if (sort === 'relevance') return registry;
-    const arr = [...registry];
-    arr.sort((a, b) => {
+  const installedNames = useMemo(() => new Set(plugins.map(p => p.name)), [plugins]);
+
+  // 合并实时安装状态 + 本地筛选（来源/状态/搜索词）+ 排序。
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const view = registry
+      .map(p => ({ ...p, installed: p.installed || installedNames.has(p.name) }))
+      .filter(p => {
+        if (source === 'official' && !p.official) return false;
+        if (source === 'community' && p.official) return false;
+        if (status === 'installed' && !p.installed) return false;
+        if (status === 'available' && p.installed) return false;
+        if (q) {
+          const hay = `${p.name} ${p.description} ${(p.keywords ?? []).join(' ')} ${p.author ?? ''}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    if (sort === 'relevance') return view;
+    return view.sort((a, b) => {
       if (sort === 'downloads') return (b.downloads ?? 0) - (a.downloads ?? 0);
       if (sort === 'score') return (b.score ?? 0) - (a.score ?? 0);
       if (sort === 'updated') return Date.parse(b.updated ?? '0') - Date.parse(a.updated ?? '0');
       return 0;
     });
-    return arr;
-  }, [registry, sort]);
+  }, [registry, installedNames, search, sort, source, status]);
 
   const handleInstall = async (name: string, official?: boolean) => {
     // 装前披露：先拉 manifest（aalis.service：需要/提供哪些服务），让 owner 知情同意。
@@ -207,34 +219,50 @@ export function MarketplacePage({
     <div className="page-content page-marketplace">
       {toast && <div className="toast">{toast}</div>}
 
-      <div className="section-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div className="section-label">
         插件市场
+        {loaded && (
+          <span className="market-count">
+            显示 {filtered.length} / 共 {registry.length}
+          </span>
+        )}
+      </div>
+
+      <div className="market-filter-row">
         <input
           className="config-edit-input"
-          style={{ flex: 1, maxWidth: 320 }}
-          placeholder="搜索插件（名称 / 关键词）"
+          style={{ flex: 1, minWidth: 180 }}
+          placeholder="搜索插件（名称 / 描述 / 关键词 / 作者）"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <select
-          className="config-edit-input"
-          style={{ maxWidth: 130 }}
-          value={sort}
-          onChange={e => setSort(e.target.value as SortKey)}
-          title="排序方式"
-        >
+        <select className="config-edit-input" value={source} onChange={e => setSource(e.target.value as Source)}>
+          {(Object.keys(SOURCE_LABELS) as Source[]).map(k => (
+            <option key={k} value={k}>
+              {SOURCE_LABELS[k]}
+            </option>
+          ))}
+        </select>
+        <select className="config-edit-input" value={status} onChange={e => setStatus(e.target.value as Status)}>
+          {(Object.keys(STATUS_LABELS) as Status[]).map(k => (
+            <option key={k} value={k}>
+              {STATUS_LABELS[k]}
+            </option>
+          ))}
+        </select>
+        <select className="config-edit-input" value={sort} onChange={e => setSort(e.target.value as SortKey)} title="排序">
           {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
             <option key={k} value={k}>
               {SORT_LABELS[k]}
             </option>
           ))}
         </select>
-        <button className="btn-sm" onClick={() => loadRegistry(search)} disabled={loading}>
+        <button className="btn-sm" onClick={() => loadRegistry()} disabled={loading}>
           {loading ? '加载中...' : '刷新'}
         </button>
       </div>
 
-      {!searched && loading && (
+      {!loaded && loading && (
         <div className="empty-hint" style={{ padding: 16 }}>
           正在从 npm 加载带 <code>aalis-plugin</code> 标签的插件…
         </div>
@@ -246,11 +274,13 @@ export function MarketplacePage({
         </div>
       )}
 
-      {searched && registry.length === 0 && !loading && !warning && (
-        <div className="empty-hint" style={{ padding: 16 }}>未找到匹配的插件</div>
+      {loaded && filtered.length === 0 && !loading && !warning && (
+        <div className="empty-hint" style={{ padding: 16 }}>
+          {registry.length === 0 ? '未找到任何插件' : '无匹配项 —— 试试调整搜索词或筛选条件'}
+        </div>
       )}
 
-      {sorted.map(pkg => {
+      {filtered.map(pkg => {
         const homeLink = pkg.links?.homepage || pkg.links?.repository || pkg.links?.npm;
         return (
           <div className="marketplace-card" key={pkg.name}>
@@ -265,7 +295,7 @@ export function MarketplacePage({
               <span className="marketplace-card-version">v{pkg.version}</span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
               {pkg.insecure && (
-                <span className="badge" style={{ background: '#e5484d', color: '#fff' }} title="npm 标记为不安全包，谨慎安装">
+                <span className="badge" style={{ background: 'var(--danger)', color: '#fff' }} title="npm 标记为不安全包，谨慎安装">
                   ⚠ 不安全
                 </span>
               )}
@@ -277,33 +307,20 @@ export function MarketplacePage({
 
             {pkg.keywords && pkg.keywords.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                {pkg.keywords.slice(0, 5).map(k => (
-                  <span
-                    key={k}
-                    style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, background: 'var(--chip-bg, #2a2a35)', opacity: 0.85 }}
-                  >
+                {pkg.keywords.slice(0, 6).map(k => (
+                  <button type="button" key={k} className="market-kw" title={`按 “${k}” 筛选`} onClick={() => setSearch(k)}>
                     {k}
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
 
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 12,
-                marginTop: 6,
-                fontSize: 11,
-                opacity: 0.7,
-                alignItems: 'center',
-              }}
-            >
+            <div className="market-meta">
               {pkg.downloads != null && <span title="近一月下载量">⬇ {fmtDownloads(pkg.downloads)}/月</span>}
               {pkg.updated && <span title={new Date(pkg.updated).toLocaleString()}>🕑 {timeAgo(pkg.updated)}</span>}
               {pkg.score != null && (
                 <span
-                  style={{ color: '#f5a623' }}
+                  style={{ color: 'var(--warning)' }}
                   title={
                     pkg.scoreDetail
                       ? `质量 ${((pkg.scoreDetail.quality ?? 0) * 100).toFixed(0)}% · 人气 ${((pkg.scoreDetail.popularity ?? 0) * 100).toFixed(0)}% · 维护 ${((pkg.scoreDetail.maintenance ?? 0) * 100).toFixed(0)}%`
@@ -329,7 +346,7 @@ export function MarketplacePage({
               {pkg.installed && pkg.removable && (
                 <button
                   className="btn btn-sm"
-                  style={{ color: '#e5484d' }}
+                  style={{ color: 'var(--danger)' }}
                   onClick={() => handleUninstall(pkg.name)}
                   disabled={installing === pkg.name}
                   title="卸载插件（删包 + 清配置）"

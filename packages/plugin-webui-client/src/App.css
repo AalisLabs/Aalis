@@ -650,6 +650,58 @@ body.is-dragging-chat .nav-rail:hover {
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
+  /* 作为 <a> 时不用浏览器默认蓝色（与深色背景对比差），用主题前景色 */
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.marketplace-card-name:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+/* 筛选行：搜索 + 来源/状态/排序 + 刷新 */
+.market-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 14px;
+}
+
+.market-count {
+  margin-left: 8px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* 可点击的关键词 chip（点击即按该词筛选，同 koishi 标签过滤） */
+.market-kw {
+  font-size: 0.62rem;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.market-kw:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+/* 卡片底部元信息（下载量 / 更新 / 评分 / 许可） */
+.market-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 0.69rem;
+  color: var(--text-muted);
+  align-items: center;
 }
 
 .marketplace-card-version {
