@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { argv, cwd, exit, stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { pathToFileURL } from 'node:url';
 
 /** scaffold 写入 dependencies 的版本范围。发布新主版本时同步更新。 */
 const AALIS_RANGE = '^0.1.0';
@@ -152,13 +153,67 @@ function fullCatalog(): string[] {
   return [...all];
 }
 
-/** 计算启用集（不含交互组；交互组由 main 补入）。 */
+/** 计算启用集（不含交互组与 live "其他插件"；二者由 main 补入）。 */
 function baseEnabled(tier: Tier): Set<string> {
   if (tier === 'full') return new Set(fullCatalog());
   if (tier === 'bare') return new Set();
   const set = new Set(MINIMAL_BASE);
   if (tier === 'standard') for (const n of STANDARD_EXTRA) set.add(n);
   return set;
+}
+
+// ── live 插件目录（init 时实时查 npm，列全生态供选） ────────────
+//
+// 搜索走官方源（keyword:aalis-plugin，同市场页约定）；npm 镜像（淘宝等）多不支持
+// search API，故这里固定官方源、可 --registry 覆盖。生成项目的 npm install 仍用
+// 用户自己的 npm 配置（与此解耦）。离线/失败回退到静态 STATIC_OTHERS。
+const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
+const AALIS_KEYWORD = 'aalis-plugin';
+
+// 离线回退：仓库内已知、但不在 base/extra/groups 目录里的"其他"官方插件。
+const STATIC_OTHERS = [
+  'asr-openai',
+  'asr-whisper-cpp',
+  'image-sender',
+  'maimai',
+  'mcp-server',
+  'office',
+  'okx-trading',
+  'tool-browser',
+  'tool-code-runner',
+  'tool-math',
+  'tool-onebot',
+  'workflow',
+].map(s => `@aalis/plugin-${s}`);
+
+interface CatalogEntry {
+  name: string;
+  description: string;
+  official: boolean;
+}
+
+/** npm search 响应 → 插件目录条目。纯函数，便于单测。 */
+export function toPluginCatalog(data: {
+  objects?: Array<{ package: { name: string; description?: string } }>;
+}): CatalogEntry[] {
+  return (data.objects ?? []).map(o => ({
+    name: o.package.name,
+    description: o.package.description ?? '',
+    official: o.package.name.startsWith('@aalis/'),
+  }));
+}
+
+/** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
+async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
+  try {
+    const base = registry.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+    const url = `${base}/-/v1/search?text=${encodeURIComponent(`keywords:${AALIS_KEYWORD}`)}&size=100`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    return toPluginCatalog((await r.json()) as Parameters<typeof toPluginCatalog>[0]);
+  } catch {
+    return null;
+  }
 }
 
 // ── 生成的文件 ──────────────────────────────────────────────
@@ -275,6 +330,7 @@ async function main(): Promise<void> {
   const skip = argv.includes('--yes') || argv.includes('-y') || tierFlag !== undefined;
   const noInstall = argv.includes('--no-install');
   const force = argv.includes('--force');
+  const registry = argValue('--registry') ?? DEFAULT_REGISTRY;
   const positional = argv.slice(2).filter(a => !a.startsWith('-'));
   const cliName = positional[0];
 
@@ -302,7 +358,8 @@ async function main(): Promise<void> {
     console.log('  bare      只装 Aalis Core + runtime（完全自定义起点）');
     console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 LLM+1 平台+记忆）');
     console.log('  standard  常用全家桶（minimal + WebUI/人设/向量记忆/工具/调度/技能…）');
-    console.log('  full      目录内全部插件（同类适配器一并全装，可能需手动取舍）\n');
+    console.log('  full      全部官方插件（实时查 npm，同类适配器一并全装，可能需手动取舍）\n');
+    console.log('（minimal/standard 交互时会实时拉取 npm 全生态供你加选“其他插件”）\n');
     const tier = (tierFlag ?? (await ask('模板档 [bare/minimal/standard/full]', 'standard'))).toLowerCase() as Tier;
     if (!['bare', 'minimal', 'standard', 'full'].includes(tier)) {
       console.error(`未知模板档: ${tier}`);
@@ -331,6 +388,54 @@ async function main(): Promise<void> {
         for (const idx of chosen.length > 0 ? chosen : defaults) enabled.add(group.members[idx - 1].name);
       }
     }
+
+    // live 插件目录：实时查 npm（keyword:aalis-plugin），列全生态（官方 + 社区）。
+    // full 档据此装全部官方插件；minimal/standard 交互档据此提供"其他插件"多选。
+    let catalog: CatalogEntry[] | null = null;
+    if (tier !== 'bare') {
+      catalog = await fetchCatalog(registry);
+      if (!catalog) console.warn('（无法连接 npm 检索插件目录，回退离线静态表）');
+    }
+
+    if (tier === 'full') {
+      // full = 全部官方插件：live 优先，失败回退静态（baseEnabled(full) 已含 base∪extra∪groups）
+      if (catalog) {
+        for (const e of catalog) if (e.official) enabled.add(e.name);
+      } else {
+        for (const n of STATIC_OTHERS) enabled.add(n);
+      }
+    } else if ((tier === 'minimal' || tier === 'standard') && !skip) {
+      // 其他插件 live 多选（排除已启用、同类组成员、core/runtime/package-manager）
+      const groupMembers = new Set(GROUPS.flatMap(g => g.members.map(m => m.name)));
+      const exclude = new Set<string>([
+        ...enabled,
+        ...groupMembers,
+        '@aalis/core',
+        '@aalis/runtime',
+        '@aalis/plugin-package-manager',
+      ]);
+      const others = (catalog ?? STATIC_OTHERS.map(n => ({ name: n, description: '', official: true }))).filter(
+        e => !exclude.has(e.name),
+      );
+      if (others.length > 0) {
+        console.log(`\n其他可选插件（${catalog ? 'live from npm' : '离线静态表'}）:`);
+        for (const [i, e] of others.entries()) {
+          console.log(
+            `  ${i + 1}. ${e.name}${e.official ? '' : ' [社区]'}${e.description ? ` — ${e.description}` : ''}`,
+          );
+        }
+        const raw = await ask('选若干（逗号分隔序号，留空=不加）', '');
+        const picks = raw
+          .split(',')
+          .map(s => Number.parseInt(s.trim(), 10))
+          .filter(n => n >= 1 && n <= others.length);
+        for (const idx of picks) enabled.add(others[idx - 1].name);
+      }
+    }
+
+    // 市场需要安装引擎：选了 WebUI 就自动带上 package-manager，否则市场页"安装"会报
+    // 503「package-manager 服务未启用」（webui-server 仅把它列为 dev 依赖，不会被装）。
+    if (enabled.has('@aalis/plugin-webui-server')) enabled.add('@aalis/plugin-package-manager');
 
     // 写文件
     mkdirSync(targetDir, { recursive: true });
@@ -371,7 +476,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(err => {
-  console.error(err);
-  exit(1);
-});
+// 仅在作为 CLI 直接执行时运行 main；被 import（单测纯函数）时不自动跑。
+if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
+  main().catch(err => {
+    console.error(err);
+    exit(1);
+  });
+}
