@@ -1,8 +1,6 @@
 import type { AppService, ConfigSchema, Context } from '@aalis/core';
-import type { SafetyLevel } from '@aalis/plugin-authority-api';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
-import { useDoctorService } from '@aalis/plugin-doctor-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -18,7 +16,6 @@ export const subsystem = 'core';
 export const provides = ['commands'];
 export const inject = {
   required: ['gateway'],
-  optional: ['doctor'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -102,10 +99,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const commands = new CommandRegistry(ctx.logger);
   const storage = createStorageGateway(ctx);
 
-  // 加载指令覆盖配置
-  const cmdOverrides = ctx.config.get('commandOverrides');
-  if (cmdOverrides)
-    commands.loadOverrides(cmdOverrides as Record<string, { authority?: number; safety?: SafetyLevel }>);
+  // 可见性的运行时覆盖（visibilityOverrides）现归 authority 配置，不在指令注册表加载。
 
   // 配置指令系统
   commands.prefix = (config.commandPrefix as string) ?? '/';
@@ -169,7 +163,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 这些来源的权限身份来自创建时固化的 message.actor（如 scheduler 在 setJob 时
   // snapshot 创建者身份），守卫按 actor 的真实等级评估——与普通用户走同一闸门，
   // 不再有任何绕过路径（历史上的 bypassGuard 全绕过已废除）。
-  // skipSafetyCheck 仍然需要：cron 上下文无人可点 dangerous 确认弹窗。
+  // skipConfirm 仍然需要：cron 上下文无人可点受限二次确认弹窗（authorize 仍生效）。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。
   const TRUSTED_SYSTEM_SOURCES = new Set(['scheduler', 'workflow', 'system']);
@@ -198,7 +192,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         sessionType: message.sessionType,
         args: parsed.args,
         raw: parsed.raw,
-        skipSafetyCheck: isSystemTrigger,
+        skipConfirm: isSystemTrigger,
       });
       if (result) {
         if (isSystemTrigger) {
@@ -268,7 +262,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('shutdown', '关闭应用', { authority: 5, safety: 'dangerous' })
+    .command('shutdown', '关闭应用', { visibility: 'restricted' })
     .action(async () => {
       const app = ctx.getService<AppService>('app');
       if (!app) return '无法访问应用服务';
@@ -280,7 +274,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('restart', '重启应用', { authority: 5, safety: 'dangerous' })
+    .command('restart', '重启应用', { visibility: 'restricted' })
     .action(async () => {
       const app = ctx.getService<AppService>('app');
       if (!app) return '无法访问应用服务';
@@ -383,33 +377,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   useCommandService(ctx)
     .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {
-      authority: 3,
-      safety: 'dangerous',
+      visibility: 'restricted',
     })
     .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
     .action(async argv => runClearFromOptions(argv, 'all'));
-
-  // 诊断检查项：检测 commandOverrides 配置中是否存在已不存在的指令名（孤立键）。
-  // 历史上由 plugin-doctor 内置；现迁回 commands 自身——commands 才知道自己注册了哪些指令，
-  // 也最有资格判定 override 是否「孤立」。
-  useDoctorService(ctx).registerCheck({
-    id: 'commands.overrides',
-    category: 'config',
-    pluginName: name,
-    run() {
-      const overrides = commands.getOverrides();
-      const known = new Set(commands.getAll().map(c => c.name));
-      const orphan = Object.keys(overrides).filter(k => !known.has(k));
-      return {
-        id: 'commands.overrides',
-        category: 'config',
-        level: orphan.length === 0 ? 'ok' : 'warn',
-        message:
-          orphan.length === 0
-            ? `已注册指令 ${known.size} 个；覆盖配置 ${Object.keys(overrides).length} 条全部命中`
-            : `commandOverrides 含 ${orphan.length} 条孤立键（无对应指令）`,
-        detail: orphan.length > 0 ? orphan.join(', ') : undefined,
-      };
-    },
-  });
 }

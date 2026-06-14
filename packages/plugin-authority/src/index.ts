@@ -46,14 +46,15 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
   // ===== 执行守卫：能力统一闸 + 受限能力的临时委托确认 =====
   const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
-    if (g.internal) return null; // 受信内部桥接调用（指令→工具等，外层已鉴权）
     const capability = `${g.type}:${g.name}`;
     const overrides = (ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>;
     const visibility = overrides[g.name] ?? g.visibility;
     const identity = { platform: g.platform, userId: g.userId };
+    // authorize 永远先评估（含系统源）——防"桥接/系统调用"绕过能力检查提权
     const denied = authority.authorize(identity, { capability, visibility, resourceCapabilities: g.permissions });
     if (!denied) return null;
-    // 受限被拒 → 临时委托确认流程（白名单 / 会话临时授予 / owner 确认回调）
+    // 受限被拒：系统/受信源无人确认，直接返回拒绝；否则走交互确认（白名单/会话授予/回调）
+    if (g.skipConfirm) return denied;
     const granted = await authority.requestAccess({
       name: g.name,
       type: g.type,
@@ -340,8 +341,8 @@ export const actions: PluginModule['actions'] = {
 };
 
 // createBindCode / unlinkIdentity 对任何登录账户开放（绑码只能绑自己；解绑有 handler 内本人/owner 检查）；
-// 其余 action 不声明 → 默认要求 owner。（gate 的可见性化在 Phase 3）
+// 其余 action 不声明 → 默认 restricted（仅 owner / 被委托）。
 export const actionsMeta: PluginModule['actionsMeta'] = {
-  createBindCode: { authority: 1 },
-  unlinkIdentity: { authority: 1 },
+  createBindCode: { visibility: 'public' },
+  unlinkIdentity: { visibility: 'public' },
 };

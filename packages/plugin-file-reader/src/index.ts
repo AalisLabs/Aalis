@@ -602,7 +602,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const ok = await deleteFile(fileId);
       return ok ? `已删除文件: ${entry.name} (ID: ${fileId})` : `删除失败 (ID: ${fileId})`;
     },
-    safety: 'dangerous',
+    visibility: 'restricted',
   });
 
   // ===== 附件预处理 =====

@@ -15,7 +15,7 @@
 // 实现见 @aalis/plugin-tool-system。
 
 import type { Context } from '@aalis/core';
-import type { ExecutionGuard, PermissionId, SafetyLevel } from '@aalis/plugin-authority-api';
+import type { CapabilityId, CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
@@ -62,23 +62,21 @@ export interface ToolExecuteMessage {
 }
 
 /**
- * 已注册的工具：函数声明 + 处理器 + 权限/安全/分组元信息。
+ * 已注册的工具：函数声明 + 处理器 + 能力可见性/分组元信息。
  */
 export interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
-  /** 最低权限等级 (默认 1) */
-  authority?: number;
-  /** 安全级别 (默认 'safe') */
-  safety?: SafetyLevel;
-  /** 静态权限标识，用于透明展示与策略匹配 */
-  permissions?: PermissionId[];
-  /** 根据工具参数解析动态权限，如 storage:workspace:write */
+  /** 主能力默认可见性（缺省 public）；restricted 须被 owner/委托授予 */
+  visibility?: CapabilityVisibility;
+  /** 静态资源能力标识，用于透明展示与能力匹配 */
+  permissions?: CapabilityId[];
+  /** 根据工具参数解析动态能力，如 storage:workspace:write */
   resolvePermissions?: (
     args: Record<string, unknown>,
     ctx: ToolCallContext,
-  ) => PermissionId[] | Promise<PermissionId[]>;
+  ) => CapabilityId[] | Promise<CapabilityId[]>;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
 }
@@ -88,7 +86,7 @@ export interface ToolSummary {
   name: string;
   description: string;
   groups?: string[];
-  permissions?: PermissionId[];
+  permissions?: CapabilityId[];
 }
 
 /** 工具分组信息 */
@@ -125,34 +123,16 @@ export interface ToolService {
     name: string;
     description: string;
     pluginName: string;
-    /** 生效的 authority（已叠加 override） */
-    authority?: number;
-    /** 生效的 safety（已叠加 override） */
-    safety?: SafetyLevel;
+    /** 主能力默认可见性（缺省 public）；可被 authority 配置的 visibilityOverrides 调整 */
+    visibility: CapabilityVisibility;
     permissions?: string[];
     groups?: string[];
-    /** 插件原始声明的 authority（未被 override 覆盖前的值） */
-    baseAuthority?: number;
-    /** 插件原始声明的 safety */
-    baseSafety?: SafetyLevel;
-    /** 是否有 override（UI 高亮用） */
-    overridden?: boolean;
   }>;
 
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
 
-  /** 注入执行守卫，用于权限等级与 dangerous 二次确认 */
+  /** 注入执行守卫，用于能力裁决与 restricted 二次确认 */
   setExecutionGuard(guard: ExecutionGuard): void;
-
-  // ---- 权限 override（与 CommandService 对齐）----
-  /** 从配置一次性导入 override，会清空现有 */
-  loadOverrides?(overrides: Record<string, { authority?: number; safety?: SafetyLevel }>): void;
-  /** 设置某个工具的 override（按工具名） */
-  setOverride?(name: string, override: { authority?: number; safety?: SafetyLevel }): void;
-  /** 清除某个工具的 override */
-  removeOverride?(name: string): void;
-  /** 获取全部 override（持久化用） */
-  getOverrides?(): Record<string, { authority?: number; safety?: SafetyLevel }>;
 
   unregisterByPlugin(pluginName: string): void;
 

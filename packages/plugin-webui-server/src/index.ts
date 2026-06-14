@@ -379,7 +379,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const authority = ctx.getService<AuthorityService>('authority');
     res.json({
       identity,
-      authority: authority?.getAuthority(identity.platform, identity.userId) ?? null,
       isOwner: authority?.isOwner(identity.platform, identity.userId) ?? false,
     });
   });
@@ -465,7 +464,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // ---------- REST API ----------
 
   // 获取系统状态
-  expressApp.get('/api/status', gate('webui:status:read', 1), (_req, res) => {
+  expressApp.get('/api/status', gate('webui:status:read', 'public'), (_req, res) => {
     const persona = ctx.getService<PersonaService>('persona');
     // 判断上传能力
     const hasMedia = ctx.hasService('media');
@@ -500,8 +499,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         .map(c => ({
           name: c.name,
           description: c.description,
-          authority: c.authority,
-          safety: c.safety,
+          visibility: c.visibility,
         })),
     });
   });
@@ -512,7 +510,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
-  expressApp.get('/api/logs', gate('webui:logs:read', 4), async (_req, res) => {
+  expressApp.get('/api/logs', gate('webui:logs:read', 'restricted'), async (_req, res) => {
     try {
       const entries = await readLogFileTail(200);
       res.json(entries);
@@ -522,7 +520,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 尾部 N 条（首屏 / 显式刷新）
-  expressApp.get('/api/logs/tail', gate('webui:logs:read', 4), async (req, res) => {
+  expressApp.get('/api/logs/tail', gate('webui:logs:read', 'restricted'), async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
     try {
       res.json(await readLogFileTail(limit));
@@ -532,7 +530,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 历史分页：返回 seq < before 的最近 limit 条（向上滚动加载更早）
-  expressApp.get('/api/logs/range', gate('webui:logs:read', 4), async (req, res) => {
+  expressApp.get('/api/logs/range', gate('webui:logs:read', 'restricted'), async (req, res) => {
     const before = Number(req.query.before);
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
     if (!Number.isFinite(before)) {
@@ -547,7 +545,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 获取服务列表（含提供者信息）
-  expressApp.get('/api/services', gate('webui:services:read', 1), async (_req, res) => {
+  expressApp.get('/api/services', gate('webui:services:read', 'public'), async (_req, res) => {
     const pluginMgr = getPluginMgr();
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     const displayNameMap = new Map<string, string>();
@@ -595,7 +593,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
    * 设置服务偏好。body: { contextId: string }
    * 偏好语义：`preferred > priority > 注册顺序`。持久化到 aalis.config.yaml 的 servicePreferences。
    */
-  expressApp.post('/api/services/:name/prefer', gate('webui:services:manage', 'owner'), async (req, res) => {
+  expressApp.post('/api/services/:name/prefer', gate('webui:services:manage', 'restricted'), async (req, res) => {
     const svcName = String(req.params.name);
     const contextId = String((req.body as { contextId?: string })?.contextId ?? '').trim();
     if (!contextId) {
@@ -615,7 +613,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   /** 清除服务偏好 */
-  expressApp.delete('/api/services/:name/prefer', gate('webui:services:manage', 'owner'), async (req, res) => {
+  expressApp.delete('/api/services/:name/prefer', gate('webui:services:manage', 'restricted'), async (req, res) => {
     const svcName = String(req.params.name);
     ctx.unpreferService(svcName);
     ctx.config.removeServicePreference(svcName);
@@ -624,12 +622,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 获取所有平台适配器及其连接状态
-  expressApp.get('/api/platforms', gate('webui:status:read', 1), (_req, res) => {
+  expressApp.get('/api/platforms', gate('webui:status:read', 'public'), (_req, res) => {
     res.json({ platforms: aggregatePlatformDetails(ctx) });
   });
 
   // 获取已注册的工具分组（含元数据 + 各组工具数量 + 贡献插件列表）
-  expressApp.get('/api/tool-groups', gate('webui:status:read', 1), (_req, res) => {
+  expressApp.get('/api/tool-groups', gate('webui:status:read', 'public'), (_req, res) => {
     const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
     const allTools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     const knownNames = new Set(groups.map(g => g.name));
@@ -659,7 +657,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 获取服务分组（manifest 驱动：每个插件自己声明 subsystem，本路由仅聚合）
-  expressApp.get('/api/service-groups', gate('webui:status:read', 1), (_req, res) => {
+  expressApp.get('/api/service-groups', gate('webui:status:read', 'public'), (_req, res) => {
     const pluginMgr = getPluginMgr();
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     // 按 plugin.subsystem 归组（未声明 → 'external'）
@@ -698,7 +696,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 获取所有 LLM 模型（枚举所有注册的 per-model entry）
-  expressApp.get('/api/llm-models', gate('webui:llm:read', 4), async (_req, res) => {
+  expressApp.get('/api/llm-models', gate('webui:llm:read', 'restricted'), async (_req, res) => {
     try {
       const entries = ctx.getAllServices<LLMModel>('llm');
       const models: ModelInfo[] = entries.map(e => ({
@@ -714,7 +712,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // LLM providers + per-provider models（供 schema type='llm-ref' 联动 select 使用）
-  expressApp.get('/api/llm-providers', gate('webui:llm:read', 4), async (_req, res) => {
+  expressApp.get('/api/llm-providers', gate('webui:llm:read', 'restricted'), async (_req, res) => {
     try {
       const entries = ctx.getAllServices<LLMModel>('llm');
       type ProvAgg = {
@@ -754,7 +752,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 触发指定 provider 重新探测远端模型列表（用于 webui 上的"刷新模型"按钮）
   // 仅对在 LLMModel 上实现了 refresh() 的 provider 生效（远端动态发现型，如 Ollama / OpenAI）。
   // 同 provider 下所有 model entries 共享同一份 refresh 闭包，调任一个 entry 即可。
-  expressApp.post('/api/llm-providers/:contextId/refresh', gate('webui:llm:manage', 'owner'), async (req, res) => {
+  expressApp.post('/api/llm-providers/:contextId/refresh', gate('webui:llm:manage', 'restricted'), async (req, res) => {
     const contextId = req.params.contextId;
     if (!contextId) {
       res.status(400).json({ error: 'contextId is required' });
@@ -777,7 +775,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 获取某个服务的可用模型/选项列表
-  expressApp.get('/api/models/:service', gate('webui:models:read', 1), async (req, res) => {
+  expressApp.get('/api/models/:service', gate('webui:models:read', 'public'), async (req, res) => {
     const serviceName = req.params.service;
 
     // 特殊处理 platform：通过 helper 获取已注册的平台名称
