@@ -628,12 +628,20 @@ body.is-dragging-chat .nav-rail:hover {
 }
 
 /* 市场插件卡片 */
+/* 宽屏自适应多列（同概览网格）；窄屏自动回落单列，每列保证信息完整 */
+.marketplace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
 .marketplace-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 12px 14px;
-  margin: 6px 0;
+  margin: 0; /* 间距交给 grid gap */
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
@@ -702,6 +710,12 @@ a.marketplace-card-name:hover {
   font-size: 0.69rem;
   color: var(--text-muted);
   align-items: center;
+}
+
+.market-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .marketplace-card-version {
