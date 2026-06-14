@@ -54,13 +54,19 @@ export class DisposableChain {
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
-    for (let i = this._items.length - 1; i >= 0; i--) {
+    // 先快照并清空，再迭代快照：dispose 期间 disposer 常回调 remove(自身)
+    // （provide / whenService / subscribe 的自移除语义）。若在迭代中 splice 活动
+    // 数组，索引会错位、长度缩短，导致 `this._items[i]` 取到 undefined 而抛
+    // "is not a function"。清空在前则这些 remove 作用于空数组、安全 no-op
+    // （返回 false，符合各自移除点注释的预期），快照索引也始终稳定。
+    const items = this._items;
+    this._items = [];
+    for (let i = items.length - 1; i >= 0; i--) {
       try {
-        this._items[i]();
+        items[i]();
       } catch (err) {
         this.logger?.debug('DisposableChain: dispose 抛出，已忽略:', err);
       }
     }
-    this._items = [];
   }
 }
