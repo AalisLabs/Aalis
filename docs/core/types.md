@@ -134,10 +134,9 @@ interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
-  authority?: number;                 // 默认 1
-  safety?: SafetyLevel;               // 默认 'safe'
-  permissions?: PermissionId[];       // 静态权限，如 tool:file.write
-  resolvePermissions?: (args: Record<string, unknown>, ctx: ToolCallContext) => PermissionId[] | Promise<PermissionId[]>;
+  visibility?: CapabilityVisibility;  // 默认 'public'（'restricted' 则默认禁、需授予）
+  permissions?: CapabilityId[];       // 静态资源能力，如 tool:file.write
+  resolvePermissions?: (args: Record<string, unknown>, ctx: ToolCallContext) => CapabilityId[] | Promise<CapabilityId[]>;
   groups?: string[];                  // 分组，如 'system', 'code-runner'
 }
 
@@ -145,7 +144,7 @@ interface ToolSummary {
   name: string;
   description: string;
   groups?: string[];
-  permissions?: PermissionId[];
+  permissions?: CapabilityId[];
 }
 
 interface ToolCallContext {
@@ -170,7 +169,7 @@ interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
-  getAll(): Array<{ name: string; description: string; pluginName: string; authority?: number; safety?: SafetyLevel; permissions?: string[]; groups?: string[] }>;
+  getAll(): Array<{ name: string; description: string; pluginName: string; visibility: CapabilityVisibility; permissions?: string[]; groups?: string[] }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
   setExecutionGuard(guard: ExecutionGuard): void;
   unregisterByPlugin(pluginName: string): void;
@@ -578,14 +577,13 @@ type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
 interface ExecutionGuardContext {
   name: string;
   type: 'command' | 'tool';
-  authority: number;
-  safety: SafetyLevel;
-  permissions?: PermissionId[];
+  visibility: CapabilityVisibility;   // 主能力默认可见性（操作声明；未标默认 public）
+  permissions?: CapabilityId[];       // 额外触达的资源能力（可见性由 restrictedCapabilities 决定）
   sessionId: string;
   platform: string;
   userId?: string;
   args?: Record<string, unknown>;
-  skipSafetyCheck?: boolean;
+  skipConfirm?: boolean;              // 受信系统源（scheduler）：仍走 authorize，仅跳过交互确认弹窗
 }
 
 type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
@@ -628,9 +626,8 @@ interface ExtendDeclaration {
 interface CommandDefinition {
   name: string;
   description: string;
-  authority?: number;
-  safety?: SafetyLevel;
-  permissions?: PermissionId[];
+  visibility?: CapabilityVisibility;  // 'public'（默认）| 'restricted'；沿点路径向子节点继承
+  permissions?: CapabilityId[];       // 额外触达的资源能力
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   usage?: string;
@@ -642,9 +639,8 @@ interface CommandDefinition {
 interface SubcommandDefinition {
   name: string;
   description: string;
-  authority?: number;
-  safety?: SafetyLevel;
-  permissions?: PermissionId[];
+  visibility?: CapabilityVisibility;  // 未声明则继承父分组可见性
+  permissions?: CapabilityId[];
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   usage?: string;
@@ -661,7 +657,7 @@ interface CommandContext {
   operands?: Record<string, unknown>;
   options?: Record<string, unknown>;
   raw: string;
-  skipSafetyCheck?: boolean;
+  skipConfirm?: boolean;              // 受信系统源跳过交互确认（不绕过 authorize）
 }
 
 interface CommandArgumentDefinition {
@@ -682,6 +678,6 @@ interface CommandOptionDefinition {
   required?: boolean;
 }
 
-type SafetyLevel = 'safe' | 'dangerous';
-type PermissionId = string;
+type CapabilityVisibility = 'public' | 'restricted';
+type CapabilityId = string;
 ```

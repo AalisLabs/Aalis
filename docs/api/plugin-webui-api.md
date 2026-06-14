@@ -31,15 +31,16 @@ interface WebUIService {
   插件 RPC 动作表，webui-server 经 `POST /api/page-action/:plugin/:method` 调起。
   第三参 caller 为权限闸放行后的调用者身份（登录账户或单 token 模式的
   `webui:console`），handler 可用它做业务级检查；忽略即向后兼容；
-- `actionsMeta?: Record<string, { authority?: number }>` —— action 所需最低权限等级。
-  **未声明的 action 默认要求 owner（默认拒绝）**；闸的 capability 形状为
-  `action:<plugin>:<method>`，支持 per-user grant/deny（见 plugin-authority-api）。
+- `actionsMeta?: Record<string, { visibility?: CapabilityVisibility }>` —— action 的默认可见性
+  （`'public'` / `'restricted'`）。**未声明的 action 默认 restricted（默认拒绝）**，作者必须
+  显式标 `visibility: 'public'` 才放开；闸的 capability 形状为 `action:<plugin>:<method>`，
+  支持 per-user grant/deny（见 plugin-authority-api）。
 
 ```ts
 export const actions: PluginModule['actions'] = {
   async getStats(ctx) { /* ... */ },
 };
-export const actionsMeta = { getStats: { authority: 1 } }; // 显式降门槛才对低等级开放
+export const actionsMeta = { getStats: { visibility: 'public' } }; // 显式放开才对所有人开放
 ```
 
 ## 页面注册 helper
@@ -113,8 +114,8 @@ interface WebuiPage {
   key: string;                       // URL 段
   label: string;
   icon?: string;
-  components: WebuiComponent[];
-  permission?: PermissionId;         // 进入页面所需权限（PermissionId 从 @aalis/plugin-authority-api 导入）
+  order?: number;                    // 排序权重（越小越靠前，默认 99）
+  content?: WebuiComponent[];        // 声明式页面内容（不提供则用客户端内置页面）
 }
 ```
 

@@ -196,7 +196,7 @@ declare module '@aalis/core' {
      * core 不感知此字段；host 路由层（POST /api/page-action/:plugin/:method）
      * 在权限闸门放行后以插件自身的 `entry.context` 调用 handler。
      * 第三参 caller 为路由层解析出的调用者身份，handler 可用它做业务级
-     * 检查（如"不能把他人权限设为 >= 自身等级"）；忽略该参数即向后兼容。
+     * 检查（如"不能委托超出自身持有的能力"）；忽略该参数即向后兼容。
      */
     actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>>;
     /**

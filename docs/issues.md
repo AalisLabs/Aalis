@@ -6,11 +6,11 @@
 
 ## 待办问题
 
-### #3 权限体系收尾（主体已完成并实测，见归档与决议）
+### #3 权限体系收尾（已重写为纯能力委托模型，见归档与决议）
 
 - ⏭️ `code_runner` 图灵完备参数需进程级隔离（容器化，新功能 #6）——最后一个已知真洞。
-- ⏭️ 为各插件 action 标注低于 owner 的 `actionsMeta` 等级（authority 的
-  createBindCode/unlinkIdentity 已开先例 authority:1；渐进式松绑，非阻塞）。
+- ⏭️ 为各插件 action 标注 `actionsMeta: { visibility: 'public' }`（默认 restricted；
+  authority 的 createBindCode/unlinkIdentity 已开先例；渐进式松绑，非阻塞）。
 
 ### #9 core 设计层面的已知妥协（低优先级，记录在案）
 
@@ -50,10 +50,17 @@
   merging 锚定在 `'@aalis/core'` 包名上。重新评估触发条件：①core 发 npm 且要给基底层
   单独 1.0 承诺；②出现 kernel-only 真实消费者；③多人协作需要 Conway 边界。
   「基底层不得 import 编排层」由 test/core/architecture.test.ts 设防。
-- 📌 2026-06-13 权限模型定型：**capability 图为唯一裁决机制，数字等级 = 内置角色链
-  的命名**（level-1 ⊂ … ⊂ owner）。否决"等级 + 节点图双轨并行"（Koishi 双轨为反面
-  教材）；插件 `authority: number` 声明照写，语义为"capability 归入 level-N 角色包"。
-  裁决优先级：permissionPolicy > 用户 deny > 用户 grant > 角色链门槛（per-capability）。
+- 📌 2026-06-14 权限模型**重定型（废除数字等级，超越 2026-06-13 角色链方案）**：纯
+  **能力委托图**——owner=`*`；每能力默认可见性 `public`/`restricted`；用户有效能力
+  = owner ? 全部 : (public ∪ 被授予 restricted) − 被禁用；委托树（grantedBy + 子集
+  约束，孙 ⊆ 子 ⊆ owner，天然防越权）。裁决优先级：**deny > owner(*) > public >
+  granted**；全局 `deniedCapabilities` 连 owner 都压过。危险确认 → 临时 restricted
+  委托（requestAccess + restrictedPolicy 限时白名单 + 会话授予，按 sessionId 隔离）。
+  指令/工具声明 `visibility` 取代 `authority+safety`；owner 可经 `visibilityOverrides`
+  单条覆盖。用户迁移：净化无 v2→v3 迁移（users.json v3，旧版本丢弃）。理由：数字等级
+  反直觉、与"委托"心智模型割裂；委托图"高权用户分发子用户并限权"符合人类直觉。
+- 📌 2026-06-13 权限模型定型（**已被上条 2026-06-14 取代，保留备查**）：capability 图
+  为唯一裁决，数字等级 = 内置角色链命名。重写原因见上：等级制最终判定为不必要的复杂度。
 - 📌 2026-06-13 多用户设计调研决议（22 源、25 论断对抗验证，存档
   docs/architecture/multiuser-identity-survey.md）：**当前体系不重构**；绑定语义定型为
   **运行时零合并 + 绑时一次性合并**（吸收 Koishi 指针模型，denies 并集堵"绑定洗白
@@ -64,6 +71,13 @@
 ## 已完成归档（单行索引）
 
 > 2026-06-13 全量核验：以下记载的修复均经 18 个核验代理在当前代码中逐条实证后才压缩为单行。
+
+- ✅ 2026-06-14 #3 权限重写为**纯能力委托图**（feat/auth-capability）：废除数字等级/safety/
+  per-command override；capability-model（纯函数）+ user-store（v3）+ authority-manager
+  模块化（替代 1360 行单体）；commands/tools/mcp/webui 全量切 visibility；契约
+  authority-api 重写、commands-api/tools-api/webui-api actionsMeta 同步；前端 AuthorityPage
+  重写为委托树 + 能力集编辑 + 可见性覆盖。全量 ci:local 绿（693 测试），含修临时委托
+  跨会话泄漏 bug（isTemporarilyAllowed 漏判 sessionId）。
 
 - ✅ 2026-06-13 tokenMode=disabled 多用户收口 + capability 全面展示（5edfe1b）。
 - ✅ 2026-06-13 跨平台身份绑定：绑码/消费/解绑、/bind 仅私聊、WebUI 配套（1581b2e）。

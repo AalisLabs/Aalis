@@ -245,7 +245,7 @@ class CliTui {
     );
 
     this.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async request => {
-      return this.askConfirm(`/${request.name} 是高危指令，按 y 确认，其他键取消`);
+      return this.askConfirm(`/${request.name} 是受限指令，按 y 确认，其他键取消`);
     });
 
     input.on('keypress', this.handleKeypress);

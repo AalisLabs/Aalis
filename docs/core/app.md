@@ -75,16 +75,18 @@ const app = createApp(options?: AppOptions);
 
 App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-commands` 提供 `/help`、`/status`、`/clear`、`/shutdown`、`/restart`，`@aalis/plugin-authority` 提供 `/grant`、`/authority`。
 
-| 指令 | 权限 | 安全等级 | 说明 |
-|---|---|---|---|
-| `/help` | 0 | safe | 列出所有已注册指令 |
-| `/status` | 0 | safe | 显示系统状态（服务可用性、工具数、指令数） |
-| `/clear [--type/-t <type>]` | 0 | safe | 清空当前会话指定类型记忆 |
-| `/clear all [--type/-t <type>]` | 3 | dangerous | 全局清空指定类型记忆 |
-| `/shutdown` | 5 | dangerous | 关闭应用 |
-| `/restart` | 5 | dangerous | 重启应用 |
-| `/grant <platform:userId> <level>` | 2 | safe | 设置用户权限（不可授予 ≥ 自身权限） |
-| `/authority [platform:userId]` | 0 | safe | 查看权限等级 |
+| 指令 | 可见性 | 说明 |
+|---|---|---|
+| `/help` | public | 列出所有已注册指令 |
+| `/status` | public | 显示系统状态（服务可用性、工具数、指令数） |
+| `/clear [--type/-t <type>]` | public | 清空当前会话指定类型记忆 |
+| `/clear all [--type/-t <type>]` | restricted | 全局清空指定类型记忆 |
+| `/shutdown` | restricted | 关闭应用 |
+| `/restart` | restricted | 重启应用 |
+| `/grant <target> <capability>` | restricted | 给用户授予一个能力（受子集约束，不可授予自己不持有的） |
+| `/deny <target> <capability>` | restricted | 禁用用户一个能力 |
+| `/authority [target]` | public | 查看自己或指定用户的能力授予 |
+| `/bind <code>` | public | 将当前平台账号绑定到 WebUI 账户 |
 
 ## 配置同步
 

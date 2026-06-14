@@ -12,8 +12,8 @@ interface CommandDefinition {
   name: string;              // 指令名
   description: string;       // 描述
   action: (ctx: CommandContext) => Promise<string | void>;
-  authority?: number;        // 最低权限等级（默认 1）
-  safety?: SafetyLevel;      // 'safe' | 'dangerous'
+  visibility?: CapabilityVisibility;  // 'public' | 'restricted'（默认 public）
+  permissions?: CapabilityId[];       // 额外触达的资源能力（如 storage:path:...:write）
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   usage?: string;
@@ -54,7 +54,7 @@ interface CommandContext {
   operands?: Record<string, unknown>; // 按 arguments 声明解析出的参数
   options?: Record<string, unknown>;  // 按 options 声明解析出的选项
   raw: string;               // 原始输入文本
-  skipSafetyCheck?: boolean; // 工具桥接时跳过重复确认
+  skipConfirm?: boolean;     // 受信系统源（scheduler）跳过受限确认弹窗；authorize 仍生效
 }
 ```
 
@@ -82,33 +82,24 @@ parseCommand(input)
   ▼
 execute(name, cmdCtx)
   │
-  ├─ 查找指令（含覆盖的权限/安全等级）
-  ├─ 权限检查: authority.getAuthority() ≥ 指令要求
-  ├─ 如果 safety='dangerous':
-  │     authority.confirmDangerous() → 交互式确认
+  ├─ 查找指令（含继承/覆盖后的有效可见性 + 资源能力）
+  ├─ 执行守卫: authority.authorize() —— 逐能力裁决 deny > owner > public > granted
+  ├─ 若命中未授予的 restricted 能力且非 skipConfirm:
+  │     authority.requestAccess() → 临时委托（白名单 / 会话授予 / 确认回调）
   └─ 调用 action(cmdCtx) → 返回结果
 ```
 
-## 覆盖系统
+## 可见性覆盖
 
-支持通过配置覆盖指令的权限等级和安全等级：
+owner 可通过配置覆盖单条操作的默认可见性，无需改插件声明：
 
 ```yaml
-commandOverrides:
-  shutdown:
-    authority: 3         # 降低关闭指令的权限要求
-    safety: safe         # 改为安全操作（不需确认）
-  # 子指令使用冒号拼接路径作为键（可递归多层）
-  clear:all:
-    authority: 4
+visibilityOverrides:
+  shutdown: public        # 把关闭指令放开为所有人可用
+  clear.all: restricted   # 把子指令收紧为需授予（子指令用点路径作为键）
 ```
 
-```typescript
-commands.setOverride('shutdown', { authority: 3, safety: 'safe' });
-commands.setOverride('clear:all', { authority: 4 });
-commands.removeOverride('shutdown');
-commands.getOverrides();
-```
+此外 `restrictedCapabilities`（额外 restricted 能力 glob）与 `deniedCapabilities`（全局硬禁用 glob）也在 authority 配置里调整。
 
 ## 子指令（递归）
 
@@ -126,8 +117,8 @@ commands.command({
   ],
   subcommands: [
     { name: 'list', description: '列出可清理类型', action: async () => listClearTypes() },
-    { name: 'all', description: '【危险】全局清空',
-      authority: 3, safety: 'dangerous',
+    { name: 'all', description: '【受限】全局清空',
+      visibility: 'restricted',
       options: [{ name: 'type', alias: 't', type: 'string[]' }],
       action: async (c) => runClear(c, 'all') },
   ],
@@ -140,23 +131,25 @@ commands.command({
 - 任一层未命中则停在当前节点，调用其 `action`（`args` 为去掉已解析选项后的剩余位置参数）
 - 节点未提供 `action` 时会返回自动生成的 usage
 
-权限/安全级继承：
-- 每个节点未声明 `authority`/`safety` 时继承父节点的有效值（已应用 override）
-- 与根一致，每个节点也可被单独 override，键 = 冒号拼接的路径（如 `clear:all`、`db:migrate:up`）
+可见性继承：
+- 每个节点未声明 `visibility` 时沿点路径继承最近声明的祖先值（restricted 父分组 → restricted 子节点，除非子节点重新声明）；缺省 public
+- 每个节点也可被单独覆盖，键 = 点拼接的路径（如 `clear.all`、`db.migrate.up`），在 `visibilityOverrides` 配置
 - WebUI「权限」页以可折叠的缩进行展示完整指令树，每一节点可独立编辑
 
 ## 基础指令参考
 
-| 指令 | 参数 | 说明 | 权限 | 安全等级 |
-|---|---|---|---|---|
-| `/help` | — | 显示帮助信息 | 0 | safe |
-| `/status` | — | 系统状态 | 0 | safe |
-| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | 0 | safe |
-| `/clear list` | — | 列出可清理类型 | 0 | safe |
-| `/clear all` | `[--type/-t <type>]` | 【危险】清空全部会话指定类型；默认全部类型 | 3 | dangerous |
-| `/model` | `[model_name]` | 查看或切换会话模型 | 0 | safe |
-| `/tools` | — | 列出所有 AI 工具 | 0 | safe |
-| `/shutdown` | — | 关闭应用 | 5 | dangerous |
-| `/restart` | — | 重启应用 | 5 | dangerous |
-| `/grant` | `<platform:userId> <level>` | 设置用户权限 | 2 | safe |
-| `/authority` | `[platform:userId]` | 查看权限等级 | 0 | safe |
+| 指令 | 参数 | 说明 | 可见性 |
+|---|---|---|---|
+| `/help` | — | 显示帮助信息 | public |
+| `/status` | — | 系统状态 | public |
+| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | public |
+| `/clear list` | — | 列出可清理类型 | public |
+| `/clear all` | `[--type/-t <type>]` | 【受限】清空全部会话指定类型；默认全部类型 | restricted |
+| `/model` | `[model_name]` | 查看或切换会话模型 | public |
+| `/tools` | — | 列出所有 AI 工具 | public |
+| `/shutdown` | — | 关闭应用 | restricted |
+| `/restart` | — | 重启应用 | restricted |
+| `/grant` | `<target> <capability>` | 给用户授予一个能力（受子集约束） | restricted |
+| `/deny` | `<target> <capability>` | 禁用用户一个能力 | restricted |
+| `/authority` | `[target]` | 查看自己或指定用户的能力授予 | public |
+| `/bind` | `<code>` | 将当前平台账号绑定到 WebUI 账户 | public |
