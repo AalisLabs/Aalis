@@ -19,18 +19,22 @@ interface AalisConfig {
   disabledPlugins?: string[];
   servicePreferences?: Record<string, string>;
   commandPrefix?: string;          // 指令前缀（默认 '/'）
-  owners?: UserIdentity[];         // Owner 用户列表
-  defaultAuthority?: number;       // 默认权限等级
-  ownerAuthority?: number;         // Owner 权限等级
-  dangerousPolicy?: {
-    allow?: string[];              // 白名单操作
-    duration?: number;             // 白名单有效期(ms)
-    enabledAt?: number;
+
+  // ↓ authority 域业务字段，由 plugin-authority-api 经 declaration merging 注入
+  owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
+  restrictedCapabilities?: string[];                // 受限能力 glob：命中即默认 restricted（内置保护 + 本清单叠加）
+  deniedCapabilities?: string[];                    // 全局硬禁用 glob：命中即拒，连 owner 都压过
+  visibilityOverrides?: Record<string, 'public' | 'restricted'>; // 单操作可见性覆盖（操作名 → 可见性）
+  restrictedPolicy?: {                              // 受限能力临时放行策略
+    allow?: string[];                               // 自动放行的 restricted 能力/操作名 glob（['*'] 全放）
+    duration?: number;                              // 放行时长（秒，0=永久）
   };
-  commandOverrides?: Record<string, { authority?, safety? }>;
-  toolOverrides?: Record<string, { authority?, safety? }>;
 }
 ```
+
+> 模型说明见 [权限系统](authority.md)。`owners` 等 authority 字段在 core 的
+> `AalisConfig` 里不显式声明（core 不知晓权限语义），由 `plugin-authority-api`
+> 经 declaration merging 注入；不装 authority 插件时这些字段无意义。
 
 ## 关键方法
 
