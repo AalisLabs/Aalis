@@ -1,6 +1,7 @@
 {
   "name": "@aalis/core",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "aalis": {
     "core": true

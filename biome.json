@@ -79,12 +79,23 @@
         "packages/plugin-tool-browser/src/index.ts",
         "packages/plugin-cli/src/log-file.ts",
         "packages/create-aalis-plugin/src/**",
-        "packages/create-aalis/src/**"
+        "packages/create-aalis/src/**",
+        "packages/runtime/src/**"
       ],
       "linter": {
         "rules": {
           "style": {
             "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/create-aalis/src/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
           }
         }
       }

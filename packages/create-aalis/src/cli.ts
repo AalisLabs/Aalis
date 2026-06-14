@@ -1,49 +1,46 @@
 #!/usr/bin/env node
 // ============================================================
-// create-aalis — Aalis 快速初始化脚手架
+// create-aalis — 在新目录脚手架一个可运行的独立 Aalis 项目（纯 npm）
 //
-//   create-aalis              → 交互式：选模板档 + 同类适配器 → 写 aalis.config.yaml
-//   create-aalis --yes        → 非交互：用 standard 档 + 默认适配器
+//   npm create aalis my-bot           → 交互：选模板档 + 同类适配器
+//   npm create aalis my-bot -- --yes  → 非交互：standard 档 + 默认适配器
+//   npm create aalis my-bot -- --tier minimal --no-install
 //
-// 现状（Aalis 暂未发 npm）：脚手架在 monorepo 根运行，扫描本地 packages/ 的
-// 真实插件，按"模板档 + 同类组选择 + 微调"生成 aalis.config.yaml（启用集 =
-// 全部插件 − disabledPlugins）。敏感配置（API key / 平台 token）留 WebUI 配置页填。
+// 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
+// index.mjs（一行 startAalis 启动）、aalis.config.yaml、README、.gitignore、.env.example，
+// 随后自动 npm install。启动：cd my-bot && npm start。
 //
-// 设计：选插件心智 = 模板（bare/minimal/standard/full）+ 微调；同类适配器
-// （LLM / 平台 / 记忆后端 / 向量库 / embedding / ASR）交互选用哪些，避免全塞冲突。
+// 选插件心智：模板（bare/minimal/standard/full）+ 同类适配器组（LLM/平台/记忆/
+// embedding/向量库）交互选用哪些，避免同类全塞冲突。所选插件即写入 dependencies，
+// 由 @aalis/runtime 的 node_modules 加载器在启动时发现并加载。
 // ============================================================
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { argv, cwd, exit, stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 
-interface PluginMeta {
-  name: string;
-  displayName: string;
-  subsystem: string;
-}
+/** scaffold 写入 dependencies 的版本范围。发布新主版本时同步更新。 */
+const AALIS_RANGE = '^0.1.0';
 
-/** 模板档：每档是"基础启用集"，full 为全部、bare 为空。 */
+/** 模板档：每档是“基础启用集”，full 为全部目录、bare 为空。 */
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 
-// ── curated 归类（随仓库插件增减维护） ──────────────────────
-//
-// 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（让 Aalis 能跑起一个最简
-// 对话实例：网关路由 → 指令/agent → 会话 → 权限）。同类适配器不在此列，由
-// GROUPS 交互选择补入。
+// 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
+// 会话 → 权限 → 跨会话历史）。同类适配器不在此列，由 GROUPS 交互选择补入。
 const MINIMAL_BASE = [
-  '@aalis/plugin-storage-local', // storage 网关实现（众多插件依赖）
-  '@aalis/plugin-process-local', // process 网关实现
-  '@aalis/plugin-gateway', // 入站消息路由
-  '@aalis/plugin-commands', // 内置指令
-  '@aalis/plugin-flow-control', // 消息流控
-  '@aalis/plugin-agent', // Agent 核心
-  '@aalis/plugin-tools', // 工具注册表
-  '@aalis/plugin-prompt-budget', // Agent 套件：预算自检
-  '@aalis/plugin-authority', // 权限（商业级默认带）
-  '@aalis/plugin-session-manager', // 会话管理
-  '@aalis/plugin-memory-history', // 跨会话历史上下文
+  '@aalis/plugin-storage-local',
+  '@aalis/plugin-process-local',
+  '@aalis/plugin-gateway',
+  '@aalis/plugin-commands',
+  '@aalis/plugin-flow-control',
+  '@aalis/plugin-agent',
+  '@aalis/plugin-tools',
+  '@aalis/plugin-prompt-budget',
+  '@aalis/plugin-authority',
+  '@aalis/plugin-session-manager',
+  '@aalis/plugin-memory-history',
 ];
 
 // standard 在 minimal 之上增加的常用能力（管理界面 / 人设 / 记忆增强 / 常用工具 /
@@ -80,7 +77,6 @@ interface AdapterGroup {
   label: string;
   mode: 'exclusive' | 'multi';
   members: Array<{ name: string; label: string; default?: boolean }>;
-  /** 该组在哪些档出现（bare 永不问） */
   tiers: Tier[];
 }
 
@@ -140,62 +136,147 @@ const GROUPS: AdapterGroup[] = [
   },
 ];
 
-const CONFIG_FILE = 'aalis.config.yaml';
+// 已知插件的配置桩 + 引用的环境变量（写进 aalis.config.yaml 与 .env.example）。
+// 仅覆盖需密钥/地址的常见适配器；其余插件用默认配置启动。
+const KNOWN_CONFIG: Record<string, { config: Record<string, string>; env?: string[] }> = {
+  '@aalis/plugin-deepseek': { config: { apiKey: '${DEEPSEEK_API_KEY}' }, env: ['DEEPSEEK_API_KEY'] },
+  '@aalis/plugin-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
+  '@aalis/plugin-embedding-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
+  '@aalis/plugin-websearch-serper': { config: { apiKey: '${SERPER_API_KEY}' }, env: ['SERPER_API_KEY'] },
+};
 
-/** 扫描 monorepo packages/ 下的真实插件（导出 apply、非 -api 包）。 */
-function scanPlugins(packagesDir: string): PluginMeta[] {
-  const out: PluginMeta[] = [];
-  for (const dirent of readdirSync(packagesDir, { withFileTypes: true })) {
-    if (!dirent.isDirectory()) continue;
-    const idx = resolve(packagesDir, dirent.name, 'src/index.ts');
-    const pkg = resolve(packagesDir, dirent.name, 'package.json');
-    if (!existsSync(idx) || !existsSync(pkg)) continue;
-    const src = readFileSync(idx, 'utf-8');
-    if (!/export\s+(?:async\s+function\s+apply|function\s+apply|const\s+apply)/.test(src)) continue;
-    const name = (JSON.parse(readFileSync(pkg, 'utf-8')) as { name?: string }).name ?? '';
-    if (!name || name.endsWith('-api')) continue;
-    const displayName = src.match(/export\s+const\s+displayName\s*=\s*'([^']+)'/)?.[1] ?? name;
-    const subsystem = src.match(/export\s+const\s+subsystem\s*=\s*'([^']+)'/)?.[1] ?? 'other';
-    out.push({ name, displayName, subsystem });
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
+/** full 档 = 全目录（base ∪ extra ∪ 所有组成员）。 */
+function fullCatalog(): string[] {
+  const all = new Set<string>([...MINIMAL_BASE, ...STANDARD_EXTRA]);
+  for (const g of GROUPS) for (const m of g.members) all.add(m.name);
+  return [...all];
 }
 
-/** 生成 aalis.config.yaml 文本（启用集 enabled，其余进 disabledPlugins）。 */
-function renderConfig(all: PluginMeta[], enabled: Set<string>): string {
-  const disabled = all.map(p => p.name).filter(n => !enabled.has(n));
-  const lines = [
-    'name: Aalis',
-    'logLevel: info',
-    '# 启用的插件用默认配置启动；敏感配置（API key/token）请在 WebUI 配置页填写。',
-    'plugins: {}',
-  ];
-  if (disabled.length > 0) {
-    lines.push('disabledPlugins:');
-    for (const n of disabled) lines.push(`  - "${n}"`);
+/** 计算启用集（不含交互组；交互组由 main 补入）。 */
+function baseEnabled(tier: Tier): Set<string> {
+  if (tier === 'full') return new Set(fullCatalog());
+  if (tier === 'bare') return new Set();
+  const set = new Set(MINIMAL_BASE);
+  if (tier === 'standard') for (const n of STANDARD_EXTRA) set.add(n);
+  return set;
+}
+
+// ── 生成的文件 ──────────────────────────────────────────────
+
+function renderPackageJson(projectName: string, enabled: string[]): string {
+  const deps: Record<string, string> = {
+    '@aalis/core': AALIS_RANGE,
+    '@aalis/runtime': AALIS_RANGE,
+  };
+  for (const n of enabled.sort()) deps[n] = AALIS_RANGE;
+  return `${JSON.stringify(
+    {
+      name: projectName,
+      version: '0.1.0',
+      private: true,
+      type: 'module',
+      description: `${projectName} —— 基于 Aalis 的 AI 助手`,
+      // 默认 dev 模式（startAalis 据 NODE_ENV!=='production' 判定）；
+      // 生产部署用 `NODE_ENV=production node index.mjs`（Windows 用 set/$env:）。
+      scripts: {
+        start: 'node index.mjs',
+      },
+      dependencies: deps,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function renderEntry(): string {
+  return `import { startAalis } from '@aalis/runtime';
+
+// 从 aalis.config.yaml 读配置、从 node_modules 加载已装的 @aalis 插件、启动。
+startAalis().catch(err => {
+  console.error('Aalis 启动失败:', err);
+  process.exit(1);
+});
+`;
+}
+
+function renderConfig(enabled: Set<string>): string {
+  const lines = ['name: Aalis', 'logLevel: info'];
+  const configured = [...enabled].filter(n => KNOWN_CONFIG[n]).sort();
+  if (configured.length > 0) {
+    lines.push('plugins:');
+    for (const n of configured) {
+      lines.push(`  "${n}":`);
+      for (const [k, v] of Object.entries(KNOWN_CONFIG[n].config)) {
+        lines.push(`    ${k}: "${v}"`);
+      }
+    }
   } else {
-    lines.push('disabledPlugins: []');
+    lines.push('# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写或用 ${ENV} 引用环境变量。');
+    lines.push('plugins: {}');
   }
+  lines.push('disabledPlugins: []');
   return `${lines.join('\n')}\n`;
 }
 
+function renderEnvExample(enabled: Set<string>): string {
+  const vars = new Set<string>();
+  for (const n of enabled) for (const e of KNOWN_CONFIG[n]?.env ?? []) vars.add(e);
+  if (vars.size === 0)
+    return '# 本项目所选插件未引用环境变量。需要时在此添加，并在 aalis.config.yaml 用 ${VAR} 引用。\n';
+  return `# 复制为 .env 并填值（或直接在 aalis.config.yaml 写死）。aalis.config.yaml 用 \${VAR} 引用。\n${[...vars]
+    .sort()
+    .map(v => `${v}=`)
+    .join('\n')}\n`;
+}
+
+function renderGitignore(): string {
+  return `${['node_modules/', 'data/', '*.log', '.env', 'dist/'].join('\n')}\n`;
+}
+
+function renderReadme(projectName: string, enabled: Set<string>): string {
+  const hasWebui = enabled.has('@aalis/plugin-webui-server');
+  return `# ${projectName}
+
+基于 [Aalis](https://www.npmjs.com/package/@aalis/core) 脚手架生成的独立 AI 助手项目。
+
+## 启动
+
+\`\`\`bash
+npm install        # 若 create 时跳过了安装
+npm start
+\`\`\`
+
+## 配置
+
+- 编辑 \`aalis.config.yaml\` 调整插件与参数。
+- 密钥/令牌：填入 \`.env\`（参考 \`.env.example\`），在 \`aalis.config.yaml\` 用 \`\${VAR}\` 引用；${
+    hasWebui ? '或启动后在 WebUI 配置页填写。' : '或直接写入 aalis.config.yaml。'
+  }
+${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:8080 。\n' : ''}
+## 装更多插件
+
+\`\`\`bash
+npm install @aalis/plugin-<name>   # 装上即被自动发现加载
+\`\`\`
+${hasWebui ? '或在 WebUI 的「插件市场」页搜索安装。\n' : ''}
+> 启用集：${[...enabled].length} 个插件。完整生态见 npm 上的 \`aalis-plugin\` 关键词。
+`;
+}
+
+// ── 主流程 ──────────────────────────────────────────────────
+
+function argValue(flag: string): string | undefined {
+  const i = argv.indexOf(flag);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
 async function main(): Promise<void> {
-  // --tier <bare|minimal|standard|full>：非交互指定档位（同类适配器取默认），
-  // 利于 CI/脚本化初始化。--yes 等价于 --tier standard。
-  const tierIdx = argv.indexOf('--tier');
-  const tierFlag = tierIdx >= 0 ? argv[tierIdx + 1] : undefined;
+  const tierFlag = argValue('--tier') as Tier | undefined;
   const skip = argv.includes('--yes') || argv.includes('-y') || tierFlag !== undefined;
-  const packagesDir = resolve(cwd(), 'packages');
-  if (!existsSync(packagesDir)) {
-    console.error(`未找到 packages/ 目录（当前: ${cwd()}）。请在 Aalis 仓库根目录运行 create-aalis。`);
-    exit(1);
-  }
-  const all = scanPlugins(packagesDir);
-  if (all.length === 0) {
-    console.error('packages/ 下未扫描到任何插件。');
-    exit(1);
-  }
-  const known = new Set(all.map(p => p.name));
+  const noInstall = argv.includes('--no-install');
+  const force = argv.includes('--force');
+  const positional = argv.slice(2).filter(a => !a.startsWith('-'));
+  const cliName = positional[0];
 
   const rl = createInterface({ input: stdin, output: stdout });
   const ask = async (q: string, def: string): Promise<string> => {
@@ -205,33 +286,38 @@ async function main(): Promise<void> {
   };
 
   try {
-    console.log('\n=== Aalis 快速初始化 ===\n');
-    console.log(`扫描到 ${all.length} 个本地插件。选择一个模板档，随后微调同类适配器。\n`);
-    console.log('  bare      只启用 Aalis Core（不启用任何官方插件，完全自定义起点）');
-    console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 个 LLM+1 个平台+记忆）');
+    console.log('\n=== 创建 Aalis 项目 ===\n');
+    const projectName = cliName ?? (await ask('项目目录名', 'my-aalis-bot'));
+    if (!/^[a-zA-Z0-9._@/-]+$/.test(projectName)) {
+      console.error(`非法项目名: ${projectName}`);
+      exit(1);
+    }
+    const targetDir = resolve(cwd(), projectName);
+    if (existsSync(targetDir) && readdirSync(targetDir).length > 0 && !force) {
+      console.error(`目录已存在且非空: ${targetDir}（加 --force 覆盖写入）`);
+      exit(1);
+    }
+
+    console.log('\n模板档：');
+    console.log('  bare      只装 Aalis Core + runtime（完全自定义起点）');
+    console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 LLM+1 平台+记忆）');
     console.log('  standard  常用全家桶（minimal + WebUI/人设/向量记忆/工具/调度/技能…）');
-    console.log('  full      启用全部本地插件（同类适配器一并全装，可能需手动取舍）\n');
+    console.log('  full      目录内全部插件（同类适配器一并全装，可能需手动取舍）\n');
     const tier = (tierFlag ?? (await ask('模板档 [bare/minimal/standard/full]', 'standard'))).toLowerCase() as Tier;
     if (!['bare', 'minimal', 'standard', 'full'].includes(tier)) {
       console.error(`未知模板档: ${tier}`);
       exit(1);
     }
 
-    const enabled = new Set<string>();
-    if (tier === 'full') {
-      for (const p of all) enabled.add(p.name);
-    } else if (tier !== 'bare') {
-      for (const n of MINIMAL_BASE) if (known.has(n)) enabled.add(n);
-      if (tier === 'standard') for (const n of STANDARD_EXTRA) if (known.has(n)) enabled.add(n);
+    const enabled = baseEnabled(tier);
 
-      // 同类适配器交互选择（仅问该档出现的组）
+    // 同类适配器交互选择（仅 minimal/standard，且仅该档出现的组）
+    if (tier === 'minimal' || tier === 'standard') {
       for (const group of GROUPS) {
         if (!group.tiers.includes(tier)) continue;
-        const members = group.members.filter(m => known.has(m.name));
-        if (members.length === 0) continue;
         console.log(`\n${group.label}:`);
-        for (const [i, m] of members.entries()) console.log(`  ${i + 1}. ${m.label}`);
-        const defaults = members.filter(m => m.default).map(m => members.indexOf(m) + 1);
+        for (const [i, m] of group.members.entries()) console.log(`  ${i + 1}. ${m.label}`);
+        const defaults = group.members.filter(m => m.default).map(m => group.members.indexOf(m) + 1);
         const defStr = group.mode === 'exclusive' ? String(defaults[0] ?? 1) : defaults.join(',');
         const raw = await ask(
           group.mode === 'exclusive' ? '选一个（序号）' : '选若干（逗号分隔序号，留空=默认）',
@@ -240,49 +326,46 @@ async function main(): Promise<void> {
         const picks = raw
           .split(',')
           .map(s => Number.parseInt(s.trim(), 10))
-          .filter(n => n >= 1 && n <= members.length);
+          .filter(n => n >= 1 && n <= group.members.length);
         const chosen = group.mode === 'exclusive' ? picks.slice(0, 1) : picks;
-        for (const idx of chosen.length > 0 ? chosen : defaults) enabled.add(members[idx - 1].name);
+        for (const idx of chosen.length > 0 ? chosen : defaults) enabled.add(group.members[idx - 1].name);
       }
     }
 
-    // 微调：额外启用/禁用（可跳过）
-    if (!skip && tier !== 'bare') {
-      const extra = (await ask('\n额外启用的插件名（逗号分隔，留空跳过）', '')).trim();
-      for (const n of extra
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean)) {
-        if (known.has(n)) enabled.add(n);
-        else console.warn(`  忽略未知插件: ${n}`);
+    // 写文件
+    mkdirSync(targetDir, { recursive: true });
+    const enabledList = [...enabled];
+    writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabledList), 'utf-8');
+    writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
+    writeFileSync(resolve(targetDir, 'aalis.config.yaml'), renderConfig(enabled), 'utf-8');
+    writeFileSync(resolve(targetDir, '.env.example'), renderEnvExample(enabled), 'utf-8');
+    writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
+    writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
+
+    console.log(`\n✓ 已生成项目: ${targetDir}（启用 ${enabledList.length} 个插件）`);
+
+    // 安装依赖
+    if (!noInstall) {
+      console.log('\n正在 npm install（可能需要几分钟）…\n');
+      const r = spawnSync('npm', ['install'], {
+        cwd: targetDir,
+        stdio: 'inherit',
+        shell: process.platform === 'win32',
+      });
+      if (r.status !== 0) {
+        console.error('\nnpm install 失败。可手动进入目录重试：');
+        console.error(`  cd ${projectName} && npm install`);
+        exit(1);
       }
-      const off = (await ask('额外禁用的插件名（逗号分隔，留空跳过）', '')).trim();
-      for (const n of off
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean))
-        enabled.delete(n);
     }
 
-    const target = resolve(cwd(), CONFIG_FILE);
-    if (existsSync(target)) {
-      if (skip) {
-        // 非交互模式遇已存在文件：必须 --force 才覆盖，否则明确报错（不静默跳过）
-        if (!argv.includes('--force')) {
-          console.error(`${CONFIG_FILE} 已存在。非交互模式（--tier/--yes）请加 --force 覆盖。`);
-          exit(1);
-        }
-      } else {
-        const ow = await ask(`\n${CONFIG_FILE} 已存在，覆盖？[y/N]`, 'N');
-        if (ow.toLowerCase() !== 'y') {
-          console.log('已取消，未写入。');
-          exit(0);
-        }
-      }
-    }
-    writeFileSync(target, renderConfig(all, enabled), 'utf-8');
-    console.log(`\n✓ 已写入 ${CONFIG_FILE}：启用 ${enabled.size} / ${all.length} 个插件。`);
-    console.log('  启动：pnpm dev    然后在 WebUI 配置页填写 API key / 平台 token。\n');
+    console.log('\n下一步：');
+    if (noInstall) console.log(`  cd ${projectName} && npm install`);
+    else console.log(`  cd ${projectName}`);
+    const needsEnv = enabledList.some(n => KNOWN_CONFIG[n]?.env?.length);
+    if (needsEnv) console.log('  cp .env.example .env   # 填入 API key');
+    console.log('  npm start');
+    console.log('');
   } finally {
     rl.close();
   }

@@ -1,6 +1,7 @@
 {
   "name": "@aalis/plugin-checkpoint",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "keywords": [
     "aalis-plugin"
