@@ -2317,7 +2317,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('profile.clear', '清除你自己的事实档案', { authority: 2 })
+    .command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' })
     .action(async argv => {
       const userId = argv.session.userId;
       if (!userId) return '当前会话未识别用户身份，无法清除档案。';
@@ -2348,7 +2348,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { authority: 3, safety: 'dangerous' })
+    .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { visibility: 'restricted' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.deleteMetadata) return '记忆服务不支持档案删除。';
@@ -2362,7 +2362,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('profile.clear.nuke', '【危险】清空所有用户档案', { authority: 3, safety: 'dangerous' })
+    .command('profile.clear.nuke', '【危险】清空所有用户档案', { visibility: 'restricted' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.listMetadata || !memory?.deleteMetadata) {
@@ -2404,7 +2404,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('instruct.add <text:text>', '手动添加一条第三方行为指令', { authority: 2 })
+    .command('instruct.add <text:text>', '手动添加一条第三方行为指令', { visibility: 'restricted' })
     .action(async (argv, text) => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
       const body = typeof text === 'string' ? text.trim() : '';
@@ -2433,7 +2433,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('instruct.remove <id:string>', '按 id 删除一条第三方行为指令', { authority: 2 })
+    .command('instruct.remove <id:string>', '按 id 删除一条第三方行为指令', { visibility: 'restricted' })
     .action(async (_argv, id) => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
       const targetId = typeof id === 'string' ? id.trim() : '';
@@ -2448,8 +2448,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   useCommandService(ctx)
     .command('instruct.clear', '【危险】清空当前 persona 的全部第三方行为指令', {
-      authority: 3,
-      safety: 'dangerous',
+      visibility: 'restricted',
     })
     .action(async () => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';

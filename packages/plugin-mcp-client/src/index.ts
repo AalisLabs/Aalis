@@ -13,7 +13,7 @@
  */
 
 import type { AppService, ConfigSchema, Context, PluginManagerService } from '@aalis/core';
-import type { SafetyLevel } from '@aalis/plugin-authority-api';
+import type { CapabilityVisibility } from '@aalis/plugin-authority-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-tools-api 触发 declaration merging，使 ctx.registerTool 类型生效
@@ -32,10 +32,8 @@ interface ServerSpec {
   env?: Record<string, string>;
   /** 是否启用，默认 true */
   enabled?: boolean;
-  /** 该 server 提供的工具的安全级别，默认 'safe'；建议对文件/shell 类设为 'dangerous' */
-  safety?: SafetyLevel;
-  /** 该 server 提供的工具的最低权限等级，默认 1 */
-  authority?: number;
+  /** 该 server 提供的工具的默认可见性，默认 'public'；建议对文件/shell 类设为 'restricted' */
+  visibility?: CapabilityVisibility;
 }
 
 interface Config {
@@ -88,21 +86,15 @@ export const configSchema: ConfigSchema = {
         description: '关闭可临时跳过该 server 而不删除整条配置。',
         default: true,
       },
-      safety: {
+      visibility: {
         type: 'select',
-        label: '安全级别',
-        description: '控制该 server 暴露的所有工具的默认安全级别；dangerous 受 allowDangerous 约束。',
-        default: 'safe',
+        label: '默认可见性',
+        description: '控制该 server 暴露的所有工具的默认可见性；restricted 须被 owner/委托授予才能调用。',
+        default: 'public',
         options: [
-          { label: 'safe（安全）', value: 'safe' },
-          { label: 'dangerous（高危，受授权策略约束）', value: 'dangerous' },
+          { label: 'public（默认可用）', value: 'public' },
+          { label: 'restricted（受限，须授予）', value: 'restricted' },
         ],
-      },
-      authority: {
-        type: 'number',
-        label: '最低权限等级',
-        description: '调用该 server 工具所需的最低 authority；默认 1。',
-        default: 1,
       },
     },
     default: [],
@@ -176,8 +168,7 @@ function registerSelfServiceTools(ctx: Context): void {
       },
     },
     groups: ['mcp:_meta'],
-    safety: 'safe',
-    authority: 1,
+    visibility: 'public',
     handler: async () => {
       const cfg = ctx.config.getPluginConfig<{ servers?: unknown[] }>(name);
       const list = (cfg.servers ?? []).map((s, i) => {
@@ -212,9 +203,8 @@ function registerSelfServiceTools(ctx: Context): void {
       },
     },
     groups: ['mcp:_meta'],
-    // 写配置 + 触发 bounce 不算 dangerous（不能 spawn 任意命令），但仍要求 authority>=2。
-    safety: 'safe',
-    authority: 2,
+    // 写配置 + 触发 bounce：受限能力，须被 owner/委托授予。
+    visibility: 'restricted',
     handler: async args => {
       const id = typeof args.id === 'string' ? args.id : '';
       const enabled = args.enabled === true;
@@ -289,12 +279,11 @@ function normalizeServerSpec(raw: unknown, index: number, ctx: Context): ServerS
     }
   }
 
-  const safety: SafetyLevel | undefined =
-    r.safety === 'dangerous' ? 'dangerous' : r.safety === 'safe' ? 'safe' : undefined;
-  const authority = typeof r.authority === 'number' ? r.authority : undefined;
+  const visibility: CapabilityVisibility | undefined =
+    r.visibility === 'restricted' ? 'restricted' : r.visibility === 'public' ? 'public' : undefined;
   const enabled = r.enabled !== false;
 
-  return { id, command, args, env, enabled, safety, authority };
+  return { id, command, args, env, enabled, visibility };
 }
 
 async function connectServer(ctx: Context, spec: ServerSpec): Promise<void> {
@@ -346,8 +335,7 @@ export async function bridgeClientToTools(ctx: Context, client: Client, spec: Se
     useToolService(ctx).register({
       definition,
       groups: [`mcp:${spec.id}`],
-      safety: spec.safety ?? 'safe',
-      authority: spec.authority ?? 1,
+      visibility: spec.visibility ?? 'public',
       handler: async args => {
         try {
           const result = await client.callTool({

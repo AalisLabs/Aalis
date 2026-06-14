@@ -375,8 +375,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    authority: 3,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:file.write', 'storage:write'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
@@ -416,8 +415,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    authority: 3,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:file.edit', 'storage:write'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
@@ -482,8 +480,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    authority: 3,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:file.append', 'storage:write'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
@@ -528,8 +525,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    authority: 3,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:file.delete', 'storage:delete'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'delete'),
     handler: async (args, callCtx) => {

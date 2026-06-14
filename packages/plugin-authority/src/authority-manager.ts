@@ -169,7 +169,8 @@ export class AuthorityManager implements AuthorityService {
     this.confirmHandlers.set(platform, handler);
   }
 
-  isTemporarilyAllowed(capability: CapabilityId): boolean {
+  /** 该能力是否已被（白名单/临时委托）放行（内部用，requestAccess 调用） */
+  private isTemporarilyAllowed(capability: CapabilityId): boolean {
     const policy = this.config.get('restrictedPolicy');
     if (policy?.allow && policy.allow.length > 0) {
       if (!policy.duration || policy.duration <= 0 || (this.policyEnabledAt && (Date.now() - this.policyEnabledAt) / 1000 <= policy.duration)) {

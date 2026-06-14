@@ -8,7 +8,7 @@
  * 外部 client 通过 SSE URL 连接。
  *
  * 安全考虑：
- * - 默认拒绝 safetyLevel='dangerous' 的工具暴露；config.allowDangerous 可改
+ * - 默认拒绝 visibility='restricted' 的工具暴露；config.allowRestricted 可改
  * - config.toolGroups 白名单：仅暴露指定分组（空数组=全部允许）
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
@@ -25,10 +25,10 @@ interface Config {
   port: number;
   /** 监听地址，默认 127.0.0.1 */
   bind: string;
-  /** 仅暴露这些工具分组（空 = 全部允许，但仍受 allowDangerous 约束） */
+  /** 仅暴露这些工具分组（空 = 全部允许，但仍受 allowRestricted 约束） */
   toolGroups: string[];
-  /** 是否允许暴露 safetyLevel='dangerous' 的工具 */
-  allowDangerous: boolean;
+  /** 是否允许暴露 visibility='restricted' 的工具 */
+  allowRestricted: boolean;
 }
 
 export const name = '@aalis/plugin-mcp-server';
@@ -41,7 +41,7 @@ export const defaultConfig: Config = {
   port: 7861,
   bind: '127.0.0.1',
   toolGroups: [],
-  allowDangerous: false,
+  allowRestricted: false,
 };
 
 export const configSchema: ConfigSchema = {
@@ -54,8 +54,8 @@ export const configSchema: ConfigSchema = {
   bind: { type: 'string', label: '监听地址', default: '127.0.0.1' } as ConfigSchema[string],
   toolGroups: {
     type: 'array',
-    label: '允许的工具分组（空=全部，受危险开关约束）',
-    description: '空列表 = 暴露所有分组的工具（仍受 allowDangerous 约束）。',
+    label: '允许的工具分组（空=全部，受受限开关约束）',
+    description: '空列表 = 暴露所有分组的工具（仍受 allowRestricted 约束）。',
     items: {
       name: {
         type: 'string',
@@ -66,9 +66,9 @@ export const configSchema: ConfigSchema = {
     },
     default: [],
   } as ConfigSchema[string],
-  allowDangerous: {
+  allowRestricted: {
     type: 'boolean',
-    label: '允许暴露 dangerous 工具',
+    label: '允许暴露 restricted（受限）工具',
     default: false,
   } as ConfigSchema[string],
 };
@@ -149,7 +149,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   });
 
   ctx.logger.info(
-    `MCP server 监听 http://${config.bind}:${config.port}/sse (allowDangerous=${config.allowDangerous}, groups=${config.toolGroups.length === 0 ? '*' : config.toolGroups.join(',')})`,
+    `MCP server 监听 http://${config.bind}:${config.port}/sse (allowRestricted=${config.allowRestricted}, groups=${config.toolGroups.length === 0 ? '*' : config.toolGroups.join(',')})`,
   );
 
   ctx.onDispose(async () => {
@@ -177,7 +177,7 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
     const all = tools.getAll();
     const groupFilter = new Set(config.toolGroups);
     const filtered = all.filter(t => {
-      if (!config.allowDangerous && t.safety === 'dangerous') return false;
+      if (!config.allowRestricted && t.visibility === 'restricted') return false;
       if (groupFilter.size > 0) {
         const groups = t.groups ?? [];
         if (!groups.some(g => groupFilter.has(g))) return false;
@@ -218,9 +218,9 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
         isError: true,
       };
     }
-    if (!config.allowDangerous && meta.safety === 'dangerous') {
+    if (!config.allowRestricted && meta.visibility === 'restricted') {
       return {
-        content: [{ type: 'text', text: `工具 "${toolName}" 已被 plugin-mcp-server 拒绝（dangerous）` }],
+        content: [{ type: 'text', text: `工具 "${toolName}" 已被 plugin-mcp-server 拒绝（restricted）` }],
         isError: true,
       };
     }

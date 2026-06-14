@@ -136,8 +136,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
         },
       },
     },
-    authority: 5,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:shell.exec', 'system:process.exec'],
     handler: async (args, _callCtx) => {
       const command = args.command as string;
@@ -208,8 +207,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
         },
       },
     },
-    authority: 5,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:shell.exec_background', 'system:process.exec', 'system:process.background'],
     handler: async (args, callCtx) => {
       const command = args.command as string;
@@ -287,8 +285,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
         },
       },
     },
-    authority: 5,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:process.list', 'system:process.read'],
     handler: async (_args, callCtx) => {
       const processes = getSessionProcesses(callCtx.sessionId);
@@ -330,8 +327,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
         },
       },
     },
-    authority: 5,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:process.read', 'system:process.read'],
     handler: async (args, callCtx) => {
       const processId = args.processId as string;
@@ -384,8 +380,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
         },
       },
     },
-    authority: 5,
-    safety: 'dangerous',
+    visibility: 'restricted',
     permissions: ['tool:process.kill', 'system:process.kill'],
     handler: async (args, callCtx) => {
       const processId = args.processId as string;

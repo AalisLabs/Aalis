@@ -109,7 +109,7 @@ export function registerRelationCommands(
 
   // ---- cleanup person/event/entity ----
   cmds
-    .command('relation.cleanup.person <id:text>', '删除人物及其所有相关边', { authority: 3 })
+    .command('relation.cleanup.person <id:text>', '删除人物及其所有相关边', { visibility: 'restricted' })
     .action(async (_argv, idArg) => {
       const id = String(idArg ?? '').trim();
       if (!id.includes(':')) return 'person id 应为 platform:userId';
@@ -123,9 +123,7 @@ export function registerRelationCommands(
   // 别人在事件 title / evidence 里**提及**你的名字（纯字符串）无法清理——
   // 因为这种情况下系统压根没把"你"识别为一个节点，没有 id 可定位。
   cmds
-    .command('relation.forget-me', '清理我自己在关系图中的节点与直接关联（不清理别人对我的文本提及）', {
-      authority: 1,
-    })
+    .command('relation.forget-me', '清理我自己在关系图中的节点与直接关联（不清理别人对我的文本提及）')
     .action(async argv => {
       const { platform, userId } = argv.session;
       if (!platform || !userId) return '当前会话无法识别你的身份（缺少 platform / userId）';
@@ -138,7 +136,7 @@ export function registerRelationCommands(
     });
 
   cmds
-    .command('relation.cleanup.event <id:text>', '删除事件及其所有相关边', { authority: 3 })
+    .command('relation.cleanup.event <id:text>', '删除事件及其所有相关边', { visibility: 'restricted' })
     .action(async (_argv, idArg) => {
       const id = String(idArg ?? '').trim();
       if (!id) return '请提供 event id';
@@ -147,7 +145,7 @@ export function registerRelationCommands(
     });
 
   cmds
-    .command('relation.cleanup.entity <id:text>', '删除实体及其所有相关边', { authority: 3 })
+    .command('relation.cleanup.entity <id:text>', '删除实体及其所有相关边', { visibility: 'restricted' })
     .action(async (_argv, idArg) => {
       const id = String(idArg ?? '').trim();
       if (!id) return '请提供 entity id';
@@ -155,7 +153,7 @@ export function registerRelationCommands(
       return `✓ 已删除 entity ${id}（级联 ${r.deletedEdges} 条边）`;
     });
 
-  cmds.command('relation.cleanup.orphans', '一键清理所有孤立点', { authority: 3 }).action(async () => {
+  cmds.command('relation.cleanup.orphans', '一键清理所有孤立点', { visibility: 'restricted' }).action(async () => {
     const snap = await service.loadAll();
     const { orphanPersons, orphanEvents, orphanEntities } = collectOrphans(snap);
     let deleted = 0;
@@ -185,7 +183,7 @@ export function registerRelationCommands(
       'relation.cleanup.fake-self',
       '清理 LLM 误抽的伪 person（platform 不在运行时白名单或 userId 为 self/me/bot/assistant）',
       {
-        authority: 3,
+        visibility: 'restricted',
       },
     )
     .option('dry-run', '--dry-run', { description: '只列出会被删的节点，不实际删除' })
@@ -223,8 +221,7 @@ export function registerRelationCommands(
 
   cmds
     .command('relation.cleanup.all', '⚠ 危险：清空整个关系图（需要 --yes 确认）', {
-      authority: 4,
-      safety: 'dangerous',
+      visibility: 'restricted',
     })
     .option('yes', '--yes', { description: '确认执行' })
     .action(async argv => {
@@ -284,7 +281,7 @@ export function registerRelationCommands(
   // ---- consolidate（整理：别名候选 / 自动 part-of / 旧账去重） ----
   cmds
     .command('relation.consolidate', '整理关系图：扫描别名候选、自动 part-of、规范化 PersonEventEdge', {
-      authority: 3,
+      visibility: 'restricted',
     })
     .option('auto-link', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
     .option('no-llm', '--no-llm', { description: '跳过 consolidationModel 配置的 LLM 增强（A 核验 + B 摘要重写）' })
@@ -349,7 +346,7 @@ export function registerRelationCommands(
     .command(
       'relation.rewrite-weights',
       '关系图：把 event/entity/edge 的 weight 字段物理回写为当前 effectiveWeight（时间衰减落地）',
-      { authority: 3 },
+      { visibility: 'restricted' },
     )
     .action(async argv => {
       const gate = tryAcquireCommand('relation.rewrite-weights');
@@ -387,7 +384,7 @@ export function registerRelationCommands(
     .command(
       'relation.event-duplicates',
       '关系图：扫描事件节点重复合并候选（dry-run，不修改图）。三段式：embedding/jaccard + 结构相似 + LLM 终判',
-      { authority: 3 },
+      { visibility: 'restricted' },
     )
     .action(async argv => {
       const gate = tryAcquireCommand('relation.event-duplicates');
@@ -442,7 +439,7 @@ export function registerRelationCommands(
   // ---- compress（仅跳出一次容量淘汰 + 伤亡报告） ----
   cmds
     .command('relation.compress', '关系图压缩：手动触发容量淘汰（PageRank 低分 → 删 events/entities/edges）', {
-      authority: 3,
+      visibility: 'restricted',
     })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.compress');
@@ -508,7 +505,7 @@ export function registerRelationCommands(
     .command(
       'relation.maintain',
       '关系图体检：先整理（别名 / part-of / 层级 / 侧向父），再压缩（容量淘汰），全过程报告',
-      { authority: 3 },
+      { visibility: 'restricted' },
     )
     .option('no-llm', '--no-llm', { description: '跳过 consolidate 阶段的 LLM 增强' })
     .option('no-auto-link', '--no-auto-link', { description: '取消 consolidate 阶段的 autoLink' })
@@ -602,9 +599,7 @@ export function registerRelationCommands(
 
   // ---- consolidation-status（查询最近一次 consolidate 运行情况） ----
   cmds
-    .command('relation.consolidation-status', '查看最近一次关系图整理（consolidate）的运行时间、触发源与结果', {
-      authority: 1,
-    })
+    .command('relation.consolidation-status', '查看最近一次关系图整理（consolidate）的运行时间、触发源与结果')
     .action(async () => {
       const info = service.getLastConsolidateInfo();
       if (!info.lastRunAt) {
