@@ -23,10 +23,12 @@ export async function tryDispatchSubcommand(
   const result = await commands.execute(cmdName, {
     sessionId: 'cli',
     platform: 'cli',
-    userId: 'cli',
+    // userId 'console'：本地终端 = 运维者本人，命中 authority 的 cli:console owner 快速通道。
+    // 一次性子命令模式无人可点交互确认，故 skipConfirm（authorize 仍生效，owner 直接放行）。
+    userId: 'console',
     args: rest,
     raw: `/${cmdName}${rest.length ? ` ${rest.join(' ')}` : ''}`,
-    skipSafetyCheck: true,
+    skipConfirm: true,
   });
   if (result) out(result);
   return 0;

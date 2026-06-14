@@ -63,7 +63,7 @@ export function registerUploadedFilesRoutes(
   }
 
   /** 列出某 session 下的所有上传文件元信息（不传 sessionId 时列全部 session） */
-  expressApp.get('/api/uploaded-files', gate('webui:files:read', 4), async (req, res) => {
+  expressApp.get('/api/uploaded-files', gate('webui:files:read', 'restricted'), async (req, res) => {
     const sessionId = req.query.sessionId ? String(req.query.sessionId) : undefined;
     if (sessionId !== undefined && !isSafeSessionId(sessionId)) {
       res.status(400).json({ error: 'sessionId 非法' });
@@ -113,7 +113,7 @@ export function registerUploadedFilesRoutes(
   });
 
   /** 下载文件 */
-  expressApp.get('/api/uploaded-files/download', gate('webui:files:read', 4), async (req, res) => {
+  expressApp.get('/api/uploaded-files/download', gate('webui:files:read', 'restricted'), async (req, res) => {
     const sessionId = String(req.query.sessionId || '');
     const fileId = String(req.query.fileId || '');
     if (!isSafeSessionId(sessionId) || !isSafeFileId(fileId)) {
@@ -140,7 +140,7 @@ export function registerUploadedFilesRoutes(
   });
 
   /** 删除文件 */
-  expressApp.post('/api/uploaded-files/delete', gate('webui:files:write', 'owner'), async (req, res) => {
+  expressApp.post('/api/uploaded-files/delete', gate('webui:files:write', 'restricted'), async (req, res) => {
     const body = (req.body ?? {}) as { sessionId?: string; fileId?: string };
     const sessionId = body.sessionId ?? '';
     const fileId = body.fileId ?? '';

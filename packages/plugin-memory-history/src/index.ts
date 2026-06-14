@@ -341,7 +341,6 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         if (records.length === 0) return '（最近没有匹配的消息）';
         return formatRecords(records);
       },
-      safety: 'safe',
     });
   }
 }
