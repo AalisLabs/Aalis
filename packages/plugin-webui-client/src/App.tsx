@@ -47,7 +47,6 @@ export function App() {
   /** 当前登录身份（/api/auth/me）：账户登录显示用户名，单 token 模式为 console */
   const [me, setMe] = useState<{
     identity: { platform: string; userId: string };
-    authority: number | null;
     isOwner: boolean;
   } | null>(null);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -783,9 +782,7 @@ export function App() {
           {me && (
             <span className="content-user" title={`${me.identity.platform}:${me.identity.userId}`}>
               {me.identity.userId}
-              {me.authority != null && (
-                <span className="content-user-level">{me.isOwner ? 'owner' : `等级 ${me.authority}`}</span>
-              )}
+              {me.isOwner && <span className="content-user-level">owner</span>}
               <button
                 className="btn-sm"
                 onClick={async () => {

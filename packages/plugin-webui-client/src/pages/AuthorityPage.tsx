@@ -1,15 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
-import { User, Crown, Command, Wrench, AlertTriangle } from 'lucide-react';
+import { User, Crown, Command, Wrench, Clock } from 'lucide-react';
 import { pageAction } from '../api';
 
 interface AuthorityUser {
   platform: string;
   userId: string;
-  authority: number;
-  /** capability 个别授予/拒绝（glob；deny > grant > 等级） */
-  grants?: string[];
-  denies?: string[];
-  /** 是否为可登录账户（存在密码凭据） */
+  isOwner: boolean;
+  /** 被授予的受限能力（glob） */
+  grant?: string[];
+  /** 被拒绝的能力（glob；deny 压过一切，含 owner） */
+  deny?: string[];
+  /** 委托来源（上级身份键，如 webui:boss），构成委托树 */
+  grantedBy?: string;
+  /** 是否为可登录账户（已设密码） */
   hasPassword?: boolean;
   /** 本账户绑定的平台身份键（如 onebot:12345） */
   links?: string[];
@@ -23,73 +26,55 @@ interface AuthorityOwner {
 }
 
 interface AuthorityCommand {
-  /** override 键 = path.join(':')；同时作为 React key */
   key: string;
-  /** 同 key（兼容旧字段；React key 用 key） */
   name: string;
-  /** 渲染显示，如 '/clear nuke' */
   displayName: string;
-  /** 路径末段名 'nuke'，用于子行更紧凑展示 */
-  leafName: string;
-  /** 完整路径 */
-  path: string[];
-  /** 嵌套深度，根=0 */
-  depth: number;
-  isRoot: boolean;
-  hasSubcommands: boolean;
-  hasAction: boolean;
-  description: string;
-  authority: number;
-  safety: string;
-  baseAuthority: number;
-  baseSafety: string;
-  overridden: boolean;
-  pluginName: string;
-  /** 该指令触达的 capability 清单（与等级一起过 authorize 闸） */
-  permissions?: string[];
+  visibility: 'public' | 'restricted';
 }
 
 interface AuthorityTool {
+  key: string;
   name: string;
-  description: string;
-  pluginName: string;
-  groups?: string[];
-  authority?: number;
-  safety?: string;
-  baseAuthority?: number;
-  baseSafety?: string;
-  overridden?: boolean;
-  /** 该工具触达的 capability 清单 */
-  permissions?: string[];
+  visibility: 'public' | 'restricted';
 }
 
-interface AuthorityData {
+interface TemporaryGrant {
+  id: string;
+  capability: string;
+  name: string;
+  type: 'command' | 'tool';
+  sessionId: string;
+  platform: string;
+  userId?: string;
+  expiresAt: number;
+  maxUses?: number;
+  used: number;
+  createdAt: number;
+}
+
+interface Overview {
   users: AuthorityUser[];
   owners: AuthorityOwner[];
-  /** 当前可选平台列表（来自已注册的 platform 服务 + 既有用户/owner 的平台） */
-  platforms?: string[];
-  defaultAuthority: number;
-  ownerAuthority: number;
+  platforms: string[];
+  restrictedCapabilities: string[];
+  deniedCapabilities: string[];
+  visibilityOverrides: Record<string, 'public' | 'restricted'>;
+  restrictedPolicy: { allow?: string[]; duration?: number };
+  temporaryGrants: TemporaryGrant[];
   commandPrefix: string;
   commands: AuthorityCommand[];
-  commandOverrides: Record<string, { authority?: number; safety?: string }>;
   tools: AuthorityTool[];
-  toolOverrides?: Record<string, { authority?: number; safety?: string }>;
-  dangerousPolicy: {
-    allow?: string[];
-    duration?: number;
-    enabledAt?: number;
-  };
-  /** 参数级动态提权清单（capability glob → 所需等级；叠加在内置保护清单之上） */
-  permissionAuthority?: Record<string, number>;
 }
 
+const toList = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
+const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
 export function AuthorityPage() {
-  const [data, setData] = useState<AuthorityData | null>(null);
+  const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
 
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['config']));
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['users']));
   const toggleSection = (key: string) => {
     setOpenSections(prev => {
       const next = new Set(prev);
@@ -98,58 +83,37 @@ export function AuthorityPage() {
     });
   };
 
-  const [editConfig, setEditConfig] = useState(false);
-  const [configDraft, setConfigDraft] = useState({ defaultAuthority: 1, ownerAuthority: 5 });
-  const [editDangerous, setEditDangerous] = useState(false);
-  const [dangerousDraft, setDangerousDraft] = useState({ allow: '', duration: 0 });
-  const [editUser, setEditUser] = useState<{ platform: string; userId: string; authority: number } | null>(null);
-  /** capability 授予内联编辑（grants/denies 为逗号分隔草稿） */
-  const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grants: string; denies: string } | null>(null);
-  /** 密码设置内联编辑 */
+  // 用户与委托
+  const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grant: string; deny: string } | null>(null);
   const [editPwd, setEditPwd] = useState<{ platform: string; userId: string; password: string } | null>(null);
-  /** 当前登录账户的待用绑定码（createBindCode 返回） */
   const [bindCode, setBindCode] = useState<{ code: string; hint: string } | null>(null);
-  const [newUser, setNewUser] = useState({ platform: '', userId: '', authority: 1, password: '' });
+  const [newUser, setNewUser] = useState({ platform: '', userId: '', grant: '', deny: '' });
   const [showAddUser, setShowAddUser] = useState(false);
+
+  // Owner
   const [newOwner, setNewOwner] = useState({ platform: '', userId: '' });
   const [showAddOwner, setShowAddOwner] = useState(false);
-  const [editingCmd, setEditingCmd] = useState<string | null>(null);
-  const [cmdDraft, setCmdDraft] = useState({ authority: 1, safety: 'safe' });
-  const [editingTool, setEditingTool] = useState<string | null>(null);
-  const [toolDraft, setToolDraft] = useState({ authority: 1, safety: 'safe' });
-  // 子指令展开状态：存储已展开的根指令 key（深度=0 的 key 即根名）
-  const [expandedCmds, setExpandedCmds] = useState<Set<string>>(new Set());
-  const toggleCmdExpand = (key: string) => {
-    setExpandedCmds(prev => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  };
+
+  // 受限 / 禁用能力清单
+  const [editCapsList, setEditCapsList] = useState(false);
+  const [capsDraft, setCapsDraft] = useState({ restricted: '', denied: '' });
+
+  // 临时放行策略
+  const [editPolicy, setEditPolicy] = useState(false);
+  const [policyDraft, setPolicyDraft] = useState({ allow: '', duration: 0 });
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await pageAction<AuthorityData>('@aalis/plugin-authority', 'getOverview');
+      const d = await pageAction<Overview>('@aalis/plugin-authority', 'getOverview');
       setData(d);
-      setConfigDraft({ defaultAuthority: d.defaultAuthority, ownerAuthority: d.ownerAuthority });
-      setDangerousDraft({
-        allow: (d.dangerousPolicy?.allow ?? []).join(', '),
-        duration: d.dangerousPolicy?.duration ?? 0,
+      setCapsDraft({
+        restricted: (d.restrictedCapabilities ?? []).join(', '),
+        denied: (d.deniedCapabilities ?? []).join(', '),
       });
-      // 自动展开"有任意后代被 override"的根指令，方便用户一眼看到自己的修改
-      setExpandedCmds(prev => {
-        const next = new Set(prev);
-        for (const c of d.commands) {
-          if (c.depth > 0 && c.overridden) {
-            const rootKey = c.path[0];
-            next.add(rootKey);
-            // 同时展开沿途的所有祖先（孙级以上情况）
-            for (let i = 1; i < c.path.length - 1; i++) {
-              next.add(c.path.slice(0, i + 1).join(':'));
-            }
-          }
-        }
-        return next;
+      setPolicyDraft({
+        allow: (d.restrictedPolicy?.allow ?? []).join(', '),
+        duration: d.restrictedPolicy?.duration ?? 0,
       });
     } catch {
       setData(null);
@@ -157,96 +121,26 @@ export function AuthorityPage() {
     setLoading(false);
   }, []);
 
-  // 倒计时：剩余秒数
-  const [remainSec, setRemainSec] = useState<number | null>(null);
-
   useEffect(() => { refresh(); }, [refresh]);
-
-  // 当 data 变化时启动 / 重置倒计时
-  useEffect(() => {
-    const policy = data?.dangerousPolicy;
-    if (!policy?.enabledAt || !policy?.duration || policy.duration <= 0) {
-      setRemainSec(null);
-      return;
-    }
-    const calc = () => {
-      const elapsed = (Date.now() - policy.enabledAt!) / 1000;
-      const left = Math.max(0, Math.ceil(policy.duration! - elapsed));
-      setRemainSec(left);
-    };
-    calc();
-    const timer = setInterval(calc, 1000);
-    return () => clearInterval(timer);
-  }, [data?.dangerousPolicy]);
 
   const flash = (msg: string) => {
     setMessage(msg);
     setTimeout(() => setMessage(''), 2000);
   };
 
-  const saveUserAuthority = async (platform: string, userId: string, authority: number) => {
-    await pageAction('@aalis/plugin-authority', 'setUser', { platform, userId, authority });
-    setEditUser(null);
-    flash(`已设置 ${platform}:${userId} → ${authority}`);
-    refresh();
-  };
-  const deleteUser = async (platform: string, userId: string) => {
-    await pageAction('@aalis/plugin-authority', 'deleteUser', { platform, userId });
-    flash(`已重置 ${platform}:${userId}`);
-    refresh();
-  };
-  const addUser = async () => {
-    if (!newUser.platform || !newUser.userId) return;
-    try {
-      await pageAction('@aalis/plugin-authority', 'setUser', {
-        platform: newUser.platform, userId: newUser.userId, authority: newUser.authority,
-      });
-      if (newUser.password) {
-        await pageAction('@aalis/plugin-authority', 'setPassword', {
-          platform: newUser.platform, userId: newUser.userId, password: newUser.password,
-        });
-      }
-      flash(`已添加 ${newUser.platform}:${newUser.userId}${newUser.password ? '（含登录密码）' : ''}`);
-      setNewUser({ platform: '', userId: '', authority: 1, password: '' });
-      setShowAddUser(false);
-      refresh();
-    } catch (err) {
-      flash(err instanceof Error ? err.message : String(err));
-    }
-  };
-
+  // ---- 用户与委托 ----
   const saveUserCapabilities = async () => {
     if (!editCaps) return;
-    const toList = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
     try {
       await pageAction('@aalis/plugin-authority', 'setUserCapabilities', {
         platform: editCaps.platform, userId: editCaps.userId,
-        grants: toList(editCaps.grants), denies: toList(editCaps.denies),
+        grant: toList(editCaps.grant), deny: toList(editCaps.deny),
       });
-      flash(`已更新 ${editCaps.platform}:${editCaps.userId} 的授予`);
+      flash(`已更新 ${editCaps.platform}:${editCaps.userId} 的委托`);
       setEditCaps(null);
       refresh();
     } catch (err) {
-      flash(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const generateBindCode = async () => {
-    try {
-      const r = await pageAction<{ code: string; hint: string }>('@aalis/plugin-authority', 'createBindCode');
-      setBindCode(r);
-    } catch (err) {
-      flash(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const unlinkIdentity = async (platform: string, userId: string) => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'unlinkIdentity', { platform, userId });
-      flash(`已解绑 ${platform}:${userId}`);
-      refresh();
-    } catch (err) {
-      flash(err instanceof Error ? err.message : String(err));
+      flash(errMsg(err));
     }
   };
 
@@ -260,63 +154,130 @@ export function AuthorityPage() {
       setEditPwd(null);
       refresh();
     } catch (err) {
-      flash(err instanceof Error ? err.message : String(err));
+      flash(errMsg(err));
     }
   };
 
+  const deleteUser = async (platform: string, userId: string) => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'deleteUser', { platform, userId });
+      flash(`已删除 ${platform}:${userId}`);
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
+  };
+
+  const addUser = async () => {
+    if (!newUser.platform || !newUser.userId) return;
+    try {
+      await pageAction('@aalis/plugin-authority', 'setUserCapabilities', {
+        platform: newUser.platform, userId: newUser.userId,
+        grant: toList(newUser.grant), deny: toList(newUser.deny),
+      });
+      flash(`已添加 ${newUser.platform}:${newUser.userId}`);
+      setNewUser({ platform: '', userId: '', grant: '', deny: '' });
+      setShowAddUser(false);
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
+  };
+
+  const generateBindCode = async () => {
+    try {
+      const r = await pageAction<{ code: string; hint: string }>('@aalis/plugin-authority', 'createBindCode');
+      setBindCode(r);
+    } catch (err) {
+      flash(errMsg(err));
+    }
+  };
+
+  const unlinkIdentity = async (platform: string, userId: string) => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'unlinkIdentity', { platform, userId });
+      flash(`已解绑 ${platform}:${userId}`);
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
+  };
+
+  // ---- Owner ----
   const addOwner = async () => {
     if (!data || !newOwner.platform || !newOwner.userId) return;
-    const owners = [...data.owners, { platform: newOwner.platform, userId: newOwner.userId }];
-    await pageAction('@aalis/plugin-authority', 'setOwners', { owners });
-    setNewOwner({ platform: '', userId: '' });
-    setShowAddOwner(false);
-    flash('Owner 已添加');
-    refresh();
+    try {
+      const owners = [...data.owners, { platform: newOwner.platform, userId: newOwner.userId }];
+      await pageAction('@aalis/plugin-authority', 'setOwners', { owners });
+      setNewOwner({ platform: '', userId: '' });
+      setShowAddOwner(false);
+      flash('Owner 已添加');
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
   };
+
   const removeOwner = async (idx: number) => {
     if (!data) return;
-    const owners = data.owners.filter((_, i) => i !== idx);
-    await pageAction('@aalis/plugin-authority', 'setOwners', { owners });
-    flash('Owner 已移除');
-    refresh();
+    try {
+      const owners = data.owners.filter((_, i) => i !== idx);
+      await pageAction('@aalis/plugin-authority', 'setOwners', { owners });
+      flash('Owner 已移除');
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
   };
 
-  const saveConfig = async () => {
-    await pageAction('@aalis/plugin-authority', 'setConfig', configDraft);
-    setEditConfig(false);
-    flash('权限配置已保存');
-    refresh();
-  };
-  const saveDangerous = async () => {
-    const allow = dangerousDraft.allow.split(',').map(s => s.trim()).filter(Boolean);
-    await pageAction('@aalis/plugin-authority', 'setDangerousPolicy', { policy: { allow, duration: dangerousDraft.duration } });
-    setEditDangerous(false);
-    flash('高危策略已保存');
-    refresh();
+  // ---- 可见性覆盖 ----
+  const setVisibility = async (name: string, visibility: 'public' | 'restricted' | '') => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'setVisibilityOverride', { name, visibility });
+      flash(visibility ? `${name} → ${visibility}` : `${name} 已恢复默认`);
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
   };
 
-  const saveCommandOverride = async (name: string) => {
-    await pageAction('@aalis/plugin-authority', 'setCommandOverride', { name, authority: cmdDraft.authority, safety: cmdDraft.safety });
-    setEditingCmd(null);
-    flash(`指令 ${name} 权限已更新`);
-    refresh();
-  };
-  const resetCommandOverride = async (name: string) => {
-    await pageAction('@aalis/plugin-authority', 'resetCommandOverride', { name });
-    flash(`指令 ${name} 已恢复默认`);
-    refresh();
+  // ---- 受限 / 禁用能力清单 ----
+  const saveCapsList = async () => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'setConfig', {
+        restrictedCapabilities: toList(capsDraft.restricted),
+        deniedCapabilities: toList(capsDraft.denied),
+      });
+      setEditCapsList(false);
+      flash('能力清单已保存');
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
   };
 
-  const saveToolOverride = async (name: string) => {
-    await pageAction('@aalis/plugin-authority', 'setToolOverride', { name, authority: toolDraft.authority, safety: toolDraft.safety });
-    setEditingTool(null);
-    flash(`工具 ${name} 权限已更新`);
-    refresh();
+  // ---- 临时放行策略 ----
+  const savePolicy = async () => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'setRestrictedPolicy', {
+        policy: { allow: toList(policyDraft.allow), duration: policyDraft.duration },
+      });
+      setEditPolicy(false);
+      flash('临时放行策略已保存');
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
   };
-  const resetToolOverride = async (name: string) => {
-    await pageAction('@aalis/plugin-authority', 'resetToolOverride', { name });
-    flash(`工具 ${name} 已恢复默认`);
-    refresh();
+
+  const revokeTemporaryGrant = async (id: string) => {
+    try {
+      await pageAction('@aalis/plugin-authority', 'revokeTemporaryGrant', { id });
+      flash('已撤销临时委托');
+      refresh();
+    } catch (err) {
+      flash(errMsg(err));
+    }
   };
 
   if (loading && !data) {
@@ -326,11 +287,45 @@ export function AuthorityPage() {
     return <div className="page-content"><div className="empty-hint">获取权限数据失败</div></div>;
   }
 
+  const renderVisibilityRow = (
+    row: { key: string; name: string; displayName?: string; visibility: 'public' | 'restricted' },
+  ) => {
+    const overridden = Object.prototype.hasOwnProperty.call(data.visibilityOverrides, row.name);
+    return (
+      <div className={`authority-cmd-row ${overridden ? 'overridden' : ''}`} key={row.key}>
+        <span className="authority-cmd-name" title={row.name}>
+          {row.displayName ?? row.name}
+          {overridden && (
+            <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: 11 }} title="已被 owner 覆盖（非插件默认）">●</span>
+          )}
+        </span>
+        <span>
+          <span className={`authority-safety-tag ${row.visibility}`}>{row.visibility}</span>
+        </span>
+        <span className="authority-actions">
+          <button
+            className={`btn btn-sm ${row.visibility === 'public' ? 'btn-primary' : ''}`}
+            onClick={() => setVisibility(row.name, 'public')}
+            title="任何人默认可用"
+          >public</button>
+          <button
+            className={`btn btn-sm ${row.visibility === 'restricted' ? 'btn-primary' : ''}`}
+            onClick={() => setVisibility(row.name, 'restricted')}
+            title="默认禁用，需显式授予"
+          >restricted</button>
+          {overridden && (
+            <button className="btn btn-sm" onClick={() => setVisibility(row.name, '')} title="恢复插件声明的默认可见性">默认</button>
+          )}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="page-content page-authority">
       {message && <div className="toast">{message}</div>}
 
-      {/* 平台候选项（供 newOwner / newUser 输入框 list 引用） */}
+      {/* 平台候选项 */}
       <datalist id="authority-platforms">
         {(data.platforms ?? []).map(p => <option key={p} value={p} />)}
       </datalist>
@@ -341,370 +336,50 @@ export function AuthorityPage() {
         <div className="overview-card">
           <div className="overview-card-icon"><User size={20} /></div>
           <div className="overview-card-body">
-            <div className="overview-card-label">已注册用户</div>
+            <div className="overview-card-label">用户</div>
             <div className="overview-card-value">{data.users.length}</div>
           </div>
         </div>
         <div className="overview-card">
           <div className="overview-card-icon"><Crown size={20} /></div>
           <div className="overview-card-body">
-            <div className="overview-card-label">Owner 数</div>
+            <div className="overview-card-label">Owner</div>
             <div className="overview-card-value">{data.owners.length}</div>
           </div>
         </div>
         <div className="overview-card">
           <div className="overview-card-icon"><Command size={20} /></div>
           <div className="overview-card-body">
-            <div className="overview-card-label">已注册指令</div>
+            <div className="overview-card-label">指令</div>
             <div className="overview-card-value">{data.commands.length}</div>
           </div>
         </div>
         <div className="overview-card">
           <div className="overview-card-icon"><Wrench size={20} /></div>
           <div className="overview-card-body">
-            <div className="overview-card-label">已注册工具</div>
-            <div className="overview-card-value">{data.tools?.length ?? 0}</div>
+            <div className="overview-card-label">工具</div>
+            <div className="overview-card-value">{data.tools.length}</div>
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon"><AlertTriangle size={20} /></div>
+          <div className="overview-card-icon"><Clock size={20} /></div>
           <div className="overview-card-body">
-            <div className="overview-card-label">高危白名单</div>
-            <div className="overview-card-value">{data.dangerousPolicy?.allow?.length ?? 0}</div>
+            <div className="overview-card-label">临时委托</div>
+            <div className="overview-card-value">{data.temporaryGrants.length}</div>
           </div>
         </div>
       </div>
 
-      {/* 权限配置 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('config')}>
-          <span className="config-block-title">权限配置</span>
-          <span className="config-block-hint">控制新用户默认的权限等级及 Owner 的权限上限</span>
-          <span className={`config-block-toggle ${openSections.has('config') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('config') && (
-          <div className="config-block-body">
-            {editConfig ? (
-              <div className="config-edit-form">
-                <div className="config-edit-row">
-                  <label className="config-edit-label">defaultAuthority</label>
-                  <input type="number" className="config-edit-input" min={0}
-                    value={configDraft.defaultAuthority}
-                    onChange={e => setConfigDraft(v => ({ ...v, defaultAuthority: parseInt(e.target.value) || 0 }))} />
-                  <span className="config-edit-hint">新用户默认权限等级</span>
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">ownerAuthority</label>
-                  <input type="number" className="config-edit-input" min={1}
-                    value={configDraft.ownerAuthority}
-                    onChange={e => setConfigDraft(v => ({ ...v, ownerAuthority: parseInt(e.target.value) || 5 }))} />
-                  <span className="config-edit-hint">Owner 用户权限等级</span>
-                </div>
-                <div className="config-edit-actions">
-                  <button className="btn btn-primary btn-sm" onClick={saveConfig}>保存</button>
-                  <button className="btn btn-sm" onClick={() => setEditConfig(false)}>取消</button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="config-item">
-                  <span className="key">defaultAuthority</span>
-                  <span className="val">{data.defaultAuthority}</span>
-                </div>
-                <div className="config-item">
-                  <span className="key">ownerAuthority</span>
-                  <span className="val">{data.ownerAuthority}</span>
-                </div>
-                <div className="config-item" title="参数级动态提权：命中 glob 的 capability 要求对应等级（与声明等级取较大者）。内置保护：写/删 data:/users.json、data:/scheduler-jobs.json 与 aalis:/ 源码根需 owner 级。">
-                  <span className="key">permissionAuthority</span>
-                  <span className="val">
-                    {Object.entries(data.permissionAuthority ?? {}).map(([k, v]) => `${k} → ${v}`).join('，') || '(仅内置保护清单)'}
-                  </span>
-                </div>
-                <div style={{ padding: '6px 0 2px' }}>
-                  <button className="btn-sm" onClick={() => setEditConfig(true)}>编辑</button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 指令权限 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('commands')}>
-          <span className="config-block-title">指令权限</span>
-          <span className="config-block-hint">自定义每条指令的所需权限等级与安全等级，修改后优先于插件默认值</span>
-          <span className={`config-block-toggle ${openSections.has('commands') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('commands') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            {data.commands.length === 0 ? (
-              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册指令</div>
-            ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header">
-                  <span>指令</span>
-                  <span>来源</span>
-                  <span>权限等级</span>
-                  <span>安全等级</span>
-                  <span>操作</span>
-                </div>
-                {(() => {
-                  // 根据 expandedCmds 过滤：未展开的根，跳过其所有后代
-                  const rows: AuthorityCommand[] = [];
-                  let skipPrefixDepth: number | null = null;
-                  let skipPrefixPath: string[] | null = null;
-                  for (const c of data.commands) {
-                    if (skipPrefixPath && c.depth > skipPrefixDepth! &&
-                        c.path.slice(0, skipPrefixPath.length).join(':') === skipPrefixPath.join(':')) {
-                      continue; // 仍在被折叠的子树内
-                    }
-                    skipPrefixPath = null;
-                    rows.push(c);
-                    if (c.hasSubcommands && !expandedCmds.has(c.key)) {
-                      skipPrefixDepth = c.depth;
-                      skipPrefixPath = c.path;
-                    }
-                  }
-                  return rows.map(c => {
-                    const isEditing = editingCmd === c.key;
-                    const isExpanded = expandedCmds.has(c.key);
-                    return (
-                      <div
-                        className={`authority-cmd-row ${c.overridden ? 'overridden' : ''} ${c.depth > 0 ? 'is-sub' : ''}`}
-                        style={c.depth > 0 ? { paddingLeft: 16 + c.depth * 18 } : undefined}
-                        key={c.key}
-                      >
-                        <span className="authority-cmd-name" title={c.description}>
-                          {c.hasSubcommands && (
-                            <span
-                              className={`authority-cmd-toggle ${isExpanded ? 'open' : ''}`}
-                              onClick={() => toggleCmdExpand(c.key)}
-                              title={isExpanded ? '折叠子指令' : '展开子指令'}
-                              style={{ cursor: 'pointer', display: 'inline-block', width: 14, marginRight: 4, opacity: 0.6 }}
-                            >▶</span>
-                          )}
-                          {c.depth === 0 ? c.displayName : c.leafName}
-                          {c.hasSubcommands && !c.hasAction && (
-                            <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.55 }}>(分组)</span>
-                          )}
-                          {c.permissions?.length ? (
-                            <span className="authority-user-flag" title={`触达的 capability（裁决时与等级一起过 authorize 闸）：\n${c.permissions.join('\n')}`}>
-                              {c.permissions.length} cap
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="authority-cmd-plugin">
-                          {c.depth === 0 ? c.pluginName : ''}
-                        </span>
-                        <span>
-                          {isEditing ? (
-                            <select className="config-edit-input authority-inline-input"
-                              value={cmdDraft.authority}
-                              onChange={e => setCmdDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
-                              autoFocus>
-                              {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
-                                <option key={lv} value={lv}>{lv}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className={`authority-badge ${c.authority >= data.ownerAuthority ? 'owner' : c.authority >= 3 ? 'high' : ''}`}>
-                              {c.authority}
-                            </span>
-                          )}
-                        </span>
-                        <span>
-                          {isEditing ? (
-                            <select className="config-edit-input authority-inline-select"
-                              value={cmdDraft.safety}
-                              onChange={e => setCmdDraft(v => ({ ...v, safety: e.target.value }))}>
-                              <option value="safe">safe</option>
-                              <option value="dangerous">dangerous</option>
-                            </select>
-                          ) : (
-                            <span className={`authority-safety-tag ${c.safety}`}>{c.safety}</span>
-                          )}
-                        </span>
-                        <span className="authority-actions">
-                          {isEditing ? (
-                            <>
-                              <button className="btn btn-primary btn-sm" onClick={() => saveCommandOverride(c.key)}>保存</button>
-                              <button className="btn btn-sm" onClick={() => setEditingCmd(null)}>取消</button>
-                            </>
-                          ) : (
-                            <>
-                              <button className="btn btn-sm" onClick={() => {
-                                setEditingCmd(c.key);
-                                setCmdDraft({ authority: c.authority, safety: c.safety });
-                              }}>编辑</button>
-                              {c.overridden && (
-                                <button className="btn btn-sm" onClick={() => resetCommandOverride(c.key)} title="恢复插件默认值">重置</button>
-                              )}
-                            </>
-                          )}
-                        </span>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 工具清单 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('tools')}>
-          <span className="config-block-title">AI 工具</span>
-          <span className="config-block-hint">工具调用受运行时 guard 检查；可按工具调整最低权限与危险级别</span>
-          <span className={`config-block-toggle ${openSections.has('tools') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('tools') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            {!data.tools || data.tools.length === 0 ? (
-              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册工具</div>
-            ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header">
-                  <span>工具</span>
-                  <span>权限</span>
-                  <span>安全</span>
-                  <span>分组 / 来源</span>
-                  <span>操作</span>
-                </div>
-                {data.tools.map(t => {
-                  const isEditing = editingTool === t.name;
-                  return (
-                    <div className="authority-cmd-row" key={t.name}>
-                      <span className="authority-cmd-name" title={t.description}>
-                        {t.name}
-                        {t.overridden && <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: 11 }}>●</span>}
-                        {t.permissions?.length ? (
-                          <span className="authority-user-flag" title={`触达的 capability（含参数级动态产出的路径项不在此列）：\n${t.permissions.join('\n')}`}>
-                            {t.permissions.length} cap
-                          </span>
-                        ) : null}
-                      </span>
-                      {isEditing ? (
-                        <>
-                          <span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={toolDraft.authority}
-                              onChange={e => setToolDraft(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}
-                              style={{ width: 60 }}
-                            />
-                          </span>
-                          <span>
-                            <select
-                              value={toolDraft.safety}
-                              onChange={e => setToolDraft(v => ({ ...v, safety: e.target.value }))}>
-                              <option value="safe">safe</option>
-                              <option value="dangerous">dangerous</option>
-                            </select>
-                          </span>
-                          <span style={{ fontSize: 11, color: '#888' }}>
-                            {t.groups?.length ? t.groups.join(', ') : '通用'} / {t.pluginName}
-                          </span>
-                          <span>
-                            <button className="btn btn-primary btn-sm" onClick={() => saveToolOverride(t.name)}>保存</button>
-                            <button className="btn btn-sm" onClick={() => setEditingTool(null)}>取消</button>
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span title={t.overridden ? `插件默认: ${t.baseAuthority ?? 1}` : ''}>
-                            {t.authority ?? 1}
-                          </span>
-                          <span title={t.overridden ? `插件默认: ${t.baseSafety ?? 'safe'}` : ''}>
-                            {t.safety ?? 'safe'}
-                          </span>
-                          <span style={{ fontSize: 11, color: '#888' }}>
-                            {t.groups?.length ? t.groups.join(', ') : '通用'} / {t.pluginName}
-                          </span>
-                          <span>
-                            <button className="btn btn-sm" onClick={() => {
-                              setEditingTool(t.name);
-                              setToolDraft({ authority: t.authority ?? 1, safety: t.safety ?? 'safe' });
-                            }}>编辑</button>
-                            {t.overridden && (
-                              <button className="btn btn-sm" onClick={() => resetToolOverride(t.name)} title="恢复插件默认值">重置</button>
-                            )}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Owner 管理 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('owners')}>
-          <span className="config-block-title">Owner 管理</span>
-          <span className="config-block-hint">Owner 自动获得最高权限等级；单 token 模式登录的控制台恒为 Owner，账户登录按各自等级</span>
-          <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('owners') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            <div style={{ padding: '8px 12px' }}>
-              <button className="btn-sm" onClick={() => setShowAddOwner(!showAddOwner)}>
-                {showAddOwner ? '取消' : '+ 添加 Owner'}
-              </button>
-            </div>
-            {showAddOwner && (
-              <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
-                <input className="config-edit-input" placeholder="平台 (如 onebot)"
-                  list="authority-platforms"
-                  value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
-                <input className="config-edit-input" placeholder="用户 ID"
-                  value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
-                <button className="btn btn-primary btn-sm" onClick={addOwner} disabled={!newOwner.platform || !newOwner.userId}>确认</button>
-              </div>
-            )}
-            {data.owners.length === 0 ? (
-              <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
-                暂无 Owner。WebUI 控制台用户始终拥有最高权限。
-              </div>
-            ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header authority-owner-header">
-                  <span>平台</span>
-                  <span>用户 ID</span>
-                  <span>操作</span>
-                </div>
-                {data.owners.map((o, idx) => (
-                  <div className="authority-cmd-row authority-owner-row" key={`${o.platform}:${o.userId}`}>
-                    <span className="authority-cell-platform">{o.platform}</span>
-                    <span className="authority-cell-id">{o.userId}</span>
-                    <span>
-                      <button className="btn btn-danger btn-sm" onClick={() => removeOwner(idx)}>移除</button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 用户权限 */}
+      {/* 用户与委托 */}
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('users')}>
-          <span className="config-block-title">用户权限</span>
-          <span className="config-block-hint">已自定义权限的用户列表，未列出的用户使用 defaultAuthority</span>
+          <span className="config-block-title">用户与委托</span>
+          <span className="config-block-hint">为用户授予受限能力或拒绝能力（glob）；deny &gt; owner(*) &gt; public &gt; grant</span>
           <span className={`config-block-toggle ${openSections.has('users') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('users') && (
           <div className="config-block-body" style={{ padding: 0 }}>
-            <div style={{ padding: '8px 12px', display: 'flex', gap: 6 }}>
+            <div style={{ padding: '8px 12px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn-sm" onClick={() => setShowAddUser(!showAddUser)}>
                 {showAddUser ? '取消' : '+ 添加用户'}
               </button>
@@ -716,7 +391,7 @@ export function AuthorityPage() {
             </div>
             {bindCode && (
               <div className="authority-user-expand" style={{ borderTop: '1px solid var(--border)' }}>
-                <label>绑定码（5 分钟有效，一次性；重复生成会作废旧码）</label>
+                <label>绑定码（一次性，限时有效；重复生成会作废旧码）</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <code style={{ fontSize: 18, letterSpacing: 2 }}>{bindCode.code}</code>
                   <button className="btn-sm" onClick={() => setBindCode(null)}>关闭</button>
@@ -731,57 +406,58 @@ export function AuthorityPage() {
                   value={newUser.platform} onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))} />
                 <input className="config-edit-input" placeholder="用户 ID"
                   value={newUser.userId} onChange={e => setNewUser(v => ({ ...v, userId: e.target.value }))} />
-                <select className="config-edit-input" title="权限等级"
-                  value={newUser.authority}
-                  onChange={e => setNewUser(v => ({ ...v, authority: parseInt(e.target.value) || 0 }))}>
-                  {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
-                    <option key={lv} value={lv}>{lv}{lv === data.defaultAuthority ? ' (默认)' : ''}{lv === data.ownerAuthority ? ' (Owner)' : ''}</option>
-                  ))}
-                </select>
-                <input className="config-edit-input" type="password" autoComplete="new-password"
-                  placeholder="登录密码 (可选，≥6 位)"
-                  title="填写后该用户可凭密码登录 WebUI（平台填 webui 时用户 ID 即登录用户名）"
-                  value={newUser.password} onChange={e => setNewUser(v => ({ ...v, password: e.target.value }))} />
+                <input className="config-edit-input" placeholder="授予 grant（逗号分隔 glob，可空）"
+                  title="如 tool:file.*, command:deploy"
+                  value={newUser.grant} onChange={e => setNewUser(v => ({ ...v, grant: e.target.value }))} />
+                <input className="config-edit-input" placeholder="拒绝 deny（逗号分隔 glob，可空）"
+                  title="如 tool:shell.*"
+                  value={newUser.deny} onChange={e => setNewUser(v => ({ ...v, deny: e.target.value }))} />
                 <button className="btn btn-primary btn-sm" onClick={addUser}
-                  disabled={!newUser.platform || !newUser.userId || (newUser.password.length > 0 && newUser.password.length < 6)}>确认</button>
+                  disabled={!newUser.platform || !newUser.userId}>确认</button>
               </div>
             )}
             {data.users.length === 0 ? (
               <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
-                暂无已设置权限的用户。新用户将获得默认等级 {data.defaultAuthority}。
+                暂无用户记录。public 能力对所有人默认开放，无需登记。
               </div>
             ) : (
               <div className="authority-cmd-list">
                 <div className="authority-cmd-header authority-user-header">
                   <span>平台</span>
-                  <span>用户 ID</span>
-                  <span>权限等级</span>
+                  <span>身份 / 委托</span>
                   <span>操作</span>
                 </div>
                 {data.users.map(u => {
                   const key = `${u.platform}:${u.userId}`;
-                  const isEditing = editUser && editUser.platform === u.platform && editUser.userId === u.userId;
                   const isCapsOpen = editCaps && editCaps.platform === u.platform && editCaps.userId === u.userId;
                   const isPwdOpen = editPwd && editPwd.platform === u.platform && editPwd.userId === u.userId;
+                  const grantN = u.grant?.length ?? 0;
+                  const denyN = u.deny?.length ?? 0;
                   return (
                     <div key={key}>
                       <div className="authority-cmd-row authority-user-row">
                         <span className="authority-cell-platform">{u.platform}</span>
                         <span className="authority-cell-id">
                           {u.userId}
+                          {u.isOwner && <span className="authority-user-flag owner" title="Owner（拥有全部能力 *）">owner</span>}
                           {u.hasPassword && <span className="authority-user-flag" title="可登录账户（已设密码）">账户</span>}
-                          {(u.grants?.length || u.denies?.length) ? (
-                            <span className="authority-user-flag" title={`授予: ${(u.grants ?? []).join(', ') || '无'}\n拒绝: ${(u.denies ?? []).join(', ') || '无'}`}>
-                              +{u.grants?.length ?? 0}/−{u.denies?.length ?? 0}
+                          {(grantN || denyN) ? (
+                            <span className="authority-user-flag" title={`授予: ${(u.grant ?? []).join(', ') || '无'}\n拒绝: ${(u.deny ?? []).join(', ') || '无'}`}>
+                              +{grantN} / −{denyN}
                             </span>
                           ) : null}
+                          {u.grantedBy && (
+                            <span className="authority-user-flag" title="委托来源（上级授予者），构成委托树">
+                              委托自 {u.grantedBy}
+                            </span>
+                          )}
                           {u.linkedTo && (
-                            <span className="authority-user-flag" title={`已绑定到主账户 ${u.linkedTo}：运行时以账户权限为准，本行记录被遮蔽（解绑后还原）；自身 denies 仍生效`}>
+                            <span className="authority-user-flag" title={`已绑定到主账户 ${u.linkedTo}：运行时以账户身份解析（解绑后还原）`}>
                               → {u.linkedTo}
                             </span>
                           )}
                           {u.links?.map(link => (
-                            <span key={link} className="authority-user-flag" title={`已绑定的平台身份（运行时解析到本账户）`}>
+                            <span key={link} className="authority-user-flag" title="已绑定的平台身份（运行时解析到本账户）">
                               ⇄ {link}
                               <button className="authority-unlink-btn" title="解绑"
                                 onClick={() => {
@@ -791,53 +467,27 @@ export function AuthorityPage() {
                             </span>
                           ))}
                         </span>
-                        <span>
-                          {isEditing ? (
-                            <select className="config-edit-input authority-inline-input"
-                              value={editUser!.authority}
-                              onChange={e => setEditUser(prev => prev ? { ...prev, authority: parseInt(e.target.value) || 0 } : null)}
-                              autoFocus>
-                              {Array.from({ length: data.ownerAuthority + 1 }, (_, i) => i).map(lv => (
-                                <option key={lv} value={lv}>{lv}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className={`authority-badge ${u.authority >= data.ownerAuthority ? 'owner' : u.authority >= 3 ? 'high' : ''}`}>
-                              {u.authority}
-                            </span>
-                          )}
-                        </span>
                         <span className="authority-actions">
-                          {isEditing ? (
-                            <>
-                              <button className="btn btn-primary btn-sm" onClick={() => saveUserAuthority(editUser!.platform, editUser!.userId, editUser!.authority)}>保存</button>
-                              <button className="btn btn-sm" onClick={() => setEditUser(null)}>取消</button>
-                            </>
-                          ) : (
-                            <>
-                              <button className="btn btn-sm" onClick={() => setEditUser({ platform: u.platform, userId: u.userId, authority: u.authority })}>编辑</button>
-                              <button className="btn btn-sm" title="capability 个别授予/拒绝（deny > grant > 等级）"
-                                onClick={() => setEditCaps(isCapsOpen ? null : {
-                                  platform: u.platform, userId: u.userId,
-                                  grants: (u.grants ?? []).join(', '), denies: (u.denies ?? []).join(', '),
-                                })}>授予</button>
-                              <button className="btn btn-sm" title={u.hasPassword ? '重置登录密码' : '设置登录密码（platform=webui 时可登录 WebUI）'}
-                                onClick={() => setEditPwd(isPwdOpen ? null : { platform: u.platform, userId: u.userId, password: '' })}>密码</button>
-                              <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>重置</button>
-                            </>
-                          )}
+                          <button className="btn btn-sm" title="设置该用户的授予 / 拒绝能力（委托）"
+                            onClick={() => setEditCaps(isCapsOpen ? null : {
+                              platform: u.platform, userId: u.userId,
+                              grant: (u.grant ?? []).join(', '), deny: (u.deny ?? []).join(', '),
+                            })}>能力</button>
+                          <button className="btn btn-sm" title={u.hasPassword ? '重置登录密码' : '设置登录密码（platform=webui 时可登录 WebUI）'}
+                            onClick={() => setEditPwd(isPwdOpen ? null : { platform: u.platform, userId: u.userId, password: '' })}>密码</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>删除</button>
                         </span>
                       </div>
                       {isCapsOpen && (
                         <div className="authority-user-expand">
-                          <label>grants（逗号分隔 glob，命中即无视等级放行）</label>
-                          <input className="config-edit-input" placeholder="如 tool:file.*, action:@aalis/plugin-skills:*"
-                            value={editCaps!.grants}
-                            onChange={e => setEditCaps(prev => prev ? { ...prev, grants: e.target.value } : null)} autoFocus />
-                          <label>denies（命中即拒绝，压过 grant 与等级）</label>
-                          <input className="config-edit-input" placeholder="如 tool:shell.*"
-                            value={editCaps!.denies}
-                            onChange={e => setEditCaps(prev => prev ? { ...prev, denies: e.target.value } : null)} />
+                          <label>grant — 授予的受限能力（逗号分隔 glob）</label>
+                          <input className="config-edit-input" placeholder="如 tool:file.*, action:@aalis/plugin-x:method, *"
+                            value={editCaps!.grant}
+                            onChange={e => setEditCaps(prev => prev ? { ...prev, grant: e.target.value } : null)} autoFocus />
+                          <label>deny — 拒绝的能力（压过 grant 与 owner）</label>
+                          <input className="config-edit-input" placeholder="如 tool:shell.*, command:shutdown"
+                            value={editCaps!.deny}
+                            onChange={e => setEditCaps(prev => prev ? { ...prev, deny: e.target.value } : null)} />
                           <div className="config-edit-actions">
                             <button className="btn btn-primary btn-sm" onClick={saveUserCapabilities}>保存</button>
                             <button className="btn btn-sm" onClick={() => setEditCaps(null)}>取消</button>
@@ -865,60 +515,229 @@ export function AuthorityPage() {
         )}
       </div>
 
-      {/* 高危操作策略 */}
+      {/* Owner 管理 */}
       <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('dangerous')}>
-          <span className="config-block-title">高危操作策略</span>
-          <span className="config-block-hint">控制哪些危险指令/工具允许执行，未在白名单中的 dangerous 操作会被拒绝</span>
-          <span className={`config-block-toggle ${openSections.has('dangerous') ? 'open' : ''}`}>▶</span>
+        <div className="config-block-header" onClick={() => toggleSection('owners')}>
+          <span className="config-block-title">Owner 管理</span>
+          <span className="config-block-hint">Owner 拥有全部能力（*）；console（单 token 登录）恒为 Owner</span>
+          <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
         </div>
-        {openSections.has('dangerous') && (
+        {openSections.has('owners') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            <div style={{ padding: '8px 12px' }}>
+              <button className="btn-sm" onClick={() => setShowAddOwner(!showAddOwner)}>
+                {showAddOwner ? '取消' : '+ 添加 Owner'}
+              </button>
+            </div>
+            {showAddOwner && (
+              <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
+                <input className="config-edit-input" placeholder="平台 (如 onebot)"
+                  list="authority-platforms"
+                  value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
+                <input className="config-edit-input" placeholder="用户 ID"
+                  value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
+                <button className="btn btn-primary btn-sm" onClick={addOwner} disabled={!newOwner.platform || !newOwner.userId}>确认</button>
+              </div>
+            )}
+            {data.owners.length === 0 ? (
+              <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
+                暂无显式 Owner。console（单 token 登录）始终拥有全部能力。
+              </div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header authority-owner-header">
+                  <span>平台</span>
+                  <span>用户 ID</span>
+                  <span>操作</span>
+                </div>
+                {data.owners.map((o, idx) => (
+                  <div className="authority-cmd-row authority-owner-row" key={`${o.platform}:${o.userId}`}>
+                    <span className="authority-cell-platform">{o.platform}</span>
+                    <span className="authority-cell-id">{o.userId}</span>
+                    <span>
+                      <button className="btn btn-danger btn-sm" onClick={() => removeOwner(idx)}>移除</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 指令可见性 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('commands')}>
+          <span className="config-block-title">指令可见性</span>
+          <span className="config-block-hint">public = 默认任何人可用；restricted = 默认禁用需授予。Owner 可覆盖单条声明</span>
+          <span className={`config-block-toggle ${openSections.has('commands') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('commands') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            {data.commands.length === 0 ? (
+              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册指令</div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header">
+                  <span>指令</span>
+                  <span>可见性</span>
+                  <span>操作</span>
+                </div>
+                {data.commands.map(c => renderVisibilityRow(c))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 工具可见性 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('tools')}>
+          <span className="config-block-title">工具可见性</span>
+          <span className="config-block-hint">AI 工具的默认可见性；Owner 可覆盖单个工具的声明</span>
+          <span className={`config-block-toggle ${openSections.has('tools') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('tools') && (
+          <div className="config-block-body" style={{ padding: 0 }}>
+            {data.tools.length === 0 ? (
+              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册工具</div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header">
+                  <span>工具</span>
+                  <span>可见性</span>
+                  <span>操作</span>
+                </div>
+                {data.tools.map(t => renderVisibilityRow(t))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 受限 / 禁用能力清单 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('caps')}>
+          <span className="config-block-title">受限 / 禁用能力清单</span>
+          <span className="config-block-hint">在内置之外追加的能力 glob 规则</span>
+          <span className={`config-block-toggle ${openSections.has('caps') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('caps') && (
           <div className="config-block-body">
-            {editDangerous ? (
+            {editCapsList ? (
+              <div className="config-edit-form">
+                <div className="config-edit-row">
+                  <label className="config-edit-label">restricted</label>
+                  <input className="config-edit-input"
+                    value={capsDraft.restricted}
+                    onChange={e => setCapsDraft(v => ({ ...v, restricted: e.target.value }))}
+                    placeholder="tool:shell.*, command:deploy" />
+                  <span className="config-edit-hint">额外按受限处理（默认禁，需授予）</span>
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">denied</label>
+                  <input className="config-edit-input"
+                    value={capsDraft.denied}
+                    onChange={e => setCapsDraft(v => ({ ...v, denied: e.target.value }))}
+                    placeholder="tool:dangerous.*" />
+                  <span className="config-edit-hint">全局硬禁，连 owner 都压过；慎用</span>
+                </div>
+                <div className="config-edit-actions">
+                  <button className="btn btn-primary btn-sm" onClick={saveCapsList}>保存</button>
+                  <button className="btn btn-sm" onClick={() => setEditCapsList(false)}>取消</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="config-item" title="额外按受限处理：默认禁用，需显式授予">
+                  <span className="key">restrictedCapabilities</span>
+                  <span className="val">{(data.restrictedCapabilities ?? []).join(', ') || '(无)'}</span>
+                </div>
+                <div className="config-item" title="全局硬禁：覆盖一切，连 owner 都压过；慎用">
+                  <span className="key">deniedCapabilities</span>
+                  <span className="val">{(data.deniedCapabilities ?? []).join(', ') || '(无)'}</span>
+                </div>
+                <div style={{ padding: '6px 0 2px' }}>
+                  <button className="btn-sm" onClick={() => setEditCapsList(true)}>编辑</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 临时放行策略 */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('policy')}>
+          <span className="config-block-title">临时放行策略</span>
+          <span className="config-block-hint">受限能力的临时自动放行白名单，及当前活跃的临时委托</span>
+          <span className={`config-block-toggle ${openSections.has('policy') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('policy') && (
+          <div className="config-block-body">
+            {editPolicy ? (
               <div className="config-edit-form">
                 <div className="config-edit-row">
                   <label className="config-edit-label">allow</label>
                   <input className="config-edit-input"
-                    value={dangerousDraft.allow}
-                    onChange={e => setDangerousDraft(v => ({ ...v, allow: e.target.value }))}
-                    placeholder="shutdown, restart 或 *" />
-                  <span className="config-edit-hint">逗号分隔，* 表示全部放行</span>
+                    value={policyDraft.allow}
+                    onChange={e => setPolicyDraft(v => ({ ...v, allow: e.target.value }))}
+                    placeholder="command:deploy, tool:file.* 或 *" />
+                  <span className="config-edit-hint">逗号分隔 glob，* 表示全部受限能力</span>
                 </div>
                 <div className="config-edit-row">
                   <label className="config-edit-label">duration</label>
                   <input type="number" className="config-edit-input" min={0}
-                    value={dangerousDraft.duration}
-                    onChange={e => setDangerousDraft(v => ({ ...v, duration: parseInt(e.target.value) || 0 }))} />
+                    value={policyDraft.duration}
+                    onChange={e => setPolicyDraft(v => ({ ...v, duration: parseInt(e.target.value) || 0 }))} />
                   <span className="config-edit-hint">有效期 (秒)，0 = 永久</span>
                 </div>
                 <div className="config-edit-actions">
-                  <button className="btn btn-primary btn-sm" onClick={saveDangerous}>保存</button>
-                  <button className="btn btn-sm" onClick={() => setEditDangerous(false)}>取消</button>
+                  <button className="btn btn-primary btn-sm" onClick={savePolicy}>保存</button>
+                  <button className="btn btn-sm" onClick={() => setEditPolicy(false)}>取消</button>
                 </div>
               </div>
             ) : (
               <>
                 <div className="config-item">
                   <span className="key">allow</span>
-                  <span className="val">{(data.dangerousPolicy?.allow ?? []).join(', ') || '(无)'}</span>
+                  <span className="val">{(data.restrictedPolicy?.allow ?? []).join(', ') || '(无)'}</span>
                 </div>
                 <div className="config-item">
                   <span className="key">duration</span>
-                  <span className="val">
-                    {data.dangerousPolicy?.duration === 0
-                      ? '(永久)'
-                      : remainSec != null
-                        ? remainSec > 0
-                          ? `${Math.floor(remainSec / 3600).toString().padStart(2, '0')}:${Math.floor((remainSec % 3600) / 60).toString().padStart(2, '0')}:${(remainSec % 60).toString().padStart(2, '0')} 剩余`
-                          : '✕ 已过期'
-                        : `${data.dangerousPolicy?.duration ?? 0}s (未激活)`
-                    }
-                  </span>
+                  <span className="val">{data.restrictedPolicy?.duration === 0 ? '(永久)' : `${data.restrictedPolicy?.duration ?? 0}s`}</span>
                 </div>
                 <div style={{ padding: '6px 0 2px' }}>
-                  <button className="btn-sm" onClick={() => setEditDangerous(true)}>编辑</button>
+                  <button className="btn-sm" onClick={() => setEditPolicy(true)}>编辑</button>
                 </div>
               </>
+            )}
+
+            <div className="section-label" style={{ marginTop: 12 }}>当前临时委托</div>
+            {data.temporaryGrants.length === 0 ? (
+              <div className="empty-hint" style={{ padding: '4px 0' }}>暂无活跃的临时委托。</div>
+            ) : (
+              <div className="authority-cmd-list">
+                <div className="authority-cmd-header">
+                  <span>能力 / 会话</span>
+                  <span>用量</span>
+                  <span>操作</span>
+                </div>
+                {data.temporaryGrants.map(g => (
+                  <div className="authority-cmd-row" key={g.id}>
+                    <span className="authority-cmd-name" title={`类型 ${g.type} · 平台 ${g.platform}${g.userId ? ':' + g.userId : ''} · 到期 ${new Date(g.expiresAt).toLocaleString()}`}>
+                      {g.capability}
+                      <span className="authority-cmd-plugin" style={{ marginLeft: 6 }}>{g.sessionId}</span>
+                    </span>
+                    <span style={{ fontSize: 12, opacity: 0.8 }}>
+                      {g.used}{g.maxUses ? ` / ${g.maxUses}` : ''}
+                    </span>
+                    <span className="authority-actions">
+                      <button className="btn btn-danger btn-sm" onClick={() => revokeTemporaryGrant(g.id)}>撤销</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
