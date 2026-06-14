@@ -155,8 +155,7 @@ import { useCommandService } from '@aalis/plugin-commands-api';
 useToolService(ctx)?.register({
   definition: { type: 'function', function: { name: 'my_tool', description: '...', parameters: { ... } } },
   handler: async (args, toolCtx) => JSON.stringify(result),
-  safety: 'safe',
-  authority: 1,
+  visibility: 'public',   // 'public'（默认所有人可用）| 'restricted'（默认禁，需授予）
 });
 
 // 注册一个用户斜杠命令

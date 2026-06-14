@@ -107,7 +107,7 @@ declare module '@aalis/core' {
 | `plugin-commands-api` | — | `commands` | `CommandService` |
 | `plugin-gateway-api` | `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | — | `GatewayService`, `InboundPhaseData` |
 | `plugin-webui-api` | — | `webui-server` | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；导出 `useWebuiService(ctx)` helper 用于注册页面 |
-| `plugin-authority-api` | — | `authority` | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `DangerousConfirm*` 等 |
+| `plugin-authority-api` | — | `authority` | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等 |
 | `plugin-agent-api` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | — | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
 
 ## 何时需要新建 api 包
