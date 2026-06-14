@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-deepseek",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "DeepSeek LLM 提供者（深度思考 + 工具调用）",
   "type": "module",
   "keywords": [
     "aalis-plugin"

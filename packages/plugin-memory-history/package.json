@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-memory-history",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "跨会话消息历史上下文（基础记忆）",
   "type": "module",
   "keywords": [
     "aalis-plugin"

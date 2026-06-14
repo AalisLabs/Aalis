@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-cron-engine",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "Cron 定时引擎：解析与触发 cron 表达式任务",
   "type": "module",
   "keywords": [
     "aalis-plugin"

@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-asr-whisper-cpp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "语音识别（ASR）—— 本地 whisper.cpp 提供者",
   "type": "module",
   "keywords": [
     "aalis-plugin"

@@ -1,7 +1,6 @@
 # @aalis/plugin-memory-mongodb
 
-运行时插件
-
+MongoDB 消息历史存储后端
 ## 角色
 
 运行时插件
