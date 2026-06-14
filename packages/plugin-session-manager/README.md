@@ -1,7 +1,6 @@
 # @aalis/plugin-session-manager
 
-运行时插件
-
+会话管理：生命周期、平台配置、会话树
 ## 角色
 
 运行时插件

@@ -1,7 +1,6 @@
 # @aalis/plugin-memory-summary
 
-运行时插件
-
+对话摘要记忆：LLM 将历史压缩为摘要
 ## 角色
 
 运行时插件

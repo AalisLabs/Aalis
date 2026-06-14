@@ -1,7 +1,6 @@
 # @aalis/plugin-commands
 
-运行时插件
-
+斜杠指令系统：注册与分发 /command
 ## 角色
 
 运行时插件

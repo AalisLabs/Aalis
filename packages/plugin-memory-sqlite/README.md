@@ -1,7 +1,6 @@
 # @aalis/plugin-memory-sqlite
 
-运行时插件
-
+SQLite 消息历史存储后端（本地文件，推荐）
 ## 角色
 
 运行时插件

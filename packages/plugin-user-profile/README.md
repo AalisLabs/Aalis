@@ -1,7 +1,6 @@
 # @aalis/plugin-user-profile
 
-运行时插件
-
+用户画像：记录与检索用户信息
 ## 角色
 
 运行时插件

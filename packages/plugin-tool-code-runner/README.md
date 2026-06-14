@@ -1,7 +1,6 @@
 # @aalis/plugin-tool-code-runner
 
-运行时插件
-
+代码执行工具：运行代码片段并取回结果
 ## 角色
 
 运行时插件

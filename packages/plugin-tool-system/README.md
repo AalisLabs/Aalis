@@ -1,7 +1,6 @@
 # @aalis/plugin-tool-system
 
-运行时插件
-
+系统工具集：Shell / 文件 / HTTP 等基础能力
 ## 角色
 
 运行时插件

@@ -1,7 +1,6 @@
 # @aalis/plugin-todo-list
 
-运行时插件
-
+待办清单：AI 任务的结构化 TODO 跟踪
 ## 角色
 
 运行时插件

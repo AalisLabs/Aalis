@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-skills",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "技能系统：AI 自主学习与管理可复用技能库",
   "type": "module",
   "keywords": [
     "aalis-plugin"
