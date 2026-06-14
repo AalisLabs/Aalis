@@ -1,13 +1,13 @@
 import type { ConfigManager, Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { AuthorityManager } from '../../packages/plugin-authority/src/index.js';
+import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 
 // ════════════════════════════════════════════════════════════
-// authority — 跨平台身份绑定（2026-06-13 调研决议）
+// authority — 跨平台身份绑定（纯能力委托模型）
 //
-// 语义：运行时零合并（被绑身份解析到主账户单一真源，denies 取自身∪账户
-// 并集防洗白）+ 绑定时刻一次性合并（等级 max、grants/denies 并集写入账户）。
-// 平台身份原记录原样留底，解绑即还原。
+// 语义：运行时零合并（被绑身份的 grant 解析到主账户单一真源，deny 取自身∪账户
+// 并集防"绑定洗白封禁"）+ 绑定时刻一次性合并（grant/deny 并集写入账户）。
+// 平台身份原记录原样留底，解绑即还原。无数字等级。
 // ════════════════════════════════════════════════════════════
 
 type StorageParam = ConstructorParameters<typeof AuthorityManager>[2];
@@ -19,18 +19,20 @@ function makeLogger(): Logger {
 }
 
 function makeManager(cfg: Record<string, unknown> = {}, storage: Partial<StorageParam> = {}): AuthorityManager {
-  const data: Record<string, unknown> = { defaultAuthority: 1, ownerAuthority: 5, ...cfg };
-  const config = { get: (k: string) => data[k] } as unknown as ConfigManager;
+  const config = { get: (k: string) => cfg[k] } as unknown as ConfigManager;
   return new AuthorityManager(config, makeLogger(), storage as StorageParam);
 }
 
 const QQ = { platform: 'onebot', userId: '12345' };
+const WEBUI = (userId: string) => ({ platform: 'webui', userId });
+// 被授予后即可过 restricted 能力闸，用 authorize 间接断言"有效 grant"
+const can = (m: AuthorityManager, id: typeof QQ, cap: string) =>
+  m.authorize(id, { capability: cap, visibility: 'restricted' }) === null;
 
-/** 建账户 + 发码 + 消费的快捷流 */
-function bindQQ(m: AuthorityManager, account = 'alice'): string {
+/** 发码 + 消费的快捷流 */
+function bindQQ(m: AuthorityManager, account = 'alice'): void {
   const { code } = m.createBindCode('webui', account);
   m.consumeBindCode(code, QQ);
-  return code;
 }
 
 describe('createBindCode', () => {
@@ -52,8 +54,8 @@ describe('createBindCode', () => {
 
 describe('consumeBindCode', () => {
   it('成功绑定：账户记录 links、被绑身份 linkedTo', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setAuthority('webui', 'alice', 2);
+    const m = makeManager();
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:x'] });
     const { code } = m.createBindCode('webui', 'alice');
     const account = m.consumeBindCode(code, QQ);
     expect(account).toEqual({ platform: 'webui', userId: 'alice' });
@@ -76,61 +78,58 @@ describe('consumeBindCode', () => {
 });
 
 describe('绑定时刻一次性合并', () => {
-  it('等级取 max、grants/denies 并集写入账户', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setAuthority('webui', 'alice', 1);
-    m.setUserCapabilities('webui', 'alice', { grants: ['tool:a'] });
-    m.setAuthority('onebot', '12345', 3);
-    m.setUserCapabilities('onebot', '12345', { grants: ['tool:b'], denies: ['tool:evil'] });
+  it('grant/deny 并集写入账户；平台身份原记录留底', () => {
+    const m = makeManager();
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:a'] });
+    m.setUserCapabilities(null, QQ, { grant: ['tool:b'], deny: ['tool:evil'] });
     bindQQ(m);
     const alice = m.listUsers().find(u => u.userId === 'alice');
-    expect(alice?.authority).toBe(3); // max(1, 3)
-    expect(alice?.grants?.sort()).toEqual(['tool:a', 'tool:b']);
-    expect(alice?.denies).toEqual(['tool:evil']);
+    expect(alice?.grant?.sort()).toEqual(['tool:a', 'tool:b']);
+    expect(alice?.deny).toEqual(['tool:evil']);
     // 平台身份原记录留底未动
-    expect(m.listUsers().find(u => u.userId === '12345')?.grants).toEqual(['tool:b']);
+    expect(m.listUsers().find(u => u.userId === '12345')?.grant).toEqual(['tool:b']);
   });
 
   it('平台身份无记录时账户不变', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setAuthority('webui', 'alice', 2);
+    const m = makeManager();
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:a'] });
     bindQQ(m);
-    expect(m.listUsers().find(u => u.userId === 'alice')?.authority).toBe(2);
+    expect(m.listUsers().find(u => u.userId === 'alice')?.grant).toEqual(['tool:a']);
   });
 });
 
 describe('运行时解析（零合并单一真源）', () => {
-  it('被绑身份的等级实时跟随账户（改账户立即生效）', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setAuthority('webui', 'alice', 2);
+  it('被绑身份的 grant 实时跟随账户（改账户立即生效）', () => {
+    const m = makeManager();
     bindQQ(m);
-    expect(m.getAuthority('onebot', '12345')).toBe(2);
-    m.setAuthority('webui', 'alice', 4);
-    expect(m.getAuthority('onebot', '12345')).toBe(4);
+    expect(can(m, QQ, 'tool:x')).toBe(false);
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:x'] });
+    expect(can(m, QQ, 'tool:x')).toBe(true); // 立即生效
   });
 
-  it('grants 以账户为唯一真源；自身 denies 绑定后仍生效（防洗白）', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setUserCapabilities('onebot', '12345', { denies: ['tool:banned'] });
-    m.setAuthority('webui', 'alice', 1);
+  it('grant 以账户为唯一真源；自身 deny 绑定后仍生效（防洗白）', () => {
+    const m = makeManager();
+    m.setUserCapabilities(null, QQ, { deny: ['tool:banned'] });
     bindQQ(m);
     // 绑后给账户 grant —— 被绑身份立即享有
-    m.setUserCapabilities('webui', 'alice', { grants: ['tool:x'], denies: ['tool:banned'] });
-    expect(m.authorize(QQ, { capabilities: ['tool:x'], declaredAuthority: 4 })).toBeNull();
-    // 被绑身份自身的 deny（绑时已并入账户，且自身记录仍参与并集）继续拒绝
-    expect(m.authorize(QQ, { capabilities: ['tool:banned'], declaredAuthority: 0 })).toMatch(/已被禁止/);
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:x', 'tool:banned'] });
+    expect(can(m, QQ, 'tool:x')).toBe(true);
+    // 被绑身份自身的 deny（自身记录仍参与并集）继续拒绝
+    expect(can(m, QQ, 'tool:banned')).toBe(false);
   });
 });
 
 describe('解绑还原', () => {
   it('解绑后回到平台身份自身记录（留底生效）', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setAuthority('onebot', '12345', 3);
-    m.setAuthority('webui', 'alice', 5);
-    bindQQ(m);
-    expect(m.getAuthority('onebot', '12345')).toBe(5);
+    const m = makeManager();
+    m.setUserCapabilities(null, QQ, { grant: ['tool:own'] }); // 平台身份自身留底
+    bindQQ(m); // 绑定时账户一次性吸收 tool:own
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:own', 'tool:acct'] }); // 账户后增 tool:acct（独有）
+    expect(can(m, QQ, 'tool:acct')).toBe(true); // 绑定期间随账户可用
+    expect(can(m, QQ, 'tool:own')).toBe(true);
     expect(m.unlinkIdentity('onebot', '12345')).toBe(true);
-    expect(m.getAuthority('onebot', '12345')).toBe(3); // 还原
+    expect(can(m, QQ, 'tool:own')).toBe(true); // 还原到自身留底
+    expect(can(m, QQ, 'tool:acct')).toBe(false); // 账户独有的随解绑消失
     expect(m.listUsers().find(u => u.userId === 'alice')?.links).toBeUndefined();
     expect(m.unlinkIdentity('onebot', '12345')).toBe(false);
   });
@@ -139,27 +138,28 @@ describe('解绑还原', () => {
 describe('持久化与级联', () => {
   it('links 经 save/init 往返存活，linkIndex 重建后解析仍生效', async () => {
     let written = '';
-    const m = makeManager({ defaultAuthority: 1 }, {
+    const m = makeManager({}, {
       writeFile: async (_uri: string, payload: string | Uint8Array) => {
         written = payload as string;
       },
     } as Partial<StorageParam>);
-    m.setAuthority('webui', 'alice', 4);
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:acct'] });
     bindQQ(m);
     m.save();
     await new Promise(r => setTimeout(r, 0));
-    const m2 = makeManager({ defaultAuthority: 1 }, { readFile: async () => written } as Partial<StorageParam>);
+    const m2 = makeManager({}, { readFile: async () => written } as Partial<StorageParam>);
     await m2.init();
-    expect(m2.getAuthority('onebot', '12345')).toBe(4);
+    expect(can(m2, QQ, 'tool:acct')).toBe(true); // 绑定 + grant 往返
     expect(m2.listUsers().find(u => u.userId === '12345')?.linkedTo).toBe('webui:alice');
   });
 
   it('删除账户记录后被绑身份自动还原', () => {
-    const m = makeManager({ defaultAuthority: 1 });
-    m.setAuthority('onebot', '12345', 3);
-    m.setAuthority('webui', 'alice', 5);
+    const m = makeManager();
+    m.setUserCapabilities(null, QQ, { grant: ['tool:own'] });
     bindQQ(m);
+    m.setUserCapabilities(null, WEBUI('alice'), { grant: ['tool:own', 'tool:acct'] });
     m.removeUser('webui', 'alice');
-    expect(m.getAuthority('onebot', '12345')).toBe(3);
+    expect(can(m, QQ, 'tool:own')).toBe(true); // 回退自身留底
+    expect(can(m, QQ, 'tool:acct')).toBe(false);
   });
 });

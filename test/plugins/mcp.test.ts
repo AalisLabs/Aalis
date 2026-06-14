@@ -70,8 +70,7 @@ class FakeToolService implements ToolService {
       name: t.definition.function.name,
       description: t.definition.function.description,
       pluginName: t.pluginName,
-      authority: t.authority,
-      safety: t.safety,
+      visibility: t.visibility ?? 'public',
       permissions: t.permissions,
       groups: t.groups,
     }));
@@ -118,7 +117,7 @@ function makeFakeCtx(toolService: FakeToolService): Context {
 // ===== Test A：mcp-server 侧 =====
 
 describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 Aalis 工具', () => {
-  async function setup(opts: { allowDangerous?: boolean } = {}) {
+  async function setup(opts: { allowRestricted?: boolean } = {}) {
     const tools = new FakeToolService();
     tools.register({
       definition: {
@@ -129,7 +128,6 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
           parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
         },
       },
-      safety: 'safe',
       handler: async args => `${args.text}!`,
     });
     tools.register({
@@ -137,11 +135,11 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
         type: 'function',
         function: {
           name: 'rm_rf',
-          description: '危险工具',
+          description: '受限工具',
           parameters: { type: 'object', properties: {} },
         },
       },
-      safety: 'dangerous',
+      visibility: 'restricted',
       handler: async () => 'boom',
     });
 
@@ -149,7 +147,7 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
       port: 0,
       bind: '127.0.0.1',
       toolGroups: [],
-      allowDangerous: opts.allowDangerous ?? false,
+      allowRestricted: opts.allowRestricted ?? false,
     });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -159,7 +157,7 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
     return { client, server, tools };
   }
 
-  it('listTools 默认过滤 dangerous，仅返回 safe 工具', async () => {
+  it('listTools 默认过滤 restricted，仅返回 public 工具', async () => {
     const { client, server } = await setup();
     const res = await client.listTools();
     const names = res.tools.map(t => t.name);
@@ -180,16 +178,16 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
     await server.close();
   });
 
-  it('callTool 调用 dangerous 工具时返回 isError', async () => {
-    const { client, server } = await setup({ allowDangerous: false });
+  it('callTool 调用 restricted 工具时返回 isError', async () => {
+    const { client, server } = await setup({ allowRestricted: false });
     const res = await client.callTool({ name: 'rm_rf', arguments: {} });
     expect(res.isError).toBe(true);
     await client.close();
     await server.close();
   });
 
-  it('allowDangerous=true 时 dangerous 工具可见可调用', async () => {
-    const { client, server } = await setup({ allowDangerous: true });
+  it('allowRestricted=true 时 restricted 工具可见可调用', async () => {
+    const { client, server } = await setup({ allowRestricted: true });
     const list = await client.listTools();
     expect(list.tools.map(t => t.name)).toContain('rm_rf');
     const res = await client.callTool({ name: 'rm_rf', arguments: {} });
@@ -253,7 +251,7 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
       required: ['who'],
     });
     expect(t.groups).toEqual(['mcp:remote']);
-    expect(t.safety).toBe('safe');
+    expect(t.visibility ?? 'public').toBe('public');
 
     await client.close();
     await server.close();

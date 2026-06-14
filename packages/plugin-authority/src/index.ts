@@ -92,7 +92,9 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       const isOwner = authority.isOwner(platform, userId);
       const who = self ? '您' : `${platform}:${userId}`;
       const lines = [`${who}${isOwner ? '（owner，拥有全部能力）' : ''}`];
-      const entry = userId ? authority.listUsers().find(u => u.platform === platform && u.userId === userId) : undefined;
+      const entry = userId
+        ? authority.listUsers().find(u => u.platform === platform && u.userId === userId)
+        : undefined;
       if (entry?.linkedTo) lines.push(`已绑定到主账户 ${entry.linkedTo}（能力以账户为准）`);
       if (entry?.links?.length) lines.push(`已绑定身份: ${entry.links.join(', ')}`);
       if (entry?.grant?.length) lines.push(`授予能力: ${entry.grant.join(', ')}`);
@@ -189,7 +191,13 @@ export const actions: PluginModule['actions'] = {
     const cmdNodes = commandsSvc?.getAll() ?? [];
     const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
     const platforms = Array.from(
-      new Set([...getPlatformNames(ctx), 'webui', 'cli', ...users.map(u => u.platform), ...owners.map(o => o.platform)]),
+      new Set([
+        ...getPlatformNames(ctx),
+        'webui',
+        'cli',
+        ...users.map(u => u.platform),
+        ...owners.map(o => o.platform),
+      ]),
     ).filter(Boolean);
     return {
       users,
@@ -298,7 +306,9 @@ export const actions: PluginModule['actions'] = {
     ctx.config.set('restrictedPolicy', policy);
     app.saveConfig();
     if (Array.isArray(policy.allow) && policy.allow.length > 0) {
-      (ctx.getService<AuthorityService>('authority') as unknown as { markPolicyEnabled?: () => void } | undefined)?.markPolicyEnabled?.();
+      (
+        ctx.getService<AuthorityService>('authority') as unknown as { markPolicyEnabled?: () => void } | undefined
+      )?.markPolicyEnabled?.();
     }
     return { message: '临时放行策略已更新' };
   },

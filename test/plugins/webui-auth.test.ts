@@ -1,6 +1,6 @@
 import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { AuthorityManager } from '../../packages/plugin-authority/src/index.js';
+import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import { type AccountVerifier, createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
 import { createRouteGate } from '../../packages/plugin-webui-server/src/gate.js';
 
@@ -229,17 +229,24 @@ describe('tokenMode=disabled（多用户收口）', () => {
   });
 });
 
-describe('REST 路由权限闸（gate × authorize）', () => {
-  function makeGate(level: number, grants?: string[]) {
-    const cfgData: Record<string, unknown> = { ownerAuthority: 5, defaultAuthority: 1 };
-    const config = { get: (k: string) => cfgData[k] };
+describe('REST 路由能力闸（gate × authorize）', () => {
+  // owner=true 时把 alice 配为 owner；grant/deny 对 alice 做能力委托（系统上下文，不校验子集）。
+  function makeGate(opts: { owner?: boolean; grant?: string[]; deny?: string[] } = {}) {
+    const cfgData: Record<string, unknown> = opts.owner ? { owners: [{ platform: 'webui', userId: 'alice' }] } : {};
+    const config = {
+      get: (k: string) => cfgData[k],
+      set: (k: string, v: unknown) => {
+        cfgData[k] = v;
+      },
+    };
     const manager = new AuthorityManager(
       config as never,
       makeLogger(),
       {} as ConstructorParameters<typeof AuthorityManager>[2],
     );
-    manager.setAuthority('webui', 'alice', level);
-    if (grants) manager.setUserCapabilities('webui', 'alice', { grants });
+    if (opts.grant || opts.deny) {
+      manager.setUserCapabilities(null, { platform: 'webui', userId: 'alice' }, { grant: opts.grant, deny: opts.deny });
+    }
     const ctx = { getService: (n: string) => (n === 'authority' ? manager : undefined), config } as never;
     return createRouteGate(ctx, () => ({ platform: 'webui', userId: 'alice' }));
   }
@@ -253,30 +260,30 @@ describe('REST 路由权限闸（gate × authorize）', () => {
     return { status: res.statusCode, nexted };
   }
 
-  it('分层缺省：公共读放行低等级账户，管理读与变更档拒绝', () => {
-    const gate = makeGate(1);
-    expect(pass(gate('webui:status:read', 1)).nexted).toBe(true);
-    expect(pass(gate('webui:logs:read', 4)).status).toBe(403);
-    expect(pass(gate('webui:config:write', 'owner')).status).toBe(403);
+  it('默认可见性：public 放行普通账户，restricted（未授予）拒绝', () => {
+    const gate = makeGate();
+    expect(pass(gate('webui:status:read', 'public')).nexted).toBe(true);
+    expect(pass(gate('webui:logs:read', 'restricted')).status).toBe(403);
+    expect(pass(gate('webui:config:write', 'restricted')).status).toBe(403);
   });
 
-  it('per-user grant 可单独放行某条管理路由（不动等级）', () => {
-    const gate = makeGate(1, ['webui:files:read']);
-    expect(pass(gate('webui:files:read', 4)).nexted).toBe(true);
-    expect(pass(gate('webui:files:write', 'owner')).status).toBe(403);
+  it('per-user grant 可单独放行某条 restricted 路由', () => {
+    const gate = makeGate({ grant: ['webui:files:read'] });
+    expect(pass(gate('webui:files:read', 'restricted')).nexted).toBe(true);
+    expect(pass(gate('webui:files:write', 'restricted')).status).toBe(403);
   });
 
-  it('owner 等级账户全档放行', () => {
-    const gate = makeGate(5);
-    expect(pass(gate('webui:config:write', 'owner')).nexted).toBe(true);
+  it('owner 账户全档放行', () => {
+    const gate = makeGate({ owner: true });
+    expect(pass(gate('webui:config:write', 'restricted')).nexted).toBe(true);
   });
 
-  it('authority 缺席时 fail-closed：公共读放行，管理读/变更 503（不裸奔）', () => {
-    const config = { get: (k: string) => ({ ownerAuthority: 5, defaultAuthority: 1 })[k] };
+  it('authority 缺席时 fail-closed：public 放行，restricted 503（不裸奔）', () => {
+    const config = { get: () => undefined };
     const ctx = { getService: () => undefined, config } as never;
     const gate = createRouteGate(ctx, () => ({ platform: 'webui', userId: 'console' }));
-    expect(pass(gate('webui:status:read', 1)).nexted).toBe(true);
-    expect(pass(gate('webui:logs:read', 4)).status).toBe(503);
-    expect(pass(gate('webui:config:write', 'owner')).status).toBe(503);
+    expect(pass(gate('webui:status:read', 'public')).nexted).toBe(true);
+    expect(pass(gate('webui:logs:read', 'restricted')).status).toBe(503);
+    expect(pass(gate('webui:config:write', 'restricted')).status).toBe(503);
   });
 });
