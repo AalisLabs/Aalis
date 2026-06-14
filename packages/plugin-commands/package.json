@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@aalis/plugin-commands-api": "workspace:^",
-    "@aalis/plugin-doctor-api": "workspace:^",
     "@aalis/plugin-gateway-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^"
   },
@@ -37,9 +36,6 @@
     "service": {
       "required": [
         "gateway"
-      ],
-      "optional": [
-        "doctor"
       ],
       "provides": [
         "commands"
