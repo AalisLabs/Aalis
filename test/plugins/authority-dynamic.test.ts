@@ -1,7 +1,7 @@
 import type { ConfigManager, Logger } from '@aalis/core';
-import type { AccessRequest } from '@aalis/plugin-authority-api';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import type { AccessRequest } from '../../packages/plugin-authority-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // authority — 临时能力委托（restricted 能力的时限/限次放行）
