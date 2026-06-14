@@ -1,7 +1,6 @@
 # @aalis/plugin-openai
 
-运行时插件
-
+OpenAI / 兼容接口 LLM 提供者（对话、工具、流式）
 ## 角色
 
 运行时插件

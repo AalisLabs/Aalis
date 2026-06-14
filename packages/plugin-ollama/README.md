@@ -1,7 +1,6 @@
 # @aalis/plugin-ollama
 
-运行时插件
-
+Ollama 本地 LLM 提供者
 ## 角色
 
 运行时插件

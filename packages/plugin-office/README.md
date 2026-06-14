@@ -1,7 +1,6 @@
 # @aalis/plugin-office
 
-运行时插件
-
+Office 文档：Word/Excel/PPT/PDF 创建与编辑
 ## 角色
 
 运行时插件

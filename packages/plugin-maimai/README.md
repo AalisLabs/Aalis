@@ -1,7 +1,6 @@
 # @aalis/plugin-maimai
 
-运行时插件
-
+舞萌 DX（maimai）查分与相关工具
 ## 角色
 
 运行时插件

@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-authority",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "权限系统：能力授权、跨平台身份绑定、高危操作拦截",
   "type": "module",
   "keywords": [
     "aalis-plugin"

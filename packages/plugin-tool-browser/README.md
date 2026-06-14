@@ -1,7 +1,6 @@
 # @aalis/plugin-tool-browser
 
-运行时插件
-
+浏览器自动化工具（Puppeteer）
 ## 角色
 
 运行时插件

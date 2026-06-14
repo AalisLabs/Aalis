@@ -1,7 +1,6 @@
 # @aalis/plugin-embedding-openai
 
-运行时插件
-
+文本向量化（Embedding）—— OpenAI 接口提供者
 ## 角色
 
 运行时插件

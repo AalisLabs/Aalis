@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-tool-system",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "系统工具集：Shell / 文件 / HTTP 等基础能力",
   "type": "module",
   "keywords": [
     "aalis-plugin"

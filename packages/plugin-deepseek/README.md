@@ -1,7 +1,6 @@
 # @aalis/plugin-deepseek
 
-运行时插件
-
+DeepSeek LLM 提供者（深度思考 + 工具调用）
 ## 角色
 
 运行时插件

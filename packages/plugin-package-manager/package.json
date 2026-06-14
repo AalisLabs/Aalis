@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-package-manager",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "MIT",
+  "description": "插件包管理：从 npm 安装/卸载插件到 packages/",
   "type": "module",
   "keywords": [
     "aalis-plugin"

@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-scheduler",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "任务调度：AI 可自主创建定时任务",
   "type": "module",
   "keywords": [
     "aalis-plugin"

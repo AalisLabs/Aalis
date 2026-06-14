@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "对话编排核心：消息构建、工具循环、上下文管理",
   "type": "module",
   "keywords": [
     "aalis-plugin"

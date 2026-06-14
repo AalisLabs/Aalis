@@ -1,7 +1,6 @@
 # @aalis/plugin-webui-server
 
-运行时插件
-
+Web 管理界面后端：对话/插件/服务/市场/文件
 ## 角色
 
 运行时插件

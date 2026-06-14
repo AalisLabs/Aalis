@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-adapter-onebot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "OneBot v11/v12 协议适配器（QQ 等平台接入，多连接 + 自动重连）",
   "type": "module",
   "keywords": [
     "aalis-plugin"
