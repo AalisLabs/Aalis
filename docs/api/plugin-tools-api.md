@@ -23,7 +23,7 @@ interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
-  getAll(): Array<{ name; description; pluginName; authority?; safety?; permissions?; groups? }>;
+  getAll(): Array<{ name; description; pluginName; visibility; permissions?; groups? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
   setExecutionGuard(guard: ExecutionGuard): void;
   unregisterByPlugin(pluginName: string): void;
@@ -39,11 +39,10 @@ interface RegisteredTool {
   definition: ToolDefinition;             // OpenAI 风格函数声明
   handler: (args, callCtx: ToolCallContext) => Promise<string>;
   pluginName: string;
-  authority?: number;                     // 默认 1
-  safety?: SafetyLevel;                   // 默认 'safe'
-  permissions?: PermissionId[];           // 静态权限
-  resolvePermissions?: (args, ctx) => PermissionId[] | Promise<PermissionId[]>; // 动态权限
-  // 注：SafetyLevel / PermissionId 自 2026-06 起从 @aalis/plugin-authority-api 导入（已迁出 core）
+  visibility?: CapabilityVisibility;      // 'public' | 'restricted'（默认 public）
+  permissions?: CapabilityId[];           // 静态资源能力
+  resolvePermissions?: (args, ctx) => CapabilityId[] | Promise<CapabilityId[]>; // 动态资源能力
+  // 注：CapabilityVisibility / CapabilityId 从 @aalis/plugin-authority-api 导入
   groups?: string[];                      // 工具分组，未设置时始终可用
 }
 ```

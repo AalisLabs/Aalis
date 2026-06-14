@@ -13,8 +13,8 @@ interface RegisteredTool {
   definition: ToolDefinition;   // OpenAI 格式的工具定义
   handler: (args: Record<string, unknown>, ctx?: ToolCallContext) => Promise<string>;
   pluginName: string;           // 注册该工具的插件名
-  safety?: 'safe' | 'dangerous';
-  authority?: number;           // 最低权限等级
+  visibility?: CapabilityVisibility;  // 'public' | 'restricted'（默认 public）
+  permissions?: CapabilityId[];       // 静态资源能力
 }
 ```
 
@@ -40,8 +40,7 @@ const dispose = tools.register({
     },
   },
   handler: async (args) => `结果: ${args.input}`,
-  safety: 'safe',
-  authority: 0,
+  visibility: 'public',
 });
 ```
 
@@ -50,10 +49,10 @@ const dispose = tools.register({
 ```
 tools.execute(name, args, callCtx)
   │
-  ├─ 查找工具（含覆盖的权限/安全等级）
-  ├─ 权限检查: authority.getAuthority() ≥ 工具要求
-  ├─ 如果 safety='dangerous':
-  │     authority.confirmDangerous() → 交互式确认
+  ├─ 查找工具（解析有效可见性 + 静态/动态资源能力）
+  ├─ 执行守卫: authority.authorize() —— 逐能力裁决 deny > owner > public > granted
+  ├─ 若命中未授予的 restricted 能力:
+  │     authority.requestAccess() → 临时委托（白名单 / 会话授予 / 确认回调）
   └─ 调用 handler(args, callCtx) → 返回字符串结果
 ```
 
@@ -61,19 +60,17 @@ tools.execute(name, args, callCtx)
 
 ```typescript
 tools.getDefinitions()    // 获取所有工具定义（发给 LLM）
-tools.getSummaries()      // 获取摘要（名称、描述、权限）
-tools.getAll()            // 获取详细信息（含插件名、是否被覆盖）
+tools.getSummaries()      // 获取摘要（名称、描述、资源能力）
+tools.getAll()            // 获取详细信息（含插件名、可见性、资源能力）
 ```
 
-## 覆盖系统
+## 可见性覆盖
 
-与指令系统类似，支持通过配置覆盖工具的权限和安全等级：
+与指令系统类似，owner 可通过 authority 配置覆盖单条工具的默认可见性，无需改插件声明：
 
 ```yaml
-toolOverrides:
-  exec:
-    authority: 5
-    safety: dangerous
+visibilityOverrides:
+  exec: restricted
 ```
 
 ## 生命周期

@@ -17,19 +17,21 @@ meta.inject = {}
 
 ## 内置指令
 
-| 指令 | 说明 | 权限 |
+| 指令 | 说明 | 可见性 |
 |---|---|---|
-| `/help` | 显示帮助信息 | 0 |
-| `/status` | 系统状态 | 0 |
-| `/clear [--type/-t <type>]` | 清空当前会话记忆；类型可重复或逗号分隔 | 0 |
-| `/clear list` | 列出可清理类型 | 0 |
-| `/clear all [--type/-t <type>]` | 全局清空指定类型或全部类型 | 3 (dangerous) |
-| `/model` | 查看或切换会话模型 | 0 |
-| `/tools` | 列出所有 AI 工具 | 0 |
-| `/shutdown` | 关闭应用 | 5 (dangerous) |
-| `/restart` | 重启应用 | 5 (dangerous) |
-| `/grant` | 设置用户权限 | 2 |
-| `/authority` | 查看权限等级 | 0 |
+| `/help` | 显示帮助信息 | public |
+| `/status` | 系统状态 | public |
+| `/clear [--type/-t <type>]` | 清空当前会话记忆；类型可重复或逗号分隔 | public |
+| `/clear list` | 列出可清理类型 | public |
+| `/clear all [--type/-t <type>]` | 全局清空指定类型或全部类型 | restricted |
+| `/model` | 查看或切换会话模型 | public |
+| `/tools` | 列出所有 AI 工具 | public |
+| `/shutdown` | 关闭应用 | restricted |
+| `/restart` | 重启应用 | restricted |
+| `/grant <target> <capability>` | 给用户授予一个能力（受子集约束） | restricted |
+| `/deny <target> <capability>` | 禁用用户一个能力 | restricted |
+| `/authority [target]` | 查看自己或指定用户的能力授予 | public |
+| `/bind <code>` | 将当前平台账号绑定到 WebUI 账户 | public |
 
 ## `/clear` 类型
 
