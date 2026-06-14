@@ -147,7 +147,9 @@ export class AuthorityManager implements AuthorityService {
     } else {
       this.store.set(key, next);
     }
-    this.logger.debug(`设置能力委托: ${key} grant=${grant?.length ?? 0} deny=${deny?.length ?? 0} by=${grantedBy ?? '-'}`);
+    this.logger.debug(
+      `设置能力委托: ${key} grant=${grant?.length ?? 0} deny=${deny?.length ?? 0} by=${grantedBy ?? '-'}`,
+    );
   }
 
   removeUser(platform: string, userId: string): void {
@@ -169,23 +171,32 @@ export class AuthorityManager implements AuthorityService {
     this.confirmHandlers.set(platform, handler);
   }
 
-  /** 该能力是否已被（白名单/临时委托）放行（内部用，requestAccess 调用） */
-  private isTemporarilyAllowed(capability: CapabilityId): boolean {
+  /**
+   * 该请求是否已被（白名单/会话内临时委托）放行（内部用，requestAccess 调用）。
+   * restrictedPolicy 白名单是管理员全局策略；会话临时授予按 capability + sessionId 匹配
+   * （一次会话的临时批准不跨会话泄漏到其他会话）。
+   */
+  private isTemporarilyAllowed(request: AccessRequest): boolean {
     const policy = this.config.get('restrictedPolicy');
     if (policy?.allow && policy.allow.length > 0) {
-      if (!policy.duration || policy.duration <= 0 || (this.policyEnabledAt && (Date.now() - this.policyEnabledAt) / 1000 <= policy.duration)) {
-        if (matchAnyCap(policy.allow, capability)) return true;
+      if (
+        !policy.duration ||
+        policy.duration <= 0 ||
+        (this.policyEnabledAt && (Date.now() - this.policyEnabledAt) / 1000 <= policy.duration)
+      ) {
+        if (matchAnyCap(policy.allow, request.capability)) return true;
       }
     }
     this.pruneTempGrants();
     for (const g of this.tempGrants.values()) {
-      if (matchAnyCap([g.capability], capability) || g.capability === capability) return true;
+      if (g.sessionId !== request.sessionId) continue;
+      if (g.capability === request.capability || matchAnyCap([g.capability], request.capability)) return true;
     }
     return false;
   }
 
   async requestAccess(request: AccessRequest): Promise<boolean> {
-    if (this.isTemporarilyAllowed(request.capability)) {
+    if (this.isTemporarilyAllowed(request)) {
       this.consumeTempGrant(request);
       return true;
     }
@@ -249,7 +260,9 @@ export class AuthorityManager implements AuthorityService {
       createdAt: Date.now(),
     };
     this.tempGrants.set(grant.id, grant);
-    this.logger.info(`创建临时能力委托: ${grant.capability} session=${grant.sessionId} ${durationSeconds}s grant=${grant.id}`);
+    this.logger.info(
+      `创建临时能力委托: ${grant.capability} session=${grant.sessionId} ${durationSeconds}s grant=${grant.id}`,
+    );
   }
 
   private pruneTempGrants(): void {
