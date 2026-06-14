@@ -209,7 +209,8 @@ body.is-dragging-chat .nav-rail:hover {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  /* 内容区硬下限：聊天列收缩到位后内容区才让步，绝不被挤到 0 / 藏到左侧导航后 */
+  min-width: 280px;
   overflow: hidden;
 }
 
@@ -745,8 +746,9 @@ a.marketplace-card-name:hover {
   display: flex;
   flex-direction: column;
   height: 100%;
-  flex-shrink: 0;
-  min-width: 0;
+  /* 空间不足时聊天列先收缩（让内容区保命），到 min-width 为止；不再固定不缩把内容挤没 */
+  flex-shrink: 1;
+  min-width: 240px;
 }
 
 /* ===== 会话侧边栏 ===== */

@@ -84,6 +84,24 @@ export function App() {
   useEffect(() => {
     try { window.localStorage.setItem('aalis:chatWidth', String(chatWidth)); } catch { /* quota */ }
   }, [chatWidth]);
+  // 容器变窄时重新夹取 chatWidth：保证内容区始终 ≥ minContent，空间实在不够才把
+  // 聊天降到地板宽。否则固定宽的聊天列会把 flex 内容区挤到 0、被左侧导航“吃掉”。
+  // 监听 .app-layout 尺寸变化（VSCode webview / 浏览器窗口拉伸都会触发）。
+  useEffect(() => {
+    const layout = document.querySelector<HTMLElement>('.app-layout');
+    if (!layout || typeof ResizeObserver === 'undefined') return;
+    const MIN_CONTENT = 360;
+    const MIN_CHAT = 240;
+    const reclamp = () => {
+      const appW = layout.clientWidth;
+      const navW = document.querySelector<HTMLElement>('.nav-rail')?.getBoundingClientRect().width ?? 56;
+      const max = Math.max(MIN_CHAT, appW - navW - MIN_CONTENT);
+      setChatWidth(w => Math.min(Math.max(w, MIN_CHAT), max));
+    };
+    const ro = new ResizeObserver(reclamp);
+    ro.observe(layout);
+    return () => ro.disconnect();
+  }, []);
 
   // 工具调用达到上限标记
   const [toolLimitReached, setToolLimitReached] = useState(false);
