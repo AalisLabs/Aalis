@@ -1162,9 +1162,6 @@ importers:
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
-      '@aalis/plugin-storage-api':
-        specifier: workspace:^
-        version: link:../plugin-storage-api
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
