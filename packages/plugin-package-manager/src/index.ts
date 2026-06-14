@@ -1,6 +1,5 @@
 import type { AppService, Context } from '@aalis/core';
 import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/plugin-process-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 
 // ===== 插件元数据 =====
 
@@ -9,7 +8,7 @@ export const displayName = '包管理器';
 export const subsystem = 'system';
 export const provides = ['package-manager'];
 export const inject = {
-  required: ['process', 'storage'],
+  required: ['process'],
 };
 
 // ===== 服务接口 =====
@@ -69,7 +68,6 @@ async function execProc(proc: ProcessService, cmd: string, args: string[], cwd: 
 function createService(ctx: Context, config: Record<string, unknown>): PackageManagerService {
   const log = ctx.logger;
   const proc = createProcessGateway(ctx);
-  const storage: StorageService = createStorageGateway(ctx);
 
   function getApp(): AppService {
     const app = ctx.getService<AppService>('app');
@@ -78,39 +76,32 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
   }
 
   /**
-   * 解析 packages/ 的 storage URI 与本地绝对路径。
+   * 真实插件目录的绝对路径。
    *
-   * 与 core 的 createFsPluginLoader 默认一致：`workspace:/packages`。
-   * 可通过插件配置 `packagesDir` 字段覆盖（必须是 storage URI 或 workspace 下的相对路径）。
+   * 必须与 core 的 createFsPluginLoader 一致——后者扫描 `<cwd>/packages`。
+   * 关键：**不能**走 storage 的 `workspace:` 根（那是 agent 沙盒 `<cwd>/workspace`，
+   * 与插件目录 `<cwd>/packages` 不是同一处），否则装到/找错地方（历史 bug：
+   * 卸载报"目录不存在"）。可用插件配置 `packagesDir` 覆盖（相对 cwd 或绝对路径）。
    */
-  function packagesUri(): string {
+  function packagesDir(): string {
     const override = (config as { packagesDir?: unknown }).packagesDir;
+    const base = process.cwd();
     if (typeof override === 'string' && override.length > 0) {
-      if (override.includes(':/')) return override;
-      return `workspace:/${override.replace(/^\.?\/+/, '')}`;
+      return override.startsWith('/') ? override : `${base}/${override.replace(/^\.?\/+/, '')}`;
     }
-    return 'workspace:/packages';
-  }
-
-  async function packagesLocal(): Promise<string> {
-    const uri = packagesUri();
-    if (!storage.resolveLocalPath) {
-      throw new Error('storage 服务未实现 resolveLocalPath，无法执行包管理操作');
-    }
-    return storage.resolveLocalPath(uri, 'write');
+    return `${base}/packages`;
   }
 
   return createPackageManager({
     proc,
-    storage,
     log,
-    packagesUri,
-    packagesLocal,
+    packagesDir,
     rescanPlugins: () => getApp().rescanPlugins(),
-    // plugins 服务可能未启用：缺席即跳过实例停用（仅删目录）
-    disablePlugin: async name => {
-      const pm = ctx.getService<{ disablePlugin(n: string): Promise<boolean> }>('plugins');
-      if (pm) await pm.disablePlugin(name);
+    // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
+    // 区别于 disablePlugin（仅置禁用态，仍滞留在插件列表里）。
+    unloadPlugin: async name => {
+      const pm = ctx.getService<{ unload(n: string): Promise<void> }>('plugins');
+      if (pm) await pm.unload(name);
     },
     // 卸载后清残留配置：删 plugins.<name> 配置块 + 从 disabledPlugins 移除
     // （否则重装会被"上次禁用"标记带成已禁用状态），并持久化。
@@ -125,26 +116,29 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
 /** install/uninstall 的显式依赖（从 ctx/网关解耦，便于集成测试） */
 export interface PackageManagerDeps {
   proc: ProcessService;
-  storage: Pick<StorageService, 'stat' | 'delete'>;
   log: { info(msg: string): void; error(msg: string): void };
-  packagesUri(): string;
-  packagesLocal(): Promise<string>;
+  /** 真实插件目录绝对路径（= `<cwd>/packages`，与 FS 加载器一致） */
+  packagesDir(): string;
   rescanPlugins(): Promise<string[]>;
-  disablePlugin(name: string): Promise<void>;
+  /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
+  unloadPlugin(name: string): Promise<void>;
   /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
   cleanupConfig?(name: string): void;
 }
 
 /**
  * 包管理核心：install/uninstall 的纯依赖实现（不碰 ctx/网关，可单测）。
+ * 所有文件操作走 process 网关（子进程：npm/tar/mkdir/rm/test），目标是真实
+ * `<cwd>/packages`——不经 storage 沙盒（沙盒根是 workspace，够不到 packages）。
  * ctx 组装层见 createService。
  */
 export function createPackageManager(deps: PackageManagerDeps): PackageManagerService {
-  const { proc, storage, log } = deps;
+  const { proc, log } = deps;
 
-  async function dirExists(uri: string): Promise<boolean> {
+  // 目录存在性：`test -d <abs>`（不存在/非目录 → exit 1 → 抛 → false）。绝对路径，cwd 无关。
+  async function dirExists(absPath: string): Promise<boolean> {
     try {
-      await storage.stat(uri);
+      await proc.execFile('test', ['-d', absPath], { cwd: process.cwd(), timeout: 10_000 });
       return true;
     } catch {
       return false;
@@ -153,35 +147,34 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
   return {
     async install(npmPkg) {
-      const packagesDir = await deps.packagesLocal();
+      const packagesDir = deps.packagesDir();
       // 分离包名与可选版本：@scope/foo@1.2.3 → dirName=foo（去 scope、去版本）
       const dirName = npmPkg.replace(/^@[^/]+\//, '').replace(/@[^@]+$/, '');
-      const targetUri = `${deps.packagesUri()}/${dirName}`;
       const targetDir = `${packagesDir}/${dirName}`;
 
-      if (await dirExists(targetUri)) {
+      if (await dirExists(targetDir)) {
         return { ok: false, message: `目录 ${dirName} 已存在` };
       }
       log.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
 
-      let tgzName: string | undefined;
+      let tgzPath: string | undefined;
       try {
+        await execProc(proc, 'mkdir', ['-p', packagesDir], process.cwd()); // 确保 packages/ 存在
         // npm pack --json 精确返回产物 {filename, name}，避免 includes 误匹配
         // （装 foo 时命中 foo-bar-*.tgz）；name 是精确包名，供 pnpm --filter 用。
         const packOut = await execProc(
           proc,
           'npm',
           ['pack', npmPkg, '--pack-destination', packagesDir, '--json'],
-          packagesDir,
+          process.cwd(),
         );
         const packInfo = parsePackInfo(packOut);
         if (!packInfo) return { ok: false, message: '下载包失败: 未能解析 npm pack 产物' };
-        tgzName = packInfo.filename;
-        const tgzPath = `${packagesDir}/${tgzName}`;
-        await execProc(proc, 'mkdir', ['-p', targetDir], packagesDir);
-        await execProc(proc, 'tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1'], packagesDir);
-        await storage.delete(`${deps.packagesUri()}/${tgzName}`).catch(() => {}); // 清理 tgz
-        tgzName = undefined; // 已删，回滚时不再尝试
+        tgzPath = `${packagesDir}/${packInfo.filename}`;
+        await execProc(proc, 'mkdir', ['-p', targetDir], process.cwd());
+        await execProc(proc, 'tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1'], process.cwd());
+        await execProc(proc, 'rm', ['-f', tgzPath], process.cwd()); // 清理 tgz
+        tgzPath = undefined; // 已删，回滚时不再尝试
         // --filter 用精确包名（npm pack 回报的 name，无版本后缀）链接新 workspace 包
         await execProc(proc, 'pnpm', ['install', '--filter', packInfo.name], process.cwd());
 
@@ -193,24 +186,26 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         const message = err instanceof Error ? err.message : String(err);
         log.error(`安装插件 "${npmPkg}" 失败: ${message}`);
         // 回滚：清理半成品 targetDir 与残留 tgz，避免占位导致下次"目录已存在"
-        await storage.delete(targetUri).catch(() => {});
-        if (tgzName) await storage.delete(`${deps.packagesUri()}/${tgzName}`).catch(() => {});
+        await execProc(proc, 'rm', ['-rf', targetDir], process.cwd()).catch(() => {});
+        if (tgzPath) await execProc(proc, 'rm', ['-f', tgzPath], process.cwd()).catch(() => {});
         return { ok: false, message };
       }
     },
 
     async uninstall(pluginName) {
-      await deps.disablePlugin(pluginName); // 先停用实例（plugins 服务缺席则 no-op）
       const dirName = pluginName.replace(/^@[^/]+\//, '');
-      const targetUri = `${deps.packagesUri()}/${dirName}`;
-      if (!(await dirExists(targetUri))) {
-        return { ok: true, message: `插件 ${pluginName} 已卸载（目录不存在）` };
-      }
+      const packagesDir = deps.packagesDir();
+      const targetDir = `${packagesDir}/${dirName}`;
+      const existed = await dirExists(targetDir);
       try {
-        await storage.delete(targetUri);
-        deps.cleanupConfig?.(pluginName); // 清残留配置（删目录后再清，失败不影响已删成功）
-        log.info(`已删除插件目录: packages/${dirName}`);
-        return { ok: true, message: `插件 ${pluginName} 已卸载并删除` };
+        if (existed) await execProc(proc, 'rm', ['-rf', targetDir], process.cwd()); // 删目录，不再回来
+        await deps.unloadPlugin(pluginName); // 从运行时注册表彻底移除（dispose + delete），幂等
+        deps.cleanupConfig?.(pluginName); // 清残留配置
+        log.info(existed ? `已删除插件目录: packages/${dirName}` : `插件 ${pluginName} 目录原不存在，已从运行时移除`);
+        return {
+          ok: true,
+          message: existed ? `插件 ${pluginName} 已卸载并删除` : `插件 ${pluginName} 已从运行时移除（目录原不存在）`,
+        };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { ok: false, message };
