@@ -1,6 +1,7 @@
 {
   "name": "aalis",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {
@@ -29,13 +30,14 @@
     "knip": "^5.88.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "yaml": "^2.7.0"
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/plugin-commands-api": "workspace:*",
-    "chalk": "^5.4.0",
-    "yaml": "^2.7.0"
+    "@aalis/runtime": "workspace:*",
+    "chalk": "^5.4.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
