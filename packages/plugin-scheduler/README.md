@@ -1,7 +1,6 @@
 # @aalis/plugin-scheduler
 
-运行时插件
-
+任务调度：AI 可自主创建定时任务
 ## 角色
 
 运行时插件

@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-user-relation",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "用户关系图谱：抽取事件/实体/关系",
   "type": "module",
   "keywords": [
     "aalis-plugin"

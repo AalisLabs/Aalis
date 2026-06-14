@@ -1,7 +1,6 @@
 # @aalis/plugin-tool-onebot
 
-运行时插件
-
+OneBot 平台工具：群管/戳一戳等平台动作
 ## 角色
 
 运行时插件

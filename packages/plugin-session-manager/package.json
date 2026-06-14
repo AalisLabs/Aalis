@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-session-manager",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "会话管理：生命周期、平台配置、会话树",
   "type": "module",
   "keywords": [
     "aalis-plugin"

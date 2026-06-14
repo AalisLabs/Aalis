@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-tool-browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "浏览器自动化工具（Puppeteer）",
   "type": "module",
   "keywords": [
     "aalis-plugin"

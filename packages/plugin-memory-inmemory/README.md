@@ -1,7 +1,6 @@
 # @aalis/plugin-memory-inmemory
 
-运行时插件
-
+内存消息历史后端（重启丢失，零依赖）
 ## 角色
 
 运行时插件

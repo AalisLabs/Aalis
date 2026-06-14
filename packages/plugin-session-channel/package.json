@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-session-channel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "会话信道：群聊/频道级会话隔离与路由",
   "type": "module",
   "keywords": [
     "aalis-plugin"

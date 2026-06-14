@@ -1,7 +1,6 @@
 # @aalis/plugin-adapter-onebot
 
-运行时插件
-
+OneBot v11/v12 协议适配器（QQ 等平台接入，多连接 + 自动重连）
 ## 角色
 
 运行时插件

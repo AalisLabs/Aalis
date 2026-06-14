@@ -1,7 +1,6 @@
 # @aalis/plugin-vectorstore-lancedb
 
-运行时插件
-
+向量库 —— LanceDB 高性能实现
 ## 角色
 
 运行时插件

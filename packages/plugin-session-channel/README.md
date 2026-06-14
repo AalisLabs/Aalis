@@ -1,7 +1,6 @@
 # @aalis/plugin-session-channel
 
-运行时插件
-
+会话信道：群聊/频道级会话隔离与路由
 ## 角色
 
 运行时插件

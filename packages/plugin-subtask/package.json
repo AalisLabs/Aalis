@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-subtask",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "子任务并行：create_subtask/wait_subtasks 协调",
   "type": "module",
   "keywords": [
     "aalis-plugin"

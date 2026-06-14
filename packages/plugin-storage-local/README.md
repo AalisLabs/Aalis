@@ -1,7 +1,6 @@
 # @aalis/plugin-storage-local
 
-运行时插件
-
+存储网关本地实现：沙盒化文件读写
 ## 角色
 
 运行时插件

@@ -1,7 +1,6 @@
 # @aalis/plugin-okx-trading
 
-运行时插件
-
+OKX 行情/交易工具插件
 ## 角色
 
 运行时插件

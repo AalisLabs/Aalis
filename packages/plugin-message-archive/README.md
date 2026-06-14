@@ -1,7 +1,6 @@
 # @aalis/plugin-message-archive
 
-运行时插件
-
+消息归档：持久化原始消息流以供检索
 ## 角色
 
 运行时插件

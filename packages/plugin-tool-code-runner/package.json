@@ -1,7 +1,8 @@
 {
   "name": "@aalis/plugin-tool-code-runner",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
+  "description": "代码执行工具：运行代码片段并取回结果",
   "type": "module",
   "keywords": [
     "aalis-plugin"
