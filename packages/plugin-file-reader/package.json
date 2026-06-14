@@ -1,6 +1,7 @@
 {
   "name": "@aalis/plugin-file-reader",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "keywords": [
     "aalis-plugin"
