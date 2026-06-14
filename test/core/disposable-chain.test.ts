@@ -58,4 +58,29 @@ describe('DisposableChain', () => {
     chain.dispose();
     expect(order).toEqual([1]);
   });
+
+  it('回归：dispose 期间 disposer 移除同链其他项不破坏迭代（旧实现抛 _items[i] is not a function）', () => {
+    // 复现真实场景：ctx.dispose → 链上 provide/whenService 的 disposer 执行时会
+    // remove(自身/兄弟)。旧实现在迭代中 splice 活动数组 → 索引错位 → _items[i]
+    // 取到 undefined 抛错（被 debug swallow，每个插件停机时刷屏）。
+    const order: number[] = [];
+    const logger = new DefaultLogger('test');
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const chain = new DisposableChain(logger);
+    const a = () => order.push(1);
+    const b = () => order.push(2);
+    chain.push(a);
+    chain.push(b);
+    // 最后入链 → 最先执行；执行时移除两个更低索引、尚未执行的兄弟
+    chain.push(() => {
+      order.push(3);
+      chain.remove(a);
+      chain.remove(b);
+    });
+    expect(() => chain.dispose()).not.toThrow();
+    // 快照语义：所有已登记项各执行一次（逆序），dispose 期间的 remove 为安全 no-op
+    expect(order).toEqual([3, 2, 1]);
+    // 不再有 "is not a function" 被吞进 debug
+    expect(debugSpy).not.toHaveBeenCalled();
+  });
 });
