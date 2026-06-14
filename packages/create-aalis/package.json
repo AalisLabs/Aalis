@@ -1,6 +1,7 @@
 {
   "name": "create-aalis",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Aalis 快速初始化脚手架：交互式选插件，生成 aalis.config.yaml。",
   "type": "module",
   "bin": {

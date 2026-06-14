@@ -160,6 +160,38 @@ export function PluginConfigPage({
     }
   };
 
+  // 卸载（删整个包）：核心/契约/WebUI 基础设施禁卸（与服务端 isProtectedPackage 一致；
+  // 服务端仍会硬校验，这里只是不显示按钮，避免无谓的报错点击）。
+  const PROTECTED_PKGS = new Set([
+    '@aalis/core',
+    '@aalis/plugin-package-manager',
+    '@aalis/plugin-webui-server',
+    '@aalis/plugin-webui-client',
+  ]);
+  const isProtectedPkg = (name: string) => PROTECTED_PKGS.has(name) || /-api$/.test(name.replace(/^@[^/]+\//, ''));
+
+  const handleUninstall = async (p: PluginInfo) => {
+    if (
+      !confirm(
+        `确定卸载插件「${p.displayName ?? p.name}」(${p.name})？\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。`,
+      )
+    ) {
+      return;
+    }
+    markBusy(p.instanceId);
+    const res = await api<{ ok?: boolean; error?: string; message?: string }>('/api/marketplace/uninstall', {
+      method: 'POST',
+      body: JSON.stringify({ name: p.name }),
+    });
+    if (res.ok) {
+      showToast(res.message ?? `${p.name} 已卸载`);
+      onRefresh();
+    } else {
+      showToast(res.error ?? '卸载失败');
+      setBusySet(prev => { const next = new Set(prev); next.delete(p.instanceId); return next; });
+    }
+  };
+
   /** 判断是否为多实例的子实例（instanceId 含冒号后缀） */
   const isSubInstance = (p: PluginInfo) => p.instanceId !== p.name;
 
@@ -392,6 +424,9 @@ export function PluginConfigPage({
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {isSub && (
                   <button className="btn btn-sm" style={{ color: '#e55', fontSize: 11 }} onClick={() => handleRemoveInstance(iid)} disabled={isBusy(iid)}>删除</button>
+                )}
+                {!isSub && !p.core && !isProtectedPkg(p.name) && (
+                  <button className="btn btn-sm" style={{ color: '#e55', fontSize: 11 }} onClick={() => handleUninstall(p)} disabled={isBusy(iid)} title="卸载插件（删包 + 清配置）">卸载</button>
                 )}
                 {p.reusable && !isSub && (
                   <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => { setNewInstanceTarget(newInstanceTarget === p.name ? null : p.name); setNewInstanceSuffix(''); }}>+ 实例</button>

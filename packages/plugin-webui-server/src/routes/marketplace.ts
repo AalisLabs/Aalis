@@ -1,4 +1,4 @@
-import type { Context, PluginManagerService } from '@aalis/core';
+import type { Context, PluginManagerService, PluginStatusEntry } from '@aalis/core';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
@@ -22,6 +22,22 @@ interface MarketplacePackage {
   installed: boolean;
   /** @aalis/ scope = 官方插件；其余为社区（npm 自带信号，零额外维护） */
   official: boolean;
+  /** 已装且非核心/契约/WebUI 基础设施 → 允许从市场卸载（由路由层据 getStatus 计算） */
+  removable?: boolean;
+  /** 关键词标签（已剔除 aalis-plugin 约定词） */
+  keywords?: string[];
+  /** 月下载量（npm search 自带，可信度信号） */
+  downloads?: number;
+  /** 最近更新时间（ISO，新鲜度信号） */
+  updated?: string;
+  /** npm 综合评分 0~1（quality/popularity/maintenance 加权） */
+  score?: number;
+  /** 评分细分，用于 tooltip 展示 */
+  scoreDetail?: { quality?: number; popularity?: number; maintenance?: number };
+  /** npm 标记的不安全包（红色警示） */
+  insecure?: boolean;
+  license?: string;
+  links?: { npm?: string; homepage?: string; repository?: string };
 }
 
 interface NpmSearchResponse {
@@ -30,8 +46,16 @@ interface NpmSearchResponse {
       name: string;
       version: string;
       description?: string;
+      keywords?: string[];
+      date?: string;
+      license?: string;
+      links?: { npm?: string; homepage?: string; repository?: string };
       publisher?: { username?: string };
     };
+    score?: { final?: number; detail?: { quality?: number; popularity?: number; maintenance?: number } };
+    downloads?: { monthly?: number; weekly?: number };
+    flags?: { insecure?: number };
+    updated?: string;
   }>;
 }
 
@@ -43,7 +67,47 @@ interface PluginManifest {
   service?: { required?: string[]; optional?: string[]; provides?: string[] };
 }
 
-/** npm search 响应 → 市场卡片列表（标注已装 + 官方）。纯函数，便于单测。 */
+/**
+ * 核心 / 契约 / WebUI 基础设施包：禁止从市场卸载（删了会连锁崩或把当前 WebUI
+ * 自己干掉）。`*-api` 契约包被大量插件依赖；webui-server/client 是你正用的控制台；
+ * package-manager 是卸载引擎本身；core===true 是 manifest 标记的核心插件。纯函数，便于单测。
+ */
+const PROTECTED_EXACT = new Set([
+  '@aalis/core',
+  '@aalis/plugin-package-manager',
+  '@aalis/plugin-webui-server',
+  '@aalis/plugin-webui-client',
+]);
+export function isProtectedPackage(name: string, entry?: { core?: boolean }): boolean {
+  if (PROTECTED_EXACT.has(name)) return true;
+  const short = name.replace(/^@[^/]+\//, '');
+  if (/-api$/.test(short)) return true; // 契约/类型包
+  return entry?.core === true;
+}
+
+/**
+ * 找出"卸载 target 会断其服务依赖"的活跃插件：target 提供的某服务 S，没有别的
+ * 插件也提供，且有别的插件 requiredServices 含 S → 这些插件会被打断。纯函数，便于单测。
+ */
+export function findServiceDependents(
+  targetName: string,
+  status: ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'provides' | 'requiredServices'>>,
+): string[] {
+  const target = status.find(p => p.name === targetName);
+  const provided = target?.provides ?? [];
+  if (provided.length === 0) return [];
+  const dependents = new Set<string>();
+  for (const svc of provided) {
+    const otherProvider = status.some(p => p.name !== targetName && (p.provides ?? []).includes(svc));
+    if (otherProvider) continue; // 还有别的提供者，删了不致命
+    for (const p of status) {
+      if (p.name !== targetName && (p.requiredServices ?? []).includes(svc)) dependents.add(p.name);
+    }
+  }
+  return [...dependents];
+}
+
+/** npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息）。纯函数，便于单测。 */
 export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<string>): MarketplacePackage[] {
   return (data.objects ?? []).map(o => ({
     name: o.package.name,
@@ -52,6 +116,14 @@ export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<st
     author: o.package.publisher?.username,
     installed: installed.has(o.package.name),
     official: o.package.name.startsWith('@aalis/'),
+    keywords: (o.package.keywords ?? []).filter(k => k !== AALIS_KEYWORD),
+    downloads: o.downloads?.monthly,
+    updated: o.updated ?? o.package.date,
+    score: o.score?.final,
+    scoreDetail: o.score?.detail,
+    insecure: o.flags?.insecure ? true : undefined,
+    license: o.package.license,
+    links: o.package.links,
   }));
 }
 
@@ -81,16 +153,22 @@ export function registerMarketplaceRoutes(
   gate: RouteGate,
   registryBase: string = DEFAULT_REGISTRY,
 ): void {
-  // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
+  // 市场列表：npm registry keyword 检索 + 标注已装/可卸。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
   expressApp.get('/api/marketplace', gate('webui:marketplace:read', 4), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const installed = new Set((getPluginMgr()?.getStatus() ?? []).map(p => p.name));
+    const status = getPluginMgr()?.getStatus() ?? [];
+    const installed = new Set(status.map(p => p.name));
+    const statusByName = new Map(status.map(p => [p.name, p]));
     try {
       const r = await fetch(buildSearchUrl(q, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!r.ok) throw new Error(`npm registry 返回 ${r.status}`);
       const data = (await r.json()) as NpmSearchResponse;
-      res.json({ packages: toMarketplacePackages(data, installed) });
+      const packages = toMarketplacePackages(data, installed).map(p => ({
+        ...p,
+        removable: p.installed && !isProtectedPackage(p.name, statusByName.get(p.name)),
+      }));
+      res.json({ packages });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.logger.debug(`market: npm registry 检索失败: ${msg}`);
@@ -137,6 +215,39 @@ export function registerMarketplaceRoutes(
     }
     try {
       res.json(await pkgMgr.install(npmPkg));
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // 卸载：owner 级。护栏——禁卸核心/契约/WebUI 基础设施；禁卸"删了会断别人服务依赖"的包。
+  // 真正删目录 + 清残留配置由 package-manager.uninstall 负责。
+  expressApp.post('/api/marketplace/uninstall', gate('webui:plugins:manage', 'owner'), async (req, res) => {
+    const name = req.body?.name;
+    if (!name || typeof name !== 'string' || !PKG_NAME_RE.test(name)) {
+      res.status(400).json({ error: 'name 字段必须是合法 npm 包名' });
+      return;
+    }
+    const status = getPluginMgr()?.getStatus() ?? [];
+    const entry = status.find(p => p.name === name);
+    if (isProtectedPackage(name, entry)) {
+      res.status(400).json({ error: `「${name}」是核心 / 契约 / WebUI 基础设施，禁止从市场卸载` });
+      return;
+    }
+    const dependents = findServiceDependents(name, status);
+    if (dependents.length > 0) {
+      res.status(409).json({
+        error: `卸载会破坏依赖：${dependents.join('、')} 依赖此插件提供的服务且无其他提供者。请先卸载它们或安装替代提供者。`,
+      });
+      return;
+    }
+    const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+    if (!pkgMgr) {
+      res.status(503).json({ error: 'package-manager 服务未启用，无法卸载插件' });
+      return;
+    }
+    try {
+      res.json(await pkgMgr.uninstall(name));
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
