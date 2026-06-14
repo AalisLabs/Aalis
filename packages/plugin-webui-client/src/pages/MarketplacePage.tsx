@@ -1,3 +1,4 @@
+import { AlertTriangle, Clock, Download, Scale, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import type { PluginInfo } from '../types';
@@ -64,13 +65,6 @@ function timeAgo(iso?: string): string {
     if (sec >= s) return `${Math.floor(sec / s)} ${label}前`;
   }
   return '刚刚';
-}
-
-/** npm 综合评分 0~1 → 5 星字符串。 */
-function stars(score?: number): string {
-  if (score == null) return '';
-  const full = Math.round(score * 5);
-  return '★'.repeat(full) + '☆'.repeat(5 - full);
 }
 
 export function MarketplacePage({
@@ -280,10 +274,11 @@ export function MarketplacePage({
         </div>
       )}
 
-      {filtered.map(pkg => {
-        const homeLink = pkg.links?.homepage || pkg.links?.repository || pkg.links?.npm;
-        return (
-          <div className="marketplace-card" key={pkg.name}>
+      <div className="marketplace-grid">
+        {filtered.map(pkg => {
+          const homeLink = pkg.links?.homepage || pkg.links?.repository || pkg.links?.npm;
+          return (
+            <div className="marketplace-card" key={pkg.name}>
             <div className="marketplace-card-info">
               {homeLink ? (
                 <a className="marketplace-card-name" href={homeLink} target="_blank" rel="noreferrer">
@@ -295,8 +290,12 @@ export function MarketplacePage({
               <span className="marketplace-card-version">v{pkg.version}</span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
               {pkg.insecure && (
-                <span className="badge" style={{ background: 'var(--danger)', color: '#fff' }} title="npm 标记为不安全包，谨慎安装">
-                  ⚠ 不安全
+                <span
+                  className="badge"
+                  style={{ background: 'var(--danger)', color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                  title="npm 标记为不安全包，谨慎安装"
+                >
+                  <AlertTriangle size={11} /> 不安全
                 </span>
               )}
               {pkg.author && <span className="marketplace-card-author">by {pkg.author}</span>}
@@ -316,10 +315,19 @@ export function MarketplacePage({
             )}
 
             <div className="market-meta">
-              {pkg.downloads != null && <span title="近一月下载量">⬇ {fmtDownloads(pkg.downloads)}/月</span>}
-              {pkg.updated && <span title={new Date(pkg.updated).toLocaleString()}>🕑 {timeAgo(pkg.updated)}</span>}
+              {pkg.downloads != null && (
+                <span className="market-meta-item" title="近一月下载量">
+                  <Download size={12} /> {fmtDownloads(pkg.downloads)}/月
+                </span>
+              )}
+              {pkg.updated && (
+                <span className="market-meta-item" title={new Date(pkg.updated).toLocaleString()}>
+                  <Clock size={12} /> {timeAgo(pkg.updated)}
+                </span>
+              )}
               {pkg.score != null && (
                 <span
+                  className="market-meta-item"
                   style={{ color: 'var(--warning)' }}
                   title={
                     pkg.scoreDetail
@@ -327,10 +335,14 @@ export function MarketplacePage({
                       : `综合评分 ${(pkg.score * 100).toFixed(0)}%`
                   }
                 >
-                  {stars(pkg.score)}
+                  <Star size={12} /> {(pkg.score * 5).toFixed(1)}
                 </span>
               )}
-              {pkg.license && <span title="许可证">⚖ {pkg.license}</span>}
+              {pkg.license && (
+                <span className="market-meta-item" title="许可证">
+                  <Scale size={12} /> {pkg.license}
+                </span>
+              )}
             </div>
 
             <div style={{ marginTop: 8 }}>
@@ -355,9 +367,10 @@ export function MarketplacePage({
                 </button>
               )}
             </div>
-          </div>
-        );
-      })}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
