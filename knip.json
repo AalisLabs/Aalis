@@ -30,6 +30,7 @@
     "packages/plugin-webui-client/src/pages/SessionTreePage.tsx": ["files"],
     "packages/plugin-webui-server/src/auth.ts": ["types"],
     "packages/plugin-webui-server/src/routes/files.ts": ["types"],
+    "packages/plugin-authority/src/user-store.ts": ["types"],
     "packages/plugin-checkpoint/src/service.ts": ["exports"],
     "packages/plugin-user-relation/src/extractor.ts": ["exports", "types"],
     "packages/plugin-user-relation/src/middleware.ts": ["exports", "types"],
