@@ -1,7 +1,6 @@
 # @aalis/plugin-tool-search
 
-运行时插件
-
+工具搜索层：工具多时按需检索，省 token
 ## 角色
 
 运行时插件

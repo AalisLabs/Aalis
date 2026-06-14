@@ -1,7 +1,6 @@
 # @aalis/plugin-file-reader
 
-运行时插件
-
+文件读取：解析多种格式文件供 AI 理解
 ## 角色
 
 运行时插件

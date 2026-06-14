@@ -1,7 +1,6 @@
 # @aalis/plugin-embedding-ollama
 
-运行时插件
-
+文本向量化（Embedding）—— 本地 Ollama 提供者
 ## 角色
 
 运行时插件
