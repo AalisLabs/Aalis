@@ -60,6 +60,8 @@ export interface PluginManagerService {
   enablePlugin(name: string): Promise<boolean>;
   /** 禁用插件 */
   disablePlugin(name: string): Promise<boolean>;
+  /** 彻底卸载插件：dispose 上下文并从注册表移除（用于市场卸载，区别于 disablePlugin 仅置禁用态） */
+  unload(name: string): Promise<void>;
   /** 基于 reusable 插件创建新实例，返回 instanceId */
   createInstance(moduleName: string, suffix: string, config?: Record<string, unknown>): Promise<string | undefined>;
   /** 删除实例 */
