@@ -1,7 +1,6 @@
 import type { Logger } from '@aalis/core';
-import type { ExecutionGuard, PermissionId, SafetyLevel } from '@aalis/plugin-authority-api';
+import type { CapabilityId, CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
 import type {
-  AuthorityOverride,
   Command,
   CommandArgv,
   CommandBuilder,
@@ -24,7 +23,8 @@ import type {
 // - Map<fullDotName, Command>，name 即注册键
 // - 注册 'memory.clear.all' 时自动创建 'memory' / 'memory.clear' 分组节点（无 handler）
 // - 解析输入时按最长前缀匹配命中节点
-// - Override key = 完整点路径名（与 name 一致）
+// - 可见性（public/restricted）沿点路径继承：子节点未声明则取最近声明的祖先，缺省 public。
+//   能力可见性的运行时覆盖在 authority 配置（visibilityOverrides），不在本注册表。
 // ============================================================================
 
 const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
@@ -32,9 +32,9 @@ const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
 /** 内部：构造 Command 时的可变 patches（builder 写入这里，最终 finalize 时合成有效值） */
 interface CommandPatches {
   description?: string;
-  baseAuthority?: number;
-  baseSafety?: SafetyLevel;
-  basePermissions?: PermissionId[];
+  /** 节点自身声明的可见性（未声明则继承祖先；缺省 public） */
+  baseVisibility?: CapabilityVisibility;
+  basePermissions?: CapabilityId[];
   aliases: string[];
   positionalArgs: PositionalArgSpec[];
   options: OptionSpec[];
@@ -60,7 +60,6 @@ export class CommandRegistry implements CommandService {
   private readonly nodes = new Map<string, CommandPatches>();
   /** 别名映射：aliasName → realName */
   private readonly aliases = new Map<string, string>();
-  private readonly overrides = new Map<string, AuthorityOverride>();
   private readonly logger: Logger;
   private _guard?: ExecutionGuard;
 
@@ -68,22 +67,6 @@ export class CommandRegistry implements CommandService {
 
   constructor(logger: Logger) {
     this.logger = logger.child('commands');
-  }
-
-  // ---- Overrides ----
-
-  loadOverrides(overrides: Record<string, AuthorityOverride>): void {
-    this.overrides.clear();
-    for (const [name, o] of Object.entries(overrides)) this.overrides.set(name, o);
-  }
-  setOverride(name: string, override: AuthorityOverride): void {
-    this.overrides.set(name, override);
-  }
-  removeOverride(name: string): void {
-    this.overrides.delete(name);
-  }
-  getOverrides(): Record<string, AuthorityOverride> {
-    return Object.fromEntries(this.overrides);
   }
 
   // ---- Guard ----
@@ -118,8 +101,7 @@ export class CommandRegistry implements CommandService {
 
     node.declared = true;
     node.description = description ?? '';
-    node.baseAuthority = meta?.authority;
-    node.baseSafety = meta?.safety;
+    node.baseVisibility = meta?.visibility;
     node.basePermissions = meta?.permissions ? [...meta.permissions] : [];
     node.positionalArgs = positionalArgs;
     node.usage = meta?.usage;
@@ -307,13 +289,12 @@ export class CommandRegistry implements CommandService {
       const rejection = await this._guard({
         name: cmd.name,
         type: 'command',
-        authority: cmd.authority,
-        safety: cmd.safety,
+        visibility: cmd.visibility,
         permissions: cmd.permissions,
         sessionId: input.sessionId,
         platform: input.platform,
         userId: input.userId,
-        skipSafetyCheck: input.skipSafetyCheck,
+        skipConfirm: input.skipConfirm,
       });
       if (rejection) return rejection;
     }
@@ -338,44 +319,32 @@ export class CommandRegistry implements CommandService {
     }
   }
 
-  // ---- 内部：把 patches 合成有效 Command（含父级继承与 override） ----
+  // ---- 内部：把 patches 合成有效 Command（含父级可见性 + 权限继承） ----
 
   private materialize(name: string): Command {
     const node = this.nodes.get(name);
     if (!node) throw new Error(`internal: node ${name} missing`);
 
-    // 父继承：沿 dot path 向上合并
-    let effAuthority = 1;
-    let effSafety: SafetyLevel = 'safe';
+    // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖；
+    // 资源能力沿途累加（父分组声明的 permissions 下传子节点）。
+    let effVisibility: CapabilityVisibility = 'public';
     const inheritedPermissions: string[] = [];
     const parts = name.split('.');
     for (let i = 1; i < parts.length; i++) {
       const parent = parts.slice(0, i).join('.');
       const p = this.nodes.get(parent);
-      const ovr = this.overrides.get(parent);
-      const pAuth = ovr?.authority ?? p?.baseAuthority;
-      const pSafety = ovr?.safety ?? p?.baseSafety;
-      if (pAuth !== undefined) effAuthority = pAuth;
-      if (pSafety !== undefined) effSafety = pSafety;
+      if (p?.baseVisibility !== undefined) effVisibility = p.baseVisibility;
       if (p?.basePermissions) inheritedPermissions.push(...p.basePermissions);
     }
 
-    const ovr = this.overrides.get(name);
-    const baseAuth = node.baseAuthority ?? effAuthority;
-    const baseSafety = node.baseSafety ?? effSafety;
-    const auth = ovr?.authority ?? baseAuth;
-    const safety = ovr?.safety ?? baseSafety;
+    const visibility = node.baseVisibility ?? effVisibility;
     const permissions = unique([`command:${name}`, ...inheritedPermissions, ...(node.basePermissions ?? [])]);
 
     return {
       name,
       pluginName: node.pluginName ?? 'unknown',
       description: node.description ?? '',
-      baseAuthority: baseAuth,
-      baseSafety,
-      basePermissions: node.basePermissions ?? [],
-      authority: auth,
-      safety,
+      visibility,
       permissions,
       aliases: [...node.aliases],
       positionalArgs: [...node.positionalArgs],
@@ -383,7 +352,6 @@ export class CommandRegistry implements CommandService {
       usage: node.usage,
       examples: [...node.examples],
       handler: node.handler,
-      overridden: !!ovr,
       isGroup: !node.declared,
     };
   }

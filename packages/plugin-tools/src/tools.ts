@@ -1,5 +1,5 @@
 import type { Logger } from '@aalis/core';
-import type { ExecutionGuard, SafetyLevel } from '@aalis/plugin-authority-api';
+import type { CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
 import type {
   RegisteredTool,
   ToolCallContext,
@@ -26,7 +26,6 @@ import type {
 export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
   private _groups = new Map<string, ToolGroupInfo>();
-  private overrides = new Map<string, { authority?: number; safety?: SafetyLevel }>();
   private logger: Logger;
   private _guard?: ExecutionGuard;
 
@@ -88,32 +87,18 @@ export class ToolRegistry implements ToolService {
     name: string;
     description: string;
     pluginName: string;
-    authority?: number;
-    safety?: import('@aalis/plugin-authority-api').SafetyLevel;
+    visibility: CapabilityVisibility;
     permissions?: string[];
     groups?: string[];
-    baseAuthority?: number;
-    baseSafety?: import('@aalis/plugin-authority-api').SafetyLevel;
-    overridden?: boolean;
   }> {
-    return [...this.tools.values()].map(t => {
-      const name = t.definition.function.name;
-      const ovr = this.overrides.get(name);
-      const baseAuthority = t.authority;
-      const baseSafety = t.safety;
-      return {
-        name,
-        description: t.definition.function.description,
-        pluginName: t.pluginName,
-        authority: ovr?.authority ?? baseAuthority,
-        safety: ovr?.safety ?? baseSafety,
-        permissions: this.getStaticPermissions(t),
-        groups: t.groups,
-        baseAuthority,
-        baseSafety,
-        overridden: !!ovr,
-      };
-    });
+    return [...this.tools.values()].map(t => ({
+      name: t.definition.function.name,
+      description: t.definition.function.description,
+      pluginName: t.pluginName,
+      visibility: t.visibility ?? 'public',
+      permissions: this.getStaticPermissions(t),
+      groups: t.groups,
+    }));
   }
 
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void {
@@ -136,27 +121,6 @@ export class ToolRegistry implements ToolService {
 
   setExecutionGuard(guard: ExecutionGuard): void {
     this._guard = guard;
-  }
-
-  // ---- Overrides（与 CommandRegistry 对齐）----
-
-  loadOverrides(overrides: Record<string, { authority?: number; safety?: SafetyLevel }>): void {
-    this.overrides.clear();
-    for (const [name, o] of Object.entries(overrides)) {
-      // 过滤空 override，避免污染
-      if (o && (typeof o.authority === 'number' || o.safety === 'safe' || o.safety === 'dangerous')) {
-        this.overrides.set(name, o);
-      }
-    }
-  }
-  setOverride(name: string, override: { authority?: number; safety?: SafetyLevel }): void {
-    this.overrides.set(name, override);
-  }
-  removeOverride(name: string): void {
-    this.overrides.delete(name);
-  }
-  getOverrides(): Record<string, { authority?: number; safety?: SafetyLevel }> {
-    return Object.fromEntries(this.overrides);
   }
 
   /** 工具名未命中时，按下划线分词的 token 交集 + 子串关系给出近似建议（最多 3 个）。 */
@@ -194,9 +158,7 @@ export class ToolRegistry implements ToolService {
       return JSON.stringify({ error: schemaError });
     }
 
-    const ovr = this.overrides.get(toolName);
-    const authority = ovr?.authority ?? tool.authority ?? 1;
-    const safety: SafetyLevel = ovr?.safety ?? tool.safety ?? 'safe';
+    const visibility: CapabilityVisibility = tool.visibility ?? 'public';
     let permissions: string[];
     try {
       permissions = await this.resolvePermissions(tool, args, callCtx);
@@ -209,8 +171,7 @@ export class ToolRegistry implements ToolService {
       const denied = await this._guard({
         name: toolName,
         type: 'tool',
-        authority,
-        safety,
+        visibility,
         permissions,
         sessionId: callCtx.sessionId,
         platform: callCtx.platform ?? 'unknown',
@@ -224,9 +185,9 @@ export class ToolRegistry implements ToolService {
     }
 
     try {
-      if (safety === 'dangerous') {
+      if (visibility === 'restricted') {
         this.logger.info(
-          `危险工具执行: ${toolName} session=${callCtx.sessionId} platform=${callCtx.platform ?? 'unknown'} args=${JSON.stringify(args)}`,
+          `受限工具执行: ${toolName} session=${callCtx.sessionId} platform=${callCtx.platform ?? 'unknown'} args=${JSON.stringify(args)}`,
         );
       }
       const result = await tool.handler(args, callCtx);

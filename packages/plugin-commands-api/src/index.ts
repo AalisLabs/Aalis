@@ -11,7 +11,7 @@
 // 实现见 @aalis/plugin-commands。
 
 import type { Context } from '@aalis/core';
-import type { ExecutionGuard, PermissionId, SafetyLevel } from '@aalis/plugin-authority-api';
+import type { CapabilityId, CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
 
 // ===== handler 接口 =====
 
@@ -74,9 +74,10 @@ export interface OptionSpec {
 
 /** 注册时的元数据 */
 export interface CommandMeta {
-  authority?: number;
-  safety?: SafetyLevel;
-  permissions?: PermissionId[];
+  /** 主能力默认可见性（缺省 public）；restricted 须被 owner/委托授予 */
+  visibility?: CapabilityVisibility;
+  /** 额外触达的资源能力（如 storage:path:...:write），不含默认 command:<name> */
+  permissions?: CapabilityId[];
   /** 自定义 usage 文本 */
   usage?: string;
   /** 示例 */
@@ -90,17 +91,9 @@ export interface Command {
   /** 注册插件名 */
   pluginName: string;
   description: string;
-  /** 节点自身声明的 authority（缺省 1） */
-  baseAuthority: number;
-  /** 节点自身声明的 safety（缺省 'safe'） */
-  baseSafety: SafetyLevel;
-  /** 节点自身声明的权限标识（不含默认 command:<name>） */
-  basePermissions: PermissionId[];
-  /** 有效 authority */
-  authority: number;
-  /** 有效 safety */
-  safety: SafetyLevel;
-  /** 有效权限标识列表 */
+  /** 主能力默认可见性（缺省 public）；可被 authority 配置的 visibilityOverrides 调整 */
+  visibility: CapabilityVisibility;
+  /** 有效资源能力列表（含默认 command:<name> + 从父分组继承的声明） */
   permissions: string[];
   /** 别名（完整点路径） */
   aliases: string[];
@@ -110,16 +103,8 @@ export interface Command {
   examples?: string[];
   /** 执行函数；分组节点为 undefined */
   handler?: CommandHandler;
-  /** 当前 name 是否被 override 命中 */
-  overridden: boolean;
   /** 是否为自动创建的分组节点 */
   isGroup: boolean;
-}
-
-/** Authority override */
-export interface AuthorityOverride {
-  authority?: number;
-  safety?: SafetyLevel;
 }
 
 /** 命令服务消费方（CLI / 适配器）传入的执行输入 */
@@ -132,16 +117,13 @@ export interface ExecutionInput {
   args: string[];
   raw: string;
   /**
-   * 跳过 dangerous 确认弹窗（authority + permissionPolicy 仍然生效）。
+   * 跳过受限被拒后的交互确认弹窗（requestAccess）；authorize 仍然生效。
    *
    * 供无法交互确认的受信任系统源（scheduler 等）使用：这些调用的身份来自
-   * 创建时固化的 actor（IncomingMessage.actor），权限按 actor 的真实等级评估，
-   * 只是 cron 上下文里没有人能点确认弹窗，故跳过该步。
-   *
-   * 历史：曾存在 bypassGuard 字段可完全绕过守卫（authority/permission/safety
-   * 全跳），已废除——系统源现在通过 actor 身份走与用户一致的守卫评估。
+   * 创建时固化的 actor（IncomingMessage.actor），能力按 actor 真实持有评估，
+   * 只是 cron 上下文里没有人能点确认弹窗，故跳过该步。**不**绕过 authorize（防提权）。
    */
-  skipSafetyCheck?: boolean;
+  skipConfirm?: boolean;
 }
 
 // ===== Builder =====
@@ -195,11 +177,6 @@ export interface CommandService {
   get(name: string): Command | undefined;
   getNode(name: string | string[]): Command | undefined;
   getAll(): Command[];
-
-  loadOverrides(overrides: Record<string, AuthorityOverride>): void;
-  setOverride(name: string, override: AuthorityOverride): void;
-  removeOverride(name: string): void;
-  getOverrides(): Record<string, AuthorityOverride>;
 
   setExecutionGuard(guard: ExecutionGuard): void;
 }

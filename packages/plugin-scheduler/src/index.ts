@@ -167,13 +167,13 @@ export const configSchema: ConfigSchema = {
         type: 'string',
         label: '执行身份-平台',
         description:
-          '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合查权限等级。留空 = webui。',
+          '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合裁决能力。留空 = webui。',
         default: 'webui',
       },
       actorUserId: {
         type: 'string',
         label: '执行身份-用户 ID',
-        description: '代理身份的 userId。留空 = console（与 actorPlatform=webui 组合可获得 ownerAuthority）。',
+        description: '代理身份的 userId。留空 = console（与 actorPlatform=webui 组合即 owner，拥有一切能力）。',
         default: 'console',
       },
       content: {

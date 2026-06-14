@@ -43,8 +43,11 @@ export interface ExecutionGuardContext {
   userId?: string;
   /** 操作参数 */
   args?: Record<string, unknown>;
-  /** 受信内部调用（如指令→工具桥接：外层已鉴权）：跳过 restricted 能力闸 */
-  internal?: boolean;
+  /**
+   * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，
+   * 仅跳过受限被拒后的交互确认弹窗（requestAccess）。**不**绕过 authorize（防提权）。
+   */
+  skipConfirm?: boolean;
 }
 
 /**
@@ -197,8 +200,6 @@ export interface AuthorityService {
   // ── 临时能力委托（restricted 能力的时限/限次授予）──
   /** 用户触达未授予的 restricted 能力时，过临时委托流程（白名单策略 → 会话临时授予 → 确认回调） */
   requestAccess(request: AccessRequest): Promise<boolean>;
-  /** 该能力是否已被（白名单/临时委托）放行 */
-  isTemporarilyAllowed(capability: CapabilityId): boolean;
   listTemporaryGrants(): TemporaryGrant[];
   revokeTemporaryGrant(id: string): boolean;
   setConfirmHandler(platform: string, handler: AccessConfirmHandler): void;

@@ -5,7 +5,7 @@
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { UserIdentity } from '@aalis/plugin-authority-api';
+import type { CapabilityVisibility, UserIdentity } from '@aalis/plugin-authority-api';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -200,13 +200,14 @@ declare module '@aalis/core' {
      */
     actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>>;
     /**
-     * actions 的权限元数据：action 名 → 所需最低权限等级。
+     * actions 的能力元数据：action 名 → 默认可见性（public/restricted）。
      *
-     * host 在调用 action 前按调用者身份统一过闸；**未声明的 action 默认
-     * 要求 owner 等级**（默认拒绝——插件作者必须显式声明才能降低门槛，
+     * host 在调用 action 前按调用者身份过 authorize 统一闸（capability
+     * `action:<plugin>:<method>`）；**未声明的 action 默认 restricted**
+     * （默认拒绝——插件作者必须显式标 `visibility: 'public'` 才能放开，
      * 避免漏标的敏感 action 在登录功能上线后裸奔）。
      */
-    actionsMeta?: Record<string, { authority?: number }>;
+    actionsMeta?: Record<string, { visibility?: CapabilityVisibility }>;
   }
 
   /**
