@@ -16,8 +16,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-process-api": "workspace:^",
-    "@aalis/plugin-storage-api": "workspace:^"
+    "@aalis/plugin-process-api": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -30,8 +29,7 @@
   "aalis": {
     "service": {
       "required": [
-        "process",
-        "storage"
+        "process"
       ],
       "provides": [
         "package-manager"
