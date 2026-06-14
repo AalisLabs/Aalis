@@ -356,9 +356,6 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
-      '@aalis/plugin-doctor-api':
-        specifier: workspace:^
-        version: link:../plugin-doctor-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:^
         version: link:../plugin-gateway-api
