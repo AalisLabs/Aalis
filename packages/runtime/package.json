@@ -1,0 +1,34 @@
+{
+  "name": "@aalis/runtime",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "Aalis 独立部署运行时：node_modules 插件加载 + YAML 配置 + 一行启动 startAalis",
+  "keywords": [
+    "aalis",
+    "aalis-runtime"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "yaml": "^2.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "aalis": {
+    "tooling": true
+  }
+}

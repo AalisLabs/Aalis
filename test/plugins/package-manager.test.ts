@@ -71,6 +71,7 @@ function makeHarness(
     packagesLocal: async () => '/abs/packages',
     rescanPlugins: async () => opts.rescan ?? ['@scope/foo'],
     disablePlugin: vi.fn(async () => {}),
+    cleanupConfig: vi.fn(() => {}),
   };
   return { deps, execCalls, deleted };
 }
@@ -138,12 +139,13 @@ describe('install', () => {
 });
 
 describe('uninstall', () => {
-  it('停用实例 + 删目录', async () => {
+  it('停用实例 + 删目录 + 清残留配置', async () => {
     const h = makeHarness({ exists: new Set(['workspace:/packages/foo']) });
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(true);
     expect(h.deps.disablePlugin).toHaveBeenCalledWith('@scope/foo');
     expect(h.deleted).toContain('workspace:/packages/foo');
+    expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo');
   });
 
   it('目录不存在：幂等成功', async () => {

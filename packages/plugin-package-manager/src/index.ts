@@ -112,6 +112,13 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
       const pm = ctx.getService<{ disablePlugin(n: string): Promise<boolean> }>('plugins');
       if (pm) await pm.disablePlugin(name);
     },
+    // 卸载后清残留配置：删 plugins.<name> 配置块 + 从 disabledPlugins 移除
+    // （否则重装会被"上次禁用"标记带成已禁用状态），并持久化。
+    cleanupConfig: name => {
+      ctx.config.removePluginConfig(name);
+      ctx.config.setPluginEnabled(name, true);
+      ctx.config.save();
+    },
   });
 }
 
@@ -124,6 +131,8 @@ export interface PackageManagerDeps {
   packagesLocal(): Promise<string>;
   rescanPlugins(): Promise<string[]>;
   disablePlugin(name: string): Promise<void>;
+  /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
+  cleanupConfig?(name: string): void;
 }
 
 /**
@@ -199,6 +208,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       }
       try {
         await storage.delete(targetUri);
+        deps.cleanupConfig?.(pluginName); // 清残留配置（删目录后再清，失败不影响已删成功）
         log.info(`已删除插件目录: packages/${dirName}`);
         return { ok: true, message: `插件 ${pluginName} 已卸载并删除` };
       } catch (err) {
