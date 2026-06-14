@@ -155,7 +155,7 @@ export function registerMarketplaceRoutes(
 ): void {
   // 市场列表：npm registry keyword 检索 + 标注已装/可卸。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
-  expressApp.get('/api/marketplace', gate('webui:marketplace:read', 4), async (req, res) => {
+  expressApp.get('/api/marketplace', gate('webui:marketplace:read', 'restricted'), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const status = getPluginMgr()?.getStatus() ?? [];
     const installed = new Set(status.map(p => p.name));
@@ -178,7 +178,7 @@ export function registerMarketplaceRoutes(
 
   // 装前能力披露：fetch npm packument 读 aalis.service（该插件需要/提供哪些服务）。
   // 安装前展示给 owner 知情同意。scoped 包名含 /，用 query 传。
-  expressApp.get('/api/marketplace/manifest', gate('webui:marketplace:read', 4), async (req, res) => {
+  expressApp.get('/api/marketplace/manifest', gate('webui:marketplace:read', 'restricted'), async (req, res) => {
     const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
     if (!name || !PKG_NAME_RE.test(name)) {
       res.status(400).json({ error: 'name 必须是合法 npm 包名' });
@@ -202,7 +202,7 @@ export function registerMarketplaceRoutes(
   });
 
   // 安装：复用 package-manager 的 npm pack 流程；owner 级（安装第三方代码 = 高危）。
-  expressApp.post('/api/marketplace/install', gate('webui:plugins:manage', 'owner'), async (req, res) => {
+  expressApp.post('/api/marketplace/install', gate('webui:plugins:manage', 'restricted'), async (req, res) => {
     const npmPkg = req.body?.name;
     if (!npmPkg || typeof npmPkg !== 'string' || !PKG_NAME_RE.test(npmPkg)) {
       res.status(400).json({ error: 'name 字段必须是合法 npm 包名' });
@@ -222,7 +222,7 @@ export function registerMarketplaceRoutes(
 
   // 卸载：owner 级。护栏——禁卸核心/契约/WebUI 基础设施；禁卸"删了会断别人服务依赖"的包。
   // 真正删目录 + 清残留配置由 package-manager.uninstall 负责。
-  expressApp.post('/api/marketplace/uninstall', gate('webui:plugins:manage', 'owner'), async (req, res) => {
+  expressApp.post('/api/marketplace/uninstall', gate('webui:plugins:manage', 'restricted'), async (req, res) => {
     const name = req.body?.name;
     if (!name || typeof name !== 'string' || !PKG_NAME_RE.test(name)) {
       res.status(400).json({ error: 'name 字段必须是合法 npm 包名' });
