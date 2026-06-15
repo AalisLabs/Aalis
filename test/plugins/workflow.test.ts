@@ -28,6 +28,48 @@ const fakeCtx = (toolFn?: (name: string, args: unknown) => Promise<string> | str
   } as unknown as Context;
 };
 
+interface AgentReply {
+  reply: string;
+  outcome?: 'replied' | 'silent' | 'aborted' | 'error';
+}
+
+/**
+ * 模拟一个会响应 inbound:message 的 ctx：emit('inbound:message') 时按 replyFor 决定回复，
+ * 若有回复则同步触发已注册的 'agent:turn:after' 中间件（仿 agent 跑完一轮）。
+ * replyFor 返回 null 表示"无 agent 应答"（用于触发超时路径）。
+ */
+const agentCtx = (
+  replyFor: (sessionId: string, content: string) => AgentReply | null,
+  emitted: Array<{ sessionId: string; content: string; platform?: string }> = [],
+): Context => {
+  const handlers: Array<(data: unknown, next: () => Promise<void>) => Promise<void>> = [];
+  return {
+    getService: () => undefined,
+    middleware(hook: string, handler: (data: unknown, next: () => Promise<void>) => Promise<void>) {
+      if (hook !== 'agent:turn:after') return () => {};
+      handlers.push(handler);
+      return () => {
+        const i = handlers.indexOf(handler);
+        if (i >= 0) handlers.splice(i, 1);
+      };
+    },
+    async emit(event: string, msg: { sessionId: string; content: string; platform?: string }) {
+      if (event !== 'inbound:message') return;
+      emitted.push({ sessionId: msg.sessionId, content: msg.content, platform: msg.platform });
+      const r = replyFor(msg.sessionId, msg.content);
+      if (!r) return;
+      const data = {
+        message: msg,
+        reply: r.reply,
+        outcome: r.outcome ?? 'replied',
+        sessionId: msg.sessionId,
+        metadata: {},
+      };
+      for (const h of [...handlers]) await h(data, async () => {});
+    },
+  } as unknown as Context;
+};
+
 describe('workflow validateGraph', () => {
   it('接受合法 DAG', () => {
     const def: WorkflowDef = {
@@ -185,5 +227,137 @@ describe('workflow runDag', () => {
     });
     expect(res.status).toBe('success');
     expect(peak).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('workflow agent 节点', () => {
+  it('派发→等回复→out 入 outputs，下游 agent 经 deps 接收上游结果（编排管道）', async () => {
+    const emitted: Array<{ sessionId: string; content: string }> = [];
+    const ctx = agentCtx((_sid, content) => {
+      if (content.includes('请分解')) return { reply: '子任务结果X' };
+      if (content.includes('子任务结果X')) return { reply: '聚合完成' };
+      return { reply: '?' };
+    }, emitted);
+    const def: WorkflowDef = {
+      id: 'w',
+      trigger: { type: 'manual' },
+      nodes: [
+        { id: 'a', type: 'agent', instruction: '请分解任务', out: 'aOut' },
+        { id: 'b', type: 'agent', instruction: '基于上游：{{outputs.aOut}}', deps: ['a'], out: 'bOut' },
+      ],
+    };
+    const res = await runDag({
+      ctx,
+      logger: noopLogger(),
+      def,
+      runId: 'rA',
+      triggerSource: 'test',
+      vars: {},
+      toolCallContext: {} as never,
+      cancelToken: { cancelled: false },
+    });
+    expect(res.status).toBe('success');
+    expect(res.outputs.aOut).toBe('子任务结果X');
+    expect(res.outputs.bOut).toBe('聚合完成');
+    // 下游 b 的指令应已插值上游结果
+    expect(emitted[1].content).toContain('子任务结果X');
+    // 省略 sessionId → 一次性隔离子会话 workflow:agent:<runId>:<nodeId>
+    expect(emitted[0].sessionId).toBe('workflow:agent:rA:a');
+    expect(emitted[1].sessionId).toBe('workflow:agent:rA:b');
+  });
+
+  it('显式 sessionId/platform + vars 插值', async () => {
+    const emitted: Array<{ sessionId: string; content: string; platform?: string }> = [];
+    const ctx = agentCtx(() => ({ reply: 'ok' }), emitted);
+    const def: WorkflowDef = {
+      id: 'w',
+      trigger: { type: 'manual' },
+      nodes: [
+        {
+          id: 'a',
+          type: 'agent',
+          instruction: '通知 {{vars.who}}',
+          sessionId: 'onebot:{{vars.who}}',
+          platform: 'onebot',
+        },
+      ],
+    };
+    const res = await runDag({
+      ctx,
+      logger: noopLogger(),
+      def,
+      runId: 'rS',
+      triggerSource: 'test',
+      vars: { who: '群A' },
+      toolCallContext: {} as never,
+      cancelToken: { cancelled: false },
+    });
+    expect(res.status).toBe('success');
+    expect(emitted[0].content).toBe('通知 群A');
+    expect(emitted[0].sessionId).toBe('onebot:群A');
+    expect(emitted[0].platform).toBe('onebot');
+  });
+
+  it('超时（无 agent 应答）→ 节点失败', async () => {
+    const ctx = agentCtx(() => null);
+    const def: WorkflowDef = {
+      id: 'w',
+      trigger: { type: 'manual' },
+      nodes: [{ id: 'a', type: 'agent', instruction: 'x', timeoutSeconds: 0.05 }],
+    };
+    const res = await runDag({
+      ctx,
+      logger: noopLogger(),
+      def,
+      runId: 'rT',
+      triggerSource: 'test',
+      vars: {},
+      toolCallContext: {} as never,
+      cancelToken: { cancelled: false },
+    });
+    expect(res.status).toBe('failed');
+    expect(res.error).toMatch(/超时/);
+  });
+
+  it('outcome=error → 节点失败', async () => {
+    const ctx = agentCtx(() => ({ reply: '', outcome: 'error' }));
+    const def: WorkflowDef = {
+      id: 'w',
+      trigger: { type: 'manual' },
+      nodes: [{ id: 'a', type: 'agent', instruction: 'x' }],
+    };
+    const res = await runDag({
+      ctx,
+      logger: noopLogger(),
+      def,
+      runId: 'rE',
+      triggerSource: 'test',
+      vars: {},
+      toolCallContext: {} as never,
+      cancelToken: { cancelled: false },
+    });
+    expect(res.status).toBe('failed');
+    expect(res.error).toMatch(/outcome=error/);
+  });
+
+  it('outcome=silent → 成功且输出空串（agent 选择不回复是合法结果）', async () => {
+    const ctx = agentCtx(() => ({ reply: '', outcome: 'silent' }));
+    const def: WorkflowDef = {
+      id: 'w',
+      trigger: { type: 'manual' },
+      nodes: [{ id: 'a', type: 'agent', instruction: 'x', out: 'r' }],
+    };
+    const res = await runDag({
+      ctx,
+      logger: noopLogger(),
+      def,
+      runId: 'rSilent',
+      triggerSource: 'test',
+      vars: {},
+      toolCallContext: {} as never,
+      cancelToken: { cancelled: false },
+    });
+    expect(res.status).toBe('success');
+    expect(res.outputs.r).toBe('');
   });
 });
