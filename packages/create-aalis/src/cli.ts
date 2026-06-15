@@ -16,14 +16,11 @@
 // ============================================================
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { argv, cwd, exit, stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
-import { pathToFileURL } from 'node:url';
-
-/** scaffold 写入 dependencies 的版本范围。发布新主版本时同步更新。 */
-const AALIS_RANGE = '^0.1.0';
+import { fileURLToPath } from 'node:url';
 
 /** 模板档：每档是“基础启用集”，full 为全部目录、bare 为空。 */
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
@@ -190,6 +187,8 @@ interface CatalogEntry {
   name: string;
   description: string;
   official: boolean;
+  /** npm search 返回的最新版本（用于脚手架逐包写 `^<最新>`，省一次单独查询） */
+  version?: string;
 }
 
 /**
@@ -199,7 +198,7 @@ interface CatalogEntry {
  * 纯函数，便于单测。
  */
 export function toPluginCatalog(data: {
-  objects?: Array<{ package: { name: string; description?: string } }>;
+  objects?: Array<{ package: { name: string; description?: string; version?: string } }>;
 }): CatalogEntry[] {
   return (data.objects ?? [])
     .filter(o => {
@@ -210,6 +209,7 @@ export function toPluginCatalog(data: {
       name: o.package.name,
       description: o.package.description ?? '',
       official: o.package.name.startsWith('@aalis/'),
+      version: o.package.version,
     }));
 }
 
@@ -226,14 +226,52 @@ async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
   }
 }
 
+/** 查 {registry}/{pkg}/latest 的版本；失败返回 null（调用方回退 'latest'）。 */
+async function fetchLatestVersion(registry: string, pkg: string): Promise<string | null> {
+  try {
+    const base = registry.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+    const r = await fetch(`${base}/${pkg}/latest`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { version?: unknown };
+    return typeof j.version === 'string' ? j.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 逐包解析写入生成项目 package.json 的版本范围（替代旧的硬编码 AALIS_RANGE 常量）：
+ * - 插件优先复用 live catalog 已带的最新版（零额外请求）；
+ * - core/runtime 及不在 catalog 的包，实时查 {registry}/{pkg}/latest；
+ * - 任何解析失败的包回退 `'latest'`（npm install 时再取最新，自我修正，避免硬编码版本过时/无法跨 0.x 非统一版本）。
+ * 解析得到的版本写成 `^<版本>`（与生态约定一致：0.x caret 锁次版本，每包各取自身最新）。
+ */
+async function resolveDepRanges(
+  registry: string,
+  names: readonly string[],
+  catalog: CatalogEntry[] | null,
+): Promise<Map<string, string>> {
+  const fromCatalog = new Map<string, string>();
+  for (const e of catalog ?? []) if (e.version) fromCatalog.set(e.name, e.version);
+  const out = new Map<string, string>();
+  await Promise.all(
+    [...new Set(names)].map(async name => {
+      const v = fromCatalog.get(name) ?? (await fetchLatestVersion(registry, name));
+      out.set(name, v ? `^${v}` : 'latest');
+    }),
+  );
+  return out;
+}
+
 // ── 生成的文件 ──────────────────────────────────────────────
 
-function renderPackageJson(projectName: string, enabled: string[]): string {
+function renderPackageJson(projectName: string, enabled: string[], versions: Map<string, string>): string {
+  const range = (n: string): string => versions.get(n) ?? 'latest';
   const deps: Record<string, string> = {
-    '@aalis/core': AALIS_RANGE,
-    '@aalis/runtime': AALIS_RANGE,
+    '@aalis/core': range('@aalis/core'),
+    '@aalis/runtime': range('@aalis/runtime'),
   };
-  for (const n of enabled.sort()) deps[n] = AALIS_RANGE;
+  for (const n of enabled.sort()) deps[n] = range(n);
   return `${JSON.stringify(
     {
       name: projectName,
@@ -455,7 +493,9 @@ async function main(): Promise<void> {
     // 写文件
     mkdirSync(targetDir, { recursive: true });
     const enabledList = [...enabled];
-    writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabledList), 'utf-8');
+    // 逐包解析当前最新版本（复用 catalog；core/runtime 实时查；失败回退 latest）
+    const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabledList], catalog);
+    writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabledList, versions), 'utf-8');
     writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
     writeFileSync(resolve(targetDir, 'aalis.config.yaml'), renderConfig(enabled), 'utf-8');
     writeFileSync(resolve(targetDir, '.env.example'), renderEnvExample(enabled), 'utf-8');
@@ -492,7 +532,15 @@ async function main(): Promise<void> {
 }
 
 // 仅在作为 CLI 直接执行时运行 main；被 import（单测纯函数）时不自动跑。
-if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
+// 用 realpath 比较两侧：`npm create aalis` 经 .bin 软链调用时 argv[1] 是软链路径，
+// 直接比 import.meta.url 会不相等导致 main() 静默不跑（Bug：交互界面进不来）。
+let isCliEntry = false;
+try {
+  isCliEntry = !!argv[1] && realpathSync(argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch {
+  /* 非文件入口（REPL/eval 等）：保持 false，不自动运行 */
+}
+if (isCliEntry) {
   main().catch(err => {
     console.error(err);
     exit(1);
