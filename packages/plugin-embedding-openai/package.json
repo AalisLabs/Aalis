@@ -5,6 +5,7 @@
   "description": "文本向量化（Embedding）—— OpenAI 接口提供者",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

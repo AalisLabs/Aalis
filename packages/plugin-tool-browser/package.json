@@ -5,6 +5,7 @@
   "description": "浏览器自动化工具（Puppeteer）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

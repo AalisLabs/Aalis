@@ -5,6 +5,7 @@
   "description": "会话信道：群聊/频道级会话隔离与路由",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

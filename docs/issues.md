@@ -37,6 +37,9 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-15 **runtime 文档 + keyword 伞形**：新增 docs/core/runtime.md（@aalis/runtime = Node 宿主层、
+  与包管理器无关、设施清单、如何为别的环境写 host）；全包加 `aalis` 伞形关键词（core 加 `aalis-core`），
+  `npm search aalis` 即可找全生态（**本地已改，随下次发布上线**；不影响市场的 `aalis-plugin` 过滤）。
 - ✅ 2026-06-15 **0.2.0 协调全量发布**：feat 全并入 dev + 清理分支（只剩 dev/main，ff main→dev）；
   90 包统一 bump 0.2.0 + 83 处 peerDep `^0.1.0→^0.2.0`；npm 已发、CI 绿；市场 api/前端 类目实际
   可见（`keywords:aalis-plugin` 检索 83 包 = 59 插件 + 23 api + 1 前端）。

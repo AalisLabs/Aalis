@@ -5,6 +5,7 @@
   "description": "任务调度：AI 可自主创建定时任务",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

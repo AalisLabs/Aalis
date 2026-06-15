@@ -5,6 +5,7 @@
   "description": "用户画像：记录与检索用户信息",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

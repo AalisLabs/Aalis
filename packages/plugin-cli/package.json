@@ -5,6 +5,7 @@
   "description": "CLI 终端平台适配器：在终端直接与 AI 对话",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

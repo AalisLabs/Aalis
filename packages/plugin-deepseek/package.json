@@ -5,6 +5,7 @@
   "description": "DeepSeek LLM 提供者（深度思考 + 工具调用）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

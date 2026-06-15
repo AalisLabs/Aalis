@@ -5,6 +5,7 @@
   "description": "代码执行工具：运行代码片段并取回结果",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

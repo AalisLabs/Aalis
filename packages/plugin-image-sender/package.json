@@ -5,6 +5,7 @@
   "description": "图片发送：将生成/本地图片经平台发出",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

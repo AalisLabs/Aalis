@@ -5,6 +5,7 @@
   "description": "工作流编排：多步骤任务的声明式编排",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

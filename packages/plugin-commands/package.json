@@ -5,6 +5,7 @@
   "description": "斜杠指令系统：注册与分发 /command",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

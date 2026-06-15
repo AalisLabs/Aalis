@@ -5,6 +5,7 @@
   "description": "语音识别（ASR）—— OpenAI Whisper API 提供者",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

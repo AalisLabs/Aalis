@@ -5,6 +5,7 @@
   "description": "Web 管理界面后端：对话/插件/服务/市场/文件",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

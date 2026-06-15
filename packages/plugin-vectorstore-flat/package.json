@@ -5,6 +5,7 @@
   "description": "向量库 —— 内置平面文件实现（零依赖）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",
