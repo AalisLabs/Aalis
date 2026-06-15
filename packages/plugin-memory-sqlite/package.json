@@ -5,6 +5,7 @@
   "description": "SQLite 消息历史存储后端（本地文件，推荐）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

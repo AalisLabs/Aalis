@@ -14,5 +14,8 @@
   },
   "devDependencies": {
     "typescript": "^5.7.0"
-  }
+  },
+  "keywords": [
+    "aalis"
+  ]
 }

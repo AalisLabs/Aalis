@@ -5,6 +5,7 @@
   "description": "Cron 定时引擎：解析与触发 cron 表达式任务",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

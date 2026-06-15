@@ -5,6 +5,7 @@
   "description": "对话编排核心：消息构建、工具循环、上下文管理",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

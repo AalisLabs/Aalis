@@ -20,5 +20,8 @@
   },
   "aalis": {
     "tooling": true
-  }
+  },
+  "keywords": [
+    "aalis"
+  ]
 }

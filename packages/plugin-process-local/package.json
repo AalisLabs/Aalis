@@ -5,6 +5,7 @@
   "description": "进程网关本地实现：受控执行子进程",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

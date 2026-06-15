@@ -5,6 +5,7 @@
   "description": "消息归档：持久化原始消息流以供检索",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

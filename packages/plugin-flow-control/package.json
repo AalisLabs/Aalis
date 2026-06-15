@@ -5,6 +5,7 @@
   "description": "平台无关流控：禁言/冷却/限速/闲置触发",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

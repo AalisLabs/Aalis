@@ -5,6 +5,7 @@
   "description": "跨会话消息历史上下文（基础记忆）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

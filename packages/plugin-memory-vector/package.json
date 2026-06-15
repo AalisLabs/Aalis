@@ -5,6 +5,7 @@
   "description": "语义向量记忆：相似度 + 时间衰减检索历史",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

@@ -5,6 +5,7 @@
   "description": "内存消息历史后端（重启丢失，零依赖）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

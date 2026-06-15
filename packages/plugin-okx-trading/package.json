@@ -5,6 +5,7 @@
   "description": "OKX 行情/交易工具插件",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

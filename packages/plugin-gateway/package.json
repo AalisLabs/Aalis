@@ -5,6 +5,7 @@
   "description": "消息网关：入站/出站编排（指令→流控→触发→分发相位）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",
