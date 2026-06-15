@@ -306,6 +306,18 @@ export const actions: PluginModule['actions'] = {
           },
         });
     }
+    // owner → 「* 全部能力」：owner 持有 `*`，不逐条 grant，否则会是孤立节点。连一个
+    // `*` 能力节点直观表达"拥有一切"，也让焦点/邻域有内容可展开。
+    const ownerIds = [...nodes.values()].filter(n => n.data.kind === 'owner').map(n => String(n.data.id));
+    if (ownerIds.length > 0) {
+      const allCap = 'cap:*';
+      if (!nodes.has(allCap))
+        nodes.set(allCap, { data: { id: allCap, label: '★ 全部能力 (*)', kind: 'cap', pageRankScale: 0.6 } });
+      for (const id of ownerIds)
+        edges.push({
+          data: { id: `own:${id}`, source: id, target: allCap, label: '拥有全部', kind: 'grant', directed: true },
+        });
+    }
     const stats = {
       用户: users.length,
       owner: owners.length,
