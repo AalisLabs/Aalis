@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-memory-history",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "跨会话消息历史上下文（基础记忆）",
   "type": "module",
@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {

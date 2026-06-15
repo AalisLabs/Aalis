@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-vectorstore-flat",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "向量库 —— 内置平面文件实现（零依赖）",
   "type": "module",
@@ -26,7 +26,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {

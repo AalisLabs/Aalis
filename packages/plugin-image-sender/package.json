@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-image-sender",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "图片发送：将生成/本地图片经平台发出",
   "type": "module",
@@ -30,7 +30,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {
