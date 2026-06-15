@@ -124,6 +124,22 @@ describe('workflow validateGraph', () => {
     };
     expect(validateGraph(def)).toMatch(/环/);
   });
+
+  it('按类型校验必填字段（定义期就报清晰错，而非运行期 cryptic）', () => {
+    const wrap = (node: unknown): WorkflowDef => ({
+      id: 'w',
+      trigger: { type: 'manual' },
+      nodes: [node as WorkflowDef['nodes'][number]],
+    });
+    expect(validateGraph(wrap({ id: 'a', type: 'agent' }))).toMatch(/instruction/);
+    expect(validateGraph(wrap({ id: 'a', type: 'tool' }))).toMatch(/tool/);
+    expect(validateGraph(wrap({ id: 'a', type: 'send-message', sessionId: 's' }))).toMatch(/content/);
+    expect(validateGraph(wrap({ id: 'a', type: 'send-message', content: 'x' }))).toMatch(/sessionId/);
+    expect(validateGraph(wrap({ id: 'a', type: 'wait' }))).toMatch(/seconds/);
+    expect(validateGraph(wrap({ id: 'a', type: 'mystery' }))).toMatch(/类型未知/);
+    // 合法 agent 节点通过
+    expect(validateGraph(wrap({ id: 'a', type: 'agent', instruction: '干活' }))).toBeNull();
+  });
 });
 
 describe('workflow runDag', () => {

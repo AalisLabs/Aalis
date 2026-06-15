@@ -68,9 +68,16 @@ export function DashboardPage({
   };
 
   // 切换活跃前端（owner）：后端实时重挂 + 持久化，切完 reload 即加载新前端。
+  // 不走 api()——api() 不校验 res.ok，会把 403/404/503 当成功，导致非 owner 点击后假成功并刷新。
   const switchClient = async (id: string) => {
     try {
-      await api('/api/clients/active', { method: 'POST', body: JSON.stringify({ id }) });
+      const res = await fetch('/api/clients/active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error || `切换失败（HTTP ${res.status}）`);
       showToast('已切换前端，正在重新加载…');
       setTimeout(() => window.location.reload(), 600);
     } catch (e) {
