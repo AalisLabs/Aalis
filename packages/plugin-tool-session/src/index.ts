@@ -191,8 +191,13 @@ interface SessionHistoryResult {
   limit: number;
   includeArchived: boolean;
   range?: { fromTs: number; toTs: number };
+  /** 区间模式：窗口内消息多于返回条数时为 true，提示「请缩小时间窗」 */
+  truncated?: boolean;
   messages: Array<Record<string, unknown>>;
 }
+
+/** 无原生区间查询的后端：区间检索退回扫描历史的最大条数（best-effort 上界，防 OOM） */
+const RANGE_FALLBACK_SCAN = 5000;
 
 // ===== 时间区间解析（纯函数，单测覆盖见 test/plugins/session-history-range.test.ts） =====
 
@@ -387,27 +392,37 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
           const fromTs = typeof options.sinceTs === 'number' ? options.sinceTs : 0;
           const toTs = typeof options.untilTs === 'number' ? options.untilTs : Date.now();
           let ranged: Message[];
+          // 区间后端（getMessagesBySessionRange）天然含归档；仅当退化到 getHistory 时才是「仅活跃」。
+          let includesArchived = true;
           if (memory.getMessagesBySessionRange) {
             ranged = await memory.getMessagesBySessionRange(targetSessionId, fromTs, toTs);
           } else {
-            // 后端不支持区间查询：退回全量历史（尽量含归档）+ 客户端按时间过滤。
-            const base = memory.getFullHistory
-              ? await memory.getFullHistory(targetSessionId)
-              : await memory.getHistory(targetSessionId);
+            // 后端不支持原生区间查询：退回扫描历史 + 客户端按时间过滤（best-effort，很早的窗口可能不全）。
+            let base: Message[];
+            if (memory.getFullHistory) {
+              base = await memory.getFullHistory(targetSessionId, RANGE_FALLBACK_SCAN);
+            } else {
+              base = await memory.getHistory(targetSessionId, RANGE_FALLBACK_SCAN);
+              includesArchived = false; // getHistory 不含归档，诚实回显
+            }
             ranged = base.filter(m => {
               const ts = m.timestamp ?? 0;
               return ts >= fromTs && ts <= toTs;
             });
           }
-          // 区间内可能很多，取最近 limit 条（区间查询按时间升序，截末尾）。
-          const sliced = ranged.length > limit ? ranged.slice(ranged.length - limit) : ranged;
+          // 区间查询按时间升序返回。窗口内超过 limit 时取**最早**的 limit 条（按阅读顺序、与「区间」语义一致），
+          // 并以 truncated 明示「窗口内还有更多、请缩小窗口」——不再静默丢弃。
+          // 注意：原生区间后端通常有约 500 条的硬上限，极大窗口可能在后端那步就已截断，故 truncated 为保守信号。
+          const sliced = ranged.slice(0, limit);
+          const truncated = ranged.length > sliced.length;
           const result: SessionHistoryResult = {
             ok: true,
             sessionId: targetSessionId,
             count: sliced.length,
             limit,
-            includeArchived: true,
+            includeArchived: includesArchived,
             range: { fromTs, toTs },
+            ...(truncated ? { truncated: true } : {}),
             messages: sliced.map((message, index) => formatHistoryMessage(message, index + 1, cfg.perMessageMaxChars)),
           };
           return result;
@@ -453,7 +468,8 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
           '两种模式：',
           '①【条数】默认——读最近若干条（limit 控制）。',
           '②【时间区间】给定 within_minutes（最近 N 分钟）或 since/until（绝对区间）时启用——',
-          '  取该会话落在区间内的消息（含归档完整记录），区间内仍最多返回 limit 条（取较新的）。',
+          '  取该会话落在区间内的消息（含归档完整记录），按时间正序返回最早的 limit 条；',
+          '  窗口内更多时结果带 truncated:true（请缩小时间窗再查）。',
           '适合在用户明确提到另一个会话、需要核实原文上下文、或要查「某段时间里聊了什么」时使用。',
           '默认只允许读取配置范围内的会话；不要把它当作全局搜索工具，语义检索请用 memory_recall。',
         ].join('\n'),
