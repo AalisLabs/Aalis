@@ -12,7 +12,8 @@
    （切换 UI 已做，见归档；目前只用默认前端验证过 UI 路径）。
 3. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
    scope 事件总线不隔离。
-4. **文档内图片识别**（file-reader / office 尚无）。
+4. **PDF 内嵌图片识别**（DOCX 已做，见归档）：PDF 抽内嵌图片较复杂（需 pdf.js operator/XObject 级解析），
+   暂仅提取文本。（office 插件是纯创作工具、不读文档，无此需求。）
 5. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
    运行时**递归**任务分解（subtask 现禁止嵌套）+ 一等公民 `task:*` 事件 + 专用任务树 WebUI 页 +
    per-subtask context-scope 隔离。见 docs/design/task-tree-system.md 缺口分析。
@@ -42,6 +43,11 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-15 **DOCX 内嵌图片识别**：file-reader 读 DOCX 时第二遍 `mammoth.convertToHtml`
+  收集内嵌图片 data URI → `media.describeImage` 识别 → 以「`--- 文档内图片 (N) ---`」小节附正文末，
+  让 LLM 看见文档里的图。配置 `recognizeDocImages`（默认开）+ `maxDocImages`（默认 8，超出跳过）；
+  单张失败不影响其余、无 media 静默跳过、结果随文本缓存。纯编排 doc-images.ts（recognizeImages/
+  formatImageSection）+ 7 例单测。澄清 office 是纯创作插件不读文档（无此需求）；PDF 抽图较复杂留待办#4。
 - ✅ 2026-06-15 **onebot 主动撤回**（bot 撤回自己发的消息）：适配器 `sendMessage` 原先丢弃发送响应、
   bot 无从得知自己消息的 message_id。现 `SentMessageTracker` 按会话记录发出消息的 id（环形缓冲、30min
   时窗、撤回后 forget 可重复往前撤）；适配器暴露 `getSentMessages`/`forgetSentMessage`（仿 getSelfMutes
