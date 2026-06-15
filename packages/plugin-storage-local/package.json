@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-storage-local",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "存储网关本地实现：沙盒化文件读写",
   "type": "module",
@@ -26,7 +26,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {

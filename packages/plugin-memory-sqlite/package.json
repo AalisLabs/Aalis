@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-memory-sqlite",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "SQLite 消息历史存储后端（本地文件，推荐）",
   "type": "module",
@@ -29,7 +29,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {

@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-vectorstore-lancedb",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "向量库 —— LanceDB 高性能实现",
   "type": "module",
@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {
