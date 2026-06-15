@@ -192,15 +192,25 @@ interface CatalogEntry {
   official: boolean;
 }
 
-/** npm search 响应 → 插件目录条目。纯函数，便于单测。 */
+/**
+ * npm search 响应 → 插件目录条目。脚手架只列**可装功能插件**：自 2026-06 起
+ * `aalis-plugin` 关键词也涵盖 api 契约 / 前端（市场分类用），故按包名剔除 `*-api`
+ * 与 `webui-client*`（契约是依赖、前端随 webui-server 自动带，均非"选功能"对象）。
+ * 纯函数，便于单测。
+ */
 export function toPluginCatalog(data: {
   objects?: Array<{ package: { name: string; description?: string } }>;
 }): CatalogEntry[] {
-  return (data.objects ?? []).map(o => ({
-    name: o.package.name,
-    description: o.package.description ?? '',
-    official: o.package.name.startsWith('@aalis/'),
-  }));
+  return (data.objects ?? [])
+    .filter(o => {
+      const short = o.package.name.replace(/^@[^/]+\//, '');
+      return !/-api$/.test(short) && !/webui-client/.test(short);
+    })
+    .map(o => ({
+      name: o.package.name,
+      description: o.package.description ?? '',
+      official: o.package.name.startsWith('@aalis/'),
+    }));
 }
 
 /** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
