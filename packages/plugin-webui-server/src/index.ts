@@ -464,6 +464,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
+  // 已发现的前端候选 + 当前活跃 id（供「切换活跃前端」UI 读/写；ready 时填充）。
+  const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
+  let activeClientId = '';
+  /** 切换活跃前端：实时重挂静态目录 + 更新 SPA 回退 + 持久化 webui.client，下次启动沿用。 */
+  function activateClient(id: string): boolean {
+    const c = clientCandidates.find(x => x.id === id);
+    if (!c) return false;
+    clientDist = c.dir;
+    mountStaticDir(c.dir);
+    activeClientId = id;
+    ctx.config.setPluginConfig(name, { ...ctx.config.getPluginConfig(name), client: id });
+    ctx.config.save();
+    ctx.logger.info(`活跃前端切换为: ${c.label} (${id})`);
+    return true;
+  }
+
   // 动态静态文件中间件（支持运行时切换前端）
   expressApp.use((req, res, next) => {
     if (staticMiddleware) {
@@ -631,6 +647,23 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.config.removeServicePreference(svcName);
     ctx.config.save();
     res.json({ ok: true });
+  });
+
+  // 前端切换：列出已发现的前端 + 当前活跃（多前端时 UI 展示）。只回 id/label/active，不泄露 fs 路径。
+  expressApp.get('/api/clients', gate('webui:status:read', 'public'), (_req, res) => {
+    res.json({
+      clients: clientCandidates.map(c => ({ id: c.id, label: c.label, active: c.id === activeClientId })),
+      active: activeClientId,
+    });
+  });
+  // 设活跃前端（owner）：实时重挂 + 持久化；前端切完自行 reload 即加载新前端。
+  expressApp.post('/api/clients/active', gate('webui:clients:manage', 'restricted'), (req, res) => {
+    const id = String((req.body as { id?: string })?.id ?? '').trim();
+    if (!activateClient(id)) {
+      res.status(404).json({ ok: false, error: `未找到已发现的前端 "${id}"` });
+      return;
+    }
+    res.json({ ok: true, active: id });
   });
 
   // 获取所有平台适配器及其连接状态
@@ -1484,7 +1517,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         return existsSync(sibling) ? sibling : undefined;
       }
     };
-    const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
     const addCandidate = (id: string, label: string, dir: string | undefined): void => {
       if (!dir || clientCandidates.some(c => c.id === id)) return;
       if (existsSync(dir) && existsSync(resolve(dir, 'index.html'))) clientCandidates.push({ id, label, dir });
@@ -1528,6 +1560,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
       clientDist = active.dir;
       mountStaticDir(active.dir);
+      activeClientId = active.id;
       ctx.logger.info(`活跃前端: ${active.label}${preferred ? '（config.client 指定）' : ''}`);
     }
 
