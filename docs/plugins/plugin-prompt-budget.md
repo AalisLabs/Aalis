@@ -6,7 +6,7 @@
 
 ## 设计动机
 
-`plugin-agent-default` 已 emit `token:usage` 事件（含 12 桶 breakdown），WebUI 通过 `plugin-webui-server` 订阅渲染面板。但 **AI 自己在工具循环里跑时看不到 WebUI**，怀疑"是不是 prompt 太大了"的时候没有内省路径。
+`plugin-agent` 已 emit `token:usage` 事件（含 12 桶 breakdown），WebUI 通过 `plugin-webui-server` 订阅渲染面板。但 **AI 自己在工具循环里跑时看不到 WebUI**，怀疑"是不是 prompt 太大了"的时候没有内省路径。
 
 本插件提供一个**主动 query** 工具：让模型在 tool loop 中直接查到自己最近一次 LLM 调用的预算消耗，决定是否调用 `memory.compress` / 减少 tool 输出 / 调整策略。
 
@@ -79,12 +79,12 @@ meta.subsystem = 'agent'
 | `>= 0.50` | INFO | （健康范围） |
 | `< 0.50` | OK | 预算健康，无需干预。 |
 
-阈值与 `plugin-agent-default` 内的节流 logger 一致，便于 WebUI 日志、AI 自检、人类观察对齐口径。
+阈值与 `plugin-agent` 内的节流 logger 一致，便于 WebUI 日志、AI 自检、人类观察对齐口径。
 
 ## 与其他模块的关系
 
 ```
-plugin-agent-default                     plugin-webui-server
+plugin-agent                             plugin-webui-server
    │                                          ▲
    │ emit('token:usage', snapshot)            │
    │           ┌──────────────────────────────┘ 推 WebSocket
@@ -110,6 +110,6 @@ plugin-agent-default                     plugin-webui-server
 
 ## 相关
 
-- token:usage 事件结构与 12 桶含义：[plugin-agent-default](./plugin-agent.md)
+- token:usage 事件结构与 12 桶含义：[plugin-agent](./plugin-agent.md)
 - 自动压缩：[plugin-memory-summary](./plugin-memory-summary.md)
 - WebUI 面板：[plugin-webui-server](./plugin-webui-server.md)

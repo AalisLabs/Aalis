@@ -14,7 +14,10 @@
    scope 事件总线不隔离。
 4. **onebot 主动撤回**（bot 撤回自己发的消息；撤回「感知」已做）。
 5. **文档内图片识别**（file-reader / office 尚无）。
-6. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
+6. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
+   运行时**递归**任务分解（subtask 现禁止嵌套）+ 一等公民 `task:*` 事件 + 专用任务树 WebUI 页 +
+   per-subtask context-scope 隔离。见 docs/design/task-tree-system.md 缺口分析。
+7. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
 
 ## 已知限制（接受的妥协，非 bug，记录在案）
 
@@ -40,7 +43,17 @@
 
 ## 已完成（单行归档，新→旧）
 
-- ✅ 2026-06-15 **按时间区间取消息**：`session_get_history` 工具加 `within_minutes` / `since` / `until`
+- ✅ 2026-06-15 **workflow `agent` 节点（task-orchestrator 确定性编排落地）**：给 plugin-workflow 加
+  `agent` 节点类型——派发指令给 agent 并 join 本轮回复（复用 delegate `agent:turn:after` 机制），
+  回复经 `out` 入 outputs 供 `{{outputs.X}}` 插值；配合 deps 即「分解→依赖→串/并行→管道→聚合」。
+  省略 sessionId 自动隔离子会话；超时/error 节点失败。`AgentNodeSpec` 入 workflow-api；engine
+  `execAgent` + 5 例单测；新增 docs/plugins/plugin-workflow.md；task-tree-system.md 重标为设计提案
+  （不另造 plugin-task-orchestrator，~70% 已由现有插件组合覆盖，余项见待办#6）。
+- ✅ 2026-06-15 **文档口吻去 owner-gated + 名称勘误**：extensions/index.md 改「请先在本表登记」为
+  「这不是注册门禁——第三方直接 `declare module` 即可，无需登记；本表只收录一方包」；node-usage-policy
+  「社区收录评审」澄清为「仅合入主仓库时才 review，发 npm 即用」；`plugin-agent-default`→`plugin-agent`
+  （无此包名，7 处）。审计确认家族简写（plugin-llm 等）本就规范、其余文档口吻无问题。
+- ✅ 2026-06-15 **按时间区间取消息**：`session_get_history` 工具加 `within_minutes` / `since` / `until``session_get_history` 工具加 `within_minutes` / `since` / `until`
   入参（ISO 或毫秒），给定时间窗即路由到 `memory.getMessagesBySessionRange`（区间含归档完整记录、
   区间内取较新 limit 条），否则维持原条数检索；纯函数 `resolveTimeRange`/`parseTimestamp` 抽出单测
   （test/plugins/session-history-range.test.ts，15 例）。补齐单会话/任意区间的通用查询缺口。
