@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-websearch-serper",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "联网搜索 —— Serper API 提供者",
   "type": "module",
@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {
