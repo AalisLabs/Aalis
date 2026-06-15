@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import { useAgent } from '@aalis/plugin-agent-api';
+import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type {} from '@aalis/plugin-session-manager-api'; // declaration merging：session:deleted 事件
@@ -10,6 +11,7 @@ import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-tools-api';
+import { formatImageSection, recognizeImages } from './doc-images.js';
 
 // ===== 插件元数据 =====
 
@@ -19,7 +21,7 @@ export const subsystem = 'tools';
 export const provides = ['file-reader'];
 export const inject = {
   required: ['storage'],
-  optional: ['agent', 'memory'],
+  optional: ['agent', 'memory', 'media'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -68,6 +70,19 @@ export const configSchema: ConfigSchema = {
     description:
       '开启后：仅当会话中存在历史上传文件且本轮没有新上传时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时跳过注入（user message 里已有 【文件: ...】 描述）以节省 token。',
   },
+  recognizeDocImages: {
+    type: 'boolean',
+    label: '识别文档内嵌图片',
+    default: true,
+    description:
+      '读取 DOCX 时调用 media 服务识别内嵌图片，把描述附在正文末尾（需启用 media/vision；无 media 服务时自动跳过）。识别会增加首次解析耗时与 vision token 开销，结果随提取文本一并缓存。',
+  },
+  maxDocImages: {
+    type: 'number',
+    label: '单文档最多识别图片数',
+    default: 8,
+    description: '超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。',
+  },
 };
 
 export const defaultConfig = {
@@ -78,6 +93,8 @@ export const defaultConfig = {
   lruMaxTotalMB: 500,
   fileRetentionMinutes: 0,
   historyHintEnabled: true,
+  recognizeDocImages: true,
+  maxDocImages: 8,
 };
 
 // ===== 支持的文件类型 =====
@@ -168,6 +185,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const retentionDays = (config.retentionDays as number) ?? 30;
   const lruMaxTotalBytes = ((config.lruMaxTotalMB as number) ?? 500) * 1024 * 1024;
   const historyHintEnabled = (config.historyHintEnabled as boolean | undefined) ?? true;
+  const recognizeDocImages = (config.recognizeDocImages as boolean | undefined) ?? true;
+  const maxDocImages = Math.max(0, Math.floor((config.maxDocImages as number) ?? 8));
   const HISTORY_HINT_SOURCE = 'file-reader-history';
 
   const _storage = ctx.getService<StorageService>('storage');
@@ -331,11 +350,54 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     try {
       const mammoth = await import('mammoth');
       const result = await mammoth.extractRawText({ buffer });
-      return result.value || '[DOCX 无文本内容]';
+      let text = result.value || '[DOCX 无文本内容]';
+      const imageSection = await describeDocxImages(mammoth, buffer);
+      if (imageSection) text += imageSection;
+      return text;
     } catch (err) {
       ctx.logger.warn('DOCX 解析失败:', err);
       return '[DOCX 解析失败]';
     }
+  }
+
+  /**
+   * 提取 DOCX 内嵌图片并用 media 服务识别，返回追加到正文末尾的图片小节（无图/无 media 返回空串）。
+   * 第二遍 convertToHtml 仅用于触发图片回调收集 data URI，HTML 输出丢弃；正文仍由 extractRawText 提供。
+   */
+  async function describeDocxImages(mammoth: typeof import('mammoth'), buffer: Buffer): Promise<string> {
+    if (!recognizeDocImages || maxDocImages <= 0) return '';
+    const media = ctx.getService<MediaService>('media');
+    if (!media?.describeImage) return '';
+
+    const uris: string[] = [];
+    try {
+      await mammoth.convertToHtml(
+        { buffer },
+        {
+          convertImage: mammoth.images.imgElement(async image => {
+            if (uris.length >= maxDocImages) return { src: '' };
+            try {
+              const b64 = await image.readAsBase64String();
+              uris.push(`data:${image.contentType || 'image/png'};base64,${b64}`);
+            } catch (err) {
+              ctx.logger.debug('DOCX 内嵌图片读取失败:', err);
+            }
+            return { src: '' };
+          }),
+        },
+      );
+    } catch (err) {
+      ctx.logger.debug('DOCX 图片提取失败:', err);
+      return '';
+    }
+    if (uris.length === 0) return '';
+
+    const descriptions = await recognizeImages(
+      uris,
+      uri => media.describeImage(uri, { hint: '这是文档中内嵌的图片，请描述其内容，并尽量包含图中可见的文字。' }),
+      maxDocImages,
+    );
+    return formatImageSection(descriptions);
   }
 
   // ===== 存储 / 删除 =====
