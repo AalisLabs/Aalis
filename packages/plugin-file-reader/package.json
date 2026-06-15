@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-media-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
@@ -42,7 +43,8 @@
       ],
       "optional": [
         "agent",
-        "memory"
+        "memory",
+        "media"
       ],
       "provides": [
         "file-reader"
