@@ -5,6 +5,7 @@
   "description": "数学计算工具：表达式求值",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

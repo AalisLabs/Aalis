@@ -5,6 +5,7 @@
   "description": "工具搜索层：工具多时按需检索，省 token",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

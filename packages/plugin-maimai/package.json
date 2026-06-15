@@ -5,6 +5,7 @@
   "description": "舞萌 DX（maimai）查分与相关工具",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

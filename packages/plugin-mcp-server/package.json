@@ -5,6 +5,7 @@
   "description": "MCP 服务端：把 Aalis 的工具以 MCP 协议对外暴露",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

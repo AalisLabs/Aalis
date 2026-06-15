@@ -5,6 +5,7 @@
   "description": "MCP 客户端：连接外部 MCP server，把其 tools 注册进工具表",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

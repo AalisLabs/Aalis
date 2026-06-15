@@ -5,6 +5,7 @@
   "description": "联网搜索 —— Serper API 提供者",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

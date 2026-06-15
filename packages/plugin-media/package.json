@@ -5,6 +5,7 @@
   "description": "媒体处理：音视频/图片的转码与收发支撑",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

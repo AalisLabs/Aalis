@@ -5,6 +5,7 @@
   "description": "OpenAI / 兼容接口 LLM 提供者（对话、工具、流式）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

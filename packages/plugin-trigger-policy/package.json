@@ -5,6 +5,7 @@
   "description": "触发策略：@/名字/关键词/计数/评分 决定是否回应",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

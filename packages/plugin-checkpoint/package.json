@@ -5,6 +5,7 @@
   "description": "会话检查点：保存与回滚对话状态",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",
