@@ -190,7 +190,80 @@ interface SessionHistoryResult {
   count: number;
   limit: number;
   includeArchived: boolean;
+  range?: { fromTs: number; toTs: number };
   messages: Array<Record<string, unknown>>;
+}
+
+// ===== 时间区间解析（纯函数，单测覆盖见 test/plugins/session-history-range.test.ts） =====
+
+/**
+ * 把一个时间值解析为毫秒时间戳。接受：
+ * - number：直接当毫秒时间戳（有限值）。
+ * - 纯数字字符串：当毫秒时间戳。
+ * - ISO 8601 等可被 `Date.parse` 识别的字符串。
+ * 无法解析时返回 `null`。
+ */
+export function parseTimestamp(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    if (/^\d+$/.test(trimmed)) {
+      const n = Number(trimmed);
+      return Number.isFinite(n) ? n : null;
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+/**
+ * 根据工具入参解析出时间区间 [fromTs, toTs]（毫秒）。
+ * - 给定 `since`/`until`（ISO 或毫秒）→ 绝对区间；`until` 省略时取 `now`。
+ * - 否则给定 `within_minutes`（正数）→ 相对区间 [now - N 分钟, now]。
+ * - 都没给 → 返回 `null`（调用方退回纯条数检索）。
+ * 解析失败或区间非法时返回 `{ error }`。
+ */
+export function resolveTimeRange(
+  args: { within_minutes?: unknown; since?: unknown; until?: unknown },
+  now: number,
+): { fromTs: number; toTs: number } | { error: string } | null {
+  const hasSince = args.since != null && args.since !== '';
+  const hasUntil = args.until != null && args.until !== '';
+  const hasWithin = args.within_minutes != null && args.within_minutes !== '';
+
+  if (hasSince || hasUntil) {
+    let fromTs = 0;
+    if (hasSince) {
+      const parsed = parseTimestamp(args.since);
+      if (parsed == null) {
+        return { error: `无法解析 since 时间：${String(args.since)}（请用 ISO 8601 或毫秒时间戳）` };
+      }
+      fromTs = parsed;
+    }
+    let toTs = now;
+    if (hasUntil) {
+      const parsed = parseTimestamp(args.until);
+      if (parsed == null) {
+        return { error: `无法解析 until 时间：${String(args.until)}（请用 ISO 8601 或毫秒时间戳）` };
+      }
+      toTs = parsed;
+    }
+    if (fromTs > toTs) return { error: 'since 不能晚于 until' };
+    return { fromTs, toTs };
+  }
+
+  if (hasWithin) {
+    const minutes = Number(args.within_minutes);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      return { error: `within_minutes 必须为正数：${String(args.within_minutes)}` };
+    }
+    return { fromTs: now - minutes * 60_000, toTs: now };
+  }
+
+  return null;
 }
 
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
@@ -305,7 +378,41 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
       const includeArchived =
         typeof options.includeArchived === 'boolean' ? options.includeArchived : cfg.includeArchivedDefault;
 
+      // 区间检索模式：给定 sinceTs / untilTs 任一即进入。区间查询天然含归档（含完整记录），
+      // 故 include_archived 在此模式下不再区分，结果统一回显 includeArchived: true。
+      const hasRange = typeof options.sinceTs === 'number' || typeof options.untilTs === 'number';
+
       try {
+        if (hasRange) {
+          const fromTs = typeof options.sinceTs === 'number' ? options.sinceTs : 0;
+          const toTs = typeof options.untilTs === 'number' ? options.untilTs : Date.now();
+          let ranged: Message[];
+          if (memory.getMessagesBySessionRange) {
+            ranged = await memory.getMessagesBySessionRange(targetSessionId, fromTs, toTs);
+          } else {
+            // 后端不支持区间查询：退回全量历史（尽量含归档）+ 客户端按时间过滤。
+            const base = memory.getFullHistory
+              ? await memory.getFullHistory(targetSessionId)
+              : await memory.getHistory(targetSessionId);
+            ranged = base.filter(m => {
+              const ts = m.timestamp ?? 0;
+              return ts >= fromTs && ts <= toTs;
+            });
+          }
+          // 区间内可能很多，取最近 limit 条（区间查询按时间升序，截末尾）。
+          const sliced = ranged.length > limit ? ranged.slice(ranged.length - limit) : ranged;
+          const result: SessionHistoryResult = {
+            ok: true,
+            sessionId: targetSessionId,
+            count: sliced.length,
+            limit,
+            includeArchived: true,
+            range: { fromTs, toTs },
+            messages: sliced.map((message, index) => formatHistoryMessage(message, index + 1, cfg.perMessageMaxChars)),
+          };
+          return result;
+        }
+
         const history =
           includeArchived && memory.getFullHistory
             ? await memory.getFullHistory(targetSessionId, limit)
@@ -342,8 +449,12 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
       function: {
         name: 'session_get_history',
         description: [
-          '按 Aalis sessionId 读取指定会话最近若干条消息。',
-          '适合在用户明确提到另一个会话、需要核实原文上下文时使用。',
+          '按 Aalis sessionId 读取指定会话的消息。',
+          '两种模式：',
+          '①【条数】默认——读最近若干条（limit 控制）。',
+          '②【时间区间】给定 within_minutes（最近 N 分钟）或 since/until（绝对区间）时启用——',
+          '  取该会话落在区间内的消息（含归档完整记录），区间内仍最多返回 limit 条（取较新的）。',
+          '适合在用户明确提到另一个会话、需要核实原文上下文、或要查「某段时间里聊了什么」时使用。',
           '默认只允许读取配置范围内的会话；不要把它当作全局搜索工具，语义检索请用 memory_recall。',
         ].join('\n'),
         parameters: {
@@ -352,9 +463,25 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
             session_id: { type: 'string', description: '目标 Aalis sessionId，例如 onebot:10000:group:20001' },
             limit: {
               type: 'number',
-              description: `读取最近多少条，默认 ${cfg.defaultLimit}，最多 ${cfg.maxLimit}`,
+              description: `读取多少条（区间模式下为区间内上限），默认 ${cfg.defaultLimit}，最多 ${cfg.maxLimit}`,
             },
-            include_archived: { type: 'boolean', description: '是否包含已归档消息。默认使用插件配置。' },
+            include_archived: {
+              type: 'boolean',
+              description: '是否包含已归档消息（仅条数模式生效；区间模式恒含归档）。默认使用插件配置。',
+            },
+            within_minutes: {
+              type: 'number',
+              description: '时间区间：最近 N 分钟内的消息。与 since/until 互斥，后者优先。',
+            },
+            since: {
+              type: 'string',
+              description:
+                '时间区间下界，ISO 8601（如 2026-06-15T08:00:00Z）或毫秒时间戳。给定 since/until 即进入区间模式。',
+            },
+            until: {
+              type: 'string',
+              description: '时间区间上界，ISO 8601 或毫秒时间戳。省略时默认取「现在」。',
+            },
           },
           required: ['session_id'],
           additionalProperties: false,
@@ -364,11 +491,15 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
     handler: async (args, callCtx) => {
       const targetSessionId = String(args.session_id ?? '').trim();
       if (!targetSessionId) return JSON.stringify({ error: 'session_id 不能为空' });
+      const range = resolveTimeRange(args, Date.now());
+      if (range && 'error' in range) return JSON.stringify({ error: range.error });
       const result = await historyService.getHistory(
         {
           sessionId: targetSessionId,
           limit: Number(args.limit) || undefined,
           includeArchived: typeof args.include_archived === 'boolean' ? args.include_archived : undefined,
+          sinceTs: range ? range.fromTs : undefined,
+          untilTs: range ? range.toTs : undefined,
         },
         callCtx,
       );

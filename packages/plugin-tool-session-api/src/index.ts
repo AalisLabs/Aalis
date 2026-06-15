@@ -58,6 +58,8 @@ export type SessionHistoryReadResult =
       count: number;
       limit: number;
       includeArchived: boolean;
+      /** 若按时间区间检索，回显实际生效的 [fromTs, toTs]（毫秒）；纯条数检索时缺省。 */
+      range?: { fromTs: number; toTs: number };
       messages: Array<Record<string, unknown>>;
     }
   | { error: string };
@@ -68,7 +70,15 @@ export type SessionHistoryReadResult =
  */
 export interface SessionHistoryService {
   getHistory(
-    options: { sessionId: string; limit?: number; includeArchived?: boolean },
+    options: {
+      sessionId: string;
+      limit?: number;
+      includeArchived?: boolean;
+      /** 时间区间下界（毫秒）。给定 sinceTs 或 untilTs 任一即进入区间检索模式。 */
+      sinceTs?: number;
+      /** 时间区间上界（毫秒）。区间模式下省略时默认取「现在」。 */
+      untilTs?: number;
+    },
     callCtx: ToolCallContext,
   ): Promise<SessionHistoryReadResult>;
 
