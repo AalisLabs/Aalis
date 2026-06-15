@@ -34,6 +34,10 @@
   见 docs/core/events.md）。
 - **core 不拆 kernel 包**：declaration merging 锚定 `@aalis/core` 包名。重评触发条件：①core 单独
   1.0 承诺；②出现 kernel-only 消费者；③多人协作需 Conway 边界。架构测试设防「基底层不得 import 编排层」。
+- **runtime 命名**：`@aalis/runtime` 暂保持（= 默认 Node 宿主；Node 专用但 npm/pnpm/yarn 通用——区分轴
+  是 JS 运行时非包管理器）。**改名触发条件**：出现第二个环境宿主（如 Deno/浏览器）时，再改为
+  `@aalis/runtime-node` 与 `@aalis/runtime-deno` 并列（届时保留旧名 alias 或迁移 create-aalis，避免
+  断存量项目）。说明见 docs/core/runtime.md。
 
 ## 已完成（单行归档，新→旧）
 
