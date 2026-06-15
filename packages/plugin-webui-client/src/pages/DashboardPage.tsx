@@ -36,6 +36,7 @@ export function DashboardPage({
   const [toolGroups, setToolGroups] = useState<ToolGroupDetail[]>([]);
   const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
   const [llmModels, setLlmModels] = useState<LLMModelEntry[]>([]);
+  const [clients, setClients] = useState<Array<{ id: string; label: string; active: boolean }>>([]);
 
   useEffect(() => {
     api<{ groups: ToolGroupDetail[] }>('/api/tool-groups')
@@ -55,9 +56,26 @@ export function DashboardPage({
       .catch(() => {});
   }, [plugins]);
 
+  useEffect(() => {
+    api<{ clients: Array<{ id: string; label: string; active: boolean }> }>('/api/clients')
+      .then(d => setClients(d.clients ?? []))
+      .catch(() => {});
+  }, []);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
+  };
+
+  // 切换活跃前端（owner）：后端实时重挂 + 持久化，切完 reload 即加载新前端。
+  const switchClient = async (id: string) => {
+    try {
+      await api('/api/clients/active', { method: 'POST', body: JSON.stringify({ id }) });
+      showToast('已切换前端，正在重新加载…');
+      setTimeout(() => window.location.reload(), 600);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '切换失败（需 owner 权限）');
+    }
   };
 
   const serviceEntries = servicesData
@@ -135,6 +153,29 @@ export function DashboardPage({
           </div>
         </div>
       </div>
+
+      {clients.length > 1 && (
+        <>
+          <div className="section-label">前端（活跃切换）</div>
+          <div className="services-grid">
+            {clients.map(c => (
+              <div key={c.id} className="service-slot-card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontWeight: 600 }}>{c.label}</span>
+                  {c.active ? (
+                    <span className="badge active">活跃</span>
+                  ) : (
+                    <button type="button" className="btn-sm" onClick={() => switchClient(c.id)}>
+                      设为活跃
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim, #888)' }}>{c.id}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {hasGroups ? (
         <>
