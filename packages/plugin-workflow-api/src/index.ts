@@ -6,7 +6,7 @@
 //
 // 设计要点：
 //   - 工作流 = 触发器 + DAG（节点 + deps 边）
-//   - 节点类型：tool / send-message / wait（v1）；后续扩 agent / decision / parallel-fanout
+//   - 节点类型：tool / send-message / wait / agent；后续可扩 decision / parallel-fanout
 //   - DAG 引擎按 deps 拓扑分层并行执行；任一节点失败整个 run 标记 failed
 //   - 节点可声明 `out`，将 string 结果存入 outputs 命名空间，供下游 `{{outputs.X}}` 插值
 //   - 工作流"定义"是用户/AI 资产，存 workspace；"运行实例"是运行时，存 data
@@ -25,7 +25,7 @@ export type TriggerSpec =
 
 // ============ 节点 ============
 
-export type NodeType = 'tool' | 'send-message' | 'wait';
+export type NodeType = 'tool' | 'send-message' | 'wait' | 'agent';
 
 interface BaseNodeSpec {
   /** 节点唯一 id（在工作流内） */
@@ -60,7 +60,29 @@ export interface WaitNodeSpec extends BaseNodeSpec {
   seconds: number;
 }
 
-export type NodeSpec = ToolNodeSpec | SendMessageNodeSpec | WaitNodeSpec;
+/**
+ * agent 节点：把一段指令派发给 agent 处理并**等待其回复**，回复文本作为节点结果。
+ *
+ * 与 send-message 的区别：send-message 是 fire-and-forget；agent 节点会注册
+ * `agent:turn:after` 监听、join 目标会话本轮回复，从而把"一个子任务 = 一次 agent 调用"
+ * 接入 DAG——配合 deps/串并行/`{{outputs.X}}` 插值即可表达"分解→依赖→管道→聚合"的确定性编排。
+ */
+export interface AgentNodeSpec extends BaseNodeSpec {
+  type: 'agent';
+  /** 交给 agent 处理的指令/任务正文；支持插值（{{vars.X}} / {{outputs.Y}}） */
+  instruction: string;
+  /**
+   * 目标会话 id；支持插值。省略时为本节点生成一次性隔离子会话
+   * （`workflow:agent:<runId>:<nodeId>`），互不串扰，适合"子任务"语义。
+   */
+  sessionId?: string;
+  /** 平台标识；默认 'workflow' */
+  platform?: string;
+  /** 等待 agent 回复的超时秒数；默认 120。超时则该节点失败。 */
+  timeoutSeconds?: number;
+}
+
+export type NodeSpec = ToolNodeSpec | SendMessageNodeSpec | WaitNodeSpec | AgentNodeSpec;
 
 // ============ 工作流定义 ============
 

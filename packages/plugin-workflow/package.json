@@ -18,6 +18,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/plugin-agent-api": "workspace:^",
     "@aalis/plugin-cron-engine-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^",
     "@aalis/plugin-tools-api": "workspace:^",
