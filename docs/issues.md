@@ -8,8 +8,8 @@
 
 1. **`code_runner` 进程级隔离 / 容器化**（唯一安全相关项）：图灵完备工具的代码参数需沙箱，
    否则可越出工作区任意执行。是已知最后一个真洞，但需进程/容器隔离设施，属功能级工程。
-2. **市场 v2 收尾**：前端「切换活跃前端」图形开关（当前已可经 `webui.client` 配置切换，缺 UI）
-   + 第三方前端端到端实测。
+2. **第三方前端端到端实测**：装一个非默认 `aalis.client` 包，验证「发现 → 切换 → reload 加载」全链路
+   （切换 UI 已做，见归档；目前只用默认前端验证过 UI 路径）。
 3. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
    scope 事件总线不隔离。
 4. **onebot 主动撤回**（bot 撤回自己发的消息；撤回「感知」已做）。
@@ -41,6 +41,9 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-15 **市场 v2 切换前端 UI**：webui-server `GET /api/clients`（列已发现前端）+
+  `POST /api/clients/active`（owner 设活跃：实时重挂静态目录 + 持久化 `webui.client`）；Dashboard
+  在装了 >1 前端时显示切换卡片（设为活跃 → reload 即加载新前端）。收尾「前端忒修斯之船可换」。
 - ✅ 2026-06-15 **runtime 文档 + keyword 伞形**：新增 docs/core/runtime.md（@aalis/runtime = Node 宿主层、
   与包管理器无关、设施清单、如何为别的环境写 host）；全包加 `aalis` 伞形关键词（core 加 `aalis-core`），
   `npm search aalis` 即可找全生态（**本地已改，随下次发布上线**；不影响市场的 `aalis-plugin` 过滤）。
