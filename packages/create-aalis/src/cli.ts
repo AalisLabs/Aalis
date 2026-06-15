@@ -433,9 +433,14 @@ async function main(): Promise<void> {
       }
     }
 
-    // 市场需要安装引擎：选了 WebUI 就自动带上 package-manager，否则市场页"安装"会报
-    // 503「package-manager 服务未启用」（webui-server 仅把它列为 dev 依赖，不会被装）。
-    if (enabled.has('@aalis/plugin-webui-server')) enabled.add('@aalis/plugin-package-manager');
+    // 选了 WebUI 后端就自动带上前端 + 安装引擎：
+    // - webui-client：webui-server 仅托管前端静态资源，自身不含；缺它会 404
+    //   「请安装 webui-client 插件」。它非运行时插件（无 apply），装上即被自动发现挂载。
+    // - package-manager：否则市场页"安装"会报 503（webui-server 仅把它列为 dev 依赖）。
+    if (enabled.has('@aalis/plugin-webui-server')) {
+      enabled.add('@aalis/plugin-webui-client');
+      enabled.add('@aalis/plugin-package-manager');
+    }
 
     // 写文件
     mkdirSync(targetDir, { recursive: true });
