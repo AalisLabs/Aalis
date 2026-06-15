@@ -60,6 +60,8 @@ export type SessionHistoryReadResult =
       includeArchived: boolean;
       /** 若按时间区间检索，回显实际生效的 [fromTs, toTs]（毫秒）；纯条数检索时缺省。 */
       range?: { fromTs: number; toTs: number };
+      /** 区间模式：窗口内消息多于返回条数（被 limit/后端上限截断）时为 true。 */
+      truncated?: boolean;
       messages: Array<Record<string, unknown>>;
     }
   | { error: string };

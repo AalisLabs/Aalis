@@ -17,11 +17,16 @@
 5. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
    运行时**递归**任务分解（subtask 现禁止嵌套）+ 一等公民 `task:*` 事件 + 专用任务树 WebUI 页 +
    per-subtask context-scope 隔离。见 docs/design/task-tree-system.md 缺口分析。
-6. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
+6. **GUI 修复缺失依赖**（暂缓；经分析属**功能**非 bug）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
+   可由 `doctor.registerCheck`（检声明依赖是否缺失）+ `package-manager.install(npmPkg)` 组合实现，属中等工程。
 
 ## 已知限制（接受的妥协，非 bug，记录在案）
 
 - `'ready'` 与 `'app:started'` 语义重叠：合并属破坏性变更，暂保留双事件，新代码优先用 `'app:started'`。
+- **OneBot 撤回对「严格 v12」服务端不保证**：`onebot_recall_self` / `onebot_delete_msg` 硬编码 v11 动作名
+  `delete_msg` 且 message_id 走数字优先（`Number(id)||id`）。主流 QQ 实现（NapCat/Lagrange/go-cqhttp）均说 v11，
+  故实际可用；但严格 v12 服务端的 `delete_message` 动作名与字符串 message_id 未适配（撤回会失败、不崩溃，
+  结果落在工具的 failed 列表）。彻底修需适配器按协商版本翻译动作名/参数类型——留作 OneBot v12 专项。
 - `ScopedConfigManager` 用「extends + 全量覆写 + 反射防漂移单测」而非纯组合：基类新增公开方法
   须同步覆写（test/core/config.test.ts 设防）。
 - 插件 page-action 默认 `restricted`（仅 owner）：现有 actions 全是 WebUI 管理操作，owner-only 即正确；
@@ -43,7 +48,14 @@
 
 ## 已完成（单行归档，新→旧）
 
-- ✅ 2026-06-15 **DOCX 内嵌图片识别**：file-reader 读 DOCX 时第二遍 `mammoth.convertToHtml`
+- ✅ 2026-06-15 **合 main 前对抗审查 + 修复**（6 reviewer × 3 验证者；12/21 确认）：
+  ①file-reader DOCX 识别去 `hint`（恢复 24h 描述缓存）+ `detailLevel:'detailed'`（每图 2→1 次视觉调用）+
+  并发 3 + 30s 整体预算（修「上传同步阻塞」）；②workflow agent 节点 `source` 含 nodeId 隔离并发 lane
+  （修同会话回合互相 abort）+ 显式同 sessionId 串扰风险入文档；③`session_get_history` 区间检索改按时间**正序**
+  返回最早 limit 条 + `truncated` 标记（修 >500 静默丢最新）+ fallback 扩到 5000 条且诚实回显 includeArchived；
+  ④Dashboard 切换前端改校验 `res.ok`（修非 owner 假成功并 reload）；⑤workflow `validateGraph` 增按类型必填
+  字段校验（agent 缺 instruction 等定义期即报错，免运行期 cryptic）；⑥图片识别失败日志升 warn。OneBot v12
+  严格服务端撤回不适配 → 记已知限制。无 `packages/core` 改动。新增/更新单测，ci 绿。file-reader 读 DOCX 时第二遍 `mammoth.convertToHtml`
   收集内嵌图片 data URI → `media.describeImage` 识别 → 以「`--- 文档内图片 (N) ---`」小节附正文末，
   让 LLM 看见文档里的图。配置 `recognizeDocImages`（默认开）+ `maxDocImages`（默认 8，超出跳过）；
   单张失败不影响其余、无 media 静默跳过、结果随文本缓存。纯编排 doc-images.ts（recognizeImages/

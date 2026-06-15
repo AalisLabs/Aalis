@@ -73,7 +73,10 @@ export interface AgentNodeSpec extends BaseNodeSpec {
   instruction: string;
   /**
    * 目标会话 id；支持插值。省略时为本节点生成一次性隔离子会话
-   * （`workflow:agent:<runId>:<nodeId>`），互不串扰，适合"子任务"语义。
+   * （`workflow:agent:<runId>:<nodeId>`），互不串扰，适合"子任务"语义（推荐）。
+   *
+   * ⚠️ 同一并行层内**不要**让多个 agent 节点指向**相同的显式 sessionId**：`agent:turn:after`
+   * 按 sessionId 匹配回复，会发生串扰捕获（A 可能拿到 B 的回复）。需要隔离子任务就省略本字段。
    */
   sessionId?: string;
   /** 平台标识；默认 'workflow' */

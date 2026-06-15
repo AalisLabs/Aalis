@@ -69,11 +69,36 @@ function interpolateValue(v: unknown, vars: Record<string, unknown>, outputs: Re
 
 // ─── 拓扑校验 ────────────────────────────────────────
 
-/** 校验定义的节点 deps 合法（不引用未知节点；不形成环）；返回错误消息或 null */
+/** 按节点类型校验必填字段（运行期 raw 可能缺字段）；返回错误消息或 null */
+function nodeFieldError(node: NodeSpec): string | null {
+  const r = node as unknown as Record<string, unknown>;
+  const id = String(r.id ?? '?');
+  const filled = (v: unknown): boolean => typeof v === 'string' && v.trim().length > 0;
+  switch (node.type) {
+    case 'tool':
+      return filled(r.tool) ? null : `节点 "${id}"(tool) 缺少 tool 字段`;
+    case 'send-message':
+      if (!filled(r.content)) return `节点 "${id}"(send-message) 缺少 content 字段`;
+      if (!filled(r.sessionId)) return `节点 "${id}"(send-message) 缺少 sessionId 字段`;
+      return null;
+    case 'wait':
+      return typeof r.seconds === 'number' && Number.isFinite(r.seconds)
+        ? null
+        : `节点 "${id}"(wait) 缺少数值字段 seconds`;
+    case 'agent':
+      return filled(r.instruction) ? null : `节点 "${id}"(agent) 缺少 instruction 字段`;
+    default:
+      return `节点 "${id}" 类型未知: ${String(r.type ?? '?')}`;
+  }
+}
+
+/** 校验定义的节点字段与 deps 合法（必填字段齐全；不引用未知节点；不形成环）；返回错误消息或 null */
 export function validateGraph(def: WorkflowDef): string | null {
   const ids = new Set(def.nodes.map(n => n.id));
   if (ids.size !== def.nodes.length) return '节点 id 重复';
   for (const n of def.nodes) {
+    const fieldErr = nodeFieldError(n);
+    if (fieldErr) return fieldErr;
     for (const d of n.deps ?? []) {
       if (!ids.has(d)) return `节点 "${n.id}" 引用未知 dep "${d}"`;
       if (d === n.id) return `节点 "${n.id}" 自引用`;
@@ -148,6 +173,14 @@ const DEFAULT_AGENT_TIMEOUT_SEC = 120;
  * agent 节点：派发指令给 agent 并等待本轮回复（复用 delegate_to_session 的 join 机制）。
  * 在 emit 前注册 `agent:turn:after` 监听，按目标 sessionId 捕获首条回复；超时或
  * outcome=error/aborted 抛错（=> 节点失败）。回复文本作为节点结果，可被 `{{outputs.X}}` 下游引用。
+ *
+ * 注意事项（见 AgentNodeSpec 文档）：
+ * - `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane——否则同一会话上的
+ *   两个 agent 回合会因 lane 相同而互相 abort。但**显式指定相同 sessionId 的并行 agent 节点**仍会
+ *   因 `agent:turn:after` 按 sessionId 匹配而串扰捕获——省略 sessionId（默认一次性子会话）可彻底避免。
+ * - 等待期间不感知 run 取消（与 wait 节点一致），最长阻塞至 timeoutSeconds。
+ * - 若目标 platform/sessionType 落入 trigger-policy / flow-control 生效 scope，proactive 消息可能被
+ *   吞掉而永不回 `agent:turn:after`，节点会等满超时才失败——放宽 scope 时需为编排消息留通路。
  */
 async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const instruction = interpolateString(node.instruction, ec.vars, ec.outputs);
@@ -176,8 +209,10 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const incoming: IncomingMessage = {
     content: instruction,
     sessionId,
+    // source 含 nodeId：隔离 agent 的并发 lane（laneKey=sessionId::source），
+    // 避免同会话上的两个 agent 节点回合互相 abort。
+    source: `workflow:${ec.workflowId}:${node.id}`,
     platform,
-    source: `workflow:${ec.workflowId}`,
     triggerType: 'proactive',
   };
 

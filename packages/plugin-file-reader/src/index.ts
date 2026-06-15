@@ -387,16 +387,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         },
       );
     } catch (err) {
-      ctx.logger.debug('DOCX 图片提取失败:', err);
+      ctx.logger.warn('DOCX 图片提取失败（仅影响图片识别，正文不受影响）:', err);
       return '';
     }
     if (uris.length === 0) return '';
 
-    const descriptions = await recognizeImages(
-      uris,
-      uri => media.describeImage(uri, { hint: '这是文档中内嵌的图片，请描述其内容，并尽量包含图中可见的文字。' }),
-      maxDocImages,
-    );
+    // 关键：不传 hint —— 传 hint 会绕过 media 的 24h 描述缓存（同图重复读会重复识别）；
+    // 显式 detailLevel:'detailed' 跳过 auto 档的额外「分类」视觉调用，每张从 2 次降到 1 次。
+    // 并发 3 + 整体 30s 预算：避免多图 DOCX 在上传预处理阶段长时间阻塞首个回复。
+    const descriptions = await recognizeImages(uris, uri => media.describeImage(uri, { detailLevel: 'detailed' }), {
+      maxImages: maxDocImages,
+      concurrency: 3,
+      timeoutMs: 30_000,
+    });
+    if (descriptions.length === 0) {
+      ctx.logger.warn(`DOCX 内嵌 ${uris.length} 张图片但识别结果为空（vision 不可用 / 配额耗尽 / 超时？）`);
+    }
     return formatImageSection(descriptions);
   }
 
