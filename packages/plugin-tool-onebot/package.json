@@ -5,6 +5,7 @@
   "description": "OneBot 平台工具：群管/戳一戳等平台动作",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

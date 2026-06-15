@@ -5,6 +5,7 @@
   "description": "存储网关本地实现：沙盒化文件读写",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

@@ -5,6 +5,7 @@
   "description": "会话工具：让 AI 读写当前会话状态",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

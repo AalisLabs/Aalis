@@ -5,6 +5,7 @@
   "description": "待办清单：AI 任务的结构化 TODO 跟踪",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

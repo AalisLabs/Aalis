@@ -5,6 +5,7 @@
   "description": "插件包管理：从 npm 安装/卸载插件到 packages/",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

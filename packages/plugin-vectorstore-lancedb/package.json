@@ -5,6 +5,7 @@
   "description": "向量库 —— LanceDB 高性能实现",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

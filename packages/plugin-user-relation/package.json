@@ -5,6 +5,7 @@
   "description": "用户关系图谱：抽取事件/实体/关系",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

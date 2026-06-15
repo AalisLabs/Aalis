@@ -5,6 +5,7 @@
   "description": "会话管理：生命周期、平台配置、会话树",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",
