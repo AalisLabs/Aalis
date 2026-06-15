@@ -15,6 +15,7 @@ import {
   transcodeAudioBufferToWav,
 } from './attachment-cache.js';
 import { renderAttachmentsAsContentMarkers } from './attachments.js';
+import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
 import type {
   NormalizedRequestEvent,
   OneBotActionResponse,
@@ -675,6 +676,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const selfMuted = new Map<string, number>();
   /** 已通过 shut_up_timestamp 完成恢复检查的会话集合 */
   const muteRecoveryChecked = new Set<string>();
+  /** 机器人自身近期发出消息记录，支撑 adapter.getSentMessages() / 撤回自己发的消息 */
+  const sentTracker = new SentMessageTracker();
 
   function setSelfMute(sessionId: string, durationSec: number, platform = 'onebot'): void {
     const flow = ctx.getService<FlowControlService>('flow-control');
@@ -1144,7 +1147,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           content: piece,
         });
 
-        await sendAction(state, action, params);
+        const sendResult = await sendAction(state, action, params);
+        // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
+        const sentId = extractSentMessageId(sendResult);
+        if (sentId) sentTracker.record(sessionId, sentId, piece, Date.now());
 
         // 按下一条消息的字数计算延迟
         if (i < pieces.length - 1) {
@@ -1239,6 +1245,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return out;
     },
 
+    /**
+     * 非标准扩展：返回机器人自身在某会话近期发出的消息（新→旧），用于「撤回自己发的消息」。
+     */
+    getSentMessages(sessionId: string, limit = 10) {
+      return sentTracker.recent(sessionId, limit, Date.now());
+    },
+
+    /** 非标准扩展：撤回成功后从记录中移除一条（使「撤回最近一条」可重复往前走）。 */
+    forgetSentMessage(sessionId: string, messageId: string): void {
+      sentTracker.forget(sessionId, messageId);
+    },
+
     /** 处理好友请求：approve=true 同意，remark 为备注（同意时有效） */
     async handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string> {
       const pending = pendingFriendRequests.get(userId);
@@ -1277,6 +1295,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   } as PlatformAdapter & {
     getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
+    getSentMessages(sessionId: string, limit?: number): Array<{ messageId: string; ts: number; preview: string }>;
+    forgetSentMessage(sessionId: string, messageId: string): void;
     handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
     handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
   };

@@ -12,12 +12,11 @@
    （切换 UI 已做，见归档；目前只用默认前端验证过 UI 路径）。
 3. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
    scope 事件总线不隔离。
-4. **onebot 主动撤回**（bot 撤回自己发的消息；撤回「感知」已做）。
-5. **文档内图片识别**（file-reader / office 尚无）。
-6. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
+4. **文档内图片识别**（file-reader / office 尚无）。
+5. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
    运行时**递归**任务分解（subtask 现禁止嵌套）+ 一等公民 `task:*` 事件 + 专用任务树 WebUI 页 +
    per-subtask context-scope 隔离。见 docs/design/task-tree-system.md 缺口分析。
-7. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
+6. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
 
 ## 已知限制（接受的妥协，非 bug，记录在案）
 
@@ -43,6 +42,11 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-15 **onebot 主动撤回**（bot 撤回自己发的消息）：适配器 `sendMessage` 原先丢弃发送响应、
+  bot 无从得知自己消息的 message_id。现 `SentMessageTracker` 按会话记录发出消息的 id（环形缓冲、30min
+  时窗、撤回后 forget 可重复往前撤）；适配器暴露 `getSentMessages`/`forgetSentMessage`（仿 getSelfMutes
+  扩展）；新增工具 `onebot_recall_self`（无需 message_id，默认撤回最近 1 条、`count` 撤最近 N 条、
+  可指定 group_id/user_id）。纯逻辑抽 sent-messages.ts + 9 例单测。撤回他人消息仍用既有 onebot_delete_msg。
 - ✅ 2026-06-15 **workflow `agent` 节点（task-orchestrator 确定性编排落地）**：给 plugin-workflow 加
   `agent` 节点类型——派发指令给 agent 并 join 本轮回复（复用 delegate `agent:turn:after` 机制），
   回复经 `out` 入 outputs 供 `{{outputs.X}}` 插值；配合 deps 即「分解→依赖→串/并行→管道→聚合」。
