@@ -23,4 +23,16 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
     expect(toPluginCatalog({})).toEqual([]);
     expect(toPluginCatalog({ objects: [] })).toEqual([]);
   });
+
+  it('剔除 *-api 契约与 webui-client 前端（脚手架只列可装功能插件）', () => {
+    const data = {
+      objects: [
+        { package: { name: '@aalis/plugin-openai', description: 'LLM' } },
+        { package: { name: '@aalis/plugin-tools-api', description: '契约' } },
+        { package: { name: '@aalis/plugin-webui-client', description: '前端' } },
+        { package: { name: '@aalis/plugin-mcp-client', description: 'MCP 客户端' } }, // 功能插件，保留
+      ],
+    };
+    expect(toPluginCatalog(data).map(e => e.name)).toEqual(['@aalis/plugin-openai', '@aalis/plugin-mcp-client']);
+  });
 });

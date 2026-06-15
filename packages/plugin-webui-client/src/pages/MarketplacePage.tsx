@@ -10,6 +10,8 @@ interface MarketPkg {
   author?: string;
   installed: boolean;
   official?: boolean;
+  /** 组件类别（后端按包名分类）：功能插件 / api 契约 / 前端 */
+  category?: 'plugin' | 'api' | 'client';
   removable?: boolean;
   keywords?: string[];
   downloads?: number;
@@ -31,6 +33,7 @@ interface PluginManifest {
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
 type Source = 'all' | 'official' | 'community';
 type Status = 'all' | 'installed' | 'available';
+type Category = 'all' | 'plugin' | 'api' | 'client';
 
 const SORT_LABELS: Record<SortKey, string> = {
   relevance: '默认排序',
@@ -40,6 +43,7 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 const SOURCE_LABELS: Record<Source, string> = { all: '全部来源', official: '仅官方', community: '仅社区' };
 const STATUS_LABELS: Record<Status, string> = { all: '全部状态', installed: '已安装', available: '未安装' };
+const CATEGORY_LABELS: Record<Category, string> = { all: '全部类型', plugin: '功能插件', api: 'API 契约', client: '前端' };
 
 /** 1234 → 1.2k；1200000 → 1.2M */
 function fmtDownloads(n: number): string {
@@ -84,6 +88,8 @@ export function MarketplacePage({
   const [sort, setSort] = useState<SortKey>('relevance');
   const [source, setSource] = useState<Source>('all');
   const [status, setStatus] = useState<Status>('all');
+  // 默认只看功能插件（减少心智负担）；api 契约 / 前端 一键可切
+  const [category, setCategory] = useState<Category>('plugin');
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -119,6 +125,7 @@ export function MarketplacePage({
     const view = registry
       .map(p => ({ ...p, installed: p.installed || installedNames.has(p.name) }))
       .filter(p => {
+        if (category !== 'all' && (p.category ?? 'plugin') !== category) return false;
         if (source === 'official' && !p.official) return false;
         if (source === 'community' && p.official) return false;
         if (status === 'installed' && !p.installed) return false;
@@ -136,7 +143,7 @@ export function MarketplacePage({
       if (sort === 'updated') return Date.parse(b.updated ?? '0') - Date.parse(a.updated ?? '0');
       return 0;
     });
-  }, [registry, installedNames, search, sort, source, status]);
+  }, [registry, installedNames, search, sort, source, status, category]);
 
   const handleInstall = async (name: string, official?: boolean) => {
     // 装前披露：先拉 manifest（aalis.service：需要/提供哪些服务），让 owner 知情同意。
@@ -230,6 +237,18 @@ export function MarketplacePage({
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
+        <select
+          className="config-edit-input"
+          value={category}
+          onChange={e => setCategory(e.target.value as Category)}
+          title="组件类型"
+        >
+          {(Object.keys(CATEGORY_LABELS) as Category[]).map(k => (
+            <option key={k} value={k}>
+              {CATEGORY_LABELS[k]}
+            </option>
+          ))}
+        </select>
         <select className="config-edit-input" value={source} onChange={e => setSource(e.target.value as Source)}>
           {(Object.keys(SOURCE_LABELS) as Source[]).map(k => (
             <option key={k} value={k}>
@@ -289,6 +308,9 @@ export function MarketplacePage({
               )}
               <span className="marketplace-card-version">v{pkg.version}</span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
+              {pkg.category && pkg.category !== 'plugin' && (
+                <span className="badge" title="组件类别">{pkg.category === 'api' ? 'API 契约' : '前端'}</span>
+              )}
               {pkg.insecure && (
                 <span
                   className="badge"

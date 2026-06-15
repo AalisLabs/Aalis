@@ -327,9 +327,24 @@ export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.f
   { id: 'external', label: '外部', order: 160 },
 ]);
 
+/**
+ * 前端提供者（忒修斯之船「换前端」契约）：把一份已构建的前端静态目录交给
+ * webui-server 托管。第三方前端两条接入：
+ * - **纯静态包**：package.json 标 `aalis.client: true` + 含 `dist/index.html`，被
+ *   webui-server 自动发现挂载（无需 `apply`，runtime 不会把它当插件加载）。
+ * - **主动覆盖**：插件 `apply` 里 `ctx.provide('webui-client', impl)`，优先于自动发现。
+ */
+export interface WebuiClientProvider {
+  /** 返回含 index.html 的前端静态目录绝对路径 */
+  getClientDir(): string;
+  /** 可选展示名（多前端切换/选择时用） */
+  label?: string;
+}
+
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
   interface ServiceTypeMap {
     'webui-server': WebUIService;
+    'webui-client': WebuiClientProvider;
   }
 }
