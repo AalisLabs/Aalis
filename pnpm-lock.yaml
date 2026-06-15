@@ -2065,6 +2065,9 @@ importers:
 
   packages/plugin-workflow:
     dependencies:
+      '@aalis/plugin-agent-api':
+        specifier: workspace:^
+        version: link:../plugin-agent-api
       '@aalis/plugin-cron-engine-api':
         specifier: workspace:^
         version: link:../plugin-cron-engine-api

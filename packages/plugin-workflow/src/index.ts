@@ -143,7 +143,9 @@ const webuiPages: WebuiPage[] = [
             label: 'YAML 定义',
             required: true,
             description:
-              '完整 WorkflowDef YAML：id / name / trigger / nodes。trigger 类型支持 cron / interval / once / event / manual。保存后将立即注册触发器并持久化到 defsDir。',
+              '完整 WorkflowDef YAML：id / name / trigger / nodes。trigger 类型支持 cron / interval / once / event / manual。' +
+              '节点类型 tool / send-message / wait / agent（agent 节点派发指令给 agent 并等回复，配合 deps + {{outputs.X}} 做多智能体编排）。' +
+              '保存后将立即注册触发器并持久化到 defsDir。',
           },
           persist: {
             type: 'boolean',
@@ -527,7 +529,9 @@ function registerTools(ctx: Context, service: WorkflowService): void {
         name: 'workflow_define',
         description:
           '定义或覆盖一个工作流。yaml 字段为完整的 WorkflowDef YAML 字符串，包含 id/trigger/nodes 等。' +
-          ' 节点支持类型 tool / send-message / wait；deps 形成 DAG；字符串值支持 {{vars.X}} 与 {{outputs.Y}} 插值。',
+          ' 节点支持类型 tool / send-message / wait / agent；deps 形成 DAG；字符串值支持 {{vars.X}} 与 {{outputs.Y}} 插值。' +
+          ' agent 节点（instruction 必填，可选 sessionId/platform/timeoutSeconds）会把指令派发给 agent 并等待其回复，' +
+          '回复经 out 存入 outputs 供下游插值——用 deps + agent 节点即可表达"分解→依赖→串/并行→管道→聚合"的确定性多智能体编排。',
         parameters: {
           type: 'object',
           properties: {
