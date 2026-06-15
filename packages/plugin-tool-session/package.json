@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-tool-session",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "会话工具：让 AI 读写当前会话状态",
   "type": "module",
