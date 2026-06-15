@@ -27,9 +27,36 @@ export const inject = {
   optional: ['commands', 'tools'],
 };
 
-// 委托树视图 / 权限图 WebUI 留 Phase 4；此处仅管理页（renderer 在 webui-client）。
+// 权限管理页（自定义 renderer 在 webui-client）+ 委托关系图（声明式 graph 组件，
+// 复用通用 cytoscape 渲染器）：能力委托模型下"上层分发下层"天然是一张图，比扁平列表直观。
 const webuiPages: WebuiPage[] = [
   { key: 'authority', label: '权限管理', icon: 'authority', order: 50, renderer: 'authority' },
+  {
+    key: 'authority-graph',
+    label: '委托关系图',
+    icon: 'authority',
+    order: 51,
+    content: [
+      {
+        type: 'graph',
+        label: '委托关系图：owner → 子 → 孙 委托链 + 授予/拒绝能力 + 跨平台绑定（点节点看详情）',
+        source: 'getDelegationGraph',
+        detailSource: 'getDelegationNode',
+        defaultMaxDepth: 2,
+        nodeKinds: [
+          { kind: 'owner', label: 'Owner（*）', shape: 'diamond', color: '#fbbf24' },
+          { kind: 'user', label: '用户', shape: 'circle', color: '#60a5fa' },
+          { kind: 'cap', label: '能力', shape: 'round-rect', color: '#9ca3af' },
+        ],
+        edgeKinds: [
+          { kind: 'delegate', label: '委托', color: '#34d399' },
+          { kind: 'grant', label: '授予', color: '#60a5fa' },
+          { kind: 'deny', label: '拒绝', color: '#ef4444', dashed: true },
+          { kind: 'bind', label: '绑定', color: '#a78bfa', dashed: true },
+        ],
+      },
+    ],
+  },
 ];
 
 // ===== 插件入口 =====
@@ -217,6 +244,162 @@ export const actions: PluginModule['actions'] = {
       })),
       tools: tools.map(t => ({ key: t.name, name: t.name, visibility: t.visibility ?? 'public' })),
     };
+  },
+
+  /**
+   * 委托关系图数据（喂通用 cytoscape graph 组件，协议与 user-relation getRelationGraph 对齐）：
+   * 用户节点（owner/user）+ 能力节点，边 = 委托(父→子) / 授予 / 拒绝 / 绑定(被绑身份→主账户)。
+   * 保证每条边两端节点都存在；支持焦点子图导航（args.focusId 为节点或边 id + maxDepth/maxBreadth），
+   * 点边时回 focusEdge（详情卡片用）。无 focusId 返回全图。
+   */
+  async getDelegationGraph(ctx, args) {
+    const auth = ctx.getService<AuthorityService>('authority');
+    const users = auth?.listUsers() ?? [];
+    const owners: UserIdentity[] = ctx.config.get('owners') ?? [];
+    const nodes = new Map<string, { data: Record<string, unknown> }>();
+    const edges: Array<{ data: Record<string, unknown> }> = [];
+    const ensureUser = (key: string) => {
+      const id = `user:${key}`;
+      if (nodes.has(id)) return id;
+      const i = key.indexOf(':');
+      const isOwner = i > 0 ? (auth?.isOwner(key.slice(0, i), key.slice(i + 1)) ?? false) : false;
+      nodes.set(id, { data: { id, label: key, kind: isOwner ? 'owner' : 'user', pageRankScale: isOwner ? 0.7 : 0.5 } });
+      return id;
+    };
+    const ensureCap = (pat: string) => {
+      const id = `cap:${pat}`;
+      if (!nodes.has(id)) nodes.set(id, { data: { id, label: pat, kind: 'cap', pageRankScale: 0.3 } });
+      return id;
+    };
+    for (const o of owners) ensureUser(`${o.platform}:${o.userId}`);
+    for (const u of users) {
+      const key = `${u.platform}:${u.userId}`;
+      const src = ensureUser(key);
+      for (const g of u.grant ?? [])
+        edges.push({
+          data: { id: `grant:${key}:${g}`, source: src, target: ensureCap(g), label: '授予', kind: 'grant' },
+        });
+      for (const d of u.deny ?? [])
+        edges.push({
+          data: { id: `deny:${key}:${d}`, source: src, target: ensureCap(d), label: '拒绝', kind: 'deny' },
+        });
+      if (u.grantedBy)
+        edges.push({
+          data: {
+            id: `delegate:${key}`,
+            source: ensureUser(u.grantedBy),
+            target: src,
+            label: '委托',
+            kind: 'delegate',
+            directed: true,
+          },
+        });
+      if (u.linkedTo)
+        edges.push({
+          data: {
+            id: `bind:${key}`,
+            source: src,
+            target: ensureUser(u.linkedTo),
+            label: '绑定',
+            kind: 'bind',
+            directed: true,
+          },
+        });
+    }
+    const stats = {
+      用户: users.length,
+      owner: owners.length,
+      能力节点: [...nodes.keys()].filter(k => k.startsWith('cap:')).length,
+    };
+
+    // 焦点子图导航：无 focusId → 全图；有则从焦点（节点或边两端）BFS maxDepth/maxBreadth。
+    const focusId = typeof args?.focusId === 'string' && args.focusId.trim() ? args.focusId.trim() : undefined;
+    if (!focusId) return { nodes: [...nodes.values()], edges, stats };
+
+    const maxDepth = Number.isFinite(Number(args?.maxDepth)) ? Number(args?.maxDepth) : 2;
+    const maxBreadth = Number.isFinite(Number(args?.maxBreadth)) ? Number(args?.maxBreadth) : 10;
+    const edgeMatch = edges.find(e => e.data.id === focusId);
+    const starts = edgeMatch
+      ? [String(edgeMatch.data.source), String(edgeMatch.data.target)]
+      : nodes.has(focusId)
+        ? [focusId]
+        : [];
+    const focusEdge = edgeMatch
+      ? {
+          id: String(edgeMatch.data.id),
+          kind: String(edgeMatch.data.kind ?? ''),
+          description: String(edgeMatch.data.label ?? ''),
+          endpoints: [String(edgeMatch.data.source), String(edgeMatch.data.target)],
+          directed: edgeMatch.data.directed === true,
+        }
+      : undefined;
+
+    // 无向邻接：节点 id → [{edgeId, other}]
+    const adj = new Map<string, Array<{ edgeId: string; other: string }>>();
+    for (const e of edges) {
+      const s = String(e.data.source);
+      const t = String(e.data.target);
+      const id = String(e.data.id);
+      (adj.get(s) ?? adj.set(s, []).get(s))?.push({ edgeId: id, other: t });
+      (adj.get(t) ?? adj.set(t, []).get(t))?.push({ edgeId: id, other: s });
+    }
+    const keptNodes = new Set<string>(starts.filter(id => nodes.has(id)));
+    const keptEdges = new Set<string>(edgeMatch ? [focusId] : []);
+    let frontier = [...keptNodes];
+    for (let d = 0; d < maxDepth && frontier.length > 0; d++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const { edgeId, other } of (adj.get(id) ?? []).slice(0, maxBreadth)) {
+          keptEdges.add(edgeId);
+          if (!keptNodes.has(other)) {
+            keptNodes.add(other);
+            next.push(other);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return {
+      focusId,
+      focusEdge,
+      nodes: [...nodes.values()].filter(n => keptNodes.has(String(n.data.id))),
+      edges: edges.filter(
+        e =>
+          keptEdges.has(String(e.data.id)) &&
+          keptNodes.has(String(e.data.source)) &&
+          keptNodes.has(String(e.data.target)),
+      ),
+      stats,
+    };
+  },
+
+  /** 委托关系图节点详情（detailSource；点节点时调用） */
+  async getDelegationNode(ctx, args) {
+    const nodeId = String(args.nodeId ?? '');
+    const auth = ctx.getService<AuthorityService>('authority');
+    const users = auth?.listUsers() ?? [];
+    if (nodeId.startsWith('user:')) {
+      const key = nodeId.slice(5);
+      const i = key.indexOf(':');
+      const isOwner = i > 0 ? (auth?.isOwner(key.slice(0, i), key.slice(i + 1)) ?? false) : false;
+      const u = users.find(x => `${x.platform}:${x.userId}` === key);
+      return {
+        身份: key,
+        类型: isOwner ? 'owner（拥有一切能力）' : '用户',
+        授予: u?.grant?.join('、') || '（无）',
+        拒绝: u?.deny?.join('、') || '（无）',
+        委托自: u?.grantedBy || '（顶层 / owner 直接）',
+        可登录账户: u?.hasPassword ? '是' : '否',
+        绑定: u?.links?.join('、') || (u?.linkedTo ? `→ ${u.linkedTo}` : '（无）'),
+      };
+    }
+    if (nodeId.startsWith('cap:')) {
+      const pat = nodeId.slice(4);
+      const granters = users.filter(u => (u.grant ?? []).some(g => g === pat)).map(u => `${u.platform}:${u.userId}`);
+      const deniers = users.filter(u => (u.deny ?? []).some(d => d === pat)).map(u => `${u.platform}:${u.userId}`);
+      return { 能力: pat, 授予给: granters.join('、') || '（无）', 拒绝于: deniers.join('、') || '（无）' };
+    }
+    return { id: nodeId };
   },
 
   /** 委托：设置用户能力 grant/deny（caller 为授予方，非 owner 时子集校验在 manager 内） */
