@@ -936,6 +936,82 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
     },
   });
 
+  // ---- 撤回机器人自己发的消息 ----
+  group.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'onebot_recall_self',
+        description:
+          '撤回机器人自己最近发送的消息——无需 message_id（适配器已记录 bot 近期发出的消息）。' +
+          '默认撤回最近 1 条；一条回复被拆成多条发出时可用 count 一次撤回最近 N 条。' +
+          '可用 group_id 或 user_id 指定目标会话，缺省为当前会话。' +
+          '注意：QQ 通常只允许撤回约 2 分钟内的消息，过期会失败。撤回他人消息请用 onebot_delete_msg。',
+        parameters: {
+          type: 'object',
+          properties: {
+            count: { type: 'number', description: '撤回最近多少条机器人消息（默认 1，上限 10）' },
+            group_id: { type: 'string', description: '可选：目标群号。不传则用当前会话。' },
+            user_id: { type: 'string', description: '可选：目标私聊 QQ 号。不传则用当前会话。' },
+          },
+          required: [],
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      const selfId = resolveSelfId(ctx, callCtx, args);
+      const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
+      const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
+      let targetSessionId: string;
+      if (argGroupId) targetSessionId = buildOneBotSessionId(selfId, 'group', argGroupId);
+      else if (argUserId) targetSessionId = buildOneBotSessionId(selfId, 'private', argUserId);
+      else {
+        const parsed = parseOneBotSession(callCtx.sessionId);
+        if (!parsed) return '当前不在 OneBot 会话中，请用 group_id 或 user_id 指定要撤回的目标会话。';
+        targetSessionId = callCtx.sessionId;
+      }
+
+      const adapter = findOneBotAdapter(ctx) as
+        | (PlatformAdapter & {
+            getSentMessages?: (
+              sessionId: string,
+              limit?: number,
+            ) => Array<{ messageId: string; ts: number; preview: string }>;
+            forgetSentMessage?: (sessionId: string, messageId: string) => void;
+          })
+        | undefined;
+      if (!adapter?.getSentMessages) {
+        return '当前 OneBot 适配器版本未记录机器人发出的消息（不支持 getSentMessages）。如已知 message_id 可改用 onebot_delete_msg。';
+      }
+
+      const count = Math.max(1, Math.min(10, Math.floor(Number(args.count) || 1)));
+      const recent = adapter.getSentMessages(targetSessionId, 10); // 新→旧
+      if (recent.length === 0) {
+        return '没有可撤回的记录：机器人近期未在该会话发送消息，或已超出记录时窗（约 30 分钟）。';
+      }
+      const targets = recent.slice(0, count);
+      const recalled: string[] = [];
+      const failed: string[] = [];
+      for (const t of targets) {
+        try {
+          await callAction(ctx, selfId, 'delete_msg', { message_id: Number(t.messageId) || t.messageId });
+          adapter.forgetSentMessage?.(targetSessionId, t.messageId);
+          recalled.push(t.preview ? `「${t.preview}」` : `msg=${t.messageId}`);
+        } catch (err) {
+          failed.push(
+            `${t.preview ? `「${t.preview}」` : `msg=${t.messageId}`}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (recalled.length === 0) {
+        return `撤回失败（可能已超过可撤回时间，QQ 通常限 2 分钟）：${failed.join('；')}`;
+      }
+      let msg = `已撤回机器人发送的 ${recalled.length} 条消息：${recalled.join('、')}`;
+      if (failed.length > 0) msg += `；另有 ${failed.length} 条撤回失败：${failed.join('；')}`;
+      return msg;
+    },
+  });
+
   ctx.logger.info('OneBot 群管理工具已注册');
 }
 
