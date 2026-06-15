@@ -96,6 +96,88 @@ describe('getOverview — 总览快照', () => {
   });
 });
 
+describe('getDelegationGraph / getDelegationNode — 委托关系图', () => {
+  it('节点含 owner/user/cap；委托/授予/拒绝 边齐全；每条边两端节点都存在', async () => {
+    const { ctx, manager } = makeCtx({ owners: [{ platform: 'webui', userId: 'boss' }] });
+    // boss(owner) 委托 child 授 tool:a、拒 tool:b
+    manager.setUserCapabilities(
+      { platform: 'webui', userId: 'boss' },
+      { platform: 'onebot', userId: 'child' },
+      { grant: ['tool:a'], deny: ['tool:b'] },
+    );
+    const g = (await actions.getDelegationGraph(ctx, {})) as {
+      nodes: Array<{ data: { id: string; kind: string } }>;
+      edges: Array<{ data: { id: string; source: string; target: string; kind: string } }>;
+    };
+    const nodeIds = new Set(g.nodes.map(n => n.data.id));
+    // owner / user / cap 节点齐全
+    expect(g.nodes.find(n => n.data.id === 'user:webui:boss')?.data.kind).toBe('owner');
+    expect(g.nodes.find(n => n.data.id === 'user:onebot:child')?.data.kind).toBe('user');
+    expect(nodeIds.has('cap:tool:a')).toBe(true);
+    expect(nodeIds.has('cap:tool:b')).toBe(true);
+    // 边：委托 boss→child、授予 child→tool:a、拒绝 child→tool:b
+    expect(
+      g.edges.some(
+        e => e.data.kind === 'delegate' && e.data.source === 'user:webui:boss' && e.data.target === 'user:onebot:child',
+      ),
+    ).toBe(true);
+    expect(g.edges.some(e => e.data.kind === 'grant' && e.data.target === 'cap:tool:a')).toBe(true);
+    expect(g.edges.some(e => e.data.kind === 'deny' && e.data.target === 'cap:tool:b')).toBe(true);
+    // 不变式：每条边两端节点都在 nodes 里（cytoscape 缺端点会崩）
+    for (const e of g.edges) {
+      expect(nodeIds.has(e.data.source)).toBe(true);
+      expect(nodeIds.has(e.data.target)).toBe(true);
+    }
+  });
+
+  it('getDelegationNode：user 返回身份/授予，cap 返回授予给', async () => {
+    const { ctx, manager } = makeCtx();
+    manager.setUserCapabilities(null, { platform: 'onebot', userId: 'u' }, { grant: ['tool:x'] });
+    const userDetail = (await actions.getDelegationNode(ctx, { nodeId: 'user:onebot:u' })) as Record<string, unknown>;
+    expect(userDetail.身份).toBe('onebot:u');
+    expect(userDetail.授予).toBe('tool:x');
+    const capDetail = (await actions.getDelegationNode(ctx, { nodeId: 'cap:tool:x' })) as Record<string, unknown>;
+    expect(capDetail.能力).toBe('tool:x');
+    expect(capDetail.授予给).toBe('onebot:u');
+  });
+
+  it('焦点子图：node focusId 限定 1 跳邻域；edge focusId 回 focusEdge', async () => {
+    const { ctx, manager } = makeCtx({ owners: [{ platform: 'webui', userId: 'boss' }] });
+    manager.setUserCapabilities(
+      { platform: 'webui', userId: 'boss' },
+      { platform: 'onebot', userId: 'child' },
+      { grant: ['tool:a'] },
+    );
+    // 另立一个互不相连的用户，确认焦点会把它排除
+    manager.setUserCapabilities(null, { platform: 'onebot', userId: 'lone' }, { grant: ['tool:z'] });
+
+    // 聚焦 child，深度 1：含 child + 其邻居（boss 委托、cap:tool:a），排除 lone/tool:z
+    const sub = (await actions.getDelegationGraph(ctx, { focusId: 'user:onebot:child', maxDepth: 1 })) as {
+      focusId?: string;
+      nodes: Array<{ data: { id: string } }>;
+      edges: Array<{ data: { source: string; target: string } }>;
+    };
+    const ids = new Set(sub.nodes.map(n => n.data.id));
+    expect(sub.focusId).toBe('user:onebot:child');
+    expect(ids.has('user:onebot:child')).toBe(true);
+    expect(ids.has('user:webui:boss')).toBe(true);
+    expect(ids.has('cap:tool:a')).toBe(true);
+    expect(ids.has('user:onebot:lone')).toBe(false); // 不连通，被焦点排除
+    // 不变式仍成立
+    for (const e of sub.edges) {
+      expect(ids.has(e.data.source)).toBe(true);
+      expect(ids.has(e.data.target)).toBe(true);
+    }
+
+    // 聚焦一条边 → 回 focusEdge
+    const onEdge = (await actions.getDelegationGraph(ctx, { focusId: 'delegate:onebot:child' })) as {
+      focusEdge?: { id: string; kind: string };
+    };
+    expect(onEdge.focusEdge?.id).toBe('delegate:onebot:child');
+    expect(onEdge.focusEdge?.kind).toBe('delegate');
+  });
+});
+
 describe('密码 / 解绑 — owner 或本人', () => {
   it('setPassword：本人可设；他人非 owner 被拒；短密码拒', async () => {
     const { ctx, manager } = makeCtx();

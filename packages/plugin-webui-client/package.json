@@ -1,9 +1,12 @@
 {
   "name": "@aalis/plugin-webui-client",
-  "private": true,
   "version": "0.1.1",
   "license": "AGPL-3.0-only",
+  "description": "Aalis 默认 WebUI 前端（React SPA 静态资源；由 @aalis/plugin-webui-server 托管）",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "aalis": {
     "client": true
   },

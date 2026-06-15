@@ -5,8 +5,9 @@ import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
 import { LogHub, parseLogLine } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
@@ -1457,20 +1458,29 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 启动服务器
   ctx.on('ready', () => {
-    // 自动发现同级 webui-client 包并注册为 webui-client 服务提供者
+    // 自动发现 webui-client 包并注册为 webui-client 服务提供者。
+    // 解析以「项目根 package.json」为基准（与 runtime 的 node-modules 加载器同源），
+    // 这样 npm 扁平 / pnpm 隔离 / monorepo 软链三种 node_modules 拓扑都自洽——
+    // client 是项目顶层依赖（create-aalis 选 WebUI 时自动带），从项目根能 resolve 到。
+    // 回退：webui-server 同级目录（cwd≠项目根等边角场景兜底）。
     const __dirname = dirname(fileURLToPath(import.meta.url));
-    const clientCandidates: Array<{ id: string; label: string; dir: string }> = [
-      {
-        id: '@aalis/plugin-webui-client',
-        label: 'Aalis 默认前端',
-        dir: resolve(__dirname, '../../plugin-webui-client/dist'),
-      },
-      {
-        id: '@aalis/plugin-webui-client-napcat',
-        label: 'NapCat 前端',
-        dir: resolve(__dirname, '../../plugin-webui-client-napcat/dist'),
-      },
-    ];
+    const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
+    const resolveClientDir = (id: string): string | undefined => {
+      try {
+        return resolve(dirname(projectRequire.resolve(`${id}/package.json`)), 'dist');
+      } catch {
+        const sibling = resolve(__dirname, `../../${id.replace('@aalis/', '')}/dist`);
+        return existsSync(sibling) ? sibling : undefined;
+      }
+    };
+    const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
+    for (const s of [
+      { id: '@aalis/plugin-webui-client', label: 'Aalis 默认前端' },
+      { id: '@aalis/plugin-webui-client-napcat', label: 'NapCat 前端' },
+    ]) {
+      const dir = resolveClientDir(s.id);
+      if (dir) clientCandidates.push({ id: s.id, label: s.label, dir });
+    }
 
     // 如果已有外部插件注册了 webui-client 服务，则跳过自动发现
     const hasExternalClient = ctx.hasService('webui-client');
