@@ -21,5 +21,11 @@
   },
   "peerDependencies": {
     "@aalis/core": "^0.1.0"
-  }
+  },
+  "aalis": {
+    "types": true
+  },
+  "keywords": [
+    "aalis-plugin"
+  ]
 }
