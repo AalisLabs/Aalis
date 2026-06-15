@@ -19,7 +19,7 @@ meta.inject = {
 }
 ```
 
-> 工具集会被注册到 daily ToolService（即 `getService<ScopedToolService>('tools:daily')`），由 plugin-agent-default 等消费方按需公开给 LLM。
+> 工具集会被注册到 daily ToolService（即 `getService<ScopedToolService>('tools:daily')`），由 plugin-agent 等消费方按需公开给 LLM。
 
 ## 跨会话调用心智模型（重要）
 
