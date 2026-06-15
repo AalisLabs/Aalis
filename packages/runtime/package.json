@@ -1,6 +1,6 @@
 {
   "name": "@aalis/runtime",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "description": "Aalis 独立部署运行时：node_modules 插件加载 + YAML 配置 + 一行启动 startAalis",
@@ -21,7 +21,7 @@
     "yaml": "^2.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

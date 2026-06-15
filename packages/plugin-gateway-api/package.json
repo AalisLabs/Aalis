@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-gateway-api",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -25,7 +25,7 @@
     "types": true
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "keywords": [
     "aalis-plugin"

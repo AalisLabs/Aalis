@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-tools",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "AI 工具注册表：聚合并向 LLM 暴露可调用工具",
   "type": "module",
@@ -26,7 +26,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.1.0"
+    "@aalis/core": "^0.2.0"
   },
   "aalis": {
     "service": {
