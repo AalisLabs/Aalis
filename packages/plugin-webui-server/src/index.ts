@@ -2,7 +2,7 @@
 // 已在 biome.json noRestrictedImports 中作为基础设施例外列出。
 
 import { Buffer } from 'node:buffer';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -114,6 +114,13 @@ export const configSchema: ConfigSchema = {
     description:
       '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置）。',
   },
+  client: {
+    type: 'string',
+    label: '活跃前端（多前端时选用）',
+    default: '',
+    description:
+      '装了多个前端（aalis.client 包）时指定哪个为活跃前端，填包名（如 @aalis/plugin-webui-client）。留空 = 自动选第一个发现到的（默认前端优先）。插件主动 provide(webui-client) 仍优先于此。',
+  },
 };
 
 export const defaultConfig = {
@@ -125,6 +132,7 @@ export const defaultConfig = {
   fixedToken: '',
   relationGraphDefaultSpacing: 120,
   marketplaceRegistry: 'https://registry.npmjs.org',
+  client: '',
 };
 
 // ===== 配置 =====
@@ -138,6 +146,8 @@ interface WebUIConfig {
   fixedToken: string;
   relationGraphDefaultSpacing: number;
   marketplaceRegistry: string;
+  /** 多前端时指定活跃前端包名；留空=自动选第一个 */
+  client: string;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -293,6 +303,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return Number.isFinite(v) && v > 0 ? v : 120;
     })(),
     marketplaceRegistry: (config.marketplaceRegistry as string)?.trim() || 'https://registry.npmjs.org',
+    client: (config.client as string)?.trim() ?? '',
   };
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
@@ -1474,38 +1485,50 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
     };
     const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
-    for (const s of [
-      { id: '@aalis/plugin-webui-client', label: 'Aalis 默认前端' },
-      { id: '@aalis/plugin-webui-client-napcat', label: 'NapCat 前端' },
-    ]) {
-      const dir = resolveClientDir(s.id);
-      if (dir) clientCandidates.push({ id: s.id, label: s.label, dir });
-    }
-
-    // 如果已有外部插件注册了 webui-client 服务，则跳过自动发现
-    const hasExternalClient = ctx.hasService('webui-client');
-    if (!hasExternalClient) {
-      let isFirst = true;
-      for (const candidate of clientCandidates) {
-        if (existsSync(candidate.dir) && existsSync(resolve(candidate.dir, 'index.html'))) {
-          const childCtx = ctx.fork(candidate.id);
-          childCtx.provide(
-            'webui-client',
-            {
-              getClientDir: () => candidate.dir,
-            },
-            { label: candidate.label },
-          );
-          ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
-
-          if (isFirst) {
-            clientDist = candidate.dir;
-            mountStaticDir(candidate.dir);
-            ctx.logger.info(`活跃前端: ${candidate.label}`);
-            isFirst = false;
-          }
+    const addCandidate = (id: string, label: string, dir: string | undefined): void => {
+      if (!dir || clientCandidates.some(c => c.id === id)) return;
+      if (existsSync(dir) && existsSync(resolve(dir, 'index.html'))) clientCandidates.push({ id, label, dir });
+    };
+    // ① 已知 @aalis 前端（保证 monorepo/默认拓扑可用——根 deps 未必列 client）
+    addCandidate('@aalis/plugin-webui-client', 'Aalis 默认前端', resolveClientDir('@aalis/plugin-webui-client'));
+    addCandidate(
+      '@aalis/plugin-webui-client-napcat',
+      'NapCat 前端',
+      resolveClientDir('@aalis/plugin-webui-client-napcat'),
+    );
+    // ② 追加发现：项目 deps 里任何带 aalis.client marker 的第三方前端（忒修斯之船可换）
+    try {
+      const rootPkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8'));
+      const deps = Object.keys({ ...rootPkg.dependencies, ...rootPkg.optionalDependencies });
+      for (const dep of deps) {
+        if (clientCandidates.some(c => c.id === dep)) continue;
+        try {
+          const pkgPath = projectRequire.resolve(`${dep}/package.json`);
+          const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+          if (pkg?.aalis?.client !== true) continue;
+          addCandidate(dep, pkg.displayName ?? pkg.description ?? dep, resolve(dirname(pkgPath), 'dist'));
+        } catch {
+          /* 该 dep 无法解析/读取，跳过 */
         }
       }
+    } catch {
+      /* 无项目根 package.json（如 monorepo 直跑），跳过 dep 扫描 */
+    }
+
+    // 如果已有外部插件主动注册了 webui-client 服务（apply 覆盖路径），则跳过自动发现
+    const hasExternalClient = ctx.hasService('webui-client');
+    if (!hasExternalClient && clientCandidates.length > 0) {
+      // 活跃前端：config.client 指定者优先，否则取第一个（默认前端排在最前）
+      const preferred = uiConfig.client && clientCandidates.find(c => c.id === uiConfig.client);
+      const active = preferred || clientCandidates[0];
+      for (const candidate of clientCandidates) {
+        const childCtx = ctx.fork(candidate.id);
+        childCtx.provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label });
+        ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
+      }
+      clientDist = active.dir;
+      mountStaticDir(active.dir);
+      ctx.logger.info(`活跃前端: ${active.label}${preferred ? '（config.client 指定）' : ''}`);
     }
 
     // 若已有外部 webui-client 服务，使用其提供的目录

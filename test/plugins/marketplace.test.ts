@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  augmentInstalled,
   buildSearchUrl,
+  classifyPackage,
   findServiceDependents,
   isProtectedPackage,
   toManifest,
@@ -166,5 +168,51 @@ describe('toManifest（packument → 装前能力清单）', () => {
   it('无 latest tag 返回 null（降级安全）', () => {
     expect(toManifest({})).toBeNull();
     expect(toManifest({ versions: {} })).toBeNull();
+  });
+});
+
+describe('classifyPackage（按包名分类：功能插件/契约/前端）', () => {
+  it('*-api → api 契约', () => {
+    expect(classifyPackage('@aalis/plugin-tools-api')).toBe('api');
+    expect(classifyPackage('@foo/bar-api')).toBe('api');
+  });
+  it('webui-client* → 前端；但 mcp-client 仍是功能插件（不一刀切 -client）', () => {
+    expect(classifyPackage('@aalis/plugin-webui-client')).toBe('client');
+    expect(classifyPackage('@aalis/plugin-webui-client-napcat')).toBe('client');
+    expect(classifyPackage('@aalis/plugin-mcp-client')).toBe('plugin'); // 关键：MCP 客户端是功能插件
+  });
+  it('其余 → 功能插件', () => {
+    expect(classifyPackage('@aalis/plugin-openai')).toBe('plugin');
+    expect(classifyPackage('community-aalis-plugin-x')).toBe('plugin');
+  });
+  it('augmentInstalled：已装的 api/前端经 resolve 补判为已安装（getStatus 漏掉它们）', () => {
+    // base = getStatus 仅含已加载运行时插件；api/client 带 marker 不在其中
+    const base = new Set(['@aalis/plugin-openai']);
+    const names = ['@aalis/plugin-openai', '@aalis/plugin-llm-api', '@aalis/plugin-webui-client', '@aalis/plugin-x'];
+    // 模拟 node_modules：llm-api 与 webui-client 已装（可 resolve），plugin-x 未装
+    const canResolve = (n: string) => n === '@aalis/plugin-llm-api' || n === '@aalis/plugin-webui-client';
+    const out = augmentInstalled(names, base, canResolve);
+    expect(out.has('@aalis/plugin-openai')).toBe(true); // base 保留
+    expect(out.has('@aalis/plugin-llm-api')).toBe(true); // 补判已装（修复"永远未安装"bug）
+    expect(out.has('@aalis/plugin-webui-client')).toBe(true);
+    expect(out.has('@aalis/plugin-x')).toBe(false); // 未装
+    // 用于 toMarketplacePackages 时，api/client installed=true
+    const pkgs = toMarketplacePackages({ objects: names.map(n => ({ package: { name: n, version: '1.0.0' } })) }, out);
+    expect(pkgs.find(p => p.name === '@aalis/plugin-llm-api')?.installed).toBe(true);
+    expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.installed).toBe(false);
+  });
+
+  it('toMarketplacePackages 注入 category', () => {
+    const pkgs = toMarketplacePackages(
+      {
+        objects: [
+          { package: { name: '@aalis/plugin-openai', version: '1.0.0' } },
+          { package: { name: '@aalis/plugin-tools-api', version: '1.0.0' } },
+          { package: { name: '@aalis/plugin-webui-client', version: '1.0.0' } },
+        ],
+      },
+      new Set(),
+    );
+    expect(pkgs.map(p => p.category)).toEqual(['plugin', 'api', 'client']);
   });
 });
