@@ -13,9 +13,8 @@
 3. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
    scope 事件总线不隔离。
 4. **onebot 主动撤回**（bot 撤回自己发的消息；撤回「感知」已做）。
-5. **按时间区间取消息**（memory-history 已有跨会话时间窗，缺单会话/任意区间的通用查询）。
-6. **文档内图片识别**（file-reader / office 尚无）。
-7. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
+5. **文档内图片识别**（file-reader / office 尚无）。
+6. **GUI 修复缺失依赖**（暂缓）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
 
 ## 已知限制（接受的妥协，非 bug，记录在案）
 
@@ -41,6 +40,10 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-15 **按时间区间取消息**：`session_get_history` 工具加 `within_minutes` / `since` / `until`
+  入参（ISO 或毫秒），给定时间窗即路由到 `memory.getMessagesBySessionRange`（区间含归档完整记录、
+  区间内取较新 limit 条），否则维持原条数检索；纯函数 `resolveTimeRange`/`parseTimestamp` 抽出单测
+  （test/plugins/session-history-range.test.ts，15 例）。补齐单会话/任意区间的通用查询缺口。
 - ✅ 2026-06-15 **市场 v2 切换前端 UI**：webui-server `GET /api/clients`（列已发现前端）+
   `POST /api/clients/active`（owner 设活跃：实时重挂静态目录 + 持久化 `webui.client`）；Dashboard
   在装了 >1 前端时显示切换卡片（设为活跃 → reload 即加载新前端）。收尾「前端忒修斯之船可换」。
