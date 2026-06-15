@@ -3,9 +3,12 @@
 // ============================================================
 
 import type { Context, Logger } from '@aalis/core';
+// 副作用引入：激活 plugin-agent-api 对 core HookContextMap 的 'agent:turn:after' 增广
+import '@aalis/plugin-agent-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { ToolCallContext, ToolService } from '@aalis/plugin-tools-api';
 import type {
+  AgentNodeSpec,
   NodeRunInfo,
   NodeSpec,
   SendMessageNodeSpec,
@@ -139,6 +142,63 @@ async function execWait(node: WaitNodeSpec): Promise<string> {
   return `waited ${node.seconds}s`;
 }
 
+const DEFAULT_AGENT_TIMEOUT_SEC = 120;
+
+/**
+ * agent 节点：派发指令给 agent 并等待本轮回复（复用 delegate_to_session 的 join 机制）。
+ * 在 emit 前注册 `agent:turn:after` 监听，按目标 sessionId 捕获首条回复；超时或
+ * outcome=error/aborted 抛错（=> 节点失败）。回复文本作为节点结果，可被 `{{outputs.X}}` 下游引用。
+ */
+async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
+  const instruction = interpolateString(node.instruction, ec.vars, ec.outputs);
+  // 省略 sessionId 时为本节点生成一次性隔离子会话，确保并行 agent 节点互不串扰、join 不混淆。
+  const sessionId = node.sessionId
+    ? interpolateString(node.sessionId, ec.vars, ec.outputs)
+    : `workflow:agent:${ec.runId}:${node.id}`;
+  const platform = interpolateString(node.platform ?? 'workflow', ec.vars, ec.outputs);
+  const timeoutSec = node.timeoutSeconds && node.timeoutSeconds > 0 ? node.timeoutSeconds : DEFAULT_AGENT_TIMEOUT_SEC;
+  const timeoutMs = Math.floor(timeoutSec * 1000);
+
+  let captured: { reply: string; outcome: string } | undefined;
+  let resolveWait: (() => void) | undefined;
+  const waitPromise = new Promise<void>(resolve => {
+    resolveWait = resolve;
+  });
+  // 注册必须在 emit 之前，避免目标 agent 同步回复时错过监听窗口。
+  const dispose = ec.ctx.middleware('agent:turn:after', async (data, next) => {
+    await next();
+    if (captured) return;
+    if (data.sessionId !== sessionId) return;
+    captured = { reply: data.reply ?? '', outcome: data.outcome };
+    resolveWait?.();
+  });
+
+  const incoming: IncomingMessage = {
+    content: instruction,
+    sessionId,
+    platform,
+    source: `workflow:${ec.workflowId}`,
+    triggerType: 'proactive',
+  };
+
+  const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
+  try {
+    await ec.ctx.emit('inbound:message', incoming);
+    await waitPromise;
+  } finally {
+    clearTimeout(timeoutHandle);
+    dispose();
+  }
+
+  if (!captured) {
+    throw new Error(`agent 节点超时（${timeoutSec}s 内未收到 agent:turn:after，会话=${sessionId}）`);
+  }
+  if (captured.outcome === 'error' || captured.outcome === 'aborted') {
+    throw new Error(`agent 节点未正常完成（outcome=${captured.outcome}，会话=${sessionId}）`);
+  }
+  return captured.reply;
+}
+
 async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
   switch (node.type) {
     case 'tool':
@@ -147,6 +207,8 @@ async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
       return await execSendMessage(node, ec);
     case 'wait':
       return await execWait(node);
+    case 'agent':
+      return await execAgent(node, ec);
     default: {
       const _exhaustive: never = node;
       throw new Error(`未知节点类型: ${(_exhaustive as { type: string }).type}`);
