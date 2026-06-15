@@ -1,9 +1,13 @@
-# Core 扩展点索引（Single Source of Truth）
+# Core 扩展点索引（一方扩展速查）
 
-`@aalis/core` 暴露的所有 `declare module` 扩展点，及当前仓库内**谁在 augment 什么**。
+`@aalis/core` 暴露的所有 `declare module` 扩展点，及**本仓库内**谁在 augment 什么——
+便于在一方代码里查定义、查谁扩了什么。
 
-新增插件如需扩展任一扩展点，请先在本表登记。
-查找一个事件/能力/钩子的真实定义，从本表的"扩展者"列直接跳。
+> **这不是注册门禁。** 第三方插件扩展任一扩展点，只需在你自己的包里写
+> `declare module '@aalis/core' { ... }`（见 [plugin-author-guide](../plugin-author-guide.md)），
+> 编译期即生效——**无需在本表登记**，也不会（无法）出现在本表里。扩展点的**权威定义**在各
+> `-api` 包的 `declare module` 声明；本表只收录本仓库的一方包，作发现与查阅之用，并非全集。
+查找一个事件/能力/钩子的真实定义，从本表的"扩展者"列直接跳（一方实现）。
 
 > **核心原则**：core 自身只声明**空接口**，所有键值由 plugin-*-api 通过 declaration merging 注入。
 > 这是「忒修斯之船」原则——业务概念可以全部换掉，core 永远不感知它们。

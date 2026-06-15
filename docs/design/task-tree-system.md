@@ -3,6 +3,24 @@
 > 本文档描述 Aalis 框架的任务拆分与 Agent 协作系统的架构设计。  
 > 基于已实现的 `plugin-session-manager`（会话管理 + 树形结构）进行扩展。
 
+> **说明：下文的 `plugin-task-orchestrator` 未作为独立插件实现。**
+> 复盘后结论是「不另造插件」，因为它会与现有 `plugin-workflow`（DAG 引擎）、`plugin-subtask`
+> （子会话分发/join）、`plugin-session-manager`（会话树）大量重复。本设计中**真正缺失的确定性编排能力**
+> （子任务依赖图 / 串行·管道 / 结果聚合 / 超时重试 / 并发）已通过给 `plugin-workflow` 增加
+> **`agent` 节点类型**落地——一个 agent 节点 = 把一段指令派发给 agent 并等回复，回复经 `out` 入
+> `outputs` 供下游 `{{outputs.X}}` 插值，配合 `deps` 即可表达「分解 → 依赖 → 串/并行 → 管道 → 聚合」。
+> 见 [plugin-workflow](../plugins/plugin-workflow.md) 与 `@aalis/plugin-workflow-api` 的 `AgentNodeSpec`。
+>
+> **现状能力映射**（本提案约 70% 已由现有插件组合覆盖）：
+> - 子任务 = 子会话、创建/等待/自动汇报：`plugin-subtask`
+> - 会话树 = 任务树（`getTree`/`completeSession`/`result`）：`plugin-session-manager`
+> - 派发并等待 agent 回复的执行原语：`delegate_to_session`（`plugin-tool-session`）、workflow `agent` 节点
+> - 触发（cron/定时）：`plugin-scheduler`；确定性 DAG 编排：`plugin-workflow`
+> - 会话内步骤计划/进度：`plugin-todo-list`
+>
+> **仍延后**（见 docs/issues.md 待办）：运行时**递归**任务分解（subtask 目前禁止嵌套）、一等公民
+> `task:*` 事件 + 专用任务树 WebUI 页、per-subtask context-scope 隔离。下文保留作设计记录与缺口分析。
+
 ---
 
 ## 一、目标与价值
@@ -30,7 +48,7 @@
 | 会话配置覆盖         | `SessionConfig { model, tools, persona.. }`  |
 | 状态管理             | `active / waiting / completed / error`       |
 
-### 2.2 agent-default 提供的能力
+### 2.2 plugin-agent 提供的能力
 
 | 能力                 | 说明                                         |
 | -------------------- | -------------------------------------------- |

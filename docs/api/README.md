@@ -19,7 +19,7 @@
 
 | API 包 | 提供的核心契约 | 已知实现 |
 |---|---|---|
-| [plugin-agent-api](./plugin-agent-api.md) | `AgentService` —— 对话编排服务 | plugin-agent-default |
+| [plugin-agent-api](./plugin-agent-api.md) | `AgentService` —— 对话编排服务 | plugin-agent |
 | [plugin-authority-api](./plugin-authority-api.md) | `AuthorityService` + `ExecutionGuard` —— 权限校验与执行守卫 | plugin-authority |
 | [plugin-commands-api](./plugin-commands-api.md) | `CommandService` + `useCommandService(ctx)` —— 命令系统 | plugin-commands |
 | [plugin-embedding-api](./plugin-embedding-api.md) | `EmbeddingService` —— 文本向量化 | plugin-embedding-openai / plugin-embedding-ollama |
