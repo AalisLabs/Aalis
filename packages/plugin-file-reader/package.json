@@ -5,6 +5,7 @@
   "description": "文件读取：解析多种格式文件供 AI 理解",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

@@ -5,6 +5,7 @@
   "description": "OneBot v11/v12 协议适配器（QQ 等平台接入，多连接 + 自动重连）",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

@@ -5,6 +5,7 @@
   "description": "角色人格：YAML 角色卡定义性格与结构化输出",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

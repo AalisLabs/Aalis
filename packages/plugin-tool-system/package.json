@@ -5,6 +5,7 @@
   "description": "系统工具集：Shell / 文件 / HTTP 等基础能力",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

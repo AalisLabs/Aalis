@@ -5,6 +5,7 @@
   "description": "Office 文档：Word/Excel/PPT/PDF 创建与编辑",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",

@@ -5,6 +5,7 @@
   "description": "语音识别（ASR）—— 本地 whisper.cpp 提供者",
   "type": "module",
   "keywords": [
+    "aalis",
     "aalis-plugin"
   ],
   "main": "dist/index.js",
