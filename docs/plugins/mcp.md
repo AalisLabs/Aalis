@@ -33,7 +33,7 @@ Client 端工具名采用 `mcp_<server-id>_<tool-name>` 前缀避免冲突；非
 
 **MCP 工具在 Aalis 内部就是普通工具**——没有任何特殊代码路径。一旦 plugin-mcp-client 完成 `bridgeClientToTools()` 把远端工具注册到 `ToolService`：
 
-1. **LLM tool-calling 阶段**：agent（如 plugin-agent-default）调用 `useToolService(ctx).getDefinitions({ groups })` 拼装 `tools` 参数发给模型；MCP 工具与 `file_read` / `bash` 等本地工具混在同一个数组里返给 LLM
+1. **LLM tool-calling 阶段**：agent（如 plugin-agent）调用 `useToolService(ctx).getDefinitions({ groups })` 拼装 `tools` 参数发给模型；MCP 工具与 `file_read` / `bash` 等本地工具混在同一个数组里返给 LLM
 2. **执行阶段**：LLM 返回 `tool_call { name: 'mcp_<id>_<tool>', arguments }` → `ToolService.execute()` 找到注册的 handler → handler 内部走 MCP `client.callTool({...})` → 远端 server 返回 content → 文本化后回到 agent
 3. **权限/安全**：工具 `visibility` 由 server config 中按条目设置（默认 `public`），执行前会走 Aalis 标准的 ExecutionGuard
 
