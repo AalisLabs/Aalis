@@ -123,6 +123,9 @@ describe('getDelegationGraph / getDelegationNode — 委托关系图', () => {
     ).toBe(true);
     expect(g.edges.some(e => e.data.kind === 'grant' && e.data.target === 'cap:tool:a')).toBe(true);
     expect(g.edges.some(e => e.data.kind === 'deny' && e.data.target === 'cap:tool:b')).toBe(true);
+    // owner → 「* 全部能力」：owner 不孤立，直观显示拥有一切
+    expect(nodeIds.has('cap:*')).toBe(true);
+    expect(g.edges.some(e => e.data.source === 'user:webui:boss' && e.data.target === 'cap:*')).toBe(true);
     // 不变式：每条边两端节点都在 nodes 里（cytoscape 缺端点会崩）
     for (const e of g.edges) {
       expect(nodeIds.has(e.data.source)).toBe(true);
