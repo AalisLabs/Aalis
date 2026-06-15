@@ -25,9 +25,14 @@
 
 ## 新功能计划
 
-1. **市场 v2 剩余**：前端「切换活跃前端」图形开关（现可经 `webui.client` 配置切换，缺 UI）
-   + 第三方前端端到端实测。主体已实现（见归档：keyword 分类、api/前端入市、
-   WebuiClientProvider 契约、通用发现、config.client 选活跃）。
+1. **市场 v2 剩余 + npm 协调发布**：
+   - **市场 api/前端 类目要"实际可见"，需一次协调全量 npm release**——npm 上 webui-server/api
+     仍是旧 0.1.x（重写未发）。**关键耦合**：新前端 webui-client 必须配新后端 webui-server +
+     新契约**一起发**，不能单发 webui-client（新前端调老后端没有的 action 会坏；且版本号会
+     "看着兼容实则不兼容"）。本地 package.json 已带关键词，等并入 dev 后做协调 release（所有
+     改动包 bump 补丁版 + 带关键词一起重发）即生效。
+   - 前端「切换活跃前端」图形开关（现可经 `webui.client` 配置切换，缺 UI）+ 第三方前端端到端实测。
+   - 主体已实现（见归档：keyword 分类、api/前端入市、WebuiClientProvider 契约、通用发现、config.client 选活跃）。
 2. scoped/app 沙盒（第二期）：per-user 受限 WebUI 视图——按身份裁剪页面/数据可见性，
    应补「资源默认私有 + 创建者授权」粒度（见多用户调研归档）；createScope 级别的运行时
    视图隔离需先解决 scope 事件总线不隔离的问题。
