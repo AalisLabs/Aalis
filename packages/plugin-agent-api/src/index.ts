@@ -12,19 +12,6 @@ import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import type { ToolCallContext, ToolDefinition } from '@aalis/plugin-tools-api';
 
 /**
- * 插件分组信息（按子系统聚合，供 WebUI Dashboard 等使用）
- *
- * Agent 服务通过 `getPluginGroups()` 暴露当前活跃插件的分组结构，
- * 由 dashboard 据此把插件归入对应的子系统面板。
- */
-export interface PluginGroupInfo {
-  /** 分组显示名称 */
-  label: string;
-  /** 该分组包含的插件 instanceId 列表 */
-  plugins: string[];
-}
-
-/**
  * 消息预处理器函数
  *
  * 在消息到达 LLM 之前对 IncomingMessage 进行变换。
@@ -32,12 +19,6 @@ export interface PluginGroupInfo {
  * 不调用则中断整个流程（LLM 不会被调用）。
  */
 export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => Promise<void>;
-
-/** 已注册预处理器的元信息 */
-export interface PreprocessorInfo {
-  /** 预处理器名称 */
-  name: string;
-}
 
 /**
  * Agent 服务 —— 对话编排引擎
@@ -61,17 +42,6 @@ export interface AgentService {
    * 底层通过中间件系统实现，priority 越大越先执行。
    */
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
-
-  /** 获取当前所有已注册预处理器的元信息 */
-  getPreprocessors?(): PreprocessorInfo[];
-
-  /**
-   * 获取 Agent 子系统的插件分组
-   *
-   * 基于 Agent 的 inject 声明，自动找出所有为 Agent 提供服务的插件，
-   * 返回分组信息供 Dashboard 使用。
-   */
-  getPluginGroups?(): PluginGroupInfo[];
 }
 
 // ----- Agent 域钩子声明（通过 declaration merging 注入 core 的 HookContextMap）-----
