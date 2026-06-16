@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-webui-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "description": "Web 管理界面后端：对话/插件/服务/市场/文件",
   "type": "module",
@@ -47,7 +47,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {
