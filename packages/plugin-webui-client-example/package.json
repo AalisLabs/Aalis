@@ -1,0 +1,18 @@
+{
+  "name": "@aalis/plugin-webui-client-example",
+  "version": "0.4.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Aalis 示例前端（演示忒修斯之船「换前端」可热切换；private，永不发布到 npm）",
+  "displayName": "示例前端（演示换前端）",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "aalis": {
+    "client": true
+  }
+}

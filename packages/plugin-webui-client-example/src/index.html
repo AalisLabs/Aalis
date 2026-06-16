@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aalis 示例前端</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: linear-gradient(135deg, #1e1b4b, #0f172a);
+        color: #e2e8f0;
+      }
+      main {
+        max-width: 640px;
+        padding: 2.5rem;
+        margin: 1.5rem;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+      }
+      h1 { margin: 0 0 0.5rem; font-size: 1.7rem; }
+      .tag {
+        display: inline-block;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+        background: #6366f1;
+        color: #fff;
+        margin-bottom: 1rem;
+      }
+      p { line-height: 1.7; margin: 0.6rem 0; }
+      code { background: rgba(255, 255, 255, 0.1); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.9em; }
+      ol { line-height: 1.8; padding-left: 1.2rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="tag">示例前端 · webui-client-example</span>
+      <h1>🧩 你正在看「第二前端」</h1>
+      <p>
+        这是一个最小的演示前端。能看到它，说明 Aalis 的「忒修斯之船——前端可热切换」整条链路是通的：
+      </p>
+      <ol>
+        <li>它的 <code>package.json</code> 标了 <code>aalis.client: true</code>，被 webui-server <strong>动态发现</strong>（没有任何硬编码包名）；</li>
+        <li>你在<strong>默认前端的 Dashboard「前端（活跃切换）」</strong>卡片里把它设为活跃；</li>
+        <li>webui-server 实时重挂静态目录并持久化 <code>webui.client</code>，页面 reload 后由它接管。</li>
+      </ol>
+      <p>
+        切回默认前端：默认前端在 <code>@aalis/plugin-webui-client</code>。回到它的 Dashboard 同一张卡片选回即可
+        （若当前这个示例前端没有切换卡片，直接改配置 <code>webui.client</code> 或访问默认前端 URL）。
+      </p>
+    </main>
+  </body>
+</html>

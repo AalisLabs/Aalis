@@ -2,7 +2,7 @@
 // 已在 biome.json noRestrictedImports 中作为基础设施例外列出。
 
 import { Buffer } from 'node:buffer';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -36,6 +36,7 @@ import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
+import { type DiscoveryEnv, discoverClients } from './client-discovery.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
@@ -1503,50 +1504,50 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 启动服务器
   ctx.on('ready', () => {
-    // 自动发现 webui-client 包并注册为 webui-client 服务提供者。
-    // 解析以「项目根 package.json」为基准（与 runtime 的 node-modules 加载器同源），
-    // 这样 npm 扁平 / pnpm 隔离 / monorepo 软链三种 node_modules 拓扑都自洽——
-    // client 是项目顶层依赖（create-aalis 选 WebUI 时自动带），从项目根能 resolve 到。
-    // 回退：webui-server 同级目录（cwd≠项目根等边角场景兜底）。
-    const __dirname = dirname(fileURLToPath(import.meta.url));
+    // 全动态发现前端：按 `aalis.client:true` 标记扫描，**不硬编码任何前端包名**
+    // （与 runtime 加载器的 marker 驱动一致；忒修斯之船——任意第三方前端带标记+dist 即被发现）。
+    // 覆盖三种拓扑：monorepo（扫 packages 同级目录）/ 独立项目（扫 node_modules/@aalis + 根 deps）。
+    const here = dirname(fileURLToPath(import.meta.url));
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
-    const resolveClientDir = (id: string): string | undefined => {
-      try {
-        return resolve(dirname(projectRequire.resolve(`${id}/package.json`)), 'dist');
-      } catch {
-        const sibling = resolve(__dirname, `../../${id.replace('@aalis/', '')}/dist`);
-        return existsSync(sibling) ? sibling : undefined;
-      }
-    };
-    const addCandidate = (id: string, label: string, dir: string | undefined): void => {
-      if (!dir || clientCandidates.some(c => c.id === id)) return;
-      if (existsSync(dir) && existsSync(resolve(dir, 'index.html'))) clientCandidates.push({ id, label, dir });
-    };
-    // ① 已知 @aalis 前端（保证 monorepo/默认拓扑可用——根 deps 未必列 client）
-    addCandidate('@aalis/plugin-webui-client', 'Aalis 默认前端', resolveClientDir('@aalis/plugin-webui-client'));
-    addCandidate(
-      '@aalis/plugin-webui-client-napcat',
-      'NapCat 前端',
-      resolveClientDir('@aalis/plugin-webui-client-napcat'),
-    );
-    // ② 追加发现：项目 deps 里任何带 aalis.client marker 的第三方前端（忒修斯之船可换）
-    try {
-      const rootPkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8'));
-      const deps = Object.keys({ ...rootPkg.dependencies, ...rootPkg.optionalDependencies });
-      for (const dep of deps) {
-        if (clientCandidates.some(c => c.id === dep)) continue;
+    const env: DiscoveryEnv = {
+      existsSync,
+      readdirSync: p => {
         try {
-          const pkgPath = projectRequire.resolve(`${dep}/package.json`);
-          const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-          if (pkg?.aalis?.client !== true) continue;
-          addCandidate(dep, pkg.displayName ?? pkg.description ?? dep, resolve(dirname(pkgPath), 'dist'));
+          return readdirSync(p);
         } catch {
-          /* 该 dep 无法解析/读取，跳过 */
+          return [];
         }
-      }
+      },
+      readJson: p => {
+        try {
+          return JSON.parse(readFileSync(p, 'utf-8'));
+        } catch {
+          return undefined;
+        }
+      },
+      join: (...parts) => resolve(...parts),
+      dirname,
+      resolvePkgJson: id => {
+        try {
+          return projectRequire.resolve(`${id}/package.json`);
+        } catch {
+          return undefined;
+        }
+      },
+    };
+    // here = <pkg>/dist；其上两级即 monorepo 的 packages 目录。再加项目 node_modules/@aalis 作用域。
+    const scanDirs = [resolve(here, '../../'), resolve(process.cwd(), 'node_modules/@aalis')];
+    let depIds: string[] = [];
+    try {
+      const rootPkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
+        dependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
+      };
+      depIds = Object.keys({ ...rootPkg.dependencies, ...rootPkg.optionalDependencies });
     } catch {
-      /* 无项目根 package.json（如 monorepo 直跑），跳过 dep 扫描 */
+      /* 无项目根 package.json（如 monorepo 直跑），跳过 deps 扫描 */
     }
+    clientCandidates.push(...discoverClients(scanDirs, depIds, env));
 
     // 如果已有外部插件主动注册了 webui-client 服务（apply 覆盖路径），则跳过自动发现
     const hasExternalClient = ctx.hasService('webui-client');

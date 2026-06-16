@@ -177,7 +177,7 @@ describe('classifyPackage（按包名分类：功能插件/契约/前端）', ()
   });
   it('webui-client* → 前端；但 mcp-client 仍是功能插件（不一刀切 -client）', () => {
     expect(classifyPackage('@aalis/plugin-webui-client')).toBe('client');
-    expect(classifyPackage('@aalis/plugin-webui-client-napcat')).toBe('client');
+    expect(classifyPackage('@aalis/plugin-webui-client-example')).toBe('client');
     expect(classifyPackage('@aalis/plugin-mcp-client')).toBe('plugin'); // 关键：MCP 客户端是功能插件
   });
   it('其余 → 功能插件', () => {
