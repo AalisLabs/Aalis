@@ -48,7 +48,7 @@ import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
 export const name = '@aalis/plugin-webui-server';
 export const displayName = 'WebUI 服务端';
 export const subsystem = 'platform';
-export const provides = ['webui-server'];
+export const provides = ['webui-server', 'platform'];
 export const inject = {
   // storage 改为 optional：避免 plugin-storage-local bounce 时级联重启 webui-server
   // （若 required，存储服务暂时消失会让 webui-server 进入 pending，导致 registeredPages
