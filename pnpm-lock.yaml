@@ -2024,6 +2024,8 @@ importers:
         specifier: ^6.2.0
         version: 6.4.1(@types/node@25.5.0)(jiti@2.7.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/plugin-webui-client-example: {}
+
   packages/plugin-webui-server:
     dependencies:
       '@aalis/plugin-platform-api':
