@@ -351,6 +351,40 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-code-sandbox-api:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-process-api':
+        specifier: workspace:*
+        version: link:../plugin-process-api
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-code-sandbox-os:
+    dependencies:
+      '@aalis/plugin-process-api':
+        specifier: workspace:^
+        version: link:../plugin-process-api
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-code-sandbox-api':
+        specifier: workspace:*
+        version: link:../plugin-code-sandbox-api
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-commands:
     dependencies:
       '@aalis/plugin-commands-api':
@@ -1522,6 +1556,9 @@ importers:
 
   packages/plugin-tool-code-runner:
     dependencies:
+      '@aalis/plugin-code-sandbox-api':
+        specifier: workspace:^
+        version: link:../plugin-code-sandbox-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
