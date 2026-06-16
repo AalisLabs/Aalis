@@ -203,8 +203,9 @@ export function toPluginCatalog(data: {
   return (data.objects ?? [])
     .filter(o => {
       const short = o.package.name.replace(/^@[^/]+\//, '');
-      // 剔除 *-api 契约、webui-client 前端、code-sandbox* 沙箱基建（均非「选功能」对象，按需自动带入）
-      return !/-api$/.test(short) && !/webui-client/.test(short) && !/^code-sandbox/.test(short);
+      // 剔除 *-api 契约、webui-client 前端、code-sandbox 沙箱基建（均非「选功能」对象，按需自动带入）。
+      // 注意短名仍带 `plugin-` 前缀（如 plugin-code-sandbox-os），故用非锚定匹配，勿用 /^code-sandbox/。
+      return !/-api$/.test(short) && !/webui-client/.test(short) && !/code-sandbox/.test(short);
     })
     .map(o => ({
       name: o.package.name,
@@ -382,6 +383,17 @@ async function main(): Promise<void> {
   const registry = argValue('--registry') ?? DEFAULT_REGISTRY;
   const positional = argv.slice(2).filter(a => !a.startsWith('-'));
   const cliName = positional[0];
+
+  // 非交互终端（管道 / 某些 IDE 终端 / CI）下进交互模式会在 readline 遇 EOF 时静默空退
+  // （exit 0、无项目、无报错）。提前拦截并给可操作指引，避免「看着像用不了」。
+  if (!skip && !stdin.isTTY) {
+    console.error(
+      '\n检测到非交互式环境（stdin 不是 TTY），无法进入选择界面。请改用非交互模式，例如：\n' +
+        '  npm create aalis <名> -- --yes              # standard 档 + 默认适配器\n' +
+        '  npm create aalis <名> -- --tier minimal     # 指定模板档 bare/minimal/standard/full\n',
+    );
+    exit(1);
+  }
 
   const rl = createInterface({ input: stdin, output: stdout });
   const ask = async (q: string, def: string): Promise<string> => {
