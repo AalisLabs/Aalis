@@ -46,10 +46,14 @@ export function parseCronField(field: string, min: number, max: number): Set<num
       if (step > 0) for (let i = min; i <= max; i += step) result.add(i);
     } else if (trimmed.includes('-')) {
       const [a, b] = trimmed.split('-').map(Number);
-      for (let i = a; i <= b; i++) result.add(i);
+      // 跳过非法范围（如 "5-" → [5,NaN]、"abc-def"）；并夹到 [min,max]，避免越界值
+      // （如分钟字段 "1-100" 旧实现会塞入 60-99 这些非法分钟）。
+      if (!Number.isNaN(a) && !Number.isNaN(b)) {
+        for (let i = Math.max(min, a); i <= Math.min(max, b); i++) result.add(i);
+      }
     } else {
       const n = parseInt(trimmed, 10);
-      if (!Number.isNaN(n)) result.add(n);
+      if (!Number.isNaN(n) && n >= min && n <= max) result.add(n);
     }
   }
   return result;
