@@ -262,7 +262,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
   return {
     vision: {
       mode: ((vision.mode as string) ?? 'describe') as MediaConfigResolved['vision']['mode'],
-      prefer: (vision.prefer as string) || undefined,
+      prefer: (vision.prefer as MediaConfigResolved['vision']['prefer']) || undefined,
       maxTokens: (vision.maxTokens as number) ?? 300,
       think: vision.think === true,
       prompt: (vision.prompt as string) || undefined,
@@ -270,7 +270,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
     },
     audio: {
       mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'passthrough' | 'disabled',
-      prefer: (audio.prefer as string) || undefined,
+      prefer: (audio.prefer as MediaConfigResolved['audio']['prefer']) || undefined,
       language: (audio.language as string) || undefined,
       maxTokens: (audio.maxTokens as number) ?? 1024,
       think: audio.think !== false,
