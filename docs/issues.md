@@ -6,8 +6,9 @@
 ## 待办（还没做，按优先级）
 
 ### 可能的缺陷
-1. webui 的市场展示的星级到底是在展示什么，总星吗？并且质量人气维护怎么都是100%
-2. 高权限用户分法低权限用户时，采取手写glob的方式是不是有点麻烦，能升级为某种可视化的选择方式吗？另外那个绑定平台用户的功能到底是在做什么，对于用户并不是很明确
+1. **授权改可视化能力选择器**：高权限用户给低权限用户授权目前要手写 glob（如 `tool:file.*`），
+   繁琐易错。后端 `getOverview` 已返回 commands/tools 清单，前端可做多选→自动生成 grant/deny；
+   需补枚举 `action:*`/`storage:*` 等能力类型。（市场假指标、媒体模型选择、平台绑定文案三项已修，见归档。）
 
 ### 新功能
 1. **第三方前端端到端实测**：装一个非默认 `aalis.client` 包，验证「发现 → 切换 → reload 加载」全链路
@@ -65,6 +66,15 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-16 **三项可能缺陷修复（市场假指标 / 媒体模型选择 / 平台绑定文案；media·webui-server·webui-client 0.4.1）**：
+  ① **市场星级/质量/人气/维护都 100%**：根因=展示了 npm **早已废弃**的 `score.detail`（对这些包统一返回 ~1.0），
+  星级也是拿 opaque 的 score 凑——全无意义。移除前端展示+后端字段+测试断言，只留真实信号（下载量/更新时间）。
+  **published webui-client@0.4.0 是旧构建仍含 100%，本次重发修正（已验证 0.4.1 dist 干净）**。
+  ② **图像/音频识别用了没指定的模型**：根因=vision/audio 的 `prefer` 配置只认「提供者名」字符串，指定
+  具体模型时匹配不到→静默回落默认。配置类型放宽 `string | ModelRef`，pickProcessor 已支持 ModelRef 匹配
+  →可钉死模型；新增 media-processor 单测。③ **平台绑定语义不清**：澄清按钮 title + 绑定码弹窗效果说明
+  （私聊发码/权限并入本账户/deny 取并集防洗白/可解绑）+ 标签 tooltip，统一「绑定」术语对齐 /bind。
+  附带：webui-server `provides` 补 'platform'（消除「运行时 ctx.provide 了但导出/package.json 没声明」的不一致）。
 - ✅ 2026-06-16 **全仓用户可见输入面加固（batch 2，commands/cron/onebot 0.4.1）**：先用 9-agent
   workflow 研究 Koishi/create-* 做法 + 审计全仓输入面，核实后**只修确凿真问题、排除被夸大项**
   （webui page-action 实为 owner 鉴权+authorize 闸非洞；http 已有读后截断；commands tokenize 不丢内容）。
