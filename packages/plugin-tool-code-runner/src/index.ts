@@ -1,4 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
+import { useCodeSandbox } from '@aalis/plugin-code-sandbox-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
@@ -13,6 +14,7 @@ export const displayName = '代码执行器';
 export const subsystem = 'tools';
 export const inject = {
   required: [{ service: 'storage', capabilities: ['local-path'] }, 'process'],
+  optional: ['code-sandbox'],
 };
 
 export const configSchema: ConfigSchema = {
@@ -64,6 +66,35 @@ export const configSchema: ConfigSchema = {
     default: 'workspace:/',
     description: '脚本执行时的 storage URI 工作目录，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
   },
+  sandbox: {
+    label: '代码沙箱',
+    fields: {
+      mode: {
+        type: 'select',
+        label: '隔离模式',
+        default: 'auto',
+        options: [
+          { label: '自动（有沙箱则强制隔离，无则拒绝运行）', value: 'auto' },
+          { label: '无隔离（裸进程，危险，仅信任环境）', value: 'none' },
+        ],
+        description:
+          'auto：经 code-sandbox 服务（Linux bubblewrap / macOS sandbox-exec）把代码限制在「工作区 + 本次临时目录」、默认断网、' +
+          '只放行白名单环境变量；无可用沙箱后端时拒绝执行（fail-closed）。none：退回无隔离裸进程，每次告警。' +
+          '说明：v1 读放开（解释器需系统库），防的是写出工作区/联网外泄/篡改系统，不防读取本机其它文件。',
+      },
+      network: {
+        type: 'select',
+        label: '子进程网络',
+        default: 'deny',
+        options: [
+          { label: '断网（推荐）', value: 'deny' },
+          { label: '放开（粗粒度，无法按域名过滤）', value: 'allow' },
+        ],
+        description:
+          '仅 auto 模式生效。deny：脚本内联网（含 fetch）会失败。allow：放开子进程网络（无法按域名白名单过滤）。',
+      },
+    },
+  },
 };
 
 export const defaultConfig = {
@@ -73,6 +104,7 @@ export const defaultConfig = {
   maxTimeout: 300000,
   maxOutputSize: 131072,
   workingDirectory: 'workspace:/',
+  sandbox: { mode: 'auto', network: 'deny' },
 };
 
 // ===== 配置解析 =====
@@ -84,11 +116,13 @@ interface CodeRunnerConfig {
   maxTimeout: number;
   maxOutputSize: number;
   workingDirectory: string;
+  sandbox: { mode: 'auto' | 'none'; network: 'deny' | 'allow' };
 }
 
 function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
   const py = config.python as Record<string, unknown> | undefined;
   const js = config.javascript as Record<string, unknown> | undefined;
+  const sb = config.sandbox as Record<string, unknown> | undefined;
   return {
     python: {
       enabled: (py?.enabled as boolean) ?? true,
@@ -102,6 +136,10 @@ function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
     maxTimeout: (config.maxTimeout as number) ?? 300000,
     maxOutputSize: (config.maxOutputSize as number) ?? 131072,
     workingDirectory: (config.workingDirectory as string) ?? 'workspace:/',
+    sandbox: {
+      mode: sb?.mode === 'none' ? 'none' : 'auto',
+      network: sb?.network === 'allow' ? 'allow' : 'deny',
+    },
   };
 }
 
@@ -130,6 +168,9 @@ async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<
     maxOutputSize: cfg.maxOutputSize,
     cwd: await storage.resolveLocalPath!(cwdUri, 'read'),
     env: safeEnv(),
+    // mode='none' → 不带 sandbox（裸跑）；mode='auto' → 带策略，runCode 经 code-sandbox 强制隔离或 fail-closed
+    sandbox: cfg.sandbox.mode === 'none' ? undefined : { network: cfg.sandbox.network },
+    codeSandbox: useCodeSandbox(ctx),
   };
 }
 
@@ -137,6 +178,11 @@ async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const cfg = resolveConfig(config);
+  if (cfg.sandbox.mode === 'none') {
+    ctx.logger.warn(
+      '⚠️ code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',
+    );
+  }
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
   const proc: ProcessService = createProcessGateway(ctx);
   const storage: StorageService = createStorageGateway(ctx);

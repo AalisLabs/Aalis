@@ -1,0 +1,29 @@
+{
+  "name": "@aalis/plugin-code-sandbox-api",
+  "version": "0.3.0",
+  "license": "MIT",
+  "description": "代码沙箱契约：在 OS 隔离下执行不可信代码的服务接口（code_runner 等消费）",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-process-api": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.2.0"
+  }
+}

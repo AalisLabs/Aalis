@@ -1,8 +1,8 @@
 {
-  "name": "@aalis/plugin-tool-code-runner",
-  "version": "0.2.0",
+  "name": "@aalis/plugin-code-sandbox-os",
+  "version": "0.3.0",
   "license": "MIT",
-  "description": "代码执行工具：运行代码片段并取回结果",
+  "description": "代码沙箱（OS 原生）：Linux bubblewrap / macOS sandbox-exec 隔离不可信代码执行",
   "type": "module",
   "keywords": [
     "aalis",
@@ -18,13 +18,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-code-sandbox-api": "workspace:^",
-    "@aalis/plugin-process-api": "workspace:^",
-    "@aalis/plugin-storage-api": "workspace:^",
-    "@aalis/plugin-tools-api": "workspace:^"
+    "@aalis/plugin-process-api": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/plugin-code-sandbox-api": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -34,10 +32,9 @@
   "aalis": {
     "service": {
       "required": [
-        "storage",
         "process"
       ],
-      "optional": [
+      "provides": [
         "code-sandbox"
       ]
     }
