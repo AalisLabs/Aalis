@@ -61,6 +61,13 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-16 **create-aalis 0.4.1（测发布版交互流程时抓到 2 个真 bug）**：① `code-sandbox-os`
+  错误出现在「其他插件」可选列表——`toPluginCatalog` 过滤用锚定 `/^code-sandbox/`，但去 scope 后短名仍带
+  `plugin-` 前缀（`plugin-code-sandbox-os`）→ 锚点永不匹配漏过；改非锚定 `/code-sandbox/`（沙箱基建选
+  code-runner 自动带、不该单选），加回归测试。② stdin 非 TTY（管道/某些 IDE 终端/CI）进交互模式 readline
+  遇 EOF **静默空退**（exit 0、无项目、无报错）；现 `!stdin.isTTY && !skip` 提前清晰报错 + 指引 `--yes/--tier`
+  并 exit(1)。**运营提醒**：今天前 npm 上是 0.2.0（含 realpath 入口 Bug A，交互界面不出现），修复随 0.4.0 已发；
+  **npx 缓存无版本号解析结果**，用户须 `npm create aalis@latest` 或清 `~/.npm/_npx` 才拿到新版。单包发布 0.4.1。
 - ✅ 2026-06-16 **全生态统一 0.4.0 + core peerDep 松绑（根治版本策略缺陷）**：92 包统一 bump 0.4.0
   （终结 0.2/0.3 不统一）；85 个 core peerDep `^0.2.0`→**`>=0.2.0 <1.0.0`**——旧 caret 在 0.x 把插件
   锁死单个次版本，core 一升次版本全生态显示不兼容、逼重发、慢更新第三方插件掉队；新区间接受任何 0.x
