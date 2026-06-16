@@ -1155,7 +1155,8 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
       const roleFilter = typeof args.role === 'string' ? args.role : '';
-      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      // 上限封顶，避免超大 limit 把整张列表灌进 LLM 上下文（token 浪费）。
+      const limit = Math.min(200, Math.max(1, Math.floor(Number(args.limit) || 30)));
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
 
       // 精简 + 过滤
@@ -1408,7 +1409,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
-      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      // 上限封顶，避免超大 limit 把整张列表灌进 LLM 上下文（token 浪费）。
+      const limit = Math.min(200, Math.max(1, Math.floor(Number(args.limit) || 30)));
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
 
       const all = list.map(g => ({
@@ -1462,7 +1464,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
-      const limit = Math.max(1, Math.floor(Number(args.limit) || 30));
+      // 上限封顶，避免超大 limit 把整张列表灌进 LLM 上下文（token 浪费）。
+      const limit = Math.min(200, Math.max(1, Math.floor(Number(args.limit) || 30)));
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
 
       const all = list.map(f => ({

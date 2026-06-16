@@ -420,77 +420,83 @@ export class CommandRegistry implements CommandService {
     const options = this.defaultOptions(cmd.options);
     const positionalTokens: string[] = [];
 
-    for (let i = 0; i < rawArgs.length; i++) {
-      const token = rawArgs[i];
-      if (token === '--') {
-        positionalTokens.push(...rawArgs.slice(i + 1));
-        break;
-      }
-      if (token.startsWith('--') && token.length > 2) {
-        const eq = token.indexOf('=');
-        const rawName = eq >= 0 ? token.slice(2, eq) : token.slice(2);
-        const negated = rawName.startsWith('no-');
-        const optName = negated ? rawName.slice(3) : rawName;
-        const def = findOption(cmd.options, optName);
-        if (!def) return `未知选项: --${optName}\n\n${this.formatUsage(cmd)}`;
-        let rawValue = eq >= 0 ? token.slice(eq + 1) : undefined;
-        if (def.type === 'boolean') {
-          options[def.name] = negated ? false : rawValue === undefined ? true : parseBoolean(rawValue);
-        } else {
-          if (rawValue === undefined) {
-            if (def.valueOptional) {
-              options[def.name] = true;
-              continue;
+    try {
+      for (let i = 0; i < rawArgs.length; i++) {
+        const token = rawArgs[i];
+        if (token === '--') {
+          positionalTokens.push(...rawArgs.slice(i + 1));
+          break;
+        }
+        if (token.startsWith('--') && token.length > 2) {
+          const eq = token.indexOf('=');
+          const rawName = eq >= 0 ? token.slice(2, eq) : token.slice(2);
+          const negated = rawName.startsWith('no-');
+          const optName = negated ? rawName.slice(3) : rawName;
+          const def = findOption(cmd.options, optName);
+          if (!def) return `未知选项: --${optName}\n\n${this.formatUsage(cmd)}`;
+          let rawValue = eq >= 0 ? token.slice(eq + 1) : undefined;
+          if (def.type === 'boolean') {
+            options[def.name] = negated ? false : rawValue === undefined ? true : parseBoolean(rawValue);
+          } else {
+            if (rawValue === undefined) {
+              if (def.valueOptional) {
+                options[def.name] = true;
+                continue;
+              }
+              i += 1;
+              rawValue = rawArgs[i];
             }
+            if (rawValue === undefined) return `选项 --${optName} 缺少取值`;
+            options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
+          }
+          continue;
+        }
+        if (token.startsWith('-') && token.length > 1) {
+          const alias = token.slice(1);
+          const def = findOption(cmd.options, alias);
+          if (!def) return `未知选项: -${alias}\n\n${this.formatUsage(cmd)}`;
+          if (def.type === 'boolean') {
+            options[def.name] = true;
+          } else {
             i += 1;
-            rawValue = rawArgs[i];
-          }
-          if (rawValue === undefined) return `选项 --${optName} 缺少取值`;
-          options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
-        }
-        continue;
-      }
-      if (token.startsWith('-') && token.length > 1) {
-        const alias = token.slice(1);
-        const def = findOption(cmd.options, alias);
-        if (!def) return `未知选项: -${alias}\n\n${this.formatUsage(cmd)}`;
-        if (def.type === 'boolean') {
-          options[def.name] = true;
-        } else {
-          i += 1;
-          const rawValue = rawArgs[i];
-          if (rawValue === undefined) {
-            if (def.valueOptional) {
-              options[def.name] = true;
-              continue;
+            const rawValue = rawArgs[i];
+            if (rawValue === undefined) {
+              if (def.valueOptional) {
+                options[def.name] = true;
+                continue;
+              }
+              return `选项 -${alias} 缺少取值`;
             }
-            return `选项 -${alias} 缺少取值`;
+            options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
           }
-          options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
+          continue;
         }
-        continue;
+        positionalTokens.push(token);
       }
-      positionalTokens.push(token);
-    }
 
-    for (const o of cmd.options) {
-      if (o.required && options[o.name] === undefined) return `缺少必填选项: --${o.name}`;
-    }
-
-    const positionals: unknown[] = [];
-    let cursor = 0;
-    for (const def of cmd.positionalArgs) {
-      const values = def.type === 'text' ? positionalTokens.slice(cursor) : positionalTokens.slice(cursor, cursor + 1);
-      if (values.length === 0) {
-        if (def.required) return `缺少必填参数: ${def.name}`;
-        positionals.push(undefined);
-        continue;
+      for (const o of cmd.options) {
+        if (o.required && options[o.name] === undefined) return `缺少必填选项: --${o.name}`;
       }
-      positionals.push(parsePositionalValue(def, values));
-      cursor += values.length;
-    }
 
-    return { positionals, options };
+      const positionals: unknown[] = [];
+      let cursor = 0;
+      for (const def of cmd.positionalArgs) {
+        const values =
+          def.type === 'text' ? positionalTokens.slice(cursor) : positionalTokens.slice(cursor, cursor + 1);
+        if (values.length === 0) {
+          if (def.required) return `缺少必填参数: ${def.name}`;
+          positionals.push(undefined);
+          continue;
+        }
+        positionals.push(parsePositionalValue(def, values));
+        cursor += values.length;
+      }
+
+      return { positionals, options };
+    } catch (err) {
+      // 取值解析错误（数字非法 / choices 越界）→ 返回可读错误串，而非抛出冒泡到命令管道。
+      return err instanceof Error ? err.message : String(err);
+    }
   }
 
   private defaultOptions(opts: OptionSpec[]): Record<string, unknown> {
@@ -657,7 +663,11 @@ function parseBoolean(value: string): boolean {
 }
 
 function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown): unknown {
-  if (def.type === 'number') return Number(rawValue);
+  if (def.type === 'number') {
+    const n = Number(rawValue);
+    if (Number.isNaN(n)) throw new Error(`选项 --${def.name} 需要数字，收到「${rawValue}」`);
+    return n;
+  }
   if (def.type === 'boolean') return parseBoolean(rawValue);
   if (def.type === 'string[]') {
     const current = Array.isArray(previous) ? (previous as string[]) : [];
@@ -678,7 +688,11 @@ function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown):
 
 function parsePositionalValue(def: PositionalArgSpec, values: string[]): unknown {
   const raw = def.type === 'text' ? values.join(' ') : values[0];
-  if (def.type === 'number') return Number(raw);
+  if (def.type === 'number') {
+    const n = Number(raw);
+    if (Number.isNaN(n)) throw new Error(`参数 ${def.name} 需要数字，收到「${raw}」`);
+    return n;
+  }
   if (def.type === 'boolean') return parseBoolean(raw);
   return raw;
 }
