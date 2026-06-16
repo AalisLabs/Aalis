@@ -11,11 +11,12 @@
  * src/index.ts。生成完毕后打印下一步命令。
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { argv, exit, stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 
 interface Answers {
   /** 包名，如 my-plugin 或 @scope/my-plugin */
@@ -30,11 +31,57 @@ interface Answers {
   };
 }
 
+// ── 输入校验（纯函数，便于单测）─────────────────────────────────
+// 注：validateNpmName 与 create-aalis 中实现刻意一致——两者都是零运行时依赖的独立脚手架，
+// 为不引入共享依赖而各留一份；改规则时需同步。
+
+export type ValidationResult = { ok: true } | { ok: false; error: string };
+
+/** 校验合法 npm 包名（生成插件 package.json 的 name；旧实现只查非空，会生成无法发布的名字）。 */
+export function validateNpmName(name: string): ValidationResult {
+  if (!name) return { ok: false, error: '名称不能为空。' };
+  if (name.length > 214) return { ok: false, error: '名称过长（>214 字符）。' };
+  if (/\s/.test(name)) return { ok: false, error: '名称不能含空格。' };
+  if (name !== name.toLowerCase()) return { ok: false, error: '名称必须全小写（npm 包名规则，如 my-plugin）。' };
+  let pkg = name;
+  if (name.startsWith('@')) {
+    const m = name.match(/^@([^/]+)\/(.+)$/);
+    if (!m) return { ok: false, error: 'scope 包名格式应为 @scope/name。' };
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(m[1])) {
+      return { ok: false, error: `scope「${m[1]}」非法（须以小写字母/数字开头，仅含 a-z 0-9 . _ -）。` };
+    }
+    pkg = m[2];
+  }
+  if (/^[._]/.test(pkg)) return { ok: false, error: '名称不能以 . 或 _ 开头。' };
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(pkg)) {
+    return { ok: false, error: '名称只能含小写字母、数字、- . _，且以字母或数字开头（如 my-plugin）。' };
+  }
+  return { ok: true };
+}
+
+/** 解析 yes/no 输入：空=默认；y/yes/true/1=真；n/no/false/0=假；其余=null（调用方重问）。 */
+export function parseYesNo(ans: string, def: boolean): boolean | null {
+  const a = ans.trim().toLowerCase();
+  if (a === '') return def;
+  if (['y', 'yes', 'true', '1'].includes(a)) return true;
+  if (['n', 'no', 'false', '0'].includes(a)) return false;
+  return null;
+}
+
 async function main(): Promise<void> {
   const args = argv.slice(2);
   const skipPrompts = args.includes('--yes') || args.includes('-y');
   const positional = args.filter(a => !a.startsWith('-'));
   const cliName = positional[0];
+
+  // 非交互终端下进交互会在 readline 遇 EOF 时静默空退；提前拦截并给指引（与 create-aalis 一致）。
+  if (!skipPrompts && cliName === undefined && !stdin.isTTY) {
+    console.error(
+      '\n检测到非交互式环境（stdin 不是 TTY），无法进入交互。请改用：\n' +
+        '  create-aalis-plugin <包名> --yes    # 全默认（tool 模板）\n',
+    );
+    exit(1);
+  }
 
   const rl = createInterface({ input: stdin, output: stdout });
   const ask = async (q: string, def?: string): Promise<string> => {
@@ -43,18 +90,37 @@ async function main(): Promise<void> {
     const ans = (await rl.question(`${q}${suffix}: `)).trim();
     return ans || def || '';
   };
+  // 校验式提问：坏输入打印错误并重问（仅交互模式）。
+  const askValid = async (q: string, def: string, validate: (v: string) => ValidationResult): Promise<string> => {
+    if (skipPrompts) return def;
+    while (true) {
+      const ans = (await rl.question(`${q} (${def}): `)).trim() || def;
+      const r = validate(ans);
+      if (r.ok) return ans;
+      console.log(`  ⚠ ${r.error}`);
+    }
+  };
   const askYesNo = async (q: string, def = true): Promise<boolean> => {
     if (skipPrompts) return def;
-    const ans = (await ask(q, def ? 'Y/n' : 'y/N')).toLowerCase();
-    if (!ans || ans === 'y/n'.slice(0, ans.length)) return def;
-    return ans === 'y' || ans === 'yes' || ans === 'true';
+    while (true) {
+      const ans = await rl.question(`${q} (${def ? 'Y/n' : 'y/N'}): `);
+      const r = parseYesNo(ans, def);
+      if (r !== null) return r;
+      console.log('  ⚠ 请输入 y 或 n。');
+    }
   };
 
   try {
-    const packageName = cliName ?? (await ask('包名（如 my-plugin 或 @scope/my-plugin）', 'aalis-plugin-sample'));
-    if (!packageName) {
-      console.error('包名不能为空');
-      exit(1);
+    let packageName: string;
+    if (cliName !== undefined) {
+      const r = validateNpmName(cliName);
+      if (!r.ok) {
+        console.error(`非法包名「${cliName}」：${r.error}`);
+        exit(1);
+      }
+      packageName = cliName;
+    } else {
+      packageName = await askValid('包名（如 my-plugin 或 @scope/my-plugin）', 'aalis-plugin-sample', validateNpmName);
     }
     const displayName = await ask('显示名（中文标签）', defaultDisplayName(packageName));
     const features: Answers['features'] = {
@@ -259,7 +325,17 @@ ${a.features.tool ? '- ✓ 注册 AI 工具（\\`useToolService\\`）\n' : ''}${
 `;
 }
 
-main().catch(err => {
-  console.error(err);
-  exit(1);
-});
+// 仅在作为 CLI 直接执行时运行 main；被 import（单测纯函数）时不自动跑。
+// 用 realpath 比较两侧：经 .bin 软链调用时 argv[1] 是软链路径，直接比 import.meta.url 会不相等。
+let isCliEntry = false;
+try {
+  isCliEntry = !!argv[1] && realpathSync(argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch {
+  /* 非文件入口（REPL/eval 等）：保持 false，不自动运行 */
+}
+if (isCliEntry) {
+  main().catch(err => {
+    console.error(err);
+    exit(1);
+  });
+}

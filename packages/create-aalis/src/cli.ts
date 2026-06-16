@@ -215,6 +215,62 @@ export function toPluginCatalog(data: {
     }));
 }
 
+// ── 输入校验（纯函数，便于单测；交互层在出错时重问而非静默吞）──────────
+
+export type IndexParse = { ok: true; indices: number[] } | { ok: false; error: string };
+
+/**
+ * 解析「序号选择」输入：兼容逗号或空格分隔（"1,2" / "1, 2" / "1 2" 等价）。
+ * 严格校验——任何非纯数字 token、越界、重复、或 exclusive 多选都返回 ok:false + 可读错误，
+ * 由调用方重问；不再像旧实现那样 parseInt 宽容 + filter 静默丢弃坏输入。
+ * 空串视为 ok:[]（「空=默认/不选」的语义由调用方决定）。
+ */
+export function parseIndexSelection(raw: string, count: number, mode: 'multi' | 'exclusive'): IndexParse {
+  const tokens = raw.split(/[\s,]+/).filter(Boolean);
+  const indices: number[] = [];
+  for (const t of tokens) {
+    if (!/^\d+$/.test(t)) {
+      return { ok: false, error: `无法识别「${t}」：请只输入序号（如 1,2 或 1 2），不要含字母或符号。` };
+    }
+    const n = Number.parseInt(t, 10);
+    if (n < 1 || n > count) return { ok: false, error: `序号 ${n} 超出范围（应在 1-${count}）。` };
+    if (indices.includes(n)) return { ok: false, error: `序号 ${n} 重复了。` };
+    indices.push(n);
+  }
+  if (mode === 'exclusive' && indices.length > 1) {
+    return { ok: false, error: '这是单选，请只输入一个序号。' };
+  }
+  return { ok: true, indices };
+}
+
+export type ValidationResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * 校验是否为合法 npm 包名（生成项目/插件的 package.json `name`）。覆盖 npm 核心规则的常见子集：
+ * 全小写、≤214 字符、无空格、不以 . 或 _ 开头、仅 url-safe 字符、可选 @scope/ 前缀。
+ * 旧实现仅用宽松正则（放行 MyBot / 全点名等）或只查非空，会生成无法 install/publish 的名字。
+ */
+export function validateNpmName(name: string): ValidationResult {
+  if (!name) return { ok: false, error: '名称不能为空。' };
+  if (name.length > 214) return { ok: false, error: '名称过长（>214 字符）。' };
+  if (/\s/.test(name)) return { ok: false, error: '名称不能含空格。' };
+  if (name !== name.toLowerCase()) return { ok: false, error: '名称必须全小写（npm 包名规则，如 my-bot）。' };
+  let pkg = name;
+  if (name.startsWith('@')) {
+    const m = name.match(/^@([^/]+)\/(.+)$/);
+    if (!m) return { ok: false, error: 'scope 包名格式应为 @scope/name。' };
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(m[1])) {
+      return { ok: false, error: `scope「${m[1]}」非法（须以小写字母/数字开头，仅含 a-z 0-9 . _ -）。` };
+    }
+    pkg = m[2];
+  }
+  if (/^[._]/.test(pkg)) return { ok: false, error: '名称不能以 . 或 _ 开头。' };
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(pkg)) {
+    return { ok: false, error: '名称只能含小写字母、数字、- . _，且以字母或数字开头（如 my-bot）。' };
+  }
+  return { ok: true };
+}
+
 /** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
 async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
   try {
@@ -396,19 +452,49 @@ async function main(): Promise<void> {
   }
 
   const rl = createInterface({ input: stdin, output: stdout });
-  const ask = async (q: string, def: string): Promise<string> => {
-    if (skip) return def;
-    const ans = (await rl.question(`${q} (${def}): `)).trim();
-    return ans || def;
+  // 重问式提问：校验失败时打印错误并重问，不静默接受坏输入。
+  const askValid = async (q: string, def: string, validate: (v: string) => ValidationResult): Promise<string> => {
+    while (true) {
+      const ans = (await rl.question(`${q} (${def}): `)).trim() || def;
+      const r = validate(ans);
+      if (r.ok) return ans;
+      console.log(`  ⚠ ${r.error}`);
+    }
+  };
+  // 序号选择：兼容逗号或空格分隔，坏输入重问；空串=用默认集。
+  const askIndices = async (
+    q: string,
+    count: number,
+    mode: 'multi' | 'exclusive',
+    defaults: number[],
+  ): Promise<number[]> => {
+    while (true) {
+      const raw = (await rl.question(`${q}: `)).trim();
+      if (raw === '') return defaults;
+      const r = parseIndexSelection(raw, count, mode);
+      if (r.ok) return r.indices;
+      console.log(`  ⚠ ${r.error}`);
+    }
   };
 
   try {
     console.log('\n=== 创建 Aalis 项目 ===\n');
-    const projectName = cliName ?? (await ask('项目目录名', 'my-aalis-bot'));
-    if (!/^[a-zA-Z0-9._@/-]+$/.test(projectName)) {
-      console.error(`非法项目名: ${projectName}`);
-      exit(1);
+
+    // 项目名 → 生成 package.json 的 name，须为合法 npm 包名（交互时重问，flag/arg 给错则退出）。
+    let projectName: string;
+    if (cliName !== undefined) {
+      const r = validateNpmName(cliName);
+      if (!r.ok) {
+        console.error(`非法项目名「${cliName}」：${r.error}`);
+        exit(1);
+      }
+      projectName = cliName;
+    } else if (skip) {
+      projectName = 'my-aalis-bot';
+    } else {
+      projectName = await askValid('项目目录名', 'my-aalis-bot', validateNpmName);
     }
+
     const targetDir = resolve(cwd(), projectName);
     if (existsSync(targetDir) && readdirSync(targetDir).length > 0 && !force) {
       console.error(`目录已存在且非空: ${targetDir}（加 --force 覆盖写入）`);
@@ -419,78 +505,59 @@ async function main(): Promise<void> {
     console.log('  bare      只装 Aalis Core + runtime（完全自定义起点）');
     console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 LLM+1 平台+记忆）');
     console.log('  standard  常用全家桶（minimal + WebUI/人设/向量记忆/工具/调度/技能…）');
-    console.log('  full      全部官方插件（实时查 npm，同类适配器一并全装，可能需手动取舍）\n');
-    console.log('（minimal/standard 交互时会实时拉取 npm 全生态供你加选“其他插件”）\n');
-    const tier = (tierFlag ?? (await ask('模板档 [bare/minimal/standard/full]', 'standard'))).toLowerCase() as Tier;
-    if (!['bare', 'minimal', 'standard', 'full'].includes(tier)) {
-      console.error(`未知模板档: ${tier}`);
-      exit(1);
+    console.log('  full      全部官方插件（实时查 npm 全装，可能需手动取舍）\n');
+    console.log('（更多插件不在终端铺列——建好后在 WebUI 插件市场搜索安装，对齐 Koishi 做法）\n');
+
+    const validTier = (v: string): ValidationResult =>
+      ['bare', 'minimal', 'standard', 'full'].includes(v.toLowerCase())
+        ? { ok: true }
+        : { ok: false, error: `未知模板档「${v}」，请输入 bare / minimal / standard / full。` };
+    let tier: Tier;
+    if (tierFlag !== undefined) {
+      const r = validTier(tierFlag);
+      if (!r.ok) {
+        console.error(r.error);
+        exit(1);
+      }
+      tier = tierFlag.toLowerCase() as Tier;
+    } else if (skip) {
+      tier = 'standard';
+    } else {
+      tier = (await askValid('模板档 [bare/minimal/standard/full]', 'standard', validTier)).toLowerCase() as Tier;
     }
 
     const enabled = baseEnabled(tier);
 
-    // 同类适配器交互选择（仅 minimal/standard，且仅该档出现的组）
+    // 同类适配器交互选择（仅 minimal/standard，且仅该档出现的组）；坏输入重问。
     if (tier === 'minimal' || tier === 'standard') {
       for (const group of GROUPS) {
         if (!group.tiers.includes(tier)) continue;
         console.log(`\n${group.label}:`);
         for (const [i, m] of group.members.entries()) console.log(`  ${i + 1}. ${m.label}`);
         const defaults = group.members.filter(m => m.default).map(m => group.members.indexOf(m) + 1);
-        const defStr = group.mode === 'exclusive' ? String(defaults[0] ?? 1) : defaults.join(',');
-        const raw = await ask(
-          group.mode === 'exclusive' ? '选一个（序号）' : '选若干（逗号分隔序号，留空=默认）',
-          defStr,
-        );
-        const picks = raw
-          .split(',')
-          .map(s => Number.parseInt(s.trim(), 10))
-          .filter(n => n >= 1 && n <= group.members.length);
-        const chosen = group.mode === 'exclusive' ? picks.slice(0, 1) : picks;
-        for (const idx of chosen.length > 0 ? chosen : defaults) enabled.add(group.members[idx - 1].name);
+        const defStr = group.mode === 'exclusive' ? String(defaults[0] ?? 1) : defaults.join(',') || '无';
+        const q =
+          group.mode === 'exclusive'
+            ? `选一个（序号，回车=默认 ${defStr}）`
+            : `选若干（逗号或空格分隔序号，回车=默认 ${defStr}）`;
+        const picks = skip ? defaults : await askIndices(q, group.members.length, group.mode, defaults);
+        for (const idx of picks) enabled.add(group.members[idx - 1].name);
       }
     }
 
-    // live 插件目录：实时查 npm（keyword:aalis-plugin），列全生态（官方 + 社区）。
-    // full 档据此装全部官方插件；minimal/standard 交互档据此提供"其他插件"多选。
+    // 插件目录：full 档用它枚举全部官方插件；非 bare 档也复用其版本号，省去逐包查询。
+    // 注意：旧版「其他插件」live 全列表多选已撤——长尾插件发现交给 WebUI 市场（见上提示）。
     let catalog: CatalogEntry[] | null = null;
     if (tier !== 'bare') {
       catalog = await fetchCatalog(registry);
-      if (!catalog) console.warn('（无法连接 npm 检索插件目录，回退离线静态表）');
+      if (!catalog && tier === 'full') console.warn('（无法连接 npm，full 档回退离线静态表）');
     }
-
     if (tier === 'full') {
       // full = 全部官方插件：live 优先，失败回退静态（baseEnabled(full) 已含 base∪extra∪groups）
       if (catalog) {
         for (const e of catalog) if (e.official) enabled.add(e.name);
       } else {
         for (const n of STATIC_OTHERS) enabled.add(n);
-      }
-    } else if ((tier === 'minimal' || tier === 'standard') && !skip) {
-      // 其他插件 live 多选（排除已启用、同类组成员、core/runtime/package-manager）
-      const groupMembers = new Set(GROUPS.flatMap(g => g.members.map(m => m.name)));
-      const exclude = new Set<string>([
-        ...enabled,
-        ...groupMembers,
-        '@aalis/core',
-        '@aalis/runtime',
-        '@aalis/plugin-package-manager',
-      ]);
-      const others = (catalog ?? STATIC_OTHERS.map(n => ({ name: n, description: '', official: true }))).filter(
-        e => !exclude.has(e.name),
-      );
-      if (others.length > 0) {
-        console.log(`\n其他可选插件（${catalog ? 'live from npm' : '离线静态表'}）:`);
-        for (const [i, e] of others.entries()) {
-          console.log(
-            `  ${i + 1}. ${e.name}${e.official ? '' : ' [社区]'}${e.description ? ` — ${e.description}` : ''}`,
-          );
-        }
-        const raw = await ask('选若干（逗号分隔序号，留空=不加）', '');
-        const picks = raw
-          .split(',')
-          .map(s => Number.parseInt(s.trim(), 10))
-          .filter(n => n >= 1 && n <= others.length);
-        for (const idx of picks) enabled.add(others[idx - 1].name);
       }
     }
 
@@ -544,6 +611,14 @@ async function main(): Promise<void> {
     const needsEnv = enabledList.some(n => KNOWN_CONFIG[n]?.env?.length);
     if (needsEnv) console.log('  cp .env.example .env   # 填入 API key');
     console.log('  npm start');
+    if (tier !== 'full') {
+      const hasWebui = enabled.has('@aalis/plugin-webui-server');
+      console.log(
+        hasWebui
+          ? '\n更多插件：启动后在 WebUI 的「插件市场」页搜索安装（或 npm install @aalis/plugin-<name>）。'
+          : '\n更多插件：npm install @aalis/plugin-<name> 即可（装上自动发现加载）；装 webui-server 后还可用图形化插件市场。',
+      );
+    }
     console.log('');
   } finally {
     rl.close();
