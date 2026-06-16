@@ -67,6 +67,9 @@ export function registerPluginRoutes(
       commands: commandsByPlugin.get(p.name) ?? [],
       core: p.core ?? false,
       reusable: p.reusable ?? false,
+      // extends 是 WebUI 展示概念（声明合并到 PluginModule，core 状态契约不含）：
+      // 直接从插件 module 读取并转发给前端，让「扩展 Core」标签真正渲染。
+      extends: pm.getPlugin(p.instanceId)?.module?.extends,
       config: p.config,
       configSchema: p.configSchema,
       defaultConfig: p.defaultConfig,
