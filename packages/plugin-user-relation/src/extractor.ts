@@ -1394,30 +1394,30 @@ function buildExtractionPrompt(
       '',
       '## 正确建模示例',
       '### 示例 1a：纯偏好声明（无行为证据）→ 留给 user-profile，本插件全空',
-      "原话：'我喜欢打三角洲，157也喜欢'（Alice 单句声明，窗口内无其他行为记录）",
+      "原话：'我喜欢打三角洲，Bob也喜欢'（Alice 单句声明，窗口内无其他行为记录）",
       '✅ 正确输出：persons: [], entities: [], personEntityEdges: []  ← 仅声明性表态，无行为事实；画像属性由 user-profile 处理。',
       '❌ 不要：role="enthusiast"（无行为证据）。若想保留态度信号但已有其他边，在那条边上加 sentiment=positive 即可。',
       '',
       '### 示例 1b：行为性热情 → 建 enthusiast 边（多人共同指向同实体，揭示社会连接）',
-      "原话：'Alice 三角洲玩了两年还做了个 mod；157 每天晚上直播三角洲'",
+      "原话：'Alice 三角洲玩了两年还做了个 mod；Bob 每天晚上直播三角洲'",
       '✅ 正确输出：',
       '  entities: [{ refKey: "e1", name: "三角洲", entityKind: "work" }]',
-      '  personEntityEdges: [{ Alice→e1 role=enthusiast sentiment=positive }, { 157→e1 role=enthusiast sentiment=positive }]',
+      '  personEntityEdges: [{ Alice→e1 role=enthusiast sentiment=positive }, { Bob→e1 role=enthusiast sentiment=positive }]',
       '  — 有行为性证据（长期参与 + 创作/直播），且两人共同指向同实体，揭示潜在社会连接。',
       '❌ 不要：仅凭一句"喜欢"建 enthusiast；必须有行为事实支撑。',
       '',
       '### 示例 2：多人共同行为/讨论 → 建 event + part-of entity',
-      "原话（多人多轮）：A: '今晚一起打三角洲？' B: '行' A: '我开车' B: '157 你来不？' 157: '来'",
+      "原话（多人多轮）：A: '今晚一起打三角洲？' B: '行' A: '我开车' B: 'Bob 你来不？' Bob: '来'",
       '✅ 正确输出：',
       '  entities: [{ refKey: "e1", name: "三角洲", entityKind: "work" }]',
       '  events: [{ refKey: "ev1", title: "约局开黑《三角洲》", category: "collaboration" }]',
-      '  personEventEdges: [{ A→ev1 role=initiator }, { B→ev1 role=participant }, { 157→ev1 role=participant }]',
+      '  personEventEdges: [{ A→ev1 role=initiator }, { B→ev1 role=participant }, { Bob→ev1 role=participant }]',
       '  eventEntityEdges: [{ ev1→e1 relationType="part-of" }]',
       '',
       '### 示例 3：单向 person-person 声明（允许不对等）',
-      "原话：A: '157 是我兄弟' （A 自己说；窗口里 157 没回应或没否认）",
-      '✅ 正确输出：personPersonEdges: [{ A→157 relationType="friend" directed=true }]  ← 仅 A 的单向声明；不写 157→A。',
-      '✅ 同理：A: "我跟 157 闹翻了" → personPersonEdges: [{ A→157 relationType="hostile" directed=true }]，允许负向且不对等。',
+      "原话：A: 'Bob 是我兄弟' （A 自己说；窗口里 Bob 没回应或没否认）",
+      '✅ 正确输出：personPersonEdges: [{ A→Bob relationType="friend" directed=true }]  ← 仅 A 的单向声明；不写 Bob→A。',
+      '✅ 同理：A: "我跟 Bob 闹翻了" → personPersonEdges: [{ A→Bob relationType="hostile" directed=true }]，允许负向且不对等。',
       '',
       '### ⭐ 示例 4：Hub-first（同一实体的不同事件必须共享同一 entity refKey）',
       '场景：一段窗口里 A、B 在「打绝航」；同窗口 C、D 在「讨论绝航的剧情」。这是 Aalis 最容易失忆的地方。',
@@ -1536,7 +1536,7 @@ function collectSenderList(userMsgs: Message[]): string {
  *   ## Alice (onebot:1234567)
  *     event[eid] 开黑《三角洲》  role=participant w=2.3
  *     entity[entid] 三角洲 (work)  role=enthusiast w=4.1
- *     person→157(onebot) "friend" w=1.0
+ *     person→Bob(onebot) "friend" w=1.0
  * 没邻居的发言人/新人不渲染。
  */
 function renderSenderNeighbors(neighbors: SenderNeighborhood[]): string {
