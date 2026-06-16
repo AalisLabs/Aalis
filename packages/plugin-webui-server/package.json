@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-webui-server",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "AGPL-3.0-only",
   "description": "Web 管理界面后端：对话/插件/服务/市场/文件",
   "type": "module",
@@ -59,7 +59,8 @@
         "process"
       ],
       "provides": [
-        "webui-server"
+        "webui-server",
+        "platform"
       ]
     }
   }

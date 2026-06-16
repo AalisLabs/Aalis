@@ -383,8 +383,13 @@ export function AuthorityPage() {
               <button className="btn-sm" onClick={() => setShowAddUser(!showAddUser)}>
                 {showAddUser ? '取消' : '+ 添加用户'}
               </button>
-              <button className="btn-sm" title="为当前登录账户生成跨平台绑定码（绑定 QQ 等外部身份）"
-                onClick={generateBindCode}>绑定平台身份</button>
+              <button
+                className="btn-sm"
+                title="把某个平台账号（如 QQ）绑定到当前 WebUI 账户：绑定后该平台账号的权限并入本账户，相当于声明二者是同一个人，便于跨平台统一管理权限。"
+                onClick={generateBindCode}
+              >
+                绑定平台账号
+              </button>
               <button className="btn-sm" onClick={refresh} disabled={loading}>
                 {loading ? '刷新中...' : '刷新'}
               </button>
@@ -397,6 +402,9 @@ export function AuthorityPage() {
                   <button className="btn-sm" onClick={() => setBindCode(null)}>关闭</button>
                 </div>
                 <label>{bindCode.hint}</label>
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+                  用要绑定的平台账号<strong>私聊</strong>机器人发送该码（私聊防止码被他人冒用）。绑定后，该平台账号的请求按本账户的权限处理；其原有权限会并入本账户（拒绝项取并集，防「换账号洗白封禁」）。可随时在用户行点 × 解绑还原。
+                </p>
               </div>
             )}
             {showAddUser && (
@@ -452,12 +460,12 @@ export function AuthorityPage() {
                             </span>
                           )}
                           {u.linkedTo && (
-                            <span className="authority-user-flag" title={`已绑定到主账户 ${u.linkedTo}：运行时以账户身份解析（解绑后还原）`}>
+                            <span className="authority-user-flag" title={`此平台身份已绑定到账户 ${u.linkedTo}：登录后按该账户的权限处理（解绑后恢复其原权限）`}>
                               → {u.linkedTo}
                             </span>
                           )}
                           {u.links?.map(link => (
-                            <span key={link} className="authority-user-flag" title="已绑定的平台身份（运行时解析到本账户）">
+                            <span key={link} className="authority-user-flag" title="本账户已绑定的平台身份：其请求都按本账户权限处理；点 × 解绑还原">
                               ⇄ {link}
                               <button className="authority-unlink-btn" title="解绑"
                                 onClick={() => {

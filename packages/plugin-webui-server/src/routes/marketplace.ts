@@ -35,10 +35,8 @@ interface MarketplacePackage {
   downloads?: number;
   /** 最近更新时间（ISO，新鲜度信号） */
   updated?: string;
-  /** npm 综合评分 0~1（quality/popularity/maintenance 加权） */
+  /** npm 综合评分（仅供排序；npm 已不再提供可信的 quality/popularity/maintenance 细分，故不展示） */
   score?: number;
-  /** 评分细分，用于 tooltip 展示 */
-  scoreDetail?: { quality?: number; popularity?: number; maintenance?: number };
   /** npm 标记的不安全包（红色警示） */
   insecure?: boolean;
   license?: string;
@@ -57,7 +55,7 @@ interface NpmSearchResponse {
       links?: { npm?: string; homepage?: string; repository?: string };
       publisher?: { username?: string };
     };
-    score?: { final?: number; detail?: { quality?: number; popularity?: number; maintenance?: number } };
+    score?: { final?: number };
     downloads?: { monthly?: number; weekly?: number };
     flags?: { insecure?: number };
     updated?: string;
@@ -161,7 +159,6 @@ export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<st
     downloads: o.downloads?.monthly,
     updated: o.updated ?? o.package.date,
     score: o.score?.final,
-    scoreDetail: o.score?.detail,
     insecure: o.flags?.insecure ? true : undefined,
     license: o.package.license,
     links: o.package.links,
