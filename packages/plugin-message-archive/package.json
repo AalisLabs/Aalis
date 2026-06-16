@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-message-archive",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "消息归档：持久化原始消息流以供检索",
   "type": "module",
@@ -29,7 +29,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {
