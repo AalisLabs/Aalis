@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-user-profile",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "用户画像：记录与检索用户信息",
   "type": "module",
@@ -33,7 +33,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {

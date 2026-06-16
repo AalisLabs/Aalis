@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-mcp-client",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "MCP 客户端：连接外部 MCP server，把其 tools 注册进工具表",
   "type": "module",
@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {
