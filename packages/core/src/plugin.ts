@@ -230,25 +230,17 @@ export class PluginManager {
    * 编译期保证两边不漂移。
    */
   getStatus(): PluginStatusEntry[] {
+    // 注：WebUI 展示概念（subsystem/extends）不在 core 状态契约里——webui-server 直接从
+    // 插件 module（getPlugin(name).module，由 @aalis/plugin-webui-api 声明合并）读取，core 不感知。
     return [...this.plugins.entries()].map(([, entry]) => {
-      // subsystem / extends 由 @aalis/plugin-webui-api 通过 declaration merging
-      // 注入，core 不感知其语义，仅透传给 listPlugins() 调用方。
-      // 实际消费者：plugin-webui-server（按 subsystem 将插件归组渲染到 dashboard，
-      // 见 packages/plugin-webui-server/src/index.ts）。"core 不消费 ≠ 系统未消费"。
-      const m = entry.module as {
-        subsystem?: string;
-        extends?: unknown;
-      };
       return {
         name: entry.module.name,
         instanceId: entry.instanceId,
         displayName: entry.module.displayName,
-        subsystem: m.subsystem,
         state: entry.state,
         provides: entry.module.provides,
         core: entry.module.core,
         reusable: entry.module.reusable,
-        extends: m.extends,
         requiredServices: entry.requiredDeps.length > 0 ? entry.requiredDeps.map(d => d.service) : undefined,
         optionalServices: entry.optionalDeps.length > 0 ? entry.optionalDeps.map(d => d.service) : undefined,
         config: entry.config,

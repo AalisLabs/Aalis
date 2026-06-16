@@ -26,13 +26,10 @@ export interface PluginStatusEntry {
   name: string;
   instanceId: string;
   displayName?: string;
-  /** 子系统归属（manifest 声明），用于 WebUI 分组展示 */
-  subsystem?: string;
   state: PluginState;
   provides?: string[];
   core?: boolean;
   reusable?: boolean;
-  extends?: unknown;
   /** 必需依赖的服务名（来自 inject.required，能力披露用：该插件「要调用哪些子系统」） */
   requiredServices?: string[];
   /** 可选依赖的服务名（来自 inject.optional） */

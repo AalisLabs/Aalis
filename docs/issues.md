@@ -34,6 +34,13 @@
 
 ## 已决议（长期约束）
 
+- **共享契约污染审查结论（2026-06-16）**：一次 86-agent 审查扫了 core + 全部 -api，标记 21 项「单/零消费者」。
+  复核后**只有少数是真问题**（已修，见归档）；**多数是有意保留、勿再标记**：① 挂 `AalisEvents` 的
+  `workflow:run:*` 等事件（事件就是给别人订阅的，0 订阅者≠污染）；② session-tree 面（getTree/createChildSession
+  /completeSession，task-tree #5 的设计扩展点）；③ Memory 的 `updateMessageContent`/`deleteMessagesByTimestamps`
+  + capability + probe（这是「声明可选能力让消费者安全探测」的**既定模式**）；④ `getPersonaSkills`、`Scoped*.raw`、
+  `PlatformCapabilityRegistry` 等扩展点/一致访问器。**判定原则**：「当前单一消费者」不等于污染——若该成员是
+  其所属服务合理的通用能力、或是面向第三方/未来的扩展点，则保留（最多泛化文档），不删。详见 [[avoid-polluting-shared-contracts]]。
 - **core 设计理念**：环境无关（不碰 I/O / process.env，一切经 provider 注入）、抽象化（IoC + 事件
   + 钩子 + 能力声明）、最简化（不引第三方运行时依赖，API 面最小）、忒修斯之船（任何插件/子系统
   可热替换或经 AppOptions 注入替换，前端亦然）。
@@ -48,6 +55,14 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-16 **共享契约清理（仅真问题）**：① **core 去 WebUI 泄漏**——`PluginStatusEntry.subsystem/extends`
+  移出 core（env-agnostic 不该命名 WebUI 概念）；webui-server 改从 `getPlugin(instanceId).module` 读 subsystem，
+  **并顺手接通一直没接的「扩展 Core」UI**（/api/plugins 现转发 `module.extends` → 前端 chips 真正渲染）。
+  真正的扩展机制（declare module 声明合并 / 服务 / 事件）完全不动。② **删确凿死代码**（0 消费者，删前逐个 grep）：
+  `SessionManagerService.getDefaults`、`AgentService.getPluginGroups/getPreprocessors`（+ PluginGroupInfo/
+  PreprocessorInfo）。其余审计项判定为有意扩展点/既定模式予以保留（见已决议）。ci 绿、零行为回归。
+- ✅ 2026-06-16 **create-aalis 入口与版本修复**（见 fix/create-aalis-entry）：realpath 修 .bin 软链入口；
+  版本去硬编码 `^0.1.0`，改脚手架时逐包从 npm 解析当前最新写 `^<最新>`、失败回退 `latest`。create-aalis 0.2.1。
 - ✅ 2026-06-15 **合 main 前对抗审查 + 修复**（6 reviewer × 3 验证者；12/21 确认）：
   ①file-reader DOCX 识别去 `hint`（恢复 24h 描述缓存）+ `detailLevel:'detailed'`（每图 2→1 次视觉调用）+
   并发 3 + 30s 整体预算（修「上传同步阻塞」）；②workflow agent 节点 `source` 含 nodeId 隔离并发 lane
