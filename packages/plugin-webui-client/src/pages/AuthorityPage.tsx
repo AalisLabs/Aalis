@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User, Crown, Command, Wrench, Clock } from 'lucide-react';
 import { pageAction } from '../api';
+import { type CapState, buildCaps, splitCaps } from './capability-picker-util.js';
 
 interface AuthorityUser {
   platform: string;
@@ -68,6 +69,112 @@ interface Overview {
 
 const toList = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+/**
+ * 能力选择器：把已知命令/工具列成三态（默认/授予/拒绝）勾选，免去手写 glob；
+ * 通配/动作/存储等选择器表达不了的模式走「高级」框。自身持本地编辑态（按 key 重挂以重置），
+ * 任何变更经 onChange 回写 grant/deny 逗号串给父组件保存。委托子集越权由后端兜底拒绝。
+ */
+function CapabilityPicker({
+  commands,
+  tools,
+  initialGrant,
+  initialDeny,
+  onChange,
+}: {
+  commands: AuthorityCommand[];
+  tools: AuthorityTool[];
+  initialGrant: string;
+  initialDeny: string;
+  onChange: (grant: string, deny: string) => void;
+}) {
+  const items = [
+    ...commands.map(c => ({ id: `command:${c.name}`, label: c.displayName || c.name, kind: '命令', vis: c.visibility })),
+    ...tools.map(t => ({ id: `tool:${t.name}`, label: t.name, kind: '工具', vis: t.visibility })),
+  ];
+  const knownIds = new Set(items.map(i => i.id));
+
+  const init = splitCaps(initialGrant, initialDeny, knownIds);
+  const [caps, setCaps] = useState<Record<string, CapState>>(() => init.caps);
+  const [advGrant, setAdvGrant] = useState(() => init.advGrant);
+  const [advDeny, setAdvDeny] = useState(() => init.advDeny);
+  const [q, setQ] = useState('');
+
+  const emit = (c: Record<string, CapState>, ag: string, ad: string) => {
+    const { grant, deny } = buildCaps(c, ag, ad);
+    onChange(grant, deny);
+  };
+  const setCap = (id: string, st: 'default' | 'grant' | 'deny') => {
+    const next = { ...caps };
+    if (st === 'default') delete next[id];
+    else next[id] = st;
+    setCaps(next);
+    emit(next, advGrant, advDeny);
+  };
+
+  const ql = q.trim().toLowerCase();
+  const shown = items.filter(i => !ql || i.id.toLowerCase().includes(ql) || i.label.toLowerCase().includes(ql));
+
+  return (
+    <div>
+      <input className="config-edit-input" placeholder="搜索命令 / 工具…" value={q} onChange={e => setQ(e.target.value)} />
+      <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, margin: '6px 0' }}>
+        {shown.length === 0 ? (
+          <div className="config-block-hint" style={{ padding: 8 }}>无匹配项（通配/动作/存储请用下方高级框）</div>
+        ) : (
+          shown.map(i => {
+            const st = caps[i.id] ?? 'default';
+            return (
+              <div
+                key={i.id}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderBottom: '1px solid var(--border)' }}
+              >
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ opacity: 0.55, fontSize: 11, marginRight: 4 }}>{i.kind}</span>
+                  {i.label}
+                  <span
+                    className="authority-user-flag"
+                    style={{ marginLeft: 6 }}
+                    title={i.vis === 'restricted' ? '默认禁用，需显式授予' : '默认人人可用（拒绝可收回）'}
+                  >
+                    {i.vis === 'restricted' ? '受限' : '公开'}
+                  </span>
+                </span>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  {(['default', 'grant', 'deny'] as const).map(s => (
+                    <button key={s} className={`btn btn-sm${st === s ? ' btn-primary' : ''}`} onClick={() => setCap(i.id, s)}>
+                      {s === 'default' ? '默认' : s === 'grant' ? '授予' : '拒绝'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <label>高级 · grant（通配 / 动作 / 存储等选择器外的 glob，逗号分隔）</label>
+      <input
+        className="config-edit-input"
+        placeholder="如 tool:file.*, action:@aalis/plugin-x:method, *"
+        value={advGrant}
+        onChange={e => {
+          setAdvGrant(e.target.value);
+          emit(caps, e.target.value, advDeny);
+        }}
+      />
+      <label>高级 · deny（压过 grant 与 owner）</label>
+      <input
+        className="config-edit-input"
+        placeholder="如 tool:shell.*, storage:*"
+        value={advDeny}
+        onChange={e => {
+          setAdvDeny(e.target.value);
+          emit(caps, advGrant, e.target.value);
+        }}
+      />
+    </div>
+  );
+}
 
 export function AuthorityPage() {
   const [data, setData] = useState<Overview | null>(null);
@@ -414,12 +521,14 @@ export function AuthorityPage() {
                   value={newUser.platform} onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))} />
                 <input className="config-edit-input" placeholder="用户 ID"
                   value={newUser.userId} onChange={e => setNewUser(v => ({ ...v, userId: e.target.value }))} />
-                <input className="config-edit-input" placeholder="授予 grant（逗号分隔 glob，可空）"
-                  title="如 tool:file.*, command:deploy"
-                  value={newUser.grant} onChange={e => setNewUser(v => ({ ...v, grant: e.target.value }))} />
-                <input className="config-edit-input" placeholder="拒绝 deny（逗号分隔 glob，可空）"
-                  title="如 tool:shell.*"
-                  value={newUser.deny} onChange={e => setNewUser(v => ({ ...v, deny: e.target.value }))} />
+                <CapabilityPicker
+                  key="add-user"
+                  commands={data.commands}
+                  tools={data.tools}
+                  initialGrant={newUser.grant}
+                  initialDeny={newUser.deny}
+                  onChange={(g, d) => setNewUser(v => ({ ...v, grant: g, deny: d }))}
+                />
                 <button className="btn btn-primary btn-sm" onClick={addUser}
                   disabled={!newUser.platform || !newUser.userId}>确认</button>
               </div>
@@ -488,14 +597,14 @@ export function AuthorityPage() {
                       </div>
                       {isCapsOpen && (
                         <div className="authority-user-expand">
-                          <label>grant — 授予的受限能力（逗号分隔 glob）</label>
-                          <input className="config-edit-input" placeholder="如 tool:file.*, action:@aalis/plugin-x:method, *"
-                            value={editCaps!.grant}
-                            onChange={e => setEditCaps(prev => prev ? { ...prev, grant: e.target.value } : null)} autoFocus />
-                          <label>deny — 拒绝的能力（压过 grant 与 owner）</label>
-                          <input className="config-edit-input" placeholder="如 tool:shell.*, command:shutdown"
-                            value={editCaps!.deny}
-                            onChange={e => setEditCaps(prev => prev ? { ...prev, deny: e.target.value } : null)} />
+                          <CapabilityPicker
+                            key={`edit:${u.platform}:${u.userId}`}
+                            commands={data.commands}
+                            tools={data.tools}
+                            initialGrant={editCaps!.grant}
+                            initialDeny={editCaps!.deny}
+                            onChange={(g, d) => setEditCaps(prev => (prev ? { ...prev, grant: g, deny: d } : null))}
+                          />
                           <div className="config-edit-actions">
                             <button className="btn btn-primary btn-sm" onClick={saveUserCapabilities}>保存</button>
                             <button className="btn btn-sm" onClick={() => setEditCaps(null)}>取消</button>
