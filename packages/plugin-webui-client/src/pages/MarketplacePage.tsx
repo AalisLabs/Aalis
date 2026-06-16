@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock, Download, Scale, Star } from 'lucide-react';
+import { AlertTriangle, Clock, Download, Scale } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import type { PluginInfo } from '../types';
@@ -17,7 +17,6 @@ interface MarketPkg {
   downloads?: number;
   updated?: string;
   score?: number;
-  scoreDetail?: { quality?: number; popularity?: number; maintenance?: number };
   insecure?: boolean;
   license?: string;
   links?: { npm?: string; homepage?: string; repository?: string };
@@ -345,19 +344,6 @@ export function MarketplacePage({
               {pkg.updated && (
                 <span className="market-meta-item" title={new Date(pkg.updated).toLocaleString()}>
                   <Clock size={12} /> {timeAgo(pkg.updated)}
-                </span>
-              )}
-              {pkg.score != null && (
-                <span
-                  className="market-meta-item"
-                  style={{ color: 'var(--warning)' }}
-                  title={
-                    pkg.scoreDetail
-                      ? `质量 ${((pkg.scoreDetail.quality ?? 0) * 100).toFixed(0)}% · 人气 ${((pkg.scoreDetail.popularity ?? 0) * 100).toFixed(0)}% · 维护 ${((pkg.scoreDetail.maintenance ?? 0) * 100).toFixed(0)}%`
-                      : `综合评分 ${(pkg.score * 100).toFixed(0)}%`
-                  }
-                >
-                  <Star size={12} /> {(pkg.score * 5).toFixed(1)}
                 </span>
               )}
               {pkg.license && (
