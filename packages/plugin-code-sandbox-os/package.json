@@ -1,0 +1,42 @@
+{
+  "name": "@aalis/plugin-code-sandbox-os",
+  "version": "0.3.0",
+  "license": "MIT",
+  "description": "代码沙箱（OS 原生）：Linux bubblewrap / macOS sandbox-exec 隔离不可信代码执行",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/plugin-process-api": "workspace:^"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-code-sandbox-api": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": "^0.2.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "process"
+      ],
+      "provides": [
+        "code-sandbox"
+      ]
+    }
+  }
+}

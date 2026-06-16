@@ -6,6 +6,7 @@
  */
 
 import { Buffer } from 'node:buffer';
+import type { CodeSandboxService } from '@aalis/plugin-code-sandbox-api';
 import type { ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 
@@ -17,6 +18,13 @@ export interface RunnerConfig {
   cwd: string;
   /** 透传给子进程的环境变量；不提供时由 ProcessService 默认合入 process.env */
   env?: Record<string, string | undefined>;
+  /**
+   * 沙箱：给定即要求 OS 隔离（写白名单 = [cwd, 本次临时目录]、网络按 network、env 仅白名单）；
+   * undefined = 无隔离（对应 sandbox.mode='none'）。
+   */
+  sandbox?: { network: 'deny' | 'allow' };
+  /** code-sandbox 服务（auto 模式下用；不可用 → fail-closed） */
+  codeSandbox?: CodeSandboxService;
 }
 
 export interface RunResult {
@@ -62,12 +70,40 @@ export async function runCode(
     await storage.writeFile(scriptUri, Buffer.from(code, 'utf-8'));
     const scriptPath = `${tmp.path}/script${ext}`;
 
+    // 沙箱策略按本次运行实际路径构造（scope-ready：cwd 来自运行时 resolveLocalPath，
+    // 将来 #3 storage 按 session 命名空间化后自动变 per-session 隔离）。
+    const policy = config.sandbox
+      ? { fsRead: [config.cwd], fsWrite: [config.cwd, tmp.path], network: config.sandbox.network }
+      : undefined;
+    // fail-closed：要求隔离但本机无可用沙箱后端 → 拒绝执行（不静默裸跑）。
+    if (policy && !config.codeSandbox?.available) {
+      return {
+        exitCode: -1,
+        stdout: '',
+        stderr: '',
+        error:
+          `代码执行已禁用（沙箱不可用，backend=${config.codeSandbox?.backend ?? 'none'}）：` +
+          '请安装 bubblewrap（Linux：apt/dnf install bubblewrap）并确保 unprivileged user namespaces 已启用；' +
+          "macOS 自带 sandbox-exec 无需安装。或在 code-runner 配置设 sandbox.mode='none' 接受无隔离运行。",
+      };
+    }
+
+    const env = { ...(config.env ?? {}), PYTHONIOENCODING: 'utf-8' };
     try {
-      const result = await proc.execFile(interpreter, [...extraArgs, scriptPath], {
-        cwd: config.cwd,
-        env: { ...(config.env ?? {}), PYTHONIOENCODING: 'utf-8' },
-        timeout: effectiveTimeout,
-      });
+      const result = policy
+        ? await config.codeSandbox!.run({
+            cmd: interpreter,
+            args: [...extraArgs, scriptPath],
+            cwd: config.cwd,
+            env,
+            timeout: effectiveTimeout,
+            policy,
+          })
+        : await proc.execFile(interpreter, [...extraArgs, scriptPath], {
+            cwd: config.cwd,
+            env,
+            timeout: effectiveTimeout,
+          });
       return {
         exitCode: result.code ?? -1,
         stdout: truncateOutput(result.stdout, config.maxOutputSize),

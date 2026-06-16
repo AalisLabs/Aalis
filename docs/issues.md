@@ -2,21 +2,22 @@
 
 > 四区：**待办**（还没做的事，按优先级）→ **已知限制**（接受的妥协，非 bug）→
 > **已决议**（长期约束，避免反复讨论）→ **已完成**（单行归档，细节看 commit/docs）。
-> 最近核对：2026-06-15。**当前无已知未修复 bug**（近期对抗审查发现的都已在 0.2.0 修掉）。
+> 最近核对：2026-06-16。**当前无已知未修复 bug**；安全上「最后一个真洞」code_runner 已由 OS 沙箱闭合（见已完成）。
 
 ## 待办（还没做，按优先级）
 
-1. **`code_runner` 进程级隔离 / 容器化**（唯一安全相关项）：图灵完备工具的代码参数需沙箱，
-   否则可越出工作区任意执行。是已知最后一个真洞，但需进程/容器隔离设施，属功能级工程。
-2. **第三方前端端到端实测**：装一个非默认 `aalis.client` 包，验证「发现 → 切换 → reload 加载」全链路
+1. **第三方前端端到端实测**：装一个非默认 `aalis.client` 包，验证「发现 → 切换 → reload 加载」全链路
    （切换 UI 已做，见归档；目前只用默认前端验证过 UI 路径）。
-3. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
+2. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
    scope 事件总线不隔离。
-4. **PDF 内嵌图片识别**（DOCX 已做，见归档）：PDF 抽内嵌图片较复杂（需 pdf.js operator/XObject 级解析），
+3. **PDF 内嵌图片识别**（DOCX 已做，见归档）：PDF 抽内嵌图片较复杂（需 pdf.js operator/XObject 级解析），
    暂仅提取文本。（office 插件是纯创作工具、不读文档，无此需求。）
-5. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
+4. **任务树深层能力**（task-orchestrator 设计的剩余 ~30%，确定性编排已由 workflow `agent` 节点落地）：
    运行时**递归**任务分解（subtask 现禁止嵌套）+ 一等公民 `task:*` 事件 + 专用任务树 WebUI 页 +
    per-subtask context-scope 隔离。见 docs/design/task-tree-system.md 缺口分析。
+5. **更强代码沙箱 tier（可选）**：v1 OS 沙箱（bwrap/seatbelt）已闭合「最后一个真洞」（见归档），但**不防读本机文件、
+   网络只能整体开关**。如需更强隔离，可加 `code-sandbox` 的新实现：`-docker`（容器化）/ `-wasm`（Pyodide/Deno，
+   deny-by-default 但丢 C 扩展）/ `-e2b`（远程 microVM）。经同一 `code-sandbox` 服务按优先级/偏好替换，非阻塞项。
 6. **GUI 修复缺失依赖**（暂缓；经分析属**功能**非 bug）：读项目 deps + 检 node_modules 缺失 + 一键按名重装。
    可由 `doctor.registerCheck`（检声明依赖是否缺失）+ `package-manager.install(npmPkg)` 组合实现，属中等工程。
 
@@ -55,6 +56,14 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-16 **code_runner 进程隔离（OS 沙箱，闭合最后一个真洞）**：新增 `code-sandbox` 服务契约
+  （`@aalis/plugin-code-sandbox-api`）+ OS 实现（`@aalis/plugin-code-sandbox-os`：Linux bubblewrap /
+  macOS sandbox-exec），把不可信代码限制在「工作区+临时目录」可写、默认断网、env 仅白名单。**经现有
+  `process` 网关 spawn、零改 process-api/local/core**（不污染通用子进程契约；不直接 import node:*，
+  后端用功能性试跑探测）。code_runner 加 `sandbox.{mode,network}` 配置：auto=有后端强制隔离/无则
+  **fail-closed**、none=裸跑告警；create-aalis 选 code-runner 自动带 code-sandbox-os。纯 sandbox.ts
+  +10 例单测；docs/plugins/plugin-code-sandbox-os.md。**边界**：防写出/外泄/篡改系统，不防读本机文件
+  （读放开，需 WASM/microVM 更强 tier，见待办#5）。**已合 dev，随后续发布上 main**。
 - ✅ 2026-06-16 **共享契约清理（仅真问题）**：① **core 去 WebUI 泄漏**——`PluginStatusEntry.subsystem/extends`
   移出 core（env-agnostic 不该命名 WebUI 概念）；webui-server 改从 `getPlugin(instanceId).module` 读 subsystem，
   **并顺手接通一直没接的「扩展 Core」UI**（/api/plugins 现转发 `module.extends` → 前端 chips 真正渲染）。

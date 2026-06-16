@@ -203,7 +203,8 @@ export function toPluginCatalog(data: {
   return (data.objects ?? [])
     .filter(o => {
       const short = o.package.name.replace(/^@[^/]+\//, '');
-      return !/-api$/.test(short) && !/webui-client/.test(short);
+      // 剔除 *-api 契约、webui-client 前端、code-sandbox* 沙箱基建（均非「选功能」对象，按需自动带入）
+      return !/-api$/.test(short) && !/webui-client/.test(short) && !/^code-sandbox/.test(short);
     })
     .map(o => ({
       name: o.package.name,
@@ -488,6 +489,12 @@ async function main(): Promise<void> {
     if (enabled.has('@aalis/plugin-webui-server')) {
       enabled.add('@aalis/plugin-webui-client');
       enabled.add('@aalis/plugin-package-manager');
+    }
+
+    // 选了 code_runner 就自动带上 OS 沙箱实现：默认 sandbox.mode=auto，缺沙箱后端会 fail-closed
+    // 拒绝执行代码，故把隔离实现一并装上（macOS sandbox-exec 自带；Linux 还需系统装 bubblewrap）。
+    if (enabled.has('@aalis/plugin-tool-code-runner')) {
+      enabled.add('@aalis/plugin-code-sandbox-os');
     }
 
     // 写文件
