@@ -1,5 +1,5 @@
-import type { ConfigSchema, Context, Logger, PluginManagerService } from '@aalis/core';
-import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
+import type { ConfigSchema, Context, Logger } from '@aalis/core';
+import type { AgentService, PreprocessorFn } from '@aalis/plugin-agent-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
@@ -163,37 +163,6 @@ class DefaultAgent implements AgentService {
     this.preprocessors.set(name, { dispose: cleanup });
     this.logger.info(`预处理器已注册: ${name}`);
     return cleanup;
-  }
-
-  /**
-  /**
-   * 获取当前所有已注册预处理器的元信息（按注册顺序返回）
-   */
-  getPreprocessors(): PreprocessorInfo[] {
-    return [...this.preprocessors.keys()].map(name => ({ name }));
-  }
-
-  /**
-   * 获取 Agent 子系统的插件分组
-   *
-   * 仅纳入 Agent 直接依赖的能力提供者；不包含 `platform`
-   * （平台属于独立子系统，由 plugin-platform-api 的 helper 负责）。
-   */
-  getPluginGroups(): PluginGroupInfo[] {
-    const pm = this.ctx.getService<PluginManagerService>('plugins');
-    if (!pm) return [];
-
-    // 子系统归属：Agent 域的服务（不含 platform——平台是独立子系统）
-    const targetServices = new Set(['llm', 'memory', 'persona', 'message-archive']);
-    const grouped: string[] = [];
-
-    for (const p of pm.getStatus()) {
-      if (p.provides?.some(s => targetServices.has(s))) {
-        grouped.push(p.instanceId);
-      }
-    }
-
-    return [{ label: 'Agent', plugins: grouped }];
   }
 
   /**

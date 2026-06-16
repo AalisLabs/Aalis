@@ -705,10 +705,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   expressApp.get('/api/service-groups', gate('webui:status:read', 'public'), (_req, res) => {
     const pluginMgr = getPluginMgr();
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
-    // 按 plugin.subsystem 归组（未声明 → 'external'）
+    // 按插件 subsystem 归组（未声明 → 'external'）。subsystem 是 WebUI 展示概念、
+    // 由 @aalis/plugin-webui-api 声明合并到 PluginModule，core 状态契约不含——从 module 直接读。
     const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
-      const sub = p.subsystem ?? 'external';
+      const sub = pluginMgr?.getPlugin(p.instanceId)?.module?.subsystem ?? 'external';
       if (!groupsMap.has(sub)) groupsMap.set(sub, []);
       groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
     }

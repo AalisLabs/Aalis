@@ -865,10 +865,6 @@ class SessionManager implements SessionManagerService {
     return result;
   }
 
-  getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
-    return { ...this.defaults };
-  }
-
   /** 从配置加载全局 defaults */
   loadDefaults(raw: unknown): void {
     if (!raw || typeof raw !== 'object') return;
