@@ -36,12 +36,16 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
     expect(out[1].version).toBeUndefined();
   });
 
-  it('剔除 *-api 契约与 webui-client 前端（脚手架只列可装功能插件）', () => {
+  it('剔除 *-api 契约、webui-client 前端、code-sandbox 沙箱基建（脚手架只列可装功能插件）', () => {
     const data = {
       objects: [
         { package: { name: '@aalis/plugin-openai', description: 'LLM' } },
         { package: { name: '@aalis/plugin-tools-api', description: '契约' } },
         { package: { name: '@aalis/plugin-webui-client', description: '前端' } },
+        // 沙箱基建：选 code-runner 时自动带入，不应单独可选。短名带 plugin- 前缀，
+        // 故 -os 不能靠锚定 /^code-sandbox/ 剔除（曾漏过 = 本次修的 bug）；-api 也一并剔。
+        { package: { name: '@aalis/plugin-code-sandbox-os', description: 'OS 沙箱' } },
+        { package: { name: '@aalis/plugin-code-sandbox-api', description: '沙箱契约' } },
         { package: { name: '@aalis/plugin-mcp-client', description: 'MCP 客户端' } }, // 功能插件，保留
       ],
     };
