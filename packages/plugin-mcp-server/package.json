@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-mcp-server",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "MCP 服务端：把 Aalis 的工具以 MCP 协议对外暴露",
   "type": "module",
@@ -27,7 +27,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {

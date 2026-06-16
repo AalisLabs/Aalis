@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-gateway",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "消息网关：入站/出站编排（指令→流控→触发→分发相位）",
   "type": "module",
@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {

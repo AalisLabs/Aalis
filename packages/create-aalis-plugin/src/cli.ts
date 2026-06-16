@@ -108,7 +108,9 @@ async function generate(dir: string, a: Answers): Promise<void> {
 
 function renderPackageJson(a: Answers): string {
   // 运行时依赖：用了 useXxxService（运行时 helper）的 api 包进 dependencies（workspace:^
-  // 发布转 ^0.1.0）；@aalis/core 是宿主必有的核心，走 peerDependencies + devDep。
+  // 发布转 ^x.y.z）；@aalis/core 是宿主必有的核心，走 peerDependencies + devDep。
+  // core peerDep 用宽松区间 `>=0.2.0 <1.0.0`：兼容任何 0.x 宿主 core（core 承诺 0.x 内
+  // 向后兼容、破坏性变更才升 1.0.0），插件不必随 core 次版本升级而重发——慢更新插件也跟得上。
   const deps: Record<string, string> = {};
   if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'workspace:^';
   if (a.features.command) deps['@aalis/plugin-commands-api'] = 'workspace:^';
@@ -133,7 +135,7 @@ function renderPackageJson(a: Answers): string {
     },
     ...(Object.keys(deps).length ? { dependencies: deps } : {}),
     peerDependencies: {
-      '@aalis/core': '^0.1.0',
+      '@aalis/core': '>=0.2.0 <1.0.0',
     },
     devDependencies: {
       '@aalis/core': 'workspace:*',

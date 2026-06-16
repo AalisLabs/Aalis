@@ -30,12 +30,15 @@ export default {
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "peerDependencies": {
-    "@aalis/core": "*"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   }
 }
 ```
 
-> `@aalis/core` 用 **peerDependency** 引用，避免多版本冲突。
+> `@aalis/core` 用 **peerDependency** 引用，避免多版本冲突。范围用 **`>=0.2.0 <1.0.0`**：
+> core 承诺 0.x 内向后兼容、破坏性变更才升 1.0.0，所以这区间接受任何 0.x 宿主 core——插件不必
+> 随 core 次版本升级而重发（别用 `^0.x` caret，它只匹配单个次版本会把插件锁死；也别用裸 `*`，
+> 那会连未来破坏性的 1.0 都接受）。
 
 ## 2. 声明 / 消费服务
 
