@@ -32,11 +32,9 @@ export function DashboardPage({
   const activeCount = plugins.filter(p => p.state === 'active').length;
   const errorCount = plugins.filter(p => p.state === 'error').length;
   const totalCount = plugins.length;
-  const [toast, setToast] = useState<string | null>(null);
   const [toolGroups, setToolGroups] = useState<ToolGroupDetail[]>([]);
   const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
   const [llmModels, setLlmModels] = useState<LLMModelEntry[]>([]);
-  const [clients, setClients] = useState<Array<{ id: string; label: string; active: boolean }>>([]);
 
   useEffect(() => {
     api<{ groups: ToolGroupDetail[] }>('/api/tool-groups')
@@ -56,34 +54,7 @@ export function DashboardPage({
       .catch(() => {});
   }, [plugins]);
 
-  useEffect(() => {
-    api<{ clients: Array<{ id: string; label: string; active: boolean }> }>('/api/clients')
-      .then(d => setClients(d.clients ?? []))
-      .catch(() => {});
-  }, []);
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2500);
-  };
-
-  // 切换活跃前端（owner）：后端实时重挂 + 持久化，切完 reload 即加载新前端。
-  // 不走 api()——api() 不校验 res.ok，会把 403/404/503 当成功，导致非 owner 点击后假成功并刷新。
-  const switchClient = async (id: string) => {
-    try {
-      const res = await fetch('/api/clients/active', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(json.error || `切换失败（HTTP ${res.status}）`);
-      showToast('已切换前端，正在重新加载…');
-      setTimeout(() => window.location.reload(), 600);
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : '切换失败（需 owner 权限）');
-    }
-  };
+  // 前端切换已统一到「服务」页的 webui-client 偏好下拉框（多 provider 服务）。
 
   const serviceEntries = servicesData
     ? Object.entries(servicesData)
@@ -102,8 +73,6 @@ export function DashboardPage({
 
   return (
     <div className="page-content page-dashboard">
-      {toast && <div className="toast">{toast}</div>}
-
       <div className="section-label">概览</div>
       <div className="overview-grid">
         <div className="overview-card">
@@ -161,28 +130,6 @@ export function DashboardPage({
         </div>
       </div>
 
-      {clients.length > 1 && (
-        <>
-          <div className="section-label">前端（活跃切换）</div>
-          <div className="services-grid">
-            {clients.map(c => (
-              <div key={c.id} className="service-slot-card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <span style={{ fontWeight: 600 }}>{c.label}</span>
-                  {c.active ? (
-                    <span className="badge active">活跃</span>
-                  ) : (
-                    <button type="button" className="btn-sm" onClick={() => switchClient(c.id)}>
-                      设为活跃
-                    </button>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim, #888)' }}>{c.id}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
 
       {hasGroups ? (
         <>

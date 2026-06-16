@@ -115,13 +115,8 @@ export const configSchema: ConfigSchema = {
     description:
       '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置）。',
   },
-  client: {
-    type: 'string',
-    label: '活跃前端（多前端时选用）',
-    default: '',
-    description:
-      '装了多个前端（aalis.client 包）时指定哪个为活跃前端，填包名（如 @aalis/plugin-webui-client）。留空 = 自动选第一个发现到的（默认前端优先）。插件主动 provide(webui-client) 仍优先于此。',
-  },
+  // 活跃前端不在此配置：前端即 `webui-client` 服务的多 provider，活跃者由「服务偏好」
+  // （servicePreferences['webui-client']）决定——在 WebUI「服务」页的下拉框切换。
 };
 
 export const defaultConfig = {
@@ -133,7 +128,6 @@ export const defaultConfig = {
   fixedToken: '',
   relationGraphDefaultSpacing: 120,
   marketplaceRegistry: 'https://registry.npmjs.org',
-  client: '',
 };
 
 // ===== 配置 =====
@@ -147,8 +141,6 @@ interface WebUIConfig {
   fixedToken: string;
   relationGraphDefaultSpacing: number;
   marketplaceRegistry: string;
-  /** 多前端时指定活跃前端包名；留空=自动选第一个 */
-  client: string;
 }
 
 // ===== WebSocket 消息协议 =====
@@ -304,7 +296,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return Number.isFinite(v) && v > 0 ? v : 120;
     })(),
     marketplaceRegistry: (config.marketplaceRegistry as string)?.trim() || 'https://registry.npmjs.org',
-    client: (config.client as string)?.trim() ?? '',
   };
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
@@ -465,20 +456,25 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  // 已发现的前端候选 + 当前活跃 id（供「切换活跃前端」UI 读/写；ready 时填充）。
+  // 已发现的前端候选（ready 时填充，逐个注册为 webui-client 服务 provider）。
   const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
-  let activeClientId = '';
-  /** 切换活跃前端：实时重挂静态目录 + 更新 SPA 回退 + 持久化 webui.client，下次启动沿用。 */
-  function activateClient(id: string): boolean {
-    const c = clientCandidates.find(x => x.id === id);
-    if (!c) return false;
-    clientDist = c.dir;
-    mountStaticDir(c.dir);
-    activeClientId = id;
-    ctx.config.setPluginConfig(name, { ...ctx.config.getPluginConfig(name), client: id });
-    ctx.config.save();
-    ctx.logger.info(`活跃前端切换为: ${c.label} (${id})`);
-    return true;
+  /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）。 */
+  function currentClientDir(): string | undefined {
+    return ctx.getService<{ getClientDir(): string }>('webui-client')?.getClientDir?.();
+  }
+  /**
+   * 切换 webui-client 服务偏好后调用：重挂当前活跃前端 + 广播 'reload'——所有客户端进入
+   * 「正在切换前端，即将刷新」遮罩后自动 reload（复用现有刷新流程，平滑换前端、不重启进程）。
+   */
+  function remountActiveClient(): void {
+    const dir = currentClientDir();
+    if (dir) {
+      clientDist = dir;
+      mountStaticDir(dir);
+    }
+    const payload: WSOutgoing = { type: 'reload' };
+    const json = JSON.stringify(payload);
+    for (const ws of allClients) if (ws.readyState === WebSocket.OPEN) ws.send(json);
   }
 
   // 动态静态文件中间件（支持运行时切换前端）
@@ -638,6 +634,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.preferService(svcName, contextId);
     ctx.config.setServicePreference(svcName, contextId);
     ctx.config.save();
+    // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
+    if (svcName === 'webui-client') remountActiveClient();
     res.json({ ok: true });
   });
 
@@ -647,25 +645,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.unpreferService(svcName);
     ctx.config.removeServicePreference(svcName);
     ctx.config.save();
+    if (svcName === 'webui-client') remountActiveClient();
     res.json({ ok: true });
   });
 
-  // 前端切换：列出已发现的前端 + 当前活跃（多前端时 UI 展示）。只回 id/label/active，不泄露 fs 路径。
-  expressApp.get('/api/clients', gate('webui:status:read', 'public'), (_req, res) => {
-    res.json({
-      clients: clientCandidates.map(c => ({ id: c.id, label: c.label, active: c.id === activeClientId })),
-      active: activeClientId,
-    });
-  });
-  // 设活跃前端（owner）：实时重挂 + 持久化；前端切完自行 reload 即加载新前端。
-  expressApp.post('/api/clients/active', gate('webui:clients:manage', 'restricted'), (req, res) => {
-    const id = String((req.body as { id?: string })?.id ?? '').trim();
-    if (!activateClient(id)) {
-      res.status(404).json({ ok: false, error: `未找到已发现的前端 "${id}"` });
-      return;
-    }
-    res.json({ ok: true, active: id });
-  });
+  // 前端切换已统一到「服务偏好」：前端是 webui-client 服务的多 provider，切换走
+  // POST /api/services/webui-client/prefer（见上），webui-server 在该偏好变更时重挂 + 广播刷新。
+  // 故不再有独立的 /api/clients* 路由。
 
   // 获取所有平台适配器及其连接状态
   expressApp.get('/api/platforms', gate('webui:status:read', 'public'), (_req, res) => {
@@ -1549,32 +1535,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
     clientCandidates.push(...discoverClients(scanDirs, depIds, env));
 
-    // 如果已有外部插件主动注册了 webui-client 服务（apply 覆盖路径），则跳过自动发现
-    const hasExternalClient = ctx.hasService('webui-client');
-    if (!hasExternalClient && clientCandidates.length > 0) {
-      // 活跃前端：config.client 指定者优先，否则取第一个（默认前端排在最前）
-      const preferred = uiConfig.client && clientCandidates.find(c => c.id === uiConfig.client);
-      const active = preferred || clientCandidates[0];
-      for (const candidate of clientCandidates) {
-        const childCtx = ctx.fork(candidate.id);
-        childCtx.provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label });
-        ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
-      }
-      clientDist = active.dir;
-      mountStaticDir(active.dir);
-      activeClientId = active.id;
-      ctx.logger.info(`活跃前端: ${active.label}${preferred ? '（config.client 指定）' : ''}`);
+    // 把每个发现到的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
+    // 外部插件在 apply 里主动 provide('webui-client') 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
+    for (const candidate of clientCandidates) {
+      ctx.fork(candidate.id).provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label });
+      ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }
-
-    // 若已有外部 webui-client 服务，使用其提供的目录
-    if (hasExternalClient) {
-      const activeClient = ctx.getService<{ getClientDir(): string }>('webui-client');
-      if (activeClient?.getClientDir) {
-        const dir = activeClient.getClientDir();
-        clientDist = dir;
-        mountStaticDir(dir);
-        ctx.logger.info(`活跃前端(服务): ${dir}`);
-      }
+    // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
+    const activeDir = currentClientDir();
+    if (activeDir) {
+      clientDist = activeDir;
+      mountStaticDir(activeDir);
+      ctx.logger.info(`活跃前端: ${activeDir}`);
+    } else {
+      ctx.logger.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
     }
 
     server.listen(uiConfig.port, uiConfig.host, () => {
