@@ -170,6 +170,13 @@ export interface SessionManagerService {
   /** 设置指定平台的 profile */
   setPlatformProfile(platform: string, profile: PlatformProfile): void;
 
+  /**
+   * 获取全局默认配置（platform profile 之下的最低层 fallback）。
+   * 当 session 自身、父会话 sessionDefaults、platform profile 都未指定某字段时，
+   * resolveConfig 会回落到这里。配置位置：`@aalis/plugin-session-manager.defaults`。
+   */
+  getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
+
   // ---- 标题管理 ----
 
   /** 自动生成会话标题（调用 LLM 总结），返回生成的标题或 undefined。可传入 userMessage 避免依赖历史记录。 */
