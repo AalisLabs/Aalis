@@ -52,6 +52,22 @@ describe('commands v2 — 链式 builder', () => {
     expect(await r.execute('demo', input(['-g', 'alice']))).toBe(JSON.stringify({ greedy: 'alice' }));
   });
 
+  it('number 选项/参数收到非数字 → 清晰报错（旧实现静默传 NaN 给 handler）', async () => {
+    const r = new CommandRegistry(makeLogger());
+    r.command('demo', '示例')
+      .option('page', '-p <page:number>', { description: '页码' })
+      .action(async argv => JSON.stringify(argv.options));
+    expect(await r.execute('demo', input(['-p', 'abc']))).toMatch(/需要数字/);
+    expect(await r.execute('demo', input(['--page=x1']))).toMatch(/需要数字/);
+    // 合法数字仍正常
+    expect(await r.execute('demo', input(['-p', '7']))).toBe(JSON.stringify({ page: 7 }));
+
+    const r2 = new CommandRegistry(makeLogger());
+    r2.command('seek <n:number>', '跳转').action(async (_argv, n) => `n=${n}`);
+    expect(await r2.execute('seek', input(['notnum']))).toMatch(/需要数字/);
+    expect(await r2.execute('seek', input(['42']))).toBe('n=42');
+  });
+
   it('string[] 选项可重复追加', async () => {
     const r = new CommandRegistry(makeLogger());
     r.command('tag', '标签')

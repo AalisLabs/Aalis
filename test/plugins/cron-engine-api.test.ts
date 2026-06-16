@@ -22,6 +22,18 @@ describe('cron-engine-api: 表达式解析', () => {
     expect([...parseCronField('0,3,5', 0, 5).values()].sort()).toEqual([0, 3, 5]);
   });
 
+  it('parseCronField: 越界值被夹到 [min,max]，非法范围/越界单值被跳过（不再静默塞入非法值）', () => {
+    // 分钟字段 0-59：旧实现 "1-100" 会塞入 60-99 这些非法分钟，现夹到 1-59
+    expect(Math.max(...parseCronField('1-100', 0, 59))).toBe(59);
+    expect([...parseCronField('1-100', 0, 59)].every(n => n >= 1 && n <= 59)).toBe(true);
+    // 非法范围 "5-" → [5,NaN] → 跳过（不产生 NaN/全集）
+    expect([...parseCronField('5-', 0, 59)]).toEqual([]);
+    expect([...parseCronField('abc-def', 0, 59)]).toEqual([]);
+    // 越界单值被丢弃（分钟 99 非法）
+    expect([...parseCronField('99', 0, 59)]).toEqual([]);
+    expect([...parseCronField('5,99,30', 0, 59).values()].sort((a, b) => a - b)).toEqual([5, 30]);
+  });
+
   it('validateCronExpr: 5 字段 / @every / 错误三态', () => {
     expect(validateCronExpr('0 9 * * *').ok).toBe(true);
     const ev = validateCronExpr('@every 30s');
