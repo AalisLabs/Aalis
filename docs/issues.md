@@ -2,10 +2,14 @@
 
 > 四区：**待办**（还没做的事，按优先级）→ **已知限制**（接受的妥协，非 bug）→
 > **已决议**（长期约束，避免反复讨论）→ **已完成**（单行归档，细节看 commit/docs）。
-> 最近核对：2026-06-16。**当前无已知未修复 bug**；安全上「最后一个真洞」code_runner 已由 OS 沙箱闭合（见已完成）。
 
 ## 待办（还没做，按优先级）
 
+### 可能的缺陷
+1. webui 的市场展示的星级到底是在展示什么，总星吗？并且质量人气维护怎么都是100%
+2. 高权限用户分法低权限用户时，采取手写glob的方式是不是有点麻烦，能升级为某种可视化的选择方式吗？另外那个绑定平台用户的功能到底是在做什么，对于用户并不是很明确
+
+### 新功能
 1. **第三方前端端到端实测**：装一个非默认 `aalis.client` 包，验证「发现 → 切换 → reload 加载」全链路
    （切换 UI 已做，见归档；目前只用默认前端验证过 UI 路径）。
 2. **scoped/app 沙盒**：per-user 受限 WebUI 视图（资源默认私有 + 创建者授权）；需先解决
@@ -61,7 +65,25 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-16 **全仓用户可见输入面加固（batch 2，commands/cron/onebot 0.4.1）**：先用 9-agent
+  workflow 研究 Koishi/create-* 做法 + 审计全仓输入面，核实后**只修确凿真问题、排除被夸大项**
+  （webui page-action 实为 owner 鉴权+authorize 闸非洞；http 已有读后截断；commands tokenize 不丢内容）。
+  修：① commands number 选项/参数 `Number("abc")→NaN` 静默传 handler → 校验报错；且 parseArgs 未包
+  取值解析（choices 越界抛错也冒泡）→ 包一层返回可读错误串。② cron parseCronField 范围段不夹边界
+  （分钟 "1-100" 塞入 60-99）+ 非法范围 "5-" 静默 → 夹到 [min,max]+跳 NaN/越界。③ onebot 成员 limit
+  无上界 → 封顶 200。加 commands/cron 回归单测。ci 绿 765 测试。
+- ✅ 2026-06-16 **create-aalis 交互严格校验 + 撤终端插件大列表（0.4.2 / plugin 0.4.1）**：用户报
+  「输 1,2sa / sidhu / 1, 2 都过闸不报错」+ 拥挤担忧。研究确认 Koishi/create-* 做法=终端只建最小项目+
+  少量预设、插件发现交 WebUI 市场。修：抽纯函数 parseIndexSelection（逗号或空格分隔、坏 token/越界/重复/
+  单选多填一律报错**重问**，不再 parseInt 宽容+filter 静默吞）+ validateNpmName（项目名/包名按 npm 规则
+  校验重问，旧放行 MyBot 等生成坏 name）；**撤掉终端 live 全列表多选**→交 WebUI 市场（对齐 Koishi）；
+  create-aalis-plugin 修 askYesNo 真 bug（默认 No 的问题打 y 被判成 No、无法启用命令/WebUI）+ 名校验+
+  非 TTY/realpath 入口守卫。14 例纯函数单测 + PTY 集成验证（坏输入→报错→重问→成功生成）。**npx 缓存提醒**
+  仍适用：用户须 `npm create aalis@latest` 或清 `~/.npm/_npx`。
 - ✅ 2026-06-16 **create-aalis 0.4.1（测发布版交互流程时抓到 2 个真 bug）**：① `code-sandbox-os`
+  错误出现在「其他插件」可选列表——`toPluginCatalog` 过滤用锚定 `/^code-sandbox/`，但去 scope 后短名仍带
+  `plugin-` 前缀（`plugin-code-sandbox-os`）→ 锚点永不匹配漏过；改非锚定 `/code-sandbox/`（沙箱基建选
+  code-runner 自动带、不该单选），加回归测试。② stdin 非 TTY（管道/某些 IDE 终端/CI）进交互模式 readline① `code-sandbox-os`
   错误出现在「其他插件」可选列表——`toPluginCatalog` 过滤用锚定 `/^code-sandbox/`，但去 scope 后短名仍带
   `plugin-` 前缀（`plugin-code-sandbox-os`）→ 锚点永不匹配漏过；改非锚定 `/code-sandbox/`（沙箱基建选
   code-runner 自动带、不该单选），加回归测试。② stdin 非 TTY（管道/某些 IDE 终端/CI）进交互模式 readline
