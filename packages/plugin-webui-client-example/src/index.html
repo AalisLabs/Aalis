@@ -48,12 +48,12 @@
       </p>
       <ol>
         <li>它的 <code>package.json</code> 标了 <code>aalis.client: true</code>，被 webui-server <strong>动态发现</strong>（没有任何硬编码包名）；</li>
-        <li>你在<strong>默认前端的 Dashboard「前端（活跃切换）」</strong>卡片里把它设为活跃；</li>
-        <li>webui-server 实时重挂静态目录并持久化 <code>webui.client</code>，页面 reload 后由它接管。</li>
+        <li>前端就是 <code>webui-client</code> 服务的多个 provider——你在<strong>默认前端 Dashboard 的「服务」区</strong>，找到 <code>webui-client</code> 卡片的<strong>下拉框</strong>把它选为偏好；</li>
+        <li>webui-server 重挂静态目录并广播刷新（servicePreferences 持久化），页面平滑 reload 后由它接管。</li>
       </ol>
       <p>
-        切回默认前端：默认前端在 <code>@aalis/plugin-webui-client</code>。回到它的 Dashboard 同一张卡片选回即可
-        （若当前这个示例前端没有切换卡片，直接改配置 <code>webui.client</code> 或访问默认前端 URL）。
+        切回默认前端：在同一个 <code>webui-client</code> 服务卡片的下拉框选回 <code>@aalis/plugin-webui-client</code>
+        （或点「恢复默认」）。前端切换已和「偏好服务」统一为一套，没有单独的开关卡片了。
       </p>
     </main>
   </body>

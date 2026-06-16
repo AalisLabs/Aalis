@@ -9,8 +9,10 @@
 ## 怎么试
 1. `pnpm install && pnpm -r build`（或单独 `pnpm --filter @aalis/plugin-webui-client-example build`）。
 2. 启动带 webui-server 的 Aalis。
-3. 打开默认前端的 **Dashboard**，装了 ≥2 个前端时会出现「前端（活跃切换）」卡片，选「示例前端」。
-4. 页面 reload 后即由本示例前端接管；切回默认前端同理。
+3. 打开默认前端 **Dashboard 的「服务」区**，找到 `webui-client` 服务卡片的**下拉框**（多 provider 时出现），选「示例前端」。
+4. 页面平滑 reload 后即由本示例前端接管；切回默认前端 = 同一下拉框选回，或点「恢复默认」。
+
+> 前端切换统一走「服务偏好」（`webui-client` 是多 provider 服务）；没有单独的切换开关。
 
 第三方做自己的前端：建个包，`package.json` 标 `aalis.client: true`，构建出 `dist/index.html`，
 作为依赖装进你的 Aalis 项目（或放进 monorepo `packages/`）即可被发现。
