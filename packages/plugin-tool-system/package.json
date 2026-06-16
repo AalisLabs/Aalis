@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-tool-system",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "系统工具集：Shell / 文件 / HTTP 等基础能力",
   "type": "module",
@@ -30,7 +30,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {

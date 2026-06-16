@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-cron-engine",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "Cron 定时引擎：解析与触发 cron 表达式任务",
   "type": "module",
@@ -26,7 +26,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {

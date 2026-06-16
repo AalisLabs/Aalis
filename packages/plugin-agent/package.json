@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-agent",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "对话编排核心：消息构建、工具循环、上下文管理",
   "type": "module",
@@ -37,7 +37,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {

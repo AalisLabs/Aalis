@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-package-manager",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "插件包管理：从 npm 安装/卸载插件到 packages/",
   "type": "module",
@@ -26,7 +26,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": "^0.2.0"
+    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "aalis": {
     "service": {
