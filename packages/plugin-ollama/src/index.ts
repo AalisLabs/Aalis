@@ -34,14 +34,14 @@ export const configSchema: ConfigSchema = {
     label: '单模型能力覆盖',
     default: '',
     description:
-      '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：qwen2.5:7b: chat,tool_calling,streaming',
+      '强制覆盖某模型的能力(优先级最高,高于 /api/show 自动探测与家族表),与 adapter 默认能力取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling',
   },
   providerCapabilities: {
     type: 'string',
     label: '适配器默认能力（逗号分隔）',
     default: '',
     description:
-      '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
+      '兜底默认能力:仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测,通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming',
   },
   timeout: {
     type: 'number',
@@ -225,6 +225,26 @@ class OllamaClient {
       return data.models.map(m => m.name);
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * 查某模型的真实能力(Ollama /api/show 的 `capabilities`,如 completion/vision/audio/tools/thinking）。
+   * 失败返回 null → 调用方回退家族表。fetch 不读 proxy 环境变量,本机调用不受 SOCKS 影响。
+   */
+  async fetchModelCapabilities(modelId: string): Promise<string[] | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { capabilities?: string[] };
+      return Array.isArray(data.capabilities) ? data.capabilities : null;
+    } catch {
+      return null;
     }
   }
 
@@ -840,7 +860,7 @@ function safeParseJSON(str: string): Record<string, unknown> {
 
 // ===== 模型能力映射 =====
 
-const { Chat, ToolCalling, Streaming, Vision, Audio } = LLMCapabilities;
+const { Chat, ToolCalling, Streaming, Vision, Audio, Thinking } = LLMCapabilities;
 
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'llama3.1': [Chat, ToolCalling, Streaming],
@@ -862,35 +882,80 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
 
-function resolveCapabilities(model: string, userOverride?: unknown, providerCaps?: LLMCapability[]): LLMCapability[] {
-  const out = new Set<LLMCapability>(providerCaps ?? []);
+/** Ollama /api/show 的 capabilities 字符串 → Aalis LLMCapability(无关项忽略)。 */
+function mapOllamaCapabilities(caps: string[]): LLMCapability[] {
+  const out = new Set<LLMCapability>();
+  for (const c of caps) {
+    switch (c.toLowerCase()) {
+      case 'completion':
+        out.add(Chat);
+        break;
+      case 'tools':
+        out.add(ToolCalling);
+        break;
+      case 'vision':
+        out.add(Vision);
+        break;
+      case 'audio':
+        out.add(Audio);
+        break;
+      case 'thinking':
+        out.add(Thinking);
+        break;
+      // insert / embedding / 其它:与对话能力无关,忽略
+    }
+  }
+  // Ollama 对话模型一律支持流式
+  if (out.size > 0) out.add(Streaming);
+  return [...out];
+}
+
+/**
+ * 解析某模型能力。优先级(高→低):
+ *   1. 用户 per-model 覆盖(modelCapabilities,∪ provider 默认)——逃生舱,最高
+ *   2. Ollama /api/show 真实能力(detected)——权威;不再叠加 provider 默认,避免误标
+ *   3. 家族表启发式(MODEL_CAPABILITIES)——detected 不可用时的回退
+ *   4. provider 默认(providerCapabilities) + DEFAULT_CAPABILITIES——最后兜底
+ */
+function resolveCapabilities(
+  model: string,
+  userOverride?: unknown,
+  providerCaps?: LLMCapability[],
+  detected?: string[] | null,
+): LLMCapability[] {
+  // 1. 用户逐模型覆盖(沿用原语义:与 provider 默认取并集)
   if (Array.isArray(userOverride) && userOverride.length > 0) {
-    for (const c of userOverride as LLMCapability[]) out.add(c);
+    const out = new Set<LLMCapability>(userOverride as LLMCapability[]);
+    for (const c of providerCaps ?? []) out.add(c);
     return [...out];
+  }
+  // 2. /api/show 真实能力(权威)
+  if (detected && detected.length > 0) {
+    const mapped = mapOllamaCapabilities(detected);
+    if (mapped.length > 0) return mapped;
   }
   // 去掉 tag 部分（如 llama3.1:8b → llama3.1）
   const baseName = model.split(':')[0].toLowerCase();
-
-  // Gemma 4 E 系列（e2b / e4b）原生支持音频输入（约 300M Audio encoder）。
-  // 参考 https://ollama.com/library/gemma4
+  // Gemma 4 E 系列（e2b / e4b）原生支持音频输入。参考 https://ollama.com/library/gemma4
   const isGemma4Audio = /^gemma4:e[24]b/.test(model.toLowerCase());
-
+  // 3. 家族表启发式回退
   if (MODEL_CAPABILITIES[baseName]) {
-    for (const c of MODEL_CAPABILITIES[baseName]) out.add(c);
+    const out = new Set<LLMCapability>(MODEL_CAPABILITIES[baseName]);
     if (isGemma4Audio) out.add(Audio);
     return [...out];
   }
   for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
     if (baseName.startsWith(known)) {
-      for (const c of caps) out.add(c);
+      const out = new Set<LLMCapability>(caps);
       if (isGemma4Audio) out.add(Audio);
       return [...out];
     }
   }
   if (baseName.includes('llava') || baseName.includes('vision')) {
-    for (const c of [Chat, Streaming, Vision]) out.add(c);
-    return [...out];
+    return [Chat, Streaming, Vision];
   }
+  // 4. 最后兜底:provider 默认 + Chat
+  const out = new Set<LLMCapability>(providerCaps ?? []);
   for (const c of DEFAULT_CAPABILITIES) out.add(c);
   if (isGemma4Audio) out.add(Audio);
   return [...out];
@@ -988,12 +1053,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
   const refresh = (): Promise<{ added: string[]; removed: string[]; total: number }> => refreshFn();
 
-  function registerOne(modelId: string): void {
+  function registerOne(modelId: string, detected?: string[] | null): void {
     if (registered.has(modelId)) return;
     const capabilities = resolveCapabilities(
       modelId,
       ollamaConfig.modelCapabilities.get(modelId),
       ollamaConfig.providerCapabilities,
+      detected,
     );
     const handle = new OllamaModelHandle(
       client,
@@ -1039,7 +1105,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   if (initialIds.length === 0) {
     ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
   } else {
-    for (const modelId of initialIds) registerOne(modelId);
+    // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
+    const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id)));
+    for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
     ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
   }
 
@@ -1052,7 +1120,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const removed: string[] = [];
     for (const id of next) {
       if (!registered.has(id)) {
-        registerOne(id);
+        registerOne(id, await client.fetchModelCapabilities(id));
         added.push(id);
       }
     }
