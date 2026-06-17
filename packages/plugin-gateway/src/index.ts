@@ -53,13 +53,10 @@ export function apply(ctx: Context): void {
     const data: InboundPhaseData = { message, metadata: {}, agent };
 
     try {
-      // 前置相位：任一相位被 swallow 即停止后续调度（confirm 在最前，拦截会话内确认回复）
-      for (const phase of [
-        INBOUND_PHASE.CONFIRM,
-        INBOUND_PHASE.COMMAND,
-        INBOUND_PHASE.FLOW,
-        INBOUND_PHASE.TRIGGER,
-      ] as const) {
+      // 前置相位 = INBOUND_PHASE_ORDER 中除终相 DISPATCH 外的全部（单一真相：新增相位只改 gateway-api）。
+      // 任一相位被 swallow 即停止后续调度（confirm 在最前，拦截会话内确认回复）。
+      const preDispatch = INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH);
+      for (const phase of preDispatch) {
         const t0 = performance.now();
         const reachedEnd = await ctx.hooks.run(phase, data);
         ctx.emit('gateway:phase:done', {
@@ -77,7 +74,7 @@ export function apply(ctx: Context): void {
         }
       }
 
-      // 第四相位：dispatch —— 默认动作为调用 agent
+      // 终相：dispatch —— 默认动作为调用 agent
       const t0 = performance.now();
       const reachedEnd = await ctx.hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
