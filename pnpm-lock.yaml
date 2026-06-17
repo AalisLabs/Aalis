@@ -1367,6 +1367,9 @@ importers:
 
   packages/plugin-session-confirm:
     dependencies:
+      '@aalis/plugin-authority-api':
+        specifier: workspace:^
+        version: link:../plugin-authority-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:^
         version: link:../plugin-gateway-api
@@ -1374,12 +1377,25 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/plugin-session-confirm-api':
+        specifier: workspace:*
+        version: link:../plugin-session-confirm-api
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-session-confirm-api:
+    dependencies:
       '@aalis/plugin-authority-api':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../plugin-authority-api
-      '@aalis/plugin-message-api':
+    devDependencies:
+      '@aalis/core':
         specifier: workspace:*
-        version: link:../plugin-message-api
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2105,6 +2121,9 @@ importers:
       '@aalis/plugin-persona-api':
         specifier: workspace:*
         version: link:../plugin-persona-api
+      '@aalis/plugin-session-confirm-api':
+        specifier: workspace:*
+        version: link:../plugin-session-confirm-api
       '@aalis/plugin-session-manager-api':
         specifier: workspace:*
         version: link:../plugin-session-manager-api

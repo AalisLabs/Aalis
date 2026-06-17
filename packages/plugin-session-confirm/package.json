@@ -2,7 +2,7 @@
   "name": "@aalis/plugin-session-confirm",
   "version": "0.4.0",
   "license": "MIT",
-  "description": "会话内统一确认：把 authority 的高危确认请求经 gateway 总线发到任意会话型平台（onebot/cli 等），拦截 Y/YS 回复",
+  "description": "会话确认协调器：提供 session-confirm 服务（createChannel）供各平台复用，并经 gateway 总线覆盖 onebot/cli 等会话型平台",
   "type": "module",
   "keywords": [
     "aalis",
@@ -18,11 +18,12 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/plugin-authority-api": "workspace:^",
     "@aalis/plugin-gateway-api": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*",
+    "@aalis/plugin-session-confirm-api": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -36,6 +37,9 @@
       ],
       "optional": [
         "authority"
+      ],
+      "provides": [
+        "session-confirm"
       ]
     }
   }

@@ -1,0 +1,34 @@
+{
+  "name": "@aalis/plugin-session-confirm-api",
+  "version": "0.4.0",
+  "license": "MIT",
+  "description": "会话确认服务契约：createChannel(deliver) → {handler, feed}，让各平台复用同一套确认协调器",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/plugin-authority-api": "workspace:^"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "aalis": {
+    "types": true
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.2.0 <1.0.0"
+  },
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ]
+}
