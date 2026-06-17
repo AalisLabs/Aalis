@@ -6,7 +6,19 @@
 ## 待办（还没做，按优先级）
 
 ### 可能的缺陷
-- **当前无未修复缺陷**（市场假指标、媒体模型选择、平台绑定文案、授权可视化四项均已修，见归档）。
+- **当前无未修复缺陷**（市场假指标、媒体模型选择、平台绑定文案、授权可视化、memory-summary 换行、create-aalis-plugin 非 TTY 守卫均已修，见归档）。
+
+### 净化 / 技术债（2026-06-17 审计：92 项确认，归并后约 30 议题；判据见「已决议·审计净化盘点」）
+1. **LLM provider 去重专项**（最大单点债务，~680 行三重复，文件膨胀至 687/855/1074 行）：openai/deepseek/ollama
+   的流式读取基础设施 + 配置解析(D2) + 能力推断(D4) + 动态模型刷新(D5) + bootstrap(D6) 收敛到**新建
+   `@aalis/llm-provider-kit`**（具体实现包，**非 llm-api 契约**）；差异化部分（DeepSeek DSML、Ollama
+   `<think>`、各自启发式、端点、Client 构造）留各 provider。1~2 周级，**先出 kit 扩展点设计再动手**，增量抽
+   （先抽超时守护层验证抽象够不够灵活，再抽主循环），避免 big-bang。
+2. **D3 scope DSL 去重**（边界项，不立项）：flow-control / trigger-policy 各一份逐行相同的
+   `platform:sessionType:targetId` 解析+匹配（~50 行 + extractTargetId）。仅 2 消费者 + 算法稳定 →
+   留碰到任一插件时顺手抽 `plugin-config-scope-utils`。
+3. **机会性小项**（路过即修，不立项）：D12（util-json-repair 接线 consolidate-llm，注意它有数组场景）、
+   D16/D17（core getErrorMessage/isPromiseLike 提 utils，**动 core**）、D8/D9/D15 + H 系列 LOW。
 
 ### 新功能
 1. **第三方前端端到端实测**：装一个非默认 `aalis.client` 包，验证「发现 → 切换 → reload 加载」全链路
@@ -38,6 +50,11 @@
   须同步覆写（test/core/config.test.ts 设防）。
 - 插件 page-action 默认 `restricted`（仅 owner）：现有 actions 全是 WebUI 管理操作，owner-only 即正确；
   将来若出现面向普通用户的 action，再单标 `actionsMeta: { visibility: 'public' }`。
+- **OS 沙箱 fsWrite 路径须已规范化（macOS）**：seatbelt `(subpath ...)` 按**真实路径**匹配，传含软链前缀的
+  路径（如裸 `/tmp`→`/private/tmp`）会令工作区写入被拒（fail-closed，不危险但脚本写不了自己的工作区）。
+  当前唯一调用方 code-runner 经 storage 取路径、storage 已 realpath 规范化（root.realPath + resolveExisting
+  均 realpath），故**生产安全**。将来若有别的调用方直接传非规范路径，应在 code-sandbox-os 的 `run()` 内对
+  fsRead/fsWrite 加一道 realpath 兜底（小硬化，已记未做）。
 
 ## 已决议（长期约束）
 
@@ -46,7 +63,15 @@
   ② **core 承诺 0.x 内向后兼容**——次版本只做加法/温和改，**破坏性变更才升 1.0.0**（那是唯一要求插件
   适配的线，`>=` 区间正建立在此承诺上）；③ 全仓唯一的 `@aalis/*` peerDep 就是 core，包间互依走
   `workspace:^`（同批共版、发布转 caret，受我们控制无第三方问题）。脚手架/文档已落地此约定。
-- **共享契约污染审查结论（2026-06-16）**：一次 86-agent 审查扫了 core + 全部 -api，标记 21 项「单/零消费者」。
+- **审计净化盘点结论（2026-06-17）**：一次全仓「重复造轮子 + 不必要硬编码」审计，92 项确认、47 项否决。
+  落地判据（避免反复讨论）：① **api 包只持约定不持实现**——共享的 provider 实现放独立 `*-kit`/`util-*` 包，
+  **勿塞 `*-api` 契约**（llm-api 现有的 `LLMCapabilities`/`resolveLLMModel` 属「规范常量 + 参考解析语义」是约定级，
+  **不构成往 api 加实现的先例**）；② 沿用「**>3 消费者 或 >1 潜在实现**才提取」门槛——D2/D3 等 2 消费者 + 稳定算法的
+  去重属**边界项，不为它单开包**；③ 真正值得立项的只有 **LLM provider 去重专项**（见待办·净化#1）。否决项里
+  service.ts 前缀双检（修过生产 bug+有测试）、webui 三 broadcast（副作用/契约不同）、cron-engine 硬依赖（YAGNI）、
+  config 三副本（类型≠运行时重复）、provider `toXXXMessage`（协议本质不同）均为有意设计，**勿再标记**。
+  详见 [[avoid-polluting-shared-contracts]]。
+- **共享契约污染审查结论（2026-06-16）**：一次对 core + 全部 -api 的共享契约审查，标记 21 项「单/零消费者」。
   复核后**只有少数是真问题**（已修，见归档）；**多数是有意保留、勿再标记**：① 挂 `AalisEvents` 的
   `workflow:run:*` 等事件（事件就是给别人订阅的，0 订阅者≠污染）；② session-tree 面（getTree/createChildSession
   /completeSession，task-tree #5 的设计扩展点）；③ Memory 的 `updateMessageContent`/`deleteMessagesByTimestamps`
@@ -67,6 +92,23 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-17 **OS 沙箱真·渗透实测（macOS 26.4.1 / seatbelt，证明能护机）**：用插件自身 `wrapForSandbox`
+  构造真实 sandbox-exec 调用跑攻击载荷 + 未沙箱对照组。逃逸写家目录 / 写 /tmp 外部、外连网络（1.1.1.1:53）、
+  env 宿主 secret 泄漏**全部被拦**（对照组未沙箱时均成功，证明确是沙箱拦的）；工作区内写入正常；读 /etc/passwd /
+  家目录**可读**——符合设计「不防读本机文件」的已知边界（见待办#5 更强 tier）。顺带查清 seatbelt subpath 按真实路径
+  匹配、生产经 storage realpath 故安全（见已知限制）。纯测试无代码改动。
+- ✅ 2026-06-17 **H4 死配置清理（flow-control 0.4.2，已合 dev 待批量发布）**：删 `muteTimeSeconds` 空壳——禁言
+  关键词的检测+时长+scope 覆盖早统一到 trigger-policy（detector + `flow.setMuted(durationSec)` 入参），
+  flow-control 只执行、自己同名配置从不被读，还在 WebUI 造重复旋钮。删 7 处 plumbing，功能完整保留在
+  trigger-policy、零行为变化。顺带删 docs 示例 persona 的遗留 `mute_keyword`（禁言词源已是 trigger-policy.muteKeywords）。
+- ✅ 2026-06-17 **两个审计真 bug 修复（memory-summary 0.4.1 / create-aalis-plugin 0.4.2，已合 dev 待发布）**：
+  ① memory-summary 的 session:compress 路径历史格式化误用字面量 `'\n'`（双反斜杠），摘要里出现可见的 `\n`
+  而非真换行（与 generateSummary 路径不一致）；② create-aalis-plugin 非 TTY 守卫多了 `cliName === undefined`，
+  给定包名但非交互且未 --yes 时绕过守卫进 readline 撞 EOF 静默空退，对齐 create-aalis 的 `!skip && !stdin.isTTY`。
+- ✅ 2026-06-17 **PII 泄漏三层清除**：真实 QQ/群号/家人信息曾当示例硬编码进源码 + 人设卡、随包发 npm、随提交进 git。
+  ① 源码脱敏（真值→占位、人设卡家人关系块重写为脱敏示例）；② npm unpublish 全部 22 个含 PII 旧版 + 发脱敏 0.4.1
+  （tool-session/user-relation/flow-control/adapter-onebot）；③ git filter-repo 改写全史 + force-push dev/main +
+  删 stale 的 feat/code-sandbox 分支。残留：GitHub 按 SHA 缓存旧 commit（需联系 Support 彻底清）、淘宝镜像可能存旧 tarball。
 - ✅ 2026-06-16 **授权能力可视化选择器（webui-client 0.4.2）**：高权限给低权限授权原本手写 glob
   （`tool:file.*` 等）繁琐易错。新增 `CapabilityPicker`：把 `getOverview` 已有的命令/工具列成三态
   （默认/授予/拒绝）勾选 + 可见性徽章（公开/受限）+ 搜索；通配/动作/存储走「高级 glob」框。用在编辑能力 +
@@ -81,8 +123,8 @@
   →可钉死模型；新增 media-processor 单测。③ **平台绑定语义不清**：澄清按钮 title + 绑定码弹窗效果说明
   （私聊发码/权限并入本账户/deny 取并集防洗白/可解绑）+ 标签 tooltip，统一「绑定」术语对齐 /bind。
   附带：webui-server `provides` 补 'platform'（消除「运行时 ctx.provide 了但导出/package.json 没声明」的不一致）。
-- ✅ 2026-06-16 **全仓用户可见输入面加固（batch 2，commands/cron/onebot 0.4.1）**：先用 9-agent
-  workflow 研究 Koishi/create-* 做法 + 审计全仓输入面，核实后**只修确凿真问题、排除被夸大项**
+- ✅ 2026-06-16 **全仓用户可见输入面加固（batch 2，commands/cron/onebot 0.4.1）**：先研究 Koishi/create-*
+  做法 + 审计全仓输入面，核实后**只修确凿真问题、排除被夸大项**
   （webui page-action 实为 owner 鉴权+authorize 闸非洞；http 已有读后截断；commands tokenize 不丢内容）。
   修：① commands number 选项/参数 `Number("abc")→NaN` 静默传 handler → 校验报错；且 parseArgs 未包
   取值解析（choices 越界抛错也冒泡）→ 包一层返回可读错误串。② cron parseCronField 范围段不夹边界
@@ -128,7 +170,7 @@
   PreprocessorInfo）。其余审计项判定为有意扩展点/既定模式予以保留（见已决议）。ci 绿、零行为回归。
 - ✅ 2026-06-16 **create-aalis 入口与版本修复**（见 fix/create-aalis-entry）：realpath 修 .bin 软链入口；
   版本去硬编码 `^0.1.0`，改脚手架时逐包从 npm 解析当前最新写 `^<最新>`、失败回退 `latest`。create-aalis 0.2.1。
-- ✅ 2026-06-15 **合 main 前对抗审查 + 修复**（6 reviewer × 3 验证者；12/21 确认）：
+- ✅ 2026-06-15 **合 main 前全文审查 + 修复**（21 项候选，12 项确认并修）：
   ①file-reader DOCX 识别去 `hint`（恢复 24h 描述缓存）+ `detailLevel:'detailed'`（每图 2→1 次视觉调用）+
   并发 3 + 30s 整体预算（修「上传同步阻塞」）；②workflow agent 节点 `source` 含 nodeId 隔离并发 lane
   （修同会话回合互相 abort）+ 显式同 sessionId 串扰风险入文档；③`session_get_history` 区间检索改按时间**正序**
