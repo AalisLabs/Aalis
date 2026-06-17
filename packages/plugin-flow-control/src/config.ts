@@ -32,8 +32,6 @@ export interface FlowControlConfig {
 
   /** 回复后冷却（秒） */
   cooldownSeconds: number;
-  /** mute 关键词命中时的禁言时长（秒） */
-  muteTimeSeconds: number;
 
   /** 限速窗口（秒，0 关闭） */
   rateLimitWindow: number;
@@ -63,7 +61,6 @@ export interface ScopeOverride {
   activityDecayMinutes?: number;
   scoreDecayMinutes?: number;
   cooldownSeconds?: number;
-  muteTimeSeconds?: number;
   rateLimitWindow?: number;
   rateLimitMaxReplies?: number;
   idleTriggerScope?: 'off' | 'session' | 'platform';
@@ -84,7 +81,6 @@ export const defaultFlowControlConfig: FlowControlConfig = {
   activityDecayMinutes: 10,
   scoreDecayMinutes: 0,
   cooldownSeconds: 10,
-  muteTimeSeconds: 60,
   rateLimitWindow: 0,
   rateLimitMaxReplies: 10,
   idleTriggerScope: 'off',
@@ -118,7 +114,6 @@ export function resolveFlowControlConfig(raw: Record<string, unknown>): FlowCont
     activityDecayMinutes: (raw.activityDecayMinutes as number) ?? d.activityDecayMinutes,
     scoreDecayMinutes: (raw.scoreDecayMinutes as number) ?? d.scoreDecayMinutes,
     cooldownSeconds: (raw.cooldownSeconds as number) ?? d.cooldownSeconds,
-    muteTimeSeconds: (raw.muteTimeSeconds as number) ?? d.muteTimeSeconds,
     rateLimitWindow: (raw.rateLimitWindow as number) ?? d.rateLimitWindow,
     rateLimitMaxReplies: (raw.rateLimitMaxReplies as number) ?? d.rateLimitMaxReplies,
     idleTriggerScope: ((): FlowControlConfig['idleTriggerScope'] => {
@@ -241,7 +236,6 @@ function parseOverrides(raw: unknown): ScopeOverride[] {
       'activityDecayMinutes',
       'scoreDecayMinutes',
       'cooldownSeconds',
-      'muteTimeSeconds',
       'rateLimitWindow',
       'rateLimitMaxReplies',
       'idleTriggerMinutes',

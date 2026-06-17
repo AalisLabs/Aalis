@@ -62,7 +62,6 @@ export const configSchema: ConfigSchema = {
     default: defaultFlowControlConfig.scoreDecayMinutes,
   },
   cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
-  muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）', default: defaultFlowControlConfig.muteTimeSeconds },
   rateLimitWindow: {
     type: 'number',
     label: '限速窗口（秒，0=关闭）',
@@ -128,7 +127,6 @@ export const configSchema: ConfigSchema = {
       activityDecayMinutes: { type: 'number', label: '阈值衰减分钟' },
       scoreDecayMinutes: { type: 'number', label: '评分衰减分钟' },
       cooldownSeconds: { type: 'number', label: '回复后冷却（秒）' },
-      muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）' },
       rateLimitWindow: { type: 'number', label: '限速窗口（秒）' },
       rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数' },
       idleTriggerScope: {
