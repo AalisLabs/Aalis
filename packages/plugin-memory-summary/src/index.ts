@@ -474,7 +474,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const formattedMessages = messagesToSummarize
           .filter(m => m.role === 'user' || m.role === 'assistant')
           .map(m => `${m.role === 'user' ? (m.name ? `用户[${m.name}]` : '用户') : '助手'}: ${m.content ?? '(空)'}`)
-          .join('\\n');
+          .join('\n');
 
         // 从历史消息中提取最近的 todo-list 状态，注入到压缩上下文中
         let todoContext = '';
