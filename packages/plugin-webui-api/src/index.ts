@@ -5,12 +5,7 @@
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
 import type { ConfigSchema, Context } from '@aalis/core';
-import type {
-  CapabilityConfirm,
-  CapabilityRisk,
-  CapabilityVisibility,
-  UserIdentity,
-} from '@aalis/plugin-authority-api';
+import type { CapabilityVisibility, UserIdentity } from '@aalis/plugin-authority-api';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -212,17 +207,7 @@ declare module '@aalis/core' {
      * （默认拒绝——插件作者必须显式标 `visibility: 'public'` 才能放开，
      * 避免漏标的敏感 action 在登录功能上线后裸奔）。
      */
-    actionsMeta?: Record<
-      string,
-      {
-        /** 轴 A 可见性；未声明默认 restricted（action 与 tool/command 默认相反，保持现状） */
-        visibility?: CapabilityVisibility;
-        /** 轴 B 确认要求（与 visibility 正交、owner 也生效）：'session'/'always'；缺省=不确认 */
-        confirm?: CapabilityConfirm;
-        /** 风险等级（声明糖）：展开为 (visibility, confirm) 默认；显式字段覆盖 */
-        risk?: CapabilityRisk;
-      }
-    >;
+    actionsMeta?: Record<string, { visibility?: CapabilityVisibility }>;
   }
 
   /**
