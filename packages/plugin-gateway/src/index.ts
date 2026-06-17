@@ -53,8 +53,13 @@ export function apply(ctx: Context): void {
     const data: InboundPhaseData = { message, metadata: {}, agent };
 
     try {
-      // 前三相位：任一相位被 swallow 即停止后续调度
-      for (const phase of [INBOUND_PHASE.COMMAND, INBOUND_PHASE.FLOW, INBOUND_PHASE.TRIGGER] as const) {
+      // 前置相位：任一相位被 swallow 即停止后续调度（confirm 在最前，拦截会话内确认回复）
+      for (const phase of [
+        INBOUND_PHASE.CONFIRM,
+        INBOUND_PHASE.COMMAND,
+        INBOUND_PHASE.FLOW,
+        INBOUND_PHASE.TRIGGER,
+      ] as const) {
         const t0 = performance.now();
         const reachedEnd = await ctx.hooks.run(phase, data);
         ctx.emit('gateway:phase:done', {
