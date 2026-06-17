@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const cliName = positional[0];
 
   // 非交互终端下进交互会在 readline 遇 EOF 时静默空退；提前拦截并给指引（与 create-aalis 一致）。
-  if (!skipPrompts && cliName === undefined && !stdin.isTTY) {
+  if (!skipPrompts && !stdin.isTTY) {
     console.error(
       '\n检测到非交互式环境（stdin 不是 TTY），无法进入交互。请改用：\n' +
         '  create-aalis-plugin <包名> --yes    # 全默认（tool 模板）\n',
