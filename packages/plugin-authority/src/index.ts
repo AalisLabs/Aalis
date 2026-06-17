@@ -1,12 +1,10 @@
 import type { AppService, Context, PluginModule } from '@aalis/core';
 import type {
   AuthorityService,
-  CapabilityConfirm,
   CapabilityVisibility,
   ExecutionGuardContext,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
-import { isDangerousResourceCapability } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
@@ -99,12 +97,9 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       return granted ? null : denied;
     }
 
-    // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但高危能力仍需「意图确认」 ──
-    // 生效确认 = 声明的 confirm ∪ 资源能力自动判危（危险资源命名空间默认 'session' 确认）
-    const confirm: CapabilityConfirm | undefined =
-      g.confirm ?? (g.permissions?.some(isDangerousResourceCapability) ? 'session' : undefined);
-    if (confirm && !g.skipConfirm) {
-      const ok = await authority.requestAccess({ ...accessBase, confirm });
+    // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
+    if (g.confirm && !g.skipConfirm) {
+      const ok = await authority.requestAccess({ ...accessBase, confirm: g.confirm });
       if (!ok) return `操作已取消：${capability} 需确认后执行`;
     }
     return null;
