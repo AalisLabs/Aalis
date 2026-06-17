@@ -37,6 +37,7 @@ import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
 import { type DiscoveryEnv, discoverClients } from './client-discovery.js';
+import { renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
@@ -1478,6 +1479,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
+  // 前端切换「逃生页」：由 webui-server 直出、独立于任何可被切换的前端，故任意前端（哪怕
+  // 极简第三方前端无切换 UI）卡住时都能在此切回。受全局 auth 中间件登录保护；切换走既有 owner
+  // 闸的 POST /api/services/webui-client/prefer，本页零新增后端逻辑（见 client-switch-page.ts）。
+  // 注册在 SPA 兜底之前，故 `/__clients` 被本路由先接走、不落到前端 index.html。
+  expressApp.get('/__clients', (_req, res) => {
+    res.type('html').send(renderClientSwitchPage());
+  });
+
   // SPA fallback: 所有非 API 路径返回 index.html
   expressApp.get('{*path}', (_req, res) => {
     const indexPath = resolve(clientDist, 'index.html');
@@ -1556,6 +1565,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const accessUrl = `${url}?token=${authToken}`;
       void writeAccessFile(url, authToken);
       ctx.logger.info(`WebUI 已启动: ${url}`);
+      // 多前端时提示恢复页 URL：万一切到无切换 UI 的前端被卡住，可在此切回（详见 client-switch-page.ts）。
+      if (clientCandidates.length > 1) {
+        ctx.logger.info(`检测到多个前端；若卡在某前端无切换入口，可访问恢复页切回: ${url}__clients`);
+      }
       const tokenHint =
         uiConfig.tokenMode === 'ephemeral'
           ? 'token 仅本次启动有效，重启轮换'
