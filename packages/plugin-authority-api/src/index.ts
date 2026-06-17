@@ -86,23 +86,6 @@ export function resolveCapabilityPolicy(
   };
 }
 
-/**
- * 危险资源能力命名空间（自动判危）：命中即便操作没显式声明，也按 restricted + 'session' 确认处理。
- * 让存量危险工具（已声明 system:process.* / storage:*:write|delete 等资源能力）**零改**被收编，
- * 并兜底第三方插件作者漏标的危险项。仅覆盖「核弹级」命名空间，避免对普通操作过度打扰。
- */
-const DANGEROUS_RESOURCE_PATTERNS: readonly RegExp[] = [
-  /^system:process\.(exec|background|kill|spawn|signal)/, // 进程执行/后台/杀（不含只读的 .read/.list）
-  /^network:/, // 主动联网
-  /^storage:aalis:(write|delete)$/, // 源码根写删
-  /^storage:path:data:\/(users|scheduler-jobs)\.json:(write|delete)$/, // 权限 / 计划任务状态
-];
-
-/** 某资源能力是否属于「危险命名空间」（自动判危用，纯函数） */
-export function isDangerousResourceCapability(cap: CapabilityId): boolean {
-  return DANGEROUS_RESOURCE_PATTERNS.some(re => re.test(cap));
-}
-
 // ============================================================
 // 执行守卫（跨切面：commands / tools 服务通过 setExecutionGuard 注入）
 // ============================================================
@@ -227,6 +210,38 @@ export interface TemporaryGrant {
 
 /** 确认回调：boolean 为最简允许/拒绝；对象可附带临时委托范围 */
 export type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
+
+// ============================================================
+// 会话确认协调器（共享状态机：pending / 超时 / Y-YS 解析 / 文案）
+//
+// 「确认层」对所有平台一致，只有**投递**与**拦截点**因平台而异（与流式输出等正交）：
+//   - webui：投递走 WS type:'confirm'（流式友好），拦截在 WS-onmessage（发 inbound 前）。
+//   - onebot/cli：投递走 gateway 总线 outbound，拦截在 inbound:confirm 相位。
+// 各平台用同一个 coordinator，只注入自己的 deliver + 在自己的拦截点调 tryResolve。
+// ============================================================
+
+/** 把一条确认回复文本解析为决策（纯函数）：Y=本次、YS=本会话（always 不接受会话记忆）、其余=取消。 */
+export function parseConfirmReply(
+  replyText: string,
+  always: boolean,
+  sessionGrantSeconds: number,
+): boolean | AccessDecision {
+  const t = replyText.trim().toLowerCase();
+  const yes = t === 'y' || t === 'yes';
+  if (always) return yes || t === 'ys' ? { allowed: true } : false;
+  if (t === 'ys') return { allowed: true, grant: { scope: 'session', durationSeconds: sessionGrantSeconds } };
+  if (yes) return { allowed: true, grant: { scope: 'once' } };
+  return false;
+}
+
+/** 组合确认提示文案（纯函数，所有平台一致）。 */
+export function composeConfirmPrompt(request: AccessRequest, always: boolean, sessionGrantSeconds: number): string {
+  const label = request.type === 'command' ? '指令' : '工具';
+  const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
+  return always
+    ? `⚠️ ${label} ${nameStr} 是高危操作，每次都需确认。回复 Y 确认执行本次；其他任意输入取消。`
+    : `⚠️ ${label} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 本会话 ${Math.round(sessionGrantSeconds / 60)} 分钟内放行；其他任意输入取消。`;
+}
 
 // ============================================================
 // 用户身份
