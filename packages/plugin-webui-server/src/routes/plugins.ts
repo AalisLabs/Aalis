@@ -1,6 +1,7 @@
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA } from '@aalis/core';
 import type { AuthorityService, UserIdentity } from '@aalis/plugin-authority-api';
+import { resolveCapabilityPolicy } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type { ToolService } from '@aalis/plugin-tools-api';
@@ -141,7 +142,10 @@ export function registerPluginRoutes(
     // restricted 503（与 RouteGate fail-closed 一致）。
     const caller: UserIdentity = identify(req) ?? { platform: 'webui', userId: 'console' };
     const authority = ctx.getService<AuthorityService>('authority');
-    const visibility = entry.module.actionsMeta?.[method]?.visibility ?? 'restricted';
+    // action 默认 restricted（与 tool/command 相反）；risk 声明经此展开。
+    // 注：confirm 轴（防 agent confused-deputy）对 REST action 不适用——人点按钮本身即意图，
+    // 故此处只取 visibility（轴 A），confirm 留给会话型操作（tool/command）。
+    const { visibility } = resolveCapabilityPolicy(entry.module.actionsMeta?.[method] ?? {}, 'restricted');
     if (authority) {
       const denied = authority.authorize(caller, {
         capability: `action:${pluginName}:${method}`,
