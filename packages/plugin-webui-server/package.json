@@ -38,6 +38,7 @@
     "@aalis/plugin-message-api": "workspace:*",
     "@aalis/plugin-package-manager": "workspace:*",
     "@aalis/plugin-persona-api": "workspace:*",
+    "@aalis/plugin-session-confirm-api": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
     "@aalis/plugin-todo-list": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
@@ -56,7 +57,8 @@
         "authority",
         "commands",
         "platform",
-        "process"
+        "process",
+        "session-confirm"
       ],
       "provides": [
         "webui-server",
