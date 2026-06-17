@@ -1,0 +1,42 @@
+{
+  "name": "@aalis/plugin-session-confirm",
+  "version": "0.4.0",
+  "license": "MIT",
+  "description": "会话内统一确认：把 authority 的高危确认请求经 gateway 总线发到任意会话型平台（onebot/cli 等），拦截 Y/YS 回复",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/plugin-gateway-api": "workspace:^"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-authority-api": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.2.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "gateway"
+      ],
+      "optional": [
+        "authority"
+      ]
+    }
+  }
+}

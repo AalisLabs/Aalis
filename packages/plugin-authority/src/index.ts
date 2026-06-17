@@ -1,10 +1,12 @@
 import type { AppService, Context, PluginModule } from '@aalis/core';
 import type {
   AuthorityService,
+  CapabilityConfirm,
   CapabilityVisibility,
   ExecutionGuardContext,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
+import { isDangerousResourceCapability } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
@@ -71,18 +73,13 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   await authority.init();
   ctx.provide('authority', authority);
 
-  // ===== 执行守卫：能力统一闸 + 受限能力的临时委托确认 =====
+  // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
     const capability = `${g.type}:${g.name}`;
     const overrides = (ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>;
     const visibility = overrides[g.name] ?? g.visibility;
     const identity = { platform: g.platform, userId: g.userId };
-    // authorize 永远先评估（含系统源）——防"桥接/系统调用"绕过能力检查提权
-    const denied = authority.authorize(identity, { capability, visibility, resourceCapabilities: g.permissions });
-    if (!denied) return null;
-    // 受限被拒：系统/受信源无人确认，直接返回拒绝；否则走交互确认（白名单/会话授予/回调）
-    if (g.skipConfirm) return denied;
-    const granted = await authority.requestAccess({
+    const accessBase = {
       name: g.name,
       type: g.type,
       capability,
@@ -91,8 +88,26 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       sessionId: g.sessionId,
       platform: g.platform,
       userId: g.userId,
-    });
-    return granted ? null : denied;
+    } as const;
+
+    // ── 轴 A · 授权：authorize 永远先评估（含系统源）——防"桥接/系统调用"绕过能力检查提权 ──
+    const denied = authority.authorize(identity, { capability, visibility, resourceCapabilities: g.permissions });
+    if (denied) {
+      // 受限被拒：系统/受信源无人确认，直接拒；否则走交互授予（白名单/会话授予/回调）
+      if (g.skipConfirm) return denied;
+      const granted = await authority.requestAccess(accessBase);
+      return granted ? null : denied;
+    }
+
+    // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但高危能力仍需「意图确认」 ──
+    // 生效确认 = 声明的 confirm ∪ 资源能力自动判危（危险资源命名空间默认 'session' 确认）
+    const confirm: CapabilityConfirm | undefined =
+      g.confirm ?? (g.permissions?.some(isDangerousResourceCapability) ? 'session' : undefined);
+    if (confirm && !g.skipConfirm) {
+      const ok = await authority.requestAccess({ ...accessBase, confirm });
+      if (!ok) return `操作已取消：${capability} 需确认后执行`;
+    }
+    return null;
   };
 
   // 注入到 commands / tools（whenService 在 provider 上线/重启时各调一次）

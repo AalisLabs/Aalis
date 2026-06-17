@@ -11,6 +11,7 @@ import type {
   UserCapabilityOverrides,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
+import { isDangerousResourceCapability } from '@aalis/plugin-authority-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { hasCapability, matchAnyCap, rejectedDelegations } from './capability-model.js';
 import { UserStore } from './user-store.js';
@@ -82,9 +83,11 @@ export class AuthorityManager implements AuthorityService {
     return { isOwner, grants, denies };
   }
 
-  /** 一条能力是否为 restricted（命中内置 + config.restrictedCapabilities） */
+  /** 一条能力是否为 restricted（命中内置 + 自动判危 + config.restrictedCapabilities） */
   private isRestrictedCap(cap: CapabilityId): boolean {
     if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return true;
+    // 自动判危：危险资源命名空间（system:process.* / network: / 源码根 / 权限状态）即便插件漏标也收紧
+    if (isDangerousResourceCapability(cap)) return true;
     const extra = this.config.get('restrictedCapabilities') ?? [];
     return matchAnyCap(extra, cap);
   }
@@ -196,15 +199,19 @@ export class AuthorityManager implements AuthorityService {
   }
 
   async requestAccess(request: AccessRequest): Promise<boolean> {
-    if (this.isTemporarilyAllowed(request)) {
+    // confirm='always'：每次都问，不接受白名单/会话记忆（最高危）
+    const always = request.confirm === 'always';
+    if (!always && this.isTemporarilyAllowed(request)) {
       this.consumeTempGrant(request);
       return true;
     }
-    const handler = this.confirmHandlers.get(request.platform);
+    // 精确平台 handler 优先（如 WebUI 的 WS 确认）；否则落到 '*' 通配 fallback
+    // （plugin-session-confirm 注册，经 gateway 总线覆盖 onebot/cli/任何会话型平台）。
+    const handler = this.confirmHandlers.get(request.platform) ?? this.confirmHandlers.get('*');
     if (!handler) return false;
     try {
       const decision = this.normalizeDecision(await handler(request));
-      if (decision.allowed && decision.grant?.scope === 'session') this.createTempGrant(request, decision);
+      if (!always && decision.allowed && decision.grant?.scope === 'session') this.createTempGrant(request, decision);
       return decision.allowed;
     } catch (err) {
       this.logger.warn(`临时委托确认回调异常: ${err}`);
