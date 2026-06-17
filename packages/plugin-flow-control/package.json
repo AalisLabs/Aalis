@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-flow-control",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "license": "MIT",
   "description": "平台无关流控：禁言/冷却/限速/闲置触发",
   "type": "module",
