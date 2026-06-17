@@ -11,8 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
 import { LogHub, parseLogLine } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { AccessDecision, AuthorityService } from '@aalis/plugin-authority-api';
-import { composeConfirmPrompt, parseConfirmReply } from '@aalis/plugin-authority-api';
+import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type {} from '@aalis/plugin-doctor-api'; // declaration merging：doctor:updated 事件
 import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
@@ -27,6 +26,7 @@ import {
   type PlatformConnection,
 } from '@aalis/plugin-platform-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
+import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
@@ -940,45 +940,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // ---------- 受限操作交互式确认（协议复用 authority-api 纯函数；WebUI 传输=WS type:'confirm'，流式友好） ----------
-  // Y/YS 解析与文案由 parseConfirmReply / composeConfirmPrompt 共享，与 onebot/cli 一致；
-  // WebUI 自管 pending 生命周期（与 WS 传输绑定）+ 在 WS-onmessage 拦截回复（下方）。
-  const CONFIRM_TIMEOUT_MS = 60_000;
-  const SESSION_GRANT_SECONDS = 600;
-  const pendingSessionConfirms = new Map<
-    string,
-    { resolve: (v: boolean | AccessDecision) => void; timer: ReturnType<typeof setTimeout>; always: boolean }
-  >();
-  const sendConfirm = (sessionId: string, text: string): void => {
-    const payload: WSOutgoing = { type: 'confirm', content: text, sessionId };
-    const json = JSON.stringify(payload);
-    const sockets = sessions.get(sessionId);
-    const targets = sockets && sockets.size > 0 ? sockets : allClients;
-    for (const ws of targets) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(json);
-    }
-  };
-  ctx.getService<AuthorityService>('authority')?.setConfirmHandler(
-    'webui',
-    request =>
-      new Promise<boolean | AccessDecision>(resolve => {
-        // 同 session 旧未决先取消（清 timer + resolve false），防覆盖致旧 Promise 永挂 / 旧 timer 误删新条目。
-        const stale = pendingSessionConfirms.get(request.sessionId);
-        if (stale) {
-          clearTimeout(stale.timer);
-          pendingSessionConfirms.delete(request.sessionId);
-          stale.resolve(false);
-        }
-        const always = request.confirm === 'always';
-        const timer = setTimeout(() => {
-          pendingSessionConfirms.delete(request.sessionId);
-          sendConfirm(request.sessionId, '⏰ 操作确认已超时，已自动取消。');
-          resolve(false);
-        }, CONFIRM_TIMEOUT_MS);
-        pendingSessionConfirms.set(request.sessionId, { resolve, timer, always });
-        sendConfirm(request.sessionId, composeConfirmPrompt(request, always, SESSION_GRANT_SECONDS));
-      }),
-  );
+  // ---------- 受限操作交互式确认（复用 session-confirm 协调器；WebUI 传输=WS type:'confirm'，流式友好） ----------
+  // 协调器逻辑（待确认/超时/解析/文案）由 session-confirm 服务统一实现；WebUI 只注入自己的 WS 投递，
+  // 并保留 type:'confirm'（前端「确认模式」信号，抑制富客户端的「打字即打断」）。回复在 WS-onmessage 调 feed（下方）。
+  let confirmChannel: ConfirmChannel | undefined;
+  ctx.whenService<SessionConfirmService>('session-confirm', confirmSvc => {
+    confirmChannel = confirmSvc.createChannel((request, text) => {
+      const payload: WSOutgoing = { type: 'confirm', content: text, sessionId: request.sessionId };
+      const json = JSON.stringify(payload);
+      const sockets = sessions.get(request.sessionId);
+      const targets = sockets && sockets.size > 0 ? sockets : allClients;
+      for (const ws of targets) {
+        if (ws.readyState === WebSocket.OPEN) ws.send(json);
+      }
+    });
+    ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', confirmChannel.handler);
+  });
 
   // ---------- 文件管理 API ----------
   registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot }, gate);
@@ -1091,12 +1068,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
         sessions.get(sessionId)!.add(ws);
 
-        // 检查待确认的受限操作（拦截输入作为确认/取消；Y/YS 解析复用 authority-api 纯函数）
-        const pendingConfirm = pendingSessionConfirms.get(sessionId);
-        if (pendingConfirm) {
-          clearTimeout(pendingConfirm.timer);
-          pendingSessionConfirms.delete(sessionId);
-          pendingConfirm.resolve(parseConfirmReply(trimmed, pendingConfirm.always, SESSION_GRANT_SECONDS));
+        // 检查待确认的受限操作（拦截输入作为确认/取消；协调器逻辑由 session-confirm 服务统一处理）
+        if (confirmChannel?.feed(sessionId, trimmed)) {
           // 不继续处理此消息，交给原始命令/工具执行流返回结果
           return;
         }
