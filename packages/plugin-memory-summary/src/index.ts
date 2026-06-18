@@ -7,6 +7,14 @@ import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 
+/**
+ * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
+ * generateSummary 与 session:compress 两条路径共用，避免格式漂移。
+ */
+function formatMsgForSummary(m: Message): string {
+  return `${m.role === 'user' ? '用户' : '助手'}: ${m.content ?? '(空)'}`;
+}
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-memory-summary';
@@ -270,11 +278,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 格式化消息用于摘要
       const formattedMessages = messagesToSummarize
         .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => {
-          // user content 中已含 [昵称(ID)] 前缀，无需再加 name
-          const role = m.role === 'user' ? '用户' : '助手';
-          return `${role}: ${m.content ?? '(空)'}`;
-        })
+        .map(formatMsgForSummary)
         .join('\n');
 
       // 构建摘要请求
@@ -473,7 +477,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const existing = await store.getSummary(data.sessionId);
         const formattedMessages = messagesToSummarize
           .filter(m => m.role === 'user' || m.role === 'assistant')
-          .map(m => `${m.role === 'user' ? (m.name ? `用户[${m.name}]` : '用户') : '助手'}: ${m.content ?? '(空)'}`)
+          .map(formatMsgForSummary)
           .join('\n');
 
         // 从历史消息中提取最近的 todo-list 状态，注入到压缩上下文中
