@@ -290,7 +290,12 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
         s.cooldownUntil = Date.now() + e.cooldownSeconds * 1000;
       }
       s.idleBackoff = 1;
-      s.replyTimestamps.push(Date.now());
+      const now = Date.now();
+      s.replyTimestamps.push(now);
+      // 裁剪：只留限速窗口内的，否则活跃会话(lastReplyTime 常新、够不着 TTL 清理)会无界增长。
+      // 限速关闭(window<=0)时 replyTimestamps 根本不被读，直接清空。
+      s.replyTimestamps =
+        e.rateLimitWindow > 0 ? s.replyTimestamps.filter(t => t > now - e.rateLimitWindow * 1000) : [];
       this.rescheduleIdle(sessionId, platform);
     },
     isCoolingDown(sessionId) {
