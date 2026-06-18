@@ -83,8 +83,7 @@ Phase B 正向遍历（非 shutdown）:
 service-up / service-down 在第二轮起退化为 plugin-state-changed，避免无限 optional bounce。
 ```
 
-收尾对 `requiredServices` 列表中仍缺失的服务调用 `ensureServiceProvider()` 兜底恢复，
-并发出 `plugins:changed` 事件（shutdown 时跳过）。
+收尾发出 `plugins:changed` 事件（shutdown 时跳过）。
 
 `stopAll()` 与 `softReload()` 现在是 `recompute({type:'shutdown'})` 与
 `recompute({type:'plugin-state-changed'})` 的薄壳。
@@ -118,12 +117,6 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 - dispose 旧 ctx → 粗状态转 pending → `recompute({type:'plugin-state-changed'})`
 - 下游是否被级联 evict：仅当下游声明 `requiresBounceOnDepChange: true` 时才级联，
   默认不动。详见 [plugin-author-guide §3.5](../plugin-author-guide.md#35-级联契约opt-in)。
-
-### `ensureServiceProvider(serviceName)`
-
-搜索 pending 插件池，找到能提供该服务的插件并递归激活。被用户禁用的提供者
-默认会被自动启用（"必需服务可用"压过"尊重禁用"）——这是可注入政策，宿主传
-`AppOptions.serviceRecovery = { autoEnableDisabled: false }` 可反转取舍。
 
 ## 反应式监听
 
