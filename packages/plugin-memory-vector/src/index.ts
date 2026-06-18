@@ -241,7 +241,7 @@ function renderMemoryEntry(m: Message, messageMax: number): string {
 /** 给消息生成稳定 key 用于跨命中去重（sessionId + timestamp + role + content hash） */
 function messageKey(sessionId: string, m: Message): string {
   // 不含 content：同一逻辑消息（同 sid+ts+role）无论带不带 [昵称(ID)] 前缀都同 key，避免扩展路径（真消息含
-  // 前缀）与兜底（fakeMsg 取 metadata 纯文本、无前缀）对同一 pivot 各注入一次造成可见重复（M11）。
+  // 前缀）与兜底（fakeMsg 取 metadata 纯文本、无前缀）对同一 pivot 各注入一次造成可见重复。
   return `${sessionId}|${m.timestamp ?? 0}|${m.role}`;
 }
 
