@@ -13,7 +13,10 @@ import { createStorageGateway } from '@aalis/plugin-storage-api';
 export const name = '@aalis/plugin-process-local';
 export const provides = ['process'];
 
-class LocalProcessService implements ProcessService {
+/** wait() 默认累计缓冲上限（stdout+stderr 合计）：10MB，足够正常输出，又防失控输出 OOM。 */
+const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
+
+export class LocalProcessService implements ProcessService {
   constructor(private readonly storage: StorageService) {}
 
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
@@ -56,10 +59,33 @@ class LocalProcessService implements ProcessService {
       },
       wait: () =>
         new Promise<ExecResult>((resolve, reject) => {
+          // 累计缓冲上限（stdout+stderr 合计）：边读边计数，超限即截断 + 杀进程，
+          // 防失控/恶意输出无上限累积撑爆内存（评审 S1）。
+          const maxBuffer = opts.maxBuffer && opts.maxBuffer > 0 ? opts.maxBuffer : DEFAULT_MAX_BUFFER;
           const chunksOut: Buffer[] = [];
           const chunksErr: Buffer[] = [];
-          child.stdout?.on('data', d => chunksOut.push(Buffer.from(d)));
-          child.stderr?.on('data', d => chunksErr.push(Buffer.from(d)));
+          let total = 0;
+          let truncated = false;
+          const collect = (arr: Buffer[], d: unknown): void => {
+            if (truncated) return;
+            const b = Buffer.from(d as Uint8Array);
+            const room = maxBuffer - total;
+            if (b.length >= room) {
+              if (room > 0) arr.push(b.subarray(0, room));
+              total = maxBuffer;
+              truncated = true;
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            arr.push(b);
+            total += b.length;
+          };
+          child.stdout?.on('data', d => collect(chunksOut, d));
+          child.stderr?.on('data', d => collect(chunksErr, d));
           child.on('error', err => {
             if (timer) clearTimeout(timer);
             reject(err);
@@ -71,6 +97,7 @@ class LocalProcessService implements ProcessService {
               signal,
               stdout: Buffer.concat(chunksOut).toString('utf-8'),
               stderr: Buffer.concat(chunksErr).toString('utf-8'),
+              ...(truncated ? { truncated: true } : {}),
             });
           });
         }),
