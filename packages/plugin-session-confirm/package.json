@@ -1,0 +1,46 @@
+{
+  "name": "@aalis/plugin-session-confirm",
+  "version": "0.4.0",
+  "license": "MIT",
+  "description": "会话确认协调器：提供 session-confirm 服务（createChannel）供各平台复用，并经 gateway 总线覆盖 onebot/cli 等会话型平台",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/plugin-authority-api": "workspace:^",
+    "@aalis/plugin-gateway-api": "workspace:^"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@aalis/plugin-session-confirm-api": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.2.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "required": [
+        "gateway"
+      ],
+      "optional": [
+        "authority"
+      ],
+      "provides": [
+        "session-confirm"
+      ]
+    }
+  }
+}
