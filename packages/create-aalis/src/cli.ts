@@ -353,6 +353,7 @@ function renderEntry(): string {
   return `import { startAalis } from '@aalis/runtime';
 
 // 从 aalis.config.yaml 读配置、从 node_modules 加载已装的 @aalis 插件、启动。
+// 默认开启控制台彩色日志 + data/latest.log 文件日志（无 TTY 时自动关闭染色）。
 startAalis().catch(err => {
   console.error('Aalis 启动失败:', err);
   process.exit(1);
