@@ -37,46 +37,64 @@ const SESSION_GRANT_SECONDS = 600;
 
 /** 协调器工厂（平台无关）：注入投递，拿回 { handler, feed }。 */
 function createChannel(deliver: (request: AccessRequest, text: string) => void): ConfirmChannel {
-  /** 每个 session 至多一个未决确认（确认是会话内串行的一问一答）。 */
-  const pending = new Map<
-    string,
-    {
-      resolve: (v: boolean | AccessDecision) => void;
-      timer: ReturnType<typeof setTimeout>;
-      always: boolean;
-      /** 发起确认的触发者 userId；仅本人能应答（防群里第三方抢答）。 */
-      userId?: string;
-    }
-  >();
+  interface Waiter {
+    request: AccessRequest;
+    resolve: (v: boolean | AccessDecision) => void;
+    timer: ReturnType<typeof setTimeout>;
+    always: boolean;
+    /** 发起确认的触发者 userId；仅本人能应答（防群里第三方抢答）。 */
+    userId?: string;
+  }
+  // 每个 session 一条 FIFO 队列：确认是会话内一问一答，但同一回合并行工具可触发多个确认请求，
+  // 必须串行排队（队首发提示、应答/超时后出队投递下一个），不能抢占式互相 resolve(false)。
+  const queues = new Map<string, Waiter[]>();
+
+  /** 给队首发确认提示并启动其超时计时（首次入队 / 上一个结算出队后调用）。 */
+  const present = (sessionId: string): void => {
+    const head = queues.get(sessionId)?.[0];
+    if (!head) return;
+    head.timer = setTimeout(() => {
+      // 超时只结算队首：出队、投递、resolve，再推进下一个。
+      const q = queues.get(sessionId);
+      if (q?.[0]) q.shift();
+      if (q && q.length === 0) queues.delete(sessionId);
+      deliver(head.request, '⏰ 操作确认已超时，已自动取消。');
+      head.resolve(false);
+      present(sessionId);
+    }, CONFIRM_TIMEOUT_MS);
+    deliver(head.request, composeConfirmPrompt(head.request, head.always, SESSION_GRANT_SECONDS));
+  };
 
   const handler: AccessConfirmHandler = request =>
     new Promise<boolean | AccessDecision>(resolve => {
-      // 同 session 旧未决先取消（清 timer + resolve false），防覆盖致旧 Promise 永挂 / 旧 timer 误删新条目。
-      const stale = pending.get(request.sessionId);
-      if (stale) {
-        clearTimeout(stale.timer);
-        pending.delete(request.sessionId);
-        stale.resolve(false);
+      const waiter: Waiter = {
+        request,
+        resolve,
+        timer: undefined as unknown as ReturnType<typeof setTimeout>,
+        always: request.confirm === 'always',
+        userId: request.userId,
+      };
+      const q = queues.get(request.sessionId);
+      if (q) {
+        q.push(waiter); // 已有未决：排队，等队首结算后再发
+      } else {
+        queues.set(request.sessionId, [waiter]);
+        present(request.sessionId); // 队首：立即发提示
       }
-      const always = request.confirm === 'always';
-      const timer = setTimeout(() => {
-        pending.delete(request.sessionId);
-        deliver(request, '⏰ 操作确认已超时，已自动取消。');
-        resolve(false);
-      }, CONFIRM_TIMEOUT_MS);
-      pending.set(request.sessionId, { resolve, timer, always, userId: request.userId });
-      deliver(request, composeConfirmPrompt(request, always, SESSION_GRANT_SECONDS));
     });
 
   const feed = (sessionId: string, replyText: string, replyUserId?: string): boolean => {
-    const p = pending.get(sessionId);
-    if (!p) return false;
+    const q = queues.get(sessionId);
+    const head = q?.[0];
+    if (!q || !head) return false;
     // 仅触发者本人能应答：群里 sessionId=群，否则任意成员都能替授权方确认（评审 C1）。
     // 私聊/webui 触发者与应答者天然同人；二者皆 undefined 也视为同人（系统注入等无 userId 场景）。
-    if (p.userId !== replyUserId) return false;
-    clearTimeout(p.timer);
-    pending.delete(sessionId);
-    p.resolve(parseConfirmReply(replyText, p.always, SESSION_GRANT_SECONDS));
+    if (head.userId !== replyUserId) return false;
+    clearTimeout(head.timer);
+    q.shift();
+    if (q.length === 0) queues.delete(sessionId);
+    head.resolve(parseConfirmReply(replyText, head.always, SESSION_GRANT_SECONDS));
+    present(sessionId); // 推进下一个未决确认
     return true;
   };
 
