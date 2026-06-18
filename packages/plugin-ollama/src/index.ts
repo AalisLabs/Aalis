@@ -254,7 +254,9 @@ class OllamaClient {
     if (request.messages.some(m => m.audios && m.audios.length > 0)) {
       return this.chatOpenAIWithAudio(model, request);
     }
-    const messages = await Promise.all(request.messages.map(m => this.toOllamaMessage(m)));
+    // 与 chatStream 一致先走 prepareLLMMessages（归一 role + 拼 kind/自定义 role 内容前缀），否则非流式丢
+    // [系统通知]/[跨会话委派] 等前缀（M17）。
+    const messages = await Promise.all(prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
