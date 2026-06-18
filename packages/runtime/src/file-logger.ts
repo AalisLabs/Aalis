@@ -4,7 +4,7 @@ import { formatLogLine, LogHub } from '@aalis/core';
 import { getBootstrapBuffer } from './bootstrap-buffer.js';
 
 /** 默认日志文件路径。webui-server 等下游目前各自硬编码同一相对路径。 */
-const DEFAULT_LOG_FILE = 'data/latest.log';
+export const DEFAULT_LOG_FILE = 'data/latest.log';
 
 const RUNTIME_SCOPE = 'aalis:runtime';
 

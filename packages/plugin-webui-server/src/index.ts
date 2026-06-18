@@ -252,7 +252,7 @@ interface WSOutgoing {
   };
 }
 
-// ===== 日志文件读取（与 src/runtime/file-logger.ts 的格式对偶）=====
+// ===== 日志文件读取（与 @aalis/runtime 的 file-logger 格式对偶）=====
 // 行格式契约（format ↔ parse）由 @aalis/core 的 parseLogLine 唯一持有，此处只负责
 // 读取 data/latest.log（启动覆盖的单一历史源）并按 cursor 尾读分页。
 
