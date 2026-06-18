@@ -17,6 +17,27 @@ interface HttpConfig {
   storage?: StorageService;
 }
 
+/** 流式读取响应体，累计超过 maxBytes 立即中止并抛错——防无 Content-Length 时全量缓冲撑爆内存。 */
+async function readBodyCapped(response: Response, maxBytes: number): Promise<Buffer> {
+  if (!response.body) return Buffer.from(await response.arrayBuffer());
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error(`响应体过大，超过限制 ${maxBytes} 字节`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+  return Buffer.concat(chunks);
+}
+
 export function registerHttpTools(tools: ScopedToolService, config: HttpConfig): void {
   // ==================== http_request ====================
   tools.register({
@@ -91,16 +112,20 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
           });
         }
 
+        // 流式读取并设上限：无 Content-Length 时也不会全量缓冲撑爆内存
+        const bodyBuf = await readBodyCapped(response, config.maxResponseSize);
         let responseBody: string;
         if (contentType.includes('application/json')) {
-          const json = await response.json();
-          responseBody = JSON.stringify(json, null, 2);
+          try {
+            responseBody = JSON.stringify(JSON.parse(bodyBuf.toString('utf-8')), null, 2);
+          } catch {
+            responseBody = bodyBuf.toString('utf-8');
+          }
         } else if (contentType.includes('text/') || contentType.includes('xml') || contentType.includes('javascript')) {
-          responseBody = await response.text();
+          responseBody = bodyBuf.toString('utf-8');
         } else {
           // 二进制内容只返回元信息
-          const buffer = await response.arrayBuffer();
-          responseBody = `[二进制内容, ${buffer.byteLength} 字节, Content-Type: ${contentType}]`;
+          responseBody = `[二进制内容, ${bodyBuf.byteLength} 字节, Content-Type: ${contentType}]`;
         }
 
         // 截断过长的响应
@@ -152,6 +177,11 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
         },
       },
     },
+    // 写操作：与 file_write 同形挂闸——受限 + 每次确认 + storage:write 权限，
+    // 防被注入的 LLM 静默/越权地把任意内容写进 storage（如覆写 data:/users.json）。
+    visibility: 'restricted',
+    confirm: 'session',
+    permissions: ['tool:http_download', 'storage:write'],
     handler: async args => {
       const url = args.url as string;
       const savePath = args.savePath as string;
@@ -179,12 +209,8 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
           });
         }
 
-        const buffer = Buffer.from(await response.arrayBuffer());
-        if (buffer.byteLength > config.maxResponseSize) {
-          return JSON.stringify({
-            error: `下载内容过大 (${buffer.byteLength} 字节)，超过限制 ${config.maxResponseSize} 字节`,
-          });
-        }
+        // 流式读取并设上限：无 Content-Length 时也不会全量缓冲撑爆内存（超限即中止抛错）
+        const buffer = await readBodyCapped(response, config.maxResponseSize);
 
         const storageUri = toStorageUriShared(savePath, { requireValue: true, errorContext: '保存路径' });
         await config.storage.writeFile(storageUri, buffer);
