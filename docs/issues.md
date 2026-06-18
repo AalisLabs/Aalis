@@ -92,6 +92,14 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-19 **统一宿主重构（消除两份宿主重复 + 修独立部署零日志缺口）**：`src/runtime/` 的可移植宿主件
+  （bootstrap-buffer/console-sink/file-logger/terminal/subcommand）下沉进 `@aalis/runtime`；`startAalis` 参数化
+  （pluginLoader/consoleSink/fileLog/terminalRestore/subcommands/devMode 开关，默认独立部署即开控制台+文件日志，
+  修「npm create aalis 生成项目跑起来零日志」缺口——根因是 core 的 LogHub 无 sink 订阅即静默丢弃）；`src/index.ts`
+  退成 4 行薄壳（传 fsLoader + subcommands），`src/runtime/` 删除、providers 再导出并入 @aalis/runtime 导出面。runtime
+  加 chalk 依赖 + commands-api(type-only devDep)，root 去 chalk/commands-api；core/webui 仅注释勘误 src/runtime→@aalis/runtime。
+  ci 绿（build+biome+821 测试）、knip 0、startAalis 空载 smoke 通过（控制台日志可见、启停干净）。版本沿用统一 0.4.0、
+  待下次协调发布再 bump。Deno 铺路对齐「已决议·runtime 命名」（出第二宿主再拆 -node/-deno）。**本地 commit 待合 dev。**
 - ✅ 2026-06-18 **前端切换逃生页文档补齐**：`/__clients` 恢复页（卡在无切换 UI 的极简前端时切回，由 webui-server
   直出、走既有 `GET /api/services` + `POST /api/services/webui-client/prefer` owner 闸，零新增后端）此前仅有源码注释、
   用户文档零提及；补进 docs/plugins/plugin-webui-server.md「前端挂载与切换」+ webui-client-example README，并勘误下方旧路由名。
