@@ -34,7 +34,7 @@ Aalis 把「内核」和「宿主」分开：
 | `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |
 
 `startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
-`process.cwd()`）、`requiredServices`（缺失则启动告警）。
+`process.cwd()`）。
 
 ## 两种部署模型（同一套契约，两个加载器）
 
@@ -47,7 +47,7 @@ Aalis 把「内核」和「宿主」分开：
 ## 怎么为别的环境写宿主
 
 core 的 `App` 构造接收宿主契约：`{ configProvider, pluginLoader, restartStrategy, config, dataDir,
-devMode, requiredServices }`。要支持 Deno / 浏览器 / 嵌入环境，就用该环境的 API 实现这三样契约
+devMode }`。要支持 Deno / 浏览器 / 嵌入环境，就用该环境的 API 实现这三样契约
 （例：Deno 用 import map、无 node_modules；浏览器无 `fs`/`process`，配置走 fetch/IndexedDB、
 「重启」改为重建实例），再写一个等价的 `startXxx`。**core 与各插件契约不变**——这正是把
 runtime 单独成包的目的。
