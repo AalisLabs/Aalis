@@ -13,6 +13,8 @@
 4. 页面平滑 reload 后即由本示例前端接管；切回默认前端 = 同一下拉框选回，或点「恢复默认」。
 
 > 前端切换统一走「服务偏好」（`webui-client` 是多 provider 服务）；没有单独的切换开关。
+>
+> 万一切到没有切换 UI 的极简前端而卡住：访问 webui-server 直出的恢复页 `http://<host>:<port>/__clients` 即可选回（详见 [plugin-webui-server 文档](../../docs/plugins/plugin-webui-server.md#切换逃生页-__clients)）。
 
 第三方做自己的前端：建个包，`package.json` 标 `aalis.client: true`，构建出 `dist/index.html`，
 作为依赖装进你的 Aalis 项目（或放进 monorepo `packages/`）即可被发现。

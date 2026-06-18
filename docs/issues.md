@@ -92,6 +92,10 @@
 
 ## 已完成（单行归档，新→旧）
 
+- ✅ 2026-06-18 **前端切换逃生页文档补齐**：`/__clients` 恢复页（卡在无切换 UI 的极简前端时切回，由 webui-server
+  直出、走既有 `GET /api/services` + `POST /api/services/webui-client/prefer` owner 闸，零新增后端）此前仅有源码注释、
+  用户文档零提及；补进 docs/plugins/plugin-webui-server.md「前端挂载与切换」+ webui-client-example README，并勘误下方旧路由名。
+
 - ✅ 2026-06-17 **OS 沙箱真·渗透实测（macOS 26.4.1 / seatbelt，证明能护机）**：用插件自身 `wrapForSandbox`
   构造真实 sandbox-exec 调用跑攻击载荷 + 未沙箱对照组。逃逸写家目录 / 写 /tmp 外部、外连网络（1.1.1.1:53）、
   env 宿主 secret 泄漏**全部被拦**（对照组未沙箱时均成功，证明确是沙箱拦的）；工作区内写入正常；读 /etc/passwd /
@@ -204,6 +208,7 @@
 - ✅ 2026-06-15 **市场 v2 切换前端 UI**：webui-server `GET /api/clients`（列已发现前端）+
   `POST /api/clients/active`（owner 设活跃：实时重挂静态目录 + 持久化 `webui.client`）；Dashboard
   在装了 >1 前端时显示切换卡片（设为活跃 → reload 即加载新前端）。收尾「前端忒修斯之船可换」。
+  （路由后并入 `GET /api/services` + `POST /api/services/webui-client/prefer`，持久化改 `servicePreferences['webui-client']`；另见 2026-06-18 逃生页条目。）
 - ✅ 2026-06-15 **runtime 文档 + keyword 伞形**：新增 docs/core/runtime.md（@aalis/runtime = Node 宿主层、
   与包管理器无关、设施清单、如何为别的环境写 host）；全包加 `aalis` 伞形关键词（core 加 `aalis-core`），
   `npm search aalis` 即可找全生态（**本地已改，随下次发布上线**；不影响市场的 `aalis-plugin` 过滤）。
