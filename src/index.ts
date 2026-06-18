@@ -55,9 +55,6 @@ async function main() {
     restartStrategy: createProcessRespawnStrategy(),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: process.env.NODE_ENV !== 'production',
-    // 应用层声明：核心功能依赖以下服务至少各有一个提供者运行
-    // （core 自身不假设这些服务存在，必须由应用入口显式声明）
-    requiredServices: [],
   });
 
   // App 构造完成后再让 sink 监听终端归属事件——

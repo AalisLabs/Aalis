@@ -364,50 +364,6 @@ describe('激活归因与级联（#8.1 / #8.6 回归）', () => {
   });
 });
 
-describe('serviceRecovery.autoEnableDisabled 政策（#4 政策注入）', () => {
-  function makeProvider(state: ScratchState): PluginModule {
-    return {
-      name: 'provider',
-      provides: ['mysvc'],
-      apply(ctx) {
-        ctx.provide('mysvc', { ok: true });
-        state.applied.push('provider');
-      },
-    };
-  }
-
-  it('默认（true）：必需服务缺失时自动启用被禁用的提供者', async () => {
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['provider'] },
-      requiredServices: ['mysvc'],
-    });
-    const state: ScratchState = { applied: [], disposed: [] };
-    // 注：默认政策下恢复在注册后的首个 reactive recompute 收尾即可能触发，
-    // 不必等 start()——这里只断言最终态。
-    await app.plugin(makeProvider(state));
-    await app.start();
-    expect(app.plugins.getStatus()[0].state).toBe('active');
-    expect(app.ctx.hasService('mysvc')).toBe(true);
-    await app.stop();
-  });
-
-  it('autoEnableDisabled=false：尊重用户禁用，不自动启用（服务保持缺失）', async () => {
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['provider'] },
-      requiredServices: ['mysvc'],
-      serviceRecovery: { autoEnableDisabled: false },
-    });
-    const state: ScratchState = { applied: [], disposed: [] };
-    await app.plugin(makeProvider(state));
-
-    await app.start();
-    expect(app.plugins.getStatus()[0].state).toBe('disabled');
-    expect(app.ctx.hasService('mysvc')).toBe(false);
-    expect(state.applied).toEqual([]);
-    await app.stop();
-  });
-});
-
 describe('配置热重载与启动路径同政策（评审修复回归）', () => {
   it('watch 推送的快照在热重载时按 trimUnknownFields 裁剪 schema 外字段', async () => {
     let pushSnapshot: ((next: Record<string, unknown>) => void) | undefined;
