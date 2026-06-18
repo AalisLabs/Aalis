@@ -23,12 +23,20 @@ import { UserStore } from './user-store.js';
 // 数据层（users.json v3 / 绑定 / 密码）委托给 UserStore；纯判定见 capability-model。
 // ════════════════════════════════════════════════════════════
 
-/** 内置受限能力：写用户表 / 计划任务 / 源码根 —— 默认禁、仅 owner 或被授予者可触达 */
+/**
+ * 内置受限能力：读/写/删 用户表 / 计划任务 / 源码根 —— 默认禁、仅 owner 或被授予者可触达。
+ * 读也纳入：users.json 存 PBKDF2 哈希+委托结构、scheduler-jobs 存任务（含 actor 身份），
+ * 默认 allowedRoots 即便放宽到 data，也不能让 file_read 等公开工具裸读这些凭据/状态文件。
+ * （authority/scheduler 自身经 storage 服务直读直写，不过本守卫，故不受影响。）
+ */
 const BUILTIN_RESTRICTED: readonly string[] = [
+  'storage:path:data:/users.json:read',
   'storage:path:data:/users.json:write',
   'storage:path:data:/users.json:delete',
+  'storage:path:data:/scheduler-jobs.json:read',
   'storage:path:data:/scheduler-jobs.json:write',
   'storage:path:data:/scheduler-jobs.json:delete',
+  'storage:aalis:read',
   'storage:aalis:write',
   'storage:aalis:delete',
 ];
