@@ -148,6 +148,11 @@ interface APIChatResponse {
   };
 }
 
+/** OpenAI 推理模型(o 系列：o1/o3/o4…)：拒 max_tokens(需 max_completion_tokens)、拒非默认 temperature。 */
+function isReasoningModel(model: string): boolean {
+  return /^o\d/i.test(model);
+}
+
 // ===== OpenAI 客户端（不是 service、仅是底层 fetch 封装，多个 ModelHandle 共享） =====
 
 class OpenAIClient {
@@ -193,11 +198,14 @@ class OpenAIClient {
     const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
+    const reasoning = isReasoningModel(model);
     const body: Record<string, unknown> = {
       model,
       messages,
-      temperature: request.temperature ?? this.temperature,
-      max_tokens: request.maxTokens ?? 4096,
+      // 推理模型(o 系列)拒 max_tokens(需 max_completion_tokens)且只接受默认 temperature → 分支处理(M14)；
+      // 缺省回退到配置的 this.maxTokens，而非字面量 4096(M15，遵守 llm-api 契约)。
+      [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
+      ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
     };
 
     if (tools && tools.length > 0) {
@@ -258,11 +266,13 @@ class OpenAIClient {
     const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
+    const reasoning = isReasoningModel(model);
     const body: Record<string, unknown> = {
       model,
       messages,
-      temperature: request.temperature ?? this.temperature,
-      max_tokens: request.maxTokens ?? 4096,
+      // 同 chat()：推理模型分支 max_completion_tokens / 略去 temperature(M14)，缺省回退 this.maxTokens(M15)。
+      [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
+      ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
       stream: true,
     };
 
