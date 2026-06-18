@@ -261,8 +261,9 @@ class DeepSeekClient {
       body.tools = tools;
     }
 
-    // 强制 JSON 输出：工具调用走 tool_calls 字段，不受 response_format 影响
-    if (this.forceJsonOutput) {
+    // 强制 JSON 输出。带 tools 时必须不加 response_format：json_object 与 tool_calls 互斥会破坏工具循环，
+    // 兑现配置文案"工具调用阶段不受影响"的承诺(M16)。
+    if (this.forceJsonOutput && !(tools && tools.length > 0)) {
       body.response_format = { type: 'json_object' };
     }
 
@@ -380,8 +381,9 @@ class DeepSeekClient {
       body.tools = tools;
     }
 
-    // 强制 JSON 输出：工具调用走 tool_calls 字段，不受 response_format 影响
-    if (this.forceJsonOutput) {
+    // 强制 JSON 输出。带 tools 时必须不加 response_format：json_object 与 tool_calls 互斥会破坏工具循环，
+    // 兑现配置文案"工具调用阶段不受影响"的承诺(M16)。
+    if (this.forceJsonOutput && !(tools && tools.length > 0)) {
       body.response_format = { type: 'json_object' };
     }
 
