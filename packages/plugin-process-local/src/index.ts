@@ -59,8 +59,9 @@ export class LocalProcessService implements ProcessService {
       },
       wait: () =>
         new Promise<ExecResult>((resolve, reject) => {
-          // 累计缓冲上限（stdout+stderr 合计）：边读边计数，超限即截断 + 杀进程，
-          // 防失控/恶意输出无上限累积撑爆内存（评审 S1）。
+          // 累计缓冲上限（stdout+stderr 合计）：边读边计数，超限即停止累积（丢弃后续、标 truncated），
+          // 防失控/恶意输出无上限累积撑爆内存。不杀进程——终止交给 timeout / 调用方：后台进程
+          // （dev server / --watch 等）本就该长跑，杀掉会误伤，且超 buffer 也不应被误报成 SIGKILL/timedOut。
           const maxBuffer = opts.maxBuffer && opts.maxBuffer > 0 ? opts.maxBuffer : DEFAULT_MAX_BUFFER;
           const chunksOut: Buffer[] = [];
           const chunksErr: Buffer[] = [];
@@ -74,12 +75,7 @@ export class LocalProcessService implements ProcessService {
               if (room > 0) arr.push(b.subarray(0, room));
               total = maxBuffer;
               truncated = true;
-              try {
-                child.kill('SIGKILL');
-              } catch {
-                /* ignore */
-              }
-              return;
+              return; // 停止累积即可：后续 chunk 经顶部 if(truncated) 丢弃但仍被消费(不阻塞)；不杀进程
             }
             arr.push(b);
             total += b.length;
