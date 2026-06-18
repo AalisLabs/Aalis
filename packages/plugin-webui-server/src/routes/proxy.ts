@@ -58,6 +58,9 @@ export function registerProxyRoutes(expressApp: express.Express, ctx: Context, g
       res.setHeader('cache-control', 'private, max-age=86400');
       // 防止浏览器把响应当 HTML 渲染
       res.setHeader('x-content-type-options', 'nosniff');
+      // 顶层导航打开本代理 URL 时按沙箱渲染（禁脚本），杜绝 image/svg+xml 反射型 XSS；
+      // sandbox 指令仅作用于文档级加载，<img> 子资源渲染不受影响，图片正常显示。
+      res.setHeader('content-security-policy', 'sandbox');
 
       if (!upstream.body) {
         res.status(502).json({ error: '上游无响应体' });
