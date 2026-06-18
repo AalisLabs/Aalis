@@ -149,6 +149,33 @@ describe('setUserCapabilities 委托子集约束', () => {
     );
   });
 
+  it('A1: 非 owner 不能修改 owner 的能力（防 deny>owner 锁死 owner）', () => {
+    const m = new AuthorityManager(mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }), mkLogger(), storage);
+    m.setUserCapabilities(null, onebot('attacker'), { grant: ['tool:foo'] });
+    expect(() => m.setUserCapabilities(onebot('attacker'), onebot('boss'), { deny: ['*'] })).toThrow(/不能修改 owner/);
+    // owner / 系统上下文仍可改（跳过约束）
+    expect(() => m.setUserCapabilities(null, onebot('boss'), { deny: ['tool:x'] })).not.toThrow();
+  });
+
+  it('A1: deny 也受子集约束（非 owner 只能 deny 自己持有的）', () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    m.setUserCapabilities(null, onebot('granter'), { grant: ['tool:foo'] });
+    m.setUserCapabilities(onebot('granter'), onebot('sub'), { grant: ['tool:foo'] });
+    expect(() => m.setUserCapabilities(onebot('granter'), onebot('sub'), { deny: ['tool:foo'] })).not.toThrow();
+    expect(() => m.setUserCapabilities(onebot('granter'), onebot('sub'), { deny: ['tool:bar'] })).toThrow(/越权/);
+  });
+
+  it('A1: 非 owner 只能管理自己委托的下层（不能改他人/系统建的记录）', () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    m.setUserCapabilities(null, onebot('granter'), { grant: ['tool:foo'] });
+    m.setUserCapabilities(null, onebot('other'), { grant: ['tool:foo'] }); // 系统建、grantedBy 未设
+    expect(() => m.setUserCapabilities(onebot('granter'), onebot('other'), { grant: ['tool:foo'] })).toThrow(
+      /只能管理你自己委托的下层/,
+    );
+    expect(() => m.setUserCapabilities(onebot('granter'), onebot('mine'), { grant: ['tool:foo'] })).not.toThrow();
+    expect(() => m.setUserCapabilities(onebot('granter'), onebot('mine'), { deny: ['tool:foo'] })).not.toThrow();
+  });
+
   it('grantedBy 记录委托父，listDelegatees 可展开', () => {
     const m = new AuthorityManager(mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }), mkLogger(), storage);
     m.setUserCapabilities(onebot('boss'), onebot('child'), { grant: ['tool:foo'] });
