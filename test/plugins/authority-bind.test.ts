@@ -163,3 +163,21 @@ describe('持久化与级联', () => {
     expect(can(m, QQ, 'tool:acct')).toBe(false);
   });
 });
+
+describe('A3 + console 绑定闸', () => {
+  it('A3: 对被绑身份授权，写入归一到主账户（grant 生效、不静默失败）', () => {
+    const m = makeManager();
+    bindQQ(m); // onebot:12345 → webui:alice
+    // 直接对被绑身份 QQ 授权 → 应重定向落到主账户 alice，使 QQ 解析得到该 grant
+    m.setUserCapabilities(null, QQ, { grant: ['tool:redirected'] });
+    expect(can(m, QQ, 'tool:redirected')).toBe(true);
+    // 确实写到了主账户 alice，而非 QQ 自身记录
+    const alice = m.listUsers().find(u => u.platform === 'webui' && u.userId === 'alice');
+    expect(alice?.grant).toContain('tool:redirected');
+  });
+
+  it('console 不能作为绑定目标', () => {
+    const m = makeManager();
+    expect(() => m.createBindCode('webui', 'console')).toThrow(/console/);
+  });
+});

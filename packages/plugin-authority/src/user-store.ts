@@ -116,6 +116,14 @@ export class UserStore {
 
   createBindCode(platform: string, userId: string): { code: string; expiresAt: number } {
     if (platform !== 'webui') throw new Error('绑定码只能由 WebUI 主账户发起');
+    // console 是单用户/token 模式的隐式 owner，不是真账户：绑到它既传不了 owner（isOwner 按身份硬判），
+    // 又会造一条无密码的 webui:console 记录。要让外部身份成 owner 请加入 config.owners，
+    // 要继承能力请绑到具体 WebUI 账户。
+    if (userId === 'console') {
+      throw new Error(
+        'console 是隐式 owner，不能作为绑定目标；让外部身份成 owner 请加入 config.owners，继承能力请绑到具体 WebUI 账户',
+      );
+    }
     const account = `${platform}:${userId}`;
     const now = Date.now();
     for (const [code, pending] of this.bindCodes) {
