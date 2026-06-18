@@ -457,12 +457,13 @@ function escapeForRegex(s: string): string {
  * 每个模式作为一个原子 lookbehind 匹配——文本必须以该模式整体结尾才会切割。
  * XML 标记（<at>、<image> 等）保持与相邻文本在一起，不在标记内部切割。
  */
-function splitMessageByPunctuation(content: string, patterns: string[]): string[] {
+export function splitMessageByPunctuation(content: string, patterns: string[]): string[] {
   if (content.length <= 10 || patterns.length === 0) return [content];
 
-  // 识别 XML 标记位置，拆分时不切割它们
+  // 识别 XML 标记位置，拆分时不切割它们。at 用 [^>]* 容纳属性（含 <at id=..>/<at self id=..>/<at>all</at>），
+  // 并覆盖自闭合的 video/record，与下游 parseContentToSegments 接受的格式一致，避免昵称含逗号/url 含点时被切碎。
   const xmlTagRegex =
-    /<(?:at(?:\s+self)?)\s*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>/g;
+    /<at\b[^>]*>[^<]*<\/at>|<face\s+id=["'][^"']*["']\s*\/>|<image\s+url=["'][^"']*["']\s*\/>|<reply\s+id=["'][^"']*["']\s*\/>|<video\s+url=["'][^"']*["']\s*\/>|<record\s+url=["'][^"']*["']\s*\/>/g;
 
   interface Token {
     type: 'text' | 'tag';
