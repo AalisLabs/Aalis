@@ -387,8 +387,8 @@ export class ScopedConfigManager extends ConfigManager {
 
   /**
    * no-op——与基类"无 provider 内存模式 save() 静默忽略"同语义。
-   * 通用插件代码（如 ensureServiceProvider 的 config.save()）在 scope 内
-   * 运行时不应被炸；隔离性由"写只进 overlay"保证，而不是靠 save 抛错。
+   * 通用插件代码在 scope 内运行时调 config.save() 不应被炸；
+   * 隔离性由"写只进 overlay"保证，而不是靠 save 抛错。
    */
   override save(): void {
     /* scope 配置仅存活于内存 */

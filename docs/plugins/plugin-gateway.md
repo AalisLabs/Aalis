@@ -71,9 +71,7 @@ ctx.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, platfo
 
 ## 应用入口要求
 
-```ts
-new App({ requiredServices: ['gateway'] });
-```
+完整发行应加载 `@aalis/plugin-gateway`（提供 `gateway` 服务）。
 
 否则 core 启动时会因缺少 `gateway` 服务而启用 fallback 路由（直接派发到 agent，不经过相位链）；该 fallback 仅适合最小化场景。
 
