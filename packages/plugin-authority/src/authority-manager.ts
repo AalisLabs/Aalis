@@ -90,7 +90,7 @@ export class AuthorityManager implements AuthorityService {
     return { isOwner, grants, denies };
   }
 
-  /** 一条能力是否为 restricted（命中内置 + config.restrictedCapabilities） */
+  /** 一条能力是否为 restricted（命中内置保护 + config.restrictedCapabilities） */
   private isRestrictedCap(cap: CapabilityId): boolean {
     if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return true;
     const extra = this.config.get('restrictedCapabilities') ?? [];
@@ -204,15 +204,19 @@ export class AuthorityManager implements AuthorityService {
   }
 
   async requestAccess(request: AccessRequest): Promise<boolean> {
-    if (this.isTemporarilyAllowed(request)) {
+    // confirm='always'：每次都问，不接受白名单/会话记忆（最高危）
+    const always = request.confirm === 'always';
+    if (!always && this.isTemporarilyAllowed(request)) {
       this.consumeTempGrant(request);
       return true;
     }
-    const handler = this.confirmHandlers.get(request.platform);
+    // 精确平台 handler 优先（如 WebUI 的 WS 确认）；否则落到 '*' 通配 fallback
+    // （plugin-session-confirm 注册，经 gateway 总线覆盖 onebot/cli/任何会话型平台）。
+    const handler = this.confirmHandlers.get(request.platform) ?? this.confirmHandlers.get('*');
     if (!handler) return false;
     try {
       const decision = this.normalizeDecision(await handler(request));
-      if (decision.allowed && decision.grant?.scope === 'session') this.createTempGrant(request, decision);
+      if (!always && decision.allowed && decision.grant?.scope === 'session') this.createTempGrant(request, decision);
       return decision.allowed;
     } catch (err) {
       this.logger.warn(`临时委托确认回调异常: ${err}`);

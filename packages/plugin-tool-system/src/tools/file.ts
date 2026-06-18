@@ -376,6 +376,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     visibility: 'restricted',
+    // 写文件是 confused-deputy 向量（注入诱导覆盖/落恶意文件）→ owner 也需确认（本会话记住）
+    confirm: 'session',
     permissions: ['tool:file.write', 'storage:write'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
@@ -416,6 +418,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     visibility: 'restricted',
+    confirm: 'session',
     permissions: ['tool:file.edit', 'storage:write'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
@@ -481,6 +484,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     visibility: 'restricted',
+    confirm: 'session',
     permissions: ['tool:file.append', 'storage:write'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
@@ -526,6 +530,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       },
     },
     visibility: 'restricted',
+    // 删文件不可逆 → owner 也需确认（本会话记住）
+    confirm: 'session',
     permissions: ['tool:file.delete', 'storage:delete'],
     resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'delete'),
     handler: async (args, callCtx) => {

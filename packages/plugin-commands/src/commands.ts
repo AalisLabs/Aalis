@@ -1,5 +1,11 @@
 import type { Logger } from '@aalis/core';
-import type { CapabilityId, CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
+import type {
+  CapabilityConfirm,
+  CapabilityId,
+  CapabilityVisibility,
+  ExecutionGuard,
+} from '@aalis/plugin-authority-api';
+import { riskDefaults } from '@aalis/plugin-authority-api';
 import type {
   Command,
   CommandArgv,
@@ -34,6 +40,8 @@ interface CommandPatches {
   description?: string;
   /** 节点自身声明的可见性（未声明则继承祖先；缺省 public） */
   baseVisibility?: CapabilityVisibility;
+  /** 节点自身声明的确认要求（轴 B；未声明则继承祖先） */
+  baseConfirm?: CapabilityConfirm;
   basePermissions?: CapabilityId[];
   aliases: string[];
   positionalArgs: PositionalArgSpec[];
@@ -101,7 +109,9 @@ export class CommandRegistry implements CommandService {
 
     node.declared = true;
     node.description = description ?? '';
-    node.baseVisibility = meta?.visibility;
+    // 展开 risk 但保留「未声明=继承」语义（不套 public 兜底，由 materialize 末尾兜底）
+    node.baseVisibility = meta?.visibility ?? riskDefaults(meta?.risk).visibility;
+    node.baseConfirm = meta?.confirm ?? riskDefaults(meta?.risk).confirm;
     node.basePermissions = meta?.permissions ? [...meta.permissions] : [];
     node.positionalArgs = positionalArgs;
     node.usage = meta?.usage;
@@ -290,6 +300,7 @@ export class CommandRegistry implements CommandService {
         name: cmd.name,
         type: 'command',
         visibility: cmd.visibility,
+        confirm: cmd.confirm,
         permissions: cmd.permissions,
         sessionId: input.sessionId,
         platform: input.platform,
@@ -328,16 +339,19 @@ export class CommandRegistry implements CommandService {
     // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖；
     // 资源能力沿途累加（父分组声明的 permissions 下传子节点）。
     let effVisibility: CapabilityVisibility = 'public';
+    let effConfirm: CapabilityConfirm | undefined;
     const inheritedPermissions: string[] = [];
     const parts = name.split('.');
     for (let i = 1; i < parts.length; i++) {
       const parent = parts.slice(0, i).join('.');
       const p = this.nodes.get(parent);
       if (p?.baseVisibility !== undefined) effVisibility = p.baseVisibility;
+      if (p?.baseConfirm !== undefined) effConfirm = p.baseConfirm;
       if (p?.basePermissions) inheritedPermissions.push(...p.basePermissions);
     }
 
     const visibility = node.baseVisibility ?? effVisibility;
+    const confirm = node.baseConfirm ?? effConfirm;
     const permissions = unique([`command:${name}`, ...inheritedPermissions, ...(node.basePermissions ?? [])]);
 
     return {
@@ -345,6 +359,7 @@ export class CommandRegistry implements CommandService {
       pluginName: node.pluginName ?? 'unknown',
       description: node.description ?? '',
       visibility,
+      confirm,
       permissions,
       aliases: [...node.aliases],
       positionalArgs: [...node.positionalArgs],
