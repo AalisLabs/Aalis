@@ -11,7 +11,13 @@
 // 实现见 @aalis/plugin-commands。
 
 import type { Context } from '@aalis/core';
-import type { CapabilityId, CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
+import type {
+  CapabilityConfirm,
+  CapabilityId,
+  CapabilityRisk,
+  CapabilityVisibility,
+  ExecutionGuard,
+} from '@aalis/plugin-authority-api';
 
 // ===== handler 接口 =====
 
@@ -74,8 +80,12 @@ export interface OptionSpec {
 
 /** 注册时的元数据 */
 export interface CommandMeta {
-  /** 主能力默认可见性（缺省 public）；restricted 须被 owner/委托授予 */
+  /** 主能力默认可见性（轴 A；缺省 public）；restricted 须被 owner/委托授予。子命令继承父分组声明 */
   visibility?: CapabilityVisibility;
+  /** 确认要求（轴 B，与 visibility 正交、owner 也生效）：'session'/'always'；缺省=不确认。子命令继承父声明 */
+  confirm?: CapabilityConfirm;
+  /** 风险等级（声明糖）：展开为 (visibility, confirm) 默认；显式 visibility/confirm 覆盖 */
+  risk?: CapabilityRisk;
   /** 额外触达的资源能力（如 storage:path:...:write），不含默认 command:<name> */
   permissions?: CapabilityId[];
   /** 自定义 usage 文本 */
@@ -93,6 +103,8 @@ export interface Command {
   description: string;
   /** 主能力默认可见性（缺省 public）；可被 authority 配置的 visibilityOverrides 调整 */
   visibility: CapabilityVisibility;
+  /** 生效确认要求（轴 B，含从父分组继承）；缺省=不确认 */
+  confirm?: CapabilityConfirm;
   /** 有效资源能力列表（含默认 command:<name> + 从父分组继承的声明） */
   permissions: string[];
   /** 别名（完整点路径） */
