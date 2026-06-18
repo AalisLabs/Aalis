@@ -202,8 +202,8 @@ class OpenAIClient {
     const body: Record<string, unknown> = {
       model,
       messages,
-      // 推理模型(o 系列)拒 max_tokens(需 max_completion_tokens)且只接受默认 temperature → 分支处理(M14)；
-      // 缺省回退到配置的 this.maxTokens，而非字面量 4096(M15，遵守 llm-api 契约)。
+      // 推理模型(o 系列)拒 max_tokens(需 max_completion_tokens)且只接受默认 temperature → 分支处理；
+      // 缺省回退到配置的 this.maxTokens，而非字面量 4096（遵守 llm-api 契约）。
       [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
       ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
     };
@@ -270,7 +270,7 @@ class OpenAIClient {
     const body: Record<string, unknown> = {
       model,
       messages,
-      // 同 chat()：推理模型分支 max_completion_tokens / 略去 temperature(M14)，缺省回退 this.maxTokens(M15)。
+      // 同 chat()：推理模型分支 max_completion_tokens / 略去 temperature，缺省回退 this.maxTokens。
       [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
       ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
       stream: true,
