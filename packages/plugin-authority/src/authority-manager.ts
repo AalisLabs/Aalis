@@ -134,16 +134,24 @@ export class AuthorityManager implements AuthorityService {
     const grant = normalize(caps.grant);
     const deny = normalize(caps.deny);
 
+    // A3: 被绑定身份的能力以主账户为单一真源（resolve 从主账户读 grant）；写入也归一到主账户，
+    // 否则写到身份自身记录 → grant 静默不生效。account 命中即重定向到主账户键。
+    const rawKey = `${target.platform}:${target.userId}`;
+    const key = this.store.accountOf(rawKey) ?? rawKey;
+    const colon = key.indexOf(':');
+    const effPlatform = key.slice(0, colon);
+    const effUserId = key.slice(colon + 1);
+
     // 委托约束（仅约束非 owner 授予方；owner 跳过）。维护委托树「单调递减、防越权」不变量。
     if (granter && !this.isOwner(granter.platform, granter.userId)) {
       // (1) 不能修改 owner 的能力 —— 防 deny>owner 反向锁死 owner（评审 A1）。
-      if (this.isOwner(target.platform, target.userId)) {
+      if (this.isOwner(effPlatform, effUserId)) {
         throw new Error('越权：不能修改 owner 的能力');
       }
       // (3) 只能管理自己委托的下层：target 为新建、或既有记录的 grantedBy === 自己。
       // 既有但 grantedBy 非自己（含 system/owner 建的、grantedBy 未设的）一律拒，防越界改他人记录。
       const granterKey = `${granter.platform}:${granter.userId}`;
-      const existingTarget = this.store.get(`${target.platform}:${target.userId}`);
+      const existingTarget = this.store.get(key);
       if (existingTarget && existingTarget.grantedBy !== granterKey) {
         throw new Error('越权：只能管理你自己委托的下层用户');
       }
@@ -156,7 +164,6 @@ export class AuthorityManager implements AuthorityService {
       }
     }
 
-    const key = `${target.platform}:${target.userId}`;
     const existing = this.store.get(key);
     const grantedBy = granter ? `${granter.platform}:${granter.userId}` : existing?.grantedBy;
     const next = { ...existing, caps: grant || deny ? { grant, deny } : undefined, grantedBy };
