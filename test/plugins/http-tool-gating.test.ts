@@ -3,7 +3,7 @@ import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/h
 import type { RegisteredTool, ScopedToolService } from '../../packages/plugin-tools-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// H1: http_download 写工具必须挂闸（restricted + confirm + storage:write），
+// http_download 写工具必须挂闸（restricted + confirm + storage:write），
 //     防被注入的 LLM 静默/越权写 storage（如覆写 data:/users.json）。
 // ════════════════════════════════════════════════════════════
 
@@ -20,7 +20,7 @@ function captureRegistered(): Record<string, Omit<RegisteredTool, 'pluginName'>>
   return tools;
 }
 
-describe('http 工具能力闸（H1）', () => {
+describe('http 工具能力闸', () => {
   it('http_download：受限 + 每次确认 + storage:write 权限', () => {
     const t = captureRegistered().http_download;
     expect(t).toBeDefined();
@@ -29,7 +29,7 @@ describe('http 工具能力闸（H1）', () => {
     expect(t.permissions).toContain('storage:write');
   });
 
-  it('http_request：保持默认（H2 暂缓，未改其闸）', () => {
+  it('http_request：保持默认（暂未改其闸）', () => {
     const t = captureRegistered().http_request;
     expect(t).toBeDefined();
     expect(t.visibility).toBeUndefined(); // 默认 public，本批未动

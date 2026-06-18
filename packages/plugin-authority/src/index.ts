@@ -92,7 +92,7 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     const denied = authority.authorize(identity, { capability, visibility, resourceCapabilities: g.permissions });
     if (denied) {
       // 受限被拒：系统/受信源无人确认，直接拒；否则走交互授予（白名单/会话授予/回调）。
-      // 必须带上 confirm —— 否则 confirm='always' 的操作在此路径被降级为可白名单/会话记忆（评审 A2）。
+      // 必须带上 confirm —— 否则 confirm='always' 的操作在此路径被降级为可白名单/会话记忆。
       if (g.skipConfirm) return denied;
       const granted = await authority.requestAccess({ ...accessBase, confirm: g.confirm });
       return granted ? null : denied;
