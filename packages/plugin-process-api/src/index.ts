@@ -29,6 +29,11 @@ export interface SpawnOptions {
    * 'ignore' 可与 detached 携手实现 fire-and-forget（例如启动浏览器）。
    */
   stdio?: 'pipe' | 'ignore' | 'inherit';
+  /**
+   * wait() 累计缓冲（stdout+stderr 合计）字节上限；超出即截断并杀子进程，
+   * 防失控/恶意输出在 Buffer.concat 前无上限累积撑爆宿主内存。缺省由实现给安全默认（如 10MB）。
+   */
+  maxBuffer?: number;
 }
 
 export interface ExecResult {
@@ -40,6 +45,8 @@ export interface ExecResult {
   stdout: string;
   /** 标准错误 */
   stderr: string;
+  /** 输出超过 maxBuffer 被截断并提前杀进程（区别于 timeout 的 SIGKILL） */
+  truncated?: boolean;
 }
 
 export interface SpawnHandle {
