@@ -40,7 +40,13 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
   /** 每个 session 至多一个未决确认（确认是会话内串行的一问一答）。 */
   const pending = new Map<
     string,
-    { resolve: (v: boolean | AccessDecision) => void; timer: ReturnType<typeof setTimeout>; always: boolean }
+    {
+      resolve: (v: boolean | AccessDecision) => void;
+      timer: ReturnType<typeof setTimeout>;
+      always: boolean;
+      /** 发起确认的触发者 userId；仅本人能应答（防群里第三方抢答）。 */
+      userId?: string;
+    }
   >();
 
   const handler: AccessConfirmHandler = request =>
@@ -58,13 +64,16 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
         deliver(request, '⏰ 操作确认已超时，已自动取消。');
         resolve(false);
       }, CONFIRM_TIMEOUT_MS);
-      pending.set(request.sessionId, { resolve, timer, always });
+      pending.set(request.sessionId, { resolve, timer, always, userId: request.userId });
       deliver(request, composeConfirmPrompt(request, always, SESSION_GRANT_SECONDS));
     });
 
-  const feed = (sessionId: string, replyText: string): boolean => {
+  const feed = (sessionId: string, replyText: string, replyUserId?: string): boolean => {
     const p = pending.get(sessionId);
     if (!p) return false;
+    // 仅触发者本人能应答：群里 sessionId=群，否则任意成员都能替授权方确认（评审 C1）。
+    // 私聊/webui 触发者与应答者天然同人；二者皆 undefined 也视为同人（系统注入等无 userId 场景）。
+    if (p.userId !== replyUserId) return false;
     clearTimeout(p.timer);
     pending.delete(sessionId);
     p.resolve(parseConfirmReply(replyText, p.always, SESSION_GRANT_SECONDS));
@@ -99,7 +108,7 @@ export async function apply(ctx: Context): Promise<void> {
 
   // inbound:confirm 相位（最前）：命中未决确认即喂入解析并吞掉，避免触达 agent（防 abort 在途生成）。
   ctx.middleware(INBOUND_PHASE.CONFIRM, async (data, next) => {
-    if (busChannel.feed(data.message.sessionId, data.message.content ?? '')) return; // 吞掉确认回复
+    if (busChannel.feed(data.message.sessionId, data.message.content ?? '', data.message.userId)) return; // 吞掉确认回复
     return next();
   });
 }
