@@ -109,7 +109,7 @@ describe('ScopedConfigManager (沙盒)', () => {
       const parent = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
       const scope = new ScopedConfigManager(parent);
       scope.set('name', 'Sandbox');
-      // 通用插件代码（如 ensureServiceProvider）在 scope 内调 save() 不应被炸
+      // 通用插件代码在 scope 内调 save() 不应被炸
       expect(() => scope.save()).not.toThrow();
       // 父级也未触发 save：磁盘内容保持原样
       expect(existsSync(cfg.path)).toBe(true);

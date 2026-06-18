@@ -4,9 +4,8 @@
 // 从 plugin.ts 拆出的"如何把单个 entry 推进到 active 态"逻辑：
 //   - computeTargetState：给定 reason，单个 entry 的目标态是什么
 //   - activatePlugin：fork ctx → apply → 校验 provides → 标记 active/error
-//   - ensureServiceProvider：必需服务自动恢复（启用 disabled / 重试 pending）
 //
-// 这些都需要 PluginManager 的状态（plugins map / requiredServices / rootCtx），
+// 这些都需要 PluginManager 的状态（plugins map / rootCtx），
 // 但被有意提成 free function：传入 deps 对象，方便单测 mock + 让 PluginManager
 // 自身只负责"事件路由 + recompute 编排"。
 // ============================================================
@@ -19,8 +18,6 @@ interface ActivationDeps {
   plugins: Map<string, PluginEntry>;
   rootCtx: Context;
   logger: Logger;
-  /** 必需服务恢复政策（宿主经 AppOptions.serviceRecovery 注入；缺省允许自动启用 disabled 提供者） */
-  recovery?: { autoEnableDisabled: boolean };
 }
 
 /**
@@ -92,7 +89,7 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
     }
 
     // dev mode：反向一致性检查 —— 实际注册的服务名是否都在 provides 中声明
-    // 不在 provides 的服务无法享受拓扑排序与服务恢复，下游可能错过依赖关系
+    // 不在 provides 的服务无法享受拓扑排序，下游可能错过依赖关系
     // 注：是否 dev 由宿主通过 `App({ devMode })` 显式注入，core 不读 process.env
     if (rootCtx.devMode) {
       const declared = new Set(entry.module.provides ?? []);
@@ -103,7 +100,7 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
       if (undeclared.length > 0) {
         logger.warn(
           `插件 "${entry.instanceId}" 注册了服务 [${undeclared.join(', ')}] 但未在 module.provides 中声明 —— ` +
-            `下游依赖排序和自动恢复将无法找到该 provider（仅靠 reactive 兜底），建议补全 provides 列表`,
+            `下游依赖排序将无法找到该 provider（仅靠 reactive 兜底），建议补全 provides 列表`,
         );
       }
     }
@@ -124,90 +121,4 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   // 激活成败只由 apply/provides 校验决定。emit 放在 try 块外：旁观插件的
   // 监听器出问题不能把刚激活成功的无辜插件打成 error 终态（归因错位）。
   await rootCtx.emit('plugin:loaded', entry.instanceId);
-}
-
-/**
- * 查找能提供指定服务的插件并尝试激活它。
- *
- * 用于核心必需服务的自动恢复：
- * 1. 优先找已注册但被禁用的提供者 → 启用
- * 2. 其次找已注册但处于 pending/error 的提供者 → 重新激活
- * 3. 已经 active 的跳过（说明服务应该已存在；若仍不存在则插件 bug）
- *
- * @returns 成功激活的插件 instanceId，或 undefined
- */
-export async function ensureServiceProvider(
-  serviceName: string,
-  deps: ActivationDeps,
-  resolving?: Set<string>,
-): Promise<string | undefined> {
-  const { plugins, rootCtx, logger } = deps;
-
-  if (rootCtx.hasService(serviceName)) return undefined;
-
-  const inFlight = resolving ?? new Set<string>();
-  if (inFlight.has(serviceName)) {
-    logger.error(`检测到循环依赖，跳过: ${serviceName}`);
-    return undefined;
-  }
-  inFlight.add(serviceName);
-
-  const candidates: PluginEntry[] = [];
-  for (const entry of plugins.values()) {
-    if (!entry.module.provides?.includes(serviceName)) continue;
-    candidates.push(entry);
-  }
-
-  if (candidates.length === 0) {
-    logger.error(`必需服务 "${serviceName}" 无可用提供者插件`);
-    return undefined;
-  }
-
-  // 政策：是否允许为恢复必需服务而自动启用被用户禁用的提供者。
-  // 默认允许（"必需服务可用"压过"尊重禁用"）；宿主可注入 false 反转取舍。
-  const allowAutoEnable = deps.recovery?.autoEnableDisabled ?? true;
-  const disabledCandidates = candidates.filter(e => e.state === 'disabled');
-  if (!allowAutoEnable && disabledCandidates.length > 0) {
-    logger.warn(
-      `必需服务 "${serviceName}" 存在被禁用的提供者 [${disabledCandidates.map(e => e.instanceId).join(', ')}]，` +
-        `但 serviceRecovery.autoEnableDisabled=false，不自动启用`,
-    );
-  }
-  const ordered = [
-    ...(allowAutoEnable ? disabledCandidates : []),
-    ...candidates.filter(e => e.state === 'pending' || e.state === 'error'),
-  ];
-
-  for (const candidate of ordered) {
-    if (candidate.state === 'disabled') {
-      logger.warn(`必需服务 "${serviceName}" 缺失，自动启用插件: ${candidate.instanceId}`);
-      candidate.state = 'pending';
-      candidate.error = undefined;
-      rootCtx.config.setPluginEnabled(candidate.instanceId, true);
-    } else {
-      logger.warn(`必需服务 "${serviceName}" 缺失，尝试激活插件: ${candidate.instanceId}`);
-      candidate.state = 'pending';
-      candidate.error = undefined;
-    }
-
-    for (const dep of candidate.requiredDeps) {
-      if (!rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
-        await ensureServiceProvider(dep.service, deps, inFlight);
-      }
-    }
-
-    await activatePlugin(candidate, deps);
-    if ((candidate.state as PluginState) === 'active') {
-      rootCtx.config.save();
-      return candidate.instanceId;
-    }
-  }
-
-  const active = candidates.find(e => e.state === 'active');
-  if (active) {
-    logger.warn(`插件 "${active.instanceId}" 已激活但未提供 "${serviceName}" 服务`);
-  }
-
-  logger.error(`无法为必需服务 "${serviceName}" 找到可用的提供者`);
-  return undefined;
 }
