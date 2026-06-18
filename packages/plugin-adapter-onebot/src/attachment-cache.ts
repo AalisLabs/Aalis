@@ -68,12 +68,41 @@ export async function cacheAttachmentBuffer(
 }
 
 /**
+ * 流式读取响应体并限额：Content-Length 头超限即拒；流式累计超 maxBytes 即 abort 返回 null。
+ * 避免无 Content-Length 时全量缓冲撑爆内存（体积上限留在下载消费方，不塞进只做校验的 util-network-guard）。
+ */
+export async function readBodyCapped(res: Response, maxBytes: number): Promise<Buffer | null> {
+  const len = Number(res.headers.get('content-length'));
+  if (Number.isFinite(len) && len > maxBytes) return null;
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.byteLength > maxBytes ? null : buf;
+  }
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
  * 从 URL / data: URI / file:// / storage URI 取到 Buffer。失败返回 null。
  */
 export async function loadAttachmentBuffer(
   storage: StorageService,
   proc: ProcessService,
   source: string,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<Buffer | null> {
   try {
     if (source.startsWith('data:')) {
@@ -84,7 +113,7 @@ export async function loadAttachmentBuffer(
     if (source.startsWith('http://') || source.startsWith('https://')) {
       const res = await safeFetch(source, { signal: AbortSignal.timeout(30000) });
       if (!res.ok) return null;
-      return Buffer.from(await res.arrayBuffer());
+      return readBodyCapped(res, maxBytes);
     }
     if (isStorageUri(source)) {
       const raw = (await storage.readFile(source)) as Uint8Array;
