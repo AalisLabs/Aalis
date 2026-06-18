@@ -1,6 +1,6 @@
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
-import { activatePlugin, computeTargetState, ensureServiceProvider } from './plugin-activation.js';
+import { activatePlugin, computeTargetState } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 import { normalizeDependency } from './service.js';
 import type { PluginStatusEntry } from './types/index.js';
@@ -64,18 +64,6 @@ export class PluginManager {
   isShuttingDown(): boolean {
     return this.shuttingDown;
   }
-
-  /**
-   * 必需服务列表: softReload 完成后若缺失会自动恢复。
-   * 由 App 设置。
-   */
-  requiredServices: readonly string[] = [];
-
-  /**
-   * 必需服务恢复政策（由 App 从 AppOptions.serviceRecovery 设置）。
-   * autoEnableDisabled=false 时恢复路径不会自动启用被用户禁用的提供者插件。
-   */
-  recoveryPolicy: { autoEnableDisabled: boolean } = { autoEnableDisabled: true };
 
   constructor(rootCtx: Context, logger: Logger) {
     this.rootCtx = rootCtx;
@@ -433,8 +421,7 @@ export class PluginManager {
   /**
    * 重算所有插件的目标态并按依赖拓扑序应用转移。
    *
-   * 这是 PluginManager 唯一的状态变更入口（除 ensureServiceProvider 这种显式
-   * 启用 disabled 提供者的恢复策略之外）。
+   * 这是 PluginManager 唯一的状态变更入口。
    *
    * 算法：
    * 1. 反应式 reason 决定"是否走完整 fixed-point + 是否触发 optional bounce"；
@@ -445,7 +432,7 @@ export class PluginManager {
    * 4. Phase B（非 shutdown）：正向遍历，激活"目标 active 且依赖满足"的 pending entry
    *    （提供者先起、消费者后起）。
    * 5. 若本轮有变动则继续下一轮，直到稳定或达到 maxRounds。
-   * 6. 非 shutdown 时检查必需服务并发出 plugins:changed。
+   * 6. 非 shutdown 时发出 plugins:changed。
    *
    * Aalis 直接用"服务在不在 + capabilities 命中"
    * 做判断 —— 表达力等价、复杂度更低。
@@ -482,7 +469,7 @@ export class PluginManager {
     }
   }
 
-  /** 单次完整重算：fixed-point 状态转移 + （非关机）必需服务恢复与 plugins:changed 通知 */
+  /** 单次完整重算：fixed-point 状态转移 + （非关机）plugins:changed 通知 */
   private async recomputeOnce(reason: RecomputeReason): Promise<void> {
     let currentReason = reason;
     let changed = true;
@@ -562,40 +549,8 @@ export class PluginManager {
 
     if (reason.type === 'shutdown') return;
 
-    // 必需服务自动恢复
-    for (const service of this.requiredServices) {
-      if (!this.rootCtx.hasService(service)) {
-        this.logger.warn(`必需服务 "${service}" 缺失，尝试自动恢复...`);
-        const activated = await ensureServiceProvider(service, {
-          plugins: this.plugins,
-          rootCtx: this.rootCtx,
-          logger: this.logger,
-          recovery: this.recoveryPolicy,
-        });
-        if (activated) {
-          this.logger.info(`必需服务 "${service}" 已通过插件 "${activated}" 恢复`);
-        } else {
-          this.logger.error(`必需服务 "${service}" 自动恢复失败！`);
-        }
-      }
-    }
-
     this.rootCtx.emit('plugins:changed').catch(err => {
       this.logger.warn(`emit plugins:changed 失败: ${err}`);
-    });
-  }
-
-  /**
-   * 为外部（App）暴露的「必需服务自动恢复」入口。
-   *
-   * 实际逻辑在 plugin-activation.ts。PluginManager 仅负责注入 plugins/rootCtx/logger。
-   */
-  async ensureServiceProvider(serviceName: string): Promise<string | undefined> {
-    return ensureServiceProvider(serviceName, {
-      plugins: this.plugins,
-      rootCtx: this.rootCtx,
-      logger: this.logger,
-      recovery: this.recoveryPolicy,
     });
   }
 }

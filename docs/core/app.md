@@ -21,7 +21,6 @@ const app = createApp(options?: AppOptions);
 | `services` | `ServiceContainer` | 自定义服务容器 |
 | `hooks` | `HookRegistry` | 自定义钩子注册表 |
 | `config` | `ConfigManager` | 自定义配置管理器 |
-| `requiredServices` | `string[]` | 必需服务列表（缺失时尝试自动恢复） |
 
 构造时：
 
@@ -42,11 +41,10 @@ const app = createApp(options?: AppOptions);
 
 ### `app.start()`
 
-1. 如果没有 `memory` 服务，注册内存 fallback（priority=-100）
-2. 应用配置中的服务偏好
-3. 检查必需服务可用性（`webui-server`, `webui-client`, `cli`）
-4. 注册 `inbound:message` → `agent.handleMessage()` 路由
-5. 发出 `ready` 事件
+1. 发出 `app:starting` 事件
+2. 发出 `ready` 事件（sticky）
+3. 监听配置文件外部变更（provider 支持 watch 时）
+4. 发出 `app:started` 事件（sticky）
 
 ### `app.stop()`
 

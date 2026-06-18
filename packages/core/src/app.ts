@@ -57,21 +57,11 @@ export interface AppOptions {
    */
   logger?: Logger;
   /**
-   * 必需服务列表——这些服务必须至少有一个提供者在运行。
-   * 默认 `[]`，core 不假设任何具体服务存在。
-   */
-  requiredServices?: string[];
-  /**
    * 插件配置同步政策。`trimUnknownFields=false` 时 `syncPluginDefaults`
    * 保留 configSchema 之外的未知字段（默认 `true`：按 schema 裁剪）。
    * 仅在传入配置快照时生效；传入现成 ConfigManager 时政策属于该实例自身。
    */
   configSync?: { trimUnknownFields?: boolean };
-  /**
-   * 必需服务恢复政策。`autoEnableDisabled=false` 时恢复路径不会自动启用
-   * 被用户禁用的提供者插件（默认 `true`："必需服务可用"压过"尊重禁用"）。
-   */
-  serviceRecovery?: { autoEnableDisabled?: boolean };
   /**
    * 开发模式开关——传递给根 Context，决定 `provide` 是否跑能力探测。
    * 默认 `true`（dev-safe）；生产宿主应显式传入 `false` 跳过热路径开销。
@@ -110,8 +100,6 @@ export class App {
   readonly events: EventBus;
   readonly services: ServiceContainer;
   readonly hooks: HookRegistry;
-
-  readonly requiredServices: readonly string[];
 
   private readonly pluginLoader?: PluginLoader;
   private readonly restartStrategy?: RestartStrategy;
@@ -163,9 +151,6 @@ export class App {
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.ctx, this.logger);
-    this.requiredServices = options.requiredServices ?? [];
-    this.plugins.requiredServices = this.requiredServices;
-    this.plugins.recoveryPolicy = { autoEnableDisabled: options.serviceRecovery?.autoEnableDisabled ?? true };
 
     // 4. 注册核心服务
     this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
@@ -182,19 +167,6 @@ export class App {
       const pref = config.getServicePreferences()[svcName];
       if (pref) {
         this.logger.debug(`服务 "${svcName}" 注册时存在用户偏好: ${pref}`);
-      }
-    });
-
-    // 7. 必需服务掉线自动恢复
-    this.ctx.on('service:unregistered', async name => {
-      if (!this.requiredServices.includes(name)) return;
-      if (this.ctx.hasService(name)) return;
-      this.logger.warn(`必需服务 "${name}" 被卸载，尝试自动恢复...`);
-      const activated = await this.plugins.ensureServiceProvider(name);
-      if (activated) {
-        this.logger.info(`必需服务 "${name}" 已通过插件 "${activated}" 恢复`);
-      } else if (!this.ctx.hasService(name)) {
-        this.logger.error(`必需服务 "${name}" 自动恢复失败！`);
       }
     });
 
@@ -367,8 +339,6 @@ export class App {
     this.logger.info('正在启动...');
     await this.ctx.emit('app:starting');
 
-    await this.ensureRequiredServices();
-
     // 注：消息路由由 @aalis/plugin-gateway 承担。
     await this.ctx.emit('ready');
 
@@ -420,25 +390,5 @@ export class App {
     this.events.clearSticky();
     this.ctx.dispose();
     this.logger.info('已停止');
-  }
-
-  /**
-   * 检查核心必需服务是否就绪，缺失时自动寻找并启动提供者
-   */
-  private async ensureRequiredServices(): Promise<void> {
-    for (const service of this.requiredServices) {
-      if (this.ctx.hasService(service)) {
-        this.logger.debug(`必需服务 "${service}" 已就绪`);
-        continue;
-      }
-
-      this.logger.warn(`必需服务 "${service}" 未就绪，尝试自动恢复...`);
-      const activated = await this.plugins.ensureServiceProvider(service);
-      if (activated) {
-        this.logger.info(`必需服务 "${service}" 已通过插件 "${activated}" 恢复`);
-      } else {
-        this.logger.error(`必需服务 "${service}" 无法恢复！系统功能将受限。`);
-      }
-    }
   }
 }

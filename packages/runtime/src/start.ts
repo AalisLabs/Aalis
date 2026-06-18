@@ -16,8 +16,6 @@ export interface StartAalisOptions {
   configPath?: string;
   /** 项目根目录（含 package.json + node_modules），默认 process.cwd() */
   projectDir?: string;
-  /** 应用层声明的必需服务（缺失则启动告警），默认空 */
-  requiredServices?: string[];
 }
 
 /**
@@ -35,7 +33,6 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     restartStrategy: createProcessRespawnStrategy(),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: process.env.NODE_ENV !== 'production',
-    requiredServices: opts.requiredServices ?? [],
   });
 
   await app.autoLoadPlugins();
