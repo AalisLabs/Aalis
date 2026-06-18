@@ -173,17 +173,17 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config): McpServer {
   const server = new McpServer({ name: 'aalis-mcp-server', version: '0.1.0' }, { capabilities: { tools: {} } });
 
+  // 暴露策略（allowRestricted + toolGroups 白名单）：ListTools 与 CallTool 必须共用同一谓词，
+  // 否则分组限制只在发现期生效、执行期可被知道工具名的 client 绕过。
+  const groupFilter = new Set(config.toolGroups);
+  const isExposed = (t: { visibility?: string; groups?: readonly string[] }): boolean => {
+    if (!config.allowRestricted && t.visibility === 'restricted') return false;
+    if (groupFilter.size > 0 && !(t.groups ?? []).some(g => groupFilter.has(g))) return false;
+    return true;
+  };
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const all = tools.getAll();
-    const groupFilter = new Set(config.toolGroups);
-    const filtered = all.filter(t => {
-      if (!config.allowRestricted && t.visibility === 'restricted') return false;
-      if (groupFilter.size > 0) {
-        const groups = t.groups ?? [];
-        if (!groups.some(g => groupFilter.has(g))) return false;
-      }
-      return true;
-    });
+    const filtered = tools.getAll().filter(isExposed);
 
     // 需要拿 definition 才能给出 parameters；这里再走一次 getDefinitions 取
     const defsByName = new Map<string, ToolSummary>();
@@ -210,17 +210,12 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
     const toolName = request.params.name;
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
-    // 二次安全检查：即便 listTools 已过滤，CallTool 仍重新校验，防止 client 越界
+    // 二次安全检查：即便 listTools 已过滤，CallTool 仍用同一 isExposed 重新校验
+    // （含 allowRestricted + toolGroups 白名单），防 client 按名直调未暴露分组的工具。
     const meta = tools.getAll().find(t => t.name === toolName);
-    if (!meta) {
+    if (!meta || !isExposed(meta)) {
       return {
-        content: [{ type: 'text', text: `工具不存在: ${toolName}` }],
-        isError: true,
-      };
-    }
-    if (!config.allowRestricted && meta.visibility === 'restricted') {
-      return {
-        content: [{ type: 'text', text: `工具 "${toolName}" 已被 plugin-mcp-server 拒绝（restricted）` }],
+        content: [{ type: 'text', text: `工具不可用或未暴露: ${toolName}` }],
         isError: true,
       };
     }
