@@ -234,11 +234,6 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到 `maxRounds=20`。`service-up` /
 `service-down` 在第二轮起退化为 `plugin-state-changed`，避免无限 optional bounce。
 
-### 服务恢复
-
-`recompute` 收尾会检查 `requiredServices` 列表，对仍缺失的服务调用 `ensureServiceProvider(name)`：
-在所有 pending 插件中查找能 `provides` 该服务的一个，递归激活其依赖链。
-
 ### 沙盒与隔离作用域
 
 Aalis 提供两种隔离粒度：
