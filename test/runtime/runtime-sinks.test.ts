@@ -7,9 +7,9 @@ import {
   __resetBootstrapBufferForTests,
   getBootstrapBuffer,
   installBootstrapBuffer,
-} from '../../src/runtime/bootstrap-buffer.js';
-import { installConsoleSink } from '../../src/runtime/console-sink.js';
-import { appendCrashLog, setupFileLogger } from '../../src/runtime/file-logger.js';
+} from '../../packages/runtime/src/bootstrap-buffer.js';
+import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
+import { appendCrashLog, setupFileLogger } from '../../packages/runtime/src/file-logger.js';
 
 /**
  * runtime/console-sink + file-logger 集成测试
