@@ -1005,7 +1005,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
 // ──────────── 辅助函数 ────────────
 
-function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
+export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
   const rawJobs = Array.isArray(raw.jobs) ? raw.jobs : [];
   return {
     // biome-ignore lint/suspicious/noExplicitAny: 从 YAML 反序列化的原始字段，手动校验转型
@@ -1013,8 +1013,14 @@ function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
       name: String(j.name ?? 'unnamed'),
       cron: j.cron as string | undefined,
       interval: j.interval as number | undefined,
+      // schema 声明的这些字段此前在映射时被丢弃 → runAt 一次性任务不调度、timeZone 失效、
+      // 静态任务无法降权（被强制按默认 owner 身份跑）。透传回来，默认值在触发时回填。
+      runAt: j.runAt as string | undefined,
       sessionId: String(j.sessionId ?? `scheduler::${j.name ?? 'default'}`),
       platform: String(j.platform ?? 'internal'),
+      actorPlatform: j.actorPlatform as string | undefined,
+      actorUserId: j.actorUserId as string | undefined,
+      timeZone: j.timeZone as string | undefined,
       content: String(j.content ?? ''),
       enabled: j.enabled !== false,
     })),
