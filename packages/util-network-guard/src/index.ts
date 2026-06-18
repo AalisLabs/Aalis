@@ -49,18 +49,55 @@ export function isPrivateAddress(addr: string): boolean {
  * 失败抛 Error，调用方负责转 HTTP 状态或日志。
  */
 export async function assertSafeHost(hostname: string): Promise<void> {
-  if (isIP(hostname)) {
-    if (isPrivateAddress(hostname)) throw new Error(`拒绝访问私网/回环地址: ${hostname}`);
+  // URL.hostname 对 IPv6 字面量带方括号（如 [::1]），剥壳后才能被 isIP 识别。
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (isIP(host)) {
+    if (isPrivateAddress(host)) throw new Error(`拒绝访问私网/回环地址: ${host}`);
     return;
   }
-  const lc = hostname.toLowerCase();
+  const lc = host.toLowerCase();
   if (lc === 'localhost' || lc.endsWith('.localhost') || lc.endsWith('.local')) {
-    throw new Error(`拒绝访问本地主机名: ${hostname}`);
+    throw new Error(`拒绝访问本地主机名: ${host}`);
   }
-  const records = await dns.lookup(hostname, { all: true });
+  const records = await dns.lookup(host, { all: true });
   for (const r of records) {
     if (isPrivateAddress(r.address)) {
-      throw new Error(`拒绝访问：${hostname} 解析得到私网地址 ${r.address}`);
+      throw new Error(`拒绝访问：${host} 解析得到私网地址 ${r.address}`);
     }
   }
+}
+
+/** 校验 URL：仅 http/https，且 host 非私网/回环/元数据。通过则返回解析后的 URL。 */
+export async function assertSafeUrl(rawUrl: string): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`非法 URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`仅支持 http/https，收到 ${parsed.protocol}`);
+  }
+  await assertSafeHost(parsed.hostname);
+  return parsed;
+}
+
+/** 重定向跳数上限。 */
+const MAX_REDIRECTS = 5;
+
+/**
+ * SSRF 安全的 fetch：逐跳 `redirect:'manual'` + 每跳重新校验协议与 host，
+ * 杜绝「初始 host 受信但 30x 跳到内网」的重定向绕过。其余行为同原生 fetch。
+ * 任何由 LLM / 用户 / 入站消息触发的远程下载都应改走此函数。
+ */
+export async function safeFetch(url: string, init: RequestInit = {}, maxRedirects = MAX_REDIRECTS): Promise<Response> {
+  let current = await assertSafeUrl(url);
+  for (let i = 0; i <= maxRedirects; i++) {
+    const res = await fetch(current.href, { ...init, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(res.status)) return res;
+    const location = res.headers.get('location');
+    if (!location) return res;
+    current = await assertSafeUrl(new URL(location, current).href);
+  }
+  throw new Error(`重定向次数超过上限 (${maxRedirects})`);
 }
