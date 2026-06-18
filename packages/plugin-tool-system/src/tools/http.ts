@@ -6,18 +6,16 @@
  * - http_download: 下载文件到 storage 受控路径
  */
 
-import { lookup } from 'node:dns/promises';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
-import { isPrivateIp, toStorageUri as toStorageUriShared } from '@aalis/plugin-tools-api';
+import { toStorageUri as toStorageUriShared } from '@aalis/plugin-tools-api';
+import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {
   defaultTimeout: number;
   maxResponseSize: number;
   storage?: StorageService;
 }
-
-const MAX_REDIRECTS = 5;
 
 export function registerHttpTools(tools: ScopedToolService, config: HttpConfig): void {
   // ==================== http_request ====================
@@ -203,46 +201,4 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
       }
     },
   });
-}
-
-// ===== 辅助函数 =====
-
-async function safeFetch(url: string, init: RequestInit): Promise<Response> {
-  let current = await validatePublicHttpUrl(url);
-  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-    const response = await fetch(current.href, { ...init, redirect: 'manual' });
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-
-    const location = response.headers.get('location');
-    if (!location) return response;
-    current = await validatePublicHttpUrl(new URL(location, current).href);
-  }
-  throw new Error(`重定向次数超过上限 (${MAX_REDIRECTS})`);
-}
-
-async function validatePublicHttpUrl(rawUrl: string): Promise<URL> {
-  const parsed = new URL(rawUrl);
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('仅支持 http:// 和 https:// 协议');
-  }
-  if (await isPrivateHost(parsed.hostname)) {
-    throw new Error('安全限制：不允许请求内网地址。如需访问本地服务请使用 shell 工具。');
-  }
-  return parsed;
-}
-
-// 含 DNS 解析的内网判定（SSRF 防护）：先做字符串级判定，再解析域名验证每个 A/AAAA 记录。
-// 字符串级判定复用 plugin-tools-api 的 isPrivateIp，避免与其他插件重复造轮。
-async function isPrivateHost(hostname: string): Promise<boolean> {
-  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (!normalized || normalized === 'localhost') return true;
-
-  if (isPrivateIp(normalized)) return true;
-
-  try {
-    const addresses = await lookup(normalized, { all: true, verbatim: true });
-    return addresses.some(({ address }) => isPrivateIp(address));
-  } catch {
-    return true;
-  }
 }

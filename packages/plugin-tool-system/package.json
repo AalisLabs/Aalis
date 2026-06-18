@@ -21,7 +21,8 @@
     "@aalis/plugin-commands-api": "workspace:^",
     "@aalis/plugin-process-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^",
-    "@aalis/plugin-tools-api": "workspace:^"
+    "@aalis/plugin-tools-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

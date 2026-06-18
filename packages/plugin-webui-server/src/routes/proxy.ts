@@ -1,5 +1,5 @@
 import type { Context } from '@aalis/core';
-import { assertSafeHost } from '@aalis/util-network-guard';
+import { safeFetch } from '@aalis/util-network-guard';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
@@ -23,35 +23,15 @@ export function registerProxyRoutes(expressApp: express.Express, ctx: Context, g
       return;
     }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(raw);
-    } catch {
-      res.status(400).json({ error: '非法 URL' });
-      return;
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      res.status(400).json({ error: '仅支持 http/https' });
-      return;
-    }
-
-    try {
-      await assertSafeHost(parsed.hostname);
-    } catch (err) {
-      res.status(403).json({ error: err instanceof Error ? err.message : 'SSRF 防护拒绝' });
-      return;
-    }
-
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
 
     try {
-      const upstream = await fetch(parsed.toString(), {
+      // safeFetch 内含协议/host/逐跳重定向校验（SSRF）；非法 URL/内网/重定向越界等统一落到下方 catch。
+      const upstream = await safeFetch(raw, {
         signal: ac.signal,
-        // 不带 cookie / 不发用户 referer，避免泄露认证态
-        redirect: 'follow',
+        // 不带 cookie / 不发用户 referer，避免泄露认证态；按 UA 鉴别的站点给个常见 desktop UA
         headers: {
-          // 部分站点会按 UA 鉴别，给个常见 desktop UA
           'user-agent': 'Mozilla/5.0 (Aalis WebUI Image Proxy)',
           accept: 'image/*,*/*;q=0.8',
         },
