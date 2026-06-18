@@ -32,6 +32,9 @@ interface VectorStoreConfig {
 // ===== 向量计算 =====
 
 function dotProduct(a: number[], b: number[]): number {
+  // 维度不一致（多半换了 embedding 模型却复用旧库）→ 返回 -Infinity 而非读越界产 NaN：
+  // 不匹配项自然排到末尾、并被下游 minScore 过滤掉，不污染排序、不静默清空。
+  if (a.length !== b.length) return Number.NEGATIVE_INFINITY;
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += a[i] * b[i];
   return sum;
@@ -52,11 +55,13 @@ interface StoredEntry {
   metadata: Record<string, unknown>;
 }
 
-class FlatVectorStore implements VectorStoreService {
+export class FlatVectorStore implements VectorStoreService {
   private entries: StoredEntry[] = [];
   private readonly storage: StorageService;
   private readonly dataUri: string;
   private dirty = false;
+  /** 维度不匹配只告警一次，避免每次召回刷屏 */
+  private warnedDimMismatch = false;
 
   constructor(
     storage: StorageService,
@@ -113,6 +118,14 @@ class FlatVectorStore implements VectorStoreService {
   async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
     if (this.entries.length === 0) return [];
     const q = normalize(queryVector);
+
+    // 维度不符：疑似更换了 embedding 模型却复用旧库。告警一次（可操作），不匹配项由 dotProduct 返回 -Infinity 自然剔除。
+    if (q.length !== this.entries[0].vector.length && !this.warnedDimMismatch) {
+      this.warnedDimMismatch = true;
+      this.logger?.warn(
+        `向量维度不匹配（查询 ${q.length} 维 vs 库 ${this.entries[0].vector.length} 维）：疑似更换了 embedding 模型，记忆召回将失效。请清空向量库（${this.dataUri}）后重建。`,
+      );
+    }
 
     const scored = this.entries.map(e => ({
       score: dotProduct(q, e.vector),
