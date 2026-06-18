@@ -90,10 +90,13 @@ class LanceDBVectorStore implements VectorStoreService {
     const count = await this.table.countRows();
     if (count === 0) return [];
 
-    const results = await this.table.search(queryVector).limit(topK).toArray();
+    // 显式用余弦度量：默认是 L2，1-L2 既非相似度也与 flat 后端（归一化点积=余弦）量纲不一致，
+    // 会让 memory-vector 的 minScore 阈值与时间加权融合在两后端含义不同。余弦距离 = 1-余弦相似度，
+    // 故下面 1 - _distance = 余弦相似度，与 flat 完全一致（余弦 scale-invariant，无需归一化）。
+    const results = await this.table.query().nearestTo(queryVector).distanceType('cosine').limit(topK).toArray();
 
     return results.map(row => ({
-      score: 1 - (row._distance ?? 0), // LanceDB 返回 L2 距离，转换为相似度
+      score: 1 - (row._distance ?? 0),
       metadata: JSON.parse(row.metadata_json as string) as Record<string, unknown>,
     }));
   }
