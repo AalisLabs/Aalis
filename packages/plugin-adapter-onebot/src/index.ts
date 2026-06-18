@@ -609,6 +609,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const states: ConnectionState[] = [];
 
   // ===== 用户昵称缓存（userId → nickname，从每条消息的 sender 信息累积） =====
+  // 键为历史所有发言者 userId，需软上限 + onDispose 清理，否则长跑/大群下无界增长。
+  const NICKNAME_CACHE_MAX = 5000;
   const nicknameCache = new Map<string, string>();
 
   // ===== 待处理请求（好友/入群）=====
@@ -1562,7 +1564,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const rawUserId = raw.user_id != null ? String(raw.user_id) : undefined;
     if (rawUserId && sender) {
       const nick = (sender.card as string) || (sender.nickname as string);
-      if (nick) nicknameCache.set(rawUserId, nick);
+      if (nick) {
+        // 软上限 FIFO：满了且是新键就淘汰最早一个（Map 按插入序），防无界增长
+        if (nicknameCache.size >= NICKNAME_CACHE_MAX && !nicknameCache.has(rawUserId)) {
+          const oldest = nicknameCache.keys().next().value;
+          if (oldest !== undefined) nicknameCache.delete(oldest);
+        }
+        nicknameCache.set(rawUserId, nick);
+      }
     }
 
     const fallbackSelfId = state.selfId ?? 'unknown';
@@ -2285,6 +2294,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.onDispose(() => {
     selfMuted.clear();
     muteRecoveryChecked.clear();
+    nicknameCache.clear();
 
     for (const state of states) {
       if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
