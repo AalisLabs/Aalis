@@ -80,7 +80,7 @@ export interface AppOptions {
  *   pluginLoader: bundledLoader([memoryPlugin, agentPlugin]),
  * });
  *
- * // Node 宿主由 src/runtime 提供 fs/yaml/spawn 实现
+ * // Node 宿主由 @aalis/runtime 提供 fs/yaml/spawn 实现
  */
 export function createApp(options: AppOptions): App {
   return new App(options);
