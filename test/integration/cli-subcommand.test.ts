@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
-import { tryDispatchSubcommand } from '../../src/runtime/subcommand.js';
+import { tryDispatchSubcommand } from '../../packages/runtime/src/subcommand.js';
 
 /**
  * CLI 子命令分发集成测试（防回归）。

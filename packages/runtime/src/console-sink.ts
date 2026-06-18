@@ -20,9 +20,8 @@ declare module '@aalis/core' {
 /**
  * Console sink —— 运行时层的 stdout 输出（按需染色）。
  *
- * 与 file-logger 对偶：core 仅产生 LogEntry，染色 / 终端假设由入口层注入。
- * 关闭 core 内置 console sink 后，所有 stdout 输出都从这里走，
- * 保证 webui-only / 嵌入式部署无需 chalk。
+ * 与 file-logger 对偶：core 仅产生 LogEntry（零 I/O 知识），染色 / 终端假设全在本宿主层。
+ * 所有 stdout 输出都从这里走；webui-only / 嵌入式部署不装本 sink 即无需 chalk。
  *
  * 染色检测顺序（命中即决定）：
  *   FORCE_COLOR=0 / FORCE_COLOR=false → 关闭
