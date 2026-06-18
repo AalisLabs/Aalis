@@ -48,6 +48,8 @@ interface LanceDBConfig {
 class LanceDBVectorStore implements VectorStoreService {
   private db!: Connection;
   private table: LanceTable | null = null;
+  /** 首次建表的 single-flight promise：并发 add 复用它，避免「table already exists」丢向量 */
+  private tableInit: Promise<LanceTable> | null = null;
   private readonly dbPath: string;
   private readonly tableName: string;
   private logger?: { info: (msg: string, ...a: unknown[]) => void; warn: (msg: string, ...a: unknown[]) => void };
@@ -76,12 +78,18 @@ class LanceDBVectorStore implements VectorStoreService {
     };
 
     if (!this.table) {
-      // 首次写入时创建表
-      this.table = await this.db.createTable(this.tableName, [record]);
-      this.logger?.info(`LanceDB 表 "${this.tableName}" 已创建`);
-    } else {
-      await this.table.add([record]);
+      // single-flight 建表：并发 add（索引 concurrency=10 + embed I/O 让出事件循环）会同时进此分支；
+      // 旧实现各自 createTable → 第二个抛「table already exists」被吞、向量永久丢失。复用同一 promise，
+      // 首条随建表写入，其余等建表完成后 add 自己。
+      if (!this.tableInit) {
+        this.tableInit = this.db.createTable(this.tableName, [record]);
+        this.table = await this.tableInit;
+        this.logger?.info(`LanceDB 表 "${this.tableName}" 已创建`);
+        return; // 首条已随 createTable 落库
+      }
+      await this.tableInit; // 并发后续条目：等建表完成再 add 自己
     }
+    await this.table!.add([record]);
   }
 
   async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
@@ -111,6 +119,7 @@ class LanceDBVectorStore implements VectorStoreService {
       this.table.close();
       this.table = null;
     }
+    this.tableInit = null; // 必须与 table 同步重置，否则下次 add 会 await 到指向已删表的旧 promise → 崩
     // 删除旧表并重置
     const tableNames = await this.db.tableNames();
     if (tableNames.includes(this.tableName)) {
@@ -156,6 +165,7 @@ class LanceDBVectorStore implements VectorStoreService {
       this.table.close();
       this.table = null;
     }
+    this.tableInit = null;
   }
 }
 

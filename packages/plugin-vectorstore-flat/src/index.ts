@@ -62,6 +62,8 @@ export class FlatVectorStore implements VectorStoreService {
   private dirty = false;
   /** 维度不匹配只告警一次，避免每次召回刷屏 */
   private warnedDimMismatch = false;
+  /** save 串行链：并发索引会并发调 save()，串行化避免裸 writeFile 同路径并发写损坏 JSON */
+  private saveChain: Promise<void> = Promise.resolve();
 
   constructor(
     storage: StorageService,
@@ -137,11 +139,20 @@ export class FlatVectorStore implements VectorStoreService {
   }
 
   async save(): Promise<void> {
+    // 串行化：并发索引（默认 concurrency=10）会并发调 save()，裸 writeFile 同路径并发写可交错损坏 JSON
+    // → 下次 init 时 JSON.parse 失败、整库静默清空。链式确保同一时刻只有一个写在跑。
+    this.saveChain = this.saveChain.then(() => this.doSave());
+    return this.saveChain;
+  }
+
+  private async doSave(): Promise<void> {
     if (!this.dirty) return;
+    this.dirty = false; // 先清脏；期间新 add 会重新置脏，触发下一次链式 save
+    const data = JSON.stringify(this.entries);
     try {
-      await this.storage.writeFile(this.dataUri, JSON.stringify(this.entries));
-      this.dirty = false;
+      await this.storage.writeFile(this.dataUri, data);
     } catch (err) {
+      this.dirty = true; // 失败重标脏，下次重试
       const msg = err instanceof Error ? err.message : String(err);
       this.logger?.warn(`向量数据保存失败: ${msg}`);
     }

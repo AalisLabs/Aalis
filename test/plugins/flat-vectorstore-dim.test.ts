@@ -10,6 +10,28 @@ import { FlatVectorStore } from '../../packages/plugin-vectorstore-flat/src/inde
 
 const stubStorage = {} as unknown as StorageService;
 
+describe('FlatVectorStore 并发 save 串行化（M7）', () => {
+  it('多次并发 save 不并发写同一文件（防裸 writeFile 交错损坏 JSON）', async () => {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const slowStorage = {
+      writeFile: async () => {
+        concurrent++;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await new Promise(r => setTimeout(r, 5));
+        concurrent--;
+      },
+    } as unknown as StorageService;
+    const store = new FlatVectorStore(slowStorage, 'data:/x.json');
+    await store.add([1, 0, 0], { id: 'a' });
+    const p1 = store.save();
+    await store.add([0, 1, 0], { id: 'b' }); // 重新置脏，让第二次 save 也会真正写
+    const p2 = store.save();
+    await Promise.all([p1, p2]);
+    expect(maxConcurrent).toBe(1); // 串行：任一时刻最多一个写在跑
+  });
+});
+
 describe('FlatVectorStore 维度守卫（H7）', () => {
   it('同维：按相似度排序、分数有限（无 NaN）', async () => {
     const store = new FlatVectorStore(stubStorage, 'data:/x.json');
