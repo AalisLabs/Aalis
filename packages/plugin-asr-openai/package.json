@@ -18,7 +18,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-process-api": "workspace:^"
+    "@aalis/plugin-process-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

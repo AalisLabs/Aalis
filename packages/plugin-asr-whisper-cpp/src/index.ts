@@ -15,6 +15,7 @@ import type { ProcessService, TempDirHandle } from '@aalis/plugin-process-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { safeFetch } from '@aalis/util-network-guard';
 
 export const name = '@aalis/plugin-asr-whisper-cpp';
 export const displayName = 'Whisper.cpp 本地转写';
@@ -85,7 +86,7 @@ async function materializeAudio(proc: ProcessService, storage: StorageService, d
     buf = Buffer.from(m[2], 'base64');
     ext = m[1].split('/')[1]?.split(';')[0] ?? 'bin';
   } else if (data.startsWith('http://') || data.startsWith('https://')) {
-    const resp = await fetch(data);
+    const resp = await safeFetch(data);
     if (!resp.ok) {
       await tmp.cleanup();
       throw new Error(`下载失败 ${resp.status}`);

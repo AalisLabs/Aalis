@@ -21,6 +21,7 @@
     "@aalis/plugin-process-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^",
     "@aalis/plugin-tools-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^",
     "docx": "^9.5.0",
     "exceljs": "^4.4.0",
     "pdf-lib": "^1.17.1",

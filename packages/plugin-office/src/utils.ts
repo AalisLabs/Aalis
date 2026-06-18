@@ -1,4 +1,5 @@
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { safeFetch } from '@aalis/util-network-guard';
 
 /**
  * 从 URL 或 storage URI 加载图片为 Buffer。
@@ -12,7 +13,7 @@ export async function loadImage(
   baseUri?: string,
 ): Promise<{ buffer: Buffer; mime: string }> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
-    const resp = await fetch(source);
+    const resp = await safeFetch(source);
     if (!resp.ok) throw new Error(`图片下载失败: ${resp.status} ${source}`);
     const arrayBuf = await resp.arrayBuffer();
     const mime = resp.headers.get('content-type') || guessMime(source);

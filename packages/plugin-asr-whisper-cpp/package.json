@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@aalis/plugin-process-api": "workspace:^",
-    "@aalis/plugin-storage-api": "workspace:^"
+    "@aalis/plugin-storage-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

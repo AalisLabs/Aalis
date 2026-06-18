@@ -5,6 +5,7 @@ import type { Message } from '@aalis/plugin-message-api';
 import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
+import { safeFetch } from '@aalis/util-network-guard';
 
 // ===== 插件元数据 =====
 
@@ -609,7 +610,7 @@ class OllamaClient {
     // HTTP(S) URL → 下载并转 base64
     if (/^https?:\/\//i.test(trimmed)) {
       try {
-        const res = await fetch(trimmed, { signal: AbortSignal.timeout(30000) });
+        const res = await safeFetch(trimmed, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) {
           this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${trimmed}`);
           return null;

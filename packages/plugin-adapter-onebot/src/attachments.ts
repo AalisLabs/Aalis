@@ -19,6 +19,7 @@ import { Buffer } from 'node:buffer';
 import type { Logger } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/plugin-message-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { safeFetch } from '@aalis/util-network-guard';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
@@ -69,7 +70,7 @@ async function attachmentToOneBotFile(
   // http(s):// → 下载后 base64 内联
   if (data.startsWith('http://') || data.startsWith('https://')) {
     logger?.debug?.(`OneBot 下载远程附件: ${data.slice(0, 120)}`);
-    const res = await fetch(data);
+    const res = await safeFetch(data);
     if (!res.ok) throw new Error(`download failed (${res.status}): ${data}`);
     const ab = await res.arrayBuffer();
     if (ab.byteLength > MAX_INLINE_BYTES) {
