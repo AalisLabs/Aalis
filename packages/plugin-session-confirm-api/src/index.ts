@@ -18,10 +18,11 @@ export interface ConfirmChannel {
   /** authority 确认回调（注册到 setConfirmHandler(platform, ...)）。 */
   handler: AccessConfirmHandler;
   /**
-   * 在平台自己的拦截点喂一条回复给该 session 的未决确认：
-   * 命中并消费 → true（调用方据此「吞掉」该输入）；无未决 → false（放行）。
+   * 在平台自己的拦截点喂一条回复给该 session 的未决确认。
+   * 仅当 replyUserId === 发起确认的触发者 userId 时才消费（防群里第三方抢答）；私聊/webui 天然同人。
+   * @returns 命中并消费 → true（调用方据此「吞掉」该输入）；无未决 / 非本人 → false（放行）。
    */
-  feed(sessionId: string, replyText: string): boolean;
+  feed(sessionId: string, replyText: string, replyUserId?: string): boolean;
 }
 
 export interface SessionConfirmService {

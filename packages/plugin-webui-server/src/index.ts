@@ -1069,7 +1069,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         sessions.get(sessionId)!.add(ws);
 
         // 检查待确认的受限操作（拦截输入作为确认/取消；协调器逻辑由 session-confirm 服务统一处理）
-        if (confirmChannel?.feed(sessionId, trimmed)) {
+        // 传应答者身份：仅确认的触发者本人能应答（防第三方抢答；webui 同账户天然同人）。
+        if (confirmChannel?.feed(sessionId, trimmed, wsIdentity.userId)) {
           // 不继续处理此消息，交给原始命令/工具执行流返回结果
           return;
         }

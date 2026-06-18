@@ -115,4 +115,31 @@ describe('plugin-session-confirm 端到端确认环路', () => {
       await app.stop().catch(() => {});
     }
   });
+
+  it('C1: 群里只有触发者本人能确认，第三方抢答无效', async () => {
+    const { app, getHandler } = await setup();
+    try {
+      // alice 在群 sess-G 触发确认
+      const p = getHandler()!({ ...req('sess-G'), userId: 'alice' });
+      await tick();
+      // bob 抢答 Y → 不被消费（feed 返回 false，消息照常放行），确认仍挂着
+      app.ctx.emit('inbound:message', {
+        content: 'Y',
+        sessionId: 'sess-G',
+        platform: 'onebot',
+        userId: 'bob',
+      } as never);
+      await tick();
+      // alice 本人回「取消」→ 被消费；若 bob 的 Y 曾误生效，这里会是 {allowed:true} 而非 false
+      app.ctx.emit('inbound:message', {
+        content: '取消',
+        sessionId: 'sess-G',
+        platform: 'onebot',
+        userId: 'alice',
+      } as never);
+      expect(await p).toBe(false);
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
 });
