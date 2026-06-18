@@ -20,6 +20,7 @@
 import { Buffer } from 'node:buffer';
 import type { ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { safeFetch } from '@aalis/util-network-guard';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
 
@@ -81,7 +82,7 @@ export async function loadAttachmentBuffer(
       return Buffer.from(m[1], 'base64');
     }
     if (source.startsWith('http://') || source.startsWith('https://')) {
-      const res = await fetch(source, { signal: AbortSignal.timeout(30000) });
+      const res = await safeFetch(source, { signal: AbortSignal.timeout(30000) });
       if (!res.ok) return null;
       return Buffer.from(await res.arrayBuffer());
     }

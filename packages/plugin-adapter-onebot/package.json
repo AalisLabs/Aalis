@@ -23,6 +23,7 @@
     "@aalis/plugin-message-api": "workspace:^",
     "@aalis/plugin-process-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^",
     "ws": "^8.18.0"
   },
   "devDependencies": {
