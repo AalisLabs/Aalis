@@ -1,7 +1,7 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { FlowControlService } from '@aalis/plugin-flow-control-api';
 import type { MediaService } from '@aalis/plugin-media-api';
-import { AttachmentRefKind, formatAttachmentRef, getSenderLabel } from '@aalis/plugin-message-api';
+import { AttachmentRefKind, formatAttachmentRef, getSenderLabel, type Message } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
@@ -1037,6 +1037,34 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
+  // 发送类 action 的瞬时失败重试(超时 / NapCat 内核未确认多为瞬时)。
+  // 重试在传输层、不经过 agent —— 故不会触发对同一条内容的重新评论。
+  // 注意:NapCat sendMsg 超时偶有「已发出但未确认」的情况,重试可能导致重复消息;
+  // 这里权衡后选择「至少送达一次」(宁可偶发重复,也不要静默丢失)。
+  const SEND_MAX_RETRIES = 2;
+  const SEND_RETRY_DELAY_MS = 1000;
+  async function sendActionWithRetry(
+    state: ConnectionState,
+    action: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= SEND_MAX_RETRIES; attempt++) {
+      try {
+        return await sendAction(state, action, params);
+      } catch (err) {
+        lastErr = err;
+        if (attempt < SEND_MAX_RETRIES) {
+          ctx.logger.warn(
+            `OneBot ${action} 发送失败(第 ${attempt + 1}/${SEND_MAX_RETRIES + 1} 次),${SEND_RETRY_DELAY_MS}ms 后重试: ${err}`,
+          );
+          await new Promise(r => setTimeout(r, SEND_RETRY_DELAY_MS));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   // ----- 版本自动检测 -----
 
   async function detectProtocol(state: ConnectionState): Promise<OneBotProtocol> {
@@ -1147,7 +1175,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           content: piece,
         });
 
-        const sendResult = await sendAction(state, action, params);
+        const sendResult = await sendActionWithRetry(state, action, params);
         // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
         const sentId = extractSentMessageId(sendResult);
         if (sentId) sentTracker.record(sessionId, sentId, piece, Date.now());
@@ -2222,7 +2250,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
 
     adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
-      ctx.logger.warn(`OneBot 发送消息失败: ${err}`);
+      ctx.logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
+      // 反馈给 agent:多次重试仍失败 → 写一条系统提示进会话记忆,让 agent 下一轮知晓
+      // 「刚才那条(可能含图片)没送达」,而不是误以为已发成功。被动记录,不立即触发回复。
+      if (msg.source === 'agent') {
+        const archive = ctx.getService<MessageArchiveService>('message-archive');
+        const note: Message = {
+          role: 'system',
+          kind: 'outbound-delivery-failed',
+          content:
+            '[投递回报] 你刚才发送的内容(可能包含图片/媒体)经多次重试仍未能送达对方。' +
+            '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。',
+          timestamp: Date.now(),
+          metadata: { source: 'adapter-onebot', error: String(err) },
+        };
+        archive?.saveMessage(msg.sessionId, note).catch(e => ctx.logger.debug(`投递失败提示入档失败: ${e}`));
+      }
     });
   });
 

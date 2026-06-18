@@ -26,6 +26,7 @@ import {
   type PlatformConnection,
 } from '@aalis/plugin-platform-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
+import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
@@ -939,68 +940,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // ---------- 受限操作交互式确认（内联对话式；restricted 能力的临时委托） ----------
-
-  const CONFIRM_TIMEOUT = 60_000; // 60 秒超时
-  /** 每个 session 最多一个待确认请求 */
-  type PendingConfirmResult =
-    | boolean
-    | { allowed: boolean; grant?: { scope: 'once' | 'session'; durationSeconds?: number; maxUses?: number } };
-  const pendingSessionConfirms = new Map<
-    string,
-    { resolve: (v: PendingConfirmResult) => void; timer: ReturnType<typeof setTimeout> }
-  >();
-
-  ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', async request => {
-    const typeLabel = request.type === 'command' ? '指令' : '工具';
-    const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
-    const prompt = `⚠️ ${typeLabel} ${nameStr} 是受限操作。回复 Y 仅允许本次；回复 YS 允许本会话 10 分钟；其他任意输入取消。`;
-
-    // 以确认消息形式发送（不影响客户端 loading/streaming 状态）
-    const payload: WSOutgoing = {
-      type: 'confirm',
-      content: prompt,
-      sessionId: request.sessionId,
-    };
-    const json = JSON.stringify(payload);
-
-    const sockets = sessions.get(request.sessionId);
-    const targets = sockets && sockets.size > 0 ? sockets : allClients;
-    let sent = false;
-    for (const ws of targets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(json);
-        sent = true;
+  // ---------- 受限操作交互式确认（复用 session-confirm 协调器；WebUI 传输=WS type:'confirm'，流式友好） ----------
+  // 协调器逻辑（待确认/超时/解析/文案）由 session-confirm 服务统一实现；WebUI 只注入自己的 WS 投递，
+  // 并保留 type:'confirm'（前端「确认模式」信号，抑制富客户端的「打字即打断」）。回复在 WS-onmessage 调 feed（下方）。
+  let confirmChannel: ConfirmChannel | undefined;
+  ctx.whenService<SessionConfirmService>('session-confirm', confirmSvc => {
+    confirmChannel = confirmSvc.createChannel((request, text) => {
+      const payload: WSOutgoing = { type: 'confirm', content: text, sessionId: request.sessionId };
+      const json = JSON.stringify(payload);
+      const sockets = sessions.get(request.sessionId);
+      const targets = sockets && sockets.size > 0 ? sockets : allClients;
+      for (const ws of targets) {
+        if (ws.readyState === WebSocket.OPEN) ws.send(json);
       }
-    }
-    if (!sent) return false;
-
-    // 同一 session 已有未决确认时，先取消旧的（清 timer + resolve false），避免新
-    // set 覆盖后旧 Promise 永远 pending 且旧 timer 误删新条目（审计 HIGH #7 竞态）。
-    const stale = pendingSessionConfirms.get(request.sessionId);
-    if (stale) {
-      clearTimeout(stale.timer);
-      pendingSessionConfirms.delete(request.sessionId);
-      stale.resolve(false);
-    }
-
-    return new Promise<PendingConfirmResult>(resolve => {
-      const timer = setTimeout(() => {
-        pendingSessionConfirms.delete(request.sessionId);
-        // 超时后向会话发送提示
-        const timeoutPayload: WSOutgoing = {
-          type: 'confirm',
-          content: '⏰ 受限操作确认已超时，已自动取消。',
-          sessionId: request.sessionId,
-        };
-        const timeoutJson = JSON.stringify(timeoutPayload);
-        for (const ws of targets) {
-          if (ws.readyState === WebSocket.OPEN) ws.send(timeoutJson);
-        }
-        resolve(false);
-      }, CONFIRM_TIMEOUT);
-      pendingSessionConfirms.set(request.sessionId, { resolve, timer });
     });
+    ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', confirmChannel.handler);
   });
 
   // ---------- 文件管理 API ----------
@@ -1114,17 +1068,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
         sessions.get(sessionId)!.add(ws);
 
-        // 检查是否有待确认的受限操作（拦截用户输入作为确认/取消）
-        const pending = pendingSessionConfirms.get(sessionId);
-        if (pending) {
-          clearTimeout(pending.timer);
-          pendingSessionConfirms.delete(sessionId);
-          const answer = trimmed.toLowerCase();
-          if (answer === 'ys' || answer === 'y session') {
-            pending.resolve({ allowed: true, grant: { scope: 'session', durationSeconds: 600, maxUses: 30 } });
-          } else {
-            pending.resolve(answer === 'y');
-          }
+        // 检查待确认的受限操作（拦截输入作为确认/取消；协调器逻辑由 session-confirm 服务统一处理）
+        if (confirmChannel?.feed(sessionId, trimmed)) {
           // 不继续处理此消息，交给原始命令/工具执行流返回结果
           return;
         }
