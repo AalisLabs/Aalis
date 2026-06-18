@@ -583,8 +583,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const fileId = args.fileId as string;
       const maxLength = (args.maxLength as number | undefined) ?? toolDefaultMaxLength;
       const entry = index.get(fileId);
-      if (!entry) {
-        // 死链兜底：查 memory 是否有该 fileId 的旧 tool result
+      // 跨会话越权防护：fileId 是内容寻址(sha256 前16hex)、可预测，必须校验归属本会话；
+      // 非本会话（或不存在）一律走兜底 / 当作不存在，不泄漏他人会话文件的存在性与内容。
+      if (!entry || entry.sessionId !== callCtx.sessionId) {
+        // 死链兜底：查 memory 是否有该 fileId 的旧 tool result（按本会话历史，天然隔离）
         const cached = await findCachedToolResult(fileId, callCtx.sessionId);
         if (cached) {
           ctx.logger.debug(`fileId=${fileId} 在 index 中缺失，已用历史 tool result 兜底`);
@@ -617,20 +619,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         description: '列出当前会话中用户上传的所有文件。返回文件列表（含 ID、文件名、类型、大小、上传时间）。',
         parameters: {
           type: 'object',
-          properties: {
-            sessionId: {
-              type: 'string',
-              description: '会话 ID（可选，默认列出当前会话；显式传 "*" 列出所有会话）',
-            },
-          },
+          properties: {},
           additionalProperties: false,
         },
       },
     },
-    handler: async (args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> => {
-      const sidArg = args.sessionId as string | undefined;
-      const sid = sidArg === '*' ? undefined : (sidArg ?? callCtx.sessionId);
-      const files = [...index.values()].filter(f => !sid || f.sessionId === sid);
+    handler: async (_args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> => {
+      // 仅列本会话文件：移除 '*' 跨会话枚举（曾可拿到他人会话 fileId 再越权读/删）
+      const files = [...index.values()].filter(f => f.sessionId === callCtx.sessionId);
       if (files.length === 0) return '当前没有已上传的文件。';
       const lines = files
         .sort((a, b) => b.uploadedAt - a.uploadedAt)
@@ -663,10 +659,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         },
       },
     },
-    handler: async (args: Record<string, unknown>): Promise<string> => {
+    handler: async (args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> => {
       const fileId = args.fileId as string;
       const entry = index.get(fileId);
-      if (!entry) return `文件不存在或已被删除 (ID: ${fileId})。`;
+      // 跨会话越权防护：只能删本会话上传的文件
+      if (!entry || entry.sessionId !== callCtx.sessionId) return `文件不存在或已被删除 (ID: ${fileId})。`;
       const ok = await deleteFile(fileId);
       return ok ? `已删除文件: ${entry.name} (ID: ${fileId})` : `删除失败 (ID: ${fileId})`;
     },

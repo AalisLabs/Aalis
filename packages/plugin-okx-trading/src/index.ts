@@ -46,6 +46,13 @@ export const configSchema: ConfigSchema = {
     default: true,
     description: '启用后将使用模拟交易环境，强烈建议先在模拟盘测试',
   },
+  confirmRealMoney: {
+    type: 'boolean',
+    label: '确认实盘风险',
+    default: false,
+    description:
+      '仅当关闭模拟盘(demo:false)、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。',
+  },
   timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 15000 },
   enableTrading: {
     type: 'boolean',
@@ -75,6 +82,7 @@ export const defaultConfig = {
   passphrase: '',
   baseUrl: 'https://www.okx.com',
   demo: true,
+  confirmRealMoney: false,
   timeoutMs: 15000,
   enableTrading: true,
   enableAlgo: false,
@@ -87,6 +95,7 @@ interface PluginConfig {
   passphrase: string;
   baseUrl: string;
   demo: boolean;
+  confirmRealMoney: boolean;
   timeoutMs: number;
   enableTrading: boolean;
   enableAlgo: boolean;
@@ -104,6 +113,7 @@ function resolveConfig(config: Record<string, unknown>): PluginConfig {
     passphrase: (config.passphrase as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://www.okx.com',
     demo: (config.demo as boolean) ?? true,
+    confirmRealMoney: (config.confirmRealMoney as boolean) ?? false,
     timeoutMs: (config.timeoutMs as number) ?? 15000,
     enableTrading: (config.enableTrading as boolean) ?? true,
     enableAlgo: (config.enableAlgo as boolean) ?? false,
@@ -147,7 +157,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   registerRubikTools(reg, client);
   registerAccountTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
   registerOrderQueryTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
-  if (cfg.enableTrading) registerTradeTools(reg, client, modeLabel);
-  if (cfg.enableAlgo) registerAlgoTools(reg, client, modeLabel);
-  if (cfg.enableTransfer) registerTransferTools(reg, client);
+  // 实盘安全闸：真实资金交易须显式确认（demo:false 时还要 confirmRealMoney:true），否则只暴露查询工具。
+  // 不加逐单人工确认（保留实时/算法交易能力）——以「一次性显式确认 + 启动告警」替代。
+  const tradingArmed = cfg.demo || cfg.confirmRealMoney;
+  if (!cfg.demo) {
+    ctx.logger.warn(
+      cfg.confirmRealMoney
+        ? '⚠️ OKX 实盘模式：LLM 可用真实资金下单/撤单/划转/提币，且无逐单人工确认，请确认这是本意。'
+        : 'OKX 处于实盘(demo:false)但未设 confirmRealMoney:true，已禁用交易/策略/划转工具（仅保留查询）。',
+    );
+  }
+  if (cfg.enableTrading && tradingArmed) registerTradeTools(reg, client, modeLabel);
+  if (cfg.enableAlgo && tradingArmed) registerAlgoTools(reg, client, modeLabel);
+  if (cfg.enableTransfer && tradingArmed) registerTransferTools(reg, client);
 }
