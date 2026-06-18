@@ -111,6 +111,16 @@ WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都
 
 服务端为每个会话维护流式缓冲 `streamBuffers`，存储累积的 `content`、`reasoningContent` 和 `generating` 状态。当客户端断线重连（页面刷新）后，通过 `stream_resume` 消息恢复已产生但未收到的内容，实现无缝续流。
 
-## 前端挂载
+## 前端挂载与切换
 
-前端静态文件由 `plugin-webui-client` 通过 `setClientDir()` 方法挂载到 Express。
+前端不内置在 server 里——它是 `webui-client` 服务的 **provider**：每个前端包用 `package.json` 标 `aalis.client: true` + 构建出 `dist/index.html`，server 启动时由 `client-discovery.ts` 按标记**动态发现**并各注册一个 provider（无硬编码包名，第三方可自带前端）。
+
+**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 注册顺序。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸）后**实时重挂静态目录 + 广播 WebSocket `reload`**，无需重启进程。
+
+### 切换逃生页 `/__clients`
+
+前端切换的下拉框住在「前端」里；一旦切到不含该 UI 的极简前端，就没有切回去的入口。为此 server 在 `GET /__clients` 直出一个独立恢复页（源码 `client-switch-page.ts`），无论当前前端多裸都可达——「永不卡死」的兜底入口。
+
+- 受全局 auth 中间件保护（须先登录，同源 cookie 自动鉴权）；列表走 `GET /api/services`、切换走 `POST /api/services/webui-client/prefer`（owner 闸），**零新增后端逻辑**。
+- **用法**：浏览器开 `http://<host>:<port>/__clients` → 选目标前端 → 点「切换并刷新」→ 成功后自动跳回 `/`。检测到多个前端时，启动日志也会打印此 URL。
+- **终极兜底**：直接改 `aalis.config.yaml` 的 `servicePreferences.webui-client`（或删该项回退默认）后重启。
