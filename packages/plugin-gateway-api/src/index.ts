@@ -32,6 +32,7 @@ export interface InboundPhaseData {
 
 declare module '@aalis/core' {
   interface HookContextMap {
+    'inbound:confirm': InboundPhaseData;
     'inbound:command': InboundPhaseData;
     'inbound:flow': InboundPhaseData;
     'inbound:trigger': InboundPhaseData;
@@ -102,6 +103,8 @@ export interface GatewayService {
  * 同一相位内部的多个 handler 按 **注册顺序** 执行洋葱模型 (next 语义)，
  * 跨相位则由 plugin-gateway 顺序调度，无需任何优先级数字。
  *
+ *   CONFIRM  → 会话内待确认回复拦截（Y/YS/否；由 plugin-session-confirm 占据）。命中即吞掉回复、
+ *              不进入后续相位，从而**不触发 agent.handleMessage 对在途生成的 abort**（确认得以回送）。
  *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）
  *   FLOW     → 流控前置闸门（禁言/冷却/限速；由 plugin-flow-control 占据）
  *   TRIGGER  → 触发策略判定（mute 关键词/@/计数评分；由 plugin-trigger-policy 占据）
@@ -117,6 +120,7 @@ export interface GatewayService {
  *       core 不应知晓。
  */
 export const INBOUND_PHASE = {
+  CONFIRM: 'inbound:confirm',
   COMMAND: 'inbound:command',
   FLOW: 'inbound:flow',
   TRIGGER: 'inbound:trigger',
@@ -125,6 +129,7 @@ export const INBOUND_PHASE = {
 
 /** 默认相位执行顺序（gateway 内部调度使用）。 */
 export const INBOUND_PHASE_ORDER = [
+  INBOUND_PHASE.CONFIRM,
   INBOUND_PHASE.COMMAND,
   INBOUND_PHASE.FLOW,
   INBOUND_PHASE.TRIGGER,

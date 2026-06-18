@@ -15,7 +15,13 @@
 // 实现见 @aalis/plugin-tool-system。
 
 import type { Context } from '@aalis/core';
-import type { CapabilityId, CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
+import type {
+  CapabilityConfirm,
+  CapabilityId,
+  CapabilityRisk,
+  CapabilityVisibility,
+  ExecutionGuard,
+} from '@aalis/plugin-authority-api';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
@@ -68,8 +74,12 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
-  /** 主能力默认可见性（缺省 public）；restricted 须被 owner/委托授予 */
+  /** 主能力默认可见性（轴 A；缺省 public）；restricted 须被 owner/委托授予 */
   visibility?: CapabilityVisibility;
+  /** 确认要求（轴 B，与 visibility 正交、owner 也生效）：'session'/'always'；缺省=不确认 */
+  confirm?: CapabilityConfirm;
+  /** 风险等级（声明糖）：展开为 (visibility, confirm) 默认；显式 visibility/confirm 覆盖 */
+  risk?: CapabilityRisk;
   /** 静态资源能力标识，用于透明展示与能力匹配 */
   permissions?: CapabilityId[];
   /** 根据工具参数解析动态能力，如 storage:workspace:write */
@@ -125,6 +135,8 @@ export interface ToolService {
     pluginName: string;
     /** 主能力默认可见性（缺省 public）；可被 authority 配置的 visibilityOverrides 调整 */
     visibility: CapabilityVisibility;
+    /** 生效确认要求（轴 B）；缺省=不确认 */
+    confirm?: CapabilityConfirm;
     permissions?: string[];
     groups?: string[];
   }>;

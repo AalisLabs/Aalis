@@ -15,11 +15,76 @@ import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisC
 export type CapabilityId = string;
 
 /**
- * 能力默认可见性：
+ * 能力默认可见性（轴 A · 授权：谁默认能用）：
  * - public：所有人默认拥有（除非被显式 deny），如查天气、查状态。
  * - restricted：默认禁止，须被 owner/上层委托授予，如关机、写 users.json。
  */
 export type CapabilityVisibility = 'public' | 'restricted';
+
+/**
+ * 能力确认要求（轴 B · 确认：是否需「人确认」这一步，与 visibility 正交、owner 也生效）：
+ * - 缺省/undefined：无需确认（不提醒）。
+ * - 'session'：执行前需人确认；可「本会话」记住（回复 YS），会话内同能力不再追问。
+ * - 'always'：每次都需确认，不接受会话记忆（最危险操作）。
+ *
+ * 与 visibility 正交：visibility 管「授权（能不能）」，confirm 管「意图确认（是不是你本人此刻要）/防注入减速带」。
+ * 即便 owner=`*`，命中 confirm 的能力仍须确认 —— 抵御 owner 会话内提示注入借权静默调高危。
+ */
+export type CapabilityConfirm = 'session' | 'always';
+
+/**
+ * 能力风险等级（可选声明糖）：插件自分类风险，框架展开为 (visibility, confirm) 默认：
+ * - safe       → (public,     无确认)    查天气/算术等
+ * - sensitive  → (restricted, 无确认)    owner 顺手的中危
+ * - dangerous  → (restricted, 'session') owner 也确认 —— shell / 写删 / 改系统 等
+ *
+ * 显式 visibility / confirm 覆盖 risk 推导值；三者皆不声明 → visibility 默认 public（保持向后兼容）。
+ */
+export type CapabilityRisk = 'safe' | 'sensitive' | 'dangerous';
+
+/** 操作在注册时可声明的能力策略（可见性 / 确认 / 风险糖） */
+export interface CapabilityPolicyDecl {
+  visibility?: CapabilityVisibility;
+  confirm?: CapabilityConfirm;
+  risk?: CapabilityRisk;
+}
+
+const RISK_DEFAULTS: Record<CapabilityRisk, { visibility: CapabilityVisibility; confirm?: CapabilityConfirm }> = {
+  safe: { visibility: 'public' },
+  sensitive: { visibility: 'restricted' },
+  dangerous: { visibility: 'restricted', confirm: 'session' },
+};
+
+/**
+ * risk → 默认 (visibility, confirm)；无 risk 返回空对象。
+ * 供需要保留「未声明=继承」语义的注册方（如 commands 沿 dot-path 继承）用 —— 不带兜底默认。
+ */
+export function riskDefaults(risk?: CapabilityRisk): {
+  visibility?: CapabilityVisibility;
+  confirm?: CapabilityConfirm;
+} {
+  return risk ? RISK_DEFAULTS[risk] : {};
+}
+
+/**
+ * 把 (risk, visibility, confirm) 声明展开为生效的 (visibility, confirm)。纯函数。
+ * 优先级：显式 visibility/confirm > risk 推导 > defaultVisibility。
+ * @param defaultVisibility 三者皆缺省时的兜底可见性 —— tools/commands 传 'public'，
+ *   WebUI actions 传 'restricted'（actions 默认拒，与 tool/command 相反）。
+ */
+export function resolveCapabilityPolicy(
+  decl: CapabilityPolicyDecl,
+  defaultVisibility: CapabilityVisibility = 'public',
+): {
+  visibility: CapabilityVisibility;
+  confirm?: CapabilityConfirm;
+} {
+  const base = riskDefaults(decl.risk);
+  return {
+    visibility: decl.visibility ?? base.visibility ?? defaultVisibility,
+    confirm: decl.confirm ?? base.confirm,
+  };
+}
 
 // ============================================================
 // 执行守卫（跨切面：commands / tools 服务通过 setExecutionGuard 注入）
@@ -31,8 +96,10 @@ export interface ExecutionGuardContext {
   name: string;
   /** 操作类型 */
   type: 'command' | 'tool';
-  /** 操作主能力的默认可见性（操作声明；未标默认 public） */
+  /** 操作主能力的生效可见性（轴 A；注册时已由 resolveCapabilityPolicy 展开 risk/默认） */
   visibility: CapabilityVisibility;
+  /** 操作的生效确认要求（轴 B，与 visibility 正交、owner 也生效）；缺省=不确认 */
+  confirm?: CapabilityConfirm;
   /** 操作额外触达的资源能力（如 storage:path:...:write）；其可见性由 restrictedCapabilities 决定 */
   permissions?: CapabilityId[];
   /** 会话 ID */
@@ -103,6 +170,13 @@ export interface AccessRequest {
   sessionId: string;
   platform: string;
   userId?: string;
+  /**
+   * 请求性质：
+   * - 'grant'（缺省）：非 owner 触达未授予的 restricted 能力，确认=授予。
+   * - 'confirm'：调用者已有权限（含 owner），仅因能力标了 confirm 轴需「意图确认」。
+   * confirm='always' 时不接受会话记忆（每次都问）。
+   */
+  confirm?: CapabilityConfirm;
 }
 
 /** 批准后授予的临时委托范围：once 不持久；session 为当前会话短时授予 */
@@ -136,6 +210,38 @@ export interface TemporaryGrant {
 
 /** 确认回调：boolean 为最简允许/拒绝；对象可附带临时委托范围 */
 export type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
+
+// ============================================================
+// 会话确认协调器（共享状态机：pending / 超时 / Y-YS 解析 / 文案）
+//
+// 「确认层」对所有平台一致，只有**投递**与**拦截点**因平台而异（与流式输出等正交）：
+//   - webui：投递走 WS type:'confirm'（流式友好），拦截在 WS-onmessage（发 inbound 前）。
+//   - onebot/cli：投递走 gateway 总线 outbound，拦截在 inbound:confirm 相位。
+// 各平台用同一个 coordinator，只注入自己的 deliver + 在自己的拦截点调 tryResolve。
+// ============================================================
+
+/** 把一条确认回复文本解析为决策（纯函数）：Y=本次、YS=本会话（always 不接受会话记忆）、其余=取消。 */
+export function parseConfirmReply(
+  replyText: string,
+  always: boolean,
+  sessionGrantSeconds: number,
+): boolean | AccessDecision {
+  const t = replyText.trim().toLowerCase();
+  const yes = t === 'y' || t === 'yes';
+  if (always) return yes || t === 'ys' ? { allowed: true } : false;
+  if (t === 'ys') return { allowed: true, grant: { scope: 'session', durationSeconds: sessionGrantSeconds } };
+  if (yes) return { allowed: true, grant: { scope: 'once' } };
+  return false;
+}
+
+/** 组合确认提示文案（纯函数，所有平台一致）。 */
+export function composeConfirmPrompt(request: AccessRequest, always: boolean, sessionGrantSeconds: number): string {
+  const label = request.type === 'command' ? '指令' : '工具';
+  const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
+  return always
+    ? `⚠️ ${label} ${nameStr} 是高危操作，每次都需确认。回复 Y 确认执行本次；其他任意输入取消。`
+    : `⚠️ ${label} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 本会话 ${Math.round(sessionGrantSeconds / 60)} 分钟内放行；其他任意输入取消。`;
+}
 
 // ============================================================
 // 用户身份

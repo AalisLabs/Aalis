@@ -1,5 +1,6 @@
 import type { Logger } from '@aalis/core';
 import type { CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
+import { resolveCapabilityPolicy } from '@aalis/plugin-authority-api';
 import type {
   RegisteredTool,
   ToolCallContext,
@@ -91,14 +92,18 @@ export class ToolRegistry implements ToolService {
     permissions?: string[];
     groups?: string[];
   }> {
-    return [...this.tools.values()].map(t => ({
-      name: t.definition.function.name,
-      description: t.definition.function.description,
-      pluginName: t.pluginName,
-      visibility: t.visibility ?? 'public',
-      permissions: this.getStaticPermissions(t),
-      groups: t.groups,
-    }));
+    return [...this.tools.values()].map(t => {
+      const { visibility, confirm } = resolveCapabilityPolicy(t);
+      return {
+        name: t.definition.function.name,
+        description: t.definition.function.description,
+        pluginName: t.pluginName,
+        visibility,
+        confirm,
+        permissions: this.getStaticPermissions(t),
+        groups: t.groups,
+      };
+    });
   }
 
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void {
@@ -158,7 +163,7 @@ export class ToolRegistry implements ToolService {
       return JSON.stringify({ error: schemaError });
     }
 
-    const visibility: CapabilityVisibility = tool.visibility ?? 'public';
+    const { visibility, confirm } = resolveCapabilityPolicy(tool);
     let permissions: string[];
     try {
       permissions = await this.resolvePermissions(tool, args, callCtx);
@@ -172,6 +177,7 @@ export class ToolRegistry implements ToolService {
         name: toolName,
         type: 'tool',
         visibility,
+        confirm,
         permissions,
         sessionId: callCtx.sessionId,
         platform: callCtx.platform ?? 'unknown',

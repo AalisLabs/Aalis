@@ -141,6 +141,8 @@ export function registerPluginRoutes(
     // restricted 503（与 RouteGate fail-closed 一致）。
     const caller: UserIdentity = identify(req) ?? { platform: 'webui', userId: 'console' };
     const authority = ctx.getService<AuthorityService>('authority');
+    // REST action 仅有轴 A（visibility，默认 restricted）；confirm 轴是会话型操作（tool/command）的事，
+    // 人点按钮本身即意图，不在此适用。
     const visibility = entry.module.actionsMeta?.[method]?.visibility ?? 'restricted';
     if (authority) {
       const denied = authority.authorize(caller, {
