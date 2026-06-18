@@ -18,7 +18,10 @@ function loadMermaid(): Promise<MermaidApi> {
       mermaid.initialize({
         startOnLoad: false,
         theme: isDark ? 'dark' : 'default',
-        securityLevel: 'loose',
+        // strict：启用 mermaid 内置 DOMPurify 净化并禁用 click/callback 绑定。
+        // 图表源来自聊天 markdown（LLM/入站/工具输出，不可信），loose 会跳过净化致 XSS。
+        // 本仓仅渲染流程图，未用 click/htmlLabels，strict 不丢功能。
+        securityLevel: 'strict',
         fontFamily: 'inherit',
       });
       return mermaid;
@@ -101,7 +104,7 @@ function MermaidBlockImpl({ chart }: { chart: string }) {
   return (
     <div
       className="mermaid-block"
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid 输出可信 SVG（securityLevel='loose' 仍由 mermaid 自身做 sanitize）
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: securityLevel='strict' 下 mermaid 经内置 DOMPurify 净化后输出 SVG
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
