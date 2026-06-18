@@ -48,9 +48,10 @@ export const configSchema: ConfigSchema = {
       allowedRoots: {
         type: 'multiselect',
         label: '允许访问的存储根',
-        default: ['*'],
+        default: ['workspace', 'tmp'],
         description:
-          '设为 * 时允许访问 storage 中全部 readable 根；也可以显式列出根名。写入/删除仍受各根自身权限限制。',
+          '默认仅 agent 工作区（workspace/tmp），不含 data 等系统根（防裸读 data:/users.json 等）。' +
+          '设为 * 放开全部 readable 根；也可显式列出根名。写入/删除仍受各根自身权限限制。',
         options: [
           { label: '全部可读根', value: '*' },
           { label: 'Workspace', value: 'workspace' },
@@ -87,7 +88,7 @@ export const defaultConfig = {
     maxReadSize: 1048576,
     maxSearchBytes: 1048576,
     maxWriteSize: 10485760,
-    allowedRoots: ['*'],
+    allowedRoots: ['workspace', 'tmp'],
   },
   system: { enabled: true },
   http: { enabled: true, defaultTimeout: 30000, maxResponseSize: 1048576 },
@@ -205,7 +206,7 @@ function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
       maxReadSize: (file?.maxReadSize as number) ?? 1048576,
       maxSearchBytes: (file?.maxSearchBytes as number) ?? 1048576,
       maxWriteSize: (file?.maxWriteSize as number) ?? 10485760,
-      allowedRoots: configuredAllowedRoots.length ? configuredAllowedRoots : ['*'],
+      allowedRoots: configuredAllowedRoots.length ? configuredAllowedRoots : ['workspace', 'tmp'],
     },
     system: {
       enabled: (system?.enabled as boolean) ?? true,
