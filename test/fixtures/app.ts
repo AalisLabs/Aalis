@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { AalisConfig } from '../../packages/core/src/index.js';
-import { createFsPluginLoader, createFsYamlConfigProvider } from '../../src/runtime/providers.js';
+import { createFsPluginLoader, createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 
 /**
  * 测试用配置构造工具：
