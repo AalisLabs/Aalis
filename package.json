@@ -35,9 +35,7 @@
   },
   "dependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-commands-api": "workspace:*",
-    "@aalis/runtime": "workspace:*",
-    "chalk": "^5.4.0"
+    "@aalis/runtime": "workspace:*"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

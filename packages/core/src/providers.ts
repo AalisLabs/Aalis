@@ -5,7 +5,7 @@ import type { PluginModule } from './plugin.js';
  * `@aalis/core` 注入点（host providers）。
  *
  * 把"配置从哪里来 / 插件从哪里来 / 怎么重启"这三件 I/O 相关的事
- * 抽成接口，由宿主（src/runtime 或外部嵌入者）实现并注入。core 本身
+ * 抽成接口，由宿主（@aalis/runtime 或外部嵌入者）实现并注入。core 本身
  * 不再 import 任何 `node:fs` / `node:path` / `node:url` / `node:child_process`
  * / `yaml`，可在浏览器、单文件二进制、嵌入式集成等场景里运行。
  *
