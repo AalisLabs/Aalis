@@ -84,13 +84,12 @@ inject: {
 之一。这意味着：
 
 - 关机时拓扑序保证你**晚于**所有 `inject` 了 `mysvc` 的下游 dispose
-- 如果 `mysvc` 出现在某个其它插件的 `requiredServices` 列表里且当前不可用，
-  PluginManager 可能会调用 `ensureServiceProvider('mysvc')` 主动激活你
+- 下游插件 `inject.required: ['mysvc']` 时，拓扑序保证你**先于**它们激活（提供者先起、消费者后起）
 
 如果你 apply 内部调用了 `ctx.provide('mysvc', ...)` **但没在 module 顶层声明
-`provides: ['mysvc']`**，拓扑排序与服务恢复都不会把你考虑进去。结果：
+`provides: ['mysvc']`**，拓扑排序不会把你考虑进去。结果：
 - 关机时下游可能比你先 dispose（虽然有 reactive listener 兜底，但延迟一拍）
-- 服务自动恢复时找不到你
+- 激活时下游的依赖排序找不到你（仅靠 reactive 兜底）
 
 > dev 模式下 core 会在 apply 完成后扫描并 warn：「插件 X 注册了服务 [Y] 但未在
 > module.provides 中声明」，提示你补全 `provides` 列表。

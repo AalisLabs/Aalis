@@ -69,18 +69,12 @@ describe('App 生命周期', () => {
     }
   });
 
-  it('AppOptions.requiredServices 默认空', () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    expect(app.requiredServices).toEqual([]);
-  });
-
   it('内置 app / plugins 服务在 ctx 中可见', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const appSvc = app.ctx.getService<App>('app');
     const pluginsSvc = app.ctx.getService('plugins');
     expect(appSvc).toBeDefined();
     expect(pluginsSvc).toBeDefined();
-    expect(appSvc?.requiredServices).toEqual(app.requiredServices);
     expect(pluginsSvc).toEqual(app.plugins);
   });
 });
