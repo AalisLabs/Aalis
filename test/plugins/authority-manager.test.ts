@@ -96,6 +96,28 @@ describe('authorize（deny > owner > public > granted）', () => {
     ).toBeNull();
   });
 
+  it('内置受限：读 users.json/scheduler-jobs/源码根 默认禁（T1 防裸读凭据表）、owner 放行', () => {
+    const m = new AuthorityManager(mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }), mkLogger(), storage);
+    for (const cap of [
+      'storage:path:data:/users.json:read',
+      'storage:path:data:/scheduler-jobs.json:read',
+      'storage:aalis:read',
+    ]) {
+      // 非 owner 经 public 的 file_read 触达这些资源能力 → 拒
+      expect(
+        m.authorize(onebot('1'), { capability: 'tool:file_read', visibility: 'public', resourceCapabilities: [cap] }),
+      ).not.toBeNull();
+      // owner 放行
+      expect(
+        m.authorize(onebot('boss'), {
+          capability: 'tool:file_read',
+          visibility: 'public',
+          resourceCapabilities: [cap],
+        }),
+      ).toBeNull();
+    }
+  });
+
   it('全局 deniedCapabilities 连 owner 都压过', () => {
     const m = new AuthorityManager(
       mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }], deniedCapabilities: ['tool:forbidden'] }),
