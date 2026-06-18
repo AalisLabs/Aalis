@@ -10,6 +10,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import { safeFetch } from '@aalis/util-network-guard';
 
 export const name = '@aalis/plugin-asr-openai';
 export const displayName = 'OpenAI Whisper ASR';
@@ -55,7 +56,7 @@ async function attachmentToBlob(data: string, proc: ProcessService): Promise<{ b
     return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${ext}` };
   }
   if (data.startsWith('http://') || data.startsWith('https://')) {
-    const resp = await fetch(data);
+    const resp = await safeFetch(data);
     if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
     const ab = await resp.arrayBuffer();
     const ext = data.split('.').pop()?.split('?')[0] ?? 'bin';
