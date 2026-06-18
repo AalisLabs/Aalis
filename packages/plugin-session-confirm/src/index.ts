@@ -87,7 +87,7 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
     const q = queues.get(sessionId);
     const head = q?.[0];
     if (!q || !head) return false;
-    // 仅触发者本人能应答：群里 sessionId=群，否则任意成员都能替授权方确认（评审 C1）。
+    // 仅触发者本人能应答：群里 sessionId=群，否则任意成员都能替授权方确认。
     // 私聊/webui 触发者与应答者天然同人；二者皆 undefined 也视为同人（系统注入等无 userId 场景）。
     if (head.userId !== replyUserId) return false;
     clearTimeout(head.timer);

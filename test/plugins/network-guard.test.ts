@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { assertSafeUrl, safeFetch } from '../../packages/util-network-guard/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// util-network-guard：SSRF 安全 fetch（X1 治本原语）
+// util-network-guard：SSRF 安全 fetch（统一原语）
 //   字面 IP 用例不触 DNS，确定性。重定向用 stub fetch 验证逐跳校验。
 // ════════════════════════════════════════════════════════════
 

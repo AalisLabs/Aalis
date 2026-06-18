@@ -3,14 +3,14 @@ import type { StorageService } from '../../packages/plugin-storage-api/src/index
 import { FlatVectorStore } from '../../packages/plugin-vectorstore-flat/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// H7: 向量维度不匹配（换 embedding 模型复用旧库）不再静默产 NaN
+// 向量维度不匹配（换 embedding 模型复用旧库）不再静默产 NaN
 //   —— dotProduct 维度守卫 → -Infinity；search 维度不符告警一次。
 //   search/add 不触 storage，用空桩即可。
 // ════════════════════════════════════════════════════════════
 
 const stubStorage = {} as unknown as StorageService;
 
-describe('FlatVectorStore 并发 save 串行化（M7）', () => {
+describe('FlatVectorStore 并发 save 串行化', () => {
   it('多次并发 save 不并发写同一文件（防裸 writeFile 交错损坏 JSON）', async () => {
     let concurrent = 0;
     let maxConcurrent = 0;
@@ -32,7 +32,7 @@ describe('FlatVectorStore 并发 save 串行化（M7）', () => {
   });
 });
 
-describe('FlatVectorStore 维度守卫（H7）', () => {
+describe('FlatVectorStore 维度守卫', () => {
   it('同维：按相似度排序、分数有限（无 NaN）', async () => {
     const store = new FlatVectorStore(stubStorage, 'data:/x.json');
     await store.add([1, 0, 0], { id: 'a' });

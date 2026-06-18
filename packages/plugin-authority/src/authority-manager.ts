@@ -134,7 +134,7 @@ export class AuthorityManager implements AuthorityService {
     const grant = normalize(caps.grant);
     const deny = normalize(caps.deny);
 
-    // A3: 被绑定身份的能力以主账户为单一真源（resolve 从主账户读 grant）；写入也归一到主账户，
+    // 被绑定身份的能力以主账户为单一真源（resolve 从主账户读 grant）；写入也归一到主账户，
     // 否则写到身份自身记录 → grant 静默不生效。account 命中即重定向到主账户键。
     const rawKey = `${target.platform}:${target.userId}`;
     const key = this.store.accountOf(rawKey) ?? rawKey;
@@ -144,7 +144,7 @@ export class AuthorityManager implements AuthorityService {
 
     // 委托约束（仅约束非 owner 授予方；owner 跳过）。维护委托树「单调递减、防越权」不变量。
     if (granter && !this.isOwner(granter.platform, granter.userId)) {
-      // (1) 不能修改 owner 的能力 —— 防 deny>owner 反向锁死 owner（评审 A1）。
+      // (1) 不能修改 owner 的能力 —— 防 deny>owner 反向锁死 owner。
       if (this.isOwner(effPlatform, effUserId)) {
         throw new Error('越权：不能修改 owner 的能力');
       }
