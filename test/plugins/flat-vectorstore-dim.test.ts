@@ -3,7 +3,7 @@ import type { StorageService } from '../../packages/plugin-storage-api/src/index
 import { FlatVectorStore } from '../../packages/plugin-vectorstore-flat/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// H7: 向量维度不匹配（换 embedding 模型复用旧库）不再静默产 NaN
+// 向量维度不匹配（换 embedding 模型复用旧库）不再静默产 NaN
 //   —— dotProduct 维度守卫 → -Infinity；search 维度不符告警一次。
 //   search/add 不触 storage，用空桩即可。
 // ════════════════════════════════════════════════════════════

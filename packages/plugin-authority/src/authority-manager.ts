@@ -134,7 +134,7 @@ export class AuthorityManager implements AuthorityService {
     const grant = normalize(caps.grant);
     const deny = normalize(caps.deny);
 
-    // A3: 被绑定身份的能力以主账户为单一真源（resolve 从主账户读 grant）；写入也归一到主账户，
+    // 被绑定身份的能力以主账户为单一真源（resolve 从主账户读 grant）；写入也归一到主账户，
     // 否则写到身份自身记录 → grant 静默不生效。account 命中即重定向到主账户键。
     const rawKey = `${target.platform}:${target.userId}`;
     const key = this.store.accountOf(rawKey) ?? rawKey;
