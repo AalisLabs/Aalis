@@ -9,7 +9,7 @@
 
 import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
-import { assertSafeHost } from '@aalis/util-network-guard';
+import { safeFetch } from '@aalis/util-network-guard';
 import { getMediaRuntime } from './runtime.js';
 
 /** 单次下载上限，避免 LLM 触发把巨型文件灌进显存。 */
@@ -44,23 +44,12 @@ async function safeFetchBuffer(url: string, opts: SafeFetchOptions = {}): Promis
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const ua = opts.userAgent ?? 'Mozilla/5.0 (Aalis safe-fetch)';
 
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`非法 URL: ${url}`);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`仅支持 http/https，收到 ${parsed.protocol}`);
-  }
-  await assertSafeHost(parsed.hostname);
-
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const res = await fetch(parsed.toString(), {
+    // safeFetch 内含协议/host/逐跳重定向校验（SSRF），杜绝 30x 跳内网。
+    const res = await safeFetch(url, {
       signal: ac.signal,
-      redirect: 'follow',
       headers: {
         'user-agent': ua,
         accept: opts.imageOnly ? 'image/*,*/*;q=0.8' : '*/*',
@@ -97,7 +86,7 @@ async function safeFetchBuffer(url: string, opts: SafeFetchOptions = {}): Promis
         chunks.push(Buffer.from(value));
       }
     }
-    return { buffer: Buffer.concat(chunks), contentType: ctype, finalUrl: res.url || parsed.toString() };
+    return { buffer: Buffer.concat(chunks), contentType: ctype, finalUrl: res.url || url };
   } finally {
     clearTimeout(timer);
   }
