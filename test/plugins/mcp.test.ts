@@ -199,6 +199,57 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
   });
 });
 
+// ===== Test A2：toolGroups 白名单在 CallTool 同样强制（防绕过）=====
+
+describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致强制', () => {
+  async function setupGroups() {
+    const tools = new FakeToolService();
+    tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'pub_a', description: 'A 组', parameters: { type: 'object', properties: {} } },
+      },
+      groups: ['a'],
+      handler: async () => 'a-ok',
+    });
+    tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'pub_b', description: 'B 组（未暴露）', parameters: { type: 'object', properties: {} } },
+      },
+      groups: ['b'],
+      handler: async () => 'b-ok',
+    });
+    const server = buildMcpServer(makeFakeCtx(tools), tools, {
+      port: 0,
+      bind: '127.0.0.1',
+      toolGroups: ['a'], // 只暴露 a 组
+      allowRestricted: true,
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test-client', version: '0.0.1' }, { capabilities: {} });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    return { client, server };
+  }
+
+  it('ListTools 仅暴露白名单分组', async () => {
+    const { client, server } = await setupGroups();
+    const names = (await client.listTools()).tools.map(t => t.name);
+    expect(names).toContain('pub_a');
+    expect(names).not.toContain('pub_b');
+    await client.close();
+    await server.close();
+  });
+
+  it('CallTool 按名直调未暴露分组的工具 → isError（修复前可绕过）', async () => {
+    const { client, server } = await setupGroups();
+    const res = await client.callTool({ name: 'pub_b', arguments: {} });
+    expect(res.isError).toBe(true);
+    await client.close();
+    await server.close();
+  });
+});
+
 // ===== Test B：mcp-client 侧 =====
 
 describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册到 ToolService', () => {
