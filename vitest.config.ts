@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['test/**/*.test.ts'],
+    // .test.tsx：WebUI 组件测试（含 `// @vitest-environment jsdom` 文件级覆盖 node 默认环境）
+    include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     exclude: ['**/node_modules/**', '**/dist/**', 'test/fixtures/**'],
     environment: 'node',
     testTimeout: 15_000,
@@ -37,6 +38,10 @@ export default defineConfig({
         branches: 60,
       },
     },
+  },
+  // React 19 自动运行时：.tsx 组件测试无需显式 import React
+  esbuild: {
+    jsx: 'automatic',
   },
   resolve: {
     conditions: ['source', 'import', 'node', 'default'],

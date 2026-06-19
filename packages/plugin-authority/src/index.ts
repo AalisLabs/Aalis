@@ -201,13 +201,25 @@ export const actions: PluginModule['actions'] = {
       restrictedPolicy: ctx.config.get('restrictedPolicy') ?? {},
       temporaryGrants: auth?.listTemporaryGrants() ?? [],
       commandPrefix,
+      // 操作清单：指令 + 工具统一带 pluginName/type/confirm，供前端「操作」视图按插件分组、显示两轴默认。
       commands: cmdNodes.map(n => ({
         key: n.name,
         name: n.name,
+        type: 'command' as const,
         displayName: `${commandPrefix}${n.name.split('.').join(' ')}`,
+        pluginName: n.pluginName,
         visibility: n.visibility ?? 'public',
+        confirm: n.confirm,
       })),
-      tools: tools.map(t => ({ key: t.name, name: t.name, visibility: t.visibility ?? 'public' })),
+      tools: tools.map(t => ({
+        key: t.name,
+        name: t.name,
+        type: 'tool' as const,
+        displayName: t.name,
+        pluginName: t.pluginName,
+        visibility: t.visibility ?? 'public',
+        confirm: t.confirm,
+      })),
     };
   },
 
