@@ -43,6 +43,9 @@ export class MockLLMService implements LLMService {
   };
   private cursor = 0;
 
+  /** 能力元数据（与真实 provider 一致，挂在 model handle 实例上供 resolveLLMModel/listLLMModels 读取）。 */
+  readonly capabilities = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling, LLMCapabilities.Streaming];
+
   constructor(options: MockLLMOptions = {}) {
     this.opts = {
       responses: options.responses ?? [{ content: 'mock response' }],

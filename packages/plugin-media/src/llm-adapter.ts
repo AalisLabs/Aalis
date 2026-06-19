@@ -472,7 +472,7 @@ export function scanLLMProcessors(
   const processors: MediaProcessor[] = [];
   const all = ctx.getAllServices<LLMModel>('llm');
   for (const entry of all) {
-    const caps = entry.capabilities;
+    const caps = entry.instance.capabilities;
     if (caps.includes(LLMCapabilities.Vision)) {
       processors.push(wrapLLMAsProcessor(entry, 'vision', { ...defaults, ...visionOverride }));
       processors.push(wrapLLMAsProcessor(entry, 'document.image', { ...defaults, ...visionOverride }));
