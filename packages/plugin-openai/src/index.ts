@@ -571,6 +571,8 @@ class OpenAIModelHandle implements LLMModel {
     readonly maxOutputTokens: number,
     /** Provider 级共享的 refresh 闭包；webui 按 contextId 找到任一 entry 调一次即可。 */
     readonly refresh: () => Promise<{ added: string[]; removed: string[]; total: number }>,
+    /** 该 model 的能力元数据（供 media 发现/下拉展示读取，非 DI 选择机制）。 */
+    readonly capabilities: readonly LLMCapability[],
   ) {}
 
   chat(request: ChatModelRequest): Promise<ChatResponse> {
@@ -627,6 +629,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       openaiConfig.contextLength,
       openaiConfig.maxTokens,
       refresh,
+      capabilities,
     );
     const dispose = ctx.provide('llm', handle, {
       capabilities,

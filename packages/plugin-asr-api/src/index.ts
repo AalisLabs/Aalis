@@ -54,7 +54,7 @@ export interface ASRService {
 
 /** 助手：从 ctx 取首选 ASR 服务（按核心「偏好 > 优先级」解析）。无可用后端返回 undefined。 */
 export function useASRService(ctx: Context): ASRService | undefined {
-  return ctx.getService<ASRService>('asr', ['audio']);
+  return ctx.getService<ASRService>('asr');
 }
 
 // ----- 服务类型 + 能力注册（declaration merging）-----

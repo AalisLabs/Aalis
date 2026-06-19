@@ -222,9 +222,9 @@ function safeListRoots(entry: { instance: StorageService; contextId: string }): 
   }
 }
 
-/** 枚举所有 storage entry（capabilities 过滤可选） */
-export function getStorageEntries(ctx: Context, requiredCaps?: readonly StorageCapability[]): StorageProviderEntry[] {
-  return ctx.getAllServices<StorageService>('storage', requiredCaps as readonly string[] | undefined);
+/** 枚举所有 storage entry。 */
+export function getStorageEntries(ctx: Context): StorageProviderEntry[] {
+  return ctx.getAllServices<StorageService>('storage');
 }
 
 /** 聚合所有 entry 的 root 列表（保留 providerId/label） */
@@ -260,14 +260,44 @@ export function getStorageRootConflicts(ctx: Context): StorageRootConflict[] {
   return conflicts;
 }
 
-/** 按 root 名查找首个匹配且满足 caps 的 entry */
+/**
+ * 判断某 root 是否满足所需能力：按 root 真实权限位（readable/writable/deletable）
+ * + resolveLocalPath/watch 方法存在性判定，不再依赖 DI 能力声明。
+ */
+function rootSatisfies(
+  root: StorageRootInfo,
+  instance: StorageService,
+  requiredCaps?: readonly StorageCapability[],
+): boolean {
+  if (!requiredCaps || requiredCaps.length === 0) return true;
+  return requiredCaps.every(c => {
+    switch (c) {
+      case 'read':
+      case 'list':
+        return root.readable;
+      case 'write':
+        return root.writable;
+      case 'delete':
+        return root.deletable;
+      case 'local-path':
+        return typeof instance.resolveLocalPath === 'function';
+      case 'watch':
+        return typeof instance.watch === 'function';
+      default:
+        return true;
+    }
+  });
+}
+
+/** 按 root 名查找首个服务该 root 且满足 caps（按 root 权限位）的 entry */
 export function resolveStorageEntryForRoot(
   ctx: Context,
   rootName: string,
   requiredCaps?: readonly StorageCapability[],
 ): StorageProviderEntry | undefined {
-  for (const entry of getStorageEntries(ctx, requiredCaps)) {
-    if (safeListRoots(entry).some(r => r.name === rootName)) return entry;
+  for (const entry of getStorageEntries(ctx)) {
+    const root = safeListRoots(entry).find(r => r.name === rootName);
+    if (root && rootSatisfies(root, entry.instance, requiredCaps)) return entry;
   }
   return undefined;
 }

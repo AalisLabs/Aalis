@@ -3,7 +3,7 @@ import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } 
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
-import { resolveLLMModel } from '@aalis/plugin-llm-api';
+import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
 import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/plugin-message-api';
@@ -1753,8 +1753,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (sessionLLM) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
 
     if (listAvailable) {
-      // 直接枚举所有 chat-capable LLMModel entry
-      const entries = ctx.getAllServices<LLMModel>('llm', ['chat']);
+      // 直接枚举所有 chat-capable LLMModel entry（按 handle 元数据过滤）
+      const entries = listLLMModels(ctx, { caps: ['chat'] });
       const seen = new Set<string>();
       const items: string[] = [];
       for (const e of entries) {
