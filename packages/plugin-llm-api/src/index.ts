@@ -4,7 +4,6 @@
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
 import type { Context } from '@aalis/core';
-import { registerCapabilityProbe } from '@aalis/core';
 import type { Message, ToolCall } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 
@@ -157,9 +156,6 @@ export const LLMCapabilities = {
 } as const satisfies LLMCapabilityRegistry;
 
 declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    llm: LLMCapability;
-  }
   interface SchemaFieldTypes {
     /**
      * LLM 模型引用：值形如 `{ provider: string; model: string }`，前端渲染为
@@ -170,17 +166,6 @@ declare module '@aalis/core' {
     'llm-ref': true;
   }
 }
-
-// 注册能力↔方法探测器
-registerCapabilityProbe('llm', LLMCapabilities.Chat, inst =>
-  typeof (inst as { chat?: unknown }).chat === 'function' ? true : 'LLMModel.chat() is required for capability "chat"',
-);
-
-registerCapabilityProbe('llm', LLMCapabilities.Streaming, inst =>
-  typeof (inst as { chatStream?: unknown }).chatStream === 'function'
-    ? true
-    : 'LLMModel.chatStream() is required for capability "streaming"',
-);
 
 // ----- LLM model entry 解析助手 -----
 
