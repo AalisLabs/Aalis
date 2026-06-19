@@ -44,7 +44,7 @@ export function App() {
   }, [availablePages, activeTab]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
-  /** 当前登录身份（/api/auth/me）：账户登录显示用户名，单 token 模式为 console */
+  /** 当前登录身份（/api/auth/me）：单 token 模式恒为 webui:console（owner）；顶栏只显 owner 徽标 + 退出 */
   const [me, setMe] = useState<{
     identity: { platform: string; userId: string };
     isOwner: boolean;
@@ -781,7 +781,6 @@ export function App() {
           </span>
           {me && (
             <span className="content-user" title={`${me.identity.platform}:${me.identity.userId}`}>
-              {me.identity.userId}
               {me.isOwner && <span className="content-user-level">owner</span>}
               <button
                 className="btn-sm"
@@ -789,7 +788,7 @@ export function App() {
                   await fetch('/api/auth/logout', { method: 'POST' });
                   window.location.reload();
                 }}
-              >登出</button>
+              >退出</button>
             </span>
           )}
         </div>

@@ -1,169 +1,222 @@
-import { useState, useEffect, useCallback } from 'react';
-import { User, Crown, Command, Wrench, Clock } from 'lucide-react';
+import { Clock, Crown, SlidersHorizontal, User, Wrench } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { pageAction } from '../api';
-import { type CapState, buildCaps, splitCaps } from './capability-picker-util.js';
+import {
+  type ConfirmOverride,
+  type Operation,
+  type Preset,
+  type Vis,
+  capKey,
+  detectPreset,
+  effectiveConfirm,
+  effectiveVisibility,
+  groupByPlugin,
+  groupVisibility,
+  PRESET_LABEL,
+  presetToCaps,
+} from './authority-page-util.js';
+import { buildCaps, type CapState, splitCaps } from './capability-picker-util.js';
+
+const PLUGIN = '@aalis/plugin-authority';
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const toList = (s: string) =>
+  s
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean);
 
 interface AuthorityUser {
   platform: string;
   userId: string;
   isOwner: boolean;
-  /** 被授予的受限能力（glob） */
   grant?: string[];
-  /** 被拒绝的能力（glob；deny 压过一切，含 owner） */
   deny?: string[];
 }
-
-interface AuthorityOwner {
+interface Owner {
   platform: string;
   userId: string;
 }
-
-interface AuthorityCommand {
-  key: string;
-  name: string;
-  displayName: string;
-  visibility: 'public' | 'restricted';
-}
-
-interface AuthorityTool {
-  key: string;
-  name: string;
-  visibility: 'public' | 'restricted';
-}
-
 interface TemporaryGrant {
   id: string;
   capability: string;
-  name: string;
-  type: 'command' | 'tool';
   sessionId: string;
-  platform: string;
-  userId?: string;
-  expiresAt: number;
-  maxUses?: number;
   used: number;
-  createdAt: number;
+  maxUses?: number;
 }
-
 interface Overview {
   users: AuthorityUser[];
-  owners: AuthorityOwner[];
+  owners: Owner[];
   platforms: string[];
-  restrictedCapabilities: string[];
   deniedCapabilities: string[];
-  visibilityOverrides: Record<string, 'public' | 'restricted'>;
+  visibilityOverrides: Record<string, Vis>;
+  confirmOverrides: Record<string, ConfirmOverride>;
   restrictedPolicy: { allow?: string[]; duration?: number };
   temporaryGrants: TemporaryGrant[];
   commandPrefix: string;
-  commands: AuthorityCommand[];
-  tools: AuthorityTool[];
+  commands: Operation[];
+  tools: Operation[];
 }
 
-const toList = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
-const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+/** 三态/多态按钮组（当前值高亮）。所有按钮都有 onClick，绝不空转。 */
+function SegButtons<T extends string>({
+  value,
+  options,
+  onPick,
+}: {
+  value: T;
+  options: Array<{ v: T; label: string }>;
+  onPick: (v: T) => void;
+}) {
+  return (
+    <span style={{ display: 'inline-flex', gap: 2 }}>
+      {options.map(o => (
+        <button
+          key={o.v}
+          type="button"
+          className={`btn btn-sm${value === o.v ? ' btn-primary' : ''}`}
+          onClick={() => onPick(o.v)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </span>
+  );
+}
 
-/**
- * 能力选择器：把已知命令/工具列成三态（默认/授予/拒绝）勾选，免去手写 glob；
- * 通配/动作/存储等选择器表达不了的模式走「高级」框。自身持本地编辑态（按 key 重挂以重置），
- * 任何变更经 onChange 回写 grant/deny 逗号串给父组件保存。委托子集越权由后端兜底拒绝。
- */
-function CapabilityPicker({
-  commands,
-  tools,
+// ════════════════════ 用户能力编辑器（按插件分组 + 整组 + 高级 glob）════════════════════
+function UserCapEditor({
+  ops,
   initialGrant,
   initialDeny,
-  onChange,
+  onSave,
+  onCancel,
 }: {
-  commands: AuthorityCommand[];
-  tools: AuthorityTool[];
-  initialGrant: string;
-  initialDeny: string;
-  onChange: (grant: string, deny: string) => void;
+  ops: Operation[];
+  initialGrant: string[];
+  initialDeny: string[];
+  onSave: (grant: string[], deny: string[]) => void;
+  onCancel: () => void;
 }) {
-  const items = [
-    ...commands.map(c => ({ id: `command:${c.name}`, label: c.displayName || c.name, kind: '命令', vis: c.visibility })),
-    ...tools.map(t => ({ id: `tool:${t.name}`, label: t.name, kind: '工具', vis: t.visibility })),
-  ];
-  const knownIds = new Set(items.map(i => i.id));
-
-  const init = splitCaps(initialGrant, initialDeny, knownIds);
+  const knownIds = new Set(ops.map(capKey));
+  const init = splitCaps(initialGrant.join(','), initialDeny.join(','), knownIds);
   const [caps, setCaps] = useState<Record<string, CapState>>(() => init.caps);
   const [advGrant, setAdvGrant] = useState(() => init.advGrant);
   const [advDeny, setAdvDeny] = useState(() => init.advDeny);
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [q, setQ] = useState('');
 
-  const emit = (c: Record<string, CapState>, ag: string, ad: string) => {
-    const { grant, deny } = buildCaps(c, ag, ad);
-    onChange(grant, deny);
+  const groups = groupByPlugin(ops);
+  const ql = q.trim().toLowerCase();
+
+  const setOne = (id: string, st: CapState | 'default') => {
+    setCaps(prev => {
+      const next = { ...prev };
+      if (st === 'default') delete next[id];
+      else next[id] = st;
+      return next;
+    });
   };
-  const setCap = (id: string, st: 'default' | 'grant' | 'deny') => {
-    const next = { ...caps };
-    if (st === 'default') delete next[id];
-    else next[id] = st;
-    setCaps(next);
-    emit(next, advGrant, advDeny);
+  const setGroup = (groupOps: Operation[], st: CapState | 'default') => {
+    setCaps(prev => {
+      const next = { ...prev };
+      for (const op of groupOps) {
+        const id = capKey(op);
+        if (st === 'default') delete next[id];
+        else next[id] = st;
+      }
+      return next;
+    });
   };
 
-  const ql = q.trim().toLowerCase();
-  const shown = items.filter(i => !ql || i.id.toLowerCase().includes(ql) || i.label.toLowerCase().includes(ql));
+  const save = () => {
+    const { grant, deny } = buildCaps(caps, advGrant, advDeny);
+    onSave(toList(grant), toList(deny));
+  };
 
   return (
-    <div>
-      <input className="config-edit-input" placeholder="搜索命令 / 工具…" value={q} onChange={e => setQ(e.target.value)} />
-      <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, margin: '6px 0' }}>
-        {shown.length === 0 ? (
-          <div className="config-block-hint" style={{ padding: 8 }}>无匹配项（通配/动作/存储请用下方高级框）</div>
-        ) : (
-          shown.map(i => {
-            const st = caps[i.id] ?? 'default';
-            return (
-              <div
-                key={i.id}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderBottom: '1px solid var(--border)' }}
-              >
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <span style={{ opacity: 0.55, fontSize: 11, marginRight: 4 }}>{i.kind}</span>
-                  {i.label}
-                  <span
-                    className="authority-user-flag"
-                    style={{ marginLeft: 6 }}
-                    title={i.vis === 'restricted' ? '默认禁用，需显式授予' : '默认人人可用（拒绝可收回）'}
-                  >
-                    {i.vis === 'restricted' ? '受限' : '公开'}
-                  </span>
-                </span>
-                <div style={{ display: 'flex', gap: 2 }}>
-                  {(['default', 'grant', 'deny'] as const).map(s => (
-                    <button key={s} className={`btn btn-sm${st === s ? ' btn-primary' : ''}`} onClick={() => setCap(i.id, s)}>
-                      {s === 'default' ? '默认' : s === 'grant' ? '授予' : '拒绝'}
-                    </button>
-                  ))}
-                </div>
+    <div className="authority-user-expand">
+      <input
+        className="config-edit-input"
+        placeholder="搜索插件 / 操作…"
+        value={q}
+        onChange={e => setQ(e.target.value)}
+      />
+      <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, margin: '6px 0' }}>
+        {groups.map(({ plugin, ops: groupOps }) => {
+          const shown = groupOps.filter(
+            op => !ql || op.pluginName.toLowerCase().includes(ql) || op.displayName.toLowerCase().includes(ql),
+          );
+          if (shown.length === 0) return null;
+          const isOpen = open.has(plugin) || ql.length > 0;
+          return (
+            <div key={plugin} style={{ borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  style={{ flex: 1, textAlign: 'left', minWidth: 0 }}
+                  onClick={() =>
+                    setOpen(prev => {
+                      const n = new Set(prev);
+                      n.has(plugin) ? n.delete(plugin) : n.add(plugin);
+                      return n;
+                    })
+                  }
+                >
+                  {isOpen ? '▾' : '▸'} {plugin} <span style={{ opacity: 0.5 }}>({shown.length})</span>
+                </button>
+                <span style={{ opacity: 0.6, fontSize: 11 }}>整组</span>
+                <SegButtons<CapState | 'default'>
+                  value={'default'}
+                  options={[
+                    { v: 'default', label: '默认' },
+                    { v: 'grant', label: '授予' },
+                    { v: 'deny', label: '拒绝' },
+                  ]}
+                  onPick={st => setGroup(shown, st)}
+                />
               </div>
-            );
-          })
-        )}
+              {isOpen &&
+                shown.map(op => {
+                  const id = capKey(op);
+                  const st = (caps[id] ?? 'default') as CapState | 'default';
+                  return (
+                    <div
+                      key={id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 8px 3px 24px' }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ opacity: 0.5, fontSize: 11, marginRight: 4 }}>{op.type === 'command' ? '令' : '具'}</span>
+                        {op.displayName}
+                      </span>
+                      <SegButtons<CapState | 'default'>
+                        value={st}
+                        options={[
+                          { v: 'default', label: '默认' },
+                          { v: 'grant', label: '授予' },
+                          { v: 'deny', label: '拒绝' },
+                        ]}
+                        onPick={s => setOne(id, s)}
+                      />
+                    </div>
+                  );
+                })}
+            </div>
+          );
+        })}
       </div>
-      <label>高级 · grant（通配 / 动作 / 存储等选择器外的 glob，逗号分隔）</label>
-      <input
-        className="config-edit-input"
-        placeholder="如 tool:file.*, action:@aalis/plugin-x:method, *"
-        value={advGrant}
-        onChange={e => {
-          setAdvGrant(e.target.value);
-          emit(caps, e.target.value, advDeny);
-        }}
-      />
-      <label>高级 · deny（压过 grant 与 owner）</label>
-      <input
-        className="config-edit-input"
-        placeholder="如 tool:shell.*, storage:*"
-        value={advDeny}
-        onChange={e => {
-          setAdvDeny(e.target.value);
-          emit(caps, advGrant, e.target.value);
-        }}
-      />
+      <label className="config-block-hint">高级 · grant（通配 / 存储等 glob，逗号分隔）</label>
+      <input className="config-edit-input" placeholder="如 tool:file.*, storage:*" value={advGrant} onChange={e => setAdvGrant(e.target.value)} />
+      <label className="config-block-hint">高级 · deny（压过 grant 与 owner）</label>
+      <input className="config-edit-input" placeholder="如 tool:shell.*" value={advDeny} onChange={e => setAdvDeny(e.target.value)} />
+      <div className="config-edit-actions">
+        <button type="button" className="btn btn-primary btn-sm" onClick={save}>
+          保存
+        </button>
+        <button type="button" className="btn btn-sm" onClick={onCancel}>
+          取消
+        </button>
+      </div>
     </div>
   );
 }
@@ -172,43 +225,35 @@ export function AuthorityPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
-
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['users']));
-  const toggleSection = (key: string) => {
-    setOpenSections(prev => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
+  const flash = (m: string) => {
+    setMessage(m);
+    setTimeout(() => setMessage(''), 2200);
   };
 
-  // 用户与委托
-  const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grant: string; deny: string } | null>(null);
-  const [newUser, setNewUser] = useState({ platform: '', userId: '', grant: '', deny: '' });
-  const [showAddUser, setShowAddUser] = useState(false);
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['ops', 'users']));
+  const toggleSection = (k: string) =>
+    setOpenSections(prev => {
+      const n = new Set(prev);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
 
-  // Owner
+  const [opQuery, setOpQuery] = useState('');
+  const [openPlugins, setOpenPlugins] = useState<Set<string>>(new Set());
+  const [editUser, setEditUser] = useState<string | null>(null); // "platform:userId"
+  const [newUser, setNewUser] = useState({ platform: '', userId: '' });
   const [newOwner, setNewOwner] = useState({ platform: '', userId: '' });
   const [showAddOwner, setShowAddOwner] = useState(false);
-
-  // 受限 / 禁用能力清单
-  const [editCapsList, setEditCapsList] = useState(false);
-  const [capsDraft, setCapsDraft] = useState({ restricted: '', denied: '' });
-
-  // 临时放行策略
-  const [editPolicy, setEditPolicy] = useState(false);
-  const [policyDraft, setPolicyDraft] = useState({ allow: '', duration: 0 });
+  const [advDraft, setAdvDraft] = useState({ denied: '', allow: '', duration: 0 });
+  const [editAdv, setEditAdv] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await pageAction<Overview>('@aalis/plugin-authority', 'getOverview');
+      const d = await pageAction<Overview>(PLUGIN, 'getOverview');
       setData(d);
-      setCapsDraft({
-        restricted: (d.restrictedCapabilities ?? []).join(', '),
+      setAdvDraft({
         denied: (d.deniedCapabilities ?? []).join(', '),
-      });
-      setPolicyDraft({
         allow: (d.restrictedPolicy?.allow ?? []).join(', '),
         duration: d.restrictedPolicy?.duration ?? 0,
       });
@@ -217,191 +262,90 @@ export function AuthorityPage() {
     }
     setLoading(false);
   }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const flash = (msg: string) => {
-    setMessage(msg);
-    setTimeout(() => setMessage(''), 2000);
-  };
-
-  // ---- 用户与委托 ----
-  const saveUserCapabilities = async () => {
-    if (!editCaps) return;
-    try {
-      await pageAction('@aalis/plugin-authority', 'setUserCapabilities', {
-        platform: editCaps.platform, userId: editCaps.userId,
-        grant: toList(editCaps.grant), deny: toList(editCaps.deny),
-      });
-      flash(`已更新 ${editCaps.platform}:${editCaps.userId} 的委托`);
-      setEditCaps(null);
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const deleteUser = async (platform: string, userId: string) => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'deleteUser', { platform, userId });
-      flash(`已删除 ${platform}:${userId}`);
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const addUser = async () => {
-    if (!newUser.platform || !newUser.userId) return;
-    try {
-      await pageAction('@aalis/plugin-authority', 'setUserCapabilities', {
-        platform: newUser.platform, userId: newUser.userId,
-        grant: toList(newUser.grant), deny: toList(newUser.deny),
-      });
-      flash(`已添加 ${newUser.platform}:${newUser.userId}`);
-      setNewUser({ platform: '', userId: '', grant: '', deny: '' });
-      setShowAddUser(false);
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  // ---- Owner ----
-  const addOwner = async () => {
-    if (!data || !newOwner.platform || !newOwner.userId) return;
-    try {
-      const owners = [...data.owners, { platform: newOwner.platform, userId: newOwner.userId }];
-      await pageAction('@aalis/plugin-authority', 'setOwners', { owners });
-      setNewOwner({ platform: '', userId: '' });
-      setShowAddOwner(false);
-      flash('Owner 已添加');
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const removeOwner = async (idx: number) => {
-    if (!data) return;
-    try {
-      const owners = data.owners.filter((_, i) => i !== idx);
-      await pageAction('@aalis/plugin-authority', 'setOwners', { owners });
-      flash('Owner 已移除');
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  // ---- 可见性覆盖 ----
-  const setVisibility = async (name: string, visibility: 'public' | 'restricted' | '') => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'setVisibilityOverride', { name, visibility });
-      flash(visibility ? `${name} → ${visibility}` : `${name} 已恢复默认`);
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  // ---- 受限 / 禁用能力清单 ----
-  const saveCapsList = async () => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'setConfig', {
-        restrictedCapabilities: toList(capsDraft.restricted),
-        deniedCapabilities: toList(capsDraft.denied),
-      });
-      setEditCapsList(false);
-      flash('能力清单已保存');
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  // ---- 临时放行策略 ----
-  const savePolicy = async () => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'setRestrictedPolicy', {
-        policy: { allow: toList(policyDraft.allow), duration: policyDraft.duration },
-      });
-      setEditPolicy(false);
-      flash('临时放行策略已保存');
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const revokeTemporaryGrant = async (id: string) => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'revokeTemporaryGrant', { id });
-      flash('已撤销临时委托');
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
+  /** 调 action：失败 flash 错误，成功 flash 提示并刷新。 */
+  const act = useCallback(
+    async (method: string, args: Record<string, unknown>, okMsg?: string) => {
+      try {
+        await pageAction(PLUGIN, method, args);
+        if (okMsg) flash(okMsg);
+        await refresh();
+      } catch (e) {
+        flash(errMsg(e));
+      }
+    },
+    [refresh],
+  );
 
   if (loading && !data) {
-    return <div className="page-content"><div className="empty-hint">加载中...</div></div>;
-  }
-  if (!data) {
-    return <div className="page-content"><div className="empty-hint">获取权限数据失败</div></div>;
-  }
-
-  const renderVisibilityRow = (
-    row: { key: string; name: string; displayName?: string; visibility: 'public' | 'restricted' },
-  ) => {
-    const overridden = Object.prototype.hasOwnProperty.call(data.visibilityOverrides, row.name);
     return (
-      <div className={`authority-cmd-row ${overridden ? 'overridden' : ''}`} key={row.key}>
-        <span className="authority-cmd-name" title={row.name}>
-          {row.displayName ?? row.name}
-          {overridden && (
-            <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: 11 }} title="已被 owner 覆盖（非插件默认）">●</span>
-          )}
-        </span>
-        <span>
-          <span className={`authority-safety-tag ${row.visibility}`}>{row.visibility}</span>
-        </span>
-        <span className="authority-actions">
-          <button
-            className={`btn btn-sm ${row.visibility === 'public' ? 'btn-primary' : ''}`}
-            onClick={() => setVisibility(row.name, 'public')}
-            title="任何人默认可用"
-          >public</button>
-          <button
-            className={`btn btn-sm ${row.visibility === 'restricted' ? 'btn-primary' : ''}`}
-            onClick={() => setVisibility(row.name, 'restricted')}
-            title="默认禁用，需显式授予"
-          >restricted</button>
-          {overridden && (
-            <button className="btn btn-sm" onClick={() => setVisibility(row.name, '')} title="恢复插件声明的默认可见性">默认</button>
-          )}
-        </span>
+      <div className="page-content">
+        <div className="empty-hint">加载中...</div>
       </div>
     );
+  }
+  if (!data) {
+    return (
+      <div className="page-content">
+        <div className="empty-hint">获取权限数据失败</div>
+      </div>
+    );
+  }
+
+  const ops: Operation[] = [...data.commands, ...data.tools];
+  const opGroups = groupByPlugin(ops);
+  const ql = opQuery.trim().toLowerCase();
+  const users = data.users.filter(u => !u.isOwner);
+
+  // ── 操作：可见性 / 确认覆盖 ──
+  const setOpVisibility = (op: Operation, v: Vis | '') => act('setVisibilityOverride', { name: capKey(op), visibility: v }, '已更新可见性');
+  const setOpConfirm = (op: Operation, c: ConfirmOverride | '') => act('setConfirmOverride', { name: capKey(op), confirm: c }, '已更新确认');
+  const setGroupVisibility = async (groupOps: Operation[], v: Vis) => {
+    try {
+      await Promise.all(groupOps.map(op => pageAction(PLUGIN, 'setVisibilityOverride', { name: capKey(op), visibility: v })));
+      flash('整组可见性已更新');
+      await refresh();
+    } catch (e) {
+      flash(errMsg(e));
+    }
+  };
+
+  // ── 用户 ──
+  const applyPreset = (u: AuthorityUser, preset: Exclude<Preset, 'custom'>) => {
+    const caps = presetToCaps(preset);
+    act('setUserCapabilities', { platform: u.platform, userId: u.userId, grant: caps.grant, deny: caps.deny }, `已设为「${PRESET_LABEL[preset]}」`);
+  };
+  const saveUserCaps = (u: AuthorityUser, grant: string[], deny: string[]) => {
+    setEditUser(null);
+    act('setUserCapabilities', { platform: u.platform, userId: u.userId, grant, deny }, `已更新 ${u.platform}:${u.userId}`);
   };
 
   return (
     <div className="page-content page-authority">
       {message && <div className="toast">{message}</div>}
-
-      {/* 平台候选项 */}
       <datalist id="authority-platforms">
-        {(data.platforms ?? []).map(p => <option key={p} value={p} />)}
+        {(data.platforms ?? []).map(p => (
+          <option key={p} value={p} />
+        ))}
       </datalist>
 
       {/* 概览 */}
-      <div className="section-label">概览</div>
       <div className="overview-grid">
+        <div className="overview-card">
+          <div className="overview-card-icon"><Wrench size={20} /></div>
+          <div className="overview-card-body">
+            <div className="overview-card-label">操作</div>
+            <div className="overview-card-value">{ops.length}</div>
+          </div>
+        </div>
         <div className="overview-card">
           <div className="overview-card-icon"><User size={20} /></div>
           <div className="overview-card-body">
             <div className="overview-card-label">用户</div>
-            <div className="overview-card-value">{data.users.length}</div>
+            <div className="overview-card-value">{users.length}</div>
           </div>
         </div>
         <div className="overview-card">
@@ -412,169 +356,241 @@ export function AuthorityPage() {
           </div>
         </div>
         <div className="overview-card">
-          <div className="overview-card-icon"><Command size={20} /></div>
-          <div className="overview-card-body">
-            <div className="overview-card-label">指令</div>
-            <div className="overview-card-value">{data.commands.length}</div>
-          </div>
-        </div>
-        <div className="overview-card">
-          <div className="overview-card-icon"><Wrench size={20} /></div>
-          <div className="overview-card-body">
-            <div className="overview-card-label">工具</div>
-            <div className="overview-card-value">{data.tools.length}</div>
-          </div>
-        </div>
-        <div className="overview-card">
           <div className="overview-card-icon"><Clock size={20} /></div>
           <div className="overview-card-body">
-            <div className="overview-card-label">临时委托</div>
+            <div className="overview-card-label">临时放行</div>
             <div className="overview-card-value">{data.temporaryGrants.length}</div>
           </div>
         </div>
       </div>
 
-      {/* 用户与委托 */}
+      {/* ═══ 操作 ═══ */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('ops')}>
+          <span className="config-block-title">操作（指令 / 工具的默认权限）</span>
+          <span className="config-block-hint">公开=人人可用；受限=默认禁需授予。确认=执行前需人点头。Owner 可逐条或整组覆盖。</span>
+          <span className={`config-block-toggle ${openSections.has('ops') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('ops') && (
+          <div className="config-block-body">
+            <input className="config-edit-input" placeholder="搜索插件 / 操作…" value={opQuery} onChange={e => setOpQuery(e.target.value)} />
+            {opGroups.map(({ plugin, ops: groupOps }) => {
+              const shown = groupOps.filter(op => !ql || op.pluginName.toLowerCase().includes(ql) || op.displayName.toLowerCase().includes(ql));
+              if (shown.length === 0) return null;
+              const isOpen = openPlugins.has(plugin) || ql.length > 0;
+              const gvis = groupVisibility(shown, data.visibilityOverrides);
+              return (
+                <div key={plugin} className="authority-cmd-list" style={{ marginTop: 6 }}>
+                  <div className="authority-cmd-row" style={{ background: 'var(--surface)' }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      style={{ flex: 1, textAlign: 'left' }}
+                      onClick={() =>
+                        setOpenPlugins(prev => {
+                          const n = new Set(prev);
+                          n.has(plugin) ? n.delete(plugin) : n.add(plugin);
+                          return n;
+                        })
+                      }
+                    >
+                      {isOpen ? '▾' : '▸'} {plugin} <span style={{ opacity: 0.5 }}>({shown.length})</span>
+                      {gvis !== 'mixed' && <span className={`authority-safety-tag ${gvis}`} style={{ marginLeft: 6 }}>{gvis}</span>}
+                    </button>
+                    <span style={{ opacity: 0.6, fontSize: 11, marginRight: 4 }}>整组</span>
+                    <SegButtons<Vis>
+                      value={gvis === 'mixed' ? ('' as Vis) : gvis}
+                      options={[
+                        { v: 'public', label: '公开' },
+                        { v: 'restricted', label: '受限' },
+                      ]}
+                      onPick={v => setGroupVisibility(shown, v)}
+                    />
+                  </div>
+                  {isOpen &&
+                    shown.map(op => {
+                      const k = capKey(op);
+                      const vis = effectiveVisibility(op, data.visibilityOverrides);
+                      const conf = effectiveConfirm(op, data.confirmOverrides);
+                      const visOverridden = k in data.visibilityOverrides;
+                      const confOv = data.confirmOverrides[k];
+                      return (
+                        <div className="authority-cmd-row authority-user-row" key={k}>
+                          <span className="authority-cmd-name" title={k}>
+                            <span style={{ opacity: 0.5, fontSize: 11, marginRight: 4 }}>{op.type === 'command' ? '令' : '具'}</span>
+                            {op.displayName}
+                            {visOverridden && <span style={{ color: '#f59e0b', marginLeft: 4 }} title="已被 owner 覆盖">●</span>}
+                          </span>
+                          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                            <SegButtons<Vis | 'default'>
+                              value={visOverridden ? vis : 'default'}
+                              options={[
+                                { v: 'default', label: '默认' },
+                                { v: 'public', label: '公开' },
+                                { v: 'restricted', label: '受限' },
+                              ]}
+                              onPick={v => setOpVisibility(op, v === 'default' ? '' : v)}
+                            />
+                            <span style={{ opacity: 0.4 }}>|</span>
+                            <SegButtons<ConfirmOverride | 'default'>
+                              value={confOv ?? 'default'}
+                              options={[
+                                { v: 'default', label: conf ? `默认(${conf === 'always' ? '每次' : '会话'})` : '默认' },
+                                { v: 'off', label: '关' },
+                                { v: 'session', label: '会话' },
+                                { v: 'always', label: '每次' },
+                              ]}
+                              onPick={c => setOpConfirm(op, c === 'default' ? '' : c)}
+                            />
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ 用户 ═══ */}
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('users')}>
-          <span className="config-block-title">用户与委托</span>
-          <span className="config-block-hint">为用户授予受限能力或拒绝能力（glob）；deny &gt; owner(*) &gt; public &gt; grant</span>
+          <span className="config-block-title">用户（外部身份的权限）</span>
+          <span className="config-block-hint">给 QQ 等外部身份设档位或细调；deny &gt; owner(*) &gt; public &gt; grant。仅 owner 可改。</span>
           <span className={`config-block-toggle ${openSections.has('users') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('users') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            <div style={{ padding: '8px 12px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn-sm" onClick={() => setShowAddUser(!showAddUser)}>
-                {showAddUser ? '取消' : '+ 添加用户'}
+          <div className="config-block-body">
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              <input
+                className="config-edit-input"
+                style={{ maxWidth: 160 }}
+                placeholder="平台 (如 onebot)"
+                list="authority-platforms"
+                value={newUser.platform}
+                onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))}
+              />
+              <input
+                className="config-edit-input"
+                style={{ maxWidth: 160 }}
+                placeholder="用户 ID"
+                value={newUser.userId}
+                onChange={e => setNewUser(v => ({ ...v, userId: e.target.value }))}
+              />
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={!newUser.platform || !newUser.userId}
+                onClick={() => {
+                  const u = { platform: newUser.platform, userId: newUser.userId };
+                  setNewUser({ platform: '', userId: '' });
+                  setEditUser(`${u.platform}:${u.userId}`);
+                  // 仅打开编辑器；空记录在保存非空 caps 时才落库
+                  if (!data.users.some(x => x.platform === u.platform && x.userId === u.userId)) {
+                    setData(d => (d ? { ...d, users: [...d.users, { ...u, isOwner: false }] } : d));
+                  }
+                }}
+              >
+                + 添加身份
               </button>
-              <button className="btn-sm" onClick={refresh} disabled={loading}>
-                {loading ? '刷新中...' : '刷新'}
+              <button type="button" className="btn btn-sm" onClick={refresh} disabled={loading}>
+                刷新
               </button>
             </div>
-            {showAddUser && (
-              <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
-                <input className="config-edit-input" placeholder="平台 (如 onebot / webui)"
-                  list="authority-platforms"
-                  value={newUser.platform} onChange={e => setNewUser(v => ({ ...v, platform: e.target.value }))} />
-                <input className="config-edit-input" placeholder="用户 ID"
-                  value={newUser.userId} onChange={e => setNewUser(v => ({ ...v, userId: e.target.value }))} />
-                <CapabilityPicker
-                  key="add-user"
-                  commands={data.commands}
-                  tools={data.tools}
-                  initialGrant={newUser.grant}
-                  initialDeny={newUser.deny}
-                  onChange={(g, d) => setNewUser(v => ({ ...v, grant: g, deny: d }))}
-                />
-                <button className="btn btn-primary btn-sm" onClick={addUser}
-                  disabled={!newUser.platform || !newUser.userId}>确认</button>
-              </div>
-            )}
-            {data.users.length === 0 ? (
-              <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
-                暂无用户记录。public 能力对所有人默认开放，无需登记。
-              </div>
+            {users.length === 0 ? (
+              <div className="empty-hint">暂无用户记录。public 操作对所有人默认开放，无需登记。</div>
             ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header authority-user-header">
-                  <span>平台</span>
-                  <span>身份 / 委托</span>
-                  <span>操作</span>
-                </div>
-                {data.users.map(u => {
-                  const key = `${u.platform}:${u.userId}`;
-                  const isCapsOpen = editCaps && editCaps.platform === u.platform && editCaps.userId === u.userId;
-                  const grantN = u.grant?.length ?? 0;
-                  const denyN = u.deny?.length ?? 0;
-                  return (
-                    <div key={key}>
-                      <div className="authority-cmd-row authority-user-row">
-                        <span className="authority-cell-platform">{u.platform}</span>
-                        <span className="authority-cell-id">
-                          {u.userId}
-                          {u.isOwner && <span className="authority-user-flag owner" title="Owner（拥有全部能力 *）">owner</span>}
-                          {(grantN || denyN) ? (
-                            <span className="authority-user-flag" title={`授予: ${(u.grant ?? []).join(', ') || '无'}\n拒绝: ${(u.deny ?? []).join(', ') || '无'}`}>
-                              +{grantN} / −{denyN}
-                            </span>
-                          ) : null}
+              users.map(u => {
+                const key = `${u.platform}:${u.userId}`;
+                const preset = detectPreset(u.grant, u.deny);
+                const isEditing = editUser === key;
+                return (
+                  <div key={key} className="authority-cmd-list" style={{ marginBottom: 6 }}>
+                    <div className="authority-cmd-row authority-user-row">
+                      <span className="authority-cell-id" style={{ flex: 1 }}>
+                        <strong>{u.platform}</strong>:{u.userId}
+                        <span className="authority-user-flag" title={`授予: ${(u.grant ?? []).join(', ') || '无'}\n拒绝: ${(u.deny ?? []).join(', ') || '无'}`}>
+                          {PRESET_LABEL[preset]}
+                          {preset === 'custom' ? ` +${u.grant?.length ?? 0}/−${u.deny?.length ?? 0}` : ''}
                         </span>
-                        <span className="authority-actions">
-                          <button className="btn btn-sm" title="设置该用户的授予 / 拒绝能力（委托）"
-                            onClick={() => setEditCaps(isCapsOpen ? null : {
-                              platform: u.platform, userId: u.userId,
-                              grant: (u.grant ?? []).join(', '), deny: (u.deny ?? []).join(', '),
-                            })}>能力</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>删除</button>
-                        </span>
-                      </div>
-                      {isCapsOpen && (
-                        <div className="authority-user-expand">
-                          <CapabilityPicker
-                            key={`edit:${u.platform}:${u.userId}`}
-                            commands={data.commands}
-                            tools={data.tools}
-                            initialGrant={editCaps!.grant}
-                            initialDeny={editCaps!.deny}
-                            onChange={(g, d) => setEditCaps(prev => (prev ? { ...prev, grant: g, deny: d } : null))}
-                          />
-                          <div className="config-edit-actions">
-                            <button className="btn btn-primary btn-sm" onClick={saveUserCapabilities}>保存</button>
-                            <button className="btn btn-sm" onClick={() => setEditCaps(null)}>取消</button>
-                          </div>
-                        </div>
-                      )}
+                      </span>
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <SegButtons<Preset>
+                          value={preset}
+                          options={[
+                            { v: 'banned', label: '封禁' },
+                            { v: 'normal', label: '普通' },
+                            { v: 'trusted', label: '信任' },
+                            { v: 'custom', label: '自定义' },
+                          ]}
+                          onPick={p => (p === 'custom' ? setEditUser(isEditing ? null : key) : applyPreset(u, p))}
+                        />
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => act('deleteUser', { platform: u.platform, userId: u.userId }, '已删除')}>
+                          删除
+                        </button>
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
+                    {isEditing && (
+                      <UserCapEditor
+                        key={`edit:${key}`}
+                        ops={ops}
+                        initialGrant={u.grant ?? []}
+                        initialDeny={u.deny ?? []}
+                        onSave={(g, d) => saveUserCaps(u, g, d)}
+                        onCancel={() => setEditUser(null)}
+                      />
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         )}
       </div>
 
-      {/* Owner 管理 */}
+      {/* ═══ Owner ═══ */}
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('owners')}>
-          <span className="config-block-title">Owner 管理</span>
-          <span className="config-block-hint">Owner 拥有全部能力（*）；console（单 token 登录）恒为 Owner</span>
+          <span className="config-block-title">Owner</span>
+          <span className="config-block-hint">Owner 拥有全部能力（*）；console（本机登录）恒为 Owner。</span>
           <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('owners') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            <div style={{ padding: '8px 12px' }}>
-              <button className="btn-sm" onClick={() => setShowAddOwner(!showAddOwner)}>
-                {showAddOwner ? '取消' : '+ 添加 Owner'}
-              </button>
-            </div>
+          <div className="config-block-body">
+            <button type="button" className="btn btn-sm" onClick={() => setShowAddOwner(s => !s)}>
+              {showAddOwner ? '取消' : '+ 添加 Owner'}
+            </button>
             {showAddOwner && (
-              <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
-                <input className="config-edit-input" placeholder="平台 (如 onebot)"
-                  list="authority-platforms"
-                  value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
-                <input className="config-edit-input" placeholder="用户 ID"
-                  value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
-                <button className="btn btn-primary btn-sm" onClick={addOwner} disabled={!newOwner.platform || !newOwner.userId}>确认</button>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <input className="config-edit-input" style={{ maxWidth: 160 }} placeholder="平台" list="authority-platforms" value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
+                <input className="config-edit-input" style={{ maxWidth: 160 }} placeholder="用户 ID" value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={!newOwner.platform || !newOwner.userId}
+                  onClick={() => {
+                    act('setOwners', { owners: [...data.owners, { ...newOwner }] }, 'Owner 已添加');
+                    setNewOwner({ platform: '', userId: '' });
+                    setShowAddOwner(false);
+                  }}
+                >
+                  确认
+                </button>
               </div>
             )}
             {data.owners.length === 0 ? (
-              <div className="empty-hint" style={{ padding: '0 12px 12px' }}>
-                暂无显式 Owner。console（单 token 登录）始终拥有全部能力。
-              </div>
+              <div className="empty-hint" style={{ marginTop: 8 }}>暂无显式 Owner。console 始终拥有全部能力。</div>
             ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header authority-owner-header">
-                  <span>平台</span>
-                  <span>用户 ID</span>
-                  <span>操作</span>
-                </div>
-                {data.owners.map((o, idx) => (
-                  <div className="authority-cmd-row authority-owner-row" key={`${o.platform}:${o.userId}`}>
-                    <span className="authority-cell-platform">{o.platform}</span>
-                    <span className="authority-cell-id">{o.userId}</span>
-                    <span>
-                      <button className="btn btn-danger btn-sm" onClick={() => removeOwner(idx)}>移除</button>
+              <div className="authority-cmd-list" style={{ marginTop: 8 }}>
+                {data.owners.map((o, i) => (
+                  <div className="authority-cmd-row" key={`${o.platform}:${o.userId}`}>
+                    <span style={{ flex: 1 }}>
+                      <strong>{o.platform}</strong>:{o.userId}
                     </span>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('setOwners', { owners: data.owners.filter((_, j) => j !== i) }, 'Owner 已移除')}>
+                      移除
+                    </button>
                   </div>
                 ))}
               </div>
@@ -583,176 +599,85 @@ export function AuthorityPage() {
         )}
       </div>
 
-      {/* 指令可见性 */}
+      {/* ═══ 高级 ═══ */}
       <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('commands')}>
-          <span className="config-block-title">指令可见性</span>
-          <span className="config-block-hint">public = 默认任何人可用；restricted = 默认禁用需授予。Owner 可覆盖单条声明</span>
-          <span className={`config-block-toggle ${openSections.has('commands') ? 'open' : ''}`}>▶</span>
+        <div className="config-block-header" onClick={() => toggleSection('adv')}>
+          <span className="config-block-title">
+            <SlidersHorizontal size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+            高级
+          </span>
+          <span className="config-block-hint">全局硬禁能力 + 受限能力的临时自动放行（给自动化）+ 当前临时放行。</span>
+          <span className={`config-block-toggle ${openSections.has('adv') ? 'open' : ''}`}>▶</span>
         </div>
-        {openSections.has('commands') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            {data.commands.length === 0 ? (
-              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册指令</div>
-            ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header">
-                  <span>指令</span>
-                  <span>可见性</span>
-                  <span>操作</span>
-                </div>
-                {data.commands.map(c => renderVisibilityRow(c))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 工具可见性 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('tools')}>
-          <span className="config-block-title">工具可见性</span>
-          <span className="config-block-hint">AI 工具的默认可见性；Owner 可覆盖单个工具的声明</span>
-          <span className={`config-block-toggle ${openSections.has('tools') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('tools') && (
-          <div className="config-block-body" style={{ padding: 0 }}>
-            {data.tools.length === 0 ? (
-              <div className="empty-hint" style={{ padding: 12 }}>暂无已注册工具</div>
-            ) : (
-              <div className="authority-cmd-list">
-                <div className="authority-cmd-header">
-                  <span>工具</span>
-                  <span>可见性</span>
-                  <span>操作</span>
-                </div>
-                {data.tools.map(t => renderVisibilityRow(t))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 受限 / 禁用能力清单 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('caps')}>
-          <span className="config-block-title">受限 / 禁用能力清单</span>
-          <span className="config-block-hint">在内置之外追加的能力 glob 规则</span>
-          <span className={`config-block-toggle ${openSections.has('caps') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('caps') && (
+        {openSections.has('adv') && (
           <div className="config-block-body">
-            {editCapsList ? (
+            {editAdv ? (
               <div className="config-edit-form">
                 <div className="config-edit-row">
-                  <label className="config-edit-label">restricted</label>
-                  <input className="config-edit-input"
-                    value={capsDraft.restricted}
-                    onChange={e => setCapsDraft(v => ({ ...v, restricted: e.target.value }))}
-                    placeholder="tool:shell.*, command:deploy" />
-                  <span className="config-edit-hint">额外按受限处理（默认禁，需授予）</span>
+                  <label className="config-edit-label">硬禁(denied)</label>
+                  <input className="config-edit-input" value={advDraft.denied} onChange={e => setAdvDraft(v => ({ ...v, denied: e.target.value }))} placeholder="tool:dangerous.*" />
+                  <span className="config-edit-hint">连 owner 都压过，慎用</span>
                 </div>
                 <div className="config-edit-row">
-                  <label className="config-edit-label">denied</label>
-                  <input className="config-edit-input"
-                    value={capsDraft.denied}
-                    onChange={e => setCapsDraft(v => ({ ...v, denied: e.target.value }))}
-                    placeholder="tool:dangerous.*" />
-                  <span className="config-edit-hint">全局硬禁，连 owner 都压过；慎用</span>
+                  <label className="config-edit-label">自动放行(allow)</label>
+                  <input className="config-edit-input" value={advDraft.allow} onChange={e => setAdvDraft(v => ({ ...v, allow: e.target.value }))} placeholder="tool:file.* 或 *" />
+                  <span className="config-edit-hint">受限能力免确认自动放行（自动化用）</span>
+                </div>
+                <div className="config-edit-row">
+                  <label className="config-edit-label">时长(秒)</label>
+                  <input type="number" className="config-edit-input" min={0} value={advDraft.duration} onChange={e => setAdvDraft(v => ({ ...v, duration: parseInt(e.target.value, 10) || 0 }))} />
+                  <span className="config-edit-hint">0 = 永久</span>
                 </div>
                 <div className="config-edit-actions">
-                  <button className="btn btn-primary btn-sm" onClick={saveCapsList}>保存</button>
-                  <button className="btn btn-sm" onClick={() => setEditCapsList(false)}>取消</button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={async () => {
+                      await act('setConfig', { deniedCapabilities: toList(advDraft.denied) });
+                      await act('setRestrictedPolicy', { policy: { allow: toList(advDraft.allow), duration: advDraft.duration } }, '高级配置已保存');
+                      setEditAdv(false);
+                    }}
+                  >
+                    保存
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => setEditAdv(false)}>
+                    取消
+                  </button>
                 </div>
               </div>
             ) : (
               <>
-                <div className="config-item" title="额外按受限处理：默认禁用，需显式授予">
-                  <span className="key">restrictedCapabilities</span>
-                  <span className="val">{(data.restrictedCapabilities ?? []).join(', ') || '(无)'}</span>
-                </div>
-                <div className="config-item" title="全局硬禁：覆盖一切，连 owner 都压过；慎用">
-                  <span className="key">deniedCapabilities</span>
+                <div className="config-item">
+                  <span className="key">硬禁能力</span>
                   <span className="val">{(data.deniedCapabilities ?? []).join(', ') || '(无)'}</span>
                 </div>
-                <div style={{ padding: '6px 0 2px' }}>
-                  <button className="btn-sm" onClick={() => setEditCapsList(true)}>编辑</button>
+                <div className="config-item">
+                  <span className="key">自动放行</span>
+                  <span className="val">
+                    {(data.restrictedPolicy?.allow ?? []).join(', ') || '(无)'}
+                    {data.restrictedPolicy?.allow?.length ? ` · ${data.restrictedPolicy?.duration ? `${data.restrictedPolicy.duration}s` : '永久'}` : ''}
+                  </span>
                 </div>
+                <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setEditAdv(true)}>
+                  编辑
+                </button>
               </>
             )}
-          </div>
-        )}
-      </div>
-
-      {/* 临时放行策略 */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('policy')}>
-          <span className="config-block-title">临时放行策略</span>
-          <span className="config-block-hint">受限能力的临时自动放行白名单，及当前活跃的临时委托</span>
-          <span className={`config-block-toggle ${openSections.has('policy') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('policy') && (
-          <div className="config-block-body">
-            {editPolicy ? (
-              <div className="config-edit-form">
-                <div className="config-edit-row">
-                  <label className="config-edit-label">allow</label>
-                  <input className="config-edit-input"
-                    value={policyDraft.allow}
-                    onChange={e => setPolicyDraft(v => ({ ...v, allow: e.target.value }))}
-                    placeholder="command:deploy, tool:file.* 或 *" />
-                  <span className="config-edit-hint">逗号分隔 glob，* 表示全部受限能力</span>
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">duration</label>
-                  <input type="number" className="config-edit-input" min={0}
-                    value={policyDraft.duration}
-                    onChange={e => setPolicyDraft(v => ({ ...v, duration: parseInt(e.target.value) || 0 }))} />
-                  <span className="config-edit-hint">有效期 (秒)，0 = 永久</span>
-                </div>
-                <div className="config-edit-actions">
-                  <button className="btn btn-primary btn-sm" onClick={savePolicy}>保存</button>
-                  <button className="btn btn-sm" onClick={() => setEditPolicy(false)}>取消</button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="config-item">
-                  <span className="key">allow</span>
-                  <span className="val">{(data.restrictedPolicy?.allow ?? []).join(', ') || '(无)'}</span>
-                </div>
-                <div className="config-item">
-                  <span className="key">duration</span>
-                  <span className="val">{data.restrictedPolicy?.duration === 0 ? '(永久)' : `${data.restrictedPolicy?.duration ?? 0}s`}</span>
-                </div>
-                <div style={{ padding: '6px 0 2px' }}>
-                  <button className="btn-sm" onClick={() => setEditPolicy(true)}>编辑</button>
-                </div>
-              </>
-            )}
-
-            <div className="section-label" style={{ marginTop: 12 }}>当前临时委托</div>
+            <div className="section-label" style={{ marginTop: 12 }}>当前临时放行</div>
             {data.temporaryGrants.length === 0 ? (
-              <div className="empty-hint" style={{ padding: '4px 0' }}>暂无活跃的临时委托。</div>
+              <div className="empty-hint" style={{ padding: '4px 0' }}>暂无。</div>
             ) : (
               <div className="authority-cmd-list">
-                <div className="authority-cmd-header">
-                  <span>能力 / 会话</span>
-                  <span>用量</span>
-                  <span>操作</span>
-                </div>
                 {data.temporaryGrants.map(g => (
                   <div className="authority-cmd-row" key={g.id}>
-                    <span className="authority-cmd-name" title={`类型 ${g.type} · 平台 ${g.platform}${g.userId ? ':' + g.userId : ''} · 到期 ${new Date(g.expiresAt).toLocaleString()}`}>
+                    <span className="authority-cmd-name" title={g.sessionId}>
                       {g.capability}
                       <span className="authority-cmd-plugin" style={{ marginLeft: 6 }}>{g.sessionId}</span>
                     </span>
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>
-                      {g.used}{g.maxUses ? ` / ${g.maxUses}` : ''}
-                    </span>
-                    <span className="authority-actions">
-                      <button className="btn btn-danger btn-sm" onClick={() => revokeTemporaryGrant(g.id)}>撤销</button>
-                    </span>
+                    <span style={{ fontSize: 12, opacity: 0.8, marginRight: 8 }}>{g.used}{g.maxUses ? ` / ${g.maxUses}` : ''}</span>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('revokeTemporaryGrant', { id: g.id }, '已撤销')}>
+                      撤销
+                    </button>
                   </div>
                 ))}
               </div>
