@@ -88,8 +88,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const logger = ctx.logger.child('asr-openai');
 
   if (!cfg.apiKey) {
-    logger.warn('未配置 apiKey，插件不会注册 processor');
-    return;
+    // 与 openai/embedding-openai 一致：缺必填配置时抛清晰错误（而非静默 return，
+    // 否则声明了 provides:['asr'] 却不注册会触发难懂的 provides 校验错）。
+    throw new Error('OpenAI Whisper ASR 需要配置 apiKey（不使用 OpenAI ASR 可在插件管理里禁用本插件）');
   }
 
   const proc = createProcessGateway(ctx);
