@@ -12,7 +12,7 @@ import type {
   UserIdentity,
 } from '@aalis/plugin-authority-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { hasCapability, matchAnyCap, rejectedDelegations } from './capability-model.js';
+import { hasCapability, matchAnyCap } from './capability-model.js';
 import { UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
@@ -121,8 +121,8 @@ export class AuthorityManager implements AuthorityService {
     return null;
   }
 
-  // ── 委托（子集约束）────────────────────────────────────────
-  setUserCapabilities(granter: UserIdentity | null, target: UserIdentity, caps: UserCapabilityOverrides): void {
+  // ── 能力授予（owner 管理；无委托树）────────────────────────
+  setUserCapabilities(target: UserIdentity, caps: UserCapabilityOverrides): void {
     const normalize = (list?: string[]): string[] | undefined => {
       const cleaned = [...new Set((list ?? []).map(p => p.trim()).filter(Boolean))];
       return cleaned.length > 0 ? cleaned : undefined;
@@ -130,58 +130,19 @@ export class AuthorityManager implements AuthorityService {
     const grant = normalize(caps.grant);
     const deny = normalize(caps.deny);
 
+    // 单 owner 终态：无委托树/子集约束。权限只由 owner 管理（调用方做 owner-only 校验）。
+    // 覆盖式写入；两表皆空则清记录。
     const key = `${target.platform}:${target.userId}`;
-    const colon = key.indexOf(':');
-    const effPlatform = key.slice(0, colon);
-    const effUserId = key.slice(colon + 1);
-
-    // 委托约束（仅约束非 owner 授予方；owner 跳过）。维护委托树「单调递减、防越权」不变量。
-    if (granter && !this.isOwner(granter.platform, granter.userId)) {
-      // (1) 不能修改 owner 的能力 —— 防 deny>owner 反向锁死 owner。
-      if (this.isOwner(effPlatform, effUserId)) {
-        throw new Error('越权：不能修改 owner 的能力');
-      }
-      // (3) 只能管理自己委托的下层：target 为新建、或既有记录的 grantedBy === 自己。
-      // 既有但 grantedBy 非自己（含 system/owner 建的、grantedBy 未设的）一律拒，防越界改他人记录。
-      const granterKey = `${granter.platform}:${granter.userId}`;
-      const existingTarget = this.store.get(key);
-      if (existingTarget && existingTarget.grantedBy !== granterKey) {
-        throw new Error('越权：只能管理你自己委托的下层用户');
-      }
-      // (2) grant 与 deny 都受子集约束：只能授予/禁用自己当前持有的能力。
-      const gRes = this.resolve(granter.platform, granter.userId);
-      const model = { isOwner: false, publicCaps: [], grants: gRes.grants, denies: gRes.denies };
-      const bad = [...rejectedDelegations(model, grant ?? []), ...rejectedDelegations(model, deny ?? [])];
-      if (bad.length > 0) {
-        throw new Error(`越权：你不持有这些能力，无法授予/禁用：${[...new Set(bad)].join('、')}`);
-      }
-    }
-
-    const existing = this.store.get(key);
-    const grantedBy = granter ? `${granter.platform}:${granter.userId}` : existing?.grantedBy;
-    const next = { ...existing, caps: grant || deny ? { grant, deny } : undefined, grantedBy };
-    if (!next.caps) {
+    if (!grant && !deny) {
       this.store.delete(key);
     } else {
-      this.store.set(key, next);
+      this.store.set(key, { caps: { grant, deny } });
     }
-    this.logger.debug(
-      `设置能力委托: ${key} grant=${grant?.length ?? 0} deny=${deny?.length ?? 0} by=${grantedBy ?? '-'}`,
-    );
+    this.logger.debug(`设置能力: ${key} grant=${grant?.length ?? 0} deny=${deny?.length ?? 0}`);
   }
 
   removeUser(platform: string, userId: string): void {
     if (this.store.delete(`${platform}:${userId}`)) this.logger.debug(`删除用户记录: ${platform}:${userId}`);
-  }
-
-  listDelegatees(granter: UserIdentity | null): AuthorityUserEntry[] {
-    const granterKey = granter ? `${granter.platform}:${granter.userId}` : null;
-    return this.listUsers().filter(u => {
-      const entry = this.store.get(`${u.platform}:${u.userId}`);
-      // owner（null）列顶层：无 grantedBy 且非 owner 自身的用户
-      if (granterKey === null) return !entry?.grantedBy && !u.isOwner;
-      return entry?.grantedBy === granterKey;
-    });
   }
 
   // ── 临时能力委托（restricted 能力的时限/限次放行）──────────────
@@ -307,7 +268,6 @@ export class AuthorityManager implements AuthorityService {
         isOwner: this.isOwner(platform, userId),
         grant: record.caps?.grant,
         deny: record.caps?.deny,
-        grantedBy: record.grantedBy,
       });
     }
     return result;

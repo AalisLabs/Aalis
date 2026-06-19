@@ -4,18 +4,16 @@ import type { StorageService } from '@aalis/plugin-storage-api';
 // ════════════════════════════════════════════════════════════
 // UserStore —— users.json v3 数据层（能力委托存储）
 //
-// v3 记录：能力委托（caps.grant/deny）+ 委托父（grantedBy）。无数字等级。
-// 单 owner 终态：不再有账户密码 / 跨平台绑定（已随多账户剥离移除）。
-// 净化：非 v3 一律丢弃重来；加载时只取已知字段，顺带剔除旧版残留的 secret/links。
-// 策略层（authorize/委托子集/临时授予）在 authority-manager.ts。
+// v3 记录：能力授予（caps.grant/deny）。无数字等级、无委托树。
+// 单 owner 终态：权限只由 owner 管理；不再有账户密码 / 跨平台绑定 / 委托父（grantedBy）。
+// 净化：非 v3 一律丢弃重来；加载时只取 caps，顺带剔除旧版残留（secret/links/grantedBy）。
+// 策略层（authorize/owner 授予/临时放行）在 authority-manager.ts。
 // ════════════════════════════════════════════════════════════
 
 /** users.json v3 单用户记录 */
 export interface UserRecord {
-  /** 能力委托：grant=授予的 restricted 能力 glob；deny=禁用能力 glob（最高优先） */
+  /** 能力授予：grant=授予的 restricted 能力 glob；deny=禁用能力 glob（最高优先） */
   caps?: { grant?: string[]; deny?: string[] };
-  /** 委托父身份键（如 "webui:admin"；owner 直接委托或顶层则空），形成委托树 */
-  grantedBy?: string;
 }
 
 const USERS_VERSION = 3;
@@ -81,12 +79,9 @@ export class UserStore {
       if (data.version === USERS_VERSION && data.users && typeof data.users === 'object') {
         for (const [key, record] of Object.entries(data.users)) {
           if (!record || typeof record !== 'object') continue;
-          // 只取已知字段：顺带剔除旧版可能残留的 secret(密码) / links(绑定)（多账户剥离前的数据）
+          // 只取 caps：顺带剔除旧版残留（secret 密码 / links 绑定 / grantedBy 委托父）
           const r = record as UserRecord;
-          const clean: UserRecord = {};
-          if (r.caps) clean.caps = r.caps;
-          if (r.grantedBy) clean.grantedBy = r.grantedBy;
-          if (clean.caps || clean.grantedBy) this.users.set(key, clean);
+          if (r.caps) this.users.set(key, { caps: r.caps });
         }
         this.logger.debug(`加载 ${this.users.size} 条用户记录`);
       } else {
