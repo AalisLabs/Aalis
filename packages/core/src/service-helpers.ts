@@ -11,35 +11,29 @@
 import type { EventBus } from './events.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
-import { probeCapability } from './types/capabilities.js';
 import { ServicePriority } from './types/service.js';
 
 /**
  * provide() 的 dev-mode 校验集合：
  *   1. entryId 必须以 ctxId 为前缀（否则 plugin 卸载时清理不到）
- *   2. 声明的 capabilities 必须能在 instance 上探测到对应方法
- *   3. 同一上下文重复 provide 同一服务名静默失效（容器路由按 contextId）
- *   4. priority 应使用 ServicePriority enum 而非裸数字
+ *   2. 同一上下文重复 provide 同一服务名静默失效（容器路由按 contextId）
+ *   3. priority 应使用 ServicePriority enum 而非裸数字
  *
  * 参数 explicitEntryId 区分"调用方有意覆盖 entryId"vs"使用 ctxId 默认值"——
  * 前者才触发 entryId 前缀检查与抑制重复 provide warn（有意拆粒度的语义）。
  *
- * 失败模式：
- *   - capabilities 不匹配 → throw（写错的代码不该跑起来）
- *   - 其它 → warn（提示但不阻断）
+ * 失败模式：均为 warn（提示但不阻断）。
  */
 export function validateProvide(args: {
   ctxId: string;
   name: string;
-  instance: unknown;
-  capabilities: readonly string[];
   entryId: string;
   explicitEntryId: boolean;
   priority?: number;
   services: ServiceContainer;
   logger: Logger;
 }): void {
-  const { ctxId, name, instance, capabilities, entryId, explicitEntryId, priority, services, logger } = args;
+  const { ctxId, name, entryId, explicitEntryId, priority, services, logger } = args;
 
   if (explicitEntryId && entryId !== ctxId && !entryId.startsWith(`${ctxId}/`)) {
     logger.warn(
@@ -47,15 +41,6 @@ export function validateProvide(args: {
         `违反约定后 plugin 卸载时可能遗漏清理。` +
         `推荐格式：\`\${ctx.id}/\${子粒度标识}\`。`,
     );
-  }
-
-  const failures: string[] = [];
-  for (const cap of capabilities) {
-    const result = probeCapability(name, cap, instance);
-    if (typeof result === 'string') failures.push(`  - [${cap}] ${result}`);
-  }
-  if (failures.length > 0) {
-    throw new Error(`服务 "${name}" 声明的能力与实例实现不符（provide 拒绝注册）:\n${failures.join('\n')}`);
   }
 
   if (!explicitEntryId && services.hasByContext(name, ctxId)) {
@@ -85,13 +70,8 @@ export function validateProvide(args: {
  * 异步发射 service:registered 事件，捕获并 warn 任何监听器抛错。
  * 抽出为函数主要让 provide() 主体看起来更短。
  */
-export function emitServiceRegistered(
-  events: EventBus,
-  logger: Logger,
-  name: string,
-  capabilities: readonly string[],
-): void {
-  events.emit('service:registered', name, [...capabilities]).catch(err => {
+export function emitServiceRegistered(events: EventBus, logger: Logger, name: string): void {
+  events.emit('service:registered', name).catch(err => {
     logger.warn(`服务注册事件发射失败 [${name}]:`, err);
   });
 }

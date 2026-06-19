@@ -207,7 +207,7 @@ describe('plugin-user-relation: extractor', () => {
     const mem = app.ctx.getService<MemoryService>('memory');
     if (!mem) throw new Error('no memory');
     const service = new RelationService(new RelationStore(mem));
-    app.ctx.provide('llm', slowLLM, { capabilities: ['chat'], entryId: 'slow/x' });
+    app.ctx.provide('llm', slowLLM, { entryId: 'slow/x' });
     const extractor = new RelationExtractor(app.ctx, service, {
       ...EXTRACTOR_DEFAULTS,
       triggerEveryNMessages: 1,

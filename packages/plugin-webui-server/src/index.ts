@@ -590,7 +590,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       {
         providers: Array<{
           contextId: string;
-          capabilities: string[];
           displayName?: string;
           label?: string;
           priority: number;
@@ -605,7 +604,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       services[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
-          capabilities: [...e.capabilities],
           displayName: displayNameMap.get(e.contextId),
           label: e.label,
           priority: e.priority,

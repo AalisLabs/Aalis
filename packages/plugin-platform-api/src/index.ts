@@ -102,7 +102,6 @@ import type { Context } from '@aalis/core';
 export interface PlatformAdapterEntry {
   instance: PlatformAdapter;
   contextId: string;
-  capabilities: string[];
   label?: string;
 }
 
@@ -128,19 +127,17 @@ export function aggregatePlatformConnections(ctx: Context): PlatformConnection[]
   return getPlatformAdapters(ctx).flatMap(a => a.getConnections());
 }
 
-/** 聚合所有 adapter 的展示详情（含 contextId / capabilities / connections） */
+/** 聚合所有 adapter 的展示详情（含 contextId / connections） */
 export function aggregatePlatformDetails(ctx: Context): Array<{
   adapterName: string;
   platform: string;
   contextId: string;
-  capabilities: string[];
   connections: PlatformConnection[];
 }> {
-  return getPlatformAdapterEntries(ctx).map(({ instance, contextId, capabilities }) => ({
+  return getPlatformAdapterEntries(ctx).map(({ instance, contextId }) => ({
     adapterName: instance.adapterName,
     platform: instance.platform,
     contextId,
-    capabilities: [...capabilities],
     connections: instance.getConnections(),
   }));
 }

@@ -5,7 +5,7 @@ import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
 import { emitServiceRegistered, validateProvide } from './service-helpers.js';
-import type { AalisEvents, CapabilityList, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
+import type { AalisEvents, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -17,10 +17,7 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  *
  * 采用 fork / inject / provide / middleware 等术语，
  * 但 Aalis 在此之上引入若干差异化机制：
- * - **能力声明框架**：`provide` 时声明 `capabilities`，编译期类型字面量收敛 +
- *   dev 期 `probeCapability` 运行时校验声明与实现是否一致
- * - **多提供者 + 能力匹配**：`getService` / `getAllServices` 支持按能力过滤，
- *   服务可以并存多个实现
+ * - **多提供者**：`getService` / `getAllServices` 支持同名多实现并存（偏好 > 优先级 > 注册顺序）
  * - **`ScopedServiceContainer` + `ScopedConfigManager`**：`createScope()` 创建
  *   读取 fallback、写入隔离的子作用域，用于会话/沙盒
  * - **`whenService(name, cb)`**：服务就绪即触发的延迟订阅，回调可返回 cleanup
@@ -174,19 +171,10 @@ export class Context {
     return this._events.emit(event, ...args);
   }
 
-  // ---- 服务 (IoC + 能力声明) ----
+  // ---- 服务 (IoC) ----
 
   /**
    * 注册服务，返回 dispose 函数用于精确卸载该服务
-   *
-   * `capabilities` 参数按服务名获得强类型约束：
-   * - 已注册服务名（如 `'llm'`, `'memory'`）→ 仅允许对应 union 中的字面量
-   * - 未注册服务名 → 退回 `string`，保留动态扩展空间
-   *
-   * @example
-   * ctx.provide('llm', service, { capabilities: ['chat', 'tool_calling'] });
-   * //                                            ^^^^^^  ^^^^^^^^^^^^^^
-   * //                                            类型安全，拼错 'tool_call' 会编译报错
    *
    * `entryId` 选项：覆盖默认 contextId（默认 = `this.id`）。用于一个 plugin 实例
    * 需要按某种语义子粒度拆出多个 entry 的场景（典型：per-model LLM、per-path storage）。
@@ -194,20 +182,17 @@ export class Context {
    * `unregisterByContext(this.id)` 如需清理仍可多次调用；dispose 函数并不依赖这个约定，
    * 但 dev 模式下会验证以避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
    */
-  provide<TName extends string>(
-    name: TName,
+  provide(
+    name: string,
     instance: unknown,
-    options?: { capabilities?: CapabilityList<TName>; priority?: number; label?: string; entryId?: string },
+    options?: { priority?: number; label?: string; entryId?: string },
   ): () => void {
-    const caps = (options?.capabilities ?? []) as readonly string[];
     const entryId = options?.entryId ?? this.id;
 
     if (this.devMode) {
       validateProvide({
         ctxId: this.id,
         name,
-        instance,
-        capabilities: caps,
         entryId,
         explicitEntryId: options?.entryId !== undefined,
         priority: options?.priority,
@@ -216,14 +201,7 @@ export class Context {
       });
     }
 
-    const entry = this._services.register(
-      name,
-      instance,
-      caps as string[],
-      options?.priority ?? 0,
-      entryId,
-      options?.label,
-    );
+    const entry = this._services.register(name, instance, options?.priority ?? 0, entryId, options?.label);
 
     const dispose = () => {
       // 自移除：调用方手动 dispose 后，闭包不再滞留 _disposables（否则它持有
@@ -239,48 +217,35 @@ export class Context {
     };
     this._disposables.push(dispose);
 
-    emitServiceRegistered(this._events, this.logger, name, caps);
-    this.logger.debug(`服务已注册: ${name}${caps.length ? ` [${caps.join(', ')}]` : ''}`);
+    emitServiceRegistered(this._events, this.logger, name);
+    this.logger.debug(`服务已注册: ${name}`);
 
     return dispose;
   }
 
   /**
-   * 按名字 + 能力过滤拿服务当前最佳提供者。
+   * 按名字拿服务当前最佳提供者（偏好 > 优先级 > 注册顺序）。
    *
    * 返回的是**当时点的裸实例**，调用后 provider 发生换跳不会跟随。
    * 需要跟随切换的场景请听 `service:registered` / `service:unregistered`
    * 事件重新拉取；常规场景推荐在函数作用域内即取即用，不要长期存入类字段。
-   *
-   * `requiredCapabilities` 按服务名获得强类型约束（同 `provide()`）。
-   * 如果当前没有任何匹配的 entry，返回 `undefined`（保留 null-check 语义）。
    *
    * 重载行为：
    * - 传入字面量服务名（如 `'memory'`）→ 命中 `ServiceTypeMap` 自动推断为 `MemoryService | undefined`；
    * - 传入字符串变量或未登记服务名 → 退回 `<T = unknown>`，调用方需自行 narrow，
    *   仍可显式传 `<T>` 兼容旧写法。
    */
-  getService<TName extends keyof ServiceTypeMap>(
-    name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
-  ): ServiceTypeMap[TName] | undefined;
-  getService<T = unknown>(name: string, requiredCapabilities?: readonly string[]): T | undefined;
-  getService<T>(name: string, requiredCapabilities?: readonly string[]): T | undefined {
-    return this._services.get<T>(name, requiredCapabilities);
+  getService<TName extends keyof ServiceTypeMap>(name: TName): ServiceTypeMap[TName] | undefined;
+  getService<T = unknown>(name: string): T | undefined;
+  getService<T>(name: string): T | undefined {
+    return this._services.get<T>(name);
   }
 
   /**
    * 检查服务是否可用
    */
-  hasService<TName extends string>(name: TName, requiredCapabilities?: CapabilityList<TName>): boolean {
-    return this._services.has(name, requiredCapabilities as readonly string[] | undefined);
-  }
-
-  /**
-   * 获取服务的能力列表
-   */
-  getServiceCapabilities(name: string): string[] {
-    return this._services.getCapabilities(name);
+  hasService(name: string): boolean {
+    return this._services.has(name);
   }
 
   /**
@@ -291,30 +256,17 @@ export class Context {
   }
 
   /**
-   * 获取某个服务的所有实例（带提供者信息）
-   *
-   * 可选 requiredCapabilities 过滤：只返回满足所有所需能力的提供者。
+   * 获取某个服务的所有实例（带提供者信息）。
    *
    * @example
-   * // 获取所有支持 vision 的 LLM
-   * const visionLLMs = ctx.getAllServices('llm', ['vision']);
-   *
-   * // 获取所有 LLM 并聚合模型列表
    * const allLLMs = ctx.getAllServices('llm');
    */
   getAllServices<TName extends keyof ServiceTypeMap>(
     name: TName,
-    requiredCapabilities?: CapabilityList<TName>,
-  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; capabilities: string[]; label?: string }>;
-  getAllServices<T = unknown>(
-    name: string,
-    requiredCapabilities?: readonly string[],
-  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }>;
-  getAllServices<T>(
-    name: string,
-    requiredCapabilities?: readonly string[],
-  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
-    return this._services.getAll<T>(name, requiredCapabilities);
+  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; label?: string }>;
+  getAllServices<T = unknown>(name: string): Array<{ instance: T; contextId: string; label?: string }>;
+  getAllServices<T>(name: string): Array<{ instance: T; contextId: string; label?: string }> {
+    return this._services.getAll<T>(name);
   }
 
   /**
@@ -367,7 +319,6 @@ export class Context {
   getServiceEntries(name: string): ReadonlyArray<{
     instance: unknown;
     contextId: string;
-    capabilities: ReadonlySet<string>;
     priority: number;
     label?: string;
   }> {

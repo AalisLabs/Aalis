@@ -222,14 +222,6 @@ describe('Context.getService 即取即用语义（裸实例）', () => {
     const h2 = ctx.getService<Counter>('__cnt')!;
     expect(h2.inc()).toBe(1);
   });
-
-  it('能力过滤参数仅在调用时点解析', () => {
-    const ctx = makeContext();
-    ctx.provide('__svc', { kind: 'plain' }, { capabilities: [] });
-    ctx.provide('__svc', { kind: 'fancy' }, { capabilities: ['advanced'] });
-    const h = ctx.getService<{ kind: string }>('__svc', ['advanced'])!;
-    expect(h.kind).toBe('fancy');
-  });
 });
 
 describe('Context.whenService 多 provider（#8.3）', () => {

@@ -1,8 +1,6 @@
 // ----- 服务类型注册表（service name → service interface） -----
 //
-// 与 `ServiceCapabilityMap`（capabilities.ts）对称：那里登记服务名 → 能力字面量
-// union，这里登记服务名 → 服务实例接口本身。`Context.provide` / `getService`
-// 在编译期同时受这两层约束。
+// 登记服务名 → 服务实例接口本身，供 `Context.provide` / `getService` 在编译期约束类型。
 //
 // ## 用法
 //
