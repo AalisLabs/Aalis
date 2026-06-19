@@ -22,14 +22,9 @@ export type {
   PlatformProfile,
   SessionConfig,
   SessionInfo,
-  SessionManagerCapability,
-  SessionManagerCapabilityRegistry,
   SessionManagerService,
   SessionTreeNode,
 } from '@aalis/plugin-session-manager-api';
-export { SessionManagerCapabilities } from '@aalis/plugin-session-manager-api';
-
-import { SessionManagerCapabilities } from '@aalis/plugin-session-manager-api';
 
 // ===== 插件元数据 =====
 
@@ -968,7 +963,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 注册服务
   ctx.provide('session-manager', manager, {
-    capabilities: [SessionManagerCapabilities.SessionCrud, SessionManagerCapabilities.SessionTree],
     label: '会话管理',
   });
 

@@ -1,4 +1,4 @@
-import { registerCapabilityProbe } from '@aalis/core';
+import type {} from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 
 export interface ArchiveIncomingResult {
@@ -44,58 +44,6 @@ export interface MessageArchiveService {
    */
   findByMessageId?(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null>;
 }
-
-// ----- 消息归档能力声明（capability 框架）-----
-
-export interface MessageArchiveCapabilityRegistry {
-  /** 支持入站消息归档（archiveIncoming，含图片预识别） */
-  Incoming: 'incoming';
-  /** 支持通用消息保存（saveMessage） */
-  Generic: 'generic';
-  /** 支持平台 notice 事件入档（archiveNotice） */
-  Notice: 'notice';
-  /** 支持按 messageId 在历史中反查（findByMessageId） */
-  Lookup: 'lookup';
-}
-
-export type MessageArchiveCapability = MessageArchiveCapabilityRegistry[keyof MessageArchiveCapabilityRegistry];
-
-export const MessageArchiveCapabilities = {
-  Incoming: 'incoming',
-  Generic: 'generic',
-  Notice: 'notice',
-  Lookup: 'lookup',
-} as const satisfies MessageArchiveCapabilityRegistry;
-
-declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    'message-archive': MessageArchiveCapability;
-  }
-}
-
-registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Incoming, inst =>
-  typeof (inst as { archiveIncoming?: unknown }).archiveIncoming === 'function'
-    ? true
-    : 'MessageArchiveService.archiveIncoming() is required for capability "incoming"',
-);
-
-registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Generic, inst =>
-  typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
-    ? true
-    : 'MessageArchiveService.saveMessage() is required for capability "generic"',
-);
-
-registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Notice, inst =>
-  typeof (inst as { archiveNotice?: unknown }).archiveNotice === 'function'
-    ? true
-    : 'MessageArchiveService.archiveNotice() is required for capability "notice"',
-);
-
-registerCapabilityProbe('message-archive', MessageArchiveCapabilities.Lookup, inst =>
-  typeof (inst as { findByMessageId?: unknown }).findByMessageId === 'function'
-    ? true
-    : 'MessageArchiveService.findByMessageId() is required for capability "lookup"',
-);
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
