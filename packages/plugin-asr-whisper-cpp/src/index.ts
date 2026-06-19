@@ -102,8 +102,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const logger = ctx.logger.child('asr-whisper-cpp');
 
   if (!cfg.modelPath) {
-    logger.warn('未配置 modelPath，插件不会注册 processor');
-    return;
+    // 缺必填配置抛清晰错误（而非静默 return），避免 provides:['asr'] 未注册触发难懂的校验错
+    throw new Error('Whisper.cpp 需要配置 modelPath（GGML 模型文件 .bin 路径）');
   }
   const proc = createProcessGateway(ctx);
   const storage = createStorageGateway(ctx);
