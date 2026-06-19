@@ -133,53 +133,7 @@ export const StorageCapabilities = {
   Watch: 'watch',
 } as const satisfies StorageCapabilityRegistry;
 
-declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    storage: StorageCapability;
-  }
-}
-
 import type { Context } from '@aalis/core';
-import { registerCapabilityProbe } from '@aalis/core';
-
-registerCapabilityProbe('storage', StorageCapabilities.List, inst =>
-  typeof (inst as { list?: unknown }).list === 'function' &&
-  typeof (inst as { listRoots?: unknown }).listRoots === 'function'
-    ? true
-    : 'StorageService.listRoots()/list() are required for capability "list"',
-);
-
-registerCapabilityProbe('storage', StorageCapabilities.Read, inst =>
-  typeof (inst as { readFile?: unknown }).readFile === 'function' &&
-  typeof (inst as { createReadStream?: unknown }).createReadStream === 'function'
-    ? true
-    : 'StorageService.readFile()/createReadStream() are required for capability "read"',
-);
-
-registerCapabilityProbe('storage', StorageCapabilities.Write, inst =>
-  typeof (inst as { writeFile?: unknown }).writeFile === 'function' &&
-  typeof (inst as { rename?: unknown }).rename === 'function'
-    ? true
-    : 'StorageService.writeFile()/rename() are required for capability "write"',
-);
-
-registerCapabilityProbe('storage', StorageCapabilities.Delete, inst =>
-  typeof (inst as { delete?: unknown }).delete === 'function'
-    ? true
-    : 'StorageService.delete() is required for capability "delete"',
-);
-
-registerCapabilityProbe('storage', StorageCapabilities.LocalPath, inst =>
-  typeof (inst as { resolveLocalPath?: unknown }).resolveLocalPath === 'function'
-    ? true
-    : 'StorageService.resolveLocalPath() is required for capability "local-path"',
-);
-
-registerCapabilityProbe('storage', StorageCapabilities.Watch, inst =>
-  typeof (inst as { watch?: unknown }).watch === 'function'
-    ? true
-    : 'StorageService.watch() is required for capability "watch"',
-);
 
 // ----- 聚合 / 路由 helper -----
 //
