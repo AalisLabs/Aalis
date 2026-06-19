@@ -3,6 +3,7 @@
 // ============================================================
 
 import type { Context, Logger } from '@aalis/core';
+import type { ASRService } from '@aalis/plugin-asr-api';
 import type { ModelRef } from '@aalis/plugin-llm-api';
 import type {
   BuildContextOptions,
@@ -171,13 +172,13 @@ export class MediaServiceImpl implements MediaService {
       }
     }
 
-    // audio：使用统一 audio cap。LLM-as-audio 会同时覆盖转写 + 描述；Whisper 类仅返回转写。
+    // audio：经核心 asr 服务（whisper / 云ASR / LLM-as-audio），按核心偏好选 provider
     if (byKind.audio.length > 0 && this.cfg.audio.mode === 'enabled') {
-      const proc = this.pickProcessor('audio', opts.prefer ?? this.cfg.audio.prefer);
-      if (proc?.transcribe) {
+      const asr = this.ctx.getService<ASRService>('asr', ['audio']);
+      if (asr) {
         for (const i of byKind.audio) {
           try {
-            const r = await proc.transcribe(
+            const r = await asr.transcribe(
               {
                 attachment: attachments[i],
                 language: this.cfg.audio.language,
@@ -201,13 +202,14 @@ export class MediaServiceImpl implements MediaService {
     opts: TranscribeOptions & { context?: string } = {},
   ): Promise<string | undefined> {
     if (this.cfg.audio.mode === 'disabled') return undefined;
-    const proc = this.pickProcessor('audio', opts.prefer ?? this.cfg.audio.prefer);
-    if (!proc?.transcribe) {
-      this.logger.debug('无 audio processor 可用');
+    // 音频后端=核心 asr 服务（whisper / 云ASR / LLM-as-audio），由核心「偏好>优先级」选 provider
+    const asr = this.ctx.getService<ASRService>('asr', ['audio']);
+    if (!asr) {
+      this.logger.debug('无 asr 服务可用');
       return undefined;
     }
     try {
-      const r = await proc.transcribe(
+      const r = await asr.transcribe(
         {
           attachment,
           language: opts.language ?? this.cfg.audio.language,
