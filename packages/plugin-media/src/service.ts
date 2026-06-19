@@ -57,7 +57,6 @@ export interface MediaConfigResolved {
    */
   audio: {
     mode: 'enabled' | 'passthrough' | 'disabled';
-    prefer?: string | ModelRef;
     language?: string;
     /** 默认最大 output tokens。e4b thinking enabled 时全能 prompt 需要 ≥1024 */
     maxTokens: number;

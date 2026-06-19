@@ -84,11 +84,6 @@ export const configSchema: ConfigSchema = {
         ],
         default: 'enabled',
       },
-      prefer: {
-        type: 'llm-ref',
-        label: '优先音频 Processor',
-        description: '留空自动选；选定后强制使用该模型。需其提供 audio cap（LLM-as-audio 或 Whisper 类 ASR）。',
-      },
       language: {
         type: 'string',
         label: '默认语种 (ISO 639-1)',
@@ -270,7 +265,6 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
     },
     audio: {
       mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'passthrough' | 'disabled',
-      prefer: (audio.prefer as MediaConfigResolved['audio']['prefer']) || undefined,
       language: (audio.language as string) || undefined,
       maxTokens: (audio.maxTokens as number) ?? 1024,
       think: audio.think !== false,
