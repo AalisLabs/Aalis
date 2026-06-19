@@ -1,10 +1,9 @@
 // ----- 权限服务接口 + 执行守卫契约（纯能力委托模型）-----
 //
-// 模型：能力（capability）+ 默认可见性 public/restricted + 委托加减。
-//   - owner = `*`，可执行任意能力、可委托一切。
+// 模型：能力（capability）+ 默认可见性 public/restricted + owner 授予加减。
+//   - owner = `*`，可执行任意能力、可管理所有人的权限。
 //   - 用户有效能力 = owner ? 全部 : (所有 public ∪ 被授予的 restricted) − 被禁用的；deny 优先。
-//   - 委托树：每个用户可建下层用户并授予能力，但只能授予「自己持有的」（子集约束，
-//     单调递减，孙 ⊆ 子 ⊆ owner），grantedBy 记录委托父，天然防越权。
+//   - 单 owner 终态：权限只由 owner 管理（无委托树/子委托），故无子集约束。
 //
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
@@ -261,10 +260,8 @@ export interface AuthorityUserEntry {
   isOwner: boolean;
   /** 被授予的 restricted 能力（委托加） */
   grant?: string[];
-  /** 被禁用的能力（委托减） */
+  /** 被禁用的能力（owner 减） */
   deny?: string[];
-  /** 委托父身份键（如 "webui:admin"；owner 直接委托或顶层则空） */
-  grantedBy?: string;
 }
 
 // ============================================================
@@ -284,18 +281,14 @@ export interface AuthorityService {
   authorize(identity: UserIdentity | { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
 
   /**
-   * 委托：设置 target 用户的能力 grant/deny（覆盖式；两表皆空则清记录）。
-   * granter 非 owner 时校验子集——只能授予「自己当前有效持有」的能力，越权抛 Error
-   * （message 可回显）。granter 为 null 表示系统/owner 上下文（不校验）。
-   * 记录 grantedBy=granter 身份键，形成委托树。
+   * 设置 target 用户的能力 grant/deny（覆盖式；两表皆空则清记录）。
+   * 单 owner 终态：权限只由 owner 管理，无委托树/子集约束。调用方（WebUI action / CLI 指令）
+   * 自行确保仅 owner 可达（见 plugin-authority 内的 owner-only 校验）。
    */
-  setUserCapabilities(granter: UserIdentity | null, target: UserIdentity, caps: UserCapabilityOverrides): void;
+  setUserCapabilities(target: UserIdentity, caps: UserCapabilityOverrides): void;
 
-  /** 删除用户记录（能力委托一并清除；其下层用户的 grantedBy 链需调用方另行处理或保留） */
+  /** 删除用户记录（能力授予一并清除） */
   removeUser(platform: string, userId: string): void;
-
-  /** 列出某 granter 直接委托的下层用户（委托树展开用；owner 传 null 列顶层非 owner 用户） */
-  listDelegatees(granter: UserIdentity | null): AuthorityUserEntry[];
 
   // ── 临时能力委托（restricted 能力的时限/限次授予）──
   /** 用户触达未授予的 restricted 能力时，过临时委托流程（白名单策略 → 会话临时授予 → 确认回调） */

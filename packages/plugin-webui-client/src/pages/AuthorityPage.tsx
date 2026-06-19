@@ -11,8 +11,6 @@ interface AuthorityUser {
   grant?: string[];
   /** 被拒绝的能力（glob；deny 压过一切，含 owner） */
   deny?: string[];
-  /** 委托来源（上级身份键，如 webui:boss），构成委托树 */
-  grantedBy?: string;
 }
 
 interface AuthorityOwner {
@@ -500,11 +498,6 @@ export function AuthorityPage() {
                               +{grantN} / −{denyN}
                             </span>
                           ) : null}
-                          {u.grantedBy && (
-                            <span className="authority-user-flag" title="委托来源（上级授予者），构成委托树">
-                              委托自 {u.grantedBy}
-                            </span>
-                          )}
                         </span>
                         <span className="authority-actions">
                           <button className="btn btn-sm" title="设置该用户的授予 / 拒绝能力（委托）"

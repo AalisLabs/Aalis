@@ -174,7 +174,7 @@ describe('REST 路由能力闸（gate × authorize）', () => {
       {} as ConstructorParameters<typeof AuthorityManager>[2],
     );
     if (opts.grant || opts.deny) {
-      manager.setUserCapabilities(null, { platform: 'webui', userId: 'alice' }, { grant: opts.grant, deny: opts.deny });
+      manager.setUserCapabilities({ platform: 'webui', userId: 'alice' }, { grant: opts.grant, deny: opts.deny });
     }
     const ctx = { getService: (n: string) => (n === 'authority' ? manager : undefined), config } as never;
     return createRouteGate(ctx, () => ({ platform: 'webui', userId: 'alice' }));
