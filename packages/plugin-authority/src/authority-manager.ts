@@ -20,13 +20,13 @@ import { UserStore } from './user-store.js';
 //
 // owner=`*`；用户有效能力 = (public ∪ 授予的 restricted) − denied；
 // 委托子集约束（非 owner 只能授予自己持有的）；restricted 能力的临时委托。
-// 数据层（users.json v3 / 绑定 / 密码）委托给 UserStore；纯判定见 capability-model。
+// 数据层（users.json v3 能力委托存储）委托给 UserStore；纯判定见 capability-model。
 // ════════════════════════════════════════════════════════════
 
 /**
  * 内置受限能力：读/写/删 用户表 / 计划任务 / 源码根 —— 默认禁、仅 owner 或被授予者可触达。
- * 读也纳入：users.json 存 PBKDF2 哈希+委托结构、scheduler-jobs 存任务（含 actor 身份），
- * 默认 allowedRoots 即便放宽到 data，也不能让 file_read 等公开工具裸读这些凭据/状态文件。
+ * 读也纳入：users.json 存委托结构、scheduler-jobs 存任务（含 actor 身份），
+ * 默认 allowedRoots 即便放宽到 data，也不能让 file_read 等公开工具裸读这些状态文件。
  * （authority/scheduler 自身经 storage 服务直读直写，不过本守卫，故不受影响。）
  */
 const BUILTIN_RESTRICTED: readonly string[] = [
@@ -41,12 +41,12 @@ const BUILTIN_RESTRICTED: readonly string[] = [
   'storage:aalis:delete',
 ];
 
-/** 某用户的能力解析（被绑零合并后） */
+/** 某用户的能力解析 */
 interface Resolution {
   isOwner: boolean;
-  /** 授予的 restricted 能力（被绑身份取主账户为单一真源） */
+  /** 授予的 restricted 能力 */
   grants: string[];
-  /** 禁用能力（自身 ∪ 主账户并集，防"绑定洗白封禁"） */
+  /** 禁用能力 */
   denies: string[];
 }
 
@@ -78,16 +78,12 @@ export class AuthorityManager implements AuthorityService {
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
   }
 
-  /** 解析用户能力来源：被绑身份的 grant 以主账户为真源，deny 取自身∪主账户并集 */
+  /** 解析用户能力来源：读自身记录的 grant/deny */
   private resolve(platform: string, userId?: string): Resolution {
     const isOwner = this.isOwner(platform, userId);
-    const ownKey = userId ? `${platform}:${userId}` : undefined;
-    const ownRecord = ownKey ? this.store.get(ownKey) : undefined;
-    const accountKey = ownKey ? this.store.accountOf(ownKey) : undefined;
-    const accountRecord = accountKey ? this.store.get(accountKey) : undefined;
-    const grants = (accountKey ? accountRecord?.caps?.grant : ownRecord?.caps?.grant) ?? [];
-    const denies = [...(ownRecord?.caps?.deny ?? []), ...(accountRecord?.caps?.deny ?? [])];
-    return { isOwner, grants, denies };
+    const key = userId ? `${platform}:${userId}` : undefined;
+    const record = key ? this.store.get(key) : undefined;
+    return { isOwner, grants: record?.caps?.grant ?? [], denies: record?.caps?.deny ?? [] };
   }
 
   /** 一条能力是否为 restricted（命中内置保护 + config.restrictedCapabilities） */
@@ -134,10 +130,7 @@ export class AuthorityManager implements AuthorityService {
     const grant = normalize(caps.grant);
     const deny = normalize(caps.deny);
 
-    // 被绑定身份的能力以主账户为单一真源（resolve 从主账户读 grant）；写入也归一到主账户，
-    // 否则写到身份自身记录 → grant 静默不生效。account 命中即重定向到主账户键。
-    const rawKey = `${target.platform}:${target.userId}`;
-    const key = this.store.accountOf(rawKey) ?? rawKey;
+    const key = `${target.platform}:${target.userId}`;
     const colon = key.indexOf(':');
     const effPlatform = key.slice(0, colon);
     const effUserId = key.slice(colon + 1);
@@ -167,7 +160,7 @@ export class AuthorityManager implements AuthorityService {
     const existing = this.store.get(key);
     const grantedBy = granter ? `${granter.platform}:${granter.userId}` : existing?.grantedBy;
     const next = { ...existing, caps: grant || deny ? { grant, deny } : undefined, grantedBy };
-    if (!next.caps && !next.secret && !next.links) {
+    if (!next.caps) {
       this.store.delete(key);
     } else {
       this.store.set(key, next);
@@ -315,41 +308,11 @@ export class AuthorityManager implements AuthorityService {
         grant: record.caps?.grant,
         deny: record.caps?.deny,
         grantedBy: record.grantedBy,
-        hasPassword: record.secret ? true : undefined,
-        links: record.links,
-        linkedTo: this.store.accountOf(key),
       });
-    }
-    // 无自身记录的被绑身份也可见
-    for (const [identityKey, accountKey] of this.store.links()) {
-      if (this.store.get(identityKey)) continue;
-      const idx = identityKey.indexOf(':');
-      const platform = identityKey.slice(0, idx);
-      const userId = identityKey.slice(idx + 1);
-      result.push({ platform, userId, isOwner: this.isOwner(platform, userId), linkedTo: accountKey });
     }
     return result;
   }
 
-  // ── 密码 / 绑定（委托给 UserStore）──────────────────────────
-  setPassword(platform: string, userId: string, password: string): Promise<void> {
-    return this.store.setPassword(platform, userId, password);
-  }
-  verifyPassword(platform: string, userId: string, password: string): Promise<boolean> {
-    return this.store.verifyPassword(platform, userId, password);
-  }
-  hasPassword(platform: string, userId: string): boolean {
-    return this.store.hasPassword(platform, userId);
-  }
-  createBindCode(platform: string, userId: string): { code: string; expiresAt: number } {
-    return this.store.createBindCode(platform, userId);
-  }
-  consumeBindCode(code: string, identity: UserIdentity): UserIdentity {
-    return this.store.consumeBindCode(code, identity);
-  }
-  unlinkIdentity(platform: string, userId: string): boolean {
-    return this.store.unlinkIdentity(platform, userId);
-  }
   save(): void {
     this.store.save();
   }
