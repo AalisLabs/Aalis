@@ -5,7 +5,8 @@
 // 触发 session:* 事件 augmentation 的下游插件应当依赖本包，而不是 impl 包，
 // 以避免不必要的工作区依赖与编译循环风险。
 
-import { registerCapabilityProbe } from '@aalis/core';
+// 锚定 @aalis/core，使下方 declare module 的 ServiceTypeMap/AalisEvents 增强生效。
+import type {} from '@aalis/core';
 
 /**
  * 会话级配置覆盖
@@ -185,26 +186,7 @@ export interface SessionManagerService {
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }
 
-// ----- 会话管理能力声明（capability 框架）-----
-
-export interface SessionManagerCapabilityRegistry {
-  /** 基础 CRUD（create/get/update/delete） */
-  SessionCrud: 'session-crud';
-  /** 支持树形会话（createChildSession/getTree） */
-  SessionTree: 'session-tree';
-}
-
-export type SessionManagerCapability = SessionManagerCapabilityRegistry[keyof SessionManagerCapabilityRegistry];
-
-export const SessionManagerCapabilities = {
-  SessionCrud: 'session-crud',
-  SessionTree: 'session-tree',
-} as const satisfies SessionManagerCapabilityRegistry;
-
 declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    'session-manager': SessionManagerCapability;
-  }
   /** 会话生命周期事件（由 plugin-session-manager 增量声明） */
   interface AalisEvents {
     'session:created': [session: SessionInfo];
@@ -213,22 +195,6 @@ declare module '@aalis/core' {
     'session:deleted': [sessionId: string];
   }
 }
-
-registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionCrud, inst => {
-  const i = inst as { createSession?: unknown; getSession?: unknown; deleteSession?: unknown };
-  return typeof i.createSession === 'function' &&
-    typeof i.getSession === 'function' &&
-    typeof i.deleteSession === 'function'
-    ? true
-    : 'SessionManagerService.createSession()/getSession()/deleteSession() are required for capability "session-crud"';
-});
-
-registerCapabilityProbe('session-manager', SessionManagerCapabilities.SessionTree, inst => {
-  const i = inst as { getTree?: unknown; getChildren?: unknown };
-  return typeof i.getTree === 'function' && typeof i.getChildren === 'function'
-    ? true
-    : 'SessionManagerService.getTree()/getChildren() are required for capability "session-tree"';
-});
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {

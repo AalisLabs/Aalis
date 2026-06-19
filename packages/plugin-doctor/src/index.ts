@@ -149,7 +149,7 @@ export const actions: PluginModule['actions'] = {
 
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
   const registry = new DoctorRegistry(ctx);
-  ctx.provide('doctor', registry, { capabilities: ['diagnose'] });
+  ctx.provide('doctor', registry);
 
   // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
   registerBuiltinChecks(registry);

@@ -1,6 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
-import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { type Collection, type Db, MongoClient } from 'mongodb';
 
@@ -283,13 +282,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       //   sqlite=10（零配置默认）, mongodb=5（需服务，但更强）, inmemory=-100（仅测试）
       // 用户通过 servicePreferences 显式偏好时该字段不影响选择。
       priority: 5,
-      capabilities: [
-        MemoryCapabilities.History,
-        MemoryCapabilities.Metadata,
-        MemoryCapabilities.ContentUpdate,
-        MemoryCapabilities.MessageDelete,
-        MemoryCapabilities.RecentAcrossSessions,
-      ],
     });
 
     ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
