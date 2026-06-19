@@ -33,7 +33,6 @@ export type ServicePriorityValue = (typeof ServicePriority)[keyof typeof Service
 
 export interface ServiceEntry {
   instance: unknown;
-  capabilities: Set<string>;
   priority: number;
   contextId: string;
   /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
@@ -42,15 +41,11 @@ export interface ServiceEntry {
 
 export interface NormalizedDependency {
   service: string;
-  capabilities: string[];
 }
 
 /**
  * 将 string | ServiceDependency 统一为 NormalizedDependency
  */
 export function normalizeDependency(dep: DependencyDeclaration): NormalizedDependency {
-  if (typeof dep === 'string') {
-    return { service: dep, capabilities: [] };
-  }
-  return { service: dep.service, capabilities: dep.capabilities ?? [] };
+  return { service: typeof dep === 'string' ? dep : dep.service };
 }

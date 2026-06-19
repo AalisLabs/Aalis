@@ -155,7 +155,6 @@ export interface PlatformInfo {
 
 export interface ServiceProviderInfo {
   contextId: string;
-  capabilities: string[];
   displayName?: string;
   label?: string;
   /** provide() 时声明的 priority 数值；越大越优先 */

@@ -493,9 +493,7 @@ export class PluginManager {
         if (currentReason.type === 'shutdown') {
           // 静默
         } else {
-          const unmet = entry.requiredDeps.find(
-            d => !this.rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
-          );
+          const unmet = entry.requiredDeps.find(d => !this.rootCtx.hasService(d.service));
           if (unmet) {
             this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
           } else if (currentReason.type === 'service-down') {

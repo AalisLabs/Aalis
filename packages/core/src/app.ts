@@ -153,8 +153,8 @@ export class App {
     this.plugins = new PluginManager(this.ctx, this.logger);
 
     // 4. 注册核心服务
-    this.ctx.provide('app', this, { capabilities: ['lifecycle', 'config'] });
-    this.ctx.provide('plugins', this.plugins, { capabilities: ['plugin-mgmt'] });
+    this.ctx.provide('app', this);
+    this.ctx.provide('plugins', this.plugins);
 
     // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();

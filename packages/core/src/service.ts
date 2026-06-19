@@ -11,11 +11,11 @@ export type { NormalizedDependency, ServiceEntry, ServicePriorityValue };
 export { normalizeDependency, ServicePriority };
 
 /**
- * 服务容器 —— 支持同名多实现 + 能力匹配
+ * 服务容器 —— 支持同名多实现
  *
  * 设计要点：
- * - 同一个服务名可以有多个提供者（不同能力集）
- * - 获取服务时可指定所需能力, 容器会匹配满足所有能力的最高优先级提供者
+ * - 同一个服务名可以有多个提供者（按 priority + 偏好解析）
+ * - 服务选择走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 -api 自理，不在内核 DI
  * - 每个注册都关联 contextId, 以便在插件卸载时批量清理
  */
 export class ServiceContainer {
@@ -31,7 +31,6 @@ export class ServiceContainer {
   register(
     name: string,
     instance: unknown,
-    capabilities: string[] = [],
     priority: number = 0,
     contextId: string = 'root',
     label?: string,
@@ -43,7 +42,6 @@ export class ServiceContainer {
     }
     const entry: ServiceEntry = {
       instance,
-      capabilities: new Set(capabilities),
       priority,
       contextId,
       label,
@@ -75,25 +73,16 @@ export class ServiceContainer {
   /**
    * 获取一个满足能力要求的服务实例
    */
-  get<T>(name: string, requiredCapabilities?: readonly string[]): T | undefined {
+  get<T>(name: string): T | undefined {
     const list = this.resolveEntries(name);
-    if (list.length === 0) return undefined;
-
-    for (const entry of list) {
-      if (requiredCapabilities && requiredCapabilities.length > 0) {
-        const satisfied = requiredCapabilities.every(c => entry.capabilities.has(c));
-        if (!satisfied) continue;
-      }
-      return entry.instance as T;
-    }
-    return undefined;
+    return list.length > 0 ? (list[0].instance as T) : undefined;
   }
 
   /**
-   * 检查某个服务是否存在（并且满足指定能力）
+   * 检查某个服务是否存在
    */
-  has(name: string, requiredCapabilities?: readonly string[]): boolean {
-    return this.get(name, requiredCapabilities) !== undefined;
+  has(name: string): boolean {
+    return this.get(name) !== undefined;
   }
 
   /**
@@ -107,19 +96,6 @@ export class ServiceContainer {
     if (!list) return false;
     const prefix = `${contextId}/`;
     return list.some(e => e.contextId === contextId || e.contextId.startsWith(prefix));
-  }
-
-  /**
-   * 获取某个服务的所有能力列表（合并所有提供者）
-   */
-  getCapabilities(name: string): string[] {
-    const list = this.entries.get(name);
-    if (!list) return [];
-    const caps = new Set<string>();
-    for (const entry of list) {
-      for (const c of entry.capabilities) caps.add(c);
-    }
-    return [...caps];
   }
 
   /**
@@ -181,29 +157,14 @@ export class ServiceContainer {
   /**
    * 获取某个服务的所有实例（带提供者信息）
    *
-   * 可选 requiredCapabilities 过滤：只返回满足所有所需能力的提供者。
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
-  getAll<T>(
-    name: string,
-    requiredCapabilities?: readonly string[],
-  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
-    const list = this.resolveEntries(name);
-    if (list.length === 0) return [];
-    const result: Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> = [];
-    for (const entry of list) {
-      if (requiredCapabilities && requiredCapabilities.length > 0) {
-        const satisfied = requiredCapabilities.every(c => entry.capabilities.has(c));
-        if (!satisfied) continue;
-      }
-      result.push({
-        instance: entry.instance as T,
-        contextId: entry.contextId,
-        capabilities: [...entry.capabilities],
-        label: entry.label,
-      });
-    }
-    return result;
+  getAll<T>(name: string): Array<{ instance: T; contextId: string; label?: string }> {
+    return this.resolveEntries(name).map(entry => ({
+      instance: entry.instance as T,
+      contextId: entry.contextId,
+      label: entry.label,
+    }));
   }
 
   /**
@@ -271,20 +232,14 @@ export class ScopedServiceContainer extends ServiceContainer {
     this.parent = parent;
   }
 
-  override get<T>(name: string, requiredCapabilities?: readonly string[]): T | undefined {
-    const local = super.get<T>(name, requiredCapabilities);
+  override get<T>(name: string): T | undefined {
+    const local = super.get<T>(name);
     if (local !== undefined) return local;
-    return this.parent.get<T>(name, requiredCapabilities);
+    return this.parent.get<T>(name);
   }
 
-  override has(name: string, requiredCapabilities?: readonly string[]): boolean {
-    return super.has(name, requiredCapabilities) || this.parent.has(name, requiredCapabilities);
-  }
-
-  override getCapabilities(name: string): string[] {
-    const local = super.getCapabilities(name);
-    const parent = this.parent.getCapabilities(name);
-    return [...new Set([...local, ...parent])];
+  override has(name: string): boolean {
+    return super.has(name) || this.parent.has(name);
   }
 
   override getServiceNames(): string[] {
@@ -298,12 +253,7 @@ export class ScopedServiceContainer extends ServiceContainer {
     return [...local, ...parent];
   }
 
-  override getAll<T>(
-    name: string,
-    requiredCapabilities?: readonly string[],
-  ): Array<{ instance: T; contextId: string; capabilities: string[]; label?: string }> {
-    const local = super.getAll<T>(name, requiredCapabilities);
-    const parent = this.parent.getAll<T>(name, requiredCapabilities);
-    return [...local, ...parent];
+  override getAll<T>(name: string): Array<{ instance: T; contextId: string; label?: string }> {
+    return [...super.getAll<T>(name), ...this.parent.getAll<T>(name)];
   }
 }
