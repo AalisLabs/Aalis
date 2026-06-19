@@ -13,13 +13,6 @@
 import type { Context } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/plugin-message-api';
 
-/** ASR 能力枚举 */
-export type ASRCapability =
-  /** 语音/音频转文本 */
-  | 'audio'
-  /** 支持时间戳分段输出 */
-  | 'timestamps';
-
 export interface TranscribeInput {
   /** 单条音频 attachment */
   attachment: MessageAttachment;
@@ -57,12 +50,9 @@ export function useASRService(ctx: Context): ASRService | undefined {
   return ctx.getService<ASRService>('asr');
 }
 
-// ----- 服务类型 + 能力注册（declaration merging）-----
+// ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
   interface ServiceTypeMap {
     asr: ASRService;
-  }
-  interface ServiceCapabilityMap {
-    asr: ASRCapability;
   }
 }

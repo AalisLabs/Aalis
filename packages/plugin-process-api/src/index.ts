@@ -9,7 +9,6 @@
 
 import type { Readable, Writable } from 'node:stream';
 import type { Context } from '@aalis/core';
-import { registerCapabilityProbe } from '@aalis/core';
 import type { StorageService } from '@aalis/plugin-storage-api';
 
 export interface SpawnOptions {
@@ -101,37 +100,11 @@ export interface ProcessService {
   readExternalFile(path: string): Promise<Uint8Array>;
 }
 
-export type ProcessCapability = 'spawn' | 'exec' | 'temp-dir' | 'external-fs';
-
 declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    process: ProcessCapability;
-  }
   interface ServiceTypeMap {
     process: ProcessService;
   }
 }
-
-registerCapabilityProbe('process', 'spawn', inst =>
-  typeof (inst as { spawn?: unknown }).spawn === 'function'
-    ? true
-    : 'ProcessService.spawn() is required for capability "spawn"',
-);
-registerCapabilityProbe('process', 'exec', inst =>
-  typeof (inst as { execFile?: unknown }).execFile === 'function'
-    ? true
-    : 'ProcessService.execFile() is required for capability "exec"',
-);
-registerCapabilityProbe('process', 'temp-dir', inst =>
-  typeof (inst as { makeTempDir?: unknown }).makeTempDir === 'function'
-    ? true
-    : 'ProcessService.makeTempDir() is required for capability "temp-dir"',
-);
-registerCapabilityProbe('process', 'external-fs', inst =>
-  typeof (inst as { readExternalFile?: unknown }).readExternalFile === 'function'
-    ? true
-    : 'ProcessService.readExternalFile() is required for capability "external-fs"',
-);
 
 /**
  * 返回一个无服务实例时抛错、单实例时直接转发的 ProcessService 网关。

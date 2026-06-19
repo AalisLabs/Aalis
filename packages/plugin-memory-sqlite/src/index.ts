@@ -1,6 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
-import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { ContentSegment, Message } from '@aalis/plugin-message-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import Database from 'better-sqlite3';
@@ -408,13 +407,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     ctx.provide('memory', service, {
       priority: 10,
-      capabilities: [
-        MemoryCapabilities.History,
-        MemoryCapabilities.Metadata,
-        MemoryCapabilities.ContentUpdate,
-        MemoryCapabilities.MessageDelete,
-        MemoryCapabilities.RecentAcrossSessions,
-      ],
     });
 
     ctx.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
