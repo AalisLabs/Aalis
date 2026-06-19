@@ -319,10 +319,16 @@ declare module '@aalis/core' {
     /** 全局能力封禁（glob）：命中即拒，连 owner 都压过（系统级硬禁用，慎用）。 */
     deniedCapabilities?: string[];
     /**
-     * 管理员对单条操作的可见性覆盖（操作名 → public/restricted）。
+     * 管理员对单条操作的可见性覆盖（能力键 `type:name`，如 `tool:weather` → public/restricted）。
      * 让 owner 临时把某操作放开/收紧，无需改插件声明。
+     * （历史上曾用裸操作名作键；guard 读取时兼容 `type:name` 优先、裸名回退。）
      */
     visibilityOverrides?: Record<string, CapabilityVisibility>;
+    /**
+     * 管理员对单条操作的确认要求覆盖（能力键 `type:name` → session/always/off）。
+     * 'off' 强制关闭确认（即便插件声明了 confirm，便于自动化）；与 visibility 正交，owner 也吃。
+     */
+    confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
     /**
      * 受限能力的临时放行策略（替代旧 dangerousPolicy）：
      * allow 列出自动放行的 restricted 能力/操作名 glob（['*'] 全放）；duration 放行时长（秒，0=永久）。
