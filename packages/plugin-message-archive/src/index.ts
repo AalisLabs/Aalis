@@ -5,16 +5,12 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/plugin-message-api';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import { MessageArchiveCapabilities } from '@aalis/plugin-message-archive-api';
 
 export type {
   ArchiveIncomingResult,
   ArchiveNoticeOptions,
-  MessageArchiveCapability,
-  MessageArchiveCapabilityRegistry,
   MessageArchiveService,
 } from '@aalis/plugin-message-archive-api';
-export { MessageArchiveCapabilities } from '@aalis/plugin-message-archive-api';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';
@@ -237,12 +233,5 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('message-archive', service, {
-    capabilities: [
-      MessageArchiveCapabilities.Incoming,
-      MessageArchiveCapabilities.Generic,
-      MessageArchiveCapabilities.Notice,
-      MessageArchiveCapabilities.Lookup,
-    ],
-  });
+  ctx.provide('message-archive', service);
 }
