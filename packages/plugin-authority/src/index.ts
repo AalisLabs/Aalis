@@ -1,6 +1,7 @@
 import type { AppService, Context, PluginModule } from '@aalis/core';
 import type {
   AuthorityService,
+  CapabilityConfirm,
   CapabilityVisibility,
   ExecutionGuardContext,
   UserIdentity,
@@ -47,8 +48,13 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
     const capability = `${g.type}:${g.name}`;
-    const overrides = (ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>;
-    const visibility = overrides[g.name] ?? g.visibility;
+    // 可见性覆盖：`type:name` 优先，兼容历史裸操作名键。
+    const visOv = (ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>;
+    const visibility = visOv[capability] ?? visOv[g.name] ?? g.visibility;
+    // 确认覆盖：'off' 强制关确认；否则覆盖值优先，回退插件声明。
+    const confOv = (ctx.config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
+    const cOv = confOv[capability];
+    const confirm = cOv === 'off' ? undefined : (cOv ?? g.confirm);
     const identity = { platform: g.platform, userId: g.userId };
     const accessBase = {
       name: g.name,
@@ -67,13 +73,13 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       // 受限被拒：系统/受信源无人确认，直接拒；否则走交互授予（白名单/会话授予/回调）。
       // 必须带上 confirm —— 否则 confirm='always' 的操作在此路径被降级为可白名单/会话记忆。
       if (g.skipConfirm) return denied;
-      const granted = await authority.requestAccess({ ...accessBase, confirm: g.confirm });
+      const granted = await authority.requestAccess({ ...accessBase, confirm });
       return granted ? null : denied;
     }
 
     // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
-    if (g.confirm && !g.skipConfirm) {
-      const ok = await authority.requestAccess({ ...accessBase, confirm: g.confirm });
+    if (confirm && !g.skipConfirm) {
+      const ok = await authority.requestAccess({ ...accessBase, confirm });
       if (!ok) return `操作已取消：${capability} 需确认后执行`;
     }
     return null;
@@ -191,6 +197,7 @@ export const actions: PluginModule['actions'] = {
       restrictedCapabilities: ctx.config.get('restrictedCapabilities') ?? [],
       deniedCapabilities: ctx.config.get('deniedCapabilities') ?? [],
       visibilityOverrides: ctx.config.get('visibilityOverrides') ?? {},
+      confirmOverrides: ctx.config.get('confirmOverrides') ?? {},
       restrictedPolicy: ctx.config.get('restrictedPolicy') ?? {},
       temporaryGrants: auth?.listTemporaryGrants() ?? [],
       commandPrefix,
@@ -268,10 +275,12 @@ export const actions: PluginModule['actions'] = {
     return { ok, message: ok ? '临时委托已撤销' : '不存在或已过期' };
   },
 
-  /** owner 覆盖单条操作的可见性（public ↔ restricted），无需改插件声明 */
-  async setVisibilityOverride(ctx, args) {
+  /** owner 覆盖单条操作的可见性（public ↔ restricted），无需改插件声明。key=能力键 `type:name`。 */
+  async setVisibilityOverride(ctx, args, caller) {
     const { name, visibility } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     const overrides = { ...((ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>) };
@@ -280,6 +289,22 @@ export const actions: PluginModule['actions'] = {
     ctx.config.set('visibilityOverrides', overrides);
     app.saveConfig();
     return { message: `操作 ${name} 可见性已更新` };
+  },
+
+  /** owner 覆盖单条操作的确认要求（session/always/off）。key=能力键 `type:name`；非法值清除该条。 */
+  async setConfirmOverride(ctx, args, caller) {
+    const { name, confirm } = args;
+    if (!name || typeof name !== 'string') throw new Error('name 必填');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
+    const app = ctx.getService<AppService>('app');
+    if (!app) throw new Error('App 不可用');
+    const overrides = { ...((ctx.config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>) };
+    if (confirm === 'session' || confirm === 'always' || confirm === 'off') overrides[name] = confirm;
+    else delete overrides[name];
+    ctx.config.set('confirmOverrides', overrides);
+    app.saveConfig();
+    return { message: `操作 ${name} 确认要求已更新` };
   },
 
   /** 更新受限/禁用能力清单 */
