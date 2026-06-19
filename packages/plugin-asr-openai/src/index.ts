@@ -7,7 +7,7 @@
 
 import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
+import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
@@ -16,8 +16,9 @@ import { safeFetch } from '@aalis/util-network-guard';
 export const name = '@aalis/plugin-asr-openai';
 export const displayName = 'OpenAI Whisper ASR';
 export const subsystem = 'media';
-export const provides: string[] = [];
-export const inject = { required: ['media'], optional: ['process', 'storage'] };
+export const provides = ['asr'];
+export const inject = { optional: ['process', 'storage'] };
+export const reusable = true;
 
 interface Cfg {
   apiKey: string;
@@ -94,10 +95,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const proc = createProcessGateway(ctx);
   const storage = createStorageGateway(ctx);
 
-  const processor: MediaProcessor = {
-    name: `asr-openai:${cfg.model}`,
-    capabilities: ['audio'],
-    priority: cfg.priority,
+  const asr: ASRService = {
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
       const { blob, filename } = await attachmentToBlob(input.attachment.data, proc, storage);
       const fd = new FormData();
@@ -123,12 +121,6 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     },
   };
 
-  const media = ctx.getService<{ registerProcessor: (p: MediaProcessor) => () => void }>('media');
-  if (!media) {
-    logger.error('media 服务不可用，跳过注册');
-    return;
-  }
-  const dispose = media.registerProcessor(processor);
-  ctx.onDispose(() => dispose());
-  logger.info(`OpenAI Whisper 转写已注册 (model=${cfg.model}, prio=${cfg.priority})`);
+  ctx.provide('asr', asr, { capabilities: ['audio'], priority: cfg.priority });
+  logger.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model}, prio=${cfg.priority})`);
 }
