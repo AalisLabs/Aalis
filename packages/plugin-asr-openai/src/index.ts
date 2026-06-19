@@ -9,6 +9,7 @@ import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -16,7 +17,7 @@ export const name = '@aalis/plugin-asr-openai';
 export const displayName = 'OpenAI Whisper ASR';
 export const subsystem = 'media';
 export const provides: string[] = [];
-export const inject = { required: ['media'], optional: ['process'] };
+export const inject = { required: ['media'], optional: ['process', 'storage'] };
 
 interface Cfg {
   apiKey: string;
@@ -39,12 +40,16 @@ export const defaultConfig: Cfg = {
   priority: 50,
 };
 
-async function attachmentToBlob(data: string, proc: ProcessService): Promise<{ blob: Blob; filename: string }> {
-  if (data.startsWith('data:')) {
-    const m = data.match(/^data:([^;]+);base64,(.+)$/);
-    if (!m) throw new Error('无效 data URL');
-    const mime = m[1];
-    const buf = Buffer.from(m[2], 'base64');
+async function attachmentToBlob(
+  data: string,
+  proc: ProcessService,
+  storage: StorageService,
+): Promise<{ blob: Blob; filename: string }> {
+  // base64 data URL（必须带 ;base64,，借此与 storage URI `data:/...` 区分）
+  const dataUri = data.match(/^data:([^;]+);base64,(.+)$/);
+  if (dataUri) {
+    const mime = dataUri[1];
+    const buf = Buffer.from(dataUri[2], 'base64');
     const ext = mime.split('/')[1]?.split(';')[0] ?? 'bin';
     return { blob: new Blob([buf as unknown as ArrayBuffer], { type: mime }), filename: `audio.${ext}` };
   }
@@ -65,6 +70,15 @@ async function attachmentToBlob(data: string, proc: ProcessService): Promise<{ b
       filename: `audio.${ext}`,
     };
   }
+  // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...）→ 经 storage 读取
+  let storageUri: string | null = null;
+  if (/^[a-z][a-z0-9_-]*:\//.test(data)) storageUri = data;
+  else if (/^data\//.test(data)) storageUri = `data:/${data.slice('data/'.length)}`;
+  if (storageUri) {
+    const bytes = (await storage.readFile(storageUri)) as Uint8Array;
+    const ext = storageUri.split('.').pop() ?? 'bin';
+    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${ext}` };
+  }
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
 }
 
@@ -78,13 +92,14 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   }
 
   const proc = createProcessGateway(ctx);
+  const storage = createStorageGateway(ctx);
 
   const processor: MediaProcessor = {
     name: `asr-openai:${cfg.model}`,
     capabilities: ['audio'],
     priority: cfg.priority,
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-      const { blob, filename } = await attachmentToBlob(input.attachment.data, proc);
+      const { blob, filename } = await attachmentToBlob(input.attachment.data, proc, storage);
       const fd = new FormData();
       fd.append('file', blob, filename);
       fd.append('model', cfg.model);
