@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@aalis/plugin-process-api": "workspace:^",
+    "@aalis/plugin-storage-api": "workspace:^",
     "@aalis/util-network-guard": "workspace:^"
   },
   "devDependencies": {
@@ -37,7 +38,8 @@
         "media"
       ],
       "optional": [
-        "process"
+        "process",
+        "storage"
       ]
     }
   }
