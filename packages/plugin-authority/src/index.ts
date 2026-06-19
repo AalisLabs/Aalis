@@ -412,7 +412,6 @@ export const actions: PluginModule['actions'] = {
         授予: u?.grant?.join('、') || '（无）',
         拒绝: u?.deny?.join('、') || '（无）',
         委托自: u?.grantedBy || '（顶层 / owner 直接）',
-        可登录账户: u?.hasPassword ? '是' : '否',
         绑定: u?.links?.join('、') || (u?.linkedTo ? `→ ${u.linkedTo}` : '（无）'),
       };
     }
