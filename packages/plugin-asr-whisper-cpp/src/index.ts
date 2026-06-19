@@ -10,7 +10,7 @@
 
 import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { MediaProcessor, TranscribeInput, TranscribeResult } from '@aalis/plugin-media-api';
+import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
 import type { ProcessService } from '@aalis/plugin-process-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
@@ -20,8 +20,9 @@ import { safeFetch } from '@aalis/util-network-guard';
 export const name = '@aalis/plugin-asr-whisper-cpp';
 export const displayName = 'Whisper.cpp 本地转写';
 export const subsystem = 'media';
-export const provides: string[] = [];
-export const inject = { required: ['media', 'process', 'storage'] };
+export const provides = ['asr'];
+export const inject = { required: ['process', 'storage'] };
+export const reusable = true;
 
 interface Cfg {
   binaryPath: string;
@@ -107,10 +108,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const proc = createProcessGateway(ctx);
   const storage = createStorageGateway(ctx);
 
-  const processor: MediaProcessor = {
-    name: `asr-whisper-cpp:${cfg.modelPath.split('/').pop() ?? 'model'}`,
-    capabilities: ['audio'],
-    priority: cfg.priority,
+  const asr: ASRService = {
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
       const src = await materializeAudio(proc, storage, input.attachment.data);
       // ffmpeg 与 whisper-cli 的产物统一落在专用临时目录，避免污染输入所在的数据目录
@@ -150,12 +148,6 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     },
   };
 
-  const media = ctx.getService<{ registerProcessor: (p: MediaProcessor) => () => void }>('media');
-  if (!media) {
-    logger.error('media 服务不可用');
-    return;
-  }
-  const dispose = media.registerProcessor(processor);
-  ctx.onDispose(() => dispose());
-  logger.info(`Whisper.cpp 转写已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
+  ctx.provide('asr', asr, { capabilities: ['audio'], priority: cfg.priority });
+  logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
 }

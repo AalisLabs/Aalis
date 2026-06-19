@@ -28,7 +28,7 @@ export const subsystem = 'media';
 export const provides = ['media'];
 export const inject = {
   required: ['process', 'storage'],
-  optional: ['llm', 'agent'],
+  optional: ['llm', 'agent', 'asr'],
 };
 
 export const configSchema: ConfigSchema = {

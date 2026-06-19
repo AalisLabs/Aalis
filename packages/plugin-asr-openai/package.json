@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-media-api": "workspace:*",
+    "@aalis/plugin-asr-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
@@ -34,9 +34,6 @@
   },
   "aalis": {
     "service": {
-      "required": [
-        "media"
-      ],
       "optional": [
         "process",
         "storage"
