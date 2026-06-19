@@ -202,6 +202,22 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-asr-api:
+    dependencies:
+      '@aalis/plugin-message-api':
+        specifier: workspace:^
+        version: link:../plugin-message-api
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-asr-openai:
     dependencies:
       '@aalis/plugin-process-api':
