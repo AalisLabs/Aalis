@@ -13,8 +13,6 @@ interface AuthorityUser {
   deny?: string[];
   /** 委托来源（上级身份键，如 webui:boss），构成委托树 */
   grantedBy?: string;
-  /** 是否为可登录账户（已设密码） */
-  hasPassword?: boolean;
   /** 本账户绑定的平台身份键（如 onebot:12345） */
   links?: string[];
   /** 本身份被绑定到的主账户键（如 webui:alice） */
@@ -192,7 +190,6 @@ export function AuthorityPage() {
 
   // 用户与委托
   const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grant: string; deny: string } | null>(null);
-  const [editPwd, setEditPwd] = useState<{ platform: string; userId: string; password: string } | null>(null);
   const [bindCode, setBindCode] = useState<{ code: string; hint: string } | null>(null);
   const [newUser, setNewUser] = useState({ platform: '', userId: '', grant: '', deny: '' });
   const [showAddUser, setShowAddUser] = useState(false);
@@ -245,20 +242,6 @@ export function AuthorityPage() {
       });
       flash(`已更新 ${editCaps.platform}:${editCaps.userId} 的委托`);
       setEditCaps(null);
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const saveUserPassword = async () => {
-    if (!editPwd) return;
-    try {
-      await pageAction('@aalis/plugin-authority', 'setPassword', {
-        platform: editPwd.platform, userId: editPwd.userId, password: editPwd.password,
-      });
-      flash(`已更新 ${editPwd.platform}:${editPwd.userId} 的密码`);
-      setEditPwd(null);
       refresh();
     } catch (err) {
       flash(errMsg(err));
@@ -547,7 +530,6 @@ export function AuthorityPage() {
                 {data.users.map(u => {
                   const key = `${u.platform}:${u.userId}`;
                   const isCapsOpen = editCaps && editCaps.platform === u.platform && editCaps.userId === u.userId;
-                  const isPwdOpen = editPwd && editPwd.platform === u.platform && editPwd.userId === u.userId;
                   const grantN = u.grant?.length ?? 0;
                   const denyN = u.deny?.length ?? 0;
                   return (
@@ -557,7 +539,6 @@ export function AuthorityPage() {
                         <span className="authority-cell-id">
                           {u.userId}
                           {u.isOwner && <span className="authority-user-flag owner" title="Owner（拥有全部能力 *）">owner</span>}
-                          {u.hasPassword && <span className="authority-user-flag" title="可登录账户（已设密码）">账户</span>}
                           {(grantN || denyN) ? (
                             <span className="authority-user-flag" title={`授予: ${(u.grant ?? []).join(', ') || '无'}\n拒绝: ${(u.deny ?? []).join(', ') || '无'}`}>
                               +{grantN} / −{denyN}
@@ -590,8 +571,6 @@ export function AuthorityPage() {
                               platform: u.platform, userId: u.userId,
                               grant: (u.grant ?? []).join(', '), deny: (u.deny ?? []).join(', '),
                             })}>能力</button>
-                          <button className="btn btn-sm" title={u.hasPassword ? '重置登录密码' : '设置登录密码（platform=webui 时可登录 WebUI）'}
-                            onClick={() => setEditPwd(isPwdOpen ? null : { platform: u.platform, userId: u.userId, password: '' })}>密码</button>
                           <button className="btn btn-danger btn-sm" onClick={() => deleteUser(u.platform, u.userId)}>删除</button>
                         </span>
                       </div>
@@ -608,18 +587,6 @@ export function AuthorityPage() {
                           <div className="config-edit-actions">
                             <button className="btn btn-primary btn-sm" onClick={saveUserCapabilities}>保存</button>
                             <button className="btn btn-sm" onClick={() => setEditCaps(null)}>取消</button>
-                          </div>
-                        </div>
-                      )}
-                      {isPwdOpen && (
-                        <div className="authority-user-expand">
-                          <label>{u.hasPassword ? '重置密码（≥6 位）' : '设置密码（≥6 位；platform=webui 时用户 ID 即登录用户名）'}</label>
-                          <input className="config-edit-input" type="password" autoComplete="new-password"
-                            value={editPwd!.password}
-                            onChange={e => setEditPwd(prev => prev ? { ...prev, password: e.target.value } : null)} autoFocus />
-                          <div className="config-edit-actions">
-                            <button className="btn btn-primary btn-sm" onClick={saveUserPassword} disabled={editPwd!.password.length < 6}>保存</button>
-                            <button className="btn btn-sm" onClick={() => setEditPwd(null)}>取消</button>
                           </div>
                         </div>
                       )}

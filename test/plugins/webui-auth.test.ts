@@ -1,14 +1,13 @@
 import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { type AccountVerifier, createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
+import { createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
 import { createRouteGate } from '../../packages/plugin-webui-server/src/gate.js';
 
 // ════════════════════════════════════════════════════════════
-// webui-server auth — 账户 session + 单 token 双模式
+// webui-server auth — 单 token（单 owner）
 //
-// 纯 middleware 单测：用最小 req/res mock 走登录/识别/注销/锁定流程，
-// 不起 HTTP 服务器。
+// 纯 middleware 单测：用最小 req/res mock 走登录/识别/注销流程，不起 HTTP 服务器。
 // ════════════════════════════════════════════════════════════
 
 function makeLogger(): Logger {
@@ -82,16 +81,8 @@ function extractCookie(res: MockRes, name: string): string | undefined {
 
 const TOKEN = 'test-token-abc';
 
-function makeAuth(accounts?: Partial<AccountVerifier>, tokenLogin?: () => boolean) {
-  return createAuthSystem(
-    TOKEN,
-    makeLogger(),
-    {
-      verify: accounts?.verify ?? ((u, p) => u === 'alice' && p === 'correct-horse'),
-      hasAccounts: accounts?.hasAccounts ?? (() => true),
-    },
-    tokenLogin,
-  );
+function makeAuth() {
+  return createAuthSystem(TOKEN, makeLogger());
 }
 
 async function run(
@@ -106,60 +97,16 @@ async function run(
   return { res, nexted };
 }
 
-async function loginAlice(auth: ReturnType<typeof makeAuth>): Promise<{ res: MockRes; cookie?: string }> {
-  const { res } = await run(
-    auth,
-    makeReq({ path: '/api/auth/login', method: 'POST', body: { username: 'alice', password: 'correct-horse' } }),
-  );
-  return { res, cookie: extractCookie(res, 'aalis_webui_session') };
-}
-
-describe('账户登录（session）', () => {
-  it('正确账密 → 设置 session cookie，identify 解析为 webui:<username>', async () => {
-    const auth = makeAuth();
-    const { res, cookie } = await loginAlice(auth);
-    expect(res.statusCode).toBe(200);
-    expect(res.jsonBody).toMatchObject({ ok: true, identity: { platform: 'webui', userId: 'alice' } });
-    expect(cookie).toBeTruthy();
-    expect(auth.identify({ headers: { cookie } })).toEqual({ platform: 'webui', userId: 'alice' });
-    // 认证后的请求被放行
-    expect((await run(auth, makeReq({ path: '/api/plugins', cookie }))).nexted).toBe(true);
-  });
-
-  it('错误密码 → 401 且不设 cookie', async () => {
-    const auth = makeAuth();
-    const { res } = await run(
-      auth,
-      makeReq({ path: '/api/auth/login', method: 'POST', body: { username: 'alice', password: 'wrong' } }),
-    );
-    expect(res.statusCode).toBe(401);
-    expect(extractCookie(res, 'aalis_webui_session')).toBeUndefined();
-  });
-
-  it('连续失败触发锁定（429）', async () => {
-    const auth = makeAuth();
-    const attempt = () =>
-      run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { username: 'bob', password: 'x' } }));
-    for (let i = 0; i < 5; i++) expect((await attempt()).res.statusCode).toBe(401);
-    expect((await attempt()).res.statusCode).toBe(429);
-  });
-
-  it('注销清除 session：identify 回到 undefined', async () => {
-    const auth = makeAuth();
-    const { cookie } = await loginAlice(auth);
-    await run(auth, makeReq({ path: '/api/auth/logout', method: 'POST', cookie }));
-    expect(auth.identify({ headers: { cookie } })).toBeUndefined();
-  });
-});
-
-describe('单 token 模式（向后兼容）', () => {
-  it('token 登录 → identify 解析为 webui:console', async () => {
+describe('单 token 登录', () => {
+  it('token 登录 → identify 解析为 webui:console，认证后请求放行', async () => {
     const auth = makeAuth();
     const { res } = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
     expect(res.statusCode).toBe(200);
+    expect(res.jsonBody).toMatchObject({ ok: true, identity: { platform: 'webui', userId: 'console' } });
     const cookie = extractCookie(res, 'aalis_webui_token');
     expect(auth.identify({ headers: { cookie } })).toEqual({ platform: 'webui', userId: 'console' });
     expect(auth.verifyWsClient({ headers: { cookie } } as never)).toBe(true);
+    expect((await run(auth, makeReq({ path: '/api/plugins', cookie }))).nexted).toBe(true);
   });
 
   it('错误 token → 401', async () => {
@@ -168,64 +115,46 @@ describe('单 token 模式（向后兼容）', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('session 与 token 并存时 session 身份优先', async () => {
+  it('?token= 命中 → 设 cookie 并 302 到干净路径', async () => {
     const auth = makeAuth();
-    const { cookie } = await loginAlice(auth);
-    const both = `${cookie}; aalis_webui_token=${TOKEN}`;
-    expect(auth.identify({ headers: { cookie: both } })?.userId).toBe('alice');
+    const { res } = await run(auth, makeReq({ path: '/', query: { token: TOKEN } }));
+    expect(res.redirectTo).toBe('/');
+    expect(extractCookie(res, 'aalis_webui_token')).toBeTruthy();
+  });
+
+  it('注销清除 token：identify 回到 undefined', async () => {
+    const auth = makeAuth();
+    const { res } = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
+    const logout = await run(
+      auth,
+      makeReq({ path: '/api/auth/logout', method: 'POST', cookie: extractCookie(res, 'aalis_webui_token') }),
+    );
+    // 注销返回清空 cookie 头；之后无 cookie 的请求 identify 为 undefined
+    expect(logout.res.jsonBody).toMatchObject({ ok: true });
+    expect(auth.identify({ headers: {} })).toBeUndefined();
   });
 });
 
 describe('未认证拦截', () => {
-  it('API 请求 401 JSON；GET 页面返回登录页', async () => {
+  it('API 请求 401 JSON；GET 页面返回登录页（仅 token 表单）', async () => {
     const auth = makeAuth();
     const api = await run(auth, makeReq({ path: '/api/plugins' }));
     expect(api.res.statusCode).toBe(401);
     expect(api.nexted).toBe(false);
     const page = await run(auth, makeReq({ path: '/' }));
     expect(page.res.statusCode).toBe(401);
-    expect(page.res.htmlBody).toContain('用户名');
-  });
-
-  it('无账户时登录页只显示 token 表单', async () => {
-    const auth = makeAuth({ hasAccounts: () => false });
-    const page = await run(auth, makeReq({ path: '/' }));
+    expect(page.res.htmlBody).toContain('访问 token');
     expect(page.res.htmlBody).not.toContain('用户名');
-    expect(page.res.htmlBody).toContain('token');
   });
 
-  it('status 端点返回 authed=false / 登录后含身份', async () => {
+  it('status 端点：匿名 authed=false；token 登录后含 console 身份', async () => {
     const auth = makeAuth();
     const anon = await run(auth, makeReq({ path: '/api/auth/status' }));
     expect(anon.res.jsonBody).toMatchObject({ authed: false });
-    const { cookie } = await loginAlice(auth);
+    const { res } = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
+    const cookie = extractCookie(res, 'aalis_webui_token');
     const authed = await run(auth, makeReq({ path: '/api/auth/status', cookie }));
-    expect(authed.res.jsonBody).toMatchObject({ authed: true, identity: { userId: 'alice' } });
-  });
-});
-
-describe('tokenMode=disabled（多用户收口）', () => {
-  it('存在账户时 token 全面失效：登录 401、既有 token cookie 不再识别、登录页隐藏 token 表单', async () => {
-    const auth = makeAuth(undefined, () => false);
-    const login = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
-    expect(login.res.statusCode).toBe(401);
-    expect((login.res.jsonBody as { error?: string }).error).toMatch(/已禁用/);
-    expect(auth.identify({ headers: { cookie: `aalis_webui_token=${TOKEN}` } })).toBeUndefined();
-    const page = await run(auth, makeReq({ path: '/' }));
-    expect(page.res.htmlBody).toContain('用户名');
-    expect(page.res.htmlBody).not.toContain('访问 token');
-    // 账户登录不受影响
-    expect((await loginAlice(auth)).res.statusCode).toBe(200);
-  });
-
-  it('无任何账户时 token 兜底生效（防锁死）', async () => {
-    const auth = makeAuth({ hasAccounts: () => false }, () => false);
-    const login = await run(auth, makeReq({ path: '/api/auth/login', method: 'POST', body: { token: TOKEN } }));
-    expect(login.res.statusCode).toBe(200);
-    expect(auth.identify({ headers: { cookie: `aalis_webui_token=${TOKEN}` } })).toEqual({
-      platform: 'webui',
-      userId: 'console',
-    });
+    expect(authed.res.jsonBody).toMatchObject({ authed: true, identity: { userId: 'console' } });
   });
 });
 
