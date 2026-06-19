@@ -104,6 +104,13 @@ export interface LLMModel {
    */
   readonly maxOutputTokens?: number;
 
+  /**
+   * 该 model 的能力元数据（chat/vision/tool_calling/audio/video…）。
+   * 这是「模型能干啥」的领域数据——供 media 发现可处理图/音/视的模型、前端下拉展示与过滤用，
+   * **不是** DI 选择机制（服务选择一律走配置 + 按名解析）。provider 注册时填。
+   */
+  readonly capabilities: readonly LLMCapability[];
+
   chat(request: ChatModelRequest): Promise<ChatResponse>;
   chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
 
@@ -198,42 +205,43 @@ export interface ModelRef {
 }
 
 /**
+ * 按能力过滤 LLM entries —— 能力源为 handle 元数据 `instance.capabilities`，
+ * 不再依赖 core 的能力过滤（core 已不做能力选择，服务选择走配置 + 按名解析）。
+ */
+function listLLMEntries(ctx: Context, caps?: readonly LLMCapability[]): LLMModelEntry[] {
+  const all = ctx.getAllServices<LLMModel>('llm');
+  if (!caps || caps.length === 0) return all;
+  return all.filter(e => caps.every(c => (e.instance.capabilities ?? []).includes(c)));
+}
+
+/**
+ * 列出（可按能力过滤的）LLM model entries，供 `/model` 列表与前端下拉用。
+ * 能力源为 `instance.capabilities`（model 自带元数据），是展示/列举用途，非 DI 选择。
+ */
+export function listLLMModels(ctx: Context, opts?: { caps?: readonly LLMCapability[] }): LLMModelEntry[] {
+  return listLLMEntries(ctx, opts?.caps);
+}
+
+/**
  * 把 ref 解析为最匹配的 LLMModel entry。
  *
  * 解析顺序（命中即返回）：
  * 1. ref.provider + ref.model 都有 → 直接拼接 entryId `${provider}/${model}` 查找
- * 2. 仅 ref.provider → 在该 provider 名下 entries 中按 capability 过滤后取首个
+ * 2. 仅 ref.provider → 在该 provider 名下 entries 中（按 capability 过滤后）取首个
  * 3. 仅 ref.model → 全局 'llm' entries 按 instance.id 严格匹配
- * 4. 都为空 → `ctx.getService('llm', requiredCaps)` 取第一个匹配 capability 的 entry
+ * 4. 都为空 → 取首个满足 capability 的 entry（preference / priority / 注册顺序）
  *
- * 找不到时返回 undefined（调用方决定是抛错还是退化）。
+ * requiredCaps 按 handle 元数据 `instance.capabilities` 过滤。找不到返回 undefined。
  */
 export function resolveLLMModel(
   ctx: Context,
   ref?: ModelRef | null,
   requiredCaps?: LLMCapability[],
 ): LLMModelEntry | undefined {
-  // Case 1: 完整 ref → 直查 entryId
-  if (ref?.provider && ref?.model) {
-    const entryId = `${ref.provider}/${ref.model}`;
-    const all = ctx.getAllServices<LLMModel>('llm', requiredCaps);
-    return all.find(e => e.contextId === entryId);
-  }
-
-  // Case 2: 仅 provider → 该 provider 下首个匹配 cap 的
-  if (ref?.provider) {
-    const all = ctx.getAllServices<LLMModel>('llm', requiredCaps);
-    return all.find(e => e.contextId.startsWith(`${ref.provider}/`));
-  }
-
-  // Case 3: 仅 model → 跨 provider 按 instance.id 匹配
-  if (ref?.model) {
-    const all = ctx.getAllServices<LLMModel>('llm', requiredCaps);
-    return all.find(e => e.instance.id === ref.model);
-  }
-
-  // Case 4: 默认 → 取首个匹配 cap 的（preference / priority / 注册顺序）
-  const all = ctx.getAllServices<LLMModel>('llm', requiredCaps);
+  const all = listLLMEntries(ctx, requiredCaps);
+  if (ref?.provider && ref?.model) return all.find(e => e.contextId === `${ref.provider}/${ref.model}`);
+  if (ref?.provider) return all.find(e => e.contextId.startsWith(`${ref.provider}/`));
+  if (ref?.model) return all.find(e => e.instance.id === ref.model);
   return all[0];
 }
 
