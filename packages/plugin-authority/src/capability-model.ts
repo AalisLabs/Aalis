@@ -1,12 +1,11 @@
 // ════════════════════════════════════════════════════════════
 // 纯能力委托模型 —— feat/auth-capability 重构基石（纯函数，无副作用，便于单测）
 //
-// 用「能力 + 默认可见性 public/restricted + 委托加减」替代数字等级：
+// 用「能力 + 默认可见性 public/restricted + owner 授予加减」替代数字等级：
 //   - 能力是 glob 标识（tool:x / command:x / storage:path:...:write / *）。
 //   - 作者为每个操作声明默认可见性：public（默认所有人可用）/ restricted（默认禁，需授予）。
 //   - 用户有效能力 = owner ? 全部 : (所有 public ∪ 被授予的 restricted) − 被禁用的；deny 优先。
-//   - 委托子集约束：非 owner 授予方只能把「自己当前有效持有」的能力委托给下层，
-//     单调递减、天然防越权。owner = `*`，可委托一切。
+//   - 单 owner 终态：权限只由 owner 管理（无委托树/子委托），故无子集约束。
 // ════════════════════════════════════════════════════════════
 
 /** 单条能力 glob 匹配：`*` 通配任意字符段。pattern 为 glob，value 为具体能力串。 */
@@ -49,16 +48,4 @@ export function hasCapability(res: CapabilityResolution, cap: string): boolean {
   if (matchAnyCap(res.denies, cap)) return false;
   if (res.isOwner) return true;
   return matchAnyCap(res.publicCaps, cap) || matchAnyCap(res.grants, cap);
-}
-
-/**
- * 委托子集约束：授予方把 requested 能力委托给下层是否合法。
- * owner 可委托一切；非 owner 只能委托「自己当前有效持有」的能力（防越权放大）。
- * 返回越权（不可委托）的能力项；空数组 = 全部合法。
- *
- * 语义：具体能力按 hasCapability 判定；委托更宽的 glob（超出自己持有的）会被拒。
- */
-export function rejectedDelegations(granter: CapabilityResolution, requested: readonly string[]): string[] {
-  if (granter.isOwner) return [];
-  return requested.filter(cap => !hasCapability(granter, cap));
 }
