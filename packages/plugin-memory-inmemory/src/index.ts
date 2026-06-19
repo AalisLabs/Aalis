@@ -1,6 +1,5 @@
 import type { Context } from '@aalis/core';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
-import { MemoryCapabilities } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 
 // ===== InMemoryFallbackService 实现 =====
@@ -202,13 +201,6 @@ export const provides = ['memory'];
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
   const service = new InMemoryFallbackService();
   ctx.provide('memory', service, {
-    capabilities: [
-      MemoryCapabilities.History,
-      MemoryCapabilities.Metadata,
-      MemoryCapabilities.ContentUpdate,
-      MemoryCapabilities.MessageDelete,
-      MemoryCapabilities.RecentAcrossSessions,
-    ],
     priority: -100,
   });
   ctx.logger.info('内存记忆服务已启用 (数据不会持久化)');

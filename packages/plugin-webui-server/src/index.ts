@@ -1577,7 +1577,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   };
 
-  ctx.provide('platform', adapter, { capabilities: ['webui', 'text', 'image', 'file'] });
+  ctx.provide('platform', adapter);
 
   // === 注册 WebUI 服务 ===
   const registeredPages = new Map<string, Array<WebuiPage & { pluginName: string }>>();
@@ -1618,5 +1618,5 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       registeredPages.delete(pluginName);
     },
   };
-  ctx.provide('webui-server', webuiService, { capabilities: ['api-v1'] });
+  ctx.provide('webui-server', webuiService);
 }

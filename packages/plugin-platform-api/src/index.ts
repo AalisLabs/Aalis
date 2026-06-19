@@ -92,49 +92,6 @@ export interface PlatformAdapter {
   checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string };
 }
 
-// ----- 平台能力声明 -----
-//
-// service-granularity 之后，'platform' 服务不再有 router facade；每个 adapter 直接
-// 以 `ctx.provide('platform', adapter, { capabilities: [...] })` 注册，capabilities
-// 同时承担**平台标识**（如 'onebot' / 'cli' / 'webui'）和**消息能力**（如 'text' /
-// 'image' / 'voice' / 'group-chat'）双重语义。下游消费者按需用
-// `ctx.getAllServices('platform', ['text','image'])` 静态过滤。
-//
-// 注：此处仅声明"通用消息能力"集合；平台标识本身（onebot/cli/webui/...）由各
-// adapter 在注册时自行附加。
-
-export interface PlatformCapabilityRegistry {
-  Text: 'text';
-  Image: 'image';
-  Voice: 'voice';
-  Video: 'video';
-  File: 'file';
-  Forward: 'forward';
-  GroupChat: 'group-chat';
-  PrivateChat: 'private-chat';
-  CallAction: 'call-action';
-}
-
-export type PlatformCapability = PlatformCapabilityRegistry[keyof PlatformCapabilityRegistry];
-
-export const PlatformCapabilities = {
-  Text: 'text',
-  Image: 'image',
-  Voice: 'voice',
-  Video: 'video',
-  File: 'file',
-  Forward: 'forward',
-  GroupChat: 'group-chat',
-  PrivateChat: 'private-chat',
-  CallAction: 'call-action',
-} as const satisfies PlatformCapabilityRegistry;
-
-declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    platform: PlatformCapability | string;
-  }
-}
-
 // ----- 聚合 / 路由 helper -----
 //
 // 取代历史上的 PlatformRouter（同名 facade）：所有按 sessionId 分发、按平台名汇总
@@ -149,16 +106,14 @@ export interface PlatformAdapterEntry {
   label?: string;
 }
 
-/** 枚举所有 platform adapter 条目；可选按 capabilities 过滤 */
-export function getPlatformAdapterEntries(ctx: Context, requiredCaps?: readonly string[]): PlatformAdapterEntry[] {
-  return ctx
-    .getAllServices<PlatformAdapter>('platform', requiredCaps)
-    .filter(e => typeof e.instance?.getConnections === 'function');
+/** 枚举所有 platform adapter 条目 */
+export function getPlatformAdapterEntries(ctx: Context): PlatformAdapterEntry[] {
+  return ctx.getAllServices<PlatformAdapter>('platform').filter(e => typeof e.instance?.getConnections === 'function');
 }
 
 /** 枚举所有 platform adapter 实例 */
-export function getPlatformAdapters(ctx: Context, requiredCaps?: readonly string[]): PlatformAdapter[] {
-  return getPlatformAdapterEntries(ctx, requiredCaps).map(e => e.instance);
+export function getPlatformAdapters(ctx: Context): PlatformAdapter[] {
+  return getPlatformAdapterEntries(ctx).map(e => e.instance);
 }
 
 /** 枚举所有平台名（来自 adapter.platform 字段，去重） */

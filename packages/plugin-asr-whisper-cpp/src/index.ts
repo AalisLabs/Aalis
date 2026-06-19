@@ -148,6 +148,6 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('asr', asr, { capabilities: ['audio'], priority: cfg.priority });
+  ctx.provide('asr', asr, { priority: cfg.priority });
   logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
 }

@@ -28,12 +28,6 @@ export interface PackageManagerService {
   uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
 }
 
-declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    'package-manager': 'install' | 'uninstall';
-  }
-}
-
 // ===== 实现 =====
 
 /**
@@ -216,7 +210,6 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.provide('package-manager', createService(ctx, config), {
-    capabilities: ['install', 'uninstall'],
     label: 'package-manager',
   });
 }

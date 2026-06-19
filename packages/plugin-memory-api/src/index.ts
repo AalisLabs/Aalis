@@ -1,4 +1,5 @@
 // ----- 记忆服务接口 -----
+import type {} from '@aalis/core';
 import type { Message } from '@aalis/plugin-message-api';
 
 /** 跨会话最近消息查询参数 */
@@ -86,45 +87,7 @@ export interface MemoryService {
   deleteMessagesByTimestamps?(sessionId: string, timestamps: number[]): Promise<number>;
 }
 
-// ----- 记忆能力声明（capability 框架）-----
-
-/**
- * 记忆服务能力注册表
- *
- * 第三方可扩展：
- * ```ts
- * declare module '@aalis/core' {
- *   interface MemoryCapabilityRegistry { Persistent: 'persistent'; Encrypted: 'encrypted'; }
- * }
- * ```
- */
-export interface MemoryCapabilityRegistry {
-  /** 基础的消息历史保存/读取 */
-  History: 'history';
-  /** 支持结构化元数据存储（saveMetadata 等） */
-  Metadata: 'metadata';
-  /** 支持消息内容更新（updateMessageContent） */
-  ContentUpdate: 'content-update';
-  /** 支持按时间戳批量删除消息（deleteMessagesByTimestamps） */
-  MessageDelete: 'message-delete';
-  /** 支持跨会话最近消息查询（getRecentMessagesAcrossSessions） */
-  RecentAcrossSessions: 'recent-across-sessions';
-}
-
-export type MemoryCapability = MemoryCapabilityRegistry[keyof MemoryCapabilityRegistry];
-
-export const MemoryCapabilities = {
-  History: 'history',
-  Metadata: 'metadata',
-  ContentUpdate: 'content-update',
-  MessageDelete: 'message-delete',
-  RecentAcrossSessions: 'recent-across-sessions',
-} as const satisfies MemoryCapabilityRegistry;
-
 declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    memory: MemoryCapability;
-  }
   interface HookContextMap {
     /** 记忆清除钩子（统一编排） */
     'memory:clear': {
@@ -141,39 +104,6 @@ declare module '@aalis/core' {
     };
   }
 }
-
-import { registerCapabilityProbe } from '@aalis/core';
-
-registerCapabilityProbe('memory', MemoryCapabilities.History, inst =>
-  typeof (inst as { getHistory?: unknown }).getHistory === 'function' &&
-  typeof (inst as { saveMessage?: unknown }).saveMessage === 'function'
-    ? true
-    : 'MemoryService.saveMessage()/getHistory() are required for capability "history"',
-);
-
-registerCapabilityProbe('memory', MemoryCapabilities.Metadata, inst =>
-  typeof (inst as { saveMetadata?: unknown }).saveMetadata === 'function'
-    ? true
-    : 'MemoryService.saveMetadata() is required for capability "metadata"',
-);
-
-registerCapabilityProbe('memory', MemoryCapabilities.ContentUpdate, inst =>
-  typeof (inst as { updateMessageContent?: unknown }).updateMessageContent === 'function'
-    ? true
-    : 'MemoryService.updateMessageContent() is required for capability "content-update"',
-);
-
-registerCapabilityProbe('memory', MemoryCapabilities.MessageDelete, inst =>
-  typeof (inst as { deleteMessagesByTimestamps?: unknown }).deleteMessagesByTimestamps === 'function'
-    ? true
-    : 'MemoryService.deleteMessagesByTimestamps() is required for capability "message-delete"',
-);
-
-registerCapabilityProbe('memory', MemoryCapabilities.RecentAcrossSessions, inst =>
-  typeof (inst as { getRecentMessagesAcrossSessions?: unknown }).getRecentMessagesAcrossSessions === 'function'
-    ? true
-    : 'MemoryService.getRecentMessagesAcrossSessions() is required for capability "recent-across-sessions"',
-);
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {

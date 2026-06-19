@@ -1332,9 +1332,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
   };
 
-  ctx.provide('platform', adapter, {
-    capabilities: ['onebot', 'text', 'image', 'voice', 'forward', 'group-chat', 'private-chat', 'call-action'],
-  });
+  ctx.provide('platform', adapter);
 
   // ----- 连接管理 -----
 

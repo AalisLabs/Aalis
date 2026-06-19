@@ -305,7 +305,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   setMediaRuntime({ proc: createProcessGateway(ctx), storage: createStorageGateway(ctx) });
   const svc = new MediaServiceImpl(ctx, logger, cfg);
 
-  ctx.provide('media', svc, { capabilities: ['vision', 'audio', 'video'] });
+  ctx.provide('media', svc);
 
   // 注册 analyze_image / update_image_description 工具
   try {

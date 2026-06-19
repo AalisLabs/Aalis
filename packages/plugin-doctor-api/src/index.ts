@@ -11,7 +11,7 @@
  *   plugin-commands-api 的模式抽出本 api 包，仅含类型 + 一个 useDoctorService
  *   helper（懒注册、doctor 未上线时延后到 whenService 触发）。
  *
- *   ServiceCapabilityMap / AalisEvents 的模块增强统一在本文件做，避免多包
+ *   AalisEvents 的模块增强统一在本文件做，避免多包
  *   重复声明导致 TS 合并冲突。
  */
 
@@ -67,9 +67,6 @@ export interface DoctorService {
 // ===== 模块增强 =====
 
 declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    doctor: 'diagnose';
-  }
   interface AalisEvents {
     /** 一次诊断完成后发射，供 WebUI 等订阅者即时刷新 */
     'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
