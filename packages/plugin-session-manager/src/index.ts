@@ -3,7 +3,7 @@ import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 // 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
 import '@aalis/plugin-agent-api';
 import type { LLMModel } from '@aalis/plugin-llm-api';
-import { resolveLLMModel } from '@aalis/plugin-llm-api';
+import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
@@ -258,10 +258,10 @@ export const actions: PluginModule['actions'] = {
     // 可用 LLM 模型列表（枚举所有 chat-capable entry）
     let models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }> = [];
     try {
-      const entries = ctx.getAllServices<LLMModel>('llm', ['chat']);
+      const entries = listLLMModels(ctx, { caps: ['chat'] });
       models = entries.map(e => ({
         id: e.instance.id,
-        capabilities: e.capabilities,
+        capabilities: [...e.instance.capabilities],
         provider: e.instance.providerId,
         contextId: e.contextId,
       }));

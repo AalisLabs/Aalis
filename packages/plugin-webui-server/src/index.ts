@@ -15,6 +15,7 @@ import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import type {} from '@aalis/plugin-doctor-api'; // declaration merging：doctor:updated 事件
 import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
+import { listLLMModels } from '@aalis/plugin-llm-api';
 import type {} from '@aalis/plugin-memory-api'; // declaration merging：history:changed 事件
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
@@ -495,7 +496,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const persona = ctx.getService<PersonaService>('persona');
     // 判断上传能力
     const hasMedia = ctx.hasService('media');
-    const llmHasVision = ctx.getServiceCapabilities('llm').includes('vision');
+    const llmHasVision = listLLMModels(ctx).some(e => e.instance.capabilities.includes('vision'));
     const hasFileReader = ctx.hasService('file-reader');
 
     res.json({
@@ -736,7 +737,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const entries = ctx.getAllServices<LLMModel>('llm');
       const models: ModelInfo[] = entries.map(e => ({
         id: e.instance.id,
-        capabilities: e.capabilities,
+        capabilities: [...e.instance.capabilities],
         provider: e.instance.providerId,
         contextId: e.contextId,
       }));
@@ -774,7 +775,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
         agg.models.push({
           id: e.instance.id,
-          capabilities: e.capabilities,
+          capabilities: [...e.instance.capabilities],
           contextLength: e.instance.contextLength,
         });
       }
@@ -884,7 +885,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           model: e.instance.id,
           provider: e.label ?? e.contextId,
           contextId: e.contextId,
-          capabilities: e.capabilities,
+          capabilities: [...e.instance.capabilities],
         }));
         res.json({ models: aggregated.map(a => a.value), providers: aggregated });
       } catch {
@@ -917,9 +918,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           for (const m of models) {
             const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
             const modelId = isModelInfo ? ((m as Record<string, unknown>).id as string) : String(m);
-            const modelCaps = isModelInfo
-              ? ((m as Record<string, unknown>).capabilities as string[])
-              : provider.capabilities;
+            const modelCaps = isModelInfo ? ((m as Record<string, unknown>).capabilities as string[]) : [];
             aggregated.push({
               value: modelId,
               model: modelId,
