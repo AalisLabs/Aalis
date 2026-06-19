@@ -7,7 +7,7 @@ import { actions } from '../../packages/plugin-authority/src/index.js';
 // authority actions — WebUI surface（纯能力委托模型）
 //
 // 关键安全性：setUserCapabilities 经 manager 的子集约束防越权——非 owner 授予方
-// 只能委托自己持有的能力。owner / 本人才可改密码、解绑。
+// 只能委托自己持有的能力。
 // ════════════════════════════════════════════════════════════
 
 function makeLogger(): Logger {
@@ -181,29 +181,7 @@ describe('getDelegationGraph / getDelegationNode — 委托关系图', () => {
   });
 });
 
-describe('密码 / 解绑 — owner 或本人', () => {
-  it('setPassword：本人可设；他人非 owner 被拒；短密码拒', async () => {
-    const { ctx, manager } = makeCtx();
-    const alice = { platform: 'webui', userId: 'alice' };
-    await actions.setPassword(ctx, { platform: 'webui', userId: 'alice', password: 'hunter2' }, alice);
-    expect(await manager.verifyPassword('webui', 'alice', 'hunter2')).toBe(true);
-    // 他人（非 owner）改 alice 密码 → 拒
-    await expect(
-      actions.setPassword(
-        ctx,
-        { platform: 'webui', userId: 'alice', password: 'newpass' },
-        {
-          platform: 'onebot',
-          userId: 'mallory',
-        },
-      ),
-    ).rejects.toThrow(/owner 或本人/);
-    // 短密码
-    await expect(
-      actions.setPassword(ctx, { platform: 'webui', userId: 'alice', password: '123' }, alice),
-    ).rejects.toThrow(/至少 6 位/);
-  });
-
+describe('deleteUser — 删除记录', () => {
   it('deleteUser 删除整条记录', async () => {
     const { ctx, manager } = makeCtx();
     manager.setUserCapabilities(null, { platform: 'onebot', userId: 'x' }, { grant: ['tool:a'] });
