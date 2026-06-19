@@ -39,7 +39,7 @@ const webuiPages: WebuiPage[] = [
     content: [
       {
         type: 'graph',
-        label: '委托关系图：owner → 子 → 孙 委托链 + 授予/拒绝能力 + 跨平台绑定（点节点看详情）',
+        label: '委托关系图：owner → 子 → 孙 委托链 + 授予/拒绝能力（点节点看详情）',
         source: 'getDelegationGraph',
         detailSource: 'getDelegationNode',
         defaultMaxDepth: 2,
@@ -52,7 +52,6 @@ const webuiPages: WebuiPage[] = [
           { kind: 'delegate', label: '委托', color: '#34d399' },
           { kind: 'grant', label: '授予', color: '#60a5fa' },
           { kind: 'deny', label: '拒绝', color: '#ef4444', dashed: true },
-          { kind: 'bind', label: '绑定', color: '#a78bfa', dashed: true },
         ],
       },
     ],
@@ -133,8 +132,6 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       const entry = userId
         ? authority.listUsers().find(u => u.platform === platform && u.userId === userId)
         : undefined;
-      if (entry?.linkedTo) lines.push(`已绑定到主账户 ${entry.linkedTo}（能力以账户为准）`);
-      if (entry?.links?.length) lines.push(`已绑定身份: ${entry.links.join(', ')}`);
       if (entry?.grant?.length) lines.push(`授予能力: ${entry.grant.join(', ')}`);
       if (entry?.deny?.length) lines.push(`禁用能力: ${entry.deny.join(', ')}`);
       if (entry?.grantedBy) lines.push(`委托自: ${entry.grantedBy}`);
@@ -189,25 +186,6 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       return err instanceof Error ? err.message : String(err);
     }
   }
-
-  // /bind <code> — 把当前平台账号绑定到 WebUI 主账户（码在 WebUI 权限页生成）。
-  // 仅限私聊：群聊发码会暴露给旁观者。
-  cmds
-    .command('bind <code:string>', '将当前平台账号绑定到 WebUI 账户', { visibility: 'public' })
-    .example('/bind AB12CD34')
-    .action(async (argv, code) => {
-      const { platform, userId, sessionType } = argv.session;
-      if (!userId) return '无法识别您的身份，无法绑定。';
-      if (platform === 'webui' || platform === 'cli') return '请在外部平台（如 QQ）私聊中向机器人发送本指令。';
-      if (sessionType !== 'private') return '为防止绑定码泄露，请在私聊中使用本指令。';
-      try {
-        const account = authority.consumeBindCode(String(code).trim().toUpperCase(), { platform, userId });
-        authority.save();
-        return `绑定成功：${platform}:${userId} ↔ ${account.platform}:${account.userId}。可在 WebUI 权限页解绑。`;
-      } catch (err) {
-        return err instanceof Error ? err.message : String(err);
-      }
-    });
 }
 
 // ===== WebUI 操作处理器（最小新模型集；委托树/图 Phase 4 充实）=====
@@ -259,7 +237,7 @@ export const actions: PluginModule['actions'] = {
 
   /**
    * 委托关系图数据（喂通用 cytoscape graph 组件，协议与 user-relation getRelationGraph 对齐）：
-   * 用户节点（owner/user）+ 能力节点，边 = 委托(父→子) / 授予 / 拒绝 / 绑定(被绑身份→主账户)。
+   * 用户节点（owner/user）+ 能力节点，边 = 委托(父→子) / 授予 / 拒绝。
    * 保证每条边两端节点都存在；支持焦点子图导航（args.focusId 为节点或边 id + maxDepth/maxBreadth），
    * 点边时回 focusEdge（详情卡片用）。无 focusId 返回全图。
    */
@@ -302,17 +280,6 @@ export const actions: PluginModule['actions'] = {
             target: src,
             label: '委托',
             kind: 'delegate',
-            directed: true,
-          },
-        });
-      if (u.linkedTo)
-        edges.push({
-          data: {
-            id: `bind:${key}`,
-            source: src,
-            target: ensureUser(u.linkedTo),
-            label: '绑定',
-            kind: 'bind',
             directed: true,
           },
         });
@@ -412,7 +379,6 @@ export const actions: PluginModule['actions'] = {
         授予: u?.grant?.join('、') || '（无）',
         拒绝: u?.deny?.join('、') || '（无）',
         委托自: u?.grantedBy || '（顶层 / owner 直接）',
-        绑定: u?.links?.join('、') || (u?.linkedTo ? `→ ${u.linkedTo}` : '（无）'),
       };
     }
     if (nodeId.startsWith('cap:')) {
@@ -437,48 +403,6 @@ export const actions: PluginModule['actions'] = {
     );
     auth.save();
     return { message: `${platform}:${userId} 的能力委托已更新` };
-  },
-
-  /** 设置/重置账户密码（owner 或本人） */
-  async setPassword(ctx, args, caller) {
-    const { platform, userId, password } = args;
-    if (!platform || !userId || typeof password !== 'string') throw new Error('platform, userId, password 必填');
-    if (password.length < 6) throw new Error('密码长度至少 6 位');
-    const auth = ctx.getService<AuthorityService>('authority');
-    if (!auth) throw new Error('Authority 服务不可用');
-    const isSelf = caller && caller.platform === platform && caller.userId === userId;
-    if (caller && !isSelf && !auth.isOwner(caller.platform, caller.userId)) {
-      throw new Error('只有 owner 或本人可设置密码');
-    }
-    await auth.setPassword(platform as string, userId as string, password);
-    auth.save();
-    return { message: `${platform}:${userId} 密码已更新` };
-  },
-
-  async createBindCode(ctx, _args, caller) {
-    if (!caller) throw new Error('无法识别调用者身份');
-    const auth = ctx.getService<AuthorityService>('authority');
-    if (!auth) throw new Error('Authority 服务不可用');
-    const { code, expiresAt } = auth.createBindCode(caller.platform, caller.userId);
-    const prefix = ctx.getService<CommandService>('commands')?.prefix ?? '/';
-    return { code, expiresAt, hint: `请在 5 分钟内用要绑定的平台账号私聊机器人发送：${prefix}bind ${code}` };
-  },
-
-  async unlinkIdentity(ctx, args, caller) {
-    const { platform, userId } = args;
-    if (!platform || !userId) throw new Error('platform, userId 必填');
-    const auth = ctx.getService<AuthorityService>('authority');
-    if (!auth) throw new Error('Authority 服务不可用');
-    if (caller) {
-      const owning = auth.listUsers().find(u => u.links?.includes(`${platform}:${userId}`));
-      const isSelf = owning && owning.platform === caller.platform && owning.userId === caller.userId;
-      if (!isSelf && !auth.isOwner(caller.platform, caller.userId)) {
-        throw new Error('只有绑定所属账户本人或 owner 可以解绑');
-      }
-    }
-    const ok = auth.unlinkIdentity(platform as string, userId as string);
-    auth.save();
-    return { ok, message: ok ? `${platform}:${userId} 已解绑` : '该身份没有绑定记录' };
   },
 
   /** 删除用户记录 */
@@ -553,11 +477,4 @@ export const actions: PluginModule['actions'] = {
     app.saveConfig();
     return { message: '权限配置已更新' };
   },
-};
-
-// createBindCode / unlinkIdentity 对任何登录账户开放（绑码只能绑自己；解绑有 handler 内本人/owner 检查）；
-// 其余 action 不声明 → 默认 restricted（仅 owner / 被委托）。
-export const actionsMeta: PluginModule['actionsMeta'] = {
-  createBindCode: { visibility: 'public' },
-  unlinkIdentity: { visibility: 'public' },
 };
