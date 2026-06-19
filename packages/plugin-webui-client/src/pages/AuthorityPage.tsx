@@ -13,10 +13,6 @@ interface AuthorityUser {
   deny?: string[];
   /** 委托来源（上级身份键，如 webui:boss），构成委托树 */
   grantedBy?: string;
-  /** 本账户绑定的平台身份键（如 onebot:12345） */
-  links?: string[];
-  /** 本身份被绑定到的主账户键（如 webui:alice） */
-  linkedTo?: string;
 }
 
 interface AuthorityOwner {
@@ -190,7 +186,6 @@ export function AuthorityPage() {
 
   // 用户与委托
   const [editCaps, setEditCaps] = useState<{ platform: string; userId: string; grant: string; deny: string } | null>(null);
-  const [bindCode, setBindCode] = useState<{ code: string; hint: string } | null>(null);
   const [newUser, setNewUser] = useState({ platform: '', userId: '', grant: '', deny: '' });
   const [showAddUser, setShowAddUser] = useState(false);
 
@@ -268,25 +263,6 @@ export function AuthorityPage() {
       flash(`已添加 ${newUser.platform}:${newUser.userId}`);
       setNewUser({ platform: '', userId: '', grant: '', deny: '' });
       setShowAddUser(false);
-      refresh();
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const generateBindCode = async () => {
-    try {
-      const r = await pageAction<{ code: string; hint: string }>('@aalis/plugin-authority', 'createBindCode');
-      setBindCode(r);
-    } catch (err) {
-      flash(errMsg(err));
-    }
-  };
-
-  const unlinkIdentity = async (platform: string, userId: string) => {
-    try {
-      await pageAction('@aalis/plugin-authority', 'unlinkIdentity', { platform, userId });
-      flash(`已解绑 ${platform}:${userId}`);
       refresh();
     } catch (err) {
       flash(errMsg(err));
@@ -473,30 +449,10 @@ export function AuthorityPage() {
               <button className="btn-sm" onClick={() => setShowAddUser(!showAddUser)}>
                 {showAddUser ? '取消' : '+ 添加用户'}
               </button>
-              <button
-                className="btn-sm"
-                title="把某个平台账号（如 QQ）绑定到当前 WebUI 账户：绑定后该平台账号的权限并入本账户，相当于声明二者是同一个人，便于跨平台统一管理权限。"
-                onClick={generateBindCode}
-              >
-                绑定平台账号
-              </button>
               <button className="btn-sm" onClick={refresh} disabled={loading}>
                 {loading ? '刷新中...' : '刷新'}
               </button>
             </div>
-            {bindCode && (
-              <div className="authority-user-expand" style={{ borderTop: '1px solid var(--border)' }}>
-                <label>绑定码（一次性，限时有效；重复生成会作废旧码）</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <code style={{ fontSize: 18, letterSpacing: 2 }}>{bindCode.code}</code>
-                  <button className="btn-sm" onClick={() => setBindCode(null)}>关闭</button>
-                </div>
-                <label>{bindCode.hint}</label>
-                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
-                  用要绑定的平台账号<strong>私聊</strong>机器人发送该码（私聊防止码被他人冒用）。绑定后，该平台账号的请求按本账户的权限处理；其原有权限会并入本账户（拒绝项取并集，防「换账号洗白封禁」）。可随时在用户行点 × 解绑还原。
-                </p>
-              </div>
-            )}
             {showAddUser && (
               <div className="authority-add-form" style={{ padding: '0 12px 8px' }}>
                 <input className="config-edit-input" placeholder="平台 (如 onebot / webui)"
@@ -549,21 +505,6 @@ export function AuthorityPage() {
                               委托自 {u.grantedBy}
                             </span>
                           )}
-                          {u.linkedTo && (
-                            <span className="authority-user-flag" title={`此平台身份已绑定到账户 ${u.linkedTo}：登录后按该账户的权限处理（解绑后恢复其原权限）`}>
-                              → {u.linkedTo}
-                            </span>
-                          )}
-                          {u.links?.map(link => (
-                            <span key={link} className="authority-user-flag" title="本账户已绑定的平台身份：其请求都按本账户权限处理；点 × 解绑还原">
-                              ⇄ {link}
-                              <button className="authority-unlink-btn" title="解绑"
-                                onClick={() => {
-                                  const idx = link.indexOf(':');
-                                  unlinkIdentity(link.slice(0, idx), link.slice(idx + 1));
-                                }}>×</button>
-                            </span>
-                          ))}
                         </span>
                         <span className="authority-actions">
                           <button className="btn btn-sm" title="设置该用户的授予 / 拒绝能力（委托）"

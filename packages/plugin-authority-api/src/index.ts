@@ -265,12 +265,6 @@ export interface AuthorityUserEntry {
   deny?: string[];
   /** 委托父身份键（如 "webui:admin"；owner 直接委托或顶层则空） */
   grantedBy?: string;
-  /** 是否存在密码凭据（凭据本身永不返回） */
-  hasPassword?: boolean;
-  /** 本账户绑定的平台身份键（如 "onebot:12345"；仅主账户有） */
-  links?: string[];
-  /** 本身份被绑定到的主账户键（如 "webui:alice"；仅被绑平台身份有） */
-  linkedTo?: string;
 }
 
 // ============================================================
@@ -297,7 +291,7 @@ export interface AuthorityService {
    */
   setUserCapabilities(granter: UserIdentity | null, target: UserIdentity, caps: UserCapabilityOverrides): void;
 
-  /** 删除用户记录（能力委托/密码一并清除；其下层用户的 grantedBy 链需调用方另行处理或保留） */
+  /** 删除用户记录（能力委托一并清除；其下层用户的 grantedBy 链需调用方另行处理或保留） */
   removeUser(platform: string, userId: string): void;
 
   /** 列出某 granter 直接委托的下层用户（委托树展开用；owner 传 null 列顶层非 owner 用户） */
@@ -309,22 +303,6 @@ export interface AuthorityService {
   listTemporaryGrants(): TemporaryGrant[];
   revokeTemporaryGrant(id: string): boolean;
   setConfirmHandler(platform: string, handler: AccessConfirmHandler): void;
-
-  // ── 密码（登录凭据，PBKDF2-SHA256）──
-  /** 设置/更新账户密码。WebUI 账户为 platform='webui' + userId=用户名。只拒空密码，策略由调用方管。 */
-  setPassword(platform: string, userId: string, password: string): Promise<void>;
-  /** 校验密码；无凭据或不匹配均 false（恒定时间比较） */
-  verifyPassword(platform: string, userId: string, password: string): Promise<boolean>;
-  /** 该身份是否存在密码凭据 */
-  hasPassword(platform: string, userId: string): boolean;
-
-  // ── 跨平台身份绑定（运行时零合并 + 绑时一次性合并）──
-  /** 生成跨平台绑定码（一次性、约 5 分钟有效；同账户重生成作废旧码）。发起者须为 webui 主账户。 */
-  createBindCode(platform: string, userId: string): { code: string; expiresAt: number };
-  /** 消费绑定码：把 identity（外部平台身份，拒绝 webui/cli）绑定到码的发起账户。失败抛 Error。 */
-  consumeBindCode(code: string, identity: UserIdentity): UserIdentity;
-  /** 解绑平台身份（按被绑身份键）；返回是否存在该绑定。 */
-  unlinkIdentity(platform: string, userId: string): boolean;
 
   save(): void;
   listUsers(): AuthorityUserEntry[];
