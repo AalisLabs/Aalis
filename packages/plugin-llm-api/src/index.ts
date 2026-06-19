@@ -80,10 +80,10 @@ export interface ChatModelRequest {
  *
  * 一个 LLM provider 插件实例（如 plugin-openai）会按其 listModels() 结果
  * 在 apply() 期间为**每个 model 单独**调用 `ctx.provide('llm', modelHandle, {...})`，
- * capabilities 数组诚实地反映该 model 的能力。
+ * model handle 上的 capabilities 字段诚实地反映该 model 的能力。
  *
  * 调用约定：
- *   const handle = ctx.getService<LLMModel>('llm', ['vision']);
+ *   const handle = resolveLLMModel(ctx, ref, ['vision'])?.instance;
  *   await handle?.chat({ messages });   // entry 已知道是哪个 model
  *
  * 选择 default model：通过 ServiceContainer.setPreference('llm', preferredContextId)
@@ -173,8 +173,6 @@ declare module '@aalis/core' {
 export interface LLMModelEntry {
   instance: LLMModel;
   contextId: string;
-  /** entry 上声明的能力集（核心层为 string[]，LLM 域内取值范围为 LLMCapability）。 */
-  capabilities: string[];
   label?: string;
 }
 

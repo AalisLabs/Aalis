@@ -848,7 +848,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       capabilities,
     );
     ctx.provide('llm', handle, {
-      capabilities,
       label: `${baseLabel} / ${modelId}${enableThinking ? ' (thinking)' : ''}`,
       entryId: `${ctx.id}/${modelId}`,
     });

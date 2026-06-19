@@ -15,7 +15,6 @@ import type {
   StorageWatchEvent,
   StorageWatchListener,
 } from '@aalis/plugin-storage-api';
-import { StorageCapabilities, type StorageCapability } from '@aalis/plugin-storage-api';
 
 export const name = '@aalis/plugin-storage-local';
 export const displayName = '本地存储根（命名 + 路径解析）';
@@ -247,9 +246,9 @@ interface CheckpointLike {
 /**
  * Per-root 存储服务：每个 root 一个实例 + 一个 ServiceContainer entry。
  *
- * 与 service-granularity 整体方向对齐：每个 entry 暴露的 capabilities 反映该 root 的
- * 真实权限（readable/writable/deletable），消费者用 `ctx.getAllServices('storage', [cap])`
- * 即可静态过滤；按 URI 调度交给 `createStorageGateway(ctx)` helper。
+ * 与 service-granularity 整体方向对齐：每个 root 的真实权限由 StorageRootInfo 的
+ * readable/writable/deletable 位携带；storage-api 网关按位路由，按 URI 调度交给
+ * `createStorageGateway(ctx)` helper。
  *
  * 历史上 LocalStorageService 是单实例 + 内部 root 表，依赖 plugin-storage-router 做
  * URI→root 分发。删除 router 后改为这种自包含设计，单文件即可理解整条数据流。
@@ -669,28 +668,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
 
   // service-granularity：每个 root 单独注册一个 entry。
-  // - capabilities 反映该 root 的真实权限（不撒谎、不堆砌全集）；
   // - entryId = `${ctx.id}/${root.name}`，便于在 ServiceContainer 中按根定位、避免跨实例同名冲突；
+  // - 权限由 root 的 readable/writable/deletable 位携带（StorageRootInfo），storage-api 网关按位路由；
   // - URI 路由由 createStorageGateway(ctx) helper 在调用方完成，不再有 facade。
   for (const root of roots) {
-    const caps: StorageCapability[] = [];
-    if (root.readable)
-      caps.push(
-        StorageCapabilities.List,
-        StorageCapabilities.Read,
-        StorageCapabilities.LocalPath,
-        StorageCapabilities.Watch,
-      );
-    if (root.writable) caps.push(StorageCapabilities.Write);
-    if (root.deletable) caps.push(StorageCapabilities.Delete);
-    if (caps.length === 0) {
+    if (!root.readable && !root.writable && !root.deletable) {
       logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
       continue;
     }
     const scoped = new ScopedStorageService(root, logger, ctx);
     ctx.provide('storage', scoped, {
       entryId: `${ctx.id}/${root.name}`,
-      capabilities: caps,
       label: root.label || `本地根 ${root.name}`,
     });
   }

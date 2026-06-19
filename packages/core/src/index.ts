@@ -4,8 +4,7 @@
 // core 仅提供：
 //   - 运行时基础设施（App / Context / EventBus / ServiceContainer / HookRegistry / ConfigManager / Logger / PluginManager 等）
 //   - 通用 IoC 数据契约（Schema / AalisEvents / Middleware / Dependency 声明 等）
-//   - 三个扩展点（ServiceCapabilityMap / AalisEvents / HookContextMap）+ PluginModule augmentation
-//   - 服务能力声明框架（ServiceCapabilityMap + Probe）
+//   - 扩展点（AalisEvents / HookContextMap / ServiceTypeMap）+ PluginModule augmentation
 //
 // 所有业务/领域类型均由各 @aalis/plugin-*-api 包导出：
 //   - Message / ContentSegment           → @aalis/plugin-agent-api
@@ -37,8 +36,6 @@ export { ScopedServiceContainer, ServiceContainer, ServicePriority } from './ser
 export type {
   AalisEvents,
   AppService,
-  CapabilityList,
-  CapabilityOf,
   ConfigSchema,
   DependencyDeclaration,
   DisposableService,
@@ -53,10 +50,7 @@ export type {
   SchemaFieldType,
   SchemaFieldTypes,
   SchemaGroup,
-  ServiceCapabilityMap,
   ServiceDependency,
   ServiceOf,
   ServiceTypeMap,
 } from './types/index.js';
-// ----- 服务能力声明框架 -----
-export { probeCapability, registerCapabilityProbe } from './types/index.js';
