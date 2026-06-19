@@ -175,16 +175,16 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     await next();
   });
 
-  // agent:turn:after：回合结束（endTurn 是幂等的：没 current 则直接 return）
-  ctx.middleware('agent:turn:after', async (_data, next) => {
+  // agent:turn:after：回合结束（按 sessionId 提交该会话回合；无对应回合则直接 return）
+  ctx.middleware('agent:turn:after', async (data, next) => {
     await next();
-    await service.endTurn();
+    await service.endTurn(data.sessionId);
   });
 
-  // 监听 exec 工具调用，给当前 turn 打 execUsed 标记（UI 显示 "部分未保护"）
+  // 监听 exec 工具调用，给该会话当前 turn 打 execUsed 标记（UI 显示 "部分未保护"）
   ctx.middleware('agent:tool:before', async (data, next) => {
     if (data.name === 'exec' || data.name === 'shell') {
-      service.markExecUsed();
+      service.markExecUsed(data.toolCallContext.sessionId);
     }
     await next();
   });
@@ -231,6 +231,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       await next();
     },
   );
+
+  // 进程退出前提交所有未结束的活跃回合，避免崩溃/重载时丢失（per-session 化后不再有"任意新回合 flush 旧回合"的兜底）
+  ctx.onDispose(() => service.flushAll());
 
   logger.info(
     `checkpoint 服务就绪 rootUri=${config.rootUri} maxFileSize=${config.maxFileSize} scopes=${config.scopes.join('|') || '<空>'}`,

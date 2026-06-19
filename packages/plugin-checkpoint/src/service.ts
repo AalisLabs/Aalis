@@ -100,11 +100,11 @@ interface ServiceConfig {
  * 实现
  */
 export class CheckpointServiceImpl implements CheckpointService {
-  private current: TurnManifest | null = null;
-  /** 当前回合内已快照过的 uri 集合（用于去重） */
-  private snapshotted: Set<string> = new Set();
-  /** 文件计数器，用于命名 blob 文件 */
-  private blobIndex = 0;
+  /**
+   * 每会话独立的活跃回合（跨会话并发互不串台）。
+   * 每项含：清单 + 本回合已快照 uri 集合(去重) + blob 文件计数器。
+   */
+  private turns = new Map<string, { manifest: TurnManifest; snapshotted: Set<string>; blobIndex: number }>();
 
   constructor(
     private readonly cfg: ServiceConfig,
@@ -115,67 +115,76 @@ export class CheckpointServiceImpl implements CheckpointService {
   // ──────────── 生命周期 ────────────
 
   beginTurn(sessionId: string): string {
-    // 如果上一回合没有正常结束，先把它 commit 掉避免遗失
-    if (this.current) {
-      this.endTurn().catch(err => this.logger.warn(`finalize 旧回合失败: ${(err as Error).message}`));
+    // 同会话已有未结束回合（异常未 endTurn / abort 重开）→ 先提交它避免遗失（仅影响本会话，不碰其它）
+    const prev = this.turns.get(sessionId);
+    if (prev) {
+      this.turns.delete(sessionId);
+      this.commitTurn(prev).catch(err => this.logger.warn(`finalize 旧回合失败: ${(err as Error).message}`));
     }
     const turnId = crypto.randomUUID();
-    this.current = {
-      turnId,
-      sessionId,
-      startedAt: Date.now(),
-      files: [],
-    };
-    this.snapshotted = new Set();
-    this.blobIndex = 0;
+    this.turns.set(sessionId, {
+      manifest: { turnId, sessionId, startedAt: Date.now(), files: [] },
+      snapshotted: new Set(),
+      blobIndex: 0,
+    });
     this.logger.debug(`checkpoint 回合开始 ${sessionId} turn=${turnId}`);
     return turnId;
   }
 
-  async endTurn(): Promise<void> {
-    if (!this.current) return;
-    this.current.endedAt = Date.now();
-    // 在持久化前抓取本轮对话的消息时间戳（供 rollbackWithChat 使用）
-    // 即使本轮无文件改动，只要有消息就会持久化 manifest
+  async endTurn(sessionId: string): Promise<void> {
+    const turn = this.turns.get(sessionId);
+    if (!turn) return;
+    this.turns.delete(sessionId);
+    await this.commitTurn(turn);
+  }
+
+  /** 进程退出前提交所有活跃回合，避免未结束回合丢失。 */
+  async flushAll(): Promise<void> {
+    const active = [...this.turns.values()];
+    this.turns.clear();
+    for (const turn of active) {
+      await this.commitTurn(turn).catch(err => this.logger.warn(`flush 回合失败: ${(err as Error).message}`));
+    }
+  }
+
+  /** 提交一个回合：补 endedAt + 抓消息时间戳 + 落盘 manifest + 触发 GC。无改动则跳过。 */
+  private async commitTurn(turn: {
+    manifest: TurnManifest;
+    snapshotted: Set<string>;
+    blobIndex: number;
+  }): Promise<void> {
+    const m = turn.manifest;
+    m.endedAt = Date.now();
+    // 在持久化前抓取本轮对话的消息时间戳（供 rollbackWithChat 使用）；即使无文件改动，只要有消息就持久化
     if (this._memory && typeof this._memory.getMessagesBySessionRange === 'function') {
       try {
         // 宽松边界 200ms，用于容纳 archiveIncoming/saveMessage 时钟偏差
-        const msgs = await this._memory.getMessagesBySessionRange(
-          this.current.sessionId,
-          this.current.startedAt - 200,
-          this.current.endedAt + 200,
-        );
-        this.current.messageTimestamps = msgs.map(m => m.timestamp).filter((t): t is number => typeof t === 'number');
+        const msgs = await this._memory.getMessagesBySessionRange(m.sessionId, m.startedAt - 200, m.endedAt + 200);
+        m.messageTimestamps = msgs.map(msg => msg.timestamp).filter((t): t is number => typeof t === 'number');
       } catch (err) {
         this.logger.warn(`抓取本轮消息时间戳失败: ${(err as Error).message}`);
       }
     }
-    // 若整个回合没有任何文件改动且没有任何消息时间戳，跳过持久化
-    if (
-      this.current.files.length === 0 &&
-      (!this.current.messageTimestamps || this.current.messageTimestamps.length === 0)
-    ) {
-      this.logger.debug(`checkpoint 回合无改动，跳过 ${this.current.turnId}`);
-      this.current = null;
+    if (m.files.length === 0 && (!m.messageTimestamps || m.messageTimestamps.length === 0)) {
+      this.logger.debug(`checkpoint 回合无改动，跳过 ${m.turnId}`);
       return;
     }
-    const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
-    await this.storage.writeFile(joinUri(turnDir, 'manifest.json'), JSON.stringify(this.current, null, 2));
-    this.logger.info(`checkpoint 回合提交 turn=${this.current.turnId} 文件数=${this.current.files.length}`);
-    this.current = null;
+    const turnDir = this.turnDir(m.sessionId, m.turnId);
+    await this.storage.writeFile(joinUri(turnDir, 'manifest.json'), JSON.stringify(m, null, 2));
+    this.logger.info(`checkpoint 回合提交 turn=${m.turnId} 文件数=${m.files.length}`);
     this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
   }
 
-  /** 标记当前回合调用过 exec，UI 端会提示「部分未保护」 */
-  markExecUsed(): void {
-    if (!this.current) return;
-    (this.current as TurnManifest & { execUsed?: boolean }).execUsed = true;
+  /** 标记某会话当前回合调用过 exec，UI 端会提示「部分未保护」 */
+  markExecUsed(sessionId: string): void {
+    const turn = this.turns.get(sessionId);
+    if (turn) (turn.manifest as TurnManifest & { execUsed?: boolean }).execUsed = true;
   }
 
   // ──────────── beforeMutate ────────────
 
   isActive(): boolean {
-    return this.current !== null;
+    return this.turns.size > 0;
   }
 
   async beforeMutate(
@@ -183,9 +192,11 @@ export class CheckpointServiceImpl implements CheckpointService {
     op: 'write' | 'delete' | 'rename',
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
   ): Promise<void> {
-    if (!this.current) return; // 回合外，忽略
-    if (this.snapshotted.has(uri)) return; // 同回合已快照过
-    this.snapshotted.add(uri);
+    // 跨会话并发：把快照记进所有「本回合尚未对该 uri 快照过」的活跃回合。单回合=常态、零变化；
+    // 并发多回合无法精确判断是哪个 run 改的 → 保守地都备份（宁可冗余、不丢保护）。
+    const targets = [...this.turns.values()].filter(t => !t.snapshotted.has(uri));
+    if (targets.length === 0) return; // 回合外，或都已快照过
+    for (const t of targets) t.snapshotted.add(uri);
 
     let original: { data: Buffer; size: number } | null = null;
     try {
@@ -194,37 +205,34 @@ export class CheckpointServiceImpl implements CheckpointService {
       this.logger.warn(`checkpoint 加载原文件失败 ${uri}: ${(err as Error).message}`);
     }
 
-    // 情况 1：write 且原文件不存在 → 标记为新创建（回滚时需要删除）
-    if (!original && op === 'write') {
-      this.current.files.push({ uri, action: 'write-new' });
-      return;
-    }
-
-    // 情况 2：原文件不存在但是 delete/rename → 不可能，跳过
-    if (!original) return;
-
-    // 情况 3：过大 → 跳过快照但记录为「skipped」
-    if (original.size > this.cfg.maxFileSize) {
-      this.current.files.push({
+    for (const t of targets) {
+      // 情况 1：write 且原文件不存在 → 标记为新创建（回滚时需要删除）；
+      // 情况 2：原文件不存在但是 delete/rename → 不可能，跳过
+      if (!original) {
+        if (op === 'write') t.manifest.files.push({ uri, action: 'write-new' });
+        continue;
+      }
+      // 情况 3：过大 → 跳过快照但记录为「skipped」
+      if (original.size > this.cfg.maxFileSize) {
+        t.manifest.files.push({
+          uri,
+          action: op === 'rename' ? 'rename' : op,
+          originalSize: original.size,
+          skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
+        });
+        continue;
+      }
+      // 情况 4：正常快照（每个活跃回合各存一份 blob 到自己的 turn 目录）
+      const blobName = `${t.blobIndex++}.bin`;
+      const turnDir = this.turnDir(t.manifest.sessionId, t.manifest.turnId);
+      await this.storage.writeFile(joinUri(turnDir, `blobs/${blobName}`), original.data);
+      t.manifest.files.push({
         uri,
         action: op === 'rename' ? 'rename' : op,
         originalSize: original.size,
-        skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
+        blob: blobName,
       });
-      return;
     }
-
-    // 情况 4：正常快照
-    const blobName = `${this.blobIndex++}.bin`;
-    const turnDir = this.turnDir(this.current.sessionId, this.current.turnId);
-    await this.storage.writeFile(joinUri(turnDir, `blobs/${blobName}`), original.data);
-
-    this.current.files.push({
-      uri,
-      action: op === 'rename' ? 'rename' : op,
-      originalSize: original.size,
-      blob: blobName,
-    });
   }
 
   // ──────────── 查询 ────────────
