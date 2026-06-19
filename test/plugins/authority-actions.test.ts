@@ -99,3 +99,22 @@ describe('setVisibilityOverride — owner 调整单操作可见性', () => {
     expect((ctx.config.get('visibilityOverrides') as Record<string, string>)['tool:weather']).toBeUndefined();
   });
 });
+
+describe('setConfirmOverride — owner 调整单操作确认要求', () => {
+  it('写入 session/always/off；非法值删除条目', async () => {
+    const { ctx } = makeCtx();
+    await actions.setConfirmOverride(ctx, { name: 'tool:shell.exec', confirm: 'always' });
+    expect((ctx.config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBe('always');
+    await actions.setConfirmOverride(ctx, { name: 'tool:shell.exec', confirm: 'off' });
+    expect((ctx.config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBe('off');
+    await actions.setConfirmOverride(ctx, { name: 'tool:shell.exec', confirm: 'nonsense' });
+    expect((ctx.config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBeUndefined();
+  });
+
+  it('非 owner 调用被拒', async () => {
+    const { ctx } = makeCtx();
+    await expect(
+      actions.setConfirmOverride(ctx, { name: 'tool:x', confirm: 'always' }, { platform: 'onebot', userId: 'bob' }),
+    ).rejects.toThrow(/只有 owner/);
+  });
+});
