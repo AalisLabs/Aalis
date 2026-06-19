@@ -4,11 +4,10 @@ import {
   capMatches,
   hasCapability,
   matchAnyCap,
-  rejectedDelegations,
 } from '../../packages/plugin-authority/src/capability-model.js';
 
 // ════════════════════════════════════════════════════════════
-// 纯能力委托模型（feat/auth-capability 基石）
+// 能力模型纯函数（单 owner 终态：无委托子集，故无 rejectedDelegations）
 // ════════════════════════════════════════════════════════════
 
 describe('capMatches（能力 glob 匹配）', () => {
@@ -64,33 +63,5 @@ describe('hasCapability（deny > owner > public > granted）', () => {
     expect(hasCapability(base({ isOwner: true, denies: ['tool:shutdown'] }), 'tool:shutdown')).toBe(false);
     expect(hasCapability(base({ publicCaps: ['tool:weather'], denies: ['tool:weather'] }), 'tool:weather')).toBe(false);
     expect(hasCapability(base({ grants: ['tool:x'], denies: ['tool:*'] }), 'tool:x')).toBe(false);
-  });
-});
-
-describe('rejectedDelegations（委托子集约束，单调递减防越权）', () => {
-  const r = (o: Partial<CapabilityResolution>): CapabilityResolution => ({
-    isOwner: false,
-    publicCaps: [],
-    grants: [],
-    denies: [],
-    ...o,
-  });
-
-  it('owner 可委托一切', () => {
-    expect(rejectedDelegations(r({ isOwner: true }), ['tool:shutdown', 'storage:*:write'])).toEqual([]);
-  });
-  it('非 owner 只能委托自己持有的能力', () => {
-    const granter = r({ grants: ['tool:*'], publicCaps: ['command:help'] });
-    expect(rejectedDelegations(granter, ['tool:foo', 'command:help'])).toEqual([]);
-  });
-  it('委托超出自己持有的（放大）被拒', () => {
-    const granter = r({ grants: ['tool:foo'] }); // 只持有具体 tool:foo
-    expect(rejectedDelegations(granter, ['tool:*'])).toEqual(['tool:*']); // 不能放大成 tool:*
-    expect(rejectedDelegations(granter, ['storage:data:write'])).toEqual(['storage:data:write']);
-  });
-  it('自己被 deny 的能力不能委托给下层', () => {
-    const granter = r({ grants: ['tool:*'], denies: ['tool:danger'] });
-    expect(rejectedDelegations(granter, ['tool:danger'])).toEqual(['tool:danger']);
-    expect(rejectedDelegations(granter, ['tool:safe'])).toEqual([]);
   });
 });
