@@ -4,7 +4,7 @@
 
 import type { Context, Logger } from '@aalis/core';
 import type { ASRService } from '@aalis/plugin-asr-api';
-import type { ModelRef } from '@aalis/plugin-llm-api';
+import type { LLMModel, ModelRef } from '@aalis/plugin-llm-api';
 import type {
   BuildContextOptions,
   DescribeImageOptions,
@@ -173,7 +173,7 @@ export class MediaServiceImpl implements MediaService {
 
     // audio：经核心 asr 服务（whisper / 云ASR / LLM-as-audio），按核心偏好选 provider
     if (byKind.audio.length > 0 && this.cfg.audio.mode === 'enabled') {
-      const asr = this.ctx.getService<ASRService>('asr', ['audio']);
+      const asr = this.ctx.getService<ASRService>('asr');
       if (asr) {
         for (const i of byKind.audio) {
           try {
@@ -202,7 +202,7 @@ export class MediaServiceImpl implements MediaService {
   ): Promise<string | undefined> {
     if (this.cfg.audio.mode === 'disabled') return undefined;
     // 音频后端=核心 asr 服务（whisper / 云ASR / LLM-as-audio），由核心「偏好>优先级」选 provider
-    const asr = this.ctx.getService<ASRService>('asr', ['audio']);
+    const asr = this.ctx.getService<ASRService>('asr');
     if (!asr) {
       this.logger.debug('无 asr 服务可用');
       return undefined;
@@ -486,9 +486,9 @@ export class MediaServiceImpl implements MediaService {
 
   /** 重新扫描 LLM entries（按 entry id 列表的签名变化决定是否重建）。 */
   private refreshLLMProcessors(): MediaProcessor[] {
-    const all = this.ctx.getAllServices('llm');
+    const all = this.ctx.getAllServices<LLMModel>('llm');
     const sig = all
-      .map(e => `${e.contextId}:${e.capabilities.join(',')}`)
+      .map(e => `${e.contextId}:${e.instance.capabilities.join(',')}`)
       .sort()
       .join('|');
     if (this.llmCache?.signature === sig) return this.llmCache.processors;

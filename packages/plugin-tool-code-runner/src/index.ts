@@ -13,7 +13,8 @@ export const name = '@aalis/plugin-tool-code-runner';
 export const displayName = '代码执行器';
 export const subsystem = 'tools';
 export const inject = {
-  required: [{ service: 'storage', capabilities: ['local-path'] }, 'process'],
+  // storage 仅按名等待；local-path 由 createRunnerConfig 运行时探测 resolveLocalPath 守卫。
+  required: ['storage', 'process'],
   optional: ['code-sandbox'],
 };
 
@@ -157,7 +158,7 @@ function safeEnv(): NodeJS.ProcessEnv {
 }
 
 async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<RunnerConfig> {
-  if (ctx.getAllServices<StorageService>('storage', ['local-path']).length === 0) {
+  if (!ctx.getAllServices<StorageService>('storage').some(e => typeof e.instance.resolveLocalPath === 'function')) {
     throw new Error('代码执行器需要至少一个支持 local-path 的 storage entry');
   }
   const storage = createStorageGateway(ctx);

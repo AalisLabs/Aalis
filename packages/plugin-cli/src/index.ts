@@ -5,6 +5,7 @@ import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
+import { getPlatformAdapters } from '@aalis/plugin-platform-api';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
@@ -765,7 +766,7 @@ class CliTui {
 
   private getStatusViewLines(): string[] {
     const services = this.ctx.getServiceNames();
-    const platform = this.ctx.getService<PlatformAdapter>('platform', ['cli']);
+    const platform = getPlatformAdapters(this.ctx).find(a => a.platform === 'cli');
     const connections = platform?.getConnections?.() ?? [];
     const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? '-';
     const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
