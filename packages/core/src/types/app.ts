@@ -65,13 +65,6 @@ export interface PluginManagerService {
   removeInstance(instanceId: string): Promise<boolean>;
 }
 
-declare module './capabilities.js' {
-  interface ServiceCapabilityMap {
-    app: 'lifecycle' | 'config';
-    plugins: 'plugin-mgmt';
-  }
-}
-
 declare module './services.js' {
   interface ServiceTypeMap {
     app: AppService;

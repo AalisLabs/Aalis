@@ -13,7 +13,6 @@
 
 export interface ServiceDependency {
   service: string;
-  capabilities?: string[];
 }
 
 export type DependencyDeclaration = string | ServiceDependency;
@@ -106,7 +105,7 @@ export interface AalisEvents {
   // 已通过 declaration merging 由 @aalis/plugin-message-api 注入（cleanup-8）。
   // 业务工具事件（tool:execute）已通过 declaration merging 由 @aalis/plugin-tools-api 注入（cleanup-8）。
   // gateway:phase:done 由 @aalis/plugin-gateway-api 注入（cleanup-7）。
-  'service:registered': [name: string, capabilities: string[]];
+  'service:registered': [name: string];
   'service:unregistered': [name: string];
   /**
    * 某服务的偏好 provider 发生切换（preferService / unpreferService）。

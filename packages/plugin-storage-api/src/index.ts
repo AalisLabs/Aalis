@@ -164,7 +164,6 @@ export interface StorageRootConflict {
 export interface StorageProviderEntry {
   instance: StorageService;
   contextId: string;
-  capabilities: string[];
   label?: string;
 }
 

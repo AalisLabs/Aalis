@@ -115,15 +115,6 @@ export function ServiceCard({
         </div>
       )}
 
-      {active && active.capabilities.length > 0 && (
-        <div className="service-slot-caps">
-          {active.capabilities.map(c => (
-            <span className="tool-chip" key={c}>
-              {c}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

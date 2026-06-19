@@ -35,16 +35,11 @@ export function computeTargetState(entry: PluginEntry, reason: RecomputeReason, 
     return entry.state;
   }
   if (reason.type === 'shutdown') return 'disposed';
-  const reqUnmet = entry.requiredDeps.some(
-    d => !rootCtx.hasService(d.service, d.capabilities.length > 0 ? d.capabilities : undefined),
-  );
+  const reqUnmet = entry.requiredDeps.some(d => !rootCtx.hasService(d.service));
   if (reqUnmet) return 'pending';
   if (reason.type === 'service-down' && entry.module.requiresBounceOnDepChange) {
     const optHit = entry.optionalDeps.find(d => d.service === reason.service);
-    if (
-      optHit &&
-      !rootCtx.hasService(optHit.service, optHit.capabilities.length > 0 ? optHit.capabilities : undefined)
-    ) {
+    if (optHit && !rootCtx.hasService(optHit.service)) {
       return 'pending';
     }
   }
@@ -62,10 +57,8 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   if (entry.state !== 'pending') return;
 
   for (const dep of entry.requiredDeps) {
-    if (!rootCtx.hasService(dep.service, dep.capabilities.length > 0 ? dep.capabilities : undefined)) {
-      logger.debug(
-        `插件 "${entry.instanceId}" 等待服务: ${dep.service}${dep.capabilities.length ? ` [${dep.capabilities.join(', ')}]` : ''}`,
-      );
+    if (!rootCtx.hasService(dep.service)) {
+      logger.debug(`插件 "${entry.instanceId}" 等待服务: ${dep.service}`);
       return;
     }
   }

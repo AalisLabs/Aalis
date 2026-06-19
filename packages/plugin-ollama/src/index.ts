@@ -1077,7 +1077,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       capabilities,
     );
     const dispose = ctx.provide('llm', handle, {
-      capabilities,
       label: `${baseLabel} / ${modelId}`,
       entryId: `${ctx.id}/${modelId}`,
     });
