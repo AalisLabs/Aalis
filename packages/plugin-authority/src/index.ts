@@ -2,8 +2,8 @@ import type { AppService, Context, PluginModule } from '@aalis/core';
 import type {
   AuthorityService,
   CapabilityConfirm,
-  CapabilityVisibility,
   ExecutionGuardContext,
+  TierName,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
@@ -14,6 +14,7 @@ import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import { AuthorityManager } from './authority-manager.js';
+import { TIER_LABEL } from './tier-model.js';
 
 export type { AuthorityService } from '@aalis/plugin-authority-api';
 export { AuthorityManager } from './authority-manager.js';
@@ -48,9 +49,6 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
     const capability = `${g.type}:${g.name}`;
-    // 可见性覆盖：`type:name` 优先，兼容历史裸操作名键。
-    const visOv = (ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>;
-    const visibility = visOv[capability] ?? visOv[g.name] ?? g.visibility;
     // 确认覆盖：'off' 强制关确认；否则覆盖值优先，回退插件声明。
     const confOv = (ctx.config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
     const cOv = confOv[capability];
@@ -67,8 +65,13 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       userId: g.userId,
     } as const;
 
-    // ── 轴 A · 授权：authorize 永远先评估（含系统源）——防"桥接/系统调用"绕过能力检查提权 ──
-    const denied = authority.authorize(identity, { capability, visibility, resourceCapabilities: g.permissions });
+    // ── 轴 A · 授权：档位裁决（minTier 由 risk/visibility/tierOverrides 在 manager 内派生）——系统源也评估，防绕过提权 ──
+    const denied = authority.authorize(identity, {
+      capability,
+      visibility: g.visibility,
+      risk: g.risk,
+      resourceCapabilities: g.permissions,
+    });
     if (denied) {
       // 受限被拒：系统/受信源无人确认，直接拒；否则走交互授予（白名单/会话授予/回调）。
       // 必须带上 confirm —— 否则 confirm='always' 的操作在此路径被降级为可白名单/会话记忆。
@@ -103,19 +106,17 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
   // ===== 权限指令 =====
 
-  // /authority [target] — 查看自己或指定用户的能力
-  cmds.command('authority [target:string]', '查看自己或指定用户的能力授予').action(async (argv, target) => {
+  // /authority [target] — 查看自己或指定用户的档位
+  cmds.command('authority [target:string]', '查看自己或指定用户的权限档位').action(async (argv, target) => {
     const describe = (platform: string, userId: string | undefined, self: boolean): string => {
       const isOwner = authority.isOwner(platform, userId);
       const who = self ? '您' : `${platform}:${userId}`;
-      const lines = [`${who}${isOwner ? '（owner，拥有全部能力）' : ''}`];
+      if (isOwner) return `${who}（owner，拥有全部权限）`;
       const entry = userId
         ? authority.listUsers().find(u => u.platform === platform && u.userId === userId)
         : undefined;
-      if (entry?.grant?.length) lines.push(`授予能力: ${entry.grant.join(', ')}`);
-      if (entry?.deny?.length) lines.push(`禁用能力: ${entry.deny.join(', ')}`);
-      if (!isOwner && !entry?.grant?.length) lines.push('（默认拥有全部 public 能力）');
-      return lines.join('\n');
+      const tier = entry?.tier ?? 'visitor';
+      return `${who} 档位: ${TIER_LABEL[tier]}（${tier}）`;
     };
     const t = target as string | undefined;
     if (t) {
@@ -126,41 +127,33 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     return describe(argv.session.platform, argv.session.userId, true);
   });
 
-  // /grant <target> <capability> — owner 给用户授予一个能力
+  // /tier <target> <档名> — owner 给外部身份设档（封禁/访客/朋友/信任）。权限管理仅 owner 可达（防自授）。
+  const TIER_BY_NAME: Record<string, TierName> = {
+    封禁: 'banned',
+    访客: 'visitor',
+    朋友: 'friend',
+    信任: 'trusted',
+    banned: 'banned',
+    visitor: 'visitor',
+    friend: 'friend',
+    trusted: 'trusted',
+  };
   cmds
-    .command('grant <target:string> <capability:string>', '授予用户一个能力', { visibility: 'restricted' })
-    .example('/grant onebot:12345 tool:weather')
-    .action(async (argv, target, capability) => editCaps(argv, target, capability, 'grant'));
-
-  // /deny <target> <capability> — owner 禁用用户一个能力
-  cmds
-    .command('deny <target:string> <capability:string>', '禁用用户一个能力', { visibility: 'restricted' })
-    .example('/deny onebot:12345 tool:shell.exec')
-    .action(async (argv, target, capability) => editCaps(argv, target, capability, 'deny'));
-
-  /** /grant、/deny 共用：往目标用户的 grant/deny 集追加一条能力。权限管理仅 owner 可达。 */
-  function editCaps(
-    argv: { session: { platform: string; userId?: string } },
-    target: unknown,
-    capability: unknown,
-    field: 'grant' | 'deny',
-  ): string {
-    if (!authority.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
-    const t = String(target);
-    const cap = String(capability).trim();
-    const sep = t.indexOf(':');
-    if (sep < 1) return '目标格式: <platform:userId>';
-    if (!cap) return '能力不能为空';
-    const targetId: UserIdentity = { platform: t.slice(0, sep), userId: t.slice(sep + 1) };
-    const cur = authority.listUsers().find(u => u.platform === targetId.platform && u.userId === targetId.userId);
-    const next = [...new Set([...(cur?.[field] ?? []), cap])];
-    authority.setUserCapabilities(targetId, {
-      grant: field === 'grant' ? next : cur?.grant,
-      deny: field === 'deny' ? next : cur?.deny,
+    .command('tier <target:string> <tier:string>', '设置用户权限档位（封禁/访客/朋友/信任）', {
+      visibility: 'restricted',
+    })
+    .example('/tier onebot:12345 朋友')
+    .action(async (argv, target, tier) => {
+      if (!authority.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
+      const t = String(target);
+      const sep = t.indexOf(':');
+      if (sep < 1) return '目标格式: <platform:userId>';
+      const tierName = TIER_BY_NAME[String(tier).trim()];
+      if (!tierName) return '档位只能是：封禁 / 访客 / 朋友 / 信任';
+      authority.setUserTier({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, tierName);
+      authority.save();
+      return `已设 ${t} 档位: ${TIER_LABEL[tierName]}`;
     });
-    authority.save();
-    return `已${field === 'grant' ? '授予' : '禁用'} ${t}: ${cap}`;
-  }
 }
 
 // ===== WebUI 操作处理器（最小新模型集；委托树/图 Phase 4 充实）=====
@@ -196,7 +189,7 @@ export const actions: PluginModule['actions'] = {
       platforms,
       restrictedCapabilities: ctx.config.get('restrictedCapabilities') ?? [],
       deniedCapabilities: ctx.config.get('deniedCapabilities') ?? [],
-      visibilityOverrides: ctx.config.get('visibilityOverrides') ?? {},
+      tierOverrides: ctx.config.get('tierOverrides') ?? {},
       confirmOverrides: ctx.config.get('confirmOverrides') ?? {},
       restrictedPolicy: ctx.config.get('restrictedPolicy') ?? {},
       temporaryGrants: auth?.listTemporaryGrants() ?? [],
@@ -223,19 +216,19 @@ export const actions: PluginModule['actions'] = {
     };
   },
 
-  /** 设置用户能力 grant/deny（覆盖式）。权限管理仅 owner 可达（防自我提权）。 */
-  async setUserCapabilities(ctx, args, caller) {
-    const { platform, userId, grant, deny } = args;
+  /** 设置外部身份档位（覆盖式）。权限管理仅 owner 可达（防自我提权）。 */
+  async setUserTier(ctx, args, caller) {
+    const { platform, userId, tier } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');
+    if (tier !== 'banned' && tier !== 'visitor' && tier !== 'friend' && tier !== 'trusted') {
+      throw new Error('tier 只能是 banned/visitor/friend/trusted');
+    }
     const auth = ctx.getService<AuthorityService>('authority');
     if (!auth) throw new Error('Authority 服务不可用');
     if (caller && !auth.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    auth.setUserCapabilities(
-      { platform: platform as string, userId: userId as string },
-      { grant: asStringList(grant, 'grant'), deny: asStringList(deny, 'deny') },
-    );
+    auth.setUserTier({ platform: platform as string, userId: userId as string }, tier as TierName);
     auth.save();
-    return { message: `${platform}:${userId} 的能力已更新` };
+    return { message: `${platform}:${userId} 档位已更新为 ${tier}` };
   },
 
   /** 删除用户记录 */
@@ -287,20 +280,20 @@ export const actions: PluginModule['actions'] = {
     return { ok, message: ok ? '临时委托已撤销' : '不存在或已过期' };
   },
 
-  /** owner 覆盖单条操作的可见性（public ↔ restricted），无需改插件声明。key=能力键 `type:name`。 */
-  async setVisibilityOverride(ctx, args, caller) {
-    const { name, visibility } = args;
+  /** owner 覆盖单条操作的最低档（0 访客/1 朋友/2 信任），无需改插件声明。key=能力键 `type:name`；非法值清除该条。 */
+  async setTierOverride(ctx, args, caller) {
+    const { name, tier } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
     const auth = ctx.getService<AuthorityService>('authority');
     if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
-    const overrides = { ...((ctx.config.get('visibilityOverrides') ?? {}) as Record<string, CapabilityVisibility>) };
-    if (visibility === 'public' || visibility === 'restricted') overrides[name] = visibility;
+    const overrides = { ...((ctx.config.get('tierOverrides') ?? {}) as Record<string, number>) };
+    if (tier === 0 || tier === 1 || tier === 2) overrides[name] = tier;
     else delete overrides[name];
-    ctx.config.set('visibilityOverrides', overrides);
+    ctx.config.set('tierOverrides', overrides);
     app.saveConfig();
-    return { message: `操作 ${name} 可见性已更新` };
+    return { message: `操作 ${name} 最低档已更新` };
   },
 
   /** owner 覆盖单条操作的确认要求（session/always/off）。key=能力键 `type:name`；非法值清除该条。 */

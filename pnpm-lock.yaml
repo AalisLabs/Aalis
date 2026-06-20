@@ -2052,6 +2052,9 @@ importers:
 
   packages/plugin-webui-client:
     dependencies:
+      '@aalis/plugin-authority-api':
+        specifier: workspace:*
+        version: link:../plugin-authority-api
       '@aalis/util-text-normalize':
         specifier: workspace:*
         version: link:../util-text-normalize

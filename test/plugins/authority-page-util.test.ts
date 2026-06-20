@@ -1,17 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   capKey,
-  detectPreset,
   effectiveConfirm,
-  effectiveVisibility,
+  effectiveMinTier,
   groupByPlugin,
-  groupVisibility,
+  groupMinTier,
   type Operation,
-  presetToCaps,
 } from '../../packages/plugin-webui-client/src/pages/authority-page-util.js';
 
 // ════════════════════════════════════════════════════════════
-// 权限页纯逻辑：分组 / 生效策略 / 预设互转（安全相关，不丢不串能力）
+// 权限页纯逻辑（档位）：分组 / 生效最低档 / 生效确认（override > risk > visibility 兜底）
 // ════════════════════════════════════════════════════════════
 
 const op = (over: Partial<Operation>): Operation => ({
@@ -21,6 +19,7 @@ const op = (over: Partial<Operation>): Operation => ({
   displayName: over.displayName ?? over.name ?? 'x',
   pluginName: over.pluginName ?? 'p',
   visibility: over.visibility ?? 'public',
+  risk: over.risk,
   confirm: over.confirm,
 });
 
@@ -40,37 +39,32 @@ describe('capKey / groupByPlugin', () => {
   });
 });
 
-describe('effectiveVisibility / effectiveConfirm（override 优先）', () => {
-  it('visibility：override(type:name) 优先，回退默认', () => {
-    const o = op({ name: 'weather', type: 'tool', visibility: 'public' });
-    expect(effectiveVisibility(o, {})).toBe('public');
-    expect(effectiveVisibility(o, { 'tool:weather': 'restricted' })).toBe('restricted');
+describe('effectiveMinTier（override > risk > visibility 兜底）', () => {
+  it('risk 派生 safe0/sensitive1/dangerous2', () => {
+    expect(effectiveMinTier(op({ risk: 'safe' }), {})).toBe(0);
+    expect(effectiveMinTier(op({ risk: 'sensitive' }), {})).toBe(1);
+    expect(effectiveMinTier(op({ risk: 'dangerous' }), {})).toBe(2);
   });
-  it("confirm：'off' → 无；override 优先；回退默认", () => {
-    const o = op({ name: 'shell.exec', type: 'tool', confirm: 'session' });
+  it('无 risk → visibility 兜底（public0/restricted2）', () => {
+    expect(effectiveMinTier(op({ name: 'r', visibility: 'restricted' }), {})).toBe(2);
+    expect(effectiveMinTier(op({ name: 'p', visibility: 'public' }), {})).toBe(0);
+  });
+  it('tierOverrides 压过 risk/visibility', () => {
+    expect(effectiveMinTier(op({ name: 'w', risk: 'safe' }), { 'tool:w': 2 })).toBe(2);
+  });
+});
+
+describe('effectiveConfirm / groupMinTier', () => {
+  it("confirm：'off'→无；override 优先；回退默认", () => {
+    const o = op({ name: 'shell.exec', confirm: 'session' });
     expect(effectiveConfirm(o, {})).toBe('session');
     expect(effectiveConfirm(o, { 'tool:shell.exec': 'always' })).toBe('always');
     expect(effectiveConfirm(o, { 'tool:shell.exec': 'off' })).toBeUndefined();
   });
-  it('groupVisibility：全同→该值；混合→mixed', () => {
-    const a = op({ name: 'a' });
-    const b = op({ name: 'b' });
-    expect(groupVisibility([a, b], {})).toBe('public');
-    expect(groupVisibility([a, b], { 'tool:b': 'restricted' })).toBe('mixed');
-  });
-});
-
-describe('预设互转（presetToCaps / detectPreset）', () => {
-  it('封禁=deny *；信任=grant *；普通=空', () => {
-    expect(presetToCaps('banned')).toEqual({ grant: [], deny: ['*'] });
-    expect(presetToCaps('trusted')).toEqual({ grant: ['*'], deny: [] });
-    expect(presetToCaps('normal')).toEqual({ grant: [], deny: [] });
-  });
-  it('detectPreset 反推档位；细调归 custom', () => {
-    expect(detectPreset([], [])).toBe('normal');
-    expect(detectPreset([], ['*'])).toBe('banned');
-    expect(detectPreset(['*'], [])).toBe('trusted');
-    expect(detectPreset(['tool:weather'], [])).toBe('custom');
-    expect(detectPreset(['*'], ['tool:x'])).toBe('custom'); // grant* 但有 deny → 非纯信任
+  it('groupMinTier：全同→该 rank；混合→mixed', () => {
+    const a = op({ name: 'a', risk: 'safe' });
+    const b = op({ name: 'b', risk: 'safe' });
+    expect(groupMinTier([a, b], {})).toBe(0);
+    expect(groupMinTier([a, b], { 'tool:b': 2 })).toBe('mixed');
   });
 });

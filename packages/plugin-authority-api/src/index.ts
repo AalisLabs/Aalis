@@ -41,6 +41,12 @@ export type CapabilityConfirm = 'session' | 'always';
  */
 export type CapabilityRisk = 'safe' | 'sensitive' | 'dangerous';
 
+/**
+ * 用户档位（有序，单 owner 个人 bot 的「好管」权限主轴）：
+ * 封禁 < 访客 < 朋友 < 信任 < owner(∞)。每个外部身份恰好一个档；rank 数值见 plugin-authority/tier-model。
+ */
+export type TierName = 'banned' | 'visitor' | 'friend' | 'trusted';
+
 /** 操作在注册时可声明的能力策略（可见性 / 确认 / 风险糖） */
 export interface CapabilityPolicyDecl {
   visibility?: CapabilityVisibility;
@@ -95,9 +101,11 @@ export interface ExecutionGuardContext {
   name: string;
   /** 操作类型 */
   type: 'command' | 'tool';
-  /** 操作主能力的生效可见性（轴 A；注册时已由 resolveCapabilityPolicy 展开 risk/默认） */
+  /** 操作主能力的生效可见性（轴 A；注册时已由 resolveCapabilityPolicy 展开 risk/默认）。无 risk 时作 minTier 兜底 */
   visibility: CapabilityVisibility;
-  /** 操作的生效确认要求（轴 B，与 visibility 正交、owner 也生效）；缺省=不确认 */
+  /** 操作原始风险声明（透传，供 authority 派生 minTier：safe→访客/sensitive→朋友/dangerous→信任）；缺省回退 visibility */
+  risk?: CapabilityRisk;
+  /** 操作的生效确认要求（轴 B，与 visibility/档位 正交、owner 也生效）；缺省=不确认 */
   confirm?: CapabilityConfirm;
   /** 操作额外触达的资源能力（如 storage:path:...:write）；其可见性由 restrictedCapabilities 决定 */
   permissions?: CapabilityId[];
@@ -133,22 +141,14 @@ export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | nu
  * 调用 authorize 过同一闸。
  */
 export interface AuthorizeRequest {
-  /** 操作主能力（tool:<name> / command:<name> / action:<plugin>:<method>） */
+  /** 操作主能力（tool:<name> / command:<name>） */
   capability: CapabilityId;
-  /** 主能力的默认可见性（操作声明） */
+  /** 主能力的默认可见性（操作声明；无 risk 时作 minTier 兜底） */
   visibility: CapabilityVisibility;
+  /** 操作原始风险（透传，供 minTier 派生；缺省回退 visibility） */
+  risk?: CapabilityRisk;
   /** 操作额外触达的资源能力（storage:... 等）；可见性由 restrictedCapabilities 配置判定 */
   resourceCapabilities?: CapabilityId[];
-}
-
-/**
- * 用户的能力委托（覆盖式）。glob 模式，按 {@link CapabilityId} 匹配。
- * - grant：授予的 restricted 能力（委托加）。
- * - deny：禁用的能力（委托减，最高优先，连 owner / public 都压过）。
- */
-export interface UserCapabilityOverrides {
-  grant?: string[];
-  deny?: string[];
 }
 
 // ============================================================
@@ -256,12 +256,12 @@ export interface UserIdentity {
 export interface AuthorityUserEntry {
   platform: string;
   userId: string;
-  /** owner = `*`，拥有一切 */
+  /** owner = ∞，拥有一切 */
   isOwner: boolean;
-  /** 被授予的 restricted 能力（委托加） */
-  grant?: string[];
-  /** 被禁用的能力（owner 减） */
-  deny?: string[];
+  /** 用户档位（owner 不入表，此处为非 owner 外部身份的登记档；缺省 visitor） */
+  tier: TierName;
+  /** 可选备注（这人是谁） */
+  note?: string;
 }
 
 // ============================================================
@@ -273,21 +273,20 @@ export interface AuthorityService {
   isOwner(platform: string, userId?: string): boolean;
 
   /**
-   * 能力统一闸 —— 任何 surface 的敏感操作在边界调用本方法。
-   * 逐能力裁决 deny > owner(*) > public > granted；全部通过才放行。
-   * 主能力按 request.visibility 判可见性；资源能力按 config.restrictedCapabilities 判。
+   * 统一权限闸 —— 任何 surface 的敏感操作在边界调用本方法。
+   * 档位裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户档 rank >= 操作 minTier；
+   * minTier 由 request.risk/visibility/config.tierOverrides 派生；资源能力按 restrictedCapabilities 系统层 fail-closed。
    * @returns null 放行；string 为拒绝原因（可直接展示）
    */
   authorize(identity: UserIdentity | { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
 
   /**
-   * 设置 target 用户的能力 grant/deny（覆盖式；两表皆空则清记录）。
-   * 单 owner 终态：权限只由 owner 管理，无委托树/子集约束。调用方（WebUI action / CLI 指令）
-   * 自行确保仅 owner 可达（见 plugin-authority 内的 owner-only 校验）。
+   * 设置 target 外部身份的档位（覆盖式；tier='visitor' 等默认值则清记录）。
+   * 单 owner 终态：权限只由 owner 管理。调用方（WebUI action / CLI 指令）自行确保仅 owner 可达（防自授）。
    */
-  setUserCapabilities(target: UserIdentity, caps: UserCapabilityOverrides): void;
+  setUserTier(target: UserIdentity, tier: TierName): void;
 
-  /** 删除用户记录（能力授予一并清除） */
+  /** 删除用户记录（档位一并清除，回退默认 visitor） */
   removeUser(platform: string, userId: string): void;
 
   // ── 临时能力委托（restricted 能力的时限/限次授予）──
@@ -319,16 +318,20 @@ declare module '@aalis/core' {
     /** 全局能力封禁（glob）：命中即拒，连 owner 都压过（系统级硬禁用，慎用）。 */
     deniedCapabilities?: string[];
     /**
-     * 管理员对单条操作的可见性覆盖（能力键 `type:name`，如 `tool:weather` → public/restricted）。
-     * 让 owner 临时把某操作放开/收紧，无需改插件声明。
-     * （历史上曾用裸操作名作键；guard 读取时兼容 `type:name` 优先、裸名回退。）
+     * 管理员对单条操作的最低档覆盖（能力键 `type:name`，如 `tool:weather` → 0|1|2）。
+     * 让 owner 调某操作的门槛档，无需改插件声明；优先于 risk/visibility 派生。取代旧 visibilityOverrides。
      */
-    visibilityOverrides?: Record<string, CapabilityVisibility>;
+    tierOverrides?: Record<string, number>;
     /**
      * 管理员对单条操作的确认要求覆盖（能力键 `type:name` → session/always/off）。
-     * 'off' 强制关闭确认（即便插件声明了 confirm，便于自动化）；与 visibility 正交，owner 也吃。
+     * 'off' 强制关闭确认（即便插件声明了 confirm，便于自动化）；与档位正交，owner 也吃。
      */
     confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
+    /**
+     * OneBot 群角色 → 档位（可选；群 owner/admin 在群内得此档）。v1 仅声明占位、暂不接线
+     * （需把 sender.role 透传进守卫），默认 unset=关。
+     */
+    onebot?: { groupRoleTier?: number };
     /**
      * 受限能力的临时放行策略（替代旧 dangerousPolicy）：
      * allow 列出自动放行的 restricted 能力/操作名 glob（['*'] 全放）；duration 放行时长（秒，0=永久）。

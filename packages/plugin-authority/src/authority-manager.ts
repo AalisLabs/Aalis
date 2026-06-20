@@ -8,19 +8,20 @@ import type {
   AuthorizeRequest,
   CapabilityId,
   TemporaryGrant,
-  UserCapabilityOverrides,
+  TierName,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { hasCapability, matchAnyCap } from './capability-model.js';
+import { matchAnyCap, OWNER_RANK, rankOf, resolveAccess, resolveMinTier, TIERS, tierName } from './tier-model.js';
 import { UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
-// AuthorityManager —— 纯能力委托模型的 AuthorityService 实现（策略层）
+// AuthorityManager —— 档位单轴的 AuthorityService 实现（策略层）
 //
-// owner=`*`；用户有效能力 = (public ∪ 授予的 restricted) − denied；
-// 委托子集约束（非 owner 只能授予自己持有的）；restricted 能力的临时委托。
-// 数据层（users.json v3 能力委托存储）委托给 UserStore；纯判定见 capability-model。
+// owner=∞；每个外部身份一个登记档（缺省 visitor）；操作一个 minTier（risk/visibility/tierOverrides 派生）；
+// 裁决 deniedCapabilities(全局硬禁) > owner > rank>=minTier（纯函数在 tier-model）。
+// 资源能力(storage:/system:) 走系统层 fail-closed；confirm 轴 + 临时放行正交保留。
+// 数据层（users.json v4 档位存储）委托给 UserStore。
 // ════════════════════════════════════════════════════════════
 
 /**
@@ -40,15 +41,6 @@ const BUILTIN_RESTRICTED: readonly string[] = [
   'storage:aalis:write',
   'storage:aalis:delete',
 ];
-
-/** 某用户的能力解析 */
-interface Resolution {
-  isOwner: boolean;
-  /** 授予的 restricted 能力 */
-  grants: string[];
-  /** 禁用能力 */
-  denies: string[];
-}
 
 export class AuthorityManager implements AuthorityService {
   private store: UserStore;
@@ -78,67 +70,60 @@ export class AuthorityManager implements AuthorityService {
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
   }
 
-  /** 解析用户能力来源：读自身记录的 grant/deny */
-  private resolve(platform: string, userId?: string): Resolution {
-    const isOwner = this.isOwner(platform, userId);
+  /** 触发者有效档（owner→∞；登记档；无记录→访客）。v1 无访问器（onebot 群角色待 sender.role 透传后接线）。 */
+  private rank(platform: string, userId?: string): number {
+    if (this.isOwner(platform, userId)) return OWNER_RANK;
     const key = userId ? `${platform}:${userId}` : undefined;
-    const record = key ? this.store.get(key) : undefined;
-    return { isOwner, grants: record?.caps?.grant ?? [], denies: record?.caps?.deny ?? [] };
+    const tier = (key ? this.store.get(key)?.tier : undefined) ?? 'visitor';
+    return rankOf(tier);
   }
 
-  /** 一条能力是否为 restricted（命中内置保护 + config.restrictedCapabilities） */
-  private isRestrictedCap(cap: CapabilityId): boolean {
-    if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return true;
+  /** 资源能力是否受限（命中内置保护 + config.restrictedCapabilities）→ 受限资源 minTier=信任，否则访客。 */
+  private resourceMinTier(cap: CapabilityId): number {
+    if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return TIERS.trusted;
     const extra = this.config.get('restrictedCapabilities') ?? [];
-    return matchAnyCap(extra, cap);
+    return matchAnyCap(extra, cap) ? TIERS.trusted : TIERS.visitor;
   }
 
-  // ── 能力统一闸（静态判定；临时委托在 requestAccess）──────────
+  // ── 统一权限闸（档位静态判定；临时放行/确认在 requestAccess）──────────
   authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null {
-    const res = this.resolve(identity.platform, identity.userId);
-    const denied = this.config.get('deniedCapabilities') ?? [];
+    const rank = this.rank(identity.platform, identity.userId);
+    const isOwner = this.isOwner(identity.platform, identity.userId);
+    const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
+    const tierOverrides = (this.config.get('tierOverrides') ?? {}) as Record<string, number>;
 
-    const check = (cap: CapabilityId, restricted: boolean): string | null => {
-      // 全局硬禁用：连 owner 都压过
-      if (matchAnyCap(denied, cap)) return `已被系统禁用: ${cap}`;
-      // 复用纯模型：deny > owner > (public→放行) > granted
-      const ok = hasCapability(
-        { isOwner: res.isOwner, publicCaps: restricted ? [] : [cap], grants: res.grants, denies: res.denies },
-        cap,
-      );
-      if (ok) return null;
-      return restricted ? `权限不足: "${cap}" 需授予后使用` : `已被禁止: ${cap}`;
-    };
-
-    // 主能力：可见性由调用方传入（已应用 visibilityOverrides）
-    const primary = check(request.capability, request.visibility === 'restricted');
-    if (primary) return primary;
-    // 资源能力：受限性由 restrictedCapabilities 判定
+    // 主能力：minTier 由 tierOverrides > risk > visibility 派生
+    const minTier = resolveMinTier(request.capability, {
+      tierOverrides,
+      risk: request.risk,
+      visibility: request.visibility,
+    });
+    if (!resolveAccess({ rank, minTier, isOwner, denied, capability: request.capability })) {
+      if (matchAnyCap(denied, request.capability)) return `已被系统禁用: ${request.capability}`;
+      return `权限不足: "${request.capability}" 需「${tierName(minTier)}」档（当前不足）`;
+    }
+    // 资源能力：系统层 fail-closed（受限资源需信任档/owner）
     for (const cap of request.resourceCapabilities ?? []) {
-      const rejection = check(cap, this.isRestrictedCap(cap));
-      if (rejection) return rejection;
+      const rMin = this.resourceMinTier(cap);
+      if (!resolveAccess({ rank, minTier: rMin, isOwner, denied, capability: cap })) {
+        if (matchAnyCap(denied, cap)) return `已被系统禁用: ${cap}`;
+        return `权限不足: "${cap}" 需「${tierName(rMin)}」档`;
+      }
     }
     return null;
   }
 
-  // ── 能力授予（owner 管理；无委托树）────────────────────────
-  setUserCapabilities(target: UserIdentity, caps: UserCapabilityOverrides): void {
-    const normalize = (list?: string[]): string[] | undefined => {
-      const cleaned = [...new Set((list ?? []).map(p => p.trim()).filter(Boolean))];
-      return cleaned.length > 0 ? cleaned : undefined;
-    };
-    const grant = normalize(caps.grant);
-    const deny = normalize(caps.deny);
-
-    // 单 owner 终态：无委托树/子集约束。权限只由 owner 管理（调用方做 owner-only 校验）。
-    // 覆盖式写入；两表皆空则清记录。
+  // ── 档位设置（owner 管理；单轴，无 per-user 特批）──────────
+  setUserTier(target: UserIdentity, tier: TierName): void {
     const key = `${target.platform}:${target.userId}`;
-    if (!grant && !deny) {
+    const existing = this.store.get(key);
+    // visitor 是默认档：无 note 则直接清记录（保持 users.json 精简）
+    if (tier === 'visitor' && !existing?.note) {
       this.store.delete(key);
     } else {
-      this.store.set(key, { caps: { grant, deny } });
+      this.store.set(key, { ...existing, tier });
     }
-    this.logger.debug(`设置能力: ${key} grant=${grant?.length ?? 0} deny=${deny?.length ?? 0}`);
+    this.logger.debug(`设置档位: ${key} → ${tier}`);
   }
 
   removeUser(platform: string, userId: string): void {
@@ -266,8 +251,8 @@ export class AuthorityManager implements AuthorityService {
         platform,
         userId,
         isOwner: this.isOwner(platform, userId),
-        grant: record.caps?.grant,
-        deny: record.caps?.deny,
+        tier: record.tier ?? 'visitor',
+        note: record.note,
       });
     }
     return result;
