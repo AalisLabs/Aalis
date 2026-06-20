@@ -150,8 +150,30 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     description: `OKX 虚拟币交易工具集 (${modeLabel})，提供行情查询、账户管理、下单交易等功能`,
   });
 
-  // 工具代理：自动注入 groups
-  const reg: Parameters<typeof registerMarketTools>[0] = tool => baseTools.register({ ...tool, groups: ['okx'] });
+  // 动真金白银 / 改仓位的工具：标 restricted（最低等级 2，仅信任档/owner 可驱动）。
+  // 堵"任意 visitor 驱动 LLM 用 owner 真钱下单/划转"。不加逐单 confirm —— okx 刻意保留
+  // 实时/算法交易能力（见上方实盘安全闸注释），改用「等级门禁 + 一次性显式 confirmRealMoney」。
+  const MUTATING_OKX_TOOLS = new Set([
+    'okx_place_order',
+    'okx_cancel_order',
+    'okx_amend_order',
+    'okx_set_leverage',
+    'okx_set_position_mode',
+    'okx_adjust_margin',
+    'okx_batch_place_orders',
+    'okx_batch_cancel_orders',
+    'okx_close_position',
+    'okx_place_algo_order',
+    'okx_cancel_algo_order',
+    'okx_transfer',
+  ]);
+  // 工具代理：自动注入 groups；动账户的工具自动标 restricted（不公开给低档用户）。
+  const reg: Parameters<typeof registerMarketTools>[0] = tool =>
+    baseTools.register({
+      ...tool,
+      groups: ['okx'],
+      visibility: MUTATING_OKX_TOOLS.has(tool.definition.function.name) ? 'restricted' : tool.visibility,
+    });
 
   registerMarketTools(reg, client);
   registerRubikTools(reg, client);

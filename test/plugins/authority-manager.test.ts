@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import type { AccessRequest } from '../../packages/plugin-authority-api/src/index.js';
 import type { StorageService } from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -135,6 +136,50 @@ describe('setUserLevel（owner 管理；覆盖式整数）', () => {
     m.setUserLevel(onebot('1'), 5);
     m.setUserLevel(onebot('1'), 0);
     expect(m.listUsers().find(u => u.userId === '1')).toBeUndefined();
+  });
+});
+
+describe('硬化：未授权不可自我提权 / deny 绝对 / 资源不被白名单绕 / 群内不跨用户白嫖', () => {
+  const req = (over: Partial<AccessRequest> = {}): AccessRequest => ({
+    name: 'shell.exec',
+    type: 'tool',
+    capability: 'tool:shell.exec',
+    sessionId: 'group:1',
+    platform: 'onebot',
+    userId: '1',
+    ...over,
+  });
+
+  it('#1 未授权操作无 owner 预放行 → isPreApproved=false（守卫据此硬拒，不弹自我确认）', () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    expect(m.isPreApproved(req({ capability: 'command:shutdown', type: 'command', name: 'shutdown' }))).toBe(false);
+  });
+
+  it('#2 deny 绝对：deniedCapabilities 压过 restrictedPolicy.allow:["*"]', () => {
+    const m = new AuthorityManager(
+      mkConfig({ deniedCapabilities: ['tool:shell'], restrictedPolicy: { allow: ['*'] } }),
+      mkLogger(),
+      storage,
+    );
+    expect(m.isPreApproved(req({ capability: 'tool:shell' }))).toBe(false); // 硬禁压过白名单
+    expect(m.isPreApproved(req({ capability: 'tool:weather' }))).toBe(true); // 未禁 + 白名单 → 放行
+  });
+
+  it('#2b 资源保护不被白名单绕：allow:["*"] 仍挡住低等级写 users.json', () => {
+    const m = new AuthorityManager(mkConfig({ restrictedPolicy: { allow: ['*'] } }), mkLogger(), storage);
+    const r = req({ capability: 'tool:file_write', resourceCapabilities: ['storage:path:data:/users.json:write'] });
+    expect(m.isPreApproved(r)).toBe(false); // 等级 0 → 资源闸挡住，白名单救不了
+    m.setUserLevel({ platform: 'onebot', userId: '1' }, 2);
+    expect(m.isPreApproved(r)).toBe(true); // 等级够 + 白名单 → 放行
+  });
+
+  it('#3 群内临时授予绑 userId：A 批准不让同会话 B 白嫖', async () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    m.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
+    const rA = req({ userId: 'A' });
+    expect(await m.requestAccess(rA)).toBe(true); // A 回 YS → 生成绑 A 的会话授予
+    expect(m.isPreApproved(rA)).toBe(true); // A 本人：命中
+    expect(m.isPreApproved(req({ userId: 'B' }))).toBe(false); // 同会话同能力的 B：userId 不匹配 → 不白嫖
   });
 });
 

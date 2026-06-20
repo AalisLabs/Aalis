@@ -141,11 +141,23 @@ export class AuthorityManager implements AuthorityService {
   }
 
   /**
-   * 该请求是否已被（白名单/会话内临时委托）放行（内部用，requestAccess 调用）。
-   * restrictedPolicy 白名单是管理员全局策略；会话临时授予按 capability + sessionId 匹配
-   * （一次会话的临时批准不跨会话泄漏到其他会话）。
+   * 该请求是否被 owner **预先**放行（白名单 / 该用户在本会话已有的临时授予）——**绝不**含"问发起者本人"。
+   * 先过两道绝对闸（任何放行都不得绕过）：① 硬禁 deniedCapabilities；② 资源保护（受限资源始终按等级裁决）。
+   * 再看：restrictedPolicy 全局白名单（自动化免确认）或 会话临时授予。
+   * 临时授予按 **userId + sessionId + capability** 匹配 —— 群内 sessionId 全群共享时，不跨用户泄漏。
    */
   private isTemporarilyAllowed(request: AccessRequest): boolean {
+    const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
+    // ① 硬禁绝对：主能力 + 资源能力，任何放行路径都不得绕过
+    if (matchAnyCap(denied, request.capability)) return false;
+    for (const rc of request.resourceCapabilities ?? []) if (matchAnyCap(denied, rc)) return false;
+    // ② 资源保护绝对：受限资源(users.json 等)始终按等级裁决，不被白名单/授予绕过
+    const isOwner = this.isOwner(request.platform, request.userId);
+    const level = this.level(request.platform, request.userId);
+    for (const rc of request.resourceCapabilities ?? []) {
+      if (!resolveAccess({ level, minLevel: this.resourceMinLevel(rc), isOwner, denied, capability: rc })) return false;
+    }
+    // owner 全局白名单（自动化免确认）
     const policy = this.config.get('restrictedPolicy');
     if (policy?.allow && policy.allow.length > 0) {
       if (
@@ -156,12 +168,23 @@ export class AuthorityManager implements AuthorityService {
         if (matchAnyCap(policy.allow, request.capability)) return true;
       }
     }
+    // 会话临时授予：同一用户 + 同会话 + 同能力（userId 必须匹配，防群内跨用户白嫖）
     this.pruneTempGrants();
     for (const g of this.tempGrants.values()) {
       if (g.sessionId !== request.sessionId) continue;
+      if (g.userId !== request.userId) continue;
       if (g.capability === request.capability || matchAnyCap([g.capability], request.capability)) return true;
     }
     return false;
+  }
+
+  /**
+   * 守卫「未授权」分支专用闸：请求是否被 owner 预先放行（白名单 / 该用户已有授予），
+   * 且不触犯硬禁 / 资源保护。**绝不询问发起者本人** —— 杜绝低档用户对超档操作自我确认提权。
+   * 守卫拒绝后改调本方法（而非 requestAccess），requestAccess 仅用于「已授权但需意图确认」。
+   */
+  isPreApproved(request: AccessRequest): boolean {
+    return this.isTemporarilyAllowed(request);
   }
 
   async requestAccess(request: AccessRequest): Promise<boolean> {
@@ -208,6 +231,7 @@ export class AuthorityManager implements AuthorityService {
     for (const g of this.tempGrants.values()) {
       if (g.capability !== request.capability) continue;
       if (g.sessionId !== request.sessionId) continue;
+      if (g.userId !== request.userId) continue;
       g.used++;
       if (g.maxUses && g.used >= g.maxUses) this.tempGrants.delete(g.id);
       return;
