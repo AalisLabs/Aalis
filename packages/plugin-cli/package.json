@@ -18,6 +18,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/plugin-storage-api": "workspace:^",
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
     "string-width": "^8.2.0"

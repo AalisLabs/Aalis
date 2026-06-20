@@ -359,6 +359,9 @@ importers:
 
   packages/plugin-cli:
     dependencies:
+      '@aalis/plugin-storage-api':
+        specifier: workspace:^
+        version: link:../plugin-storage-api
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
