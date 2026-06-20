@@ -67,7 +67,7 @@ describe('AuthorityPage 渲染 + 等级输入可用', () => {
   it('改整组等级 → 触发 setAuthorityOverride', async () => {
     render(<AuthorityPage />);
     await screen.findByText(/操作（指令/);
-    const groupInput = await screen.findByTitle('对该组所有操作设同一最低等级');
+    const groupInput = await screen.findByTitle('批量设置本组所有操作的最低等级');
     fireEvent.change(groupInput, { target: { value: '3' } });
     fireEvent.blur(groupInput);
     await waitFor(() => expect(calls.some(c => c.method === 'setAuthorityOverride')).toBe(true));
