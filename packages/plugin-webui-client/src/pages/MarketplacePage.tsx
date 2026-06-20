@@ -294,7 +294,10 @@ export function MarketplacePage({
 
       <div className="marketplace-grid">
         {filtered.map(pkg => {
-          const homeLink = pkg.links?.homepage || pkg.links?.repository || pkg.links?.npm;
+          // 只接受 http(s) 链接做 href —— npm 搜索结果原样透传，恶意包可塞 homepage:"javascript:..."
+          // (React 19 不净化 javascript: href，只 dev 警告) → owner 点卡片即 XSS。非 http(s) 退化为纯文本。
+          const rawLink = pkg.links?.homepage || pkg.links?.repository || pkg.links?.npm;
+          const homeLink = rawLink && /^https?:\/\//i.test(rawLink) ? rawLink : undefined;
           return (
             <div className="marketplace-card" key={pkg.name}>
             <div className="marketplace-card-info">
