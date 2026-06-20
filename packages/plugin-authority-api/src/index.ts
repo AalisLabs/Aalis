@@ -284,6 +284,11 @@ export interface AuthorityService {
   removeUser(platform: string, userId: string): void;
 
   // ── 临时能力委托（restricted 能力的时限/限次授予）──
+  /**
+   * 「未授权」分支专用闸：请求是否被 owner 预先放行（restrictedPolicy 白名单 / 该用户在本会话已有授予），
+   * 且不触犯硬禁 / 资源保护。**绝不询问发起者本人**（杜绝自我确认提权）。守卫 authorize 拒绝后调本方法。
+   */
+  isPreApproved(request: AccessRequest): boolean;
   /** 用户触达未授予的 restricted 能力时，过临时委托流程（白名单策略 → 会话临时授予 → 确认回调） */
   requestAccess(request: AccessRequest): Promise<boolean>;
   listTemporaryGrants(): TemporaryGrant[];
