@@ -459,13 +459,22 @@ export function registerDocxTools(
     async handler(args) {
       sessions.require(String(args.docId), 'docx');
       const { state } = sessions.get(String(args.docId))!.doc as { state: DocState };
-      const { buffer } = await loadImage(storage, String(args.source), outputUri);
+      const { buffer, mime } = await loadImage(storage, String(args.source), outputUri);
       const width = Number(args.width || 400);
       const height = Number(args.height || 300);
+      // 按真实 mime 选图片类型，避免对 JPEG/GIF 硬编码 png 产出损坏 docx（对齐 pptx.ts 的处理）。
+      const imgType: 'jpg' | 'gif' | 'bmp' | 'png' =
+        mime.includes('jpeg') || mime.includes('jpg')
+          ? 'jpg'
+          : mime.includes('gif')
+            ? 'gif'
+            : mime.includes('bmp')
+              ? 'bmp'
+              : 'png';
 
       const para = new Paragraph({
         alignment: args.alignment ? alignMap[String(args.alignment)] : AlignmentType.CENTER,
-        children: [new ImageRun({ data: buffer, transformation: { width, height }, type: 'png' })],
+        children: [new ImageRun({ data: buffer, transformation: { width, height }, type: imgType })],
       });
       state.sections.push(para);
       return JSON.stringify({ success: true, message: `图片已添加 (${width}×${height})` });
