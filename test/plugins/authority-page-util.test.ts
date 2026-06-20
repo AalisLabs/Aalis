@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   capKey,
+  derivedMinLevel,
   effectiveConfirm,
-  effectiveMinTier,
+  effectiveMinLevel,
   groupByPlugin,
-  groupMinTier,
+  groupMinLevel,
   type Operation,
 } from '../../packages/plugin-webui-client/src/pages/authority-page-util.js';
 
 // ════════════════════════════════════════════════════════════
-// 权限页纯逻辑（档位）：分组 / 生效最低档 / 生效确认（override > risk > visibility 兜底）
+// 权限页纯逻辑（数字等级）：分组 / 派生默认 / 生效最低等级 / 生效确认（override > risk > visibility 兜底）
 // ════════════════════════════════════════════════════════════
 
 const op = (over: Partial<Operation>): Operation => ({
@@ -39,32 +40,33 @@ describe('capKey / groupByPlugin', () => {
   });
 });
 
-describe('effectiveMinTier（override > risk > visibility 兜底）', () => {
-  it('risk 派生 safe0/sensitive1/dangerous2', () => {
-    expect(effectiveMinTier(op({ risk: 'safe' }), {})).toBe(0);
-    expect(effectiveMinTier(op({ risk: 'sensitive' }), {})).toBe(1);
-    expect(effectiveMinTier(op({ risk: 'dangerous' }), {})).toBe(2);
+describe('derivedMinLevel / effectiveMinLevel（override > risk > visibility 兜底）', () => {
+  it('派生默认：risk safe0/sensitive1/dangerous2', () => {
+    expect(derivedMinLevel(op({ risk: 'safe' }))).toBe(0);
+    expect(derivedMinLevel(op({ risk: 'sensitive' }))).toBe(1);
+    expect(derivedMinLevel(op({ risk: 'dangerous' }))).toBe(2);
   });
-  it('无 risk → visibility 兜底（public0/restricted2）', () => {
-    expect(effectiveMinTier(op({ name: 'r', visibility: 'restricted' }), {})).toBe(2);
-    expect(effectiveMinTier(op({ name: 'p', visibility: 'public' }), {})).toBe(0);
+  it('派生默认：无 risk → visibility 兜底（public0/restricted2）', () => {
+    expect(derivedMinLevel(op({ visibility: 'restricted' }))).toBe(2);
+    expect(derivedMinLevel(op({ visibility: 'public' }))).toBe(0);
   });
-  it('tierOverrides 压过 risk/visibility', () => {
-    expect(effectiveMinTier(op({ name: 'w', risk: 'safe' }), { 'tool:w': 2 })).toBe(2);
+  it('authorityOverrides 压过派生（任意整数）', () => {
+    expect(effectiveMinLevel(op({ name: 'w', risk: 'safe' }), { 'tool:w': 7 })).toBe(7);
+    expect(effectiveMinLevel(op({ name: 'w', risk: 'safe' }), {})).toBe(0);
   });
 });
 
-describe('effectiveConfirm / groupMinTier', () => {
+describe('effectiveConfirm / groupMinLevel', () => {
   it("confirm：'off'→无；override 优先；回退默认", () => {
     const o = op({ name: 'shell.exec', confirm: 'session' });
     expect(effectiveConfirm(o, {})).toBe('session');
     expect(effectiveConfirm(o, { 'tool:shell.exec': 'always' })).toBe('always');
     expect(effectiveConfirm(o, { 'tool:shell.exec': 'off' })).toBeUndefined();
   });
-  it('groupMinTier：全同→该 rank；混合→mixed', () => {
+  it('groupMinLevel：全同→该等级；混合→mixed', () => {
     const a = op({ name: 'a', risk: 'safe' });
     const b = op({ name: 'b', risk: 'safe' });
-    expect(groupMinTier([a, b], {})).toBe(0);
-    expect(groupMinTier([a, b], { 'tool:b': 2 })).toBe('mixed');
+    expect(groupMinLevel([a, b], {})).toBe(0);
+    expect(groupMinLevel([a, b], { 'tool:b': 2 })).toBe('mixed');
   });
 });
