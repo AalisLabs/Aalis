@@ -86,3 +86,20 @@ export function resolveAccess(input: AccessInput): boolean {
 export function autoConfirmActive(until: number, now: number): boolean {
   return until === -1 || (until > 0 && now < until);
 }
+
+/**
+ * 确认轴是否可跳过（纯函数）。**`always` 永不可跳**（最高危：必须每次有人确认；cron 无人确认即拒）。
+ * 非 always 的两种正当跳过：① skipConfirm（系统/受信源如 scheduler，无人可点）；
+ * ② auto 模式 且 触发者是 owner 本人。其余一律不跳。
+ */
+export function shouldSkipConfirm(opts: {
+  confirm: 'session' | 'always';
+  skipConfirm: boolean;
+  isOwner: boolean;
+  autoConfirmUntil: number;
+  now: number;
+}): boolean {
+  if (opts.confirm === 'always') return false;
+  if (opts.skipConfirm) return true;
+  return opts.isOwner && autoConfirmActive(opts.autoConfirmUntil, opts.now);
+}

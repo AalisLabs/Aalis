@@ -14,7 +14,7 @@ import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
-import { autoConfirmActive, DEFAULT_AUTHORITY } from './authority-model.js';
+import { autoConfirmActive, DEFAULT_AUTHORITY, shouldSkipConfirm } from './authority-model.js';
 
 export type { AuthorityService } from '@aalis/plugin-authority-api';
 export { AuthorityManager } from './authority-manager.js';
@@ -86,13 +86,18 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
     // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
     // 仅对**已授权**操作做意图确认（owner 也吃，防注入借权）；不再是提权入口。
-    if (confirm && !g.skipConfirm) {
-      // auto 模式：owner 显式开启的临时免确认（仅 owner 本人 + 仅 session 级；always 永不跳，等级/deny 仍生效）。
-      const autoSkip =
-        confirm !== 'always' &&
-        authority.isOwner(g.platform, g.userId) &&
-        autoConfirmActive((ctx.config.get('autoConfirmUntil') as number) ?? 0, Date.now());
-      if (!autoSkip) {
+    // 跳过判定见 shouldSkipConfirm：always 永不跳（cron 无人确认即拒）；非 always 可被
+    // skipConfirm(系统/受信源) 或 owner 本人 auto 模式 跳过。修 #6：旧实现用 `!g.skipConfirm`
+    // 门控整块 → skipConfirm 会连 always 一起绕过。
+    if (confirm) {
+      const skip = shouldSkipConfirm({
+        confirm,
+        skipConfirm: !!g.skipConfirm,
+        isOwner: authority.isOwner(g.platform, g.userId),
+        autoConfirmUntil: (ctx.config.get('autoConfirmUntil') as number) ?? 0,
+        now: Date.now(),
+      });
+      if (!skip) {
         const ok = await authority.requestAccess({ ...accessBase, confirm });
         if (!ok) return `操作已取消：${capability} 需确认后执行`;
       }
