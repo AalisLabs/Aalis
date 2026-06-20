@@ -3,7 +3,6 @@
 
 import { Buffer } from 'node:buffer';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
@@ -254,13 +253,21 @@ interface WSOutgoing {
 
 // ===== 日志文件读取（与 @aalis/runtime 的 file-logger 格式对偶）=====
 // 行格式契约（format ↔ parse）由 @aalis/core 的 parseLogLine 唯一持有，此处只负责
-// 读取 data/latest.log（启动覆盖的单一历史源）并按 cursor 尾读分页。
+// 读取「持久化日志单一数据源」并按 cursor 尾读分页。
+//
+// 路径（宿主目录布局）是「环境知识」，归 storage 的 logs 根所有；本插件只用 storage
+// URI 寻址、对 cwd/落盘位置无知。写入方（runtime/file-logger）跑在 storage 起来之前，
+// 是 bootstrap 期的合法 raw-fs 例外，不在此处管辖（默认 logs 根 = data/，与之对偶）。
 
-const LOG_FILE_PATH = resolve(process.cwd(), 'data/latest.log');
+const LOG_FILE_URI = 'logs:/latest.log';
 
-async function readAllLogEntries(): Promise<LogEntry[]> {
-  if (!existsSync(LOG_FILE_PATH)) return [];
-  const raw = await readFile(LOG_FILE_PATH, 'utf8');
+async function readAllLogEntries(storage: StorageService): Promise<LogEntry[]> {
+  let raw: string;
+  try {
+    raw = (await storage.readFile(LOG_FILE_URI, 'utf-8')) as string;
+  } catch {
+    return []; // 文件未就绪 / storage 暂不可用 → 无历史
+  }
   const out: LogEntry[] = [];
   for (const line of raw.split('\n')) {
     if (!line) continue;
@@ -270,13 +277,13 @@ async function readAllLogEntries(): Promise<LogEntry[]> {
   return out;
 }
 
-async function readLogFileTail(limit: number): Promise<LogEntry[]> {
-  const all = await readAllLogEntries();
+async function readLogFileTail(storage: StorageService, limit: number): Promise<LogEntry[]> {
+  const all = await readAllLogEntries(storage);
   return all.slice(-limit);
 }
 
-async function readLogFileBefore(beforeSeq: number, limit: number): Promise<LogEntry[]> {
-  const all = await readAllLogEntries();
+async function readLogFileBefore(storage: StorageService, beforeSeq: number, limit: number): Promise<LogEntry[]> {
+  const all = await readAllLogEntries(storage);
   const filtered = all.filter(e => e.seq < beforeSeq);
   return filtered.slice(-limit);
 }
@@ -514,7 +521,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
   expressApp.get('/api/logs', gate(), async (_req, res) => {
     try {
-      const entries = await readLogFileTail(200);
+      const entries = await readLogFileTail(storage, 200);
       res.json(entries);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -525,7 +532,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   expressApp.get('/api/logs/tail', gate(), async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
     try {
-      res.json(await readLogFileTail(limit));
+      res.json(await readLogFileTail(storage, limit));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -540,7 +547,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
     try {
-      res.json(await readLogFileBefore(before, limit));
+      res.json(await readLogFileBefore(storage, before, limit));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
