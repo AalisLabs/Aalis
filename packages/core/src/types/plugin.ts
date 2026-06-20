@@ -49,7 +49,7 @@ export interface PluginModule {
   requiresBounceOnDepChange?: boolean;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
   // 注：subsystem / extends 等纯 WebUI 展示元数据，以及 host-RPC 槽位
-  // actions / actionsMeta（含调用者身份类型），均由 @aalis/plugin-webui-api
+  // actions（含调用者身份类型），均由 @aalis/plugin-webui-api
   // 通过 declaration merging 注入；core 不读取它们。
   // webuiPages 已迁移到 useWebuiService(ctx).registerPage()。
 }

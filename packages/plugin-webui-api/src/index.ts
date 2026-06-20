@@ -5,7 +5,7 @@
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
 import type { ConfigSchema, Context } from '@aalis/core';
-import type { CapabilityVisibility, UserIdentity } from '@aalis/plugin-authority-api';
+import type { UserIdentity } from '@aalis/plugin-authority-api';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -174,7 +174,7 @@ export interface WebuiPage {
 
 /**
  * 通过 declaration merging 向 core 的 PluginModule 注入
- * 纯展示元数据字段（subsystem / extends）与 host-RPC 槽位（actions / actionsMeta）。
+ * 纯展示元数据字段（subsystem / extends）与 host-RPC 槽位（actions）。
  *
  * WebuiPage 注册路径为运行时 `useWebuiService(ctx).registerPage(...)`，
  * 不作为静态 module 字段存在。
@@ -199,15 +199,6 @@ declare module '@aalis/core' {
      * 检查（如"不能委托超出自身持有的能力"）；忽略该参数即向后兼容。
      */
     actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>>;
-    /**
-     * actions 的能力元数据：action 名 → 默认可见性（public/restricted）。
-     *
-     * host 在调用 action 前按调用者身份过 authorize 统一闸（capability
-     * `action:<plugin>:<method>`）；**未声明的 action 默认 restricted**
-     * （默认拒绝——插件作者必须显式标 `visibility: 'public'` 才能放开，
-     * 避免漏标的敏感 action 在登录功能上线后裸奔）。
-     */
-    actionsMeta?: Record<string, { visibility?: CapabilityVisibility }>;
   }
 
   /**
