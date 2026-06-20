@@ -44,7 +44,7 @@ export function App() {
   }, [availablePages, activeTab]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
-  /** 当前登录身份（/api/auth/me）：单 token 模式恒为 webui:console（owner）；顶栏只显 owner 徽标 + 退出 */
+  /** 当前登录身份（/api/auth/status）：单 token 模式 authed ⟺ webui:console ⟺ owner；顶栏只显 owner 徽标 + 退出 */
   const [me, setMe] = useState<{
     identity: { platform: string; userId: string };
     isOwner: boolean;
@@ -557,7 +557,10 @@ export function App() {
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
-    api<typeof me>('/api/auth/me').then(setMe).catch(() => {});
+    // 单 token 单 owner：authed ⟺ console ⟺ owner，故 isOwner 直接取 authed。
+    api<{ authed: boolean; identity?: { platform: string; userId: string } }>('/api/auth/status')
+      .then(s => setMe(s.authed && s.identity ? { identity: s.identity, isOwner: true } : null))
+      .catch(() => {});
     refreshConfig();
     refreshPlugins();
     refreshServices();

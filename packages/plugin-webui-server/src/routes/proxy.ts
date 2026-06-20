@@ -16,7 +16,7 @@ const FETCH_TIMEOUT_MS = 15_000;
  * 未登录请求拿不到 cookie 自然过不来；这里只关心 SSRF 与体积/超时。
  */
 export function registerProxyRoutes(expressApp: express.Express, ctx: Context, gate: RouteGate): void {
-  expressApp.get('/api/proxy/image', gate('webui:proxy:read', 'public'), async (req, res) => {
+  expressApp.get('/api/proxy/image', gate(), async (req, res) => {
     const raw = req.query.url;
     if (typeof raw !== 'string' || !raw) {
       res.status(400).json({ error: '缺少 url 参数' });

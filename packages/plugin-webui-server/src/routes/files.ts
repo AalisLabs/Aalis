@@ -65,7 +65,7 @@ export function registerFileRoutes(
   }
 
   // 列出目录内容
-  expressApp.get('/api/files', gate('webui:files:read', 'restricted'), async (req, res) => {
+  expressApp.get('/api/files', gate(), async (req, res) => {
     const dir = String(req.query.path || '');
     if (!guardBrowsable(res)) return;
     try {
@@ -77,7 +77,7 @@ export function registerFileRoutes(
   });
 
   // 获取文件/目录详情
-  expressApp.get('/api/files/info', gate('webui:files:read', 'restricted'), async (req, res) => {
+  expressApp.get('/api/files/info', gate(), async (req, res) => {
     const filePath = String(req.query.path || '');
     if (!guardBrowsable(res)) return;
     try {
@@ -89,7 +89,7 @@ export function registerFileRoutes(
   });
 
   // 下载文件
-  expressApp.get('/api/files/download', gate('webui:files:read', 'restricted'), async (req, res) => {
+  expressApp.get('/api/files/download', gate(), async (req, res) => {
     const filePath = String(req.query.path || '');
     if (!guardBrowsable(res)) return;
     try {
@@ -104,7 +104,7 @@ export function registerFileRoutes(
   });
 
   // 重命名
-  expressApp.post('/api/files/rename', gate('webui:files:write', 'restricted'), async (req, res) => {
+  expressApp.post('/api/files/rename', gate(), async (req, res) => {
     const { path: filePath, newName } = req.body ?? {};
     if (!filePath || !newName) {
       res.status(400).json({ error: '缺少参数' });
@@ -130,7 +130,7 @@ export function registerFileRoutes(
   });
 
   // 删除
-  expressApp.post('/api/files/delete', gate('webui:files:write', 'restricted'), async (req, res) => {
+  expressApp.post('/api/files/delete', gate(), async (req, res) => {
     const { path: filePath } = req.body ?? {};
     if (!filePath) {
       res.status(400).json({ error: '缺少参数' });
