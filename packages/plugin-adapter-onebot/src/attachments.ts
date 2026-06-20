@@ -20,6 +20,7 @@ import type { Logger } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/plugin-message-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { safeFetch } from '@aalis/util-network-guard';
+import { readBodyCapped } from './attachment-cache.js';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
@@ -72,12 +73,13 @@ async function attachmentToOneBotFile(
     logger?.debug?.(`OneBot 下载远程附件: ${data.slice(0, 120)}`);
     const res = await safeFetch(data);
     if (!res.ok) throw new Error(`download failed (${res.status}): ${data}`);
-    const ab = await res.arrayBuffer();
-    if (ab.byteLength > MAX_INLINE_BYTES) {
-      logger?.warn?.(`OneBot 远程附件 ${ab.byteLength}B 超过内联上限，回退到 URL（依赖 daemon 直拉）`);
+    // 流式限额读取：不先全量 arrayBuffer 再判大小（避免无 Content-Length 时撑爆内存，与入站对称）。
+    const capped = await readBodyCapped(res, MAX_INLINE_BYTES);
+    if (!capped) {
+      logger?.warn?.('OneBot 远程附件超过内联上限，回退到 URL（依赖 daemon 直拉）');
       return data;
     }
-    return toBase64Uri(Buffer.from(ab));
+    return toBase64Uri(capped);
   }
 
   // storage URI（如 data:/images/xxx）→ storage.readFile → base64
