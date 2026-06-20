@@ -1,5 +1,10 @@
 import type { Logger } from '@aalis/core';
-import type { CapabilityVisibility, ExecutionGuard } from '@aalis/plugin-authority-api';
+import type {
+  CapabilityConfirm,
+  CapabilityRisk,
+  CapabilityVisibility,
+  ExecutionGuard,
+} from '@aalis/plugin-authority-api';
 import { resolveCapabilityPolicy } from '@aalis/plugin-authority-api';
 import type {
   RegisteredTool,
@@ -89,6 +94,8 @@ export class ToolRegistry implements ToolService {
     description: string;
     pluginName: string;
     visibility: CapabilityVisibility;
+    confirm?: CapabilityConfirm;
+    risk?: CapabilityRisk;
     permissions?: string[];
     groups?: string[];
   }> {
@@ -100,6 +107,7 @@ export class ToolRegistry implements ToolService {
         pluginName: t.pluginName,
         visibility,
         confirm,
+        risk: t.risk, // 原始风险透传：让 authority 区分 sensitive(朋友) / dangerous(信任)，否则二者都折成 restricted=信任
         permissions: this.getStaticPermissions(t),
         groups: t.groups,
       };
@@ -178,6 +186,7 @@ export class ToolRegistry implements ToolService {
         type: 'tool',
         visibility,
         confirm,
+        risk: tool.risk,
         permissions,
         sessionId: callCtx.sessionId,
         platform: callCtx.platform ?? 'unknown',
