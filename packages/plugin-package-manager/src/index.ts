@@ -188,6 +188,11 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
     async uninstall(pluginName) {
       const dirName = pluginName.replace(/^@[^/]+\//, '');
+      // 安全闸：dirName 必须是合法 npm 包段名——杜绝路径穿越（如 `../../x`）导致
+      // `rm -rf packages/../../x` 删到 packages 外的任意目录。
+      if (!/^[a-z0-9][a-z0-9._-]*$/i.test(dirName)) {
+        return { ok: false, message: `非法插件名（疑似路径穿越）: ${pluginName}` };
+      }
       const packagesDir = deps.packagesDir();
       const targetDir = `${packagesDir}/${dirName}`;
       const existed = await dirExists(targetDir);
