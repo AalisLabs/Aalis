@@ -127,7 +127,7 @@ export function registerPdfTools(
     async handler(args) {
       const session = sessions.require(String(args.docId));
       const state = session.doc as PdfState;
-      const page = ensurePage(state);
+      let page = ensurePage(state);
 
       const fontSize = args.fontSize ? Number(args.fontSize) : state.fontSize;
       const fontKey = args.bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
@@ -151,7 +151,7 @@ export function registerPdfTools(
 
       for (const line of lines) {
         if (state.cursorY < state.margin) {
-          state.pdfDoc.addPage([state.pageWidth, state.pageHeight]);
+          page = state.pdfDoc.addPage([state.pageWidth, state.pageHeight]);
           state.cursorY = state.pageHeight - state.margin;
         }
         page.drawText(line, { x, y: state.cursorY, size: fontSize, font, color });

@@ -2063,6 +2063,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               });
               for (const item of globalRecent) {
                 if (others.size >= candidateLimit) break;
+                // self 自档案（__self__:<persona>）是私密人格延续锚点，不可作为『群其他参与者』注入 prompt。
+                if (item.key.startsWith(SELF_KEY_PREFIX)) continue;
                 const sep = item.key.indexOf(':');
                 if (sep < 0) continue;
                 const platform = item.key.slice(0, sep);
