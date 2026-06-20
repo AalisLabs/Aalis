@@ -28,6 +28,8 @@ export class LocalProcessService implements ProcessService {
       detached: opts.detached === true,
     });
     if (opts.input != null && stdioMode === 'pipe') {
+      // stdin 写入的 EPIPE 等是异步 'error' 事件；无监听器会 uncaughtException 崩整个宿主进程。
+      child.stdin?.on('error', () => {});
       try {
         child.stdin?.end(opts.input);
       } catch {

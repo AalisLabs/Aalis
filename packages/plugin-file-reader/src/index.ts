@@ -311,6 +311,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     return `[不支持的文件格式: ${mime}]`;
   }
 
+  function isTransientExtractionFailure(t: string): boolean {
+    // 仅排除可重试的瞬时失败占位符；『不支持的格式』是永久结论、仍可缓存。
+    return t.startsWith('[') && (t.includes('解析失败') || t.includes('读取失败'));
+  }
+
   async function extractText(entry: FileEntry): Promise<string> {
     if (entry.textCache !== undefined) return entry.textCache;
     let buf: Buffer;
@@ -323,7 +328,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
     const text = await extractTextFromBuffer(buf, entry.mimeType);
     // 文本小于 inline 阈值时缓存到 meta，避免每次 PDF/DOCX 都重新解析
-    if (text.length <= autoInlineLimit) {
+    if (text.length <= autoInlineLimit && !isTransientExtractionFailure(text)) {
       entry.textCache = text;
       await storage
         .writeFile(entry.metaUri, JSON.stringify({ ...entry, dataUri: undefined, metaUri: undefined }, null, 2))
