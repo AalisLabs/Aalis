@@ -3,18 +3,18 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
-// AuthorityPage 组件测试（jsdom）—— 锁死「按钮不能是死的」：
-// 渲染不崩 + 点击按钮真的触发 pageAction（用户反复反馈"按钮点不动"，本测试守门）。
+// AuthorityPage 组件测试（jsdom，档位）—— 锁死「按钮不能是死的」：
+// 渲染不崩 + 点档位按钮真触发 setUserTier、点整组真触发 setTierOverride。
 // ════════════════════════════════════════════════════════════
 
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
 
 const OVERVIEW = {
-  users: [{ platform: 'onebot', userId: '123', isOwner: false }],
+  users: [{ platform: 'onebot', userId: '123', isOwner: false, tier: 'visitor' }],
   owners: [],
   platforms: ['onebot', 'webui'],
   deniedCapabilities: [],
-  visibilityOverrides: {},
+  tierOverrides: {},
   confirmOverrides: {},
   restrictedPolicy: {},
   temporaryGrants: [],
@@ -25,13 +25,11 @@ const OVERVIEW = {
   ],
 };
 
-// AuthorityPage 内 `import { pageAction } from '../api'`；按解析到的同一模块路径打桩。
 vi.mock('../../packages/plugin-webui-client/src/api', () => ({
   pageAction: vi.fn(async (_plugin: string, method: string, args: Record<string, unknown> = {}) => {
     calls.push({ method, args });
     return method === 'getOverview' ? OVERVIEW : {};
   }),
-  // 组件其余 api（若被树摇引用）给空壳，避免导入副作用
   api: vi.fn(),
   proxiedMediaUrl: (s: string) => s,
 }));
@@ -43,32 +41,33 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe('AuthorityPage 渲染 + 按钮可点', () => {
-  it('挂载后拉 getOverview，渲染「操作」「用户」两视图（不崩白）', async () => {
+describe('AuthorityPage 渲染 + 档位按钮可点', () => {
+  it('挂载后拉 getOverview，渲染「用户」「操作」两视图（不崩白）', async () => {
     render(<AuthorityPage />);
     await waitFor(() => expect(calls.some(c => c.method === 'getOverview')).toBe(true));
-    expect(await screen.findByText(/操作（指令/)).toBeTruthy();
-    expect(screen.getByText(/用户（外部身份/)).toBeTruthy();
+    expect(await screen.findByText(/用户（外部身份/)).toBeTruthy();
+    expect(screen.getByText(/操作（指令/)).toBeTruthy();
   });
 
-  it('点「整组·受限」→ 触发 setVisibilityOverride（按钮不是死的）', async () => {
-    render(<AuthorityPage />);
-    await screen.findByText(/操作（指令/);
-    const restrictedBtn = await screen.findByText('受限');
-    fireEvent.click(restrictedBtn);
-    await waitFor(() =>
-      expect(calls.some(c => c.method === 'setVisibilityOverride' && c.args.visibility === 'restricted')).toBe(true),
-    );
-    const call = calls.find(c => c.method === 'setVisibilityOverride');
-    expect(call?.args.name).toBe('tool:weather');
-  });
-
-  it('点用户预设「封禁」→ 触发 setUserCapabilities(deny:[*])', async () => {
+  it('点用户「封禁」档 → 触发 setUserTier(banned)（按钮不是死的）', async () => {
     render(<AuthorityPage />);
     await screen.findByText(/用户（外部身份/);
-    fireEvent.click(await screen.findByText('封禁'));
-    await waitFor(() => expect(calls.some(c => c.method === 'setUserCapabilities')).toBe(true));
-    const call = calls.find(c => c.method === 'setUserCapabilities');
-    expect(call?.args).toMatchObject({ platform: 'onebot', userId: '123', deny: ['*'] });
+    fireEvent.click(await screen.findByText('封禁')); // 封禁仅出现在用户档位段，唯一
+    await waitFor(() => expect(calls.some(c => c.method === 'setUserTier')).toBe(true));
+    expect(calls.find(c => c.method === 'setUserTier')?.args).toMatchObject({
+      platform: 'onebot',
+      userId: '123',
+      tier: 'banned',
+    });
+  });
+
+  it('点操作整组「信任」→ 触发 setTierOverride', async () => {
+    render(<AuthorityPage />);
+    await screen.findByText(/操作（指令/);
+    // 「信任」出现在 用户档位段[0] 与 操作整组[1]；点整组那个
+    const trusted = await screen.findAllByText('信任');
+    fireEvent.click(trusted[trusted.length - 1]);
+    await waitFor(() => expect(calls.some(c => c.method === 'setTierOverride')).toBe(true));
+    expect(calls.find(c => c.method === 'setTierOverride')?.args).toMatchObject({ name: 'tool:weather', tier: 2 });
   });
 });

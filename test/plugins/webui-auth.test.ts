@@ -158,9 +158,9 @@ describe('未认证拦截', () => {
   });
 });
 
-describe('REST 路由能力闸（gate × authorize）', () => {
-  // owner=true 时把 alice 配为 owner；grant/deny 对 alice 做能力委托（系统上下文，不校验子集）。
-  function makeGate(opts: { owner?: boolean; grant?: string[]; deny?: string[] } = {}) {
+describe('REST 路由权限闸（gate × authorize · 档位）', () => {
+  // owner=true 把 alice 配为 owner；tier 给 alice 设档（档位裁决：restricted webui 路由 minTier=信任）。
+  function makeGate(opts: { owner?: boolean; tier?: 'banned' | 'visitor' | 'friend' | 'trusted' } = {}) {
     const cfgData: Record<string, unknown> = opts.owner ? { owners: [{ platform: 'webui', userId: 'alice' }] } : {};
     const config = {
       get: (k: string) => cfgData[k],
@@ -173,8 +173,8 @@ describe('REST 路由能力闸（gate × authorize）', () => {
       makeLogger(),
       {} as ConstructorParameters<typeof AuthorityManager>[2],
     );
-    if (opts.grant || opts.deny) {
-      manager.setUserCapabilities({ platform: 'webui', userId: 'alice' }, { grant: opts.grant, deny: opts.deny });
+    if (opts.tier) {
+      manager.setUserTier({ platform: 'webui', userId: 'alice' }, opts.tier);
     }
     const ctx = { getService: (n: string) => (n === 'authority' ? manager : undefined), config } as never;
     return createRouteGate(ctx, () => ({ platform: 'webui', userId: 'alice' }));
@@ -189,17 +189,17 @@ describe('REST 路由能力闸（gate × authorize）', () => {
     return { status: res.statusCode, nexted };
   }
 
-  it('默认可见性：public 放行普通账户，restricted（未授予）拒绝', () => {
+  it('默认档(访客)：public 放行，restricted 拒绝', () => {
     const gate = makeGate();
     expect(pass(gate('webui:status:read', 'public')).nexted).toBe(true);
     expect(pass(gate('webui:logs:read', 'restricted')).status).toBe(403);
     expect(pass(gate('webui:config:write', 'restricted')).status).toBe(403);
   });
 
-  it('per-user grant 可单独放行某条 restricted 路由', () => {
-    const gate = makeGate({ grant: ['webui:files:read'] });
+  it('信任档可过 restricted 路由', () => {
+    const gate = makeGate({ tier: 'trusted' });
     expect(pass(gate('webui:files:read', 'restricted')).nexted).toBe(true);
-    expect(pass(gate('webui:files:write', 'restricted')).status).toBe(403);
+    expect(pass(gate('webui:config:write', 'restricted')).nexted).toBe(true);
   });
 
   it('owner 账户全档放行', () => {

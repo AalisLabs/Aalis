@@ -99,7 +99,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const commands = new CommandRegistry(ctx.logger);
   const storage = createStorageGateway(ctx);
 
-  // 可见性的运行时覆盖（visibilityOverrides）现归 authority 配置，不在指令注册表加载。
+  // 可见性的运行时覆盖（tierOverrides）现归 authority 配置，不在指令注册表加载。
 
   // 配置指令系统
   commands.prefix = (config.commandPrefix as string) ?? '/';
