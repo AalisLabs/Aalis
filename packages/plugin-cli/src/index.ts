@@ -14,6 +14,7 @@ import type { CLIService } from './types.js';
 export type { CLIService } from './types.js';
 
 import { LogHub } from '@aalis/core';
+import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { readLogFileTail } from './log-file.js';
 
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
@@ -126,7 +127,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('app:started', async () => {
     let initial: LogEntry[] = [];
     try {
-      initial = await readLogFileTail(2000);
+      initial = await readLogFileTail(createStorageGateway(ctx), 2000);
     } catch {
       // 文件未就绪可忽略——只是无早期历史
     }
