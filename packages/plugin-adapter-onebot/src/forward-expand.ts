@@ -135,6 +135,10 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   function setCachedForward(id: string, entry: ForwardEntry): void {
     forwardCache.set(id, { entry, expiresAt: Date.now() + FORWARD_CACHE_TTL_MS });
+    // 防无界增长：写时清掉**已过期**条目。getCachedForward 本就拒过期的，故清除零行为影响——
+    // 只回收死条目（原本永不删→堆积成泄漏），绝不淘汰未过期的有效缓存。
+    const now = Date.now();
+    for (const [k, v] of forwardCache) if (v.expiresAt < now) forwardCache.delete(k);
     const memory = ctx.getService<MemoryService>('memory');
     if (memory?.saveMetadata) {
       memory
