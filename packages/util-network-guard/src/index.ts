@@ -40,11 +40,75 @@ export function isPrivateAddress(addr: string): boolean {
   return false;
 }
 
+// ── 可配网络出口策略（进程级；启动时由 setNetworkPolicy 注入一次，默认拦私网）──
+// 粗粒度、高效：几条预解析 CIDR + 一个端口 Set，每请求 O(几条) 整数比对，不碎。
+
+interface V4Cidr {
+  base: number;
+  mask: number;
+}
+interface NetworkPolicyState {
+  blockPrivate: boolean;
+  denyCidrs: V4Cidr[];
+  allowedPorts: Set<number> | null;
+}
+let policy: NetworkPolicyState = { blockPrivate: true, denyCidrs: [], allowedPorts: null };
+
+/** 网络出口策略配置（core 配置 `network`，启动时注入）。 */
+export interface NetworkPolicyConfig {
+  /** 是否拦私网/回环/链路本地/元数据段（默认 true）。本地自动化可显式关。 */
+  blockPrivate?: boolean;
+  /** 额外拒绝的 IPv4 CIDR 段（私网默认已拦），如 ["100.64.0.0/10"]。 */
+  denyCidrs?: string[];
+  /** 仅允许这些目标端口（非空时生效），如 [80, 443]；空/缺省=不限。 */
+  allowedPorts?: number[];
+}
+
+function v4ToInt(ip: string): number | null {
+  const p = ip.split('.');
+  if (p.length !== 4) return null;
+  let n = 0;
+  for (const seg of p) {
+    const x = Number(seg);
+    if (!Number.isInteger(x) || x < 0 || x > 255) return null;
+    n = (n << 8) | x;
+  }
+  return n >>> 0;
+}
+
+function parseV4Cidr(s: string): V4Cidr | null {
+  const slash = s.indexOf('/');
+  const ip = slash < 0 ? s : s.slice(0, slash);
+  const bits = slash < 0 ? 32 : Number(s.slice(slash + 1));
+  if (isIP(ip) !== 4 || !Number.isInteger(bits) || bits < 0 || bits > 32) return null;
+  const n = v4ToInt(ip);
+  if (n === null) return null;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return { base: (n & mask) >>> 0, mask };
+}
+
+/** 注入进程级网络出口策略（启动时一次；CIDR 预解析，避免每请求重复解析）。 */
+export function setNetworkPolicy(cfg: NetworkPolicyConfig): void {
+  policy = {
+    blockPrivate: cfg.blockPrivate !== false,
+    denyCidrs: (cfg.denyCidrs ?? []).map(parseV4Cidr).filter((c): c is V4Cidr => c !== null),
+    allowedPorts: cfg.allowedPorts && cfg.allowedPorts.length > 0 ? new Set(cfg.allowedPorts) : null,
+  };
+}
+
+/** 解析出的 IPv4 地址是否命中配置的 denyCidrs。 */
+function inDenyCidrs(addr: string): boolean {
+  if (policy.denyCidrs.length === 0 || isIP(addr) !== 4) return false;
+  const n = v4ToInt(addr);
+  if (n === null) return false;
+  return policy.denyCidrs.some(c => (n & c.mask) >>> 0 === c.base);
+}
+
 /**
  * 校验 hostname 是否安全可下载。
- *  - 字面 IP：直接判私网。
- *  - 'localhost' / '*.localhost' / '*.local'：拒绝。
- *  - 其它域名：DNS 解析全部 A/AAAA，任意一条命中私网即拒。
+ *  - 字面 IP：判私网[可配] + denyCidrs。
+ *  - 'localhost' / '*.localhost' / '*.local'：拦（受 blockPrivate 控）。
+ *  - 其它域名：DNS 解析全部 A/AAAA，任意一条命中私网/denyCidrs 即拒。
  *
  * 失败抛 Error，调用方负责转 HTTP 状态或日志。
  */
@@ -52,18 +116,20 @@ export async function assertSafeHost(hostname: string): Promise<void> {
   // URL.hostname 对 IPv6 字面量带方括号（如 [::1]），剥壳后才能被 isIP 识别。
   const host = hostname.replace(/^\[|\]$/g, '');
   if (isIP(host)) {
-    if (isPrivateAddress(host)) throw new Error(`拒绝访问私网/回环地址: ${host}`);
+    if (policy.blockPrivate && isPrivateAddress(host)) throw new Error(`拒绝访问私网/回环地址: ${host}`);
+    if (inDenyCidrs(host)) throw new Error(`拒绝访问受限网段: ${host}`);
     return;
   }
   const lc = host.toLowerCase();
-  if (lc === 'localhost' || lc.endsWith('.localhost') || lc.endsWith('.local')) {
+  if (policy.blockPrivate && (lc === 'localhost' || lc.endsWith('.localhost') || lc.endsWith('.local'))) {
     throw new Error(`拒绝访问本地主机名: ${host}`);
   }
   const records = await dns.lookup(host, { all: true });
   for (const r of records) {
-    if (isPrivateAddress(r.address)) {
+    if (policy.blockPrivate && isPrivateAddress(r.address)) {
       throw new Error(`拒绝访问：${host} 解析得到私网地址 ${r.address}`);
     }
+    if (inDenyCidrs(r.address)) throw new Error(`拒绝访问：${host} 命中受限网段 ${r.address}`);
   }
 }
 
@@ -77,6 +143,10 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`仅支持 http/https，收到 ${parsed.protocol}`);
+  }
+  if (policy.allowedPorts) {
+    const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+    if (!policy.allowedPorts.has(port)) throw new Error(`拒绝访问端口 ${port}（不在允许列表）`);
   }
   await assertSafeHost(parsed.hostname);
   return parsed;

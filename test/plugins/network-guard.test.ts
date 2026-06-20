@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertSafeUrl, safeFetch } from '../../packages/util-network-guard/src/index.js';
+import { assertSafeUrl, safeFetch, setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // util-network-guard：SSRF 安全 fetch（统一原语）
@@ -12,7 +12,11 @@ const mkRes = (status: number, location?: string): Response =>
     headers: { get: (k: string) => (k.toLowerCase() === 'location' ? (location ?? null) : null) },
   }) as unknown as Response;
 
-afterEach(() => vi.restoreAllMocks());
+// 策略是进程级单例：每例后复位到默认（拦私网、无 CIDR、不限端口），防跨用例污染。
+afterEach(() => {
+  vi.restoreAllMocks();
+  setNetworkPolicy({});
+});
 
 describe('assertSafeUrl', () => {
   it('拒绝非 http(s) 协议', async () => {
@@ -30,6 +34,29 @@ describe('assertSafeUrl', () => {
 
   it('放行公网字面 IP', async () => {
     await expect(assertSafeUrl('http://1.1.1.1/x')).resolves.toBeInstanceOf(URL);
+  });
+});
+
+describe('可配网络出口策略（setNetworkPolicy）', () => {
+  it('denyCidrs：命中配置网段的公网 IP 被拒（私网默认仍拦）', async () => {
+    setNetworkPolicy({ denyCidrs: ['1.1.1.0/24'] });
+    await expect(assertSafeUrl('http://1.1.1.1/')).rejects.toThrow(/受限网段/);
+    await expect(assertSafeUrl('http://8.8.8.8/')).resolves.toBeInstanceOf(URL); // 不在网段，放行
+  });
+
+  it('allowedPorts：仅放行白名单端口，其余拒（默认端口按协议推断）', async () => {
+    setNetworkPolicy({ allowedPorts: [80, 443] });
+    await expect(assertSafeUrl('https://1.1.1.1/')).resolves.toBeInstanceOf(URL); // 默认 443
+    await expect(assertSafeUrl('http://1.1.1.1/')).resolves.toBeInstanceOf(URL); // 默认 80
+    await expect(assertSafeUrl('http://1.1.1.1:6379/')).rejects.toThrow(/端口/); // 内网常见 Redis 口被拦
+  });
+
+  it('blockPrivate:false：放行私网/localhost（本地自动化场景的总开关）', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    await expect(assertSafeUrl('http://127.0.0.1/')).resolves.toBeInstanceOf(URL);
+    // 但 denyCidrs 仍可单独点名拦截
+    setNetworkPolicy({ blockPrivate: false, denyCidrs: ['127.0.0.0/8'] });
+    await expect(assertSafeUrl('http://127.0.0.1/')).rejects.toThrow(/受限网段/);
   });
 });
 

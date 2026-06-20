@@ -335,6 +335,18 @@ declare module '@aalis/core' {
       allow?: string[];
       duration?: number;
     };
+    /**
+     * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的 safeFetch 能连到哪。
+     * 不影响你自己配置的固定本地服务（ollama/onebot daemon 走裸 fetch，不过 safeFetch）。
+     */
+    network?: {
+      /** 拦私网/回环/链路本地/元数据段（默认 true）。 */
+      blockPrivate?: boolean;
+      /** 额外拒绝的 IPv4 CIDR，如 ["100.64.0.0/10"]。 */
+      denyCidrs?: string[];
+      /** 仅允许这些目标端口（非空生效），如 [80, 443]。 */
+      allowedPorts?: number[];
+    };
   }
 }
 
