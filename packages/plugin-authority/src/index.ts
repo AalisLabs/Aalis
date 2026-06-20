@@ -14,7 +14,7 @@ import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
-import { DEFAULT_AUTHORITY } from './authority-model.js';
+import { autoConfirmActive, DEFAULT_AUTHORITY } from './authority-model.js';
 
 export type { AuthorityService } from '@aalis/plugin-authority-api';
 export { AuthorityManager } from './authority-manager.js';
@@ -87,8 +87,15 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
     // 仅对**已授权**操作做意图确认（owner 也吃，防注入借权）；不再是提权入口。
     if (confirm && !g.skipConfirm) {
-      const ok = await authority.requestAccess({ ...accessBase, confirm });
-      if (!ok) return `操作已取消：${capability} 需确认后执行`;
+      // auto 模式：owner 显式开启的临时免确认（仅 owner 本人 + 仅 session 级；always 永不跳，等级/deny 仍生效）。
+      const autoSkip =
+        confirm !== 'always' &&
+        authority.isOwner(g.platform, g.userId) &&
+        autoConfirmActive((ctx.config.get('autoConfirmUntil') as number) ?? 0, Date.now());
+      if (!autoSkip) {
+        const ok = await authority.requestAccess({ ...accessBase, confirm });
+        if (!ok) return `操作已取消：${capability} 需确认后执行`;
+      }
     }
     return null;
   };
@@ -148,6 +155,40 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       authority.save();
       return `已设 ${t} 等级: ${lv}`;
     });
+
+  // /auto [分钟|off|on] — owner 临时免 dangerous 二次确认（批处理便利）。on=一直, off=关, 数字=分钟。
+  cmds
+    .command('auto [arg:string]', '自动确认模式：临时免 dangerous 二次确认（仅 owner 本人）', {
+      visibility: 'restricted',
+    })
+    .example('/auto 30')
+    .example('/auto off')
+    .action(async (argv, arg) => {
+      if (!authority.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
+      const a = arg === undefined ? undefined : String(arg).trim().toLowerCase();
+      const setUntil = (u: number) => {
+        ctx.config.set('autoConfirmUntil', u);
+        ctx.getService<AppService>('app')?.saveConfig();
+      };
+      if (a === undefined) {
+        const u = (ctx.config.get('autoConfirmUntil') as number) ?? 0;
+        if (u === -1) return '自动确认：一直开启';
+        if (autoConfirmActive(u, Date.now())) return `自动确认：开启中，剩 ${Math.ceil((u - Date.now()) / 60000)} 分钟`;
+        return '自动确认：关闭';
+      }
+      if (a === 'off' || a === '0') {
+        setUntil(0);
+        return '已关闭自动确认';
+      }
+      if (a === 'on') {
+        setUntil(-1);
+        return '已开启自动确认（一直，直到手动关闭）';
+      }
+      const m = Number(a);
+      if (!Number.isInteger(m) || m <= 0) return '用法：/auto <分钟> | off | on';
+      setUntil(Date.now() + m * 60000);
+      return `已开启自动确认 ${m} 分钟`;
+    });
 }
 
 // ===== WebUI 操作处理器（数字等级单轴：用户等级 + 操作门槛 + owner 列表 + 高级）=====
@@ -186,6 +227,7 @@ export const actions: PluginModule['actions'] = {
       authorityOverrides: ctx.config.get('authorityOverrides') ?? {},
       defaultAuthority: DEFAULT_AUTHORITY,
       confirmOverrides: ctx.config.get('confirmOverrides') ?? {},
+      autoConfirmUntil: (ctx.config.get('autoConfirmUntil') as number) ?? 0,
       restrictedPolicy: ctx.config.get('restrictedPolicy') ?? {},
       temporaryGrants: auth?.listTemporaryGrants() ?? [],
       commandPrefix,
@@ -307,6 +349,20 @@ export const actions: PluginModule['actions'] = {
     ctx.config.set('confirmOverrides', overrides);
     app.saveConfig();
     return { message: `操作 ${name} 确认要求已更新` };
+  },
+
+  /** owner 切换 auto 确认模式。minutes: -1=一直 / 0=关 / N=N 分钟。仅 owner 可达。 */
+  async setAutoConfirm(ctx, args, caller) {
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
+    const app = ctx.getService<AppService>('app');
+    if (!app) throw new Error('App 不可用');
+    const m = args.minutes;
+    if (typeof m !== 'number' || !Number.isInteger(m)) throw new Error('minutes 必须是整数（-1 一直 / 0 关 / N 分钟）');
+    const until = m === -1 ? -1 : m <= 0 ? 0 : Date.now() + m * 60000;
+    ctx.config.set('autoConfirmUntil', until);
+    app.saveConfig();
+    return { message: until === -1 ? '自动确认：一直' : until === 0 ? '自动确认：关' : `自动确认：${m} 分钟`, until };
   },
 
   /** 更新受限/禁用能力清单 */
