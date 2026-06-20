@@ -78,3 +78,11 @@ export function resolveAccess(input: AccessInput): boolean {
   if (input.isOwner) return true; // 2. owner（∞）
   return input.level >= input.minLevel; // 3. 等级门槛（封禁=负数自然不过）
 }
+
+/**
+ * auto 模式（owner 临时免 session 确认，类 Claude Code auto）是否激活。纯函数。
+ * `until`：-1=一直；>now=截止前激活；其余(0/过期)=关。只影响确认轴，不动等级/deny；always 确认不被它跳过（调用方保证）。
+ */
+export function autoConfirmActive(until: number, now: number): boolean {
+  return until === -1 || (until > 0 && now < until);
+}
