@@ -373,8 +373,8 @@ export function AuthorityPage() {
                 value={opType}
                 options={[
                   { v: 'all', label: '全部' },
-                  { v: 'command', label: '令 指令' },
-                  { v: 'tool', label: '具 工具' },
+                  { v: 'command', label: '指令' },
+                  { v: 'tool', label: '工具' },
                 ]}
                 onPick={v => setOpType(v as 'all' | 'command' | 'tool')}
               />
@@ -435,17 +435,17 @@ export function AuthorityPage() {
                           >
                             <span style={{ flex: 1, minWidth: 0, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               <span
-                                title={isCmd ? '指令' : '工具'}
                                 style={{
                                   fontSize: 10,
                                   fontWeight: 700,
                                   padding: '1px 6px',
                                   borderRadius: 6,
+                                  whiteSpace: 'nowrap',
                                   background: isCmd ? 'rgba(91,141,239,0.16)' : 'rgba(45,191,128,0.16)',
                                   color: isCmd ? '#5b8def' : '#2dbf80',
                                 }}
                               >
-                                {isCmd ? '令' : '具'}
+                                {isCmd ? '指令' : '工具'}
                               </span>
                               <span className="authority-cmd-name" title={k}>{op.displayName}</span>
                               {overridden && <span style={{ color: '#f59e0b' }} title={`已覆盖（默认 ${derived}）`}>●</span>}
@@ -581,7 +581,7 @@ export function AuthorityPage() {
               <option value="">+ 选要硬禁的操作…</option>
               {ops.map(op => (
                 <option key={capKey(op)} value={capKey(op)}>
-                  {op.type === 'command' ? '令 ' : '具 '}
+                  {op.type === 'command' ? '指令 ' : '工具 '}
                   {op.displayName}
                 </option>
               ))}
