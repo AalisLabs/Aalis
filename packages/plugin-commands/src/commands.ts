@@ -30,7 +30,7 @@ import type {
 // - 注册 'memory.clear.all' 时自动创建 'memory' / 'memory.clear' 分组节点（无 handler）
 // - 解析输入时按最长前缀匹配命中节点
 // - 可见性（public/restricted）沿点路径继承：子节点未声明则取最近声明的祖先，缺省 public。
-//   能力可见性的运行时覆盖在 authority 配置（visibilityOverrides），不在本注册表。
+//   能力可见性的运行时覆盖在 authority 配置（tierOverrides），不在本注册表。
 // ============================================================================
 
 const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
