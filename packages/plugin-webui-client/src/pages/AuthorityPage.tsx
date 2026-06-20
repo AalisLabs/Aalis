@@ -383,6 +383,7 @@ export function AuthorityPage() {
               const shown = groupOps.filter(op => !ql || op.pluginName.toLowerCase().includes(ql) || op.displayName.toLowerCase().includes(ql));
               if (shown.length === 0) return null;
               const isOpen = openPlugins.has(plugin) || ql.length > 0;
+              const needConfirm = shown.filter(op => effectiveConfirm(op, data.confirmOverrides)).length;
               return (
                 <div key={plugin} className="plugin-card" style={{ marginTop: 8 }}>
                   <div className="plugin-card-header">
@@ -400,6 +401,14 @@ export function AuthorityPage() {
                     >
                       <span style={{ marginRight: 6, opacity: 0.55 }}>{isOpen ? '▾' : '▸'}</span>
                       <strong>{plugin}</strong> <span style={{ opacity: 0.5 }}>({shown.length})</span>
+                      {needConfirm > 0 && (
+                        <span
+                          style={{ marginLeft: 8, fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 6, background: 'rgba(245,158,11,0.16)', color: '#f59e0b' }}
+                          title={`本组有 ${needConfirm} 个操作需确认（危险）`}
+                        >
+                          ⚠ {needConfirm} 需确认
+                        </span>
+                      )}
                     </button>
                     <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                       <span style={{ opacity: 0.55, fontSize: 11 }}>批量设为</span>
@@ -468,6 +477,9 @@ export function AuthorityPage() {
                                 onCommit={n => setOpLevel(op, n)}
                               />
                               <span style={{ opacity: 0.4 }}>|</span>
+                              <span style={{ opacity: 0.6, fontSize: 11 }} title="确认=危险：会话/每次=执行前要人点头；关=不弹">
+                                确认
+                              </span>
                               <SegButtons
                                 value={confOv ?? 'default'}
                                 options={[
