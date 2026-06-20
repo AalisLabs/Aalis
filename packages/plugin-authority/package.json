@@ -2,7 +2,7 @@
   "name": "@aalis/plugin-authority",
   "version": "0.4.0",
   "license": "MIT",
-  "description": "权限系统：能力授权、跨平台身份绑定、高危操作拦截",
+  "description": "权限系统：数字等级授权、高危操作确认、网络出口闸（单 owner）",
   "type": "module",
   "keywords": [
     "aalis",
@@ -21,7 +21,8 @@
     "@aalis/plugin-commands-api": "workspace:^",
     "@aalis/plugin-platform-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^",
-    "@aalis/plugin-webui-api": "workspace:^"
+    "@aalis/plugin-webui-api": "workspace:^",
+    "@aalis/util-network-guard": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

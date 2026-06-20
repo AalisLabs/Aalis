@@ -12,6 +12,7 @@ import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
+import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { DEFAULT_AUTHORITY } from './authority-model.js';
 
@@ -44,6 +45,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   const authority = new AuthorityManager(ctx.config, ctx.logger, storage);
   await authority.init();
   ctx.provide('authority', authority);
+
+  // 网络出口闸（SSRF）：把 core 配置 network 注入进程级 safeFetch 策略（启动一次）。
+  // 安全归属在权限域；本地固定服务走裸 fetch、不过 safeFetch，故不受影响。
+  setNetworkPolicy(ctx.config.get('network') ?? {});
 
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
