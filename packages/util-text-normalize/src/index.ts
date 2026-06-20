@@ -153,22 +153,27 @@ export function stripLeakedSpecialTokens(content: string): {
   hadLeak: boolean;
 } {
   if (!content) return { sanitized: content, hadLeak: false };
+  // 廉价早出：三条规则都要求出现字面量 "DSML"——没有它不可能泄漏。这同时把「无 DSML 的
+  // 病理输入(如海量竖线)」挡在正则外，杜绝灾难性回溯(ReDoS：旧实现 5000 竖线即冻进程)。
+  if (!content.includes('DSML')) return { sanitized: content, hadLeak: false };
   let sanitized = content;
   let hadLeak = false;
-  // 1) 整段成对 block：<...DSML...>...</...DSML...>（贪婪到最近的闭合）
-  const blockRe = /<[｜|]+[^<>]*DSML[^<>]*?[｜|]+[^<>]*>[\s\S]*?<\/[｜|]+[^<>]*DSML[^<>]*?[｜|]+[^<>]*>/g;
+  // 线性正则：每个标签内仅**一个** `[^<>]*`，DSML 用零宽 lookahead 断言——消除旧版
+  // `[^<>]*?[｜|]+[^<>]*`（同类字符多量词重叠）的回溯爆炸，行为对现有样本完全等价。
+  // 1) 整段成对 block：<...DSML...>...</...DSML...>（lazy 到最近闭合）
+  const blockRe = /<(?=[^<>]*DSML)[｜|][^<>]*>[\s\S]*?<\/(?=[^<>]*DSML)[｜|][^<>]*>/g;
   if (blockRe.test(sanitized)) {
     hadLeak = true;
     sanitized = sanitized.replace(blockRe, '');
   }
   // 2) 残留单 token：开/闭标签碎片
-  const tokenRe = /<\/?[｜|]+[^<>]*DSML[^<>]*?[｜|]+[^<>]*>/g;
+  const tokenRe = /<\/?(?=[^<>]*DSML)[｜|][^<>]*>/g;
   if (tokenRe.test(sanitized)) {
     hadLeak = true;
     sanitized = sanitized.replace(tokenRe, '');
   }
   // 3) 极端兜底：未闭合的 DSML 起始片段（例如 `<｜｜DSML｜｜tool_calls`，缺末尾 `>`）
-  const partialRe = /<\/?[｜|]+[^<>]*DSML[^<>]*/g;
+  const partialRe = /<\/?(?=[^<>]*DSML)[｜|][^<>]*/g;
   if (partialRe.test(sanitized)) {
     hadLeak = true;
     sanitized = sanitized.replace(partialRe, '');
