@@ -3,7 +3,6 @@ import type {
   AuthorityService,
   CapabilityConfirm,
   ExecutionGuardContext,
-  TierName,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
@@ -14,7 +13,7 @@ import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import { AuthorityManager } from './authority-manager.js';
-import { TIER_LABEL } from './tier-model.js';
+import { DEFAULT_AUTHORITY } from './authority-model.js';
 
 export type { AuthorityService } from '@aalis/plugin-authority-api';
 export { AuthorityManager } from './authority-manager.js';
@@ -65,7 +64,7 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       userId: g.userId,
     } as const;
 
-    // ── 轴 A · 授权：档位裁决（minTier 由 risk/visibility/tierOverrides 在 manager 内派生）——系统源也评估，防绕过提权 ──
+    // ── 轴 A · 授权：数字等级裁决（minLevel 由 risk/visibility/authorityOverrides 在 manager 内派生）——系统源也评估，防绕过提权 ──
     const denied = authority.authorize(identity, {
       capability,
       visibility: g.visibility,
@@ -106,17 +105,16 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
   // ===== 权限指令 =====
 
-  // /authority [target] — 查看自己或指定用户的档位
-  cmds.command('authority [target:string]', '查看自己或指定用户的权限档位').action(async (argv, target) => {
+  // /authority [target] — 查看自己或指定用户的权限等级
+  cmds.command('authority [target:string]', '查看自己或指定用户的权限等级').action(async (argv, target) => {
     const describe = (platform: string, userId: string | undefined, self: boolean): string => {
       const isOwner = authority.isOwner(platform, userId);
       const who = self ? '您' : `${platform}:${userId}`;
-      if (isOwner) return `${who}（owner，拥有全部权限）`;
+      if (isOwner) return `${who}（owner，等级 ∞，拥有全部权限）`;
       const entry = userId
         ? authority.listUsers().find(u => u.platform === platform && u.userId === userId)
         : undefined;
-      const tier = entry?.tier ?? 'visitor';
-      return `${who} 档位: ${TIER_LABEL[tier]}（${tier}）`;
+      return `${who} 等级: ${entry?.level ?? DEFAULT_AUTHORITY}`;
     };
     const t = target as string | undefined;
     if (t) {
@@ -127,36 +125,26 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     return describe(argv.session.platform, argv.session.userId, true);
   });
 
-  // /tier <target> <档名> — owner 给外部身份设档（封禁/访客/朋友/信任）。权限管理仅 owner 可达（防自授）。
-  const TIER_BY_NAME: Record<string, TierName> = {
-    封禁: 'banned',
-    访客: 'visitor',
-    朋友: 'friend',
-    信任: 'trusted',
-    banned: 'banned',
-    visitor: 'visitor',
-    friend: 'friend',
-    trusted: 'trusted',
-  };
+  // /level <target> <整数> — owner 给外部身份设等级（越大越高，0=默认，负数=封禁）。权限管理仅 owner 可达（防自授）。
   cmds
-    .command('tier <target:string> <tier:string>', '设置用户权限档位（封禁/访客/朋友/信任）', {
+    .command('level <target:string> <level:number>', '设置用户权限等级（整数，越大越高；0 默认，负数封禁）', {
       visibility: 'restricted',
     })
-    .example('/tier onebot:12345 朋友')
-    .action(async (argv, target, tier) => {
+    .example('/level onebot:12345 5')
+    .action(async (argv, target, level) => {
       if (!authority.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
       const t = String(target);
       const sep = t.indexOf(':');
       if (sep < 1) return '目标格式: <platform:userId>';
-      const tierName = TIER_BY_NAME[String(tier).trim()];
-      if (!tierName) return '档位只能是：封禁 / 访客 / 朋友 / 信任';
-      authority.setUserTier({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, tierName);
+      const lv = Number(level);
+      if (!Number.isInteger(lv)) return '等级必须是整数';
+      authority.setUserLevel({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, lv);
       authority.save();
-      return `已设 ${t} 档位: ${TIER_LABEL[tierName]}`;
+      return `已设 ${t} 等级: ${lv}`;
     });
 }
 
-// ===== WebUI 操作处理器（最小新模型集；委托树/图 Phase 4 充实）=====
+// ===== WebUI 操作处理器（数字等级单轴：用户等级 + 操作门槛 + owner 列表 + 高级）=====
 
 function asStringList(v: unknown, label: string): string[] | undefined {
   if (v === undefined || v === null) return undefined;
@@ -165,7 +153,7 @@ function asStringList(v: unknown, label: string): string[] | undefined {
 }
 
 export const actions: PluginModule['actions'] = {
-  /** 权限概览：用户能力委托 + owner + 操作可见性 + 临时委托 + 受限/禁用清单 */
+  /** 权限概览：用户等级 + owner + 操作门槛/确认 + 临时放行 + 受限/禁用清单 */
   async getOverview(ctx) {
     const auth = ctx.getService<AuthorityService>('authority');
     const users = auth?.listUsers() ?? [];
@@ -189,7 +177,8 @@ export const actions: PluginModule['actions'] = {
       platforms,
       restrictedCapabilities: ctx.config.get('restrictedCapabilities') ?? [],
       deniedCapabilities: ctx.config.get('deniedCapabilities') ?? [],
-      tierOverrides: ctx.config.get('tierOverrides') ?? {},
+      authorityOverrides: ctx.config.get('authorityOverrides') ?? {},
+      defaultAuthority: DEFAULT_AUTHORITY,
       confirmOverrides: ctx.config.get('confirmOverrides') ?? {},
       restrictedPolicy: ctx.config.get('restrictedPolicy') ?? {},
       temporaryGrants: auth?.listTemporaryGrants() ?? [],
@@ -218,19 +207,17 @@ export const actions: PluginModule['actions'] = {
     };
   },
 
-  /** 设置外部身份档位（覆盖式）。权限管理仅 owner 可达（防自我提权）。 */
-  async setUserTier(ctx, args, caller) {
-    const { platform, userId, tier } = args;
+  /** 设置外部身份等级（覆盖式整数）。权限管理仅 owner 可达（防自我提权）。 */
+  async setUserLevel(ctx, args, caller) {
+    const { platform, userId, level } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');
-    if (tier !== 'banned' && tier !== 'visitor' && tier !== 'friend' && tier !== 'trusted') {
-      throw new Error('tier 只能是 banned/visitor/friend/trusted');
-    }
+    if (typeof level !== 'number' || !Number.isInteger(level)) throw new Error('level 必须是整数');
     const auth = ctx.getService<AuthorityService>('authority');
     if (!auth) throw new Error('Authority 服务不可用');
     if (caller && !auth.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    auth.setUserTier({ platform: platform as string, userId: userId as string }, tier as TierName);
+    auth.setUserLevel({ platform: platform as string, userId: userId as string }, level);
     auth.save();
-    return { message: `${platform}:${userId} 档位已更新为 ${tier}` };
+    return { message: `${platform}:${userId} 等级已更新为 ${level}` };
   },
 
   /** 删除用户记录 */
@@ -282,20 +269,20 @@ export const actions: PluginModule['actions'] = {
     return { ok, message: ok ? '临时委托已撤销' : '不存在或已过期' };
   },
 
-  /** owner 覆盖单条操作的最低档（0 访客/1 朋友/2 信任），无需改插件声明。key=能力键 `type:name`；非法值清除该条。 */
-  async setTierOverride(ctx, args, caller) {
-    const { name, tier } = args;
+  /** owner 覆盖单条操作的最低等级（任意整数），无需改插件声明。key=能力键 `type:name`；传非整数则清除该条（回退默认派生）。 */
+  async setAuthorityOverride(ctx, args, caller) {
+    const { name, level } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
     const auth = ctx.getService<AuthorityService>('authority');
     if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
-    const overrides = { ...((ctx.config.get('tierOverrides') ?? {}) as Record<string, number>) };
-    if (tier === 0 || tier === 1 || tier === 2) overrides[name] = tier;
+    const overrides = { ...((ctx.config.get('authorityOverrides') ?? {}) as Record<string, number>) };
+    if (typeof level === 'number' && Number.isInteger(level)) overrides[name] = level;
     else delete overrides[name];
-    ctx.config.set('tierOverrides', overrides);
+    ctx.config.set('authorityOverrides', overrides);
     app.saveConfig();
-    return { message: `操作 ${name} 最低档已更新` };
+    return { message: `操作 ${name} 最低等级已更新` };
   },
 
   /** owner 覆盖单条操作的确认要求（session/always/off）。key=能力键 `type:name`；非法值清除该条。 */

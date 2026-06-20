@@ -1,24 +1,23 @@
 import type { Logger } from '@aalis/core';
-import type { TierName } from '@aalis/plugin-authority-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 
 // ════════════════════════════════════════════════════════════
-// UserStore —— users.json v4 数据层（档位单轴存储）
+// UserStore —— users.json v5 数据层（数字等级单轴存储）
 //
-// 单 owner 终态：每个外部身份恰好一个**档位**（封禁/访客/朋友/信任；owner 不入表）。
-// 无能力 glob、无密码、无绑定、无委托树。净化：非 v4 一律丢弃重来（0.5.0 未发，无迁移）。
-// 裁决/访问器在 authority-manager.ts；档位↔rank 在 tier-model.ts。
+// 单 owner 终态：每个外部身份恰好一个**整数等级**（默认 0，封禁=负数；owner 不入表）。
+// 无能力 glob、无密码、无绑定、无委托树。净化：非 v5 一律丢弃重来（0.5.0 未发，无迁移）。
+// 裁决在 authority-manager.ts；等级数字引擎在 authority-model.ts。
 // ════════════════════════════════════════════════════════════
 
-/** users.json v4 单用户记录 */
+/** users.json v5 单用户记录 */
 export interface UserRecord {
-  /** 登记档位（缺省 visitor）；owner 不入表 */
-  tier?: TierName;
+  /** 登记等级（整数，越大越高；缺省 0，封禁=负数）；owner 不入表 */
+  level?: number;
   /** 可选备注（这人是谁） */
   note?: string;
 }
 
-const USERS_VERSION = 4;
+const USERS_VERSION = 5;
 
 export class UserStore {
   private users = new Map<string, UserRecord>();
@@ -58,9 +57,9 @@ export class UserStore {
     this.saveChain = this.saveChain
       .then(() => this.storage.writeFile(this.fileUri, payload))
       .then(
-        () => this.logger.debug('用户档位数据已保存'),
+        () => this.logger.debug('用户等级数据已保存'),
         err => {
-          this.logger.warn(`保存用户档位数据失败: ${err}`);
+          this.logger.warn(`保存用户等级数据失败: ${err}`);
           this.dirty = true;
         },
       );
@@ -80,17 +79,17 @@ export class UserStore {
           if (!record || typeof record !== 'object') continue;
           const r = record as UserRecord;
           const clean: UserRecord = {};
-          if (r.tier) clean.tier = r.tier;
+          if (typeof r.level === 'number' && Number.isFinite(r.level)) clean.level = r.level;
           if (r.note) clean.note = r.note;
-          if (clean.tier || clean.note) this.users.set(key, clean);
+          if (clean.level !== undefined || clean.note) this.users.set(key, clean);
         }
-        this.logger.debug(`加载 ${this.users.size} 条用户档位记录`);
+        this.logger.debug(`加载 ${this.users.size} 条用户等级记录`);
       } else {
-        // 旧版本（v1/v2/v3 能力/密码模型）净化丢弃：0.5.0 未发，无迁移
-        this.logger.info(`users.json 版本 ${data.version ?? '未知'} 非 v4，按净化策略丢弃旧数据，重新开始`);
+        // 旧版本（v1-v4 能力/密码/档位模型）净化丢弃：0.5.0 未发，无迁移
+        this.logger.info(`users.json 版本 ${data.version ?? '未知'} 非 v5，按净化策略丢弃旧数据，重新开始`);
       }
     } catch (err) {
-      this.logger.warn(`加载用户档位数据失败: ${err}`);
+      this.logger.warn(`加载用户等级数据失败: ${err}`);
     }
   }
 }
