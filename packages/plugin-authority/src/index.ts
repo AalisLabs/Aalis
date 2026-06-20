@@ -72,14 +72,15 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       resourceCapabilities: g.permissions,
     });
     if (denied) {
-      // 受限被拒：系统/受信源无人确认，直接拒；否则走交互授予（白名单/会话授予/回调）。
-      // 必须带上 confirm —— 否则 confirm='always' 的操作在此路径被降级为可白名单/会话记忆。
+      // 未授权（等级不够 / 硬禁 / 资源受限）：**绝不**让发起者本人弹确认自我提权。
+      // 仅 owner 预先配置的放行（restrictedPolicy 白名单 / 该用户在本会话已有的授予）可救；否则硬拒。
+      // 注意：这里**不**调 requestAccess（那会询问发起者）——只查 isPreApproved（不问人）。
       if (g.skipConfirm) return denied;
-      const granted = await authority.requestAccess({ ...accessBase, confirm });
-      return granted ? null : denied;
+      return authority.isPreApproved(accessBase) ? null : denied;
     }
 
     // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
+    // 仅对**已授权**操作做意图确认（owner 也吃，防注入借权）；不再是提权入口。
     if (confirm && !g.skipConfirm) {
       const ok = await authority.requestAccess({ ...accessBase, confirm });
       if (!ok) return `操作已取消：${capability} 需确认后执行`;
