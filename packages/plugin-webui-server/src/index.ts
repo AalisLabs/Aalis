@@ -1492,7 +1492,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           : uiConfig.tokenMode === 'fixed'
             ? 'token 来自配置 fixedToken，固定不变'
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
-      ctx.logger.info(`首次访问请使用以下 URL（${tokenHint}）: ${accessUrl}`);
+      // 不把 token 打进日志（会落 latest.log / 被 /api/logs 回放 / 贴日志求助时外泄）。
+      // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（该文件应 0o600，见 token 落盘）。
+      ctx.logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
       void (async () => {
         let absHint = accessFileUri;
         try {
