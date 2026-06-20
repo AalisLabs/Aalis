@@ -144,12 +144,13 @@ export function AuthorityPage() {
     });
 
   const [opQuery, setOpQuery] = useState('');
+  const [opType, setOpType] = useState<'all' | 'command' | 'tool'>('all');
   const [openPlugins, setOpenPlugins] = useState<Set<string>>(new Set());
   const [newUser, setNewUser] = useState({ platform: '', userId: '', level: '1' });
   const [newOwner, setNewOwner] = useState({ platform: '', userId: '' });
   const [showAddOwner, setShowAddOwner] = useState(false);
   const [advDraft, setAdvDraft] = useState({ denied: '', allow: '', duration: 0 });
-  const [editAdv, setEditAdv] = useState(false);
+  const [showManual, setShowManual] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -200,9 +201,11 @@ export function AuthorityPage() {
   }
 
   const ops: Operation[] = [...data.commands, ...data.tools];
-  const opGroups = groupByPlugin(ops);
+  const opGroups = groupByPlugin(ops.filter(op => opType === 'all' || op.type === opType));
   const ql = opQuery.trim().toLowerCase();
   const users = data.users.filter(u => !u.isOwner);
+  const denied = data.deniedCapabilities ?? [];
+  const allow = data.restrictedPolicy?.allow ?? [];
 
   const setUserLevel = (u: { platform: string; userId: string }, level: number) =>
     act('setUserLevel', { platform: u.platform, userId: u.userId, level }, `已设等级: ${level}`);
@@ -218,6 +221,11 @@ export function AuthorityPage() {
       flash(errMsg(e));
     }
   };
+  /** 资源能力（除自身 type:name 外）—— 不同参数可能触达的细粒度资源（如 storage:write） */
+  const resourceCaps = (op: Operation): string[] => (op.permissions ?? []).filter(p => p !== capKey(op));
+  const applyDenied = (list: string[]) => act('setConfig', { deniedCapabilities: list }, '已更新硬禁');
+  const applyAllow = (list: string[], duration: number) =>
+    act('setRestrictedPolicy', { policy: { allow: list, duration } }, '已更新自动放行');
 
   return (
     <div className="page-content page-authority">
@@ -353,19 +361,35 @@ export function AuthorityPage() {
         </div>
         {openSections.has('ops') && (
           <div className="config-block-body">
-            <input className="config-edit-input" placeholder="搜索插件 / 操作…" value={opQuery} onChange={e => setOpQuery(e.target.value)} />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+              <input
+                className="config-edit-input"
+                style={{ flex: 1, minWidth: 180 }}
+                placeholder="搜索插件 / 操作…"
+                value={opQuery}
+                onChange={e => setOpQuery(e.target.value)}
+              />
+              <SegButtons
+                value={opType}
+                options={[
+                  { v: 'all', label: '全部' },
+                  { v: 'command', label: '令 指令' },
+                  { v: 'tool', label: '具 工具' },
+                ]}
+                onPick={v => setOpType(v as 'all' | 'command' | 'tool')}
+              />
+            </div>
             {opGroups.map(({ plugin, ops: groupOps }) => {
               const shown = groupOps.filter(op => !ql || op.pluginName.toLowerCase().includes(ql) || op.displayName.toLowerCase().includes(ql));
               if (shown.length === 0) return null;
               const isOpen = openPlugins.has(plugin) || ql.length > 0;
-              const gMin = groupMinLevel(shown, data.authorityOverrides);
               return (
-                <div key={plugin} className="authority-cmd-list" style={{ marginTop: 6 }}>
-                  <div className="authority-cmd-row" style={{ background: 'var(--surface)' }}>
+                <div key={plugin} className="plugin-card" style={{ marginTop: 8 }}>
+                  <div className="plugin-card-header">
                     <button
                       type="button"
                       className="btn btn-sm"
-                      style={{ flex: 1, textAlign: 'left' }}
+                      style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 'none' }}
                       onClick={() =>
                         setOpenPlugins(prev => {
                           const n = new Set(prev);
@@ -374,54 +398,92 @@ export function AuthorityPage() {
                         })
                       }
                     >
-                      {isOpen ? '▾' : '▸'} {plugin} <span style={{ opacity: 0.5 }}>({shown.length})</span>
+                      <span style={{ marginRight: 6, opacity: 0.55 }}>{isOpen ? '▾' : '▸'}</span>
+                      <strong>{plugin}</strong> <span style={{ opacity: 0.5 }}>({shown.length})</span>
                     </button>
-                    <span style={{ opacity: 0.6, fontSize: 11, marginRight: 4 }}>整组最低等级</span>
-                    <LevelInput
-                      value={gMin === 'mixed' ? '' : gMin}
-                      placeholder={gMin === 'mixed' ? '混合' : undefined}
-                      title="对该组所有操作设同一最低等级"
-                      onCommit={n => n !== null && setGroupLevel(shown, n)}
-                    />
+                    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ opacity: 0.55, fontSize: 11 }}>批量设为</span>
+                      <LevelInput
+                        value=""
+                        placeholder="等级"
+                        title="批量设置本组所有操作的最低等级"
+                        onCommit={n => n !== null && setGroupLevel(shown, n)}
+                      />
+                    </span>
                   </div>
-                  {isOpen &&
-                    shown.map(op => {
-                      const k = capKey(op);
-                      const conf = effectiveConfirm(op, data.confirmOverrides);
-                      const overridden = k in data.authorityOverrides;
-                      const derived = derivedMinLevel(op);
-                      const eff = effectiveMinLevel(op, data.authorityOverrides);
-                      const confOv = data.confirmOverrides[k];
-                      return (
-                        <div className="authority-cmd-row authority-user-row" key={k}>
-                          <span className="authority-cmd-name" title={k}>
-                            <span style={{ opacity: 0.5, fontSize: 11, marginRight: 4 }}>{op.type === 'command' ? '令' : '具'}</span>
-                            {op.displayName}
-                            {overridden && <span style={{ color: '#f59e0b', marginLeft: 4 }} title={`已被 owner 覆盖（默认 ${derived}）`}>●</span>}
-                          </span>
-                          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-                            <span style={{ opacity: 0.6, fontSize: 11 }}>等级</span>
-                            <LevelInput
-                              value={overridden ? eff : ''}
-                              placeholder={`默认${derived}`}
-                              title={`留空=默认(${derived})；填整数=覆盖`}
-                              onCommit={n => setOpLevel(op, n)}
-                            />
-                            <span style={{ opacity: 0.4 }}>|</span>
-                            <SegButtons
-                              value={confOv ?? 'default'}
-                              options={[
-                                { v: 'default', label: conf ? `默认(${conf === 'always' ? '每次' : '会话'})` : '默认' },
-                                { v: 'off', label: '关' },
-                                { v: 'session', label: '会话' },
-                                { v: 'always', label: '每次' },
-                              ]}
-                              onPick={c => setOpConfirm(op, c === 'default' ? '' : (c as ConfirmOverride))}
-                            />
-                          </span>
-                        </div>
-                      );
-                    })}
+                  {isOpen && (
+                    <div style={{ borderTop: '1px solid var(--border)' }}>
+                      {shown.map(op => {
+                        const k = capKey(op);
+                        const conf = effectiveConfirm(op, data.confirmOverrides);
+                        const overridden = k in data.authorityOverrides;
+                        const derived = derivedMinLevel(op);
+                        const eff = effectiveMinLevel(op, data.authorityOverrides);
+                        const confOv = data.confirmOverrides[k];
+                        const isCmd = op.type === 'command';
+                        const rcaps = resourceCaps(op);
+                        return (
+                          <div
+                            key={k}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '7px 12px',
+                              borderTop: '1px solid var(--border)',
+                            }}
+                          >
+                            <span style={{ flex: 1, minWidth: 0, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span
+                                title={isCmd ? '指令' : '工具'}
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: '1px 6px',
+                                  borderRadius: 6,
+                                  background: isCmd ? 'rgba(91,141,239,0.16)' : 'rgba(45,191,128,0.16)',
+                                  color: isCmd ? '#5b8def' : '#2dbf80',
+                                }}
+                              >
+                                {isCmd ? '令' : '具'}
+                              </span>
+                              <span className="authority-cmd-name" title={k}>{op.displayName}</span>
+                              {overridden && <span style={{ color: '#f59e0b' }} title={`已覆盖（默认 ${derived}）`}>●</span>}
+                              {rcaps.map(rc => (
+                                <span
+                                  key={rc}
+                                  className="cap-chip"
+                                  title={`不同参数可能触达此资源，由「高级」的硬禁/受限按资源单独裁决（与本操作等级独立）`}
+                                >
+                                  {rc}
+                                </span>
+                              ))}
+                            </span>
+                            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                              <span style={{ opacity: 0.6, fontSize: 11 }}>等级</span>
+                              <LevelInput
+                                value={overridden ? eff : ''}
+                                placeholder={`默认${derived}`}
+                                title={`留空=默认(${derived})；填整数=覆盖`}
+                                onCommit={n => setOpLevel(op, n)}
+                              />
+                              <span style={{ opacity: 0.4 }}>|</span>
+                              <SegButtons
+                                value={confOv ?? 'default'}
+                                options={[
+                                  { v: 'default', label: conf ? `默认(${conf === 'always' ? '每次' : '会话'})` : '默认' },
+                                  { v: 'off', label: '关' },
+                                  { v: 'session', label: '会话' },
+                                  { v: 'always', label: '每次' },
+                                ]}
+                                onPick={c => setOpConfirm(op, c === 'default' ? '' : (c as ConfirmOverride))}
+                              />
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -486,62 +548,121 @@ export function AuthorityPage() {
             <SlidersHorizontal size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
             高级
           </span>
-          <span className="config-block-hint">全局硬禁能力 + 受限能力临时自动放行（给自动化）+ 当前临时放行。</span>
+          <span className="config-block-hint">全局硬禁（连 owner 都拒）+ 受限操作自动放行（给自动化）+ 当前临时放行。直接选操作即可，无需手写。</span>
           <span className={`config-block-toggle ${openSections.has('adv') ? 'open' : ''}`}>▶</span>
         </div>
         {openSections.has('adv') && (
           <div className="config-block-body">
-            {editAdv ? (
-              <div className="config-edit-form">
+            {/* 硬禁操作：选操作加 chip，无需手写 */}
+            <div className="section-label" style={{ marginTop: 0 }}>硬禁操作（连 owner 都拒，慎用）</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+              {denied.length === 0 ? (
+                <span className="empty-hint" style={{ padding: 0 }}>无</span>
+              ) : (
+                denied.map(cap => (
+                  <span key={cap} className="tool-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    {cap}
+                    <button type="button" className="btn btn-sm" style={{ padding: '0 5px', lineHeight: 1 }} title="移除" onClick={() => applyDenied(denied.filter(x => x !== cap))}>
+                      ×
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+            <select
+              className="config-edit-input"
+              style={{ maxWidth: 340 }}
+              value=""
+              onChange={e => {
+                const v = e.target.value;
+                if (v && !denied.includes(v)) applyDenied([...denied, v]);
+              }}
+            >
+              <option value="">+ 选要硬禁的操作…</option>
+              {ops.map(op => (
+                <option key={capKey(op)} value={capKey(op)}>
+                  {op.type === 'command' ? '令 ' : '具 '}
+                  {op.displayName}
+                </option>
+              ))}
+            </select>
+
+            {/* 自动放行：同样选操作 */}
+            <div className="section-label">自动放行（受限操作免确认，给自动化）</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+              {allow.length === 0 ? (
+                <span className="empty-hint" style={{ padding: 0 }}>无</span>
+              ) : (
+                allow.map(cap => (
+                  <span key={cap} className="tool-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    {cap}
+                    <button type="button" className="btn btn-sm" style={{ padding: '0 5px', lineHeight: 1 }} title="移除" onClick={() => applyAllow(allow.filter(x => x !== cap), advDraft.duration)}>
+                      ×
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                className="config-edit-input"
+                style={{ maxWidth: 340 }}
+                value=""
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v && !allow.includes(v)) applyAllow([...allow, v], advDraft.duration);
+                }}
+              >
+                <option value="">+ 选要自动放行的操作…</option>
+                {ops.map(op => (
+                  <option key={capKey(op)} value={capKey(op)}>
+                    {op.type === 'command' ? '令 ' : '具 '}
+                    {op.displayName}
+                  </option>
+                ))}
+              </select>
+              <span style={{ opacity: 0.6, fontSize: 11 }}>时长(秒,0=永久)</span>
+              <input
+                type="number"
+                min={0}
+                className="config-edit-input"
+                style={{ width: 90 }}
+                value={advDraft.duration}
+                onChange={e => setAdvDraft(v => ({ ...v, duration: parseInt(e.target.value, 10) || 0 }))}
+                onBlur={() => applyAllow(allow, advDraft.duration)}
+              />
+            </div>
+
+            {/* 手填 glob：高级逃生口（picker 只能选具体操作，glob 如 tool:* / * 仍可手填） */}
+            <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => setShowManual(s => !s)}>
+              {showManual ? '收起手填' : '手填 glob（高级，如 tool:* / *）'}
+            </button>
+            {showManual && (
+              <div className="config-edit-form" style={{ marginTop: 6 }}>
                 <div className="config-edit-row">
-                  <label className="config-edit-label">硬禁(denied)</label>
+                  <label className="config-edit-label">硬禁(glob)</label>
                   <input className="config-edit-input" value={advDraft.denied} onChange={e => setAdvDraft(v => ({ ...v, denied: e.target.value }))} placeholder="tool:dangerous.*" />
-                  <span className="config-edit-hint">连 owner 都压过，慎用</span>
                 </div>
                 <div className="config-edit-row">
-                  <label className="config-edit-label">自动放行(allow)</label>
+                  <label className="config-edit-label">放行(glob)</label>
                   <input className="config-edit-input" value={advDraft.allow} onChange={e => setAdvDraft(v => ({ ...v, allow: e.target.value }))} placeholder="tool:file.* 或 *" />
-                  <span className="config-edit-hint">受限能力免确认自动放行（自动化用）</span>
-                </div>
-                <div className="config-edit-row">
-                  <label className="config-edit-label">时长(秒)</label>
-                  <input type="number" className="config-edit-input" min={0} value={advDraft.duration} onChange={e => setAdvDraft(v => ({ ...v, duration: parseInt(e.target.value, 10) || 0 }))} />
-                  <span className="config-edit-hint">0 = 永久</span>
                 </div>
                 <div className="config-edit-actions">
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
                     onClick={async () => {
-                      await act('setConfig', { deniedCapabilities: toList(advDraft.denied) });
-                      await act('setRestrictedPolicy', { policy: { allow: toList(advDraft.allow), duration: advDraft.duration } }, '高级配置已保存');
-                      setEditAdv(false);
+                      if (advDraft.denied.trim()) await act('setConfig', { deniedCapabilities: [...new Set([...denied, ...toList(advDraft.denied)])] });
+                      if (advDraft.allow.trim())
+                        await act('setRestrictedPolicy', { policy: { allow: [...new Set([...allow, ...toList(advDraft.allow)])], duration: advDraft.duration } }, '已追加');
+                      setAdvDraft(v => ({ ...v, denied: '', allow: '' }));
+                      setShowManual(false);
                     }}
                   >
-                    保存
-                  </button>
-                  <button type="button" className="btn btn-sm" onClick={() => setEditAdv(false)}>
-                    取消
+                    追加
                   </button>
                 </div>
               </div>
-            ) : (
-              <>
-                <div className="config-item">
-                  <span className="key">硬禁能力</span>
-                  <span className="val">{(data.deniedCapabilities ?? []).join(', ') || '(无)'}</span>
-                </div>
-                <div className="config-item">
-                  <span className="key">自动放行</span>
-                  <span className="val">
-                    {(data.restrictedPolicy?.allow ?? []).join(', ') || '(无)'}
-                    {data.restrictedPolicy?.allow?.length ? ` · ${data.restrictedPolicy?.duration ? `${data.restrictedPolicy.duration}s` : '永久'}` : ''}
-                  </span>
-                </div>
-                <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setEditAdv(true)}>
-                  编辑
-                </button>
-              </>
             )}
             <div className="section-label" style={{ marginTop: 12 }}>当前临时放行</div>
             {data.temporaryGrants.length === 0 ? (
