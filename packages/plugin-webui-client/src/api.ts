@@ -36,11 +36,26 @@ export function onSessionChange(fn: (id: string) => void): () => void {
   return () => _sessionListeners.delete(fn);
 }
 
+/**
+ * 会话失效统一处理：401 ⇒ 当前浏览器无有效 cookie（过期/被清/换浏览器），
+ * 跳回 '/' 让服务端中间件返回登录页，而不是让组件吃到 {error:'unauthenticated'}
+ * 后白屏。返回 true 表示已触发跳转，调用方应中止后续处理。
+ *
+ * 服务端对未鉴权的 '/' 返回的是登录页 HTML（非 SPA），不会再发 api() 调用，
+ * 故不会与缓存的 SPA 形成回跳环。
+ */
+export function redirectToLoginOn401(status: number): boolean {
+  if (status !== 401) return false;
+  window.location.replace('/');
+  return true;
+}
+
 export async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
+  if (redirectToLoginOn401(res.status)) throw new Error('会话已失效，正在跳转登录');
   return res.json() as Promise<T>;
 }
 
@@ -50,6 +65,7 @@ export async function pageAction<T = unknown>(pluginName: string, method: string
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(args),
   });
+  if (redirectToLoginOn401(res.status)) throw new Error('会话已失效，正在跳转登录');
   const json = await res.json();
   if (!res.ok) throw new Error((json as { error?: string }).error || '请求失败');
   return (json as { ok: boolean; data: T }).data;
