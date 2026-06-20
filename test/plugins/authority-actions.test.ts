@@ -4,9 +4,9 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 import { actions } from '../../packages/plugin-authority/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// authority actions — WebUI surface（档位单轴）
+// authority actions — WebUI surface（数字等级单轴）
 //
-// 关键安全性：权限管理（setUserTier/setTierOverride/setConfirmOverride）仅 owner 可达（防自我提权）。
+// 关键安全性：权限管理（setUserLevel/setAuthorityOverride/setConfirmOverride）仅 owner 可达（防自我提权）。
 // ════════════════════════════════════════════════════════════
 
 function makeLogger(): Logger {
@@ -37,44 +37,44 @@ function makeCtx(cfg: Record<string, unknown> = {}): { ctx: Context; manager: Au
 const canRestricted = (m: AuthorityManager, platform: string, userId: string, cap: string) =>
   m.authorize({ platform, userId }, { capability: cap, visibility: 'restricted' }) === null;
 
-describe('setUserTier — 仅 owner 可管理', () => {
-  it('owner（console）可设档；信任档可过受限操作', async () => {
+describe('setUserLevel — 仅 owner 可管理', () => {
+  it('owner（console）可设等级；达标可过受限操作', async () => {
     const { ctx, manager } = makeCtx();
     const owner = { platform: 'webui', userId: 'console' };
-    await actions.setUserTier(ctx, { platform: 'onebot', userId: '123', tier: 'trusted' }, owner);
+    await actions.setUserLevel(ctx, { platform: 'onebot', userId: '123', level: 2 }, owner);
     expect(canRestricted(manager, 'onebot', '123', 'tool:shell.exec')).toBe(true);
   });
 
   it('非 owner 调用被拒（防自我提权）', async () => {
     const { ctx } = makeCtx();
     const alice = { platform: 'onebot', userId: 'alice' }; // 非 owner
-    await expect(
-      actions.setUserTier(ctx, { platform: 'onebot', userId: 'alice', tier: 'trusted' }, alice),
-    ).rejects.toThrow(/只有 owner/);
+    await expect(actions.setUserLevel(ctx, { platform: 'onebot', userId: 'alice', level: 5 }, alice)).rejects.toThrow(
+      /只有 owner/,
+    );
   });
 
-  it('非法档位 / 缺 platform 抛错', async () => {
+  it('非整数等级 / 缺 platform 抛错', async () => {
     const { ctx } = makeCtx();
-    await expect(actions.setUserTier(ctx, { platform: 'onebot', userId: 'a', tier: 'god' })).rejects.toThrow(/tier/);
-    await expect(actions.setUserTier(ctx, { platform: 'onebot', tier: 'friend' })).rejects.toThrow(/必填/);
+    await expect(actions.setUserLevel(ctx, { platform: 'onebot', userId: 'a', level: 1.5 })).rejects.toThrow(/level/);
+    await expect(actions.setUserLevel(ctx, { platform: 'onebot', level: 1 })).rejects.toThrow(/必填/);
   });
 });
 
 describe('getOverview — 总览快照', () => {
-  it('返回 users(含 tier) / owners / 命令工具清单', async () => {
+  it('返回 users(含 level) / owners / 命令工具清单', async () => {
     const { ctx, manager } = makeCtx({
       owners: [{ platform: 'webui', userId: 'boss' }],
       restrictedCapabilities: ['storage:secret:*'],
     });
-    manager.setUserTier({ platform: 'onebot', userId: 'a' }, 'friend');
+    manager.setUserLevel({ platform: 'onebot', userId: 'a' }, 1);
     const ov = (await actions.getOverview(ctx, {})) as {
-      users: Array<{ userId: string; tier: string }>;
+      users: Array<{ userId: string; level: number }>;
       owners: unknown[];
       restrictedCapabilities: string[];
       commands: unknown[];
       tools: unknown[];
     };
-    expect(ov.users.find(u => u.userId === 'a')?.tier).toBe('friend');
+    expect(ov.users.find(u => u.userId === 'a')?.level).toBe(1);
     expect(ov.owners).toEqual([{ platform: 'webui', userId: 'boss' }]);
     expect(ov.restrictedCapabilities).toContain('storage:secret:*');
     expect(Array.isArray(ov.commands)).toBe(true);
@@ -85,25 +85,25 @@ describe('getOverview — 总览快照', () => {
 describe('deleteUser — 删除记录', () => {
   it('deleteUser 删除整条记录', async () => {
     const { ctx, manager } = makeCtx();
-    manager.setUserTier({ platform: 'onebot', userId: 'x' }, 'trusted');
+    manager.setUserLevel({ platform: 'onebot', userId: 'x' }, 2);
     await actions.deleteUser(ctx, { platform: 'onebot', userId: 'x' });
     expect(manager.listUsers().find(u => u.userId === 'x')).toBeUndefined();
   });
 });
 
-describe('setTierOverride — owner 调整单操作最低档', () => {
-  it('写入 config.tierOverrides；非法值删除条目', async () => {
+describe('setAuthorityOverride — owner 调整单操作最低等级', () => {
+  it('写入 config.authorityOverrides 任意整数；非整数删除条目', async () => {
     const { ctx } = makeCtx();
-    await actions.setTierOverride(ctx, { name: 'tool:weather', tier: 2 });
-    expect((ctx.config.get('tierOverrides') as Record<string, number>)['tool:weather']).toBe(2);
-    await actions.setTierOverride(ctx, { name: 'tool:weather', tier: 9 });
-    expect((ctx.config.get('tierOverrides') as Record<string, number>)['tool:weather']).toBeUndefined();
+    await actions.setAuthorityOverride(ctx, { name: 'tool:weather', level: 5 });
+    expect((ctx.config.get('authorityOverrides') as Record<string, number>)['tool:weather']).toBe(5);
+    await actions.setAuthorityOverride(ctx, { name: 'tool:weather', level: null });
+    expect((ctx.config.get('authorityOverrides') as Record<string, number>)['tool:weather']).toBeUndefined();
   });
 
   it('非 owner 调用被拒', async () => {
     const { ctx } = makeCtx();
     await expect(
-      actions.setTierOverride(ctx, { name: 'tool:x', tier: 2 }, { platform: 'onebot', userId: 'bob' }),
+      actions.setAuthorityOverride(ctx, { name: 'tool:x', level: 2 }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
   });
 });

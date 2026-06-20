@@ -8,20 +8,26 @@ import type {
   AuthorizeRequest,
   CapabilityId,
   TemporaryGrant,
-  TierName,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { matchAnyCap, OWNER_RANK, rankOf, resolveAccess, resolveMinTier, TIERS, tierName } from './tier-model.js';
+import {
+  DEFAULT_AUTHORITY,
+  matchAnyCap,
+  OWNER_RANK,
+  RESTRICTED_LEVEL,
+  resolveAccess,
+  resolveMinLevel,
+} from './authority-model.js';
 import { UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
-// AuthorityManager —— 档位单轴的 AuthorityService 实现（策略层）
+// AuthorityManager —— 数字等级单轴的 AuthorityService 实现（策略层）
 //
-// owner=∞；每个外部身份一个登记档（缺省 visitor）；操作一个 minTier（risk/visibility/tierOverrides 派生）；
-// 裁决 deniedCapabilities(全局硬禁) > owner > rank>=minTier（纯函数在 tier-model）。
+// owner=∞；每个外部身份一个登记等级（缺省 0，封禁=负数）；操作一个 minLevel（risk/visibility/authorityOverrides 派生）；
+// 裁决 deniedCapabilities(全局硬禁) > owner > level>=minLevel（纯函数在 authority-model）。
 // 资源能力(storage:/system:) 走系统层 fail-closed；confirm 轴 + 临时放行正交保留。
-// 数据层（users.json v4 档位存储）委托给 UserStore。
+// 数据层（users.json v5 等级存储）委托给 UserStore。
 // ════════════════════════════════════════════════════════════
 
 /**
@@ -70,60 +76,59 @@ export class AuthorityManager implements AuthorityService {
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
   }
 
-  /** 触发者有效档（owner→∞；登记档；无记录→访客）。v1 无访问器（onebot 群角色待 sender.role 透传后接线）。 */
-  private rank(platform: string, userId?: string): number {
+  /** 触发者有效等级（owner→∞；登记等级；无记录→默认 0）。v1 无访问器（onebot 群角色待 sender.role 透传后接线）。 */
+  private level(platform: string, userId?: string): number {
     if (this.isOwner(platform, userId)) return OWNER_RANK;
     const key = userId ? `${platform}:${userId}` : undefined;
-    const tier = (key ? this.store.get(key)?.tier : undefined) ?? 'visitor';
-    return rankOf(tier);
+    return (key ? this.store.get(key)?.level : undefined) ?? DEFAULT_AUTHORITY;
   }
 
-  /** 资源能力是否受限（命中内置保护 + config.restrictedCapabilities）→ 受限资源 minTier=信任，否则访客。 */
-  private resourceMinTier(cap: CapabilityId): number {
-    if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return TIERS.trusted;
+  /** 资源能力是否受限（命中内置保护 + config.restrictedCapabilities）→ 受限资源 minLevel=RESTRICTED_LEVEL，否则 0。 */
+  private resourceMinLevel(cap: CapabilityId): number {
+    if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return RESTRICTED_LEVEL;
     const extra = this.config.get('restrictedCapabilities') ?? [];
-    return matchAnyCap(extra, cap) ? TIERS.trusted : TIERS.visitor;
+    return matchAnyCap(extra, cap) ? RESTRICTED_LEVEL : DEFAULT_AUTHORITY;
   }
 
-  // ── 统一权限闸（档位静态判定；临时放行/确认在 requestAccess）──────────
+  // ── 统一权限闸（等级静态判定；临时放行/确认在 requestAccess）──────────
   authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null {
-    const rank = this.rank(identity.platform, identity.userId);
+    const level = this.level(identity.platform, identity.userId);
     const isOwner = this.isOwner(identity.platform, identity.userId);
     const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
-    const tierOverrides = (this.config.get('tierOverrides') ?? {}) as Record<string, number>;
+    const authorityOverrides = (this.config.get('authorityOverrides') ?? {}) as Record<string, number>;
 
-    // 主能力：minTier 由 tierOverrides > risk > visibility 派生
-    const minTier = resolveMinTier(request.capability, {
-      tierOverrides,
+    // 主能力：minLevel 由 authorityOverrides > risk > visibility 派生
+    const minLevel = resolveMinLevel(request.capability, {
+      authorityOverrides,
       risk: request.risk,
       visibility: request.visibility,
     });
-    if (!resolveAccess({ rank, minTier, isOwner, denied, capability: request.capability })) {
+    if (!resolveAccess({ level, minLevel, isOwner, denied, capability: request.capability })) {
       if (matchAnyCap(denied, request.capability)) return `已被系统禁用: ${request.capability}`;
-      return `权限不足: "${request.capability}" 需「${tierName(minTier)}」档（当前不足）`;
+      return `权限不足: "${request.capability}" 需等级 ${minLevel}（当前 ${level}）`;
     }
-    // 资源能力：系统层 fail-closed（受限资源需信任档/owner）
+    // 资源能力：系统层 fail-closed（受限资源需 RESTRICTED_LEVEL/owner）
     for (const cap of request.resourceCapabilities ?? []) {
-      const rMin = this.resourceMinTier(cap);
-      if (!resolveAccess({ rank, minTier: rMin, isOwner, denied, capability: cap })) {
+      const rMin = this.resourceMinLevel(cap);
+      if (!resolveAccess({ level, minLevel: rMin, isOwner, denied, capability: cap })) {
         if (matchAnyCap(denied, cap)) return `已被系统禁用: ${cap}`;
-        return `权限不足: "${cap}" 需「${tierName(rMin)}」档`;
+        return `权限不足: "${cap}" 需等级 ${rMin}（当前 ${level}）`;
       }
     }
     return null;
   }
 
-  // ── 档位设置（owner 管理；单轴，无 per-user 特批）──────────
-  setUserTier(target: UserIdentity, tier: TierName): void {
+  // ── 等级设置（owner 管理；单轴，无 per-user 特批）──────────
+  setUserLevel(target: UserIdentity, level: number): void {
     const key = `${target.platform}:${target.userId}`;
     const existing = this.store.get(key);
-    // visitor 是默认档：无 note 则直接清记录（保持 users.json 精简）
-    if (tier === 'visitor' && !existing?.note) {
+    // 默认等级(0)且无备注 → 直接清记录（保持 users.json 精简）
+    if (level === DEFAULT_AUTHORITY && !existing?.note) {
       this.store.delete(key);
     } else {
-      this.store.set(key, { ...existing, tier });
+      this.store.set(key, { ...existing, level });
     }
-    this.logger.debug(`设置档位: ${key} → ${tier}`);
+    this.logger.debug(`设置等级: ${key} → ${level}`);
   }
 
   removeUser(platform: string, userId: string): void {
@@ -251,7 +256,7 @@ export class AuthorityManager implements AuthorityService {
         platform,
         userId,
         isOwner: this.isOwner(platform, userId),
-        tier: record.tier ?? 'visitor',
+        level: record.level ?? DEFAULT_AUTHORITY,
         note: record.note,
       });
     }
