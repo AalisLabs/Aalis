@@ -105,6 +105,8 @@ export interface Command {
   visibility: CapabilityVisibility;
   /** 生效确认要求（轴 B，含从父分组继承）；缺省=不确认 */
   confirm?: CapabilityConfirm;
+  /** 原始风险声明（透传，含沿点路径继承）；供 authority 派生 minTier：safe→访客/sensitive→朋友/dangerous→信任 */
+  risk?: CapabilityRisk;
   /** 有效资源能力列表（含默认 command:<name> + 从父分组继承的声明） */
   permissions: string[];
   /** 别名（完整点路径） */
