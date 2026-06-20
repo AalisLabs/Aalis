@@ -46,6 +46,7 @@ interface Overview {
   authorityOverrides: Record<string, number>;
   defaultAuthority: number;
   confirmOverrides: Record<string, ConfirmOverride>;
+  autoConfirmUntil: number;
   restrictedPolicy: { allow?: string[]; duration?: number };
   temporaryGrants: TemporaryGrant[];
   commandPrefix: string;
@@ -206,6 +207,9 @@ export function AuthorityPage() {
   const users = data.users.filter(u => !u.isOwner);
   const denied = data.deniedCapabilities ?? [];
   const allow = data.restrictedPolicy?.allow ?? [];
+  const acUntil = data.autoConfirmUntil ?? 0;
+  const acActive = acUntil === -1 || acUntil > Date.now();
+  const acStatus = acUntil === -1 ? '一直开启' : acUntil > Date.now() ? `开启中 · 剩 ${Math.ceil((acUntil - Date.now()) / 60000)} 分钟` : '关闭';
 
   const setUserLevel = (u: { platform: string; userId: string }, level: number) =>
     act('setUserLevel', { platform: u.platform, userId: u.userId, level }, `已设等级: ${level}`);
@@ -265,6 +269,32 @@ export function AuthorityPage() {
             <div className="overview-card-label">临时放行</div>
             <div className="overview-card-value">{data.temporaryGrants.length}</div>
           </div>
+        </div>
+      </div>
+
+      {/* ═══ 确认模式（auto：owner 临时免 dangerous 二次确认，批处理用）═══ */}
+      <div className="config-block" style={acActive ? { borderColor: '#f59e0b' } : undefined}>
+        <div className="config-block-header" style={{ cursor: 'default' }}>
+          <span className="config-block-title">
+            确认模式
+            {acActive && <span style={{ marginLeft: 8, color: '#f59e0b', fontSize: 12 }}>⚠ 自动确认中</span>}
+          </span>
+          <span className="config-block-hint">
+            开启后 owner 本人执行 dangerous 操作免二次确认（批处理便利）。等级门禁 / 封禁 / always 确认仍生效。当前：{acStatus}
+          </span>
+        </div>
+        <div className="config-block-body">
+          <span style={{ opacity: 0.6, fontSize: 12, marginRight: 8 }}>设为</span>
+          <SegButtons
+            value={acUntil === -1 ? '-1' : acUntil > Date.now() ? '' : '0'}
+            options={[
+              { v: '0', label: '关' },
+              { v: '30', label: '30 分钟' },
+              { v: '60', label: '1 小时' },
+              { v: '-1', label: '一直' },
+            ]}
+            onPick={v => act('setAutoConfirm', { minutes: Number(v) }, '已更新确认模式')}
+          />
         </div>
       </div>
 
