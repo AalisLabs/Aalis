@@ -1,5 +1,7 @@
-// 权限页纯逻辑（与 React 解耦，便于 node 单测）：分组、生效策略解析、用户预设互转。
-// 安全相关——务必不丢/不串能力。
+// 权限页纯逻辑（与 React 解耦，便于 node 单测）：操作分组、生效最低档/确认解析、档位标签。
+// 单 owner 纯档位：用户一个档、操作一个最低档；无 per-user 能力 glob。
+
+import type { TierName } from '@aalis/plugin-authority-api';
 
 export interface Operation {
   key: string;
@@ -8,12 +10,24 @@ export interface Operation {
   displayName: string;
   pluginName: string;
   visibility: 'public' | 'restricted';
+  /** 原始风险（risk 透传上线后有值）；用于派生默认最低档 */
+  risk?: 'safe' | 'sensitive' | 'dangerous';
   confirm?: 'session' | 'always';
 }
 
-export type Vis = 'public' | 'restricted';
 export type Confirm = 'session' | 'always';
 export type ConfirmOverride = Confirm | 'off';
+
+/** 档位标签（前端本地，因不可 import plugin-authority/tier-model）。rank: banned-1 visitor0 friend1 trusted2。 */
+export const TIER_LABEL: Record<TierName, string> = { banned: '封禁', visitor: '访客', friend: '朋友', trusted: '信任' };
+/** 用户档位段按钮顺序 */
+export const USER_TIERS: TierName[] = ['banned', 'visitor', 'friend', 'trusted'];
+/** 操作最低档可选项（无 banned；owner 永远在档外） */
+export const OP_MIN_TIERS: Array<{ rank: number; label: string }> = [
+  { rank: 0, label: '访客' },
+  { rank: 1, label: '朋友' },
+  { rank: 2, label: '信任' },
+];
 
 /** 操作的能力键（与后端 authorize/override 键一致）。 */
 export const capKey = (op: { type: string; name: string }): string => `${op.type}:${op.name}`;
@@ -26,52 +40,33 @@ export function groupByPlugin(ops: Operation[]): Array<{ plugin: string; ops: Op
     if (arr) arr.push(op);
     else m.set(op.pluginName, [op]);
   }
-  return [...m.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([plugin, list]) => ({ plugin, ops: list }));
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([plugin, list]) => ({ plugin, ops: list }));
 }
 
-/** 生效可见性：override（type:name 键）优先，回退插件默认。 */
-export function effectiveVisibility(op: Operation, visOverrides: Record<string, Vis>): Vis {
-  return visOverrides[capKey(op)] ?? op.visibility;
+/** risk → 默认最低档：safe0 sensitive1 dangerous2。 */
+function riskToRank(risk?: Operation['risk']): number {
+  if (risk === 'dangerous') return 2;
+  if (risk === 'sensitive') return 1;
+  return 0;
 }
 
-/** 生效确认：override 优先（'off' → 无确认），回退插件默认。 */
+/** 操作生效最低档（rank）：tierOverrides[cap] > risk 派生 > visibility 兜底(public0/restricted2)。 */
+export function effectiveMinTier(op: Operation, tierOverrides: Record<string, number>): number {
+  const ov = tierOverrides[capKey(op)];
+  if (ov !== undefined) return ov;
+  if (op.risk) return riskToRank(op.risk);
+  return op.visibility === 'restricted' ? 2 : 0;
+}
+
+/** 生效确认：override 优先（'off'→无），回退插件默认。 */
 export function effectiveConfirm(op: Operation, confOverrides: Record<string, ConfirmOverride>): Confirm | undefined {
   const o = confOverrides[capKey(op)];
   if (o === 'off') return undefined;
   return o ?? op.confirm;
 }
 
-/** 整组可见性聚合态：全 public→'public'，全 restricted→'restricted'，否则 'mixed'。 */
-export function groupVisibility(ops: Operation[], visOverrides: Record<string, Vis>): Vis | 'mixed' {
-  const set = new Set(ops.map(op => effectiveVisibility(op, visOverrides)));
-  return set.size === 1 ? ([...set][0] as Vis) : 'mixed';
+/** 整组最低档聚合：全同→该 rank，否则 'mixed'。 */
+export function groupMinTier(ops: Operation[], tierOverrides: Record<string, number>): number | 'mixed' {
+  const set = new Set(ops.map(op => effectiveMinTier(op, tierOverrides)));
+  return set.size === 1 ? ([...set][0] as number) : 'mixed';
 }
-
-// ── 用户权限预设（外部身份的一键档位）──────────────────────
-export type Preset = 'banned' | 'normal' | 'trusted' | 'custom';
-
-/** 预设 → grant/deny（封禁=deny *；信任=grant *；普通=空）。custom 不走此函数。 */
-export function presetToCaps(preset: Exclude<Preset, 'custom'>): { grant: string[]; deny: string[] } {
-  if (preset === 'banned') return { grant: [], deny: ['*'] };
-  if (preset === 'trusted') return { grant: ['*'], deny: [] };
-  return { grant: [], deny: [] }; // normal
-}
-
-/** 反推用户当前匹配的预设（用于高亮选中档位）。 */
-export function detectPreset(grant: string[] = [], deny: string[] = []): Preset {
-  const g = grant.filter(Boolean);
-  const d = deny.filter(Boolean);
-  if (d.includes('*')) return 'banned';
-  if (g.includes('*') && d.length === 0) return 'trusted';
-  if (g.length === 0 && d.length === 0) return 'normal';
-  return 'custom';
-}
-
-export const PRESET_LABEL: Record<Preset, string> = {
-  banned: '封禁',
-  normal: '普通',
-  trusted: '信任',
-  custom: '自定义',
-};
