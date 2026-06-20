@@ -1,8 +1,7 @@
 import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import { createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
-import { createRouteGate } from '../../packages/plugin-webui-server/src/gate.js';
+import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-server/src/gate.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 单 token（单 owner）
@@ -158,29 +157,8 @@ describe('未认证拦截', () => {
   });
 });
 
-describe('REST 路由权限闸（gate × authorize · 档位）', () => {
-  // owner=true 把 alice 配为 owner；tier 给 alice 设档（档位裁决：restricted webui 路由 minTier=信任）。
-  function makeGate(opts: { owner?: boolean; tier?: 'banned' | 'visitor' | 'friend' | 'trusted' } = {}) {
-    const cfgData: Record<string, unknown> = opts.owner ? { owners: [{ platform: 'webui', userId: 'alice' }] } : {};
-    const config = {
-      get: (k: string) => cfgData[k],
-      set: (k: string, v: unknown) => {
-        cfgData[k] = v;
-      },
-    };
-    const manager = new AuthorityManager(
-      config as never,
-      makeLogger(),
-      {} as ConstructorParameters<typeof AuthorityManager>[2],
-    );
-    if (opts.tier) {
-      manager.setUserTier({ platform: 'webui', userId: 'alice' }, opts.tier);
-    }
-    const ctx = { getService: (n: string) => (n === 'authority' ? manager : undefined), config } as never;
-    return createRouteGate(ctx, () => ({ platform: 'webui', userId: 'alice' }));
-  }
-
-  function pass(middleware: ReturnType<ReturnType<typeof makeGate>>): { status: number; nexted: boolean } {
+describe('REST 路由 owner 闸（单 owner 终态）', () => {
+  function pass(middleware: ReturnType<RouteGate>): { status: number; nexted: boolean } {
     const res = makeRes();
     let nexted = false;
     middleware({ headers: {} }, res, () => {
@@ -189,30 +167,15 @@ describe('REST 路由权限闸（gate × authorize · 档位）', () => {
     return { status: res.statusCode, nexted };
   }
 
-  it('默认档(访客)：public 放行，restricted 拒绝', () => {
-    const gate = makeGate();
-    expect(pass(gate('webui:status:read', 'public')).nexted).toBe(true);
-    expect(pass(gate('webui:logs:read', 'restricted')).status).toBe(403);
-    expect(pass(gate('webui:config:write', 'restricted')).status).toBe(403);
+  it('身份解析得到（持 token ⟺ console ⟺ owner）→ 放行', () => {
+    const gate = createRouteGate(() => ({ platform: 'webui', userId: 'console' }));
+    expect(pass(gate()).nexted).toBe(true);
   });
 
-  it('信任档可过 restricted 路由', () => {
-    const gate = makeGate({ tier: 'trusted' });
-    expect(pass(gate('webui:files:read', 'restricted')).nexted).toBe(true);
-    expect(pass(gate('webui:config:write', 'restricted')).nexted).toBe(true);
-  });
-
-  it('owner 账户全档放行', () => {
-    const gate = makeGate({ owner: true });
-    expect(pass(gate('webui:config:write', 'restricted')).nexted).toBe(true);
-  });
-
-  it('authority 缺席时 fail-closed：public 放行，restricted 503（不裸奔）', () => {
-    const config = { get: () => undefined };
-    const ctx = { getService: () => undefined, config } as never;
-    const gate = createRouteGate(ctx, () => ({ platform: 'webui', userId: 'console' }));
-    expect(pass(gate('webui:status:read', 'public')).nexted).toBe(true);
-    expect(pass(gate('webui:logs:read', 'restricted')).status).toBe(503);
-    expect(pass(gate('webui:config:write', 'restricted')).status).toBe(503);
+  it('身份解析为空（未认证，理论上 auth.middleware 已先拦）→ 403', () => {
+    const gate = createRouteGate(() => undefined);
+    const r = pass(gate());
+    expect(r.nexted).toBe(false);
+    expect(r.status).toBe(403);
   });
 });
