@@ -135,6 +135,24 @@ describe('stripLeakedSpecialTokens', () => {
     expect(hadLeak).toBe(false);
     expect(sanitized).toBe('');
   });
+
+  it('海量竖线（无 DSML）不卡死：廉价早出 → 线性，原实现此输入需数十秒', () => {
+    const evil = `<${'｜'.repeat(50000)}`; // 5万全角竖线、无 DSML、无闭合
+    const t0 = performance.now();
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(evil);
+    const ms = performance.now() - t0;
+    expect(hadLeak).toBe(false);
+    expect(sanitized).toBe(evil); // 行为不变：无 DSML 原样返回
+    expect(ms).toBeLessThan(100);
+  });
+
+  it('海量竖线 + DSML 也不回溯爆炸（线性化正则，有界多项式）', () => {
+    const evil = `<${'｜'.repeat(5000)}DSML${'｜'.repeat(5000)}`; // 含 DSML 的未闭合病理片段
+    const t0 = performance.now();
+    const { hadLeak } = stripLeakedSpecialTokens(evil);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(hadLeak).toBe(true); // partial 兜底命中
+  });
 });
 
 describe('normalizeAssistantContent', () => {
