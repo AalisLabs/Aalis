@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  autoConfirmActive,
   DEFAULT_AUTHORITY,
   OWNER_RANK,
   RESTRICTED_LEVEL,
@@ -51,5 +52,15 @@ describe('resolveAccess（deny > owner > 等级）', () => {
     const cap = 'storage:path:data:/users.json:read';
     expect(resolveAccess({ level: 0, minLevel: RESTRICTED_LEVEL, isOwner: false, capability: cap })).toBe(false);
     expect(resolveAccess({ level: OWNER_RANK, minLevel: RESTRICTED_LEVEL, isOwner: true, capability: cap })).toBe(true);
+  });
+});
+
+describe('autoConfirmActive（auto 模式开关）', () => {
+  const now = 1_000_000;
+  it('-1=一直；未来截止=激活；0/过期=关', () => {
+    expect(autoConfirmActive(-1, now)).toBe(true);
+    expect(autoConfirmActive(now + 60000, now)).toBe(true);
+    expect(autoConfirmActive(now - 1, now)).toBe(false);
+    expect(autoConfirmActive(0, now)).toBe(false);
   });
 });

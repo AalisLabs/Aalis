@@ -336,6 +336,11 @@ declare module '@aalis/core' {
       duration?: number;
     };
     /**
+     * auto 确认模式（owner 临时免 dangerous 二次确认，便于批处理；类 Claude Code auto）：
+     * epoch ms 截止时间;-1=一直;0/缺省=关。仅跳过 owner 自己的 session 确认,不动等级/deny,always 不跳。
+     */
+    autoConfirmUntil?: number;
+    /**
      * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的 safeFetch 能连到哪。
      * 不影响你自己配置的固定本地服务（ollama/onebot daemon 走裸 fetch，不过 safeFetch）。
      */

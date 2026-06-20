@@ -126,3 +126,21 @@ describe('setConfirmOverride — owner 调整单操作确认要求', () => {
     ).rejects.toThrow(/只有 owner/);
   });
 });
+
+describe('setAutoConfirm — owner 切 auto 确认模式', () => {
+  it('-1 写一直；0 写关；N 写未来截止', async () => {
+    const { ctx } = makeCtx();
+    await actions.setAutoConfirm(ctx, { minutes: -1 });
+    expect(ctx.config.get('autoConfirmUntil')).toBe(-1);
+    await actions.setAutoConfirm(ctx, { minutes: 0 });
+    expect(ctx.config.get('autoConfirmUntil')).toBe(0);
+    await actions.setAutoConfirm(ctx, { minutes: 30 });
+    expect(ctx.config.get('autoConfirmUntil') as number).toBeGreaterThan(Date.now());
+  });
+  it('非 owner 调用被拒', async () => {
+    const { ctx } = makeCtx();
+    await expect(actions.setAutoConfirm(ctx, { minutes: 30 }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
+      /只有 owner/,
+    );
+  });
+});
