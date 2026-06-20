@@ -102,6 +102,27 @@ describe('commands v2 — 链式 builder', () => {
     expect(r.get('x')!.visibility).toBe('public');
   });
 
+  it('risk 透传 + 沿点路径继承 + 进 guard ctx（authority 据此派生 minTier：sensitive→朋友/dangerous→信任）', async () => {
+    const r = new CommandRegistry(makeLogger());
+    r.command('sys.exec', '', { risk: 'dangerous' }).action(async () => 'x');
+    r.command('sys.exec.bg', '').action(async () => 'y'); // 未声明 → 继承父 risk
+    expect(r.get('sys.exec')!.risk).toBe('dangerous');
+    expect(r.get('sys.exec.bg')!.risk).toBe('dangerous'); // 继承
+    r.command('note.clear', '', { risk: 'sensitive' }).action(async () => 'z');
+    expect(r.getAll().find(c => c.name === 'note.clear')!.risk).toBe('sensitive');
+    // 无声明 → undefined（不臆造默认，让 authority 回退 visibility 兜底）
+    r.command('plain', '').action(async () => 'p');
+    expect(r.get('plain')!.risk).toBeUndefined();
+    // 原始 risk 流入 guard ctx（不被折成 visibility）
+    let seen: unknown = 'unset';
+    r.setExecutionGuard(async ctx => {
+      seen = ctx.risk;
+      return null;
+    });
+    await r.execute('sys', input(['exec']));
+    expect(seen).toBe('dangerous');
+  });
+
   it('guard 拒绝 → execute 返回拒绝原因', async () => {
     const r = new CommandRegistry(makeLogger());
     r.command('shutdown', '关机', { visibility: 'restricted' }).action(async () => 'bye');
