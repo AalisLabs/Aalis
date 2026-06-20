@@ -163,4 +163,15 @@ describe('uninstall', () => {
     expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo'); // 但仍从运行时移除
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo');
   });
+
+  it('拒绝路径穿越的插件名：绝不 rm packages 外目录', async () => {
+    for (const evil of ['../../etc', '@x/../../etc', 'a/b', '..']) {
+      const h = makeHarness({ exists: new Set([`${PKG_DIR}/${evil.replace(/^@[^/]+\//, '')}`]) });
+      const r = await createPackageManager(h.deps).uninstall(evil);
+      expect(r.ok).toBe(false);
+      expect(r.message).toContain('非法插件名');
+      expect(h.deleted).toHaveLength(0); // 一次 rm 都不能发
+      expect(h.deps.unloadPlugin).not.toHaveBeenCalled();
+    }
+  });
 });
