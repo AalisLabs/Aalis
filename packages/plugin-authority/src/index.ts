@@ -193,6 +193,7 @@ export const actions: PluginModule['actions'] = {
         visibility: n.visibility ?? 'public',
         confirm: n.confirm,
         risk: n.risk,
+        permissions: n.permissions,
       })),
       tools: tools.map(t => ({
         key: t.name,
@@ -203,6 +204,7 @@ export const actions: PluginModule['actions'] = {
         visibility: t.visibility ?? 'public',
         confirm: t.confirm,
         risk: t.risk,
+        permissions: t.permissions,
       })),
     };
   },

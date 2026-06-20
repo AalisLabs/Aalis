@@ -11,6 +11,8 @@ export interface Operation {
   /** 原始风险（risk 透传上线后有值）；用于派生默认最低等级 */
   risk?: 'safe' | 'sensitive' | 'dangerous';
   confirm?: 'session' | 'always';
+  /** 该操作静态触达的资源能力（含自身 type:name + 额外如 storage:write）；用于展示「不同参数触达的细粒度资源」 */
+  permissions?: string[];
 }
 
 export type Confirm = 'session' | 'always';
