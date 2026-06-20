@@ -7,6 +7,7 @@ import {
   resolveAccess,
   resolveMinLevel,
   riskToLevel,
+  shouldSkipConfirm,
 } from '../../packages/plugin-authority/src/authority-model.js';
 
 // ════════════════════════════════════════════════════════════
@@ -62,5 +63,22 @@ describe('autoConfirmActive（auto 模式开关）', () => {
     expect(autoConfirmActive(now + 60000, now)).toBe(true);
     expect(autoConfirmActive(now - 1, now)).toBe(false);
     expect(autoConfirmActive(0, now)).toBe(false);
+  });
+});
+
+describe('shouldSkipConfirm（确认轴跳过判定）', () => {
+  const now = 1_000_000;
+  const base = { skipConfirm: false, isOwner: false, autoConfirmUntil: 0, now };
+  it('always 永不跳——即便 skipConfirm 或 owner+auto', () => {
+    expect(shouldSkipConfirm({ ...base, confirm: 'always', skipConfirm: true })).toBe(false);
+    expect(shouldSkipConfirm({ ...base, confirm: 'always', isOwner: true, autoConfirmUntil: -1 })).toBe(false);
+  });
+  it('非 always：skipConfirm(系统/cron 源) → 跳', () => {
+    expect(shouldSkipConfirm({ ...base, confirm: 'session', skipConfirm: true })).toBe(true);
+  });
+  it('非 always：owner 本人 + auto 激活 → 跳；非 owner / auto 关 → 不跳', () => {
+    expect(shouldSkipConfirm({ ...base, confirm: 'session', isOwner: true, autoConfirmUntil: -1 })).toBe(true);
+    expect(shouldSkipConfirm({ ...base, confirm: 'session', isOwner: false, autoConfirmUntil: -1 })).toBe(false);
+    expect(shouldSkipConfirm({ ...base, confirm: 'session', isOwner: true, autoConfirmUntil: 0 })).toBe(false);
   });
 });
