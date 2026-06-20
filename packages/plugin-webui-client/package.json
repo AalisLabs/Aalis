@@ -15,7 +15,6 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@aalis/plugin-authority-api": "workspace:*",
     "@aalis/util-text-normalize": "workspace:*",
     "cytoscape": "^3.33.4",
     "cytoscape-fcose": "^2.2.0",

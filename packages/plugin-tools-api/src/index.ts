@@ -133,7 +133,7 @@ export interface ToolService {
     name: string;
     description: string;
     pluginName: string;
-    /** 主能力默认可见性（缺省 public）；可被 authority 配置的 tierOverrides 调整 */
+    /** 主能力默认可见性（缺省 public）；可被 authority 配置的 authorityOverrides 调整 */
     visibility: CapabilityVisibility;
     /** 生效确认要求（轴 B）；缺省=不确认 */
     confirm?: CapabilityConfirm;

@@ -41,12 +41,6 @@ export type CapabilityConfirm = 'session' | 'always';
  */
 export type CapabilityRisk = 'safe' | 'sensitive' | 'dangerous';
 
-/**
- * 用户档位（有序，单 owner 个人 bot 的「好管」权限主轴）：
- * 封禁 < 访客 < 朋友 < 信任 < owner(∞)。每个外部身份恰好一个档；rank 数值见 plugin-authority/tier-model。
- */
-export type TierName = 'banned' | 'visitor' | 'friend' | 'trusted';
-
 /** 操作在注册时可声明的能力策略（可见性 / 确认 / 风险糖） */
 export interface CapabilityPolicyDecl {
   visibility?: CapabilityVisibility;
@@ -258,8 +252,8 @@ export interface AuthorityUserEntry {
   userId: string;
   /** owner = ∞，拥有一切 */
   isOwner: boolean;
-  /** 用户档位（owner 不入表，此处为非 owner 外部身份的登记档；缺省 visitor） */
-  tier: TierName;
+  /** 用户等级（整数，越大越高；owner 不入表，此处为非 owner 外部身份的登记等级；缺省 0，封禁=负数） */
+  level: number;
   /** 可选备注（这人是谁） */
   note?: string;
 }
@@ -274,19 +268,19 @@ export interface AuthorityService {
 
   /**
    * 统一权限闸 —— 任何 surface 的敏感操作在边界调用本方法。
-   * 档位裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户档 rank >= 操作 minTier；
-   * minTier 由 request.risk/visibility/config.tierOverrides 派生；资源能力按 restrictedCapabilities 系统层 fail-closed。
+   * 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
+   * minLevel 由 request.risk/visibility/config.authorityOverrides 派生；资源能力按 restrictedCapabilities 系统层 fail-closed。
    * @returns null 放行；string 为拒绝原因（可直接展示）
    */
   authorize(identity: UserIdentity | { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
 
   /**
-   * 设置 target 外部身份的档位（覆盖式；tier='visitor' 等默认值则清记录）。
+   * 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且无备注则清记录）。
    * 单 owner 终态：权限只由 owner 管理。调用方（WebUI action / CLI 指令）自行确保仅 owner 可达（防自授）。
    */
-  setUserTier(target: UserIdentity, tier: TierName): void;
+  setUserLevel(target: UserIdentity, level: number): void;
 
-  /** 删除用户记录（档位一并清除，回退默认 visitor） */
+  /** 删除用户记录（等级一并清除，回退默认 0） */
   removeUser(platform: string, userId: string): void;
 
   // ── 临时能力委托（restricted 能力的时限/限次授予）──
@@ -318,20 +312,15 @@ declare module '@aalis/core' {
     /** 全局能力封禁（glob）：命中即拒，连 owner 都压过（系统级硬禁用，慎用）。 */
     deniedCapabilities?: string[];
     /**
-     * 管理员对单条操作的最低档覆盖（能力键 `type:name`，如 `tool:weather` → 0|1|2）。
-     * 让 owner 调某操作的门槛档，无需改插件声明；优先于 risk/visibility 派生。取代旧 visibilityOverrides。
+     * 管理员对单条操作的最低等级覆盖（能力键 `type:name`，如 `tool:weather` → 任意整数）。
+     * 让 owner 调某操作的门槛等级，无需改插件声明；优先于 risk/visibility 派生。
      */
-    tierOverrides?: Record<string, number>;
+    authorityOverrides?: Record<string, number>;
     /**
      * 管理员对单条操作的确认要求覆盖（能力键 `type:name` → session/always/off）。
-     * 'off' 强制关闭确认（即便插件声明了 confirm，便于自动化）；与档位正交，owner 也吃。
+     * 'off' 强制关闭确认（即便插件声明了 confirm，便于自动化）；与等级正交，owner 也吃。
      */
     confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
-    /**
-     * OneBot 群角色 → 档位（可选；群 owner/admin 在群内得此档）。v1 仅声明占位、暂不接线
-     * （需把 sender.role 透传进守卫），默认 unset=关。
-     */
-    onebot?: { groupRoleTier?: number };
     /**
      * 受限能力的临时放行策略（替代旧 dangerousPolicy）：
      * allow 列出自动放行的 restricted 能力/操作名 glob（['*'] 全放）；duration 放行时长（秒，0=永久）。
