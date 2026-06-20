@@ -153,30 +153,23 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
         timeout,
       });
 
-      let stdout = '';
-      let stderr = '';
-      child.stdout?.on('data', (chunk: Buffer | string) => {
-        stdout += typeof chunk === 'string' ? chunk : chunk.toString();
-      });
-      child.stderr?.on('data', (chunk: Buffer | string) => {
-        stderr += typeof chunk === 'string' ? chunk : chunk.toString();
-      });
-
+      // 不自起无上限累加器：直接用 process-local wait() 内部有 maxBuffer 上限的 result.stdout/stderr。
+      // 旧实现自己 `stdout += chunk` 无上限——在「超限只停累积不杀进程」(f943b1a4) 之后会无界增长 → OOM。
+      // 超时是 wait() 正常返回(带 SIGKILL 信号)、非抛错，故 result 在超时路径仍可用、带(已截断的)部分输出。
       try {
         const result = await child.wait();
         const timedOut = result.signal === 'SIGKILL' || result.signal === 'SIGTERM';
         return JSON.stringify({
           exitCode: result.code ?? -1,
-          stdout: truncateOutput(stdout || result.stdout, config.maxOutputSize),
-          stderr: truncateOutput(stderr || result.stderr, config.maxOutputSize),
+          stdout: truncateOutput(result.stdout, config.maxOutputSize),
+          stderr: truncateOutput(result.stderr, config.maxOutputSize),
           ...(timedOut ? { timedOut: true } : {}),
         });
       } catch (err) {
+        // 仅 spawn 失败等异常落这里（此时无输出可留）；超时不走此分支。
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
           exitCode: -1,
-          stdout: truncateOutput(stdout, config.maxOutputSize),
-          stderr: truncateOutput(stderr, config.maxOutputSize),
         });
       }
     },
