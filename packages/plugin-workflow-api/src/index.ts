@@ -152,7 +152,13 @@ export interface WorkflowService {
   /** 删除工作流（若 persist 文件存在则删除） */
   removeWorkflow(id: string): Promise<boolean>;
   /** 手动触发一次运行；vars 与定义中的 vars 浅合并 */
-  runWorkflow(id: string, vars?: Record<string, unknown>, triggerSource?: string): Promise<WorkflowRun>;
+  runWorkflow(
+    id: string,
+    vars?: Record<string, unknown>,
+    triggerSource?: string,
+    /** 调用者身份：经 workflow_run 工具触发时透传，使内部工具按调用者权限裁决（缺省=匿名） */
+    caller?: { platform?: string; userId?: string },
+  ): Promise<WorkflowRun>;
   /** 取消一个运行中的实例（若执行引擎支持） */
   cancelRun(runId: string): boolean;
   /** 获取运行实例（含历史） */
