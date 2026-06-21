@@ -28,6 +28,29 @@ function interpolateEnvVars(text: string): string {
   });
 }
 
+/**
+ * 在【解析后】的配置树上对字符串标量做 ${ENV} 替换（值级插值）。
+ * 不在 YAML 文本层插值——含 :/换行/{} 的 env 值也只成为该字段的字符串值，
+ * 注入不了 YAML 键、崩不了解析。含占位的纯数字/布尔结果安全恢复类型
+ * （保持 `port: ${PORT}` 仍解析为数字，与旧文本插值行为一致）。
+ */
+function interpolateEnvVarsDeep(value: unknown): unknown {
+  if (typeof value === 'string') {
+    if (!value.includes('${')) return value;
+    const s = interpolateEnvVars(value);
+    if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+    if (s === 'true' || s === 'false') return s === 'true';
+    return s;
+  }
+  if (Array.isArray(value)) return value.map(interpolateEnvVarsDeep);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = interpolateEnvVarsDeep(v);
+    return out;
+  }
+  return value;
+}
+
 const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
 
 /**
@@ -133,8 +156,8 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   function loadFromDisk(): AalisConfig {
     if (existsSync(absPath)) {
       rawYaml = readFileSync(absPath, 'utf-8');
-      const interpolated = interpolateEnvVars(rawYaml);
-      const parsed = (parseYaml(interpolated) ?? {}) as Record<string, unknown>;
+      // 先 parse、再只在解析后的字符串值上插值 ${ENV}——env 值注入不了 YAML 结构、崩不了解析。
+      const parsed = interpolateEnvVarsDeep(parseYaml(rawYaml) ?? {}) as Record<string, unknown>;
       return parsed as AalisConfig;
     }
     rawYaml = null;
@@ -164,8 +187,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
               if (lastWrittenYaml !== null && current === lastWrittenYaml) return;
               lastWrittenYaml = null;
               rawYaml = current;
-              const interpolated = interpolateEnvVars(current);
-              const parsed = (parseYaml(interpolated) ?? {}) as Record<string, unknown>;
+              const parsed = interpolateEnvVarsDeep(parseYaml(current) ?? {}) as Record<string, unknown>;
               onChange(parsed as AalisConfig);
             } catch {
               /* 文件可能被部分写入，忽略 */

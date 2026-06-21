@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
@@ -7,6 +8,22 @@ import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 import '@aalis/plugin-agent-api';
 import '@aalis/plugin-memory-api';
+
+/** 当前处理消息的会话身份（经 AsyncLocalStorage 按异步上下文隔离，杜绝并发会话间串档）。 */
+interface PersonaIdentity {
+  sessionId?: string;
+  platform?: string;
+  sessionType?: 'group' | 'private' | 'channel';
+  selfId?: string;
+  selfNickname?: string;
+  userId?: string;
+  nickname?: string;
+  groupName?: string;
+  selfRole?: 'owner' | 'admin' | 'member';
+  selfTitle?: string;
+  senderRole?: 'owner' | 'admin' | 'member';
+  senderTitle?: string;
+}
 
 export type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 
@@ -120,30 +137,8 @@ class PersonaServiceImpl implements PersonaService {
 
   /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
-  /** 当前正在处理的 sessionId（由 agent:input:before 中间件设置） */
-  currentSessionId?: string;
-  /** 当前平台 */
-  currentPlatform?: string;
-  /** 当前会话类型 */
-  currentSessionType?: 'group' | 'private' | 'channel';
-  /** 当前平台上的自身账号 ID */
-  currentSelfId?: string;
-  /** 当前平台上的自身账号昵称 */
-  currentSelfNickname?: string;
-  /** 当前消息发送者 ID */
-  currentUserId?: string;
-  /** 当前消息发送者昵称 */
-  currentNickname?: string;
-  /** 当前群名称（仅群聊时可用） */
-  currentGroupName?: string;
-  /** 当前群中 self 账号的角色（owner/admin/member），仅群聊有效 */
-  currentSelfRole?: 'owner' | 'admin' | 'member';
-  /** 当前群中 self 账号的专属头衔，仅群聊有效 */
-  currentSelfTitle?: string;
-  /** 当前群中消息发送者的角色，仅群聊有效 */
-  currentSenderRole?: 'owner' | 'admin' | 'member';
-  /** 当前群中消息发送者的专属头衔，仅群聊有效 */
-  currentSenderTitle?: string;
+  /** 当前处理消息的会话身份（按异步上下文隔离，杜绝并发会话间串档）。 */
+  private identityStore = new AsyncLocalStorage<PersonaIdentity>();
 
   constructor(
     card: PersonaCard,
@@ -263,6 +258,11 @@ class PersonaServiceImpl implements PersonaService {
     return fmt;
   }
 
+  /** 在指定会话身份的异步上下文内执行（中间件用，使并发会话各自隔离身份，穿透 await 不串）。 */
+  runWithIdentity<T>(identity: PersonaIdentity, fn: () => T): T {
+    return this.identityStore.run(identity, fn);
+  }
+
   getSystemPrompt(options?: PersonaSessionOptions): string {
     const effectiveCard = this.getEffectiveCard(options);
     let prompt = '';
@@ -310,52 +310,49 @@ class PersonaServiceImpl implements PersonaService {
     }
     prompt += effectiveCard.prompt;
 
-    // 会话上下文注入
-    if (this.currentSessionId) {
+    // 会话上下文注入（身份取自异步上下文隔离的 identityStore，杜绝并发会话串档）
+    const id = this.identityStore.getStore();
+    if (id?.sessionId) {
       prompt += '\n\n# 当前会话环境\n';
-      if (this.currentPlatform) {
-        prompt += `当前平台：${this.currentPlatform}\n`;
+      if (id.platform) {
+        prompt += `当前平台：${id.platform}\n`;
       }
-      if (this.currentSelfId || this.currentSelfNickname) {
-        const selfLabel = this.currentSelfNickname
-          ? `${this.currentSelfNickname}${this.currentSelfId ? `（${this.currentSelfId}）` : ''}`
-          : this.currentSelfId;
+      if (id.selfId || id.selfNickname) {
+        const selfLabel = id.selfNickname ? `${id.selfNickname}${id.selfId ? `（${id.selfId}）` : ''}` : id.selfId;
         prompt += `你在当前平台的账号：${selfLabel}\n`;
       }
-      if (this.currentSessionType === 'group') {
+      if (id.sessionType === 'group') {
         // 解析 sessionId 提取群号
-        const parts = this.currentSessionId.split(':');
+        const parts = id.sessionId.split(':');
         const groupId = parts.length >= 4 ? parts.slice(3).join(':') : undefined;
         prompt += '会话类型：群聊\n';
-        if (this.currentGroupName) prompt += `群名称：${this.currentGroupName}\n`;
+        if (id.groupName) prompt += `群名称：${id.groupName}\n`;
         if (groupId) prompt += `群号：${groupId}\n`;
         // 自身群身份（关键：避免 LLM 误以为自己是普通群员）
-        if (this.currentSelfRole) {
-          const roleLabel =
-            this.currentSelfRole === 'owner' ? '群主' : this.currentSelfRole === 'admin' ? '管理员' : '普通成员';
+        if (id.selfRole) {
+          const roleLabel = id.selfRole === 'owner' ? '群主' : id.selfRole === 'admin' ? '管理员' : '普通成员';
           prompt += `你在该群的身份：${roleLabel}\n`;
         }
-        if (this.currentSelfTitle) {
-          prompt += `你在该群的专属头衔：${this.currentSelfTitle}\n`;
+        if (id.selfTitle) {
+          prompt += `你在该群的专属头衔：${id.selfTitle}\n`;
         }
-      } else if (this.currentSessionType === 'private') {
+      } else if (id.sessionType === 'private') {
         prompt += '会话类型：私聊\n';
-      } else if (this.currentSessionType === 'channel') {
+      } else if (id.sessionType === 'channel') {
         prompt += '会话类型：频道\n';
       }
-      if (this.currentUserId) {
-        prompt += `当前消息发送者 ID：${this.currentUserId}\n`;
+      if (id.userId) {
+        prompt += `当前消息发送者 ID：${id.userId}\n`;
       }
-      if (this.currentNickname) {
-        prompt += `当前消息发送者昵称：${this.currentNickname}\n`;
+      if (id.nickname) {
+        prompt += `当前消息发送者昵称：${id.nickname}\n`;
       }
-      if (this.currentSenderRole) {
-        const senderRoleLabel =
-          this.currentSenderRole === 'owner' ? '群主' : this.currentSenderRole === 'admin' ? '管理员' : '普通成员';
+      if (id.senderRole) {
+        const senderRoleLabel = id.senderRole === 'owner' ? '群主' : id.senderRole === 'admin' ? '管理员' : '普通成员';
         prompt += `当前消息发送者群身份：${senderRoleLabel}\n`;
       }
-      if (this.currentSenderTitle) {
-        prompt += `当前消息发送者群头衔：${this.currentSenderTitle}\n`;
+      if (id.senderTitle) {
+        prompt += `当前消息发送者群头衔：${id.senderTitle}\n`;
       }
       prompt +=
         '短期历史范围：上下文中的历史消息均来自当前会话，即上述群聊/私聊/频道；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
@@ -363,7 +360,7 @@ class PersonaServiceImpl implements PersonaService {
 
     // 状态持久化注入
     if (this.statePersistence) {
-      const state = this.currentSessionId ? this.sessionStates.get(this.currentSessionId) : undefined;
+      const state = id?.sessionId ? this.sessionStates.get(id.sessionId) : undefined;
       if (state && Object.keys(state).length > 0) {
         prompt += '\n\n# 你上一轮的状态\n';
         prompt += '以下是你上一轮回复中的角色状态，请基于此状态继续，并根据本轮对话更新：\n';
@@ -625,39 +622,25 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   );
 
-  // 跟踪当前会话信息（始终启用，用于 session 上下文注入和状态持久化）
+  // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
+  // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
   ctx.middleware('agent:input:before', async (data, next) => {
-    service.currentSessionId = data.message.sessionId;
-    service.currentPlatform = data.message.platform;
-    service.currentSessionType = data.message.sessionType;
     const selfIdentity = getPlatformSelfIdentity(ctx, data.message.platform, data.message.sessionId);
-    service.currentSelfId = selfIdentity?.selfId;
-    service.currentSelfNickname = selfIdentity?.nickname;
-    service.currentUserId = data.message.userId;
-    service.currentNickname = data.message.nickname;
-    service.currentGroupName = data.message.groupName;
-    service.currentSelfRole = data.message.selfRole;
-    service.currentSelfTitle = data.message.selfTitle;
-    service.currentSenderRole = data.message.senderRole;
-    service.currentSenderTitle = data.message.senderTitle;
-
-    try {
-      await next();
-    } finally {
-      // 清理运行时上下文，避免泄漏到下一次调用
-      service.currentSessionId = undefined;
-      service.currentPlatform = undefined;
-      service.currentSessionType = undefined;
-      service.currentSelfId = undefined;
-      service.currentSelfNickname = undefined;
-      service.currentUserId = undefined;
-      service.currentNickname = undefined;
-      service.currentGroupName = undefined;
-      service.currentSelfRole = undefined;
-      service.currentSelfTitle = undefined;
-      service.currentSenderRole = undefined;
-      service.currentSenderTitle = undefined;
-    }
+    const identity: PersonaIdentity = {
+      sessionId: data.message.sessionId,
+      platform: data.message.platform,
+      sessionType: data.message.sessionType,
+      selfId: selfIdentity?.selfId,
+      selfNickname: selfIdentity?.nickname,
+      userId: data.message.userId,
+      nickname: data.message.nickname,
+      groupName: data.message.groupName,
+      selfRole: data.message.selfRole,
+      selfTitle: data.message.selfTitle,
+      senderRole: data.message.senderRole,
+      senderTitle: data.message.senderTitle,
+    };
+    await service.runWithIdentity(identity, () => next());
   });
 
   // agent:reply:before 钩子：统一处理 JSON 解析
