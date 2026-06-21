@@ -1,0 +1,26 @@
+{
+  "name": "@aalis/util-bounded-map",
+  "version": "0.4.0",
+  "license": "MIT",
+  "description": "有界 Map：max 上限 + 可选滑动 TTL + onEvict，纯函数无依赖",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "aalis",
+    "aalis-util"
+  ],
+  "aalis": {
+    "util": true
+  }
+}
