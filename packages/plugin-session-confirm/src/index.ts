@@ -7,7 +7,8 @@
 //   - WebUI：注入自己的 WS 投递拿一条通道，保留 WS type:'confirm'（前端「确认模式」信号），在
 //     WS-onmessage 调 feed —— 与本插件共用同一协调器实现，零重复。
 //
-// 纯协议（parseConfirmReply / composeConfirmPrompt）是无状态契约，留在 authority-api。
+// 纯协议（parseConfirmReply / composeConfirmPrompt）是本插件私有的无状态实现，内联于此——
+// 契约包（authority-api）只放类型、不放实现（避免运行时跨包边 + 版本漂移）。
 
 import type { Context } from '@aalis/core';
 import type {
@@ -16,7 +17,6 @@ import type {
   AccessRequest,
   AuthorityService,
 } from '@aalis/plugin-authority-api';
-import { composeConfirmPrompt, parseConfirmReply } from '@aalis/plugin-authority-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
@@ -34,6 +34,25 @@ export const inject = {
 const CONFIRM_TIMEOUT_MS = 60_000;
 /** YS（本会话放行）授予时长（秒）。 */
 const SESSION_GRANT_SECONDS = 600;
+
+/** 把一条确认回复文本解析为决策（纯函数）：Y=本次、YS=本会话（always 不接受会话记忆）、其余=取消。 */
+function parseConfirmReply(replyText: string, always: boolean, sessionGrantSeconds: number): boolean | AccessDecision {
+  const t = replyText.trim().toLowerCase();
+  const yes = t === 'y' || t === 'yes';
+  if (always) return yes || t === 'ys' ? { allowed: true } : false;
+  if (t === 'ys') return { allowed: true, grant: { scope: 'session', durationSeconds: sessionGrantSeconds } };
+  if (yes) return { allowed: true, grant: { scope: 'once' } };
+  return false;
+}
+
+/** 组合确认提示文案（纯函数，所有平台一致）。 */
+function composeConfirmPrompt(request: AccessRequest, always: boolean, sessionGrantSeconds: number): string {
+  const label = request.type === 'command' ? '指令' : '工具';
+  const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
+  return always
+    ? `⚠️ ${label} ${nameStr} 是高危操作，每次都需确认。回复 Y 确认执行本次；其他任意输入取消。`
+    : `⚠️ ${label} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 本会话 ${Math.round(sessionGrantSeconds / 60)} 分钟内放行；其他任意输入取消。`;
+}
 
 /** 协调器工厂（平台无关）：注入投递，拿回 { handler, feed }。 */
 function createChannel(deliver: (request: AccessRequest, text: string) => void): ConfirmChannel {

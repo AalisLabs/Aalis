@@ -199,38 +199,6 @@ export interface TemporaryGrant {
 export type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
 
 // ============================================================
-// 会话确认协调器（共享状态机：pending / 超时 / Y-YS 解析 / 文案）
-//
-// 「确认层」对所有平台一致，只有**投递**与**拦截点**因平台而异（与流式输出等正交）：
-//   - webui：投递走 WS type:'confirm'（流式友好），拦截在 WS-onmessage（发 inbound 前）。
-//   - onebot/cli：投递走 gateway 总线 outbound，拦截在 inbound:confirm 相位。
-// 各平台用同一个 coordinator，只注入自己的 deliver + 在自己的拦截点调 tryResolve。
-// ============================================================
-
-/** 把一条确认回复文本解析为决策（纯函数）：Y=本次、YS=本会话（always 不接受会话记忆）、其余=取消。 */
-export function parseConfirmReply(
-  replyText: string,
-  always: boolean,
-  sessionGrantSeconds: number,
-): boolean | AccessDecision {
-  const t = replyText.trim().toLowerCase();
-  const yes = t === 'y' || t === 'yes';
-  if (always) return yes || t === 'ys' ? { allowed: true } : false;
-  if (t === 'ys') return { allowed: true, grant: { scope: 'session', durationSeconds: sessionGrantSeconds } };
-  if (yes) return { allowed: true, grant: { scope: 'once' } };
-  return false;
-}
-
-/** 组合确认提示文案（纯函数，所有平台一致）。 */
-export function composeConfirmPrompt(request: AccessRequest, always: boolean, sessionGrantSeconds: number): string {
-  const label = request.type === 'command' ? '指令' : '工具';
-  const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
-  return always
-    ? `⚠️ ${label} ${nameStr} 是高危操作，每次都需确认。回复 Y 确认执行本次；其他任意输入取消。`
-    : `⚠️ ${label} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 本会话 ${Math.round(sessionGrantSeconds / 60)} 分钟内放行；其他任意输入取消。`;
-}
-
-// ============================================================
 // 用户身份
 // ============================================================
 
