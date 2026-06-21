@@ -2350,7 +2350,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { visibility: 'restricted' })
+    .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 'dangerous' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.deleteMetadata) return '记忆服务不支持档案删除。';
@@ -2364,7 +2364,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   useCommandService(ctx)
-    .command('profile.clear.nuke', '【危险】清空所有用户档案', { visibility: 'restricted' })
+    .command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory?.listMetadata || !memory?.deleteMetadata) {
