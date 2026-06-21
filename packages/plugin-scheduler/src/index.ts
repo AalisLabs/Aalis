@@ -54,8 +54,6 @@ interface SchedulerJobConfig {
 
 interface SchedulerConfig {
   jobs: SchedulerJobConfig[];
-  /** 同时执行的最大任务数 */
-  maxConcurrent: number;
   /** 动态任务持久化文件路径 */
   persistPath: string;
 }
@@ -191,12 +189,6 @@ export const configSchema: ConfigSchema = {
     },
     default: [],
   },
-  maxConcurrent: {
-    type: 'number',
-    label: '最大并发任务数',
-    default: 3,
-    description: '同时执行的任务数量上限，超出时排队等待。',
-  },
   persistPath: {
     type: 'string',
     label: '动态任务存储路径',
@@ -208,7 +200,6 @@ export const configSchema: ConfigSchema = {
 
 export const defaultConfig = {
   jobs: [] as Record<string, unknown>[],
-  maxConcurrent: 3,
   persistPath: 'data:/scheduler-jobs.json',
 };
 
@@ -384,7 +375,6 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   for (const page of webuiPages) webui.registerPage(page);
 
   const runtimes = new Map<string, JobRuntime>();
-  let runningCount = 0;
 
   // 配置中定义的任务名称集合（不需要持久化）
   const configJobNames = new Set(config.jobs.map(j => j.name));
@@ -472,13 +462,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
   async function executeJob(rt: JobRuntime): Promise<void> {
     if (rt.running) return;
-    if (runningCount >= config.maxConcurrent) {
-      rt.lastResult = '跳过: 并发达上限';
-      return;
-    }
 
     rt.running = true;
-    runningCount++;
     const jobName = rt.config.name;
 
     try {
@@ -526,7 +511,6 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       await ctx.emit('scheduler:job:error', jobName, msg);
     } finally {
       rt.running = false;
-      runningCount--;
     }
   }
 
@@ -1000,7 +984,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     runtimes.clear();
   });
 
-  logger.info(`计划任务调度器已启动 (${config.jobs.length} 个任务, 最大并发 ${config.maxConcurrent})`);
+  logger.info(`计划任务调度器已启动 (${config.jobs.length} 个任务)`);
 }
 
 // ──────────── 辅助函数 ────────────
@@ -1024,7 +1008,6 @@ export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
       content: String(j.content ?? ''),
       enabled: j.enabled !== false,
     })),
-    maxConcurrent: (raw.maxConcurrent as number) ?? 3,
     persistPath: (raw.persistPath as string) ?? 'data:/scheduler-jobs.json',
   };
 }
