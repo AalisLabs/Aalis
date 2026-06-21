@@ -36,18 +36,11 @@ meta.inject = {}
 ## 配置项
 
 - `config.owners`（`UserIdentity[]`）：owner 身份列表。
-- `config.restrictedCapabilities`（glob 列表）：额外视为 restricted 的能力，叠加在内置之上。
 - `config.deniedCapabilities`（glob 列表）：全局硬禁用，命中即拒，连 owner 都压过。
 - `config.visibilityOverrides`（操作名 → public/restricted）：owner 临时把某操作放开/收紧，无需改插件声明。
-- `config.restrictedPolicy`（`{ allow?, duration? }`）：受限能力的临时放行策略（时限白名单）。
+- `config.restrictedPolicy`（`{ allow?, duration? }`）：受限能力的临时放行策略（owner 自动放行的时限白名单）。
 
-### 内置受限能力（`BUILTIN_RESTRICTED`）
-
-无需配置即默认 restricted，仅 owner 或被授予者可触达：
-
-- 写 / 删 `data:/users.json`
-- 写 / 删 `data:/scheduler-jobs.json`
-- 写 / 删 `aalis:` 源码根
+某能力是否 restricted 由其所在工具/指令声明的 `visibility` 决定；`visibilityOverrides` 可逐操作覆盖。
 
 ## 临时能力委托
 

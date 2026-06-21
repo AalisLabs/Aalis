@@ -139,7 +139,6 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
     visibility: 'restricted',
     // 任意 shell 命令是最强的 confused-deputy 向量 → owner 也需确认（本会话记住）
     confirm: 'session',
-    permissions: ['tool:shell.exec', 'system:process.exec'],
     handler: async (args, _callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);
@@ -204,7 +203,6 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
     },
     visibility: 'restricted',
     confirm: 'session',
-    permissions: ['tool:shell.exec_background', 'system:process.exec', 'system:process.background'],
     handler: async (args, callCtx) => {
       const command = args.command as string;
       const cwd = await resolveCwd(config, args.cwd);
@@ -282,7 +280,6 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       },
     },
     visibility: 'restricted',
-    permissions: ['tool:process.list', 'system:process.read'],
     handler: async (_args, callCtx) => {
       const processes = getSessionProcesses(callCtx.sessionId);
       pruneDoneProcesses(processes);
@@ -324,7 +321,6 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       },
     },
     visibility: 'restricted',
-    permissions: ['tool:process.read', 'system:process.read'],
     handler: async (args, callCtx) => {
       const processId = args.processId as string;
       const tail = args.tail as number | undefined;
@@ -379,7 +375,6 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
     visibility: 'restricted',
     // 杀进程不可逆 → owner 也需确认（本会话记住）
     confirm: 'session',
-    permissions: ['tool:process.kill', 'system:process.kill'],
     handler: async (args, callCtx) => {
       const processId = args.processId as string;
       const signal = (args.signal as string) || 'SIGTERM';

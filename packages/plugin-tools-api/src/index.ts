@@ -17,7 +17,6 @@
 import type { Context } from '@aalis/core';
 import type {
   CapabilityConfirm,
-  CapabilityId,
   CapabilityRisk,
   CapabilityVisibility,
   ExecutionGuard,
@@ -80,13 +79,6 @@ export interface RegisteredTool {
   confirm?: CapabilityConfirm;
   /** 风险等级（声明糖）：展开为 (visibility, confirm) 默认；显式 visibility/confirm 覆盖 */
   risk?: CapabilityRisk;
-  /** 静态资源能力标识，用于透明展示与能力匹配 */
-  permissions?: CapabilityId[];
-  /** 根据工具参数解析动态能力，如 storage:workspace:write */
-  resolvePermissions?: (
-    args: Record<string, unknown>,
-    ctx: ToolCallContext,
-  ) => CapabilityId[] | Promise<CapabilityId[]>;
   /** 工具所属分组（用于按平台筛选，未设置时始终可用） */
   groups?: string[];
 }
@@ -96,7 +88,6 @@ export interface ToolSummary {
   name: string;
   description: string;
   groups?: string[];
-  permissions?: CapabilityId[];
 }
 
 /** 工具分组信息 */
@@ -139,7 +130,6 @@ export interface ToolService {
     confirm?: CapabilityConfirm;
     /** 原始风险声明（透传，供 authority 派生 minTier：safe→访客/sensitive→朋友/dangerous→信任） */
     risk?: CapabilityRisk;
-    permissions?: string[];
     groups?: string[];
   }>;
 

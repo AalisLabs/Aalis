@@ -225,8 +225,6 @@ export function AuthorityPage() {
       flash(errMsg(e));
     }
   };
-  /** 资源能力（除自身 type:name 外）—— 不同参数可能触达的细粒度资源（如 storage:write） */
-  const resourceCaps = (op: Operation): string[] => (op.permissions ?? []).filter(p => p !== capKey(op));
   const applyDenied = (list: string[]) => act('setConfig', { deniedCapabilities: list }, '已更新硬禁');
   const applyAllow = (list: string[], duration: number) =>
     act('setRestrictedPolicy', { policy: { allow: list, duration } }, '已更新自动放行');
@@ -460,7 +458,6 @@ export function AuthorityPage() {
                         const eff = effectiveMinLevel(op, data.authorityOverrides);
                         const confOv = data.confirmOverrides[k];
                         const isCmd = op.type === 'command';
-                        const rcaps = resourceCaps(op);
                         return (
                           <div
                             key={k}
@@ -488,15 +485,6 @@ export function AuthorityPage() {
                               </span>
                               <span className="authority-cmd-name" title={k}>{op.displayName}</span>
                               {overridden && <span style={{ color: '#f59e0b' }} title={`已覆盖（默认 ${derived}）`}>●</span>}
-                              {rcaps.map(rc => (
-                                <span
-                                  key={rc}
-                                  className="cap-chip"
-                                  title={`不同参数可能触达此资源，由「高级」的硬禁/受限按资源单独裁决（与本操作等级独立）`}
-                                >
-                                  {rc}
-                                </span>
-                              ))}
                             </span>
                             <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                               <span style={{ opacity: 0.6, fontSize: 11 }}>等级</span>

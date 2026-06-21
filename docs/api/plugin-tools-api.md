@@ -23,7 +23,7 @@ interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
-  getAll(): Array<{ name; description; pluginName; visibility; permissions?; groups? }>;
+  getAll(): Array<{ name; description; pluginName; visibility; groups? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
   setExecutionGuard(guard: ExecutionGuard): void;
   unregisterByPlugin(pluginName: string): void;
@@ -40,9 +40,7 @@ interface RegisteredTool {
   handler: (args, callCtx: ToolCallContext) => Promise<string>;
   pluginName: string;
   visibility?: CapabilityVisibility;      // 'public' | 'restricted'（默认 public）
-  permissions?: CapabilityId[];           // 静态资源能力
-  resolvePermissions?: (args, ctx) => CapabilityId[] | Promise<CapabilityId[]>; // 动态资源能力
-  // 注：CapabilityVisibility / CapabilityId 从 @aalis/plugin-authority-api 导入
+  // 注：CapabilityVisibility 从 @aalis/plugin-authority-api 导入
   groups?: string[];                      // 工具分组，未设置时始终可用
 }
 ```
@@ -113,7 +111,7 @@ const tools = useToolService(ctx);
 tools.register({
   definition: { type: 'function', function: { name: 'my_tool', ... } },
   handler: async (args, callCtx) => '...',
-  permissions: ['tool:custom.my_tool'],
+  visibility: 'public',
   groups: ['custom'],
 });
 ```

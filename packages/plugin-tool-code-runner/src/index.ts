@@ -242,7 +242,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         },
       },
       visibility: 'restricted',
-      permissions: ['tool:code.python', 'system:process.exec', 'runtime:python'],
       handler: async args => {
         const code = args.code as string;
         const timeout = args.timeout as number | undefined;
@@ -294,7 +293,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         },
       },
       visibility: 'restricted',
-      permissions: ['tool:code.javascript', 'system:process.exec', 'runtime:javascript'],
       handler: async args => {
         const code = args.code as string;
         const timeout = args.timeout as number | undefined;

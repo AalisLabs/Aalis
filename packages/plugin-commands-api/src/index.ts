@@ -13,7 +13,6 @@
 import type { Context } from '@aalis/core';
 import type {
   CapabilityConfirm,
-  CapabilityId,
   CapabilityRisk,
   CapabilityVisibility,
   ExecutionGuard,
@@ -86,8 +85,6 @@ export interface CommandMeta {
   confirm?: CapabilityConfirm;
   /** 风险等级（声明糖）：展开为 (visibility, confirm) 默认；显式 visibility/confirm 覆盖 */
   risk?: CapabilityRisk;
-  /** 额外触达的资源能力（如 storage:path:...:write），不含默认 command:<name> */
-  permissions?: CapabilityId[];
   /** 自定义 usage 文本 */
   usage?: string;
   /** 示例 */
@@ -107,8 +104,6 @@ export interface Command {
   confirm?: CapabilityConfirm;
   /** 原始风险声明（透传，含沿点路径继承）；供 authority 派生 minTier：safe→访客/sensitive→朋友/dangerous→信任 */
   risk?: CapabilityRisk;
-  /** 有效资源能力列表（含默认 command:<name> + 从父分组继承的声明） */
-  permissions: string[];
   /** 别名（完整点路径） */
   aliases: string[];
   positionalArgs: PositionalArgSpec[];
