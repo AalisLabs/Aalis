@@ -33,28 +33,36 @@ export function normalizeCronExpr(input: string): string | null {
 }
 
 /**
- * 解析 cron 字段（如 `*`、`*\/5`、`1-5`、`1,3,5`），返回命中数字集合。
+ * 解析 cron 字段，返回命中数字集合。支持：`*`、`*\/5`、`1-5`、`1,3,5`、
+ * 以及范围+步进 `1-30/5` 与 起点+步进 `0/15`（从起点步进到 max）。
+ * 非法字段（如 `abc`、`5-`、超界单值）解析为空集，由 validateCronExpr 在创建期拒绝。
  */
 export function parseCronField(field: string, min: number, max: number): Set<number> {
   const result = new Set<number>();
   for (const part of field.split(',')) {
     const trimmed = part.trim();
-    if (trimmed === '*') {
-      for (let i = min; i <= max; i++) result.add(i);
-    } else if (trimmed.startsWith('*/')) {
-      const step = parseInt(trimmed.slice(2), 10);
-      if (step > 0) for (let i = min; i <= max; i += step) result.add(i);
-    } else if (trimmed.includes('-')) {
-      const [a, b] = trimmed.split('-').map(Number);
-      // 跳过非法范围（如 "5-" → [5,NaN]、"abc-def"）；并夹到 [min,max]，避免越界值
-      // （如分钟字段 "1-100" 旧实现会塞入 60-99 这些非法分钟）。
-      if (!Number.isNaN(a) && !Number.isNaN(b)) {
-        for (let i = Math.max(min, a); i <= Math.min(max, b); i++) result.add(i);
-      }
+    // 先拆步进：a-b/step、lo/step、*/step、a-b、lo、* 统一在此处理
+    const [rangePart, stepPart] = trimmed.split('/');
+    const step = stepPart !== undefined ? parseInt(stepPart, 10) : 1;
+    if (Number.isNaN(step) || step <= 0) continue; // 非法/缺失步进值 → 跳过该 part
+    let lo: number;
+    let hi: number;
+    if (rangePart === '*') {
+      lo = min;
+      hi = max;
+    } else if (rangePart.includes('-')) {
+      const [a, b] = rangePart.split('-').map(Number);
+      if (Number.isNaN(a) || Number.isNaN(b)) continue; // "5-"、"abc-def" 等
+      lo = a;
+      hi = b;
     } else {
-      const n = parseInt(trimmed, 10);
-      if (!Number.isNaN(n) && n >= min && n <= max) result.add(n);
+      const n = parseInt(rangePart, 10);
+      if (Number.isNaN(n)) continue;
+      lo = n;
+      hi = stepPart !== undefined ? max : n; // `lo/step` → lo..max 步进；裸单值 → 仅该值
     }
+    // 夹到 [min,max]，避免越界（如分钟字段 "1-100" 不塞入 60-99 这些非法分钟）
+    for (let i = Math.max(min, lo); i <= Math.min(max, hi); i += step) result.add(i);
   }
   return result;
 }
@@ -166,7 +174,21 @@ export function validateCronExpr(input: string): ValidateResult {
   }
   const normalized = normalizeCronExpr(s);
   if (!normalized) return { ok: false, reason: `非法 cron 表达式（需 5 字段或别名）: ${s}` };
-  if (normalized.split(/\s+/).length !== 5) return { ok: false, reason: `cron 必须为 5 字段: ${normalized}` };
+  const fields = normalized.split(/\s+/);
+  if (fields.length !== 5) return { ok: false, reason: `cron 必须为 5 字段: ${normalized}` };
+  // 逐字段校验：任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
+  const ranges: Array<[number, number]> = [
+    [0, 59],
+    [0, 23],
+    [1, 31],
+    [1, 12],
+    [0, 6],
+  ];
+  for (let i = 0; i < 5; i++) {
+    if (parseCronField(fields[i], ranges[i][0], ranges[i][1]).size === 0) {
+      return { ok: false, reason: `cron 第 ${i + 1} 字段非法（解析为空）: "${fields[i]}"` };
+    }
+  }
   return { ok: true, kind: 'cron', normalized };
 }
 
