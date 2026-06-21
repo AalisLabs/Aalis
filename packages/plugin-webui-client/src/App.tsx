@@ -784,6 +784,9 @@ export function App() {
           </span>
           {me && (
             <span className="content-user" title={`${me.identity.platform}:${me.identity.userId}`}>
+              <span style={{ fontSize: 12, opacity: 0.7 }}>
+                {me.identity.platform}:{me.identity.userId}
+              </span>
               {me.isOwner && <span className="content-user-level">owner</span>}
               <button
                 className="btn-sm"
