@@ -34,6 +34,14 @@ describe('cron-engine-api: 表达式解析', () => {
     expect([...parseCronField('5,99,30', 0, 59).values()].sort((a, b) => a - b)).toEqual([5, 30]);
   });
 
+  it('parseCronField: 范围+步进 1-30/5、起点+步进 0/15（修复前静默成空集→死任务）', () => {
+    expect([...parseCronField('1-30/5', 0, 59)]).toEqual([1, 6, 11, 16, 21, 26]);
+    expect([...parseCronField('0/15', 0, 59)]).toEqual([0, 15, 30, 45]);
+    expect([...parseCronField('*/15', 0, 59)]).toEqual([0, 15, 30, 45]);
+    expect([...parseCronField('1-30/0', 0, 59)]).toEqual([]); // 非法步进 → 跳过
+    expect([...parseCronField('1-30/abc', 0, 59)]).toEqual([]);
+  });
+
   it('validateCronExpr: 5 字段 / @every / 错误三态', () => {
     expect(validateCronExpr('0 9 * * *').ok).toBe(true);
     const ev = validateCronExpr('@every 30s');
@@ -41,6 +49,9 @@ describe('cron-engine-api: 表达式解析', () => {
     if (ev.ok) expect(ev.intervalSeconds).toBe(30);
     expect(validateCronExpr('').ok).toBe(false);
     expect(validateCronExpr('garbage').ok).toBe(false);
+    // 逐字段校验：解析为空的字段被拒（旧实现只数字段个数会放行 99 这类非法值）
+    expect(validateCronExpr('99 * * * *').ok).toBe(false);
+    expect(validateCronExpr('1-30/5 9 * * *').ok).toBe(true);
   });
 });
 
