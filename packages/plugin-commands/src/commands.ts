@@ -1,7 +1,6 @@
 import type { Logger } from '@aalis/core';
 import type {
   CapabilityConfirm,
-  CapabilityId,
   CapabilityRisk,
   CapabilityVisibility,
   ExecutionGuard,
@@ -45,7 +44,6 @@ interface CommandPatches {
   baseConfirm?: CapabilityConfirm;
   /** 节点自身声明的原始风险（透传，未声明则继承祖先）；供 authority 区分 sensitive(朋友)/dangerous(信任) */
   baseRisk?: CapabilityRisk;
-  basePermissions?: CapabilityId[];
   aliases: string[];
   positionalArgs: PositionalArgSpec[];
   options: OptionSpec[];
@@ -116,7 +114,6 @@ export class CommandRegistry implements CommandService {
     node.baseVisibility = meta?.visibility ?? riskDefaults(meta?.risk).visibility;
     node.baseConfirm = meta?.confirm ?? riskDefaults(meta?.risk).confirm;
     node.baseRisk = meta?.risk;
-    node.basePermissions = meta?.permissions ? [...meta.permissions] : [];
     node.positionalArgs = positionalArgs;
     node.usage = meta?.usage;
     if (meta?.examples) node.examples.push(...meta.examples);
@@ -306,7 +303,6 @@ export class CommandRegistry implements CommandService {
         visibility: cmd.visibility,
         confirm: cmd.confirm,
         risk: cmd.risk,
-        permissions: cmd.permissions,
         sessionId: input.sessionId,
         platform: input.platform,
         userId: input.userId,
@@ -341,12 +337,10 @@ export class CommandRegistry implements CommandService {
     const node = this.nodes.get(name);
     if (!node) throw new Error(`internal: node ${name} missing`);
 
-    // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖；
-    // 资源能力沿途累加（父分组声明的 permissions 下传子节点）。
+    // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖。
     let effVisibility: CapabilityVisibility = 'public';
     let effConfirm: CapabilityConfirm | undefined;
     let effRisk: CapabilityRisk | undefined;
-    const inheritedPermissions: string[] = [];
     const parts = name.split('.');
     for (let i = 1; i < parts.length; i++) {
       const parent = parts.slice(0, i).join('.');
@@ -354,13 +348,11 @@ export class CommandRegistry implements CommandService {
       if (p?.baseVisibility !== undefined) effVisibility = p.baseVisibility;
       if (p?.baseConfirm !== undefined) effConfirm = p.baseConfirm;
       if (p?.baseRisk !== undefined) effRisk = p.baseRisk;
-      if (p?.basePermissions) inheritedPermissions.push(...p.basePermissions);
     }
 
     const visibility = node.baseVisibility ?? effVisibility;
     const confirm = node.baseConfirm ?? effConfirm;
     const risk = node.baseRisk ?? effRisk;
-    const permissions = unique([`command:${name}`, ...inheritedPermissions, ...(node.basePermissions ?? [])]);
 
     return {
       name,
@@ -369,7 +361,6 @@ export class CommandRegistry implements CommandService {
       visibility,
       confirm,
       risk,
-      permissions,
       aliases: [...node.aliases],
       positionalArgs: [...node.positionalArgs],
       options: [...node.options],
@@ -533,10 +524,6 @@ export class CommandRegistry implements CommandService {
 // ============================================================================
 // 工具函数
 // ============================================================================
-
-function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
-}
 
 function tokenize(input: string): string[] {
   const tokens: string[] = [];

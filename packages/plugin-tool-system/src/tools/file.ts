@@ -85,18 +85,6 @@ function ensureRootAllowed(uri: string, config: FileConfig): void {
   }
 }
 
-function storagePermission(
-  args: Record<string, unknown>,
-  config: FileConfig,
-  ctx: { sessionId: string } | undefined,
-  op: 'read' | 'write' | 'delete',
-): string[] {
-  const uri = toStorageUri(args.path as string | undefined, config, ctx?.sessionId);
-  const root = rootOf(uri);
-  // 额外产出路径级权限标识，供 authority 按具体文件动态提权（如 data:/users.json）。
-  return [`storage:${op}`, `storage:${root}:${op}`, `storage:path:${uri}:${op}`];
-}
-
 function requireStorage(config: FileConfig): StorageService {
   if (!config.storage) throw new Error('storage 服务不可用，文件工具已进入安全停用状态');
   return config.storage;
@@ -309,8 +297,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    permissions: ['tool:file.read', 'storage:read'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -378,8 +364,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     visibility: 'restricted',
     // 写文件是 confused-deputy 向量（注入诱导覆盖/落恶意文件）→ owner 也需确认（本会话记住）
     confirm: 'session',
-    permissions: ['tool:file.write', 'storage:write'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -419,8 +403,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     },
     visibility: 'restricted',
     confirm: 'session',
-    permissions: ['tool:file.edit', 'storage:write'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -485,8 +467,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     },
     visibility: 'restricted',
     confirm: 'session',
-    permissions: ['tool:file.append', 'storage:write'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'write'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -532,8 +512,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     visibility: 'restricted',
     // 删文件不可逆 → owner 也需确认（本会话记住）
     confirm: 'session',
-    permissions: ['tool:file.delete', 'storage:delete'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'delete'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -575,8 +553,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    permissions: ['tool:file.list', 'storage:read'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -641,8 +617,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    permissions: ['tool:file.info', 'storage:read'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -702,8 +676,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    permissions: ['tool:file.search', 'storage:read'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -844,8 +816,6 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
-    permissions: ['tool:file.tree', 'storage:read'],
-    resolvePermissions: (args, callCtx) => storagePermission(args, config, callCtx, 'read'),
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);

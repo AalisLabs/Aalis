@@ -3,7 +3,7 @@ import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/h
 import type { RegisteredTool, ScopedToolService } from '../../packages/plugin-tools-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// http_download 写工具必须挂闸（restricted + confirm + storage:write），
+// http_download 写工具必须挂闸（restricted + confirm），
 //     防被注入的 LLM 静默/越权写 storage（如覆写 data:/users.json）。
 // ════════════════════════════════════════════════════════════
 
@@ -21,12 +21,11 @@ function captureRegistered(): Record<string, Omit<RegisteredTool, 'pluginName'>>
 }
 
 describe('http 工具能力闸', () => {
-  it('http_download：受限 + 每次确认 + storage:write 权限', () => {
+  it('http_download：受限 + 每次确认', () => {
     const t = captureRegistered().http_download;
     expect(t).toBeDefined();
     expect(t.visibility).toBe('restricted');
     expect(t.confirm).toBe('session');
-    expect(t.permissions).toContain('storage:write');
   });
 
   it('http_request：保持默认（暂未改其闸）', () => {

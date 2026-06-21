@@ -10,7 +10,7 @@
 
 import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisConfig/ServiceTypeMap 增强）
 
-/** 细粒度能力标识，如 tool:file.write、command:shutdown、storage:path:data:/users.json:write */
+/** 细粒度能力标识，如 tool:file.write、command:shutdown */
 export type CapabilityId = string;
 
 /**
@@ -101,8 +101,6 @@ export interface ExecutionGuardContext {
   risk?: CapabilityRisk;
   /** 操作的生效确认要求（轴 B，与 visibility/档位 正交、owner 也生效）；缺省=不确认 */
   confirm?: CapabilityConfirm;
-  /** 操作额外触达的资源能力（如 storage:path:...:write）；其可见性由 restrictedCapabilities 决定 */
-  permissions?: CapabilityId[];
   /** 会话 ID */
   sessionId: string;
   /** 来源平台 */
@@ -141,8 +139,6 @@ export interface AuthorizeRequest {
   visibility: CapabilityVisibility;
   /** 操作原始风险（透传，供 minTier 派生；缺省回退 visibility） */
   risk?: CapabilityRisk;
-  /** 操作额外触达的资源能力（storage:... 等）；可见性由 restrictedCapabilities 配置判定 */
-  resourceCapabilities?: CapabilityId[];
 }
 
 // ============================================================
@@ -157,8 +153,6 @@ export interface AccessRequest {
   type: 'command' | 'tool';
   /** 触达的（受限）能力 */
   capability: CapabilityId;
-  /** 资源能力（如有） */
-  resourceCapabilities?: CapabilityId[];
   args?: Record<string, unknown>;
   sessionId: string;
   platform: string;
@@ -269,7 +263,7 @@ export interface AuthorityService {
   /**
    * 统一权限闸 —— 任何 surface 的敏感操作在边界调用本方法。
    * 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
-   * minLevel 由 request.risk/visibility/config.authorityOverrides 派生；资源能力按 restrictedCapabilities 系统层 fail-closed。
+   * minLevel 由 request.risk/visibility/config.authorityOverrides 派生。
    * @returns null 放行；string 为拒绝原因（可直接展示）
    */
   authorize(identity: UserIdentity | { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
@@ -309,11 +303,6 @@ declare module '@aalis/core' {
   interface AalisConfig {
     /** owner 列表（owner = `*`，拥有一切） */
     owners?: UserIdentity[];
-    /**
-     * 受限能力清单（glob）：命中即默认 restricted（默认禁、需被授予/owner）。
-     * 替代旧的数字提权 map。内置保护（写 data:/users.json、aalis:/* 等）+ 本清单叠加。
-     */
-    restrictedCapabilities?: string[];
     /** 全局能力封禁（glob）：命中即拒，连 owner 都压过（系统级硬禁用，慎用）。 */
     deniedCapabilities?: string[];
     /**

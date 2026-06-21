@@ -85,7 +85,7 @@ export const inject = {
 
 ## 权限
 
-通常通过 `permissions: ['storage:<rootName>:<read|write|delete>']` 声明，由 `ExecutionGuard` 在执行前判定。
+每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。访问哪些根由 `provide('storage', …, { capabilities })` 时声明的能力决定。
 
 ## 实现者
 
