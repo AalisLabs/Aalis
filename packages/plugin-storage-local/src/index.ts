@@ -385,7 +385,15 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveForWrite(relPath);
     await this.snapshot(toUri(this.root.name, relPath), 'write', abs);
     await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, data);
+    // 原子写：先写临时文件再 rename（同分区原子覆盖），防崩溃/并发半写损坏关键持久化（users.json/scheduler-jobs 等）。
+    const tmp = `${abs}.tmp.${process.pid}.${Date.now()}`;
+    try {
+      await writeFile(tmp, data);
+      await rename(tmp, abs);
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
     this.logger.info(`storage.write ${toUri(this.root.name, relPath)} size=${Buffer.byteLength(data)}`);
   }
 
