@@ -15,8 +15,7 @@ interface CommandDefinition {
   name: string;                          // 不含前缀 "/"
   description: string;
   visibility?: CapabilityVisibility;     // 'public' | 'restricted'（默认 public）
-  permissions?: CapabilityId[];          // 额外触达的资源能力（如 storage:path:...:write）
-  // CapabilityVisibility / CapabilityId 从 @aalis/plugin-authority-api 导入
+  // CapabilityVisibility 从 @aalis/plugin-authority-api 导入
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   subcommands?: SubcommandDefinition[];  // 子指令递归

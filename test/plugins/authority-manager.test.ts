@@ -84,35 +84,6 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
     expect(m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' })).toBeNull();
   });
 
-  it('资源能力受限(restrictedCapabilities)：默认拒、达标放行', () => {
-    const m = new AuthorityManager(mkConfig({ restrictedCapabilities: ['storage:secret:*'] }), mkLogger(), storage);
-    const req = (id: ReturnType<typeof onebot>) =>
-      m.authorize(id, {
-        capability: 'tool:save',
-        visibility: 'public',
-        resourceCapabilities: ['storage:secret:write'],
-      });
-    expect(req(onebot('1'))).not.toBeNull();
-    m.setUserLevel(onebot('1'), 2);
-    expect(req(onebot('1'))).toBeNull();
-  });
-
-  it('内置受限：读/写 users.json/源码根 默认禁、owner 放行', () => {
-    const m = new AuthorityManager(mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }), mkLogger(), storage);
-    for (const cap of [
-      'storage:path:data:/users.json:write',
-      'storage:path:data:/users.json:read',
-      'storage:aalis:read',
-    ]) {
-      expect(
-        m.authorize(onebot('1'), { capability: 'tool:fw', visibility: 'public', resourceCapabilities: [cap] }),
-      ).not.toBeNull();
-      expect(
-        m.authorize(onebot('boss'), { capability: 'tool:fw', visibility: 'public', resourceCapabilities: [cap] }),
-      ).toBeNull();
-    }
-  });
-
   it('全局 deniedCapabilities 连 owner 都压过', () => {
     const m = new AuthorityManager(
       mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }], deniedCapabilities: ['tool:forbidden'] }),
@@ -139,7 +110,7 @@ describe('setUserLevel（owner 管理；覆盖式整数）', () => {
   });
 });
 
-describe('硬化：未授权不可自我提权 / deny 绝对 / 资源不被白名单绕 / 群内不跨用户白嫖', () => {
+describe('硬化：未授权不可自我提权 / deny 绝对 / 群内不跨用户白嫖', () => {
   const req = (over: Partial<AccessRequest> = {}): AccessRequest => ({
     name: 'shell.exec',
     type: 'tool',
@@ -163,14 +134,6 @@ describe('硬化：未授权不可自我提权 / deny 绝对 / 资源不被白�
     );
     expect(m.isPreApproved(req({ capability: 'tool:shell' }))).toBe(false); // 硬禁压过白名单
     expect(m.isPreApproved(req({ capability: 'tool:weather' }))).toBe(true); // 未禁 + 白名单 → 放行
-  });
-
-  it('#2b 资源保护不被白名单绕：allow:["*"] 仍挡住低等级写 users.json', () => {
-    const m = new AuthorityManager(mkConfig({ restrictedPolicy: { allow: ['*'] } }), mkLogger(), storage);
-    const r = req({ capability: 'tool:file_write', resourceCapabilities: ['storage:path:data:/users.json:write'] });
-    expect(m.isPreApproved(r)).toBe(false); // 等级 0 → 资源闸挡住，白名单救不了
-    m.setUserLevel({ platform: 'onebot', userId: '1' }, 2);
-    expect(m.isPreApproved(r)).toBe(true); // 等级够 + 白名单 → 放行
   });
 
   it('#3 群内临时授予绑 userId：A 批准不让同会话 B 白嫖', async () => {

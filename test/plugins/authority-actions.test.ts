@@ -64,19 +64,16 @@ describe('getOverview — 总览快照', () => {
   it('返回 users(含 level) / owners / 命令工具清单', async () => {
     const { ctx, manager } = makeCtx({
       owners: [{ platform: 'webui', userId: 'boss' }],
-      restrictedCapabilities: ['storage:secret:*'],
     });
     manager.setUserLevel({ platform: 'onebot', userId: 'a' }, 1);
     const ov = (await actions.getOverview(ctx, {})) as {
       users: Array<{ userId: string; level: number }>;
       owners: unknown[];
-      restrictedCapabilities: string[];
       commands: unknown[];
       tools: unknown[];
     };
     expect(ov.users.find(u => u.userId === 'a')?.level).toBe(1);
     expect(ov.owners).toEqual([{ platform: 'webui', userId: 'boss' }]);
-    expect(ov.restrictedCapabilities).toContain('storage:secret:*');
     expect(Array.isArray(ov.commands)).toBe(true);
     expect(Array.isArray(ov.tools)).toBe(true);
   });
