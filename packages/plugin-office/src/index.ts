@@ -114,6 +114,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.logger.info('PDF 工具已启用');
   }
 
+  ctx.onDispose(() => sessions.clear());
   ctx.logger.info(`Office 文档工具插件已启动 (输出 URI: ${outputUri})`);
 }
 

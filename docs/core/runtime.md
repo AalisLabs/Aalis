@@ -28,8 +28,8 @@ Aalis 把「内核」和「宿主」分开：
 | 导出 | 作用 |
 |---|---|
 | `startAalis(opts?)` | **一行启动**：读 `aalis.config.yaml` → 从 `node_modules` 加载已装 @aalis 插件 → 组装 `App` → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。 |
-| `createNodeModulesPluginLoader(projectDir?)` | **独立部署**插件加载器：读项目 `package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（`aalis-plugin` 关键词 ∪ `@aalis/plugin-*` 名 ∪ `aalis.service`/`subsystem` 标记，且**排除** `aalis.{core,types,client,tooling}`）发现并动态 import。 |
-| `createFsPluginLoader` | **monorepo 自托管**加载器：扫 `<cwd>/packages`，同一套 marker 排除规则。 |
+| `createNodeModulesPluginLoader(projectDir?)` | **独立部署**插件加载器：读项目 `package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。 |
+| `createFsPluginLoader` | **monorepo 自托管**加载器：扫 `<cwd>/packages`，复用同一 `aalis-plugin` 纯关键词正向门。 |
 | `createFsYamlConfigProvider(configPath?)` | 文件系统 + YAML 配置 provider（返回 `{config, provider, dataDir}`）。 |
 | `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |
 

@@ -3,6 +3,7 @@ import { AlertTriangle, Radio, Workflow, Link2, Loader2 } from 'lucide-react';
 import { api } from '../api';
 import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
+import { useConfirm } from '../components/ConfirmDialog';
 import type { PluginInfo, ConfigSchema, SchemaField, ServiceInfo } from '../types';
 
 export function PluginConfigPage({
@@ -18,6 +19,7 @@ export function PluginConfigPage({
   onConfigSaved: () => void;
   onRestart: () => void;
 }) {
+  const { confirm, dialog } = useConfirm();
   const [busySet, setBusySet] = useState<Set<string>>(new Set());
   const prevPluginsRef = useRef(plugins);
   const [editingPlugin, setEditingPlugin] = useState<string | null>(null);
@@ -145,7 +147,13 @@ export function PluginConfigPage({
   };
 
   const handleRemoveInstance = async (instanceId: string) => {
-    if (!confirm(`确定删除实例 "${instanceId}"？配置将一并移除。`)) return;
+    const ok = await confirm({
+      title: `删除实例「${instanceId}」`,
+      body: '该实例的配置将一并移除。',
+      confirmLabel: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     markBusy(instanceId);
     const res = await api<{ ok?: boolean; error?: string }>(
       `/api/plugins/${encodeURIComponent(instanceId)}/instance`,
@@ -160,24 +168,15 @@ export function PluginConfigPage({
     }
   };
 
-  // 卸载（删整个包）：核心/契约/WebUI 基础设施禁卸（与服务端 isProtectedPackage 一致；
-  // 服务端仍会硬校验，这里只是不显示按钮，避免无谓的报错点击）。
-  const PROTECTED_PKGS = new Set([
-    '@aalis/core',
-    '@aalis/plugin-package-manager',
-    '@aalis/plugin-webui-server',
-    '@aalis/plugin-webui-client',
-  ]);
-  const isProtectedPkg = (name: string) => PROTECTED_PKGS.has(name) || /-api$/.test(name.replace(/^@[^/]+\//, ''));
-
+  // 卸载（删整个包）：不再前置禁卸名单——用户要切就让其切；服务端仅在「断别人服务依赖」时挡（409）。
   const handleUninstall = async (p: PluginInfo) => {
-    if (
-      !confirm(
-        `确定卸载插件「${p.displayName ?? p.name}」(${p.name})？\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: `卸载插件「${p.displayName ?? p.name}」`,
+      body: `${p.name}\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。`,
+      confirmLabel: '卸载',
+      danger: true,
+    });
+    if (!ok) return;
     markBusy(p.instanceId);
     const res = await api<{ ok?: boolean; error?: string; message?: string }>('/api/marketplace/uninstall', {
       method: 'POST',
@@ -253,6 +252,7 @@ export function PluginConfigPage({
 
   return (
     <div className="page-content page-plugin-config">
+      {dialog}
       {toast && <div className="toast">{toast}</div>}
 
       {/* 全局配置 */}
@@ -425,7 +425,7 @@ export function PluginConfigPage({
                 {isSub && (
                   <button className="btn btn-sm" style={{ color: '#e55', fontSize: 11 }} onClick={() => handleRemoveInstance(iid)} disabled={isBusy(iid)}>删除</button>
                 )}
-                {!isSub && !p.core && !isProtectedPkg(p.name) && (
+                {!isSub && (
                   <button className="btn btn-sm" style={{ color: '#e55', fontSize: 11 }} onClick={() => handleUninstall(p)} disabled={isBusy(iid)} title="卸载插件（删包 + 清配置）">卸载</button>
                 )}
                 {p.reusable && !isSub && (
