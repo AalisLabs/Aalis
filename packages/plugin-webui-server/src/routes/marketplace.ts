@@ -6,12 +6,14 @@ import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
-// 纯 npm 路线：npm registry 的 keyword 检索即天然索引（约定 keyword aalis-plugin），
-// 无自建服务器、无静态索引。分发走 package-manager 的 npm pack。
+// 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
+// 分发走 package-manager 的 npm pack。
 // 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故 registry
 // 基址可配置（marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
-const AALIS_KEYWORD = 'aalis-plugin';
+// 市场收录四类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 前端 aalis-interface。
+// npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
+const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-interface'];
 const SEARCH_TIMEOUT_MS = 8000;
 // 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）
 const PKG_NAME_RE = /^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+(@[a-z0-9.-]+)?$/i;
@@ -27,9 +29,7 @@ interface MarketplacePackage {
   official: boolean;
   /** 组件类别（按包名分类，供前端分页/筛选）：功能插件 / api 契约 / 前端 */
   category: PackageCategory;
-  /** 已装且非核心/契约/WebUI 基础设施 → 允许从市场卸载（由路由层据 getStatus 计算） */
-  removable?: boolean;
-  /** 关键词标签（已剔除 aalis-plugin 约定词） */
+  /** 关键词标签（已剔除 aalis-plugin/util/api/interface 约定词） */
   keywords?: string[];
   /** 月下载量（npm search 自带，可信度信号） */
   downloads?: number;
@@ -70,38 +70,18 @@ interface PluginManifest {
   service?: { required?: string[]; optional?: string[]; provides?: string[] };
 }
 
-/**
- * 核心 / 契约 / WebUI 基础设施包：禁止从市场卸载（删了会连锁崩或把当前 WebUI
- * 自己干掉）。`*-api` 契约包被大量插件依赖；webui-server/client 是你正用的控制台；
- * package-manager 是卸载引擎本身；core===true 是 manifest 标记的核心插件。纯函数，便于单测。
- */
-const PROTECTED_EXACT = new Set([
-  '@aalis/core',
-  '@aalis/plugin-package-manager',
-  '@aalis/plugin-webui-server',
-  '@aalis/plugin-webui-client',
-]);
-export function isProtectedPackage(name: string, entry?: { core?: boolean }): boolean {
-  if (PROTECTED_EXACT.has(name)) return true;
-  const short = name.replace(/^@[^/]+\//, '');
-  if (/-api$/.test(short)) return true; // 契约/类型包
-  return entry?.core === true;
-}
-
-/** 市场组件类别。'plugin'=可装卸功能；'api'=契约/SDK（只读）；'client'=前端（可换） */
-type PackageCategory = 'plugin' | 'api' | 'client';
+/** 市场组件类别。'plugin'=可装卸功能；'api'=契约/SDK（只读）；'interface'=前端界面（可换）；'util'=工具库（被插件 import） */
+type PackageCategory = 'plugin' | 'api' | 'interface' | 'util';
 
 /**
- * 按**包名**分类（npm search 只返回 name，拿不到 package.json 的 aalis marker）。
- * 注意 `*-client` 不可一刀切——`plugin-mcp-client` 是功能插件，只有 `webui-client*`
- * 才是前端。第三方前端建议名含 `webui-client` 以被正确归类（否则归入功能插件，
- * 仍能装/被 aalis.client marker 发现挂载，只是分类不准）。纯函数，便于单测。
+ * 按**类型关键词**分类（npm search 直接返回 keywords，与加载约定的类型词 1:1，可靠）。
+ * 市场搜索已保证结果只含 aalis-plugin/util/api/interface 之一，无需再靠包名猜测。纯函数，便于单测。
  */
-export function classifyPackage(name: string): PackageCategory {
-  const short = name.replace(/^@[^/]+\//, '');
-  if (/-api$/.test(short)) return 'api';
-  if (/webui-client/.test(short)) return 'client';
-  return 'plugin';
+export function classifyPackage(keywords: string[]): PackageCategory {
+  if (keywords.includes('aalis-interface')) return 'interface';
+  if (keywords.includes('aalis-api')) return 'api';
+  if (keywords.includes('aalis-util')) return 'util';
+  return 'plugin'; // 进了市场却非上述三类 → 必是功能插件（aalis-plugin）
 }
 
 /**
@@ -154,8 +134,8 @@ export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<st
     author: o.package.publisher?.username,
     installed: installed.has(o.package.name),
     official: o.package.name.startsWith('@aalis/'),
-    category: classifyPackage(o.package.name),
-    keywords: (o.package.keywords ?? []).filter(k => k !== AALIS_KEYWORD),
+    category: classifyPackage(o.package.keywords ?? []),
+    keywords: (o.package.keywords ?? []).filter(k => !AALIS_KEYWORDS.includes(k)),
     downloads: o.downloads?.monthly,
     updated: o.updated ?? o.package.date,
     score: o.score?.final,
@@ -178,7 +158,8 @@ export function toManifest(packument: {
 
 /** 构造 npm registry 检索 URL（keyword 约定 + 可选搜索词 + 可配 registry 基址）。纯函数，便于单测。 */
 export function buildSearchUrl(q: string, registryBase: string = DEFAULT_REGISTRY): string {
-  const text = q ? `keywords:${AALIS_KEYWORD} ${q}` : `keywords:${AALIS_KEYWORD}`;
+  const kw = `keywords:${AALIS_KEYWORDS.join(',')}`;
+  const text = q ? `${kw} ${q}` : kw;
   const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
   return `${base}/-/v1/search?text=${encodeURIComponent(text)}&size=100`;
 }
@@ -190,17 +171,21 @@ export function registerMarketplaceRoutes(
   getPluginMgr: () => PluginManagerService | undefined,
   gate: RouteGate,
   registryBase: string = DEFAULT_REGISTRY,
+  /** 本地物理存在的包名（含 monorepo 工作区包）；由调用方扫盘注入，补 require.resolve 在 pnpm 工作区的盲区。 */
+  getLocalPackageNames: () => Set<string> = () => new Set(),
 ): void {
-  // 市场列表：npm registry keyword 检索 + 标注已装/可卸。网络失败降级为空列表 + warning，
+  // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
   expressApp.get('/api/marketplace', gate(), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const status = getPluginMgr()?.getStatus() ?? [];
-    const statusByName = new Map(status.map(p => [p.name, p]));
-    // 已装判定独立于 getStatus（后者漏掉 api/前端/核心——它们带 marker 不作为插件加载）：
-    // 对检索结果按「项目根能否 resolve 到其 package.json」补判，覆盖 npm 扁平/pnpm/monorepo。
+    // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉带 marker 不加载的 api/前端/核心）。
+    // 两路补判：① 本地物理存在（含 monorepo packages/ 工作区包——require.resolve 从仓库根解析不到）；
+    // ② 项目根能 resolve（独立部署的扁平 node_modules / 第三方根依赖）。
+    const localNames = getLocalPackageNames();
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
-    const canResolve = (name: string): boolean => {
+    const isPresent = (name: string): boolean => {
+      if (localNames.has(name)) return true;
       try {
         projectRequire.resolve(`${name}/package.json`);
         return true;
@@ -215,12 +200,9 @@ export function registerMarketplaceRoutes(
       const installed = augmentInstalled(
         (data.objects ?? []).map(o => o.package.name),
         new Set(status.map(p => p.name)),
-        canResolve,
+        isPresent,
       );
-      const packages = toMarketplacePackages(data, installed).map(p => ({
-        ...p,
-        removable: p.installed && !isProtectedPackage(p.name, statusByName.get(p.name)),
-      }));
+      const packages = toMarketplacePackages(data, installed);
       res.json({ packages });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -273,7 +255,8 @@ export function registerMarketplaceRoutes(
     }
   });
 
-  // 卸载：owner 级。护栏——禁卸核心/契约/WebUI 基础设施；禁卸"删了会断别人服务依赖"的包。
+  // 卸载：owner 级。唯一护栏——禁卸"删了会断别人服务依赖"的包（无替代提供者）。
+  // 不再保护核心/契约/WebUI 基础设施：用户要切就让其切（基础设施自删的后果自负）。
   // 真正删目录 + 清残留配置由 package-manager.uninstall 负责。
   expressApp.post('/api/marketplace/uninstall', gate(), async (req, res) => {
     const name = req.body?.name;
@@ -282,11 +265,6 @@ export function registerMarketplaceRoutes(
       return;
     }
     const status = getPluginMgr()?.getStatus() ?? [];
-    const entry = status.find(p => p.name === name);
-    if (isProtectedPackage(name, entry)) {
-      res.status(400).json({ error: `「${name}」是核心 / 契约 / WebUI 基础设施，禁止从市场卸载` });
-      return;
-    }
     const dependents = findServiceDependents(name, status);
     if (dependents.length > 0) {
       res.status(409).json({

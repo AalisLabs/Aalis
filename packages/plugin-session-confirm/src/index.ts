@@ -62,6 +62,7 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
       head.resolve(false);
       present(sessionId);
     }, CONFIRM_TIMEOUT_MS);
+    head.timer.unref?.(); // 待确认定时器不阻止进程优雅退出
     deliver(head.request, composeConfirmPrompt(head.request, head.always, SESSION_GRANT_SECONDS));
   };
 
@@ -98,7 +99,18 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
     return true;
   };
 
-  return { handler, feed };
+  const dispose = (): void => {
+    // 卸载/热重载：清所有未决确认的超时定时器并安全拒掉（resolve false），避免 Promise 永挂 + 定时器卡退出。
+    for (const q of queues.values()) {
+      for (const w of q) {
+        clearTimeout(w.timer);
+        w.resolve(false);
+      }
+    }
+    queues.clear();
+  };
+
+  return { handler, feed, dispose };
 }
 
 export async function apply(ctx: Context): Promise<void> {
@@ -129,4 +141,6 @@ export async function apply(ctx: Context): Promise<void> {
     if (busChannel.feed(data.message.sessionId, data.message.content ?? '', data.message.userId)) return; // 吞掉确认回复
     return next();
   });
+
+  ctx.onDispose(() => busChannel.dispose());
 }

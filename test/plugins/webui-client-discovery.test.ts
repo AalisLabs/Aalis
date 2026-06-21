@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type DiscoveryEnv, discoverClients } from '../../packages/plugin-webui-server/src/client-discovery.js';
+import {
+  collectLocalPackageNames,
+  type DiscoveryEnv,
+  discoverClients,
+} from '../../packages/plugin-webui-server/src/client-discovery.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server 全动态前端发现：按 aalis.client 标记扫描，不硬编码任何前端名。
@@ -95,5 +99,46 @@ describe('discoverClients（全动态前端发现）', () => {
       pkgs: { '/p/a/package.json': { name: '@x/only-name', aalis: { client: true } } },
     });
     expect(discoverClients(['/p'], [], env)[0].label).toBe('@x/only-name');
+  });
+});
+
+describe('collectLocalPackageNames（市场「已装」兜底：扫盘列本地包名，scope 无关）', () => {
+  it('收集各 scanDir 下子目录 package.json.name；含工作区 api/前端（require.resolve 漏掉的）', () => {
+    const env = makeEnv({
+      dirs: {
+        '/pkgs': ['plugin-foo', 'plugin-webui-api', 'plugin-webui-client', 'no-pkgjson'],
+        '/nm/@aalis': ['core'],
+      },
+      exists: [
+        '/pkgs',
+        '/pkgs/plugin-foo/package.json',
+        '/pkgs/plugin-webui-api/package.json',
+        '/pkgs/plugin-webui-client/package.json',
+        '/nm/@aalis',
+        '/nm/@aalis/core/package.json',
+      ],
+      pkgs: {
+        '/pkgs/plugin-foo/package.json': { name: '@aalis/plugin-foo' },
+        '/pkgs/plugin-webui-api/package.json': { name: '@aalis/plugin-webui-api', aalis: { types: true } },
+        '/pkgs/plugin-webui-client/package.json': { name: '@aalis/plugin-webui-client', aalis: { client: true } },
+        '/nm/@aalis/core/package.json': { name: '@aalis/core' },
+      },
+    });
+    const names = collectLocalPackageNames(['/pkgs', '/nm/@aalis'], env);
+    expect([...names].sort()).toEqual([
+      '@aalis/core',
+      '@aalis/plugin-foo',
+      '@aalis/plugin-webui-api',
+      '@aalis/plugin-webui-client',
+    ]);
+  });
+
+  it('跳过无 package.json / 无 name 的子目录；不存在的 scanDir 安全略过', () => {
+    const env = makeEnv({
+      dirs: { '/p': ['a', 'broken'] },
+      exists: ['/p', '/p/a/package.json'], // broken 无 package.json
+      pkgs: { '/p/a/package.json': { name: '@x/a' } },
+    });
+    expect([...collectLocalPackageNames(['/p', '/missing'], env)]).toEqual(['@x/a']);
   });
 });

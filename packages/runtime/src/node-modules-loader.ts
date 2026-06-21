@@ -14,11 +14,11 @@ import type { PluginDescriptor, PluginLoader, PluginModule } from '@aalis/core';
 // @aalis 插件并 dynamic import。与 monorepo 的 createFsPluginLoader 是「两种部署
 // 模型的两个加载器」，非重复：前者扫目录，后者走 node 解析。
 //
-// 插件识别（正信号 + 排除标记）：
-//   - 排除：package.json 的 aalis.{core,types,client,tooling} 标记（核心/契约/前端/工具链）
-//   - 收录：keywords 含 'aalis-plugin'（市场约定）∪ 名称匹配 @aalis/plugin-* ∪ 有 aalis.service/subsystem
-// 这样 @aalis/core、各 *-api（types）、webui-client（client）、@aalis/runtime（tooling）
-// 与 express/yaml 等普通依赖都不会被误当插件加载。
+// 插件识别（纯正向关键词门）：
+//   - 唯一标准：package.json 的 keywords 含 'aalis-plugin'。
+// 每类包各带自己的类型关键词（插件 aalis-plugin / 契约 aalis-api / 前端 aalis-interface / 工具库 aalis-util /
+// 核心 aalis-core / 工具链 aalis-runtime，后几类均不带 aalis-plugin），所以 @aalis/core、各 *-api、webui-client、
+// @aalis/runtime、各 util-* 与 express/yaml 等普通依赖都因不带 aalis-plugin 而自然不被加载——无需 marker 特判或名前缀/service 回退。
 
 function readJson(path: string): Record<string, unknown> | null {
   try {
@@ -30,18 +30,11 @@ function readJson(path: string): Record<string, unknown> | null {
 
 /**
  * 判定一个已装依赖是否为可加载的 Aalis 插件。纯函数，便于单测。
- * 排除核心/契约/前端/工具链标记；收录有 aalis-plugin 关键词或 @aalis/plugin-* 名或 service/subsystem。
+ * 唯一标准：keywords 含 'aalis-plugin'（真插件均带；契约/前端/核心/工具库带各自类型词，自然排除）。
  */
-export function isLoadablePlugin(name: string, meta: Record<string, unknown>): boolean {
-  const aalis = (meta.aalis ?? {}) as Record<string, unknown>;
-  if (aalis.core || aalis.types || aalis.client || aalis.tooling) return false;
+export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
   const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
-  return (
-    keywords.includes('aalis-plugin') ||
-    /^@aalis\/plugin-/.test(name) ||
-    aalis.service !== undefined ||
-    aalis.subsystem !== undefined
-  );
+  return keywords.includes('aalis-plugin');
 }
 
 /**
@@ -77,7 +70,7 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
           continue; // 未安装或无法解析，跳过
         }
         const meta = readJson(metaPath);
-        if (!meta || !isLoadablePlugin(dep, meta)) continue;
+        if (!meta || !isLoadablePlugin(meta)) continue;
         let entry: string;
         try {
           entry = req.resolve(dep);

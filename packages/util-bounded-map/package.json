@@ -1,7 +1,8 @@
 {
-  "name": "@aalis/plugin-message-api",
+  "name": "@aalis/util-bounded-map",
   "version": "0.4.0",
   "license": "MIT",
+  "description": "有界 Map：max 上限 + 可选滑动 TTL + onEvict，纯函数无依赖",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,18 +14,13 @@
     "dev": "tsc --watch"
   },
   "devDependencies": {
-    "@aalis/core": "workspace:*",
-    "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
-  },
-  "aalis": {
-    "types": true
-  },
-  "peerDependencies": {
-    "@aalis/core": ">=0.2.0 <1.0.0"
   },
   "keywords": [
     "aalis",
-    "aalis-api"
-  ]
+    "aalis-util"
+  ],
+  "aalis": {
+    "util": true
+  }
 }

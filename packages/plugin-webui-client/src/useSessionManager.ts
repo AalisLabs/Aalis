@@ -267,6 +267,8 @@ export interface SessionManager {
   /** 确保有活跃会话（无会话时自动新建），返回会话 ID */
   ensureSession: () => Promise<string>;
   switchSession: (newId: string) => void;
+  /** history:changed 事件回调：若是当前活跃会话则失效消息缓存并重新拉取 */
+  handleHistoryChanged: (sessionId: string) => void;
   loading: boolean;
   setLoading: React.Dispatch<React.SetStateAction<boolean>>;
   streamingRef: React.MutableRefObject<boolean>;

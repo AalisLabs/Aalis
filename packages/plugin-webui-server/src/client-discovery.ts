@@ -62,3 +62,23 @@ export function discoverClients(scanDirs: string[], depIds: string[], env: Disco
 
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
+
+/**
+ * 扫描本地物理存在的全部包名（与 discoverClients 共用 scanDirs/env）。
+ * 用途：补市场「已装」判定——require.resolve 在 pnpm 工作区从仓库根解析不到未提升的工作区包，
+ * 直接读 scanDirs 下每个子目录的 package.json.name 兜底。scope 无关（不挑 @aalis）。纯函数便于单测。
+ */
+export function collectLocalPackageNames(
+  scanDirs: string[],
+  env: Pick<DiscoveryEnv, 'existsSync' | 'readdirSync' | 'readJson' | 'join'>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const base of scanDirs) {
+    if (!env.existsSync(base)) continue;
+    for (const entry of env.readdirSync(base)) {
+      const pkg = env.readJson(env.join(base, entry, 'package.json')) as { name?: unknown } | undefined;
+      if (pkg && typeof pkg.name === 'string') out.add(pkg.name);
+    }
+  }
+  return out;
+}
