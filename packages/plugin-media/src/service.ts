@@ -588,7 +588,9 @@ export class MediaServiceImpl implements MediaService {
             }
           }
         } finally {
-          if (downloaded) await downloaded.cleanup();
+          // 清理本地化产物：local 即 downloaded 或 materializeAttachment 的结果（opts.localPath 那个是 noop），
+          // 旧代码只清 downloaded，漏了非 http 分支的 materializeAttachment tmp。
+          if (local) await local.cleanup();
         }
       }
     } else {
