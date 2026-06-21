@@ -226,6 +226,18 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     const b = await ensureBrowser();
     const page = await b.newPage();
     page.setDefaultTimeout(config.defaultTimeout);
+    // SSRF 收口：请求级拦截，统一覆盖 navigate/click/submit/重定向/子资源——
+    // 补全 validateUrl 此前仅在 browser_navigate 生效、被 click/表单提交/30x 绕过的缺口。
+    // 仅 blockPrivate 时挂拦截（关掉即零开销、本地全通，便于 owner 测本地）；
+    // 复用同一套 blockPrivate + allowedHosts 规则，host 白名单照样放行。
+    if (config.blockPrivate) {
+      await page.setRequestInterception(true);
+      // req 用最小结构类型，避免顶层 import puppeteer（与本文件 page:any 动态导入策略一致）。
+      page.on('request', (req: { url(): string; abort(reason?: string): Promise<void>; continue(): Promise<void> }) => {
+        if (isBlockedRequestUrl(req.url(), config)) req.abort('blockedbyclient').catch(() => {});
+        else req.continue().catch(() => {});
+      });
+    }
     const newId = `page_${++pageCounter}`;
     const slot: PageSlot = { page, url: 'about:blank', title: '', lastAccess: Date.now() };
     pages.set(newId, slot);
@@ -638,4 +650,25 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
     }
   }
   return null;
+}
+
+/**
+ * 请求级 SSRF 判定（用于 page 请求拦截，覆盖 navigate/click/submit/重定向/子资源）。
+ * 仅对 http(s) 请求做内网/本地封锁，复用 validateUrl 的同一套 blockPrivate + allowedHosts 规则；
+ * 非 http(s)（data:/blob:/about: 等）一律放行，避免误伤正常页面资源。
+ * @returns true = 应拦截
+ */
+function isBlockedRequestUrl(rawUrl: string, config: BrowserConfig): boolean {
+  if (!config.blockPrivate) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  const protocol = parsed.protocol.replace(/:$/, '').toLowerCase();
+  if (protocol !== 'http' && protocol !== 'https') return false;
+  const host = parsed.hostname.toLowerCase();
+  if (config.allowedHosts.includes(host)) return false;
+  return isPrivateHost(host);
 }
