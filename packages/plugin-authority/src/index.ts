@@ -62,7 +62,6 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       name: g.name,
       type: g.type,
       capability,
-      resourceCapabilities: g.permissions,
       args: g.args,
       sessionId: g.sessionId,
       platform: g.platform,
@@ -74,7 +73,6 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       capability,
       visibility: g.visibility,
       risk: g.risk,
-      resourceCapabilities: g.permissions,
     });
     if (denied) {
       // 未授权（等级不够 / 硬禁 / 资源受限）：**绝不**让发起者本人弹确认自我提权。
@@ -227,7 +225,6 @@ export const actions: PluginModule['actions'] = {
       users,
       owners,
       platforms,
-      restrictedCapabilities: ctx.config.get('restrictedCapabilities') ?? [],
       deniedCapabilities: ctx.config.get('deniedCapabilities') ?? [],
       authorityOverrides: ctx.config.get('authorityOverrides') ?? {},
       defaultAuthority: DEFAULT_AUTHORITY,
@@ -246,7 +243,6 @@ export const actions: PluginModule['actions'] = {
         visibility: n.visibility ?? 'public',
         confirm: n.confirm,
         risk: n.risk,
-        permissions: n.permissions,
       })),
       tools: tools.map(t => ({
         key: t.name,
@@ -257,7 +253,6 @@ export const actions: PluginModule['actions'] = {
         visibility: t.visibility ?? 'public',
         confirm: t.confirm,
         risk: t.risk,
-        permissions: t.permissions,
       })),
     };
   },
@@ -370,13 +365,11 @@ export const actions: PluginModule['actions'] = {
     return { message: until === -1 ? '自动确认：一直' : until === 0 ? '自动确认：关' : `自动确认：${m} 分钟`, until };
   },
 
-  /** 更新受限/禁用能力清单 */
+  /** 更新禁用能力清单 */
   async setConfig(ctx, args) {
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
-    const restricted = asStringList(args.restrictedCapabilities, 'restrictedCapabilities');
     const denied = asStringList(args.deniedCapabilities, 'deniedCapabilities');
-    if (restricted) ctx.config.set('restrictedCapabilities', restricted);
     if (denied) ctx.config.set('deniedCapabilities', denied);
     app.saveConfig();
     return { message: '权限配置已更新' };

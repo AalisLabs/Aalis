@@ -4,14 +4,14 @@ import type { ConfigSchema } from './types/index.js';
 /**
  * Aalis 应用配置（基础设施字段）
  *
- * 仅声明 core 自身管理的字段。业务字段（owners / agent / restrictedCapabilities 等）
+ * 仅声明 core 自身管理的字段。业务字段（owners / agent / deniedCapabilities 等）
  * 由对应 plugin 通过 declaration merging 注入：
  *
  * ```ts
  * declare module '@aalis/core' {
  *   interface AalisConfig {
  *     owners?: Array<{ platform: string; userId: string }>;
- *     restrictedCapabilities?: string[];
+ *     deniedCapabilities?: string[];
  *   }
  * }
  * ```

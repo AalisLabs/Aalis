@@ -22,7 +22,6 @@ const storage = {
   },
   writeFile: async () => {},
 } as unknown as StorageService;
-const onebot = (id: string) => ({ platform: 'onebot', userId: id });
 const req = (confirm?: 'session' | 'always', cap = 'tool:x', sessionId = 's') => ({
   name: 'x',
   type: 'tool' as const,
@@ -61,29 +60,6 @@ describe('resolveCapabilityPolicy（risk 展开 + 显式覆盖 + 默认）', () 
   it('riskDefaults：无 risk 返回空对象（保留「未声明=继承」语义）', () => {
     expect(riskDefaults(undefined)).toEqual({});
     expect(riskDefaults('dangerous')).toEqual({ visibility: 'restricted', confirm: 'session' });
-  });
-});
-
-describe('authorize（轴 A 纯由声明 + 配置裁决，无隐式启发式）', () => {
-  it('资源能力受限只由 BUILTIN_RESTRICTED + restrictedCapabilities 判定', () => {
-    // 默认配置：system:process.exec 不在内置保护表/配置中 → 不自动受限（由工具自身 visibility 把关）
-    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
-    expect(
-      m.authorize(onebot('1'), {
-        capability: 'tool:run',
-        visibility: 'public',
-        resourceCapabilities: ['system:process.exec'],
-      }),
-    ).toBeNull();
-    // owner 显式用 restrictedCapabilities 配置后才收紧（显式、owner 控）
-    const m2 = new AuthorityManager(mkConfig({ restrictedCapabilities: ['system:process.*'] }), mkLogger(), storage);
-    expect(
-      m2.authorize(onebot('1'), {
-        capability: 'tool:run',
-        visibility: 'public',
-        resourceCapabilities: ['system:process.exec'],
-      }),
-    ).not.toBeNull();
   });
 });
 

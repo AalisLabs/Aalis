@@ -6,19 +6,11 @@ import type {
   AuthorityService,
   AuthorityUserEntry,
   AuthorizeRequest,
-  CapabilityId,
   TemporaryGrant,
   UserIdentity,
 } from '@aalis/plugin-authority-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import {
-  DEFAULT_AUTHORITY,
-  matchAnyCap,
-  OWNER_RANK,
-  RESTRICTED_LEVEL,
-  resolveAccess,
-  resolveMinLevel,
-} from './authority-model.js';
+import { DEFAULT_AUTHORITY, matchAnyCap, OWNER_RANK, resolveAccess, resolveMinLevel } from './authority-model.js';
 import { UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
@@ -26,27 +18,9 @@ import { UserStore } from './user-store.js';
 //
 // owner=∞；每个外部身份一个登记等级（缺省 0，封禁=负数）；操作一个 minLevel（risk/visibility/authorityOverrides 派生）；
 // 裁决 deniedCapabilities(全局硬禁) > owner > level>=minLevel（纯函数在 authority-model）。
-// 资源能力(storage:/system:) 走系统层 fail-closed；confirm 轴 + 临时放行正交保留。
+// confirm 轴 + 临时放行正交保留。
 // 数据层（users.json v5 等级存储）委托给 UserStore。
 // ════════════════════════════════════════════════════════════
-
-/**
- * 内置受限能力：读/写/删 用户表 / 计划任务 / 源码根 —— 默认禁、仅 owner 或被授予者可触达。
- * 读也纳入：users.json 存委托结构、scheduler-jobs 存任务（含 actor 身份），
- * 默认 allowedRoots 即便放宽到 data，也不能让 file_read 等公开工具裸读这些状态文件。
- * （authority/scheduler 自身经 storage 服务直读直写，不过本守卫，故不受影响。）
- */
-const BUILTIN_RESTRICTED: readonly string[] = [
-  'storage:path:data:/users.json:read',
-  'storage:path:data:/users.json:write',
-  'storage:path:data:/users.json:delete',
-  'storage:path:data:/scheduler-jobs.json:read',
-  'storage:path:data:/scheduler-jobs.json:write',
-  'storage:path:data:/scheduler-jobs.json:delete',
-  'storage:aalis:read',
-  'storage:aalis:write',
-  'storage:aalis:delete',
-];
 
 export class AuthorityManager implements AuthorityService {
   private store: UserStore;
@@ -83,13 +57,6 @@ export class AuthorityManager implements AuthorityService {
     return (key ? this.store.get(key)?.level : undefined) ?? DEFAULT_AUTHORITY;
   }
 
-  /** 资源能力是否受限（命中内置保护 + config.restrictedCapabilities）→ 受限资源 minLevel=RESTRICTED_LEVEL，否则 0。 */
-  private resourceMinLevel(cap: CapabilityId): number {
-    if (matchAnyCap(BUILTIN_RESTRICTED, cap)) return RESTRICTED_LEVEL;
-    const extra = this.config.get('restrictedCapabilities') ?? [];
-    return matchAnyCap(extra, cap) ? RESTRICTED_LEVEL : DEFAULT_AUTHORITY;
-  }
-
   // ── 统一权限闸（等级静态判定；临时放行/确认在 requestAccess）──────────
   authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null {
     const level = this.level(identity.platform, identity.userId);
@@ -106,14 +73,6 @@ export class AuthorityManager implements AuthorityService {
     if (!resolveAccess({ level, minLevel, isOwner, denied, capability: request.capability })) {
       if (matchAnyCap(denied, request.capability)) return `已被系统禁用: ${request.capability}`;
       return `权限不足: "${request.capability}" 需等级 ${minLevel}（当前 ${level}）`;
-    }
-    // 资源能力：系统层 fail-closed（受限资源需 RESTRICTED_LEVEL/owner）
-    for (const cap of request.resourceCapabilities ?? []) {
-      const rMin = this.resourceMinLevel(cap);
-      if (!resolveAccess({ level, minLevel: rMin, isOwner, denied, capability: cap })) {
-        if (matchAnyCap(denied, cap)) return `已被系统禁用: ${cap}`;
-        return `权限不足: "${cap}" 需等级 ${rMin}（当前 ${level}）`;
-      }
     }
     return null;
   }
@@ -142,21 +101,14 @@ export class AuthorityManager implements AuthorityService {
 
   /**
    * 该请求是否被 owner **预先**放行（白名单 / 该用户在本会话已有的临时授予）——**绝不**含"问发起者本人"。
-   * 先过两道绝对闸（任何放行都不得绕过）：① 硬禁 deniedCapabilities；② 资源保护（受限资源始终按等级裁决）。
+   * 先过绝对闸（任何放行都不得绕过）：硬禁 deniedCapabilities。
    * 再看：restrictedPolicy 全局白名单（自动化免确认）或 会话临时授予。
    * 临时授予按 **userId + sessionId + capability** 匹配 —— 群内 sessionId 全群共享时，不跨用户泄漏。
    */
   private isTemporarilyAllowed(request: AccessRequest): boolean {
     const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
-    // ① 硬禁绝对：主能力 + 资源能力，任何放行路径都不得绕过
+    // 硬禁绝对：主能力命中 deniedCapabilities 时，任何放行路径都不得绕过
     if (matchAnyCap(denied, request.capability)) return false;
-    for (const rc of request.resourceCapabilities ?? []) if (matchAnyCap(denied, rc)) return false;
-    // ② 资源保护绝对：受限资源(users.json 等)始终按等级裁决，不被白名单/授予绕过
-    const isOwner = this.isOwner(request.platform, request.userId);
-    const level = this.level(request.platform, request.userId);
-    for (const rc of request.resourceCapabilities ?? []) {
-      if (!resolveAccess({ level, minLevel: this.resourceMinLevel(rc), isOwner, denied, capability: rc })) return false;
-    }
     // owner 全局白名单（自动化免确认）
     const policy = this.config.get('restrictedPolicy');
     if (policy?.allow && policy.allow.length > 0) {

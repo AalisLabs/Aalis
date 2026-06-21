@@ -14,7 +14,6 @@ interface RegisteredTool {
   handler: (args: Record<string, unknown>, ctx?: ToolCallContext) => Promise<string>;
   pluginName: string;           // 注册该工具的插件名
   visibility?: CapabilityVisibility;  // 'public' | 'restricted'（默认 public）
-  permissions?: CapabilityId[];       // 静态资源能力
 }
 ```
 
@@ -49,7 +48,7 @@ const dispose = tools.register({
 ```
 tools.execute(name, args, callCtx)
   │
-  ├─ 查找工具（解析有效可见性 + 静态/动态资源能力）
+  ├─ 查找工具（解析有效可见性）
   ├─ 执行守卫: authority.authorize() —— 逐能力裁决 deny > owner > public > granted
   ├─ 若命中未授予的 restricted 能力:
   │     authority.requestAccess() → 临时委托（白名单 / 会话授予 / 确认回调）
@@ -60,8 +59,8 @@ tools.execute(name, args, callCtx)
 
 ```typescript
 tools.getDefinitions()    // 获取所有工具定义（发给 LLM）
-tools.getSummaries()      // 获取摘要（名称、描述、资源能力）
-tools.getAll()            // 获取详细信息（含插件名、可见性、资源能力）
+tools.getSummaries()      // 获取摘要（名称、描述、分组）
+tools.getAll()            // 获取详细信息（含插件名、可见性、分组）
 ```
 
 ## 可见性覆盖

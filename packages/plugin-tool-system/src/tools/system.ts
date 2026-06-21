@@ -107,7 +107,6 @@ export function registerSystemTools(tools: ScopedToolService, config: SystemConf
       },
     },
     visibility: 'restricted',
-    permissions: ['tool:env.get', 'system:env.read'],
     handler: async args => {
       const names = args.names as string[] | undefined;
       const pattern = args.pattern as string | undefined;

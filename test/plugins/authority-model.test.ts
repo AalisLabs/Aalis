@@ -49,11 +49,6 @@ describe('resolveAccess（deny > owner > 等级）', () => {
   it('封禁(负数) 压过 public/safe：连 minLevel=0 的安全操作也拒', () => {
     expect(resolveAccess({ ...base, level: -1, minLevel: DEFAULT_AUTHORITY })).toBe(false);
   });
-  it('资源能力 fail-closed：高 minLevel 下普通用户被拒、owner 放行', () => {
-    const cap = 'storage:path:data:/users.json:read';
-    expect(resolveAccess({ level: 0, minLevel: RESTRICTED_LEVEL, isOwner: false, capability: cap })).toBe(false);
-    expect(resolveAccess({ level: OWNER_RANK, minLevel: RESTRICTED_LEVEL, isOwner: true, capability: cap })).toBe(true);
-  });
 });
 
 describe('autoConfirmActive（auto 模式开关）', () => {

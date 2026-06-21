@@ -13,7 +13,6 @@ interface CommandDefinition {
   description: string;       // 描述
   action: (ctx: CommandContext) => Promise<string | void>;
   visibility?: CapabilityVisibility;  // 'public' | 'restricted'（默认 public）
-  permissions?: CapabilityId[];       // 额外触达的资源能力（如 storage:path:...:write）
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   usage?: string;
@@ -82,7 +81,7 @@ parseCommand(input)
   ▼
 execute(name, cmdCtx)
   │
-  ├─ 查找指令（含继承/覆盖后的有效可见性 + 资源能力）
+  ├─ 查找指令（含继承/覆盖后的有效可见性）
   ├─ 执行守卫: authority.authorize() —— 逐能力裁决 deny > owner > public > granted
   ├─ 若命中未授予的 restricted 能力且非 skipConfirm:
   │     authority.requestAccess() → 临时委托（白名单 / 会话授予 / 确认回调）
@@ -99,7 +98,7 @@ visibilityOverrides:
   clear.all: restricted   # 把子指令收紧为需授予（子指令用点路径作为键）
 ```
 
-此外 `restrictedCapabilities`（额外 restricted 能力 glob）与 `deniedCapabilities`（全局硬禁用 glob）也在 authority 配置里调整。
+此外 `deniedCapabilities`（全局硬禁用 glob）也在 authority 配置里调整。
 
 ## 子指令（递归）
 

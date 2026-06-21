@@ -84,7 +84,6 @@ export class ToolRegistry implements ToolService {
         name: t.definition.function.name,
         description: t.definition.function.description,
         groups: t.groups,
-        permissions: this.getStaticPermissions(t),
       };
     });
   }
@@ -96,7 +95,6 @@ export class ToolRegistry implements ToolService {
     visibility: CapabilityVisibility;
     confirm?: CapabilityConfirm;
     risk?: CapabilityRisk;
-    permissions?: string[];
     groups?: string[];
   }> {
     return [...this.tools.values()].map(t => {
@@ -108,7 +106,6 @@ export class ToolRegistry implements ToolService {
         visibility,
         confirm,
         risk: t.risk, // 原始风险透传：让 authority 区分 sensitive(朋友) / dangerous(信任)，否则二者都折成 restricted=信任
-        permissions: this.getStaticPermissions(t),
         groups: t.groups,
       };
     });
@@ -172,14 +169,6 @@ export class ToolRegistry implements ToolService {
     }
 
     const { visibility, confirm } = resolveCapabilityPolicy(tool);
-    let permissions: string[];
-    try {
-      permissions = await this.resolvePermissions(tool, args, callCtx);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`工具 ${toolName} 权限解析失败: ${message}`);
-      return JSON.stringify({ error: message });
-    }
     if (this._guard) {
       const denied = await this._guard({
         name: toolName,
@@ -187,7 +176,6 @@ export class ToolRegistry implements ToolService {
         visibility,
         confirm,
         risk: tool.risk,
-        permissions,
         sessionId: callCtx.sessionId,
         platform: callCtx.platform ?? 'unknown',
         userId: callCtx.userId,
@@ -228,25 +216,6 @@ export class ToolRegistry implements ToolService {
       }
     }
   }
-
-  // ---- 内部 ----
-
-  private getStaticPermissions(tool: RegisteredTool): string[] {
-    return unique([`tool:${tool.definition.function.name}`, ...(tool.permissions ?? [])]);
-  }
-
-  private async resolvePermissions(
-    tool: RegisteredTool,
-    args: Record<string, unknown>,
-    callCtx: ToolCallContext,
-  ): Promise<string[]> {
-    const dynamic = tool.resolvePermissions ? await tool.resolvePermissions(args, callCtx) : [];
-    return unique([...this.getStaticPermissions(tool), ...dynamic]);
-  }
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
 }
 
 /**

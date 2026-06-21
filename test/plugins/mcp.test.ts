@@ -62,7 +62,6 @@ class FakeToolService implements ToolService {
       name: t.definition.function.name,
       description: t.definition.function.description,
       groups: t.groups,
-      permissions: t.permissions,
     }));
   }
   getAll(): ReturnType<ToolService['getAll']> {
@@ -71,7 +70,6 @@ class FakeToolService implements ToolService {
       description: t.definition.function.description,
       pluginName: t.pluginName,
       visibility: t.visibility ?? 'public',
-      permissions: t.permissions,
       groups: t.groups,
     }));
   }

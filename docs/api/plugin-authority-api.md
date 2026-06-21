@@ -18,14 +18,13 @@
 ## 关键类型
 
 ```ts
-type CapabilityId = string;                       // 例: "tool:file.write" / "storage:path:data:/users.json:write"
+type CapabilityId = string;                       // 例: "tool:file.write" / "command:shutdown"
 type CapabilityVisibility = 'public' | 'restricted'; // 操作默认可见性
 
 interface ExecutionGuardContext {
   name: string;
   type: 'command' | 'tool';
   visibility: CapabilityVisibility;               // 主能力默认可见性（操作声明；未标默认 public）
-  permissions?: CapabilityId[];                   // 额外触达的资源能力（可见性由 restrictedCapabilities 决定）
   sessionId: string;
   platform: string;
   userId?: string;
@@ -47,7 +46,7 @@ interface AuthorityService {
   // capability 统一闸：null 放行 | string 拒绝原因
   authorize(
     identity: UserIdentity | { platform: string; userId?: string },
-    request: AuthorizeRequest, // { capability, visibility, resourceCapabilities? }
+    request: AuthorizeRequest, // { capability, visibility }
   ): string | null;
 
   // 委托（子集约束）：granter 非 owner 时只能授予自己持有的能力，越权抛 Error；
@@ -79,7 +78,7 @@ interface AuthorityService {
 
 ## 受限能力临时委托流程
 
-1. command/tool 声明 `visibility: 'restricted'`，与/或 `permissions: ['xxx']`（资源能力）
+1. command/tool 声明 `visibility: 'restricted'`（主能力默认禁止）
 2. 执行前 `ExecutionGuard` 委托 authorize；命中未授予的 restricted 能力被拒 → 触发 `requestAccess(request)`
 3. 临时委托流程：`restrictedPolicy` 白名单 → 会话内临时授予复用（按 sessionId 隔离）→ 平台 `AccessConfirmHandler`（adapter 提供）询问用户
 4. owner 确认后可返回 `{ allowed: true, grant: { scope: 'session', durationSeconds: 600, maxUses } }`，在该会话窗口内自动放行同名能力
@@ -87,18 +86,16 @@ interface AuthorityService {
 ## CapabilityId 命名约定
 
 - 工具：`tool:<group>.<name>`，例 `tool:file.write`
-- 存储：`storage:<rootName>:<read|write|delete>`；路径级（动态）`storage:path:<uri>:<op>`
-- 指令：默认 `command:<path>`，可在 `permissions` 字段追加业务标识
+- 指令：默认 `command:<path>`，例 `command:shutdown`
 - WebUI action：`action:<plugin>:<method>`（page-action 路由自动产出）
 - WebUI REST：`webui:<area>:<op>`（webui-server gate.ts 产出）
 
 ## 配置字段（declaration merging 注入 `AalisConfig`）
 
 - `owners?: UserIdentity[]` —— owner 列表（owner = `*`）
-- `restrictedCapabilities?: string[]` —— 命中即默认 restricted（内置保护 + 本清单叠加）
 - `deniedCapabilities?: string[]` —— 全局硬禁用（连 owner 都压过）
 - `visibilityOverrides?: Record<string, CapabilityVisibility>` —— 单操作可见性覆盖
-- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 受限能力临时放行策略
+- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 受限能力临时放行策略（owner 自动放行白名单）
 
 ## 实现者
 
