@@ -22,7 +22,6 @@ interface AalisConfig {
 
   // ↓ authority 域业务字段，由 plugin-authority-api 经 declaration merging 注入
   owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
-  restrictedCapabilities?: string[];                // 受限能力 glob：命中即默认 restricted（内置保护 + 本清单叠加）
   deniedCapabilities?: string[];                    // 全局硬禁用 glob：命中即拒，连 owner 都压过
   visibilityOverrides?: Record<string, 'public' | 'restricted'>; // 单操作可见性覆盖（操作名 → 可见性）
   restrictedPolicy?: {                              // 受限能力临时放行策略

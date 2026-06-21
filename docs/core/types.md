@@ -135,8 +135,6 @@ interface RegisteredTool {
   handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
   pluginName: string;
   visibility?: CapabilityVisibility;  // 默认 'public'（'restricted' 则默认禁、需授予）
-  permissions?: CapabilityId[];       // 静态资源能力，如 tool:file.write
-  resolvePermissions?: (args: Record<string, unknown>, ctx: ToolCallContext) => CapabilityId[] | Promise<CapabilityId[]>;
   groups?: string[];                  // 分组，如 'system', 'code-runner'
 }
 
@@ -144,7 +142,6 @@ interface ToolSummary {
   name: string;
   description: string;
   groups?: string[];
-  permissions?: CapabilityId[];
 }
 
 interface ToolCallContext {
@@ -169,7 +166,7 @@ interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
-  getAll(): Array<{ name: string; description: string; pluginName: string; visibility: CapabilityVisibility; permissions?: string[]; groups?: string[] }>;
+  getAll(): Array<{ name: string; description: string; pluginName: string; visibility: CapabilityVisibility; groups?: string[] }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
   setExecutionGuard(guard: ExecutionGuard): void;
   unregisterByPlugin(pluginName: string): void;
@@ -578,7 +575,6 @@ interface ExecutionGuardContext {
   name: string;
   type: 'command' | 'tool';
   visibility: CapabilityVisibility;   // 主能力默认可见性（操作声明；未标默认 public）
-  permissions?: CapabilityId[];       // 额外触达的资源能力（可见性由 restrictedCapabilities 决定）
   sessionId: string;
   platform: string;
   userId?: string;
@@ -627,7 +623,6 @@ interface CommandDefinition {
   name: string;
   description: string;
   visibility?: CapabilityVisibility;  // 'public'（默认）| 'restricted'；沿点路径向子节点继承
-  permissions?: CapabilityId[];       // 额外触达的资源能力
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   usage?: string;
@@ -640,7 +635,6 @@ interface SubcommandDefinition {
   name: string;
   description: string;
   visibility?: CapabilityVisibility;  // 未声明则继承父分组可见性
-  permissions?: CapabilityId[];
   arguments?: CommandArgumentDefinition[];
   options?: CommandOptionDefinition[];
   usage?: string;

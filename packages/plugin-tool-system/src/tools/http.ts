@@ -181,7 +181,6 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
     // 防被注入的 LLM 静默/越权地把任意内容写进 storage（如覆写 data:/users.json）。
     visibility: 'restricted',
     confirm: 'session',
-    permissions: ['tool:http_download', 'storage:write'],
     handler: async args => {
       const url = args.url as string;
       const savePath = args.savePath as string;
