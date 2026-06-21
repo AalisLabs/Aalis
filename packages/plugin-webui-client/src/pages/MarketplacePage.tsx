@@ -1,6 +1,7 @@
 import { AlertTriangle, Clock, Download, Scale } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { useConfirm } from '../components/ConfirmDialog';
 import type { PluginInfo } from '../types';
 
 interface MarketPkg {
@@ -10,9 +11,8 @@ interface MarketPkg {
   author?: string;
   installed: boolean;
   official?: boolean;
-  /** 组件类别（后端按包名分类）：功能插件 / api 契约 / 前端 */
-  category?: 'plugin' | 'api' | 'client';
-  removable?: boolean;
+  /** 组件类别（后端按包名分类）：功能插件 / api 契约 / 前端 / 工具库 */
+  category?: 'plugin' | 'api' | 'interface' | 'util';
   keywords?: string[];
   downloads?: number;
   updated?: string;
@@ -32,7 +32,7 @@ interface PluginManifest {
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
 type Source = 'all' | 'official' | 'community';
 type Status = 'all' | 'installed' | 'available';
-type Category = 'all' | 'plugin' | 'api' | 'client';
+type Category = 'all' | 'plugin' | 'api' | 'interface' | 'util';
 
 const SORT_LABELS: Record<SortKey, string> = {
   relevance: '默认排序',
@@ -42,7 +42,13 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 const SOURCE_LABELS: Record<Source, string> = { all: '全部来源', official: '仅官方', community: '仅社区' };
 const STATUS_LABELS: Record<Status, string> = { all: '全部状态', installed: '已安装', available: '未安装' };
-const CATEGORY_LABELS: Record<Category, string> = { all: '全部类型', plugin: '功能插件', api: 'API 契约', client: '前端' };
+const CATEGORY_LABELS: Record<Category, string> = {
+  all: '全部类型',
+  plugin: '功能插件',
+  api: 'API 契约',
+  interface: '前端界面',
+  util: '工具库',
+};
 
 /** 1234 → 1.2k；1200000 → 1.2M */
 function fmtDownloads(n: number): string {
@@ -77,6 +83,7 @@ export function MarketplacePage({
   plugins: PluginInfo[];
   onRefresh: () => void;
 }) {
+  const { confirm, dialog } = useConfirm();
   const [installing, setInstalling] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [registry, setRegistry] = useState<MarketPkg[]>([]);
@@ -164,13 +171,12 @@ export function MarketplacePage({
       /* manifest 拉取失败不阻断安装，仅少了披露 */
     }
     const src = official ? '官方插件' : '第三方社区插件';
-    if (
-      !window.confirm(
-        `将从 npm 安装${src}「${name}」。${svcLine}\n\n安装后它会以你授予的能力运行（可在权限页查看其依赖与权限）。请确认来源可信。\n\n继续安装？`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: `安装${src}「${name}」`,
+      body: `将从 npm 安装。${svcLine}\n\n安装后它会以你授予的能力运行（可在权限页查看其依赖与权限）。请确认来源可信。`,
+      confirmLabel: '安装',
+    });
+    if (!ok) return;
     setInstalling(name);
     try {
       const res = await api<{ ok?: boolean; error?: string }>('/api/marketplace/install', {
@@ -189,14 +195,19 @@ export function MarketplacePage({
     setInstalling(null);
   };
 
-  const handleUninstall = async (name: string) => {
-    if (
-      !window.confirm(
-        `确定卸载「${name}」？\n\n将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。\n\n继续卸载？`,
-      )
-    ) {
-      return;
-    }
+  const handleUninstall = async (name: string, category?: MarketPkg['category']) => {
+    // util/api 是被其它插件 import 的依赖（非服务依赖，服务端 findServiceDependents 抓不到）→ 额外警告。
+    const importDepWarn =
+      category === 'util' || category === 'api'
+        ? '\n\n⚠️ 这是工具库/契约包，可能被其它插件 import；删除后依赖它的插件可能无法启动（需重新安装恢复）。'
+        : '';
+    const ok = await confirm({
+      title: `卸载「${name}」`,
+      body: `将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。${importDepWarn}`,
+      confirmLabel: '卸载',
+      danger: true,
+    });
+    if (!ok) return;
     setInstalling(name);
     try {
       const res = await api<{ ok?: boolean; error?: string; message?: string }>('/api/marketplace/uninstall', {
@@ -217,6 +228,7 @@ export function MarketplacePage({
 
   return (
     <div className="page-content page-marketplace">
+      {dialog}
       {toast && <div className="toast">{toast}</div>}
 
       <div className="section-label">
@@ -311,7 +323,7 @@ export function MarketplacePage({
               <span className="marketplace-card-version">v{pkg.version}</span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
               {pkg.category && pkg.category !== 'plugin' && (
-                <span className="badge" title="组件类别">{pkg.category === 'api' ? 'API 契约' : '前端'}</span>
+                <span className="badge" title="组件类别">{CATEGORY_LABELS[pkg.category]}</span>
               )}
               {pkg.insecure && (
                 <span
@@ -366,11 +378,11 @@ export function MarketplacePage({
                   {installing === pkg.name ? '安装中...' : '安装'}
                 </button>
               )}
-              {pkg.installed && pkg.removable && (
+              {pkg.installed && (
                 <button
                   className="btn btn-sm"
                   style={{ color: 'var(--danger)' }}
-                  onClick={() => handleUninstall(pkg.name)}
+                  onClick={() => handleUninstall(pkg.name, pkg.category)}
                   disabled={installing === pkg.name}
                   title="卸载插件（删包 + 清配置）"
                 >

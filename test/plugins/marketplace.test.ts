@@ -4,7 +4,6 @@ import {
   buildSearchUrl,
   classifyPackage,
   findServiceDependents,
-  isProtectedPackage,
   toManifest,
   toMarketplacePackages,
 } from '../../packages/plugin-webui-server/src/routes/marketplace.js';
@@ -14,16 +13,18 @@ import {
 // ════════════════════════════════════════════════════════════
 
 describe('buildSearchUrl（keyword 约定）', () => {
-  it('无搜索词只按 aalis-plugin keyword', () => {
-    expect(buildSearchUrl('')).toBe('https://registry.npmjs.org/-/v1/search?text=keywords%3Aaalis-plugin&size=100');
+  it('无搜索词按四类 keyword（plugin∪util∪api∪interface，逗号 = 任一命中）', () => {
+    expect(buildSearchUrl('')).toBe(
+      'https://registry.npmjs.org/-/v1/search?text=keywords%3Aaalis-plugin%2Caalis-util%2Caalis-api%2Caalis-interface&size=100',
+    );
   });
   it('带搜索词时 keyword + 词同时约束', () => {
     const url = buildSearchUrl('memory');
-    expect(decodeURIComponent(url)).toContain('keywords:aalis-plugin memory');
+    expect(decodeURIComponent(url)).toContain('keywords:aalis-plugin,aalis-util,aalis-api,aalis-interface memory');
   });
   it('可配 registry 基址（去尾斜杠；空值回退官方源）', () => {
     expect(buildSearchUrl('', 'https://npm.example.com/')).toBe(
-      'https://npm.example.com/-/v1/search?text=keywords%3Aaalis-plugin&size=100',
+      'https://npm.example.com/-/v1/search?text=keywords%3Aaalis-plugin%2Caalis-util%2Caalis-api%2Caalis-interface&size=100',
     );
     expect(buildSearchUrl('', '')).toContain('registry.npmjs.org');
   });
@@ -95,28 +96,6 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
   });
 });
 
-describe('isProtectedPackage（卸载护栏：核心/契约/WebUI 基础设施不可卸）', () => {
-  it('硬保护：core / package-manager / webui-server / webui-client', () => {
-    expect(isProtectedPackage('@aalis/core')).toBe(true);
-    expect(isProtectedPackage('@aalis/plugin-package-manager')).toBe(true);
-    expect(isProtectedPackage('@aalis/plugin-webui-server')).toBe(true);
-    expect(isProtectedPackage('@aalis/plugin-webui-client')).toBe(true);
-  });
-  it('契约包：任意 *-api 短名（被大量插件依赖）', () => {
-    expect(isProtectedPackage('@aalis/plugin-webui-api')).toBe(true);
-    expect(isProtectedPackage('@aalis/plugin-tools-api')).toBe(true);
-    expect(isProtectedPackage('some-thing-api')).toBe(true);
-  });
-  it('manifest 标记 core===true 的插件受保护', () => {
-    expect(isProtectedPackage('@aalis/plugin-agent', { core: true })).toBe(true);
-    expect(isProtectedPackage('@aalis/plugin-agent', { core: false })).toBe(false);
-  });
-  it('普通功能插件可卸', () => {
-    expect(isProtectedPackage('@aalis/plugin-openai')).toBe(false);
-    expect(isProtectedPackage('community-aalis-plugin-foo')).toBe(false);
-  });
-});
-
 describe('findServiceDependents（卸载护栏：断服务依赖检测）', () => {
   const status = [
     { name: '@aalis/plugin-openai', provides: ['llm'], requiredServices: [] },
@@ -170,19 +149,19 @@ describe('toManifest（packument → 装前能力清单）', () => {
   });
 });
 
-describe('classifyPackage（按包名分类：功能插件/契约/前端）', () => {
-  it('*-api → api 契约', () => {
-    expect(classifyPackage('@aalis/plugin-tools-api')).toBe('api');
-    expect(classifyPackage('@foo/bar-api')).toBe('api');
+describe('classifyPackage（按类型关键词分类）', () => {
+  it('aalis-interface → 前端界面', () => {
+    expect(classifyPackage(['aalis', 'aalis-interface'])).toBe('interface');
   });
-  it('webui-client* → 前端；但 mcp-client 仍是功能插件（不一刀切 -client）', () => {
-    expect(classifyPackage('@aalis/plugin-webui-client')).toBe('client');
-    expect(classifyPackage('@aalis/plugin-webui-client-example')).toBe('client');
-    expect(classifyPackage('@aalis/plugin-mcp-client')).toBe('plugin'); // 关键：MCP 客户端是功能插件
+  it('aalis-api → 契约', () => {
+    expect(classifyPackage(['aalis', 'aalis-api'])).toBe('api');
   });
-  it('其余 → 功能插件', () => {
-    expect(classifyPackage('@aalis/plugin-openai')).toBe('plugin');
-    expect(classifyPackage('community-aalis-plugin-x')).toBe('plugin');
+  it('aalis-util → 工具库', () => {
+    expect(classifyPackage(['aalis', 'aalis-util'])).toBe('util');
+  });
+  it('aalis-plugin / 无类型词 → 功能插件（关键词优先，mcp-client 这类靠 aalis-plugin 判定而非名字）', () => {
+    expect(classifyPackage(['aalis', 'aalis-plugin'])).toBe('plugin');
+    expect(classifyPackage([])).toBe('plugin');
   });
   it('augmentInstalled：已装的 api/前端经 resolve 补判为已安装（getStatus 漏掉它们）', () => {
     // base = getStatus 仅含已加载运行时插件；api/client 带 marker 不在其中
@@ -201,17 +180,17 @@ describe('classifyPackage（按包名分类：功能插件/契约/前端）', ()
     expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.installed).toBe(false);
   });
 
-  it('toMarketplacePackages 注入 category', () => {
+  it('toMarketplacePackages 按关键词注入 category', () => {
     const pkgs = toMarketplacePackages(
       {
         objects: [
-          { package: { name: '@aalis/plugin-openai', version: '1.0.0' } },
-          { package: { name: '@aalis/plugin-tools-api', version: '1.0.0' } },
-          { package: { name: '@aalis/plugin-webui-client', version: '1.0.0' } },
+          { package: { name: '@aalis/plugin-openai', version: '1.0.0', keywords: ['aalis-plugin'] } },
+          { package: { name: '@aalis/plugin-tools-api', version: '1.0.0', keywords: ['aalis-api'] } },
+          { package: { name: '@aalis/plugin-webui-client', version: '1.0.0', keywords: ['aalis-interface'] } },
         ],
       },
       new Set(),
     );
-    expect(pkgs.map(p => p.category)).toEqual(['plugin', 'api', 'client']);
+    expect(pkgs.map(p => p.category)).toEqual(['plugin', 'api', 'interface']);
   });
 });

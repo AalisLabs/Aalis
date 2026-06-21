@@ -6,7 +6,7 @@
   "type": "module",
   "keywords": [
     "aalis",
-    "aalis-plugin"
+    "aalis-api"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

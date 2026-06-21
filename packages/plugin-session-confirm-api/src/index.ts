@@ -23,6 +23,8 @@ export interface ConfirmChannel {
    * @returns 命中并消费 → true（调用方据此「吞掉」该输入）；无未决 / 非本人 → false（放行）。
    */
   feed(sessionId: string, replyText: string, replyUserId?: string): boolean;
+  /** 卸载/热重载时清理：清所有未决确认的超时定时器并把挂起 Promise 安全拒掉（resolve false）。 */
+  dispose(): void;
 }
 
 export interface SessionConfirmService {

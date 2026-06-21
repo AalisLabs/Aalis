@@ -20,6 +20,9 @@ const SessionsPage = lazy(() => import('./pages/SessionsPage').then(m => ({ defa
 const FilesPage = lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })));
 const DynamicPage = lazy(() => import('./components/DynamicPage').then(m => ({ default: m.DynamicPage })));
 
+/** 客户端日志 ring buffer 上限：实时流无界增长会撑大长跑内存；更早日志经 loadOlderLogs 从服务端拉。 */
+const MAX_LOGS = 2000;
+
 export function App() {
   // input, pendingImages, pendingFiles, attachmentOrderRef 已下沉到 ChatPanel，不再在 App 层持有
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
@@ -282,8 +285,9 @@ export function App() {
       if (prev.length > 0 && prev[prev.length - 1].seq >= entry.seq) {
         if (prev.some(e => e.seq === entry.seq)) return prev;
       }
-      // 不再做硬上限——上限管理交给 LogPage 的虚拟化 + 滚动加载
-      return [...prev, entry];
+      // 客户端 ring buffer：实时流无界增长会撑大长跑内存；更早日志仍可经 loadOlderLogs 从服务端拉。
+      const next = [...prev, entry];
+      return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next;
     });
   }, []);
 

@@ -12,6 +12,7 @@ import type {
   RestartStrategy,
 } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { isLoadablePlugin } from './node-modules-loader.js';
 
 // ============================================================
 // FsYamlConfigProvider —— 从 YAML 文件加载+持久化配置
@@ -219,7 +220,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
 /**
  * 创建一个基于 packages 目录扫描的 PluginLoader。
  *
- * - `discover()`：读 dir 下每个子目录的 package.json，按 `aalis.{core,client,types}` 标记过滤
+ * - `discover()`：读 dir 下每个子目录的 package.json，按 aalis-plugin 关键词收录可加载插件
  * - `load()`：用 `pathToFileURL(entry).href` 动态 import
  * - `reload()`：用入口文件 mtime 作为 import URL 的 query 强制 ESM 缓存失效
  */
@@ -245,8 +246,9 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
         } catch {
           continue;
         }
-        const aalisMeta = pkgJson.aalis as Record<string, unknown> | undefined;
-        if (aalisMeta?.core || aalisMeta?.client || aalisMeta?.types || aalisMeta?.tooling) continue;
+        // 与 node_modules 加载器同一标准：纯 aalis-plugin 关键词正向门（单一真相，防两处漂移）。
+        // 非插件（核心/契约/前端/工具链/工具库）各带自己的类型关键词、不带 aalis-plugin，自然不被收录。
+        if (!isLoadablePlugin(pkgJson)) continue;
         const main = (pkgJson.main as string) || 'dist/index.js';
         discovered.push({
           name: pkgJson.name as string,

@@ -37,7 +37,7 @@ import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
-import { type DiscoveryEnv, discoverClients } from './client-discovery.js';
+import { collectLocalPackageNames, type DiscoveryEnv, discoverClients } from './client-discovery.js';
 import { renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
@@ -514,8 +514,34 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // ---------- 插件管理 + 全局配置 ----------
+  // fs 扫描 env：discoverClients（ready 时）与市场「已装」兜底共用一份，避免两处重复。
+  const fsScanEnv = {
+    existsSync,
+    readdirSync: (p: string) => {
+      try {
+        return readdirSync(p);
+      } catch {
+        return [];
+      }
+    },
+    readJson: (p: string) => {
+      try {
+        return JSON.parse(readFileSync(p, 'utf-8'));
+      } catch {
+        return undefined;
+      }
+    },
+    join: (...parts: string[]) => resolve(...parts),
+  };
   registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate);
-  registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate, uiConfig.marketplaceRegistry);
+  // 市场「已装」判定需本地包名兜底（pnpm 工作区下 require.resolve 从仓库根解析不到工作区包）：
+  // 与 discoverClients 同套 scanDirs（monorepo packages/ 同级 + node_modules/@aalis），每请求懒扫（量小）。
+  registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate, uiConfig.marketplaceRegistry, () =>
+    collectLocalPackageNames(
+      [resolve(dirname(fileURLToPath(import.meta.url)), '../../'), resolve(process.cwd(), 'node_modules/@aalis')],
+      fsScanEnv,
+    ),
+  );
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
@@ -1429,22 +1455,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const here = dirname(fileURLToPath(import.meta.url));
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
     const env: DiscoveryEnv = {
-      existsSync,
-      readdirSync: p => {
-        try {
-          return readdirSync(p);
-        } catch {
-          return [];
-        }
-      },
-      readJson: p => {
-        try {
-          return JSON.parse(readFileSync(p, 'utf-8'));
-        } catch {
-          return undefined;
-        }
-      },
-      join: (...parts) => resolve(...parts),
+      ...fsScanEnv,
       dirname,
       resolvePkgJson: id => {
         try {
@@ -1518,6 +1529,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   ctx.onDispose(() => {
+    confirmChannel?.dispose(); // 清 WebUI 确认通道里挂起的待确认（安全拒），避免 Promise 永挂
     removeLogListener();
     wss.close();
     server.close();

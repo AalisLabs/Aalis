@@ -13,6 +13,7 @@
 import type { Context } from '@aalis/core';
 import type { TokenUsageEvent } from '@aalis/plugin-agent-api';
 import { useToolService } from '@aalis/plugin-tools-api';
+import { createBoundedMap } from '@aalis/util-bounded-map';
 import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-prompt-budget';
@@ -27,8 +28,8 @@ interface TokenUsage extends TokenUsageEvent {
 
 export function apply(ctx: Context): void {
   const tools = useToolService(ctx);
-  /** sessionId → 最新一次的 token:usage 快照（仅保留最近一次即可） */
-  const cache = new Map<string, TokenUsage>();
+  /** sessionId → 最新一次的 token:usage 快照（派生只读，逐出后 AI 重查即重算）；有界防长跑泄漏 */
+  const cache = createBoundedMap<string, TokenUsage>({ max: 500, ttlMs: 6 * 60 * 60 * 1000 });
 
   ctx.on('token:usage', u => {
     if (!u || typeof u.sessionId !== 'string') return;
@@ -101,5 +102,6 @@ export function apply(ctx: Context): void {
     },
   });
 
+  ctx.onDispose(() => cache.clear());
   ctx.logger.info('prompt_budget_info 工具已注册');
 }
