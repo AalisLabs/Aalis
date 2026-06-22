@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-commands",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "MIT",
   "description": "斜杠指令系统：注册与分发 /command",
   "type": "module",
@@ -18,13 +18,13 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/plugin-authority-api": "workspace:^",
     "@aalis/plugin-commands-api": "workspace:^",
     "@aalis/plugin-gateway-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-authority-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "@types/node": "^22.0.0",

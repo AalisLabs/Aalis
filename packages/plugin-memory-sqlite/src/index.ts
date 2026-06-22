@@ -1,16 +1,12 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
 import type { ContentSegment, Message } from '@aalis/plugin-message-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
 import Database from 'better-sqlite3';
 
 function toUri(input: string): string {
   const s = String(input ?? '').trim();
-  if (!s) return 'data:/aalis.db';
-  if (s.includes(':/')) return s;
-  const cleaned = s.replace(/^\.?\/+/, '');
-  const idx = cleaned.indexOf('/');
-  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `data:/${cleaned}`;
+  return s ? toStorageUri(s) : 'data:/aalis.db';
 }
 
 // ===== 插件元数据 =====
