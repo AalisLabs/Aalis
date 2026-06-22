@@ -23,7 +23,7 @@ export interface DepGraph {
 }
 
 /** 递归渲染单个依赖节点 + 其子树。depth 控制缩进；根节点由调用方决定是否渲染（通常渲染其 children）。 */
-export function DependencyTree({
+function DependencyTree({
   node,
   mode,
   depth = 0,

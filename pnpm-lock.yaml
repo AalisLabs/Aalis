@@ -15,6 +15,9 @@ importers:
         specifier: workspace:*
         version: link:packages/runtime
     devDependencies:
+      '@aalis/plugin-storage-api':
+        specifier: workspace:*
+        version: link:packages/plugin-storage-api
       '@aalis/plugin-tools-api':
         specifier: workspace:*
         version: link:packages/plugin-tools-api
