@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-todo-list",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "待办清单：AI 任务的结构化 TODO 跟踪",
   "type": "module",
