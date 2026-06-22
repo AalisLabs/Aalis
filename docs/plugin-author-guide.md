@@ -5,6 +5,14 @@
 
 > **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/plugin-storage-api` / `@aalis/plugin-process-api` 等网关访问。biome 会拦截违例。
 
+> **完整参考文档**（给第三方作者与维护者的全景）：
+> - [概念层 concepts/](concepts/README.md) —— 服务模型、惰性访问、双源 manifest、存储文法、安全模型、消息管线（**写插件前先通读这 6 篇**）。
+> - [服务契约层 services/](services/README.md) —— 26 个 `*-api` 契约逐篇：怎么写 provider、怎么消费、边界与坑。
+> - [工具库 utils/](utils/README.md) —— 4 个 `util-*` 纯函数库（bounded-map / json-repair / network-guard / text-normalize）。
+> - [脚手架上手 guide/scaffolding.md](guide/scaffolding.md) —— `npm create aalis`（建项目）与 `create-aalis-plugin`（建插件）从零到能跑。
+>
+> 本指南（下文）专讲那些 **API 文档不会显式提醒、但容易踩坑**的隐式约定。
+
 ---
 
 ## 1. 服务实例替换：你需要主动通知下游吗？
