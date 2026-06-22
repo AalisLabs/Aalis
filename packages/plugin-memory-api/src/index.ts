@@ -99,8 +99,6 @@ declare module '@aalis/core' {
       sessionId?: string;
       /** 各子系统报告的结果（由中间件填充） */
       results: Array<{ source: string; success: boolean; message: string }>;
-      /** 回滚函数列表（清除失败时依次执行） */
-      rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
     };
   }
 }

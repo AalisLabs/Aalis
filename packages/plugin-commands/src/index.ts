@@ -120,7 +120,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         types?: string[];
         sessionId?: string;
         results: Array<{ source: string; success: boolean; message: string }>;
-        rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
       },
       next,
     ) => {
@@ -296,7 +295,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       types,
       sessionId: cmdCtx.sessionId,
       results: [] as Array<{ source: string; success: boolean; message: string }>,
-      rollbacks: [] as Array<{ source: string; fn: () => Promise<void> }>,
     };
 
     await ctx.hooks.run('memory:clear', clearData, async () => {
@@ -325,26 +323,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 现在统一由各自的 memory:clear middleware 处理（见 apply() 末尾的
       // image-cache middleware）。runClear 仅负责调度 hook 与处理 memory 主体。
     });
-
-    const hasFailure = clearData.results.some(r => !r.success);
-    if (hasFailure && clearData.rollbacks.length > 0) {
-      const rollbackResults: string[] = [];
-      for (const rb of clearData.rollbacks) {
-        try {
-          await rb.fn();
-          rollbackResults.push(`↩ ${rb.source}: 已回滚`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          rollbackResults.push(`↩ ${rb.source}: 回滚失败 - ${msg}`);
-        }
-      }
-      return [
-        ...clearData.results.map(r => `${r.success ? '✅' : '❌'} ${r.message}`),
-        '',
-        '**部分清除失败，已执行回滚：**',
-        ...rollbackResults,
-      ].join('\n');
-    }
 
     if (clearData.results.length === 0) return '无可清除的记忆模块。';
     return clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`).join('\n');
