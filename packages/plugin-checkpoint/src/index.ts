@@ -200,7 +200,6 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         types?: string[];
         sessionId?: string;
         results: Array<{ source: string; success: boolean; message: string }>;
-        rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
       },
       next,
     ) => {
