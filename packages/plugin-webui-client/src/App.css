@@ -5627,3 +5627,87 @@ td.col-actions { text-align: right; }
   justify-content: flex-end;
   gap: 8px;
 }
+/* 富节点正文（依赖树等）：不要 pre-wrap，免得 JSX 空白被放大 */
+.confirm-body-rich {
+  white-space: normal;
+}
+
+/* -- 依赖关系展示（market 装/卸弹窗，见 components/DependencyTree.tsx） -- */
+.dep-disclosure {
+  margin-bottom: 12px;
+}
+.dep-section-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.dep-tree-node {
+  font-size: 0.8rem;
+}
+.dep-tree-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 1px 0;
+}
+.dep-tree-name {
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+}
+.dep-tree-tag {
+  font-size: 0.66rem;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}
+.dep-tag-missing {
+  color: var(--warning, #ffb300);
+  border-color: var(--warning, #ffb300);
+}
+.dep-tag-req {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.dep-tag-prov {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.dep-line {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.dep-svc {
+  margin-right: 6px;
+}
+.dep-svc.ok {
+  color: var(--accent);
+}
+.dep-svc.warn {
+  color: var(--warning, #ffb300);
+}
+.dep-empty {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.dep-uninstall-warn {
+  margin-bottom: 12px;
+}
+.dep-warn-block {
+  color: var(--danger);
+  background: rgba(255, 107, 107, 0.08);
+  border-left: 2px solid var(--danger);
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin-top: 6px;
+}
+.dep-note {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-top: 4px;
+}
