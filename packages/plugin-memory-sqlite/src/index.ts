@@ -31,10 +31,24 @@ export const configSchema: ConfigSchema = {
     default: 'data/aalis.db',
     description: 'SQLite 数据库文件路径，相对于项目根目录',
   },
+  rangeQueryLimit: {
+    type: 'number',
+    label: '范围查询返回上限',
+    default: 500,
+    description: '区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断',
+  },
+  crossSessionMaxLimit: {
+    type: 'number',
+    label: '跨会话查询返回上限',
+    default: 1000,
+    description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
+  },
 };
 
 export const defaultConfig = {
   path: 'data/aalis.db',
+  rangeQueryLimit: 500,
+  crossSessionMaxLimit: 1000,
 };
 
 // ===== 配置 =====
@@ -42,15 +56,23 @@ export const defaultConfig = {
 interface SQLiteMemoryConfig {
   /** 数据库文件路径（相对于配置目录或绝对路径） */
   path: string;
+  /** 区间消息查询返回上限（默认 500） */
+  rangeQueryLimit?: number;
+  /** 跨会话查询返回上限（默认 1000） */
+  crossSessionMaxLimit?: number;
 }
 
 // ===== SQLite MemoryService 实现 =====
 
 class SQLiteMemoryService implements MemoryService {
   private db: Database.Database;
+  private readonly rangeQueryLimit: number;
+  private readonly crossSessionMaxLimit: number;
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number } = {}) {
     this.db = db;
+    this.rangeQueryLimit = Math.max(1, opts.rangeQueryLimit ?? 500);
+    this.crossSessionMaxLimit = Math.max(1, opts.crossSessionMaxLimit ?? 1000);
 
     // 创建表（如果不存在）
     this.db.exec(`
@@ -211,14 +233,15 @@ class SQLiteMemoryService implements MemoryService {
       sql += ` AND (kind IS NULL OR kind NOT IN (${excludeKinds.map(() => '?').join(',')}))`;
       params.push(...excludeKinds);
     }
-    sql += ' ORDER BY timestamp ASC LIMIT 500';
+    sql += ' ORDER BY timestamp ASC LIMIT ?';
+    params.push(this.rangeQueryLimit);
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
-    const limit = Math.max(1, Math.min(query.limit, 1000));
+    const limit = Math.max(1, Math.min(query.limit, this.crossSessionMaxLimit));
     const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
     // platform / excludeSessionIds 走内存过滤；为保证 limit 命中，先用 overscan 倍率拉取候选。
     const needsPostFilter =
@@ -342,7 +365,7 @@ class SQLiteMemoryService implements MemoryService {
     const updateStmt = this.db.prepare('UPDATE messages SET content = ? WHERE id = ?');
     let count = 0;
     for (const row of rows) {
-      const updated = row.content.replace(oldText, newText);
+      const updated = row.content.replaceAll(oldText, newText);
       if (updated !== row.content) {
         updateStmt.run(updated, row.id);
         count++;
@@ -403,7 +426,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 设置 WAL 模式提升并发性能
     db.pragma('journal_mode = WAL');
 
-    const service = new SQLiteMemoryService(db);
+    const service = new SQLiteMemoryService(db, {
+      rangeQueryLimit: config.rangeQueryLimit as number | undefined,
+      crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
+    });
 
     ctx.provide('memory', service, {
       priority: 10,
