@@ -342,44 +342,7 @@ function wrapLLMAsProcessor(
         };
       }
 
-      if (cap === 'audio') {
-        // 把音频附件转 base64 后放到 Message.audios，由 provider 适配（如 plugin-ollama 走 chat-completions audio 块）
-        const audios = await Promise.all(input.attachments.map(a => audioToBase64(a.data)));
-        const sizesKB = audios.map(a => Math.round((a.length * 3) / 4 / 1024));
-        const messages: Message[] = [{ role: 'user', content: prompt, audios }];
-        const t0 = Date.now();
-        _ctx.logger.info(
-          `[audio.describe] 调用 ${llm.id}，${audios.length} 段音频 (${sizesKB.join('/')}KB), ` +
-            `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
-        );
-        const resp = await llm.chat({ messages, maxTokens, think });
-        const rawLen = resp.content?.length ?? 0;
-        const text = resp.content?.trim() ?? '';
-        const usedTokens = resp.usage?.totalTokens;
-        if (rawLen === 0) {
-          const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
-          _ctx.logger.warn(
-            `[audio.describe] ${llm.id} 空响应：${Date.now() - t0}ms, sizesKB=[${sizesKB.join('/')}], ` +
-              `prompt=${prompt.length}字, tokens=${usedTokens ?? '?'}/${maxTokens}` +
-              (usedPct >= 80
-                ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空）`
-                : usedPct >= 0
-                  ? `（占用 ${usedPct}%）`
-                  : '') +
-              `, think=${think}`,
-          );
-        } else {
-          _ctx.logger.info(
-            `[audio.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}, ` +
-              `内容="${(resp.content ?? '').replace(/\n/g, ' ').slice(0, 200)}${rawLen > 200 ? '…' : ''}"`,
-          );
-        }
-        return {
-          descriptions: input.mode === 'single' ? input.attachments.map(() => text) : [text],
-          meta: { processor: name, model: llm.id, tokens: usedTokens },
-        };
-      }
-
+      // 注：audio 不走 describe——音频识别由下方的 proc.transcribe 处理（pickProcessor('audio').transcribe）。
       throw new Error(`LLM adapter 不支持 capability=${cap}`);
     },
   };
