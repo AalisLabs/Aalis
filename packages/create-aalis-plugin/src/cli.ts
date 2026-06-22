@@ -173,14 +173,17 @@ async function generate(dir: string, a: Answers): Promise<void> {
 }
 
 function renderPackageJson(a: Answers): string {
-  // 运行时依赖：用了 useXxxService（运行时 helper）的 api 包进 dependencies（workspace:^
-  // 发布转 ^x.y.z）；@aalis/core 是宿主必有的核心，走 peerDependencies + devDep。
+  // 运行时依赖：用了 useXxxService（运行时 helper）的 api 包进 dependencies；@aalis/core
+  // 是宿主必有的核心，走 peerDependencies + devDep。
+  // 注意：这里写进的是【生成给外部作者项目】的字面版本，不能用 workspace:（脚手架产物不在
+  // 本 monorepo，workspace: 协议在外部装不上）——统一用 'latest'：npm install 时取最新、自我
+  // 修正，不硬编码会过时的版本（与 create-aalis 同策略）。
   // core peerDep 用宽松区间 `>=0.2.0 <1.0.0`：兼容任何 0.x 宿主 core（core 承诺 0.x 内
   // 向后兼容、破坏性变更才升 1.0.0），插件不必随 core 次版本升级而重发——慢更新插件也跟得上。
   const deps: Record<string, string> = {};
-  if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'workspace:^';
-  if (a.features.command) deps['@aalis/plugin-commands-api'] = 'workspace:^';
-  if (a.features.webui) deps['@aalis/plugin-webui-api'] = 'workspace:^';
+  if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'latest';
+  if (a.features.command) deps['@aalis/plugin-commands-api'] = 'latest';
+  if (a.features.webui) deps['@aalis/plugin-webui-api'] = 'latest';
 
   // aalis.service：声明运行时服务依赖/提供，供市场装前披露。示例插件无服务依赖，
   // 留空提示作者按需填（用了 ctx.inject.required / provides 时同步到这里）。
@@ -204,7 +207,7 @@ function renderPackageJson(a: Answers): string {
       '@aalis/core': '>=0.2.0 <1.0.0',
     },
     devDependencies: {
-      '@aalis/core': 'workspace:*',
+      '@aalis/core': 'latest',
       typescript: '^5.7.0',
       '@types/node': '^22.0.0',
     },
