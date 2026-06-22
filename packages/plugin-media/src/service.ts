@@ -57,6 +57,8 @@ export interface MediaConfigResolved {
    */
   audio: {
     mode: 'enabled' | 'passthrough' | 'disabled';
+    /** 优先音频处理器（processor.name，统一池含 whisper/asr 与 audio LLM）。留空=按优先级自动选。 */
+    prefer?: string;
     language?: string;
     /** 默认最大 output tokens。e4b thinking enabled 时全能 prompt 需要 ≥1024 */
     maxTokens: number;
@@ -113,9 +115,35 @@ export class MediaServiceImpl implements MediaService {
   }
 
   listProcessors(cap?: MediaCapability): MediaProcessor[] {
-    const llm = this.refreshLLMProcessors();
-    const all = [...this.external, ...llm];
+    const all = [...this.external, ...this.refreshLLMProcessors(), ...this.asrProcessors()];
     return cap ? all.filter(p => p.capabilities.includes(cap)) : all;
+  }
+
+  /**
+   * 把核心 `asr` 服务的每个 provider（whisper-cpp / 云 ASR…）包成 cap='audio' 的 MediaProcessor，
+   * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务。
+   */
+  private asrProcessors(): MediaProcessor[] {
+    return this.ctx.getServiceEntries('asr').map(e => {
+      const asr = e.instance as ASRService;
+      const name = `asr:${e.contextId}`;
+      return {
+        name,
+        capabilities: ['audio'],
+        displayName: `Whisper/ASR · ${e.label ?? e.contextId}`,
+        priority: e.priority,
+        // asr-api 的 meta.processor 可选、media-api 必填 → 显式映射并盖上桥接器名。
+        transcribe: async (input, ctx) => {
+          const r = await asr.transcribe(input, ctx);
+          return {
+            text: r.text,
+            segments: r.segments,
+            language: r.language,
+            meta: { processor: name, model: r.meta?.model },
+          };
+        },
+      };
+    });
   }
 
   pickProcessor(cap: MediaCapability, prefer?: string | ModelRef | null): MediaProcessor | null {
@@ -171,18 +199,14 @@ export class MediaServiceImpl implements MediaService {
       }
     }
 
-    // audio：经核心 asr 服务（whisper / 云ASR / LLM-as-audio），按核心偏好选 provider
+    // audio：统一池（whisper/ASR 与 audio LLM）按 audio.prefer > 优先级选一个 processor，走其 transcribe
     if (byKind.audio.length > 0 && this.cfg.audio.mode === 'enabled') {
-      const asr = this.ctx.getService<ASRService>('asr');
-      if (asr) {
+      const proc = this.pickProcessor('audio', this.cfg.audio.prefer);
+      if (proc?.transcribe) {
         for (const i of byKind.audio) {
           try {
-            const r = await asr.transcribe(
-              {
-                attachment: attachments[i],
-                language: this.cfg.audio.language,
-                context: opts.hint,
-              },
+            const r = await proc.transcribe(
+              { attachment: attachments[i], language: this.cfg.audio.language, context: opts.hint },
               this.ctx,
             );
             out[i] = r.text || undefined;
@@ -201,14 +225,14 @@ export class MediaServiceImpl implements MediaService {
     opts: TranscribeOptions & { context?: string } = {},
   ): Promise<string | undefined> {
     if (this.cfg.audio.mode === 'disabled') return undefined;
-    // 音频后端=核心 asr 服务（whisper / 云ASR / LLM-as-audio），由核心「偏好>优先级」选 provider
-    const asr = this.ctx.getService<ASRService>('asr');
-    if (!asr) {
-      this.logger.debug('无 asr 服务可用');
+    // 音频后端=统一池（whisper/ASR 与 audio LLM），由 audio.prefer > 优先级选一个 processor
+    const proc = this.pickProcessor('audio', this.cfg.audio.prefer);
+    if (!proc?.transcribe) {
+      this.logger.debug('无音频处理器可用（asr / audio LLM 均未注册）');
       return undefined;
     }
     try {
-      const r = await asr.transcribe(
+      const r = await proc.transcribe(
         {
           attachment,
           language: opts.language ?? this.cfg.audio.language,

@@ -84,6 +84,14 @@ export const configSchema: ConfigSchema = {
         ],
         default: 'enabled',
       },
+      prefer: {
+        type: 'select',
+        label: '处理后端',
+        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPreferOptions）。
+        options: [{ label: '自动（按优先级）', value: '' }],
+        default: '',
+        description: 'Whisper/ASR 与「能识别音频的 LLM」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。',
+      },
       language: {
         type: 'string',
         label: '默认语种 (ISO 639-1)',
@@ -265,6 +273,7 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
     },
     audio: {
       mode: ((audio.mode as string) ?? 'enabled') as 'enabled' | 'passthrough' | 'disabled',
+      prefer: (audio.prefer as string) || undefined,
       language: (audio.language as string) || undefined,
       maxTokens: (audio.maxTokens as number) ?? 1024,
       think: audio.think !== false,
@@ -306,6 +315,26 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const svc = new MediaServiceImpl(ctx, logger, cfg);
 
   ctx.provide('media', svc);
+
+  // 动态填充 audio.prefer 下拉：把统一池（Whisper/ASR + 音频 LLM）的可选项写进 configSchema。
+  // getStatus 读的是 module.configSchema 的 live 对象，故 mutate 即可被前端配置页读到；
+  // 随 asr/llm 注册/注销刷新（媒体可能先于其可选依赖加载，apply 时池可能还空）。
+  const refreshAudioPrefer = (): void => {
+    const group = configSchema.audio;
+    if (group && 'fields' in group && group.fields.prefer) {
+      group.fields.prefer.options = [
+        { label: '自动（按优先级）', value: '' },
+        ...svc.listProcessors('audio').map(p => ({ label: p.displayName ?? p.name, value: p.name })),
+      ];
+    }
+  };
+  refreshAudioPrefer();
+  for (const ev of ['service:registered', 'service:unregistered'] as const) {
+    const off = ctx.on(ev, (name: string) => {
+      if (name === 'asr' || name === 'llm') refreshAudioPrefer();
+    });
+    ctx.onDispose(off);
+  }
 
   // 注册 analyze_image / update_image_description 工具
   try {
