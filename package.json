@@ -21,6 +21,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@aalis/plugin-storage-api": "workspace:*",
     "@aalis/plugin-tools-api": "workspace:*",
     "@biomejs/biome": "2.4.15",
     "@modelcontextprotocol/sdk": "^1.29.0",
