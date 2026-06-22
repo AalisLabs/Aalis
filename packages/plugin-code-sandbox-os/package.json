@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-code-sandbox-os",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "代码沙箱（OS 原生）：Linux bubblewrap / macOS sandbox-exec 隔离不可信代码执行",
   "type": "module",

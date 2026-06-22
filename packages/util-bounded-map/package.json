@@ -1,6 +1,6 @@
 {
   "name": "@aalis/util-bounded-map",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "有界 Map：max 上限 + 可选滑动 TTL + onEvict，纯函数无依赖",
   "type": "module",

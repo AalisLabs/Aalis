@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-memory-summary",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "对话摘要记忆：LLM 将历史压缩为摘要",
   "type": "module",

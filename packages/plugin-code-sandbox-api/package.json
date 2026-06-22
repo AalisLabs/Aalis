@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-code-sandbox-api",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "代码沙箱契约：在 OS 隔离下执行不可信代码的服务接口（code_runner 等消费）",
   "type": "module",
