@@ -1,6 +1,6 @@
 {
   "name": "@aalis/runtime",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "type": "module",
   "description": "Aalis 独立部署运行时：node_modules 插件加载 + YAML 配置 + 一行启动 startAalis",

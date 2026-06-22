@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-tools",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "AI 工具注册表：聚合并向 LLM 暴露可调用工具",
   "type": "module",

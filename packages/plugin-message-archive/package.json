@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-message-archive",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "消息归档：持久化原始消息流以供检索",
   "type": "module",

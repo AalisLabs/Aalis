@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-process-local",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "进程网关本地实现：受控执行子进程",
   "type": "module",

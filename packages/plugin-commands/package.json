@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-commands",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "斜杠指令系统：注册与分发 /command",
   "type": "module",
