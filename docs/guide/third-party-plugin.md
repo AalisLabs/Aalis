@@ -45,7 +45,8 @@ export default {
 ### 2.1 仅消费（依赖现成服务）
 
 ```ts
-import type { Context, PluginModule, LLMService } from '@aalis/llm-api';
+import type { Context, PluginModule } from '@aalis/core';
+import type { LLMService } from '@aalis/plugin-llm-api';
 
 export default {
   name: '@your-scope/plugin-x',
@@ -59,14 +60,13 @@ export default {
 } satisfies PluginModule;
 ```
 
-`*-api` 包仅导出 `type` 与 `*Capabilities`，运行时零体积，**任何插件都可以放心 import**。
+`*-api` 包仅导出 `type` 与少量纯函数 helper / 常量，运行时近零体积，**任何插件都可以放心 import**。
 
 ### 2.2 自己 provide 一个服务
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import { LLMCapabilities } from '@aalis/llm-api';
-import type { LLMService } from '@aalis/llm-api';
+import type { LLMService } from '@aalis/plugin-llm-api';
 
 class MyLLM implements LLMService { /* ... */ }
 
@@ -74,7 +74,6 @@ export default {
   name: '@your-scope/plugin-my-llm',
   apply(ctx: Context) {
     ctx.provide('llm', new MyLLM(), {
-      capabilities: [LLMCapabilities.Chat, LLMCapabilities.Streaming],
       priority: 50,
       label: 'my-llm',
     });
@@ -82,19 +81,32 @@ export default {
 } satisfies PluginModule;
 ```
 
-#### `capabilities` 类型安全
+`provide(name, instance, options?)` 的 `options` 只有三个字段：`priority`、`label`、`entryId`。
+**core 不再做"服务能力（capability）选择"**——0.5.0 已删除 `ServiceCapabilityMap` /
+`getServiceCapabilities` 及 provide 的 `capabilities` 选项。服务选择只看「偏好 > 优先级 > 注册顺序」，
+跨实例的"按能力挑选"交给领域 helper（见下）。
 
-`*-api` 包通过 `declare module './capabilities.js'` 扩展了核心的 `ServiceCapabilityMap`：
+#### 能力（capability）现在挂在 handle 元数据上
+
+以 LLM 为例：模型的能力（chat / tool_calling / vision …）不再传给 `ctx.provide`，
+而是作为 **model handle 自身的 `capabilities` 元数据**暴露，由 `@aalis/plugin-llm-api`
+的纯函数 helper 按需过滤：
 
 ```ts
-declare module '@aalis/core/types/capabilities' {
-  interface ServiceCapabilityMap {
-    llm: 'chat' | 'streaming' | 'vision' | 'tool_calling';
-  }
-}
-```
+import { LLMCapabilities } from '@aalis/plugin-llm-api';
+import type { LLMCapability } from '@aalis/plugin-llm-api';
 
-在 `ctx.provide('llm', …, { capabilities: ['chaat'] })` 处拼错会**编译期**报错。
+// provide 时不传 capabilities；能力写在 handle 实例上：
+class MyModelHandle {
+  readonly capabilities: LLMCapability[] = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling];
+  // ...
+}
+ctx.provide('llm', new MyModelHandle(), { entryId: `${ctx.id}/my-model`, label: 'my-model' });
+
+// 消费方按能力解析（在 *-api 层过滤，不经 core）：
+import { resolveLLMModel } from '@aalis/plugin-llm-api';
+const model = resolveLLMModel(ctx, ref, [LLMCapabilities.Vision])?.instance;
+```
 
 #### 推荐 `priority` 带
 
@@ -104,19 +116,22 @@ declare module '@aalis/core/types/capabilities' {
 | `10–50` | 用户希望覆盖默认的次级提供者（`Override`） |
 | `200` | `System`；仅供 core 与系统级别使用 |
 
-> Router 层已废除。上层跨 entry 调度请使用 `getAllServices(name, requiredCaps?)` 与各 *-api 提供的纯函数 helper（`resolveLLMModel` / `createStorageGateway` / `resolvePlatformBySession` 等）。
+> Router 层已废除。上层跨 entry 调度请使用 `getAllServices(name)`（只接收服务名，**无** capabilities 参数）
+> 与各 *-api 提供的纯函数 helper（`resolveLLMModel` / `listLLMModels` / `createStorageGateway` /
+> `resolvePlatformBySession` 等）做按能力 / 按 ref 的过滤。
 
-> 在同一服务名下，`getService(name)` 默认返回 ServicePreference > priority > 注册顺序脒首的那个；`getAllServices(name, caps?)` 返回全部并同顺序排序。
+> 在同一服务名下，`getService(name)` 默认返回「偏好 > priority > 注册顺序」居首的那个；
+> `getAllServices(name)` 返回全部并按同一顺序排序。用户可经 `ctx.preferService(name, contextId)`
+> 或 WebUI 的「服务」页指定偏好 provider。
 
 ### 2.3 多提供者：per-entry 注册
 
-需要在一个服务名下暴露多个实例（如多 root storage、多平台适配、多模型 LLM）时，**在同一个 apply() 里多次调用 `ctx.provide`**，每个 entry 携带真实的 capabilities：
+需要在一个服务名下暴露多个实例（如多 root storage、多平台适配、多模型 LLM）时，**在同一个 apply() 里多次调用 `ctx.provide`**，用 `entryId` 区分（约定以 `ctx.id` 为前缀）：
 
 ```ts
 for (const root of roots) {
   ctx.provide('storage', new ScopedStorageService(root, ...), {
     entryId: `${ctx.id}/${root.name}`,
-    capabilities: ['list', 'read', 'write', 'delete', 'local-path'],
     label: root.label,
   });
 }
@@ -127,12 +142,15 @@ for (const root of roots) {
 ## 3. 配置 schema
 
 ```ts
-import { defineSchema } from '@aalis/core';
+import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret 等）
 
-export const configSchema = defineSchema({
-  apiKey: { type: 'string', required: true, secret: true, label: 'API Key' },
-  baseUrl: { type: 'string', default: 'https://api.example.com' },
-});
+// ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>；
+// 每个 SchemaField 必须有 type 与 label。
+export const configSchema: ConfigSchema = {
+  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
+  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.example.com' },
+};
 
 export const defaultConfig = { baseUrl: 'https://api.example.com' };
 
@@ -140,9 +158,14 @@ export default {
   name: '@your-scope/plugin-x',
   configSchema,
   defaultConfig,
-  apply(ctx, config) { /* config 已按 schema 校验+合并默认 */ },
+  apply(ctx: Context, config: Record<string, unknown>) { /* config 已按 schema 校验+合并默认 */ },
 } satisfies PluginModule;
 ```
+
+> `secret`（以及 `dynamicOptions` / `allowCustom` 等表单属性）不是 core `SchemaField` 的字段——
+> core 只声明中立字段（`type` / `label` / `description` / `default` / `required` / `options`），
+> 渲染相关属性由 `@aalis/plugin-webui-api` 经 declaration merging 注入。用到这些属性时
+> **必须** `import type {} from '@aalis/plugin-webui-api'` 才能通过类型检查。
 
 WebUI 会自动根据 schema 渲染配置表单。
 

@@ -28,10 +28,9 @@ meta.inject = {}
 | `/tools` | 列出所有 AI 工具 | public |
 | `/shutdown` | 关闭应用 | restricted |
 | `/restart` | 重启应用 | restricted |
-| `/grant <target> <capability>` | 给用户授予一个能力（受子集约束） | restricted |
-| `/deny <target> <capability>` | 禁用用户一个能力 | restricted |
-| `/authority [target]` | 查看自己或指定用户的能力授予 | public |
-| `/bind <code>` | 将当前平台账号绑定到 WebUI 账户 | public |
+| `/authority [target]` | 查看自己或指定用户的权限等级 | public |
+| `/level <target> <n>` | 设置用户权限等级（整数，越大越高；0 默认，负数封禁） | restricted |
+| `/auto [分钟\|off\|on]` | 自动确认模式：临时免 dangerous 二次确认（仅 owner 本人） | restricted |
 
 ## `/clear` 类型
 

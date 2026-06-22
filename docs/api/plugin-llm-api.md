@@ -66,7 +66,7 @@ thinking        支持 think=true（reasoning_content）
 
 ```ts
 export const inject = {
-  required: [{ service: 'llm', capabilities: ['chat', 'tool_calling'] }],
+  required: ['llm'],
 };
 ```
 

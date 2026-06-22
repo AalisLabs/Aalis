@@ -1,13 +1,13 @@
 # Aalis
 
-一个基于大型语言模型的模块化智能助手框架，采用 **服务 IoC + 能力声明** 架构。
+一个基于大型语言模型的模块化智能助手框架，采用 **服务 IoC + 依赖注入** 架构。
 
 > 📖 **详细技术文档**: 参见 [`docs/`](docs/) 目录
 
 ## 特性
 
 - **模块化插件系统** — 所有功能均为可热插拔的插件（40+），核心框架零外部依赖
-- **服务 IoC + 能力声明** — 插件声明所需能力，框架自动匹配最佳实现
+- **服务 IoC + 依赖注入** — 插件声明所需服务，框架按偏好 > 优先级 > 注册顺序选取最佳实现
 - **多 LLM 支持** — DeepSeek / OpenAI / Ollama 及兼容接口，支持深度思考与工具调用
 - **语义记忆** — 向量化长期记忆，基于语义相似度 + 时间衰减检索历史上下文
 - **对话摘要** — LLM 驱动的消息摘要压缩，自动在消息积累后触发
@@ -32,29 +32,31 @@ Aalis 采用服务提供与依赖注入机制，核心设计为：
 
 | 模式 | 说明 |
 |---|---|
-| **服务 IoC 容器 + 能力声明** | 插件注册/消费服务时可声明所需能力，框架自动匹配最佳实现 |
+| **服务 IoC 容器 + 多提供者选择** | 同名服务可多实现并存，框架按偏好 > 优先级 > 注册顺序选取胜者（owner 可经 WebUI 设偏好） |
 | **类型安全事件总线** | 插件间通过事件松耦合通信 |
 | **中间件钩子管道** | 插件可拦截消息处理、LLM 调用、工具调用等核心流程 |
 | **反应式插件生命周期** | 依赖的服务就绪时自动激活插件，服务移除时自动停用 |
 | **优雅降级** | 核心服务缺失时自动 fallback（如内存记忆），插件加载失败不影响其他功能 |
 
-### 能力声明 (Capability Declaration)
+### 多提供者服务选择 (Service Selection)
 
-传统服务依赖是"我需要 `llm` 服务"，Aalis 的能力声明支持更细粒度的匹配：
+插件按名字声明依赖（如"我需要 `llm` 服务"）。当同一服务有多个实现并存时，框架按
+**偏好 > 优先级 > 注册顺序** 解析出唯一胜者：
 
 ```typescript
-// 插件声明: 需要一个支持工具调用的 LLM 服务
+// 插件声明依赖（字符串或 { service } 对象）
 export const inject = {
-  required: [{ service: 'llm', capabilities: ['tool_calling'] }],
+  required: ['llm'],
+  optional: [{ service: 'memory' }],
 };
 
-// LLM 插件注册时声明自己的能力
-ctx.provide('llm', service, {
-  capabilities: ['chat', 'tool_calling', 'streaming'],
-});
+// 各 LLM 插件以默认优先级注册同名 'llm' 服务
+ctx.provide('llm', service); // 可选 { priority, label }
 ```
 
-当有多个 LLM 实现时，框架会自动匹配满足所需能力的最高优先级提供者。
+当有多个 `llm` 实现时，`ctx.getService('llm')` 返回当前胜者；owner 可在 WebUI 的「服务」页
+或经 `ctx.preferService(name, contextId)` 指定偏好提供者。LLM 的工具调用 / 视觉等能力由模型
+句柄（handle）元数据描述，存储访问由 root 权限位控制——均不再走统一的"服务能力匹配"层。
 
 ## 项目结构
 
@@ -154,7 +156,10 @@ disabledPlugins:
   - "@aalis/plugin-openai"
 
 commandPrefix: "/"
-defaultAuthority: 1
+
+# 权限：owner 列表（拥有全部权限，等级 ∞）；其余外部身份默认等级 0
+owners:
+  - { platform: cli, userId: local }
 ```
 
 ### 启动
@@ -180,7 +185,7 @@ export const name = 'my-plugin';
 
 export const inject = {
   required: ['llm'],
-  optional: [{ service: 'memory', capabilities: ['persistence'] }],
+  optional: [{ service: 'memory' }],
 };
 
 export const provides = ['my-service'];
@@ -221,10 +226,8 @@ export function apply(ctx: Context, config: Record<string, unknown>) {
     data.content += '\n\n— by my-plugin';
   });
 
-  // 提供服务
-  ctx.provide('my-service', myServiceInstance, {
-    capabilities: ['feature-a', 'feature-b'],
-  });
+  // 提供服务（可选 priority / label / entryId）
+  ctx.provide('my-service', myServiceInstance, { priority: 10 });
 }
 ```
 
@@ -256,19 +259,20 @@ outputFormat:
 
 ## CLI 命令
 
-在终端或 WebUI 对话中可使用：
+在终端或 WebUI 对话中可使用（"最低等级"= 触发该操作所需的数字等级，默认身份为 0，owner=∞）：
 
-| 命令 | 描述 | 权限 |
+| 命令 | 描述 | 最低等级 |
 |---|---|---|
 | `/help` | 显示帮助信息 | 0 |
-| `/clear` | 清空当前会话全部记忆；子指令 `context\|summary\|vector\|image` 按需清；`nuke` 全局所有会话（需高权限） | 0 |
+| `/clear` | 清空当前会话记忆；用 `--type` 选择消息/摘要/向量/图片等类型；`/clear all` 清空全部会话（受限） | 0 |
 | `/status` | 显示系统状态 | 0 |
 | `/model` | 查看或切换会话模型 | 0 |
 | `/tools` | 列出所有 AI 工具 | 0 |
-| `/shutdown` | 关闭应用 | 5 (dangerous) |
-| `/restart` | 重启应用 | 5 (dangerous) |
-| `/grant <platform:userId> <level>` | 设置用户权限等级 | 2 |
-| `/authority [platform:userId]` | 查看权限等级 | 0 |
+| `/shutdown` | 关闭应用（restricted） | 2 |
+| `/restart` | 重启应用（restricted） | 2 |
+| `/authority [platform:userId]` | 查看自己或指定用户的权限等级 | 0 |
+| `/level <platform:userId> <整数>` | 设置用户权限等级（越大越高，0 默认，负数封禁；仅 owner 可用） | owner |
+| `/auto [分钟\|on\|off]` | 自动确认模式：临时免危险操作二次确认（仅 owner 本人） | owner |
 
 ## 技术文档
 
@@ -281,7 +285,7 @@ outputFormat:
 | [架构总览](docs/architecture.md) | 系统架构、消息处理流程、设计模式 |
 | [应用容器](docs/core/app.md) | App 类、启动流程、内置指令 |
 | [执行上下文](docs/core/context.md) | Context 类、IoC 容器、生命周期 |
-| [服务容器](docs/core/service.md) | 服务注册、能力匹配、优先级 |
+| [服务容器](docs/core/service.md) | 服务注册、多提供者选择、偏好与优先级 |
 | [插件管理](docs/core/plugin.md) | 插件生命周期、Soft Reload、依赖追踪 |
 | [事件系统](docs/core/events.md) | EventBus、钩子管道 |
 | [配置管理](docs/core/config.md) | YAML 配置、环境变量、Schema |
@@ -317,7 +321,7 @@ outputFormat:
 
 ### ✅ 已完成
 
-- [x] 核心框架（服务 IoC + 能力声明 + 事件总线 + 响应式插件生命周期）
+- [x] 核心框架（服务 IoC + 多提供者选择 + 事件总线 + 响应式插件生命周期）
 - [x] 配置管理（YAML + 环境变量插值 + 启动时自动同步插件默认值）
 - [x] 工具注册表（OpenAI function calling 格式 + 权限系统 + 安全等级）
 - [x] 默认 Agent（消息编排 + 工具循环 + 五阶段上下文裁剪 + 压缩后延续提示）
