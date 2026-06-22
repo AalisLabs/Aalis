@@ -1,4 +1,4 @@
-import type { Context } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 
@@ -8,6 +8,13 @@ class InMemoryFallbackService implements MemoryService {
   private sessions = new Map<string, Message[]>();
   private archivedSessions = new Map<string, Message[]>();
   private metadata = new Map<string, Map<string, Record<string, unknown>>>();
+  private readonly rangeQueryLimit: number;
+  private readonly crossSessionMaxLimit: number;
+
+  constructor(opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number } = {}) {
+    this.rangeQueryLimit = Math.max(1, opts.rangeQueryLimit ?? 500);
+    this.crossSessionMaxLimit = Math.max(1, opts.crossSessionMaxLimit ?? 1000);
+  }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     let history = this.sessions.get(sessionId);
@@ -82,11 +89,12 @@ class InMemoryFallbackService implements MemoryService {
         if (excludeKindSet && m.kind && excludeKindSet.has(m.kind)) return false;
         return true;
       })
-      .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+      .slice(0, this.rangeQueryLimit);
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
-    const limit = Math.max(1, Math.min(query.limit, 1000));
+    const limit = Math.max(1, Math.min(query.limit, this.crossSessionMaxLimit));
     const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
     const roleSet = new Set(roles);
     const excludeSet =
@@ -150,7 +158,7 @@ class InMemoryFallbackService implements MemoryService {
     const start = Math.max(0, history.length - recentLimit);
     for (let i = start; i < history.length; i++) {
       if (history[i].content && history[i].content!.includes(oldText)) {
-        history[i] = { ...history[i], content: history[i].content!.replace(oldText, newText) };
+        history[i] = { ...history[i], content: history[i].content!.replaceAll(oldText, newText) };
         count++;
       }
     }
@@ -196,10 +204,33 @@ export const displayName = '内存记忆';
 export const subsystem = 'memory';
 export const provides = ['memory'];
 
+export const configSchema: ConfigSchema = {
+  rangeQueryLimit: {
+    type: 'number',
+    label: '范围查询返回上限',
+    default: 500,
+    description: '区间消息查询单次返回的最大条数。命中上限会静默截断（与 sqlite/mongodb 后端对齐）',
+  },
+  crossSessionMaxLimit: {
+    type: 'number',
+    label: '跨会话查询返回上限',
+    default: 1000,
+    description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
+  },
+};
+
+export const defaultConfig = {
+  rangeQueryLimit: 500,
+  crossSessionMaxLimit: 1000,
+};
+
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, _config: Record<string, unknown>): void {
-  const service = new InMemoryFallbackService();
+export function apply(ctx: Context, config: Record<string, unknown>): void {
+  const service = new InMemoryFallbackService({
+    rangeQueryLimit: config.rangeQueryLimit as number | undefined,
+    crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
+  });
   ctx.provide('memory', service, {
     priority: -100,
   });

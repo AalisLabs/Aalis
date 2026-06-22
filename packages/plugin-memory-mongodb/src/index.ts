@@ -27,12 +27,26 @@ export const configSchema: ConfigSchema = {
     description: '存储消息历史的数据库',
   },
   collection: { type: 'string', label: '集合名', default: 'messages', description: '消息集合名称' },
+  rangeQueryLimit: {
+    type: 'number',
+    label: '范围查询返回上限',
+    default: 500,
+    description: '区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断',
+  },
+  crossSessionMaxLimit: {
+    type: 'number',
+    label: '跨会话查询返回上限',
+    default: 1000,
+    description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
+  },
 };
 
 export const defaultConfig = {
   uri: 'mongodb://localhost:27017',
   database: 'aalis',
   collection: 'messages',
+  rangeQueryLimit: 500,
+  crossSessionMaxLimit: 1000,
 };
 
 // ===== 配置 =====
@@ -42,6 +56,8 @@ interface MongoMemoryConfig {
   database: string;
   collection?: string;
   connectTimeoutMs?: number;
+  rangeQueryLimit?: number;
+  crossSessionMaxLimit?: number;
 }
 
 // ===== 数据库文档类型 =====
@@ -75,10 +91,18 @@ interface MetadataDocument {
 class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
   private meta: Collection<MetadataDocument>;
+  private readonly rangeQueryLimit: number;
+  private readonly crossSessionMaxLimit: number;
 
-  constructor(collection: Collection<MessageDocument>, meta: Collection<MetadataDocument>) {
+  constructor(
+    collection: Collection<MessageDocument>,
+    meta: Collection<MetadataDocument>,
+    opts: { rangeQueryLimit?: number; crossSessionMaxLimit?: number } = {},
+  ) {
     this.collection = collection;
     this.meta = meta;
+    this.rangeQueryLimit = Math.max(1, opts.rangeQueryLimit ?? 500);
+    this.crossSessionMaxLimit = Math.max(1, opts.crossSessionMaxLimit ?? 1000);
   }
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -143,12 +167,12 @@ class MongoMemoryService implements MemoryService {
     const filter: Record<string, unknown> = { sessionId, timestamp: { $gte: fromTs, $lte: toTs } };
     if (roles && roles.length > 0) filter.role = { $in: roles };
     if (excludeKinds && excludeKinds.length > 0) filter.kind = { $nin: excludeKinds };
-    const docs = await this.collection.find(filter).sort({ timestamp: 1 }).limit(500).toArray();
+    const docs = await this.collection.find(filter).sort({ timestamp: 1 }).limit(this.rangeQueryLimit).toArray();
     return docs.map(doc => this.docToMessage(doc));
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
-    const limit = Math.max(1, Math.min(query.limit, 1000));
+    const limit = Math.max(1, Math.min(query.limit, this.crossSessionMaxLimit));
     const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
     const filter: Record<string, unknown> = {
       archived: { $ne: true },
@@ -232,7 +256,7 @@ class MongoMemoryService implements MemoryService {
     let count = 0;
     for (const doc of docs) {
       if (doc.content?.includes(oldText)) {
-        const updated = doc.content.replace(oldText, newText);
+        const updated = doc.content.replaceAll(oldText, newText);
         await this.collection.updateOne({ _id: doc._id }, { $set: { content: updated } });
         count++;
       }
@@ -255,6 +279,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     database: (config.database as string) ?? 'aalis',
     collection: (config.collection as string) ?? 'messages',
     connectTimeoutMs: (config.connectTimeoutMs as number) ?? 5000,
+    rangeQueryLimit: config.rangeQueryLimit as number | undefined,
+    crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
   };
 
   ctx.logger.info(`正在连接 MongoDB: ${mongoConfig.uri} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
@@ -276,7 +302,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     await collection.createIndex({ 'metadata.platform': 1, timestamp: -1 });
     await metaCollection.createIndex({ namespace: 1, key: 1 }, { unique: true });
 
-    const service = new MongoMemoryService(collection, metaCollection);
+    const service = new MongoMemoryService(collection, metaCollection, {
+      rangeQueryLimit: mongoConfig.rangeQueryLimit,
+      crossSessionMaxLimit: mongoConfig.crossSessionMaxLimit,
+    });
     ctx.provide('memory', service, {
       // priority 与同类 memory provider 自文档化对照：
       //   sqlite=10（零配置默认）, mongodb=5（需服务，但更强）, inmemory=-100（仅测试）
