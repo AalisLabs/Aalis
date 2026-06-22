@@ -364,9 +364,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   const cancelTokens = new Map<string, { cancelled: boolean }>();
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
-  const triggers = new TriggerManager(ctx, logger, (workflowId, source) => {
-    // 异步触发，不阻塞触发源
-    runById(workflowId, {}, source).catch(err => {
+  const triggers = new TriggerManager(ctx, logger, (workflowId, source, payload) => {
+    // 异步触发，不阻塞触发源；event 触发的 payload（{args}）作为 vars 注入，{{vars.X}} 才读得到
+    runById(workflowId, payload ?? {}, source).catch(err => {
       logger.error(
         `触发执行 workflow=${workflowId} source=${source} 失败: ${err instanceof Error ? err.message : err}`,
       );

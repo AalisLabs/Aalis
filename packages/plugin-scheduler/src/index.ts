@@ -1,7 +1,7 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import { parseEverySeconds, useCronEngine } from '@aalis/plugin-cron-engine-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -384,13 +384,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
 
   const storage = createStorageGateway(ctx);
-  function toUri(input: string): string {
-    if (input.includes(':/')) return input;
-    const s = input.trim().replace(/^\.?\/+/, '');
-    const idx = s.indexOf('/');
-    return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
-  }
-  const persistUri = toUri(config.persistPath);
+  const persistUri = toStorageUri(config.persistPath);
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
     try {

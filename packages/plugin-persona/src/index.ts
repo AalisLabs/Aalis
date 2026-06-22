@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
@@ -456,14 +456,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const timeZone = (config.timeZone as string) ?? '';
 
   const storage = createStorageGateway(ctx);
-
-  // 把 "data/personas" / "abc:/path" 都规范化为 storage URI
-  function toStorageUri(input: string): string {
-    if (input.includes(':/')) return input;
-    const s = input.trim().replace(/^\.?\/+/, '');
-    const idx = s.indexOf('/');
-    return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
-  }
 
   // 候选目录：用户配置 + configDir/personas（若存在 configDir 根，则用 configDir 根；否则跳过）
   const searchUris: string[] = [toStorageUri(personasDirRaw)];

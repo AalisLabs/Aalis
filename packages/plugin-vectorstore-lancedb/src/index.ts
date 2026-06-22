@@ -1,15 +1,11 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';
 
 function toUri(input: string): string {
   const s = String(input ?? '').trim();
-  if (!s) return 'data:/lancedb';
-  if (s.includes(':/')) return s;
-  const cleaned = s.replace(/^\.?\/+/, '');
-  const idx = cleaned.indexOf('/');
-  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `data:/${cleaned}`;
+  return s ? toStorageUri(s) : 'data:/lancedb';
 }
 
 // ===== 插件元数据 =====
