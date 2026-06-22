@@ -50,7 +50,6 @@ const PLUGIN_DIRS = [
   'plugin-persona',
   'plugin-prompt-budget',
   'plugin-scheduler',
-  'plugin-session-channel',
   'plugin-session-manager',
   'plugin-subtask',
   'plugin-tool-session',
