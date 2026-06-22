@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   augmentInstalled,
+  buildDependencyChain,
   buildSearchUrl,
   classifyPackage,
+  findPackageDependents,
   findServiceDependents,
   toManifest,
   toMarketplacePackages,
@@ -12,21 +14,20 @@ import {
 // 插件市场 — npm registry 检索映射（纯 npm 路线，keyword 发现）
 // ════════════════════════════════════════════════════════════
 
-describe('buildSearchUrl（keyword 约定）', () => {
-  it('无搜索词按四类 keyword（plugin∪util∪api∪interface，逗号 = 任一命中）', () => {
-    expect(buildSearchUrl('')).toBe(
-      'https://registry.npmjs.org/-/v1/search?text=keywords%3Aaalis-plugin%2Caalis-util%2Caalis-api%2Caalis-interface&size=100',
+describe('buildSearchUrl（单类型关键词；调用方对四类各发一条再合并 = OR）', () => {
+  it('无搜索词只按该 keyword（npm 的 keywords 逗号是 AND，故不合并成一条）', () => {
+    expect(buildSearchUrl('', 'aalis-util')).toBe(
+      'https://registry.npmjs.org/-/v1/search?text=keywords%3Aaalis-util&size=100',
     );
   });
   it('带搜索词时 keyword + 词同时约束', () => {
-    const url = buildSearchUrl('memory');
-    expect(decodeURIComponent(url)).toContain('keywords:aalis-plugin,aalis-util,aalis-api,aalis-interface memory');
+    expect(decodeURIComponent(buildSearchUrl('memory', 'aalis-plugin'))).toContain('keywords:aalis-plugin memory');
   });
   it('可配 registry 基址（去尾斜杠；空值回退官方源）', () => {
-    expect(buildSearchUrl('', 'https://npm.example.com/')).toBe(
-      'https://npm.example.com/-/v1/search?text=keywords%3Aaalis-plugin%2Caalis-util%2Caalis-api%2Caalis-interface&size=100',
+    expect(buildSearchUrl('', 'aalis-api', 'https://npm.example.com/')).toBe(
+      'https://npm.example.com/-/v1/search?text=keywords%3Aaalis-api&size=100',
     );
-    expect(buildSearchUrl('', '')).toContain('registry.npmjs.org');
+    expect(buildSearchUrl('', 'aalis-plugin', '')).toContain('registry.npmjs.org');
   });
 });
 
@@ -118,6 +119,73 @@ describe('findServiceDependents（卸载护栏：断服务依赖检测）', () =
   });
 });
 
+describe('findPackageDependents（import 依赖：谁的 deps 含 target）', () => {
+  const depMap = new Map<string, string[]>([
+    ['@aalis/plugin-a', ['@aalis/plugin-b', 'express']],
+    ['@aalis/plugin-b', ['@aalis/util-c']],
+    ['@aalis/util-c', []],
+    ['@aalis/plugin-d', ['@aalis/util-c']],
+  ]);
+  it('列出直接 import 该包的所有包（排序、排除自身）', () => {
+    expect(findPackageDependents('@aalis/util-c', depMap)).toEqual(['@aalis/plugin-b', '@aalis/plugin-d']);
+    expect(findPackageDependents('@aalis/plugin-b', depMap)).toEqual(['@aalis/plugin-a']);
+  });
+  it('无人依赖 → 空', () => {
+    expect(findPackageDependents('@aalis/plugin-a', depMap)).toEqual([]);
+  });
+});
+
+describe('buildDependencyChain（import 链路树：传递、环/深度守卫、缺失中断）', () => {
+  // a → b → c(util) ；d → c ；e → f(缺失，本地无)
+  const depMap = new Map<string, string[]>([
+    ['@aalis/plugin-a', ['@aalis/plugin-b', 'express']],
+    ['@aalis/plugin-b', ['@aalis/util-c']],
+    ['@aalis/util-c', []],
+    ['@aalis/plugin-d', ['@aalis/util-c']],
+    ['@aalis/plugin-e', ['@aalis/plugin-f']], // f 不在图中（缺失）
+  ]);
+  const names = (n: { children: { name: string }[] }) => n.children.map(c => c.name);
+
+  it('upstream：传递展开依赖；第三方库（express）被 isRelevant 默认滤掉', () => {
+    const t = buildDependencyChain('@aalis/plugin-a', depMap, 'upstream');
+    expect(names(t)).toEqual(['@aalis/plugin-b']); // express 被滤
+    expect(t.children[0].children.map(c => c.name)).toEqual(['@aalis/util-c']); // 传递到 c
+  });
+  it('upstream：依赖缺失 → present=false 且不再下钻（中断）', () => {
+    const t = buildDependencyChain('@aalis/plugin-e', depMap, 'upstream', { isRelevant: () => true });
+    expect(t.children[0]).toMatchObject({ name: '@aalis/plugin-f', present: false, children: [] });
+  });
+  it('downstream：谁依赖它，传递；不因 target 未装而中断', () => {
+    const t = buildDependencyChain('@aalis/util-c', depMap, 'downstream');
+    expect(names(t).sort()).toEqual(['@aalis/plugin-b', '@aalis/plugin-d']);
+    // b 的上游依赖者是 a → 传递展开
+    expect(t.children.find(c => c.name === '@aalis/plugin-b')?.children.map(c => c.name)).toEqual(['@aalis/plugin-a']);
+  });
+  it('downstream：target 本地未装也能查依赖者（装前场景）', () => {
+    const t = buildDependencyChain('@aalis/plugin-f', depMap, 'downstream');
+    expect(t.present).toBe(false);
+    expect(names(t)).toEqual(['@aalis/plugin-e']); // e 依赖 f
+  });
+  it('环检测：a↔b 互依不死循环', () => {
+    const cyclic = new Map<string, string[]>([
+      ['a', ['b']],
+      ['b', ['a']],
+    ]);
+    const t = buildDependencyChain('a', cyclic, 'upstream', { isRelevant: () => true });
+    expect(t.children[0].name).toBe('b');
+    expect(t.children[0].children[0]).toMatchObject({ name: 'a', children: [] }); // 回到 a 即停
+  });
+  it('深度上限：maxDepth 截断', () => {
+    const chain = new Map<string, string[]>([
+      ['a', ['b']],
+      ['b', ['c']],
+      ['c', ['d']],
+    ]);
+    const t = buildDependencyChain('a', chain, 'upstream', { isRelevant: () => true, maxDepth: 1 });
+    expect(t.children[0]).toMatchObject({ name: 'b', children: [] }); // depth 1 即停，不展开 c
+  });
+});
+
 describe('toManifest（packument → 装前能力清单）', () => {
   it('读 dist-tags.latest 版本的 aalis.service', () => {
     const packument = {
@@ -127,6 +195,8 @@ describe('toManifest（packument → 装前能力清单）', () => {
         '1.2.0': {
           description: '新',
           aalis: { service: { required: ['llm'], optional: ['memory'], provides: ['x'] } },
+          dependencies: { '@aalis/plugin-llm-api': 'workspace:^', zod: '^3.0.0' },
+          peerDependencies: { '@aalis/core': '>=0.2.0 <1.0.0' },
         },
       },
     };
@@ -135,12 +205,13 @@ describe('toManifest（packument → 装前能力清单）', () => {
       version: '1.2.0',
       description: '新',
       service: { required: ['llm'], optional: ['memory'], provides: ['x'] },
+      dependencies: ['@aalis/plugin-llm-api', 'zod', '@aalis/core'], // deps+peer 并集去重、剔版本
     });
   });
 
-  it('无 aalis.service 字段时 service 为 undefined（仍返回版本/描述）', () => {
+  it('无 aalis.service / 无依赖时 service=undefined、dependencies=[]（仍返回版本/描述）', () => {
     const m = toManifest({ 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { description: 'd' } } });
-    expect(m).toEqual({ name: '', version: '1.0.0', description: 'd', service: undefined });
+    expect(m).toEqual({ name: '', version: '1.0.0', description: 'd', service: undefined, dependencies: [] });
   });
 
   it('无 latest tag 返回 null（降级安全）', () => {

@@ -62,12 +62,14 @@ interface NpmSearchResponse {
   }>;
 }
 
-/** 插件能力清单（来自 npm 包 package.json 的 aalis.service，装前披露用） */
+/** 插件能力清单（来自 npm 包 package.json 的 aalis.service + 依赖，装前披露用） */
 interface PluginManifest {
   name: string;
   version: string;
   description?: string;
   service?: { required?: string[]; optional?: string[]; provides?: string[] };
+  /** 该版本声明的依赖名（dependencies+peer，已剔版本）；供装前依赖树的根种子。 */
+  dependencies?: string[];
 }
 
 /** 市场组件类别。'plugin'=可装卸功能；'api'=契约/SDK（只读）；'interface'=前端界面（可换）；'util'=工具库（被插件 import） */
@@ -125,6 +127,52 @@ export function findServiceDependents(
   return [...dependents];
 }
 
+/** 直接 import 依赖者：哪些本地包的依赖名单里含 target（不含自身）。排序输出。纯函数，便于单测。 */
+export function findPackageDependents(target: string, depMap: ReadonlyMap<string, string[]>): string[] {
+  const out: string[] = [];
+  for (const [name, deps] of depMap) {
+    if (name !== target && deps.includes(target)) out.push(name);
+  }
+  return out.sort();
+}
+
+/** 依赖链路树节点。present=false：该包本地不存在（upstream 里即「缺失/将引入」，链路在此中断）。 */
+export interface DepChainNode {
+  name: string;
+  present: boolean;
+  /** 服务标注（仅已加载插件有；util/api/未装为 undefined）。由端点据 getStatus 补，纯函数不填。 */
+  services?: { provides: string[]; requires: string[] };
+  children: DepChainNode[];
+}
+
+/**
+ * 构建 target 的 import 依赖链路树（纯函数，只看 import 边，不碰服务）。
+ * direction='upstream'：children=该节点的依赖（它需要谁）；缺失依赖标 present=false 且停止下钻（中断）。
+ * direction='downstream'：children=依赖该节点的包（谁需要它），复用 findPackageDependents；不因 target 自身未装而中断。
+ * isRelevant 滤掉无关第三方库（如 express），默认只跟 depMap 内的包；调用方可放宽到 @aalis scope。
+ * 环检测（路径内重复即停）+ 深度上限。
+ */
+export function buildDependencyChain(
+  target: string,
+  depMap: ReadonlyMap<string, string[]>,
+  direction: 'upstream' | 'downstream',
+  opts: { maxDepth?: number; isRelevant?: (name: string) => boolean } = {},
+): DepChainNode {
+  const maxDepth = opts.maxDepth ?? 8;
+  const isRelevant = opts.isRelevant ?? ((n: string) => depMap.has(n));
+  const build = (name: string, depth: number, path: ReadonlySet<string>): DepChainNode => {
+    const node: DepChainNode = { name, present: depMap.has(name), children: [] };
+    if (depth >= maxDepth || path.has(name)) return node; // 深度 / 环 → 不下钻
+    if (direction === 'upstream' && !node.present) return node; // upstream 缺失即中断（downstream 不受 target 自身存在影响）
+    const nextPath = new Set(path).add(name);
+    const edges =
+      direction === 'upstream' ? (depMap.get(name) ?? []).filter(isRelevant) : findPackageDependents(name, depMap);
+    for (const child of edges) node.children.push(build(child, depth + 1, nextPath));
+    return node;
+  };
+  return build(target, 0, new Set());
+}
+
 /** npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息）。纯函数，便于单测。 */
 export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<string>): MarketplacePackage[] {
   return (data.objects ?? []).map(o => ({
@@ -145,21 +193,33 @@ export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<st
   }));
 }
 
-/** npm packument → 装前能力清单（读 latest 版本的 aalis.service）。纯函数，便于单测。 */
+/** npm packument → 装前能力清单（读 latest 版本的 aalis.service + 依赖名）。纯函数，便于单测。 */
 export function toManifest(packument: {
   'dist-tags'?: { latest?: string };
-  versions?: Record<string, { description?: string; aalis?: { service?: PluginManifest['service'] } }>;
+  versions?: Record<
+    string,
+    {
+      description?: string;
+      aalis?: { service?: PluginManifest['service'] };
+      dependencies?: Record<string, unknown>;
+      peerDependencies?: Record<string, unknown>;
+    }
+  >;
 }): PluginManifest | null {
   const latest = packument['dist-tags']?.latest;
   if (!latest) return null;
   const v = packument.versions?.[latest];
-  return { name: '', version: latest, description: v?.description, service: v?.aalis?.service };
+  const dependencies = [...new Set([...Object.keys(v?.dependencies ?? {}), ...Object.keys(v?.peerDependencies ?? {})])];
+  return { name: '', version: latest, description: v?.description, service: v?.aalis?.service, dependencies };
 }
 
-/** 构造 npm registry 检索 URL（keyword 约定 + 可选搜索词 + 可配 registry 基址）。纯函数，便于单测。 */
-export function buildSearchUrl(q: string, registryBase: string = DEFAULT_REGISTRY): string {
-  const kw = `keywords:${AALIS_KEYWORDS.join(',')}`;
-  const text = q ? `${kw} ${q}` : kw;
+/**
+ * 构造单个类型关键词的 npm registry 检索 URL。纯函数，便于单测。
+ * 注意：npm search 的 `keywords:a,b` 是 **AND**（须同时含），不是 OR——故四类关键词不能逗号合并成一条查询
+ * （会要求一个包同时是 plugin+util+api+interface → 0 结果）。改为每类发一条、调用方合并，见 registerMarketplaceRoutes。
+ */
+export function buildSearchUrl(q: string, keyword: string, registryBase: string = DEFAULT_REGISTRY): string {
+  const text = q ? `keywords:${keyword} ${q}` : `keywords:${keyword}`;
   const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
   return `${base}/-/v1/search?text=${encodeURIComponent(text)}&size=100`;
 }
@@ -171,8 +231,8 @@ export function registerMarketplaceRoutes(
   getPluginMgr: () => PluginManagerService | undefined,
   gate: RouteGate,
   registryBase: string = DEFAULT_REGISTRY,
-  /** 本地物理存在的包名（含 monorepo 工作区包）；由调用方扫盘注入，补 require.resolve 在 pnpm 工作区的盲区。 */
-  getLocalPackageNames: () => Set<string> = () => new Set(),
+  /** 本地包扫描：`name → 依赖名[]`（含 monorepo 工作区包）。keys 补 require.resolve 在 pnpm 工作区的盲区；values 供依赖图。 */
+  getLocalPackages: () => Map<string, string[]> = () => new Map(),
 ): void {
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
@@ -182,10 +242,10 @@ export function registerMarketplaceRoutes(
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉带 marker 不加载的 api/前端/核心）。
     // 两路补判：① 本地物理存在（含 monorepo packages/ 工作区包——require.resolve 从仓库根解析不到）；
     // ② 项目根能 resolve（独立部署的扁平 node_modules / 第三方根依赖）。
-    const localNames = getLocalPackageNames();
+    const localPkgs = getLocalPackages();
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
     const isPresent = (name: string): boolean => {
-      if (localNames.has(name)) return true;
+      if (localPkgs.has(name)) return true;
       try {
         projectRequire.resolve(`${name}/package.json`);
         return true;
@@ -193,47 +253,83 @@ export function registerMarketplaceRoutes(
         return false;
       }
     };
-    try {
-      const r = await fetch(buildSearchUrl(q, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
+    // 四类关键词各发一条检索（npm 的 keywords 逗号是 AND 非 OR），并行后按包名合并去重 = OR。
+    const fetchKw = async (kw: string): Promise<NpmSearchResponse> => {
+      const r = await fetch(buildSearchUrl(q, kw, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!r.ok) throw new Error(`npm registry 返回 ${r.status}`);
-      const data = (await r.json()) as NpmSearchResponse;
-      const installed = augmentInstalled(
-        (data.objects ?? []).map(o => o.package.name),
-        new Set(status.map(p => p.name)),
-        isPresent,
-      );
-      const packages = toMarketplacePackages(data, installed);
-      res.json({ packages });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      return (await r.json()) as NpmSearchResponse;
+    };
+    const settled = await Promise.allSettled(AALIS_KEYWORDS.map(fetchKw));
+    const okResults = settled.filter((s): s is PromiseFulfilledResult<NpmSearchResponse> => s.status === 'fulfilled');
+    if (okResults.length === 0) {
+      const reason = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
+      const msg = reason?.reason instanceof Error ? reason.reason.message : String(reason?.reason ?? '未知错误');
       ctx.logger.debug(`market: npm registry 检索失败: ${msg}`);
       res.json({ packages: [], warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件` });
+      return;
     }
+    const byName = new Map<string, NonNullable<NpmSearchResponse['objects']>[number]>();
+    for (const r of okResults) for (const o of r.value.objects ?? []) byName.set(o.package.name, o);
+    const merged: NpmSearchResponse = { objects: [...byName.values()] };
+    const installed = augmentInstalled([...byName.keys()], new Set(status.map(p => p.name)), isPresent);
+    res.json({ packages: toMarketplacePackages(merged, installed) });
   });
 
-  // 装前能力披露：fetch npm packument 读 aalis.service（该插件需要/提供哪些服务）。
-  // 安装前展示给 owner 知情同意。scoped 包名含 /，用 query 传。
-  expressApp.get('/api/marketplace/manifest', gate(), async (req, res) => {
+  // 依赖图：本地 import 依赖图（name→deps 扫描）+ 运行时服务图（getStatus）合成，供装/卸/装前展示。
+  // 两类边：import（链路树，可传递）+ service（每节点直接标注 + 根的提供者解析）。
+  // 装前（target 本地不存在）：拉一次 packument 取其直接依赖作根种子，深层仍走本地图。
+  expressApp.get('/api/marketplace/depgraph', gate(), async (req, res) => {
     const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
     if (!name || !PKG_NAME_RE.test(name)) {
       res.status(400).json({ error: 'name 必须是合法 npm 包名' });
       return;
     }
-    try {
-      const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
-      const r = await fetch(`${base}/${name.replace('/', '%2F')}`, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
-      if (!r.ok) throw new Error(`npm registry 返回 ${r.status}`);
-      const manifest = toManifest((await r.json()) as Parameters<typeof toManifest>[0]);
-      if (!manifest) {
-        res.json({ manifest: null, warning: '该包无可解析的版本信息' });
-        return;
+    const depMap = getLocalPackages();
+    const status = getPluginMgr()?.getStatus() ?? [];
+    const svcOf = new Map(
+      status.map(p => [p.name, { provides: p.provides ?? [], requires: p.requiredServices ?? [] }]),
+    );
+    // target 本地没有（装前浏览）→ 拉 packument 取直接依赖 + 服务，注入工作图当根种子。
+    let rootServices: { provides: string[]; requires: string[] } | undefined;
+    let upstreamMap = depMap;
+    if (!depMap.has(name)) {
+      try {
+        const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+        const r = await fetch(`${base}/${name.replace('/', '%2F')}`, {
+          signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+        });
+        if (r.ok) {
+          const m = toManifest((await r.json()) as Parameters<typeof toManifest>[0]);
+          if (m) {
+            upstreamMap = new Map(depMap).set(name, m.dependencies ?? []);
+            if (m.service) rootServices = { provides: m.service.provides ?? [], requires: m.service.required ?? [] };
+          }
+        }
+      } catch {
+        /* 拉不到就给空根，不阻断 */
       }
-      res.json({ manifest: { ...manifest, name } });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      ctx.logger.debug(`market: 拉取 ${name} manifest 失败: ${msg}`);
-      res.json({ manifest: null, warning: `无法拉取插件清单（${msg}）` });
     }
+    // upstream 放宽 isRelevant 到 @aalis scope：看得见缺失的生态依赖（中断），又不带 express 这类库噪声。
+    const isRelevant = (n: string) => upstreamMap.has(n) || n.startsWith('@aalis/');
+    const annotate = (node: DepChainNode): DepChainNode => ({
+      ...node,
+      services: svcOf.get(node.name) ?? (node.name === name ? rootServices : undefined),
+      children: node.children.map(annotate),
+    });
+    const upstream = annotate(buildDependencyChain(name, upstreamMap, 'upstream', { isRelevant }));
+    const downstream = annotate(buildDependencyChain(name, depMap, 'downstream'));
+    // 根的服务需求 + 提供者解析（已装范围内；未装提供者无法解析——见 docs，留空）。
+    const required = (svcOf.get(name)?.requires ?? rootServices?.requires ?? []).map(svc => ({
+      service: svc,
+      providedBy: status.find(p => p.name !== name && (p.provides ?? []).includes(svc))?.name ?? null,
+    }));
+    res.json({
+      upstream,
+      downstream,
+      services: { required, provides: svcOf.get(name)?.provides ?? rootServices?.provides ?? [] },
+      // 卸载会断服务的依赖者（与卸载路由 409 同口径），供卸载弹窗装前预警。
+      serviceDependents: findServiceDependents(name, status),
+    });
   });
 
   // 安装：复用 package-manager 的 npm pack 流程；owner 级（安装第三方代码 = 高危）。

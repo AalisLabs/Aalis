@@ -64,20 +64,35 @@ export function discoverClients(scanDirs: string[], depIds: string[], env: Disco
 }
 
 /**
- * 扫描本地物理存在的全部包名（与 discoverClients 共用 scanDirs/env）。
- * 用途：补市场「已装」判定——require.resolve 在 pnpm 工作区从仓库根解析不到未提升的工作区包，
- * 直接读 scanDirs 下每个子目录的 package.json.name 兜底。scope 无关（不挑 @aalis）。纯函数便于单测。
+ * 扫描本地物理存在的包 → `name → 依赖名[]`（与 discoverClients 共用 scanDirs/env）。
+ * 两用，一次扫盘：① keys 即「本地已装包名」，补市场已装判定（require.resolve 在 pnpm 工作区
+ * 从仓库根解析不到未提升的工作区包）；② values 即各包 `dependencies/peer/optional` 的并集名单，
+ * 供依赖图（谁依赖谁）。**只取依赖名、不看版本区间**（`workspace:^`/`^1.0.0` 一律按名），故无需 semver。
+ * scope 无关（不挑 @aalis）。纯函数便于单测。
  */
-export function collectLocalPackageNames(
+export function collectLocalPackageDeps(
   scanDirs: string[],
   env: Pick<DiscoveryEnv, 'existsSync' | 'readdirSync' | 'readJson' | 'join'>,
-): Set<string> {
-  const out = new Set<string>();
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
   for (const base of scanDirs) {
     if (!env.existsSync(base)) continue;
     for (const entry of env.readdirSync(base)) {
-      const pkg = env.readJson(env.join(base, entry, 'package.json')) as { name?: unknown } | undefined;
-      if (pkg && typeof pkg.name === 'string') out.add(pkg.name);
+      const pkg = env.readJson(env.join(base, entry, 'package.json')) as
+        | {
+            name?: unknown;
+            dependencies?: Record<string, unknown>;
+            peerDependencies?: Record<string, unknown>;
+            optionalDependencies?: Record<string, unknown>;
+          }
+        | undefined;
+      if (!pkg || typeof pkg.name !== 'string') continue;
+      const deps = new Set<string>([
+        ...Object.keys(pkg.dependencies ?? {}),
+        ...Object.keys(pkg.peerDependencies ?? {}),
+        ...Object.keys(pkg.optionalDependencies ?? {}),
+      ]);
+      out.set(pkg.name, [...deps]);
     }
   }
   return out;

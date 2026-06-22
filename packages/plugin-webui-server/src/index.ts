@@ -37,7 +37,7 @@ import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
-import { collectLocalPackageNames, type DiscoveryEnv, discoverClients } from './client-discovery.js';
+import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients } from './client-discovery.js';
 import { renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
@@ -534,13 +534,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     join: (...parts: string[]) => resolve(...parts),
   };
   registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate);
-  // 市场「已装」判定需本地包名兜底（pnpm 工作区下 require.resolve 从仓库根解析不到工作区包）：
+  // 市场「已装」判定 + 依赖图都吃这一份本地扫描（pnpm 工作区下 require.resolve 从仓库根解析不到工作区包）：
   // 与 discoverClients 同套 scanDirs（monorepo packages/ 同级 + node_modules/@aalis），每请求懒扫（量小）。
+  // 返回 name→依赖名[]：keys=已装包名，values=依赖图边。
+  const localScanDirs = [
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../'),
+    resolve(process.cwd(), 'node_modules/@aalis'),
+  ];
   registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate, uiConfig.marketplaceRegistry, () =>
-    collectLocalPackageNames(
-      [resolve(dirname(fileURLToPath(import.meta.url)), '../../'), resolve(process.cwd(), 'node_modules/@aalis')],
-      fsScanEnv,
-    ),
+    collectLocalPackageDeps(localScanDirs, fsScanEnv),
   );
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。

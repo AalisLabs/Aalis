@@ -2,6 +2,7 @@ import { AlertTriangle, Clock, Download, Scale } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useConfirm } from '../components/ConfirmDialog';
+import { type DepGraph, InstallDepDisclosure, UninstallDepWarning } from '../components/DependencyTree';
 import type { PluginInfo } from '../types';
 
 interface MarketPkg {
@@ -11,7 +12,7 @@ interface MarketPkg {
   author?: string;
   installed: boolean;
   official?: boolean;
-  /** 组件类别（后端按包名分类）：功能插件 / api 契约 / 前端 / 工具库 */
+  /** 组件类别（后端按类型关键词分类）：功能插件 / api 契约 / 前端界面 / 工具库 */
   category?: 'plugin' | 'api' | 'interface' | 'util';
   keywords?: string[];
   downloads?: number;
@@ -20,13 +21,6 @@ interface MarketPkg {
   insecure?: boolean;
   license?: string;
   links?: { npm?: string; homepage?: string; repository?: string };
-}
-
-interface PluginManifest {
-  name: string;
-  version: string;
-  description?: string;
-  service?: { required?: string[]; optional?: string[]; provides?: string[] };
 }
 
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
@@ -127,7 +121,8 @@ export function MarketplacePage({
 
   // 合并实时安装状态 + 本地筛选（来源/状态/搜索词）+ 排序。
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    // 空格分词 = 多关键词 AND（如「webui interface」需同时命中）；空词跳过。
+    const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const view = registry
       .map(p => ({ ...p, installed: p.installed || installedNames.has(p.name) }))
       .filter(p => {
@@ -136,9 +131,9 @@ export function MarketplacePage({
         if (source === 'community' && p.official) return false;
         if (status === 'installed' && !p.installed) return false;
         if (status === 'available' && p.installed) return false;
-        if (q) {
+        if (terms.length) {
           const hay = `${p.name} ${p.description} ${(p.keywords ?? []).join(' ')} ${p.author ?? ''}`.toLowerCase();
-          if (!hay.includes(q)) return false;
+          if (!terms.every(t => hay.includes(t))) return false;
         }
         return true;
       });
@@ -152,28 +147,23 @@ export function MarketplacePage({
   }, [registry, installedNames, search, sort, source, status, category]);
 
   const handleInstall = async (name: string, official?: boolean) => {
-    // 装前披露：先拉 manifest（aalis.service：需要/提供哪些服务），让 owner 知情同意。
+    // 装前披露：拉依赖图（import 依赖树 + 服务需/供含提供者解析 + 已装依赖者），让 owner 知情同意。
     // 安装第三方代码 = 高危：装后该插件以你授予的能力运行。
-    let svcLine = '';
+    let graph: DepGraph | null = null;
     try {
-      const { manifest } = await api<{ manifest: PluginManifest | null }>(
-        `/api/marketplace/manifest?name=${encodeURIComponent(name)}`,
-      );
-      const s = manifest?.service;
-      if (s) {
-        const parts: string[] = [];
-        if (s.required?.length) parts.push(`需要服务: ${s.required.join(', ')}`);
-        if (s.optional?.length) parts.push(`可选服务: ${s.optional.join(', ')}`);
-        if (s.provides?.length) parts.push(`提供服务: ${s.provides.join(', ')}`);
-        if (parts.length) svcLine = `\n\n该插件声明：\n${parts.join('\n')}`;
-      }
+      graph = await api<DepGraph>(`/api/marketplace/depgraph?name=${encodeURIComponent(name)}`);
     } catch {
-      /* manifest 拉取失败不阻断安装，仅少了披露 */
+      /* 依赖图拉取失败不阻断安装，仅少了披露 */
     }
     const src = official ? '官方插件' : '第三方社区插件';
     const ok = await confirm({
       title: `安装${src}「${name}」`,
-      body: `将从 npm 安装。${svcLine}\n\n安装后它会以你授予的能力运行（可在权限页查看其依赖与权限）。请确认来源可信。`,
+      body: (
+        <>
+          {graph && <InstallDepDisclosure graph={graph} />}
+          <div className="dep-note">将从 npm 安装。安装后它以你授予的能力运行（可在权限页查看依赖与权限）。请确认来源可信。</div>
+        </>
+      ),
       confirmLabel: '安装',
     });
     if (!ok) return;
@@ -195,15 +185,23 @@ export function MarketplacePage({
     setInstalling(null);
   };
 
-  const handleUninstall = async (name: string, category?: MarketPkg['category']) => {
-    // util/api 是被其它插件 import 的依赖（非服务依赖，服务端 findServiceDependents 抓不到）→ 额外警告。
-    const importDepWarn =
-      category === 'util' || category === 'api'
-        ? '\n\n⚠️ 这是工具库/契约包，可能被其它插件 import；删除后依赖它的插件可能无法启动（需重新安装恢复）。'
-        : '';
+  const handleUninstall = async (name: string) => {
+    // 卸前披露：拉依赖图，列出真实依赖者——服务依赖者（将被 409 拒）+ import 依赖者（删后可能起不来）。
+    // 取代旧的「按类别拍脑袋」静态警告（既误报又漏报）。
+    let graph: DepGraph | null = null;
+    try {
+      graph = await api<DepGraph>(`/api/marketplace/depgraph?name=${encodeURIComponent(name)}`);
+    } catch {
+      /* 拉取失败退回无预警 */
+    }
     const ok = await confirm({
       title: `卸载「${name}」`,
-      body: `将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。${importDepWarn}`,
+      body: (
+        <>
+          {graph && <UninstallDepWarning graph={graph} />}
+          <div className="dep-note">将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。</div>
+        </>
+      ),
       confirmLabel: '卸载',
       danger: true,
     });
@@ -382,7 +380,7 @@ export function MarketplacePage({
                 <button
                   className="btn btn-sm"
                   style={{ color: 'var(--danger)' }}
-                  onClick={() => handleUninstall(pkg.name, pkg.category)}
+                  onClick={() => handleUninstall(pkg.name)}
                   disabled={installing === pkg.name}
                   title="卸载插件（删包 + 清配置）"
                 >
