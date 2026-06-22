@@ -14,7 +14,7 @@ import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugi
 import type { ProcessService } from '@aalis/plugin-process-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway, isStorageUri } from '@aalis/plugin-storage-api';
 import { safeFetch } from '@aalis/util-network-guard';
 
 export const name = '@aalis/plugin-asr-whisper-cpp';
@@ -79,7 +79,7 @@ async function materializeAudio(
   }
   // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...），统一解析到本地路径
   let storageUri: string | null = null;
-  if (/^[a-z][a-z0-9_-]*:\//.test(data)) storageUri = data;
+  if (isStorageUri(data)) storageUri = data;
   else if (/^data\//.test(data)) storageUri = `data:/${data.slice('data/'.length)}`;
   if (storageUri) {
     const local = await storage.resolveLocalPath?.(storageUri, 'read');

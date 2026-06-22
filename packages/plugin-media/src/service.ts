@@ -18,6 +18,7 @@ import type {
 } from '@aalis/plugin-media-api';
 import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
 import { AttachmentRefKind, formatAttachmentRef } from '@aalis/plugin-message-api';
+import { isStorageUri, parseUriRoot } from '@aalis/plugin-storage-api';
 import { lookupCachedDescription, rememberDescription } from './cache.js';
 import { buildIncomingImageContext } from './context.js';
 import {
@@ -261,13 +262,10 @@ export class MediaServiceImpl implements MediaService {
     const data = att.data;
     if (typeof data !== 'string' || !data) return null;
     if (data.startsWith('http://') || data.startsWith('https://')) return data;
-    // 已是 storage URI（scheme 非 http/https/data/file）→ 转为相对路径
-    const storagePrefixMatch = data.match(/^([a-z][a-z0-9_-]*):\/(.+)$/);
-    if (storagePrefixMatch) {
-      const scheme = storagePrefixMatch[1].toLowerCase();
-      if (scheme !== 'http' && scheme !== 'https' && scheme !== 'data' && scheme !== 'file') {
-        return `${scheme}/${storagePrefixMatch[2]}`;
-      }
+    // 已是 storage URI（含 data:/，根名 data，OneBot 已落盘）→ 转为相对路径 root/rest
+    if (isStorageUri(data)) {
+      const root = parseUriRoot(data);
+      return `${root}/${data.slice(root.length + 2)}`;
     }
     // base64 data URI（WebUI 上传的原始图片）
     if (!data.startsWith('data:')) return null;
