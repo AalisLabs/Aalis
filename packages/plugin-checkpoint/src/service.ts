@@ -1,6 +1,6 @@
 import type { Logger } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import { type StorageService, toStorageUri } from '@aalis/plugin-storage-api';
 
 /**
  * Checkpoint 服务
@@ -499,9 +499,5 @@ export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
 
 function toUri(input: string): string {
   const s = String(input ?? '').trim();
-  if (!s) return 'data:/checkpoints';
-  if (s.includes(':/')) return s;
-  const cleaned = s.replace(/^\.?\/+/, '');
-  const idx = cleaned.indexOf('/');
-  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `data:/${cleaned}`;
+  return s ? toStorageUri(s) : 'data:/checkpoints';
 }

@@ -494,7 +494,7 @@ class SessionManager implements SessionManagerService {
       createdAt: now,
       updatedAt: now,
       createdBy: opts?.createdBy || 'user',
-      inputContext: opts?.metadata?.inputContext as string | undefined,
+      inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext as string | undefined),
       metadata: opts?.metadata,
     };
 

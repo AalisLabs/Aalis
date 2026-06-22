@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-checkpoint",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "MIT",
   "description": "会话检查点：保存与回滚对话状态",
   "type": "module",

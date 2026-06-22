@@ -1,5 +1,5 @@
 import type { ConfigSchema, Context } from '@aalis/core';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/plugin-storage-api';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 
 // ===== 插件元数据 =====
@@ -167,12 +167,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   };
 
   // 兼容旧格式 “data/vectorstore”
-  function toUri(input: string): string {
-    if (input.includes(':/')) return input;
-    const s = input.trim().replace(/^\.?\/+/, '');
-    const idx = s.indexOf('/');
-    return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
-  }
+  const toUri = (input: string): string => toStorageUri(input);
 
   const dirUri = toUri(storeConfig.path);
   const dataUri = dirUri.endsWith('/') ? `${dirUri}vectors.json` : `${dirUri}/vectors.json`;

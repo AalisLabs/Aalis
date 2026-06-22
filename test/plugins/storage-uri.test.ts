@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isStorageUri, parseUriRoot } from '../../packages/plugin-storage-api/src/index.js';
+import { isStorageUri, parseUriRoot, toStorageUri } from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // storage URI 权威文法（isStorageUri / parseUriRoot）—— 收口 onebot/media/asr 6 处重抄。
@@ -45,5 +45,25 @@ describe('parseUriRoot', () => {
   it('非法形态抛错', () => {
     expect(() => parseUriRoot('/abs')).toThrow();
     expect(() => parseUriRoot('justtext')).toThrow();
+  });
+});
+
+describe('toStorageUri（配置路径归一）', () => {
+  it('已是 URI → 原样', () => {
+    expect(toStorageUri('data:/x')).toBe('data:/x');
+    expect(toStorageUri('workspace:/a/b')).toBe('workspace:/a/b');
+  });
+  it('多段 foo/bar → foo:/bar（首段当根）', () => {
+    expect(toStorageUri('data/personas')).toBe('data:/personas');
+    expect(toStorageUri('logs/x.log')).toBe('logs:/x.log');
+  });
+  it('单段裸名 → fallbackRoot:/name（默认 data，不把裸名当根名）', () => {
+    expect(toStorageUri('aalis.db')).toBe('data:/aalis.db');
+    expect(toStorageUri('lancedb')).toBe('data:/lancedb');
+    expect(toStorageUri('foo', 'workspace')).toBe('workspace:/foo');
+  });
+  it('去前导 ./ 与 /', () => {
+    expect(toStorageUri('./data/x')).toBe('data:/x');
+    expect(toStorageUri('/data/x')).toBe('data:/x');
   });
 });
