@@ -61,20 +61,23 @@ await ctx.getService('plugins')!.bouncePlugin(myInstanceId);
 实例引用。这是为了避免"前一秒注册到旧 commands 实例的 `/help` 子命令在新实例
 中消失"这类隐性 bug。
 
-### capabilities 数组什么时候用
+### inject 只认服务名，不认能力
 
 ```typescript
 inject: {
-  required: [{ service: 'llm', capabilities: ['tool_calling', 'streaming'] }],
+  required: ['llm'],            // 裸字符串
+  optional: [{ service: 'memory' }],  // 或 { service } 对象，等价
 }
 ```
 
-只在以下情况用：
-- 你**真的**会调用某个能力 API（比如 `llm.toolCall(...)`），用 capabilities 让框架
-  自动在多 LLM 提供者中选满足该能力的最高优先级实现。
-- 否则就用裸字符串 `required: ['llm']`，让用户/路由插件决定用哪个 provider。
+`inject` 的元素是 `string | { service: string }`——**只有服务名**，0.5.0 起 core DI
+不再有 `{ service, capabilities: [...] }` 这一维。多个插件 provide 同名服务时，
+`getService(name)` 的胜者按 **preference > priority > 注册顺序** 选出（见第 13 节的
+`preferService` 与 WebUI Services 页），跟"能力"无关。
 
-> 不要把 capabilities 当文档用——它会改变运行时选服务的行为。
+> 你**真的**依赖某个领域能力（如 LLM 的 tool-calling、storage 的 local-path）时，
+> 不要试图让 core DI 帮你选——那是各域 `*-api` helper 的活：用 `resolveLLMModel(ctx, …)` /
+> `resolveStorageEntryForRoot(ctx, root, caps)` 按**实例 / 句柄元数据**过滤（见第 10 节）。
 
 ---
 
@@ -161,8 +164,8 @@ export const reusable = true;
 
 - `apply` 内**不直接注册全局命令**（会重复注册），改为通过 `commands` 服务
   路由，命令 handler 内根据 `instanceId` 区分实例
-- 如果你 `provides` 服务，所有实例提供的服务**同名**，下游通过 capabilities
-  + priority 区分；你需要确保自己的服务实例之间互不串扰
+- 如果你 `provides` 服务，所有实例提供的服务**同名**，下游通过 priority + preference
+  选胜者（域能力另由 `*-api` helper 按实例/句柄元数据过滤）；你需要确保自己的服务实例之间互不串扰
 - `displayName` 内最好包含配置区分信息（`displayName: \`OpenAI / ${cfg.model}\``）
   让 WebUI 能区分
 
@@ -174,8 +177,8 @@ export const reusable = true;
 ```typescript
 // ❌ 不要这么写
 export async function apply(ctx) {
-  ctx.provide('llm', backend1, { capabilities: ['chat'] });
-  ctx.provide('llm', backend2, { capabilities: ['vision'] }); // 静默失效
+  ctx.provide('llm', backend1);
+  ctx.provide('llm', backend2); // 同名同 contextId 二次注册，下游路由命不中第二个
 }
 ```
 
@@ -202,16 +205,17 @@ plugins:
 export async function apply(ctx, cfg) {
   for (const model of cfg.models) {
     ctx.provide('llm', new LLMBackend(model), {
-      capabilities: model.capabilities,
-      entryId: `${ctx.id}/${model.id}`, // 显式拆子粒度，抽抽 warn
+      entryId: `${ctx.id}/${model.id}`, // 显式拆子粒度，避开"二次注册命不中"的 warn
+      label: `OpenAI / ${model.id}`,     // provide 选项：priority? / label? / entryId?
     });
   }
 }
 ```
 
-下游走 capability filter / preference 机制选中所需实例（高优先级 / 偏好），
-或在请求参数中显式传 `provider` / `model` hint（参见 plugin-openai / plugin-deepseek
-的 `resolveLLMModel` 实现）。
+下游走 preference 机制选默认胜者（高优先级 / 偏好），或在请求参数中显式传
+`provider` / `model` hint，由 `*-api` helper（如 `resolveLLMModel(ctx, { provider, model })`）
+按 model-handle 元数据定位实例（参见 plugin-openai / plugin-deepseek 实现）——
+**能力过滤在 helper 这层，不在 core DI**。
 
 ---
 
@@ -337,38 +341,43 @@ it('should activate when its dependencies are present', async () => {
 
 ---
 
-## 10. 类型化能力（typed capabilities）—— 已有的好东西，记得用
+## 10. 领域能力（domain capabilities）—— 写在实例 / 句柄上，不进 core 的 map
 
-`ServiceCapabilityMap` 是个 declaration-merging 扩展点。`-api` 包应该在自己的入口
-文件里把所属服务的能力枚举声明出来：
+> ⚠️ 0.5.0 起 **core 不再有 `ServiceCapabilityMap`**。core 的 declaration-merging
+> 扩展点只剩三个：`ServiceTypeMap`（服务名→实例接口）、`HookContextMap`、`AalisEvents`
+> （外加配置层的 `SchemaFieldTypes`）。`getService(name)` / `inject` 只认**服务名**，
+> 不再有 `{ capabilities: [...] }` 这一维。
+
+领域能力（LLM 的 tool-calling / vision、storage 的 read/write/local-path）**不是 core
+DI 概念**，而是落在**服务实例 / model-handle 的元数据**上，由各 `-api` 包自己导出能力
+枚举 + 提供过滤 helper。`-api` 包把能力枚举当**普通导出类型/常量**声明出来即可，不需要、
+也不能往 core 的某个 map 里 `declare module`：
 
 ```typescript
-// packages/plugin-llm-api/src/index.ts
-export type LLMCapability =
-  | 'chat'
-  | 'tool_calling'
-  | 'streaming'
-  | 'vision'
-  | 'thinking'
-  | (string & {});  // 留逃逸口，允许私有能力字符串
-
-declare module '@aalis/core' {
-  interface ServiceCapabilityMap {
-    llm: LLMCapability;
-  }
+// packages/plugin-storage-api/src/index.ts
+export interface StorageCapabilityRegistry {
+  List: 'list';
+  Read: 'read';
+  Write: 'write';
+  Delete: 'delete';
+  LocalPath: 'local-path';
+  Watch: 'watch';
 }
+export type StorageCapability = StorageCapabilityRegistry[keyof StorageCapabilityRegistry];
+export const StorageCapabilities = { /* ...as const... */ } satisfies StorageCapabilityRegistry;
 ```
 
 收益：
-- `ctx.provide('llm', x, { capabilities: ['streaming'] })` 标准能力有自动补全
-- `'streaaming'` 这种 typo 会被 IDE 提示 `Did you mean 'streaming'?`
-- 模板字面量类型（如 `model:${string}`）能约束"能力名族"
-- 运行时**完全不强制**——`(string & {})` 兜底，私有能力随便写，框架不管
+- 能力枚举是普通导出，IDE 一样能自动补全 / 拦 typo，但**不污染 core**
+- 能力按需检测：storage 按 root 的真实权限位（`readable/writable/deletable`）+
+  方法存在性（`resolveLocalPath`/`watch`）判定；LLM 按 model-handle 元数据判定
+- 运行时由各域的 `*-api` helper 做过滤（如 `resolveStorageEntryForRoot(ctx, root, caps)` /
+  `resolveLLMModel(ctx, { provider, model })`），**不是** core DI / 不是 `getService(name, { caps })`
 
 **不要**在每个实现包里也声明自己的能力枚举——只 `-api` 包声明，实现包按需引用。
 
-类似地，`AalisEvents` 和 `HookContextMap` 也是 declaration-merging 扩展点，按同样
-规则使用：契约由 `-api` 包定义，实现包消费。
+至于 core 自己的三个 declaration-merging 扩展点（`ServiceTypeMap` / `AalisEvents` /
+`HookContextMap`），同样遵循"契约由 `-api` 包定义、实现包消费"的纪律。
 
 ### `AalisEvents` 是封闭的：动态事件名怎么办？
 
@@ -440,9 +449,9 @@ core 已经处理好"已就绪立刻同步触发 / 反复上下线重接 / dispo
 
 ## 12. -api 包：怎么让 `ctx.getService('xxx')` 拿到强类型
 
-`ServiceTypeMap` 也是 declaration-merging 扩展点。`-api` 包里同时声明能力枚举
-和类型映射，业务插件只要 `import '@aalis/plugin-xxx-api'`（哪怕只是副作用导入）
-就能让 TS 在调用 `ctx.getService('xxx')` 时自动推断出对应接口类型：
+`ServiceTypeMap` 是 core 仅有的"服务名→实例接口"declaration-merging 扩展点。`-api`
+包在自己的入口文件里把服务接口 declare 进去，业务插件只要 `import '@aalis/plugin-xxx-api'`
+（哪怕只是副作用导入）就能让 TS 在调用 `ctx.getService('xxx')` 时自动推断出对应接口类型：
 
 ```typescript
 // packages/plugin-llm-api/src/index.ts
@@ -455,11 +464,11 @@ declare module '@aalis/core' {
   interface ServiceTypeMap {
     llm: LLMService;
   }
-  interface ServiceCapabilityMap {
-    llm: LLMCapability;
-  }
 }
 ```
+
+> 能力枚举（`LLMCapability` / `StorageCapability` 等）是 `-api` 包的**普通导出类型**，
+> 不进任何 core map（参见第 10 节）——`ServiceTypeMap` 只登记"服务名→实例接口"这一件事。
 
 业务插件：
 

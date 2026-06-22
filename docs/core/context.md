@@ -33,12 +33,12 @@
 | 跨插件消费服务（**推荐**） | `ctx.whenService(name, svc => …)` | 高频；自动响应 provider 上下/下线 |
 | 消费已知一定存在的服务 | `useXxxService(ctx)` helper | 高频；通过 api 包提供，自带类型 |
 | 一次性按名拿服务 | `ctx.getService('name')` | 中频；服务未就绪返回 undefined |
-| 拦截/改写核心流程 | `ctx.middleware(hook, fn, priority?)` | 高频；详见 [events.md](events.md) |
+| 拦截/改写核心流程 | `ctx.middleware(hook, fn)` | 高频；详见 [events.md](events.md) |
 | 注册外部资源清理 | `ctx.onDispose(() => …)` | 高频；**唯一正确的清理 API** |
 | 创建沙盒/子作用域 | `ctx.createScope(id)` / `ctx.fork(id)` | 中频；scope 自带服务隔离 |
 | 动态加载子模块 | `ctx.useModule(mod, cfg, opts?)` | 罕用；多用于沙盒/动态注入 |
 | 设置全局服务路由偏好 | `ctx.preferService(name, id)` | 罕用；多用于 WebUI/CLI 切换 |
-| 枚举/巡视服务（管控类） | `ctx.getServiceEntries/Names/Capabilities` | 罕用；面向 plugin-doctor / WebUI |
+| 枚举/巡视服务（管控类） | `ctx.getServiceEntries/Names` | 罕用；面向 plugin-doctor / WebUI |
 
 > 大多数插件只会用到 **on / emit / provide / whenService / middleware / onDispose** 加 `useXxxService(ctx)` 系列 helper。表里"罕用"那几条主要是 WebUI、调度、诊断、权限管控类插件才会接触。
 
@@ -84,13 +84,13 @@ await ctx.emit('outbound:message', outMsg);
 
 事件清单见 [events.md](events.md)。
 
-## 服务 API（IoC + 能力匹配）
+## 服务 API（IoC）
 
 ```typescript
 // 注册服务（建议同时在 PluginModule.provides 中声明，core 会做一致性校验）
 ctx.provide('llm', service, {
-  capabilities: ['chat', 'tool_calling', 'streaming'],
   priority: 10,
+  label: 'openai',   // 可选；多 entry 巡视时展示
 });
 
 // 推荐消费方式：whenService —— 自动响应 provider 上下/下线
@@ -103,12 +103,17 @@ ctx.whenService('llm', llm => {
 // 一次性按名拿：注意可能为 undefined
 const memory = ctx.getService<MemoryService>('memory');
 
-// 按能力筛
-const llmWithTools = ctx.getService('llm', ['tool_calling']);
+// 拿同名服务的全部实例（带提供者信息）
+const allLLMs = ctx.getAllServices('llm');
 
 // 检查可用性
 if (ctx.hasService('memory')) { ... }
 ```
+
+> 0.5.0 起 core 不再做「服务能力匹配」：`provide` 不接受 `capabilities` 选项，
+> `getService` 不接受能力参数，`getServiceCapabilities` 已删除。LLM 的
+> tool-calling / vision 等能力放在 model handle 元数据上；storage 访问按 root
+> 权限位判定，均与 ServiceContainer 无关。
 
 ### 服务解析顺序
 
@@ -132,14 +137,16 @@ ctx.middleware('agent:input:before', async (data, next) => {
   if (shouldBlock(data.message)) return; // 中断
   data.message.content += ' [已审核]';   // 修改
   await next();                           // 继续
-}, 200); // priority 越大越外层
+});
 
 // 后处理（先 next 再改）
 ctx.middleware('agent:reply:before', async (data, next) => {
   await next();
   data.content = transform(data.content);
-}, 50);
+});
 ```
+
+> 同一钩子键内的多个 handler 按**注册顺序**执行洋葱模型（next 语义），不使用数字优先级；相位间的次序由调度方显式表达。
 
 详见 [events.md — 中间件钩子管道](events.md)。
 
@@ -155,7 +162,7 @@ import { useCommandService } from '@aalis/plugin-commands-api';
 useToolService(ctx)?.register({
   definition: { type: 'function', function: { name: 'my_tool', description: '...', parameters: { ... } } },
   handler: async (args, toolCtx) => JSON.stringify(result),
-  visibility: 'public',   // 'public'（默认所有人可用）| 'restricted'（默认禁，需授予）
+  visibility: 'public',   // 'public'（默认 minLevel 0，所有人可用）| 'restricted'（minLevel 2，需达到该等级）
 });
 
 // 注册一个用户斜杠命令

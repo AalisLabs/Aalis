@@ -51,8 +51,7 @@ message-delete    支持 deleteMessagesByTimestamps
 
 ```ts
 export const inject = {
-  required: [{ service: 'memory', capabilities: ['history'] }],
-  optional: [{ service: 'memory', capabilities: ['metadata'] }],
+  required: ['memory'],
 };
 ```
 
