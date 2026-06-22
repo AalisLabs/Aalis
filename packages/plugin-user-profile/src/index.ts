@@ -162,8 +162,9 @@ export const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启用 Aalis 对用户的主观感受',
     description:
-      '在每位用户的客观事实档案之外，额外让 Aalis 以「主观视角」记录对该用户的态度/情感/边缘观察（独立 schema，注入 prompt 时单独成段）。复用同一次 LLM 提取调用，不增加额外成本',
-    default: true,
+      '在每位用户的客观事实档案之外，额外让 Aalis 以「主观视角」记录对该用户的态度/情感/边缘观察（独立 schema，注入 prompt 时单独成段）。复用同一次 LLM 提取调用，不增加额外成本。' +
+      '⚠️ 默认关闭：模型把自己写下的主观感受再读回去会形成自我蒸馏回路，放大臆测/幻觉与口癖、降低事实精度，不建议开启',
+    default: false,
   },
   maxFeelingsPerUser: {
     type: 'number',
@@ -178,8 +179,9 @@ export const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启用 Aalis 自档案',
     description:
-      '让 Aalis 周期性地反思自身，提炼「关于自己的事实」（近期心情走向、在意的事、自我观察）。注入到所有 LLM 调用的 system prompt 早段，提供跨会话的人格延续性',
-    default: true,
+      '让 Aalis 周期性地反思自身，提炼「关于自己的事实」（近期心情走向、在意的事、自我观察）。注入到所有 LLM 调用的 system prompt 早段，提供跨会话的人格延续性。' +
+      '⚠️ 默认关闭：自档案是模型对自身输出的二次提炼，再注入会自我强化先前的臆测、随时间漂移并放大幻觉，不建议开启',
+    default: false,
   },
   selfReflectEveryNMessages: {
     type: 'number',
@@ -260,9 +262,9 @@ export const defaultConfig = {
   relationIncrementInterval: 0.5,
   relationIncrementWitness: 0.1,
   allowGlobalBackfill: false,
-  enableAalisFeelings: true,
+  enableAalisFeelings: false,
   maxFeelingsPerUser: 15,
-  enableSelfProfile: true,
+  enableSelfProfile: false,
   selfReflectEveryNMessages: 25,
   selfReflectHistory: 16,
   maxSelfFacts: 20,
@@ -520,9 +522,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ? (config.extractLLM as { provider: string; model: string })
         : undefined,
     allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
-    enableAalisFeelings: (config.enableAalisFeelings as boolean) ?? true,
+    enableAalisFeelings: (config.enableAalisFeelings as boolean) ?? false,
     maxFeelingsPerUser: Math.max(0, (config.maxFeelingsPerUser as number) ?? 15),
-    enableSelfProfile: (config.enableSelfProfile as boolean) ?? true,
+    enableSelfProfile: (config.enableSelfProfile as boolean) ?? false,
     selfReflectEveryNMessages: Math.max(0, (config.selfReflectEveryNMessages as number) ?? 25),
     selfReflectHistory: Math.max(4, (config.selfReflectHistory as number) ?? 16),
     maxSelfFacts: Math.max(5, (config.maxSelfFacts as number) ?? 20),
