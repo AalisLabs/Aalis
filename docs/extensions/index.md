@@ -14,26 +14,31 @@
 
 ---
 
-## 1. `ServiceCapabilityMap`
+## 1. `ServiceTypeMap`
 
-服务名 → 能力 union 类型映射。`ctx.provide(name, inst, { capabilities: [...] })`
-和 `ctx.getService(name, { capability })` 在编译期靠它做 capability 字符串约束。
+服务名 → 服务实例接口类型映射。`ctx.provide(name, inst)` 和 `ctx.getService(name)` / `ctx.getAllServices(name)`
+在编译期靠它把服务名字面量推断成对应实例类型（未登记的名字退回 `unknown`）。
+取用只传**名字**，不带任何 capabilities 参数；同名多实现时的胜者由 preference > priority > 注册顺序决定。
 
-**位置**：[packages/core/src/types/capabilities.ts](packages/core/src/types/capabilities.ts)
+> 领域能力（LLM 的 tool-calling / vision、storage 的 local-path 等）**不在这里**——
+> 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选，
+> 而非走 core 的 DI。core 的服务注册只认名字与实例类型。
+
+**位置**：[packages/core/src/types/services.ts](packages/core/src/types/services.ts)
 
 **扩展者**：
 
-| api 包 | 注册的服务 | 能力 union（部分） |
-|---|---|---|
-| [@aalis/plugin-llm-api](packages/plugin-llm-api/src/index.ts) | `llm` | `chat / tool_calling / vision / ...` |
-| [@aalis/plugin-memory-api](packages/plugin-memory-api/src/index.ts) | `memory` | `persistent / encrypted / ...` |
-| [@aalis/plugin-storage-api](packages/plugin-storage-api/src/index.ts) | `storage` | — |
-| [@aalis/plugin-media-api](packages/plugin-media-api/src/index.ts) | `media` | `vision / audio / video` |
-| [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session-manager` | — |
-| [@aalis/plugin-platform-api](packages/plugin-platform-api/src/index.ts) | `platform` | helper: `resolvePlatformBySession` / `aggregatePlatformDetails` |
-| [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` | — |
-| [@aalis/plugin-message-archive](packages/plugin-message-archive/src/types.ts) | `message-archive` | — |
-| [@aalis/plugin-websearch-serper](packages/plugin-websearch-serper/src/types.ts) | `websearch` | — |
+| api 包 | 注册的服务 |
+|---|---|
+| [@aalis/plugin-llm-api](packages/plugin-llm-api/src/index.ts) | `llm` |
+| [@aalis/plugin-memory-api](packages/plugin-memory-api/src/index.ts) | `memory` |
+| [@aalis/plugin-storage-api](packages/plugin-storage-api/src/index.ts) | `storage` |
+| [@aalis/plugin-media-api](packages/plugin-media-api/src/index.ts) | `media` |
+| [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session-manager` |
+| [@aalis/plugin-platform-api](packages/plugin-platform-api/src/index.ts) | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
+| [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` |
+| [@aalis/plugin-message-archive](packages/plugin-message-archive/src/types.ts) | `message-archive` |
+| [@aalis/plugin-websearch-serper](packages/plugin-websearch-serper/src/types.ts) | `websearch` |
 
 ---
 
@@ -167,6 +172,6 @@ declare module '@aalis/plugin-llm-api' {
 
 - 加一个**新事件** → 在自己的 `*-api` 包内 `declare module '@aalis/core' { interface AalisEvents { ... } }`
 - 加一个**新钩子** → 同上但写 `HookContextMap`
-- 加一个**新服务名** → 同上但写 `ServiceCapabilityMap`，同时定义自己的 `XxxCapabilityRegistry`
+- 加一个**新服务名** → 同上但写 `ServiceTypeMap`（服务名 → 服务实例接口类型）。领域能力不在这里登记——按需在自己的 `*-api` 里把它们放到服务实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 7 节）
 - 加一个 **`ctx.xxx()` 便捷方法** → 在 `*-api` 包用 `declare module '@aalis/core' { interface Context { xxx(...): ...; } }`，并在 plugin 实现里 `Context.prototype.xxx = ...`。**慎用**——优先考虑改成 Service。
 - 加一个**配置字段** → 在 `*-api` 包 `declare module '@aalis/core' { interface AalisConfig { myField: ... } }`，并提供 schema 给 ConfigManager

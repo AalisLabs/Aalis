@@ -68,8 +68,7 @@ local-path    .resolveLocalPath() —— shell/code-runner 必需
 
 ```ts
 export const inject = {
-  required: [{ service: 'storage', capabilities: ['read', 'write'] }],
-  optional: [{ service: 'storage', capabilities: ['local-path'] }],
+  required: ['storage'],
 };
 ```
 
