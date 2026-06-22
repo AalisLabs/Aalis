@@ -50,7 +50,13 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: 键盘交互由上面的 window keydown 统一处理 */}
       <div className="confirm-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
         <div className="confirm-title">{pending.title}</div>
-        {pending.body != null && <div className="confirm-body">{pending.body}</div>}
+        {pending.body != null &&
+          // 字符串正文保留 pre-wrap（换行生效）；富节点正文用 normal（避免 JSX 空白被 pre-wrap 放大）。
+          (typeof pending.body === 'string' ? (
+            <div className="confirm-body">{pending.body}</div>
+          ) : (
+            <div className="confirm-body confirm-body-rich">{pending.body}</div>
+          ))}
         <div className="confirm-actions">
           <button type="button" className="btn btn-sm" onClick={() => settle(false)}>
             {pending.cancelLabel ?? '取消'}
