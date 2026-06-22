@@ -79,4 +79,3 @@ interface SessionManagerService {
 ## 相关
 
 - `/model`、`/persona` 等指令在 [plugin-commands](../plugins/plugin-commands.md) 中由 session-manager 注册
-- 子会话编排见 `@aalis/plugin-session-channel`

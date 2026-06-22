@@ -1402,27 +1402,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-session-channel:
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@aalis/plugin-gateway-api':
-        specifier: workspace:*
-        version: link:../plugin-gateway-api
-      '@aalis/plugin-memory-api':
-        specifier: workspace:*
-        version: link:../plugin-memory-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-session-confirm:
     dependencies:
       '@aalis/plugin-authority-api':
