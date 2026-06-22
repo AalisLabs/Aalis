@@ -19,7 +19,7 @@
 
 import { Buffer } from 'node:buffer';
 import type { ProcessService } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import { isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
 import { safeFetch } from '@aalis/util-network-guard';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
@@ -34,13 +34,6 @@ const KIND_DIR: Record<AttachmentKind, string> = {
 /** 把 sessionId 转为文件系统安全的名字（替换 `:`/`/`/`\\`）。 */
 function safeSessionDir(sessionId: string): string {
   return sessionId.replace(/[:/\\]/g, '_');
-}
-
-/** 简易判定：形如 <root>:/<path>，且 root 非 http/https/data/file。 */
-function isStorageUri(s: string): boolean {
-  if (!/^[a-z][a-z0-9_-]*:\//.test(s)) return false;
-  const scheme = s.slice(0, s.indexOf(':')).toLowerCase();
-  return scheme !== 'http' && scheme !== 'https' && scheme !== 'data' && scheme !== 'file';
 }
 
 /**
@@ -105,6 +98,11 @@ export async function loadAttachmentBuffer(
   maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<Buffer | null> {
   try {
+    // storage URI 优先：data:/ 也是 storage（根名 data），不能被下面的 data: 分支误当 data-URI。
+    if (isStorageUri(source)) {
+      const raw = (await storage.readFile(source)) as Uint8Array;
+      return Buffer.from(raw);
+    }
     if (source.startsWith('data:')) {
       const m = source.match(/^data:[^;]+;base64,(.+)$/);
       if (!m) return null;
@@ -114,10 +112,6 @@ export async function loadAttachmentBuffer(
       const res = await safeFetch(source, { signal: AbortSignal.timeout(30000) });
       if (!res.ok) return null;
       return readBodyCapped(res, maxBytes);
-    }
-    if (isStorageUri(source)) {
-      const raw = (await storage.readFile(source)) as Uint8Array;
-      return Buffer.from(raw);
     }
     // file:// 或绝对路径：OneBot daemon 推来的任意 OS 路径，走 process.readExternalFile
     const raw = await proc.readExternalFile(source);

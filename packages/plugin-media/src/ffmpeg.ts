@@ -7,6 +7,7 @@
 
 import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
+import { isStorageUri } from '@aalis/plugin-storage-api';
 import { getMediaRuntime } from './runtime.js';
 import { safeDownloadToTemp } from './safe-fetch.js';
 
@@ -220,7 +221,7 @@ export async function materializeAttachment(
     // storage URI（如 data:/images/...）→ 解析到本地路径。
     // 同时兼容历史相对路径（如 `data/images/...`，缺少冒号），统一补成 storage URI。
     let storageUri: string | null = null;
-    if (/^[a-z][a-z0-9_-]*:\//.test(data)) {
+    if (isStorageUri(data)) {
       storageUri = data;
     } else if (/^data\//.test(data)) {
       storageUri = `data:/${data.slice('data/'.length)}`;

@@ -264,7 +264,26 @@ export function resolveStorageByPath(
   return resolveStorageEntryForRoot(ctx, parseUriRoot(uri), requiredCaps);
 }
 
-function parseUriRoot(uri: string): string {
+/** 存储 URI 的 scheme 文法：`<root>:/<path>`，root 以字母开头 + 字母/数字/下划线/连字符。 */
+const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
+/** 非 storage 的保留 scheme：这些 `:/` 形态另有专门读取路径（safeFetch / readExternalFile），不算 storage URI。 */
+const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
+
+/**
+ * 判定字符串是否为 storage URI（`<root>:/path`）—— 权威文法，全体消费者（onebot/media/asr）复用，
+ * 勿各自重抄。与之区分：http/https/file URL（保留 scheme）、标准 data-URI `data:<mime>;base64,...`。
+ *
+ * `data:` 的歧义由文法天然区分——storage 根 `data` 写作 `data:/...`（冒号后紧跟 `/`，正则匹配）；
+ * 标准 data-URI 是 `data:image/...;base64,...`（冒号后跟 MIME，正则不匹配）。
+ */
+export function isStorageUri(s: string): boolean {
+  if (!STORAGE_URI_RE.test(s)) return false;
+  const scheme = s.slice(0, s.indexOf(':')).toLowerCase();
+  return !RESERVED_URI_SCHEMES.has(scheme);
+}
+
+/** 从 storage URI 取根名（`data:/images/x.jpg` → `data`）。非 `<根名>:/...` 形态抛错。 */
+export function parseUriRoot(uri: string): string {
   const idx = uri.indexOf(':/');
   if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}（应为 <根名>:/<相对路径>）`);
   return uri.slice(0, idx);
