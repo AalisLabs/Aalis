@@ -1,6 +1,6 @@
 {
   "name": "create-aalis-plugin",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "Aalis 插件交互式脚手架。",
   "type": "module",

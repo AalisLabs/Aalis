@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-prompt-budget",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "提示词预算：token 计数与上下文裁剪自检",
   "type": "module",

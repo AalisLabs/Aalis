@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-tool-system",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "系统工具集：Shell / 文件 / HTTP 等基础能力",
   "type": "module",

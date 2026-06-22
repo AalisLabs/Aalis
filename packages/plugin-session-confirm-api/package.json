@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-session-confirm-api",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "会话确认服务契约：createChannel(deliver) → {handler, feed}，让各平台复用同一套确认协调器",
   "type": "module",
