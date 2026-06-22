@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-session-confirm",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "会话确认协调器：提供 session-confirm 服务（createChannel）供各平台复用，并经 gateway 总线覆盖 onebot/cli 等会话型平台",
   "type": "module",

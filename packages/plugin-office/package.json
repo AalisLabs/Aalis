@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-office",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "Office 文档：Word/Excel/PPT/PDF 创建与编辑",
   "type": "module",

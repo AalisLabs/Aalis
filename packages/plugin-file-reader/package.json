@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-file-reader",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "文件读取：解析多种格式文件供 AI 理解",
   "type": "module",
