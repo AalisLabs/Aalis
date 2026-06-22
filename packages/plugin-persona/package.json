@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-persona",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "MIT",
   "description": "角色人格：YAML 角色卡定义性格与结构化输出",
   "type": "module",

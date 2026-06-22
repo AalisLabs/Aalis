@@ -626,7 +626,6 @@ export class MediaServiceImpl implements MediaService {
       } else if (detailLevel === 'detailed') {
         basePrompt = DEFAULT_VISION_DETAILED_PROMPT;
         chosenTier = 'detailed';
-        chosenTier = 'professional';
       } else {
         // auto：调一次轻量分类（耗时 ~1-2s）
         const picked = await this.classifyAndPickPrompt(proc, imageUrl);

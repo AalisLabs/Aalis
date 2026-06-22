@@ -290,6 +290,23 @@ export function parseUriRoot(uri: string): string {
 }
 
 /**
+ * 把配置里的路径/裸名归一为 storage URI —— 契约级文法，全体后端消费者（memory/vectorstore/
+ * checkpoint/scheduler/persona…）复用，勿各自重抄。
+ * - 已是 storage URI（含 `:/`）→ 原样返回。
+ * - `foo/bar`（含 `/`）→ `foo:/bar`（首段当根名）。
+ * - `name`（单段裸名）→ `<fallbackRoot>:/name`（默认归 data 根相对路径，而非把裸名当根名——
+ *   后者会让 gateway 抛「未知根」）。
+ * 空输入留给调用方各自处理（各包默认文件名不同）。
+ */
+export function toStorageUri(input: string, fallbackRoot = 'data'): string {
+  const s = input.trim();
+  if (s.includes(':/')) return s;
+  const cleaned = s.replace(/^\.?\/+/, '');
+  const idx = cleaned.indexOf('/');
+  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `${fallbackRoot}:/${cleaned}`;
+}
+
+/**
  * 创建一个面向调用方的 StorageService 网关：每次方法调用按 URI 路由到对应 entry。
  *
  * 不注册到 ServiceContainer——纯本地构造，没有 facade entry。适用于 tools / shell /

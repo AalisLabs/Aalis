@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-workflow",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "MIT",
   "description": "工作流编排：多步骤任务的声明式编排",
   "type": "module",

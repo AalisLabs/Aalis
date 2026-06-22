@@ -243,12 +243,16 @@ function renderIndexTs(a: Answers): string {
     body.push(`  // 注册 AI 可调用的工具
   useToolService(ctx).register({
     definition: {
-      name: 'hello',
-      description: '示例工具：返回问候语',
-      parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+      type: 'function',
+      function: {
+        name: 'hello',
+        description: '示例工具：返回问候语',
+        parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+      },
     },
+    // handler 必须返回 string（工具结果文本），不是对象
     async handler(args) {
-      return { text: \`你好, \${(args as { name: string }).name}!\` };
+      return \`你好, \${(args as { name: string }).name}!\`;
     },
   });`);
   }
