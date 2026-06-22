@@ -112,7 +112,6 @@ type MemoryClearData = {
   types?: string[];
   sessionId?: string;
   results: Array<{ source: string; success: boolean; message: string }>;
-  rollbacks: Array<{ source: string; fn: () => Promise<void> }>;
 };
 
 // ===== WebuiPages（声明式 UI） =====
@@ -624,7 +623,6 @@ class SessionManager implements SessionManagerService {
       scope: 'session',
       sessionId: id,
       results: [],
-      rollbacks: [],
     };
 
     await this.ctx.hooks.run('memory:clear', clearData, async () => {
