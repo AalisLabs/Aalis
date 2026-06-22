@@ -62,7 +62,6 @@ const STANDARD_EXTRA = [
   '@aalis/plugin-checkpoint',
   '@aalis/plugin-skills',
   '@aalis/plugin-message-archive',
-  '@aalis/plugin-session-channel',
   '@aalis/plugin-subtask',
   '@aalis/plugin-tool-session',
   '@aalis/plugin-doctor',
