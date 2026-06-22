@@ -5,7 +5,7 @@ import { type ReactNode, useCallback, useEffect, useState } from 'react';
 //   if (!(await confirm({ title, body, danger }))) return;  // 取消即 false
 // Promise 化，天然适配「先 await fetch 再确认」的异步流程。
 
-export interface ConfirmOptions {
+interface ConfirmOptions {
   title: string;
   /** 正文，支持多行（CSS white-space: pre-wrap）或任意节点 */
   body?: ReactNode;

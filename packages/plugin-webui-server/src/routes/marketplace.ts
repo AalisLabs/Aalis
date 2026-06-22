@@ -137,7 +137,7 @@ export function findPackageDependents(target: string, depMap: ReadonlyMap<string
 }
 
 /** 依赖链路树节点。present=false：该包本地不存在（upstream 里即「缺失/将引入」，链路在此中断）。 */
-export interface DepChainNode {
+interface DepChainNode {
   name: string;
   present: boolean;
   /** 服务标注（仅已加载插件有；util/api/未装为 undefined）。由端点据 getStatus 补，纯函数不填。 */
