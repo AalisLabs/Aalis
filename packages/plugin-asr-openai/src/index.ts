@@ -9,7 +9,7 @@ import { Buffer } from 'node:buffer';
 import type { ConfigSchema, Context } from '@aalis/core';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
+import { createStorageGateway, isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -73,7 +73,7 @@ async function attachmentToBlob(
   }
   // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...）→ 经 storage 读取
   let storageUri: string | null = null;
-  if (/^[a-z][a-z0-9_-]*:\//.test(data)) storageUri = data;
+  if (isStorageUri(data)) storageUri = data;
   else if (/^data\//.test(data)) storageUri = `data:/${data.slice('data/'.length)}`;
   if (storageUri) {
     const bytes = (await storage.readFile(storageUri)) as Uint8Array;

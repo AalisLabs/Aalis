@@ -18,7 +18,7 @@
 import { Buffer } from 'node:buffer';
 import type { Logger } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/plugin-message-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import { isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
 
@@ -28,20 +28,6 @@ const MAX_INLINE_BYTES = 10 * 1024 * 1024;
 /** 把 Buffer 包成 base64:// 字符串。 */
 function toBase64Uri(buf: Buffer): string {
   return `base64://${buf.toString('base64')}`;
-}
-
-/** 简易判定：形如 <root>:/<path>，且 root 非 http/https/file。
- * 注意："data:/path" 是 storage 根路径（storage URI），
- * "data:image/png;base64,..." 是标准 data URI（非 storage）——
- * 区分依据：storage URI 的冒号后紧跟 '/'，标准 data URI 后跟 MIME type。 */
-function isStorageUri(s: string): boolean {
-  if (!/^[a-z][a-z0-9_-]*:\//.test(s)) return false;
-  const colonIdx = s.indexOf(':');
-  const scheme = s.slice(0, colonIdx).toLowerCase();
-  if (scheme === 'http' || scheme === 'https' || scheme === 'file') return false;
-  // data:/ → storage root；data:mime/type;base64,... → 标准 data URI → 非 storage
-  if (scheme === 'data') return s[colonIdx + 1] === '/';
-  return true;
 }
 
 /**
